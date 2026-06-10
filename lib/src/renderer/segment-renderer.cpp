@@ -181,21 +181,31 @@ namespace EdgeLighting
             discard;
         }
 
-        float core = smoothstep(uLineWidth * 0.5, 0.0, absD);
-        float glow = exp(-absD / (uGlowWidth * 0.35));
-        float totalGlow = (core * 0.6 + glow * 0.4) * maxTailIntensity * uIntensity;
+        // 1. Organic Breathing Glow
+        float pulse = 1.0 + 0.12 * sin(uTime * 3.5);
+        float pulseIntensity = uIntensity * (1.0 + 0.08 * sin(uTime * 3.5));
 
+        float core = smoothstep(uLineWidth * 0.5, 0.0, absD);
+        float glow = exp(-absD / (uGlowWidth * 0.35 * pulse));
+        float totalGlow = (core * 0.6 + glow * 0.4) * maxTailIntensity * pulseIntensity;
+
+        // 2. Dynamic Rotating / Flowing Gradients
         vec4 baseColor;
         if (uColorMode == 0) {
             baseColor = uPrimaryColor;
         } else if (uColorMode == 1) {
-            baseColor = mix(uPrimaryColor, uSecondaryColor, p_pos);
+            float flowPos = fract(p_pos - uTime * 0.15);
+            baseColor = mix(uPrimaryColor, uSecondaryColor, flowPos);
         } else {
             float shift = fract(p_pos - uTime * 0.25);
             baseColor = vec4(getRainbowColor(shift), 1.0);
         }
 
-        fragColor = baseColor * totalGlow;
+        // 3. Screen-Space pseudo-random dithering (banding prevention)
+        float dither = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
+        dither = (dither - 0.5) / 255.0; // Scale to fit 8-bit color depth step
+
+        fragColor = (baseColor * totalGlow) + vec4(vec3(dither), 0.0);
     }
     )";
 
