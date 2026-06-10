@@ -19,23 +19,11 @@ target_include_directories(glad PUBLIC ${EXTERNAL_INC_DIR})
 target_link_libraries(glad PRIVATE ${CMAKE_DL_LIBS})
 
 # GLFW library
-add_library(glfw STATIC IMPORTED)
+add_library(glfw SHARED IMPORTED)
 set_target_properties(glfw PROPERTIES
-    IMPORTED_LOCATION "${EXTERNAL_LIB_DIR}/libglfw3.a"
+    IMPORTED_LOCATION "${EXTERNAL_DIR}/lib/arm64/libglfw.3.dylib"
     INTERFACE_INCLUDE_DIRECTORIES "${EXTERNAL_INC_DIR}"
 )
-
-# On macOS, GLFW needs system frameworks.
-if(APPLE)
-    find_library(COCOA_LIBRARY Cocoa)
-    find_library(IOKIT_LIBRARY IOKit)
-    find_library(COREVIDEO_LIBRARY CoreVideo)
-    find_library(QUARTZCORE_LIBRARY QuartzCore)
-    find_library(APPKIT_LIBRARY AppKit)
-    set_target_properties(glfw PROPERTIES
-        INTERFACE_LINK_LIBRARIES "${COCOA_LIBRARY};${IOKIT_LIBRARY};${COREVIDEO_LIBRARY};${QUARTZCORE_LIBRARY};${APPKIT_LIBRARY};-pthread"
-    )
-endif()
 
 add_subdirectory(lib)
 add_subdirectory(demo)
