@@ -54,8 +54,10 @@ int main()
         return -1;
     }
 
-    // Setup Viewport and callbacks
-    glViewport(0, 0, initialWidth, initialHeight);
+    // Get actual framebuffer size (fixes Retina/high-DPI scaling)
+    int displayW, displayH;
+    glfwGetFramebufferSize(window, &displayW, &displayH);
+    glViewport(0, 0, displayW, displayH);
     glfwSetFramebufferSizeCallback(window, OnResize);
     glfwSetKeyCallback(window, OnKey);
 
@@ -69,10 +71,10 @@ int main()
     g_Effect->AddRenderer(segmentRenderer);
     g_Effect->AddRenderer(particleRenderer);
 
-    // Set initial size of the rectangle to match window with margins
+    // Set initial size of the rectangle to match framebuffer with margins
     EdgeLighting::Config config;
-    config.width = static_cast<float>(initialWidth) - 80.0f;
-    config.height = static_cast<float>(initialHeight) - 80.0f;
+    config.width = static_cast<float>(displayW) - 80.0f;
+    config.height = static_cast<float>(displayH) - 80.0f;
     config.borderRadius = 50.0f;
     config.glowWidth = 45.0f;
     config.lineWidth = 8.0f;
