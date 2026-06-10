@@ -1,6 +1,8 @@
 #include "renderer/particles.h"
 #include <glad/glad.h>
-#include <cstdlib>
+#include <iostream>
+#include <random>
+#include <algorithm>
 #include <cmath>
 
 namespace EdgeLighting
@@ -43,15 +45,19 @@ namespace EdgeLighting
     }
     )";
 
-    static float randomFloat(float min, float max)
+    static std::mt19937 &rng()
     {
-        return min + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX) / (max - min));
+        static std::mt19937 instance{1337};
+        return instance;
     }
 
-    ParticleSystem::ParticleSystem()
+    static float randomFloat(float min, float max)
     {
-        srand(static_cast<unsigned int>(1337));
+        std::uniform_real_distribution<float> dist(min, max);
+        return dist(rng());
     }
+
+    ParticleSystem::ParticleSystem() {}
 
     ParticleSystem::~ParticleSystem()
     {
@@ -88,6 +94,9 @@ namespace EdgeLighting
         glGetShaderiv(vertexShader, GL_COMPILE_STATUS, &success);
         if (!success)
         {
+            glGetShaderInfoLog(vertexShader, 512, nullptr, infoLog);
+            std::cerr << "Particle Vertex Shader Compile Error:\n"
+                      << infoLog << std::endl;
             glDeleteShader(vertexShader);
             return false;
         }
@@ -99,6 +108,9 @@ namespace EdgeLighting
         glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
         if (!success)
         {
+            glGetShaderInfoLog(fragmentShader, 512, nullptr, infoLog);
+            std::cerr << "Particle Fragment Shader Compile Error:\n"
+                      << infoLog << std::endl;
             glDeleteShader(vertexShader);
             glDeleteShader(fragmentShader);
             return false;
@@ -157,6 +169,14 @@ namespace EdgeLighting
             maxParticles_ = maxParticles;
             if (vao_ != 0)
             {
+                glDeleteVertexArrays(1, &vao_);
+                glDeleteBuffers(1, &vboPos_);
+                glDeleteBuffers(1, &vboCol_);
+                glDeleteBuffers(1, &vboSize_);
+                vao_ = 0;
+                vboPos_ = 0;
+                vboCol_ = 0;
+                vboSize_ = 0;
                 setupBuffers();
             }
         }
@@ -243,6 +263,7 @@ namespace EdgeLighting
                 float lifeFactor = p.life / p.maxLife;
                 glm::vec4 col = p.color;
                 col.a *= lifeFactor * globalIntensity_;
+                col.a = std::min(col.a, 1.0f);
                 activeColors.push_back(col);
 
                 activeSizes.push_back(p.size);
