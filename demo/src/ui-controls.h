@@ -22,6 +22,7 @@ namespace EdgeLightingDemo
         std::cout << "  [LEFT / RIGHT] - Decrease / Increase Line Length\n";
         std::cout << "  [W / S]        - Increase / Decrease Glow Width\n";
         std::cout << "  [A / D]        - Increase / Decrease Line Width\n";
+        std::cout << "  [K / J]        - Increase / Decrease Corner Radius (0 for sharp corners)\n";
         std::cout << "  [P]            - Toggle Particle System\n";
         std::cout << "  [L]            - Cycle Multi-Lights Count (1 to 4)\n";
         std::cout << "  [C]            - Cycle Primary Color Theme\n";
@@ -52,6 +53,7 @@ namespace EdgeLightingDemo
                   << " | Length: " << std::setw(4) << config.lineLength
                   << " | Glow: " << std::setw(4) << config.glowWidth
                   << " | LineWidth: " << std::setw(4) << config.lineWidth
+                  << " | CornerRad: " << std::setw(4) << config.borderRadius
                   << " | Lights: " << std::setw(2) << config.lightCount
                   << " | Particles: " << (config.enableParticles ? "ON " : "OFF")
                   << "      " << std::flush;

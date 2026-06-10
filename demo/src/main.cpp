@@ -215,6 +215,12 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
     case GLFW_KEY_P:
         config.enableParticles = !config.enableParticles;
         break;
+    case GLFW_KEY_K:
+        config.borderRadius = std::min(200.0f, config.borderRadius + 5.0f);
+        break;
+    case GLFW_KEY_J:
+        config.borderRadius = std::max(0.0f, config.borderRadius - 5.0f);
+        break;
     case GLFW_KEY_L:
         config.lightCount = (config.lightCount % 4) + 1;
         break;

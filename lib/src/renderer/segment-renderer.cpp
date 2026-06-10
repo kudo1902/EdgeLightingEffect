@@ -54,6 +54,33 @@ namespace EdgeLighting
     }
 
     float getPerimeterPos(vec2 p, vec2 b, float r) {
+        if (r <= 0.01) {
+            float w_str = 2.0 * b.x;
+            float h_str = 2.0 * b.y;
+            float total = 2.0 * w_str + 2.0 * h_str;
+
+            float distToTop = abs(p.y - b.y);
+            float distToBottom = abs(p.y + b.y);
+            float distToRight = abs(p.x - b.x);
+            float distToLeft = abs(p.x + b.x);
+
+            float minDist = min(min(distToTop, distToBottom), min(distToRight, distToLeft));
+
+            if (minDist == distToTop) {
+                float t = (p.x + b.x) / w_str;
+                return (t * w_str) / total;
+            } else if (minDist == distToRight) {
+                float t = (b.y - p.y) / h_str;
+                return (w_str + t * h_str) / total;
+            } else if (minDist == distToBottom) {
+                float t = (b.x - p.x) / w_str;
+                return (w_str + h_str + t * w_str) / total;
+            } else {
+                float t = (p.y + b.y) / h_str;
+                return (2.0 * w_str + h_str + t * h_str) / total;
+            }
+        }
+
         float w_str = 2.0 * (b.x - r);
         float h_str = 2.0 * (b.y - r);
         float arc = 0.5 * 3.1415926535 * r;
@@ -61,41 +88,49 @@ namespace EdgeLighting
 
         vec2 c_tr = b - vec2(r);
 
+        // Top-right corner arc
         if (p.x >= c_tr.x && p.y >= c_tr.y) {
             float angle = atan(p.y - c_tr.y, p.x - c_tr.x);
             float t = (3.1415926535 * 0.5 - angle) / (3.1415926535 * 0.5);
-            return (w_str * 0.5 + t * arc) / total;
+            return (w_str + t * arc) / total;
         }
+        // Bottom-right corner arc
         else if (p.x >= c_tr.x && p.y <= -c_tr.y) {
             float angle = atan(-p.y - c_tr.y, p.x - c_tr.x);
             float t = angle / (3.1415926535 * 0.5);
-            return (w_str * 0.5 + arc + h_str + t * arc) / total;
+            return (w_str + arc + h_str + t * arc) / total;
         }
+        // Bottom-left corner arc
         else if (p.x <= -c_tr.x && p.y <= -c_tr.y) {
             float angle = atan(-p.y - c_tr.y, -p.x - c_tr.x);
             float t = (3.1415926535 * 0.5 - angle) / (3.1415926535 * 0.5);
-            return (w_str * 0.5 + arc + h_str + arc + w_str + t * arc) / total;
+            return (w_str + arc + h_str + arc + w_str + t * arc) / total;
         }
+        // Top-left corner arc
         else if (p.x <= -c_tr.x && p.y >= c_tr.y) {
             float angle = atan(p.y - c_tr.y, -p.x - c_tr.x);
             float t = angle / (3.1415926535 * 0.5);
-            return (w_str * 0.5 + arc + h_str + arc + w_str + arc + h_str + t * arc) / total;
+            return (w_str + arc + h_str + arc + w_str + arc + h_str + t * arc) / total;
         }
+        // Top straight edge
         else if (p.y >= c_tr.y) {
             float t = (p.x - (-c_tr.x)) / (2.0 * c_tr.x);
             return (t * w_str) / total;
         }
+        // Right straight edge
         else if (p.x >= c_tr.x) {
             float t = (c_tr.y - p.y) / (2.0 * c_tr.y);
-            return (w_str * 0.5 + arc + t * h_str) / total;
+            return (w_str + arc + t * h_str) / total;
         }
+        // Bottom straight edge
         else if (p.y <= -c_tr.y) {
             float t = (c_tr.x - p.x) / (2.0 * c_tr.x);
-            return (w_str * 0.5 + arc + h_str + arc + t * w_str) / total;
+            return (w_str + arc + h_str + arc + t * w_str) / total;
         }
+        // Left straight edge
         else {
             float t = (p.y - (-c_tr.y)) / (2.0 * c_tr.y);
-            return (w_str * 0.5 + arc + h_str + arc + w_str + arc + t * h_str) / total;
+            return (w_str + arc + h_str + arc + w_str + arc + t * h_str) / total;
         }
     }
 
