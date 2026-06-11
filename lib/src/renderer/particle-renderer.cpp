@@ -1,5 +1,5 @@
 #include "renderer/particle-renderer.h"
-#include <iostream>
+#include "util/log-util.h"
 
 namespace EdgeLighting
 {
@@ -13,7 +13,7 @@ namespace EdgeLighting
     {
         if (!mParticleSystem->Initialize())
         {
-            std::cerr << "Failed to initialize particle system in ParticleRenderer." << std::endl;
+            LOG_E("Failed to initialize particle system in ParticleRenderer.");
             return false;
         }
         return true;

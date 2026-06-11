@@ -4,7 +4,7 @@
 #include "renderer/segment-renderer.h"
 #include "renderer/particle-renderer.h"
 #include "ui-controls.h"
-#include <iostream>
+#include "util/log-util.h"
 #include <memory>
 
 // Global effect instance
@@ -20,7 +20,7 @@ int main()
     // Initialize GLFW
     if (!glfwInit())
     {
-        std::cerr << "Failed to initialize GLFW" << std::endl;
+        LOG_E("Failed to initialize GLFW");
         return -1;
     }
 
@@ -38,7 +38,7 @@ int main()
     GLFWwindow *window = glfwCreateWindow(initialWidth, initialHeight, "Edge Lighting Effect Demo", nullptr, nullptr);
     if (!window)
     {
-        std::cerr << "Failed to create GLFW window" << std::endl;
+        LOG_E("Failed to create GLFW window");
         glfwTerminate();
         return -1;
     }
@@ -48,7 +48,7 @@ int main()
     // Initialize GLAD
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
     {
-        std::cerr << "Failed to initialize GLAD" << std::endl;
+        LOG_E("Failed to initialize GLAD");
         glfwDestroyWindow(window);
         glfwTerminate();
         return -1;
@@ -86,7 +86,7 @@ int main()
 
     if (!gEffect->Initialize())
     {
-        std::cerr << "Failed to initialize EdgeLightingEffect" << std::endl;
+        LOG_E("Failed to initialize EdgeLightingEffect");
         delete gEffect;
         glfwDestroyWindow(window);
         glfwTerminate();

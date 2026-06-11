@@ -1,6 +1,6 @@
 #include "renderer/segment-renderer.h"
+#include "util/log-util.h"
 #include <glad/glad.h>
-#include <iostream>
 
 namespace EdgeLighting
 {
@@ -230,7 +230,7 @@ namespace EdgeLighting
     {
         if (!setupShaders())
         {
-            std::cerr << "Failed to compile/link SegmentRenderer shaders." << std::endl;
+            LOG_E("Failed to compile/link SegmentRenderer shaders.");
             return false;
         }
         setupQuadGeometry();
@@ -249,8 +249,7 @@ namespace EdgeLighting
         if (!success)
         {
             glGetShaderInfoLog(vertexShader, 512, nullptr, infoLog);
-            std::cerr << "Vertex Shader Compile Error:\n"
-                      << infoLog << std::endl;
+            LOG_E("Vertex Shader Compile Error:\n%s", infoLog);
             glDeleteShader(vertexShader);
             return false;
         }
@@ -263,8 +262,7 @@ namespace EdgeLighting
         if (!success)
         {
             glGetShaderInfoLog(fragmentShader, 512, nullptr, infoLog);
-            std::cerr << "Fragment Shader Compile Error:\n"
-                      << infoLog << std::endl;
+            LOG_E("Fragment Shader Compile Error:\n%s", infoLog);
             glDeleteShader(vertexShader);
             glDeleteShader(fragmentShader);
             return false;
@@ -279,8 +277,7 @@ namespace EdgeLighting
         if (!success)
         {
             glGetProgramInfoLog(mShaderProgram, 512, nullptr, infoLog);
-            std::cerr << "Shader Program Link Error:\n"
-                      << infoLog << std::endl;
+            LOG_E("Shader Program Link Error:\n%s", infoLog);
             glDeleteShader(vertexShader);
             glDeleteShader(fragmentShader);
             glDeleteProgram(mShaderProgram);

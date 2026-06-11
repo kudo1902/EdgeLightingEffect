@@ -1,6 +1,6 @@
 #include "renderer/particles.h"
+#include "util/log-util.h"
 #include <glad/glad.h>
-#include <iostream>
 #include <random>
 #include <algorithm>
 #include <cmath>
@@ -97,8 +97,7 @@ namespace EdgeLighting
         if (!success)
         {
             glGetShaderInfoLog(vertexShader, 512, nullptr, infoLog);
-            std::cerr << "Particle Vertex Shader Compile Error:\n"
-                      << infoLog << std::endl;
+            LOG_E("Particle Vertex Shader Compile Error:\n%s", infoLog);
             glDeleteShader(vertexShader);
             return false;
         }
@@ -111,8 +110,7 @@ namespace EdgeLighting
         if (!success)
         {
             glGetShaderInfoLog(fragmentShader, 512, nullptr, infoLog);
-            std::cerr << "Particle Fragment Shader Compile Error:\n"
-                      << infoLog << std::endl;
+            LOG_E("Particle Fragment Shader Compile Error:\n%s", infoLog);
             glDeleteShader(vertexShader);
             glDeleteShader(fragmentShader);
             return false;
