@@ -7,12 +7,12 @@
 namespace EdgeLighting
 {
 
-    enum class ColorMode
+    typedef enum class ColorMode
     {
         STATIC,
         GRADIENT,
         AMBIENT_RAINBOW
-    };
+    } ColorMode;
 
     typedef struct Config
     {
