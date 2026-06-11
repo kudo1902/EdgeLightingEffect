@@ -18,10 +18,12 @@ namespace EdgeLighting
     out vec4 vColor;
 
     uniform vec2 uResolution;
+    uniform vec2 uOffset;
 
     void main() {
         vColor = aColor;
-        vec2 ndcPos = aPos / (uResolution * 0.5);
+        vec2 worldPos = aPos + uOffset;
+        vec2 ndcPos = worldPos / (uResolution * 0.5);
         gl_Position = vec4(ndcPos, 0.0, 1.0);
         gl_PointSize = aSize;
     }
@@ -244,7 +246,7 @@ namespace EdgeLighting
         }
     }
 
-    void ParticleSystem::Render(int viewportWidth, int viewportHeight)
+    void ParticleSystem::Render(int viewportWidth, int viewportHeight, glm::vec2 offset)
     {
         std::vector<glm::vec2> activePositions;
         std::vector<glm::vec4> activeColors;
@@ -283,6 +285,8 @@ namespace EdgeLighting
 
         int resLoc = glGetUniformLocation(mShaderProgram, "uResolution");
         glUniform2f(resLoc, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight));
+        int offLoc = glGetUniformLocation(mShaderProgram, "uOffset");
+        glUniform2f(offLoc, offset.x, offset.y);
 
         glBindVertexArray(mVao);
 

@@ -20,6 +20,9 @@ namespace EdgeLighting
         float width = 800.0f;
         float height = 600.0f;
 
+        // Rectangle top-left corner in app space (0,0 = viewport top-left, +x right, +y down)
+        glm::vec2 position = glm::vec2(0.0f, 0.0f);
+
         // Visual Parameters
         float borderRadius = 40.0f; // Corner rounding radius in pixels
         float glowWidth = 30.0f;    // Width of the glow falloff in pixels

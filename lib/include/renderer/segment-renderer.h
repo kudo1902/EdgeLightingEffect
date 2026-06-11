@@ -18,8 +18,9 @@ namespace EdgeLighting
 
     private:
         bool setupShaders();
-        void setupQuadGeometry();
+        void setupQuadGeometry(const Config &config);
 
+        Config mCurrentConfig;
         unsigned int mShaderProgram = 0;
         unsigned int mQuadVAO = 0;
         unsigned int mQuadVBO = 0;

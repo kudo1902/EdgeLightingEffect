@@ -25,7 +25,7 @@ namespace EdgeLighting
 
         bool Initialize();
         void Update(float deltaTime);
-        void Render(int viewportWidth, int viewportHeight);
+        void Render(int viewportWidth, int viewportHeight, glm::vec2 offset = glm::vec2(0.0f));
         void Emit(const glm::vec2 &position, const glm::vec4 &color, float speed, int count);
 
         void SetMaxParticles(int maxParticles);

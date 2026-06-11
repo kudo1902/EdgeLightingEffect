@@ -32,7 +32,10 @@ namespace EdgeLighting
     {
         if (!config.enableParticles)
             return;
-        mParticleSystem->Render(viewportWidth, viewportHeight);
+        // Rectangle center in screen-center-relative coords (for particle NDC conversion)
+        glm::vec2 offset(config.position.x + config.width * 0.5f - viewportWidth * 0.5f,
+                         viewportHeight * 0.5f - config.position.y - config.height * 0.5f);
+        mParticleSystem->Render(viewportWidth, viewportHeight, offset);
     }
 
     void ParticleRenderer::OnConfigChanged(const Config &config)

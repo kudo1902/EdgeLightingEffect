@@ -1,35 +1,33 @@
 #include "renderer/segment-renderer.h"
 #include "util/log-util.h"
 #include <glad/glad.h>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 namespace EdgeLighting
 {
-    // Vertex Shader: compatible with OpenGL 3.3 Core Profile
+    // Vertex Shader
     static const char *const VERTEX_SHADER_SRC = R"(
     #version 330 core
     precision highp float;
 
     layout(location = 0) in vec2 aPos;
-    layout(location = 1) in vec2 aTexCoords;
 
-    out vec2 vTexCoords;
     out vec2 vPos;
 
-    uniform vec2 uResolution;
+    uniform mat4 uMVP;
 
     void main() {
-        vTexCoords = aTexCoords;
-        vPos = aPos * (uResolution * 0.5);
-        gl_Position = vec4(aPos, 0.0, 1.0);
+        vPos = aPos;
+        gl_Position = uMVP * vec4(aPos, 0.0, 1.0);
     }
     )";
 
-    // Fragment Shader: compatible with OpenGL 3.3 Core Profile
+    // Fragment Shader
     static const char *const FRAGMENT_SHADER_SRC = R"(
     #version 330 core
     precision highp float;
 
-    in vec2 vTexCoords;
     in vec2 vPos;
 
     out vec4 fragColor;
@@ -233,7 +231,7 @@ namespace EdgeLighting
             LOG_E("Failed to compile/link SegmentRenderer shaders.");
             return false;
         }
-        setupQuadGeometry();
+        setupQuadGeometry(mCurrentConfig);
         return true;
     }
 
@@ -289,32 +287,35 @@ namespace EdgeLighting
         return true;
     }
 
-    void SegmentRenderer::setupQuadGeometry()
+    void SegmentRenderer::setupQuadGeometry(const Config &config)
     {
+        float halfW = config.width * 0.5f;
+        float halfH = config.height * 0.5f;
+        float margin = config.glowWidth + 5.0f;
+
+        float l = -(halfW + margin);
+        float r =  halfW + margin;
+        float b = -(halfH + margin);
+        float t =  halfH + margin;
+
         float vertices[] = {
-            // positions // texCoords
-            -1.0f, 1.0f, 0.0f, 1.0f,
-            -1.0f, -1.0f, 0.0f, 0.0f,
-            1.0f, -1.0f, 1.0f, 0.0f,
+            l, t,   l, b,   r, b,
+            l, t,   r, b,   r, t,
+        };
 
-            -1.0f, 1.0f, 0.0f, 1.0f,
-            1.0f, -1.0f, 1.0f, 0.0f,
-            1.0f, 1.0f, 1.0f, 1.0f};
+        if (mQuadVAO == 0)
+        {
+            glGenVertexArrays(1, &mQuadVAO);
+            glGenBuffers(1, &mQuadVBO);
+            glBindVertexArray(mQuadVAO);
+            glBindBuffer(GL_ARRAY_BUFFER, mQuadVBO);
+            glEnableVertexAttribArray(0);
+            glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *)0);
+            glBindVertexArray(0);
+        }
 
-        glGenVertexArrays(1, &mQuadVAO);
-        glGenBuffers(1, &mQuadVBO);
-
-        glBindVertexArray(mQuadVAO);
         glBindBuffer(GL_ARRAY_BUFFER, mQuadVBO);
         glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
-
-        glEnableVertexAttribArray(0);
-        glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)0);
-
-        glEnableVertexAttribArray(1);
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)(2 * sizeof(float)));
-
-        glBindVertexArray(0);
     }
 
     void SegmentRenderer::Update(float deltaTime, float progress, float time, const Config &config)
@@ -329,9 +330,20 @@ namespace EdgeLighting
 
         glUseProgram(mShaderProgram);
 
+        // Compute orthographic MVP
+        // position = rect top-left in app coords (0,0 = top-left, +y down)
+        // Convert to OpenGL coords (0,0 = bottom-left, +y up)
+        float halfRectW = config.width * 0.5f;
+        float halfRectH = config.height * 0.5f;
+        glm::mat4 proj = glm::ortho(0.0f, static_cast<float>(viewportWidth), 0.0f, static_cast<float>(viewportHeight), -1.0f, 1.0f);
+        glm::vec2 center(config.position.x + halfRectW,
+                         static_cast<float>(viewportHeight) - config.position.y - halfRectH);
+        glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(center, 0.0f));
+        glm::mat4 mvp = proj * model;
+
+        glUniformMatrix4fv(glGetUniformLocation(mShaderProgram, "uMVP"), 1, GL_FALSE, glm::value_ptr(mvp));
+
         // Set uniforms
-        glUniform2f(glGetUniformLocation(mShaderProgram, "uResolution"),
-                    static_cast<float>(viewportWidth), static_cast<float>(viewportHeight));
         glUniform2f(glGetUniformLocation(mShaderProgram, "uRectSize"),
                     config.width, config.height);
         glUniform1f(glGetUniformLocation(mShaderProgram, "uBorderRadius"), config.borderRadius);
@@ -358,7 +370,11 @@ namespace EdgeLighting
 
     void SegmentRenderer::OnConfigChanged(const Config &config)
     {
-        // Config updates are handled on-the-fly inside Render() via config object
+        mCurrentConfig = config;
+        if (mQuadVAO != 0 || mShaderProgram != 0)
+        {
+            setupQuadGeometry(config);
+        }
     }
 
 } // namespace EdgeLighting

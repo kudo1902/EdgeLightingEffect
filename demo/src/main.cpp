@@ -73,8 +73,9 @@ int main()
 
     // Set initial size of the rectangle to match framebuffer with margins
     EdgeLighting::Config config;
-    config.width = static_cast<float>(displayW) - 80.0f;
-    config.height = static_cast<float>(displayH) - 80.0f;
+    config.width = displayW / 2;
+    config.height = displayH / 2;
+    config.position = glm::vec2(0, 0);
     config.borderRadius = 50.0f;
     config.glowWidth = 45.0f;
     config.lineWidth = 8.0f;
