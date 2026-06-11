@@ -216,6 +216,18 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
     case GLFW_KEY_P:
         config.enableParticles = !config.enableParticles;
         break;
+    case GLFW_KEY_I:
+        if (mods & GLFW_MOD_SHIFT)
+            config.particleIntensity = std::min(5.0f, config.particleIntensity + 0.1f);
+        else
+            config.intensity = std::min(5.0f, config.intensity + 0.1f);
+        break;
+    case GLFW_KEY_O:
+        if (mods & GLFW_MOD_SHIFT)
+            config.particleIntensity = std::max(0.0f, config.particleIntensity - 0.1f);
+        else
+            config.intensity = std::max(0.0f, config.intensity - 0.1f);
+        break;
     case GLFW_KEY_K:
         config.borderRadius = std::min(200.0f, config.borderRadius + 5.0f);
         break;
@@ -263,6 +275,8 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
         config.lineWidth = 8.0f;
         config.speed = 0.6f;
         config.lineLength = 0.3f;
+        config.intensity = 1.5f;
+        config.particleIntensity = 1.2f;
         animation.Play();
         break;
     }
