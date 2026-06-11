@@ -25,6 +25,10 @@
 - Private methods: `camelCase`
   - e.g. `setupShaders()`, `setupQuadGeometry()`, `setupBuffers()`, `updateBuffers()`, `emitParticlesAtHead()`
 
+## Event Callbacks
+- `PascalCase` with `On` prefix
+  - e.g. `OnProgress`, `OnLoopCompleted`, `OnParticleSpawned`, `OnResize`, `OnKey`
+
 ## Variables
 
 ### Member variables
