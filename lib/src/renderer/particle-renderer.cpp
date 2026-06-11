@@ -6,12 +6,12 @@ namespace EdgeLighting
 
     ParticleRenderer::ParticleRenderer()
     {
-        particleSystem_ = std::make_unique<ParticleSystem>();
+        mParticleSystem = std::make_unique<ParticleSystem>();
     }
 
     bool ParticleRenderer::Initialize()
     {
-        if (!particleSystem_->Initialize())
+        if (!mParticleSystem->Initialize())
         {
             std::cerr << "Failed to initialize particle system in ParticleRenderer." << std::endl;
             return false;
@@ -25,23 +25,23 @@ namespace EdgeLighting
             return;
 
         emitParticlesAtHead(progress, time, config);
-        particleSystem_->Update(deltaTime);
+        mParticleSystem->Update(deltaTime);
     }
 
     void ParticleRenderer::Render(int viewportWidth, int viewportHeight, float progress, float time, const Config &config)
     {
         if (!config.enableParticles)
             return;
-        particleSystem_->Render(viewportWidth, viewportHeight);
+        mParticleSystem->Render(viewportWidth, viewportHeight);
     }
 
     void ParticleRenderer::OnConfigChanged(const Config &config)
     {
-        if (particleSystem_)
+        if (mParticleSystem)
         {
-            particleSystem_->SetMaxParticles(config.maxParticles);
-            particleSystem_->SetParticleSize(config.particleSize);
-            particleSystem_->SetParticleIntensity(config.particleIntensity);
+            mParticleSystem->SetMaxParticles(config.maxParticles);
+            mParticleSystem->SetParticleSize(config.particleSize);
+            mParticleSystem->SetParticleIntensity(config.particleIntensity);
         }
     }
 
@@ -93,7 +93,7 @@ namespace EdgeLighting
             }
 
             glm::vec4 color = (config.particleColor.a > 0.0f) ? config.particleColor : emitterColor;
-            particleSystem_->Emit(spawnPos, color, config.speed, 2);
+            mParticleSystem->Emit(spawnPos, color, config.speed, 2);
         }
     }
 

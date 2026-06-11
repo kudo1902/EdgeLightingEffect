@@ -209,16 +209,21 @@ namespace EdgeLighting
     }
     )";
 
-    SegmentRenderer::SegmentRenderer() : shaderProgram_(0), quadVAO_(0), quadVBO_(0) {}
+    SegmentRenderer::SegmentRenderer()
+        : mShaderProgram(0),
+          mQuadVAO(0),
+          mQuadVBO(0)
+    {
+    }
 
     SegmentRenderer::~SegmentRenderer()
     {
-        if (quadVAO_ != 0)
-            glDeleteVertexArrays(1, &quadVAO_);
-        if (quadVBO_ != 0)
-            glDeleteBuffers(1, &quadVBO_);
-        if (shaderProgram_ != 0)
-            glDeleteProgram(shaderProgram_);
+        if (mQuadVAO != 0)
+            glDeleteVertexArrays(1, &mQuadVAO);
+        if (mQuadVBO != 0)
+            glDeleteBuffers(1, &mQuadVBO);
+        if (mShaderProgram != 0)
+            glDeleteProgram(mShaderProgram);
     }
 
     bool SegmentRenderer::Initialize()
@@ -265,20 +270,20 @@ namespace EdgeLighting
             return false;
         }
 
-        shaderProgram_ = glCreateProgram();
-        glAttachShader(shaderProgram_, vertexShader);
-        glAttachShader(shaderProgram_, fragmentShader);
-        glLinkProgram(shaderProgram_);
+        mShaderProgram = glCreateProgram();
+        glAttachShader(mShaderProgram, vertexShader);
+        glAttachShader(mShaderProgram, fragmentShader);
+        glLinkProgram(mShaderProgram);
 
-        glGetProgramiv(shaderProgram_, GL_LINK_STATUS, &success);
+        glGetProgramiv(mShaderProgram, GL_LINK_STATUS, &success);
         if (!success)
         {
-            glGetProgramInfoLog(shaderProgram_, 512, nullptr, infoLog);
+            glGetProgramInfoLog(mShaderProgram, 512, nullptr, infoLog);
             std::cerr << "Shader Program Link Error:\n"
                       << infoLog << std::endl;
             glDeleteShader(vertexShader);
             glDeleteShader(fragmentShader);
-            glDeleteProgram(shaderProgram_);
+            glDeleteProgram(mShaderProgram);
             return false;
         }
 
@@ -299,11 +304,11 @@ namespace EdgeLighting
             1.0f, -1.0f, 1.0f, 0.0f,
             1.0f, 1.0f, 1.0f, 1.0f};
 
-        glGenVertexArrays(1, &quadVAO_);
-        glGenBuffers(1, &quadVBO_);
+        glGenVertexArrays(1, &mQuadVAO);
+        glGenBuffers(1, &mQuadVBO);
 
-        glBindVertexArray(quadVAO_);
-        glBindBuffer(GL_ARRAY_BUFFER, quadVBO_);
+        glBindVertexArray(mQuadVAO);
+        glBindBuffer(GL_ARRAY_BUFFER, mQuadVBO);
         glBufferData(GL_ARRAY_BUFFER, sizeof(vertices), vertices, GL_STATIC_DRAW);
 
         glEnableVertexAttribArray(0);
@@ -325,28 +330,28 @@ namespace EdgeLighting
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE); // Additive blending for glow
 
-        glUseProgram(shaderProgram_);
+        glUseProgram(mShaderProgram);
 
         // Set uniforms
-        glUniform2f(glGetUniformLocation(shaderProgram_, "uResolution"),
+        glUniform2f(glGetUniformLocation(mShaderProgram, "uResolution"),
                     static_cast<float>(viewportWidth), static_cast<float>(viewportHeight));
-        glUniform2f(glGetUniformLocation(shaderProgram_, "uRectSize"),
+        glUniform2f(glGetUniformLocation(mShaderProgram, "uRectSize"),
                     config.width, config.height);
-        glUniform1f(glGetUniformLocation(shaderProgram_, "uBorderRadius"), config.borderRadius);
-        glUniform1f(glGetUniformLocation(shaderProgram_, "uGlowWidth"), config.glowWidth);
-        glUniform1f(glGetUniformLocation(shaderProgram_, "uLineWidth"), config.lineWidth);
-        glUniform1f(glGetUniformLocation(shaderProgram_, "uLineLength"), config.lineLength);
-        glUniform1f(glGetUniformLocation(shaderProgram_, "uProgress"), progress);
-        glUniform1f(glGetUniformLocation(shaderProgram_, "uIntensity"), config.intensity);
-        glUniform1i(glGetUniformLocation(shaderProgram_, "uColorMode"), static_cast<int>(config.colorMode));
-        glUniform4f(glGetUniformLocation(shaderProgram_, "uPrimaryColor"),
+        glUniform1f(glGetUniformLocation(mShaderProgram, "uBorderRadius"), config.borderRadius);
+        glUniform1f(glGetUniformLocation(mShaderProgram, "uGlowWidth"), config.glowWidth);
+        glUniform1f(glGetUniformLocation(mShaderProgram, "uLineWidth"), config.lineWidth);
+        glUniform1f(glGetUniformLocation(mShaderProgram, "uLineLength"), config.lineLength);
+        glUniform1f(glGetUniformLocation(mShaderProgram, "uProgress"), progress);
+        glUniform1f(glGetUniformLocation(mShaderProgram, "uIntensity"), config.intensity);
+        glUniform1i(glGetUniformLocation(mShaderProgram, "uColorMode"), static_cast<int>(config.colorMode));
+        glUniform4f(glGetUniformLocation(mShaderProgram, "uPrimaryColor"),
                     config.primaryColor.r, config.primaryColor.g, config.primaryColor.b, config.primaryColor.a);
-        glUniform4f(glGetUniformLocation(shaderProgram_, "uSecondaryColor"),
+        glUniform4f(glGetUniformLocation(mShaderProgram, "uSecondaryColor"),
                     config.secondaryColor.r, config.secondaryColor.g, config.secondaryColor.b, config.secondaryColor.a);
-        glUniform1f(glGetUniformLocation(shaderProgram_, "uTime"), time);
-        glUniform1i(glGetUniformLocation(shaderProgram_, "uLightCount"), config.lightCount);
+        glUniform1f(glGetUniformLocation(mShaderProgram, "uTime"), time);
+        glUniform1i(glGetUniformLocation(mShaderProgram, "uLightCount"), config.lightCount);
 
-        glBindVertexArray(quadVAO_);
+        glBindVertexArray(mQuadVAO);
         glDrawArrays(GL_TRIANGLES, 0, 6);
         glBindVertexArray(0);
 

@@ -1,5 +1,5 @@
-#ifndef EDGE_LIGHTING_PARTICLE_RENDERER_H
-#define EDGE_LIGHTING_PARTICLE_RENDERER_H
+#ifndef _EDGE_LIGHTING_PARTICLE_RENDERER_H_
+#define _EDGE_LIGHTING_PARTICLE_RENDERER_H_
 
 #include "renderer/base-renderer.h"
 #include "renderer/particles.h"
@@ -13,7 +13,6 @@ namespace EdgeLighting
         ParticleRenderer();
         virtual ~ParticleRenderer() = default;
 
-        // BaseRenderer overrides
         virtual bool Initialize() override;
         virtual void Update(float deltaTime, float progress, float time, const Config &config) override;
         virtual void Render(int viewportWidth, int viewportHeight, float progress, float time, const Config &config) override;
@@ -22,9 +21,9 @@ namespace EdgeLighting
     private:
         void emitParticlesAtHead(float progress, float time, const Config &config);
 
-        std::unique_ptr<ParticleSystem> particleSystem_;
+        std::unique_ptr<ParticleSystem> mParticleSystem;
     };
 
 } // namespace EdgeLighting
 
-#endif // EDGE_LIGHTING_PARTICLE_RENDERER_H
+#endif // _EDGE_LIGHTING_PARTICLE_RENDERER_H_

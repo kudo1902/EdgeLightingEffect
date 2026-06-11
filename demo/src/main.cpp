@@ -8,8 +8,8 @@
 #include <memory>
 
 // Global effect instance
-EdgeLighting::EdgeLightingEffect *g_Effect = nullptr;
-int g_ColorThemeIndex = 0;
+EdgeLighting::EdgeLightingEffect *gEffect = nullptr;
+int gColorThemeIndex = 0;
 
 // Callback function declarations (prefixed with 'On')
 void OnResize(GLFWwindow *window, int width, int height);
@@ -62,14 +62,14 @@ int main()
     glfwSetKeyCallback(window, OnKey);
 
     // Initialize Edge Lighting Effect
-    g_Effect = new EdgeLighting::EdgeLightingEffect();
+    gEffect = new EdgeLighting::EdgeLightingEffect();
 
     // Create Renderer Modules
     auto segmentRenderer = std::make_shared<EdgeLighting::SegmentRenderer>();
     auto particleRenderer = std::make_shared<EdgeLighting::ParticleRenderer>();
 
-    g_Effect->AddRenderer(segmentRenderer);
-    g_Effect->AddRenderer(particleRenderer);
+    gEffect->AddRenderer(segmentRenderer);
+    gEffect->AddRenderer(particleRenderer);
 
     // Set initial size of the rectangle to match framebuffer with margins
     EdgeLighting::Config config;
@@ -82,26 +82,26 @@ int main()
     config.lineLength = 0.3f;
     config.colorMode = EdgeLighting::ColorMode::AMBIENT_RAINBOW;
 
-    g_Effect->SetConfig(config);
+    gEffect->SetConfig(config);
 
-    if (!g_Effect->Initialize())
+    if (!gEffect->Initialize())
     {
         std::cerr << "Failed to initialize EdgeLightingEffect" << std::endl;
-        delete g_Effect;
+        delete gEffect;
         glfwDestroyWindow(window);
         glfwTerminate();
         return -1;
     }
 
     // Bind animation callbacks
-    g_Effect->GetAnimation().OnLoopCompleted = []()
+    gEffect->GetAnimation().OnLoopCompleted = []()
     {
         // Triggered every time a loop completes
     };
 
     // Print CLI controls instructions
     EdgeLightingDemo::PrintControls();
-    EdgeLightingDemo::PrintCurrentConfig(g_Effect->GetConfig(), g_Effect->GetAnimation().IsPlaying());
+    EdgeLightingDemo::PrintCurrentConfig(gEffect->GetConfig(), gEffect->GetAnimation().IsPlaying());
 
     // Main render loop
     float lastFrameTime = 0.0f;
@@ -116,19 +116,19 @@ int main()
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         // Update effect animation and active renderers
-        g_Effect->Update(deltaTime);
+        gEffect->Update(deltaTime);
 
         // Render the effect (gets viewport size dynamically)
         int displayW, displayH;
         glfwGetFramebufferSize(window, &displayW, &displayH);
-        g_Effect->Render(displayW, displayH);
+        gEffect->Render(displayW, displayH);
 
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
 
     // Cleanup
-    delete g_Effect;
+    delete gEffect;
     glfwDestroyWindow(window);
     glfwTerminate();
     return 0;
@@ -139,14 +139,14 @@ void OnResize(GLFWwindow *window, int width, int height)
 {
     glViewport(0, 0, width, height);
 
-    if (g_Effect)
+    if (gEffect)
     {
         // Dynamically adjust rectangle dimensions to fit the window with margins
-        EdgeLighting::Config config = g_Effect->GetConfig();
+        EdgeLighting::Config config = gEffect->GetConfig();
         config.width = static_cast<float>(width) - 80.0f;
         config.height = static_cast<float>(height) - 80.0f;
-        g_Effect->SetConfig(config);
-        EdgeLightingDemo::PrintCurrentConfig(config, g_Effect->GetAnimation().IsPlaying());
+        gEffect->SetConfig(config);
+        EdgeLightingDemo::PrintCurrentConfig(config, gEffect->GetAnimation().IsPlaying());
     }
 }
 
@@ -162,10 +162,10 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
         return;
     }
 
-    if (!g_Effect)
+    if (!gEffect)
         return;
-    EdgeLighting::Config config = g_Effect->GetConfig();
-    EdgeLighting::Animation &animation = g_Effect->GetAnimation();
+    EdgeLighting::Config config = gEffect->GetConfig();
+    EdgeLighting::Animation &animation = gEffect->GetAnimation();
 
     switch (key)
     {
@@ -227,18 +227,18 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
     case GLFW_KEY_C:
     {
         // Cycle primary color presets
-        g_ColorThemeIndex = (g_ColorThemeIndex + 1) % 4;
-        if (g_ColorThemeIndex == 0)
+        gColorThemeIndex = (gColorThemeIndex + 1) % 4;
+        if (gColorThemeIndex == 0)
         {
             config.primaryColor = glm::vec4(0.0f, 0.8f, 1.0f, 1.0f);   // Cyan
             config.secondaryColor = glm::vec4(1.0f, 0.0f, 0.8f, 1.0f); // Magenta
         }
-        else if (g_ColorThemeIndex == 1)
+        else if (gColorThemeIndex == 1)
         {
             config.primaryColor = glm::vec4(0.0f, 1.0f, 0.4f, 1.0f);   // Emerald Green
             config.secondaryColor = glm::vec4(0.9f, 0.9f, 0.0f, 1.0f); // Gold
         }
-        else if (g_ColorThemeIndex == 2)
+        else if (gColorThemeIndex == 2)
         {
             config.primaryColor = glm::vec4(1.0f, 0.3f, 0.0f, 1.0f);   // Orange Red
             config.secondaryColor = glm::vec4(0.5f, 0.0f, 1.0f, 1.0f); // Purple
@@ -269,6 +269,6 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
         return;
     }
 
-    g_Effect->SetConfig(config);
+    gEffect->SetConfig(config);
     EdgeLightingDemo::PrintCurrentConfig(config, animation.IsPlaying());
 }

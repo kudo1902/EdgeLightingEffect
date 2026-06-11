@@ -1,5 +1,5 @@
-#ifndef EDGE_LIGHTING_EFFECT_H
-#define EDGE_LIGHTING_EFFECT_H
+#ifndef _EDGE_LIGHTING_EFFECT_H_
+#define _EDGE_LIGHTING_EFFECT_H_
 
 #include "core/config.h"
 #include "animation/animation.h"
@@ -16,7 +16,6 @@ namespace EdgeLighting
         EdgeLightingEffect();
         ~EdgeLightingEffect() = default;
 
-        // Public API (PascalCase)
         bool Initialize();
         void Update(float deltaTime);
         void Render(int viewportWidth, int viewportHeight);
@@ -28,13 +27,13 @@ namespace EdgeLighting
         Animation &GetAnimation();
 
     private:
-        Config config_;
-        float time_ = 0.0f;
+        Config mConfig;
+        float mTime = 0.0f;
 
-        Animation animation_;
-        std::vector<std::shared_ptr<BaseRenderer>> renderers_;
+        Animation mAnimation;
+        std::vector<std::shared_ptr<BaseRenderer>> mRenderers;
     };
 
 } // namespace EdgeLighting
 
-#endif // EDGE_LIGHTING_EFFECT_H
+#endif // _EDGE_LIGHTING_EFFECT_H_

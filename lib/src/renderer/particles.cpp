@@ -57,20 +57,22 @@ namespace EdgeLighting
         return dist(rng());
     }
 
-    ParticleSystem::ParticleSystem() {}
+    ParticleSystem::ParticleSystem()
+    {
+    }
 
     ParticleSystem::~ParticleSystem()
     {
-        if (vao_ != 0)
-            glDeleteVertexArrays(1, &vao_);
-        if (vboPos_ != 0)
-            glDeleteBuffers(1, &vboPos_);
-        if (vboCol_ != 0)
-            glDeleteBuffers(1, &vboCol_);
-        if (vboSize_ != 0)
-            glDeleteBuffers(1, &vboSize_);
-        if (shaderProgram_ != 0)
-            glDeleteProgram(shaderProgram_);
+        if (mVao != 0)
+            glDeleteVertexArrays(1, &mVao);
+        if (mVboPos != 0)
+            glDeleteBuffers(1, &mVboPos);
+        if (mVboCol != 0)
+            glDeleteBuffers(1, &mVboCol);
+        if (mVboSize != 0)
+            glDeleteBuffers(1, &mVboSize);
+        if (mShaderProgram != 0)
+            glDeleteProgram(mShaderProgram);
     }
 
     bool ParticleSystem::Initialize()
@@ -116,17 +118,17 @@ namespace EdgeLighting
             return false;
         }
 
-        shaderProgram_ = glCreateProgram();
-        glAttachShader(shaderProgram_, vertexShader);
-        glAttachShader(shaderProgram_, fragmentShader);
-        glLinkProgram(shaderProgram_);
+        mShaderProgram = glCreateProgram();
+        glAttachShader(mShaderProgram, vertexShader);
+        glAttachShader(mShaderProgram, fragmentShader);
+        glLinkProgram(mShaderProgram);
 
-        glGetProgramiv(shaderProgram_, GL_LINK_STATUS, &success);
+        glGetProgramiv(mShaderProgram, GL_LINK_STATUS, &success);
         if (!success)
         {
             glDeleteShader(vertexShader);
             glDeleteShader(fragmentShader);
-            glDeleteProgram(shaderProgram_);
+            glDeleteProgram(mShaderProgram);
             return false;
         }
 
@@ -137,25 +139,25 @@ namespace EdgeLighting
 
     void ParticleSystem::setupBuffers()
     {
-        glGenVertexArrays(1, &vao_);
-        glGenBuffers(1, &vboPos_);
-        glGenBuffers(1, &vboCol_);
-        glGenBuffers(1, &vboSize_);
+        glGenVertexArrays(1, &mVao);
+        glGenBuffers(1, &mVboPos);
+        glGenBuffers(1, &mVboCol);
+        glGenBuffers(1, &mVboSize);
 
-        glBindVertexArray(vao_);
+        glBindVertexArray(mVao);
 
-        glBindBuffer(GL_ARRAY_BUFFER, vboPos_);
-        glBufferData(GL_ARRAY_BUFFER, maxParticles_ * sizeof(glm::vec2), nullptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_ARRAY_BUFFER, mVboPos);
+        glBufferData(GL_ARRAY_BUFFER, mMaxParticles * sizeof(glm::vec2), nullptr, GL_DYNAMIC_DRAW);
         glEnableVertexAttribArray(0);
         glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, sizeof(glm::vec2), (void *)0);
 
-        glBindBuffer(GL_ARRAY_BUFFER, vboCol_);
-        glBufferData(GL_ARRAY_BUFFER, maxParticles_ * sizeof(glm::vec4), nullptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_ARRAY_BUFFER, mVboCol);
+        glBufferData(GL_ARRAY_BUFFER, mMaxParticles * sizeof(glm::vec4), nullptr, GL_DYNAMIC_DRAW);
         glEnableVertexAttribArray(1);
         glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, sizeof(glm::vec4), (void *)0);
 
-        glBindBuffer(GL_ARRAY_BUFFER, vboSize_);
-        glBufferData(GL_ARRAY_BUFFER, maxParticles_ * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
+        glBindBuffer(GL_ARRAY_BUFFER, mVboSize);
+        glBufferData(GL_ARRAY_BUFFER, mMaxParticles * sizeof(float), nullptr, GL_DYNAMIC_DRAW);
         glEnableVertexAttribArray(2);
         glVertexAttribPointer(2, 1, GL_FLOAT, GL_FALSE, sizeof(float), (void *)0);
 
@@ -164,19 +166,19 @@ namespace EdgeLighting
 
     void ParticleSystem::SetMaxParticles(int maxParticles)
     {
-        if (maxParticles_ != maxParticles)
+        if (mMaxParticles != maxParticles)
         {
-            maxParticles_ = maxParticles;
-            if (vao_ != 0)
+            mMaxParticles = maxParticles;
+            if (mVao != 0)
             {
-                glDeleteVertexArrays(1, &vao_);
-                glDeleteBuffers(1, &vboPos_);
-                glDeleteBuffers(1, &vboCol_);
-                glDeleteBuffers(1, &vboSize_);
-                vao_ = 0;
-                vboPos_ = 0;
-                vboCol_ = 0;
-                vboSize_ = 0;
+                glDeleteVertexArrays(1, &mVao);
+                glDeleteBuffers(1, &mVboPos);
+                glDeleteBuffers(1, &mVboCol);
+                glDeleteBuffers(1, &mVboSize);
+                mVao = 0;
+                mVboPos = 0;
+                mVboCol = 0;
+                mVboSize = 0;
                 setupBuffers();
             }
         }
@@ -184,12 +186,12 @@ namespace EdgeLighting
 
     void ParticleSystem::SetParticleSize(float size)
     {
-        globalSize_ = size;
+        mGlobalSize = size;
     }
 
     void ParticleSystem::SetParticleIntensity(float intensity)
     {
-        globalIntensity_ = intensity;
+        mGlobalIntensity = intensity;
     }
 
     void ParticleSystem::Emit(const glm::vec2 &position, const glm::vec4 &color, float speed, int count)
@@ -207,14 +209,14 @@ namespace EdgeLighting
             p.color = color;
             p.life = randomFloat(0.3f, 0.8f);
             p.maxLife = p.life;
-            p.size = randomFloat(0.5f, 1.5f) * globalSize_;
+            p.size = randomFloat(0.5f, 1.5f) * mGlobalSize;
 
             if (OnParticleSpawned)
             {
                 OnParticleSpawned(p);
             }
 
-            for (auto &activeP : particles_)
+            for (auto &activeP : mParticles)
             {
                 if (activeP.life <= 0.0f)
                 {
@@ -224,16 +226,16 @@ namespace EdgeLighting
                 }
             }
 
-            if (!emitted && particles_.size() < static_cast<size_t>(maxParticles_))
+            if (!emitted && mParticles.size() < static_cast<size_t>(mMaxParticles))
             {
-                particles_.push_back(p);
+                mParticles.push_back(p);
             }
         }
     }
 
     void ParticleSystem::Update(float deltaTime)
     {
-        for (auto &p : particles_)
+        for (auto &p : mParticles)
         {
             if (p.life > 0.0f)
             {
@@ -250,11 +252,11 @@ namespace EdgeLighting
         std::vector<glm::vec4> activeColors;
         std::vector<float> activeSizes;
 
-        activePositions.reserve(particles_.size());
-        activeColors.reserve(particles_.size());
-        activeSizes.reserve(particles_.size());
+        activePositions.reserve(mParticles.size());
+        activeColors.reserve(mParticles.size());
+        activeSizes.reserve(mParticles.size());
 
-        for (const auto &p : particles_)
+        for (const auto &p : mParticles)
         {
             if (p.life > 0.0f)
             {
@@ -262,7 +264,7 @@ namespace EdgeLighting
 
                 float lifeFactor = p.life / p.maxLife;
                 glm::vec4 col = p.color;
-                col.a *= lifeFactor * globalIntensity_;
+                col.a *= lifeFactor * mGlobalIntensity;
                 col.a = std::min(col.a, 1.0f);
                 activeColors.push_back(col);
 
@@ -279,20 +281,20 @@ namespace EdgeLighting
         glBlendFunc(GL_SRC_ALPHA, GL_ONE);
         glDepthMask(GL_FALSE);
 
-        glUseProgram(shaderProgram_);
+        glUseProgram(mShaderProgram);
 
-        int resLoc = glGetUniformLocation(shaderProgram_, "uResolution");
+        int resLoc = glGetUniformLocation(mShaderProgram, "uResolution");
         glUniform2f(resLoc, static_cast<float>(viewportWidth), static_cast<float>(viewportHeight));
 
-        glBindVertexArray(vao_);
+        glBindVertexArray(mVao);
 
-        glBindBuffer(GL_ARRAY_BUFFER, vboPos_);
+        glBindBuffer(GL_ARRAY_BUFFER, mVboPos);
         glBufferSubData(GL_ARRAY_BUFFER, 0, activePositions.size() * sizeof(glm::vec2), activePositions.data());
 
-        glBindBuffer(GL_ARRAY_BUFFER, vboCol_);
+        glBindBuffer(GL_ARRAY_BUFFER, mVboCol);
         glBufferSubData(GL_ARRAY_BUFFER, 0, activeColors.size() * sizeof(glm::vec4), activeColors.data());
 
-        glBindBuffer(GL_ARRAY_BUFFER, vboSize_);
+        glBindBuffer(GL_ARRAY_BUFFER, mVboSize);
         glBufferSubData(GL_ARRAY_BUFFER, 0, activeSizes.size() * sizeof(float), activeSizes.data());
 
 #ifdef GL_PROGRAM_POINT_SIZE

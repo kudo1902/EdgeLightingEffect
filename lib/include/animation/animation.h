@@ -1,5 +1,5 @@
-#ifndef EDGE_LIGHTING_ANIMATION_H
-#define EDGE_LIGHTING_ANIMATION_H
+#ifndef _EDGE_LIGHTING_ANIMATION_H_
+#define _EDGE_LIGHTING_ANIMATION_H_
 
 #include <functional>
 
@@ -11,7 +11,6 @@ namespace EdgeLighting
         Animation();
         ~Animation() = default;
 
-        // Public API (PascalCase)
         void Play();
         void Pause();
         void Stop();
@@ -25,16 +24,15 @@ namespace EdgeLighting
 
         bool IsPlaying() const;
 
-        // Event callbacks (prefixed with 'On')
         std::function<void(float progress)> OnProgress;
         std::function<void()> OnLoopCompleted;
 
     private:
-        bool isPlaying_ = true;
-        float speed_ = 1.0f;    // Loops per second
-        float progress_ = 0.0f; // 0.0 to 1.0
+        bool mIsPlaying = true;
+        float mSpeed = 1.0f;    // Loops per second
+        float mProgress = 0.0f; // 0.0 to 1.0
     };
 
 } // namespace EdgeLighting
 
-#endif // EDGE_LIGHTING_ANIMATION_H
+#endif // _EDGE_LIGHTING_ANIMATION_H_

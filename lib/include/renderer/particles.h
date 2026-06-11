@@ -1,5 +1,5 @@
-#ifndef EDGE_LIGHTING_PARTICLES_H
-#define EDGE_LIGHTING_PARTICLES_H
+#ifndef _EDGE_LIGHTING_PARTICLES_H_
+#define _EDGE_LIGHTING_PARTICLES_H_
 
 #include <glm/glm.hpp>
 #include <vector>
@@ -7,7 +7,7 @@
 
 namespace EdgeLighting
 {
-    struct Particle
+    typedef struct Particle
     {
         glm::vec2 position = glm::vec2(0.0f);
         glm::vec2 velocity = glm::vec2(0.0f);
@@ -15,7 +15,7 @@ namespace EdgeLighting
         float life = 0.0f; // 1.0 to 0.0
         float maxLife = 1.0f;
         float size = 5.0f;
-    };
+    } Particle;
 
     class ParticleSystem
     {
@@ -23,7 +23,6 @@ namespace EdgeLighting
         ParticleSystem();
         ~ParticleSystem();
 
-        // Public API (PascalCase)
         bool Initialize();
         void Update(float deltaTime);
         void Render(int viewportWidth, int viewportHeight);
@@ -33,7 +32,6 @@ namespace EdgeLighting
         void SetParticleSize(float size);
         void SetParticleIntensity(float intensity);
 
-        // Callback event (prefixed with 'On')
         std::function<void(const Particle &)> OnParticleSpawned;
 
     private:
@@ -42,20 +40,20 @@ namespace EdgeLighting
         void setupBuffers();
         void updateBuffers();
 
-        int maxParticles_ = 200;
-        float globalSize_ = 6.0f;
-        float globalIntensity_ = 1.0f;
+        int mMaxParticles = 200;
+        float mGlobalSize = 6.0f;
+        float mGlobalIntensity = 1.0f;
 
-        std::vector<Particle> particles_;
+        std::vector<Particle> mParticles;
 
         // OpenGL Objects
-        unsigned int shaderProgram_ = 0;
-        unsigned int vao_ = 0;
-        unsigned int vboPos_ = 0;
-        unsigned int vboCol_ = 0;
-        unsigned int vboSize_ = 0;
+        unsigned int mShaderProgram = 0;
+        unsigned int mVao = 0;
+        unsigned int mVboPos = 0;
+        unsigned int mVboCol = 0;
+        unsigned int mVboSize = 0;
     };
 
 } // namespace EdgeLighting
 
-#endif // EDGE_LIGHTING_PARTICLES_H
+#endif // _EDGE_LIGHTING_PARTICLES_H_

@@ -1,5 +1,5 @@
-#ifndef EDGE_LIGHTING_DEMO_UI_CONTROLS_H
-#define EDGE_LIGHTING_DEMO_UI_CONTROLS_H
+#ifndef _EDGE_LIGHTING_DEMO_UI_CONTROLS_H_
+#define _EDGE_LIGHTING_DEMO_UI_CONTROLS_H_
 
 #include "core/edge-lighting.h"
 #include <iostream>
@@ -61,4 +61,4 @@ namespace EdgeLightingDemo
 
 } // namespace EdgeLightingDemo
 
-#endif // EDGE_LIGHTING_DEMO_UI_CONTROLS_H
+#endif // _EDGE_LIGHTING_DEMO_UI_CONTROLS_H_

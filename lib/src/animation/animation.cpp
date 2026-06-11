@@ -4,37 +4,42 @@
 namespace EdgeLighting
 {
 
-    Animation::Animation() : isPlaying_(true), speed_(1.0f), progress_(0.0f) {}
+    Animation::Animation()
+        : mIsPlaying(true),
+          mSpeed(1.0f),
+          mProgress(0.0f)
+    {
+    }
 
     void Animation::Play()
     {
-        isPlaying_ = true;
+        mIsPlaying = true;
     }
 
     void Animation::Pause()
     {
-        isPlaying_ = false;
+        mIsPlaying = false;
     }
 
     void Animation::Stop()
     {
-        isPlaying_ = false;
-        progress_ = 0.0f;
+        mIsPlaying = false;
+        mProgress = 0.0f;
         if (OnProgress)
         {
-            OnProgress(progress_);
+            OnProgress(mProgress);
         }
     }
 
     void Animation::Update(float deltaTime)
     {
-        if (!isPlaying_)
+        if (!mIsPlaying)
             return;
 
-        progress_ += speed_ * deltaTime;
-        if (progress_ >= 1.0f)
+        mProgress += mSpeed * deltaTime;
+        if (mProgress >= 1.0f)
         {
-            progress_ = glm::fract(progress_);
+            mProgress = glm::fract(mProgress);
             if (OnLoopCompleted)
             {
                 OnLoopCompleted();
@@ -43,37 +48,37 @@ namespace EdgeLighting
 
         if (OnProgress)
         {
-            OnProgress(progress_);
+            OnProgress(mProgress);
         }
     }
 
     void Animation::SetSpeed(float speed)
     {
-        speed_ = speed;
+        mSpeed = speed;
     }
 
     float Animation::GetSpeed() const
     {
-        return speed_;
+        return mSpeed;
     }
 
     void Animation::SetProgress(float progress)
     {
-        progress_ = glm::clamp(progress, 0.0f, 1.0f);
+        mProgress = glm::clamp(progress, 0.0f, 1.0f);
         if (OnProgress)
         {
-            OnProgress(progress_);
+            OnProgress(mProgress);
         }
     }
 
     float Animation::GetProgress() const
     {
-        return progress_;
+        return mProgress;
     }
 
     bool Animation::IsPlaying() const
     {
-        return isPlaying_;
+        return mIsPlaying;
     }
 
 } // namespace EdgeLighting

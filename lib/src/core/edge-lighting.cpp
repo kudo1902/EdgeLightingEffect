@@ -3,15 +3,16 @@
 namespace EdgeLighting
 {
 
-    EdgeLightingEffect::EdgeLightingEffect() : time_(0.0f)
+    EdgeLightingEffect::EdgeLightingEffect()
+        : mTime(0.0f)
     {
-        animation_.SetSpeed(config_.speed);
+        mAnimation.SetSpeed(mConfig.speed);
     }
 
     bool EdgeLightingEffect::Initialize()
     {
         bool success = true;
-        for (auto &renderer : renderers_)
+        for (auto &renderer : mRenderers)
         {
             if (!renderer->Initialize())
             {
@@ -23,55 +24,55 @@ namespace EdgeLighting
 
     void EdgeLightingEffect::Update(float deltaTime)
     {
-        animation_.Update(deltaTime);
-        if (animation_.IsPlaying())
+        mAnimation.Update(deltaTime);
+        if (mAnimation.IsPlaying())
         {
-            time_ += deltaTime;
+            mTime += deltaTime;
         }
 
-        float progress = animation_.GetProgress();
-        for (auto &renderer : renderers_)
+        float progress = mAnimation.GetProgress();
+        for (auto &renderer : mRenderers)
         {
-            renderer->Update(deltaTime, progress, time_, config_);
+            renderer->Update(deltaTime, progress, mTime, mConfig);
         }
     }
 
     void EdgeLightingEffect::Render(int viewportWidth, int viewportHeight)
     {
-        float progress = animation_.GetProgress();
-        for (auto &renderer : renderers_)
+        float progress = mAnimation.GetProgress();
+        for (auto &renderer : mRenderers)
         {
-            renderer->Render(viewportWidth, viewportHeight, progress, time_, config_);
+            renderer->Render(viewportWidth, viewportHeight, progress, mTime, mConfig);
         }
     }
 
     void EdgeLightingEffect::SetConfig(const Config &config)
     {
-        config_ = config;
-        animation_.SetSpeed(config_.speed);
-        for (auto &renderer : renderers_)
+        mConfig = config;
+        mAnimation.SetSpeed(mConfig.speed);
+        for (auto &renderer : mRenderers)
         {
-            renderer->OnConfigChanged(config_);
+            renderer->OnConfigChanged(mConfig);
         }
     }
 
     const Config &EdgeLightingEffect::GetConfig() const
     {
-        return config_;
+        return mConfig;
     }
 
     void EdgeLightingEffect::AddRenderer(std::shared_ptr<BaseRenderer> renderer)
     {
         if (renderer)
         {
-            renderers_.push_back(renderer);
-            renderer->OnConfigChanged(config_);
+            mRenderers.push_back(renderer);
+            renderer->OnConfigChanged(mConfig);
         }
     }
 
     Animation &EdgeLightingEffect::GetAnimation()
     {
-        return animation_;
+        return mAnimation;
     }
 
 } // namespace EdgeLighting

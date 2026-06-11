@@ -1,5 +1,5 @@
-#ifndef EDGE_LIGHTING_CONFIG_H
-#define EDGE_LIGHTING_CONFIG_H
+#ifndef _EDGE_LIGHTING_CONFIG_H_
+#define _EDGE_LIGHTING_CONFIG_H_
 
 #include <glm/glm.hpp>
 #include <cmath>
@@ -14,7 +14,7 @@ namespace EdgeLighting
         AMBIENT_RAINBOW
     };
 
-    struct Config
+    typedef struct Config
     {
         // Dimensions of the rectangle boundary
         float width = 800.0f;
@@ -42,7 +42,7 @@ namespace EdgeLighting
 
         // Multi-light config
         int lightCount = 1; // Number of moving light segments
-    };
+    } Config;
 
     namespace GeometryUtils
     {
@@ -161,4 +161,4 @@ namespace EdgeLighting
 
 } // namespace EdgeLighting
 
-#endif // EDGE_LIGHTING_CONFIG_H
+#endif // _EDGE_LIGHTING_CONFIG_H_

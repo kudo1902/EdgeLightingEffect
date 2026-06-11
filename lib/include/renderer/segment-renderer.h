@@ -1,5 +1,5 @@
-#ifndef EDGE_LIGHTING_SEGMENT_RENDERER_H
-#define EDGE_LIGHTING_SEGMENT_RENDERER_H
+#ifndef _EDGE_LIGHTING_SEGMENT_RENDERER_H_
+#define _EDGE_LIGHTING_SEGMENT_RENDERER_H_
 
 #include "renderer/base-renderer.h"
 
@@ -11,7 +11,6 @@ namespace EdgeLighting
         SegmentRenderer();
         virtual ~SegmentRenderer();
 
-        // BaseRenderer overrides
         virtual bool Initialize() override;
         virtual void Update(float deltaTime, float progress, float time, const Config &config) override;
         virtual void Render(int viewportWidth, int viewportHeight, float progress, float time, const Config &config) override;
@@ -21,11 +20,11 @@ namespace EdgeLighting
         bool setupShaders();
         void setupQuadGeometry();
 
-        unsigned int shaderProgram_ = 0;
-        unsigned int quadVAO_ = 0;
-        unsigned int quadVBO_ = 0;
+        unsigned int mShaderProgram = 0;
+        unsigned int mQuadVAO = 0;
+        unsigned int mQuadVBO = 0;
     };
 
 } // namespace EdgeLighting
 
-#endif // EDGE_LIGHTING_SEGMENT_RENDERER_H
+#endif // _EDGE_LIGHTING_SEGMENT_RENDERER_H_
