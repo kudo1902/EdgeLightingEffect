@@ -8,7 +8,7 @@
 #include <memory>
 
 // Global effect instance
-EdgeLighting::EdgeLightingEffect *gEffect = nullptr;
+std::unique_ptr<EdgeLighting::EdgeLightingEffect> gEffect;
 int gColorThemeIndex = 0;
 
 // Callback function declarations (prefixed with 'On')
@@ -62,7 +62,7 @@ int main()
     glfwSetKeyCallback(window, OnKey);
 
     // Initialize Edge Lighting Effect
-    gEffect = new EdgeLighting::EdgeLightingEffect();
+    gEffect = std::make_unique<EdgeLighting::EdgeLightingEffect>();
 
     // Create Renderer Modules
     auto segmentRenderer = std::make_shared<EdgeLighting::SegmentRenderer>();
@@ -88,7 +88,7 @@ int main()
     if (!gEffect->Initialize())
     {
         LOG_E("Failed to initialize EdgeLightingEffect");
-        delete gEffect;
+        gEffect.reset();
         glfwDestroyWindow(window);
         glfwTerminate();
         return -1;
@@ -129,7 +129,7 @@ int main()
     }
 
     // Cleanup
-    delete gEffect;
+    gEffect.reset();
     glfwDestroyWindow(window);
     glfwTerminate();
     return 0;
