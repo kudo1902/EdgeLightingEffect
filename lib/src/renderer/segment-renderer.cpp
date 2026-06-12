@@ -1,6 +1,6 @@
 #include "renderer/segment-renderer.h"
 #include "util/log-util.h"
-#include <glad/glad.h>
+#include "util/gl-header.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 

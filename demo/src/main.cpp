@@ -1,4 +1,4 @@
-#include <glad/glad.h>
+#include "util/gl-header.h"
 #include <GLFW/glfw3.h>
 #include "core/edge-lighting.h"
 #include "renderer/segment-renderer.h"

@@ -1,6 +1,6 @@
 #include "renderer/particles.h"
 #include "util/log-util.h"
-#include <glad/glad.h>
+#include "util/gl-header.h"
 #include <random>
 #include <algorithm>
 #include <cmath>
