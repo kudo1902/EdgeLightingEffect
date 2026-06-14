@@ -2,9 +2,18 @@
 #define _EDGE_LIGHTING_CONFIG_H_
 
 #include <glm/glm.hpp>
+#include <vector>
 
 namespace EdgeLighting
 {
+    /// Source of the lighting path geometry.
+    typedef enum class PathSource
+    {
+        RECT = 0,   ///< Rectangle edge (current analytic SDF)
+        CUSTOM = 1, ///< User-provided polyline points
+        MASK = 2,   ///< Contour extracted from a binary mask
+    } PathSource;
+
     /// Controls whether the stroke boundary sits on, inside, or outside the rectangle edge.
     typedef enum class StrokeAlignment
     {
@@ -36,7 +45,6 @@ namespace EdgeLighting
         RAINBOW_TIME, ///< Uniform hue shift over time across the entire stroke
         PULSE         ///< Uniform oscillation between primaryColor and secondaryColor over time
     } StrokeColorMode;
-
 
     /// Top-level configuration for the EdgeLightingEffect pipeline.
     typedef struct Config
@@ -122,10 +130,26 @@ namespace EdgeLighting
             glm::vec4 color = glm::vec4(0.0f);
         } Particles;
 
+        /// Lighting path definition.
+        typedef struct Path
+        {
+            /// Source of the path geometry.
+            PathSource source = PathSource::RECT;
+            /// Whether the path forms a closed loop.
+            bool closed = true;
+            /// Starting position of the light head along the path [0-1].
+            float startPos = 0.0f;
+            /// End position of the light head along the path [0-1].
+            float endPos = 1.0f;
+            /// Polyline points in local space (for CUSTOM and MASK modes).
+            std::vector<glm::vec2> points;
+        } Path;
+
         Geometry geometry;   ///< Rectangle geometry
         Stroke stroke;       ///< Stroke rendering settings
         Wireframe wireframe; ///< Wireframe overlay settings
         Particles particles; ///< Particle trail settings
+        Path path;           ///< Path source + start/end configuration
     } Config;
 
 } // namespace EdgeLighting
