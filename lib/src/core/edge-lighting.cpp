@@ -55,6 +55,7 @@ namespace EdgeLighting
     {
         mConfig = config;
 
+        mAnimation.SetSpeed(mConfig.stroke.speed);
         mAnimation.OnLoopCompleted = [this]()
         {
             if (!mConfig.path.closed)
