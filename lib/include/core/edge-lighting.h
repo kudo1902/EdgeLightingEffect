@@ -6,6 +6,7 @@
 #include "renderer/base-renderer.h"
 #include <vector>
 #include <memory>
+#include <cstdint>
 
 namespace EdgeLighting
 {
@@ -42,7 +43,21 @@ namespace EdgeLighting
         /// Provides access to the shared animation controller.
         Animation &GetAnimation();
 
+        /// Load an image from disk, trace the outermost contour of its alpha channel,
+        /// and set it as the MASK path source.
+        /// @param path  Filesystem path to a PNG or other image readable by stb_image.
+        /// @return true if the mask was loaded and traced successfully.
+        bool SetMaskFromFile(const char *path);
+
+        /// Trace the outermost contour of a raw RGBA pixel buffer and set it as the MASK path source.
+        /// @param pixels  4-channel RGBA pixel data.
+        /// @param w, h    Image dimensions in pixels.
+        /// @return true if foreground was found and traced successfully.
+        bool SetMaskFromPixels(const uint8_t *pixels, int w, int h);
+
     private:
+        float computeHeadPos() const;
+
         Config mConfig;
         float mTime = 0.0f;
 
