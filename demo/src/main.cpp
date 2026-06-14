@@ -4,6 +4,7 @@
 #include "renderer/stroke-renderer.h"
 #include "renderer/wireframe-renderer.h"
 #include "renderer/particle-renderer.h"
+#include "debug-ui.h"
 #include "ui-controls.h"
 #include "util/log-util.h"
 #include <memory>
@@ -50,12 +51,11 @@ int main()
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #endif
 
-    int initialWidth = 900;
-    int initialHeight = 700;
-    GLFWwindow *window = glfwCreateWindow(initialWidth, initialHeight, "Stroke + Wireframe", nullptr, nullptr);
+    int mainW = 900, mainH = 700;
+    GLFWwindow *window = glfwCreateWindow(mainW, mainH, "Edge Lighting Effect", nullptr, nullptr);
     if (!window)
     {
-        LOG_E("Failed to create GLFW window");
+        LOG_E("Failed to create main window");
         glfwTerminate();
         return -1;
     }
@@ -76,6 +76,18 @@ int main()
     glfwSetFramebufferSizeCallback(window, OnResize);
     glfwSetKeyCallback(window, OnKey);
 
+    // --- Debug UI (separate window, shared GL context) ---
+    DebugUI debugUI;
+    if (!debugUI.Init(window, mainW, mainH))
+    {
+        glfwSetKeyCallback(window, nullptr);
+        glfwSetFramebufferSizeCallback(window, nullptr);
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return -1;
+    }
+
+    // --- Effect setup ---
     gEffect = std::make_unique<EdgeLighting::EdgeLightingEffect>();
 
     auto strokeRenderer = std::make_shared<EdgeLighting::StrokeRenderer>();
@@ -101,6 +113,7 @@ int main()
     {
         LOG_E("Failed to initialize EdgeLightingEffect");
         gEffect.reset();
+        debugUI.Shutdown();
         glfwDestroyWindow(window);
         glfwTerminate();
         return -1;
@@ -110,24 +123,39 @@ int main()
     EdgeLightingDemo::PrintCurrentConfig(gEffect->GetConfig(), gEffect->GetAnimation().IsPlaying());
 
     float lastFrameTime = 0.0f;
-    while (!glfwWindowShouldClose(window))
+    while (!glfwWindowShouldClose(window) && !glfwWindowShouldClose(debugUI.GetWindow()))
     {
         float currentFrameTime = static_cast<float>(glfwGetTime());
         float deltaTime = currentFrameTime - lastFrameTime;
         lastFrameTime = currentFrameTime;
 
-        glClearColor(0.03f, 0.03f, 0.05f, 1.0f);
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        // --- Debug UI (ImGui widgets + render to debug window) ---
+        {
+            EdgeLighting::Config cfg = gEffect->GetConfig();
+            debugUI.Build(cfg, *gEffect);
+        }
+        debugUI.Render();
 
-        gEffect->Update(deltaTime);
+        // --- Render main window (no ImGui overlay) ---
+        glfwMakeContextCurrent(window);
+        {
+            glClearColor(0.03f, 0.03f, 0.05f, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
 
-        int fbW, fbH;
-        glfwGetFramebufferSize(window, &fbW, &fbH);
-        gEffect->Render(fbW, fbH);
+            gEffect->Update(deltaTime);
 
-        glfwSwapBuffers(window);
+            int fbW, fbH;
+            glfwGetFramebufferSize(window, &fbW, &fbH);
+            gEffect->Render(fbW, fbH);
+
+            glfwSwapBuffers(window);
+        }
+
         glfwPollEvents();
     }
+
+    // --- Shutdown ---
+    debugUI.Shutdown();
 
     gEffect.reset();
     glfwDestroyWindow(window);
@@ -147,7 +175,6 @@ void OnResize(GLFWwindow *window, int width, int height)
         config.geometry.width = static_cast<float>(width) / 2;
         config.geometry.height = static_cast<float>(height) / 2;
 
-        // Rescale mask contour points proportionally to the new rectangle size
         if (config.path.source == EdgeLighting::PathSource::MASK && !gStoredMaskPoints.empty())
         {
             float sx = config.geometry.width / oldW;
