@@ -14,13 +14,13 @@ namespace EdgeLighting
         virtual ~ParticleRenderer() = default;
 
         virtual bool Initialize() override;
-        virtual void Update(float deltaTime, float progress, float time, const Config &config) override;
-        virtual void Render(int viewportWidth, int viewportHeight, float progress, float time, const Config &config) override;
+        virtual void Update(float deltaTime, float progress, float headPos, float time, const Config &config) override;
+        virtual void Render(int viewportWidth, int viewportHeight, float progress, float headPos, float time, const Config &config) override;
         virtual void OnConfigChanged(const Config &config) override;
 
     private:
         static glm::vec3 getRainbowColor(float p);
-        void emitParticlesAtHead(float progress, float time, const Config &config);
+        void emitParticlesAtHead(float headPos, float time, const Config &config);
 
     private:
         std::unique_ptr<ParticleSystem> mParticleSystem;

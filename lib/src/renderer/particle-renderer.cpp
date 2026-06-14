@@ -1,6 +1,7 @@
 #include "renderer/particle-renderer.h"
 #include "util/log-util.h"
 #include "util/geometry-utils.h"
+#include "util/path-utils.h"
 #include <glm/gtc/matrix_transform.hpp>
 
 namespace EdgeLighting
@@ -21,7 +22,7 @@ namespace EdgeLighting
         return true;
     }
 
-    void ParticleRenderer::Update(float deltaTime, float progress, float time, const Config &config)
+    void ParticleRenderer::Update(float deltaTime, float, float headPos, float time, const Config &config)
     {
         if (!config.particles.enable)
         {
@@ -30,13 +31,13 @@ namespace EdgeLighting
 
         if (config.stroke.animation == StrokeAnimation::MOVING)
         {
-            emitParticlesAtHead(progress, time, config);
+            emitParticlesAtHead(headPos, time, config);
         }
 
         mParticleSystem->Update(deltaTime);
     }
 
-    void ParticleRenderer::Render(int viewportWidth, int viewportHeight, float, float, const Config &config)
+    void ParticleRenderer::Render(int viewportWidth, int viewportHeight, float, float, float, const Config &config)
     {
         if (!config.particles.enable)
         {
@@ -91,13 +92,26 @@ namespace EdgeLighting
         return glm::mix(c6, c1, (p - 5.0f * w) / w);
     }
 
-    void ParticleRenderer::emitParticlesAtHead(float progress, float time, const Config &config)
+    void ParticleRenderer::emitParticlesAtHead(float headPos, float time, const Config &config)
     {
         for (int i = 0; i < config.stroke.lineCount; ++i)
         {
             float offset = static_cast<float>(i) / static_cast<float>(config.stroke.lineCount);
-            float headProgress = glm::fract(time * config.stroke.speed + offset);
-            glm::vec2 spawnPos = GeometryUtils::GetPointOnRectangle(headProgress, config.geometry);
+            float headProgress = glm::fract(headPos + offset);
+            glm::vec2 spawnPos;
+            if (config.path.source == PathSource::RECT)
+            {
+                spawnPos = GeometryUtils::GetPointOnRectangle(headProgress, config.geometry);
+            }
+            else
+            {
+                // Match the texture direction: reverse progress for CW winding
+                float pathProgress = (config.geometry.winding == Winding::CLOCKWISE)
+                                         ? 1.0f - headProgress
+                                         : headProgress;
+                glm::vec2 appPos = PathUtils::GetPointOnPath(pathProgress, config.path.points, config.path.closed);
+                spawnPos = GeometryUtils::AppToLocal(appPos, config.geometry);
+            }
 
             glm::vec4 emitterColor;
             if (config.stroke.colorMode == StrokeColorMode::STATIC)
