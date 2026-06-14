@@ -59,7 +59,7 @@ namespace EdgeLighting
                 const glm::vec2 &b = points[i + 1];
                 float segLen = glm::length(b - a);
 
-                if (target <= accum + segLen || i == points.size() - 2)
+                if (target <= accum + segLen)
                 {
                     float frac = (segLen > 0.0f) ? (target - accum) / segLen : 0.0f;
                     frac = glm::clamp(frac, 0.0f, 1.0f);
