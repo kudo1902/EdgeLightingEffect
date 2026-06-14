@@ -5,15 +5,21 @@
 
 namespace EdgeLighting
 {
+    /// RAII wrapper combining an OpenGL VAO and a single VBO.
+    ///
+    /// Provides convenience methods for uploading vertex data, setting
+    /// attribute pointers, and issuing draw calls. Move-only.
     class VertexArray
     {
     public:
+        /// Generates a new VAO and VBO.
         VertexArray()
         {
             glGenVertexArrays(1, &mVao);
             glGenBuffers(1, &mVbo);
         }
 
+        /// Deletes the VBO and VAO.
         ~VertexArray()
         {
             if (mVbo != 0)
@@ -58,21 +64,29 @@ namespace EdgeLighting
             return *this;
         }
 
+        /// Binds the VAO.
         void Bind() const
         {
             glBindVertexArray(mVao);
         }
 
+        /// Unbinds the current VAO.
         void Unbind() const
         {
             glBindVertexArray(0);
         }
 
+        /// Binds the internal VBO to @c GL_ARRAY_BUFFER.
+        /// Required before calling @c glBufferSubData on this buffer.
         void BindBuffer() const
         {
             glBindBuffer(GL_ARRAY_BUFFER, mVbo);
         }
 
+        /// Uploads vertex data to the VBO (binds VAO internally).
+        /// @param data  Source data (nullptr to allocate without uploading).
+        /// @param size  Size in bytes.
+        /// @param usage  GL_STATIC_DRAW, GL_DYNAMIC_DRAW, etc.
         void SetVertexData(const void *data, size_t size, GLenum usage = GL_STATIC_DRAW) const
         {
             Bind();
@@ -80,6 +94,12 @@ namespace EdgeLighting
             glBufferData(GL_ARRAY_BUFFER, size, data, usage);
         }
 
+        /// Configures a vertex attribute pointer (enables it automatically).
+        /// @param location  Shader layout location index.
+        /// @param size      Number of components (1-4).
+        /// @param type      GL_FLOAT, etc.
+        /// @param stride    Byte stride between consecutive vertices.
+        /// @param offset    Byte offset to the first attribute value.
         void SetAttribPointer(GLuint location, GLint size, GLenum type, GLsizei stride, size_t offset) const
         {
             Bind();
@@ -88,6 +108,7 @@ namespace EdgeLighting
             glVertexAttribPointer(location, size, type, GL_FALSE, stride, (void *)offset);
         }
 
+        /// Binds the VAO and issues @c glDrawArrays.
         void DrawArrays(GLenum mode, GLint count, GLint first = 0) const
         {
             Bind();
@@ -95,8 +116,8 @@ namespace EdgeLighting
         }
 
     private:
-        GLuint mVao = 0;
-        GLuint mVbo = 0;
+        GLuint mVao = 0; ///< Vertex Array Object handle.
+        GLuint mVbo = 0; ///< Vertex Buffer Object handle.
     };
 
 } // namespace EdgeLighting

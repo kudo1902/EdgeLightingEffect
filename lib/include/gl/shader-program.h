@@ -8,11 +8,20 @@
 
 namespace EdgeLighting
 {
+    /// RAII wrapper around an OpenGL shader program object.
+    ///
+    /// Compiles a vertex + fragment shader pair and links them into a program
+    /// on construction. Provides typed uniform setters and move-only ownership.
     class ShaderProgram
     {
     public:
+        /// Default constructor — creates an invalid (null) program.
         ShaderProgram() = default;
 
+        /// Compiles vertex and fragment shaders and links them into a program.
+        /// @param vertSrc  Vertex shader source string.
+        /// @param fragSrc  Fragment shader source string.
+        /// Logs errors through @ref LOG_E on failure; resulting program is invalid.
         ShaderProgram(const char *vertSrc, const char *fragSrc)
         {
             GLuint vs = compileShader(GL_VERTEX_SHADER, vertSrc);
@@ -78,18 +87,24 @@ namespace EdgeLighting
             return *this;
         }
 
+        /// Returns true if the program compiled and linked successfully.
         bool IsValid() const { return mId != 0; }
 
+        /// Activates this shader program (@c glUseProgram).
         void Use() const
         {
             glUseProgram(mId);
         }
 
+        /// Deactivates the current shader program (@c glUseProgram(0)).
         void Unuse() const
         {
             glUseProgram(0);
         }
 
+        /// @name Typed uniform setters
+        /// Each resolves the uniform location and uploads the value.
+        ///@{
         void SetUniform(const char *name, int value) const
         {
             glUniform1i(glGetUniformLocation(mId, name), value);
@@ -114,8 +129,11 @@ namespace EdgeLighting
         {
             glUniformMatrix4fv(glGetUniformLocation(mId, name), 1, GL_FALSE, glm::value_ptr(value));
         }
+        ///@}
 
     private:
+        /// Compiles a single shader from source.
+        /// @return The shader ID, or 0 on failure.
         static GLuint compileShader(GLenum type, const char *src)
         {
             GLuint shader = glCreateShader(type);
@@ -134,7 +152,7 @@ namespace EdgeLighting
             return shader;
         }
 
-        GLuint mId = 0;
+        GLuint mId = 0; ///< OpenGL program handle; 0 = invalid.
     };
 
 } // namespace EdgeLighting
