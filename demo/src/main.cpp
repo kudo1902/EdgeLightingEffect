@@ -1,30 +1,26 @@
-#include "util/gl-header.h"
+#include "gl/gl-header.h"
 #include <GLFW/glfw3.h>
 #include "core/edge-lighting.h"
-#include "renderer/segment-renderer.h"
+#include "renderer/stroke-renderer.h"
+#include "renderer/wireframe-renderer.h"
 #include "renderer/particle-renderer.h"
 #include "ui-controls.h"
 #include "util/log-util.h"
 #include <memory>
 
-// Global effect instance
 std::unique_ptr<EdgeLighting::EdgeLightingEffect> gEffect;
-int gColorThemeIndex = 0;
 
-// Callback function declarations (prefixed with 'On')
 void OnResize(GLFWwindow *window, int width, int height);
 void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods);
 
 int main()
 {
-    // Initialize GLFW
     if (!glfwInit())
     {
         LOG_E("Failed to initialize GLFW");
         return -1;
     }
 
-    // Configure GLFW for OpenGL 3.3 Core Profile
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
@@ -32,10 +28,9 @@ int main()
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
 #endif
 
-    // Create GLFW window
     int initialWidth = 900;
     int initialHeight = 700;
-    GLFWwindow *window = glfwCreateWindow(initialWidth, initialHeight, "Edge Lighting Effect Demo", nullptr, nullptr);
+    GLFWwindow *window = glfwCreateWindow(initialWidth, initialHeight, "Stroke + Wireframe", nullptr, nullptr);
     if (!window)
     {
         LOG_E("Failed to create GLFW window");
@@ -45,7 +40,6 @@ int main()
 
     glfwMakeContextCurrent(window);
 
-    // Initialize GLAD
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
     {
         LOG_E("Failed to initialize GLAD");
@@ -54,34 +48,30 @@ int main()
         return -1;
     }
 
-    // Get actual framebuffer size (fixes Retina/high-DPI scaling)
     int displayW, displayH;
     glfwGetFramebufferSize(window, &displayW, &displayH);
     glViewport(0, 0, displayW, displayH);
     glfwSetFramebufferSizeCallback(window, OnResize);
     glfwSetKeyCallback(window, OnKey);
 
-    // Initialize Edge Lighting Effect
     gEffect = std::make_unique<EdgeLighting::EdgeLightingEffect>();
 
-    // Create Renderer Modules
-    auto segmentRenderer = std::make_shared<EdgeLighting::SegmentRenderer>();
+    auto strokeRenderer = std::make_shared<EdgeLighting::StrokeRenderer>();
+    auto wireframeRenderer = std::make_shared<EdgeLighting::WireframeRenderer>();
     auto particleRenderer = std::make_shared<EdgeLighting::ParticleRenderer>();
-
-    gEffect->AddRenderer(segmentRenderer);
+    gEffect->AddRenderer(strokeRenderer);
+    gEffect->AddRenderer(wireframeRenderer);
     gEffect->AddRenderer(particleRenderer);
 
-    // Set initial size of the rectangle to match framebuffer with margins
     EdgeLighting::Config config;
-    config.width = displayW / 2;
-    config.height = displayH / 2;
-    config.position = glm::vec2(0, 0);
-    config.borderRadius = 50.0f;
-    config.glowWidth = 45.0f;
-    config.lineWidth = 8.0f;
-    config.speed = 0.6f;
-    config.lineLength = 0.3f;
-    config.colorMode = EdgeLighting::ColorMode::AMBIENT_RAINBOW;
+    config.geometry.width = displayW / 2;
+    config.geometry.height = displayH / 2;
+    config.geometry.position = glm::vec2(0, 0);
+    config.geometry.borderRadius = 0.0f;
+    config.stroke.primaryColor = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
+    config.stroke.secondaryColor = glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
+    config.wireframe.enable = true;
+    config.wireframe.color = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
 
     gEffect->SetConfig(config);
 
@@ -94,17 +84,9 @@ int main()
         return -1;
     }
 
-    // Bind animation callbacks
-    gEffect->GetAnimation().OnLoopCompleted = []()
-    {
-        // Triggered every time a loop completes
-    };
-
-    // Print CLI controls instructions
     EdgeLightingDemo::PrintControls();
     EdgeLightingDemo::PrintCurrentConfig(gEffect->GetConfig(), gEffect->GetAnimation().IsPlaying());
 
-    // Main render loop
     float lastFrameTime = 0.0f;
     while (!glfwWindowShouldClose(window))
     {
@@ -112,46 +94,39 @@ int main()
         float deltaTime = currentFrameTime - lastFrameTime;
         lastFrameTime = currentFrameTime;
 
-        // Clear with a deep dark background
         glClearColor(0.03f, 0.03f, 0.05f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        // Update effect animation and active renderers
         gEffect->Update(deltaTime);
 
-        // Render the effect (gets viewport size dynamically)
-        int displayW, displayH;
-        glfwGetFramebufferSize(window, &displayW, &displayH);
-        gEffect->Render(displayW, displayH);
+        int fbW, fbH;
+        glfwGetFramebufferSize(window, &fbW, &fbH);
+        gEffect->Render(fbW, fbH);
 
         glfwSwapBuffers(window);
         glfwPollEvents();
     }
 
-    // Cleanup
     gEffect.reset();
     glfwDestroyWindow(window);
     glfwTerminate();
     return 0;
 }
 
-// Window resizing callback
 void OnResize(GLFWwindow *window, int width, int height)
 {
     glViewport(0, 0, width, height);
 
     if (gEffect)
     {
-        // Dynamically adjust rectangle dimensions to fit the window with margins
         EdgeLighting::Config config = gEffect->GetConfig();
-        config.width = static_cast<float>(width) - 80.0f;
-        config.height = static_cast<float>(height) - 80.0f;
+        config.geometry.width = static_cast<float>(width) - 80.0f;
+        config.geometry.height = static_cast<float>(height) - 80.0f;
         gEffect->SetConfig(config);
         EdgeLightingDemo::PrintCurrentConfig(config, gEffect->GetAnimation().IsPlaying());
     }
 }
 
-// Keyboard input callback
 void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
 {
     if (action != GLFW_PRESS && action != GLFW_REPEAT)
@@ -166,124 +141,110 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
     if (!gEffect)
         return;
     EdgeLighting::Config config = gEffect->GetConfig();
-    EdgeLighting::Animation &animation = gEffect->GetAnimation();
 
     switch (key)
     {
-    case GLFW_KEY_SPACE:
-        if (animation.IsPlaying())
-        {
-            animation.Pause();
-        }
-        else
-        {
-            animation.Play();
-        }
+    case GLFW_KEY_R:
+        config.stroke.thickness = std::min(40.0f, config.stroke.thickness + 1.0f);
         break;
-    case GLFW_KEY_1:
-        config.colorMode = EdgeLighting::ColorMode::STATIC;
-        break;
-    case GLFW_KEY_2:
-        config.colorMode = EdgeLighting::ColorMode::GRADIENT;
-        break;
-    case GLFW_KEY_3:
-        config.colorMode = EdgeLighting::ColorMode::AMBIENT_RAINBOW;
-        break;
-    case GLFW_KEY_UP:
-        config.speed = std::min(5.0f, config.speed + 0.1f);
-        break;
-    case GLFW_KEY_DOWN:
-        config.speed = std::max(0.1f, config.speed - 0.1f);
-        break;
-    case GLFW_KEY_RIGHT:
-        config.lineLength = std::min(0.9f, config.lineLength + 0.05f);
-        break;
-    case GLFW_KEY_LEFT:
-        config.lineLength = std::max(0.05f, config.lineLength - 0.05f);
-        break;
-    case GLFW_KEY_W:
-        config.glowWidth = std::min(150.0f, config.glowWidth + 5.0f);
-        break;
-    case GLFW_KEY_S:
-        config.glowWidth = std::max(5.0f, config.glowWidth - 5.0f);
-        break;
-    case GLFW_KEY_A:
-        config.lineWidth = std::min(40.0f, config.lineWidth + 1.0f);
-        break;
-    case GLFW_KEY_D:
-        config.lineWidth = std::max(1.0f, config.lineWidth - 1.0f);
-        break;
-    case GLFW_KEY_P:
-        config.enableParticles = !config.enableParticles;
-        break;
-    case GLFW_KEY_I:
-        if (mods & GLFW_MOD_SHIFT)
-            config.particleIntensity = std::min(5.0f, config.particleIntensity + 0.1f);
-        else
-            config.intensity = std::min(5.0f, config.intensity + 0.1f);
-        break;
-    case GLFW_KEY_O:
-        if (mods & GLFW_MOD_SHIFT)
-            config.particleIntensity = std::max(0.0f, config.particleIntensity - 0.1f);
-        else
-            config.intensity = std::max(0.0f, config.intensity - 0.1f);
+    case GLFW_KEY_F:
+        config.stroke.thickness = std::max(1.0f, config.stroke.thickness - 1.0f);
         break;
     case GLFW_KEY_K:
-        config.borderRadius = std::min(200.0f, config.borderRadius + 5.0f);
+        config.geometry.borderRadius = std::min(200.0f, config.geometry.borderRadius + 5.0f);
         break;
     case GLFW_KEY_J:
-        config.borderRadius = std::max(0.0f, config.borderRadius - 5.0f);
+        config.geometry.borderRadius = std::max(0.0f, config.geometry.borderRadius - 5.0f);
+        break;
+    case GLFW_KEY_I:
+        config.stroke.intensity = std::min(1.0f, config.stroke.intensity + 0.1f);
+        break;
+    case GLFW_KEY_O:
+        config.stroke.intensity = std::max(0.0f, config.stroke.intensity - 0.1f);
+        break;
+    case GLFW_KEY_T:
+    {
+        int s = static_cast<int>(config.stroke.alignment);
+        s = (s + 1) % 3;
+        config.stroke.alignment = static_cast<EdgeLighting::StrokeAlignment>(s);
+        break;
+    }
+    case GLFW_KEY_H:
+        if (mods & GLFW_MOD_SHIFT)
+            config.stroke.fadeRange = std::max(0.0f, config.stroke.fadeRange - 1.0f);
+        else
+            config.stroke.fadeRange = std::min(config.stroke.thickness, config.stroke.fadeRange + 1.0f);
+        break;
+    case GLFW_KEY_M:
+    {
+        int m = static_cast<int>(config.stroke.animation);
+        m = (m + 1) % 2;
+        config.stroke.animation = static_cast<EdgeLighting::StrokeAnimation>(m);
+        break;
+    }
+    case GLFW_KEY_U:
+        config.stroke.segmentLength = std::min(1.0f, config.stroke.segmentLength + 0.05f);
+        break;
+    case GLFW_KEY_Y:
+        config.stroke.segmentLength = std::max(0.05f, config.stroke.segmentLength - 0.05f);
+        break;
+    case GLFW_KEY_P:
+        config.stroke.speed = std::min(5.0f, config.stroke.speed + 0.1f);
         break;
     case GLFW_KEY_L:
-        config.lightCount = (config.lightCount % 4) + 1;
+        config.stroke.speed = std::max(0.1f, config.stroke.speed - 0.1f);
         break;
+    case GLFW_KEY_SPACE:
+        if (gEffect->GetAnimation().IsPlaying())
+            gEffect->GetAnimation().Pause();
+        else
+            gEffect->GetAnimation().Play();
+        break;
+    case GLFW_KEY_B:
+    {
+        int m = static_cast<int>(config.stroke.fadeMode);
+        m = (m + 1) % 2;
+        config.stroke.fadeMode = static_cast<EdgeLighting::FadeMode>(m);
+        break;
+    }
     case GLFW_KEY_C:
     {
-        // Cycle primary color presets
-        gColorThemeIndex = (gColorThemeIndex + 1) % 4;
-        if (gColorThemeIndex == 0)
-        {
-            config.primaryColor = glm::vec4(0.0f, 0.8f, 1.0f, 1.0f);   // Cyan
-            config.secondaryColor = glm::vec4(1.0f, 0.0f, 0.8f, 1.0f); // Magenta
-        }
-        else if (gColorThemeIndex == 1)
-        {
-            config.primaryColor = glm::vec4(0.0f, 1.0f, 0.4f, 1.0f);   // Emerald Green
-            config.secondaryColor = glm::vec4(0.9f, 0.9f, 0.0f, 1.0f); // Gold
-        }
-        else if (gColorThemeIndex == 2)
-        {
-            config.primaryColor = glm::vec4(1.0f, 0.3f, 0.0f, 1.0f);   // Orange Red
-            config.secondaryColor = glm::vec4(0.5f, 0.0f, 1.0f, 1.0f); // Purple
-        }
-        else
-        {
-            config.primaryColor = glm::vec4(1.0f, 1.0f, 1.0f, 1.0f);   // White
-            config.secondaryColor = glm::vec4(0.2f, 0.2f, 0.2f, 1.0f); // Dark grey
-        }
+        int m = static_cast<int>(config.stroke.colorMode);
+        m = (m + 1) % 5;
+        config.stroke.colorMode = static_cast<EdgeLighting::StrokeColorMode>(m);
         break;
     }
-    case GLFW_KEY_R:
-    {
-        config = EdgeLighting::Config();
-        int w, h;
-        glfwGetFramebufferSize(window, &w, &h);
-        config.width = static_cast<float>(w) - 80.0f;
-        config.height = static_cast<float>(h) - 80.0f;
-        config.borderRadius = 50.0f;
-        config.glowWidth = 45.0f;
-        config.lineWidth = 8.0f;
-        config.speed = 0.6f;
-        config.lineLength = 0.3f;
-        config.intensity = 1.5f;
-        config.particleIntensity = 1.2f;
-        animation.Play();
+    case GLFW_KEY_COMMA:
+        config.stroke.lineCount = std::max(1, config.stroke.lineCount - 1);
         break;
-    }
+    case GLFW_KEY_PERIOD:
+        config.stroke.lineCount = std::min(16, config.stroke.lineCount + 1);
+        break;
+    case GLFW_KEY_N:
+        config.particles.enable = !config.particles.enable;
+        break;
+    case GLFW_KEY_V:
+        config.stroke.glowEnable = !config.stroke.glowEnable;
+        break;
+    case GLFW_KEY_LEFT_BRACKET:
+        config.stroke.glowSize = std::max(1.0f, config.stroke.glowSize - 1.0f);
+        break;
+    case GLFW_KEY_RIGHT_BRACKET:
+        config.stroke.glowSize = std::min(40.0f, config.stroke.glowSize + 1.0f);
+        break;
+    case GLFW_KEY_SEMICOLON:
+        config.stroke.glowIntensity = std::max(0.0f, config.stroke.glowIntensity - 0.05f);
+        break;
+    case GLFW_KEY_APOSTROPHE:
+        config.stroke.glowIntensity = std::min(1.0f, config.stroke.glowIntensity + 0.05f);
+        break;
+    case GLFW_KEY_G:
+        config.wireframe.enable = !config.wireframe.enable;
+        break;
     default:
         return;
     }
 
     gEffect->SetConfig(config);
-    EdgeLightingDemo::PrintCurrentConfig(config, animation.IsPlaying());
+    EdgeLightingDemo::PrintCurrentConfig(config, gEffect->GetAnimation().IsPlaying());
 }

@@ -1,13 +1,16 @@
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/stroke.vert"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/stroke.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/wireframe.vert"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/wireframe.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/particle.vert"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/particle.frag"
+)
+
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/stroke.vert" STROKE_VERT_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/stroke.frag" STROKE_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/wireframe.vert" WIREFRAME_VERT_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/wireframe.frag" WIREFRAME_FRAG_CONTENT)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/edge-glow.vert" EDGE_GLOW_VERT_CONTENT)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/edge-glow.frag" EDGE_GLOW_FRAG_CONTENT)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/segment.vert" SEGMENT_VERT_CONTENT)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/segment.frag" SEGMENT_FRAG_CONTENT)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/debug.vert" DEBUG_VERT_CONTENT)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/debug.frag" DEBUG_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/particle.vert" PARTICLE_VERT_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/particle.frag" PARTICLE_FRAG_CONTENT)
 
@@ -21,9 +24,10 @@ configure_file(
 add_library(edge-lighting STATIC
     src/core/edge-lighting.cpp
     src/animation/animation.cpp
-    src/renderer/segment-renderer.cpp
-    src/renderer/particle-renderer.cpp
+    src/renderer/stroke-renderer.cpp
+    src/renderer/wireframe-renderer.cpp
     src/renderer/particles.cpp
+    src/renderer/particle-renderer.cpp
 )
 
 target_include_directories(edge-lighting PUBLIC

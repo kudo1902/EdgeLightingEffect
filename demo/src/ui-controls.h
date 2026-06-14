@@ -10,56 +10,62 @@ namespace EdgeLightingDemo
 
     inline void PrintControls()
     {
-        std::cout << "\n=============================================\n";
-        std::cout << "      Animated Edge Lighting Effect Demo\n";
-        std::cout << "=============================================\n";
+        std::cout << "\n=========================================\n";
+        std::cout << "      Stroke + Wireframe Demo\n";
+        std::cout << "=========================================\n";
         std::cout << "Controls:\n";
-        std::cout << "  [1]            - Color Mode: Static Color\n";
-        std::cout << "  [2]            - Color Mode: Gradient Color\n";
-        std::cout << "  [3]            - Color Mode: Ambient Rainbow\n";
-        std::cout << "  [SPACE]        - Play / Pause Animation\n";
-        std::cout << "  [UP / DOWN]    - Increase / Decrease Speed\n";
-        std::cout << "  [LEFT / RIGHT] - Decrease / Increase Line Length\n";
-        std::cout << "  [W / S]        - Increase / Decrease Glow Width\n";
-        std::cout << "  [A / D]        - Increase / Decrease Line Width\n";
-        std::cout << "  [K / J]        - Increase / Decrease Corner Radius (0 for sharp corners)\n";
-        std::cout << "  [I / O]        - Increase / Decrease Master Intensity\n";
-        std::cout << "  [Shift+I/O]    - Increase / Decrease Particle Intensity\n";
-        std::cout << "  [P]            - Toggle Particle System\n";
-        std::cout << "  [L]            - Cycle Multi-Lights Count (1 to 4)\n";
-        std::cout << "  [C]            - Cycle Primary Color Theme\n";
-        std::cout << "  [R]            - Reset to Default Settings\n";
+        std::cout << "  [R / F]        - Inc / Dec Stroke Thickness\n";
+        std::cout << "  [K / J]        - Inc / Dec Corner Radius\n";
+        std::cout << "  [I / O]        - Inc / Dec Stroke Intensity\n";
+        std::cout << "  [T]            - Cycle Alignment (CENTER / INNER / OUTER)\n";
+        std::cout << "  [H / Shift+H]  - Inc / Dec Fade Range (feather)\n";
+        std::cout << "  [B]            - Cycle Fade Mode (SINGLE / DOUBLE)\n";
+        std::cout << "  [C]            - Cycle Color Mode (STC/GRD/RNB/RNT/PLS)\n";
+        std::cout << "  [, / .]        - Dec / Inc Line Count\n";
+        std::cout << "  [M]            - Toggle Animation (STATIC / MOVING)\n";
+        std::cout << "  [U / Y]        - Inc / Dec Segment Length (moving)\n";
+        std::cout << "  [P / L]        - Inc / Dec Speed (moving)\n";
+        std::cout << "  [SPACE]        - Pause / Resume Animation\n";
+        std::cout << "  [N]            - Toggle Particle Trail\n";
+        std::cout << "  [V]            - Toggle Glow\n";
+        std::cout << "  [[ / ]]        - Inc / Dec Glow Size\n";
+        std::cout << "  [; / ']        - Inc / Dec Glow Intensity\n";
+        std::cout << "  [G]            - Toggle Wireframe Bounding Box\n";
         std::cout << "  [ESC]          - Exit\n";
-        std::cout << "=============================================\n\n";
+        std::cout << "=========================================\n\n";
     }
 
     inline void PrintCurrentConfig(const EdgeLighting::Config &config, bool isPlaying)
     {
-        std::string modeStr;
-        switch (config.colorMode)
-        {
-        case EdgeLighting::ColorMode::STATIC:
-            modeStr = "Static";
-            break;
-        case EdgeLighting::ColorMode::GRADIENT:
-            modeStr = "Gradient";
-            break;
-        case EdgeLighting::ColorMode::AMBIENT_RAINBOW:
-            modeStr = "Ambient Rainbow";
-            break;
-        }
+        std::string sideStr = (config.stroke.alignment == EdgeLighting::StrokeAlignment::CENTER) ? "CEN" : (config.stroke.alignment == EdgeLighting::StrokeAlignment::INNER) ? "IN"
+                                                                                                                                                                             : "OUT";
+        std::string modeStr = (config.stroke.animation == EdgeLighting::StrokeAnimation::STATIC) ? "ST" : "MV";
+        std::string fadeStr = (config.stroke.fadeMode == EdgeLighting::FadeMode::SINGLE) ? "SGL" : "DBL";
+        std::string colorStr = (config.stroke.colorMode == EdgeLighting::StrokeColorMode::STATIC) ? "STC" : (config.stroke.colorMode == EdgeLighting::StrokeColorMode::GRADIENT)   ? "GRD"
+                                                                                                        : (config.stroke.colorMode == EdgeLighting::StrokeColorMode::RAINBOW)      ? "RNB"
+                                                                                                        : (config.stroke.colorMode == EdgeLighting::StrokeColorMode::RAINBOW_TIME) ? "RNT"
+                                                                                                                                                                                   : "PLS";
 
-        std::cout << "\r[Config] State: " << (isPlaying ? "PLAY" : "PAUSE")
-                  << " | Mode: " << std::left << std::setw(15) << modeStr
-                  << " | Speed: " << std::fixed << std::setprecision(1) << std::setw(4) << config.speed
-                  << " | Length: " << std::setw(4) << config.lineLength
-                  << " | Glow: " << std::setw(4) << config.glowWidth
-                  << " | LineWidth: " << std::setw(4) << config.lineWidth
-                  << " | CornerRad: " << std::setw(4) << config.borderRadius
-                  << " | Intensity: " << std::setprecision(1) << std::setw(3) << config.intensity
-                  << " | PtclIntensity: " << std::setprecision(1) << std::setw(3) << config.particleIntensity
-                  << " | Lights: " << std::setw(2) << config.lightCount
-                  << " | Particles: " << (config.enableParticles ? "ON " : "OFF")
+        std::string glowStr = config.stroke.glowEnable
+                                  ? "ON sz:" + std::to_string((int)config.stroke.glowSize) + " int:" + std::to_string((int)(config.stroke.glowIntensity * 100))
+                                  : "OFF";
+        std::string particleStr = config.particles.enable ? "ON" : "OFF";
+
+        std::cout << "\r[Stroke] W: " << std::setw(3) << config.stroke.thickness
+                  << " | R: " << std::setw(3) << config.geometry.borderRadius
+                  << " | Int: " << std::fixed << std::setprecision(1) << std::setw(3) << config.stroke.intensity
+                  << " | " << sideStr
+                  << " | Fade: " << std::setprecision(1) << std::setw(3) << config.stroke.fadeRange
+                  << " | " << modeStr
+                  << " Ln: " << config.stroke.lineCount
+                  << " Seg: " << std::setprecision(2) << std::setw(4) << config.stroke.segmentLength
+                  << " Spd: " << std::setprecision(2) << std::setw(4) << config.stroke.speed
+                  << " | " << colorStr
+                  << " Fd: " << fadeStr
+                  << " | Glow: " << glowStr
+                  << " | Ptcl: " << particleStr
+                  << " | Anim: " << (isPlaying ? "PLAY" : "PAUS")
+                  << " | Wire: " << (config.wireframe.enable ? "ON " : "OFF")
                   << "      " << std::flush;
     }
 
