@@ -8,7 +8,6 @@ namespace EdgeLighting
 {
     namespace GeometryUtils
     {
-
         /// Returns a point on the rectangle edge given a perimeter progress in [0, 1].
         /// Progress 0 = top-left, goes clockwise (top → right → bottom → left).
         /// Supports rounded corners via borderRadius.
@@ -128,6 +127,33 @@ namespace EdgeLighting
                 float angle = -pi * 0.5f * (2.0f + frac);
                 return glm::vec2(-halfWs + r * cosf(angle), halfHs + r * sinf(angle));
             }
+        }
+
+        /// Converts an app-space point (rect top-left = (0,0), +Y down) to local space
+        /// (rect center = (0,0), +Y up).
+        inline glm::vec2 AppToLocal(const glm::vec2 &appPt, float halfW, float halfH)
+        {
+            return glm::vec2(appPt.x - halfW, halfH - appPt.y);
+        }
+
+        inline glm::vec2 AppToLocal(const glm::vec2 &appPt, const Config::Geometry &geom)
+        {
+            return AppToLocal(appPt, geom.width * 0.5f, geom.height * 0.5f);
+        }
+
+        /// Converts an array of app-space points to local space.
+        inline std::vector<glm::vec2> AppToLocal(const std::vector<glm::vec2> &appPts, float halfW, float halfH)
+        {
+            std::vector<glm::vec2> result;
+            result.reserve(appPts.size());
+            for (const auto &pt : appPts)
+                result.push_back(AppToLocal(pt, halfW, halfH));
+            return result;
+        }
+
+        inline std::vector<glm::vec2> AppToLocal(const std::vector<glm::vec2> &appPts, const Config::Geometry &geom)
+        {
+            return AppToLocal(appPts, geom.width * 0.5f, geom.height * 0.5f);
         }
 
     } // namespace GeometryUtils
