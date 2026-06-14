@@ -16,11 +16,11 @@ namespace EdgeLighting
         return true;
     }
 
-    void WireframeRenderer::Update(float, float, float, const Config &)
+    void WireframeRenderer::Update(float, float, float, float, const Config &)
     {
     }
 
-    void WireframeRenderer::Render(int viewportWidth, int viewportHeight, float, float, const Config &config)
+    void WireframeRenderer::Render(int viewportWidth, int viewportHeight, float, float, float, const Config &config)
     {
         if (!config.wireframe.enable)
         {

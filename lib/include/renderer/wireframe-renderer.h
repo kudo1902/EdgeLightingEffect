@@ -17,8 +17,8 @@ namespace EdgeLighting
         WireframeRenderer() = default;
 
         virtual bool Initialize() override;
-        virtual void Update(float deltaTime, float progress, float time, const Config &config) override;
-        virtual void Render(int viewportWidth, int viewportHeight, float progress, float time, const Config &config) override;
+        virtual void Update(float deltaTime, float progress, float headPos, float time, const Config &config) override;
+        virtual void Render(int viewportWidth, int viewportHeight, float progress, float headPos, float time, const Config &config) override;
         virtual void OnConfigChanged(const Config &config) override;
 
     private:
