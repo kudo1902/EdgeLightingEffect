@@ -36,6 +36,13 @@ namespace EdgeLighting
         DOUBLE  ///< Fade applies to both edges of the stroke
     } FadeMode;
 
+    /// Direction of traversal around the rectangle perimeter.
+    typedef enum class Winding
+    {
+        CLOCKWISE,
+        COUNTER_CLOCKWISE
+    } Winding;
+
     /// Determines how colors are computed for the stroke.
     typedef enum class StrokeColorMode
     {
@@ -52,10 +59,11 @@ namespace EdgeLighting
         /// Geometry of the target rectangle.
         typedef struct Geometry
         {
-            float width = 800.0f;                       ///< Rectangle width in pixels
-            float height = 600.0f;                      ///< Rectangle height in pixels
-            glm::vec2 position = glm::vec2(0.0f, 0.0f); ///< Top-left corner in viewport coordinates
-            float borderRadius = 40.0f;                 ///< Corner radius in pixels (0 = sharp corners)
+            float width = 800.0f;                         ///< Rectangle width in pixels
+            float height = 600.0f;                        ///< Rectangle height in pixels
+            glm::vec2 position = glm::vec2(0.0f, 0.0f);   ///< Top-left corner in viewport coordinates
+            float borderRadius = 40.0f;                   ///< Corner radius in pixels (0 = sharp corners)
+            Winding winding = Winding::COUNTER_CLOCKWISE; ///< Traversal direction around the perimeter
         } Geometry;
 
         /// Stroke rendering configuration.
