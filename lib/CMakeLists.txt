@@ -28,6 +28,8 @@ add_library(edge-lighting STATIC
     src/renderer/wireframe-renderer.cpp
     src/renderer/particles.cpp
     src/renderer/particle-renderer.cpp
+    src/util/contour-tracer.cpp
+    src/util/stb-image.cpp
 )
 
 target_include_directories(edge-lighting PUBLIC

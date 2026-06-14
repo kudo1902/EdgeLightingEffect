@@ -9,6 +9,28 @@
 #include <memory>
 
 std::unique_ptr<EdgeLighting::EdgeLightingEffect> gEffect;
+static std::vector<glm::vec2> gStoredMaskPoints;
+
+// Preset custom paths in app space: rect top-left = (0,0), +X right, +Y down.
+// Fits the initial 900×700 window.
+static std::vector<glm::vec2> MakeTrianglePath()
+{
+    return {
+        {410.0f, 30.0f},  // center near top edge
+        {100.0f, 590.0f}, // near bottom-left corner
+        {720.0f, 590.0f}, // near bottom-right corner
+    };
+}
+
+static std::vector<glm::vec2> MakeDiamondPath()
+{
+    return {
+        {410.0f, 30.0f},  // center near top edge
+        {760.0f, 310.0f}, // near right edge, centered vertically
+        {410.0f, 590.0f}, // center near bottom edge
+        {60.0f, 310.0f},  // near left edge, centered vertically
+    };
+}
 
 void OnResize(GLFWwindow *window, int width, int height);
 void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods);
@@ -120,8 +142,24 @@ void OnResize(GLFWwindow *window, int width, int height)
     if (gEffect)
     {
         EdgeLighting::Config config = gEffect->GetConfig();
-        config.geometry.width = static_cast<float>(width) - 80.0f;
-        config.geometry.height = static_cast<float>(height) - 80.0f;
+        float oldW = config.geometry.width;
+        float oldH = config.geometry.height;
+        config.geometry.width = static_cast<float>(width) / 2;
+        config.geometry.height = static_cast<float>(height) / 2;
+
+        // Rescale mask contour points proportionally to the new rectangle size
+        if (config.path.source == EdgeLighting::PathSource::MASK && !gStoredMaskPoints.empty())
+        {
+            float sx = config.geometry.width / oldW;
+            float sy = config.geometry.height / oldH;
+            for (auto &pt : config.path.points)
+            {
+                pt.x *= sx;
+                pt.y *= sy;
+            }
+            gStoredMaskPoints = config.path.points;
+        }
+
         gEffect->SetConfig(config);
         EdgeLightingDemo::PrintCurrentConfig(config, gEffect->GetAnimation().IsPlaying());
     }
@@ -240,6 +278,60 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
         break;
     case GLFW_KEY_G:
         config.wireframe.enable = !config.wireframe.enable;
+        break;
+    case GLFW_KEY_X:
+    {
+        int s = static_cast<int>(config.path.source);
+        s = (s + 1) % 3;
+        config.path.source = static_cast<EdgeLighting::PathSource>(s);
+        if (config.path.source == EdgeLighting::PathSource::CUSTOM)
+        {
+            config.path.points = MakeTrianglePath();
+            config.path.closed = true;
+        }
+        else if (config.path.source == EdgeLighting::PathSource::MASK && !gStoredMaskPoints.empty())
+        {
+            config.path.points = gStoredMaskPoints;
+            config.path.closed = true;
+        }
+        break;
+    }
+    case GLFW_KEY_1:
+        config.path.startPos = std::max(0.0f, config.path.startPos - 0.05f);
+        break;
+    case GLFW_KEY_2:
+        config.path.startPos = std::min(1.0f, config.path.startPos + 0.05f);
+        break;
+    case GLFW_KEY_3:
+        config.path.endPos = std::max(0.0f, config.path.endPos - 0.05f);
+        break;
+    case GLFW_KEY_4:
+        config.path.endPos = std::min(1.0f, config.path.endPos + 0.05f);
+        break;
+    case GLFW_KEY_5:
+        config.path.closed = !config.path.closed;
+        break;
+    case GLFW_KEY_Z:
+    {
+        if (gEffect->SetMaskFromFile(RES_DIR "/mask.png"))
+        {
+            config = gEffect->GetConfig();
+            gStoredMaskPoints = config.path.points;
+        }
+        break;
+    }
+    case GLFW_KEY_W:
+    {
+        int w = static_cast<int>(config.geometry.winding);
+        w = (w + 1) % 2;
+        config.geometry.winding = static_cast<EdgeLighting::Winding>(w);
+        break;
+    }
+    case GLFW_KEY_6:
+        if (config.path.source == EdgeLighting::PathSource::CUSTOM)
+        {
+            config.path.points = MakeDiamondPath();
+        }
         break;
     default:
         return;

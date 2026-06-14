@@ -31,6 +31,14 @@ namespace EdgeLightingDemo
         std::cout << "  [[ / ]]        - Inc / Dec Glow Size\n";
         std::cout << "  [; / ']        - Inc / Dec Glow Intensity\n";
         std::cout << "  [G]            - Toggle Wireframe Bounding Box\n";
+        std::cout << "  [X]            - Cycle Path Source (RECT / CUSTOM / MASK)\n";
+        std::cout << "  [6]            - Switch to Diamond path (CUSTOM)\n";
+        std::cout << "  [Z]            - Load mask from 'res/mask.png' and switch to MASK\n";
+
+        std::cout << "  [1 / 2]        - Dec / Inc Start Pos\n";
+        std::cout << "  [3 / 4]        - Dec / Inc End Pos\n";
+        std::cout << "  [5]            - Toggle Path Closed / Open\n";
+        std::cout << "  [W]            - Toggle Winding (CW / CCW)\n";
         std::cout << "  [ESC]          - Exit\n";
         std::cout << "=========================================\n\n";
     }
@@ -50,6 +58,11 @@ namespace EdgeLightingDemo
                                   ? "ON sz:" + std::to_string((int)config.stroke.glowSize) + " int:" + std::to_string((int)(config.stroke.glowIntensity * 100))
                                   : "OFF";
         std::string particleStr = config.particles.enable ? "ON" : "OFF";
+        std::string pathStr = (config.path.source == EdgeLighting::PathSource::RECT)     ? "RECT"
+                              : (config.path.source == EdgeLighting::PathSource::CUSTOM) ? "CUST"
+                                                                                         : "MASK";
+        std::string closedStr = config.path.closed ? "CL" : "OP";
+        std::string windingStr = (config.geometry.winding == EdgeLighting::Winding::CLOCKWISE) ? "CW" : "CCW";
 
         std::cout << "\r[Stroke] W: " << std::setw(3) << config.stroke.thickness
                   << " | R: " << std::setw(3) << config.geometry.borderRadius
@@ -64,6 +77,11 @@ namespace EdgeLightingDemo
                   << " Fd: " << fadeStr
                   << " | Glow: " << glowStr
                   << " | Ptcl: " << particleStr
+                  << " | Path: " << pathStr
+                  << " " << closedStr
+                  << " " << windingStr
+                  << " S:" << std::setprecision(2) << config.path.startPos
+                  << " E:" << std::setprecision(2) << config.path.endPos
                   << " | Anim: " << (isPlaying ? "PLAY" : "PAUS")
                   << " | Wire: " << (config.wireframe.enable ? "ON " : "OFF")
                   << "      " << std::flush;
