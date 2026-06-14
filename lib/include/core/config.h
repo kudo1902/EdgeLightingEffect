@@ -2,165 +2,172 @@
 #define _EDGE_LIGHTING_CONFIG_H_
 
 #include <glm/glm.hpp>
-#include <cmath>
+#include <vector>
 
 namespace EdgeLighting
 {
-
-    typedef enum class ColorMode
+    /// Source of the lighting path geometry.
+    typedef enum class PathSource
     {
-        STATIC,
-        GRADIENT,
-        AMBIENT_RAINBOW
-    } ColorMode;
+        RECT = 0,   ///< Rectangle edge (current analytic SDF)
+        CUSTOM = 1, ///< User-provided polyline points
+        MASK = 2,   ///< Contour extracted from a binary mask
+    } PathSource;
 
+    /// Controls whether the stroke boundary sits on, inside, or outside the rectangle edge.
+    typedef enum class StrokeAlignment
+    {
+        CENTER, ///< Stroke straddles the rectangle edge
+        INNER,  ///< Stroke sits entirely inside the rectangle
+        OUTER   ///< Stroke sits entirely outside the rectangle
+    } StrokeAlignment;
+
+    /// Determines the stroke animation mode.
+    typedef enum class StrokeAnimation
+    {
+        STATIC,  ///< Full stroke around the entire perimeter
+        MOVING,  ///< A moving segment travels around the perimeter
+        FLASHING ///< Full stroke blinks on/off at speed frequency
+    } StrokeAnimation;
+
+    /// Controls which side of the stroke boundary gets the soft fade.
+    typedef enum class FadeMode
+    {
+        SINGLE, ///< Fade applies only to the far edge (away from the boundary)
+        DOUBLE  ///< Fade applies to both edges of the stroke
+    } FadeMode;
+
+    /// Direction of traversal around the perimeter.
+    /// For RECT mode, this controls the physical direction around the rectangle edge.
+    /// For CUSTOM/MASK modes, the vertex order in Path::points defines the CCW direction;
+    /// CLOCKWISE simply reverses it (traverses points in reverse order).
+    /// There is no automatic winding detection — the vertex order is taken as-is.
+    typedef enum class Winding
+    {
+        CLOCKWISE,
+        COUNTER_CLOCKWISE
+    } Winding;
+
+    /// Determines how colors are computed for the stroke.
+    typedef enum class StrokeColorMode
+    {
+        STATIC,       ///< Single fixed color (@ref Stroke::primaryColor)
+        GRADIENT,     ///< Blends primaryColor -> secondaryColor -> primaryColor around the perimeter
+        RAINBOW,      ///< Hue shifts along the perimeter (0-360°)
+        RAINBOW_TIME, ///< Uniform hue shift over time across the entire stroke
+        PULSE         ///< Uniform oscillation between primaryColor and secondaryColor over time
+    } StrokeColorMode;
+
+    /// Top-level configuration for the EdgeLightingEffect pipeline.
     typedef struct Config
     {
-        // Dimensions of the rectangle boundary
-        float width = 800.0f;
-        float height = 600.0f;
-
-        // Rectangle top-left corner in app space (0,0 = viewport top-left, +x right, +y down)
-        glm::vec2 position = glm::vec2(0.0f, 0.0f);
-
-        // Visual Parameters
-        float borderRadius = 40.0f; // Corner rounding radius in pixels
-        float glowWidth = 30.0f;    // Width of the glow falloff in pixels
-        float lineWidth = 6.0f;     // Thickness of the moving light line in pixels
-        float lineLength = 0.25f;   // Length of the line as a fraction of the total perimeter (0.0 to 1.0)
-        float speed = 1.0f;         // Speed of the moving line along the perimeter (loops per second)
-        float intensity = 1.5f;     // Master brightness intensity
-
-        // Color Mode Configuration
-        ColorMode colorMode = ColorMode::AMBIENT_RAINBOW;
-        glm::vec4 primaryColor = glm::vec4(0.0f, 0.8f, 1.0f, 1.0f);   // Cyan/Blue (default static/gradient start)
-        glm::vec4 secondaryColor = glm::vec4(1.0f, 0.0f, 0.8f, 1.0f); // Magenta/Pink (default gradient end)
-
-        // Particle Visual Parameters
-        bool enableParticles = true;
-        int maxParticles = 150;
-        float particleSize = 8.0f;
-        float particleIntensity = 1.2f;
-        glm::vec4 particleColor = glm::vec4(1.0f, 0.9f, 0.5f, 0.8f);
-
-        // Multi-light config
-        int lightCount = 1; // Number of moving light segments
-    } Config;
-
-    namespace GeometryUtils
-    {
-
-        inline glm::vec2 GetPointOnRectangle(float perimeterPos, const Config &config)
+        /// Geometry of the target rectangle.
+        typedef struct Geometry
         {
-            float r = config.borderRadius;
-            float halfW = config.width * 0.5f;
-            float halfH = config.height * 0.5f;
+            float width = 800.0f;                       ///< Rectangle width in pixels
+            float height = 600.0f;                      ///< Rectangle height in pixels
+            glm::vec2 position = glm::vec2(0.0f, 0.0f); ///< Top-left corner in viewport coordinates
+            float borderRadius = 40.0f;                 ///< Corner radius in pixels (0 = sharp corners)
+            /// Traversal direction around the perimeter.
+            /// For CUSTOM/MASK, vertex order defines CCW; CW reverses it.
+            Winding winding = Winding::COUNTER_CLOCKWISE;
+        } Geometry;
 
-            // Handle sharp corners directly to avoid division-by-zero (NaN) issues
-            if (r <= 0.01f)
-            {
-                float w_str = 2.0f * halfW;
-                float h_str = 2.0f * halfH;
-                float total = 2.0f * w_str + 2.0f * h_str;
-                float dist = perimeterPos * total;
+        /// Stroke rendering configuration.
+        typedef struct Stroke
+        {
+            bool enable = true; ///< Enable or disable the stroke renderer
 
-                // Segment 1: Top edge (Left to Right)
-                if (dist < w_str)
-                {
-                    return glm::vec2(-halfW + dist, halfH);
-                }
-                // Segment 2: Right edge (Top to Bottom)
-                if (dist < w_str + h_str)
-                {
-                    return glm::vec2(halfW, halfH - (dist - w_str));
-                }
-                // Segment 3: Bottom edge (Right to Left)
-                if (dist < w_str + h_str + w_str)
-                {
-                    return glm::vec2(halfW - (dist - w_str - h_str), -halfH);
-                }
-                // Segment 4: Left edge (Bottom to Top)
-                return glm::vec2(-halfW, -halfH + (dist - w_str - h_str - w_str));
-            }
+            // --- Appearance ---
 
-            float w_str = 2.0f * (halfW - r);
-            float h_str = 2.0f * (halfH - r);
-            float arc = 0.5f * 3.1415926535f * r;
-            float total = 4.0f * arc + 2.0f * w_str + 2.0f * h_str;
+            /// Stroke thickness in pixels (diameter for CENTER alignment, full width for INNER/OUTER).
+            float thickness = 3.0f;
+            /// Global opacity multiplier [0-1].
+            float intensity = 1.0f;
+            /// Whether the stroke sits centered on, inside, or outside the rectangle edge.
+            StrokeAlignment alignment = StrokeAlignment::CENTER;
 
-            float dist = perimeterPos * total;
+            // --- Color ---
 
-            glm::vec2 c_tr(halfW - r, halfH - r);
-            glm::vec2 c_br(halfW - r, -halfH + r);
-            glm::vec2 c_bl(-halfW + r, -halfH + r);
-            glm::vec2 c_tl(-halfW + r, halfH - r);
+            /// Primary color (used in STATIC mode, and as first blend color in GRADIENT/PULSE modes).
+            glm::vec4 primaryColor = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
+            /// Secondary color (used as second blend color in GRADIENT/PULSE modes).
+            glm::vec4 secondaryColor = glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
+            /// Active color rendering mode.
+            StrokeColorMode colorMode = StrokeColorMode::STATIC;
 
-            // Segment 1: Top straight edge
-            float s1_end = w_str;
-            if (dist < s1_end)
-            {
-                float t = dist / w_str;
-                return glm::vec2(-halfW + r + t * w_str, halfH);
-            }
+            // --- Edge feathering ---
 
-            // Segment 2: Top-right corner arc
-            float s2_end = s1_end + arc;
-            if (dist < s2_end)
-            {
-                float t = (dist - s1_end) / arc;
-                float angle = 3.1415926535f * 0.5f * (1.0f - t); // PI/2 down to 0
-                return c_tr + glm::vec2(std::cos(angle), std::sin(angle)) * r;
-            }
+            /// Soft fade distance from the stroke edge in pixels (0 = hard edge, up to thickness).
+            float fadeRange = 0.0f;
+            /// Which side(s) of the stroke receive the fade.
+            FadeMode fadeMode = FadeMode::SINGLE;
 
-            // Segment 3: Right straight edge
-            float s3_end = s2_end + h_str;
-            if (dist < s3_end)
-            {
-                float t = (dist - s2_end) / h_str;
-                return glm::vec2(halfW, halfH - r - t * h_str);
-            }
+            // --- Animation ---
 
-            // Segment 4: Bottom-right corner arc
-            float s4_end = s3_end + arc;
-            if (dist < s4_end)
-            {
-                float t = (dist - s3_end) / arc;
-                float angle = -3.1415926535f * 0.5f * t; // 0 down to -PI/2
-                return c_br + glm::vec2(std::cos(angle), std::sin(angle)) * r;
-            }
+            /// Whether the stroke is static or has a moving segment.
+            StrokeAnimation animation = StrokeAnimation::STATIC;
+            /// Length of the moving segment as a fraction of the total perimeter [0-1].
+            float segmentLength = 0.25f;
+            /// Travel speed of the moving segment (revolutions per second).
+            /// No enforced limit. Very low values (< 0.01) appear frozen;
+            /// very high values (> 100) may flicker.
+            float speed = 0.5f;
+            /// Number of simultaneous moving segments spread evenly around the perimeter.
+            int lineCount = 1;
 
-            // Segment 5: Bottom straight edge
-            float s5_end = s4_end + w_str;
-            if (dist < s5_end)
-            {
-                float t = (dist - s4_end) / w_str;
-                return glm::vec2(halfW - r - t * w_str, -halfH);
-            }
+            // --- Glow ---
 
-            // Segment 6: Bottom-left corner arc
-            float s6_end = s5_end + arc;
-            if (dist < s6_end)
-            {
-                float t = (dist - s5_end) / arc;
-                float angle = -3.1415926535f * 0.5f * (1.0f + t); // -PI/2 down to -PI
-                return c_bl + glm::vec2(std::cos(angle), std::sin(angle)) * r;
-            }
+            /// Enable a wider, fainter glow behind the core stroke.
+            bool glowEnable = false;
+            /// Extra pixels extending beyond the stroke edge.
+            float glowSize = 5.0f;
+            /// Opacity multiplier for the glow pass.
+            float glowIntensity = 0.25f;
+        } Stroke;
 
-            // Segment 7: Left straight edge
-            float s7_end = s6_end + h_str;
-            if (dist < s7_end)
-            {
-                float t = (dist - s6_end) / h_str;
-                return glm::vec2(-halfW, -halfH + r + t * h_str);
-            }
+        /// Wireframe debug overlay configuration.
+        typedef struct Wireframe
+        {
+            bool enable = true;                                  ///< Show or hide the wireframe bounding box
+            glm::vec4 color = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f); ///< Wireframe color
+        } Wireframe;
 
-            // Segment 8: Top-left corner arc
-            float t = (dist - s7_end) / arc;
-            float angle = 3.1415926535f * (1.0f - 0.5f * t); // PI down to PI/2
-            return c_tl + glm::vec2(std::cos(angle), std::sin(angle)) * r;
-        }
+        /// Particle trail configuration.
+        typedef struct Particles
+        {
+            bool enable = true;     ///< Enable or disable particle emission
+            int maxCount = 200;     ///< Maximum number of particles alive at once
+            float size = 6.0f;      ///< Particle point size in pixels
+            float intensity = 1.0f; ///< Global opacity multiplier for particles
+            /// Particle color override. Zero alpha (= default) uses auto color
+            /// derived from the stroke color mode at the spawn point.
+            glm::vec4 color = glm::vec4(0.0f);
+        } Particles;
 
-    } // namespace GeometryUtils
+        /// Lighting path definition.
+        typedef struct Path
+        {
+            /// Source of the path geometry.
+            PathSource source = PathSource::RECT;
+            /// Whether the path forms a closed loop.
+            bool closed = true;
+            /// Starting position of the light head along the path [0-1].
+            float startPos = 0.0f;
+            /// End position of the light head along the path [0-1].
+            float endPos = 1.0f;
+            /// Polyline points in local space (for CUSTOM and MASK modes).
+            /// Vertex order defines the CCW traversal direction.
+            /// When Winding::CLOCKWISE is set, points are traversed in reverse.
+            std::vector<glm::vec2> points;
+        } Path;
+
+        Geometry geometry;   ///< Rectangle geometry
+        Stroke stroke;       ///< Stroke rendering settings
+        Wireframe wireframe; ///< Wireframe overlay settings
+        Particles particles; ///< Particle trail settings
+        Path path;           ///< Path source + start/end configuration
+    } Config;
 
 } // namespace EdgeLighting
 

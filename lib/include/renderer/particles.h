@@ -4,6 +4,8 @@
 #include <glm/glm.hpp>
 #include <vector>
 #include <functional>
+#include "gl/shader-program.h"
+#include "gl/vertex-array.h"
 
 namespace EdgeLighting
 {
@@ -12,16 +14,22 @@ namespace EdgeLighting
         glm::vec2 position = glm::vec2(0.0f);
         glm::vec2 velocity = glm::vec2(0.0f);
         glm::vec4 color = glm::vec4(1.0f);
-        float life = 0.0f; // 1.0 to 0.0
+        float life = 0.0f;
         float maxLife = 1.0f;
         float size = 5.0f;
     } Particle;
 
+    struct ParticleVertex
+    {
+        glm::vec2 position;
+        glm::vec4 color;
+        float size;
+    };
+
     class ParticleSystem
     {
     public:
-        ParticleSystem();
-        ~ParticleSystem();
+        ParticleSystem() = default;
 
         bool Initialize();
         void Update(float deltaTime);
@@ -35,10 +43,8 @@ namespace EdgeLighting
         std::function<void(const Particle &)> OnParticleSpawned;
 
     private:
-        // Private methods (camelCase)
         bool setupShaders();
         void setupBuffers();
-        void updateBuffers();
 
         int mMaxParticles = 200;
         float mGlobalSize = 6.0f;
@@ -46,12 +52,8 @@ namespace EdgeLighting
 
         std::vector<Particle> mParticles;
 
-        // OpenGL Objects
-        unsigned int mShaderProgram = 0;
-        unsigned int mVao = 0;
-        unsigned int mVboPos = 0;
-        unsigned int mVboCol = 0;
-        unsigned int mVboSize = 0;
+        ShaderProgram mShaderProgram;
+        VertexArray mVertexArray;
     };
 
 } // namespace EdgeLighting

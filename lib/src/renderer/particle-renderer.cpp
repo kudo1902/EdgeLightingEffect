@@ -1,5 +1,8 @@
 #include "renderer/particle-renderer.h"
 #include "util/log-util.h"
+#include "util/geometry-utils.h"
+#include "util/path-utils.h"
+#include <glm/gtc/matrix_transform.hpp>
 
 namespace EdgeLighting
 {
@@ -19,22 +22,30 @@ namespace EdgeLighting
         return true;
     }
 
-    void ParticleRenderer::Update(float deltaTime, float progress, float time, const Config &config)
+    void ParticleRenderer::Update(float deltaTime, float, float headPos, float time, const Config &config)
     {
-        if (!config.enableParticles)
+        if (!config.particles.enable)
+        {
             return;
+        }
 
-        emitParticlesAtHead(progress, time, config);
+        if (config.stroke.animation == StrokeAnimation::MOVING)
+        {
+            emitParticlesAtHead(headPos, time, config);
+        }
+
         mParticleSystem->Update(deltaTime);
     }
 
-    void ParticleRenderer::Render(int viewportWidth, int viewportHeight, float progress, float time, const Config &config)
+    void ParticleRenderer::Render(int viewportWidth, int viewportHeight, float, float, float, const Config &config)
     {
-        if (!config.enableParticles)
+        if (!config.particles.enable)
+        {
             return;
-        // Rectangle center in screen-center-relative coords (for particle NDC conversion)
-        glm::vec2 offset(config.position.x + config.width * 0.5f - viewportWidth * 0.5f,
-                         viewportHeight * 0.5f - config.position.y - config.height * 0.5f);
+        }
+
+        glm::vec2 offset(config.geometry.position.x + config.geometry.width * 0.5f - viewportWidth * 0.5f,
+                         viewportHeight * 0.5f - config.geometry.position.y - config.geometry.height * 0.5f);
         mParticleSystem->Render(viewportWidth, viewportHeight, offset);
     }
 
@@ -42,61 +53,84 @@ namespace EdgeLighting
     {
         if (mParticleSystem)
         {
-            mParticleSystem->SetMaxParticles(config.maxParticles);
-            mParticleSystem->SetParticleSize(config.particleSize);
-            mParticleSystem->SetParticleIntensity(config.particleIntensity);
+            mParticleSystem->SetMaxParticles(config.particles.maxCount);
+            mParticleSystem->SetParticleSize(config.particles.size);
+            mParticleSystem->SetParticleIntensity(config.particles.intensity);
         }
     }
 
-    void ParticleRenderer::emitParticlesAtHead(float progress, float time, const Config &config)
+    glm::vec3 ParticleRenderer::getRainbowColor(float p)
     {
-        for (int i = 0; i < config.lightCount; ++i)
-        {
-            float offset = static_cast<float>(i) / static_cast<float>(config.lightCount);
-            float headProgress = glm::fract(progress + offset);
-            glm::vec2 spawnPos = GeometryUtils::GetPointOnRectangle(headProgress, config);
+        glm::vec3 c1(1.0f, 0.0f, 0.0f);
+        glm::vec3 c2(1.0f, 1.0f, 0.0f);
+        glm::vec3 c3(0.0f, 1.0f, 0.0f);
+        glm::vec3 c4(0.0f, 1.0f, 1.0f);
+        glm::vec3 c5(0.0f, 0.0f, 1.0f);
+        glm::vec3 c6(1.0f, 0.0f, 1.0f);
 
-            // Determine color
-            glm::vec4 emitterColor;
-            if (config.colorMode == ColorMode::STATIC)
+        float w = 1.0f / 6.0f;
+        if (p < w)
+        {
+            return glm::mix(c1, c2, p / w);
+        }
+        if (p < 2.0f * w)
+        {
+            return glm::mix(c2, c3, (p - w) / w);
+        }
+        if (p < 3.0f * w)
+        {
+            return glm::mix(c3, c4, (p - 2.0f * w) / w);
+        }
+        if (p < 4.0f * w)
+        {
+            return glm::mix(c4, c5, (p - 3.0f * w) / w);
+        }
+        if (p < 5.0f * w)
+        {
+            return glm::mix(c5, c6, (p - 4.0f * w) / w);
+        }
+        return glm::mix(c6, c1, (p - 5.0f * w) / w);
+    }
+
+    void ParticleRenderer::emitParticlesAtHead(float headPos, float time, const Config &config)
+    {
+        for (int i = 0; i < config.stroke.lineCount; ++i)
+        {
+            float offset = static_cast<float>(i) / static_cast<float>(config.stroke.lineCount);
+            float headProgress = glm::fract(headPos + offset);
+            glm::vec2 spawnPos;
+            if (config.path.source == PathSource::RECT)
             {
-                emitterColor = config.primaryColor;
-            }
-            else if (config.colorMode == ColorMode::GRADIENT)
-            {
-                emitterColor = glm::mix(config.primaryColor, config.secondaryColor, headProgress);
+                spawnPos = GeometryUtils::GetPointOnRectangle(headProgress, config.geometry);
             }
             else
             {
-                // Rainbow shift
-                float shift = glm::fract(headProgress - time * 0.25f);
-                auto getRainbow = [](float p)
-                {
-                    glm::vec3 c1(1.0f, 0.0f, 0.0f);
-                    glm::vec3 c2(1.0f, 1.0f, 0.0f);
-                    glm::vec3 c3(0.0f, 1.0f, 0.0f);
-                    glm::vec3 c4(0.0f, 1.0f, 1.0f);
-                    glm::vec3 c5(0.0f, 0.0f, 1.0f);
-                    glm::vec3 c6(1.0f, 0.0f, 1.0f);
-
-                    float w = 1.0f / 6.0f;
-                    if (p < w)
-                        return glm::mix(c1, c2, p / w);
-                    if (p < 2.0f * w)
-                        return glm::mix(c2, c3, (p - w) / w);
-                    if (p < 3.0f * w)
-                        return glm::mix(c3, c4, (p - 2.0f * w) / w);
-                    if (p < 4.0f * w)
-                        return glm::mix(c4, c5, (p - 3.0f * w) / w);
-                    if (p < 5.0f * w)
-                        return glm::mix(c5, c6, (p - 4.0f * w) / w);
-                    return glm::mix(c6, c1, (p - 5.0f * w) / w);
-                };
-                emitterColor = glm::vec4(getRainbow(shift), 1.0f);
+                // Match the texture direction: reverse progress for CW winding
+                float pathProgress = (config.geometry.winding == Winding::CLOCKWISE)
+                                         ? 1.0f - headProgress
+                                         : headProgress;
+                glm::vec2 appPos = PathUtils::GetPointOnPath(pathProgress, config.path.points, config.path.closed);
+                spawnPos = GeometryUtils::AppToLocal(appPos, config.geometry);
             }
 
-            glm::vec4 color = (config.particleColor.a > 0.0f) ? config.particleColor : emitterColor;
-            mParticleSystem->Emit(spawnPos, color, config.speed, 2);
+            glm::vec4 emitterColor;
+            if (config.stroke.colorMode == StrokeColorMode::STATIC)
+            {
+                emitterColor = config.stroke.primaryColor;
+            }
+            else if (config.stroke.colorMode == StrokeColorMode::GRADIENT)
+            {
+                float t = 1.0f - abs(2.0f * headProgress - 1.0f);
+                emitterColor = glm::mix(config.stroke.primaryColor, config.stroke.secondaryColor, t);
+            }
+            else
+            {
+                float shift = glm::fract(headProgress - time * 0.25f);
+                emitterColor = glm::vec4(getRainbowColor(shift), 1.0f);
+            }
+
+            glm::vec4 color = (config.particles.color.a > 0.0f) ? config.particles.color : emitterColor;
+            mParticleSystem->Emit(spawnPos, color, config.stroke.speed, 2);
         }
     }
 
