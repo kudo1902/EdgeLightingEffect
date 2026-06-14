@@ -262,13 +262,42 @@ vec2 sdPolyline(vec2 p) {
         vec2 closest = a + ab * t;
         float dist = length(p - closest);
 
-        vec2 dir = ab / segLen;
-        float crossVal = dir.x * (p.y - a.y) - dir.y * (p.x - a.x);
-        float sDist = (crossVal >= 0.0) ? dist : -dist;
-
         if (dist < minAbsDist) {
             minAbsDist = dist;
-            signedDist = sDist;
+
+            float side;
+            if (t < 0.001) {
+                // At vertex 'a' — use angle-weighted pseudonormal
+                if (uPathClosed || i > 0) {
+                    int prevI = uPathClosed ? ((i - 1 + n) % n) : (i - 1);
+                    vec2 prev = texelFetch(uPathTexture, prevI, 0).xy;
+                    vec2 dPrev = normalize(a - prev);
+                    vec2 dNext = normalize(b - a);
+                    vec2 pseudoN = normalize(vec2(-dPrev.y, dPrev.x) + vec2(-dNext.y, dNext.x));
+                    side = dot(p - a, pseudoN);
+                } else {
+                    vec2 d = ab / segLen;
+                    side = d.x * (p.y - a.y) - d.y * (p.x - a.x);
+                }
+            } else if (t > 0.999) {
+                // At vertex 'b' — use angle-weighted pseudonormal
+                if (uPathClosed || i < segCount - 1) {
+                    int nextI = uPathClosed ? ((i + 1) % n) : (i + 1);
+                    vec2 next = texelFetch(uPathTexture, (nextI + 1) % n, 0).xy;
+                    vec2 dPrev = normalize(b - a);
+                    vec2 dNext = normalize(next - b);
+                    vec2 pseudoN = normalize(vec2(-dPrev.y, dPrev.x) + vec2(-dNext.y, dNext.x));
+                    side = dot(p - b, pseudoN);
+                } else {
+                    vec2 d = ab / segLen;
+                    side = d.x * (p.y - a.y) - d.y * (p.x - a.x);
+                }
+            } else {
+                vec2 d = ab / segLen;
+                side = d.x * (p.y - a.y) - d.y * (p.x - a.x);
+            }
+
+            signedDist = (side >= 0.0) ? dist : -dist;
             perimPos = (cumLen + t * segLen) / uPathTotalLength;
         }
         cumLen += segLen;
