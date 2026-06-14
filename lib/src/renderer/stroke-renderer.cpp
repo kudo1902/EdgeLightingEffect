@@ -55,6 +55,7 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uSegmentLength", config.stroke.segmentLength);
         mShaderProgram.SetUniform("uHeadPosition", headPos);
         mShaderProgram.SetUniform("uTime", time);
+        mShaderProgram.SetUniform("uSpeed", config.stroke.speed);
         mShaderProgram.SetUniform("uSecondaryColor", config.stroke.secondaryColor);
         mShaderProgram.SetUniform("uColorMode", static_cast<int>(config.stroke.colorMode));
         mShaderProgram.SetUniform("uLineCount", config.stroke.lineCount);

@@ -18,6 +18,7 @@ uniform int uStrokeAnimation;
 uniform float uSegmentLength;
 uniform float uHeadPosition;
 uniform float uTime;
+uniform float uSpeed;
 
 uniform int uColorMode;
 uniform int uLineCount;
@@ -344,6 +345,11 @@ void main() {
             }
         }
         finalAlpha = movingAlpha;
+    }
+
+    if (uStrokeAnimation == 2) {
+        float blink = step(0.5, fract(uTime * uSpeed));
+        finalAlpha *= blink;
     }
 
     if (uStrokeAlignment == 1 && d > 0.0) discard;

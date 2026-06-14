@@ -216,7 +216,7 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
     case GLFW_KEY_M:
     {
         int m = static_cast<int>(config.stroke.animation);
-        m = (m + 1) % 2;
+        m = (m + 1) % 3;
         config.stroke.animation = static_cast<EdgeLighting::StrokeAnimation>(m);
         break;
     }

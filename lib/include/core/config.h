@@ -22,11 +22,12 @@ namespace EdgeLighting
         OUTER   ///< Stroke sits entirely outside the rectangle
     } StrokeAlignment;
 
-    /// Determines whether the stroke renders as a full edge or an animated moving segment.
+    /// Determines the stroke animation mode.
     typedef enum class StrokeAnimation
     {
-        STATIC, ///< Full stroke around the entire perimeter
-        MOVING  ///< A moving segment travels around the perimeter
+        STATIC,  ///< Full stroke around the entire perimeter
+        MOVING,  ///< A moving segment travels around the perimeter
+        FLASHING ///< Full stroke blinks on/off at speed frequency
     } StrokeAnimation;
 
     /// Controls which side of the stroke boundary gets the soft fade.
@@ -63,10 +64,10 @@ namespace EdgeLighting
         /// Geometry of the target rectangle.
         typedef struct Geometry
         {
-            float width = 800.0f;                         ///< Rectangle width in pixels
-            float height = 600.0f;                        ///< Rectangle height in pixels
-            glm::vec2 position = glm::vec2(0.0f, 0.0f);   ///< Top-left corner in viewport coordinates
-            float borderRadius = 40.0f;                   ///< Corner radius in pixels (0 = sharp corners)
+            float width = 800.0f;                       ///< Rectangle width in pixels
+            float height = 600.0f;                      ///< Rectangle height in pixels
+            glm::vec2 position = glm::vec2(0.0f, 0.0f); ///< Top-left corner in viewport coordinates
+            float borderRadius = 40.0f;                 ///< Corner radius in pixels (0 = sharp corners)
             /// Traversal direction around the perimeter.
             /// For CUSTOM/MASK, vertex order defines CCW; CW reverses it.
             Winding winding = Winding::COUNTER_CLOCKWISE;

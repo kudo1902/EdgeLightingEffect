@@ -22,7 +22,7 @@ namespace EdgeLightingDemo
         std::cout << "  [B]            - Cycle Fade Mode (SINGLE / DOUBLE)\n";
         std::cout << "  [C]            - Cycle Color Mode (STC/GRD/RNB/RNT/PLS)\n";
         std::cout << "  [, / .]        - Dec / Inc Line Count\n";
-        std::cout << "  [M]            - Toggle Animation (STATIC / MOVING)\n";
+        std::cout << "  [M]            - Cycle Animation (STATIC / MOVING / FLASHING)\n";
         std::cout << "  [U / Y]        - Inc / Dec Segment Length (moving)\n";
         std::cout << "  [P / L]        - Inc / Dec Speed (moving)\n";
         std::cout << "  [SPACE]        - Pause / Resume Animation\n";
@@ -47,7 +47,8 @@ namespace EdgeLightingDemo
     {
         std::string sideStr = (config.stroke.alignment == EdgeLighting::StrokeAlignment::CENTER) ? "CEN" : (config.stroke.alignment == EdgeLighting::StrokeAlignment::INNER) ? "IN"
                                                                                                                                                                              : "OUT";
-        std::string modeStr = (config.stroke.animation == EdgeLighting::StrokeAnimation::STATIC) ? "ST" : "MV";
+        std::string modeStr = (config.stroke.animation == EdgeLighting::StrokeAnimation::STATIC) ? "ST" : (config.stroke.animation == EdgeLighting::StrokeAnimation::MOVING) ? "MV"
+                                                                                                                                                                             : "FL";
         std::string fadeStr = (config.stroke.fadeMode == EdgeLighting::FadeMode::SINGLE) ? "SGL" : "DBL";
         std::string colorStr = (config.stroke.colorMode == EdgeLighting::StrokeColorMode::STATIC) ? "STC" : (config.stroke.colorMode == EdgeLighting::StrokeColorMode::GRADIENT)   ? "GRD"
                                                                                                         : (config.stroke.colorMode == EdgeLighting::StrokeColorMode::RAINBOW)      ? "RNB"
