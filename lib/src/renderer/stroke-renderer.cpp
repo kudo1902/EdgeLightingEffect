@@ -1,6 +1,9 @@
 #include "renderer/stroke-renderer.h"
 #include "shaders.h"
 #include "util/log-util.h"
+#include "util/geometry-utils.h"
+#include "util/path-utils.h"
+#include <algorithm>
 #include <glm/gtc/matrix_transform.hpp>
 
 namespace EdgeLighting
@@ -13,14 +16,15 @@ namespace EdgeLighting
             return false;
         }
         setupGeometry(mCurrentConfig);
+        uploadPathTexture(mCurrentConfig);
         return true;
     }
 
-    void StrokeRenderer::Update(float, float, float, const Config &)
+    void StrokeRenderer::Update(float, float, float, float, const Config &)
     {
     }
 
-    void StrokeRenderer::Render(int viewportWidth, int viewportHeight, float progress, float time, const Config &config)
+    void StrokeRenderer::Render(int viewportWidth, int viewportHeight, float, float headPos, float time, const Config &config)
     {
         if (!config.stroke.enable)
             return;
@@ -49,11 +53,26 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uFadeMode", static_cast<int>(config.stroke.fadeMode));
         mShaderProgram.SetUniform("uStrokeAnimation", static_cast<int>(config.stroke.animation));
         mShaderProgram.SetUniform("uSegmentLength", config.stroke.segmentLength);
-        mShaderProgram.SetUniform("uSpeed", config.stroke.speed);
+        mShaderProgram.SetUniform("uHeadPosition", headPos);
         mShaderProgram.SetUniform("uTime", time);
         mShaderProgram.SetUniform("uSecondaryColor", config.stroke.secondaryColor);
         mShaderProgram.SetUniform("uColorMode", static_cast<int>(config.stroke.colorMode));
         mShaderProgram.SetUniform("uLineCount", config.stroke.lineCount);
+        mShaderProgram.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
+
+        mShaderProgram.SetUniform("uPathSource", static_cast<int>(config.path.source));
+        mShaderProgram.SetUniform("uPathPointCount", static_cast<int>(config.path.points.size()));
+        mShaderProgram.SetUniform("uPathClosed", static_cast<int>(config.path.closed));
+
+        {
+            float totalLen = (config.path.source != PathSource::RECT && !config.path.points.empty())
+                                 ? PathUtils::GetPathLength(config.path.points, config.path.closed)
+                                 : 1.0f;
+            mShaderProgram.SetUniform("uPathTotalLength", totalLen);
+
+            mPathTexture.Bind(0);
+            mShaderProgram.SetUniform("uPathTexture", 0);
+        }
 
         if (config.stroke.glowEnable)
         {
@@ -74,7 +93,10 @@ namespace EdgeLighting
     {
         mCurrentConfig = config;
         if (mShaderProgram.IsValid())
+        {
             setupGeometry(config);
+            uploadPathTexture(config);
+        }
     }
 
     bool StrokeRenderer::setupShaders()
@@ -85,14 +107,28 @@ namespace EdgeLighting
 
     void StrokeRenderer::setupGeometry(const Config &config)
     {
-        float halfW = config.geometry.width * 0.5f;
-        float halfH = config.geometry.height * 0.5f;
         float margin = config.stroke.thickness + config.stroke.glowSize + 5.0f;
+        float l, r, b, t;
 
-        float l = -(halfW + margin);
-        float r = halfW + margin;
-        float b = -(halfH + margin);
-        float t = halfH + margin;
+        if (config.path.source != PathSource::RECT && !config.path.points.empty())
+        {
+            auto localPts = GeometryUtils::AppToLocal(config.path.points, config.geometry);
+            glm::vec2 center, halfSize;
+            PathUtils::GetPathAABB(localPts, center, halfSize);
+            l = center.x - (halfSize.x + margin);
+            r = center.x + (halfSize.x + margin);
+            b = center.y - (halfSize.y + margin);
+            t = center.y + (halfSize.y + margin);
+        }
+        else
+        {
+            float halfW = config.geometry.width * 0.5f;
+            float halfH = config.geometry.height * 0.5f;
+            l = -(halfW + margin);
+            r = halfW + margin;
+            b = -(halfH + margin);
+            t = halfH + margin;
+        }
 
         // clang-format off
         float verts[] = {
@@ -103,6 +139,30 @@ namespace EdgeLighting
 
         mVertexArray.SetVertexData(verts, sizeof(verts));
         mVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+    }
+
+    void StrokeRenderer::uploadPathTexture(const Config &config)
+    {
+        mPathTexture = Texture1D();
+
+        if (config.path.source == PathSource::RECT || config.path.points.empty())
+        {
+            float zero[2] = {0.0f, 0.0f};
+            mPathTexture.SetData(zero, 1);
+        }
+        else
+        {
+            auto localPts = GeometryUtils::AppToLocal(config.path.points, config.geometry);
+            if (config.geometry.winding == Winding::CLOCKWISE)
+            {
+                std::reverse(localPts.begin(), localPts.end());
+            }
+
+            mPathTexture.SetData(reinterpret_cast<const float *>(localPts.data()),
+                                 static_cast<GLsizei>(localPts.size()));
+        }
+
+        mPathTexture.SetParams();
     }
 
 } // namespace EdgeLighting

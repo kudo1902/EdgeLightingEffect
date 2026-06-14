@@ -4,6 +4,7 @@
 #include "renderer/base-renderer.h"
 #include "gl/shader-program.h"
 #include "gl/vertex-array.h"
+#include "gl/texture-1d.h"
 
 namespace EdgeLighting
 {
@@ -16,19 +17,22 @@ namespace EdgeLighting
     {
     public:
         StrokeRenderer() = default;
+        virtual ~StrokeRenderer() = default;
 
         virtual bool Initialize() override;
-        virtual void Update(float deltaTime, float progress, float time, const Config &config) override;
-        virtual void Render(int viewportWidth, int viewportHeight, float progress, float time, const Config &config) override;
+        virtual void Update(float deltaTime, float progress, float headPos, float time, const Config &config) override;
+        virtual void Render(int viewportWidth, int viewportHeight, float progress, float headPos, float time, const Config &config) override;
         virtual void OnConfigChanged(const Config &config) override;
 
     private:
         bool setupShaders();
         void setupGeometry(const Config &config);
+        void uploadPathTexture(const Config &config);
 
         Config mCurrentConfig;
         ShaderProgram mShaderProgram;
         VertexArray mVertexArray;
+        Texture1D mPathTexture;
     };
 }
 
