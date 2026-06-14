@@ -36,7 +36,11 @@ namespace EdgeLighting
         DOUBLE  ///< Fade applies to both edges of the stroke
     } FadeMode;
 
-    /// Direction of traversal around the rectangle perimeter.
+    /// Direction of traversal around the perimeter.
+    /// For RECT mode, this controls the physical direction around the rectangle edge.
+    /// For CUSTOM/MASK modes, the vertex order in Path::points defines the CCW direction;
+    /// CLOCKWISE simply reverses it (traverses points in reverse order).
+    /// There is no automatic winding detection — the vertex order is taken as-is.
     typedef enum class Winding
     {
         CLOCKWISE,
@@ -63,7 +67,9 @@ namespace EdgeLighting
             float height = 600.0f;                        ///< Rectangle height in pixels
             glm::vec2 position = glm::vec2(0.0f, 0.0f);   ///< Top-left corner in viewport coordinates
             float borderRadius = 40.0f;                   ///< Corner radius in pixels (0 = sharp corners)
-            Winding winding = Winding::COUNTER_CLOCKWISE; ///< Traversal direction around the perimeter
+            /// Traversal direction around the perimeter.
+            /// For CUSTOM/MASK, vertex order defines CCW; CW reverses it.
+            Winding winding = Winding::COUNTER_CLOCKWISE;
         } Geometry;
 
         /// Stroke rendering configuration.
@@ -150,6 +156,8 @@ namespace EdgeLighting
             /// End position of the light head along the path [0-1].
             float endPos = 1.0f;
             /// Polyline points in local space (for CUSTOM and MASK modes).
+            /// Vertex order defines the CCW traversal direction.
+            /// When Winding::CLOCKWISE is set, points are traversed in reverse.
             std::vector<glm::vec2> points;
         } Path;
 
