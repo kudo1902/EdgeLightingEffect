@@ -186,7 +186,7 @@ float getPerimeterPosCCW(vec2 p, vec2 b, float r) {
     if (p.x <= -c_tr.x && p.y >= c_tr.y) {
         // TL arc π/2 → π
         float angle = atan(p.y - c_tr.y, p.x + c_tr.x);
-        float t = (3.14159265 - angle) / (3.14159265 * 0.5);
+        float t = (angle - 3.14159265 * 0.5) / (3.14159265 * 0.5);
         return (h_str + arc + w_str + arc + h_str + arc + w_str + t * arc) / total;
     }
 
