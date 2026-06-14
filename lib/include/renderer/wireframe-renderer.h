@@ -7,6 +7,10 @@
 
 namespace EdgeLighting
 {
+    /// Renders a minimal 4-vertex GL_LINE_LOOP bounding-box overlay
+    /// around the target rectangle.
+    ///
+    /// @see Config::Wireframe for configuration options.
     class WireframeRenderer : public BaseRenderer
     {
     public:
