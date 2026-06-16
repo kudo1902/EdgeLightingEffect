@@ -3,33 +3,27 @@
 
 namespace EdgeLighting
 {
-    namespace ShaderSource
-    {
-        static const char *const STROKE_VERT_SRC = R"shadersrc(
-@STROKE_VERT_CONTENT@
+        namespace ShaderSource
+        {
+                static const char *const STROKE_VERT_SRC = R"shadersrc(@STROKE_VERT_CONTENT@
 )shadersrc";
 
-        static const char *const STROKE_FRAG_SRC = R"shadersrc(
-@STROKE_FRAG_CONTENT@
+                static const char *const STROKE_FRAG_SRC = R"shadersrc(@STROKE_FRAG_CONTENT@
 )shadersrc";
 
-        static const char *const WIREFRAME_VERT_SRC = R"shadersrc(
-@WIREFRAME_VERT_CONTENT@
+                static const char *const WIREFRAME_VERT_SRC = R"shadersrc(@WIREFRAME_VERT_CONTENT@
 )shadersrc";
 
-        static const char *const WIREFRAME_FRAG_SRC = R"shadersrc(
-@WIREFRAME_FRAG_CONTENT@
+                static const char *const WIREFRAME_FRAG_SRC = R"shadersrc(@WIREFRAME_FRAG_CONTENT@
 )shadersrc";
 
-        static const char *const PARTICLE_VERT_SRC = R"shadersrc(
-@PARTICLE_VERT_CONTENT@
+                static const char *const PARTICLE_VERT_SRC = R"shadersrc(@PARTICLE_VERT_CONTENT@
 )shadersrc";
 
-        static const char *const PARTICLE_FRAG_SRC = R"shadersrc(
-@PARTICLE_FRAG_CONTENT@
+                static const char *const PARTICLE_FRAG_SRC = R"shadersrc(@PARTICLE_FRAG_CONTENT@
 )shadersrc";
 
-    }
+        }
 }
 
 #endif

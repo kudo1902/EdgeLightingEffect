@@ -6,14 +6,6 @@
 
 namespace EdgeLighting
 {
-    /// Source of the lighting path geometry.
-    typedef enum class PathSource
-    {
-        RECT = 0,   ///< Rectangle edge (current analytic SDF)
-        CUSTOM = 1, ///< User-provided polyline points
-        MASK = 2,   ///< Contour extracted from a binary mask
-    } PathSource;
-
     /// Controls whether the stroke boundary sits on, inside, or outside the rectangle edge.
     typedef enum class StrokeAlignment
     {
@@ -38,10 +30,6 @@ namespace EdgeLighting
     } FadeMode;
 
     /// Direction of traversal around the perimeter.
-    /// For RECT mode, this controls the physical direction around the rectangle edge.
-    /// For CUSTOM/MASK modes, the vertex order in Path::points defines the CCW direction;
-    /// CLOCKWISE simply reverses it (traverses points in reverse order).
-    /// There is no automatic winding detection — the vertex order is taken as-is.
     typedef enum class Winding
     {
         CLOCKWISE,
@@ -145,21 +133,13 @@ namespace EdgeLighting
             glm::vec4 color = glm::vec4(0.0f);
         } Particles;
 
-        /// Lighting path definition.
+        /// Lighting path definition (rect only).
         typedef struct Path
         {
-            /// Source of the path geometry.
-            PathSource source = PathSource::RECT;
-            /// Whether the path forms a closed loop.
-            bool closed = true;
             /// Starting position of the light head along the path [0-1].
             float startPos = 0.0f;
             /// End position of the light head along the path [0-1].
             float endPos = 1.0f;
-            /// Polyline points in local space (for CUSTOM and MASK modes).
-            /// Vertex order defines the CCW traversal direction.
-            /// When Winding::CLOCKWISE is set, points are traversed in reverse.
-            std::vector<glm::vec2> points;
         } Path;
 
         Geometry geometry;   ///< Rectangle geometry

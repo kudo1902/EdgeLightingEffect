@@ -201,14 +201,6 @@ void DebugUI::buildPathSection(EdgeLighting::Config &cfg)
     {
         return;
     }
-    const char *pathItems[] = {"RECT", "CUSTOM", "MASK"};
-    int pathIdx = static_cast<int>(cfg.path.source);
-    if (ImGui::Combo("Source", &pathIdx, pathItems, IM_ARRAYSIZE(pathItems)))
-    {
-        cfg.path.source = static_cast<EdgeLighting::PathSource>(pathIdx);
-    }
-
-    ImGui::Checkbox("Closed", &cfg.path.closed);
     ImGui::SliderFloat("Start Pos", &cfg.path.startPos, 0.0f, 1.0f, "%.2f");
     ImGui::SliderFloat("End Pos", &cfg.path.endPos, 0.0f, 1.0f, "%.2f");
 }

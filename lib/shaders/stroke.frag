@@ -25,12 +25,6 @@ uniform int uLineCount;
 uniform float uGlowSize;
 uniform int uWinding;
 
-uniform int   uPathSource;
-uniform sampler1D uPathTexture;
-uniform int   uPathPointCount;
-uniform bool  uPathClosed;
-uniform float uPathTotalLength;
-
 vec3 hsv2rgb(vec3 c) {
     vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
     vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
@@ -239,88 +233,11 @@ float getPerimeterPos(vec2 p, vec2 b, float r) {
     return getPerimeterPosCCW(p, b, r);
 }
 
-/// Computes signed distance and perimeter position for a polyline path.
-/// Returns vec2(signedDist, perimPos).
-vec2 sdPolyline(vec2 p) {
-    float minAbsDist = 1e10;
-    float signedDist = 0.0;
-    float perimPos = 0.0;
-    float cumLen = 0.0;
-    int n = uPathPointCount;
-    int segCount = uPathClosed ? n : n - 1;
-
-    for (int i = 0; i < segCount; ++i) {
-        vec2 a = texelFetch(uPathTexture, i, 0).xy;
-        vec2 b = texelFetch(uPathTexture, (i + 1) % n, 0).xy;
-
-        vec2 ab = b - a;
-        float segLen = length(ab);
-        if (segLen < 0.0001) continue;
-
-        float t = dot(p - a, ab) / (segLen * segLen);
-        t = clamp(t, 0.0, 1.0);
-        vec2 closest = a + ab * t;
-        float dist = length(p - closest);
-
-        if (dist < minAbsDist) {
-            minAbsDist = dist;
-
-            float side;
-            if (t < 0.001) {
-                // At vertex 'a' — use angle-weighted pseudonormal
-                if (uPathClosed || i > 0) {
-                    int prevI = uPathClosed ? ((i - 1 + n) % n) : (i - 1);
-                    vec2 prev = texelFetch(uPathTexture, prevI, 0).xy;
-                    vec2 dPrev = normalize(a - prev);
-                    vec2 dNext = normalize(b - a);
-                    vec2 pseudoN = normalize(vec2(-dPrev.y, dPrev.x) + vec2(-dNext.y, dNext.x));
-                    side = dot(p - a, pseudoN);
-                } else {
-                    vec2 d = ab / segLen;
-                    side = d.x * (p.y - a.y) - d.y * (p.x - a.x);
-                }
-            } else if (t > 0.999) {
-                // At vertex 'b' — use angle-weighted pseudonormal
-                if (uPathClosed || i < segCount - 1) {
-                    int nextI = uPathClosed ? ((i + 1) % n) : (i + 1);
-                    vec2 next = texelFetch(uPathTexture, (nextI + 1) % n, 0).xy;
-                    vec2 dPrev = normalize(b - a);
-                    vec2 dNext = normalize(next - b);
-                    vec2 pseudoN = normalize(vec2(-dPrev.y, dPrev.x) + vec2(-dNext.y, dNext.x));
-                    side = dot(p - b, pseudoN);
-                } else {
-                    vec2 d = ab / segLen;
-                    side = d.x * (p.y - a.y) - d.y * (p.x - a.x);
-                }
-            } else {
-                vec2 d = ab / segLen;
-                side = d.x * (p.y - a.y) - d.y * (p.x - a.x);
-            }
-
-            signedDist = (side >= 0.0) ? dist : -dist;
-            perimPos = (cumLen + t * segLen) / uPathTotalLength;
-        }
-        cumLen += segLen;
-    }
-
-    return vec2(signedDist, perimPos);
-}
-
 void main() {
-    float d, perimPos, totalP;
-    vec2 halfSize;
-
-    if (uPathSource == 0) {
-        halfSize = uRectSize * 0.5;
-        d = sdRoundedBox(vPos, halfSize, uBorderRadius);
-        perimPos = getPerimeterPos(vPos, halfSize, uBorderRadius);
-        totalP = getPerimeterLength(uRectSize, uBorderRadius);
-    } else {
-        vec2 result = sdPolyline(vPos);
-        d = result.x;
-        perimPos = result.y;
-        totalP = uPathTotalLength;
-    }
+    vec2 halfSize = uRectSize * 0.5;
+    float d = sdRoundedBox(vPos, halfSize, uBorderRadius);
+    float perimPos = getPerimeterPos(vPos, halfSize, uBorderRadius);
+    float totalP = getPerimeterLength(uRectSize, uBorderRadius);
 
     float absD = abs(d);
 
