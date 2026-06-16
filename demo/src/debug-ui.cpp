@@ -1,7 +1,9 @@
 #include "debug-ui.h"
 #include "core/config.h"
 #include "core/edge-lighting.h"
+#include "ui-controls.h"
 #include "util/log-util.h"
+#include "util/screenshot-util.h"
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -29,6 +31,8 @@ bool DebugUI::Init(GLFWwindow *mainWindow, int mainW, int mainH)
     }
     glfwSetWindowPos(mWindow, mainW + 20, 40);
     glfwSetWindowAttrib(mWindow, GLFW_FLOATING, GLFW_TRUE);
+
+    mMainWindow = mainWindow;
 
     // Keep main context current after window creation (shared context)
     glfwMakeContextCurrent(mainWindow);
@@ -98,6 +102,21 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     if (ImGui::Button("Stop"))
     {
         effect.GetAnimation().Stop();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Screenshot"))
+    {
+        int fbW, fbH;
+        glfwGetFramebufferSize(mMainWindow, &fbW, &fbH);
+        std::string path = EdgeLighting::ScreenshotUtil::TimestampedPath(RES_DIR, "screenshot_", "png");
+        EdgeLighting::ScreenshotUtil::SaveScreenshot(path, fbW, fbH);
+        LOG_I("Screenshot saved: %s", path.c_str());
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Dump Config"))
+    {
+        EdgeLightingDemo::PrintCurrentConfig(effect.GetConfig(), effect.GetAnimation().IsPlaying());
+        std::cout << "\n";
     }
     ImGui::End();
 
