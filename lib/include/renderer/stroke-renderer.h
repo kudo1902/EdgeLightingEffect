@@ -4,7 +4,6 @@
 #include "renderer/base-renderer.h"
 #include "gl/shader-program.h"
 #include "gl/vertex-array.h"
-#include "gl/texture-1d.h"
 
 namespace EdgeLighting
 {
@@ -27,12 +26,10 @@ namespace EdgeLighting
     private:
         bool setupShaders();
         void setupGeometry(const Config &config);
-        void uploadPathTexture(const Config &config);
 
         Config mCurrentConfig;
         ShaderProgram mShaderProgram;
         VertexArray mVertexArray;
-        Texture1D mPathTexture;
     };
 }
 
