@@ -37,5 +37,8 @@ target_include_directories(edge-lighting PUBLIC
     $<BUILD_INTERFACE:${SHADER_GEN_DIR}>
     $<INSTALL_INTERFACE:include>
 )
+target_include_directories(edge-lighting PRIVATE
+    ${CMAKE_SOURCE_DIR}/external/include
+)
 
 target_link_libraries(edge-lighting PUBLIC glad)
