@@ -20,7 +20,6 @@ namespace EdgeLightingDemo
         std::cout << "  [T]            - Cycle Alignment (CENTER / INNER / OUTER)\n";
         std::cout << "  [H / Shift+H]  - Inc / Dec Fade Range (feather)\n";
         std::cout << "  [B]            - Cycle Fade Mode (SINGLE / DOUBLE)\n";
-        std::cout << "  [C]            - Cycle Color Mode (STC/GRD/RNB/RNT/PLS)\n";
         std::cout << "  [, / .]        - Dec / Inc Line Count\n";
         std::cout << "  [M]            - Cycle Animation (STATIC / MOVING / FLASHING)\n";
         std::cout << "  [U / Y]        - Inc / Dec Segment Length (moving)\n";
@@ -45,16 +44,14 @@ namespace EdgeLightingDemo
         std::string modeStr = (config.stroke.animation == EdgeLighting::StrokeAnimation::STATIC) ? "ST" : (config.stroke.animation == EdgeLighting::StrokeAnimation::MOVING) ? "MV"
                                                                                                                                                                              : "FL";
         std::string fadeStr = (config.stroke.fadeMode == EdgeLighting::FadeMode::SINGLE) ? "SGL" : "DBL";
-        std::string colorStr = (config.stroke.colorMode == EdgeLighting::StrokeColorMode::STATIC) ? "STC" : (config.stroke.colorMode == EdgeLighting::StrokeColorMode::GRADIENT)   ? "GRD"
-                                                                                                        : (config.stroke.colorMode == EdgeLighting::StrokeColorMode::RAINBOW)      ? "RNB"
-                                                                                                        : (config.stroke.colorMode == EdgeLighting::StrokeColorMode::RAINBOW_TIME) ? "RNT"
-                                                                                                                                                                                   : "PLS";
+
 
         std::string glowStr = config.stroke.glowEnable
                                   ? "ON sz:" + std::to_string((int)config.stroke.glowSize) + " int:" + std::to_string((int)(config.stroke.glowIntensity * 100))
                                   : "OFF";
         std::string particleStr = config.particles.enable ? "ON" : "OFF";
         std::string windingStr = (config.geometry.winding == EdgeLighting::Winding::CLOCKWISE) ? "CW" : "CCW";
+        std::string blendStr = (config.stroke.blendSpace == EdgeLighting::BlendSpace::HSV) ? "HSV" : "RGB";
 
         std::cout << "\r[Stroke] W: " << std::setw(3) << config.stroke.thickness
                   << " | Int: " << std::fixed << std::setprecision(1) << std::setw(3) << config.stroke.intensity
@@ -64,11 +61,11 @@ namespace EdgeLightingDemo
                   << " Ln: " << config.stroke.lineCount
                   << " Seg: " << std::setprecision(2) << std::setw(4) << config.stroke.segmentLength
                   << " Spd: " << std::setprecision(2) << std::setw(4) << config.stroke.speed
-                  << " | " << colorStr
-                  << " Fd: " << fadeStr
+                  << " | Fd: " << fadeStr
                   << " | Glow: " << glowStr
                   << " | Ptcl: " << particleStr
                   << " | " << windingStr
+                  << " | " << blendStr
                   << " S:" << std::setprecision(2) << config.path.startPos
                   << " E:" << std::setprecision(2) << config.path.endPos
                   << " | Anim: " << (isPlaying ? "PLAY" : "PAUS")

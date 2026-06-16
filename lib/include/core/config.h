@@ -36,15 +36,19 @@ namespace EdgeLighting
         COUNTER_CLOCKWISE
     } Winding;
 
-    /// Determines how colors are computed for the stroke.
-    typedef enum class StrokeColorMode
+    /// A colour stop along the perimeter.
+    typedef struct ColorStop
     {
-        STATIC,       ///< Single fixed color (@ref Stroke::primaryColor)
-        GRADIENT,     ///< Blends primaryColor -> secondaryColor -> primaryColor around the perimeter
-        RAINBOW,      ///< Hue shifts along the perimeter (0-360°)
-        RAINBOW_TIME, ///< Uniform hue shift over time across the entire stroke
-        PULSE         ///< Uniform oscillation between primaryColor and secondaryColor over time
-    } StrokeColorMode;
+        float position;  ///< Normalised position along the perimeter [0-1].
+        glm::vec4 color; ///< RGBA colour at this stop.
+    } ColorStop;
+
+    /// Interpolation colour space for multi-stop blending.
+    typedef enum class BlendSpace
+    {
+        RGB, ///< Blend directly in linear RGB.
+        HSV  ///< Convert to HSV, interpolate, convert back (avoids muddy mid-tones).
+    } BlendSpace;
 
     /// Top-level configuration for the EdgeLightingEffect pipeline.
     typedef struct Config
@@ -55,9 +59,10 @@ namespace EdgeLighting
             float width = 800.0f;                       ///< Rectangle width in pixels
             float height = 600.0f;                      ///< Rectangle height in pixels
             glm::vec2 position = glm::vec2(0.0f, 0.0f); ///< Top-left corner in viewport coordinates
-            float borderRadius = 40.0f;                 ///< Corner radius in pixels (0 = sharp corners)
+            float cornerRadius = 40.0f;                 ///< Corner radius in pixels (0 = sharp corners)
             /// Traversal direction around the perimeter.
-            /// For CUSTOM/MASK, vertex order defines CCW; CW reverses it.
+            /// CW starts at top-left and goes top → right → bottom → left (clockwise).
+            /// CCW starts at top-left and goes left → bottom → right → top (counter-clockwise).
             Winding winding = Winding::COUNTER_CLOCKWISE;
         } Geometry;
 
@@ -77,12 +82,18 @@ namespace EdgeLighting
 
             // --- Color ---
 
-            /// Primary color (used in STATIC mode, and as first blend color in GRADIENT/PULSE modes).
-            glm::vec4 primaryColor = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
-            /// Secondary color (used as second blend color in GRADIENT/PULSE modes).
-            glm::vec4 secondaryColor = glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
-            /// Active color rendering mode.
-            StrokeColorMode colorMode = StrokeColorMode::STATIC;
+            /// Maximum number of colour stops.
+            static const int MAX_COLOR_STOPS = 16;
+
+            /// Blend space for interpolating between colour stops.
+            BlendSpace blendSpace = BlendSpace::RGB;
+            /// Colour stops — 1 stop = solid; 2 stops = gradient; 3+ = multi-stop circular.
+            std::vector<ColorStop> colorStops = {
+                {0.00f, glm::vec4(1.0f, 0.0f, 0.0f, 1.0f)},
+                {0.25f, glm::vec4(0.0f, 1.0f, 0.0f, 1.0f)},
+                {0.50f, glm::vec4(0.0f, 0.0f, 1.0f, 1.0f)},
+                {0.75f, glm::vec4(1.0f, 1.0f, 0.0f, 1.0f)},
+            };
 
             // --- Edge feathering ---
 

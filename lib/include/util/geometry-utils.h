@@ -15,7 +15,7 @@ namespace EdgeLighting
             {
                 float halfW = geom.width * 0.5f;
                 float halfH = geom.height * 0.5f;
-                float r = std::max(0.0f, geom.borderRadius);
+                float r = std::max(0.0f, geom.cornerRadius);
 
                 if (r <= 0.0f)
                 {
@@ -137,7 +137,7 @@ namespace EdgeLighting
             {
                 float halfW = geom.width * 0.5f;
                 float halfH = geom.height * 0.5f;
-                float r = std::max(0.0f, geom.borderRadius);
+                float r = std::max(0.0f, geom.cornerRadius);
 
                 if (r <= 0.0f)
                 {
@@ -258,7 +258,7 @@ namespace EdgeLighting
 
         /// Returns a point on the rectangle edge given a perimeter progress in [0, 1].
         /// Progress 0 = top-left. Direction is controlled by geom.winding.
-        /// Supports rounded corners via borderRadius.
+        /// Supports rounded corners via cornerRadius.
         /// The point is in the rectangle's local coordinate system (origin at center).
         inline glm::vec2 GetPointOnRectangle(float t, const Config::Geometry &geom)
         {

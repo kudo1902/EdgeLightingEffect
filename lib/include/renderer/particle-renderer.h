@@ -19,7 +19,6 @@ namespace EdgeLighting
         virtual void OnConfigChanged(const Config &config) override;
 
     private:
-        static glm::vec3 getRainbowColor(float p);
         void emitParticlesAtHead(float headPos, float time, const Config &config);
 
     private:

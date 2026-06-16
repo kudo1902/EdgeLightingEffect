@@ -151,15 +151,37 @@ void DebugUI::buildStrokeSection(EdgeLighting::Config &cfg)
     }
     ImGui::SliderFloat("Speed", &cfg.stroke.speed, 0.1f, 5.0f, "%.1f");
 
-    const char *colorItems[] = {"STATIC", "GRADIENT", "RAINBOW", "RAINBOW_TIME", "PULSE"};
-    int colorIdx = static_cast<int>(cfg.stroke.colorMode);
-    if (ImGui::Combo("Color Mode", &colorIdx, colorItems, IM_ARRAYSIZE(colorItems)))
+    const char *blendItems[] = {"RGB", "HSV"};
+    int blendIdx = static_cast<int>(cfg.stroke.blendSpace);
+    if (ImGui::Combo("Blend Space", &blendIdx, blendItems, IM_ARRAYSIZE(blendItems)))
     {
-        cfg.stroke.colorMode = static_cast<EdgeLighting::StrokeColorMode>(colorIdx);
+        cfg.stroke.blendSpace = static_cast<EdgeLighting::BlendSpace>(blendIdx);
     }
 
-    ImGui::ColorEdit3("Primary", &cfg.stroke.primaryColor.x);
-    ImGui::ColorEdit3("Secondary", &cfg.stroke.secondaryColor.x);
+    int toRemove = -1;
+    for (int i = 0; i < (int)cfg.stroke.colorStops.size(); i++)
+    {
+        ImGui::PushID(i);
+        ImGui::SliderFloat("Pos", &cfg.stroke.colorStops[i].position, 0.0f, 1.0f, "%.2f");
+        ImGui::SameLine();
+        ImGui::ColorEdit3("##col", &cfg.stroke.colorStops[i].color.x,
+                          ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+        ImGui::SameLine();
+        if (ImGui::SmallButton("X") && cfg.stroke.colorStops.size() > 1)
+            toRemove = i;
+        ImGui::PopID();
+    }
+    if (toRemove >= 0)
+        cfg.stroke.colorStops.erase(cfg.stroke.colorStops.begin() + toRemove);
+    if (cfg.stroke.colorStops.size() < EdgeLighting::Config::Stroke::MAX_COLOR_STOPS)
+    {
+        if (ImGui::Button("+ Add Stop"))
+        {
+            float lastPos = cfg.stroke.colorStops.empty() ? 0.0f : cfg.stroke.colorStops.back().position;
+            cfg.stroke.colorStops.push_back(
+                {std::min(1.0f, lastPos + 0.1f), glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)});
+        }
+    }
 
     ImGui::SliderFloat("Fade Range", &cfg.stroke.fadeRange, 0.0f, cfg.stroke.thickness, "%.1f");
 
@@ -185,7 +207,7 @@ void DebugUI::buildGeometrySection(EdgeLighting::Config &cfg)
 
     ImGui::SliderFloat("Width", &cfg.geometry.width, 100.0f, 1600.0f, "%.0f");
     ImGui::SliderFloat("Height", &cfg.geometry.height, 100.0f, 1200.0f, "%.0f");
-    ImGui::SliderFloat("Corner Radius", &cfg.geometry.borderRadius, 0.0f, 200.0f, "%.0f");
+    ImGui::SliderFloat("Corner Radius", &cfg.geometry.cornerRadius, 0.0f, 200.0f, "%.0f");
 
     const char *windingItems[] = {"CW", "CCW"};
     int windingIdx = static_cast<int>(cfg.geometry.winding);
