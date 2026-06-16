@@ -44,7 +44,7 @@ namespace EdgeLighting
                         float frac = dist / geom.width;
                         return glm::vec2(halfW - frac * geom.width, -halfH);
                     }
-                    dist -= geom.height;
+                    dist -= geom.width;
 
                     // left edge: bottom to top
                     {
