@@ -36,6 +36,7 @@ private:
     void buildParticlesSection(EdgeLighting::Config &cfg);
 
     GLFWwindow *mWindow = nullptr;
+    GLFWwindow *mMainWindow = nullptr;
     ImGuiContext *mContext = nullptr;
 };
 

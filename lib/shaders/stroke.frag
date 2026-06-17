@@ -5,11 +5,9 @@ in vec2 vPos;
 out vec4 fragColor;
 
 uniform vec2 uRectSize;
-uniform float uBorderRadius;
+uniform float uCornerRadius;
 uniform float uStrokeThickness;
 uniform float uIntensity;
-uniform vec4 uPrimaryColor;
-uniform vec4 uSecondaryColor;
 uniform int uStrokeAlignment;
 uniform float uFadeRange;
 uniform int uFadeMode;
@@ -20,15 +18,41 @@ uniform float uHeadPosition;
 uniform float uTime;
 uniform float uSpeed;
 
-uniform int uColorMode;
 uniform int uLineCount;
 uniform float uGlowSize;
 uniform int uWinding;
+
+uniform int uColorStopCount;
+uniform float uColorStopPositions[16];
+uniform vec4 uColorStopColors[16];
+uniform int uBlendSpace;
+
+vec3 rgb2hsv(vec3 c) {
+    vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+    vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+    vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+    float d = q.x - min(q.w, q.y);
+    float e = 1.0e-10;
+    return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+}
 
 vec3 hsv2rgb(vec3 c) {
     vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
     vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
     return c.z * mix(K.xxx, clamp(p - K.xxx, 0.0, 1.0), c.y);
+}
+
+vec3 blendRGB(vec3 a, vec3 b, float t) {
+    return mix(a, b, t);
+}
+
+vec3 blendHSV(vec3 a, vec3 b, float t) {
+    vec3 ha = rgb2hsv(a);
+    vec3 hb = rgb2hsv(b);
+    float dh = hb.x - ha.x;
+    if (dh > 0.5) dh -= 1.0;
+    if (dh < -0.5) dh += 1.0;
+    return hsv2rgb(vec3(ha.x + dh * t, mix(ha.y, hb.y, t), mix(ha.z, hb.z, t)));
 }
 
 float sdRoundedBox(vec2 p, vec2 b, float r) {
@@ -233,11 +257,48 @@ float getPerimeterPos(vec2 p, vec2 b, float r) {
     return getPerimeterPosCCW(p, b, r);
 }
 
+vec3 blend(vec3 a, vec3 b, float t) {
+    if (uBlendSpace == 1) return blendHSV(a, b, t);
+    return blendRGB(a, b, t);
+}
+
+vec3 sampleStops(float pos) {
+    int count = uColorStopCount;
+    if (count <= 0) return vec3(1.0);
+    if (count == 1) return uColorStopColors[0].rgb;
+    if (count == 2) {
+        float tri = 1.0 - abs(2.0 * pos - 1.0);
+        return blend(uColorStopColors[0].rgb, uColorStopColors[1].rgb, tri);
+    }
+    for (int i = 0; i < count; i++) {
+        int next = (i + 1 < count) ? i + 1 : 0;
+        float a = uColorStopPositions[i];
+        float b = uColorStopPositions[next];
+        if (next != 0) {
+            if (pos >= a && pos < b) {
+                float t = (pos - a) / max(b - a, 0.0001);
+                return blend(uColorStopColors[i].rgb, uColorStopColors[next].rgb, t);
+            }
+        } else {
+            float wrapLen = (1.0 - a) + b;
+            if (pos >= a) {
+                float t = (pos - a) / max(wrapLen, 0.0001);
+                return blend(uColorStopColors[i].rgb, uColorStopColors[next].rgb, t);
+            }
+            if (pos < b) {
+                float t = ((1.0 - a) + pos) / max(wrapLen, 0.0001);
+                return blend(uColorStopColors[i].rgb, uColorStopColors[next].rgb, t);
+            }
+        }
+    }
+    return uColorStopColors[0].rgb;
+}
+
 void main() {
     vec2 halfSize = uRectSize * 0.5;
-    float d = sdRoundedBox(vPos, halfSize, uBorderRadius);
-    float perimPos = getPerimeterPos(vPos, halfSize, uBorderRadius);
-    float totalP = getPerimeterLength(uRectSize, uBorderRadius);
+    float d = sdRoundedBox(vPos, halfSize, uCornerRadius);
+    float perimPos = getPerimeterPos(vPos, halfSize, uCornerRadius);
+    float totalP = getPerimeterLength(uRectSize, uCornerRadius);
 
     float absD = abs(d);
 
@@ -303,21 +364,7 @@ void main() {
 
     if (finalAlpha < 0.01) discard;
 
-    vec3 color;
-    if (uColorMode == 0) {
-        color = uPrimaryColor.rgb;
-    } else if (uColorMode == 1) {
-        float smoothT = 1.0 - abs(2.0 * perimPos - 1.0);
-        color = mix(uPrimaryColor.rgb, uSecondaryColor.rgb, smoothT);
-    } else if (uColorMode == 2) {
-        color = hsv2rgb(vec3(perimPos, 0.8, 1.0));
-    } else if (uColorMode == 3) {
-        float hue = fract(uTime * 0.15);
-        color = hsv2rgb(vec3(hue, 0.8, 1.0));
-    } else {
-        float t = sin(uTime * 2.0) * 0.5 + 0.5;
-        color = mix(uPrimaryColor.rgb, uSecondaryColor.rgb, t);
-    }
+    vec3 color = sampleStops(perimPos);
 
     float dither = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453);
     dither = (dither - 0.5) / 255.0;

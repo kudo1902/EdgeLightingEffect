@@ -2,6 +2,7 @@
 #include "util/log-util.h"
 #include "util/geometry-utils.h"
 #include <glm/gtc/matrix_transform.hpp>
+#include <algorithm>
 
 namespace EdgeLighting
 {
@@ -58,37 +59,104 @@ namespace EdgeLighting
         }
     }
 
-    glm::vec3 ParticleRenderer::getRainbowColor(float p)
+    static glm::vec3 rgb2hsv(glm::vec3 c)
     {
-        glm::vec3 c1(1.0f, 0.0f, 0.0f);
-        glm::vec3 c2(1.0f, 1.0f, 0.0f);
-        glm::vec3 c3(0.0f, 1.0f, 0.0f);
-        glm::vec3 c4(0.0f, 1.0f, 1.0f);
-        glm::vec3 c5(0.0f, 0.0f, 1.0f);
-        glm::vec3 c6(1.0f, 0.0f, 1.0f);
+        float r = c.r, g = c.g, b = c.b;
+        float mx = glm::max(glm::max(r, g), b);
+        float mn = glm::min(glm::min(r, g), b);
+        float d = mx - mn;
+        float h = 0.0f;
+        if (d > 1e-10f)
+        {
+            if (mx == r) h = glm::mod((g - b) / d, 6.0f);
+            else if (mx == g) h = (b - r) / d + 2.0f;
+            else h = (r - g) / d + 4.0f;
+            h /= 6.0f;
+        }
+        return glm::vec3(h, (mx > 1e-10f) ? d / mx : 0.0f, mx);
+    }
 
-        float w = 1.0f / 6.0f;
-        if (p < w)
+    static glm::vec3 hsv2rgb(glm::vec3 c)
+    {
+        float h = c.x, s = c.y, v = c.z;
+        float r = v, g = v, b = v;
+        if (s > 0.0f && v > 0.0f)
         {
-            return glm::mix(c1, c2, p / w);
+            h = glm::fract(h) * 6.0f;
+            int i = (int)h;
+            float f = h - (float)i;
+            float p = v * (1.0f - s);
+            float q = v * (1.0f - s * f);
+            float t = v * (1.0f - s * (1.0f - f));
+            switch (i)
+            {
+            case 0: r = v; g = t; b = p; break;
+            case 1: r = q; g = v; b = p; break;
+            case 2: r = p; g = v; b = t; break;
+            case 3: r = p; g = q; b = v; break;
+            case 4: r = t; g = p; b = v; break;
+            default: r = v; g = p; b = q; break;
+            }
         }
-        if (p < 2.0f * w)
+        return glm::vec3(r, g, b);
+    }
+
+    static glm::vec3 blendHsv(glm::vec3 a, glm::vec3 b, float t)
+    {
+        glm::vec3 ha = rgb2hsv(a);
+        glm::vec3 hb = rgb2hsv(b);
+        float dh = hb.x - ha.x;
+        if (dh > 0.5f) dh -= 1.0f;
+        if (dh < -0.5f) dh += 1.0f;
+        return hsv2rgb(glm::vec3(ha.x + dh * t, glm::mix(ha.y, hb.y, t), glm::mix(ha.z, hb.z, t)));
+    }
+
+    static glm::vec3 blendColors(glm::vec3 a, glm::vec3 b, float t, BlendSpace space)
+    {
+        if (space == BlendSpace::HSV) return blendHsv(a, b, t);
+        return glm::mix(a, b, t);
+    }
+
+    static glm::vec4 sampleColorStops(float pos, const std::vector<ColorStop> &stops, BlendSpace blendSpace)
+    {
+        int count = (int)stops.size();
+        if (count <= 0) return glm::vec4(1.0f);
+        if (count == 1) return stops[0].color;
+        auto bl = [&](glm::vec3 a, glm::vec3 b, float t) { return blendColors(a, b, t, blendSpace); };
+        if (count == 2)
         {
-            return glm::mix(c2, c3, (p - w) / w);
+            float t = 1.0f - std::abs(2.0f * pos - 1.0f);
+            return glm::vec4(bl(glm::vec3(stops[0].color), glm::vec3(stops[1].color), t), 1.0f);
         }
-        if (p < 3.0f * w)
+        for (int i = 0; i < count; i++)
         {
-            return glm::mix(c3, c4, (p - 2.0f * w) / w);
+            int next = (i + 1 < count) ? i + 1 : 0;
+            float a = stops[i].position;
+            float b = stops[next].position;
+            if (next != 0)
+            {
+                if (pos >= a && pos < b)
+                {
+                    float t = (pos - a) / std::max(b - a, 0.0001f);
+                    return glm::vec4(bl(glm::vec3(stops[i].color), glm::vec3(stops[next].color), t), 1.0f);
+                }
+            }
+            else
+            {
+                float wrapLen = (1.0f - a) + b;
+                if (pos >= a)
+                {
+                    float t = (pos - a) / std::max(wrapLen, 0.0001f);
+                    return glm::vec4(bl(glm::vec3(stops[i].color), glm::vec3(stops[next].color), t), 1.0f);
+                }
+                if (pos < b)
+                {
+                    float t = ((1.0f - a) + pos) / std::max(wrapLen, 0.0001f);
+                    return glm::vec4(bl(glm::vec3(stops[i].color), glm::vec3(stops[next].color), t), 1.0f);
+                }
+            }
         }
-        if (p < 4.0f * w)
-        {
-            return glm::mix(c4, c5, (p - 3.0f * w) / w);
-        }
-        if (p < 5.0f * w)
-        {
-            return glm::mix(c5, c6, (p - 4.0f * w) / w);
-        }
-        return glm::mix(c6, c1, (p - 5.0f * w) / w);
+        return stops[0].color;
     }
 
     void ParticleRenderer::emitParticlesAtHead(float headPos, float time, const Config &config)
@@ -99,22 +167,7 @@ namespace EdgeLighting
             float headProgress = glm::fract(headPos + offset);
             glm::vec2 spawnPos = GeometryUtils::GetPointOnRectangle(headProgress, config.geometry);
 
-            glm::vec4 emitterColor;
-            if (config.stroke.colorMode == StrokeColorMode::STATIC)
-            {
-                emitterColor = config.stroke.primaryColor;
-            }
-            else if (config.stroke.colorMode == StrokeColorMode::GRADIENT)
-            {
-                float t = 1.0f - abs(2.0f * headProgress - 1.0f);
-                emitterColor = glm::mix(config.stroke.primaryColor, config.stroke.secondaryColor, t);
-            }
-            else
-            {
-                float shift = glm::fract(headProgress - time * 0.25f);
-                emitterColor = glm::vec4(getRainbowColor(shift), 1.0f);
-            }
-
+            glm::vec4 emitterColor = sampleColorStops(headProgress, config.stroke.colorStops, config.stroke.blendSpace);
             glm::vec4 color = (config.particles.color.a > 0.0f) ? config.particles.color : emitterColor;
             mParticleSystem->Emit(spawnPos, color, config.stroke.speed, 2);
         }

@@ -78,10 +78,12 @@ int main()
     EdgeLighting::Config config;
     config.geometry.width = displayW / 2;
     config.geometry.height = displayH / 2;
-    config.geometry.position = glm::vec2(0, 0);
-    config.geometry.borderRadius = 0.0f;
-    config.stroke.primaryColor = glm::vec4(1.0f, 0.0f, 0.0f, 1.0f);
-    config.stroke.secondaryColor = glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
+    config.geometry.position = glm::vec2(displayW / 4, displayH / 4);
+    config.geometry.cornerRadius = 0.0f;
+    config.stroke.colorStops = {
+        {0.00f, glm::vec4(1.0f, 0.0f, 0.0f, 1.0f)},
+        {0.50f, glm::vec4(0.0f, 0.0f, 1.0f, 1.0f)},
+    };
     config.wireframe.enable = true;
     config.wireframe.color = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
 
@@ -230,13 +232,7 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
         config.stroke.fadeMode = static_cast<EdgeLighting::FadeMode>(m);
         break;
     }
-    case GLFW_KEY_C:
-    {
-        int m = static_cast<int>(config.stroke.colorMode);
-        m = (m + 1) % 5;
-        config.stroke.colorMode = static_cast<EdgeLighting::StrokeColorMode>(m);
-        break;
-    }
+
     case GLFW_KEY_COMMA:
         config.stroke.lineCount = std::max(1, config.stroke.lineCount - 1);
         break;

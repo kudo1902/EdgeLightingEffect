@@ -40,10 +40,9 @@ namespace EdgeLighting
 
         mShaderProgram.SetUniform("uMVP", mvp);
         mShaderProgram.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
-        mShaderProgram.SetUniform("uBorderRadius", config.geometry.borderRadius);
+        mShaderProgram.SetUniform("uCornerRadius", config.geometry.cornerRadius);
         mShaderProgram.SetUniform("uStrokeThickness", config.stroke.thickness);
         mShaderProgram.SetUniform("uIntensity", config.stroke.intensity);
-        mShaderProgram.SetUniform("uPrimaryColor", config.stroke.primaryColor);
         mShaderProgram.SetUniform("uStrokeAlignment", static_cast<int>(config.stroke.alignment));
         mShaderProgram.SetUniform("uFadeRange", config.stroke.fadeRange);
         mShaderProgram.SetUniform("uFadeMode", static_cast<int>(config.stroke.fadeMode));
@@ -52,10 +51,17 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uHeadPosition", headPos);
         mShaderProgram.SetUniform("uTime", time);
         mShaderProgram.SetUniform("uSpeed", config.stroke.speed);
-        mShaderProgram.SetUniform("uSecondaryColor", config.stroke.secondaryColor);
-        mShaderProgram.SetUniform("uColorMode", static_cast<int>(config.stroke.colorMode));
         mShaderProgram.SetUniform("uLineCount", config.stroke.lineCount);
         mShaderProgram.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
+        mShaderProgram.SetUniform("uBlendSpace", static_cast<int>(config.stroke.blendSpace));
+        mShaderProgram.SetUniform("uColorStopCount", static_cast<int>(config.stroke.colorStops.size()));
+        for (int i = 0; i < static_cast<int>(config.stroke.colorStops.size()) && i < Config::Stroke::MAX_COLOR_STOPS; ++i)
+        {
+            std::string posName = "uColorStopPositions[" + std::to_string(i) + "]";
+            mShaderProgram.SetUniform(posName.c_str(), config.stroke.colorStops[i].position);
+            std::string colName = "uColorStopColors[" + std::to_string(i) + "]";
+            mShaderProgram.SetUniform(colName.c_str(), config.stroke.colorStops[i].color);
+        }
 
         if (config.stroke.glowEnable)
         {
@@ -95,10 +101,12 @@ namespace EdgeLighting
         float b = -(halfH + margin);
         float t = halfH + margin;
 
+        // clang-format off
         float verts[] = {
             l, t, l, b, r, b,
             l, t, r, b, r, t,
         };
+        // clang-format on
 
         mVertexArray.SetVertexData(verts, sizeof(verts));
         mVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
