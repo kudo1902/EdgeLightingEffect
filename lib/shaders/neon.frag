@@ -162,15 +162,26 @@ void main() {
     // This prevents the 4 coloured quadrant shapes from appearing inside.
     float outsideStrength = smoothstep(-uGlowSize * 0.3, 1.0, d);
 
-    // --- EXTERIOR: full-colour three-layer glow ---
-    vec3 result = col * (core * 0.35 + glow * 0.90 + fill * 0.18) * outsideStrength * uIntensity;
+    // exterior: colour by nearest point on the perimeter (perpendicular bands)
+    float hOut = fract((perimAng / 6.2831853) + 0.5 + uTime * uSpeed);
+    vec3 colOut = sampleStops(hOut);
 
-    // --- INTERIOR: dim neutral spill only ---
-    // insideStrength ramps from 0 at the edge to 1 at –glowSize×0.5 px inside
+    // interior: colour by the conic angle from the centre.
+    // Smooth (only a single dim singularity at the dead centre) and equals hOut
+    // exactly at the edge (closestPoint == vPos when d == 0) → no seam.
+    float hIn = fract((atan(vPos.y, vPos.x) / 6.2831853) + 0.5 + uTime * uSpeed);
+    vec3 colIn = sampleStops(hIn);
+
+    // EXTERIOR — full colour three-layer glow (unchanged)
+    vec3 result = colOut * (core * 0.35 + glow * 0.90 + fill * 0.18)
+                * outsideStrength * uIntensity;
+
+    // INTERIOR — full colour three-layer glow (now coloured & smooth, no shapes)
     float insideStrength = 1.0 - smoothstep(-uGlowSize * 0.5, 0.0, d);
-    // A very dim (0.04×) neutral-grey version of the glow — no colour shapes
-    result += vec3(glow * 0.04) * insideStrength * uIntensity;
+    result += colIn * (core * 0.35 + glow * 0.90) * insideStrength * uIntensity;
 
+    float t = clamp(ad / min(halfSize.x, halfSize.y), 0.0, 1.0);
+    colIn = mix(colIn, vec3(dot(colIn, vec3(0.3333))), t * 0.6); // neutral toward centre
     // --- Post-processing ---
     // Reinhard tone map — compresses HDR values while preserving colour
     result = result / (result + vec3(0.6));
