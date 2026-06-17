@@ -23,6 +23,12 @@ namespace EdgeLighting
                 static const char *const PARTICLE_FRAG_SRC = R"shadersrc(@PARTICLE_FRAG_CONTENT@
 )shadersrc";
 
+                static const char *const NEON_VERT_SRC = R"shadersrc(@NEON_VERT_CONTENT@
+)shadersrc";
+
+                static const char *const NEON_FRAG_SRC = R"shadersrc(@NEON_FRAG_CONTENT@
+)shadersrc";
+
         }
 }
 

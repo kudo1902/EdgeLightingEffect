@@ -4,6 +4,7 @@
 #include "renderer/stroke-renderer.h"
 #include "renderer/wireframe-renderer.h"
 #include "renderer/particle-renderer.h"
+#include "renderer/neon-renderer.h"
 #include "debug-ui.h"
 #include "ui-controls.h"
 #include "util/log-util.h"
@@ -71,9 +72,11 @@ int main()
     auto strokeRenderer = std::make_shared<EdgeLighting::StrokeRenderer>();
     auto wireframeRenderer = std::make_shared<EdgeLighting::WireframeRenderer>();
     auto particleRenderer = std::make_shared<EdgeLighting::ParticleRenderer>();
-    gEffect->AddRenderer(strokeRenderer);
+    auto neonRenderer = std::make_shared<EdgeLighting::NeonRenderer>();
+    // gEffect->AddRenderer(strokeRenderer);
     gEffect->AddRenderer(wireframeRenderer);
     gEffect->AddRenderer(particleRenderer);
+    gEffect->AddRenderer(neonRenderer);
 
     EdgeLighting::Config config;
     config.geometry.width = displayW / 2;
@@ -240,6 +243,9 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
         config.stroke.lineCount = std::min(16, config.stroke.lineCount + 1);
         break;
     case GLFW_KEY_N:
+        config.neon.enable = !config.neon.enable;
+        break;
+    case GLFW_KEY_J:
         config.particles.enable = !config.particles.enable;
         break;
     case GLFW_KEY_V:

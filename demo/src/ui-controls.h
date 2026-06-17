@@ -25,7 +25,8 @@ namespace EdgeLightingDemo
         std::cout << "  [U / Y]        - Inc / Dec Segment Length (moving)\n";
         std::cout << "  [P / L]        - Inc / Dec Speed (moving)\n";
         std::cout << "  [SPACE]        - Pause / Resume Animation\n";
-        std::cout << "  [N]            - Toggle Particle Trail\n";
+        std::cout << "  [N]            - Toggle Neon Mode (alt. rendering)\n";
+        std::cout << "  [J]            - Toggle Particle Trail\n";
         std::cout << "  [V]            - Toggle Glow\n";
         std::cout << "  [[ / ]]        - Inc / Dec Glow Size\n";
         std::cout << "  [; / ']        - Inc / Dec Glow Intensity\n";
@@ -50,6 +51,7 @@ namespace EdgeLightingDemo
                                   ? "ON sz:" + std::to_string((int)config.stroke.glowSize) + " int:" + std::to_string((int)(config.stroke.glowIntensity * 100))
                                   : "OFF";
         std::string particleStr = config.particles.enable ? "ON" : "OFF";
+        std::string neonStr = config.neon.enable ? "NEON" : "SDF";
         std::string windingStr = (config.geometry.winding == EdgeLighting::Winding::CLOCKWISE) ? "CW" : "CCW";
         std::string blendStr = (config.stroke.blendSpace == EdgeLighting::BlendSpace::HSV) ? "HSV" : "RGB";
 
@@ -64,6 +66,7 @@ namespace EdgeLightingDemo
                   << " | Fd: " << fadeStr
                   << " | Glow: " << glowStr
                   << " | Ptcl: " << particleStr
+                  << " | Mode: " << neonStr
                   << " | " << windingStr
                   << " | " << blendStr
                   << " S:" << std::setprecision(2) << config.path.startPos

@@ -22,7 +22,7 @@ namespace EdgeLighting
 
     void StrokeRenderer::Render(int viewportWidth, int viewportHeight, float, float headPos, float time, const Config &config)
     {
-        if (!config.stroke.enable)
+        if (!config.stroke.enable || config.neon.enable)
             return;
 
         glEnable(GL_BLEND);

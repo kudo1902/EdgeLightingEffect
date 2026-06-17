@@ -117,13 +117,31 @@ namespace EdgeLighting
 
             // --- Glow ---
 
-            /// Enable a wider, fainter glow behind the core stroke.
             bool glowEnable = false;
             /// Extra pixels extending beyond the stroke edge.
             float glowSize = 5.0f;
             /// Opacity multiplier for the glow pass.
             float glowIntensity = 0.25f;
         } Stroke;
+
+        /// Neon-style LED strip rendering configuration.
+        typedef struct Neon
+        {
+            bool enable = false;                                     ///< Enable neon rendering
+            float thickness = 4.0f;                                  ///< Line thickness in pixels
+            float intensity = 1.0f;                                  ///< Global intensity multiplier
+            float glowSize = 5.0f;                                   ///< Glow spread radius in pixels
+            float speed = 0.5f;                                      ///< Sweep speed (revolutions per second)
+            BlendSpace blendSpace = BlendSpace::RGB;                 ///< Color interpolation space
+            static const int MAX_COLOR_STOPS = 16;                   ///< Max colour stops
+            /// Colour stops for the gradient around the perimeter.
+            std::vector<ColorStop> colorStops = {
+                {0.00f, glm::vec4(1.0f, 0.0f, 0.0f, 1.0f)},
+                {0.25f, glm::vec4(0.0f, 1.0f, 0.0f, 1.0f)},
+                {0.50f, glm::vec4(0.0f, 0.0f, 1.0f, 1.0f)},
+                {0.75f, glm::vec4(1.0f, 1.0f, 0.0f, 1.0f)},
+            };
+        } Neon;
 
         /// Wireframe debug overlay configuration.
         typedef struct Wireframe
@@ -155,6 +173,7 @@ namespace EdgeLighting
 
         Geometry geometry;   ///< Rectangle geometry
         Stroke stroke;       ///< Stroke rendering settings
+        Neon neon;           ///< Neon rendering settings
         Wireframe wireframe; ///< Wireframe overlay settings
         Particles particles; ///< Particle trail settings
         Path path;           ///< Path source + start/end configuration

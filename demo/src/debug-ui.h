@@ -31,6 +31,7 @@ public:
 
 private:
     void buildStrokeSection(EdgeLighting::Config &cfg);
+    void buildNeonSection(EdgeLighting::Config &cfg);
     void buildGeometrySection(EdgeLighting::Config &cfg);
     void buildPathSection(EdgeLighting::Config &cfg);
     void buildParticlesSection(EdgeLighting::Config &cfg);

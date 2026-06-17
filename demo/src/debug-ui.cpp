@@ -84,6 +84,7 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
 
     buildStrokeSection(cfg);
     buildGeometrySection(cfg);
+    buildNeonSection(cfg);
     buildPathSection(cfg);
     buildParticlesSection(cfg);
 
@@ -233,6 +234,51 @@ void DebugUI::buildGeometrySection(EdgeLighting::Config &cfg)
     if (ImGui::Combo("Winding", &windingIdx, windingItems, IM_ARRAYSIZE(windingItems)))
     {
         cfg.geometry.winding = static_cast<EdgeLighting::Winding>(windingIdx);
+    }
+}
+
+void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
+{
+    if (!ImGui::CollapsingHeader("Neon", ImGuiTreeNodeFlags_DefaultOpen))
+        return;
+
+    ImGui::Checkbox("Enable##Neon", &cfg.neon.enable);
+    if (!cfg.neon.enable)
+        return;
+
+    ImGui::SliderFloat("Thickness##Neon", &cfg.neon.thickness, 1.0f, 20.0f, "%.0f");
+    ImGui::SliderFloat("Intensity##Neon", &cfg.neon.intensity, 0.0f, 3.0f, "%.2f");
+    ImGui::SliderFloat("Glow Size##Neon", &cfg.neon.glowSize, 1.0f, 80.0f, "%.0f");
+    ImGui::SliderFloat("Speed##Neon", &cfg.neon.speed, 0.0f, 2.0f, "%.2f");
+
+    const char *blendItems[] = {"RGB", "HSV"};
+    int blendIdx = static_cast<int>(cfg.neon.blendSpace);
+    if (ImGui::Combo("Blend Space##Neon", &blendIdx, blendItems, IM_ARRAYSIZE(blendItems)))
+    {
+        cfg.neon.blendSpace = static_cast<EdgeLighting::BlendSpace>(blendIdx);
+    }
+
+    for (size_t i = 0; i < cfg.neon.colorStops.size(); ++i)
+    {
+        ImGui::PushID(static_cast<int>(i));
+        float p = cfg.neon.colorStops[i].position;
+        if (ImGui::SliderFloat("Pos##Neon", &p, 0.0f, 1.0f, "%.2f"))
+            cfg.neon.colorStops[i].position = p;
+        ImGui::SameLine();
+        glm::vec4 c = cfg.neon.colorStops[i].color;
+        if (ImGui::ColorEdit4("Col##Neon", &c.x, ImGuiColorEditFlags_NoInputs))
+            cfg.neon.colorStops[i].color = c;
+        ImGui::PopID();
+    }
+
+    if (cfg.neon.colorStops.size() < EdgeLighting::Config::Neon::MAX_COLOR_STOPS)
+    {
+        if (ImGui::Button("+ Add Stop##Neon"))
+        {
+            float lastPos = cfg.neon.colorStops.empty() ? 0.0f : cfg.neon.colorStops.back().position;
+            cfg.neon.colorStops.push_back(
+                {std::min(1.0f, lastPos + 0.1f), glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)});
+        }
     }
 }
 
