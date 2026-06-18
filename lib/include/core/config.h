@@ -143,6 +143,26 @@ namespace EdgeLighting
             };
         } Neon;
 
+        /// Multi-pass gradient-to-texture neon configuration.
+        typedef struct MultiPassNeon
+        {
+            bool enable = false;                                     ///< Enable multi-pass neon rendering
+            bool showGradient = false;                               ///< Debug: show gradient texture instead of glow
+            float thickness = 4.0f;                                  ///< Line thickness in pixels
+            float intensity = 1.0f;                                  ///< Global intensity multiplier
+            float glowSize = 5.0f;                                   ///< Glow spread radius in pixels
+            float speed = 0.5f;                                      ///< Sweep speed (revolutions per second)
+            BlendSpace blendSpace = BlendSpace::RGB;                 ///< Color interpolation space
+            static const int MAX_COLOR_STOPS = 16;                   ///< Max colour stops
+            /// Colour stops for the gradient around the perimeter.
+            std::vector<ColorStop> colorStops = {
+                {0.00f, glm::vec4(1.0f, 0.0f, 0.0f, 1.0f)},
+                {0.25f, glm::vec4(0.0f, 1.0f, 0.0f, 1.0f)},
+                {0.50f, glm::vec4(0.0f, 0.0f, 1.0f, 1.0f)},
+                {0.75f, glm::vec4(1.0f, 1.0f, 0.0f, 1.0f)},
+            };
+        } MultiPassNeon;
+
         /// Wireframe debug overlay configuration.
         typedef struct Wireframe
         {
@@ -171,11 +191,13 @@ namespace EdgeLighting
             float endPos = 1.0f;
         } Path;
 
-        Geometry geometry;   ///< Rectangle geometry
-        Stroke stroke;       ///< Stroke rendering settings
-        Neon neon;           ///< Neon rendering settings
-        Wireframe wireframe; ///< Wireframe overlay settings
-        Particles particles; ///< Particle trail settings
+        Geometry geometry;          ///< Rectangle geometry
+        Stroke stroke;              ///< Stroke rendering settings
+        Neon neon;                  ///< Neon rendering settings
+        MultiPassNeon multipassNeon;///< Multi-pass neon rendering settings
+        Wireframe wireframe;        ///< Wireframe overlay settings
+
+        Particles particles;           ///< Particle trail settings
         Path path;           ///< Path source + start/end configuration
     } Config;
 

@@ -85,6 +85,7 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     buildStrokeSection(cfg);
     buildGeometrySection(cfg);
     buildNeonSection(cfg);
+    buildMultiPassNeonSection(cfg);
     buildPathSection(cfg);
     buildParticlesSection(cfg);
 
@@ -147,8 +148,12 @@ void DebugUI::buildStrokeSection(EdgeLighting::Config &cfg)
     if (!ImGui::CollapsingHeader("Stroke", ImGuiTreeNodeFlags_DefaultOpen))
         return;
 
-    ImGui::SliderFloat("Thickness", &cfg.stroke.thickness, 1.0f, 40.0f, "%.0f");
-    ImGui::SliderFloat("Intensity", &cfg.stroke.intensity, 0.0f, 1.0f, "%.2f");
+    ImGui::Checkbox("Enable##Stroke", &cfg.stroke.enable);
+    if (!cfg.stroke.enable)
+        return;
+
+    ImGui::SliderFloat("Thickness##Stroke", &cfg.stroke.thickness, 1.0f, 40.0f, "%.0f");
+    ImGui::SliderFloat("Intensity##Stroke", &cfg.stroke.intensity, 0.0f, 1.0f, "%.2f");
 
     const char *alignItems[] = {"CENTER", "INNER", "OUTER"};
     int alignIdx = static_cast<int>(cfg.stroke.alignment);
@@ -277,6 +282,53 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
         {
             float lastPos = cfg.neon.colorStops.empty() ? 0.0f : cfg.neon.colorStops.back().position;
             cfg.neon.colorStops.push_back(
+                {std::min(1.0f, lastPos + 0.1f), glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)});
+        }
+    }
+}
+
+void DebugUI::buildMultiPassNeonSection(EdgeLighting::Config &cfg)
+{
+    if (!ImGui::CollapsingHeader("MultiPass Neon", ImGuiTreeNodeFlags_DefaultOpen))
+        return;
+
+    ImGui::Checkbox("Enable##MultiPass", &cfg.multipassNeon.enable);
+    ImGui::SameLine();
+    ImGui::Checkbox("Show Gradient##MP", &cfg.multipassNeon.showGradient);
+    if (!cfg.multipassNeon.enable)
+        return;
+
+    ImGui::SliderFloat("Thickness##MP", &cfg.multipassNeon.thickness, 1.0f, 20.0f, "%.0f");
+    ImGui::SliderFloat("Intensity##MP", &cfg.multipassNeon.intensity, 0.0f, 3.0f, "%.2f");
+    ImGui::SliderFloat("Glow Size##MP", &cfg.multipassNeon.glowSize, 1.0f, 80.0f, "%.0f");
+    ImGui::SliderFloat("Speed##MP", &cfg.multipassNeon.speed, 0.0f, 2.0f, "%.2f");
+
+    const char *blendItems[] = {"RGB", "HSV"};
+    int blendIdx = static_cast<int>(cfg.multipassNeon.blendSpace);
+    if (ImGui::Combo("Blend Space##MP", &blendIdx, blendItems, IM_ARRAYSIZE(blendItems)))
+    {
+        cfg.multipassNeon.blendSpace = static_cast<EdgeLighting::BlendSpace>(blendIdx);
+    }
+
+    for (size_t i = 0; i < cfg.multipassNeon.colorStops.size(); ++i)
+    {
+        ImGui::PushID(static_cast<int>(i + 100));
+        float p = cfg.multipassNeon.colorStops[i].position;
+        if (ImGui::SliderFloat("Pos##MP", &p, 0.0f, 1.0f, "%.2f"))
+            cfg.multipassNeon.colorStops[i].position = p;
+        ImGui::SameLine();
+        glm::vec4 c = cfg.multipassNeon.colorStops[i].color;
+        if (ImGui::ColorEdit4("Col##MP", &c.x, ImGuiColorEditFlags_NoInputs))
+            cfg.multipassNeon.colorStops[i].color = c;
+        ImGui::PopID();
+    }
+
+    if (cfg.multipassNeon.colorStops.size() < EdgeLighting::Config::MultiPassNeon::MAX_COLOR_STOPS)
+    {
+        if (ImGui::Button("+ Add Stop##MP"))
+        {
+            float lastPos = cfg.multipassNeon.colorStops.empty() ? 0.0f : cfg.multipassNeon.colorStops.back().position;
+            cfg.multipassNeon.colorStops.push_back(
                 {std::min(1.0f, lastPos + 0.1f), glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)});
         }
     }

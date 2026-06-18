@@ -7,6 +7,8 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/particle.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.vert"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-gradient.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-glow.frag"
 )
 
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/stroke.vert" STROKE_VERT_CONTENT)
@@ -17,6 +19,8 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/particle.vert" PARTICLE_VERT_CONT
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/particle.frag" PARTICLE_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.vert" NEON_VERT_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.frag" NEON_FRAG_CONTENT)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-gradient.frag" NEON_GRADIENT_FRAG_CONTENT)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-glow.frag" NEON_GLOW_FRAG_CONTENT)
 
 set(SHADER_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 configure_file(
@@ -33,6 +37,7 @@ add_library(edge-lighting STATIC
     src/renderer/particles.cpp
     src/renderer/particle-renderer.cpp
     src/renderer/neon-renderer.cpp
+    src/renderer/neon-multi-pass-renderer.cpp
     src/util/contour-tracer.cpp
     src/util/stb-image.cpp
 )

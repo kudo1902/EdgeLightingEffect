@@ -5,6 +5,7 @@
 #include "renderer/wireframe-renderer.h"
 #include "renderer/particle-renderer.h"
 #include "renderer/neon-renderer.h"
+#include "renderer/neon-multi-pass-renderer.h"
 #include "debug-ui.h"
 #include "ui-controls.h"
 #include "util/log-util.h"
@@ -73,10 +74,12 @@ int main()
     auto wireframeRenderer = std::make_shared<EdgeLighting::WireframeRenderer>();
     auto particleRenderer = std::make_shared<EdgeLighting::ParticleRenderer>();
     auto neonRenderer = std::make_shared<EdgeLighting::NeonRenderer>();
-    // gEffect->AddRenderer(strokeRenderer);
+    auto neonMultiPassRenderer = std::make_shared<EdgeLighting::NeonMultiPassRenderer>();
+    gEffect->AddRenderer(strokeRenderer);
     gEffect->AddRenderer(wireframeRenderer);
     gEffect->AddRenderer(particleRenderer);
     gEffect->AddRenderer(neonRenderer);
+    gEffect->AddRenderer(neonMultiPassRenderer);
 
     EdgeLighting::Config config;
     config.geometry.width = displayW / 2;
@@ -243,7 +246,10 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
         config.stroke.lineCount = std::min(16, config.stroke.lineCount + 1);
         break;
     case GLFW_KEY_N:
-        config.neon.enable = !config.neon.enable;
+        if (mods & GLFW_MOD_SHIFT)
+            config.multipassNeon.enable = !config.multipassNeon.enable;
+        else
+            config.neon.enable = !config.neon.enable;
         break;
     case GLFW_KEY_J:
         config.particles.enable = !config.particles.enable;
@@ -262,6 +268,9 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
         break;
     case GLFW_KEY_APOSTROPHE:
         config.stroke.glowIntensity = std::min(1.0f, config.stroke.glowIntensity + 0.05f);
+        break;
+    case GLFW_KEY_S:
+        config.stroke.enable = !config.stroke.enable;
         break;
     case GLFW_KEY_G:
         config.wireframe.enable = !config.wireframe.enable;

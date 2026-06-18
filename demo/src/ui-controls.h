@@ -24,8 +24,10 @@ namespace EdgeLightingDemo
         std::cout << "  [M]            - Cycle Animation (STATIC / MOVING / FLASHING)\n";
         std::cout << "  [U / Y]        - Inc / Dec Segment Length (moving)\n";
         std::cout << "  [P / L]        - Inc / Dec Speed (moving)\n";
+        std::cout << "  [S]            - Toggle Stroke Renderer\n";
         std::cout << "  [SPACE]        - Pause / Resume Animation\n";
         std::cout << "  [N]            - Toggle Neon Mode (alt. rendering)\n";
+        std::cout << "  [Shift+N]      - Toggle MultiPass Neon\n";
         std::cout << "  [J]            - Toggle Particle Trail\n";
         std::cout << "  [V]            - Toggle Glow\n";
         std::cout << "  [[ / ]]        - Inc / Dec Glow Size\n";
@@ -52,10 +54,14 @@ namespace EdgeLightingDemo
                                   : "OFF";
         std::string particleStr = config.particles.enable ? "ON" : "OFF";
         std::string neonStr = config.neon.enable ? "NEON" : "SDF";
+        std::string mpNeonStr = config.multipassNeon.enable ? "MP" : "  ";
         std::string windingStr = (config.geometry.winding == EdgeLighting::Winding::CLOCKWISE) ? "CW" : "CCW";
         std::string blendStr = (config.stroke.blendSpace == EdgeLighting::BlendSpace::HSV) ? "HSV" : "RGB";
 
+        std::string strokeStr = config.stroke.enable ? "ON " : "OFF";
+
         std::cout << "\r[Stroke] W: " << std::setw(3) << config.stroke.thickness
+                  << " | En: " << strokeStr
                   << " | Int: " << std::fixed << std::setprecision(1) << std::setw(3) << config.stroke.intensity
                   << " | " << sideStr
                   << " | Fade: " << std::setprecision(1) << std::setw(3) << config.stroke.fadeRange
@@ -66,7 +72,7 @@ namespace EdgeLightingDemo
                   << " | Fd: " << fadeStr
                   << " | Glow: " << glowStr
                   << " | Ptcl: " << particleStr
-                  << " | Mode: " << neonStr
+                  << " | Mode: " << neonStr << mpNeonStr
                   << " | " << windingStr
                   << " | " << blendStr
                   << " S:" << std::setprecision(2) << config.path.startPos
