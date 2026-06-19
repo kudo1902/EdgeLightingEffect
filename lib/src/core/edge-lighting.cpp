@@ -32,29 +32,24 @@ namespace EdgeLighting
         }
 
         float rawProgress = mAnimation.GetProgress();
-        float headPos = computeHeadPos();
         for (auto &renderer : mRenderers)
         {
-            renderer->Update(deltaTime, rawProgress, headPos, mTime, mConfig);
+            renderer->Update(deltaTime, rawProgress, 0.0f, mTime, mConfig);
         }
     }
 
     void EdgeLightingEffect::Render(int viewportWidth, int viewportHeight)
     {
         float rawProgress = mAnimation.GetProgress();
-        float headPos = computeHeadPos();
         for (auto &renderer : mRenderers)
         {
-            renderer->Render(viewportWidth, viewportHeight, rawProgress, headPos, mTime, mConfig);
+            renderer->Render(viewportWidth, viewportHeight, rawProgress, 0.0f, mTime, mConfig);
         }
     }
 
     void EdgeLightingEffect::SetConfig(const Config &config)
     {
         mConfig = config;
-
-        mAnimation.SetSpeed(mConfig.stroke.speed);
-
         for (auto &renderer : mRenderers)
         {
             renderer->OnConfigChanged(mConfig);
@@ -78,20 +73,6 @@ namespace EdgeLighting
     Animation &EdgeLightingEffect::GetAnimation()
     {
         return mAnimation;
-    }
-
-    float EdgeLightingEffect::computeHeadPos() const
-    {
-        float rawProgress;
-        if (mConfig.path.startPos == mConfig.path.endPos)
-        {
-            rawProgress = glm::fract(mTime * mConfig.stroke.speed);
-        }
-        else
-        {
-            rawProgress = mAnimation.GetProgress();
-        }
-        return glm::mix(mConfig.path.startPos, mConfig.path.endPos, rawProgress);
     }
 
 } // namespace EdgeLighting
