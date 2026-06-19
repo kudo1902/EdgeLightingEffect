@@ -1,4 +1,5 @@
 #include "renderer/neon-renderer.h"
+#include "util/geometry-utils.h"
 #include "shaders.h"
 #include "util/log-util.h"
 #include <glm/gtc/matrix_transform.hpp>
@@ -13,6 +14,7 @@ namespace EdgeLighting
             return false;
         }
         setupGeometry(mCurrentConfig);
+        rebuildLoopSamples(mCurrentConfig);
         return true;
     }
 
@@ -41,14 +43,17 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uMVP", mvp);
         mShaderProgram.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
         mShaderProgram.SetUniform("uCornerRadius", config.geometry.cornerRadius);
-        mShaderProgram.SetUniform("uStrokeThickness", config.neon.thickness);
+        mShaderProgram.SetUniform("uLineWidth", config.neon.lineWidth);
         mShaderProgram.SetUniform("uIntensity", config.neon.intensity);
         mShaderProgram.SetUniform("uTime", time);
-        mShaderProgram.SetUniform("uSpeed", config.neon.speed);
-        mShaderProgram.SetUniform("uGlowSize", config.neon.glowSize);
+        mShaderProgram.SetUniform("uSweepSpeed", config.neon.sweepSpeed);
+        mShaderProgram.SetUniform("uGlowRadius", config.neon.glowRadius);
+        mShaderProgram.SetUniform("uBloomStrength", config.neon.bloomStrength);
+        mShaderProgram.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
+        mShaderProgram.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness);
         mShaderProgram.SetUniform("uBlendSpace", static_cast<int>(config.neon.blendSpace));
         mShaderProgram.SetUniform("uColorStopCount", static_cast<int>(config.neon.colorStops.size()));
-        for (int i = 0; i < static_cast<int>(config.neon.colorStops.size()) && i < Config::Neon::MAX_COLOR_STOPS; ++i)
+        for (int i = 0; i < static_cast<int>(config.neon.colorStops.size()) && i < NeonConfig::MAX_COLOR_STOPS; ++i)
         {
             std::string posName = "uColorStopPositions[" + std::to_string(i) + "]";
             mShaderProgram.SetUniform(posName.c_str(), config.neon.colorStops[i].position);
@@ -56,6 +61,13 @@ namespace EdgeLighting
             mShaderProgram.SetUniform(colName.c_str(), config.neon.colorStops[i].color);
         }
 
+        int sampleCount = static_cast<int>(mLoopSamples.size());
+        mShaderProgram.SetUniform("uSampleCount", sampleCount);
+        mShaderProgram.SetUniform("uSampleSpacing", mSampleSpacing);
+        if (sampleCount > 0)
+        {
+            mShaderProgram.SetUniform("uLoopSamples", mLoopSamples.data(), sampleCount);
+        }
         mVertexArray.DrawArrays(GL_TRIANGLES, 6);
 
         mShaderProgram.Unuse();
@@ -66,7 +78,10 @@ namespace EdgeLighting
     {
         mCurrentConfig = config;
         if (mShaderProgram.IsValid())
+        {
             setupGeometry(config);
+            rebuildLoopSamples(config);
+        }
     }
 
     bool NeonRenderer::setupShaders()
@@ -85,12 +100,33 @@ namespace EdgeLighting
         float b = -(halfH + margin);
         float t = halfH + margin;
 
+        // clang-format off
         float verts[] = {
             l, t, l, b, r, b,
             l, t, r, b, r, t,
         };
+        // clang-format on
 
         mVertexArray.SetVertexData(verts, sizeof(verts));
         mVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+    }
+
+    void NeonRenderer::rebuildLoopSamples(const Config &config)
+    {
+        // Evenly spaced points (by arc length) around the rounded-rect perimeter.
+        // Drives the additive halo/spill/colour gather in the fragment shader.
+        mLoopSamples.resize(NUM_LOOP_SAMPLES);
+        for (int i = 0; i < NUM_LOOP_SAMPLES; ++i)
+        {
+            float t = static_cast<float>(i) / static_cast<float>(NUM_LOOP_SAMPLES);
+            mLoopSamples[i] = GeometryUtils::GetPointOnRectangle(t, config.geometry);
+        }
+
+        float w = config.geometry.width;
+        float h = config.geometry.height;
+        float r = std::max(0.0f, std::min(config.geometry.cornerRadius, std::min(w, h) * 0.5f));
+        constexpr float pi = 3.14159265358979323846f;
+        float perimeter = 2.0f * (w - 2.0f * r) + 2.0f * (h - 2.0f * r) + 2.0f * pi * r;
+        mSampleSpacing = perimeter / static_cast<float>(NUM_LOOP_SAMPLES);
     }
 }

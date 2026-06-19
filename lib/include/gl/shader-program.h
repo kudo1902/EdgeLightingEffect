@@ -129,6 +129,13 @@ namespace EdgeLighting
         {
             glUniformMatrix4fv(glGetUniformLocation(mId, name), 1, GL_FALSE, glm::value_ptr(value));
         }
+
+        /// Uploads a tightly packed array of vec2 values to a uniform array.
+        void SetUniform(const char *name, const glm::vec2 *values, int count) const
+        {
+            if (count <= 0) return;
+            glUniform2fv(glGetUniformLocation(mId, name), count, glm::value_ptr(*values));
+        }
         ///@}
 
     private:

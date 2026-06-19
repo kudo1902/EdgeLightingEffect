@@ -1,30 +1,103 @@
 #version 330 core
 precision highp float;
 
+#define NEON_NUM_SAMPLES 128
+
+// ---------------------------------------------------------------------------
+// Tuning constants — all values calibrated for the gathered-loop algorithm.
+// See docs/neon-square-final.md for the derivations behind each ratio.
+// ---------------------------------------------------------------------------
+
+// -- Glow-side mode (mirrors the GlowSide enum on the C++ side) --
+#define GLOW_SIDE_BOTH    0
+#define GLOW_SIDE_INSIDE  1
+#define GLOW_SIDE_OUTSIDE 2
+
+// -- Early-out: fragments far past the bloom kernel contribute < 1% --
+//    Multiplier on uGlowRadius, ≈ 8 × BLOOM_REACH_TO_GLOW so bloom is dust.
+#define EARLY_OUT_RADIUS_FACTOR   48.0
+//    Spacing-based floor for long-perimeter / small-glow cases.
+#define EARLY_OUT_SPACING_FACTOR  32.0
+
+// -- Filament (the bright line itself) --
+//    Minimum half-width in pixels — keeps the line visible for sub-pixel widths.
+#define FILAMENT_MIN_HALF_WIDTH   0.5
+//    Squared falloff: pow(k/(ad+k), FILAMENT_FALLOFF) — higher = sharper.
+#define FILAMENT_FALLOFF          2.0
+//    Filament gain inside the HDR sum; combines with sat<1 colour to roll to white.
+#define FILAMENT_GAIN             12.0
+
+// -- Halo (sharp coloured neon glow) --
+//    Per-sample kernel exponent. Sum along the bar -> ~1/D^(2p-1) transverse falloff.
+#define HALO_KERNEL_EXPONENT      1.3
+//    = 2 * HALO_KERNEL_EXPONENT - 1; used to normalise the gather to unit density.
+#define HALO_NORM_EXPONENT        1.6
+//    Density / kernel-width normalisation constant (empirical).
+#define HALO_NORM_FACTOR          0.43
+//    Halo gain inside the HDR sum.
+#define HALO_GAIN                 0.90
+//    Spacing floor: kernel width must be ≥ 1.2× spacing or the line beads into LEDs.
+#define HALO_SPACING_FLOOR        1.2
+
+// -- Bloom (wide soft background spill) --
+//    Bloom kernel width relative to halo radius.
+#define BLOOM_REACH_TO_GLOW       6.0
+//    Spacing floor for the bloom kernel.
+#define BLOOM_SPACING_FLOOR       4.0
+//    Density / kernel-width normalisation constant (empirical).
+#define BLOOM_NORM_FACTOR         0.32
+
+// -- Colour gather (corner cross-fade between stops) --
+//    Cross-fade width relative to halo radius; low = crisp, high = pastel corners.
+#define COLOR_BLEND_TO_GLOW       1.5
+//    Spacing floor for the colour-weight kernel.
+#define COLOR_BLEND_SPACING_FLOOR 1.5
+
+// -- Grading --
+//    Reinhard tone-map shoulder: result / (result + SHOULDER).
+#define TONE_MAP_SHOULDER         0.6
+//    Final gamma lift (display gamma).
+#define GAMMA_EXPONENT            0.85
+//    Per-pixel hash noise amplitude.
+#define FILM_GRAIN_AMOUNT         0.04
+
+// -- Epsilons --
+//    Tiny lower bound for the side-cut transition so smoothstep(0,0,·) never fires.
+#define SIDE_SOFT_EPSILON         1e-5
+//    Floor for the colour-weight sum so the divide never sees zero.
+#define WSUM_EPSILON              1e-6
+
 in vec2 vPos;
 out vec4 fragColor;
 
-uniform vec2 uRectSize;
+uniform vec2  uRectSize;
 uniform float uCornerRadius;
-uniform float uStrokeThickness;
+uniform float uLineWidth;
 uniform float uIntensity;
 uniform float uTime;
-uniform float uSpeed;
-uniform float uGlowSize;
+uniform float uSweepSpeed;
+uniform float uGlowRadius;
+uniform float uBloomStrength;
+uniform int   uGlowSide;        // 0 both, 1 inside, 2 outside
+uniform float uGlowSideSoftness;
 
-uniform int uColorStopCount;
+uniform int   uSampleCount;
+uniform float uSampleSpacing;                  // arc length between consecutive samples (pixels)
+uniform vec2  uLoopSamples[NEON_NUM_SAMPLES];  // perimeter sample positions, rect-local space
+
+uniform int   uColorStopCount;
 uniform float uColorStopPositions[16];
-uniform vec4 uColorStopColors[16];
-uniform int uBlendSpace;
+uniform vec4  uColorStopColors[16];
+uniform int   uBlendSpace;
 
-// --- SDF rounded box ---
-// signed distance to a rounded rectangle centered at origin
+// --- Signed distance to a rounded rectangle centered at origin -----------
+// d < 0 inside, d = 0 on the edge, d > 0 outside.
 float sdRoundBox(vec2 p, vec2 b, float r) {
     vec2 q = abs(p) - b + r;
     return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
 }
 
-// --- HSV ---
+// --- Colour-space helpers -----------------------------------------------
 vec3 hsv2rgb(vec3 c) {
     vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
     vec3 p = abs(fract(c.xxx + K.xyz) * 6.0 - K.www);
@@ -40,53 +113,40 @@ vec3 rgb2hsv(vec3 c) {
     return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (d + e), q.x);
 }
 
-// --- Film grain hash ---
-float hash(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-}
-
-// --- Blending ---
-vec3 blendRGB(vec3 a, vec3 b, float t) {
-    return mix(a, b, t);
-}
+vec3 blendRGB(vec3 a, vec3 b, float t) { return mix(a, b, t); }
 
 vec3 blendHSV(vec3 a, vec3 b, float t) {
     vec3 ha = rgb2hsv(a);
     vec3 hb = rgb2hsv(b);
     float dh = hb.x - ha.x;
-    if (dh > 0.5) dh -= 1.0;
+    if (dh > 0.5)  dh -= 1.0;
     if (dh < -0.5) dh += 1.0;
     return hsv2rgb(vec3(ha.x + dh * t, mix(ha.y, hb.y, t), mix(ha.z, hb.z, t)));
 }
 
 vec3 blend(vec3 a, vec3 b, float t) {
-    if (uBlendSpace == 1) return blendHSV(a, b, t);
-    return blendRGB(a, b, t);
+    return (uBlendSpace == 1) ? blendHSV(a, b, t) : blendRGB(a, b, t);
 }
 
-// --- Color stop sampling ---
+// Sample the user-supplied colour-stop ring at perimeter position `pos` in [0,1).
 vec3 sampleStops(float pos) {
     int count = uColorStopCount;
     if (count <= 0) return vec3(1.0);
     if (count == 1) return uColorStopColors[0].rgb;
     if (count == 2) {
-        // triangular blend: stop0 at pos 0 & 1, stop1 at pos 0.5
         float tri = 1.0 - abs(2.0 * pos - 1.0);
         return blend(uColorStopColors[0].rgb, uColorStopColors[1].rgb, tri);
     }
-    // 3+ stops: walk the segments, wrapping last→first
     for (int i = 0; i < count; i++) {
         int next = (i + 1 < count) ? i + 1 : 0;
         float a = uColorStopPositions[i];
         float b = uColorStopPositions[next];
         if (next != 0) {
-            // normal segment (non-wrap)
             if (pos >= a && pos < b) {
                 float t = (pos - a) / max(b - a, 0.0001);
                 return blend(uColorStopColors[i].rgb, uColorStopColors[next].rgb, t);
             }
         } else {
-            // wrap segment: last stop → first stop across the 0/1 boundary
             float wrapLen = (1.0 - a) + b;
             if (pos >= a) {
                 float t = (pos - a) / max(wrapLen, 0.0001);
@@ -101,95 +161,90 @@ vec3 sampleStops(float pos) {
     return uColorStopColors[0].rgb;
 }
 
-void main() {
-    vec2 halfSize = uRectSize * 0.5;
+float hash(vec2 p) {
+    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+}
 
-    // d = signed distance to the rounded-rect edge
-    //   d < 0  →  inside the rectangle
-    //   d = 0  →  exactly on the edge
-    //   d > 0  →  outside the rectangle
-    float d = sdRoundBox(vPos, halfSize, uCornerRadius);
+void main() {
+    vec2  halfSize = uRectSize * 0.5;
+    float d  = sdRoundBox(vPos, halfSize, uCornerRadius);
     float ad = abs(d);
 
-    // --- Determine the color for this fragment ---
-    // Instead of using the fragment's own angular position (which creates a
-    // rotating conic wheel at the centre), we trace back along the SDF
-    // gradient to find the closest point ON the perimeter and use its angle.
-    // This way every fragment in a line perpendicular to the edge gets the
-    // same colour — no conic wheel.
-    float eps = max(0.5, min(uRectSize.x, uRectSize.y) * 0.001);
-    vec2 grad = vec2(
-        sdRoundBox(vPos + vec2(eps, 0.0), halfSize, uCornerRadius) -
-        sdRoundBox(vPos - vec2(eps, 0.0), halfSize, uCornerRadius),
-        sdRoundBox(vPos + vec2(0.0, eps), halfSize, uCornerRadius) -
-        sdRoundBox(vPos - vec2(0.0, eps), halfSize, uCornerRadius)
-    );
-    float gradLen = length(grad);
-    float perimAng;
-    if (gradLen < 1e-4) {
-        perimAng = 0.0; // centre of a symmetric rect → arbitrary reference
-    } else {
-        vec2 closestPoint = vPos - d * (grad / gradLen);
-        perimAng = atan(closestPoint.y, closestPoint.x);
+    // --- Early-out: skip the gather where contribution is dust -------
+    // Past EARLY_OUT_RADIUS_FACTOR × glow radius the bloom is below ~1% of
+    // peak — invisible after the tone map. The spacing-based floor keeps
+    // the halo intact on long perimeters with small glow values.
+    float earlyOut = max(uGlowRadius    * EARLY_OUT_RADIUS_FACTOR,
+                         uSampleSpacing * EARLY_OUT_SPACING_FACTOR);
+    if (ad > earlyOut)
+        discard;
+
+    // Stronger early-out for one-sided modes: the masked half is unconditionally
+    // dark past the softness band, so the whole gather can be skipped there.
+    float softEdge = max(uGlowSideSoftness, SIDE_SOFT_EPSILON);
+    if (uGlowSide == GLOW_SIDE_INSIDE  && d >  softEdge) discard;
+    if (uGlowSide == GLOW_SIDE_OUTSIDE && d < -softEdge) discard;
+
+    // --- Filament: width scales with lineWidth, peak stays ~1 --------
+    // k / (ad + k) peaks at 1 when ad = 0 and falls as ad grows; the
+    // FILAMENT_FALLOFF-power sharpens the line so it does not bleed across.
+    float k    = max(uLineWidth * 0.5, FILAMENT_MIN_HALF_WIDTH);
+    float core = pow(k / (ad + k), FILAMENT_FALLOFF);
+
+    // --- Additive gather over the perimeter samples ------------------
+    // Each loop sample drops two smooth kernels (halo + wide spill) plus an
+    // inverse-square colour weight. Summed along the bar, the kernels add up
+    // to a clean transverse falloff with no medial creases and no LED dots.
+    // Kernel widths are clamped to the sample spacing so the sum stays smooth
+    // even for thin halos on long perimeters.
+    float kg     = max(uGlowRadius,                       uSampleSpacing * HALO_SPACING_FLOOR);
+    float kg2    = kg * kg;
+    float bw     = max(uGlowRadius * BLOOM_REACH_TO_GLOW, uSampleSpacing * BLOOM_SPACING_FLOOR);
+    float bw2    = bw * bw;
+    float blendW = max(uGlowRadius * COLOR_BLEND_TO_GLOW, uSampleSpacing * COLOR_BLEND_SPACING_FLOOR);
+    float b2     = blendW * blendW;
+
+    float glow  = 0.0;
+    float bloom = 0.0;
+    vec3  acc   = vec3(0.0);
+    float wsum  = 0.0;
+    float invCount = 1.0 / float(max(uSampleCount, 1));
+
+    for (int i = 0; i < NEON_NUM_SAMPLES; i++) {
+        if (i >= uSampleCount) break;
+
+        vec2  dv  = vPos - uLoopSamples[i];
+        float dd  = dot(dv, dv);
+
+        glow  += pow(1.0 / (dd + kg2), HALO_KERNEL_EXPONENT);   // -> ~1/D^1.6 neon halo
+        bloom += 1.0 / (dd + bw2);                              // -> ~1/D     wide spill
+
+        float ww   = 1.0 / (dd + b2);                           // inverse-square colour weight
+        float ti   = fract(float(i) * invCount + uTime * uSweepSpeed);
+        acc  += sampleStops(ti) * ww;
+        wsum += ww;
     }
-    // Map angle [-π, π] to [0, 1] perimeter position + time animation
-    float h = fract((perimAng / 6.2831853) + 0.5 + uTime * uSpeed);
-    vec3 col = sampleStops(h); // ← the colour for this fragment
+    glow  *= uSampleSpacing * pow(kg, HALO_NORM_EXPONENT) * HALO_NORM_FACTOR;
+    bloom *= uSampleSpacing * bw                          * BLOOM_NORM_FACTOR;
 
-    // --- Three-layer neon (ported from neon-square.html) ---
-    // All three layers use `ad` = distance from the edge, so they are
-    // SYMMETRIC — they glow on both the inside and the outside.
+    vec3 col = acc / max(wsum, WSUM_EPSILON);   // smooth gathered colour
 
-    // 1. Core: bright thin line at the stroke edge
-    //   w / (ad + ε)  — inverse-distance falloff, ε prevents division by zero
-    float w = max(uStrokeThickness * 0.5, 0.1);
-    float core = w / (ad + 0.8);
+    vec3 result  = col * core  * FILAMENT_GAIN  * uIntensity;  // white-hot filament
+    result      += col * glow  * HALO_GAIN      * uIntensity;  // coloured neon halo
+    result      += col * bloom * uBloomStrength * uIntensity;  // wide background spill
 
-    // 2. Glow: soft halo that spreads wider than the core
-    //   pow(w / (ad + spread), 1.6)  — slower falloff = wider halo
-    float glow = pow(w / (ad + uGlowSize * 0.5), 1.6);
+    // --- One-sided cut: mask the WHOLE emission at the line ----------
+    // The cut sits at d = 0 (fixed, doesn't drift with thickness), and multiplies
+    // the entire summed light so the dark side is truly black — no leak from the
+    // filament's own falloff. softEdge is clamped to SIDE_SOFT_EPSILON to avoid the
+    // degenerate smoothstep(0,0,·) when softness == 0 (the hard-edge case).
+    if (uGlowSide == GLOW_SIDE_INSIDE)       result *= smoothstep( softEdge, -softEdge, d);
+    else if (uGlowSide == GLOW_SIDE_OUTSIDE) result *= smoothstep(-softEdge,  softEdge, d);
 
-    // 3. Fill (outer bloom): extra glow that only appears outside
-    //   smoothstep(outside_start, inside_end, d)  → 1 far out, 0 far in
-    //   At the edge (d=0) it is ~0.16, ramping to 1 at ~glowSize×0.6 px out
-    float bloomFalloff = max(uGlowSize * 0.4, 2.0);
-    float fill = smoothstep(bloomFalloff * 1.5, -bloomFalloff * 0.5, d);
-
-    // --- Separate interior from exterior ---
-    // outsideStrength gates the COLOURED three-layer glow to the exterior:
-    //   d ≥ 1 px outside → outsideStrength = 1 (full colour)
-    //   d ≤ –glowSize×0.3 px inside → outsideStrength ≈ 0 (no colour)
-    // This prevents the 4 coloured quadrant shapes from appearing inside.
-    float outsideStrength = smoothstep(-uGlowSize * 0.3, 1.0, d);
-
-    // exterior: colour by nearest point on the perimeter (perpendicular bands)
-    float hOut = fract((perimAng / 6.2831853) + 0.5 + uTime * uSpeed);
-    vec3 colOut = sampleStops(hOut);
-
-    // interior: colour by the conic angle from the centre.
-    // Smooth (only a single dim singularity at the dead centre) and equals hOut
-    // exactly at the edge (closestPoint == vPos when d == 0) → no seam.
-    float hIn = fract((atan(vPos.y, vPos.x) / 6.2831853) + 0.5 + uTime * uSpeed);
-    vec3 colIn = sampleStops(hIn);
-
-    // EXTERIOR — full colour three-layer glow (unchanged)
-    vec3 result = colOut * (core * 0.35 + glow * 0.90 + fill * 0.18)
-                * outsideStrength * uIntensity;
-
-    // INTERIOR — full colour three-layer glow (now coloured & smooth, no shapes)
-    float insideStrength = 1.0 - smoothstep(-uGlowSize * 0.5, 0.0, d);
-    result += colIn * (core * 0.35 + glow * 0.90) * insideStrength * uIntensity;
-
-    float t = clamp(ad / min(halfSize.x, halfSize.y), 0.0, 1.0);
-    colIn = mix(colIn, vec3(dot(colIn, vec3(0.3333))), t * 0.6); // neutral toward centre
-    // --- Post-processing ---
-    // Reinhard tone map — compresses HDR values while preserving colour
-    result = result / (result + vec3(0.6));
-    result = pow(result, vec3(0.85)); // gamma lift
-
-    // Film grain
-    float grain = 0.04;
-    result += (hash(gl_FragCoord.xy + uTime) - 0.5) * grain;
+    // --- Grade: tone map AFTER summing, then gamma + grain -----------
+    result = result / (result + vec3(TONE_MAP_SHOULDER));
+    result = pow(result, vec3(GAMMA_EXPONENT));
+    result += (hash(gl_FragCoord.xy + uTime) - 0.5) * FILM_GRAIN_AMOUNT;
 
     fragColor = vec4(result, 1.0);
 }

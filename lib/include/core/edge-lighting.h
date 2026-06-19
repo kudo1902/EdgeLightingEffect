@@ -43,8 +43,6 @@ namespace EdgeLighting
         Animation &GetAnimation();
 
     private:
-        float computeHeadPos() const;
-
         Config mConfig;
         float mTime = 0.0f;
 

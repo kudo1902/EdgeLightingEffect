@@ -4,12 +4,17 @@
 #include "renderer/base-renderer.h"
 #include "gl/shader-program.h"
 #include "gl/vertex-array.h"
+#include <glm/glm.hpp>
+#include <vector>
 
 namespace EdgeLighting
 {
     class NeonRenderer : public BaseRenderer
     {
     public:
+        /// Must match NEON_NUM_SAMPLES in lib/shaders/neon.frag.
+        static constexpr int NUM_LOOP_SAMPLES = 128;
+
         NeonRenderer() = default;
         virtual ~NeonRenderer() = default;
 
@@ -21,10 +26,14 @@ namespace EdgeLighting
     private:
         bool setupShaders();
         void setupGeometry(const Config &config);
+        void rebuildLoopSamples(const Config &config);
 
         Config mCurrentConfig;
         ShaderProgram mShaderProgram;
         VertexArray mVertexArray;
+
+        std::vector<glm::vec2> mLoopSamples;
+        float mSampleSpacing = 0.0f;
     };
 }
 

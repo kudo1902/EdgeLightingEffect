@@ -11,7 +11,7 @@ namespace EdgeLighting
         namespace Detail
         {
             /// Clockwise traversal: top → right → bottom → left
-            inline glm::vec2 GetPointOnRectCW(float t, const Config::Geometry &geom)
+            inline glm::vec2 GetPointOnRectCW(float t, const RectGeometry &geom)
             {
                 float halfW = geom.width * 0.5f;
                 float halfH = geom.height * 0.5f;
@@ -133,7 +133,7 @@ namespace EdgeLighting
             }
 
             /// Counter-clockwise traversal: left → bottom → right → top
-            inline glm::vec2 GetPointOnRectCCW(float t, const Config::Geometry &geom)
+            inline glm::vec2 GetPointOnRectCCW(float t, const RectGeometry &geom)
             {
                 float halfW = geom.width * 0.5f;
                 float halfH = geom.height * 0.5f;
@@ -260,7 +260,7 @@ namespace EdgeLighting
         /// Progress 0 = top-left. Direction is controlled by geom.winding.
         /// Supports rounded corners via cornerRadius.
         /// The point is in the rectangle's local coordinate system (origin at center).
-        inline glm::vec2 GetPointOnRectangle(float t, const Config::Geometry &geom)
+        inline glm::vec2 GetPointOnRectangle(float t, const RectGeometry &geom)
         {
             if (geom.winding == Winding::CLOCKWISE)
             {
@@ -277,7 +277,7 @@ namespace EdgeLighting
             return glm::vec2(appPt.x - halfW, halfH - appPt.y);
         }
 
-        inline glm::vec2 AppToLocal(const glm::vec2 &appPt, const Config::Geometry &geom)
+        inline glm::vec2 AppToLocal(const glm::vec2 &appPt, const RectGeometry &geom)
         {
             return AppToLocal(appPt, geom.width * 0.5f, geom.height * 0.5f);
         }
@@ -292,7 +292,7 @@ namespace EdgeLighting
             return result;
         }
 
-        inline std::vector<glm::vec2> AppToLocal(const std::vector<glm::vec2> &appPts, const Config::Geometry &geom)
+        inline std::vector<glm::vec2> AppToLocal(const std::vector<glm::vec2> &appPts, const RectGeometry &geom)
         {
             return AppToLocal(appPts, geom.width * 0.5f, geom.height * 0.5f);
         }
