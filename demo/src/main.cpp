@@ -1,9 +1,7 @@
 #include "gl/gl-header.h"
 #include <GLFW/glfw3.h>
 #include "core/edge-lighting.h"
-#include "renderer/stroke-renderer.h"
 #include "renderer/wireframe-renderer.h"
-#include "renderer/particle-renderer.h"
 #include "renderer/neon-renderer.h"
 #include "renderer/neon-multi-pass-renderer.h"
 #include "debug-ui.h"
@@ -70,14 +68,11 @@ int main()
     // --- Effect setup ---
     gEffect = std::make_unique<EdgeLighting::EdgeLightingEffect>();
 
-    auto strokeRenderer = std::make_shared<EdgeLighting::StrokeRenderer>();
     auto wireframeRenderer = std::make_shared<EdgeLighting::WireframeRenderer>();
-    auto particleRenderer = std::make_shared<EdgeLighting::ParticleRenderer>();
     auto neonRenderer = std::make_shared<EdgeLighting::NeonRenderer>();
     auto neonMultiPassRenderer = std::make_shared<EdgeLighting::NeonMultiPassRenderer>();
-    gEffect->AddRenderer(strokeRenderer);
+
     gEffect->AddRenderer(wireframeRenderer);
-    gEffect->AddRenderer(particleRenderer);
     gEffect->AddRenderer(neonRenderer);
     gEffect->AddRenderer(neonMultiPassRenderer);
 
@@ -86,10 +81,7 @@ int main()
     config.geometry.height = displayH / 2;
     config.geometry.position = glm::vec2(displayW / 4, displayH / 4);
     config.geometry.cornerRadius = 0.0f;
-    config.stroke.colorStops = {
-        {0.00f, glm::vec4(1.0f, 0.0f, 0.0f, 1.0f)},
-        {0.50f, glm::vec4(0.0f, 0.0f, 1.0f, 1.0f)},
-    };
+    config.neon.enable = true;
     config.wireframe.enable = true;
     config.wireframe.color = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
 
@@ -182,48 +174,28 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
     switch (key)
     {
     case GLFW_KEY_R:
-        config.stroke.thickness = std::min(40.0f, config.stroke.thickness + 1.0f);
+        config.neon.lineWidth = std::min(20.0f, config.neon.lineWidth + 1.0f);
         break;
     case GLFW_KEY_F:
-        config.stroke.thickness = std::max(1.0f, config.stroke.thickness - 1.0f);
+        config.neon.lineWidth = std::max(1.0f, config.neon.lineWidth - 1.0f);
         break;
     case GLFW_KEY_I:
-        config.stroke.intensity = std::min(1.0f, config.stroke.intensity + 0.1f);
+        config.neon.intensity = std::min(3.0f, config.neon.intensity + 0.1f);
         break;
     case GLFW_KEY_O:
-        config.stroke.intensity = std::max(0.0f, config.stroke.intensity - 0.1f);
+        config.neon.intensity = std::max(0.0f, config.neon.intensity - 0.1f);
         break;
-    case GLFW_KEY_T:
-    {
-        int s = static_cast<int>(config.stroke.alignment);
-        s = (s + 1) % 3;
-        config.stroke.alignment = static_cast<EdgeLighting::StrokeAlignment>(s);
+    case GLFW_KEY_LEFT_BRACKET:
+        config.neon.glowRadius = std::max(1.0f, config.neon.glowRadius - 1.0f);
         break;
-    }
-    case GLFW_KEY_H:
-        if (mods & GLFW_MOD_SHIFT)
-            config.stroke.fadeRange = std::max(0.0f, config.stroke.fadeRange - 1.0f);
-        else
-            config.stroke.fadeRange = std::min(config.stroke.thickness, config.stroke.fadeRange + 1.0f);
-        break;
-    case GLFW_KEY_M:
-    {
-        int m = static_cast<int>(config.stroke.animation);
-        m = (m + 1) % 3;
-        config.stroke.animation = static_cast<EdgeLighting::StrokeAnimation>(m);
-        break;
-    }
-    case GLFW_KEY_U:
-        config.stroke.segmentLength = std::min(1.0f, config.stroke.segmentLength + 0.05f);
-        break;
-    case GLFW_KEY_Y:
-        config.stroke.segmentLength = std::max(0.05f, config.stroke.segmentLength - 0.05f);
+    case GLFW_KEY_RIGHT_BRACKET:
+        config.neon.glowRadius = std::min(80.0f, config.neon.glowRadius + 1.0f);
         break;
     case GLFW_KEY_P:
-        config.stroke.speed = std::min(5.0f, config.stroke.speed + 0.1f);
+        config.neon.sweepSpeed = std::min(5.0f, config.neon.sweepSpeed + 0.1f);
         break;
     case GLFW_KEY_L:
-        config.stroke.speed = std::max(0.1f, config.stroke.speed - 0.1f);
+        config.neon.sweepSpeed = std::max(0.0f, config.neon.sweepSpeed - 0.1f);
         break;
     case GLFW_KEY_SPACE:
         if (gEffect->GetAnimation().IsPlaying())
@@ -231,61 +203,14 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
         else
             gEffect->GetAnimation().Play();
         break;
-    case GLFW_KEY_B:
-    {
-        int m = static_cast<int>(config.stroke.fadeMode);
-        m = (m + 1) % 2;
-        config.stroke.fadeMode = static_cast<EdgeLighting::FadeMode>(m);
-        break;
-    }
-
-    case GLFW_KEY_COMMA:
-        config.stroke.lineCount = std::max(1, config.stroke.lineCount - 1);
-        break;
-    case GLFW_KEY_PERIOD:
-        config.stroke.lineCount = std::min(16, config.stroke.lineCount + 1);
-        break;
     case GLFW_KEY_N:
         if (mods & GLFW_MOD_SHIFT)
             config.multipassNeon.enable = !config.multipassNeon.enable;
         else
             config.neon.enable = !config.neon.enable;
         break;
-    case GLFW_KEY_J:
-        config.particles.enable = !config.particles.enable;
-        break;
-    case GLFW_KEY_V:
-        config.stroke.glowEnable = !config.stroke.glowEnable;
-        break;
-    case GLFW_KEY_LEFT_BRACKET:
-        config.stroke.glowSize = std::max(1.0f, config.stroke.glowSize - 1.0f);
-        break;
-    case GLFW_KEY_RIGHT_BRACKET:
-        config.stroke.glowSize = std::min(40.0f, config.stroke.glowSize + 1.0f);
-        break;
-    case GLFW_KEY_SEMICOLON:
-        config.stroke.glowIntensity = std::max(0.0f, config.stroke.glowIntensity - 0.05f);
-        break;
-    case GLFW_KEY_APOSTROPHE:
-        config.stroke.glowIntensity = std::min(1.0f, config.stroke.glowIntensity + 0.05f);
-        break;
-    case GLFW_KEY_S:
-        config.stroke.enable = !config.stroke.enable;
-        break;
     case GLFW_KEY_G:
         config.wireframe.enable = !config.wireframe.enable;
-        break;
-    case GLFW_KEY_1:
-        config.path.startPos = std::max(0.0f, config.path.startPos - 0.05f);
-        break;
-    case GLFW_KEY_2:
-        config.path.startPos = std::min(1.0f, config.path.startPos + 0.05f);
-        break;
-    case GLFW_KEY_3:
-        config.path.endPos = std::max(0.0f, config.path.endPos - 0.05f);
-        break;
-    case GLFW_KEY_4:
-        config.path.endPos = std::min(1.0f, config.path.endPos + 0.05f);
         break;
     case GLFW_KEY_W:
     {
