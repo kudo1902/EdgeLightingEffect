@@ -34,6 +34,10 @@ namespace EdgeLighting
 
         std::vector<glm::vec2> mLoopSamples;
         float mSampleSpacing = 0.0f;
+
+        // Reusable buffers for colour-stop array uploads.
+        std::vector<float> mStopPositions;
+        std::vector<glm::vec4> mStopColors;
     };
 }
 

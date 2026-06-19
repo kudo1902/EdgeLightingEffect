@@ -52,13 +52,21 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
         mShaderProgram.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness);
         mShaderProgram.SetUniform("uBlendSpace", static_cast<int>(config.neon.blendSpace));
-        mShaderProgram.SetUniform("uColorStopCount", static_cast<int>(config.neon.colorStops.size()));
-        for (int i = 0; i < static_cast<int>(config.neon.colorStops.size()) && i < NeonConfig::MAX_COLOR_STOPS; ++i)
+        int stopCount = std::min(static_cast<int>(config.neon.colorStops.size()),
+                                 NeonConfig::MAX_COLOR_STOPS);
+        mShaderProgram.SetUniform("uColorStopCount", stopCount);
+        mStopPositions.resize(stopCount);
+        mStopColors.resize(stopCount);
+        for (int i = 0; i < stopCount; ++i)
         {
-            std::string posName = "uColorStopPositions[" + std::to_string(i) + "]";
-            mShaderProgram.SetUniform(posName.c_str(), config.neon.colorStops[i].position);
-            std::string colName = "uColorStopColors[" + std::to_string(i) + "]";
-            mShaderProgram.SetUniform(colName.c_str(), config.neon.colorStops[i].color);
+            mStopPositions[i] = config.neon.colorStops[i].position;
+            mStopColors[i] = config.neon.colorStops[i].color;
+        }
+
+        if (stopCount > 0)
+        {
+            mShaderProgram.SetUniform("uColorStopPositions", mStopPositions.data(), stopCount);
+            mShaderProgram.SetUniform("uColorStopColors", mStopColors.data(), stopCount);
         }
 
         int sampleCount = static_cast<int>(mLoopSamples.size());
@@ -86,7 +94,9 @@ namespace EdgeLighting
 
     bool NeonRenderer::setupShaders()
     {
-        mShaderProgram = ShaderProgram(ShaderSource::NEON_VERT_SRC, ShaderSource::NEON_FRAG_SRC);
+        mShaderProgram = ShaderProgram(ShaderSource::NEON_VERT_SRC,
+                                       ShaderSource::NEON_FRAG_SRC,
+                                       "NeonRenderer");
         return mShaderProgram.IsValid();
     }
 

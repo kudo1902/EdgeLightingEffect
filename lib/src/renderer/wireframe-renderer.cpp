@@ -58,7 +58,9 @@ namespace EdgeLighting
 
     bool WireframeRenderer::setupShaders()
     {
-        mShaderProgram = ShaderProgram(ShaderSource::WIREFRAME_VERT_SRC, ShaderSource::WIREFRAME_FRAG_SRC);
+        mShaderProgram = ShaderProgram(ShaderSource::WIREFRAME_VERT_SRC,
+                                       ShaderSource::WIREFRAME_FRAG_SRC,
+                                       "WireframeRenderer");
         return mShaderProgram.IsValid();
     }
 
