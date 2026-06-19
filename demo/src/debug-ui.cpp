@@ -82,12 +82,9 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
 
     ImGui::Begin("Debug Controls");
 
-    buildStrokeSection(cfg);
     buildGeometrySection(cfg);
     buildNeonSection(cfg);
     buildMultiPassNeonSection(cfg);
-    buildPathSection(cfg);
-    buildParticlesSection(cfg);
 
     ImGui::Checkbox("Wireframe", &cfg.wireframe.enable);
 
@@ -143,88 +140,6 @@ void DebugUI::Render()
 // Sections
 // ---------------------------------------------------------------------------
 
-void DebugUI::buildStrokeSection(EdgeLighting::Config &cfg)
-{
-    if (!ImGui::CollapsingHeader("Stroke", ImGuiTreeNodeFlags_DefaultOpen))
-        return;
-
-    ImGui::Checkbox("Enable##Stroke", &cfg.stroke.enable);
-    if (!cfg.stroke.enable)
-        return;
-
-    ImGui::SliderFloat("Thickness##Stroke", &cfg.stroke.thickness, 1.0f, 40.0f, "%.0f");
-    ImGui::SliderFloat("Intensity##Stroke", &cfg.stroke.intensity, 0.0f, 1.0f, "%.2f");
-
-    const char *alignItems[] = {"CENTER", "INNER", "OUTER"};
-    int alignIdx = static_cast<int>(cfg.stroke.alignment);
-    if (ImGui::Combo("Alignment", &alignIdx, alignItems, IM_ARRAYSIZE(alignItems)))
-    {
-        cfg.stroke.alignment = static_cast<EdgeLighting::StrokeAlignment>(alignIdx);
-    }
-
-    const char *animItems[] = {"STATIC", "MOVING", "FLASHING"};
-    int animIdx = static_cast<int>(cfg.stroke.animation);
-    if (ImGui::Combo("Animation", &animIdx, animItems, IM_ARRAYSIZE(animItems)))
-    {
-        cfg.stroke.animation = static_cast<EdgeLighting::StrokeAnimation>(animIdx);
-    }
-
-    if (cfg.stroke.animation == EdgeLighting::StrokeAnimation::MOVING)
-    {
-        ImGui::SliderFloat("Segment Len", &cfg.stroke.segmentLength, 0.05f, 1.0f, "%.2f");
-        ImGui::SliderInt("Line Count", &cfg.stroke.lineCount, 1, 16);
-    }
-    ImGui::SliderFloat("Speed", &cfg.stroke.speed, 0.1f, 5.0f, "%.1f");
-
-    const char *blendItems[] = {"RGB", "HSV"};
-    int blendIdx = static_cast<int>(cfg.stroke.blendSpace);
-    if (ImGui::Combo("Blend Space", &blendIdx, blendItems, IM_ARRAYSIZE(blendItems)))
-    {
-        cfg.stroke.blendSpace = static_cast<EdgeLighting::BlendSpace>(blendIdx);
-    }
-
-    int toRemove = -1;
-    for (int i = 0; i < (int)cfg.stroke.colorStops.size(); i++)
-    {
-        ImGui::PushID(i);
-        ImGui::SliderFloat("Pos", &cfg.stroke.colorStops[i].position, 0.0f, 1.0f, "%.2f");
-        ImGui::SameLine();
-        ImGui::ColorEdit3("##col", &cfg.stroke.colorStops[i].color.x,
-                          ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
-        ImGui::SameLine();
-        if (ImGui::SmallButton("X") && cfg.stroke.colorStops.size() > 1)
-            toRemove = i;
-        ImGui::PopID();
-    }
-    if (toRemove >= 0)
-        cfg.stroke.colorStops.erase(cfg.stroke.colorStops.begin() + toRemove);
-    if (cfg.stroke.colorStops.size() < EdgeLighting::Config::Stroke::MAX_COLOR_STOPS)
-    {
-        if (ImGui::Button("+ Add Stop"))
-        {
-            float lastPos = cfg.stroke.colorStops.empty() ? 0.0f : cfg.stroke.colorStops.back().position;
-            cfg.stroke.colorStops.push_back(
-                {std::min(1.0f, lastPos + 0.1f), glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)});
-        }
-    }
-
-    ImGui::SliderFloat("Fade Range", &cfg.stroke.fadeRange, 0.0f, cfg.stroke.thickness, "%.1f");
-
-    const char *fadeItems[] = {"SINGLE", "DOUBLE"};
-    int fadeIdx = static_cast<int>(cfg.stroke.fadeMode);
-    if (ImGui::Combo("Fade Mode", &fadeIdx, fadeItems, IM_ARRAYSIZE(fadeItems)))
-    {
-        cfg.stroke.fadeMode = static_cast<EdgeLighting::FadeMode>(fadeIdx);
-    }
-
-    ImGui::Checkbox("Glow", &cfg.stroke.glowEnable);
-    if (cfg.stroke.glowEnable)
-    {
-        ImGui::SliderFloat("Glow Size", &cfg.stroke.glowSize, 1.0f, 40.0f, "%.0f");
-        ImGui::SliderFloat("Glow Int", &cfg.stroke.glowIntensity, 0.0f, 1.0f, "%.2f");
-    }
-}
-
 void DebugUI::buildGeometrySection(EdgeLighting::Config &cfg)
 {
     if (!ImGui::CollapsingHeader("Geometry", ImGuiTreeNodeFlags_DefaultOpen))
@@ -251,10 +166,20 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
     if (!cfg.neon.enable)
         return;
 
-    ImGui::SliderFloat("Thickness##Neon", &cfg.neon.thickness, 1.0f, 20.0f, "%.0f");
+    ImGui::SliderFloat("Line Width##Neon", &cfg.neon.lineWidth, 1.0f, 20.0f, "%.0f");
     ImGui::SliderFloat("Intensity##Neon", &cfg.neon.intensity, 0.0f, 3.0f, "%.2f");
-    ImGui::SliderFloat("Glow Size##Neon", &cfg.neon.glowSize, 1.0f, 80.0f, "%.0f");
-    ImGui::SliderFloat("Speed##Neon", &cfg.neon.speed, 0.0f, 2.0f, "%.2f");
+    ImGui::SliderFloat("Glow Radius##Neon", &cfg.neon.glowRadius, 1.0f, 80.0f, "%.0f");
+    ImGui::SliderFloat("Bloom Strength##Neon", &cfg.neon.bloomStrength, 0.0f, 2.0f, "%.2f");
+    ImGui::SliderFloat("Sweep Speed##Neon", &cfg.neon.sweepSpeed, 0.0f, 2.0f, "%.2f");
+
+    const char *sideItems[] = {"Both", "Inside", "Outside"};
+    int sideIdx = static_cast<int>(cfg.neon.glowSide);
+    if (ImGui::Combo("Glow Side##Neon", &sideIdx, sideItems, IM_ARRAYSIZE(sideItems)))
+    {
+        cfg.neon.glowSide = static_cast<EdgeLighting::GlowSide>(sideIdx);
+    }
+    if (cfg.neon.glowSide != EdgeLighting::GlowSide::BOTH)
+        ImGui::SliderFloat("Side Softness##Neon", &cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
 
     const char *blendItems[] = {"RGB", "HSV"};
     int blendIdx = static_cast<int>(cfg.neon.blendSpace);
@@ -273,10 +198,15 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
         glm::vec4 c = cfg.neon.colorStops[i].color;
         if (ImGui::ColorEdit4("Col##Neon", &c.x, ImGuiColorEditFlags_NoInputs))
             cfg.neon.colorStops[i].color = c;
+        ImGui::SameLine();
+        if (cfg.neon.colorStops.size() > 1 && ImGui::SmallButton("X"))
+        {
+            cfg.neon.colorStops.erase(cfg.neon.colorStops.begin() + static_cast<ptrdiff_t>(i));
+        }
         ImGui::PopID();
     }
 
-    if (cfg.neon.colorStops.size() < EdgeLighting::Config::Neon::MAX_COLOR_STOPS)
+    if (cfg.neon.colorStops.size() < EdgeLighting::NeonConfig::MAX_COLOR_STOPS)
     {
         if (ImGui::Button("+ Add Stop##Neon"))
         {
@@ -320,10 +250,15 @@ void DebugUI::buildMultiPassNeonSection(EdgeLighting::Config &cfg)
         glm::vec4 c = cfg.multipassNeon.colorStops[i].color;
         if (ImGui::ColorEdit4("Col##MP", &c.x, ImGuiColorEditFlags_NoInputs))
             cfg.multipassNeon.colorStops[i].color = c;
+        ImGui::SameLine();
+        if (cfg.multipassNeon.colorStops.size() > 1 && ImGui::SmallButton("X"))
+        {
+            cfg.multipassNeon.colorStops.erase(cfg.multipassNeon.colorStops.begin() + static_cast<ptrdiff_t>(i));
+        }
         ImGui::PopID();
     }
 
-    if (cfg.multipassNeon.colorStops.size() < EdgeLighting::Config::MultiPassNeon::MAX_COLOR_STOPS)
+    if (cfg.multipassNeon.colorStops.size() < EdgeLighting::MultiPassNeonConfig::MAX_COLOR_STOPS)
     {
         if (ImGui::Button("+ Add Stop##MP"))
         {
@@ -332,27 +267,4 @@ void DebugUI::buildMultiPassNeonSection(EdgeLighting::Config &cfg)
                 {std::min(1.0f, lastPos + 0.1f), glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)});
         }
     }
-}
-
-void DebugUI::buildPathSection(EdgeLighting::Config &cfg)
-{
-    if (!ImGui::CollapsingHeader("Path", ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        return;
-    }
-    ImGui::SliderFloat("Start Pos", &cfg.path.startPos, 0.0f, 1.0f, "%.2f");
-    ImGui::SliderFloat("End Pos", &cfg.path.endPos, 0.0f, 1.0f, "%.2f");
-}
-
-void DebugUI::buildParticlesSection(EdgeLighting::Config &cfg)
-{
-    if (!ImGui::CollapsingHeader("Particles", ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        return;
-    }
-
-    ImGui::Checkbox("Enable", &cfg.particles.enable);
-    ImGui::SliderInt("Max Count", &cfg.particles.maxCount, 10, 500);
-    ImGui::SliderFloat("Size", &cfg.particles.size, 1.0f, 30.0f, "%.0f");
-    ImGui::SliderFloat("Intensity", &cfg.particles.intensity, 0.0f, 1.0f, "%.2f");
 }

@@ -30,12 +30,9 @@ public:
     GLFWwindow *GetWindow() const { return mWindow; }
 
 private:
-    void buildStrokeSection(EdgeLighting::Config &cfg);
+    void buildGeometrySection(EdgeLighting::Config &cfg);
     void buildNeonSection(EdgeLighting::Config &cfg);
     void buildMultiPassNeonSection(EdgeLighting::Config &cfg);
-    void buildGeometrySection(EdgeLighting::Config &cfg);
-    void buildPathSection(EdgeLighting::Config &cfg);
-    void buildParticlesSection(EdgeLighting::Config &cfg);
 
     GLFWwindow *mWindow = nullptr;
     GLFWwindow *mMainWindow = nullptr;
