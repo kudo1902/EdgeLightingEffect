@@ -21,11 +21,11 @@ namespace EdgeLighting
         return true;
     }
 
-    void NeonMultiPassRenderer::Update(float, float, float, float, const Config &)
+    void NeonMultiPassRenderer::Update(float, float, const Config &)
     {
     }
 
-    void NeonMultiPassRenderer::Render(int viewportWidth, int viewportHeight, float, float headPos, float time, const Config &config)
+    void NeonMultiPassRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
     {
         if (!config.multipassNeon.enable)
             return;
@@ -56,7 +56,7 @@ namespace EdgeLighting
         mGradientShader.SetUniform("uStrokeThickness", config.multipassNeon.thickness);
         mGradientShader.SetUniform("uBlendSpace", static_cast<int>(config.multipassNeon.blendSpace));
         mGradientShader.SetUniform("uColorStopCount", static_cast<int>(config.multipassNeon.colorStops.size()));
-        for (int i = 0; i < static_cast<int>(config.multipassNeon.colorStops.size()) && i < Config::MultiPassNeon::MAX_COLOR_STOPS; ++i)
+        for (int i = 0; i < static_cast<int>(config.multipassNeon.colorStops.size()) && i < MultiPassNeonConfig::MAX_COLOR_STOPS; ++i)
         {
             std::string posName = "uColorStopPositions[" + std::to_string(i) + "]";
             mGradientShader.SetUniform(posName.c_str(), config.multipassNeon.colorStops[i].position);

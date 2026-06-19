@@ -31,19 +31,17 @@ namespace EdgeLighting
             mTime += deltaTime;
         }
 
-        float rawProgress = mAnimation.GetProgress();
         for (auto &renderer : mRenderers)
         {
-            renderer->Update(deltaTime, rawProgress, 0.0f, mTime, mConfig);
+            renderer->Update(deltaTime, mTime, mConfig);
         }
     }
 
     void EdgeLightingEffect::Render(int viewportWidth, int viewportHeight)
     {
-        float rawProgress = mAnimation.GetProgress();
         for (auto &renderer : mRenderers)
         {
-            renderer->Render(viewportWidth, viewportHeight, rawProgress, 0.0f, mTime, mConfig);
+            renderer->Render(viewportWidth, viewportHeight, mTime, mConfig);
         }
     }
 

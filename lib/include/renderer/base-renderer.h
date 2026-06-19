@@ -22,20 +22,16 @@ namespace EdgeLighting
 
         /// Called every frame before @ref Render.
         /// @param deltaTime  Seconds since the last frame.
-        /// @param progress   Animation progress in [0, 1] (resets on loop).
-        /// @param headPos    Effective head position along the path [0, 1], already mapped through start/end.
-        /// @param time       Accumulated wall-clock time in seconds.
+        /// @param time       Accumulated wall-clock time in seconds (paused when the animation is paused).
         /// @param config     Current active configuration.
-        virtual void Update(float deltaTime, float progress, float headPos, float time, const Config &config) = 0;
+        virtual void Update(float deltaTime, float time, const Config &config) = 0;
 
         /// Draws the renderer's visual layer.
         /// @param viewportWidth  Current framebuffer width.
         /// @param viewportHeight Current framebuffer height.
-        /// @param progress   Animation progress in [0, 1].
-        /// @param headPos    Effective head position along the path [0, 1], already mapped through start/end.
-        /// @param time       Accumulated wall-clock time in seconds.
+        /// @param time       Accumulated wall-clock time in seconds (paused when the animation is paused).
         /// @param config     Current active configuration.
-        virtual void Render(int viewportWidth, int viewportHeight, float progress, float headPos, float time, const Config &config) = 0;
+        virtual void Render(int viewportWidth, int viewportHeight, float time, const Config &config) = 0;
 
         /// Called when the configuration changes (e.g. on key press).
         /// @param config  The new configuration to adapt to.

@@ -18,11 +18,11 @@ namespace EdgeLighting
         return true;
     }
 
-    void NeonRenderer::Update(float, float, float, float, const Config &)
+    void NeonRenderer::Update(float, float, const Config &)
     {
     }
 
-    void NeonRenderer::Render(int viewportWidth, int viewportHeight, float, float headPos, float time, const Config &config)
+    void NeonRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
     {
         if (!config.neon.enable)
             return;
