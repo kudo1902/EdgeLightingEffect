@@ -1,11 +1,18 @@
 #include "renderer/neon-renderer.h"
+#include "util/color-utils.h"
+#include "util/constants.h"
 #include "util/geometry-utils.h"
 #include "shaders.h"
 #include "util/log-util.h"
 #include <glm/gtc/matrix_transform.hpp>
+#include <algorithm>
+#include <cmath>
 
 namespace EdgeLighting
 {
+    // -------------------------------------------------------------------------
+    // -------------------------------------------------------------------------
+
     bool NeonRenderer::Initialize()
     {
         if (!setupShaders())
@@ -15,6 +22,7 @@ namespace EdgeLighting
         }
         setupGeometry(mCurrentConfig);
         rebuildLoopSamples(mCurrentConfig);
+        rebuildGradientLUT(mCurrentConfig);
         return true;
     }
 
@@ -25,7 +33,9 @@ namespace EdgeLighting
     void NeonRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
     {
         if (!config.neon.enable)
+        {
             return;
+        }
 
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE);
@@ -51,31 +61,19 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uBloomStrength", config.neon.bloomStrength);
         mShaderProgram.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
         mShaderProgram.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness);
-        mShaderProgram.SetUniform("uBlendSpace", static_cast<int>(config.neon.blendSpace));
-        int stopCount = std::min(static_cast<int>(config.neon.colorStops.size()),
-                                 NeonConfig::MAX_COLOR_STOPS);
-        mShaderProgram.SetUniform("uColorStopCount", stopCount);
-        mStopPositions.resize(stopCount);
-        mStopColors.resize(stopCount);
-        for (int i = 0; i < stopCount; ++i)
-        {
-            mStopPositions[i] = config.neon.colorStops[i].position;
-            mStopColors[i] = config.neon.colorStops[i].color;
-        }
 
-        if (stopCount > 0)
-        {
-            mShaderProgram.SetUniform("uColorStopPositions", mStopPositions.data(), stopCount);
-            mShaderProgram.SetUniform("uColorStopColors", mStopColors.data(), stopCount);
-        }
-
-        int sampleCount = static_cast<int>(mLoopSamples.size());
-        mShaderProgram.SetUniform("uSampleCount", sampleCount);
         mShaderProgram.SetUniform("uSampleSpacing", mSampleSpacing);
+        int sampleCount = static_cast<int>(mLoopSamples.size());
         if (sampleCount > 0)
         {
             mShaderProgram.SetUniform("uLoopSamples", mLoopSamples.data(), sampleCount);
         }
+
+        // Bind the precomputed gradient LUT to texture unit 0. The shader
+        // pulls per-sample colour from this in a single texture() call.
+        mGradientLUT.Bind(0);
+        mShaderProgram.SetUniform("uGradientLUT", 0);
+
         mVertexArray.DrawArrays(GL_TRIANGLES, 6);
 
         mShaderProgram.Unuse();
@@ -89,6 +87,7 @@ namespace EdgeLighting
         {
             setupGeometry(config);
             rebuildLoopSamples(config);
+            rebuildGradientLUT(config);
         }
     }
 
@@ -135,8 +134,26 @@ namespace EdgeLighting
         float w = config.geometry.width;
         float h = config.geometry.height;
         float r = std::max(0.0f, std::min(config.geometry.cornerRadius, std::min(w, h) * 0.5f));
-        constexpr float pi = 3.14159265358979323846f;
-        float perimeter = 2.0f * (w - 2.0f * r) + 2.0f * (h - 2.0f * r) + 2.0f * pi * r;
+
+        float perimeter = 2.0f * (w - 2.0f * r) + 2.0f * (h - 2.0f * r) + 2.0f * PI * r;
         mSampleSpacing = perimeter / static_cast<float>(NUM_LOOP_SAMPLES);
+    }
+
+    void NeonRenderer::rebuildGradientLUT(const Config &config)
+    {
+        // Bake the entire colour ring once on CPU; the shader then becomes
+        // colour-stop-agnostic. Keeps HSV-vs-RGB blend cost off the GPU hot path.
+        mLUTScratch.resize(GRADIENT_LUT_SIZE * 4);
+        for (int i = 0; i < GRADIENT_LUT_SIZE; ++i)
+        {
+            float t = static_cast<float>(i) / static_cast<float>(GRADIENT_LUT_SIZE);
+            glm::vec3 c = ColorUtils::SampleStops(t, config.neon.colorStops, config.neon.blendSpace);
+            mLUTScratch[i * 4 + 0] = c.r;
+            mLUTScratch[i * 4 + 1] = c.g;
+            mLUTScratch[i * 4 + 2] = c.b;
+            mLUTScratch[i * 4 + 3] = 1.0f;
+        }
+        mGradientLUT.SetData(mLUTScratch.data(), GRADIENT_LUT_SIZE, GL_RGBA32F, GL_RGBA);
+        mGradientLUT.SetParams(GL_LINEAR, GL_LINEAR, GL_REPEAT);
     }
 }
