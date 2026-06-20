@@ -1,14 +1,10 @@
 #include "core/edge-lighting.h"
 #include "util/log-util.h"
-#include <glm/glm.hpp>
 
 namespace EdgeLighting
 {
 
-    EdgeLightingEffect::EdgeLightingEffect()
-        : mTime(0.0f)
-    {
-    }
+    EdgeLightingEffect::EdgeLightingEffect() = default;
 
     bool EdgeLightingEffect::Initialize()
     {
@@ -25,23 +21,20 @@ namespace EdgeLighting
 
     void EdgeLightingEffect::Update(float deltaTime)
     {
-        mAnimation.Update(deltaTime);
-        if (mAnimation.IsPlaying())
-        {
-            mTime += deltaTime;
-        }
-
+        mClock.Update(deltaTime);
+        float t = mClock.GetTime();
         for (auto &renderer : mRenderers)
         {
-            renderer->Update(deltaTime, mTime, mConfig);
+            renderer->Update(deltaTime, t, mConfig);
         }
     }
 
     void EdgeLightingEffect::Render(int viewportWidth, int viewportHeight)
     {
+        float t = mClock.GetTime();
         for (auto &renderer : mRenderers)
         {
-            renderer->Render(viewportWidth, viewportHeight, mTime, mConfig);
+            renderer->Render(viewportWidth, viewportHeight, t, mConfig);
         }
     }
 
@@ -68,9 +61,7 @@ namespace EdgeLighting
         }
     }
 
-    Animation &EdgeLightingEffect::GetAnimation()
-    {
-        return mAnimation;
-    }
+    Clock &EdgeLightingEffect::GetClock() { return mClock; }
+    const Clock &EdgeLightingEffect::GetClock() const { return mClock; }
 
 } // namespace EdgeLighting
