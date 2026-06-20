@@ -39,7 +39,7 @@ namespace EdgeLightingDemo
                   << " | Int: " << std::fixed << std::setprecision(2) << std::setw(4) << config.neon.intensity
                   << " | GlowR: " << std::setprecision(0) << std::setw(3) << config.neon.glowRadius
                   << " | Bloom: " << std::setprecision(2) << std::setw(4) << config.neon.bloomStrength
-                  << " | Spd: " << std::setprecision(2) << std::setw(4) << config.neon.sweepSpeed
+                  << " | HueRate: " << std::setprecision(2) << std::setw(4) << config.neon.hueRotationRate
                   << " | MP: " << mpNeonStr
                   << " | " << windingStr
                   << " | " << blendStr
