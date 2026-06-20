@@ -90,7 +90,7 @@ namespace EdgeLighting
         // --- Color ---
 
         /// Maximum number of colour stops.
-        static const int MAX_COLOR_STOPS = 16;
+        static constexpr int MAX_COLOR_STOPS = 16;
         /// Blend space for interpolating between colour stops.
         BlendSpace blendSpace = BlendSpace::RGB;
         /// Colour stops around the perimeter
@@ -104,8 +104,9 @@ namespace EdgeLighting
 
         // --- Animation ---
 
-        /// Hue sweep speed in revolutions per second around the perimeter. 0 = static.
-        float sweepSpeed = 0.5f;
+        /// Hue rotation rate in revolutions per second around the perimeter. 0 = static.
+        float hueRotationRate = 0.5f;
+
     } NeonConfig;
 
     /// Multi-pass gradient-to-texture neon configuration.
@@ -126,6 +127,10 @@ namespace EdgeLighting
             {0.50f, glm::vec4(0.0f, 0.0f, 1.0f, 1.0f)},
             {0.75f, glm::vec4(1.0f, 1.0f, 0.0f, 1.0f)},
         };
+        // --- Animation ---
+
+        /// Hue rotation rate in revolutions per second around the perimeter. 0 = static.
+        float hueRotationRate = 0.5f;
     } MultiPassNeonConfig;
 
     /// Wireframe debug overlay configuration.

@@ -54,7 +54,7 @@ uniform float uCornerRadius;
 uniform float uLineWidth;
 uniform float uIntensity;
 uniform float uTime;
-uniform float uSweepSpeed;
+uniform float uHueRotationRate;
 uniform float uGlowRadius;
 uniform float uBloomStrength;
 uniform int   uGlowSide;

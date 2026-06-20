@@ -149,7 +149,9 @@ void DebugUI::Render()
 void DebugUI::buildGeometrySection(EdgeLighting::Config &cfg)
 {
     if (!ImGui::CollapsingHeader("Geometry", ImGuiTreeNodeFlags_DefaultOpen))
+    {
         return;
+    }
 
     ImGui::SliderFloat("Width", &cfg.geometry.width, 100.0f, 1600.0f, "%.0f");
     ImGui::SliderFloat("Height", &cfg.geometry.height, 100.0f, 1200.0f, "%.0f");
@@ -180,7 +182,7 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
     ImGui::SliderFloat("Intensity##Neon", &cfg.neon.intensity, 0.0f, 3.0f, "%.2f");
     ImGui::SliderFloat("Glow Radius##Neon", &cfg.neon.glowRadius, 1.0f, 80.0f, "%.0f");
     ImGui::SliderFloat("Bloom Strength##Neon", &cfg.neon.bloomStrength, 0.0f, 2.0f, "%.2f");
-    ImGui::SliderFloat("Sweep Speed##Neon", &cfg.neon.sweepSpeed, 0.0f, 2.0f, "%.2f");
+    ImGui::SliderFloat("Hue Rotation Rate##Neon", &cfg.neon.hueRotationRate, 0.0f, 2.0f, "%.2f");
 
     const char *sideItems[] = {"Both", "Inside", "Outside"};
     int sideIdx = static_cast<int>(cfg.neon.glowSide);

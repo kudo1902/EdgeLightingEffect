@@ -56,7 +56,7 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uLineWidth", config.neon.lineWidth);
         mShaderProgram.SetUniform("uIntensity", config.neon.intensity);
         mShaderProgram.SetUniform("uTime", time);
-        mShaderProgram.SetUniform("uSweepSpeed", config.neon.sweepSpeed);
+        mShaderProgram.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
         mShaderProgram.SetUniform("uGlowRadius", config.neon.glowRadius);
         mShaderProgram.SetUniform("uBloomStrength", config.neon.bloomStrength);
         mShaderProgram.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
