@@ -159,7 +159,9 @@ void OnResize(GLFWwindow *window, int width, int height)
 void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
 {
     if (action != GLFW_PRESS && action != GLFW_REPEAT)
+    {
         return;
+    }
 
     if (key == GLFW_KEY_ESCAPE)
     {
@@ -168,50 +170,82 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
     }
 
     if (!gEffect)
+    {
         return;
+    }
     EdgeLighting::Config config = gEffect->GetConfig();
 
     switch (key)
     {
     case GLFW_KEY_R:
+    {
         config.neon.lineWidth = std::min(20.0f, config.neon.lineWidth + 1.0f);
         break;
+    }
     case GLFW_KEY_F:
+    {
         config.neon.lineWidth = std::max(1.0f, config.neon.lineWidth - 1.0f);
         break;
+    }
     case GLFW_KEY_I:
+    {
         config.neon.intensity = std::min(3.0f, config.neon.intensity + 0.1f);
         break;
+    }
     case GLFW_KEY_O:
+    {
         config.neon.intensity = std::max(0.0f, config.neon.intensity - 0.1f);
         break;
+    }
     case GLFW_KEY_LEFT_BRACKET:
+    {
         config.neon.glowRadius = std::max(1.0f, config.neon.glowRadius - 1.0f);
         break;
+    }
     case GLFW_KEY_RIGHT_BRACKET:
+    {
         config.neon.glowRadius = std::min(80.0f, config.neon.glowRadius + 1.0f);
         break;
+    }
     case GLFW_KEY_P:
+    {
         config.neon.sweepSpeed = std::min(5.0f, config.neon.sweepSpeed + 0.1f);
         break;
+    }
     case GLFW_KEY_L:
+    {
         config.neon.sweepSpeed = std::max(0.0f, config.neon.sweepSpeed - 0.1f);
         break;
+    }
     case GLFW_KEY_SPACE:
+    {
         if (gEffect->GetAnimation().IsPlaying())
+        {
             gEffect->GetAnimation().Pause();
+        }
         else
+        {
             gEffect->GetAnimation().Play();
+        }
         break;
+    }
     case GLFW_KEY_N:
+    {
         if (mods & GLFW_MOD_SHIFT)
+        {
             config.multipassNeon.enable = !config.multipassNeon.enable;
+        }
         else
+        {
             config.neon.enable = !config.neon.enable;
+        }
         break;
+    }
     case GLFW_KEY_G:
+    {
         config.wireframe.enable = !config.wireframe.enable;
         break;
+    }
     case GLFW_KEY_W:
     {
         int w = static_cast<int>(config.geometry.winding);
@@ -220,7 +254,9 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
         break;
     }
     default:
+    {
         return;
+    }
     }
 
     gEffect->SetConfig(config);

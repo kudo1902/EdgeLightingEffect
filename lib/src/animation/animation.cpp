@@ -34,7 +34,9 @@ namespace EdgeLighting
     void Animation::Update(float deltaTime)
     {
         if (!mIsPlaying)
+        {
             return;
+        }
 
         mProgress += mSpeed * deltaTime;
         if (mProgress >= 1.0f)

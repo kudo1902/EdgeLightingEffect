@@ -81,6 +81,10 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     bool playing = effect.GetAnimation().IsPlaying();
 
     ImGui::Begin("Debug Controls");
+    // --- Perf readout (always visible, sticky at the top) ---
+    const ImGuiIO &io = ImGui::GetIO();
+    ImGui::Text("FPS: %.1f  |  %.2f ms/frame", io.Framerate, 1000.0f / io.Framerate);
+    ImGui::Separator();
 
     buildGeometrySection(cfg);
     buildNeonSection(cfg);
@@ -93,7 +97,9 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     if (ImGui::Button(playing ? "Pause" : "Play"))
     {
         if (playing)
+        {
             effect.GetAnimation().Pause();
+        }
         else
             effect.GetAnimation().Play();
     }
@@ -160,11 +166,15 @@ void DebugUI::buildGeometrySection(EdgeLighting::Config &cfg)
 void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
 {
     if (!ImGui::CollapsingHeader("Neon", ImGuiTreeNodeFlags_DefaultOpen))
+    {
         return;
+    }
 
     ImGui::Checkbox("Enable##Neon", &cfg.neon.enable);
     if (!cfg.neon.enable)
+    {
         return;
+    }
 
     ImGui::SliderFloat("Line Width##Neon", &cfg.neon.lineWidth, 1.0f, 20.0f, "%.0f");
     ImGui::SliderFloat("Intensity##Neon", &cfg.neon.intensity, 0.0f, 3.0f, "%.2f");
@@ -179,7 +189,9 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
         cfg.neon.glowSide = static_cast<EdgeLighting::GlowSide>(sideIdx);
     }
     if (cfg.neon.glowSide != EdgeLighting::GlowSide::BOTH)
+    {
         ImGui::SliderFloat("Side Softness##Neon", &cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
+    }
 
     const char *blendItems[] = {"RGB", "HSV"};
     int blendIdx = static_cast<int>(cfg.neon.blendSpace);
@@ -193,11 +205,15 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
         ImGui::PushID(static_cast<int>(i));
         float p = cfg.neon.colorStops[i].position;
         if (ImGui::SliderFloat("Pos##Neon", &p, 0.0f, 1.0f, "%.2f"))
+        {
             cfg.neon.colorStops[i].position = p;
+        }
         ImGui::SameLine();
         glm::vec4 c = cfg.neon.colorStops[i].color;
         if (ImGui::ColorEdit4("Col##Neon", &c.x, ImGuiColorEditFlags_NoInputs))
+        {
             cfg.neon.colorStops[i].color = c;
+        }
         ImGui::SameLine();
         if (cfg.neon.colorStops.size() > 1 && ImGui::SmallButton("X"))
         {
@@ -220,13 +236,17 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
 void DebugUI::buildMultiPassNeonSection(EdgeLighting::Config &cfg)
 {
     if (!ImGui::CollapsingHeader("MultiPass Neon", ImGuiTreeNodeFlags_DefaultOpen))
+    {
         return;
+    }
 
     ImGui::Checkbox("Enable##MultiPass", &cfg.multipassNeon.enable);
     ImGui::SameLine();
     ImGui::Checkbox("Show Gradient##MP", &cfg.multipassNeon.showGradient);
     if (!cfg.multipassNeon.enable)
+    {
         return;
+    }
 
     ImGui::SliderFloat("Thickness##MP", &cfg.multipassNeon.thickness, 1.0f, 20.0f, "%.0f");
     ImGui::SliderFloat("Intensity##MP", &cfg.multipassNeon.intensity, 0.0f, 3.0f, "%.2f");
@@ -245,11 +265,15 @@ void DebugUI::buildMultiPassNeonSection(EdgeLighting::Config &cfg)
         ImGui::PushID(static_cast<int>(i + 100));
         float p = cfg.multipassNeon.colorStops[i].position;
         if (ImGui::SliderFloat("Pos##MP", &p, 0.0f, 1.0f, "%.2f"))
+        {
             cfg.multipassNeon.colorStops[i].position = p;
+        }
         ImGui::SameLine();
         glm::vec4 c = cfg.multipassNeon.colorStops[i].color;
         if (ImGui::ColorEdit4("Col##MP", &c.x, ImGuiColorEditFlags_NoInputs))
+        {
             cfg.multipassNeon.colorStops[i].color = c;
+        }
         ImGui::SameLine();
         if (cfg.multipassNeon.colorStops.size() > 1 && ImGui::SmallButton("X"))
         {
