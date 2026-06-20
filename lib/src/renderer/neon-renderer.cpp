@@ -61,6 +61,11 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uBloomStrength", config.neon.bloomStrength);
         mShaderProgram.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
         mShaderProgram.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness);
+        mShaderProgram.SetUniform("uSegmentPosition", config.neon.segmentPosition);
+        mShaderProgram.SetUniform("uSegmentLength", config.neon.segmentLength);
+        mShaderProgram.SetUniform("uSegmentBoost", config.neon.segmentBoost);
+        mShaderProgram.SetUniform("uArcStart", config.neon.arcStart);
+        mShaderProgram.SetUniform("uArcLength", config.neon.arcLength);
 
         mShaderProgram.SetUniform("uSampleSpacing", mSampleSpacing);
         int sampleCount = static_cast<int>(mLoopSamples.size());
