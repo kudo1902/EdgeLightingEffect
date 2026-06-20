@@ -8,12 +8,16 @@
 - `PascalCase`
   - e.g. `EdgeLighting`, `EdgeLightingDemo`, `GeometryUtils`
 
-## Classes / Structs / Enums
+## Classes
+- `PascalCase`
+- Examples: `EdgeLightingEffect`, `BaseRenderer`, `SegmentRenderer`, `ParticleSystem`, `Particle`, `Animation`
+
+## Structs / Enums
 - `PascalCase`
 - Must have `typedef` alias (same name, C++ style)
   - `typedef struct Config { ... } Config;`
   - `typedef enum class ColorMode { ... } ColorMode;`
-- Examples: `EdgeLightingEffect`, `Config`, `ColorMode`, `BaseRenderer`, `SegmentRenderer`, `ParticleSystem`, `Particle`, `Animation`
+- Examples: `Config`, `ColorMode`
 
 ## Enum values
 - `ALL_CAPS` with underscores
