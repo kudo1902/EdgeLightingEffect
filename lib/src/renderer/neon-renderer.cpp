@@ -158,7 +158,10 @@ namespace EdgeLighting
             mLUTScratch[i * 4 + 2] = c.b;
             mLUTScratch[i * 4 + 3] = 1.0f;
         }
-        mGradientLUT.SetData(mLUTScratch.data(), GRADIENT_LUT_SIZE, GL_RGBA32F, GL_RGBA);
-        mGradientLUT.SetParams(GL_LINEAR, GL_LINEAR, GL_REPEAT);
+        // 1-row 2D texture (sampled with v = 0.5 in the shader). REPEAT on
+        // the U axis lets the gradient sweep wrap naturally; the V axis is a
+        // single row, so CLAMP is fine.
+        mGradientLUT.SetData(mLUTScratch.data(), GRADIENT_LUT_SIZE, /*height=*/1, GL_RGBA32F, GL_RGBA, GL_FLOAT);
+        mGradientLUT.SetParams(GL_LINEAR, GL_LINEAR, GL_REPEAT, GL_CLAMP_TO_EDGE);
     }
 }

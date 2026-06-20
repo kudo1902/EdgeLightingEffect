@@ -1,4 +1,3 @@
-#version 330 core
 precision highp float;
 
 uniform vec4 uColor;

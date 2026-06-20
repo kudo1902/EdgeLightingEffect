@@ -23,11 +23,17 @@ int main()
         return -1;
     }
 
+    // Context hints — Core 3.3 on macOS, OpenGL ES 3.0 on Windows / Linux.
+    // The PLATFORM_* defines come from lib/CMakeLists.txt.
+#if defined(PLATFORM_MACOS)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
-#ifdef __APPLE__
     glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+#else // Windows or Linux → OpenGL ES 3.0
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_ES_API);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
 #endif
 
     int mainW = 900, mainH = 700;
@@ -41,13 +47,25 @@ int main()
 
     glfwMakeContextCurrent(window);
 
+    // GL function loader — only desktop GL and ANGLE-on-Windows need GLAD.
+    // Linux uses native <GLES3/gl3.h> whose symbols are already linked.
+#if defined(PLATFORM_MACOS)
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))
     {
-        LOG_E("Failed to initialize GLAD");
+        LOG_E("Failed to initialize GLAD (desktop GL)");
         glfwDestroyWindow(window);
         glfwTerminate();
         return -1;
     }
+#elif defined(PLATFORM_WINDOWS)
+    if (!gladLoadGLES2Loader((GLADloadproc)glfwGetProcAddress))
+    {
+        LOG_E("Failed to initialize GLAD (GLES 3.0)");
+        glfwDestroyWindow(window);
+        glfwTerminate();
+        return -1;
+    }
+#endif
 
     int displayW, displayH;
     glfwGetFramebufferSize(window, &displayW, &displayH);

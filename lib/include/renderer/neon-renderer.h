@@ -4,7 +4,7 @@
 #include "renderer/base-renderer.h"
 #include "gl/shader-program.h"
 #include "gl/vertex-array.h"
-#include "gl/texture-1d.h"
+#include "gl/texture-2d.h"
 #include <glm/glm.hpp>
 #include <vector>
 
@@ -40,9 +40,9 @@ namespace EdgeLighting
         std::vector<glm::vec2> mLoopSamples;
         float mSampleSpacing = 0.0f;
 
-        /// Baked colour ring. Each shader sample becomes a single texture lookup
-        /// instead of an in-shader stops loop + HSV blend.
-        Texture1D mGradientLUT;
+        /// Baked colour ring as a 1×N RGBA32F texture (sampled with v=0.5 in the shader).
+        /// Each shader sample becomes a single texture lookup instead of an in-shader stops loop + HSV blend
+        Texture2D mGradientLUT;
         std::vector<float> mLUTScratch; ///< Reusable upload buffer (GRADIENT_LUT_SIZE * 4 floats).
     };
 }

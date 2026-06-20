@@ -1,4 +1,3 @@
-#version 330 core
 precision highp float;
 
 #define NEON_NUM_SAMPLES 128

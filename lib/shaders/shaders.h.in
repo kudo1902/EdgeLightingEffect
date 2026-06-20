@@ -1,29 +1,42 @@
 #ifndef _GENERATED_SHADERS_H_
 #define _GENERATED_SHADERS_H_
 
+// Auto-generated from lib/shaders/*.{vert,frag}.
+// The GLSL version line is injected by CMake based on platform:
+//   macOS  → #version 330 core
+//   Win/Linux → #version 300 es
+// The .frag/.vert files themselves contain no #version directive.
+
 namespace EdgeLighting
 {
         namespace ShaderSource
         {
-                static const char *const WIREFRAME_VERT_SRC = R"shadersrc(@WIREFRAME_VERT_CONTENT@
+                static const char *const WIREFRAME_VERT_SRC = R"shadersrc(@GLSL_VERSION@
+@WIREFRAME_VERT_CONTENT@
 )shadersrc";
 
-                static const char *const WIREFRAME_FRAG_SRC = R"shadersrc(@WIREFRAME_FRAG_CONTENT@
+                static const char *const WIREFRAME_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
+@WIREFRAME_FRAG_CONTENT@
 )shadersrc";
 
-                static const char *const NEON_VERT_SRC = R"shadersrc(@NEON_VERT_CONTENT@
+                static const char *const NEON_VERT_SRC = R"shadersrc(@GLSL_VERSION@
+@NEON_VERT_CONTENT@
 )shadersrc";
 
-                static const char *const NEON_FRAG_SRC = R"shadersrc(@NEON_FRAG_CONTENT@
+                static const char *const NEON_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
+@NEON_FRAG_CONTENT@
 )shadersrc";
 
-                static const char *const NEON_GRADIENT_FRAG_SRC = R"shadersrc(@NEON_GRADIENT_FRAG_CONTENT@
+                static const char *const NEON_GRADIENT_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
+@NEON_GRADIENT_FRAG_CONTENT@
 )shadersrc";
 
-                static const char *const NEON_BLUR_FRAG_SRC = R"shadersrc(@NEON_BLUR_FRAG_CONTENT@
+                static const char *const NEON_BLUR_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
+@NEON_BLUR_FRAG_CONTENT@
 )shadersrc";
 
-                static const char *const NEON_GLOW_FRAG_SRC = R"shadersrc(@NEON_GLOW_FRAG_CONTENT@
+                static const char *const NEON_GLOW_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
+@NEON_GLOW_FRAG_CONTENT@
 )shadersrc";
 
         }

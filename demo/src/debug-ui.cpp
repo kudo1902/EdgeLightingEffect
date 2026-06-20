@@ -45,7 +45,7 @@ bool DebugUI::Init(GLFWwindow *mainWindow, int mainW, int mainH)
     io.IniFilename = nullptr;
     ImGui::StyleColorsDark();
     ImGui_ImplGlfw_InitForOpenGL(mWindow, true);
-    ImGui_ImplOpenGL3_Init("#version 330 core");
+    ImGui_ImplOpenGL3_Init(GLSL_VERSION);
 
     return true;
 }
