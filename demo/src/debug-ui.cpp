@@ -78,9 +78,10 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
 
-    bool playing = effect.GetAnimation().IsPlaying();
+    bool playing = effect.GetClock().IsPlaying();
 
     ImGui::Begin("Debug Controls");
+
     // --- Perf readout (always visible, sticky at the top) ---
     const ImGuiIO &io = ImGui::GetIO();
     ImGui::Text("FPS: %.1f  |  %.2f ms/frame", io.Framerate, 1000.0f / io.Framerate);
@@ -89,6 +90,7 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     buildGeometrySection(cfg);
     buildNeonSection(cfg);
     buildMultiPassNeonSection(cfg);
+    buildAnimationSection(cfg, effect.GetClock().GetTime());
 
     ImGui::Checkbox("Wireframe", &cfg.wireframe.enable);
 
@@ -98,15 +100,17 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     {
         if (playing)
         {
-            effect.GetAnimation().Pause();
+            effect.GetClock().Pause();
         }
         else
-            effect.GetAnimation().Play();
+        {
+            effect.GetClock().Play();
+        }
     }
     ImGui::SameLine();
     if (ImGui::Button("Stop"))
     {
-        effect.GetAnimation().Stop();
+        effect.GetClock().Stop();
     }
     ImGui::SameLine();
     if (ImGui::Button("Screenshot"))
@@ -120,12 +124,45 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     ImGui::SameLine();
     if (ImGui::Button("Dump Config"))
     {
-        EdgeLightingDemo::PrintCurrentConfig(effect.GetConfig(), effect.GetAnimation().IsPlaying());
+        EdgeLightingDemo::PrintCurrentConfig(effect.GetConfig(), effect.GetClock().IsPlaying());
         std::cout << "\n";
     }
     ImGui::End();
+}
 
-    effect.SetConfig(cfg);
+void DebugUI::ApplyActiveAnimation(EdgeLighting::Config &config, float clockTime)
+{
+    // Advance the animation-time accumulator regardless of whether we'll
+    // actually call Apply this frame — so the clock-time reference stays
+    // current even after the animation has completed.
+    float dt = clockTime - mLastClockTime;
+    mLastClockTime = clockTime;
+
+    if (!mAnimation)
+        return;
+
+    // Once a one-shot animation has completed (and the OnComplete callback has
+    // fired once), stop writing to config. This lets the user grab sliders for
+    // fields the animation was driving (e.g. Arc Start / End after Outline
+    // Tracer) and tweak them without the next Apply overwriting the drag.
+    //
+    // Loopers (PlaybackMode::LOOP) → IsComplete always false → mFiredComplete
+    // never gets set, so they keep applying every frame as before.
+    if (mFiredComplete)
+        return;
+
+    // Speed-scaled accumulator. Changing speed mid-flight only affects future
+    // progression — past elapsed isn't recomputed, so the animation continues
+    // smoothly from where it was (no fast-forward / rewind jumps).
+    mAnimElapsed += dt * mAnimation->GetSpeed();
+    mAnimation->Apply(config, mAnimElapsed);
+
+    if (mAnimation->IsComplete(mAnimElapsed))
+    {
+        mFiredComplete = true;
+        if (mAnimation->OnComplete)
+            mAnimation->OnComplete();
+    }
 }
 
 void DebugUI::Render()
@@ -195,6 +232,15 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
         ImGui::SliderFloat("Side Softness##Neon", &cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
     }
 
+    // --- Travelling segment (set Boost > 0 to enable) ---
+    ImGui::SliderFloat("Segment Pos##Neon", &cfg.neon.segmentPosition, 0.0f, 1.0f, "%.2f");
+    ImGui::SliderFloat("Segment Length##Neon", &cfg.neon.segmentLength, 0.02f, 0.5f, "%.2f");
+    ImGui::SliderFloat("Segment Boost##Neon", &cfg.neon.segmentBoost, 0.0f, 10.0f, "%.1f");
+
+    // --- Arc gating (0..1 = full perimeter; shrink to "draw" part of the rect) ---
+    ImGui::SliderFloat("Arc Start##Neon", &cfg.neon.arcStart, 0.0f, 1.0f, "%.2f");
+    ImGui::SliderFloat("Arc Length##Neon", &cfg.neon.arcLength, 0.0f, 1.0f, "%.2f");
+
     const char *blendItems[] = {"RGB", "HSV"};
     int blendIdx = static_cast<int>(cfg.neon.blendSpace);
     if (ImGui::Combo("Blend Space##Neon", &blendIdx, blendItems, IM_ARRAYSIZE(blendItems)))
@@ -244,16 +290,30 @@ void DebugUI::buildMultiPassNeonSection(EdgeLighting::Config &cfg)
 
     ImGui::Checkbox("Enable##MultiPass", &cfg.multipassNeon.enable);
     ImGui::SameLine();
-    ImGui::Checkbox("Show Gradient##MP", &cfg.multipassNeon.showGradient);
+    ImGui::Checkbox("Show Perimeter##MP", &cfg.multipassNeon.showPerimeterGradient);
+    ImGui::SameLine();
+    ImGui::Checkbox("Show Full Grad##MP", &cfg.multipassNeon.showFullGradient);
     if (!cfg.multipassNeon.enable)
     {
         return;
     }
 
-    ImGui::SliderFloat("Thickness##MP", &cfg.multipassNeon.thickness, 1.0f, 20.0f, "%.0f");
+    ImGui::SliderFloat("Line Width##MP", &cfg.multipassNeon.lineWidth, 1.0f, 20.0f, "%.0f");
     ImGui::SliderFloat("Intensity##MP", &cfg.multipassNeon.intensity, 0.0f, 3.0f, "%.2f");
-    ImGui::SliderFloat("Glow Size##MP", &cfg.multipassNeon.glowSize, 1.0f, 80.0f, "%.0f");
-    ImGui::SliderFloat("Speed##MP", &cfg.multipassNeon.speed, 0.0f, 2.0f, "%.2f");
+    ImGui::SliderFloat("Glow Radius##MP", &cfg.multipassNeon.glowRadius, 1.0f, 80.0f, "%.0f");
+    ImGui::SliderFloat("Bloom Strength##MP", &cfg.multipassNeon.bloomStrength, 0.0f, 2.0f, "%.2f");
+    ImGui::SliderFloat("Hue Rotation Rate##MP", &cfg.multipassNeon.hueRotationRate, 0.0f, 2.0f, "%.2f");
+
+    const char *mpSideItems[] = {"Both", "Inside", "Outside"};
+    int mpSideIdx = static_cast<int>(cfg.multipassNeon.glowSide);
+    if (ImGui::Combo("Glow Side##MP", &mpSideIdx, mpSideItems, IM_ARRAYSIZE(mpSideItems)))
+    {
+        cfg.multipassNeon.glowSide = static_cast<EdgeLighting::GlowSide>(mpSideIdx);
+    }
+    if (cfg.multipassNeon.glowSide != EdgeLighting::GlowSide::BOTH)
+    {
+        ImGui::SliderFloat("Side Softness##MP", &cfg.multipassNeon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
+    }
 
     const char *blendItems[] = {"RGB", "HSV"};
     int blendIdx = static_cast<int>(cfg.multipassNeon.blendSpace);
@@ -292,5 +352,89 @@ void DebugUI::buildMultiPassNeonSection(EdgeLighting::Config &cfg)
             cfg.multipassNeon.colorStops.push_back(
                 {std::min(1.0f, lastPos + 0.1f), glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)});
         }
+    }
+}
+
+void DebugUI::buildAnimationSection(EdgeLighting::Config & /*cfg*/, float clockTime)
+{
+    if (!ImGui::CollapsingHeader("Animation", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+
+    // Combo over every preset name. Picking a new one rebuilds the underlying
+    // Animation and snapshots the clock time so each preset starts from t = 0.
+    static constexpr int PRESET_COUNT = static_cast<int>(EdgeLightingDemo::AnimationPreset::COUNT);
+    const char *names[PRESET_COUNT];
+    for (int i = 0; i < PRESET_COUNT; ++i)
+    {
+        names[i] = EdgeLightingDemo::PresetName(static_cast<EdgeLightingDemo::AnimationPreset>(i));
+    }
+
+    int presetIdx = static_cast<int>(mPreset);
+    if (ImGui::Combo("Preset", &presetIdx, names, PRESET_COUNT))
+    {
+        mPreset = static_cast<EdgeLightingDemo::AnimationPreset>(presetIdx);
+        mAnimation = EdgeLightingDemo::CreateAnimation(mPreset);
+        // Example: log when a one-shot preset finishes. Library users would
+        // wire OnComplete to whatever they want (chain into the next anim,
+        // hide the effect, etc.).
+        if (mAnimation)
+        {
+            auto presetName = EdgeLightingDemo::PresetName(mPreset);
+            mAnimation->OnComplete = [presetName]()
+            {
+                LOG_I("Animation '%s' completed.", presetName);
+            };
+        }
+        mAnimElapsed = 0.0f;
+        mLastClockTime = clockTime;
+        mFiredComplete = false;
+    }
+
+    if (mAnimation)
+    {
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Restart"))
+        {
+            mAnimElapsed = 0.0f;
+            mLastClockTime = clockTime;
+            mFiredComplete = false;
+        }
+
+        // Speed multiplier — affects future progression only (no fast-forward).
+        float speed = mAnimation->GetSpeed();
+        if (ImGui::SliderFloat("Speed##Anim", &speed, 0.0f, 4.0f, "%.2fx"))
+            mAnimation->SetSpeed(speed);
+
+        float elapsed = mAnimElapsed;
+        if (mAnimation->GetPlaybackMode() == EdgeLighting::PlaybackMode::LOOP)
+        {
+            ImGui::TextDisabled("Active for %.2fs (anim) — loops forever", elapsed);
+        }
+        else
+        {
+            float dur = mAnimation->GetDuration();
+            bool done = mAnimation->IsComplete(elapsed);
+            ImGui::TextDisabled("Active for %.2fs / %.2fs (anim) — %s",
+                                elapsed, dur, done ? "complete" : "running");
+
+            // Live duration tweak. Subclasses with internal modulators
+            // (FadeIn/FadeOut) rebuild via OnDurationChanged() so the visual
+            // fade stretches alongside the completion latch.
+            float editable = dur;
+            if (ImGui::SliderFloat("Duration##Anim", &editable, 0.05f, 10.0f, "%.2fs"))
+            {
+                mAnimation->SetDuration(editable);
+                // If the new duration is shorter than what's already elapsed,
+                // OnComplete is on the verge of firing — clear the latch so it
+                // does, even though IsComplete just flipped true.
+                if (editable < elapsed)
+                {
+                    mFiredComplete = false;
+                }
+            }
+        }
+        ImGui::TextDisabled("Note: sliders for animated fields will be overwritten each frame.");
     }
 }

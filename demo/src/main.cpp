@@ -4,6 +4,7 @@
 #include "renderer/wireframe-renderer.h"
 #include "renderer/neon-renderer.h"
 #include "renderer/neon-multi-pass-renderer.h"
+#include "animation/neon-animations.h"
 #include "debug-ui.h"
 #include "ui-controls.h"
 #include "util/log-util.h"
@@ -98,7 +99,7 @@ int main()
     }
 
     EdgeLightingDemo::PrintControls();
-    EdgeLightingDemo::PrintCurrentConfig(gEffect->GetConfig(), gEffect->GetAnimation().IsPlaying());
+    EdgeLightingDemo::PrintCurrentConfig(gEffect->GetConfig(), gEffect->GetClock().IsPlaying());
 
     float lastFrameTime = 0.0f;
     while (!glfwWindowShouldClose(window) && !glfwWindowShouldClose(debugUI.GetWindow()))
@@ -108,9 +109,13 @@ int main()
         lastFrameTime = currentFrameTime;
 
         // --- Debug UI (ImGui widgets + render to debug window) ---
+        // Build the UI (mutates cfg from slider drags / preset picks), then
+        // overlay the currently-active animation preset, then push back.
         {
             EdgeLighting::Config cfg = gEffect->GetConfig();
             debugUI.Build(cfg, *gEffect);
+            debugUI.ApplyActiveAnimation(cfg, gEffect->GetClock().GetTime());
+            gEffect->SetConfig(cfg);
         }
         debugUI.Render();
 
@@ -152,7 +157,7 @@ void OnResize(GLFWwindow *window, int width, int height)
         config.geometry.height = static_cast<float>(height) / 2;
 
         gEffect->SetConfig(config);
-        EdgeLightingDemo::PrintCurrentConfig(config, gEffect->GetAnimation().IsPlaying());
+        EdgeLightingDemo::PrintCurrentConfig(config, gEffect->GetClock().IsPlaying());
     }
 }
 
@@ -209,23 +214,23 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
     }
     case GLFW_KEY_P:
     {
-        config.neon.sweepSpeed = std::min(5.0f, config.neon.sweepSpeed + 0.1f);
+        config.neon.hueRotationRate = std::min(5.0f, config.neon.hueRotationRate + 0.1f);
         break;
     }
     case GLFW_KEY_L:
     {
-        config.neon.sweepSpeed = std::max(0.0f, config.neon.sweepSpeed - 0.1f);
+        config.neon.hueRotationRate = std::max(0.0f, config.neon.hueRotationRate - 0.1f);
         break;
     }
     case GLFW_KEY_SPACE:
     {
-        if (gEffect->GetAnimation().IsPlaying())
+        if (gEffect->GetClock().IsPlaying())
         {
-            gEffect->GetAnimation().Pause();
+            gEffect->GetClock().Pause();
         }
         else
         {
-            gEffect->GetAnimation().Play();
+            gEffect->GetClock().Play();
         }
         break;
     }
@@ -260,5 +265,5 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
     }
 
     gEffect->SetConfig(config);
-    EdgeLightingDemo::PrintCurrentConfig(config, gEffect->GetAnimation().IsPlaying());
+    EdgeLightingDemo::PrintCurrentConfig(config, gEffect->GetClock().IsPlaying());
 }
