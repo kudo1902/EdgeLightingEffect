@@ -5,11 +5,6 @@
 
 namespace EdgeLighting
 {
-    NeonMultiPassRenderer::~NeonMultiPassRenderer()
-    {
-        destroyFbo();
-    }
-
     bool NeonMultiPassRenderer::Initialize()
     {
         if (!setupShaders())
@@ -28,140 +23,210 @@ namespace EdgeLighting
     void NeonMultiPassRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
     {
         if (!config.multipassNeon.enable)
+        {
             return;
+        }
 
-        if (viewportWidth != mFboW || viewportHeight != mFboH)
-            createFbo(viewportWidth, viewportHeight);
+        // All three FBOs share the same size as the viewport. The blur kernel
+        // is sized in pixels via uBlurRadius so an FBO supersample factor is a
+        // separate concern — keep them at 1x for now.
+        if (!mBarBuffer.Resize(viewportWidth, viewportHeight) ||
+            !mBlurHBuffer.Resize(viewportWidth, viewportHeight) ||
+            !mBlurVBuffer.Resize(viewportWidth, viewportHeight))
+        {
+            return;
+        }
 
         float halfRectW = config.geometry.width * 0.5f;
         float halfRectH = config.geometry.height * 0.5f;
-        glm::mat4 proj = glm::ortho(0.0f, static_cast<float>(viewportWidth), 0.0f, static_cast<float>(viewportHeight), -1.0f, 1.0f);
+        glm::mat4 proj  = glm::ortho(0.0f, static_cast<float>(viewportWidth),
+                                     0.0f, static_cast<float>(viewportHeight),
+                                     -1.0f, 1.0f);
         glm::vec2 center(config.geometry.position.x + halfRectW,
                          static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
         glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(center, 0.0f));
-        glm::mat4 mvp = proj * model;
+        glm::mat4 mvp   = proj * model;
 
-        // --- Pass 1: Render conic gradient to FBO texture ---
-        glBindFramebuffer(GL_FRAMEBUFFER, mGradientFbo);
-        glViewport(0, 0, viewportWidth, viewportHeight);
+        glm::vec2 texelSize(1.0f / static_cast<float>(viewportWidth),
+                            1.0f / static_cast<float>(viewportHeight));
+
+        // ===================================================================
+        // Pass 1 — bake the bar (premultiplied colour) into mBarBuffer.
+        // ===================================================================
+        mBarBuffer.Bind();
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClear(GL_COLOR_BUFFER_BIT);
-
-        mGradientShader.Use();
-        mGradientShader.SetUniform("uMVP", mvp);
-        mGradientShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
-        mGradientShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
-        mGradientShader.SetUniform("uTime", time);
-        mGradientShader.SetUniform("uSpeed", config.multipassNeon.speed);
-        mGradientShader.SetUniform("uStrokeThickness", config.multipassNeon.thickness);
-        mGradientShader.SetUniform("uBlendSpace", static_cast<int>(config.multipassNeon.blendSpace));
-        mGradientShader.SetUniform("uColorStopCount", static_cast<int>(config.multipassNeon.colorStops.size()));
-        for (int i = 0; i < static_cast<int>(config.multipassNeon.colorStops.size()) && i < MultiPassNeonConfig::MAX_COLOR_STOPS; ++i)
-        {
-            std::string posName = "uColorStopPositions[" + std::to_string(i) + "]";
-            mGradientShader.SetUniform(posName.c_str(), config.multipassNeon.colorStops[i].position);
-            std::string colName = "uColorStopColors[" + std::to_string(i) + "]";
-            mGradientShader.SetUniform(colName.c_str(), config.multipassNeon.colorStops[i].color);
-        }
         glDisable(GL_BLEND);
-        mVertexArray.DrawArrays(GL_TRIANGLES, 6);
 
-        // --- Pass 2: Sample gradient texture, apply SDF glow to screen ---
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        mBarShader.Use();
+        mBarShader.SetUniform("uMVP", mvp);
+        mBarShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
+        mBarShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
+        mBarShader.SetUniform("uTime", time);
+        mBarShader.SetUniform("uHueRotationRate", config.multipassNeon.hueRotationRate);
+        mBarShader.SetUniform("uLineWidth", config.multipassNeon.lineWidth);
+        mBarShader.SetUniform("uBlendSpace", static_cast<int>(config.multipassNeon.blendSpace));
+        mBarShader.SetUniform("uFullGradient", config.multipassNeon.showFullGradient);
+
+        int stopCount = std::min(static_cast<int>(config.multipassNeon.colorStops.size()),
+                                 MultiPassNeonConfig::MAX_COLOR_STOPS);
+        mBarShader.SetUniform("uColorStopCount", stopCount);
+        mStopPositions.resize(stopCount);
+        mStopColors.resize(stopCount);
+        for (int i = 0; i < stopCount; ++i)
+        {
+            mStopPositions[i] = config.multipassNeon.colorStops[i].position;
+            mStopColors[i]    = config.multipassNeon.colorStops[i].color;
+        }
+        if (stopCount > 0)
+        {
+            mBarShader.SetUniform("uColorStopPositions", mStopPositions.data(), stopCount);
+            mBarShader.SetUniform("uColorStopColors",    mStopColors.data(),    stopCount);
+        }
+
+        // In full-gradient debug mode the bar shader writes everywhere — use the
+        // wide quad so we cover the whole rect.
+        if (config.multipassNeon.showFullGradient)
+        {
+            mGlowVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        }
+        else
+        {
+            mBarVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        }
+
+        // ===================================================================
+        // Pass 2 — horizontal Gaussian blur. Reads mBarBuffer, writes mBlurH.
+        // ===================================================================
+        mBlurHBuffer.Bind();
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        mBlurShader.Use();
+        mBlurShader.SetUniform("uMVP", mvp);
+        mBlurShader.SetUniform("uTexelSize", texelSize);
+        mBlurShader.SetUniform("uBlurRadius", config.multipassNeon.glowRadius);
+        mBlurShader.SetUniform("uDirection", glm::vec2(1.0f, 0.0f));
+        mBarBuffer.BindTexture(0);
+        mBlurShader.SetUniform("uSource", 0);
+        mGlowVertexArray.DrawArrays(GL_TRIANGLES, 6);
+
+        // ===================================================================
+        // Pass 3 — vertical Gaussian blur. Reads mBlurH, writes mBlurV.
+        // ===================================================================
+        mBlurVBuffer.Bind();
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        mBlurShader.SetUniform("uDirection", glm::vec2(0.0f, 1.0f));
+        mBlurHBuffer.BindTexture(0);
+        mBlurShader.SetUniform("uSource", 0);
+        mGlowVertexArray.DrawArrays(GL_TRIANGLES, 6);
+
+        // ===================================================================
+        // Pass 4 — composite to screen.
+        // ===================================================================
+        Framebuffer::BindDefault();
         glViewport(0, 0, viewportWidth, viewportHeight);
-
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE);
 
-        glActiveTexture(GL_TEXTURE0);
-        glBindTexture(GL_TEXTURE_2D, mGradientTex);
-        mGlowShader.Use();
-        mGlowShader.SetUniform("uMVP", mvp);
-        mGlowShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
-        mGlowShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
-        mGlowShader.SetUniform("uStrokeThickness", config.multipassNeon.thickness);
-        mGlowShader.SetUniform("uIntensity", config.multipassNeon.intensity);
-        mGlowShader.SetUniform("uTime", time);
-        mGlowShader.SetUniform("uSpeed", config.multipassNeon.speed);
-        mGlowShader.SetUniform("uGlowSize", config.multipassNeon.glowSize);
-        mGlowShader.SetUniform("uViewportSize", glm::vec2(viewportWidth, viewportHeight));
-        mGlowShader.SetUniform("uGradient", 0);
-        mGlowShader.SetUniform("uShowGradient", config.multipassNeon.showGradient);
-        mVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        mCompositeShader.Use();
+        mCompositeShader.SetUniform("uMVP", mvp);
+        mCompositeShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
+        mCompositeShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
+        mCompositeShader.SetUniform("uLineWidth", config.multipassNeon.lineWidth);
+        mCompositeShader.SetUniform("uIntensity", config.multipassNeon.intensity);
+        mCompositeShader.SetUniform("uTime", time);
+        mCompositeShader.SetUniform("uGlowRadius", config.multipassNeon.glowRadius);
+        mCompositeShader.SetUniform("uBloomStrength", config.multipassNeon.bloomStrength);
+        mCompositeShader.SetUniform("uGlowSide", static_cast<int>(config.multipassNeon.glowSide));
+        mCompositeShader.SetUniform("uGlowSideSoftness", config.multipassNeon.glowSideSoftness);
+        mCompositeShader.SetUniform("uViewportSize",
+                                    glm::vec2(viewportWidth, viewportHeight));
 
-        mGlowShader.Unuse();
+        // Debug toggles: showPerimeterGradient/showFullGradient → display the
+        // baked bar texture directly; otherwise normal composite.
+        bool showGradient = config.multipassNeon.showPerimeterGradient ||
+                            config.multipassNeon.showFullGradient;
+        mCompositeShader.SetUniform("uShowGradient", showGradient);
+        mCompositeShader.SetUniform("uShowBlurred", false);
+
+        mBarBuffer.BindTexture(0);
+        mBlurVBuffer.BindTexture(1);
+        mCompositeShader.SetUniform("uBar", 0);
+        mCompositeShader.SetUniform("uHalo", 1);
+
+        mGlowVertexArray.DrawArrays(GL_TRIANGLES, 6);
+
+        mCompositeShader.Unuse();
     }
 
     void NeonMultiPassRenderer::OnConfigChanged(const Config &config)
     {
         mCurrentConfig = config;
-        if (mGradientShader.IsValid())
+        if (mBarShader.IsValid())
+        {
             setupGeometry(config);
+        }
     }
 
     bool NeonMultiPassRenderer::setupShaders()
     {
-        mGradientShader = ShaderProgram(ShaderSource::NEON_VERT_SRC, ShaderSource::NEON_GRADIENT_FRAG_SRC);
-        mGlowShader = ShaderProgram(ShaderSource::NEON_VERT_SRC, ShaderSource::NEON_GLOW_FRAG_SRC);
-        return mGradientShader.IsValid() && mGlowShader.IsValid();
+        mBarShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
+                                   ShaderSource::NEON_GRADIENT_FRAG_SRC,
+                                   "NeonMultiPass.Bar");
+        mBlurShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
+                                    ShaderSource::NEON_BLUR_FRAG_SRC,
+                                    "NeonMultiPass.Blur");
+        mCompositeShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
+                                         ShaderSource::NEON_GLOW_FRAG_SRC,
+                                         "NeonMultiPass.Composite");
+        return mBarShader.IsValid() && mBlurShader.IsValid() && mCompositeShader.IsValid();
     }
 
     void NeonMultiPassRenderer::setupGeometry(const Config &config)
     {
-        float margin = 600.0f;
         float halfW = config.geometry.width * 0.5f;
         float halfH = config.geometry.height * 0.5f;
-        float l = -(halfW + margin);
-        float r = halfW + margin;
-        float b = -(halfH + margin);
-        float t = halfH + margin;
 
-        float verts[] = {
-            l, t, l, b, r, b,
-            l, t, r, b, r, t,
-        };
-
-        mVertexArray.SetVertexData(verts, sizeof(verts));
-        mVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
-    }
-
-    void NeonMultiPassRenderer::destroyFbo()
-    {
-        if (mGradientFbo)
+        // --- Bar quad: tight around the perimeter ---
+        // Pass 1 only writes within lineHalf + BAR_FADE_MARGIN of the edge,
+        // so a quad sized to (rect + ~max line half width + a few pixels of
+        // safety) covers everything and saves ~90% of Pass 1 fragment work.
+        constexpr float BAR_MARGIN = 16.0f;
         {
-            glDeleteFramebuffers(1, &mGradientFbo);
-            mGradientFbo = 0;
+            float l = -(halfW + BAR_MARGIN);
+            float r =  (halfW + BAR_MARGIN);
+            float b = -(halfH + BAR_MARGIN);
+            float t =  (halfH + BAR_MARGIN);
+
+            // clang-format off
+            float verts[] = {
+                l, t, l, b, r, b,
+                l, t, r, b, r, t,
+            };
+            // clang-format on
+
+            mBarVertexArray.SetVertexData(verts, sizeof(verts));
+            mBarVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
         }
-        if (mGradientTex)
+
+        // --- Glow quad: wide enough to cover the blur reach for Pass 2-4. ---
+        constexpr float GLOW_MARGIN = 600.0f;
         {
-            glDeleteTextures(1, &mGradientTex);
-            mGradientTex = 0;
+            float l = -(halfW + GLOW_MARGIN);
+            float r =  (halfW + GLOW_MARGIN);
+            float b = -(halfH + GLOW_MARGIN);
+            float t =  (halfH + GLOW_MARGIN);
+
+            // clang-format off
+            float verts[] = {
+                l, t, l, b, r, b,
+                l, t, r, b, r, t,
+            };
+            // clang-format on
+
+            mGlowVertexArray.SetVertexData(verts, sizeof(verts));
+            mGlowVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
         }
-        mFboW = mFboH = 0;
-    }
-
-    void NeonMultiPassRenderer::createFbo(int w, int h)
-    {
-        destroyFbo();
-
-        glGenTextures(1, &mGradientTex);
-        glBindTexture(GL_TEXTURE_2D, mGradientTex);
-        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, w, h, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-        glGenFramebuffers(1, &mGradientFbo);
-        glBindFramebuffer(GL_FRAMEBUFFER, mGradientFbo);
-        glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, mGradientTex, 0);
-
-        GLenum s = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-        if (s != GL_FRAMEBUFFER_COMPLETE)
-            LOG_W("Gradient FBO incomplete (status=%x)", s);
-
-        glBindFramebuffer(GL_FRAMEBUFFER, 0);
-        mFboW = w;
-        mFboH = h;
     }
 }

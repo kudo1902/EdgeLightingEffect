@@ -4,16 +4,35 @@ precision highp float;
 in vec2 vPos;
 out vec4 fragColor;
 
-uniform vec2 uRectSize;
+uniform vec2  uRectSize;
 uniform float uCornerRadius;
 uniform float uTime;
-uniform float uSpeed;
-uniform float uStrokeThickness;
+uniform float uHueRotationRate;
+uniform float uLineWidth;
 
-uniform int uColorStopCount;
+uniform int   uColorStopCount;
 uniform float uColorStopPositions[16];
-uniform vec4 uColorStopColors[16];
-uniform int uBlendSpace;
+uniform vec4  uColorStopColors[16];
+uniform int   uBlendSpace;
+
+// Debug: when true, write the gradient colour at every pixel (no perimeter mask)
+// so the entire FBO is filled. Pairs with uShowGradient in the glow shader.
+uniform bool  uFullGradient;
+
+// ---------------------------------------------------------------------------
+// Tuning constants — Pass 1 only writes within a thin band along the perimeter.
+// ---------------------------------------------------------------------------
+
+// Minimum bar half-width in pixels (keeps thin lines from collapsing).
+#define BAR_MIN_HALF_WIDTH    2.0
+// Extra pixels of margin around the bar where the alpha mask falls off.
+#define BAR_FADE_MARGIN       2.0
+// Below this mask value the fragment is invisible — skip.
+#define MASK_DISCARD_EPSILON  0.01
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 vec3 hsv2rgb(vec3 c) {
     vec4 K = vec4(1.0, 2.0 / 3.0, 1.0 / 3.0, 3.0);
@@ -30,22 +49,19 @@ vec3 rgb2hsv(vec3 c) {
     return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (d + e), q.x);
 }
 
-vec3 blendRGB(vec3 a, vec3 b, float t) {
-    return mix(a, b, t);
-}
+vec3 blendRGB(vec3 a, vec3 b, float t) { return mix(a, b, t); }
 
 vec3 blendHSV(vec3 a, vec3 b, float t) {
     vec3 ha = rgb2hsv(a);
     vec3 hb = rgb2hsv(b);
     float dh = hb.x - ha.x;
-    if (dh > 0.5) dh -= 1.0;
+    if (dh > 0.5)  dh -= 1.0;
     if (dh < -0.5) dh += 1.0;
     return hsv2rgb(vec3(ha.x + dh * t, mix(ha.y, hb.y, t), mix(ha.z, hb.z, t)));
 }
 
 vec3 blend(vec3 a, vec3 b, float t) {
-    if (uBlendSpace == 1) return blendHSV(a, b, t);
-    return blendRGB(a, b, t);
+    return (uBlendSpace == 1) ? blendHSV(a, b, t) : blendRGB(a, b, t);
 }
 
 vec3 sampleStops(float pos) {
@@ -113,7 +129,7 @@ float getPerimPosCCW(vec2 p, vec2 halfSize, float r) {
     float w = 2.0 * c.x;
     float h = 2.0 * c.y;
     float arc = 0.5 * 3.1415926535 * r;
-    float total = 4.0 * arc + w + h;
+    float total = 4.0 * arc + 2.0 * w + 2.0 * h;
 
     if (abs(cp.x + halfSize.x) < 0.001) {
         float t = (c.y - cp.y) / h;
@@ -152,29 +168,22 @@ float getPerimPosCCW(vec2 p, vec2 halfSize, float r) {
     return (h + arc + w + arc + h + arc + w + t * arc) / total;
 }
 
-// Find the closest point on the perimeter and return its distance from p.
+// Closest point on the rounded-rect perimeter to p.
 float closestPerimDist(vec2 p, vec2 halfSize, float r, out vec2 cp) {
-    vec2 c = halfSize - r;     // core: inner rect before corner arcs start
+    vec2 c = halfSize - r;
     vec2 ap = abs(p);
     vec2 sp = sign(p);
 
-    // Corner region: outside both edges of the core
     if (ap.x > c.x && ap.y > c.y) {
         vec2 delta = ap - c;
         float d = length(delta);
         vec2 dir = delta / d;
-        // Project onto the corner arc (radius r from corner center c)
         cp = vec2(c.x + dir.x * r, c.y + dir.y * r) * sp;
-    }
-    // Edge region: outside core on one axis only — closest point is on the
-    // corresponding straight edge of the rounded rectangle (at halfSize, not c)
-    else if (ap.x > c.x) {
+    } else if (ap.x > c.x) {
         cp = vec2(halfSize.x, clamp(ap.y, 0.0, c.y)) * sp;
     } else if (ap.y > c.y) {
         cp = vec2(clamp(ap.x, 0.0, c.x), halfSize.y) * sp;
-    }
-    // Inside core: closest is the nearest straight edge
-    else {
+    } else {
         float ex = c.x - ap.x;
         float ey = c.y - ap.y;
         if (ex < ey)
@@ -188,21 +197,38 @@ float closestPerimDist(vec2 p, vec2 halfSize, float r, out vec2 cp) {
 void main() {
     vec2 halfSize = uRectSize * 0.5;
 
-    vec2 cp;
-    float dist = closestPerimDist(vPos, halfSize, uCornerRadius, cp);
-    float sd = sdRoundBox(vPos, halfSize, uCornerRadius);
-    float lineHalf = max(uStrokeThickness * 0.5, 2.0);
-    if (sd > lineHalf + 2.0) {
-        fragColor = vec4(0.0);
+    // --- Debug: fill the FBO everywhere with a true conic gradient ---
+    // Uses the angle from centre instead of closest-perimeter-point so the
+    // visual is a smooth colour wheel, not 4 Voronoi regions.
+    if (uFullGradient) {
+        float angle = atan(vPos.y, vPos.x);
+        float h     = fract(angle / (2.0 * 3.14159265) + 0.5 + uTime * uHueRotationRate);
+        fragColor = vec4(sampleStops(h), 1.0);
         return;
     }
-    float mask = 1.0 - smoothstep(0.0, lineHalf, dist);
-    if (mask < 0.01) {
-        fragColor = vec4(0.0);
-        return;
-    }
+
+    // --- Normal mode: write only within a thin band around the perimeter ---
     float perimPos = getPerimPosCCW(vPos, halfSize, uCornerRadius);
-    float h = fract(perimPos + uTime * uSpeed);
-    vec3 col = sampleStops(h);
-    fragColor = vec4(col, mask);
+    float h        = fract(perimPos + uTime * uHueRotationRate);
+    vec3  col      = sampleStops(h);
+    vec2  cp;
+    float dist     = closestPerimDist(vPos, halfSize, uCornerRadius, cp);
+    float sd       = sdRoundBox(vPos, halfSize, uCornerRadius);
+    float lineHalf = max(uLineWidth * 0.5, BAR_MIN_HALF_WIDTH);
+
+    if (sd > lineHalf + BAR_FADE_MARGIN) {
+        fragColor = vec4(0.0);
+        return;
+    }
+
+    float mask = 1.0 - smoothstep(0.0, lineHalf, dist);
+    if (mask < MASK_DISCARD_EPSILON) {
+        fragColor = vec4(0.0);
+        return;
+    }
+
+    // Output PREMULTIPLIED so the subsequent blur averages colour weighted by
+    // coverage. Without this, blurring would bleed full-strength colour into
+    // nominally transparent pixels at the bar edge.
+    fragColor = vec4(col * mask, mask);
 }
