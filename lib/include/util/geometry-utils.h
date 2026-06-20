@@ -2,6 +2,7 @@
 #define _EDGE_LIGHTING_GEOMETRY_UTILS_H_
 
 #include "core/config.h"
+#include "util/constants.h"
 #include <glm/glm.hpp>
 
 namespace EdgeLighting
@@ -11,7 +12,7 @@ namespace EdgeLighting
         namespace Detail
         {
             /// Clockwise traversal: top → right → bottom → left
-            inline glm::vec2 GetPointOnRectCW(float t, const Config::Geometry &geom)
+            inline glm::vec2 GetPointOnRectCW(float t, const RectGeometry &geom)
             {
                 float halfW = geom.width * 0.5f;
                 float halfH = geom.height * 0.5f;
@@ -59,8 +60,7 @@ namespace EdgeLighting
                 float halfHs = halfH - r;
                 float ws = geom.width - 2.0f * r;
                 float hs = geom.height - 2.0f * r;
-                constexpr float pi = 3.14159265358979323846f;
-                float arcLen = pi * r * 0.5f;
+                float arcLen = PI * r * 0.5f;
 
                 float peri = 2.0f * ws + 2.0f * hs + 4.0f * arcLen;
                 float dist = t * peri;
@@ -77,7 +77,7 @@ namespace EdgeLighting
                 if (dist <= arcLen)
                 {
                     float frac = dist / arcLen;
-                    float angle = pi * 0.5f * (1.0f - frac);
+                    float angle = PI * 0.5f * (1.0f - frac);
                     return glm::vec2(halfWs + r * cosf(angle), halfHs + r * sinf(angle));
                 }
                 dist -= arcLen;
@@ -94,7 +94,7 @@ namespace EdgeLighting
                 if (dist <= arcLen)
                 {
                     float frac = dist / arcLen;
-                    float angle = -pi * 0.5f * frac;
+                    float angle = -PI * 0.5f * frac;
                     return glm::vec2(halfWs + r * cosf(angle), -halfHs + r * sinf(angle));
                 }
                 dist -= arcLen;
@@ -111,7 +111,7 @@ namespace EdgeLighting
                 if (dist <= arcLen)
                 {
                     float frac = dist / arcLen;
-                    float angle = -pi * 0.5f * (1.0f + frac);
+                    float angle = -PI * 0.5f * (1.0f + frac);
                     return glm::vec2(-halfWs + r * cosf(angle), -halfHs + r * sinf(angle));
                 }
                 dist -= arcLen;
@@ -127,13 +127,13 @@ namespace EdgeLighting
                 // top-left arc: angle -π → -3π/2
                 {
                     float frac = dist / arcLen;
-                    float angle = -pi * 0.5f * (2.0f + frac);
+                    float angle = -PI * 0.5f * (2.0f + frac);
                     return glm::vec2(-halfWs + r * cosf(angle), halfHs + r * sinf(angle));
                 }
             }
 
             /// Counter-clockwise traversal: left → bottom → right → top
-            inline glm::vec2 GetPointOnRectCCW(float t, const Config::Geometry &geom)
+            inline glm::vec2 GetPointOnRectCCW(float t, const RectGeometry &geom)
             {
                 float halfW = geom.width * 0.5f;
                 float halfH = geom.height * 0.5f;
@@ -181,8 +181,7 @@ namespace EdgeLighting
                 float halfHs = halfH - r;
                 float ws = geom.width - 2.0f * r;
                 float hs = geom.height - 2.0f * r;
-                constexpr float pi = 3.14159265358979323846f;
-                float arcLen = pi * r * 0.5f;
+                float arcLen = PI * r * 0.5f;
 
                 float peri = 2.0f * ws + 2.0f * hs + 4.0f * arcLen;
                 float dist = t * peri;
@@ -199,7 +198,7 @@ namespace EdgeLighting
                 if (dist <= arcLen)
                 {
                     float frac = dist / arcLen;
-                    float angle = -pi + pi * 0.5f * frac;
+                    float angle = -PI + PI * 0.5f * frac;
                     return glm::vec2(-halfWs + r * cosf(angle), -halfHs + r * sinf(angle));
                 }
                 dist -= arcLen;
@@ -216,7 +215,7 @@ namespace EdgeLighting
                 if (dist <= arcLen)
                 {
                     float frac = dist / arcLen;
-                    float angle = -pi * 0.5f + pi * 0.5f * frac;
+                    float angle = -PI * 0.5f + PI * 0.5f * frac;
                     return glm::vec2(halfWs + r * cosf(angle), -halfHs + r * sinf(angle));
                 }
                 dist -= arcLen;
@@ -233,7 +232,7 @@ namespace EdgeLighting
                 if (dist <= arcLen)
                 {
                     float frac = dist / arcLen;
-                    float angle = pi * 0.5f * frac;
+                    float angle = PI * 0.5f * frac;
                     return glm::vec2(halfWs + r * cosf(angle), halfHs + r * sinf(angle));
                 }
                 dist -= arcLen;
@@ -249,7 +248,7 @@ namespace EdgeLighting
                 // top-left arc: angle π/2 → π
                 {
                     float frac = dist / arcLen;
-                    float angle = pi * 0.5f + pi * 0.5f * frac;
+                    float angle = PI * 0.5f + PI * 0.5f * frac;
                     return glm::vec2(-halfWs + r * cosf(angle), halfHs + r * sinf(angle));
                 }
             }
@@ -260,7 +259,7 @@ namespace EdgeLighting
         /// Progress 0 = top-left. Direction is controlled by geom.winding.
         /// Supports rounded corners via cornerRadius.
         /// The point is in the rectangle's local coordinate system (origin at center).
-        inline glm::vec2 GetPointOnRectangle(float t, const Config::Geometry &geom)
+        inline glm::vec2 GetPointOnRectangle(float t, const RectGeometry &geom)
         {
             if (geom.winding == Winding::CLOCKWISE)
             {
@@ -277,7 +276,7 @@ namespace EdgeLighting
             return glm::vec2(appPt.x - halfW, halfH - appPt.y);
         }
 
-        inline glm::vec2 AppToLocal(const glm::vec2 &appPt, const Config::Geometry &geom)
+        inline glm::vec2 AppToLocal(const glm::vec2 &appPt, const RectGeometry &geom)
         {
             return AppToLocal(appPt, geom.width * 0.5f, geom.height * 0.5f);
         }
@@ -288,11 +287,13 @@ namespace EdgeLighting
             std::vector<glm::vec2> result;
             result.reserve(appPts.size());
             for (const auto &pt : appPts)
+            {
                 result.push_back(AppToLocal(pt, halfW, halfH));
+            }
             return result;
         }
 
-        inline std::vector<glm::vec2> AppToLocal(const std::vector<glm::vec2> &appPts, const Config::Geometry &geom)
+        inline std::vector<glm::vec2> AppToLocal(const std::vector<glm::vec2> &appPts, const RectGeometry &geom)
         {
             return AppToLocal(appPts, geom.width * 0.5f, geom.height * 0.5f);
         }

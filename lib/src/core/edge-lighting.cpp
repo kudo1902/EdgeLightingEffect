@@ -1,14 +1,10 @@
 #include "core/edge-lighting.h"
 #include "util/log-util.h"
-#include <glm/glm.hpp>
 
 namespace EdgeLighting
 {
 
-    EdgeLightingEffect::EdgeLightingEffect()
-        : mTime(0.0f)
-    {
-    }
+    EdgeLightingEffect::EdgeLightingEffect() = default;
 
     bool EdgeLightingEffect::Initialize()
     {
@@ -25,36 +21,26 @@ namespace EdgeLighting
 
     void EdgeLightingEffect::Update(float deltaTime)
     {
-        mAnimation.Update(deltaTime);
-        if (mAnimation.IsPlaying())
-        {
-            mTime += deltaTime;
-        }
-
-        float rawProgress = mAnimation.GetProgress();
-        float headPos = computeHeadPos();
+        mClock.Update(deltaTime);
+        float t = mClock.GetTime();
         for (auto &renderer : mRenderers)
         {
-            renderer->Update(deltaTime, rawProgress, headPos, mTime, mConfig);
+            renderer->Update(deltaTime, t, mConfig);
         }
     }
 
     void EdgeLightingEffect::Render(int viewportWidth, int viewportHeight)
     {
-        float rawProgress = mAnimation.GetProgress();
-        float headPos = computeHeadPos();
+        float t = mClock.GetTime();
         for (auto &renderer : mRenderers)
         {
-            renderer->Render(viewportWidth, viewportHeight, rawProgress, headPos, mTime, mConfig);
+            renderer->Render(viewportWidth, viewportHeight, t, mConfig);
         }
     }
 
     void EdgeLightingEffect::SetConfig(const Config &config)
     {
         mConfig = config;
-
-        mAnimation.SetSpeed(mConfig.stroke.speed);
-
         for (auto &renderer : mRenderers)
         {
             renderer->OnConfigChanged(mConfig);
@@ -75,23 +61,7 @@ namespace EdgeLighting
         }
     }
 
-    Animation &EdgeLightingEffect::GetAnimation()
-    {
-        return mAnimation;
-    }
-
-    float EdgeLightingEffect::computeHeadPos() const
-    {
-        float rawProgress;
-        if (mConfig.path.startPos == mConfig.path.endPos)
-        {
-            rawProgress = glm::fract(mTime * mConfig.stroke.speed);
-        }
-        else
-        {
-            rawProgress = mAnimation.GetProgress();
-        }
-        return glm::mix(mConfig.path.startPos, mConfig.path.endPos, rawProgress);
-    }
+    Clock &EdgeLightingEffect::GetClock() { return mClock; }
+    const Clock &EdgeLightingEffect::GetClock() const { return mClock; }
 
 } // namespace EdgeLighting

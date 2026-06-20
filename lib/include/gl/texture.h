@@ -32,7 +32,9 @@ namespace EdgeLighting
             if (this != &other)
             {
                 if (mId != 0)
+                {
                     glDeleteTextures(1, &mId);
+                }
                 mId = other.mId;
                 other.mId = 0;
             }

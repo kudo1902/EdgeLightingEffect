@@ -17,7 +17,7 @@ namespace EdgeLighting
         // Cases 6 and 9 are saddle cells; entries here are the "valley" pairing.
         // At runtime, saddle ambiguity is resolved by comparing the average
         // corner alpha against the threshold (ridge = connect inside corners).
-        const int kMarchTable[16][4] = {
+        const int MARCH_TABLE[16][4] = {
             {-1, -1, -1, -1}, // 0:  none
             {0, 3, -1, -1},   // 1:  A
             {0, 1, -1, -1},   // 2:  B
@@ -90,7 +90,9 @@ namespace EdgeLighting
         float lerpAlpha(float va, float vb, float threshold)
         {
             if (std::abs(vb - va) < 1e-7f)
+            {
                 return 0.5f;
+            }
             return std::max(0.0f, std::min(1.0f, (threshold - va) / (vb - va)));
         }
 
@@ -101,41 +103,53 @@ namespace EdgeLighting
             switch (edge)
             {
             case 0:
+            {
                 t = lerpAlpha(vA, vB, threshold);
                 return {x + t, y};
+            }
             case 1:
+            {
                 t = lerpAlpha(vB, vD, threshold);
                 return {x + 1, y + t};
+            }
             case 2:
+            {
                 t = lerpAlpha(vC, vD, threshold);
                 return {x + t, y + 1};
+            }
             case 3:
+            {
                 t = lerpAlpha(vA, vC, threshold);
                 return {x, y + t};
+            }
             default:
+            {
                 return {0, 0};
+            }
             }
         }
 
-        struct Segment
+        typedef struct Segment
         {
             glm::vec2 a, b;
-        };
+        } Segment;
 
         // Chain segments into a single closed polyline by walking the adjacency graph.
         std::vector<glm::vec2> chainSegments(const std::vector<Segment> &segs, float snap)
         {
             if (segs.empty())
+            {
                 return {};
+            }
 
             using Key = glm::ivec2;
-            struct Hasher
+            typedef struct Hasher
             {
                 size_t operator()(const Key &k) const
                 {
                     return static_cast<size_t>(k.x) ^ (static_cast<size_t>(k.y) << 16);
                 }
-            };
+            } Hasher;
 
             // Build adjacency: map snapped key → list of connected keys.
             // Also store one canonical position per key.
@@ -201,11 +215,15 @@ namespace EdgeLighting
                 }
 
                 if (nextKey == curKey)
+                {
                     break; // dead end
+                }
 
                 // Check if we're about to return to start
                 if (nextKey == startKey && chain.size() > 2)
+                {
                     break; // closed loop complete
+                }
 
                 chain.push_back(posMap[nextKey]);
                 prevKey = curKey;
@@ -218,7 +236,9 @@ namespace EdgeLighting
         std::vector<glm::vec2> resampleUniform(const std::vector<glm::vec2> &points, int maxCount)
         {
             if (points.size() <= static_cast<size_t>(maxCount))
+            {
                 return points;
+            }
 
             std::vector<glm::vec2> result;
             result.reserve(maxCount);
@@ -284,7 +304,7 @@ namespace EdgeLighting
                 {
                     for (int i = 0; i < 4; ++i)
                     {
-                        edges[i] = kMarchTable[caseIdx][i];
+                        edges[i] = MARCH_TABLE[caseIdx][i];
                     }
                 }
 

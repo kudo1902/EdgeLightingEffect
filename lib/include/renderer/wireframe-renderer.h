@@ -10,15 +10,15 @@ namespace EdgeLighting
     /// Renders a minimal 4-vertex GL_LINE_LOOP bounding-box overlay
     /// around the target rectangle.
     ///
-    /// @see Config::Wireframe for configuration options.
+    /// @see WireframeConfig for configuration options.
     class WireframeRenderer : public BaseRenderer
     {
     public:
         WireframeRenderer() = default;
 
         virtual bool Initialize() override;
-        virtual void Update(float deltaTime, float progress, float headPos, float time, const Config &config) override;
-        virtual void Render(int viewportWidth, int viewportHeight, float progress, float headPos, float time, const Config &config) override;
+        virtual void Update(float deltaTime, float time, const Config &config) override;
+        virtual void Render(int viewportWidth, int viewportHeight, float time, const Config &config) override;
         virtual void OnConfigChanged(const Config &config) override;
 
     private:

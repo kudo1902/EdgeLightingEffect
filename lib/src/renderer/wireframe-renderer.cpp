@@ -16,11 +16,11 @@ namespace EdgeLighting
         return true;
     }
 
-    void WireframeRenderer::Update(float, float, float, float, const Config &)
+    void WireframeRenderer::Update(float, float, const Config &)
     {
     }
 
-    void WireframeRenderer::Render(int viewportWidth, int viewportHeight, float, float, float, const Config &config)
+    void WireframeRenderer::Render(int viewportWidth, int viewportHeight, float, const Config &config)
     {
         if (!config.wireframe.enable)
         {
@@ -58,7 +58,9 @@ namespace EdgeLighting
 
     bool WireframeRenderer::setupShaders()
     {
-        mShaderProgram = ShaderProgram(ShaderSource::WIREFRAME_VERT_SRC, ShaderSource::WIREFRAME_FRAG_SRC);
+        mShaderProgram = ShaderProgram(ShaderSource::WIREFRAME_VERT_SRC,
+                                       ShaderSource::WIREFRAME_FRAG_SRC,
+                                       "WireframeRenderer");
         return mShaderProgram.IsValid();
     }
 
