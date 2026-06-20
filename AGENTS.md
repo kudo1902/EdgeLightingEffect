@@ -50,3 +50,43 @@
 ## Header guards / Macros
 - `ALL_CAPS` with `_` prefix and `_` suffix
   - e.g. `_EDGE_LIGHTING_EFFECT_H_`, `_EDGE_LIGHTING_CONFIG_H_`
+
+## Braces / Formatting
+- Always use braces for control flow statements, even single-line bodies
+  - *Correct:*
+    ```
+    if (count <= 0)
+    {
+        return glm::vec3(1.0f);
+    }
+    ```
+  - *Incorrect:*
+    ```
+    if (count <= 0)
+        return glm::vec3(1.0f);
+    ```
+- Use braces for `case` bodies inside `switch`:
+  - *Correct:*
+    ```
+    switch (i)
+    {
+    case 0:
+    {
+        r = v; g = t; b = p;
+        break;
+    }
+    case 1:
+    {
+        r = q; g = v; b = p;
+        break;
+    }
+    }
+    ```
+  - *Incorrect:*
+    ```
+    switch (i)
+    {
+    case 0: r = v; g = t; b = p; break;
+    case 1: r = q; g = v; b = p; break;
+    }
+    ```
