@@ -2,6 +2,7 @@
 #define _EDGE_LIGHTING_GEOMETRY_UTILS_H_
 
 #include "core/config.h"
+#include "util/constants.h"
 #include <glm/glm.hpp>
 
 namespace EdgeLighting
@@ -59,8 +60,7 @@ namespace EdgeLighting
                 float halfHs = halfH - r;
                 float ws = geom.width - 2.0f * r;
                 float hs = geom.height - 2.0f * r;
-                constexpr float pi = 3.14159265358979323846f;
-                float arcLen = pi * r * 0.5f;
+                float arcLen = PI * r * 0.5f;
 
                 float peri = 2.0f * ws + 2.0f * hs + 4.0f * arcLen;
                 float dist = t * peri;
@@ -77,7 +77,7 @@ namespace EdgeLighting
                 if (dist <= arcLen)
                 {
                     float frac = dist / arcLen;
-                    float angle = pi * 0.5f * (1.0f - frac);
+                    float angle = PI * 0.5f * (1.0f - frac);
                     return glm::vec2(halfWs + r * cosf(angle), halfHs + r * sinf(angle));
                 }
                 dist -= arcLen;
@@ -94,7 +94,7 @@ namespace EdgeLighting
                 if (dist <= arcLen)
                 {
                     float frac = dist / arcLen;
-                    float angle = -pi * 0.5f * frac;
+                    float angle = -PI * 0.5f * frac;
                     return glm::vec2(halfWs + r * cosf(angle), -halfHs + r * sinf(angle));
                 }
                 dist -= arcLen;
@@ -111,7 +111,7 @@ namespace EdgeLighting
                 if (dist <= arcLen)
                 {
                     float frac = dist / arcLen;
-                    float angle = -pi * 0.5f * (1.0f + frac);
+                    float angle = -PI * 0.5f * (1.0f + frac);
                     return glm::vec2(-halfWs + r * cosf(angle), -halfHs + r * sinf(angle));
                 }
                 dist -= arcLen;
@@ -127,7 +127,7 @@ namespace EdgeLighting
                 // top-left arc: angle -π → -3π/2
                 {
                     float frac = dist / arcLen;
-                    float angle = -pi * 0.5f * (2.0f + frac);
+                    float angle = -PI * 0.5f * (2.0f + frac);
                     return glm::vec2(-halfWs + r * cosf(angle), halfHs + r * sinf(angle));
                 }
             }
@@ -181,8 +181,7 @@ namespace EdgeLighting
                 float halfHs = halfH - r;
                 float ws = geom.width - 2.0f * r;
                 float hs = geom.height - 2.0f * r;
-                constexpr float pi = 3.14159265358979323846f;
-                float arcLen = pi * r * 0.5f;
+                float arcLen = PI * r * 0.5f;
 
                 float peri = 2.0f * ws + 2.0f * hs + 4.0f * arcLen;
                 float dist = t * peri;
@@ -199,7 +198,7 @@ namespace EdgeLighting
                 if (dist <= arcLen)
                 {
                     float frac = dist / arcLen;
-                    float angle = -pi + pi * 0.5f * frac;
+                    float angle = -PI + PI * 0.5f * frac;
                     return glm::vec2(-halfWs + r * cosf(angle), -halfHs + r * sinf(angle));
                 }
                 dist -= arcLen;
@@ -216,7 +215,7 @@ namespace EdgeLighting
                 if (dist <= arcLen)
                 {
                     float frac = dist / arcLen;
-                    float angle = -pi * 0.5f + pi * 0.5f * frac;
+                    float angle = -PI * 0.5f + PI * 0.5f * frac;
                     return glm::vec2(halfWs + r * cosf(angle), -halfHs + r * sinf(angle));
                 }
                 dist -= arcLen;
@@ -233,7 +232,7 @@ namespace EdgeLighting
                 if (dist <= arcLen)
                 {
                     float frac = dist / arcLen;
-                    float angle = pi * 0.5f * frac;
+                    float angle = PI * 0.5f * frac;
                     return glm::vec2(halfWs + r * cosf(angle), halfHs + r * sinf(angle));
                 }
                 dist -= arcLen;
@@ -249,7 +248,7 @@ namespace EdgeLighting
                 // top-left arc: angle π/2 → π
                 {
                     float frac = dist / arcLen;
-                    float angle = pi * 0.5f + pi * 0.5f * frac;
+                    float angle = PI * 0.5f + PI * 0.5f * frac;
                     return glm::vec2(-halfWs + r * cosf(angle), halfHs + r * sinf(angle));
                 }
             }
@@ -288,7 +287,9 @@ namespace EdgeLighting
             std::vector<glm::vec2> result;
             result.reserve(appPts.size());
             for (const auto &pt : appPts)
+            {
                 result.push_back(AppToLocal(pt, halfW, halfH));
+            }
             return result;
         }
 
