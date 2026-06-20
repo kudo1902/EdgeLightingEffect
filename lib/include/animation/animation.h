@@ -113,7 +113,9 @@ namespace EdgeLighting
             mMode = PlaybackMode::ONE_SHOT;
             mDuration = duration;
             if (changed)
+            {
                 OnDurationChanged(duration);
+            }
         }
 
         /// @brief Switch back to @c LOOP mode. Duration becomes irrelevant.
@@ -178,7 +180,9 @@ namespace EdgeLighting
         void Add(AnimationPtr animation)
         {
             if (animation)
+            {
                 mAnimations.push_back(std::move(animation));
+            }
         }
 
         void Clear() { mAnimations.clear(); }
@@ -193,14 +197,20 @@ namespace EdgeLighting
             // first frame after a child speed change there's a small jump,
             // acceptable for an interactive demo.
             for (const auto &a : mAnimations)
+            {
                 a->Apply(config, elapsed * a->GetSpeed());
+            }
         }
 
         PlaybackMode GetPlaybackMode() const override
         {
             for (const auto &a : mAnimations)
+            {
                 if (a->GetPlaybackMode() == PlaybackMode::LOOP)
+                {
                     return PlaybackMode::LOOP;
+                }
+            }
             return mAnimations.empty() ? PlaybackMode::LOOP : PlaybackMode::ONE_SHOT;
         }
 
@@ -210,7 +220,9 @@ namespace EdgeLighting
             for (const auto &a : mAnimations)
             {
                 if (a->GetPlaybackMode() == PlaybackMode::LOOP)
-                    return 0.0f; // mode says LOOP → duration is irrelevant anyway
+                {
+                    return 0.0f;
+                }
                 maxD = std::max(maxD, a->GetDuration());
             }
             return maxD;
