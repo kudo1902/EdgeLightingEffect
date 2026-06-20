@@ -103,26 +103,36 @@ namespace EdgeLighting
             switch (edge)
             {
             case 0:
+            {
                 t = lerpAlpha(vA, vB, threshold);
                 return {x + t, y};
+            }
             case 1:
+            {
                 t = lerpAlpha(vB, vD, threshold);
                 return {x + 1, y + t};
+            }
             case 2:
+            {
                 t = lerpAlpha(vC, vD, threshold);
                 return {x + t, y + 1};
+            }
             case 3:
+            {
                 t = lerpAlpha(vA, vC, threshold);
                 return {x, y + t};
+            }
             default:
+            {
                 return {0, 0};
+            }
             }
         }
 
-        struct Segment
+        typedef struct Segment
         {
             glm::vec2 a, b;
-        };
+        } Segment;
 
         // Chain segments into a single closed polyline by walking the adjacency graph.
         std::vector<glm::vec2> chainSegments(const std::vector<Segment> &segs, float snap)
@@ -133,13 +143,13 @@ namespace EdgeLighting
             }
 
             using Key = glm::ivec2;
-            struct Hasher
+            typedef struct Hasher
             {
                 size_t operator()(const Key &k) const
                 {
                     return static_cast<size_t>(k.x) ^ (static_cast<size_t>(k.y) << 16);
                 }
-            };
+            } Hasher;
 
             // Build adjacency: map snapped key → list of connected keys.
             // Also store one canonical position per key.

@@ -25,15 +25,25 @@ namespace EdgeLighting
             switch (level)
             {
             case Level::DEBUG:
+            {
                 return "DEBUG";
+            }
             case Level::INFO:
+            {
                 return "INFO";
+            }
             case Level::WARN:
+            {
                 return "WARN";
+            }
             case Level::ERROR:
+            {
                 return "ERROR";
+            }
             default:
+            {
                 return "UNKNOWN";
+            }
             }
         }
 
@@ -64,10 +74,10 @@ namespace EdgeLighting
         inline void Print(Level level, const char *file, const char *func, int line, const std::string &message)
         {
             std::cout << "[Thread:" << std::this_thread::get_id() << "]["
-               << LevelToString(level) << "] "
-               << GetFileName(file) << ": "
-               << func << "(" << line << ") > "
-               << message << "\n";
+                      << LevelToString(level) << "] "
+                      << GetFileName(file) << ": "
+                      << func << "(" << line << ") > "
+                      << message << "\n";
         }
 
     } // namespace Util
