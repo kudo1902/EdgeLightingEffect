@@ -292,9 +292,11 @@ namespace EdgeLighting
     // -------------------------------------------------------------------------
 
     /// @brief One-shot animation that progressively lights up the outline.
-    /// @details Starts with the whole rectangle dark (arc empty), then sweeps
-    ///          the lit arc from 0 to 1 over @p duration seconds, ending with
-    ///          the rectangle fully lit and held (arcEnd stays at 1).
+    /// @details Sweeps @c neon.arcLength from 0 to 1 over @p duration seconds,
+    ///          ending fully lit and held. Does NOT touch @c neon.arcStart —
+    ///          set that externally (slider, code, another animation) to
+    ///          choose where the trace begins. This separation lets users
+    ///          drag the Arc Start slider freely while the tracer is running.
     ///
     /// Combine with @ref IntensityFadeIn for a smoother appearance, or chain
     /// into a @ref SegmentTravel afterwards via @ref Animation::OnComplete for
@@ -315,8 +317,7 @@ namespace EdgeLighting
 
         void Apply(Config &cfg, float elapsed) const override
         {
-            cfg.neon.arcStart = 0.0f;
-            cfg.neon.arcEnd = mEase.Evaluate(elapsed);
+            cfg.neon.arcLength = mEase.Evaluate(elapsed);
         }
 
     protected:
