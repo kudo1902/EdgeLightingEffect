@@ -43,7 +43,7 @@ namespace EdgeLighting
         /// Baked colour ring as a 1×N RGBA32F texture (sampled with v=0.5 in the shader).
         /// Each shader sample becomes a single texture lookup instead of an in-shader stops loop + HSV blend
         Texture2D mGradientLUT;
-        std::vector<float> mLUTScratch; ///< Reusable upload buffer (GRADIENT_LUT_SIZE * 4 floats).
+        std::vector<float> mLUTScratch; ///< Float scratch for CPU gradient baking (GRADIENT_LUT_SIZE * 4).
     };
 }
 

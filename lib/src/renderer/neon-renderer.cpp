@@ -158,10 +158,19 @@ namespace EdgeLighting
             mLUTScratch[i * 4 + 2] = c.b;
             mLUTScratch[i * 4 + 3] = 1.0f;
         }
+
+        // Edge devices often lack float-texture support; pack into ubyte RGBA8.
+        std::vector<unsigned char> lutBytes(GRADIENT_LUT_SIZE * 4);
+        for (int i = 0; i < GRADIENT_LUT_SIZE * 4; ++i)
+        {
+            lutBytes[i] = static_cast<unsigned char>(
+                std::clamp(mLUTScratch[i] * 255.0f, 0.0f, 255.0f));
+        }
+
         // 1-row 2D texture (sampled with v = 0.5 in the shader). REPEAT on
         // the U axis lets the gradient sweep wrap naturally; the V axis is a
         // single row, so CLAMP is fine.
-        mGradientLUT.SetData(mLUTScratch.data(), GRADIENT_LUT_SIZE, /*height=*/1, GL_RGBA32F, GL_RGBA, GL_FLOAT);
+        mGradientLUT.SetData(lutBytes.data(), GRADIENT_LUT_SIZE, /*height=*/1, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
         mGradientLUT.SetParams(GL_LINEAR, GL_LINEAR, GL_REPEAT, GL_CLAMP_TO_EDGE);
     }
 }
