@@ -2,6 +2,8 @@
 #define _EDGE_LIGHTING_VERTEX_ARRAY_H_
 
 #include "gl/gl-header.h"
+#include "util/log-util.h"
+#include <string>
 
 namespace EdgeLighting
 {
@@ -13,10 +15,13 @@ namespace EdgeLighting
     {
     public:
         /// Generates a new VAO and VBO.
-        VertexArray()
+        /// @param name  Optional label used in log messages (default "unnamed").
+        VertexArray(const char *name = nullptr)
+            : mName(name ? name : "unnamed")
         {
             glGenVertexArrays(1, &mVao);
             glGenBuffers(1, &mVbo);
+            LOG_I("VertexArray[%s] created (vao=%u, vbo=%u).", mName.c_str(), mVao, mVbo);
         }
 
         /// Deletes the VBO and VAO.
@@ -31,16 +36,18 @@ namespace EdgeLighting
             {
                 glDeleteVertexArrays(1, &mVao);
             }
+            LOG_I("VertexArray[%s] destroyed.", mName.c_str());
         }
 
         VertexArray(const VertexArray &) = delete;
         VertexArray &operator=(const VertexArray &) = delete;
 
         VertexArray(VertexArray &&other) noexcept
-            : mVao(other.mVao), mVbo(other.mVbo)
+            : mVao(other.mVao), mVbo(other.mVbo), mName(std::move(other.mName))
         {
             other.mVao = 0;
             other.mVbo = 0;
+            LOG_I("VertexArray[%s] moved (vao=%u, vbo=%u).", mName.c_str(), mVao, mVbo);
         }
 
         VertexArray &operator=(VertexArray &&other) noexcept
@@ -56,8 +63,11 @@ namespace EdgeLighting
                 {
                     glDeleteVertexArrays(1, &mVao);
                 }
+                LOG_I("VertexArray[%s] move-assign replaced (vao=%u->%u, vbo=%u->%u).",
+                      mName.c_str(), mVao, other.mVao, mVbo, other.mVbo);
                 mVao = other.mVao;
                 mVbo = other.mVbo;
+                mName = std::move(other.mName);
                 other.mVao = 0;
                 other.mVbo = 0;
             }
@@ -118,6 +128,7 @@ namespace EdgeLighting
     private:
         GLuint mVao = 0; ///< Vertex Array Object handle.
         GLuint mVbo = 0; ///< Vertex Buffer Object handle.
+        std::string mName = "unnamed";
     };
 
 } // namespace EdgeLighting

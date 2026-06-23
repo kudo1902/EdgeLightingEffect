@@ -32,6 +32,7 @@ namespace EdgeLighting
         bool setupShaders();
         void setupGeometry(const Config &config);
 
+    private:
         Config mCurrentConfig;
 
         // --- Framebuffers (one per pass output) ---
@@ -40,16 +41,16 @@ namespace EdgeLighting
         Framebuffer mBlurVBuffer{"NeonMultiPass.BlurV"};
 
         // --- Shaders (one per stage) ---
-        ShaderProgram mBarShader;        // Pass 1
-        ShaderProgram mBlurShader;       // Passes 2 + 3 (separable Gaussian)
-        ShaderProgram mCompositeShader;  // Pass 4
+        ShaderProgram mBarShader;       // Pass 1
+        ShaderProgram mBlurShader;      // Passes 2 + 3 (separable Gaussian)
+        ShaderProgram mCompositeShader; // Pass 4
 
         // --- Geometry ---
-        VertexArray mBarVertexArray;     ///< Tight quad: Pass 1 only rasterises near the perimeter.
-        VertexArray mGlowVertexArray;    ///< Wide quad: blur + composite cover the bloom extent.
+        VertexArray mBarVertexArray{"NeonMP.Bar"};   ///< Tight quad: Pass 1 only rasterises near the perimeter.
+        VertexArray mGlowVertexArray{"NeonMP.Glow"}; ///< Wide quad: blur + composite cover the bloom extent.
 
         // --- Reusable buffers for colour-stop array uploads ---
-        std::vector<float>     mStopPositions;
+        std::vector<float> mStopPositions;
         std::vector<glm::vec4> mStopColors;
     };
 }
