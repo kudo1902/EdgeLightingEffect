@@ -4,6 +4,7 @@
 #include "renderer/wireframe-renderer.h"
 #include "renderer/neon-renderer.h"
 #include "renderer/neon-multi-pass-renderer.h"
+#include "renderer/neon-optimized-renderer.h"
 #include "animation/neon-animations.h"
 #include "debug-ui.h"
 #include "ui-controls.h"
@@ -90,10 +91,12 @@ int main()
     auto wireframeRenderer = std::make_shared<EdgeLighting::WireframeRenderer>();
     auto neonRenderer = std::make_shared<EdgeLighting::NeonRenderer>();
     auto neonMultiPassRenderer = std::make_shared<EdgeLighting::NeonMultiPassRenderer>();
+    auto neonOptimizedRenderer = std::make_shared<EdgeLighting::NeonOptimizedRenderer>();
 
     gEffect->AddRenderer(wireframeRenderer);
     gEffect->AddRenderer(neonRenderer);
     gEffect->AddRenderer(neonMultiPassRenderer);
+    gEffect->AddRenderer(neonOptimizedRenderer);
 
     EdgeLighting::Config config;
     config.geometry.width = displayW / 2;
@@ -147,7 +150,10 @@ int main()
 
             int fbW, fbH;
             glfwGetFramebufferSize(window, &fbW, &fbH);
+            double t0 = glfwGetTime();
             gEffect->Render(fbW, fbH);
+            double t1 = glfwGetTime();
+            debugUI.SetLastRenderTimeMs(static_cast<float>((t1 - t0) * 1000.0));
 
             glfwSwapBuffers(window);
         }
@@ -215,11 +221,6 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
         config.neon.intensity = std::min(3.0f, config.neon.intensity + 0.1f);
         break;
     }
-    case GLFW_KEY_O:
-    {
-        config.neon.intensity = std::max(0.0f, config.neon.intensity - 0.1f);
-        break;
-    }
     case GLFW_KEY_LEFT_BRACKET:
     {
         config.neon.glowRadius = std::max(1.0f, config.neon.glowRadius - 1.0f);
@@ -267,6 +268,18 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
     case GLFW_KEY_G:
     {
         config.wireframe.enable = !config.wireframe.enable;
+        break;
+    }
+    case GLFW_KEY_O:
+    {
+        if (mods & GLFW_MOD_SHIFT)
+        {
+            config.optimizedNeon.enable = !config.optimizedNeon.enable;
+        }
+        else
+        {
+            config.neon.intensity = std::max(0.0f, config.neon.intensity - 0.1f);
+        }
         break;
     }
     case GLFW_KEY_W:

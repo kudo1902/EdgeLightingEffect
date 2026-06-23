@@ -84,12 +84,14 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
 
     // --- Perf readout (always visible, sticky at the top) ---
     const ImGuiIO &io = ImGui::GetIO();
-    ImGui::Text("FPS: %.1f  |  %.2f ms/frame", io.Framerate, 1000.0f / io.Framerate);
+    ImGui::Text("FPS: %.1f  |  %.2f ms (frame)  |  %.2f ms (render)",
+                io.Framerate, 1000.0f / io.Framerate, mLastRenderTimeMs);
     ImGui::Separator();
 
     buildGeometrySection(cfg);
     buildNeonSection(cfg);
     buildMultiPassNeonSection(cfg);
+    buildOptimizedNeonSection(cfg);
     buildAnimationSection(cfg, effect.GetClock().GetTime());
 
     ImGui::Checkbox("Wireframe", &cfg.wireframe.enable);
@@ -192,6 +194,8 @@ void DebugUI::buildGeometrySection(EdgeLighting::Config &cfg)
 
     ImGui::SliderFloat("Width", &cfg.geometry.width, 100.0f, 1600.0f, "%.0f");
     ImGui::SliderFloat("Height", &cfg.geometry.height, 100.0f, 1200.0f, "%.0f");
+    ImGui::SliderFloat("Pos X", &cfg.geometry.position.x, 0.0f, 1600.0f, "%.0f");
+    ImGui::SliderFloat("Pos Y", &cfg.geometry.position.y, 0.0f, 1200.0f, "%.0f");
     ImGui::SliderFloat("Corner Radius", &cfg.geometry.cornerRadius, 0.0f, 200.0f, "%.0f");
 
     const char *windingItems[] = {"CW", "CCW"};
@@ -350,6 +354,96 @@ void DebugUI::buildMultiPassNeonSection(EdgeLighting::Config &cfg)
         {
             float lastPos = cfg.multipassNeon.colorStops.empty() ? 0.0f : cfg.multipassNeon.colorStops.back().position;
             cfg.multipassNeon.colorStops.push_back(
+                {std::min(1.0f, lastPos + 0.1f), glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)});
+        }
+    }
+}
+
+void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg)
+{
+    if (!ImGui::CollapsingHeader("Optimized Neon (½-res)", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+
+    ImGui::Checkbox("Enable##Optimized", &cfg.optimizedNeon.enable);
+    if (!cfg.optimizedNeon.enable)
+    {
+        return;
+    }
+
+    ImGui::SameLine();
+    ImGui::Checkbox("Show Half-Res##Optimized", &cfg.optimizedNeon.showHalfRes);
+
+    ImGui::SliderFloat("Res Scale##Opt", &cfg.optimizedNeon.resolutionScale, 0.125f, 1.0f, "%.3f");
+    ImGui::SliderInt("Samples##Opt", &cfg.optimizedNeon.numSamples, 8, 64);
+    ImGui::SliderInt("LUT Size##Opt", &cfg.optimizedNeon.gradientLutSize, 32, 256);
+
+    ImGui::Separator();
+    ImGui::TextDisabled("Visual params (shared with Neon)");
+
+    ImGui::SliderFloat("Line Width##Opt", &cfg.neon.lineWidth, 1.0f, 20.0f, "%.0f");
+    ImGui::SliderFloat("Intensity##Opt", &cfg.neon.intensity, 0.0f, 3.0f, "%.2f");
+    ImGui::SliderFloat("Glow Radius##Opt", &cfg.neon.glowRadius, 1.0f, 80.0f, "%.0f");
+    ImGui::SliderFloat("Bloom Strength##Opt", &cfg.neon.bloomStrength, 0.0f, 2.0f, "%.2f");
+    ImGui::SliderFloat("Hue Rotation Rate##Opt", &cfg.neon.hueRotationRate, 0.0f, 2.0f, "%.2f");
+
+    const char *sideItems[] = {"Both", "Inside", "Outside"};
+    int sideIdx = static_cast<int>(cfg.neon.glowSide);
+    if (ImGui::Combo("Glow Side##Opt", &sideIdx, sideItems, IM_ARRAYSIZE(sideItems)))
+    {
+        cfg.neon.glowSide = static_cast<EdgeLighting::GlowSide>(sideIdx);
+    }
+    if (cfg.neon.glowSide != EdgeLighting::GlowSide::BOTH)
+    {
+        ImGui::SliderFloat("Side Softness##Opt", &cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
+    }
+
+    ImGui::SliderFloat("Segment Pos##Opt", &cfg.neon.segmentPosition, 0.0f, 1.0f, "%.2f");
+    ImGui::SliderFloat("Segment Length##Opt", &cfg.neon.segmentLength, 0.02f, 0.5f, "%.2f");
+    ImGui::SliderFloat("Segment Boost##Opt", &cfg.neon.segmentBoost, 0.0f, 10.0f, "%.1f");
+
+    ImGui::SliderFloat("Arc Start##Opt", &cfg.neon.arcStart, 0.0f, 1.0f, "%.2f");
+    ImGui::SliderFloat("Arc Length##Opt", &cfg.neon.arcLength, 0.0f, 1.0f, "%.2f");
+
+    const char *blendItems[] = {"RGB", "HSV"};
+    int blendIdx = static_cast<int>(cfg.neon.blendSpace);
+    if (ImGui::Combo("Blend Space##Opt", &blendIdx, blendItems, IM_ARRAYSIZE(blendItems)))
+    {
+        cfg.neon.blendSpace = static_cast<EdgeLighting::BlendSpace>(blendIdx);
+    }
+
+    for (size_t i = 0; i < cfg.neon.colorStops.size(); ++i)
+    {
+        ImGui::PushID(static_cast<int>(i + 200));
+        float p = cfg.neon.colorStops[i].position;
+        if (ImGui::SliderFloat("Pos##Opt", &p, 0.0f, 1.0f, "%.2f"))
+        {
+            cfg.neon.colorStops[i].position = p;
+        }
+        ImGui::SameLine();
+        glm::vec4 c = cfg.neon.colorStops[i].color;
+        if (ImGui::ColorEdit4("Col##Opt", &c.x, ImGuiColorEditFlags_NoInputs))
+        {
+            cfg.neon.colorStops[i].color = c;
+        }
+        ImGui::SameLine();
+        if (cfg.neon.colorStops.size() > 1 && ImGui::SmallButton("X"))
+        {
+            cfg.neon.colorStops.erase(
+                cfg.neon.colorStops.begin() + static_cast<ptrdiff_t>(i));
+        }
+        ImGui::PopID();
+    }
+
+    if (cfg.neon.colorStops.size() < EdgeLighting::NeonConfig::MAX_COLOR_STOPS)
+    {
+        if (ImGui::Button("+ Add Stop##Opt"))
+        {
+            float lastPos = cfg.neon.colorStops.empty()
+                                ? 0.0f
+                                : cfg.neon.colorStops.back().position;
+            cfg.neon.colorStops.push_back(
                 {std::min(1.0f, lastPos + 0.1f), glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)});
         }
     }

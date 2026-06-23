@@ -40,6 +40,8 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-gradient.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-blur.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-glow.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-optimized.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-blit.frag"
 )
 
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/wireframe.vert" WIREFRAME_VERT_CONTENT)
@@ -49,6 +51,8 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.frag" NEON_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-gradient.frag" NEON_GRADIENT_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-blur.frag" NEON_BLUR_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-glow.frag" NEON_GLOW_FRAG_CONTENT)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-optimized.frag" NEON_OPTIMIZED_FRAG_CONTENT)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-blit.frag" NEON_BLIT_FRAG_CONTENT)
 
 set(SHADER_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 configure_file(
@@ -63,6 +67,7 @@ add_library(edge-lighting STATIC
     src/renderer/wireframe-renderer.cpp
     src/renderer/neon-renderer.cpp
     src/renderer/neon-multi-pass-renderer.cpp
+    src/renderer/neon-optimized-renderer.cpp
     src/util/contour-tracer.cpp
     src/util/stb-image.cpp
 )
