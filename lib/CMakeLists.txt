@@ -87,3 +87,27 @@ target_include_directories(edge-lighting PRIVATE
 )
 
 target_link_libraries(edge-lighting PUBLIC glad)
+
+# ---------------------------------------------------------------------------
+# C ABI shared library for FFI / C# interop.
+# ---------------------------------------------------------------------------
+# Wraps the static edge-lighting lib in a flat extern "C" surface and links it
+# whole into a shared object (libedge-lighting-c.{dylib,so} / edge-lighting-c.dll)
+# that .NET P/Invoke (or any FFI) can load. Only the el_* symbols are exported;
+# everything else is hidden so the C++ ABI never leaks.
+add_library(edge-lighting-c SHARED
+    capi/edge-lighting-c.cpp
+)
+
+target_include_directories(edge-lighting-c PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/capi>
+    $<INSTALL_INTERFACE:include>
+)
+
+target_link_libraries(edge-lighting-c PRIVATE edge-lighting)
+
+set_target_properties(edge-lighting-c PROPERTIES
+    CXX_VISIBILITY_PRESET hidden
+    VISIBILITY_INLINES_HIDDEN ON
+    OUTPUT_NAME edge-lighting-c
+)
