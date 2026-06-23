@@ -1,4 +1,5 @@
 #include "renderer/neon-renderer.h"
+#include "renderer/neon-tuning.h"
 #include "util/color-utils.h"
 #include "util/constants.h"
 #include "util/geometry-utils.h"
@@ -20,8 +21,10 @@ namespace EdgeLighting
             LOG_E("Failed to compile/link NeonRenderer shaders.");
             return false;
         }
-        setupGeometry(mCurrentConfig);
+        // rebuildLoopSamples must run before setupGeometry: the quad size
+        // depends on mSampleSpacing (computed in rebuildLoopSamples).
         rebuildLoopSamples(mCurrentConfig);
+        setupGeometry(mCurrentConfig);
         rebuildGradientLUT(mCurrentConfig);
         return true;
     }
@@ -90,8 +93,8 @@ namespace EdgeLighting
         mCurrentConfig = config;
         if (mShaderProgram.IsValid())
         {
+            rebuildLoopSamples(config); // updates mSampleSpacing, used by setupGeometry
             setupGeometry(config);
-            rebuildLoopSamples(config);
             rebuildGradientLUT(config);
         }
     }
@@ -106,7 +109,13 @@ namespace EdgeLighting
 
     void NeonRenderer::setupGeometry(const Config &config)
     {
-        float margin = 600.0f; // Large margin to avoid hard clipping the glow
+        // Size the quad to exactly cover the lit region: rect + earlyOut. Beyond
+        // this the halo/bloom are < ~1%, so geometry bounds the far region
+        // instead of a per-fragment discard — friendlier to tile-based GPUs.
+        // Factors come from the shared neon-tuning.h (also fed to the shaders).
+        float margin = std::max(config.neon.glowRadius * float(EARLY_OUT_RADIUS_FACTOR),
+                                mSampleSpacing * float(EARLY_OUT_SPACING_FACTOR));
+
         float halfW = config.geometry.width * 0.5f;
         float halfH = config.geometry.height * 0.5f;
         float l = -(halfW + margin);
