@@ -25,9 +25,10 @@ namespace EdgeLighting
         bool setupShaders();
         void buildGeometry(const Config &config);
 
+    private:
         Config mCurrentConfig;
         ShaderProgram mShaderProgram;
-        VertexArray mVertexArray;
+        VertexArray mVertexArray{"Wireframe"};
     };
 }
 

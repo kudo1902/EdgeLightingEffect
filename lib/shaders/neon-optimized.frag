@@ -10,35 +10,12 @@ precision mediump float;
 #define GLOW_SIDE_INSIDE  1
 #define GLOW_SIDE_OUTSIDE 2
 
-// Early-out: fragments past this many glow-radii past the line receive < 1%.
-#define EARLY_OUT_RADIUS_FACTOR   48.0
-#define EARLY_OUT_SPACING_FACTOR  32.0
-
-// Filament (sharp line)
-#define FILAMENT_MIN_HALF_WIDTH   0.5
-#define FILAMENT_FALLOFF          2.0
-#define FILAMENT_GAIN             12.0
-
-// Halo (sharp coloured glow). Kernel uses g * sqrt(g) ≈ p = 1.5 — close to
-// the original p = 1.3 visually but ~10× cheaper than pow() on most GPUs.
-// Density normalisation must match: transverse falloff is 1/D^2 so we
-// multiply the sum by kg² to recover unit-density brightness.
-#define HALO_GAIN                 0.90
-#define HALO_NORM_FACTOR          0.43
-#define HALO_SPACING_FLOOR        1.2
-
-// Bloom (wide background spill)
-#define BLOOM_REACH_TO_GLOW       6.0
-#define BLOOM_SPACING_FLOOR       4.0
-#define BLOOM_NORM_FACTOR         0.32
-
-// Grading
-#define TONE_MAP_SHOULDER         0.6
-#define GAMMA_EXPONENT            0.85
-
-// Epsilons
-#define SIDE_SOFT_EPSILON         1e-5
-#define WSUM_EPSILON              1e-6
+// All other tuning constants (FILAMENT_*, HALO_*, BLOOM_*, grading, epsilons)
+// are injected from lib/include/renderer/neon-tuning.h via @NEON_TUNING@ in
+// shaders.h.in — single source of truth shared with the C++ renderer.
+//
+// (Far early-out lives on the CPU: the Pass-1 quad is sized to rect + earlyOut,
+//  so there's no per-fragment discard here. See neon-optimized-renderer.cpp.)
 
 // ---------------------------------------------------------------------------
 // Uniforms
@@ -116,13 +93,14 @@ void main() {
     float d  = sdRoundBox(vPos, halfSize, uCornerRadius);
     float ad = abs(d);
 
-    // --- Early-out: skip the gather where contribution is dust -------
-    float earlyOut = max(uGlowRadius    * EARLY_OUT_RADIUS_FACTOR,
-                         uSampleSpacing * EARLY_OUT_SPACING_FACTOR);
-    if (ad > earlyOut)
-        discard;
-
-    // Stronger early-out for one-sided modes.
+    // Note: the far-exterior early-out (ad > earlyOut → discard) that the
+    // standard NeonRenderer uses is intentionally absent here. The Pass-1
+    // quad is sized on the CPU to exactly rect + earlyOut, so geometry culls
+    // the far region instead — friendlier to tile-based mobile GPUs, which
+    // pay a hidden-surface-removal penalty for any discard in the shader.
+    //
+    // The one-sided cuts below stay as discards: they cull a useful half of
+    // the band (real work saved) and the quad can't express that shape.
     float softEdge = max(uGlowSideSoftness, SIDE_SOFT_EPSILON);
     if (uGlowSide == GLOW_SIDE_INSIDE  && d >  softEdge) discard;
     if (uGlowSide == GLOW_SIDE_OUTSIDE && d < -softEdge) discard;
@@ -167,11 +145,18 @@ void main() {
         wsum    += g;
         wsumArc += lg;
 
-        float segDist = abs(si - uSegmentPosition);
-        segDist = min(segDist, 1.0 - segDist);
-        float bell = exp(-(segDist * invSegSigma) * (segDist * invSegSigma));
-        float headW = 1.0 + uSegmentBoost * bell;
-        headWSum += headW * lg;
+        // Travelling-segment head weight. The exp() bell is the most expensive
+        // op in the loop, so skip it entirely in the common case where the
+        // segment feature is off (uSegmentBoost == 0). This is a uniform
+        // branch — coherent across the whole draw, so effectively free.
+        if (uSegmentBoost > 0.0) {
+            float segDist = abs(si - uSegmentPosition);
+            segDist = min(segDist, 1.0 - segDist);
+            float bell = exp(-(segDist * invSegSigma) * (segDist * invSegSigma));
+            headWSum += (1.0 + uSegmentBoost * bell) * lg;
+        } else {
+            headWSum += lg; // headW == 1 → same as the bell branch with boost 0
+        }
 
         ti  += dti;
         si  += dti;

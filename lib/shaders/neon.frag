@@ -10,36 +10,12 @@ precision highp float;
 #define GLOW_SIDE_INSIDE  1
 #define GLOW_SIDE_OUTSIDE 2
 
-// Early-out: fragments past this many glow-radii past the line receive < 1%.
-#define EARLY_OUT_RADIUS_FACTOR   48.0
-#define EARLY_OUT_SPACING_FACTOR  32.0
-
-// Filament (sharp line)
-#define FILAMENT_MIN_HALF_WIDTH   0.5
-#define FILAMENT_FALLOFF          2.0
-#define FILAMENT_GAIN             12.0
-
-// Halo (sharp coloured glow). Kernel uses g * sqrt(g) ≈ p = 1.5 — close to
-// the original p = 1.3 visually but ~10× cheaper than pow() on most GPUs.
-// Density normalisation must match: transverse falloff is 1/D^2 so we
-// multiply the sum by kg² to recover unit-density brightness.
-#define HALO_GAIN                 0.90
-#define HALO_NORM_FACTOR          0.43
-#define HALO_SPACING_FLOOR        1.2
-
-// Bloom (wide background spill)
-#define BLOOM_REACH_TO_GLOW       6.0
-#define BLOOM_SPACING_FLOOR       4.0
-#define BLOOM_NORM_FACTOR         0.32
-
-// Grading
-#define TONE_MAP_SHOULDER         0.6
-#define GAMMA_EXPONENT            0.85
-#define FILM_GRAIN_AMOUNT         0.04
-
-// Epsilons
-#define SIDE_SOFT_EPSILON         1e-5
-#define WSUM_EPSILON              1e-6
+// All other tuning constants (FILAMENT_*, HALO_*, BLOOM_*, grading, epsilons)
+// are injected from lib/include/renderer/neon-tuning.h via @NEON_TUNING@ in
+// shaders.h.in — single source of truth shared with the C++ renderer.
+//
+// (Far early-out lives on the CPU: the draw quad is sized to rect + earlyOut,
+//  so there's no per-fragment discard here. See neon-renderer.cpp.)
 
 // ---------------------------------------------------------------------------
 // Uniforms
@@ -118,13 +94,11 @@ void main() {
     float d  = sdRoundBox(vPos, halfSize, uCornerRadius);
     float ad = abs(d);
 
-    // --- Early-out: skip the gather where contribution is dust -------
-    float earlyOut = max(uGlowRadius    * EARLY_OUT_RADIUS_FACTOR,
-                         uSampleSpacing * EARLY_OUT_SPACING_FACTOR);
-    if (ad > earlyOut)
-        discard;
-
-    // Stronger early-out for one-sided modes.
+    // Note: the far-exterior early-out is handled on the CPU — the draw quad is
+    // sized to rect + earlyOut in NeonRenderer::setupGeometry, so geometry culls
+    // the far region instead of a per-fragment discard (tiler-friendly).
+    // The one-sided cuts below stay as discards: they cull a useful half-band
+    // the quad can't express.
     float softEdge = max(uGlowSideSoftness, SIDE_SOFT_EPSILON);
     if (uGlowSide == GLOW_SIDE_INSIDE  && d >  softEdge) discard;
     if (uGlowSide == GLOW_SIDE_OUTSIDE && d < -softEdge) discard;

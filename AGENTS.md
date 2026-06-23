@@ -55,6 +55,36 @@
 - `ALL_CAPS` with `_` prefix and `_` suffix
   - e.g. `_EDGE_LIGHTING_EFFECT_H_`, `_EDGE_LIGHTING_CONFIG_H_`
 
+## Class layout / Access specifiers
+- Use separate `private:` (or `public:`) labels for methods vs member variables
+  - First `private:` — methods
+  - Second `private:` — member variables
+  - *Correct:*
+    ```
+    class Foo : public BaseRenderer
+    {
+    public:
+        // public methods...
+
+    private:
+        // private methods...
+
+    private:
+        // member variables...
+    };
+    ```
+  - *Incorrect:*
+    ```
+    class Foo : public BaseRenderer
+    {
+    public:
+        // public methods...
+
+    private:
+        // everything mixed
+    };
+    ```
+
 ## Braces / Formatting
 - Always use braces for control flow statements, even single-line bodies
   - *Correct:*

@@ -1,4 +1,5 @@
 #include "renderer/neon-optimized-renderer.h"
+#include "renderer/neon-tuning.h"
 #include "util/color-utils.h"
 #include "util/constants.h"
 #include "util/geometry-utils.h"
@@ -20,8 +21,10 @@ namespace EdgeLighting
             LOG_E("Failed to compile/link NeonOptimizedRenderer shaders.");
             return false;
         }
-        setupGeometry(mCurrentConfig);
+        // rebuildLoopSamples must run before setupGeometry: the Pass-1 quad
+        // size depends on mSampleSpacing (computed in rebuildLoopSamples).
         rebuildLoopSamples(mCurrentConfig);
+        setupGeometry(mCurrentConfig);
         rebuildGradientLUT(mCurrentConfig);
         return true;
     }
@@ -70,7 +73,7 @@ namespace EdgeLighting
         mNeonShader.SetUniform("uMVP", mvp);
         mNeonShader.SetUniform("uRectSize", rectSizeScaled);
         mNeonShader.SetUniform("uCornerRadius", config.geometry.cornerRadius * scale);
-        mNeonShader.SetUniform("uLineWidth", config.neon.lineWidth);
+        mNeonShader.SetUniform("uLineWidth", config.neon.lineWidth * scale);
         mNeonShader.SetUniform("uIntensity", config.neon.intensity);
         mNeonShader.SetUniform("uTime", time);
         mNeonShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
@@ -104,7 +107,13 @@ namespace EdgeLighting
         Framebuffer::BindDefault();
         glViewport(0, 0, viewportWidth, viewportHeight);
 
-        glDisable(GL_BLEND);
+        // Composite additively, like every other renderer layer. The FBO holds
+        // tone-mapped neon over cleared black, so GL_ONE,GL_ONE adds the colour
+        // while the black background contributes nothing — this keeps the
+        // optimized renderer stacking correctly over wireframe / other layers
+        // instead of overwriting the whole backbuffer.
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ONE);
 
         mBlitShader.Use();
 
@@ -126,6 +135,7 @@ namespace EdgeLighting
         mBlitVertexArray.DrawArrays(GL_TRIANGLES, 6);
 
         mBlitShader.Unuse();
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     }
 
     void NeonOptimizedRenderer::OnConfigChanged(const Config &config)
@@ -133,8 +143,8 @@ namespace EdgeLighting
         mCurrentConfig = config;
         if (mNeonShader.IsValid())
         {
+            rebuildLoopSamples(config); // updates mSampleSpacing, used by setupGeometry
             setupGeometry(config);
-            rebuildLoopSamples(config);
             rebuildGradientLUT(config);
         }
     }
@@ -156,8 +166,19 @@ namespace EdgeLighting
         float scale = config.optimizedNeon.resolutionScale;
 
         // --- Scaled glow quad (pass 1) ---
+        // Size the quad to exactly cover the lit region: rect + earlyOut, where
+        // earlyOut matches the shader's old discard threshold. Beyond this the
+        // halo/bloom are < ~1% and were previously discarded; now geometry
+        // bounds them instead (no per-fragment discard → tiler-friendly).
+        // Everything here is in scaled (FBO) space: glowRadius*scale and
+        // mSampleSpacing are already scaled, matching the uniforms uploaded
+        // in Render().
         {
-            float margin = 600.0f * scale;
+            // Factors come from the shared neon-tuning.h (also fed to the shaders).
+            float earlyOut = std::max(config.neon.glowRadius * scale * float(EARLY_OUT_RADIUS_FACTOR),
+                                      mSampleSpacing * float(EARLY_OUT_SPACING_FACTOR));
+
+            float margin = earlyOut;
             float halfW = config.geometry.width * 0.5f * scale;
             float halfH = config.geometry.height * 0.5f * scale;
             float l = -(halfW + margin);
@@ -165,21 +186,24 @@ namespace EdgeLighting
             float b = -(halfH + margin);
             float t = halfH + margin;
 
+            // clang-format off
             float verts[] = {
                 l, t, l, b, r, b,
                 l, t, r, b, r, t,
             };
-
+            // clang-format on
             mNeonVertexArray.SetVertexData(verts, sizeof(verts));
             mNeonVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
         }
 
         // --- Fullscreen NDC quad (pass 2, identity MVP) ---
         {
+            // clang-format off
             float verts[] = {
                 -1.0f,  1.0f,  -1.0f, -1.0f,  1.0f, -1.0f,
                 -1.0f,  1.0f,   1.0f, -1.0f,  1.0f,  1.0f,
             };
+            // clang-format on
 
             mBlitVertexArray.SetVertexData(verts, sizeof(verts));
             mBlitVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);

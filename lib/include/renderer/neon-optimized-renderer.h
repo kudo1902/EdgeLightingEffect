@@ -32,7 +32,7 @@ namespace EdgeLighting
         virtual void Render(int viewportWidth, int viewportHeight, float time, const Config &config) override;
         virtual void OnConfigChanged(const Config &config) override;
 
-        static constexpr int MAX_LOOP_SAMPLES  = 64;
+        static constexpr int MAX_LOOP_SAMPLES = 64;
 
     private:
         bool setupShaders();
@@ -40,12 +40,13 @@ namespace EdgeLighting
         void rebuildLoopSamples(const Config &config);
         void rebuildGradientLUT(const Config &config);
 
+    private:
         Config mCurrentConfig;
-        ShaderProgram mNeonShader;       // Pass 1 — half-res neon
-        ShaderProgram mBlitShader;       // Pass 2 — upscale to full-res
-        Framebuffer   mHalfResBuffer{"NeonOptimized.HalfRes"};
-        VertexArray   mNeonVertexArray;  // glow quad for pass 1
-        VertexArray   mBlitVertexArray;  // fullscreen quad for pass 2
+        ShaderProgram mNeonShader; // Pass 1 — half-res neon
+        ShaderProgram mBlitShader; // Pass 2 — upscale to full-res
+        Framebuffer mHalfResBuffer{"NeonOptimized.HalfRes"};
+        VertexArray mNeonVertexArray{"NeonOpt.Pass1"};
+        VertexArray mBlitVertexArray{"NeonOpt.Blit"};
 
         std::vector<glm::vec2> mLoopSamples;
         float mSampleSpacing = 0.0f;

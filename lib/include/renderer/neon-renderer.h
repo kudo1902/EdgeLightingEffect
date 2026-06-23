@@ -33,9 +33,10 @@ namespace EdgeLighting
         void rebuildLoopSamples(const Config &config);
         void rebuildGradientLUT(const Config &config);
 
+    private:
         Config mCurrentConfig;
         ShaderProgram mShaderProgram;
-        VertexArray mVertexArray;
+        VertexArray mVertexArray{"NeonRenderer"};
 
         std::vector<glm::vec2> mLoopSamples;
         float mSampleSpacing = 0.0f;
