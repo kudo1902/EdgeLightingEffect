@@ -11,6 +11,13 @@
 #include <unordered_map>
 #include <vector>
 
+/// Set to 0 to fall back to per-element indexed uniforms (e.g. "colors[0]",
+/// "colors[1]", …) instead of the direct GL array upload (glUniform* v with
+/// count > 1). Some restricted GL implementations or wrappers require this.
+#ifndef UNIFORM_ARRAY_DIRECT
+#define UNIFORM_ARRAY_DIRECT 1
+#endif
+
 namespace EdgeLighting
 {
     /// RAII wrapper around a GL shader program with uniform caching.
@@ -269,6 +276,7 @@ namespace EdgeLighting
 
         void SetUniform(const char *name, const float *values, int count)
         {
+#if UNIFORM_ARRAY_DIRECT
             GLint loc = getLocation(name);
             if (loc < 0 || count <= 0)
             {
@@ -281,10 +289,24 @@ namespace EdgeLighting
             }
 
             glUniform1fv(loc, count, values);
+#else
+            if (count <= 0)
+            {
+                return;
+            }
+
+            for (int i = 0; i < count; ++i)
+            {
+                char elemName[128];
+                snprintf(elemName, sizeof(elemName), "%s[%d]", name, i);
+                SetUniform(elemName, values[i]);
+            }
+#endif
         }
 
         void SetUniform(const char *name, const glm::vec2 *values, int count)
         {
+#if UNIFORM_ARRAY_DIRECT
             GLint loc = getLocation(name);
             if (loc < 0 || count <= 0)
             {
@@ -297,10 +319,24 @@ namespace EdgeLighting
             }
 
             glUniform2fv(loc, count, glm::value_ptr(*values));
+#else
+            if (count <= 0)
+            {
+                return;
+            }
+
+            for (int i = 0; i < count; ++i)
+            {
+                char elemName[128];
+                snprintf(elemName, sizeof(elemName), "%s[%d]", name, i);
+                SetUniform(elemName, values[i]);
+            }
+#endif
         }
 
         void SetUniform(const char *name, const glm::vec4 *values, int count)
         {
+#if UNIFORM_ARRAY_DIRECT
             GLint loc = getLocation(name);
             if (loc < 0 || count <= 0)
             {
@@ -313,6 +349,19 @@ namespace EdgeLighting
             }
 
             glUniform4fv(loc, count, glm::value_ptr(*values));
+#else
+            if (count <= 0)
+            {
+                return;
+            }
+
+            for (int i = 0; i < count; ++i)
+            {
+                char elemName[128];
+                snprintf(elemName, sizeof(elemName), "%s[%d]", name, i);
+                SetUniform(elemName, values[i]);
+            }
+#endif
         }
 
     private:
