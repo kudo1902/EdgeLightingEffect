@@ -202,6 +202,30 @@ namespace EdgeLighting
         float hueRotationRate = 0.5f;
     } MultiPassNeonConfig;
 
+    /// Half-resolution optimized neon renderer configuration.
+    ///
+    /// Renders the neon shader at half resolution then bilinear-blits to full res.
+    /// Uses mediump precision + 64 gather samples for edge-device performance.
+    /// Visual parameters (line width, intensity, colour stops, etc.) are shared
+    /// with Config::neon — adjust them in the Neon section of the debug UI.
+    typedef struct OptimizedNeonConfig
+    {
+        bool enable = false; ///< Enable or disable the optimized neon renderer
+
+        /// Resolution scale factor for the internal FBO (0.5 = half, 0.25 = quarter).
+        float resolutionScale = 0.5f;
+        /// Number of gather samples per fragment (max 64, lower = faster).
+        int numSamples = 64;
+        /// Size of the precomputed gradient look-up texture (power-of-two, 32–256).
+        int gradientLutSize = 256;
+
+        // --- Debug visualisations ---
+
+        /// Show the raw half-res FBO (nearest-neighbour upscale) instead of
+        /// the bilinear-blitted result. Useful to verify pass-1 rendering.
+        bool showHalfRes = false;
+    } OptimizedNeonConfig;
+
     /// Wireframe debug overlay configuration.
     typedef struct WireframeConfig
     {
@@ -222,6 +246,7 @@ namespace EdgeLighting
         RectGeometry geometry;             ///< Rectangle geometry
         NeonConfig neon;                   ///< Single-pass neon settings
         MultiPassNeonConfig multipassNeon; ///< Multi-pass neon settings
+        OptimizedNeonConfig optimizedNeon; ///< Half-res optimized neon settings
         WireframeConfig wireframe;         ///< Wireframe overlay settings
     } Config;
 

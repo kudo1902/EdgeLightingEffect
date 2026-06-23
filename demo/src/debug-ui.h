@@ -28,6 +28,9 @@ public:
     /// pushing the resulting config back to the effect.
     void Build(EdgeLighting::Config &config, EdgeLighting::EdgeLightingEffect &effect);
 
+    /// Feed the last frame's render time (only gEffect->Render, no ImGui) for display.
+    void SetLastRenderTimeMs(float ms) { mLastRenderTimeMs = ms; }
+
     /// Apply the currently selected animation preset (if any) to @p config.
     /// @p clockTime is the effect's clock time; this method subtracts the
     /// preset's start time so each preset evaluates from its own t = 0.
@@ -44,11 +47,14 @@ private:
     void buildGeometrySection(EdgeLighting::Config &cfg);
     void buildNeonSection(EdgeLighting::Config &cfg);
     void buildMultiPassNeonSection(EdgeLighting::Config &cfg);
+    void buildOptimizedNeonSection(EdgeLighting::Config &cfg);
     void buildAnimationSection(EdgeLighting::Config &cfg, float clockTime);
 
     GLFWwindow *mWindow = nullptr;
     GLFWwindow *mMainWindow = nullptr;
     ImGuiContext *mContext = nullptr;
+
+    float mLastRenderTimeMs = 0.0f;
 
     // --- Animation preset state ---
     EdgeLightingDemo::AnimationPreset mPreset = EdgeLightingDemo::AnimationPreset::NONE;
