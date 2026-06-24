@@ -181,5 +181,11 @@ void main() {
     // --- Grade --------------------------------------------------------
     result = result / (result + vec3(TONE_MAP_SHOULDER));
     result = pow(result, vec3(GAMMA_EXPONENT));
-    fragColor = vec4(result, 1.0);
+
+    // Premultiplied-alpha output (coverage = brightest channel). Rendered into
+    // the cleared-transparent half-res FBO with GL_ONE,GL_ONE_MINUS_SRC_ALPHA so
+    // the FBO holds premultiplied colour + coverage, which the blit then
+    // composites over background objects (core occludes, halo/bloom add).
+    float alpha = clamp(max(result.r, max(result.g, result.b)), 0.0, 1.0);
+    fragColor = vec4(result, alpha);
 }
