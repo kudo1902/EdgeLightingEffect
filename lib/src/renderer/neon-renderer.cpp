@@ -40,8 +40,14 @@ namespace EdgeLighting
             return;
         }
 
+        // Premultiplied-alpha "over": final = src.rgb + dst * (1 - src.a). The
+        // shader emits premultiplied colour with coverage in alpha, so the hot
+        // core occludes background objects while the halo/bloom stay additive
+        // and the dark surround leaves the background untouched. (Plain additive
+        // GL_SRC_ALPHA,GL_ONE could only add light — it washed out over bright
+        // content and the opaque alpha boxed out anything composited behind it.)
         glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
         mShaderProgram.Use();
 

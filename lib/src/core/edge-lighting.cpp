@@ -1,5 +1,6 @@
 #include "core/edge-lighting.h"
 #include "util/log-util.h"
+#include "util/gl-utils.h"
 
 namespace EdgeLighting
 {
@@ -8,15 +9,24 @@ namespace EdgeLighting
 
     bool EdgeLightingEffect::Initialize()
     {
-        bool success = true;
-        for (auto &renderer : mRenderers)
+        GLUtils::LogExtensions();
+        GLUtils::LogCaps();
+
+        bool allOk = true;
+        for (auto it = mRenderers.begin(); it != mRenderers.end();)
         {
-            if (!renderer->Initialize())
+            if (!(*it)->Initialize())
             {
-                success = false;
+                LOG_E("EdgeLightingEffect: a renderer failed to initialize — removing it.");
+                it = mRenderers.erase(it);
+                allOk = false;
+            }
+            else
+            {
+                ++it;
             }
         }
-        return success;
+        return allOk;
     }
 
     void EdgeLightingEffect::Update(float deltaTime)

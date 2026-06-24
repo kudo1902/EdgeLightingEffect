@@ -196,5 +196,12 @@ void main() {
     result = pow(result, vec3(GAMMA_EXPONENT));
     result += (hash(gl_FragCoord.xy + uTime) - 0.5) * FILM_GRAIN_AMOUNT;
 
-    fragColor = vec4(result, 1.0);
+    // Premultiplied-alpha output so the effect composites over arbitrary
+    // background objects instead of only adding light. Coverage = brightest
+    // channel: the hot filament core (alpha ~ 1) occludes the background and
+    // reads as a solid tube; the dim halo/bloom (alpha ~ 0) stay additive; the
+    // dark surround (alpha = 0) leaves the background untouched. Pairs with
+    // glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA) in the renderer.
+    float alpha = clamp(max(result.r, max(result.g, result.b)), 0.0, 1.0);
+    fragColor = vec4(result, alpha);
 }

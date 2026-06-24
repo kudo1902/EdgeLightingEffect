@@ -39,13 +39,13 @@ namespace EdgeLighting
 
         float halfRectW = config.geometry.width * 0.5f;
         float halfRectH = config.geometry.height * 0.5f;
-        glm::mat4 proj  = glm::ortho(0.0f, static_cast<float>(viewportWidth),
-                                     0.0f, static_cast<float>(viewportHeight),
-                                     -1.0f, 1.0f);
+        glm::mat4 proj = glm::ortho(0.0f, static_cast<float>(viewportWidth),
+                                    0.0f, static_cast<float>(viewportHeight),
+                                    -1.0f, 1.0f);
         glm::vec2 center(config.geometry.position.x + halfRectW,
                          static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
         glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(center, 0.0f));
-        glm::mat4 mvp   = proj * model;
+        glm::mat4 mvp = proj * model;
 
         glm::vec2 texelSize(1.0f / static_cast<float>(viewportWidth),
                             1.0f / static_cast<float>(viewportHeight));
@@ -76,12 +76,12 @@ namespace EdgeLighting
         for (int i = 0; i < stopCount; ++i)
         {
             mStopPositions[i] = config.multipassNeon.colorStops[i].position;
-            mStopColors[i]    = config.multipassNeon.colorStops[i].color;
+            mStopColors[i] = config.multipassNeon.colorStops[i].color;
         }
         if (stopCount > 0)
         {
             mBarShader.SetUniform("uColorStopPositions", mStopPositions.data(), stopCount);
-            mBarShader.SetUniform("uColorStopColors",    mStopColors.data(),    stopCount);
+            mBarShader.SetUniform("uColorStopColors", mStopColors.data(), stopCount);
         }
 
         // In full-gradient debug mode the bar shader writes everywhere — use the
@@ -126,8 +126,11 @@ namespace EdgeLighting
         // ===================================================================
         Framebuffer::BindDefault();
         glViewport(0, 0, viewportWidth, viewportHeight);
+        // Premultiplied-alpha "over" so the composite blends over background
+        // objects (core occludes, halo/bloom add, surround transparent) rather
+        // than only adding light. The composite shader emits premultiplied RGBA.
         glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
         mCompositeShader.Use();
         mCompositeShader.SetUniform("uMVP", mvp);
@@ -195,9 +198,9 @@ namespace EdgeLighting
         constexpr float BAR_MARGIN = 16.0f;
         {
             float l = -(halfW + BAR_MARGIN);
-            float r =  (halfW + BAR_MARGIN);
+            float r = (halfW + BAR_MARGIN);
             float b = -(halfH + BAR_MARGIN);
-            float t =  (halfH + BAR_MARGIN);
+            float t = (halfH + BAR_MARGIN);
 
             // clang-format off
             float verts[] = {
@@ -214,9 +217,9 @@ namespace EdgeLighting
         constexpr float GLOW_MARGIN = 600.0f;
         {
             float l = -(halfW + GLOW_MARGIN);
-            float r =  (halfW + GLOW_MARGIN);
+            float r = (halfW + GLOW_MARGIN);
             float b = -(halfH + GLOW_MARGIN);
-            float t =  (halfH + GLOW_MARGIN);
+            float t = (halfH + GLOW_MARGIN);
 
             // clang-format off
             float verts[] = {

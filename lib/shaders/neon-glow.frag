@@ -100,5 +100,9 @@ void main() {
     result = pow(result, vec3(GAMMA_EXPONENT));
     result += (hash(gl_FragCoord.xy + uTime) - 0.5) * FILM_GRAIN_AMOUNT;
 
-    fragColor = vec4(result, 1.0);
+    // Premultiplied-alpha output (coverage = brightest channel) so the composite
+    // blends over background objects: core occludes, halo/bloom add, surround is
+    // transparent. Pairs with glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA).
+    float alpha = clamp(max(result.r, max(result.g, result.b)), 0.0, 1.0);
+    fragColor = vec4(result, alpha);
 }
