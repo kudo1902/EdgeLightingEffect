@@ -51,8 +51,11 @@ namespace EdgeLighting
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
+        // Premultiplied "over" into the transparent FBO: a single non-overlapping
+        // quad over (0,0,0,0) leaves the FBO holding the shader's premultiplied
+        // colour + coverage alpha, ready to be composited over the backbuffer.
         glEnable(GL_BLEND);
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
         mNeonShader.Use();
 
@@ -107,13 +110,13 @@ namespace EdgeLighting
         Framebuffer::BindDefault();
         glViewport(0, 0, viewportWidth, viewportHeight);
 
-        // Composite additively, like every other renderer layer. The FBO holds
-        // tone-mapped neon over cleared black, so GL_ONE,GL_ONE adds the colour
-        // while the black background contributes nothing — this keeps the
-        // optimized renderer stacking correctly over wireframe / other layers
-        // instead of overwriting the whole backbuffer.
+        // Composite the premultiplied half-res FBO over the backbuffer:
+        // final = src.rgb + dst * (1 - src.a). The FBO's coverage alpha lets the
+        // hot core occlude background objects while the halo/bloom stay additive
+        // and the transparent surround leaves the background untouched. Bilinear
+        // upscaling of premultiplied alpha is fringe-free.
         glEnable(GL_BLEND);
-        glBlendFunc(GL_ONE, GL_ONE);
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
         mBlitShader.Use();
 
