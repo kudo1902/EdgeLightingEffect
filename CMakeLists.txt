@@ -4,6 +4,10 @@ project(EdgeLightingEffect C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Build everything position-independent so the static lib + glad can be linked
+# into the edge-lighting-c shared library (required on Linux; harmless on macOS).
+set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
 # ---------------------------------------------------------------------------
 # Platform / GL profile auto-detection
 # ---------------------------------------------------------------------------

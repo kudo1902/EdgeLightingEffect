@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net7.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="OpenTK" Version="4.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../EdgeLighting.Interop/EdgeLighting.Interop.csproj" />
+  </ItemGroup>
+
+  <!--
+    Copy the native C-API library next to the managed output so DllImport can
+    resolve it. Build it first from the repo root with CMake (target
+    edge-lighting-c). Adjust the path / extension for your platform
+    (.so on Linux, .dll on Windows).
+  -->
+  <ItemGroup>
+    <None Include="../../../../build/lib/libedge-lighting-c.dylib"
+          Condition="Exists('../../../../build/lib/libedge-lighting-c.dylib')">
+      <Link>libedge-lighting-c.dylib</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="../../../../build/lib/libedge-lighting-c.so"
+          Condition="Exists('../../../../build/lib/libedge-lighting-c.so')">
+      <Link>libedge-lighting-c.so</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <None Include="../../../../build/lib/edge-lighting-c.dll"
+          Condition="Exists('../../../../build/lib/edge-lighting-c.dll')">
+      <Link>edge-lighting-c.dll</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+
+</Project>
