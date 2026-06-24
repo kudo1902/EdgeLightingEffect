@@ -468,12 +468,12 @@ extern "C"
         }
         case EL_ANIM_BREATHING:
         {
-            a = std::make_shared<IntensityPulse>(0.6f, 0.4f, 1.0f);
+            a = std::make_shared<IntensityPulse>(1.0f / 0.6f, 0.4f, 1.0f);
             break;
         }
         case EL_ANIM_STROBE:
         {
-            a = std::make_shared<IntensityStrobe>(6.0f, 0.0f, 1.0f);
+            a = std::make_shared<IntensityStrobe>(1.0f / 6.0f, 0.0f, 1.0f);
             break;
         }
         case EL_ANIM_HEARTBEAT:
@@ -491,17 +491,17 @@ extern "C"
         case EL_ANIM_SHIMMER:
         {
             auto group = std::make_shared<AnimationGroup>();
-            group->Add(std::make_shared<IntensityPulse>(2.0f, 0.65f, 1.0f));
-            group->Add(std::make_shared<GlowRadiusBreath>(2.0f, 5.0f, 10.0f));
+            group->Add(std::make_shared<IntensityPulse>(0.5f, 0.65f, 1.0f));
+            group->Add(std::make_shared<GlowRadiusBreath>(0.5f, 5.0f, 10.0f));
             a = group;
             break;
         }
         case EL_ANIM_AURORA:
         {
             auto group = std::make_shared<AnimationGroup>();
-            group->Add(std::make_shared<IntensityPulse>(0.10f, 0.75f, 1.00f));
-            group->Add(std::make_shared<GlowRadiusBreath>(0.15f, 8.0f, 24.0f));
-            group->Add(std::make_shared<BloomPulse>(0.20f, 0.20f, 0.70f));
+            group->Add(std::make_shared<IntensityPulse>(10.0f, 0.75f, 1.00f));
+            group->Add(std::make_shared<GlowRadiusBreath>(1.0f / 0.15f, 8.0f, 24.0f));
+            group->Add(std::make_shared<BloomPulse>(5.0f, 0.20f, 0.70f));
             a = group;
             break;
         }
@@ -542,7 +542,8 @@ extern "C"
         }
         case EL_ANIM_HUE_REVERSE:
         {
-            a = std::make_shared<HueRotationReverse>(0.4f, 3.0f);
+            // Abrupt direction flip every 3 seconds (6 s full cycle).
+            a = std::make_shared<HueRotationReverse>(0.4f, 6.0f);
             break;
         }
         default:
@@ -554,13 +555,13 @@ extern "C"
         return new EL_Animation{std::move(a)};
     }
 
-    EL_Animation *el_animation_intensity_pulse(float frequency, float min, float max)
+    EL_Animation *el_animation_intensity_pulse(float duration, float min, float max)
     {
-        return new EL_Animation{std::make_shared<EdgeLighting::IntensityPulse>(frequency, min, max)};
+        return new EL_Animation{std::make_shared<EdgeLighting::IntensityPulse>(duration, min, max)};
     }
-    EL_Animation *el_animation_intensity_strobe(float frequency, float offIntensity, float onIntensity)
+    EL_Animation *el_animation_intensity_strobe(float duration, float offIntensity, float onIntensity)
     {
-        return new EL_Animation{std::make_shared<EdgeLighting::IntensityStrobe>(frequency, offIntensity, onIntensity)};
+        return new EL_Animation{std::make_shared<EdgeLighting::IntensityStrobe>(duration, offIntensity, onIntensity)};
     }
     EL_Animation *el_animation_intensity_fade_in(float target, float duration, int32_t easing)
     {
@@ -570,29 +571,29 @@ extern "C"
     {
         return new EL_Animation{std::make_shared<EdgeLighting::IntensityFadeOut>(start, duration, toEasing(easing))};
     }
-    EL_Animation *el_animation_glow_radius_breath(float frequency, float minRadius, float maxRadius)
+    EL_Animation *el_animation_glow_radius_breath(float duration, float minRadius, float maxRadius)
     {
-        return new EL_Animation{std::make_shared<EdgeLighting::GlowRadiusBreath>(frequency, minRadius, maxRadius)};
+        return new EL_Animation{std::make_shared<EdgeLighting::GlowRadiusBreath>(duration, minRadius, maxRadius)};
     }
-    EL_Animation *el_animation_bloom_pulse(float frequency, float min, float max)
+    EL_Animation *el_animation_bloom_pulse(float duration, float min, float max)
     {
-        return new EL_Animation{std::make_shared<EdgeLighting::BloomPulse>(frequency, min, max)};
+        return new EL_Animation{std::make_shared<EdgeLighting::BloomPulse>(duration, min, max)};
     }
-    EL_Animation *el_animation_hue_rotation_reverse(float baseRate, float reverseEvery)
+    EL_Animation *el_animation_hue_rotation_reverse(float baseRate, float duration)
     {
-        return new EL_Animation{std::make_shared<EdgeLighting::HueRotationReverse>(baseRate, reverseEvery)};
+        return new EL_Animation{std::make_shared<EdgeLighting::HueRotationReverse>(baseRate, duration)};
     }
-    EL_Animation *el_animation_hue_rotation_ease_reverse(float maxRate, float period)
+    EL_Animation *el_animation_hue_rotation_ease_reverse(float maxRate, float duration)
     {
-        return new EL_Animation{std::make_shared<EdgeLighting::HueRotationEaseReverse>(maxRate, period)};
+        return new EL_Animation{std::make_shared<EdgeLighting::HueRotationEaseReverse>(maxRate, duration)};
     }
-    EL_Animation *el_animation_segment_travel(float secondsPerRevolution, float length, float boost)
+    EL_Animation *el_animation_segment_travel(float duration, float length, float boost)
     {
-        return new EL_Animation{std::make_shared<EdgeLighting::SegmentTravel>(secondsPerRevolution, length, boost)};
+        return new EL_Animation{std::make_shared<EdgeLighting::SegmentTravel>(duration, length, boost)};
     }
-    EL_Animation *el_animation_segment_bounce(float period, float length, float boost)
+    EL_Animation *el_animation_segment_bounce(float duration, float length, float boost)
     {
-        return new EL_Animation{std::make_shared<EdgeLighting::SegmentBounce>(period, length, boost)};
+        return new EL_Animation{std::make_shared<EdgeLighting::SegmentBounce>(duration, length, boost)};
     }
     EL_Animation *el_animation_outline_tracer(float duration, int32_t easing)
     {
@@ -631,19 +632,24 @@ extern "C"
         return (anim && anim->ptr && anim->ptr->IsComplete(elapsed)) ? 1 : 0;
     }
 
-    void el_animation_set_duration(EL_Animation *anim, float duration)
+    EL_PlaybackMode el_animation_get_playback_mode(EL_Animation *anim)
     {
-        if (anim && anim->ptr)
+        if (!anim || !anim->ptr)
         {
-            anim->ptr->SetDuration(duration);
+            return EL_PLAYBACK_LOOP;
         }
+        return anim->ptr->GetPlaybackMode() == EdgeLighting::PlaybackMode::ONE_SHOT
+                   ? EL_PLAYBACK_ONE_SHOT
+                   : EL_PLAYBACK_LOOP;
     }
 
-    void el_animation_set_looping(EL_Animation *anim)
+    void el_animation_set_playback_mode(EL_Animation *anim, EL_PlaybackMode mode)
     {
         if (anim && anim->ptr)
         {
-            anim->ptr->SetLooping();
+            anim->ptr->SetPlaybackMode(mode == EL_PLAYBACK_ONE_SHOT
+                                          ? EdgeLighting::PlaybackMode::ONE_SHOT
+                                          : EdgeLighting::PlaybackMode::LOOP);
         }
     }
 
@@ -652,13 +658,17 @@ extern "C"
         return (anim && anim->ptr) ? anim->ptr->GetDuration() : 0.0f;
     }
 
-    EL_Bool el_animation_is_one_shot(EL_Animation *anim)
+    void el_animation_set_duration(EL_Animation *anim, float seconds)
     {
-        if (!anim || !anim->ptr)
+        if (anim && anim->ptr)
         {
-            return 0;
+            anim->ptr->SetDuration(seconds);
         }
-        return anim->ptr->GetPlaybackMode() == EdgeLighting::PlaybackMode::ONE_SHOT ? 1 : 0;
+    }
+
+    float el_animation_get_speed(EL_Animation *anim)
+    {
+        return (anim && anim->ptr) ? anim->ptr->GetSpeed() : 1.0f;
     }
 
     void el_animation_set_speed(EL_Animation *anim, float speed)

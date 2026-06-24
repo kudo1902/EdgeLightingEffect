@@ -94,6 +94,13 @@ typedef enum EL_BlendSpace
     EL_BLEND_SPACE_HSV = 1
 } EL_BlendSpace;
 
+/** Playback mode of an animation (mirror EdgeLighting::PlaybackMode). */
+typedef enum EL_PlaybackMode
+{
+    EL_PLAYBACK_LOOP = 0,    ///< Plays forever; never completes.
+    EL_PLAYBACK_ONE_SHOT = 1 ///< Plays for the configured duration, then stops.
+} EL_PlaybackMode;
+
 /** Easing curves (mirror EdgeLighting::EasingFunction::*). */
 typedef enum EL_Easing
 {
@@ -309,16 +316,17 @@ typedef enum EL_AnimationPreset
 EL_API EL_Animation *el_animation_create(EL_AnimationPreset preset);
 
 /* --- Parametric factories (mirror animation/neon-animations.h) --- */
-EL_API EL_Animation *el_animation_intensity_pulse(float frequency, float min, float max);
-EL_API EL_Animation *el_animation_intensity_strobe(float frequency, float offIntensity, float onIntensity);
+/* For periodic animations, `duration` is seconds per cycle.                  */
+EL_API EL_Animation *el_animation_intensity_pulse(float duration, float min, float max);
+EL_API EL_Animation *el_animation_intensity_strobe(float duration, float offIntensity, float onIntensity);
 EL_API EL_Animation *el_animation_intensity_fade_in(float target, float duration, int32_t easing /*EL_Easing*/);
 EL_API EL_Animation *el_animation_intensity_fade_out(float start, float duration, int32_t easing /*EL_Easing*/);
-EL_API EL_Animation *el_animation_glow_radius_breath(float frequency, float minRadius, float maxRadius);
-EL_API EL_Animation *el_animation_bloom_pulse(float frequency, float min, float max);
-EL_API EL_Animation *el_animation_hue_rotation_reverse(float baseRate, float reverseEvery);
-EL_API EL_Animation *el_animation_hue_rotation_ease_reverse(float maxRate, float period);
-EL_API EL_Animation *el_animation_segment_travel(float secondsPerRevolution, float length, float boost);
-EL_API EL_Animation *el_animation_segment_bounce(float period, float length, float boost);
+EL_API EL_Animation *el_animation_glow_radius_breath(float duration, float minRadius, float maxRadius);
+EL_API EL_Animation *el_animation_bloom_pulse(float duration, float min, float max);
+EL_API EL_Animation *el_animation_hue_rotation_reverse(float baseRate, float duration);
+EL_API EL_Animation *el_animation_hue_rotation_ease_reverse(float maxRate, float duration);
+EL_API EL_Animation *el_animation_segment_travel(float duration, float length, float boost);
+EL_API EL_Animation *el_animation_segment_bounce(float duration, float length, float boost);
 EL_API EL_Animation *el_animation_outline_tracer(float duration, int32_t easing /*EL_Easing*/);
 
 /** @brief Destroy an animation. Safe to pass null. */
@@ -332,22 +340,35 @@ EL_API void el_animation_destroy(EL_Animation *anim);
  */
 EL_API EL_Result el_animation_apply(EL_Animation *anim, EL_Config *cfg, float elapsed);
 
-/** @brief True if a one-shot animation has reached its duration at @p elapsed. */
-EL_API EL_Bool el_animation_is_complete(EL_Animation *anim, float elapsed);
+/* --- Playback mode (loop vs one-shot) --- */
 
-/** @brief Switch to one-shot mode ending after @p duration seconds. */
-EL_API void el_animation_set_duration(EL_Animation *anim, float duration);
+/** @brief Current playback mode. */
+EL_API EL_PlaybackMode el_animation_get_playback_mode(EL_Animation *anim);
 
-/** @brief Switch back to looping mode. */
-EL_API void el_animation_set_looping(EL_Animation *anim);
+/** @brief Set the playback mode. Does NOT touch the duration. */
+EL_API void el_animation_set_playback_mode(EL_Animation *anim, EL_PlaybackMode mode);
 
-/** @brief One-shot duration in seconds (0 if looping). */
+/* --- Duration (wall-clock seconds; consulted only in ONE_SHOT) --- */
+
+/** @brief Configured wall-clock duration in seconds. */
 EL_API float el_animation_get_duration(EL_Animation *anim);
 
-/** @brief True if the animation is one-shot, false if looping. */
-EL_API EL_Bool el_animation_is_one_shot(EL_Animation *anim);
+/**
+ * @brief Set the wall-clock duration in seconds. Does NOT touch the mode.
+ * @details Subclasses with duration-dependent internal modulators (e.g. eased
+ *          fades) rebuild them in lockstep so the visual matches the latch.
+ */
+EL_API void el_animation_set_duration(EL_Animation *anim, float seconds);
 
-/** @brief Set the playback rate multiplier (1.0 = normal). */
+/** @brief True if mode is ONE_SHOT and @p elapsed has reached the duration. */
+EL_API EL_Bool el_animation_is_complete(EL_Animation *anim, float elapsed);
+
+/* --- Speed (playback-rate multiplier; 1.0 = normal) --- */
+
+/** @brief Current playback rate multiplier. */
+EL_API float el_animation_get_speed(EL_Animation *anim);
+
+/** @brief Set the playback rate multiplier (1.0 = normal, 0.5 = half, 2.0 = double). */
 EL_API void el_animation_set_speed(EL_Animation *anim, float speed);
 
 #ifdef __cplusplus
