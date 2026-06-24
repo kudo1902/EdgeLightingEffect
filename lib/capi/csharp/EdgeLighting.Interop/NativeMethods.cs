@@ -49,6 +49,13 @@ namespace EdgeLighting
         [DllImport(Lib, CallingConvention = Cc)]
         public static extern ElResult el_effect_render(IntPtr fx, int viewportWidth, int viewportHeight);
 
+        // --- Per-renderer enable/disable ---
+        [DllImport(Lib, CallingConvention = Cc)]
+        public static extern ElResult el_effect_set_renderer_enabled(IntPtr fx, ElRendererKind kind, int enabled);
+
+        [DllImport(Lib, CallingConvention = Cc)]
+        public static extern int el_effect_is_renderer_enabled(IntPtr fx, ElRendererKind kind);
+
         // --- Clock ---
         [DllImport(Lib, CallingConvention = Cc)]
         public static extern void el_effect_play(IntPtr fx);

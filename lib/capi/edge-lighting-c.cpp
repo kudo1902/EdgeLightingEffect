@@ -408,6 +408,95 @@ extern "C"
         }
     }
 
+    // --- Per-renderer enable/disable ---
+    //
+    // Implemented as syntactic sugar over GetConfig/SetConfig: the underlying
+    // truth lives in the `enable` flag on each sub-config. SetConfig fires
+    // OnConfigChanged on every renderer (LUT rebuilds etc.), which is heavier
+    // than strictly necessary for a flag toggle but acceptable for an explicit
+    // user action that isn't on the per-frame hot path.
+
+    EL_Result el_effect_set_renderer_enabled(EL_Effect *fx, EL_RendererKind kind, EL_Bool enabled)
+    {
+        if (!fx)
+        {
+            setError("el_effect_set_renderer_enabled: fx is null");
+            return EL_ERR_NULL_ARG;
+        }
+        try
+        {
+            EdgeLighting::Config cfg = fx->effect.GetConfig();
+            bool b = enabled != 0;
+            switch (kind)
+            {
+            case EL_RENDERER_WIREFRAME:
+            {
+                cfg.wireframe.enable = b;
+                break;
+            }
+            case EL_RENDERER_NEON:
+            {
+                cfg.neon.enable = b;
+                break;
+            }
+            case EL_RENDERER_MULTIPASS_NEON:
+            {
+                cfg.multipassNeon.enable = b;
+                break;
+            }
+            case EL_RENDERER_OPTIMIZED_NEON:
+            {
+                cfg.optimizedNeon.enable = b;
+                break;
+            }
+            default:
+            {
+                setError("el_effect_set_renderer_enabled: unknown EL_RendererKind");
+                return EL_ERR_NULL_ARG;
+            }
+            }
+            fx->effect.SetConfig(cfg);
+            return EL_OK;
+        }
+        catch (const std::exception &e)
+        {
+            setError(e.what());
+            return EL_ERR_EXCEPTION;
+        }
+    }
+
+    EL_Bool el_effect_is_renderer_enabled(EL_Effect *fx, EL_RendererKind kind)
+    {
+        if (!fx)
+        {
+            return 0;
+        }
+        const EdgeLighting::Config &cfg = fx->effect.GetConfig();
+        switch (kind)
+        {
+        case EL_RENDERER_WIREFRAME:
+        {
+            return cfg.wireframe.enable ? 1 : 0;
+        }
+        case EL_RENDERER_NEON:
+        {
+            return cfg.neon.enable ? 1 : 0;
+        }
+        case EL_RENDERER_MULTIPASS_NEON:
+        {
+            return cfg.multipassNeon.enable ? 1 : 0;
+        }
+        case EL_RENDERER_OPTIMIZED_NEON:
+        {
+            return cfg.optimizedNeon.enable ? 1 : 0;
+        }
+        default:
+        {
+            return 0;
+        }
+        }
+    }
+
     // --- Clock ---
     void el_effect_play(EL_Effect *fx)
     {

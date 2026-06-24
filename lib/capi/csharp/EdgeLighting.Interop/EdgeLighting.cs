@@ -143,6 +143,50 @@ namespace EdgeLighting
 
         public bool IsPlaying => NativeMethods.el_effect_is_playing(Handle) != 0;
 
+        // --- Per-renderer enable/disable ---
+        //
+        // Each renderer's `enable` flag lives inside its sub-config. These
+        // helpers wrap the GetConfig → mutate → SetConfig dance so the host
+        // can flip a single renderer without rebuilding the whole snapshot.
+
+        /// <summary>Enable or disable one of the built-in renderers.</summary>
+        public void SetRendererEnabled(ElRendererKind kind, bool enabled) =>
+            EdgeLightingLibrary.Check(
+                NativeMethods.el_effect_set_renderer_enabled(Handle, kind, enabled ? 1 : 0),
+                "el_effect_set_renderer_enabled");
+
+        /// <summary>True if the given renderer is currently enabled.</summary>
+        public bool IsRendererEnabled(ElRendererKind kind) =>
+            NativeMethods.el_effect_is_renderer_enabled(Handle, kind) != 0;
+
+        /// <summary>Toggle the 1px line-loop debug box.</summary>
+        public bool WireframeEnabled
+        {
+            get => IsRendererEnabled(ElRendererKind.Wireframe);
+            set => SetRendererEnabled(ElRendererKind.Wireframe, value);
+        }
+
+        /// <summary>Toggle the single-pass neon stroke.</summary>
+        public bool NeonEnabled
+        {
+            get => IsRendererEnabled(ElRendererKind.Neon);
+            set => SetRendererEnabled(ElRendererKind.Neon, value);
+        }
+
+        /// <summary>Toggle the multi-pass (FBO + separable blur) neon.</summary>
+        public bool MultipassNeonEnabled
+        {
+            get => IsRendererEnabled(ElRendererKind.MultipassNeon);
+            set => SetRendererEnabled(ElRendererKind.MultipassNeon, value);
+        }
+
+        /// <summary>Toggle the half-resolution neon for edge devices.</summary>
+        public bool OptimizedNeonEnabled
+        {
+            get => IsRendererEnabled(ElRendererKind.OptimizedNeon);
+            set => SetRendererEnabled(ElRendererKind.OptimizedNeon, value);
+        }
+
         /// <summary>Destroy the native effect. Call on the GL thread.</summary>
         public void Dispose()
         {

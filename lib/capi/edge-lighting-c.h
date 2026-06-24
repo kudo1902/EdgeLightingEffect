@@ -94,6 +94,16 @@ typedef enum EL_BlendSpace
     EL_BLEND_SPACE_HSV = 1
 } EL_BlendSpace;
 
+/** Identifies one of the built-in renderers for enable/disable toggling.
+ *  Values match the registration order in @ref el_effect_create. */
+typedef enum EL_RendererKind
+{
+    EL_RENDERER_WIREFRAME = 0,      ///< 1px line-loop debug box.
+    EL_RENDERER_NEON = 1,           ///< Single-pass neon stroke.
+    EL_RENDERER_MULTIPASS_NEON = 2, ///< Multi-pass (FBO + separable blur) neon.
+    EL_RENDERER_OPTIMIZED_NEON = 3  ///< Half-resolution neon for edge devices.
+} EL_RendererKind;
+
 /** Playback mode of an animation (mirror EdgeLighting::PlaybackMode). */
 typedef enum EL_PlaybackMode
 {
@@ -276,6 +286,14 @@ EL_API EL_Result el_effect_update(EL_Effect *fx, float deltaTime);
 
 /** @brief Render all enabled renderers into the current framebuffer. */
 EL_API EL_Result el_effect_render(EL_Effect *fx, int32_t viewportWidth, int32_t viewportHeight);
+
+/* --- Per-renderer enable/disable (convenience over get_config + set_config) --- */
+
+/** @brief Enable or disable one of the built-in renderers. */
+EL_API EL_Result el_effect_set_renderer_enabled(EL_Effect *fx, EL_RendererKind kind, EL_Bool enabled);
+
+/** @brief True if the given renderer is currently enabled. */
+EL_API EL_Bool el_effect_is_renderer_enabled(EL_Effect *fx, EL_RendererKind kind);
 
 /* --- Clock --- */
 EL_API void el_effect_play(EL_Effect *fx);

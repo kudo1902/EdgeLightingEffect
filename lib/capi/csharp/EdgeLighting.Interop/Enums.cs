@@ -45,6 +45,18 @@ namespace EdgeLighting
         OneShot = 1,
     }
 
+    /// <summary>
+    /// Identifies one of the built-in renderers for enable/disable toggling.
+    /// Values match the registration order in <c>el_effect_create</c>.
+    /// </summary>
+    public enum ElRendererKind
+    {
+        Wireframe = 0,
+        Neon = 1,
+        MultipassNeon = 2,
+        OptimizedNeon = 3,
+    }
+
     /// <summary>Easing curves (mirror EdgeLighting::EasingFunction::*).</summary>
     public enum ElEasing
     {
