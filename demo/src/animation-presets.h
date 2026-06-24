@@ -112,13 +112,14 @@ namespace EdgeLightingDemo
 
         case AnimationPreset::BREATHING:
         {
-            // Calm 0.6 Hz sine — about 36 BPM.
-            return std::make_shared<IntensityPulse>(0.6f, 0.4f, 1.0f);
+            // Calm ~1.67 s sine — about 36 BPM.
+            return std::make_shared<IntensityPulse>(1.0f / 0.6f, 0.4f, 1.0f);
         }
 
         case AnimationPreset::STROBE:
         {
-            return std::make_shared<IntensityStrobe>(6.0f, 0.0f, 1.0f);
+            // 6 on+off cycles per second.
+            return std::make_shared<IntensityStrobe>(1.0f / 6.0f, 0.0f, 1.0f);
         }
 
         case AnimationPreset::HEARTBEAT:
@@ -136,22 +137,22 @@ namespace EdgeLightingDemo
 
         case AnimationPreset::SHIMMER:
         {
-            // Intensity + glow radius pulse together at 2 Hz — gives the line
-            // a fast "twinkle". Use AnimationGroup to stack.
+            // Intensity + glow radius pulse together every 0.5 s — gives the
+            // line a fast "twinkle". Use AnimationGroup to stack.
             auto group = std::make_shared<AnimationGroup>();
-            group->Add(std::make_shared<IntensityPulse>(2.0f, 0.65f, 1.0f));
-            group->Add(std::make_shared<GlowRadiusBreath>(2.0f, 5.0f, 10.0f));
+            group->Add(std::make_shared<IntensityPulse>(0.5f, 0.65f, 1.0f));
+            group->Add(std::make_shared<GlowRadiusBreath>(0.5f, 5.0f, 10.0f));
             return group;
         }
 
         case AnimationPreset::AURORA:
         {
             // Slow, atmospheric motion across three params at different
-            // frequencies so they drift in and out of phase.
+            // periods so they drift in and out of phase.
             auto group = std::make_shared<AnimationGroup>();
-            group->Add(std::make_shared<IntensityPulse>(0.10f, 0.75f, 1.00f));
-            group->Add(std::make_shared<GlowRadiusBreath>(0.15f, 8.0f, 24.0f));
-            group->Add(std::make_shared<BloomPulse>(0.20f, 0.20f, 0.70f));
+            group->Add(std::make_shared<IntensityPulse>(10.0f, 0.75f, 1.00f));
+            group->Add(std::make_shared<GlowRadiusBreath>(1.0f / 0.15f, 8.0f, 24.0f));
+            group->Add(std::make_shared<BloomPulse>(5.0f, 0.20f, 0.70f));
             return group;
         }
 
@@ -198,8 +199,8 @@ namespace EdgeLightingDemo
 
         case AnimationPreset::HUE_REVERSE:
         {
-            // Abrupt direction flip every 3 seconds.
-            return std::make_shared<HueRotationReverse>(0.4f, 3.0f);
+            // Abrupt direction flip every 3 seconds (6s full cycle).
+            return std::make_shared<HueRotationReverse>(0.4f, 6.0f);
         }
 
         default:

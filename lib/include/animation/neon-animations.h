@@ -30,15 +30,15 @@ namespace EdgeLighting
     // -------------------------------------------------------------------------
 
     /// @brief Sine-wave breathe on @c neon.intensity.
-    /// @details Default 1 Hz oscillation between 0.4 and 1.0.
+    /// @details Default one-second cycle between 0.4 and 1.0.
     class IntensityPulse : public Animation
     {
     public:
-        /// @param frequency Cycles per second (Hz).
-        /// @param min       Minimum intensity (lower bound).
-        /// @param max       Maximum intensity (upper bound).
-        IntensityPulse(float frequency = 1.0f, float min = 0.4f, float max = 1.0f)
-            : mOsc(frequency, min, max) {}
+        /// @param duration Seconds per cycle.
+        /// @param min      Minimum intensity (lower bound).
+        /// @param max      Maximum intensity (upper bound).
+        IntensityPulse(float duration = 1.0f, float min = 0.4f, float max = 1.0f)
+            : mOsc(1.0f / duration, min, max) {}
         void Apply(Config &cfg, float elapsed) const override
         {
             cfg.neon.intensity = mOsc.Evaluate(elapsed);
@@ -52,13 +52,13 @@ namespace EdgeLighting
     class IntensityStrobe : public Animation
     {
     public:
-        /// @param frequency     On/off cycles per second (Hz).
+        /// @param duration      Seconds per on+off cycle.
         /// @param offIntensity  Value when the strobe is off.
         /// @param onIntensity   Value when the strobe is on.
-        IntensityStrobe(float frequency = 4.0f,
+        IntensityStrobe(float duration = 0.25f,
                         float offIntensity = 0.0f,
                         float onIntensity = 1.0f)
-            : mOsc(frequency, offIntensity, onIntensity, 0.0f, Waveform::SQUARE) {}
+            : mOsc(1.0f / duration, offIntensity, onIntensity, 0.0f, Waveform::SQUARE) {}
         void Apply(Config &cfg, float elapsed) const override
         {
             cfg.neon.intensity = mOsc.Evaluate(elapsed);
@@ -143,13 +143,13 @@ namespace EdgeLighting
     class GlowRadiusBreath : public Animation
     {
     public:
-        /// @param frequency Cycles per second.
+        /// @param duration  Seconds per cycle.
         /// @param minRadius Minimum glow radius in pixels.
         /// @param maxRadius Maximum glow radius in pixels.
-        GlowRadiusBreath(float frequency = 0.5f,
+        GlowRadiusBreath(float duration = 2.0f,
                          float minRadius = 4.0f,
                          float maxRadius = 12.0f)
-            : mOsc(frequency, minRadius, maxRadius) {}
+            : mOsc(1.0f / duration, minRadius, maxRadius) {}
         void Apply(Config &cfg, float elapsed) const override
         {
             cfg.neon.glowRadius = mOsc.Evaluate(elapsed);
@@ -168,13 +168,13 @@ namespace EdgeLighting
     class BloomPulse : public Animation
     {
     public:
-        /// @param frequency Cycles per second.
-        /// @param min       Minimum bloom strength.
-        /// @param max       Maximum bloom strength.
-        BloomPulse(float frequency = 0.7f,
+        /// @param duration Seconds per cycle.
+        /// @param min      Minimum bloom strength.
+        /// @param max      Maximum bloom strength.
+        BloomPulse(float duration = 1.5f,
                    float min = 0.1f,
                    float max = 0.6f)
-            : mOsc(frequency, min, max) {}
+            : mOsc(1.0f / duration, min, max) {}
         void Apply(Config &cfg, float elapsed) const override
         {
             cfg.neon.bloomStrength = mOsc.Evaluate(elapsed);
@@ -189,24 +189,24 @@ namespace EdgeLighting
     // -------------------------------------------------------------------------
 
     /// @brief Flip the sign of @c neon.hueRotationRate periodically.
-    /// @details Alternates direction every @p reverseEvery seconds with an
-    ///          abrupt square-wave transition.
+    /// @details A full forward-backward cycle takes @p duration seconds, with
+    ///          an abrupt square-wave transition at the half-cycle mark.
     class HueRotationReverse : public Animation
     {
     public:
-        /// @param baseRate     Absolute rotation rate in cycles/second.
-        /// @param reverseEvery Seconds between sign flips.
-        HueRotationReverse(float baseRate = 0.5f, float reverseEvery = 4.0f)
-            : mBaseRate(baseRate), mPeriod(reverseEvery) {}
+        /// @param baseRate Absolute rotation rate in cycles/second.
+        /// @param duration Seconds for one full forward-backward cycle (sign flips at duration/2).
+        HueRotationReverse(float baseRate = 0.5f, float duration = 8.0f)
+            : mBaseRate(baseRate), mHalfPeriod(duration * 0.5f) {}
         void Apply(Config &cfg, float elapsed) const override
         {
-            int n = static_cast<int>(std::floor(elapsed / mPeriod));
+            int n = static_cast<int>(std::floor(elapsed / mHalfPeriod));
             cfg.neon.hueRotationRate = (n & 1) ? -mBaseRate : mBaseRate;
         }
 
     private:
         float mBaseRate;
-        float mPeriod;
+        float mHalfPeriod;
     };
 
     /// @brief Smoothly ease the hue rotation direction.
@@ -215,10 +215,10 @@ namespace EdgeLighting
     class HueRotationEaseReverse : public Animation
     {
     public:
-        /// @param maxRate Maximum absolute rotation rate.
-        /// @param period  Full forward-backward cycle in seconds.
-        HueRotationEaseReverse(float maxRate = 0.5f, float period = 6.0f)
-            : mOsc(1.0f / period, -maxRate, maxRate, 0.0f, Waveform::TRIANGLE) {}
+        /// @param maxRate  Maximum absolute rotation rate.
+        /// @param duration Seconds for one full forward-backward cycle.
+        HueRotationEaseReverse(float maxRate = 0.5f, float duration = 6.0f)
+            : mOsc(1.0f / duration, -maxRate, maxRate, 0.0f, Waveform::TRIANGLE) {}
         void Apply(Config &cfg, float elapsed) const override
         {
             cfg.neon.hueRotationRate = mOsc.Evaluate(elapsed);
@@ -238,13 +238,13 @@ namespace EdgeLighting
     class SegmentTravel : public Animation
     {
     public:
-        /// @param secondsPerRevolution Time for one full lap in seconds.
-        /// @param length               Width of the bright peak [0, 1].
-        /// @param boost                Peak intensity multiplier.
-        SegmentTravel(float secondsPerRevolution = 3.0f,
+        /// @param duration Seconds for one full revolution.
+        /// @param length   Width of the bright peak [0, 1].
+        /// @param boost    Peak intensity multiplier.
+        SegmentTravel(float duration = 3.0f,
                       float length = 0.15f,
                       float boost = 4.0f)
-            : mPosOsc(1.0f / secondsPerRevolution, 0.0f, 1.0f, 0.0f, Waveform::SAWTOOTH),
+            : mPosOsc(1.0f / duration, 0.0f, 1.0f, 0.0f, Waveform::SAWTOOTH),
               mLength(length), mBoost(boost) {}
 
         void Apply(Config &cfg, float elapsed) const override
@@ -265,13 +265,13 @@ namespace EdgeLighting
     class SegmentBounce : public Animation
     {
     public:
-        /// @param period Full back-and-forth cycle in seconds.
-        /// @param length  Width of the bright peak [0, 1].
-        /// @param boost   Peak intensity multiplier.
-        SegmentBounce(float period = 4.0f,
+        /// @param duration Seconds for one full back-and-forth cycle.
+        /// @param length   Width of the bright peak [0, 1].
+        /// @param boost    Peak intensity multiplier.
+        SegmentBounce(float duration = 4.0f,
                       float length = 0.20f,
                       float boost = 4.0f)
-            : mPosOsc(1.0f / period, 0.0f, 1.0f, 0.0f, Waveform::TRIANGLE),
+            : mPosOsc(1.0f / duration, 0.0f, 1.0f, 0.0f, Waveform::TRIANGLE),
               mLength(length), mBoost(boost) {}
 
         void Apply(Config &cfg, float elapsed) const override
@@ -339,9 +339,10 @@ namespace EdgeLighting
     // dedicated subclass.
     //
     // Two constructors:
-    //   - one-arg : loops forever (duration = -1)
+    //   - one-arg : loops forever (duration = 0)
     //   - two-arg : one-shot for the given duration
-    // Mode can be flipped at runtime via SetDuration.
+    // Mode and duration are independent at runtime — see Animation::SetPlaybackMode
+    // and Animation::SetDuration.
 
     /// @brief Drive @c neon.intensity with an arbitrary modulator.
     class IntensityCurve : public Animation
