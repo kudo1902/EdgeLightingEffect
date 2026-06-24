@@ -81,6 +81,55 @@ namespace EdgeLighting
             LOG_I("---------------");
         }
 
+        /// Check and log any pending GL error. Returns true if no error.
+        /// @param context  Optional label for the log message (e.g. the calling function name).
+        /// Prefer the GL_CHECK_ERROR macro which automatically includes file + line.
+        inline bool CheckGLError(const char *context = nullptr)
+        {
+            GLenum err = glGetError();
+            if (err == GL_NO_ERROR)
+            {
+                return true;
+            }
+
+            const char *label = context ? context : "?";
+            const char *desc = "unknown";
+            switch (err)
+            {
+            case GL_INVALID_ENUM:
+                desc = "GL_INVALID_ENUM";
+                break;
+            case GL_INVALID_VALUE:
+                desc = "GL_INVALID_VALUE";
+                break;
+            case GL_INVALID_OPERATION:
+                desc = "GL_INVALID_OPERATION";
+                break;
+            case GL_OUT_OF_MEMORY:
+                desc = "GL_OUT_OF_MEMORY";
+                break;
+            case GL_INVALID_FRAMEBUFFER_OPERATION:
+                desc = "GL_INVALID_FRAMEBUFFER_OPERATION";
+                break;
+            }
+
+            // GLES 3.0 / desktop 3.3 may not define GL_STACK_* errors, so skip them.
+
+            LOG_E("[%s] GL error: %s (0x%x)", label, desc, err);
+
+            // Flush any additional queued errors.
+            while ((err = glGetError()) != GL_NO_ERROR)
+            {
+                LOG_E("[%s] GL error (chained): 0x%x", label, err);
+            }
+            return false;
+        }
+
+        /// Macro wrapper that passes file:line as context automatically.
+#define GL_UTILS_STR(x) #x
+#define GL_UTILS_XSTR(x) GL_UTILS_STR(x)
+#define GL_CHECK_ERROR() ::EdgeLighting::GLUtil::CheckGLError(__FILE__ ":" GL_UTILS_XSTR(__LINE__))
+
         /// Return the value of a GL integer cap (e.g. GL_MAX_TEXTURE_SIZE).
         inline int GetCap(GLenum cap)
         {
