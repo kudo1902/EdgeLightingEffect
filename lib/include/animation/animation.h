@@ -48,15 +48,18 @@ namespace EdgeLighting
     /// an animation is selected and subtracts that snapshot when calling
     /// @ref Apply, so every animation starts from t = 0.
     ///
-    /// ## Playback mode and duration
+    /// ## Playback mode and duration (orthogonal axes)
     ///
-    /// The base class owns two pieces of state:
-    /// - @ref PlaybackMode  — does this animation loop forever or stop?
-    /// - @c mDuration       — only consulted when the mode is @c ONE_SHOT.
+    /// The base class owns two independent pieces of state:
+    /// - @ref PlaybackMode — does this animation loop forever or stop?
+    /// - @c mDuration      — wall-clock seconds to play (consulted by
+    ///                       @ref IsComplete when the mode is @c ONE_SHOT).
     ///
-    /// Construct a looper with the default ctor; construct a one-shot with
-    /// the @c float ctor. Mutate live with @ref SetDuration / @ref SetLooping;
-    /// subclasses whose internal modulators depend on the duration override
+    /// Construct a looper with the default ctor or a one-shot with the
+    /// @c float ctor. After construction, mutate either axis independently:
+    /// @ref SetPlaybackMode toggles loop/one-shot without touching the duration,
+    /// @ref SetDuration changes the duration without touching the mode.
+    /// Subclasses whose internal modulators depend on the duration override
     /// @ref OnDurationChanged to rebuild them in lockstep.
     ///
     /// ## Completion
@@ -69,18 +72,19 @@ namespace EdgeLighting
     ///     // Looping: 2-second sine pulse, runs forever.
     ///     auto pulse = std::make_shared<IntensityPulse>(0.5f);
     ///
-    ///     // One-shot: same pulse, but stops + fires OnComplete after 6 s.
+    ///     // Make it a one-shot that stops after 6 seconds.
     ///     pulse->SetDuration(6.0f);
+    ///     pulse->SetPlaybackMode(PlaybackMode::ONE_SHOT);
     ///     pulse->OnComplete = []() { LOG_I("Pulse done."); };
     ///
-    ///     // Back to looping at any point:
-    ///     pulse->SetLooping();
+    ///     // Back to looping at any point (duration stays at 6 s, just ignored):
+    ///     pulse->SetPlaybackMode(PlaybackMode::LOOP);
     /// @endcode
     class Animation
     {
     public:
-        /// @brief Construct a looping animation.
-        Animation() : mMode(PlaybackMode::LOOP), mDuration(0.0f) {}
+        /// @brief Construct a looping animation with duration 0.
+        Animation() = default;
 
         /// @brief Construct a one-shot animation that ends after @p duration seconds.
         explicit Animation(float duration)
@@ -99,29 +103,26 @@ namespace EdgeLighting
         ///       can derive it from their children.
         virtual PlaybackMode GetPlaybackMode() const { return mMode; }
 
-        /// @brief Total play duration in seconds for @c ONE_SHOT mode.
-        /// @note Undefined / unused when mode is @c LOOP. Virtual so composite
+        /// @brief Set the playback mode. Does NOT touch the duration.
+        void SetPlaybackMode(PlaybackMode mode) { mMode = mode; }
+
+        /// @brief Configured wall-clock duration in seconds.
+        /// @note Consulted by @ref IsComplete only when the mode is @c ONE_SHOT;
+        ///       in @c LOOP mode it's just metadata. Virtual so composite
         ///       animations can derive it from their children.
         virtual float GetDuration() const { return mDuration; }
 
-        /// @brief Switch to @c ONE_SHOT mode with the given duration.
+        /// @brief Set the wall-clock duration in seconds. Does NOT touch the mode.
         /// @details Triggers @ref OnDurationChanged so subclasses can rebuild
-        ///          any duration-dependent internal modulators.
+        ///          any duration-dependent internal modulators (e.g. an @ref Ease
+        ///          whose visual transition must match the completion latch).
         void SetDuration(float duration)
         {
-            bool changed = (mMode != PlaybackMode::ONE_SHOT) || (duration != mDuration);
-            mMode = PlaybackMode::ONE_SHOT;
-            mDuration = duration;
-            if (changed)
+            if (duration != mDuration)
             {
+                mDuration = duration;
                 OnDurationChanged(duration);
             }
-        }
-
-        /// @brief Switch back to @c LOOP mode. Duration becomes irrelevant.
-        void SetLooping()
-        {
-            mMode = PlaybackMode::LOOP;
         }
 
         /// @brief True iff mode is @c ONE_SHOT and @p elapsed has reached duration.
@@ -157,8 +158,8 @@ namespace EdgeLighting
         virtual void OnDurationChanged(float /*newDuration*/) {}
 
     private:
-        PlaybackMode mMode;
-        float mDuration;
+        PlaybackMode mMode = PlaybackMode::LOOP;
+        float mDuration = 0.0f;
         float mSpeed = 1.0f;
     };
 
