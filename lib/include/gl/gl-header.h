@@ -11,17 +11,17 @@
 // All three configurations expose the same gl* symbols we use; pick at link
 // time via the corresponding glad.c / system library.
 
-#if defined(PLATFORM_LINUX)
+#if defined(PLATFORM_LINUX) || defined(__linux__)
 #include <GLES3/gl3.h>
 #define GLSL_VERSION "#version 300 es"
-#elif defined(PLATFORM_WINDOWS)
+#elif defined(PLATFORM_WINDOWS) || defined(_WIN32)
 #include <glad/glad.h>
 #define GLSL_VERSION "#version 300 es"
-#elif defined(PLATFORM_MACOS)
+#elif defined(PLATFORM_MACOS) || defined(__APPLE__)
 #include <glad/glad.h>
 #define GLSL_VERSION "#version 330 core"
 #else
-#error "Unknown platform — set PLATFORM_MACOS / _WINDOWS / _LINUX via CMake"
+#error "Unknown platform — set PLATFORM_MACOS / _WINDOWS / _LINUX via CMake or rely on compiler built-ins"
 #endif
 
 #endif // _EDGE_LIGHTING_GL_HEADER_H_
