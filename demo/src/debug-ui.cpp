@@ -219,9 +219,9 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
         return;
     }
 
-    ImGui::SliderFloat("Line Width##Neon", &cfg.neon.lineWidth, 1.0f, 20.0f, "%.0f");
+    ImGui::SliderFloat("Line Width##Neon", &cfg.neon.lineWidth, 0.0f, 20.0f, "%.0f");
     ImGui::SliderFloat("Intensity##Neon", &cfg.neon.intensity, 0.0f, 3.0f, "%.2f");
-    ImGui::SliderFloat("Glow Radius##Neon", &cfg.neon.glowRadius, 1.0f, 80.0f, "%.0f");
+    ImGui::SliderFloat("Glow Radius##Neon", &cfg.neon.glowRadius, 0.0f, 80.0f, "%.0f");
     ImGui::SliderFloat("Bloom Strength##Neon", &cfg.neon.bloomStrength, 0.0f, 2.0f, "%.2f");
     ImGui::SliderFloat("Hue Rotation Rate##Neon", &cfg.neon.hueRotationRate, 0.0f, 2.0f, "%.2f");
 
