@@ -26,6 +26,10 @@
 #define FILAMENT_MIN_HALF_WIDTH   0.5
 #define FILAMENT_FALLOFF          2.0
 #define FILAMENT_GAIN             12.0
+// Constant-width soft edge of the flat-top filament, in pixels. Independent of
+// lineWidth so the line's soft edge does NOT grow as the line thickens — all
+// spreading glow comes from glowRadius instead.
+#define FILAMENT_EDGE_SOFTNESS    1.5
 
 // --- Halo (sharp coloured glow). Kernel uses g * sqrt(g) ~ p = 1.5. The sum
 //     is normalised by kg^2 to recover unit-density brightness. ---

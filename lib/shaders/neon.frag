@@ -104,13 +104,30 @@ void main() {
     if (uGlowSide == GLOW_SIDE_OUTSIDE && d < -softEdge) discard;
 
     // --- Filament -----------------------------------------------------
-    float k    = max(uLineWidth * 0.5, FILAMENT_MIN_HALF_WIDTH);
-    float core = pow(k / (ad + k), FILAMENT_FALLOFF);
+    // Flat-top profile: a solid bar of width = lineWidth with a CONSTANT-width
+    // soft edge (FILAMENT_EDGE_SOFTNESS). Because the edge width is constant,
+    // thickening the line widens only the solid part — the soft "halo" around
+    // it does NOT grow. (The old pow(k/(ad+k)) profile had an edge whose width
+    // scaled with lineWidth, so a thick line bloomed into a wide glow even with
+    // glowRadius=0.) All spreading glow now comes from glowRadius alone.
+    //
+    // lineGate fades the filament intensity from 0 at lineWidth=0 up to full at
+    // lineWidth = FILAMENT_MIN_HALF_WIDTH * 2, so lineWidth=0 means "no line"
+    // while sub-pixel widths fade out instead of aliasing.
+    float halfWidth = uLineWidth * 0.5;
+    float core = 1.0 - smoothstep(halfWidth, halfWidth + FILAMENT_EDGE_SOFTNESS, ad);
+    float lineGate = clamp(uLineWidth / (FILAMENT_MIN_HALF_WIDTH * 2.0), 0.0, 1.0);
 
     // --- Kernel widths ------------------------------------------------
     // Halo kernel doubles as the colour-gather weight (saves a divide per
     // sample with no visible difference vs. the previous 1.5×-wider weight).
-    float kg  = max(uGlowRadius,                       uSampleSpacing * HALO_SPACING_FLOOR);
+    // The width is floored to haloFloor so the gather never beads into dots,
+    // even at tiny glow radii. That floor must NOT manufacture a halo when the
+    // user asked for none (glowRadius == 0): haloGate (below) fades the halo's
+    // intensity from 0 at glowRadius=0 up to full once glowRadius reaches the
+    // floor, so glowRadius=0 reads as "filament only".
+    float haloFloor = uSampleSpacing * HALO_SPACING_FLOOR;
+    float kg  = max(uGlowRadius,                       haloFloor);
     float kg2 = kg * kg;
     float bw  = max(uGlowRadius * BLOOM_REACH_TO_GLOW, uSampleSpacing * BLOOM_SPACING_FLOOR);
     float bw2 = bw * bw;
@@ -183,8 +200,13 @@ void main() {
     float litFraction = wsumArc / max(wsum, WSUM_EPSILON);
     float filamentGate = smoothstep(0.5, 1.0, litFraction);
 
-    vec3 result  = col * core  * FILAMENT_GAIN  * uIntensity * headWAvg * filamentGate;
-    result      += col * glow  * HALO_GAIN      * uIntensity * headWAvg;
+    // Halo visibility follows glowRadius so glowRadius == 0 means "filament
+    // only". Below the anti-bead floor the kernel can't shrink further, so we
+    // dim instead — fading the halo to nothing at glowRadius=0.
+    float haloGate = clamp(uGlowRadius / max(haloFloor, 1e-4), 0.0, 1.0);
+
+    vec3 result  = col * core  * FILAMENT_GAIN  * uIntensity * headWAvg * filamentGate * lineGate;
+    result      += col * glow  * HALO_GAIN      * uIntensity * headWAvg * haloGate;
     result      += col * bloom * uBloomStrength * uIntensity * headWAvg;
 
     // --- One-sided cut: mask the WHOLE emission at the line ----------
