@@ -32,17 +32,15 @@ namespace EdgeLightingDemo
         std::string neonStr = config.neon.enable ? "ON " : "OFF";
         std::string mpNeonStr = config.multipassNeon.enable ? "ON " : "OFF";
         std::string windingStr = (config.geometry.winding == EdgeLighting::Winding::CLOCKWISE) ? "CW" : "CCW";
-        std::string blendStr = (config.neon.blendSpace == EdgeLighting::BlendSpace::HSV) ? "HSV" : "RGB";
 
         std::cout << "\r[Neon] LineW: " << std::setw(3) << config.neon.lineWidth
                   << " | En: " << neonStr
                   << " | Int: " << std::fixed << std::setprecision(2) << std::setw(4) << config.neon.intensity
                   << " | GlowR: " << std::setprecision(0) << std::setw(3) << config.neon.glowRadius
                   << " | Bloom: " << std::setprecision(2) << std::setw(4) << config.neon.bloomStrength
-                  << " | HueRate: " << std::setprecision(2) << std::setw(4) << config.neon.hueRotationRate
+                  << " | Segs: " << config.neon.segments.size()
                   << " | MP: " << mpNeonStr
                   << " | " << windingStr
-                  << " | " << blendStr
                   << " | Anim: " << (isPlaying ? "PLAY" : "PAUS")
                   << " | Wire: " << (config.wireframe.enable ? "ON " : "OFF")
                   << "      " << std::flush;

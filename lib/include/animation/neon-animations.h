@@ -4,6 +4,7 @@
 #include "animation/animation.h"
 #include "animation/easing-function.h"
 #include "animation/modulator.h"
+#include "util/geometry-utils.h"
 #include <cmath>
 
 namespace EdgeLighting
@@ -185,106 +186,153 @@ namespace EdgeLighting
     };
 
     // -------------------------------------------------------------------------
-    // neon.hueRotationRate
-    // -------------------------------------------------------------------------
-
-    /// @brief Flip the sign of @c neon.hueRotationRate periodically.
-    /// @details A full forward-backward cycle takes @p duration seconds, with
-    ///          an abrupt square-wave transition at the half-cycle mark.
-    class HueRotationReverse : public Animation
-    {
-    public:
-        /// @param baseRate Absolute rotation rate in cycles/second.
-        /// @param duration Seconds for one full forward-backward cycle (sign flips at duration/2).
-        HueRotationReverse(float baseRate = 0.5f, float duration = 8.0f)
-            : mBaseRate(baseRate), mHalfPeriod(duration * 0.5f) {}
-        void Apply(Config &cfg, float elapsed) const override
-        {
-            int n = static_cast<int>(std::floor(elapsed / mHalfPeriod));
-            cfg.neon.hueRotationRate = (n & 1) ? -mBaseRate : mBaseRate;
-        }
-
-    private:
-        float mBaseRate;
-        float mHalfPeriod;
-    };
-
-    /// @brief Smoothly ease the hue rotation direction.
-    /// @details Uses a triangle wave so direction reverses gradually — no
-    ///          abrupt flips.
-    class HueRotationEaseReverse : public Animation
-    {
-    public:
-        /// @param maxRate  Maximum absolute rotation rate.
-        /// @param duration Seconds for one full forward-backward cycle.
-        HueRotationEaseReverse(float maxRate = 0.5f, float duration = 6.0f)
-            : mOsc(1.0f / duration, -maxRate, maxRate, 0.0f, Waveform::TRIANGLE) {}
-        void Apply(Config &cfg, float elapsed) const override
-        {
-            cfg.neon.hueRotationRate = mOsc.Evaluate(elapsed);
-        }
-
-    private:
-        Oscillator mOsc;
-    };
-
-    // -------------------------------------------------------------------------
     // Travelling segment
     // -------------------------------------------------------------------------
 
-    /// @brief Spin a bright Gaussian peak around the perimeter.
-    /// @details Uses a sawtooth on @c segmentPosition so the peak wraps around
-    ///          and restarts from 0.
+    /// @brief A bright dot travelling around a full colour ring.
+    /// @details Lays down a full-ring colour segment plus a short, bright,
+    ///          white dot segment whose start sweeps around the perimeter
+    ///          (sawtooth), wrapping seamlessly. Replaces the whole segment list.
     class SegmentTravel : public Animation
     {
     public:
         /// @param duration Seconds for one full revolution.
-        /// @param length   Width of the bright peak [0, 1].
-        /// @param boost    Peak intensity multiplier.
+        /// @param length   Width of the spot as a fraction of the perimeter.
+        /// @param level    Emission weight at the spot (>1 = brighter than base).
         SegmentTravel(float duration = 3.0f,
                       float length = 0.15f,
-                      float boost = 4.0f)
+                      float level = 4.0f)
             : mPosOsc(1.0f / duration, 0.0f, 1.0f, 0.0f, Waveform::SAWTOOTH),
-              mLength(length), mBoost(boost) {}
+              mLength(length), mLevel(level) {}
 
         void Apply(Config &cfg, float elapsed) const override
         {
-            cfg.neon.segmentPosition = mPosOsc.Evaluate(elapsed);
-            cfg.neon.segmentLength = mLength;
-            cfg.neon.segmentBoost = mBoost;
+            // Full colour ring + a bright white dot whose centre rides the
+            // oscillator (start offset by -length/2; wraps fine for negatives).
+            LitSegment dot{mPosOsc.Evaluate(elapsed) - mLength * 0.5f, mLength, mLevel};
+            cfg.neon.segments = {DefaultRingSegment(), dot};
         }
 
     private:
         Oscillator mPosOsc;
         float mLength;
-        float mBoost;
+        float mLevel;
     };
 
-    /// @brief Swing the bright spot back and forth.
-    /// @details Uses a triangle wave on @c segmentPosition.
+    /// @brief A bright dot swinging back and forth along a full colour ring.
+    /// @details Triangle wave on the dot's position. See @ref SegmentTravel.
     class SegmentBounce : public Animation
     {
     public:
         /// @param duration Seconds for one full back-and-forth cycle.
-        /// @param length   Width of the bright peak [0, 1].
-        /// @param boost    Peak intensity multiplier.
+        /// @param length   Width of the spot as a fraction of the perimeter.
+        /// @param level    Emission weight at the spot (>1 = brighter than base).
         SegmentBounce(float duration = 4.0f,
                       float length = 0.20f,
-                      float boost = 4.0f)
+                      float level = 4.0f)
             : mPosOsc(1.0f / duration, 0.0f, 1.0f, 0.0f, Waveform::TRIANGLE),
-              mLength(length), mBoost(boost) {}
+              mLength(length), mLevel(level) {}
 
         void Apply(Config &cfg, float elapsed) const override
         {
-            cfg.neon.segmentPosition = mPosOsc.Evaluate(elapsed);
-            cfg.neon.segmentLength = mLength;
-            cfg.neon.segmentBoost = mBoost;
+            LitSegment dot{mPosOsc.Evaluate(elapsed) - mLength * 0.5f, mLength, mLevel};
+            cfg.neon.segments = {DefaultRingSegment(), dot};
         }
 
     private:
         Oscillator mPosOsc;
         float mLength;
-        float mBoost;
+        float mLevel;
+    };
+
+    /// @brief Light the two side edges (left + right) and nothing else.
+    /// @details Recomputes the two segments from geometry each frame (via
+    ///          @ref GeometryUtils::GetEdgeArc) so they stay glued to the side
+    ///          edges if the rect is resized; the rest of the perimeter stays
+    ///          dark — the classic two-bar edge light. Static by default; pair
+    ///          with @ref IntensityPulse to make the pair breathe.
+    class SideEdges : public Animation
+    {
+    public:
+        /// @param coverage Fraction of each edge's straight run that is lit
+        ///                 (1 = full edge; <1 leaves a gap toward the corners).
+        /// @param level    Emission weight of the two bars.
+        SideEdges(float coverage = 0.95f, float level = 1.0f)
+            : mCoverage(coverage), mLevel(level) {}
+
+        void Apply(Config &cfg, float /*elapsed*/) const override
+        {
+            cfg.neon.segments = {
+                edgeSegment(GeometryUtils::GetEdgeArc(Edge::LEFT, cfg.geometry)),
+                edgeSegment(GeometryUtils::GetEdgeArc(Edge::RIGHT, cfg.geometry)),
+            };
+        }
+
+    private:
+        // GetEdgeArc returns {start, fullLength}; centre the shortened bar within
+        // the edge so a <1 coverage leaves an equal gap at both corners.
+        LitSegment edgeSegment(const glm::vec2 &edge) const
+        {
+            float len = edge.y * mCoverage;
+            float start = edge.x + (edge.y - len) * 0.5f;
+            return LitSegment{start, len, mLevel};
+        }
+
+        float mCoverage;
+        float mLevel;
+    };
+
+    /// @brief Two side edges, each with its OWN colour and a white spot that
+    ///        travels along it — a showcase of per-segment colour + nested spots.
+    /// @details Left bar red->orange, right bar blue->cyan; a white-hot accent
+    ///          slides up the left bar and down the right. All baked per-sample
+    ///          on the CPU (ColorUtils::BuildSampleData), so it costs nothing
+    ///          extra in the shader. Geometry-driven, so it tracks rect resizes.
+    class SideEdgesAccent : public Animation
+    {
+    public:
+        /// @param duration Seconds for the accent to traverse one bar.
+        explicit SideEdgesAccent(float duration = 2.5f)
+            : mTravel(1.0f / duration, 0.0f, 1.0f, 0.0f, Waveform::SAWTOOTH) {}
+
+        void Apply(Config &cfg, float elapsed) const override
+        {
+            float t = mTravel.Evaluate(elapsed);
+
+            LitSegment left = edgeBar(GeometryUtils::GetEdgeArc(Edge::LEFT, cfg.geometry));
+            left.colorStops = {{0.0f, glm::vec4(1.0f, 0.0f, 0.0f, 1.0f)},
+                               {1.0f, glm::vec4(1.0f, 0.5f, 0.0f, 1.0f)}};
+            left.spot = makeWhiteSpot(t);
+
+            LitSegment right = edgeBar(GeometryUtils::GetEdgeArc(Edge::RIGHT, cfg.geometry));
+            right.colorStops = {{0.0f, glm::vec4(0.0f, 0.4f, 1.0f, 1.0f)},
+                                {1.0f, glm::vec4(0.0f, 1.0f, 1.0f, 1.0f)}};
+            right.spot = makeWhiteSpot(1.0f - t);
+
+            cfg.neon.segments = {left, right};
+        }
+
+    private:
+        // GetEdgeArc returns {start, fullLength}; centre a 0.95-coverage bar.
+        static LitSegment edgeBar(const glm::vec2 &edge)
+        {
+            float len = edge.y * 0.95f;
+            return LitSegment{edge.x + (edge.y - len) * 0.5f, len, 1.0f};
+        }
+
+        // @p travel in [0,1] maps the spot's START so it stays fully inside the
+        // bar (start runs 0 -> 1-length). spot.position is the start.
+        static Spot makeWhiteSpot(float travel)
+        {
+            Spot s;
+            s.length = 0.18f;
+            s.position = travel * (1.0f - s.length);
+            s.boost = 4.0f;
+            s.colorStops = {{0.0f, glm::vec4(1.0f)}, {1.0f, glm::vec4(1.0f)}};
+            return s;
+        }
+
+        Oscillator mTravel;
     };
 
     // -------------------------------------------------------------------------
@@ -292,11 +340,11 @@ namespace EdgeLighting
     // -------------------------------------------------------------------------
 
     /// @brief One-shot animation that progressively lights up the outline.
-    /// @details Sweeps @c neon.arcLength from 0 to 1 over @p duration seconds,
-    ///          ending fully lit and held. Does NOT touch @c neon.arcStart —
-    ///          set that externally (slider, code, another animation) to
-    ///          choose where the trace begins. This separation lets users
-    ///          drag the Arc Start slider freely while the tracer is running.
+    /// @details Grows a single colour-ring segment from @c si = 0 forward until
+    ///          it covers the whole perimeter over @p duration seconds, ending
+    ///          fully lit and held — the rect "draws" itself. Replaces the
+    ///          segment list (the perimeter is dark wherever the segment hasn't
+    ///          reached yet).
     ///
     /// Combine with @ref IntensityFadeIn for a smoother appearance, or chain
     /// into a @ref SegmentTravel afterwards via @ref Animation::OnComplete for
@@ -317,7 +365,12 @@ namespace EdgeLighting
 
         void Apply(Config &cfg, float elapsed) const override
         {
-            cfg.neon.arcLength = mEase.Evaluate(elapsed);
+            // Grow a segment starting at si = 0, length 0 -> 1 (position = start),
+            // carrying the default colour gradient.
+            LitSegment seg = DefaultRingSegment();
+            seg.position = 0.0f;
+            seg.length = mEase.Evaluate(elapsed);
+            cfg.neon.segments = {seg};
         }
 
     protected:
@@ -395,24 +448,6 @@ namespace EdgeLighting
             if (mMod)
             {
                 cfg.neon.bloomStrength = mMod->Evaluate(elapsed);
-            }
-        }
-
-    private:
-        ModulatorPtr mMod;
-    };
-
-    /// @brief Drive @c neon.hueRotationRate with an arbitrary modulator.
-    class HueRotationRateCurve : public Animation
-    {
-    public:
-        explicit HueRotationRateCurve(ModulatorPtr mod) : Animation(), mMod(std::move(mod)) {}
-        HueRotationRateCurve(ModulatorPtr mod, float duration) : Animation(duration), mMod(std::move(mod)) {}
-        void Apply(Config &cfg, float elapsed) const override
-        {
-            if (mMod)
-            {
-                cfg.neon.hueRotationRate = mMod->Evaluate(elapsed);
             }
         }
 

@@ -25,6 +25,17 @@ namespace EdgeLighting
         OUTSIDE ///< Glow only outside the rectangle (interior goes dark)
     } GlowSide;
 
+    /// A straight edge of the rectangle. Used by GeometryUtils::GetEdgeArc to
+    /// map an edge to its span in perimeter [0, 1] space (e.g. to place a
+    /// LitSegment exactly over the left / right side edge).
+    typedef enum class Edge
+    {
+        TOP,
+        RIGHT,
+        BOTTOM,
+        LEFT
+    } Edge;
+
     /// Interpolation colour space for multi-stop blending.
     typedef enum class BlendSpace
     {
@@ -38,6 +49,79 @@ namespace EdgeLighting
         float position;  ///< Normalised position along the perimeter [0-1].
         glm::vec4 color; ///< RGBA colour at this stop.
     } ColorStop;
+
+    /// A bright accent nested inside a LitSegment.
+    ///
+    /// Its @c position / @c length are expressed in the parent segment's local
+    /// space [0, 1] (0 = start of the segment, 1 = end). @c position is the
+    /// accent's START; the accent covers [position, position + length] of the
+    /// segment, so animating @c position slides it *along* its bar. The accent's
+    /// @c boost adds on top of the segment's brightness, and it can carry its own colour
+    /// (e.g. a white-hot core); leave @c colorStops empty to reuse the segment's
+    /// colour. @c boost == 0 (default) disables it.
+    typedef struct Spot
+    {
+        float position = 0.4f; ///< Start, in the parent segment's local [0, 1].
+        float length = 0.2f;   ///< Width as a fraction of the parent segment.
+        float boost = 0.0f;    ///< Extra emission added on top of the segment (0 = no accent).
+        BlendSpace blendSpace = BlendSpace::RGB;
+        std::vector<ColorStop> colorStops = {}; ///< Empty => inherit the segment colour.
+    } Spot;
+
+    /// A lit span along the perimeter.
+    ///
+    /// Several segments can light disjoint regions (e.g. the two side edges)
+    /// while the rest of the perimeter stays dark. @c position is the START of
+    /// the span; it runs forward to @c position + @c length (wrapping over 0/1).
+    /// The @c brightness is combined across overlapping segments via max().
+    ///
+    /// Each segment carries its own colour (its @c colorStops sampled across the
+    /// span) and an optional nested @c spot accent. All of this is baked
+    /// per-sample on the CPU by @ref ColorUtils::BuildSampleData, so it costs
+    /// nothing extra in the shader.
+    typedef struct LitSegment
+    {
+        // --- Span ---
+        float position = 0.0f;   ///< Start of the span, perimeter position [0, 1); runs to position + length.
+        float length = 0.2f;     ///< Width as a fraction of the perimeter.
+        float brightness = 1.0f; ///< Brightness (1 = normal, >1 = brighter, 0 = off).
+                                 ///< Scales brightness only; the filament gate caps at coverage,
+                                 ///< so raising it never extends the segment's lit length.
+
+        // --- Colour (empty colorStops => solid white) ---
+        BlendSpace blendSpace = BlendSpace::RGB;
+        float hueRotationRate = 0.0f; ///< Revolutions/sec of this segment's gradient.
+        std::vector<ColorStop> colorStops = {};
+
+        // --- Nested accent ---
+        Spot spot = {};
+    } LitSegment;
+
+    /// The classic 4-colour neon gradient (red → green → blue → yellow).
+    inline std::vector<ColorStop> DefaultColorStops()
+    {
+        return {
+            {0.00f, glm::vec4(1.0f, 0.0f, 0.0f, 1.0f)},
+            {0.25f, glm::vec4(0.0f, 1.0f, 0.0f, 1.0f)},
+            {0.50f, glm::vec4(0.0f, 0.0f, 1.0f, 1.0f)},
+            {0.75f, glm::vec4(1.0f, 1.0f, 0.0f, 1.0f)},
+        };
+    }
+
+    /// A single segment that fills the whole perimeter with the default rotating
+    /// colour gradient — the out-of-the-box "colour ring around the rect" look,
+    /// and the default contents of NeonConfig::segments. A full-ring segment
+    /// (length 1) wraps its gradient seamlessly across the 0/1 seam.
+    inline LitSegment DefaultRingSegment()
+    {
+        LitSegment s;
+        s.position = 0.0f;
+        s.length = 1.0f;
+        s.brightness = 1.0f;
+        s.hueRotationRate = 0.0f; // static by default; stops sit where placed
+        s.colorStops = DefaultColorStops();
+        return s;
+    }
 
     // -----------------------------------------------------------------------
     // Per-renderer configuration
@@ -97,60 +181,34 @@ namespace EdgeLighting
         /// feather. Ignored when glowSide == BOTH.
         float glowSideSoftness = 0.0f;
 
-        // --- Color ---
+        // --- Lit segments (the whole effect; there is no separate global ring) ---
+        //
+        // Every lit region is a LitSegment carrying its own colour, rotation and
+        // optional spot. The perimeter is dark wherever no segment covers it.
+        // The default is a single full-ring segment (so out of the box this looks
+        // like a colour ring around the rect); add more for side edges, arcs,
+        // travelling dots, etc.
+        //
+        //   {DefaultRingSegment()}                  → colour ring (default)
+        //   {left, right}                           → only those spans lit
+        //   {position 0, length t}                  → a growing arc ("draw" it)
+        //   {ring, short bright dot}                → ring + a bright spot
+        //
+        // Per-sample colour + weight are precomputed on the CPU by
+        // @ref ColorUtils::BuildSampleData and uploaded as uSampleData[] (one
+        // vec4 per sample: rgb = colour, a = weight), so the shader stays
+        // segment-count agnostic, branch-free, and texture-free. Use
+        // @ref GeometryUtils::GetEdgeArc to place a segment exactly over an edge.
 
-        /// Maximum number of colour stops.
+        /// Maximum colour stops per segment gradient.
         static constexpr int MAX_COLOR_STOPS = 16;
-        /// Blend space for interpolating between colour stops.
-        BlendSpace blendSpace = BlendSpace::RGB;
-        /// Colour stops around the perimeter
-        /// (1 stop = solid, 2 = gradient, 3+ = multi-stop circular).
-        std::vector<ColorStop> colorStops = {
-            {0.00f, glm::vec4(1.0f, 0.0f, 0.0f, 1.0f)},
-            {0.25f, glm::vec4(0.0f, 1.0f, 0.0f, 1.0f)},
-            {0.50f, glm::vec4(0.0f, 0.0f, 1.0f, 1.0f)},
-            {0.75f, glm::vec4(1.0f, 1.0f, 0.0f, 1.0f)},
-        };
 
-        // --- Animation ---
+        /// Maximum number of lit segments (caps the uploaded array / C API array).
+        static constexpr int MAX_SEGMENTS = 8;
 
-        /// Hue rotation rate in revolutions per second around the perimeter. 0 = static.
-        float hueRotationRate = 0.5f;
-
-        // --- Travelling segment (spatial brightness bump) ---
-        //
-        // A Gaussian-shaped brightness peak rides on top of the base neon
-        // line. When @c segmentBoost == 0 (default) the feature is effectively
-        // inactive. Drive @c segmentPosition over time with @ref SegmentTravel
-        // for a moving spot.
-
-        /// Centre of the bright segment, in [0, 1) perimeter position
-        /// (same parametrisation as the colour ring).
-        float segmentPosition = 0.0f;
-        /// Segment width as a fraction of the perimeter (~Gaussian σ × 2).
-        /// 0.15 ≈ "comfortable spot", 0.05 ≈ "tight dot", 0.5 ≈ "broad swell".
-        float segmentLength = 0.15f;
-        /// Brightness multiplier added at the head. 0 = disabled, 4 = strong.
-        float segmentBoost = 0.0f;
-
-        // --- Arc gating (which slice of the perimeter is "on") ---
-        //
-        // The lit region starts at @c arcStart and extends @c arcLength of the
-        // perimeter forwards (wrapping over 0/1 if needed). Samples outside
-        // contribute zero brightness, so the bar / halo / bloom render only
-        // inside the arc.
-        //
-        //   arcStart = 0.0, arcLength = 1.0 → full perimeter lit (default)
-        //   arcStart = 0.0, arcLength = 0.0 → nothing lit
-        //   arcStart = 0.0, arcLength = 0.5 → first half lit
-        //   arcStart = 0.5, arcLength = 1.0 → still full, but the implicit
-        //                                    "draw direction" is 0.5 → 1 → 0 → 0.5
-        //   arcStart = 0.8, arcLength = 0.4 → wraps: lit from 0.8 to 0.2
-        //
-        // The @ref OutlineTracer animation drives @c arcLength from 0 → 1 to
-        // "draw" the rect outline (with @c arcStart fixed at the start phase).
-        float arcStart = 0.0f;
-        float arcLength = 1.0f;
+        /// Lit spans along the perimeter. Empty = nothing lit. Defaults to a
+        /// single full-ring segment (see @ref DefaultRingSegment).
+        std::vector<LitSegment> segments = {DefaultRingSegment()};
     } NeonConfig;
 
     /// Multi-pass gradient-to-texture neon configuration.
@@ -226,8 +284,6 @@ namespace EdgeLighting
         float resolutionScale = 0.5f;
         /// Number of gather samples per fragment (max 64, lower = faster).
         int numSamples = 64;
-        /// Size of the precomputed gradient look-up texture (power-of-two, 32–256).
-        int gradientLutSize = 256;
 
         // --- Debug visualisations ---
 

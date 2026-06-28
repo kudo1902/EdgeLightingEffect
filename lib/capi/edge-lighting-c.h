@@ -57,6 +57,9 @@ extern "C"
 /** Maximum colour stops per gradient (mirrors NeonConfig::MAX_COLOR_STOPS). */
 #define EL_MAX_COLOR_STOPS 16
 
+/** Maximum lit segments (mirrors NeonConfig::MAX_SEGMENTS). */
+#define EL_MAX_SEGMENTS 8
+
 /** 32-bit boolean (0 = false, non-zero = true) for unambiguous marshalling. */
 typedef int32_t EL_Bool;
 
@@ -143,6 +146,14 @@ typedef struct EL_ColorStop
     float a;
 } EL_ColorStop;
 
+/** A lit span along the perimeter (mirrors EdgeLighting::LitSegment). */
+typedef struct EL_LitSegment
+{
+    float position;   ///< Start of the span, perimeter position [0,1); runs to position + length.
+    float length;     ///< Width as a fraction of the perimeter.
+    float brightness; ///< Brightness (1 = normal, >1 = brighter, 0 = off).
+} EL_LitSegment;
+
 /** Geometry of the target rounded rectangle. */
 typedef struct EL_RectGeometry
 {
@@ -154,7 +165,12 @@ typedef struct EL_RectGeometry
     int32_t winding;    ///< EL_Winding.
 } EL_RectGeometry;
 
-/** Single-pass neon renderer settings. */
+/** Single-pass neon renderer settings.
+ *
+ * The lit effect is defined entirely by @c segments (there is no global colour
+ * ring). NOTE: per-segment colour/rotation/spot are not exposed through this C
+ * ABI yet — segments carry geometry only and render solid white; drive colour
+ * from C++ for now. */
 typedef struct EL_NeonConfig
 {
     EL_Bool enable;
@@ -164,15 +180,8 @@ typedef struct EL_NeonConfig
     float bloomStrength;
     int32_t glowSide; ///< EL_GlowSide.
     float glowSideSoftness;
-    int32_t blendSpace;     ///< EL_BlendSpace.
-    int32_t colorStopCount; ///< Number of valid entries in colorStops.
-    EL_ColorStop colorStops[EL_MAX_COLOR_STOPS];
-    float hueRotationRate;
-    float segmentPosition;
-    float segmentLength;
-    float segmentBoost;
-    float arcStart;
-    float arcLength;
+    int32_t segmentCount; ///< Number of valid entries in segments.
+    EL_LitSegment segments[EL_MAX_SEGMENTS];
 } EL_NeonConfig;
 
 /** Multi-pass (gradient-to-FBO + separable blur) neon renderer settings. */
@@ -197,10 +206,9 @@ typedef struct EL_MultiPassNeonConfig
 typedef struct EL_OptimizedNeonConfig
 {
     EL_Bool enable;
-    float resolutionScale;  ///< Internal FBO scale (0.5 = half res).
-    int32_t numSamples;     ///< Gather samples per fragment (max 64).
-    int32_t gradientLutSize; ///< Power-of-two LUT size, 32..256.
-    EL_Bool showHalfRes;    ///< Debug: show raw half-res FBO (nearest upscale).
+    float resolutionScale; ///< Internal FBO scale (0.5 = half res).
+    int32_t numSamples;    ///< Gather samples per fragment (max 64).
+    EL_Bool showHalfRes;   ///< Debug: show raw half-res FBO (nearest upscale).
 } EL_OptimizedNeonConfig;
 
 /** Wireframe debug overlay settings. */
@@ -317,14 +325,12 @@ typedef enum EL_AnimationPreset
     EL_ANIM_HEARTBEAT = 3,
     EL_ANIM_SHIMMER = 4,
     EL_ANIM_AURORA = 5,
-    EL_ANIM_REVERSE_SWEEP = 6,
-    EL_ANIM_FADE_IN = 7,
-    EL_ANIM_SEGMENT_TRAVEL = 8,
-    EL_ANIM_SEGMENT_BOUNCE = 9,
-    EL_ANIM_COMET = 10,
-    EL_ANIM_OUTLINE_TRACER = 11,
-    EL_ANIM_FADE_OUT = 12,
-    EL_ANIM_HUE_REVERSE = 13
+    EL_ANIM_FADE_IN = 6,
+    EL_ANIM_SEGMENT_TRAVEL = 7,
+    EL_ANIM_SEGMENT_BOUNCE = 8,
+    EL_ANIM_COMET = 9,
+    EL_ANIM_OUTLINE_TRACER = 10,
+    EL_ANIM_FADE_OUT = 11
 } EL_AnimationPreset;
 
 /**
@@ -341,8 +347,6 @@ EL_API EL_Animation *el_animation_intensity_fade_in(float target, float duration
 EL_API EL_Animation *el_animation_intensity_fade_out(float start, float duration, int32_t easing /*EL_Easing*/);
 EL_API EL_Animation *el_animation_glow_radius_breath(float duration, float minRadius, float maxRadius);
 EL_API EL_Animation *el_animation_bloom_pulse(float duration, float min, float max);
-EL_API EL_Animation *el_animation_hue_rotation_reverse(float baseRate, float duration);
-EL_API EL_Animation *el_animation_hue_rotation_ease_reverse(float maxRate, float duration);
 EL_API EL_Animation *el_animation_segment_travel(float duration, float length, float boost);
 EL_API EL_Animation *el_animation_segment_bounce(float duration, float length, float boost);
 EL_API EL_Animation *el_animation_outline_tracer(float duration, int32_t easing /*EL_Easing*/);

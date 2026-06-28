@@ -4,6 +4,9 @@
 #include "core/config.h"
 #include "util/constants.h"
 #include <glm/glm.hpp>
+#include <algorithm>
+#include <cmath>
+#include <vector>
 
 namespace EdgeLighting
 {
@@ -267,6 +270,57 @@ namespace EdgeLighting
             }
 
             return Detail::GetPointOnRectCCW(t, geom);
+        }
+
+        /// Maps a straight edge to the span of perimeter [0, 1] it occupies,
+        /// returned as { x = start position, y = length } so it drops straight
+        /// into a LitSegment (whose position is its start). Accounts for winding
+        /// and rounded corners (the returned span covers only the straight
+        /// portion, not the corner arcs). Example: light the left edge with
+        ///   auto a = GetEdgeArc(Edge::LEFT, geom);
+        ///   LitSegment{ a.x, a.y };
+        inline glm::vec2 GetEdgeArc(Edge edge, const RectGeometry &geom)
+        {
+            float halfW = geom.width * 0.5f;
+            float halfH = geom.height * 0.5f;
+            float r = std::max(0.0f, std::min(geom.cornerRadius, std::min(halfW, halfH)));
+
+            float ws = geom.width - 2.0f * r;  // top / bottom straight length
+            float hs = geom.height - 2.0f * r; // left / right straight length
+            float arc = PI * r * 0.5f;         // one quarter-corner length
+            float peri = 2.0f * ws + 2.0f * hs + 4.0f * arc;
+            if (peri <= 0.0f)
+            {
+                return glm::vec2(0.0f, 0.0f);
+            }
+
+            // Distance to the start of each edge's straight run, in traversal order.
+            // CW : top -> right -> bottom -> left.  CCW: left -> bottom -> right -> top.
+            float start = 0.0f;
+            float len = (edge == Edge::TOP || edge == Edge::BOTTOM) ? ws : hs;
+
+            if (geom.winding == Winding::CLOCKWISE)
+            {
+                switch (edge)
+                {
+                    case Edge::TOP:    { start = 0.0f; break; }
+                    case Edge::RIGHT:  { start = ws + arc; break; }
+                    case Edge::BOTTOM: { start = ws + hs + 2.0f * arc; break; }
+                    case Edge::LEFT:   { start = 2.0f * ws + hs + 3.0f * arc; break; }
+                }
+            }
+            else
+            {
+                switch (edge)
+                {
+                    case Edge::LEFT:   { start = 0.0f; break; }
+                    case Edge::BOTTOM: { start = hs + arc; break; }
+                    case Edge::RIGHT:  { start = hs + ws + 2.0f * arc; break; }
+                    case Edge::TOP:    { start = 2.0f * hs + ws + 3.0f * arc; break; }
+                }
+            }
+
+            return glm::vec2(start / peri, len / peri);
         }
 
         /// Converts an app-space point (rect top-left = (0,0), +Y down) to local space

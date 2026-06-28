@@ -249,16 +249,6 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
         config.neon.glowRadius = std::min(80.0f, config.neon.glowRadius + 1.0f);
         break;
     }
-    case GLFW_KEY_P:
-    {
-        config.neon.hueRotationRate = std::min(5.0f, config.neon.hueRotationRate + 0.1f);
-        break;
-    }
-    case GLFW_KEY_L:
-    {
-        config.neon.hueRotationRate = std::max(0.0f, config.neon.hueRotationRate - 0.1f);
-        break;
-    }
     case GLFW_KEY_SPACE:
     {
         if (gEffect->GetClock().IsPlaying())

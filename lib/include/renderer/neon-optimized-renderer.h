@@ -4,7 +4,6 @@
 #include "renderer/base-renderer.h"
 #include "gl/shader-program.h"
 #include "gl/vertex-array.h"
-#include "gl/texture-2d.h"
 #include "gl/framebuffer.h"
 #include <glm/glm.hpp>
 #include <vector>
@@ -38,7 +37,6 @@ namespace EdgeLighting
         bool setupShaders();
         void setupGeometry(const Config &config);
         void rebuildLoopSamples(const Config &config);
-        void rebuildGradientLUT(const Config &config);
 
     private:
         Config mCurrentConfig;
@@ -50,9 +48,11 @@ namespace EdgeLighting
 
         std::vector<glm::vec2> mLoopSamples;
         float mSampleSpacing = 0.0f;
+        float mQuadMargin = 0.0f; ///< Draw-quad margin (scaled px); shader fades the bloom out by here.
 
-        Texture2D mGradientLUT;
-        std::vector<float> mLUTScratch;
+        /// Per-loop-sample gather data (rgb = colour, a = weight), rebuilt each
+        /// frame and uploaded as uSampleData[]. See ColorUtils::BuildSampleData.
+        std::vector<glm::vec4> mSampleData;
     };
 
 } // namespace EdgeLighting

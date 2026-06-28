@@ -124,6 +124,29 @@ namespace
         return out;
     }
 
+    void copySegmentsToC(const std::vector<EdgeLighting::LitSegment> &src, EL_LitSegment *dst, int32_t &count)
+    {
+        count = static_cast<int32_t>(std::min<size_t>(src.size(), EL_MAX_SEGMENTS));
+        for (int32_t i = 0; i < count; ++i)
+        {
+            dst[i].position = src[i].position;
+            dst[i].length = src[i].length;
+            dst[i].brightness = src[i].brightness;
+        }
+    }
+
+    std::vector<EdgeLighting::LitSegment> segmentsFromC(const EL_LitSegment *src, int32_t count)
+    {
+        std::vector<EdgeLighting::LitSegment> out;
+        int32_t n = std::max(0, std::min(count, EL_MAX_SEGMENTS));
+        out.reserve(static_cast<size_t>(n));
+        for (int32_t i = 0; i < n; ++i)
+        {
+            out.push_back({src[i].position, src[i].length, src[i].brightness});
+        }
+        return out;
+    }
+
     EdgeLighting::Config toConfig(const EL_Config &c)
     {
         using namespace EdgeLighting;
@@ -142,14 +165,7 @@ namespace
         out.neon.bloomStrength = c.neon.bloomStrength;
         out.neon.glowSide = static_cast<GlowSide>(c.neon.glowSide);
         out.neon.glowSideSoftness = c.neon.glowSideSoftness;
-        out.neon.blendSpace = static_cast<BlendSpace>(c.neon.blendSpace);
-        out.neon.colorStops = stopsFromC(c.neon.colorStops, c.neon.colorStopCount);
-        out.neon.hueRotationRate = c.neon.hueRotationRate;
-        out.neon.segmentPosition = c.neon.segmentPosition;
-        out.neon.segmentLength = c.neon.segmentLength;
-        out.neon.segmentBoost = c.neon.segmentBoost;
-        out.neon.arcStart = c.neon.arcStart;
-        out.neon.arcLength = c.neon.arcLength;
+        out.neon.segments = segmentsFromC(c.neon.segments, c.neon.segmentCount);
 
         out.multipassNeon.enable = c.multipassNeon.enable != 0;
         out.multipassNeon.showPerimeterGradient = c.multipassNeon.showPerimeterGradient != 0;
@@ -167,7 +183,6 @@ namespace
         out.optimizedNeon.enable = c.optimizedNeon.enable != 0;
         out.optimizedNeon.resolutionScale = c.optimizedNeon.resolutionScale;
         out.optimizedNeon.numSamples = c.optimizedNeon.numSamples;
-        out.optimizedNeon.gradientLutSize = c.optimizedNeon.gradientLutSize;
         out.optimizedNeon.showHalfRes = c.optimizedNeon.showHalfRes != 0;
 
         out.wireframe.enable = c.wireframe.enable != 0;
@@ -192,14 +207,7 @@ namespace
         out.neon.bloomStrength = c.neon.bloomStrength;
         out.neon.glowSide = static_cast<int32_t>(c.neon.glowSide);
         out.neon.glowSideSoftness = c.neon.glowSideSoftness;
-        out.neon.blendSpace = static_cast<int32_t>(c.neon.blendSpace);
-        copyStopsToC(c.neon.colorStops, out.neon.colorStops, out.neon.colorStopCount);
-        out.neon.hueRotationRate = c.neon.hueRotationRate;
-        out.neon.segmentPosition = c.neon.segmentPosition;
-        out.neon.segmentLength = c.neon.segmentLength;
-        out.neon.segmentBoost = c.neon.segmentBoost;
-        out.neon.arcStart = c.neon.arcStart;
-        out.neon.arcLength = c.neon.arcLength;
+        copySegmentsToC(c.neon.segments, out.neon.segments, out.neon.segmentCount);
 
         out.multipassNeon.enable = c.multipassNeon.enable ? 1 : 0;
         out.multipassNeon.showPerimeterGradient = c.multipassNeon.showPerimeterGradient ? 1 : 0;
@@ -217,7 +225,6 @@ namespace
         out.optimizedNeon.enable = c.optimizedNeon.enable ? 1 : 0;
         out.optimizedNeon.resolutionScale = c.optimizedNeon.resolutionScale;
         out.optimizedNeon.numSamples = c.optimizedNeon.numSamples;
-        out.optimizedNeon.gradientLutSize = c.optimizedNeon.gradientLutSize;
         out.optimizedNeon.showHalfRes = c.optimizedNeon.showHalfRes ? 1 : 0;
 
         out.wireframe.enable = c.wireframe.enable ? 1 : 0;
@@ -594,11 +601,6 @@ extern "C"
             a = group;
             break;
         }
-        case EL_ANIM_REVERSE_SWEEP:
-        {
-            a = std::make_shared<HueRotationEaseReverse>(0.8f, 6.0f);
-            break;
-        }
         case EL_ANIM_FADE_IN:
         {
             a = std::make_shared<IntensityFadeIn>(1.0f, 1.5f, EasingFunction::OutCubic);
@@ -627,12 +629,6 @@ extern "C"
         case EL_ANIM_FADE_OUT:
         {
             a = std::make_shared<IntensityFadeOut>(1.0f, 2.0f, EasingFunction::InCubic);
-            break;
-        }
-        case EL_ANIM_HUE_REVERSE:
-        {
-            // Abrupt direction flip every 3 seconds (6 s full cycle).
-            a = std::make_shared<HueRotationReverse>(0.4f, 6.0f);
             break;
         }
         default:
@@ -667,14 +663,6 @@ extern "C"
     EL_Animation *el_animation_bloom_pulse(float duration, float min, float max)
     {
         return new EL_Animation{std::make_shared<EdgeLighting::BloomPulse>(duration, min, max)};
-    }
-    EL_Animation *el_animation_hue_rotation_reverse(float baseRate, float duration)
-    {
-        return new EL_Animation{std::make_shared<EdgeLighting::HueRotationReverse>(baseRate, duration)};
-    }
-    EL_Animation *el_animation_hue_rotation_ease_reverse(float maxRate, float duration)
-    {
-        return new EL_Animation{std::make_shared<EdgeLighting::HueRotationEaseReverse>(maxRate, duration)};
     }
     EL_Animation *el_animation_segment_travel(float duration, float length, float boost)
     {

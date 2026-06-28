@@ -19,14 +19,14 @@ namespace EdgeLightingDemo
         HEARTBEAT,      ///< lub-DUB rhythm on intensity, rest, loop.
         SHIMMER,        ///< Intensity + glow radius pulse in phase, fast.
         AURORA,         ///< Very slow layered motion across multiple params.
-        REVERSE_SWEEP,  ///< Hue ring sweeps forwards then backwards, smoothly.
         FADE_IN,        ///< One-shot ease-in of intensity from 0 to 1.
         SEGMENT_TRAVEL, ///< Bright Gaussian spot revolves around the perimeter.
         SEGMENT_BOUNCE, ///< Bright spot swings back and forth (triangle wave).
         COMET,          ///< Tight fast spot — single-revolution comet feel.
+        SIDE_EDGES,     ///< Only the two side edges lit; the pair breathes.
+        SIDE_EDGES_DUO, ///< Two side edges, own colours + travelling white spots.
         OUTLINE_TRACER, ///< One-shot: rect dark, then arc grows 0→1 to light it.
         FADE_OUT,       ///< One-shot ease-out of intensity to 0.
-        HUE_REVERSE,    ///< Hue direction flips abruptly every few seconds.
         COUNT
     } AnimationPreset;
 
@@ -58,10 +58,6 @@ namespace EdgeLightingDemo
         {
             return "Aurora";
         }
-        case AnimationPreset::REVERSE_SWEEP:
-        {
-            return "Reverse Sweep";
-        }
         case AnimationPreset::FADE_IN:
         {
             return "Fade In";
@@ -78,6 +74,14 @@ namespace EdgeLightingDemo
         {
             return "Comet";
         }
+        case AnimationPreset::SIDE_EDGES:
+        {
+            return "Side Edges";
+        }
+        case AnimationPreset::SIDE_EDGES_DUO:
+        {
+            return "Side Edges Duo";
+        }
         case AnimationPreset::OUTLINE_TRACER:
         {
             return "Outline Tracer";
@@ -85,10 +89,6 @@ namespace EdgeLightingDemo
         case AnimationPreset::FADE_OUT:
         {
             return "Fade Out";
-        }
-        case AnimationPreset::HUE_REVERSE:
-        {
-            return "Hue Reverse";
         }
         default:
         {
@@ -156,12 +156,6 @@ namespace EdgeLightingDemo
             return group;
         }
 
-        case AnimationPreset::REVERSE_SWEEP:
-        {
-            // Triangle wave between -0.8 and +0.8 over 6 s — smooth direction flip.
-            return std::make_shared<HueRotationEaseReverse>(0.8f, 6.0f);
-        }
-
         case AnimationPreset::FADE_IN:
         {
             return std::make_shared<IntensityFadeIn>(1.0f, 1.5f, EdgeLighting::EasingFunction::OutCubic);
@@ -185,6 +179,24 @@ namespace EdgeLightingDemo
             return std::make_shared<SegmentTravel>(0.6f, 0.05f, 6.0f);
         }
 
+        case AnimationPreset::SIDE_EDGES:
+        {
+            // Two bars on the left + right edges (rest dark), gently breathing
+            // together. SideEdges sets the gate/geometry; IntensityPulse drives
+            // the shared brightness.
+            auto group = std::make_shared<AnimationGroup>();
+            group->Add(std::make_shared<SideEdges>(0.95f, 1.0f));
+            group->Add(std::make_shared<IntensityPulse>(2.0f, 0.5f, 1.0f));
+            return group;
+        }
+
+        case AnimationPreset::SIDE_EDGES_DUO:
+        {
+            // Per-segment colour + nested travelling spots: left red->orange,
+            // right blue->cyan, each with a white accent sliding along it.
+            return std::make_shared<SideEdgesAccent>(2.5f);
+        }
+
         case AnimationPreset::OUTLINE_TRACER:
         {
             // One-shot 2 s draw — rect goes from dark to fully lit.
@@ -195,12 +207,6 @@ namespace EdgeLightingDemo
         {
             // One-shot fade-out from full intensity to 0 over 2 seconds.
             return std::make_shared<IntensityFadeOut>(1.0f, 2.0f, EdgeLighting::EasingFunction::InCubic);
-        }
-
-        case AnimationPreset::HUE_REVERSE:
-        {
-            // Abrupt direction flip every 3 seconds (6s full cycle).
-            return std::make_shared<HueRotationReverse>(0.4f, 6.0f);
         }
 
         default:

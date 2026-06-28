@@ -31,8 +31,9 @@
 // spreading glow comes from glowRadius instead.
 #define FILAMENT_EDGE_SOFTNESS    1.5
 
-// --- Halo (sharp coloured glow). Kernel uses g * sqrt(g) ~ p = 1.5. The sum
-//     is normalised by kg^2 to recover unit-density brightness. ---
+// --- Halo (sharp coloured glow). Kernel uses g*g (p = 2, no sqrt — cheaper on
+//     weak GPUs); transverse falloff ~1/D^3. The sum is normalised by kg^3 to
+//     recover unit-density brightness (peak matches the old g*sqrt(g) form). ---
 #define HALO_GAIN                 0.90
 #define HALO_NORM_FACTOR          0.43
 #define HALO_SPACING_FLOOR        1.2
@@ -45,7 +46,8 @@
 // --- Grading ---
 #define TONE_MAP_SHOULDER         0.6
 #define GAMMA_EXPONENT            0.85
-#define FILM_GRAIN_AMOUNT         0.04
+// (Film grain removed from neon.frag / neon-optimized.frag to save a per-pixel
+//  sin/hash on weak GPUs. The multi-pass glow shader keeps its own grain.)
 
 // --- Epsilons ---
 #define SIDE_SOFT_EPSILON         1e-5
