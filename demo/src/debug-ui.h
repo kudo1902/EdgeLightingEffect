@@ -61,6 +61,7 @@ private:
     void buildAnimationSection(EdgeLighting::Config &cfg, float clockTime);
     void buildBackgroundSection();
 
+private:
     GLFWwindow *mWindow = nullptr;
     GLFWwindow *mMainWindow = nullptr;
     ImGuiContext *mContext = nullptr;
