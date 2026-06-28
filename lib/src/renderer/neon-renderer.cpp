@@ -40,17 +40,6 @@ namespace EdgeLighting
             return;
         }
 
-        // Premultiplied-alpha "over": final = src.rgb + dst * (1 - src.a). The
-        // shader emits premultiplied colour with coverage in alpha, so the hot
-        // core occludes background objects while the halo/bloom stay additive
-        // and the dark surround leaves the background untouched. (Plain additive
-        // GL_SRC_ALPHA,GL_ONE could only add light — it washed out over bright
-        // content and the opaque alpha boxed out anything composited behind it.)
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-
-        mShaderProgram.Use();
-
         float halfRectW = config.geometry.width * 0.5f;
         float halfRectH = config.geometry.height * 0.5f;
         glm::mat4 proj = glm::ortho(0.0f, static_cast<float>(viewportWidth), 0.0f, static_cast<float>(viewportHeight), -1.0f, 1.0f);
@@ -59,6 +48,56 @@ namespace EdgeLighting
         glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(center, 0.0f));
         glm::mat4 mvp = proj * model;
 
+        // Compositing mode:
+        //  - opaque == false (default): premultiplied-alpha "over" —
+        //    final = src.rgb + dst * (1 - src.a). The shader emits premultiplied
+        //    colour with coverage in alpha, so the hot core occludes background
+        //    objects while the halo/bloom stay additive and the dark surround
+        //    leaves the background untouched. The expensive gather runs only on
+        //    the tight glow quad.
+        //  - opaque == true: blending off. A cheap fullscreen black fill runs
+        //    first (Pass 1), then the SAME tight glow quad draws the neon on top
+        //    (Pass 2). The far region keeps the fill's black, so the result is a
+        //    fullscreen opaque image — but the costly 128-sample gather still
+        //    only runs on the tight quad, not the whole screen.
+        if (config.neon.opaque)
+        {
+            glDisable(GL_BLEND);
+
+            // Pass 1: fullscreen black fill. Build a viewport-covering quad in
+            // rect-local space — the four viewport corners are (world - center);
+            // uMVP maps local -> NDC so the quad lands on the screen corners.
+            float l = -center.x;
+            float b = -center.y;
+            float r = static_cast<float>(viewportWidth) - center.x;
+            float t = static_cast<float>(viewportHeight) - center.y;
+            // clang-format off
+            float verts[] = {
+                l, t, l, b, r, b,
+                l, t, r, b, r, t,
+            };
+            // clang-format on
+            mFullVertexArray.SetVertexData(verts, sizeof(verts));
+            mFullVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+
+            mFillShader.Use();
+            mFillShader.SetUniform("uMVP", mvp);
+            mFillShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
+            mFillShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
+            mFillShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
+            mFillShader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness);
+            mFullVertexArray.DrawArrays(GL_TRIANGLES, 6);
+            mFillShader.Unuse();
+        }
+        else
+        {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        }
+
+        // Pass 2 (opaque) / only pass (transparent): the neon gather on the
+        // tight glow quad, in both modes.
+        mShaderProgram.Use();
         mShaderProgram.SetUniform("uMVP", mvp);
         mShaderProgram.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
         mShaderProgram.SetUniform("uCornerRadius", config.geometry.cornerRadius);
@@ -87,10 +126,17 @@ namespace EdgeLighting
         // pulls per-sample colour from this in a single texture() call.
         mGradientLUT.Bind(0);
         mShaderProgram.SetUniform("uGradientLUT", 0);
+        mShaderProgram.SetUniform("uQuadMargin", mQuadMargin);
 
+        // Tight glow quad in both modes — opaque's far region is covered by the
+        // Pass 1 black fill above, so the gather never runs fullscreen.
         mVertexArray.DrawArrays(GL_TRIANGLES, 6);
 
         mShaderProgram.Unuse();
+
+        // Restore a known blend state for following renderers (the opaque path
+        // disables blending).
+        glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     }
 
@@ -110,17 +156,31 @@ namespace EdgeLighting
         mShaderProgram = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                        ShaderSource::NEON_FRAG_SRC,
                                        "NeonRenderer");
-        return mShaderProgram.IsValid();
+        // Cheap fullscreen black fill, used only by opaque mode. Reuses the
+        // standard neon vertex shader (uMVP) so the fill quad respects the
+        // viewport.
+        mFillShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
+                                    ShaderSource::NEON_FILL_FRAG_SRC,
+                                    "NeonRenderer.Fill");
+        return mShaderProgram.IsValid() && mFillShader.IsValid();
     }
 
     void NeonRenderer::setupGeometry(const Config &config)
     {
-        // Size the quad to exactly cover the lit region: rect + earlyOut. Beyond
-        // this the halo/bloom are < ~1%, so geometry bounds the far region
-        // instead of a per-fragment discard — friendlier to tile-based GPUs.
+        // Size the quad to cover the lit region: rect + earlyOut. Beyond this the
+        // halo/bloom are < ~1% at default strength, so geometry bounds the far
+        // region instead of a per-fragment discard (tiler-friendly).
         // Factors come from the shared neon-tuning.h (also fed to the shaders).
         float margin = std::max(config.neon.glowRadius * float(EARLY_OUT_RADIUS_FACTOR),
                                 mSampleSpacing * float(EARLY_OUT_SPACING_FACTOR));
+
+        // The wide bloom (1/D tail) stays visible further out as bloomStrength /
+        // intensity rise, so grow the quad with them — otherwise a strong bloom
+        // gets chopped at a hard rectangular edge, worst on small geometry. The
+        // shader still soft-fades the emission to zero at mQuadMargin, so even
+        // if this under-estimates there's no hard cutoff.
+        margin *= 1.0f + config.neon.bloomStrength * config.neon.intensity;
+        mQuadMargin = margin;
 
         float halfW = config.geometry.width * 0.5f;
         float halfH = config.geometry.height * 0.5f;

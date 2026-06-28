@@ -65,6 +65,16 @@ namespace EdgeLighting
     {
         bool enable = false; ///< Enable or disable the neon renderer
 
+        // --- Compositing ---
+
+        /// How the effect combines with whatever is already in the framebuffer.
+        /// false (default): premultiplied-alpha "over" — the dark surround is
+        ///   transparent, so the effect composites onto the background.
+        /// true: opaque — blending is disabled and the effect's pixels (a dark
+        ///   surround around the lit line) are written directly, occluding the
+        ///   background within the effect's draw region.
+        bool opaque = false;
+
         // --- Filament (the bright line itself) ---
 
         /// Width of the bright filament line in pixels.

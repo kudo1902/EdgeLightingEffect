@@ -7,6 +7,7 @@
 #include "renderer/neon-optimized-renderer.h"
 #include "animation/neon-animations.h"
 #include "debug-ui.h"
+#include "background-quad.h"
 #include "ui-controls.h"
 #include "util/log-util.h"
 #include <memory>
@@ -119,6 +120,13 @@ int main()
         return -1;
     }
 
+    // Debug background quad (verifies neon compositing: blend vs opaque).
+    EdgeLightingDemo::BackgroundQuad background;
+    if (!background.Init())
+    {
+        LOG_W("Background debug quad failed to initialise; continuing without it.");
+    }
+
     EdgeLightingDemo::PrintControls();
     EdgeLightingDemo::PrintCurrentConfig(gEffect->GetConfig(), gEffect->GetClock().IsPlaying());
 
@@ -146,10 +154,20 @@ int main()
             glClearColor(0.03f, 0.03f, 0.05f, 1.0f);
             glClear(GL_COLOR_BUFFER_BIT);
 
-            gEffect->Update(deltaTime);
-
             int fbW, fbH;
             glfwGetFramebufferSize(window, &fbW, &fbH);
+
+            // Debug checker background, drawn first so the effect composites
+            // over it. Toggling Neon > Opaque shows blend vs occlude.
+            if (debugUI.IsBackgroundEnabled())
+            {
+                background.Draw(debugUI.GetBackgroundCheckerSize(),
+                                debugUI.GetBackgroundColorA(),
+                                debugUI.GetBackgroundColorB());
+            }
+
+            gEffect->Update(deltaTime);
+
             double t0 = glfwGetTime();
             gEffect->Render(fbW, fbH);
             double t1 = glfwGetTime();

@@ -57,6 +57,11 @@ uniform float uArcLength;
 // GLES 3.0 does not support sampler1D, so we use a 1-row 2D texture.
 uniform sampler2D uGradientLUT;
 
+// Distance (in pixels, from the rect edge) to the draw quad's edge. The whole
+// emission is faded to zero just before this, so the bloom never shows a hard
+// rectangular cutoff where the quad clips it — independent of bloom strength.
+uniform float uQuadMargin;
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -212,6 +217,12 @@ void main() {
     // --- One-sided cut: mask the WHOLE emission at the line ----------
     if (uGlowSide == GLOW_SIDE_INSIDE)       result *= smoothstep( softEdge, -softEdge, d);
     else if (uGlowSide == GLOW_SIDE_OUTSIDE) result *= smoothstep(-softEdge,  softEdge, d);
+
+    // --- Quad-edge fade: the draw quad ends at d == uQuadMargin (exterior).
+    // Fade the emission to zero over the last stretch so a strong bloom never
+    // shows a hard rectangular cutoff where the quad clips it. Interior pixels
+    // have d < 0, well below the fade band, so they're unaffected.
+    result *= 1.0 - smoothstep(uQuadMargin * 0.8, uQuadMargin, d);
 
     // --- Grade --------------------------------------------------------
     result = result / (result + vec3(TONE_MAP_SHOULDER));

@@ -5,6 +5,7 @@
 #include "animation-presets.h"
 #include "animation/animation.h"
 #include <GLFW/glfw3.h>
+#include <glm/glm.hpp>
 
 struct ImGuiContext;
 
@@ -43,12 +44,22 @@ public:
 
     GLFWwindow *GetWindow() const { return mWindow; }
 
+    /// @name Debug background quad (demo verification aid)
+    /// Drawn by the demo behind the effect to visualise neon compositing.
+    ///@{
+    bool IsBackgroundEnabled() const { return mShowBackground; }
+    float GetBackgroundCheckerSize() const { return mBgCheckerSize; }
+    const glm::vec3 &GetBackgroundColorA() const { return mBgColorA; }
+    const glm::vec3 &GetBackgroundColorB() const { return mBgColorB; }
+    ///@}
+
 private:
     void buildGeometrySection(EdgeLighting::Config &cfg);
     void buildNeonSection(EdgeLighting::Config &cfg);
     void buildMultiPassNeonSection(EdgeLighting::Config &cfg);
     void buildOptimizedNeonSection(EdgeLighting::Config &cfg);
     void buildAnimationSection(EdgeLighting::Config &cfg, float clockTime);
+    void buildBackgroundSection();
 
     GLFWwindow *mWindow = nullptr;
     GLFWwindow *mMainWindow = nullptr;
@@ -62,6 +73,12 @@ private:
     float mAnimElapsed   = 0.0f;     ///< Animation-time accumulator (scaled by speed each frame).
     float mLastClockTime = 0.0f;     ///< Clock time at last ApplyActiveAnimation tick.
     bool  mFiredComplete = false;    ///< Edge-triggered OnComplete latch.
+
+    // --- Debug background quad (demo verification aid) ---
+    bool      mShowBackground = false;
+    float     mBgCheckerSize  = 24.0f;
+    glm::vec3 mBgColorA       = glm::vec3(0.55f, 0.55f, 0.58f); ///< Light checker square.
+    glm::vec3 mBgColorB       = glm::vec3(0.20f, 0.20f, 0.23f); ///< Dark checker square.
 };
 
 #endif
