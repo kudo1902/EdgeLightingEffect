@@ -26,6 +26,17 @@ namespace EdgeLighting
         rebuildLoopSamples(mCurrentConfig);
         setupGeometry(mCurrentConfig);
         rebuildGradientLUT(mCurrentConfig);
+
+        // Static fullscreen NDC quad for the opaque-mode black fill (identity
+        // MVP; the fill shader derives its shape from gl_FragCoord, not aPos).
+        // clang-format off
+        float ndc[] = {
+            -1.0f,  1.0f,  -1.0f, -1.0f,   1.0f, -1.0f,
+            -1.0f,  1.0f,   1.0f, -1.0f,   1.0f,  1.0f,
+        };
+        // clang-format on
+        mFullVertexArray.SetVertexData(ndc, sizeof(ndc));
+        mFullVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
         return true;
     }
 
@@ -48,51 +59,33 @@ namespace EdgeLighting
         glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(center, 0.0f));
         glm::mat4 mvp = proj * model;
 
-        // Compositing mode:
-        //  - opaque == false (default): premultiplied-alpha "over" —
-        //    final = src.rgb + dst * (1 - src.a). The shader emits premultiplied
-        //    colour with coverage in alpha, so the hot core occludes background
-        //    objects while the halo/bloom stay additive and the dark surround
-        //    leaves the background untouched. The expensive gather runs only on
-        //    the tight glow quad.
-        //  - opaque == true: blending off. A cheap fullscreen black fill runs
-        //    first (Pass 1), then the SAME tight glow quad draws the neon on top
-        //    (Pass 2). The far region keeps the fill's black, so the result is a
-        //    fullscreen opaque image — but the costly 128-sample gather still
-        //    only runs on the tight quad, not the whole screen.
+        // Premultiplied-alpha "over": final = src.rgb + dst * (1 - src.a). Used
+        // for both the opaque black fill and the neon, so the neon composites
+        // cleanly over the black. (Blending stays ON the whole time — toggling
+        // GL_BLEND mid-draw is a common cross-driver footgun on mobile GLES.)
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+
+        // --- Opaque-mode black background pass -----------------------------
+        // A fullscreen NDC quad (identity MVP); the fragment shader shapes the
+        // black coverage from an analytic rounded-box SDF read off gl_FragCoord
+        // (highp — exact on Mali/Tizen):
+        //   BOTH    -> black everywhere (whole viewport opaque).
+        //   INSIDE  -> black only where d <= softEdge (off-side stays clear).
+        //   OUTSIDE -> mirror of INSIDE.
         if (config.neon.opaque)
         {
-            glDisable(GL_BLEND);
-
-            // Pass 1: fullscreen black fill. Build a viewport-covering quad in
-            // rect-local space — the four viewport corners are (world - center);
-            // uMVP maps local -> NDC so the quad lands on the screen corners.
-            float l = -center.x;
-            float b = -center.y;
-            float r = static_cast<float>(viewportWidth) - center.x;
-            float t = static_cast<float>(viewportHeight) - center.y;
-            // clang-format off
-            float verts[] = {
-                l, t, l, b, r, b,
-                l, t, r, b, r, t,
-            };
-            // clang-format on
-            mFullVertexArray.SetVertexData(verts, sizeof(verts));
-            mFullVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
-
-            mFillShader.Use();
-            mFillShader.SetUniform("uMVP", mvp);
-            mFillShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
-            mFillShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
-            mFillShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
-            mFillShader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness);
+            float softEdge = std::max(config.neon.glowSideSoftness,
+                                      static_cast<float>(SIDE_SOFT_EPSILON));
+            mBlackRectShader.Use();
+            mBlackRectShader.SetUniform("uMVP", glm::mat4(1.0f));
+            mBlackRectShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
+            mBlackRectShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
+            mBlackRectShader.SetUniform("uRectCenter", center);
+            mBlackRectShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
+            mBlackRectShader.SetUniform("uSoftEdge", softEdge);
             mFullVertexArray.DrawArrays(GL_TRIANGLES, 6);
-            mFillShader.Unuse();
-        }
-        else
-        {
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+            mBlackRectShader.Unuse();
         }
 
         // Pass 2 (opaque) / only pass (transparent): the neon gather on the
@@ -159,10 +152,10 @@ namespace EdgeLighting
         // Cheap fullscreen black fill, used only by opaque mode. Reuses the
         // standard neon vertex shader (uMVP) so the fill quad respects the
         // viewport.
-        mFillShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
-                                    ShaderSource::NEON_FILL_FRAG_SRC,
-                                    "NeonRenderer.Fill");
-        return mShaderProgram.IsValid() && mFillShader.IsValid();
+        mBlackRectShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
+                                         ShaderSource::BLACK_RECT_FRAG_SRC,
+                                         "NeonRenderer.BlackRect");
+        return mShaderProgram.IsValid() && mBlackRectShader.IsValid();
     }
 
     void NeonRenderer::setupGeometry(const Config &config)

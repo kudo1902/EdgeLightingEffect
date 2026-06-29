@@ -36,7 +36,7 @@ namespace EdgeLighting
     private:
         Config mCurrentConfig;
         ShaderProgram mShaderProgram;
-        ShaderProgram mFillShader;                         ///< Cheap black fill for opaque mode.
+        ShaderProgram mBlackRectShader;                    ///< Opaque-mode black background fill (black-rect.frag).
         VertexArray mVertexArray{"NeonRenderer"};          ///< Tight glow quad (rect + earlyOut).
         VertexArray mFullVertexArray{"NeonRenderer.Full"}; ///< Viewport-covering quad for the opaque fill.
 
@@ -47,7 +47,7 @@ namespace EdgeLighting
         /// Each shader sample becomes a single texture lookup instead of an in-shader stops loop + HSV blend
         Texture2D mGradientLUT;
         std::vector<float> mLUTScratch; ///< Float scratch for CPU gradient baking (GRADIENT_LUT_SIZE * 4).
-        float mQuadMargin = 0.0f; ///< Draw-quad margin (px from rect edge); shader fades the bloom out by here.
+        float mQuadMargin = 0.0f;       ///< Draw-quad margin (px from rect edge); shader fades the bloom out by here.
     };
 }
 
