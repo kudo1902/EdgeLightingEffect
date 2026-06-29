@@ -47,6 +47,11 @@ namespace EdgeLighting
         /// Each shader sample becomes a single texture lookup instead of an in-shader stops loop + HSV blend
         Texture2D mGradientLUT;
         std::vector<float> mLUTScratch; ///< Float scratch for CPU gradient baking (GRADIENT_LUT_SIZE * 4).
+
+        /// Loop sample positions as an N×1 RGBA32F data texture (xy = position),
+        /// texelFetch'd in the shader instead of a `uniform vec2[]` array.
+        Texture2D mLoopSamplesTex;
+        std::vector<float> mLoopSamplesData; ///< RGBA32F scratch: (x, y, 0, 0) per sample.
         float mQuadMargin = 0.0f;       ///< Draw-quad margin (px from rect edge); shader fades the bloom out by here.
     };
 }

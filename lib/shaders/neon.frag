@@ -36,7 +36,13 @@ uniform int   uGlowSide;
 uniform float uGlowSideSoftness;
 
 uniform float uSampleSpacing;
-uniform vec2  uLoopSamples[NEON_NUM_SAMPLES];
+
+// Loop sample positions (perimeter points) as an N×1 RGBA32F data texture,
+// texelFetch'd in the gather loop. Using a texture instead of a
+// `uniform vec2 uLoopSamples[N]` array avoids the large per-element uniform
+// allocation, which can blow the fragment uniform-vector limit (and silently
+// fail to link) on some mobile GLES drivers. texelFetch is exact (no filtering).
+uniform sampler2D uLoopSamplesTex;
 
 // Travelling segment — Gaussian brightness peak at uSegmentPosition along
 // the perimeter. When uSegmentBoost == 0 the feature is effectively inactive
@@ -155,7 +161,7 @@ void main() {
     float si   = 0.0; // sample's normalised perimeter position
 
     for (int i = 0; i < NEON_NUM_SAMPLES; i++) {
-        vec2  dv  = vPos - uLoopSamples[i];
+        vec2  dv  = vPos - texelFetch(uLoopSamplesTex, ivec2(i, 0), 0).xy;
         float dd  = dot(dv, dv);
 
         float g   = 1.0 / (dd + kg2);
