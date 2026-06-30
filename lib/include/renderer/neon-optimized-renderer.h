@@ -53,6 +53,13 @@ namespace EdgeLighting
 
         Texture2D mGradientLUT;
         std::vector<float> mLUTScratch;
+
+        /// Loop sample positions as an N×1 RGBA8 data texture (16-bit-packed xy),
+        /// texelFetch'd in the shader instead of a `uniform vec2[]` array. Byte
+        /// texture only (Tizen/Mali), encoded over [-mSampleMaxCoord, mSampleMaxCoord].
+        Texture2D mLoopSamplesTex;
+        std::vector<unsigned char> mLoopSamplesBytes;
+        float mSampleMaxCoord = 1.0f;
     };
 
 } // namespace EdgeLighting

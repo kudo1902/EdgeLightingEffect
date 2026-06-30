@@ -92,11 +92,12 @@ namespace EdgeLighting
 
         mNeonShader.SetUniform("uNumSamples", config.optimizedNeon.numSamples);
         mNeonShader.SetUniform("uSampleSpacing", mSampleSpacing);
-        int sampleCount = static_cast<int>(mLoopSamples.size());
-        if (sampleCount > 0)
-        {
-            mNeonShader.SetUniform("uLoopSamples", mLoopSamples.data(), sampleCount);
-        }
+
+        // Loop sample positions from a data texture (unit 1) the shader
+        // texelFetches, instead of a uniform vec2[] array.
+        mLoopSamplesTex.Bind(1);
+        mNeonShader.SetUniform("uLoopSamplesTex", 1);
+        mNeonShader.SetUniform("uSampleMaxCoord", mSampleMaxCoord);
 
         mGradientLUT.Bind(0);
         mNeonShader.SetUniform("uGradientLUT", 0);
@@ -110,19 +111,43 @@ namespace EdgeLighting
         Framebuffer::BindDefault();
         glViewport(0, 0, viewportWidth, viewportHeight);
 
-        // Composite the premultiplied half-res FBO over the backbuffer:
-        // final = src.rgb + dst * (1 - src.a). The FBO's coverage alpha lets the
-        // hot core occlude background objects while the halo/bloom stay additive
-        // and the transparent surround leaves the background untouched. Bilinear
-        // upscaling of premultiplied alpha is fringe-free.
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        // Compositing mode (matches NeonRenderer):
+        //  - opaque == false: premult "over" — the transparent surround lets the
+        //    background through, the hot core occludes, halo/bloom add. Bilinear
+        //    upscaling of premultiplied alpha is fringe-free.
+        //  - opaque == true: blend off; the blit writes the effect opaquely over
+        //    black on the lit side (occluding the background) and discards the
+        //    unlit side of a one-sided glow so the background shows there.
+        const bool opaque = config.neon.opaque;
+        if (opaque)
+        {
+            glDisable(GL_BLEND);
+        }
+        else
+        {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        }
 
         mBlitShader.Use();
 
         // Identity MVP — blit quad is in NDC [-1, 1]
         glm::mat4 identity(1.0f);
         mBlitShader.SetUniform("uMVP", identity);
+        mBlitShader.SetUniform("uOpaque", opaque ? 1 : 0);
+        if (opaque)
+        {
+            // Full-res rect for the side-aware mask (gl_FragCoord space, y-up).
+            glm::vec2 centerFull(config.geometry.position.x + halfRectW,
+                                 static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
+            float softEdge = std::max(config.neon.glowSideSoftness,
+                                      static_cast<float>(SIDE_SOFT_EPSILON));
+            mBlitShader.SetUniform("uRectCenter", centerFull);
+            mBlitShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
+            mBlitShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
+            mBlitShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
+            mBlitShader.SetUniform("uSoftEdge", softEdge);
+        }
 
         // Debug toggle: nearest neighbour shows the raw half-res pixels.
         GLuint texId = mHalfResBuffer.GetTextureId();
@@ -138,6 +163,8 @@ namespace EdgeLighting
         mBlitVertexArray.DrawArrays(GL_TRIANGLES, 6);
 
         mBlitShader.Unuse();
+        // Restore default blend state (opaque mode disabled it above).
+        glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     }
 
@@ -224,6 +251,14 @@ namespace EdgeLighting
             float t = static_cast<float>(i) / static_cast<float>(n);
             mLoopSamples[i] = GeometryUtils::GetPointOnRectangle(t, config.geometry) * scale;
         }
+
+        // Upload the (scaled) positions as an N×1 RGBA8 data texture (16-bit-packed
+        // xy; byte texture only on the target). The shader texelFetches + decodes
+        // this instead of a uniform vec2[].
+        GeometryUtils::PackLoopSamplesRGBA8(mLoopSamples, MAX_LOOP_SAMPLES, mLoopSamplesBytes, mSampleMaxCoord);
+        mLoopSamplesTex.SetData(mLoopSamplesBytes.data(), MAX_LOOP_SAMPLES, /*height=*/1,
+                                GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
+        mLoopSamplesTex.SetParams(GL_NEAREST, GL_NEAREST, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
 
         float w = config.geometry.width;
         float h = config.geometry.height;

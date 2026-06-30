@@ -424,6 +424,7 @@ namespace EdgeLighting
             return true;
         }
 
+    private:
         GLuint mId = 0;
         std::string mName;
 

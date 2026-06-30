@@ -36,7 +36,9 @@ namespace EdgeLighting
     private:
         Config mCurrentConfig;
         ShaderProgram mShaderProgram;
-        VertexArray mVertexArray{"NeonRenderer"};
+        ShaderProgram mBlackRectShader;                    ///< Opaque-mode black background fill (black-rect.frag).
+        VertexArray mVertexArray{"NeonRenderer"};          ///< Tight glow quad (rect + earlyOut).
+        VertexArray mFullVertexArray{"NeonRenderer.Full"}; ///< Viewport-covering quad for the opaque fill.
 
         std::vector<glm::vec2> mLoopSamples;
         float mSampleSpacing = 0.0f;
@@ -45,6 +47,15 @@ namespace EdgeLighting
         /// Each shader sample becomes a single texture lookup instead of an in-shader stops loop + HSV blend
         Texture2D mGradientLUT;
         std::vector<float> mLUTScratch; ///< Float scratch for CPU gradient baking (GRADIENT_LUT_SIZE * 4).
+
+        /// Loop sample positions as an N×1 RGBA8 data texture (16-bit-packed xy),
+        /// texelFetch'd in the shader instead of a `uniform vec2[]` array. Only
+        /// byte textures are guaranteed on Tizen/Mali, so positions are encoded
+        /// over [-mSampleMaxCoord, mSampleMaxCoord] (see GeometryUtils::PackLoopSamplesRGBA8).
+        Texture2D mLoopSamplesTex;
+        std::vector<unsigned char> mLoopSamplesBytes;
+        float mSampleMaxCoord = 1.0f;
+        float mQuadMargin = 0.0f; ///< Draw-quad margin (px from rect edge); shader fades the bloom out by here.
     };
 }
 

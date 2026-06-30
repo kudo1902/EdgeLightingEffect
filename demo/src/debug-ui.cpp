@@ -93,6 +93,7 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     buildMultiPassNeonSection(cfg);
     buildOptimizedNeonSection(cfg);
     buildAnimationSection(cfg, effect.GetClock().GetTime());
+    buildBackgroundSection();
 
     ImGui::Checkbox("Wireframe", &cfg.wireframe.enable);
 
@@ -219,9 +220,10 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
         return;
     }
 
-    ImGui::SliderFloat("Line Width##Neon", &cfg.neon.lineWidth, 1.0f, 20.0f, "%.0f");
+    ImGui::Checkbox("Opaque (no blend)##Neon", &cfg.neon.opaque);
+    ImGui::SliderFloat("Line Width##Neon", &cfg.neon.lineWidth, 0.0f, 20.0f, "%.0f");
     ImGui::SliderFloat("Intensity##Neon", &cfg.neon.intensity, 0.0f, 3.0f, "%.2f");
-    ImGui::SliderFloat("Glow Radius##Neon", &cfg.neon.glowRadius, 1.0f, 80.0f, "%.0f");
+    ImGui::SliderFloat("Glow Radius##Neon", &cfg.neon.glowRadius, 0.0f, 80.0f, "%.0f");
     ImGui::SliderFloat("Bloom Strength##Neon", &cfg.neon.bloomStrength, 0.0f, 2.0f, "%.2f");
     ImGui::SliderFloat("Hue Rotation Rate##Neon", &cfg.neon.hueRotationRate, 0.0f, 2.0f, "%.2f");
 
@@ -531,4 +533,23 @@ void DebugUI::buildAnimationSection(EdgeLighting::Config & /*cfg*/, float clockT
         }
         ImGui::TextDisabled("Note: sliders for animated fields will be overwritten each frame.");
     }
+}
+
+void DebugUI::buildBackgroundSection()
+{
+    if (!ImGui::CollapsingHeader("Background (debug)", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+
+    ImGui::Checkbox("Show Checker##Bg", &mShowBackground);
+    ImGui::TextDisabled("Toggle Neon > 'Opaque' to see blend vs occlude.");
+    if (!mShowBackground)
+    {
+        return;
+    }
+
+    ImGui::SliderFloat("Checker Size##Bg", &mBgCheckerSize, 4.0f, 128.0f, "%.0f");
+    ImGui::ColorEdit3("Color A##Bg", &mBgColorA.x, ImGuiColorEditFlags_NoInputs);
+    ImGui::ColorEdit3("Color B##Bg", &mBgColorB.x, ImGuiColorEditFlags_NoInputs);
 }

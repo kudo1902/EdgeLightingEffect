@@ -36,7 +36,15 @@ uniform int   uGlowSide;
 uniform float uGlowSideSoftness;
 
 uniform float uSampleSpacing;
-uniform vec2  uLoopSamples[NEON_NUM_SAMPLES];
+
+// Loop sample positions (perimeter points) as an N×1 data texture, texelFetch'd
+// in the gather loop instead of a `uniform vec2[]` array (some mobile GLES
+// drivers don't accept large uniform arrays / blow the uniform-vector limit).
+// RGBA8 (only byte textures are guaranteed): each position is packed as two
+// 16-bit fixed-point coords (x = R:hi G:lo, y = B:hi A:lo) over
+// [-uSampleMaxCoord, uSampleMaxCoord]; decodeSample() reconstructs it.
+uniform sampler2D uLoopSamplesTex;
+uniform float     uSampleMaxCoord;
 
 // Dynamic sample count (≤ NEON_NUM_SAMPLES). Lower = fewer ALU ops.
 uniform int uNumSamples;
@@ -63,6 +71,15 @@ uniform sampler2D uGradientLUT;
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// Decode a byte-packed loop sample. Per coord: hi + lo/255 reconstructs the
+// 16-bit value in [0,1]; (2*n - 1) maps it to [-1,1]; * uSampleMaxCoord scales
+// back to pixels in [-uSampleMaxCoord, uSampleMaxCoord]. The /255 keeps the
+// intermediate < 1 so it stays fp16-safe in this mediump shader.
+vec2 decodeSample(vec4 e) {
+    vec2 n = vec2(e.r + e.g * (1.0 / 255.0), e.b + e.a * (1.0 / 255.0));
+    return (2.0 * n - 1.0) * uSampleMaxCoord;
+}
 
 float sdRoundBox(vec2 p, vec2 b, float r) {
     vec2 q = abs(p) - b + r;
@@ -124,13 +141,16 @@ void main() {
     float headWSum  = 0.0;
 
     int n = min(uNumSamples, NEON_NUM_SAMPLES);
-    float ti   = uTime * uHueRotationRate;
+    // Negate the time term so a positive hueRotationRate scrolls the colours
+    // WITH the winding (i advances in the winding direction; REPEAT wrap handles
+    // the negative LUT coordinate).
+    float ti   = -uTime * uHueRotationRate;
     float dti  = 1.0 / float(n);
     float invSegSigma = 1.0 / max(uSegmentLength * 0.5, 1e-3);
     float si   = 0.0;
 
     for (int i = 0; i < n; i++) {
-        vec2  dv  = vPos - uLoopSamples[i];
+        vec2  dv  = vPos - decodeSample(texelFetch(uLoopSamplesTex, ivec2(i, 0), 0));
         float dd  = dot(dv, dv);
 
         float g   = 1.0 / (dd + kg2);

@@ -26,6 +26,17 @@ namespace EdgeLighting
         rebuildLoopSamples(mCurrentConfig);
         setupGeometry(mCurrentConfig);
         rebuildGradientLUT(mCurrentConfig);
+
+        // Static fullscreen NDC quad for the opaque-mode black fill (identity
+        // MVP; the fill shader derives its shape from gl_FragCoord, not aPos).
+        // clang-format off
+        float ndc[] = {
+            -1.0f,  1.0f,  -1.0f, -1.0f,   1.0f, -1.0f,
+            -1.0f,  1.0f,   1.0f, -1.0f,   1.0f,  1.0f,
+        };
+        // clang-format on
+        mFullVertexArray.SetVertexData(ndc, sizeof(ndc));
+        mFullVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
         return true;
     }
 
@@ -40,17 +51,6 @@ namespace EdgeLighting
             return;
         }
 
-        // Premultiplied-alpha "over": final = src.rgb + dst * (1 - src.a). The
-        // shader emits premultiplied colour with coverage in alpha, so the hot
-        // core occludes background objects while the halo/bloom stay additive
-        // and the dark surround leaves the background untouched. (Plain additive
-        // GL_SRC_ALPHA,GL_ONE could only add light — it washed out over bright
-        // content and the opaque alpha boxed out anything composited behind it.)
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-
-        mShaderProgram.Use();
-
         float halfRectW = config.geometry.width * 0.5f;
         float halfRectH = config.geometry.height * 0.5f;
         glm::mat4 proj = glm::ortho(0.0f, static_cast<float>(viewportWidth), 0.0f, static_cast<float>(viewportHeight), -1.0f, 1.0f);
@@ -59,6 +59,38 @@ namespace EdgeLighting
         glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(center, 0.0f));
         glm::mat4 mvp = proj * model;
 
+        // Premultiplied-alpha "over": final = src.rgb + dst * (1 - src.a). Used
+        // for both the opaque black fill and the neon, so the neon composites
+        // cleanly over the black. (Blending stays ON the whole time — toggling
+        // GL_BLEND mid-draw is a common cross-driver footgun on mobile GLES.)
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+
+        // --- Opaque-mode black background pass -----------------------------
+        // A fullscreen NDC quad (identity MVP); the fragment shader shapes the
+        // black coverage from an analytic rounded-box SDF read off gl_FragCoord
+        // (highp — exact on Mali/Tizen):
+        //   BOTH    -> black everywhere (whole viewport opaque).
+        //   INSIDE  -> black only where d <= softEdge (off-side stays clear).
+        //   OUTSIDE -> mirror of INSIDE.
+        if (config.neon.opaque)
+        {
+            float softEdge = std::max(config.neon.glowSideSoftness,
+                                      static_cast<float>(SIDE_SOFT_EPSILON));
+            mBlackRectShader.Use();
+            mBlackRectShader.SetUniform("uMVP", glm::mat4(1.0f));
+            mBlackRectShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
+            mBlackRectShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
+            mBlackRectShader.SetUniform("uRectCenter", center);
+            mBlackRectShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
+            mBlackRectShader.SetUniform("uSoftEdge", softEdge);
+            mFullVertexArray.DrawArrays(GL_TRIANGLES, 6);
+            mBlackRectShader.Unuse();
+        }
+
+        // Pass 2 (opaque) / only pass (transparent): the neon gather on the
+        // tight glow quad, in both modes.
+        mShaderProgram.Use();
         mShaderProgram.SetUniform("uMVP", mvp);
         mShaderProgram.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
         mShaderProgram.SetUniform("uCornerRadius", config.geometry.cornerRadius);
@@ -77,20 +109,28 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uArcLength", config.neon.arcLength);
 
         mShaderProgram.SetUniform("uSampleSpacing", mSampleSpacing);
-        int sampleCount = static_cast<int>(mLoopSamples.size());
-        if (sampleCount > 0)
-        {
-            mShaderProgram.SetUniform("uLoopSamples", mLoopSamples.data(), sampleCount);
-        }
+
+        // Loop sample positions come from a data texture (unit 1) that the shader
+        // texelFetches, instead of a uniform vec2[] array (see neon.frag).
+        mLoopSamplesTex.Bind(1);
+        mShaderProgram.SetUniform("uLoopSamplesTex", 1);
+        mShaderProgram.SetUniform("uSampleMaxCoord", mSampleMaxCoord);
 
         // Bind the precomputed gradient LUT to texture unit 0. The shader
         // pulls per-sample colour from this in a single texture() call.
         mGradientLUT.Bind(0);
         mShaderProgram.SetUniform("uGradientLUT", 0);
+        mShaderProgram.SetUniform("uQuadMargin", mQuadMargin);
 
+        // Tight glow quad in both modes — opaque's far region is covered by the
+        // Pass 1 black fill above, so the gather never runs fullscreen.
         mVertexArray.DrawArrays(GL_TRIANGLES, 6);
 
         mShaderProgram.Unuse();
+
+        // Restore a known blend state for following renderers (the opaque path
+        // disables blending).
+        glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     }
 
@@ -110,17 +150,31 @@ namespace EdgeLighting
         mShaderProgram = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                        ShaderSource::NEON_FRAG_SRC,
                                        "NeonRenderer");
-        return mShaderProgram.IsValid();
+        // Cheap fullscreen black fill, used only by opaque mode. Reuses the
+        // standard neon vertex shader (uMVP) so the fill quad respects the
+        // viewport.
+        mBlackRectShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
+                                         ShaderSource::BLACK_RECT_FRAG_SRC,
+                                         "NeonRenderer.BlackRect");
+        return mShaderProgram.IsValid() && mBlackRectShader.IsValid();
     }
 
     void NeonRenderer::setupGeometry(const Config &config)
     {
-        // Size the quad to exactly cover the lit region: rect + earlyOut. Beyond
-        // this the halo/bloom are < ~1%, so geometry bounds the far region
-        // instead of a per-fragment discard — friendlier to tile-based GPUs.
+        // Size the quad to cover the lit region: rect + earlyOut. Beyond this the
+        // halo/bloom are < ~1% at default strength, so geometry bounds the far
+        // region instead of a per-fragment discard (tiler-friendly).
         // Factors come from the shared neon-tuning.h (also fed to the shaders).
         float margin = std::max(config.neon.glowRadius * float(EARLY_OUT_RADIUS_FACTOR),
                                 mSampleSpacing * float(EARLY_OUT_SPACING_FACTOR));
+
+        // The wide bloom (1/D tail) stays visible further out as bloomStrength /
+        // intensity rise, so grow the quad with them — otherwise a strong bloom
+        // gets chopped at a hard rectangular edge, worst on small geometry. The
+        // shader still soft-fades the emission to zero at mQuadMargin, so even
+        // if this under-estimates there's no hard cutoff.
+        margin *= 1.0f + config.neon.bloomStrength * config.neon.intensity;
+        mQuadMargin = margin;
 
         float halfW = config.geometry.width * 0.5f;
         float halfH = config.geometry.height * 0.5f;
@@ -150,6 +204,14 @@ namespace EdgeLighting
             float t = static_cast<float>(i) / static_cast<float>(NUM_LOOP_SAMPLES);
             mLoopSamples[i] = GeometryUtils::GetPointOnRectangle(t, config.geometry);
         }
+
+        // Upload the positions as an N×1 RGBA8 data texture (16-bit-packed xy;
+        // only byte textures are guaranteed on the target). The shader texelFetches
+        // and decodes this instead of reading a uniform vec2[] array.
+        GeometryUtils::PackLoopSamplesRGBA8(mLoopSamples, NUM_LOOP_SAMPLES, mLoopSamplesBytes, mSampleMaxCoord);
+        mLoopSamplesTex.SetData(mLoopSamplesBytes.data(), NUM_LOOP_SAMPLES, /*height=*/1,
+                                GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
+        mLoopSamplesTex.SetParams(GL_NEAREST, GL_NEAREST, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
 
         float w = config.geometry.width;
         float h = config.geometry.height;
