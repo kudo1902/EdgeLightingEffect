@@ -41,8 +41,13 @@ uniform float uSampleSpacing;
 // texelFetch'd in the gather loop. Using a texture instead of a
 // `uniform vec2 uLoopSamples[N]` array avoids the large per-element uniform
 // allocation, which can blow the fragment uniform-vector limit (and silently
-// fail to link) on some mobile GLES drivers. texelFetch is exact (no filtering).
+// fail to link) on some mobile GLES drivers.
+//
+// The texture is RGBA8 (only byte textures are guaranteed): each position is
+// packed as two 16-bit fixed-point coords (x = R:hi G:lo, y = B:hi A:lo),
+// normalised to [0,1] over [-uSampleMaxCoord, uSampleMaxCoord] and decoded below.
 uniform sampler2D uLoopSamplesTex;
+uniform float     uSampleMaxCoord;
 
 // Travelling segment — Gaussian brightness peak at uSegmentPosition along
 // the perimeter. When uSegmentBoost == 0 the feature is effectively inactive
@@ -71,6 +76,15 @@ uniform float uQuadMargin;
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+// Decode a byte-packed loop sample. Per coord: hi(channel) + lo(channel)/255
+// reconstructs the 16-bit value in [0,1]; (2*n - 1) maps it to [-1,1];
+// * uSampleMaxCoord scales back to pixels in [-uSampleMaxCoord, uSampleMaxCoord].
+// The /255 keeps the intermediate < 1 so it stays fp16-safe.
+vec2 decodeSample(vec4 e) {
+    vec2 n = vec2(e.r + e.g * (1.0 / 255.0), e.b + e.a * (1.0 / 255.0));
+    return (2.0 * n - 1.0) * uSampleMaxCoord;
+}
 
 float sdRoundBox(vec2 p, vec2 b, float r) {
     vec2 q = abs(p) - b + r;
@@ -155,13 +169,16 @@ void main() {
     float wsumArc   = 0.0; // ∑ lit g — for the sharp filament gate
     float headWSum  = 0.0; // ∑ headW(i) · g(i)  — for the position-weighted average
 
-    float ti   = uTime * uHueRotationRate;
+    // Negate the time term so a positive hueRotationRate scrolls the colours
+    // WITH the winding (sample index i advances in the winding direction; the
+    // REPEAT-wrapped LUT handles the resulting negative coordinate).
+    float ti   = -uTime * uHueRotationRate;
     float dti  = 1.0 / float(NEON_NUM_SAMPLES);
     float invSegSigma = 1.0 / max(uSegmentLength * 0.5, 1e-3);
     float si   = 0.0; // sample's normalised perimeter position
 
     for (int i = 0; i < NEON_NUM_SAMPLES; i++) {
-        vec2  dv  = vPos - texelFetch(uLoopSamplesTex, ivec2(i, 0), 0).xy;
+        vec2  dv  = vPos - decodeSample(texelFetch(uLoopSamplesTex, ivec2(i, 0), 0));
         float dd  = dot(dv, dv);
 
         float g   = 1.0 / (dd + kg2);

@@ -114,6 +114,7 @@ namespace EdgeLighting
         // texelFetches, instead of a uniform vec2[] array (see neon.frag).
         mLoopSamplesTex.Bind(1);
         mShaderProgram.SetUniform("uLoopSamplesTex", 1);
+        mShaderProgram.SetUniform("uSampleMaxCoord", mSampleMaxCoord);
 
         // Bind the precomputed gradient LUT to texture unit 0. The shader
         // pulls per-sample colour from this in a single texture() call.
@@ -204,18 +205,12 @@ namespace EdgeLighting
             mLoopSamples[i] = GeometryUtils::GetPointOnRectangle(t, config.geometry);
         }
 
-        // Upload the positions as an N×1 RGBA32F data texture (xy = position).
-        // The shader texelFetches this instead of reading a uniform vec2[] array.
-        mLoopSamplesData.resize(NUM_LOOP_SAMPLES * 4);
-        for (int i = 0; i < NUM_LOOP_SAMPLES; ++i)
-        {
-            mLoopSamplesData[i * 4 + 0] = mLoopSamples[i].x;
-            mLoopSamplesData[i * 4 + 1] = mLoopSamples[i].y;
-            mLoopSamplesData[i * 4 + 2] = 0.0f;
-            mLoopSamplesData[i * 4 + 3] = 0.0f;
-        }
-        mLoopSamplesTex.SetData(mLoopSamplesData.data(), NUM_LOOP_SAMPLES, /*height=*/1,
-                                GL_RGBA32F, GL_RGBA, GL_FLOAT);
+        // Upload the positions as an N×1 RGBA8 data texture (16-bit-packed xy;
+        // only byte textures are guaranteed on the target). The shader texelFetches
+        // and decodes this instead of reading a uniform vec2[] array.
+        GeometryUtils::PackLoopSamplesRGBA8(mLoopSamples, NUM_LOOP_SAMPLES, mLoopSamplesBytes, mSampleMaxCoord);
+        mLoopSamplesTex.SetData(mLoopSamplesBytes.data(), NUM_LOOP_SAMPLES, /*height=*/1,
+                                GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
         mLoopSamplesTex.SetParams(GL_NEAREST, GL_NEAREST, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
 
         float w = config.geometry.width;

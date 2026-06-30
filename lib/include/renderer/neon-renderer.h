@@ -48,11 +48,14 @@ namespace EdgeLighting
         Texture2D mGradientLUT;
         std::vector<float> mLUTScratch; ///< Float scratch for CPU gradient baking (GRADIENT_LUT_SIZE * 4).
 
-        /// Loop sample positions as an N×1 RGBA32F data texture (xy = position),
-        /// texelFetch'd in the shader instead of a `uniform vec2[]` array.
+        /// Loop sample positions as an N×1 RGBA8 data texture (16-bit-packed xy),
+        /// texelFetch'd in the shader instead of a `uniform vec2[]` array. Only
+        /// byte textures are guaranteed on Tizen/Mali, so positions are encoded
+        /// over [-mSampleMaxCoord, mSampleMaxCoord] (see GeometryUtils::PackLoopSamplesRGBA8).
         Texture2D mLoopSamplesTex;
-        std::vector<float> mLoopSamplesData; ///< RGBA32F scratch: (x, y, 0, 0) per sample.
-        float mQuadMargin = 0.0f;       ///< Draw-quad margin (px from rect edge); shader fades the bloom out by here.
+        std::vector<unsigned char> mLoopSamplesBytes;
+        float mSampleMaxCoord = 1.0f;
+        float mQuadMargin = 0.0f; ///< Draw-quad margin (px from rect edge); shader fades the bloom out by here.
     };
 }
 

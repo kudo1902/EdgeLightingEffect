@@ -4,6 +4,9 @@
 #include "core/config.h"
 #include "util/constants.h"
 #include <glm/glm.hpp>
+#include <algorithm>
+#include <cmath>
+#include <vector>
 
 namespace EdgeLighting
 {
@@ -267,6 +270,52 @@ namespace EdgeLighting
             }
 
             return Detail::GetPointOnRectCCW(t, geom);
+        }
+
+        /// Packs @p count loop-sample positions into an RGBA8 buffer (4 bytes each)
+        /// for upload as a byte data texture — Tizen/Mali only guarantee byte
+        /// textures, so positions can't be stored as float. Each coord is encoded
+        /// as 16-bit fixed point (x -> R:hi G:lo, y -> B:hi A:lo), normalised over
+        /// [-maxCoord, maxCoord] where @p outMaxCoord is the largest |coordinate|.
+        /// The shader decodes with `coord = (2*(hi + lo/255) - 1) * maxCoord`.
+        /// ~16-bit precision is far finer than a pixel. @p outMaxCoord receives
+        /// the value for the uSampleMaxCoord uniform.
+        inline void PackLoopSamplesRGBA8(const std::vector<glm::vec2> &samples, int count,
+                                         std::vector<unsigned char> &out, float &outMaxCoord)
+        {
+            float maxCoord = 1.0f;
+            for (int i = 0; i < count; ++i)
+            {
+                maxCoord = std::max(maxCoord, std::max(std::fabs(samples[i].x), std::fabs(samples[i].y)));
+            }
+            maxCoord *= 1.0009766f; // small margin so the normalised value never hits exactly 1
+            outMaxCoord = maxCoord;
+
+            float inv = 1.0f / (2.0f * maxCoord);
+            out.resize(static_cast<size_t>(count) * 4);
+            auto pack = [](float n, unsigned char &hi, unsigned char &lo)
+            {
+                n = std::min(std::max(n, 0.0f), 1.0f);
+                float v = n * 255.0f;
+                int h = static_cast<int>(std::floor(v));
+                int l = static_cast<int>(std::lround((v - static_cast<float>(h)) * 255.0f));
+                if (l > 255)
+                {
+                    l = 0;
+                    if (h < 255)
+                    {
+                        ++h;
+                    }
+                }
+                hi = static_cast<unsigned char>(std::min(std::max(h, 0), 255));
+                lo = static_cast<unsigned char>(std::min(std::max(l, 0), 255));
+            };
+            for (int i = 0; i < count; ++i)
+            {
+                // map coord in [-maxCoord, maxCoord] to [0, 1], then 16-bit pack.
+                pack((samples[i].x + maxCoord) * inv, out[i * 4 + 0], out[i * 4 + 1]); // x -> R, G
+                pack((samples[i].y + maxCoord) * inv, out[i * 4 + 2], out[i * 4 + 3]); // y -> B, A
+            }
         }
 
         /// Converts an app-space point (rect top-left = (0,0), +Y down) to local space

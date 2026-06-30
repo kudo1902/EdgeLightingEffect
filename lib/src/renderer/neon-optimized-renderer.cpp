@@ -92,11 +92,12 @@ namespace EdgeLighting
 
         mNeonShader.SetUniform("uNumSamples", config.optimizedNeon.numSamples);
         mNeonShader.SetUniform("uSampleSpacing", mSampleSpacing);
-        int sampleCount = static_cast<int>(mLoopSamples.size());
-        if (sampleCount > 0)
-        {
-            mNeonShader.SetUniform("uLoopSamples", mLoopSamples.data(), sampleCount);
-        }
+
+        // Loop sample positions from a data texture (unit 1) the shader
+        // texelFetches, instead of a uniform vec2[] array.
+        mLoopSamplesTex.Bind(1);
+        mNeonShader.SetUniform("uLoopSamplesTex", 1);
+        mNeonShader.SetUniform("uSampleMaxCoord", mSampleMaxCoord);
 
         mGradientLUT.Bind(0);
         mNeonShader.SetUniform("uGradientLUT", 0);
@@ -250,6 +251,14 @@ namespace EdgeLighting
             float t = static_cast<float>(i) / static_cast<float>(n);
             mLoopSamples[i] = GeometryUtils::GetPointOnRectangle(t, config.geometry) * scale;
         }
+
+        // Upload the (scaled) positions as an N×1 RGBA8 data texture (16-bit-packed
+        // xy; byte texture only on the target). The shader texelFetches + decodes
+        // this instead of a uniform vec2[].
+        GeometryUtils::PackLoopSamplesRGBA8(mLoopSamples, MAX_LOOP_SAMPLES, mLoopSamplesBytes, mSampleMaxCoord);
+        mLoopSamplesTex.SetData(mLoopSamplesBytes.data(), MAX_LOOP_SAMPLES, /*height=*/1,
+                                GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
+        mLoopSamplesTex.SetParams(GL_NEAREST, GL_NEAREST, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
 
         float w = config.geometry.width;
         float h = config.geometry.height;
