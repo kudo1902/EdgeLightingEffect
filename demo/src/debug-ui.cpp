@@ -384,9 +384,10 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg)
     ImGui::Separator();
     ImGui::TextDisabled("Visual params (shared with Neon)");
 
-    ImGui::SliderFloat("Line Width##Opt", &cfg.neon.lineWidth, 1.0f, 20.0f, "%.0f");
+    ImGui::Checkbox("Opaque (no blend)##Opt", &cfg.neon.opaque);
+    ImGui::SliderFloat("Line Width##Opt", &cfg.neon.lineWidth, 0.0f, 20.0f, "%.0f");
     ImGui::SliderFloat("Intensity##Opt", &cfg.neon.intensity, 0.0f, 3.0f, "%.2f");
-    ImGui::SliderFloat("Glow Radius##Opt", &cfg.neon.glowRadius, 1.0f, 80.0f, "%.0f");
+    ImGui::SliderFloat("Glow Radius##Opt", &cfg.neon.glowRadius, 0.0f, 80.0f, "%.0f");
     ImGui::SliderFloat("Bloom Strength##Opt", &cfg.neon.bloomStrength, 0.0f, 2.0f, "%.2f");
     ImGui::SliderFloat("Hue Rotation Rate##Opt", &cfg.neon.hueRotationRate, 0.0f, 2.0f, "%.2f");
 

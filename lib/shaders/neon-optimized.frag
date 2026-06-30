@@ -123,11 +123,24 @@ void main() {
     if (uGlowSide == GLOW_SIDE_OUTSIDE && d < -softEdge) discard;
 
     // --- Filament -----------------------------------------------------
-    float k    = max(uLineWidth * 0.5, FILAMENT_MIN_HALF_WIDTH);
-    float core = pow(k / (ad + k), FILAMENT_FALLOFF);
+    // Flat-top profile: solid bar of width = lineWidth with a CONSTANT soft
+    // edge (FILAMENT_EDGE_SOFTNESS) — independent of lineWidth so thickening
+    // the line widens only the solid part, not the surrounding glow.
+    // lineGate fades the filament from 0 at lineWidth = 0 up to full at
+    // lineWidth = FILAMENT_MIN_HALF_WIDTH * 2, so lineWidth = 0 means "no
+    // line" instead of inheriting the floored half-width.
+    float halfWidth = uLineWidth * 0.5;
+    float core      = 1.0 - smoothstep(halfWidth, halfWidth + FILAMENT_EDGE_SOFTNESS, ad);
+    float lineGate  = clamp(uLineWidth / (FILAMENT_MIN_HALF_WIDTH * 2.0), 0.0, 1.0);
 
     // --- Kernel widths ------------------------------------------------
-    float kg  = max(uGlowRadius,                       uSampleSpacing * HALO_SPACING_FLOOR);
+    // The halo kernel is floored to haloFloor so the gather never beads into
+    // dots, even at tiny glow radii. That floor must NOT manufacture a halo
+    // when the user asked for none (glowRadius == 0): haloGate (below) fades
+    // the halo's intensity from 0 at glowRadius = 0 up to full once
+    // glowRadius reaches the floor, so glowRadius = 0 reads as "filament only".
+    float haloFloor = uSampleSpacing * HALO_SPACING_FLOOR;
+    float kg  = max(uGlowRadius,                       haloFloor);
     float kg2 = kg * kg;
     float bw  = max(uGlowRadius * BLOOM_REACH_TO_GLOW, uSampleSpacing * BLOOM_SPACING_FLOOR);
     float bw2 = bw * bw;
@@ -190,8 +203,11 @@ void main() {
     float litFraction = wsumArc / max(wsum, WSUM_EPSILON);
     float filamentGate = smoothstep(0.5, 1.0, litFraction);
 
-    vec3 result  = col * core  * FILAMENT_GAIN  * uIntensity * headWAvg * filamentGate;
-    result      += col * glow  * HALO_GAIN      * uIntensity * headWAvg;
+    // Halo visibility follows glowRadius (glowRadius == 0 -> filament only).
+    float haloGate = clamp(uGlowRadius / max(haloFloor, 1e-4), 0.0, 1.0);
+
+    vec3 result  = col * core  * FILAMENT_GAIN  * uIntensity * headWAvg * filamentGate * lineGate;
+    result      += col * glow  * HALO_GAIN      * uIntensity * headWAvg * haloGate;
     result      += col * bloom * uBloomStrength * uIntensity * headWAvg;
 
     // --- One-sided cut ---
