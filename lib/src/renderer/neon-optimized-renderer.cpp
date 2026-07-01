@@ -107,47 +107,49 @@ namespace EdgeLighting
         mNeonShader.Unuse();
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-        // --- Pass 2: blit half-res FBO to full-res backbuffer ---
+        // --- Pass 2a (opaque only): fullscreen black fill on the backbuffer ---
+        // A single NDC quad + identity MVP; the black-rect fragment shader
+        // shapes the silhouette from the analytic rounded-box SDF read off
+        // gl_FragCoord, with softness-aware feathering:
+        //   BOTH    -> whole viewport opaque black.
+        //   INSIDE  -> black only where d <= softEdge; off-side stays clear.
+        //   OUTSIDE -> mirror of INSIDE.
+        // Rounded corners AA cleanly via fwidth(d) — no discard, no stair-step.
         Framebuffer::BindDefault();
         glViewport(0, 0, viewportWidth, viewportHeight);
 
-        // Compositing mode (matches NeonRenderer):
-        //  - opaque == false: premult "over" — the transparent surround lets the
-        //    background through, the hot core occludes, halo/bloom add. Bilinear
-        //    upscaling of premultiplied alpha is fringe-free.
-        //  - opaque == true: blend off; the blit writes the effect opaquely over
-        //    black on the lit side (occluding the background) and discards the
-        //    unlit side of a one-sided glow so the background shows there.
-        const bool opaque = config.neon.opaque;
-        if (opaque)
-        {
-            glDisable(GL_BLEND);
-        }
-        else
-        {
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-        }
+        // Premultiplied "over" for both the black fill and the blit, so
+        // blending stays ON the whole pass (toggling GL_BLEND mid-draw is a
+        // cross-driver footgun on mobile GLES).
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
-        mBlitShader.Use();
-
-        // Identity MVP — blit quad is in NDC [-1, 1]
         glm::mat4 identity(1.0f);
-        mBlitShader.SetUniform("uMVP", identity);
-        mBlitShader.SetUniform("uOpaque", opaque ? 1 : 0);
-        if (opaque)
+        if (config.neon.opaque)
         {
-            // Full-res rect for the side-aware mask (gl_FragCoord space, y-up).
+            // Rect centre in full-res gl_FragCoord space (y-up).
             glm::vec2 centerFull(config.geometry.position.x + halfRectW,
                                  static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
             float softEdge = std::max(config.neon.glowSideSoftness,
                                       static_cast<float>(SIDE_SOFT_EPSILON));
-            mBlitShader.SetUniform("uRectCenter", centerFull);
-            mBlitShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
-            mBlitShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
-            mBlitShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
-            mBlitShader.SetUniform("uSoftEdge", softEdge);
+
+            mBlackRectShader.Use();
+            mBlackRectShader.SetUniform("uMVP", identity);
+            mBlackRectShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
+            mBlackRectShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
+            mBlackRectShader.SetUniform("uRectCenter", centerFull);
+            mBlackRectShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
+            mBlackRectShader.SetUniform("uSoftEdge", softEdge);
+            mBlitVertexArray.DrawArrays(GL_TRIANGLES, 6);
+            mBlackRectShader.Unuse();
         }
+
+        // --- Pass 2b: bilinear composite of the half-res neon FBO ---
+        // Bilinear upscaling of premultiplied alpha is fringe-free; the blit
+        // shader is a plain texture read that composites over whatever's on
+        // the backbuffer (black fill if opaque, original bg otherwise).
+        mBlitShader.Use();
+        mBlitShader.SetUniform("uMVP", identity);
 
         // Debug toggle: nearest neighbour shows the raw half-res pixels.
         GLuint texId = mHalfResBuffer.GetTextureId();
@@ -163,7 +165,7 @@ namespace EdgeLighting
         mBlitVertexArray.DrawArrays(GL_TRIANGLES, 6);
 
         mBlitShader.Unuse();
-        // Restore default blend state (opaque mode disabled it above).
+        // Restore default blend state for following renderers.
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     }
@@ -185,10 +187,18 @@ namespace EdgeLighting
                                     ShaderSource::NEON_OPTIMIZED_FRAG_SRC,
                                     "NeonOptimized");
 
+        // Opaque-mode fullscreen black fill (shared with NeonRenderer): the
+        // analytic SDF in the fragment shader shapes the silhouette with
+        // softness-aware feathering, so rounded corners AA cleanly — no more
+        // stair-stepping like the old per-fragment discard in neon-blit.frag.
+        mBlackRectShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
+                                         ShaderSource::BLACK_RECT_FRAG_SRC,
+                                         "NeonOptimized.BlackRect");
+
         mBlitShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                     ShaderSource::NEON_BLIT_FRAG_SRC,
                                     "NeonBlit");
-        return mNeonShader.IsValid() && mBlitShader.IsValid();
+        return mNeonShader.IsValid() && mBlackRectShader.IsValid() && mBlitShader.IsValid();
     }
 
     void NeonOptimizedRenderer::setupGeometry(const Config &config)

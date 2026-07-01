@@ -129,8 +129,16 @@ void main() {
     // lineGate fades the filament from 0 at lineWidth = 0 up to full at
     // lineWidth = FILAMENT_MIN_HALF_WIDTH * 2, so lineWidth = 0 means "no
     // line" instead of inheriting the floored half-width.
+    // fwidth-based adaptive SDF AA: aa = per-fragment rate of change of ad,
+    // floored to FILAMENT_EDGE_SOFTNESS so straight edges get the same
+    // constant transition as the main NeonRenderer. Symmetric smoothstep
+    // around halfWidth so the visible line width stays = uLineWidth (no
+    // "wider filament" side effect from the previous overly-wide gradient).
+    // On rounded corners fwidth naturally widens where the gradient turns,
+    // giving more sample points along the curve to bilinear-upscale from.
     float halfWidth = uLineWidth * 0.5;
-    float core      = 1.0 - smoothstep(halfWidth, halfWidth + FILAMENT_EDGE_SOFTNESS, ad);
+    float aa        = max(fwidth(ad), FILAMENT_EDGE_SOFTNESS);
+    float core      = 1.0 - smoothstep(halfWidth - aa * 0.5, halfWidth + aa * 0.5, ad);
     float lineGate  = clamp(uLineWidth / (FILAMENT_MIN_HALF_WIDTH * 2.0), 0.0, 1.0);
 
     // --- Kernel widths ------------------------------------------------

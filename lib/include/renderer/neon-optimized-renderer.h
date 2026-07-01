@@ -42,8 +42,9 @@ namespace EdgeLighting
 
     private:
         Config mCurrentConfig;
-        ShaderProgram mNeonShader; // Pass 1 — half-res neon
-        ShaderProgram mBlitShader; // Pass 2 — upscale to full-res
+        ShaderProgram mNeonShader;      // Pass 1 — half-res neon
+        ShaderProgram mBlackRectShader; // Opaque-mode fullscreen black fill
+        ShaderProgram mBlitShader;      // Pass 2 — upscale to full-res
         Framebuffer mHalfResBuffer{"NeonOptimized.HalfRes"};
         VertexArray mNeonVertexArray{"NeonOpt.Pass1"};
         VertexArray mBlitVertexArray{"NeonOpt.Blit"};
