@@ -141,19 +141,34 @@ void main() {
     // Flat-top profile: solid bar of width = lineWidth with a CONSTANT soft
     // edge (FILAMENT_EDGE_SOFTNESS) — independent of lineWidth so thickening
     // the line widens only the solid part, not the surrounding glow.
+    // ASYMMETRIC AA (matches the base NeonRenderer): full-brightness region
+    // spans ad ∈ [0, halfWidth], then the AA transition sits ENTIRELY on the
+    // outside from halfWidth to halfWidth + FILAMENT_EDGE_SOFTNESS.
+    //
+    // 2×2 SUB-PIXEL SUPERSAMPLING on this term only: evaluate the SDF +
+    // smoothstep at four ±0.25-pixel offsets and average. MSAA on the FBO
+    // wouldn't help — the shader runs once per pixel centre by default and
+    // all sub-samples of a covered pixel receive the same computed value.
+    // Explicit supersampling here bypasses that. Cost is 4× the SDF +
+    // smoothstep (~60 ops), negligible vs. the 64-sample halo gather below
+    // (~1000+ ops), so the perf hit is minor.
+    //
     // lineGate fades the filament from 0 at lineWidth = 0 up to full at
     // lineWidth = FILAMENT_MIN_HALF_WIDTH * 2, so lineWidth = 0 means "no
     // line" instead of inheriting the floored half-width.
-    // fwidth-based adaptive SDF AA: aa = per-fragment rate of change of ad,
-    // floored to FILAMENT_EDGE_SOFTNESS so straight edges get the same
-    // constant transition as the main NeonRenderer. Symmetric smoothstep
-    // around halfWidth so the visible line width stays = uLineWidth (no
-    // "wider filament" side effect from the previous overly-wide gradient).
-    // On rounded corners fwidth naturally widens where the gradient turns,
-    // giving more sample points along the curve to bilinear-upscale from.
     float halfWidth = uLineWidth * 0.5;
-    float aa        = max(fwidth(ad), FILAMENT_EDGE_SOFTNESS);
-    float core      = 1.0 - smoothstep(halfWidth - aa * 0.5, halfWidth + aa * 0.5, ad);
+    vec2  offX      = dFdx(vPos) * 0.25;
+    vec2  offY      = dFdy(vPos) * 0.25;
+    float ad00      = abs(sdRoundBox(vPos - offX - offY, halfSize, uCornerRadius));
+    float ad10      = abs(sdRoundBox(vPos + offX - offY, halfSize, uCornerRadius));
+    float ad01      = abs(sdRoundBox(vPos - offX + offY, halfSize, uCornerRadius));
+    float ad11      = abs(sdRoundBox(vPos + offX + offY, halfSize, uCornerRadius));
+    float core      = 0.25 * (
+        (1.0 - smoothstep(halfWidth, halfWidth + FILAMENT_EDGE_SOFTNESS, ad00)) +
+        (1.0 - smoothstep(halfWidth, halfWidth + FILAMENT_EDGE_SOFTNESS, ad10)) +
+        (1.0 - smoothstep(halfWidth, halfWidth + FILAMENT_EDGE_SOFTNESS, ad01)) +
+        (1.0 - smoothstep(halfWidth, halfWidth + FILAMENT_EDGE_SOFTNESS, ad11))
+    );
     float lineGate  = clamp(uLineWidth / (FILAMENT_MIN_HALF_WIDTH * 2.0), 0.0, 1.0);
 
     // --- Kernel widths ------------------------------------------------

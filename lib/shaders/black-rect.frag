@@ -38,9 +38,12 @@ void main() {
     float d        = sdRoundBox(localPos, halfSize, uCornerRadius);
 
     // Feather the cut over [-edge, +edge] so the black quad fades across the
-    // same soft band the neon shader uses. Floor to fwidth(d)*0.5 so a near-zero
-    // softness still gets ~1 px of clean AA instead of aliasing.
-    float effectiveEdge = max(uSoftEdge, fwidth(d) * 0.5);
+    // same soft band the neon shader uses. Floor to fwidth(d) (which gives
+    // ~2 screen px of AA gradient, since the smoothstep width is 2·edge):
+    // 1 px was enough for axis-aligned edges but visibly stair-stepped on
+    // rounded corners. 2 px stays smooth on curves; the extra softness is
+    // imperceptible against black.
+    float effectiveEdge = max(uSoftEdge, fwidth(d));
 
     float coverage = 1.0;
     if (uGlowSide == GLOW_SIDE_INSIDE) {
