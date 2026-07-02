@@ -6,6 +6,8 @@
 #include "animation/animation.h"
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
+#include <memory>
+#include <vector>
 
 struct ImGuiContext;
 
@@ -32,11 +34,12 @@ public:
     /// Feed the last frame's render time (only gEffect->Render, no ImGui) for display.
     void SetLastRenderTimeMs(float ms) { mLastRenderTimeMs = ms; }
 
-    /// Apply the currently selected animation preset (if any) to @p config.
-    /// @p clockTime is the effect's clock time; this method subtracts the
-    /// preset's start time so each preset evaluates from its own t = 0.
-    /// Also fires the animation's @c OnComplete callback exactly once when
-    /// the elapsed time first crosses the animation's duration.
+    /// Update the currently selected animation preset (if any) and apply
+    /// its output to @p config.
+    /// @p clockTime is the effect's clock time; we use its per-frame delta
+    /// to drive @c Animation::Update. The animation owns its own state,
+    /// elapsed accumulator, and completion latching — pausing the effect
+    /// clock freezes dt to 0 and effectively pauses every animation.
     void ApplyActiveAnimation(EdgeLighting::Config &config, float clockTime);
 
     /// Render the ImGui frame into the debug window. Must be called after Build() each frame.
@@ -68,12 +71,23 @@ private:
 
     float mLastRenderTimeMs = 0.0f;
 
-    // --- Animation preset state ---
-    EdgeLightingDemo::AnimationPreset mPreset = EdgeLightingDemo::AnimationPreset::NONE;
-    EdgeLighting::AnimationPtr mAnimation;
-    float mAnimElapsed   = 0.0f;     ///< Animation-time accumulator (scaled by speed each frame).
-    float mLastClockTime = 0.0f;     ///< Clock time at last ApplyActiveAnimation tick.
-    bool  mFiredComplete = false;    ///< Edge-triggered OnComplete latch.
+    // --- Animation state ---
+    // Multi-animation UX: mActiveGroup owns any presets the user has added.
+    // AnimationGroup broadcasts Play/Pause/Stop/Reset/Update/Apply, so the
+    // section-level "Play all" / "Pause all" controls fall out for free, and
+    // each child can still be controlled individually via its own Animation
+    // methods.
+    std::shared_ptr<EdgeLighting::AnimationGroup> mActiveGroup =
+        std::make_shared<EdgeLighting::AnimationGroup>();
+    /// Preset index selected in the Add combo.
+    int mAddPresetIdx = 0;
+    /// Human-readable preset name per active child, parallel to
+    /// mActiveGroup->GetChildren(). Kept because AnimationGroup only stores
+    /// AnimationPtr, and we want each row header to say "Breathing" instead
+    /// of "Animation #3". Preset name pointers come from PresetName() which
+    /// returns string literals — safe to hold as raw const char*.
+    std::vector<const char *> mActiveNames;
+    float mLastClockTime = 0.0f; ///< Clock time at last ApplyActiveAnimation tick.
 
     // --- Debug background quad (demo verification aid) ---
     bool      mShowBackground = false;

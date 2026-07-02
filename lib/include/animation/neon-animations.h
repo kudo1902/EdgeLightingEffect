@@ -30,7 +30,9 @@ namespace EdgeLighting
     // -------------------------------------------------------------------------
 
     /// @brief Sine-wave breathe on @c neon.intensity.
-    /// @details Default one-second cycle between 0.4 and 1.0.
+    /// @details Default one-second cycle between 0.4 and 1.0. @ref SetDuration
+    ///          rebuilds the internal Oscillator so the debug UI's Duration
+    ///          slider live-adjusts the breathing period.
     class IntensityPulse : public Animation
     {
     public:
@@ -38,14 +40,25 @@ namespace EdgeLighting
         /// @param min      Minimum intensity (lower bound).
         /// @param max      Maximum intensity (upper bound).
         IntensityPulse(float duration = 1.0f, float min = 0.4f, float max = 1.0f)
-            : mOsc(1.0f / duration, min, max) {}
-        void Apply(Config &cfg, float elapsed) const override
+            : mOsc(1.0f / duration, min, max), mMin(min), mMax(max)
+        {
+            SetDuration(duration);
+        }
+        void ApplyAt(Config &cfg, float elapsed) const override
         {
             cfg.neon.intensity = mOsc.Evaluate(elapsed);
         }
 
+    protected:
+        void OnDurationChanged(float d) override
+        {
+            mOsc = Oscillator(1.0f / d, mMin, mMax);
+        }
+
     private:
         Oscillator mOsc;
+        float mMin;
+        float mMax;
     };
 
     /// @brief Square-wave on/off strobe on @c neon.intensity.
@@ -58,14 +71,26 @@ namespace EdgeLighting
         IntensityStrobe(float duration = 0.25f,
                         float offIntensity = 0.0f,
                         float onIntensity = 1.0f)
-            : mOsc(1.0f / duration, offIntensity, onIntensity, 0.0f, Waveform::SQUARE) {}
-        void Apply(Config &cfg, float elapsed) const override
+            : mOsc(1.0f / duration, offIntensity, onIntensity, 0.0f, Waveform::SQUARE),
+              mOff(offIntensity), mOn(onIntensity)
+        {
+            SetDuration(duration);
+        }
+        void ApplyAt(Config &cfg, float elapsed) const override
         {
             cfg.neon.intensity = mOsc.Evaluate(elapsed);
         }
 
+    protected:
+        void OnDurationChanged(float d) override
+        {
+            mOsc = Oscillator(1.0f / d, mOff, mOn, 0.0f, Waveform::SQUARE);
+        }
+
     private:
         Oscillator mOsc;
+        float mOff;
+        float mOn;
     };
 
     /// @brief One-shot eased fade-in on @c neon.intensity.
@@ -85,7 +110,7 @@ namespace EdgeLighting
               mTarget(targetIntensity), mCurve(curve),
               mEase(0.0f, targetIntensity, duration, curve, /*loop=*/false) {}
 
-        void Apply(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, float elapsed) const override
         {
             cfg.neon.intensity = mEase.Evaluate(elapsed);
         }
@@ -117,7 +142,7 @@ namespace EdgeLighting
               mStart(startIntensity), mCurve(curve),
               mEase(startIntensity, 0.0f, duration, curve, /*loop=*/false) {}
 
-        void Apply(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, float elapsed) const override
         {
             cfg.neon.intensity = mEase.Evaluate(elapsed);
         }
@@ -149,14 +174,26 @@ namespace EdgeLighting
         GlowRadiusBreath(float duration = 2.0f,
                          float minRadius = 4.0f,
                          float maxRadius = 12.0f)
-            : mOsc(1.0f / duration, minRadius, maxRadius) {}
-        void Apply(Config &cfg, float elapsed) const override
+            : mOsc(1.0f / duration, minRadius, maxRadius),
+              mMin(minRadius), mMax(maxRadius)
+        {
+            SetDuration(duration);
+        }
+        void ApplyAt(Config &cfg, float elapsed) const override
         {
             cfg.neon.glowRadius = mOsc.Evaluate(elapsed);
         }
 
+    protected:
+        void OnDurationChanged(float d) override
+        {
+            mOsc = Oscillator(1.0f / d, mMin, mMax);
+        }
+
     private:
         Oscillator mOsc;
+        float mMin;
+        float mMax;
     };
 
     // -------------------------------------------------------------------------
@@ -174,14 +211,25 @@ namespace EdgeLighting
         BloomPulse(float duration = 1.5f,
                    float min = 0.1f,
                    float max = 0.6f)
-            : mOsc(1.0f / duration, min, max) {}
-        void Apply(Config &cfg, float elapsed) const override
+            : mOsc(1.0f / duration, min, max), mMin(min), mMax(max)
+        {
+            SetDuration(duration);
+        }
+        void ApplyAt(Config &cfg, float elapsed) const override
         {
             cfg.neon.bloomStrength = mOsc.Evaluate(elapsed);
         }
 
+    protected:
+        void OnDurationChanged(float d) override
+        {
+            mOsc = Oscillator(1.0f / d, mMin, mMax);
+        }
+
     private:
         Oscillator mOsc;
+        float mMin;
+        float mMax;
     };
 
     // -------------------------------------------------------------------------
@@ -197,11 +245,20 @@ namespace EdgeLighting
         /// @param baseRate Absolute rotation rate in cycles/second.
         /// @param duration Seconds for one full forward-backward cycle (sign flips at duration/2).
         HueRotationReverse(float baseRate = 0.5f, float duration = 8.0f)
-            : mBaseRate(baseRate), mHalfPeriod(duration * 0.5f) {}
-        void Apply(Config &cfg, float elapsed) const override
+            : mBaseRate(baseRate), mHalfPeriod(duration * 0.5f)
+        {
+            SetDuration(duration);
+        }
+        void ApplyAt(Config &cfg, float elapsed) const override
         {
             int n = static_cast<int>(std::floor(elapsed / mHalfPeriod));
             cfg.neon.hueRotationRate = (n & 1) ? -mBaseRate : mBaseRate;
+        }
+
+    protected:
+        void OnDurationChanged(float d) override
+        {
+            mHalfPeriod = d * 0.5f;
         }
 
     private:
@@ -218,14 +275,25 @@ namespace EdgeLighting
         /// @param maxRate  Maximum absolute rotation rate.
         /// @param duration Seconds for one full forward-backward cycle.
         HueRotationEaseReverse(float maxRate = 0.5f, float duration = 6.0f)
-            : mOsc(1.0f / duration, -maxRate, maxRate, 0.0f, Waveform::TRIANGLE) {}
-        void Apply(Config &cfg, float elapsed) const override
+            : mOsc(1.0f / duration, -maxRate, maxRate, 0.0f, Waveform::TRIANGLE),
+              mMaxRate(maxRate)
+        {
+            SetDuration(duration);
+        }
+        void ApplyAt(Config &cfg, float elapsed) const override
         {
             cfg.neon.hueRotationRate = mOsc.Evaluate(elapsed);
         }
 
+    protected:
+        void OnDurationChanged(float d) override
+        {
+            mOsc = Oscillator(1.0f / d, -mMaxRate, mMaxRate, 0.0f, Waveform::TRIANGLE);
+        }
+
     private:
         Oscillator mOsc;
+        float mMaxRate;
     };
 
     // -------------------------------------------------------------------------
@@ -245,13 +313,22 @@ namespace EdgeLighting
                       float length = 0.15f,
                       float boost = 4.0f)
             : mPosOsc(1.0f / duration, 0.0f, 1.0f, 0.0f, Waveform::SAWTOOTH),
-              mLength(length), mBoost(boost) {}
+              mLength(length), mBoost(boost)
+        {
+            SetDuration(duration);
+        }
 
-        void Apply(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, float elapsed) const override
         {
             cfg.neon.segmentPosition = mPosOsc.Evaluate(elapsed);
             cfg.neon.segmentLength = mLength;
             cfg.neon.segmentBoost = mBoost;
+        }
+
+    protected:
+        void OnDurationChanged(float d) override
+        {
+            mPosOsc = Oscillator(1.0f / d, 0.0f, 1.0f, 0.0f, Waveform::SAWTOOTH);
         }
 
     private:
@@ -272,13 +349,22 @@ namespace EdgeLighting
                       float length = 0.20f,
                       float boost = 4.0f)
             : mPosOsc(1.0f / duration, 0.0f, 1.0f, 0.0f, Waveform::TRIANGLE),
-              mLength(length), mBoost(boost) {}
+              mLength(length), mBoost(boost)
+        {
+            SetDuration(duration);
+        }
 
-        void Apply(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, float elapsed) const override
         {
             cfg.neon.segmentPosition = mPosOsc.Evaluate(elapsed);
             cfg.neon.segmentLength = mLength;
             cfg.neon.segmentBoost = mBoost;
+        }
+
+    protected:
+        void OnDurationChanged(float d) override
+        {
+            mPosOsc = Oscillator(1.0f / d, 0.0f, 1.0f, 0.0f, Waveform::TRIANGLE);
         }
 
     private:
@@ -315,7 +401,7 @@ namespace EdgeLighting
               mCurve(curve),
               mEase(0.0f, 1.0f, duration, curve, /*loop=*/false) {}
 
-        void Apply(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, float elapsed) const override
         {
             cfg.neon.arcLength = mEase.Evaluate(elapsed);
         }
@@ -354,7 +440,7 @@ namespace EdgeLighting
         /// @param mod      Modulator producing the intensity value.
         /// @param duration One-shot duration in seconds.
         IntensityCurve(ModulatorPtr mod, float duration) : Animation(duration), mMod(std::move(mod)) {}
-        void Apply(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, float elapsed) const override
         {
             if (mMod)
             {
@@ -372,7 +458,7 @@ namespace EdgeLighting
     public:
         explicit GlowRadiusCurve(ModulatorPtr mod) : Animation(), mMod(std::move(mod)) {}
         GlowRadiusCurve(ModulatorPtr mod, float duration) : Animation(duration), mMod(std::move(mod)) {}
-        void Apply(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, float elapsed) const override
         {
             if (mMod)
             {
@@ -390,7 +476,7 @@ namespace EdgeLighting
     public:
         explicit BloomStrengthCurve(ModulatorPtr mod) : Animation(), mMod(std::move(mod)) {}
         BloomStrengthCurve(ModulatorPtr mod, float duration) : Animation(duration), mMod(std::move(mod)) {}
-        void Apply(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, float elapsed) const override
         {
             if (mMod)
             {
@@ -408,7 +494,7 @@ namespace EdgeLighting
     public:
         explicit HueRotationRateCurve(ModulatorPtr mod) : Animation(), mMod(std::move(mod)) {}
         HueRotationRateCurve(ModulatorPtr mod, float duration) : Animation(duration), mMod(std::move(mod)) {}
-        void Apply(Config &cfg, float elapsed) const override
+        void ApplyAt(Config &cfg, float elapsed) const override
         {
             if (mMod)
             {

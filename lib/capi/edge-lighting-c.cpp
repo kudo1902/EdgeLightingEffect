@@ -705,7 +705,18 @@ extern "C"
         try
         {
             EdgeLighting::Config c = toConfig(*cfg);
-            anim->ptr->Apply(c, elapsed);
+            // Bridge the stateless CAPI (caller tracks elapsed) to the
+            // stateful Animation: inject the caller-supplied elapsed then
+            // Apply. Default state is Playing so Apply writes; if the caller
+            // Stop()ed via a future CAPI extension, we restore Playing here
+            // to preserve the historical el_animation_apply behaviour.
+            anim->ptr->SetElapsed(elapsed);
+            if (anim->ptr->IsStopped())
+            {
+                anim->ptr->Play();
+                anim->ptr->SetElapsed(elapsed); // Play from Stopped zeros elapsed; restore.
+            }
+            anim->ptr->Apply(c);
             fromConfig(c, *cfg);
             return EL_OK;
         }
@@ -718,7 +729,14 @@ extern "C"
 
     EL_Bool el_animation_is_complete(EL_Animation *anim, float elapsed)
     {
-        return (anim && anim->ptr && anim->ptr->IsComplete(elapsed)) ? 1 : 0;
+        // Stateless check — the animation's own mElapsed may not match what
+        // the CAPI caller has tracked. Use the arithmetic condition directly.
+        if (!anim || !anim->ptr)
+            return 0;
+        return (anim->ptr->GetPlaybackMode() == EdgeLighting::PlaybackMode::ONE_SHOT
+                && elapsed >= anim->ptr->GetDuration())
+                   ? 1
+                   : 0;
     }
 
     EL_PlaybackMode el_animation_get_playback_mode(EL_Animation *anim)

@@ -91,10 +91,6 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
     return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
 }
 
-float hash(vec2 p) {
-    return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
-}
-
 // Returns 1.0 if sample at perimeter position @c si is inside an arc that
 // starts at @p start and extends forwards by @p length. Length 0 = empty,
 // length 1 = full (start becomes an irrelevant phase). Anything in between
@@ -250,7 +246,6 @@ void main() {
     // --- Grade --------------------------------------------------------
     result = result / (result + vec3(TONE_MAP_SHOULDER));
     result = pow(result, vec3(GAMMA_EXPONENT));
-    result += (hash(gl_FragCoord.xy + uTime) - 0.5) * FILM_GRAIN_AMOUNT;
 
     // Premultiplied-alpha output so the effect composites over arbitrary
     // background objects instead of only adding light. Coverage = brightest

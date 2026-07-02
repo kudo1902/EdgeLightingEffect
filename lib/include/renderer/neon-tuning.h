@@ -45,7 +45,6 @@
 // --- Grading ---
 #define TONE_MAP_SHOULDER         0.6
 #define GAMMA_EXPONENT            0.85
-#define FILM_GRAIN_AMOUNT         0.04
 
 // --- Epsilons ---
 #define SIDE_SOFT_EPSILON         1e-5
