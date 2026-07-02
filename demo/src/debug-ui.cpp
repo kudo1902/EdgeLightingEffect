@@ -9,6 +9,8 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 
+#include <memory>
+
 // ---------------------------------------------------------------------------
 // Lifecycle
 // ---------------------------------------------------------------------------
@@ -591,6 +593,43 @@ namespace
         ImGui::PopID();
         return wantRemove;
     }
+
+    // Recursively render an AnimationGroup's children as indented sub-rows.
+    // Each child gets a full row (state badge, control buttons, Speed / Mode /
+    // Duration sliders) so per-child parameters like SegmentTravel's revolution
+    // time or IntensityPulse's period are reachable even when the outer group
+    // is what the user added. Nested groups keep nesting.
+    //
+    // Removing a sub-row detaches from the innermost group, leaving siblings
+    // intact. The outer preset row keeps its own Remove button for the whole
+    // composite.
+    void DrawGroupChildren(EdgeLighting::AnimationGroup &group,
+                           EdgeLighting::Config &cfg)
+    {
+        // Iterate a snapshot so an inline Remove from within a child row
+        // doesn't invalidate our loop over the group's children vector.
+        const auto children = group.GetChildren();
+        if (children.empty()) return;
+
+        ImGui::Indent(18.0f);
+        for (size_t i = 0; i < children.size(); ++i)
+        {
+            char childLabel[48];
+            std::snprintf(childLabel, sizeof(childLabel), "Child #%zu", i + 1);
+            if (DrawAnimationRow(childLabel, *children[i], cfg,
+                                 /*allowRemove=*/true))
+            {
+                group.Remove(children[i]);
+            }
+            // Recurse for nested groups.
+            if (auto sub = std::dynamic_pointer_cast<EdgeLighting::AnimationGroup>(
+                    children[i]))
+            {
+                DrawGroupChildren(*sub, cfg);
+            }
+        }
+        ImGui::Unindent(18.0f);
+    }
 }
 
 void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg, float clockTime)
@@ -635,12 +674,12 @@ void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg, float clockTime)
                 }
                 LOG_I("Animation '%s' → %s", presetName, stateName);
             };
-            // Added animations start Stopped (Animation's default state).
-            // Reset(cfg) writes the modulator's t=0 baseline into the target
-            // field so the "before Play" state is the animation's starting
-            // frame, not whatever value the config held. User clicks Play in
-            // the row to actually start the animation.
-            anim->Reset(cfg);
+            // Added animations start Stopped and DON'T touch the config
+            // yet — the animated field keeps whatever value it was showing
+            // in the sliders. The animation only starts writing when the
+            // user clicks Play on the row. (Reset(cfg) is available on the
+            // row's Reset button for the "seed baseline before Play" case,
+            // but we don't force it here.)
             mActiveGroup->Add(anim);
             // Remember the human-readable name so the row header reads
             // "Breathing" instead of "Animation #3". Parallel vector because
@@ -673,6 +712,16 @@ void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg, float clockTime)
             {
                 mActiveNames.erase(mActiveNames.begin() + static_cast<ptrdiff_t>(i));
             }
+            continue; // vector snapshot means the iterator is still valid,
+                      // but the child is gone — skip its group-children draw.
+        }
+        // If this preset is an AnimationGroup (Shimmer, Aurora, …), expose
+        // its children as indented sub-rows so the per-child Duration slider
+        // is reachable. Non-group animations skip this branch.
+        if (auto sub = std::dynamic_pointer_cast<EdgeLighting::AnimationGroup>(
+                children[i]))
+        {
+            DrawGroupChildren(*sub, cfg);
         }
     }
 
