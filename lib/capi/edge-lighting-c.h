@@ -52,7 +52,7 @@ extern "C"
 #endif
 
 /** ABI version. Bump on any breaking change to a struct layout or signature. */
-#define EL_ABI_VERSION 1
+#define EL_ABI_VERSION 2
 
 /** Maximum colour stops per gradient (mirrors NeonConfig::MAX_COLOR_STOPS). */
 #define EL_MAX_COLOR_STOPS 16
@@ -228,6 +228,7 @@ typedef struct EL_Config
  * ------------------------------------------------------------------------ */
 typedef struct EL_Effect EL_Effect;
 typedef struct EL_Animation EL_Animation;
+typedef struct EL_Modulator EL_Modulator;
 
 /** GL function loader (e.g. glfwGetProcAddress / SDL_GL_GetProcAddress). */
 typedef void *(*EL_GLGetProcAddress)(const char *name);
@@ -388,6 +389,118 @@ EL_API float el_animation_get_speed(EL_Animation *anim);
 
 /** @brief Set the playback rate multiplier (1.0 = normal, 0.5 = half, 2.0 = double). */
 EL_API void el_animation_set_speed(EL_Animation *anim, float speed);
+
+/* --------------------------------------------------------------------------
+ * Modulators (compose your own animations)
+ *
+ * Mirrors EdgeLighting::Modulator — pure `time -> float` primitives that can
+ * be composed (multiplied, added, sequenced) into arbitrarily complex signals.
+ *
+ * Ownership model
+ * ---------------
+ * All factories return an owning EL_Modulator* the caller must destroy.
+ * Composition factories (multiplier/adder/remap/sequence_append) SHARE
+ * ownership of their inputs — the caller may destroy their handle right after
+ * composing, the composition keeps the underlying modulator alive internally.
+ *
+ * Typical use
+ * -----------
+ *   EL_Modulator *env    = el_modulator_ease(0, 1, 0.3f, EL_EASE_OUT_CUBIC, 0);
+ *   EL_Modulator *osc    = el_modulator_oscillator(1, 0.6f, 1, 0, EL_WAVE_SINE);
+ *   EL_Modulator *signal = el_modulator_multiplier(env, osc);
+ *   el_modulator_destroy(env);
+ *   el_modulator_destroy(osc);
+ *
+ *   EL_Animation *anim = el_animation_from_modulator(EL_FIELD_NEON_INTENSITY, signal);
+ *   el_modulator_destroy(signal);
+ *   // per frame: el_animation_apply(anim, &cfg, elapsedTime);
+ * ------------------------------------------------------------------------ */
+
+/** Periodic waveform shapes for @ref el_modulator_oscillator. */
+typedef enum EL_Waveform
+{
+    EL_WAVE_SINE = 0,     ///< Smooth periodic (default).
+    EL_WAVE_TRIANGLE = 1, ///< Linear up + linear down.
+    EL_WAVE_SQUARE = 2,   ///< Hard on/off — useful for strobes.
+    EL_WAVE_SAWTOOTH = 3  ///< Linear ramp 0->1, snap back.
+} EL_Waveform;
+
+/** Config fields that @ref el_animation_from_modulator can drive.
+ *  Currently only single-value NeonConfig scalars. Per-segment / vector fields
+ *  (colour stops, segment positions, geometry vec2s) are not exposed yet. */
+typedef enum EL_ConfigField
+{
+    EL_FIELD_NEON_INTENSITY = 0,
+    EL_FIELD_NEON_LINE_WIDTH = 1,
+    EL_FIELD_NEON_GLOW_RADIUS = 2,
+    EL_FIELD_NEON_BLOOM_STRENGTH = 3,
+    EL_FIELD_NEON_FILAMENT_FALLOFF = 4,
+    EL_FIELD_NEON_GLOW_SIDE_SOFTNESS = 5
+} EL_ConfigField;
+
+/* --- Modulator factories ---
+ * Each returns an owning handle (null on allocation failure). */
+
+/** @brief Returns @p value at every time. */
+EL_API EL_Modulator *el_modulator_constant(float value);
+
+/**
+ * @brief Periodic waveform in [min, max].
+ * @param frequency Cycles per second (Hz).
+ * @param phase     Initial phase in cycles [0, 1).
+ * @param waveform  One of EL_Waveform.
+ */
+EL_API EL_Modulator *el_modulator_oscillator(
+    float frequency, float min, float max, float phase, int32_t waveform /*EL_Waveform*/);
+
+/**
+ * @brief One-shot or looping easing curve from @p from to @p to over @p duration seconds.
+ * @param easing One of EL_Easing.
+ */
+EL_API EL_Modulator *el_modulator_ease(
+    float from, float to, float duration, int32_t easing /*EL_Easing*/, EL_Bool loop);
+
+/**
+ * @brief Empty sequence. Fill via @ref el_modulator_sequence_append, one segment at a time.
+ * @param loop If true, wraps back to the start after the final segment ends.
+ */
+EL_API EL_Modulator *el_modulator_sequence(EL_Bool loop);
+
+/**
+ * @brief Append a segment to a sequence created by @ref el_modulator_sequence.
+ * @param seq      The sequence handle.
+ * @param segment  Modulator that runs during this segment. Shared ownership.
+ * @param duration Segment length in seconds.
+ * @return EL_ERR_NULL_ARG on null inputs; otherwise EL_OK.
+ */
+EL_API EL_Result el_modulator_sequence_append(
+    EL_Modulator *seq, EL_Modulator *segment, float duration);
+
+/** @brief Product of two modulators: a(t) * b(t). */
+EL_API EL_Modulator *el_modulator_multiplier(EL_Modulator *a, EL_Modulator *b);
+
+/** @brief Sum of two modulators: a(t) + b(t). */
+EL_API EL_Modulator *el_modulator_adder(EL_Modulator *a, EL_Modulator *b);
+
+/** @brief Rescale @p inner's output into [outMin, outMax]. */
+EL_API EL_Modulator *el_modulator_remap(EL_Modulator *inner, float outMin, float outMax);
+
+/** @brief Destroy a modulator handle. Safe with null; underlying object lives on
+ *         as long as any composition still refers to it. */
+EL_API void el_modulator_destroy(EL_Modulator *mod);
+
+/** @brief Evaluate at @p time. Useful for testing. Returns 0 on null. */
+EL_API float el_modulator_evaluate(EL_Modulator *mod, float time);
+
+/**
+ * @brief Wrap a modulator into an EL_Animation that writes into @p field.
+ * @param field  One of EL_ConfigField.
+ * @param mod    Modulator to evaluate each Apply. Shared ownership.
+ * @return An EL_Animation the caller destroys with @ref el_animation_destroy.
+ *         Loops forever (playback mode LOOP) — set one-shot via
+ *         @ref el_animation_set_playback_mode if desired.
+ */
+EL_API EL_Animation *el_animation_from_modulator(int32_t field /*EL_ConfigField*/, EL_Modulator *mod);
 
 #ifdef __cplusplus
 } // extern "C"

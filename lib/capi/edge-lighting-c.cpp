@@ -226,6 +226,72 @@ namespace
         out.wireframe.b = c.wireframe.color.b;
         out.wireframe.a = c.wireframe.color.a;
     }
+
+    // ----------------------------------------------------------------------
+    // FieldBoundAnimation — writes a modulator's value into one Config field
+    // named by EL_ConfigField. Backs el_animation_from_modulator.
+    // ----------------------------------------------------------------------
+    class FieldBoundAnimation : public EdgeLighting::Animation
+    {
+    public:
+        FieldBoundAnimation(int32_t field, EdgeLighting::ModulatorPtr mod)
+            : mField(field), mMod(std::move(mod))
+        {
+        }
+
+        void ApplyAt(EdgeLighting::Config &cfg, float elapsed) const override
+        {
+            if (!mMod)
+            {
+                return;
+            }
+            float v = mMod->Evaluate(elapsed);
+            switch (mField)
+            {
+            case EL_FIELD_NEON_INTENSITY:
+            {
+                cfg.neon.intensity = v;
+                break;
+            }
+            case EL_FIELD_NEON_LINE_WIDTH:
+            {
+                cfg.neon.lineWidth = v;
+                break;
+            }
+            case EL_FIELD_NEON_GLOW_RADIUS:
+            {
+                cfg.neon.glowRadius = v;
+                break;
+            }
+            case EL_FIELD_NEON_BLOOM_STRENGTH:
+            {
+                cfg.neon.bloomStrength = v;
+                break;
+            }
+            case EL_FIELD_NEON_FILAMENT_FALLOFF:
+            {
+                cfg.neon.filamentFalloff = v;
+                break;
+            }
+            case EL_FIELD_NEON_GLOW_SIDE_SOFTNESS:
+            {
+                cfg.neon.glowSideSoftness = v;
+                break;
+            }
+            default:
+            {
+                // Unknown field id — no-op rather than crash. Handles
+                // forward-compatibility if a newer header emits an enum value
+                // the current binary doesn't know.
+                break;
+            }
+            }
+        }
+
+    private:
+        int32_t mField;
+        EdgeLighting::ModulatorPtr mMod;
+    };
 } // namespace
 
 // ==========================================================================
@@ -239,6 +305,11 @@ struct EL_Effect
 struct EL_Animation
 {
     EdgeLighting::AnimationPtr ptr;
+};
+
+struct EL_Modulator
+{
+    EdgeLighting::ModulatorPtr ptr;
 };
 
 extern "C"
@@ -783,6 +854,210 @@ extern "C"
         if (anim && anim->ptr)
         {
             anim->ptr->SetSpeed(speed);
+        }
+    }
+
+    // ======================================================================
+    // Modulators
+    // ======================================================================
+
+    EL_Modulator *el_modulator_constant(float value)
+    {
+        try
+        {
+            return new EL_Modulator{std::make_shared<EdgeLighting::Constant>(value)};
+        }
+        catch (const std::exception &e)
+        {
+            setError(e.what());
+            return nullptr;
+        }
+    }
+
+    EL_Modulator *el_modulator_oscillator(float frequency, float min, float max,
+                                          float phase, int32_t waveform)
+    {
+        try
+        {
+            EdgeLighting::Waveform w;
+            switch (static_cast<EL_Waveform>(waveform))
+            {
+            case EL_WAVE_TRIANGLE:
+            {
+                w = EdgeLighting::Waveform::TRIANGLE;
+                break;
+            }
+            case EL_WAVE_SQUARE:
+            {
+                w = EdgeLighting::Waveform::SQUARE;
+                break;
+            }
+            case EL_WAVE_SAWTOOTH:
+            {
+                w = EdgeLighting::Waveform::SAWTOOTH;
+                break;
+            }
+            case EL_WAVE_SINE:
+            default:
+            {
+                w = EdgeLighting::Waveform::SINE;
+                break;
+            }
+            }
+            return new EL_Modulator{std::make_shared<EdgeLighting::Oscillator>(
+                frequency, min, max, phase, w)};
+        }
+        catch (const std::exception &e)
+        {
+            setError(e.what());
+            return nullptr;
+        }
+    }
+
+    EL_Modulator *el_modulator_ease(float from, float to, float duration,
+                                    int32_t easing, EL_Bool loop)
+    {
+        try
+        {
+            return new EL_Modulator{std::make_shared<EdgeLighting::Ease>(
+                from, to, duration, toEasing(easing), loop != 0)};
+        }
+        catch (const std::exception &e)
+        {
+            setError(e.what());
+            return nullptr;
+        }
+    }
+
+    EL_Modulator *el_modulator_sequence(EL_Bool loop)
+    {
+        try
+        {
+            auto seq = std::make_shared<EdgeLighting::Sequence>();
+            seq->SetLoop(loop != 0);
+            return new EL_Modulator{std::move(seq)};
+        }
+        catch (const std::exception &e)
+        {
+            setError(e.what());
+            return nullptr;
+        }
+    }
+
+    EL_Result el_modulator_sequence_append(EL_Modulator *seq, EL_Modulator *segment, float duration)
+    {
+        if (!seq || !seq->ptr || !segment || !segment->ptr)
+        {
+            setError("el_modulator_sequence_append: null argument");
+            return EL_ERR_NULL_ARG;
+        }
+        // Down-cast the underlying modulator to Sequence. If the caller passed
+        // a handle that isn't a Sequence, refuse rather than corrupting memory.
+        auto *seqPtr = dynamic_cast<EdgeLighting::Sequence *>(seq->ptr.get());
+        if (!seqPtr)
+        {
+            setError("el_modulator_sequence_append: first argument is not a Sequence");
+            return EL_ERR_NULL_ARG;
+        }
+        try
+        {
+            seqPtr->Append(segment->ptr, duration);
+            return EL_OK;
+        }
+        catch (const std::exception &e)
+        {
+            setError(e.what());
+            return EL_ERR_EXCEPTION;
+        }
+    }
+
+    EL_Modulator *el_modulator_multiplier(EL_Modulator *a, EL_Modulator *b)
+    {
+        if (!a || !a->ptr || !b || !b->ptr)
+        {
+            setError("el_modulator_multiplier: null argument");
+            return nullptr;
+        }
+        try
+        {
+            return new EL_Modulator{std::make_shared<EdgeLighting::Multiplier>(a->ptr, b->ptr)};
+        }
+        catch (const std::exception &e)
+        {
+            setError(e.what());
+            return nullptr;
+        }
+    }
+
+    EL_Modulator *el_modulator_adder(EL_Modulator *a, EL_Modulator *b)
+    {
+        if (!a || !a->ptr || !b || !b->ptr)
+        {
+            setError("el_modulator_adder: null argument");
+            return nullptr;
+        }
+        try
+        {
+            return new EL_Modulator{std::make_shared<EdgeLighting::Adder>(a->ptr, b->ptr)};
+        }
+        catch (const std::exception &e)
+        {
+            setError(e.what());
+            return nullptr;
+        }
+    }
+
+    EL_Modulator *el_modulator_remap(EL_Modulator *inner, float outMin, float outMax)
+    {
+        if (!inner || !inner->ptr)
+        {
+            setError("el_modulator_remap: null argument");
+            return nullptr;
+        }
+        try
+        {
+            return new EL_Modulator{std::make_shared<EdgeLighting::Remap>(inner->ptr, outMin, outMax)};
+        }
+        catch (const std::exception &e)
+        {
+            setError(e.what());
+            return nullptr;
+        }
+    }
+
+    void el_modulator_destroy(EL_Modulator *mod) { delete mod; }
+
+    float el_modulator_evaluate(EL_Modulator *mod, float time)
+    {
+        if (!mod || !mod->ptr)
+        {
+            return 0.0f;
+        }
+        try
+        {
+            return mod->ptr->Evaluate(time);
+        }
+        catch (...)
+        {
+            return 0.0f;
+        }
+    }
+
+    EL_Animation *el_animation_from_modulator(int32_t field, EL_Modulator *mod)
+    {
+        if (!mod || !mod->ptr)
+        {
+            setError("el_animation_from_modulator: null modulator");
+            return nullptr;
+        }
+        try
+        {
+            return new EL_Animation{std::make_shared<FieldBoundAnimation>(field, mod->ptr)};
+        }
+        catch (const std::exception &e)
+        {
+            setError(e.what());
+            return nullptr;
         }
     }
 
