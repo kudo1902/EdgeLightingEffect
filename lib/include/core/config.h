@@ -81,6 +81,20 @@ namespace EdgeLighting
         /// Sets the line *width*; peak brightness stays constant regardless of value.
         float lineWidth = 4.0f;
 
+        /// Filament brightness falloff rate from the axis outward. The shader
+        /// uses a super-Lorentzian `1 / (1 + (ad/k)^N)` profile where
+        /// N = 2 * filamentFalloff. Peak brightness on the axis (ad = 0) is
+        /// always exactly 1.0; this value controls how the sides fall off and
+        /// how much of a flat plateau the core has:
+        ///   0.5 = heavy Lorentzian tail (N=1) — blends smoothly into the halo
+        ///   1.0 = default pure Lorentzian (N=2) — tight neon look, no plateau
+        ///   2.0 = plateau roughly the width of lineWidth, sharper shoulder
+        ///   >3  = near-rectangular: plateau IS the line, edges are crisp
+        /// Higher values also make lineWidth read as a proper visible width,
+        /// not just brightness, because the flat top of the profile scales
+        /// with halfWidth.
+        float filamentFalloff = 1.0f;
+
         // --- Glow ---
 
         /// Master brightness multiplier applied to filament + halo + bloom.

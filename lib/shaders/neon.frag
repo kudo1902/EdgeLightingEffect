@@ -27,6 +27,7 @@ out vec4 fragColor;
 uniform vec2  uRectSize;
 uniform float uCornerRadius;
 uniform float uLineWidth;
+uniform float uFilamentFalloff; ///< Super-Lorentzian exponent scale (N = 2 * value); higher = thinner core.
 uniform float uIntensity;
 uniform float uTime;
 uniform float uHueRotationRate;
@@ -37,15 +38,15 @@ uniform float uGlowSideSoftness;
 
 uniform float uSampleSpacing;
 
-// Loop sample positions (perimeter points) as an N×1 RGBA32F data texture,
+// Loop sample positions (perimeter points) as an N×1 RGBA8 data texture,
 // texelFetch'd in the gather loop. Using a texture instead of a
 // `uniform vec2 uLoopSamples[N]` array avoids the large per-element uniform
 // allocation, which can blow the fragment uniform-vector limit (and silently
 // fail to link) on some mobile GLES drivers.
 //
-// The texture is RGBA8 (only byte textures are guaranteed): each position is
-// packed as two 16-bit fixed-point coords (x = R:hi G:lo, y = B:hi A:lo),
-// normalised to [0,1] over [-uSampleMaxCoord, uSampleMaxCoord] and decoded below.
+// RGBA8 is the only guaranteed byte texture: each position is packed as two
+// 16-bit fixed-point coords (x = R:hi G:lo, y = B:hi A:lo), normalised to
+// [0,1] over [-uSampleMaxCoord, uSampleMaxCoord] and decoded below.
 uniform sampler2D uLoopSamplesTex;
 uniform float     uSampleMaxCoord;
 
@@ -125,19 +126,34 @@ void main() {
     if (uGlowSide == GLOW_SIDE_OUTSIDE && d < -softEdge) discard;
 
     // --- Filament -----------------------------------------------------
-    // Flat-top profile: a solid bar of width = lineWidth with a CONSTANT-width
-    // soft edge (FILAMENT_EDGE_SOFTNESS). Because the edge width is constant,
-    // thickening the line widens only the solid part — the soft "halo" around
-    // it does NOT grow. (The old pow(k/(ad+k)) profile had an edge whose width
-    // scaled with lineWidth, so a thick line bloomed into a wide glow even with
-    // glowRadius=0.) All spreading glow now comes from glowRadius alone.
+    // Neon-tube profile via a super-Lorentzian falloff:
     //
-    // lineGate fades the filament intensity from 0 at lineWidth=0 up to full at
-    // lineWidth = FILAMENT_MIN_HALF_WIDTH * 2, so lineWidth=0 means "no line"
-    // while sub-pixel widths fade out instead of aliasing.
+    //   core(ad) = 1 / (1 + (ad / k)^N)
+    //
+    // This is the Lorentzian family generalised so lineWidth controls a real
+    // visible width, not just brightness. k = halfWidth is the half-brightness
+    // radius (core = 0.5 at ad = k), and N = 2 * uFilamentFalloff controls the
+    // sharpness of the transition:
+    //   uFilamentFalloff = 0.5 → N = 1   (heavy tail; blends smoothly into halo)
+    //   uFilamentFalloff = 1.0 → N = 2   (pure Lorentzian; default)
+    //   uFilamentFalloff = 2.0 → N = 4   (flat plateau of width ~= lineWidth,
+    //                                     then sharper falloff)
+    //   uFilamentFalloff = 5.0 → N = 10  (near-rectangular; the plateau IS
+    //                                     the line, edges are crisp)
+    //
+    // Higher N flattens the top and sharpens the shoulder, so widening
+    // lineWidth widens the fully-bright interior instead of just brightening
+    // the same-looking thin peak. Peak at ad = 0 is always exactly 1.0.
+    //
+    // lineGate fades the filament from 0 at lineWidth = 0 up to full at
+    // lineWidth = FILAMENT_MIN_HALF_WIDTH * 2, so lineWidth = 0 means "no
+    // line" instead of a single-pixel bright dot.
     float halfWidth = uLineWidth * 0.5;
-    float core = 1.0 - smoothstep(halfWidth, halfWidth + FILAMENT_EDGE_SOFTNESS, ad);
-    float lineGate = clamp(uLineWidth / (FILAMENT_MIN_HALF_WIDTH * 2.0), 0.0, 1.0);
+    float k         = max(halfWidth, 1.0);
+    float N         = 2.0 * max(uFilamentFalloff, 1e-3);
+    float r         = ad / k;
+    float core      = 1.0 / (1.0 + pow(r, N));
+    float lineGate  = clamp(uLineWidth / (FILAMENT_MIN_HALF_WIDTH * 2.0), 0.0, 1.0);
 
     // --- Kernel widths ------------------------------------------------
     // Halo kernel doubles as the colour-gather weight (saves a divide per
@@ -154,10 +170,12 @@ void main() {
     float bw2 = bw * bw;
 
     // --- Additive gather --------------------------------------------------
-    // Per iteration: 1 sub, 1 dot, 2 reciprocals, 1 sqrt, 1 texture lookup
-    // (plus a tiny head-weight computation when uSegmentBoost > 0).
-    // No pow(), no in-shader stops walk, no HSV math. Sweep advance is folded
-    // into the GL_REPEAT-wrapped texture — no fract() needed either.
+    // Per iteration: 1 texture fetch + decode for the sample position, 1 sub,
+    // 1 dot, 2 reciprocals, 1 sqrt, 1 gradient-LUT lookup, 1 exp() + a couple
+    // of mul/adds for the travelling-segment head weight (unconditional — when
+    // uSegmentBoost == 0 the bell becomes headW = 1 so it's a no-op result,
+    // but the exp still runs). No pow(), no in-shader stops walk, no HSV math.
+    // Sweep advance is folded into the GL_REPEAT-wrapped LUT — no fract() either.
     float glow      = 0.0;
     float bloom     = 0.0;
     vec3  acc       = vec3(0.0);

@@ -77,6 +77,7 @@ namespace EdgeLighting
         mNeonShader.SetUniform("uRectSize", rectSizeScaled);
         mNeonShader.SetUniform("uCornerRadius", config.geometry.cornerRadius * scale);
         mNeonShader.SetUniform("uLineWidth", config.neon.lineWidth * scale);
+        mNeonShader.SetUniform("uFilamentFalloff", config.neon.filamentFalloff);
         mNeonShader.SetUniform("uIntensity", config.neon.intensity);
         mNeonShader.SetUniform("uTime", time);
         mNeonShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
