@@ -135,36 +135,22 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
 
 void DebugUI::ApplyActiveAnimation(EdgeLighting::Config &config, float clockTime)
 {
-    // Advance the animation-time accumulator regardless of whether we'll
-    // actually call Apply this frame — so the clock-time reference stays
-    // current even after the animation has completed.
+    // Compute the frame delta ourselves: main.cpp still hands us the effect's
+    // clock time so we can freeze animations by pausing that clock, but the
+    // animation itself now owns state / elapsed / completion latching, so we
+    // just forward dt to Update() and call Apply().
     float dt = clockTime - mLastClockTime;
     mLastClockTime = clockTime;
 
-    if (!mAnimation)
-        return;
-
-    // Once a one-shot animation has completed (and the OnComplete callback has
-    // fired once), stop writing to config. This lets the user grab sliders for
-    // fields the animation was driving (e.g. Arc Start / End after Outline
-    // Tracer) and tweak them without the next Apply overwriting the drag.
-    //
-    // Loopers (PlaybackMode::LOOP) → IsComplete always false → mFiredComplete
-    // never gets set, so they keep applying every frame as before.
-    if (mFiredComplete)
-        return;
-
-    // Speed-scaled accumulator. Changing speed mid-flight only affects future
-    // progression — past elapsed isn't recomputed, so the animation continues
-    // smoothly from where it was (no fast-forward / rewind jumps).
-    mAnimElapsed += dt * mAnimation->GetSpeed();
-    mAnimation->Apply(config, mAnimElapsed);
-
-    if (mAnimation->IsComplete(mAnimElapsed))
+    // AnimationGroup::Update / Apply broadcast to each child, respecting each
+    // child's own state (Stopped → skip, Paused → hold, Playing → advance).
+    // The shader consumes cfg.neon.hueRotationRate directly via uTime; a
+    // preset that modulates the rate (HueRotationReverse etc.) writes into
+    // config and the next frame's Render sends the new rate to the shader.
+    if (mActiveGroup)
     {
-        mFiredComplete = true;
-        if (mAnimation->OnComplete)
-            mAnimation->OnComplete();
+        mActiveGroup->Update(dt);
+        mActiveGroup->Apply(config);
     }
 }
 
@@ -452,88 +438,246 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg)
     }
 }
 
-void DebugUI::buildAnimationSection(EdgeLighting::Config & /*cfg*/, float clockTime)
+namespace
 {
-    if (!ImGui::CollapsingHeader("Animation", ImGuiTreeNodeFlags_DefaultOpen))
+    // Colour-coded label for an animation's current state.
+    void DrawStateBadge(EdgeLighting::AnimationState s)
+    {
+        ImVec4 col;
+        const char *label = "?";
+        switch (s)
+        {
+        case EdgeLighting::AnimationState::Playing:
+            col = ImVec4(0.30f, 0.85f, 0.35f, 1.0f);
+            label = "PLAYING";
+            break;
+        case EdgeLighting::AnimationState::Paused:
+            col = ImVec4(0.95f, 0.75f, 0.15f, 1.0f);
+            label = "PAUSED";
+            break;
+        case EdgeLighting::AnimationState::Stopped:
+            col = ImVec4(0.55f, 0.55f, 0.60f, 1.0f);
+            label = "STOPPED";
+            break;
+        case EdgeLighting::AnimationState::Completed:
+            col = ImVec4(0.40f, 0.70f, 1.00f, 1.0f);
+            label = "DONE";
+            break;
+        }
+        ImGui::TextColored(col, "%-7s", label);
+    }
+
+    // Render one row of controls for @p anim. Returns true if the user hit
+    // the Remove button (caller is responsible for the actual detach).
+    // @p allowRemove hides the Remove button for pinned rows (currently
+    // there are no pinned rows, but the flag is kept for future use).
+    bool DrawAnimationRow(const char *label,
+                          EdgeLighting::Animation &anim,
+                          EdgeLighting::Config &cfg,
+                          bool allowRemove)
+    {
+        ImGui::PushID(label);
+        DrawStateBadge(anim.GetState());
+        ImGui::SameLine();
+        ImGui::Text("%s", label);
+
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Play"))
+        {
+            anim.Play();
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Pause"))
+        {
+            anim.Pause();
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Stop"))
+        {
+            anim.Stop();
+        }
+        ImGui::SameLine();
+        // Reset rewinds elapsed to 0 AND writes the modulator@t=0 baseline
+        // into cfg — leaves state unchanged (Playing keeps playing from the
+        // top; Stopped stays Stopped but the config field is restored).
+        if (ImGui::SmallButton("Reset"))
+        {
+            anim.Reset(cfg);
+        }
+
+        bool wantRemove = false;
+        if (allowRemove)
+        {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Remove"))
+            {
+                wantRemove = true;
+            }
+        }
+
+        // --- Per-animation params ---
+        // These are the pieces of state Animation's base class exposes to
+        // every subclass. Editing them here is a "live tweak" of the added
+        // instance; subclass-specific ctor arguments (baseRate, easing,
+        // segment length, …) are still baked in at Add-time via the preset
+        // — those would need a per-subclass params panel to expose here.
+
+        // Speed multiplier — 0 acts as "pause at the value level".
+        float speed = anim.GetSpeed();
+        ImGui::SetNextItemWidth(160.0f);
+        if (ImGui::SliderFloat("Speed", &speed, 0.0f, 4.0f, "%.2fx"))
+        {
+            anim.SetSpeed(speed);
+        }
+
+        // Playback mode — LOOP wraps elapsed at duration; ONE_SHOT completes
+        // after one cycle. Toggling is live: switching a Playing looper to
+        // ONE_SHOT will complete on the next Update if elapsed already >= dur.
+        int modeIdx = (anim.GetPlaybackMode() == EdgeLighting::PlaybackMode::LOOP)
+                          ? 0 : 1;
+        const char *modeItems[] = {"Loop", "One-shot"};
+        ImGui::SetNextItemWidth(160.0f);
+        if (ImGui::Combo("Mode", &modeIdx, modeItems, IM_ARRAYSIZE(modeItems)))
+        {
+            anim.SetPlaybackMode(modeIdx == 0
+                                     ? EdgeLighting::PlaybackMode::LOOP
+                                     : EdgeLighting::PlaybackMode::ONE_SHOT);
+        }
+
+        // Duration — cycle length in seconds. Subclasses with internal
+        // modulators (FadeIn/FadeOut/OutlineTracer) rebuild them via
+        // OnDurationChanged so the visual matches the completion latch.
+        // 0 means "modulator owns its own periodicity" (oscillator-based
+        // subclasses), so we disable the slider in that case rather than
+        // silently clamping.
+        float dur = anim.GetDuration();
+        ImGui::SetNextItemWidth(160.0f);
+        if (dur > 0.0f)
+        {
+            float editable = dur;
+            if (ImGui::SliderFloat("Duration", &editable, 0.05f, 10.0f, "%.2fs"))
+            {
+                anim.SetDuration(editable);
+            }
+        }
+        else
+        {
+            ImGui::BeginDisabled();
+            float placeholder = 0.0f;
+            ImGui::SliderFloat("Duration", &placeholder, 0.0f, 1.0f,
+                               "modulator-owned");
+            ImGui::EndDisabled();
+        }
+
+        // --- Elapsed status line ---
+        float elapsed = anim.GetElapsed();
+        if (anim.GetPlaybackMode() == EdgeLighting::PlaybackMode::LOOP)
+        {
+            if (dur > 0.0f)
+            {
+                ImGui::TextDisabled("t=%.2fs / cycle=%.2fs (looping)", elapsed, dur);
+            }
+            else
+            {
+                ImGui::TextDisabled("t=%.2fs (looping)", elapsed);
+            }
+        }
+        else
+        {
+            const char *status = anim.IsCompleted() ? "done" : "running";
+            ImGui::TextDisabled("t=%.2fs / dur=%.2fs (%s)", elapsed, dur, status);
+        }
+
+        ImGui::PopID();
+        return wantRemove;
+    }
+}
+
+void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg, float clockTime)
+{
+    if (!ImGui::CollapsingHeader("Animations", ImGuiTreeNodeFlags_DefaultOpen))
     {
         return;
     }
 
-    // Combo over every preset name. Picking a new one rebuilds the underlying
-    // Animation and snapshots the clock time so each preset starts from t = 0.
+    // --- Add row: preset combo (no separate Add button — changing the
+    // selection commits immediately, so picking a preset is a single click). ---
     static constexpr int PRESET_COUNT = static_cast<int>(EdgeLightingDemo::AnimationPreset::COUNT);
     const char *names[PRESET_COUNT];
     for (int i = 0; i < PRESET_COUNT; ++i)
     {
-        names[i] = EdgeLightingDemo::PresetName(static_cast<EdgeLightingDemo::AnimationPreset>(i));
+        names[i] = EdgeLightingDemo::PresetName(
+            static_cast<EdgeLightingDemo::AnimationPreset>(i));
     }
-
-    int presetIdx = static_cast<int>(mPreset);
-    if (ImGui::Combo("Preset", &presetIdx, names, PRESET_COUNT))
+    ImGui::SetNextItemWidth(200.0f);
+    if (ImGui::Combo("Add animation", &mAddPresetIdx, names, PRESET_COUNT))
     {
-        mPreset = static_cast<EdgeLightingDemo::AnimationPreset>(presetIdx);
-        mAnimation = EdgeLightingDemo::CreateAnimation(mPreset);
-        // Example: log when a one-shot preset finishes. Library users would
-        // wire OnComplete to whatever they want (chain into the next anim,
-        // hide the effect, etc.).
-        if (mAnimation)
+        auto preset = static_cast<EdgeLightingDemo::AnimationPreset>(mAddPresetIdx);
+        if (auto anim = EdgeLightingDemo::CreateAnimation(preset))
         {
-            auto presetName = EdgeLightingDemo::PresetName(mPreset);
-            mAnimation->OnComplete = [presetName]()
+            const char *presetName = EdgeLightingDemo::PresetName(preset);
+            // Log completion + state changes for the added animation. In a
+            // real app these hooks would drive UI transitions, chain the
+            // next animation, etc.
+            anim->OnComplete = [presetName]()
+            { LOG_I("Animation '%s' completed.", presetName); };
+            anim->OnStateChanged =
+                [presetName](EdgeLighting::AnimationState /*prev*/,
+                             EdgeLighting::AnimationState now)
             {
-                LOG_I("Animation '%s' completed.", presetName);
-            };
-        }
-        mAnimElapsed = 0.0f;
-        mLastClockTime = clockTime;
-        mFiredComplete = false;
-    }
-
-    if (mAnimation)
-    {
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Restart"))
-        {
-            mAnimElapsed = 0.0f;
-            mLastClockTime = clockTime;
-            mFiredComplete = false;
-        }
-
-        // Speed multiplier — affects future progression only (no fast-forward).
-        float speed = mAnimation->GetSpeed();
-        if (ImGui::SliderFloat("Speed##Anim", &speed, 0.0f, 4.0f, "%.2fx"))
-            mAnimation->SetSpeed(speed);
-
-        float elapsed = mAnimElapsed;
-        if (mAnimation->GetPlaybackMode() == EdgeLighting::PlaybackMode::LOOP)
-        {
-            ImGui::TextDisabled("Active for %.2fs (anim) — loops forever", elapsed);
-        }
-        else
-        {
-            float dur = mAnimation->GetDuration();
-            bool done = mAnimation->IsComplete(elapsed);
-            ImGui::TextDisabled("Active for %.2fs / %.2fs (anim) — %s",
-                                elapsed, dur, done ? "complete" : "running");
-
-            // Live duration tweak. Subclasses with internal modulators
-            // (FadeIn/FadeOut) rebuild via OnDurationChanged() so the visual
-            // fade stretches alongside the completion latch.
-            float editable = dur;
-            if (ImGui::SliderFloat("Duration##Anim", &editable, 0.05f, 10.0f, "%.2fs"))
-            {
-                mAnimation->SetDuration(editable);
-                // If the new duration is shorter than what's already elapsed,
-                // OnComplete is on the verge of firing — clear the latch so it
-                // does, even though IsComplete just flipped true.
-                if (editable < elapsed)
+                const char *stateName = "?";
+                switch (now)
                 {
-                    mFiredComplete = false;
+                case EdgeLighting::AnimationState::Playing:   stateName = "Playing"; break;
+                case EdgeLighting::AnimationState::Paused:    stateName = "Paused"; break;
+                case EdgeLighting::AnimationState::Stopped:   stateName = "Stopped"; break;
+                case EdgeLighting::AnimationState::Completed: stateName = "Completed"; break;
                 }
+                LOG_I("Animation '%s' → %s", presetName, stateName);
+            };
+            // Added animations start Stopped (Animation's default state).
+            // Reset(cfg) writes the modulator's t=0 baseline into the target
+            // field so the "before Play" state is the animation's starting
+            // frame, not whatever value the config held. User clicks Play in
+            // the row to actually start the animation.
+            anim->Reset(cfg);
+            mActiveGroup->Add(anim);
+            // Remember the human-readable name so the row header reads
+            // "Breathing" instead of "Animation #3". Parallel vector because
+            // AnimationGroup only stores AnimationPtr, not names.
+            mActiveNames.push_back(presetName);
+        }
+        mLastClockTime = clockTime;
+    }
+
+    ImGui::Separator();
+
+    // --- Added animation rows ---
+    // Iterate a snapshot of the children so removing during iteration is
+    // safe (mActiveGroup->Remove(...) invalidates any iterator otherwise).
+    const auto children = mActiveGroup->GetChildren();
+    if (children.empty())
+    {
+        ImGui::TextDisabled("No animations added. Pick a preset above to add one.");
+    }
+    for (size_t i = 0; i < children.size(); ++i)
+    {
+        const char *presetName = i < mActiveNames.size() ? mActiveNames[i]
+                                                          : "Animation";
+        char label[80];
+        std::snprintf(label, sizeof(label), "%s##%zu", presetName, i);
+        if (DrawAnimationRow(label, *children[i], cfg, /*allowRemove=*/true))
+        {
+            mActiveGroup->Remove(children[i]);
+            if (i < mActiveNames.size())
+            {
+                mActiveNames.erase(mActiveNames.begin() + static_cast<ptrdiff_t>(i));
             }
         }
-        ImGui::TextDisabled("Note: sliders for animated fields will be overwritten each frame.");
     }
+
+    ImGui::TextDisabled(
+        "Sliders for animated fields will be overwritten each frame.");
 }
 
 void DebugUI::buildBackgroundSection()
