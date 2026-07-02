@@ -210,6 +210,7 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
 
     ImGui::Checkbox("Opaque (no blend)##Neon", &cfg.neon.opaque);
     ImGui::SliderFloat("Line Width##Neon", &cfg.neon.lineWidth, 0.0f, 20.0f, "%.0f");
+    ImGui::SliderFloat("Filament Falloff##Neon", &cfg.neon.filamentFalloff, 0.5f, 5.0f, "%.2f");
     ImGui::SliderFloat("Intensity##Neon", &cfg.neon.intensity, 0.0f, 3.0f, "%.2f");
     ImGui::SliderFloat("Glow Radius##Neon", &cfg.neon.glowRadius, 0.0f, 80.0f, "%.0f");
     ImGui::SliderFloat("Bloom Strength##Neon", &cfg.neon.bloomStrength, 0.0f, 2.0f, "%.2f");
@@ -374,6 +375,7 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg)
 
     ImGui::Checkbox("Opaque (no blend)##Opt", &cfg.neon.opaque);
     ImGui::SliderFloat("Line Width##Opt", &cfg.neon.lineWidth, 0.0f, 20.0f, "%.0f");
+    ImGui::SliderFloat("Filament Falloff##Opt", &cfg.neon.filamentFalloff, 0.5f, 5.0f, "%.2f");
     ImGui::SliderFloat("Intensity##Opt", &cfg.neon.intensity, 0.0f, 3.0f, "%.2f");
     ImGui::SliderFloat("Glow Radius##Opt", &cfg.neon.glowRadius, 0.0f, 80.0f, "%.0f");
     ImGui::SliderFloat("Bloom Strength##Opt", &cfg.neon.bloomStrength, 0.0f, 2.0f, "%.2f");

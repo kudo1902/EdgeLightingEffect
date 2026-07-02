@@ -37,6 +37,7 @@ out vec4 fragColor;
 uniform vec2  uRectSize;
 uniform float uCornerRadius;
 uniform float uLineWidth;
+uniform float uFilamentFalloff; ///< Super-Lorentzian exponent scale (N = 2 * value); higher = thinner core.
 uniform float uIntensity;
 uniform float uTime;
 uniform float uHueRotationRate;
@@ -138,37 +139,32 @@ void main() {
     if (uGlowSide == GLOW_SIDE_OUTSIDE && d < -softEdge) discard;
 
     // --- Filament -----------------------------------------------------
-    // Flat-top profile: solid bar of width = lineWidth with a CONSTANT soft
-    // edge (FILAMENT_EDGE_SOFTNESS) — independent of lineWidth so thickening
-    // the line widens only the solid part, not the surrounding glow.
-    // ASYMMETRIC AA (matches the base NeonRenderer): full-brightness region
-    // spans ad ∈ [0, halfWidth], then the AA transition sits ENTIRELY on the
-    // outside from halfWidth to halfWidth + FILAMENT_EDGE_SOFTNESS.
+    // Neon-tube profile via a super-Lorentzian falloff (matches the base
+    // NeonRenderer so the two look identical):
     //
-    // 2×2 SUB-PIXEL SUPERSAMPLING on this term only: evaluate the SDF +
-    // smoothstep at four ±0.25-pixel offsets and average. MSAA on the FBO
-    // wouldn't help — the shader runs once per pixel centre by default and
-    // all sub-samples of a covered pixel receive the same computed value.
-    // Explicit supersampling here bypasses that. Cost is 4× the SDF +
-    // smoothstep (~60 ops), negligible vs. the 64-sample halo gather below
-    // (~1000+ ops), so the perf hit is minor.
+    //   core(ad) = 1 / (1 + (ad / k)^N)
+    //
+    // k = halfWidth is the half-brightness radius (core = 0.5 at ad = k), and
+    // N = 2 * uFilamentFalloff controls the sharpness of the transition:
+    //   uFilamentFalloff = 0.5 → N = 1   (heavy tail; blends smoothly into halo)
+    //   uFilamentFalloff = 1.0 → N = 2   (pure Lorentzian; default)
+    //   uFilamentFalloff = 2.0 → N = 4   (flat plateau of width ~= lineWidth,
+    //                                     then sharper falloff)
+    //   uFilamentFalloff = 5.0 → N = 10  (near-rectangular; the plateau IS
+    //                                     the line, edges are crisp)
+    //
+    // Peak at ad = 0 is always exactly 1.0. The 2×2 supersampling used by the
+    // old flat-top profile isn't needed — the Lorentzian has no sharp shoulder
+    // to alias, so smoothness is intrinsic to the shape.
     //
     // lineGate fades the filament from 0 at lineWidth = 0 up to full at
     // lineWidth = FILAMENT_MIN_HALF_WIDTH * 2, so lineWidth = 0 means "no
-    // line" instead of inheriting the floored half-width.
+    // line" instead of a single-pixel bright dot.
     float halfWidth = uLineWidth * 0.5;
-    vec2  offX      = dFdx(vPos) * 0.25;
-    vec2  offY      = dFdy(vPos) * 0.25;
-    float ad00      = abs(sdRoundBox(vPos - offX - offY, halfSize, uCornerRadius));
-    float ad10      = abs(sdRoundBox(vPos + offX - offY, halfSize, uCornerRadius));
-    float ad01      = abs(sdRoundBox(vPos - offX + offY, halfSize, uCornerRadius));
-    float ad11      = abs(sdRoundBox(vPos + offX + offY, halfSize, uCornerRadius));
-    float core      = 0.25 * (
-        (1.0 - smoothstep(halfWidth, halfWidth + FILAMENT_EDGE_SOFTNESS, ad00)) +
-        (1.0 - smoothstep(halfWidth, halfWidth + FILAMENT_EDGE_SOFTNESS, ad10)) +
-        (1.0 - smoothstep(halfWidth, halfWidth + FILAMENT_EDGE_SOFTNESS, ad01)) +
-        (1.0 - smoothstep(halfWidth, halfWidth + FILAMENT_EDGE_SOFTNESS, ad11))
-    );
+    float k         = max(halfWidth, 1.0);
+    float N         = 2.0 * max(uFilamentFalloff, 1e-3);
+    float r         = ad / k;
+    float core      = 1.0 / (1.0 + pow(r, N));
     float lineGate  = clamp(uLineWidth / (FILAMENT_MIN_HALF_WIDTH * 2.0), 0.0, 1.0);
 
     // --- Kernel widths ------------------------------------------------

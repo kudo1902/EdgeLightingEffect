@@ -95,6 +95,7 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
         mShaderProgram.SetUniform("uCornerRadius", config.geometry.cornerRadius);
         mShaderProgram.SetUniform("uLineWidth", config.neon.lineWidth);
+        mShaderProgram.SetUniform("uFilamentFalloff", config.neon.filamentFalloff);
         mShaderProgram.SetUniform("uIntensity", config.neon.intensity);
         mShaderProgram.SetUniform("uTime", time);
         mShaderProgram.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
