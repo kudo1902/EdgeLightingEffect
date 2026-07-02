@@ -397,10 +397,10 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg)
     {
         cfg.neon.glowSide = static_cast<EdgeLighting::GlowSide>(sideIdx);
     }
-    if (cfg.neon.glowSide != EdgeLighting::GlowSide::BOTH)
-    {
-        ImGui::SliderFloat("Side Softness##Opt", &cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
-    }
+    // Always show Side Softness so the control is discoverable regardless of
+    // the Glow Side mode (it only feathers the one-sided cut, but keeping it
+    // live avoids the slider vanishing when Glow Side is Both).
+    ImGui::SliderFloat("Side Softness##Opt", &cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
 
     ImGui::SliderFloat("Segment Pos##Opt", &cfg.neon.segmentPosition, 0.0f, 1.0f, "%.2f");
     ImGui::SliderFloat("Segment Length##Opt", &cfg.neon.segmentLength, 0.02f, 0.5f, "%.2f");

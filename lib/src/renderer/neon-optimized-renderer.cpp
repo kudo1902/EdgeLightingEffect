@@ -92,6 +92,7 @@ namespace EdgeLighting
 
         mNeonShader.SetUniform("uNumSamples", config.optimizedNeon.numSamples);
         mNeonShader.SetUniform("uSampleSpacing", mSampleSpacing);
+        mNeonShader.SetUniform("uQuadMargin", mQuadMargin);
 
         // Loop sample positions from a data texture (unit 1) the shader
         // texelFetches, instead of a uniform vec2[] array.
@@ -214,11 +215,20 @@ namespace EdgeLighting
         // mSampleSpacing are already scaled, matching the uniforms uploaded
         // in Render().
         {
-            // Factors come from the shared neon-tuning.h (also fed to the shaders).
+            // Use the SAME early-out factors as the base NeonRenderer so the
+            // bloom's wide 1/D tail reaches exactly as far here as it does
+            // there — a smaller margin faded the bloom out sooner and made the
+            // optimized output look visibly shorter than the base (mismatch).
+            // The factors come from the shared neon-tuning.h (also fed to the
+            // base renderer's setupGeometry).
             float earlyOut = std::max(config.neon.glowRadius * scale * float(EARLY_OUT_RADIUS_FACTOR),
                                       mSampleSpacing * float(EARLY_OUT_SPACING_FACTOR));
 
-            float margin = earlyOut;
+            // Grow with bloom × intensity, matching the base renderer: the
+            // 1/D bloom tail reaches further as those rise. The uQuadMargin
+            // soft-fade (below, also mirrored from the base) guards the edge.
+            float margin = earlyOut * (1.0f + config.neon.bloomStrength * config.neon.intensity);
+            mQuadMargin = margin;
             float halfW = config.geometry.width * 0.5f * scale;
             float halfH = config.geometry.height * 0.5f * scale;
             float l = -(halfW + margin);

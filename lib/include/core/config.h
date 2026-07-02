@@ -215,7 +215,9 @@ namespace EdgeLighting
     /// Half-resolution optimized neon renderer configuration.
     ///
     /// Renders the neon shader at half resolution then bilinear-blits to full res.
-    /// Uses mediump precision + 64 gather samples for edge-device performance.
+    /// The perf wins are the half-res FBO + reduced gather samples (not reduced
+    /// precision — the shader uses highp; mediump = fp16 on ANGLE overflowed the
+    /// large fragment coordinates and produced NaN "noise dots").
     /// Visual parameters (line width, intensity, colour stops, etc.) are shared
     /// with Config::neon — adjust them in the Neon section of the debug UI.
     typedef struct OptimizedNeonConfig

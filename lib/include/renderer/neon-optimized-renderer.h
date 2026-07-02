@@ -14,9 +14,14 @@ namespace EdgeLighting
     /// Half-resolution single-pass neon renderer for edge devices.
     ///
     /// Two-pass approach:
-    ///   Pass 1 — render the neon shader (mediump, 64 gather samples) into
+    ///   Pass 1 — render the neon shader (highp, up to 64 gather samples) into
     ///             a half-resolution RGBA8 FBO.
     ///   Pass 2 — bilinear blit the half-res FBO to the full-res backbuffer.
+    ///
+    /// The perf wins are the half-res FBO, reduced sample count, data-texture
+    /// sample lookup and baked colour LUT — not reduced precision. The shader
+    /// uses highp: on desktop GLES (ANGLE) mediump = fp16, which overflows on
+    /// the large fragment coordinates and produced NaN "noise dots".
     ///
     /// Visual parameters are read from Config::neon (shared with the
     /// standard single-pass NeonRenderer), so switching between them for
@@ -51,6 +56,7 @@ namespace EdgeLighting
 
         std::vector<glm::vec2> mLoopSamples;
         float mSampleSpacing = 0.0f;
+        float mQuadMargin = 0.0f; ///< Scaled/FBO-space margin to the Pass-1 quad edge (shader soft-fade).
 
         Texture2D mGradientLUT;
         std::vector<float> mLUTScratch;

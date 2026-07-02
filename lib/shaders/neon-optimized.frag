@@ -1,5 +1,15 @@
-precision mediump float;
+precision highp float;
 
+// Precision: highp (NOT mediump). This renderer's "optimized" wins come from
+// the half-res FBO, reduced gather sample count, data-texture sample lookup
+// and the baked colour LUT — NOT from mediump. On desktop GLES (ANGLE on
+// Windows) mediump maps to fp16, whose 65504 max and ~11-bit mantissa can't
+// hold the fragment coordinates: the draw quad extends hundreds of px past
+// the rect, so the interpolated vPos and dot(dv, dv) overflow/quantise and
+// the gather divides go 0/0 = NaN, rasterising as scattered colour "noise
+// dots". highp is mandatory for fragment shaders in GLES 3.0 (#version 300
+// es), so this is safe on every 3.0 target; the mediump ALU savings weren't
+// worth the precision breakage.
 #define NEON_NUM_SAMPLES 64
 
 // ---------------------------------------------------------------------------
@@ -36,6 +46,11 @@ uniform int   uGlowSide;
 uniform float uGlowSideSoftness;
 
 uniform float uSampleSpacing;
+
+// Distance (in scaled/FBO px, from the rect edge) to the draw quad's edge.
+// The emission is faded to zero just before this so a tight quad never shows
+// a hard rectangular cutoff where a strong bloom is clipped.
+uniform float uQuadMargin;
 
 // Loop sample positions (perimeter points) as an N×1 data texture, texelFetch'd
 // in the gather loop instead of a `uniform vec2[]` array (some mobile GLES
@@ -221,6 +236,13 @@ void main() {
     // --- One-sided cut ---
     if (uGlowSide == GLOW_SIDE_INSIDE)       result *= smoothstep( softEdge, -softEdge, d);
     else if (uGlowSide == GLOW_SIDE_OUTSIDE) result *= smoothstep(-softEdge,  softEdge, d);
+
+    // --- Quad-edge fade: the draw quad ends at d == uQuadMargin (all in
+    // scaled/FBO space). Fade the emission to zero over the last stretch so a
+    // strong bloom never shows a hard rectangular cutoff where the quad clips
+    // it — mirrors the base NeonRenderer so the two match. Interior pixels
+    // have d < 0, well below the band.
+    result *= 1.0 - smoothstep(uQuadMargin * 0.8, uQuadMargin, d);
 
     // --- Grade --------------------------------------------------------
     result = result / (result + vec3(TONE_MAP_SHOULDER));
