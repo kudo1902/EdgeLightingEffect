@@ -1,5 +1,15 @@
-precision mediump float;
+precision highp float;
 
+// Precision: highp (NOT mediump). This renderer's "optimized" wins come from
+// the half-res FBO, reduced gather sample count, data-texture sample lookup
+// and the baked colour LUT — NOT from mediump. On desktop GLES (ANGLE on
+// Windows) mediump maps to fp16, whose 65504 max and ~11-bit mantissa can't
+// hold the fragment coordinates: the draw quad extends hundreds of px past
+// the rect, so the interpolated vPos and dot(dv, dv) overflow/quantise and
+// the gather divides go 0/0 = NaN, rasterising as scattered colour "noise
+// dots". highp is mandatory for fragment shaders in GLES 3.0 (#version 300
+// es), so this is safe on every 3.0 target; the mediump ALU savings weren't
+// worth the precision breakage.
 #define NEON_NUM_SAMPLES 64
 
 // ---------------------------------------------------------------------------
@@ -36,6 +46,11 @@ uniform int   uGlowSide;
 uniform float uGlowSideSoftness;
 
 uniform float uSampleSpacing;
+
+// Distance (in scaled/FBO px, from the rect edge) to the draw quad's edge.
+// The emission is faded to zero just before this so a tight quad never shows
+// a hard rectangular cutoff where a strong bloom is clipped.
+uniform float uQuadMargin;
 
 // Loop sample positions (perimeter points) as an N×1 data texture, texelFetch'd
 // in the gather loop instead of a `uniform vec2[]` array (some mobile GLES
@@ -126,11 +141,34 @@ void main() {
     // Flat-top profile: solid bar of width = lineWidth with a CONSTANT soft
     // edge (FILAMENT_EDGE_SOFTNESS) — independent of lineWidth so thickening
     // the line widens only the solid part, not the surrounding glow.
+    // ASYMMETRIC AA (matches the base NeonRenderer): full-brightness region
+    // spans ad ∈ [0, halfWidth], then the AA transition sits ENTIRELY on the
+    // outside from halfWidth to halfWidth + FILAMENT_EDGE_SOFTNESS.
+    //
+    // 2×2 SUB-PIXEL SUPERSAMPLING on this term only: evaluate the SDF +
+    // smoothstep at four ±0.25-pixel offsets and average. MSAA on the FBO
+    // wouldn't help — the shader runs once per pixel centre by default and
+    // all sub-samples of a covered pixel receive the same computed value.
+    // Explicit supersampling here bypasses that. Cost is 4× the SDF +
+    // smoothstep (~60 ops), negligible vs. the 64-sample halo gather below
+    // (~1000+ ops), so the perf hit is minor.
+    //
     // lineGate fades the filament from 0 at lineWidth = 0 up to full at
     // lineWidth = FILAMENT_MIN_HALF_WIDTH * 2, so lineWidth = 0 means "no
     // line" instead of inheriting the floored half-width.
     float halfWidth = uLineWidth * 0.5;
-    float core      = 1.0 - smoothstep(halfWidth, halfWidth + FILAMENT_EDGE_SOFTNESS, ad);
+    vec2  offX      = dFdx(vPos) * 0.25;
+    vec2  offY      = dFdy(vPos) * 0.25;
+    float ad00      = abs(sdRoundBox(vPos - offX - offY, halfSize, uCornerRadius));
+    float ad10      = abs(sdRoundBox(vPos + offX - offY, halfSize, uCornerRadius));
+    float ad01      = abs(sdRoundBox(vPos - offX + offY, halfSize, uCornerRadius));
+    float ad11      = abs(sdRoundBox(vPos + offX + offY, halfSize, uCornerRadius));
+    float core      = 0.25 * (
+        (1.0 - smoothstep(halfWidth, halfWidth + FILAMENT_EDGE_SOFTNESS, ad00)) +
+        (1.0 - smoothstep(halfWidth, halfWidth + FILAMENT_EDGE_SOFTNESS, ad10)) +
+        (1.0 - smoothstep(halfWidth, halfWidth + FILAMENT_EDGE_SOFTNESS, ad01)) +
+        (1.0 - smoothstep(halfWidth, halfWidth + FILAMENT_EDGE_SOFTNESS, ad11))
+    );
     float lineGate  = clamp(uLineWidth / (FILAMENT_MIN_HALF_WIDTH * 2.0), 0.0, 1.0);
 
     // --- Kernel widths ------------------------------------------------
@@ -213,6 +251,13 @@ void main() {
     // --- One-sided cut ---
     if (uGlowSide == GLOW_SIDE_INSIDE)       result *= smoothstep( softEdge, -softEdge, d);
     else if (uGlowSide == GLOW_SIDE_OUTSIDE) result *= smoothstep(-softEdge,  softEdge, d);
+
+    // --- Quad-edge fade: the draw quad ends at d == uQuadMargin (all in
+    // scaled/FBO space). Fade the emission to zero over the last stretch so a
+    // strong bloom never shows a hard rectangular cutoff where the quad clips
+    // it — mirrors the base NeonRenderer so the two match. Interior pixels
+    // have d < 0, well below the band.
+    result *= 1.0 - smoothstep(uQuadMargin * 0.8, uQuadMargin, d);
 
     // --- Grade --------------------------------------------------------
     result = result / (result + vec3(TONE_MAP_SHOULDER));
