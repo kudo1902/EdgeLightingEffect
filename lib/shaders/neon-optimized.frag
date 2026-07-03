@@ -110,8 +110,11 @@ float arcInside(float si, float start, float length) {
     if (length >= 1.0 - 1e-6) return 1.0;   // full coverage
     if (length <= 1e-6)       return 0.0;   // empty
     float end = start + length;
-    if (end <= 1.0) {
-        // non-wrap: [start, end] fits inside [0, 1]
+    // Strict '<' so end == 1.0 takes the wrap path — see neon.frag for the
+    // full rationale. Without this ArcWipe's head "parks just before" the
+    // top-left instead of at it.
+    if (end < 1.0) {
+        // non-wrap: [start, end] fits strictly inside [0, 1)
         return (si >= start && si <= end) ? 1.0 : 0.0;
     }
     // wrap: lit region is [start, 1] U [0, end - 1]

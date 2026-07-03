@@ -100,8 +100,13 @@ float arcInside(float si, float start, float length) {
     if (length >= 1.0 - 1e-6) return 1.0;   // full coverage
     if (length <= 1e-6)       return 0.0;   // empty
     float end = start + length;
-    if (end <= 1.0) {
-        // non-wrap: [start, end] fits inside [0, 1]
+    // Use strict '<' so that end == 1.0 exactly takes the wrap path — the
+    // sample at si == 0 sits at the same physical point as si == 1 (perimeter
+    // is a loop), so it must be included when the arc "reaches" the wrap
+    // point. Otherwise animations that park the head at position 1.0 (e.g.
+    // ArcWipe's phase 3) leave a one-sample gap at the top-left corner.
+    if (end < 1.0) {
+        // non-wrap: [start, end] fits strictly inside [0, 1)
         return (si >= start && si <= end) ? 1.0 : 0.0;
     }
     // wrap: lit region is [start, 1] ∪ [0, end - 1]

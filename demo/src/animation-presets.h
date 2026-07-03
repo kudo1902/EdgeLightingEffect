@@ -25,6 +25,7 @@ namespace EdgeLightingDemo
         SEGMENT_BOUNCE, ///< Bright spot swings back and forth (triangle wave).
         COMET,          ///< Tight fast spot — single-revolution comet feel.
         OUTLINE_TRACER, ///< One-shot: rect dark, then arc grows 0→1 to light it.
+        ARC_WIPE,       ///< One-shot: 3-phase grow/chase/shrink wipe around perimeter.
         FADE_OUT,       ///< One-shot ease-out of intensity to 0.
         HUE_REVERSE,    ///< Hue direction flips abruptly every few seconds.
         COUNT
@@ -81,6 +82,10 @@ namespace EdgeLightingDemo
         case AnimationPreset::OUTLINE_TRACER:
         {
             return "Outline Tracer";
+        }
+        case AnimationPreset::ARC_WIPE:
+        {
+            return "Arc Wipe";
         }
         case AnimationPreset::FADE_OUT:
         {
@@ -189,6 +194,21 @@ namespace EdgeLightingDemo
         {
             // One-shot 2 s draw — rect goes from dark to fully lit.
             return std::make_shared<OutlineTracer>(2.0f, EdgeLighting::EasingFunction::OutCubic);
+        }
+
+        case AnimationPreset::ARC_WIPE:
+        {
+            // Full-loop wipe (startPos == endPos): race a 0.25-long arc all
+            // the way around the perimeter, back to the origin over 3 s.
+            // Phase timings (with default Linear ease) work out to grow≈0.6s /
+            // chase≈1.8s / shrink≈0.6s (grow and shrink equal because the
+            // head and tail move at the same speed throughout).
+            return std::make_shared<ArcWipe>(
+                /*duration=*/3.0f,
+                /*startPos=*/0.1f,
+                /*endPos=*/0.1f,
+                /*maxLength=*/0.25f,
+                EdgeLighting::EasingFunction::Linear);
         }
 
         case AnimationPreset::FADE_OUT:
