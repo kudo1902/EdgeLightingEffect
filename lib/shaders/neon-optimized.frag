@@ -106,17 +106,19 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
 // starts at @p start and extends forwards by @p length. Length 0 = empty,
 // length 1 = full (start becomes an irrelevant phase). Anything in between
 // is a wrap-aware [start, start+length] range over the unit circle.
+// See neon.frag for full rationale: feather sits OUTSIDE the arc's
+// mathematical bounds so a sample exactly at start / end gets weight 1.
+// The virtual si+1 check keeps the arc continuous across the wrap point.
 float arcInside(float si, float start, float length) {
-    if (length >= 1.0 - 1e-6) return 1.0;   // full coverage
-    if (length <= 1e-6)       return 0.0;   // empty
+    if (length >= 1.0 - 1e-6) return 1.0;
+    if (length <= 1e-6)       return 0.0;
+    float f   = 1.0 / float(NEON_NUM_SAMPLES);
     float end = start + length;
-    if (end <= 1.0) {
-        // non-wrap: [start, end] fits inside [0, 1]
-        return (si >= start && si <= end) ? 1.0 : 0.0;
-    }
-    // wrap: lit region is [start, 1] U [0, end - 1]
-    end -= 1.0;
-    return (si >= start || si <= end) ? 1.0 : 0.0;
+    float g1a = smoothstep(start - f, start, si);
+    float g2a = 1.0 - smoothstep(end, end + f, si);
+    float g1b = smoothstep(start - f, start, si + 1.0);
+    float g2b = 1.0 - smoothstep(end, end + f, si + 1.0);
+    return max(g1a * g2a, g1b * g2b);
 }
 
 // ---------------------------------------------------------------------------

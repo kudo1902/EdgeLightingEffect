@@ -4,6 +4,7 @@
 #include "animation/animation.h"
 #include "animation/easing-function.h"
 #include "animation/modulator.h"
+#include "util/log-util.h"
 #include <cmath>
 
 namespace EdgeLighting
@@ -415,6 +416,176 @@ namespace EdgeLighting
     private:
         EasingFunction::Curve mCurve;
         Ease mEase;
+    };
+
+    /// @brief Three-phase arc wipe: grow, chase, shrink.
+    /// @details A "wipe" that draws the neon arc from @c startPos, races it
+    ///          around the perimeter at a fixed maximum length, and shrinks it
+    ///          away as the tail reaches @c endPos.
+    ///
+    /// - **Phase 1 — grow**  : @c arcStart stays at @c startPos; @c arcLength
+    ///                         grows 0 → @c maxLength.  The head moves out
+    ///                         from @c startPos.
+    /// - **Phase 2 — chase** : @c arcLength stays at @c maxLength; both head
+    ///                         and tail advance at the same speed.  The head
+    ///                         travels from @c (startPos + maxLength) to
+    ///                         @c endPos.
+    /// - **Phase 3 — shrink**: head parks at @c endPos; tail catches up.
+    ///                         @c arcLength shrinks @c maxLength → 0.
+    ///
+    /// The per-phase durations are chosen so the head and tail move at the
+    /// same constant speed across all three phases — no visible acceleration
+    /// at phase boundaries.  Given a total @c duration D:
+    ///     speed = (totalDist + maxLength) / D
+    ///     t1 = t3 = maxLength / speed
+    ///     t2 = D − 2·t1
+    /// where @c totalDist is the head's sweep from @c startPos to @c endPos
+    /// (unwrapped forward, so @c endPos < @c startPos wraps around through 0).
+    ///
+    /// Positions can wrap. @c endPos <= @c startPos means "go around" (add 1
+    /// to the unwrapped endpoint), so a wipe from 0.8 → 0.2 travels 0.4 units
+    /// forward through 0 rather than 0.6 units backward. In particular,
+    /// **@c startPos == @c endPos is treated as a full loop** (totalDist = 1)
+    /// so a default `ArcWipe(3.0)` sweeps the whole perimeter.
+    ///
+    /// An @c EasingFunction::Curve can shape the wall-clock progression: the
+    /// eased time drives the phase math, so an @c OutCubic (say) starts the
+    /// grow fast, blazes through the chase, and lingers on the shrink. Default
+    /// is @c Linear (constant head/tail speed).
+    ///
+    /// Defaults to @c ONE_SHOT since a wipe is naturally a fire-and-forget
+    /// gesture; toggle @ref SetPlaybackMode to LOOP for a repeating chase.
+    /// @ref SetDuration rebuilds the phase timings so the slider works live.
+    class ArcWipe : public Animation
+    {
+    public:
+        /// @param duration   Total wipe time in seconds.
+        /// @param startPos   Perimeter position [0, 1) where the tail begins;
+        ///                   arcStart stays here during phase 1.
+        /// @param endPos     Perimeter position [0, 1) where both ends meet
+        ///                   at the end of the wipe. The head parks here at
+        ///                   the end of phase 2; the tail closes the gap
+        ///                   during phase 3 and reaches @p endPos exactly
+        ///                   when arcLength hits 0. Equal to @p startPos →
+        ///                   full loop.
+        /// @param maxLength  Arc length during the chase phase [0, 1).
+        /// @param curve      Easing applied to the whole wipe timeline.
+        ArcWipe(float duration = 2.0f,
+                float startPos = 0.0f,
+                float endPos = 1.0f,
+                float maxLength = 0.25f,
+                EasingFunction::Curve curve = EasingFunction::Linear)
+            : Animation(duration),
+              mStartPos(startPos),
+              mEndPos(endPos),
+              mMaxLength(maxLength),
+              mCurve(curve)
+        {
+            computePhases(duration);
+        }
+
+        void ApplyAt(Config &cfg, float elapsed) const override
+        {
+            float arcStart = mStartPos;
+            float arcLength = 0.0f;
+
+            // Apply the easing curve to the timeline. Curve maps [0, 1] to
+            // [0, 1]; multiply back by duration so t remains in seconds and
+            // the phase-boundary comparisons below still make sense.
+            float t = elapsed;
+            float dur = GetDuration();
+            if (mCurve && dur > 0.0f)
+            {
+                t = mCurve(elapsed / dur) * dur;
+            }
+
+            if (t <= mT1)
+            {
+                // Phase 1: grow. Tail fixed at startPos, head advances.
+                float p = mT1 > 0.0f ? (t / mT1) : 1.0f;
+                arcStart = mStartPos;
+                arcLength = p * mMaxLength;
+            }
+            else if (t <= mT1 + mT2)
+            {
+                // Phase 2: chase. Both head and tail advance in lockstep,
+                // length constant. Chase ends when the HEAD reaches endPos,
+                // so the tail has covered (totalDist - maxLength).
+                float p = mT2 > 0.0f ? ((t - mT1) / mT2) : 1.0f;
+                arcStart = mStartPos + p * (mTotalDist - mMaxLength);
+                arcLength = mMaxLength;
+            }
+            else
+            {
+                // Phase 3: shrink. Head parks at endPos; the tail travels its
+                // final maxLength stretch to reach endPos as arcLength winds
+                // down to 0. arcStart at end == endPos, arcLength == 0.
+                float p = mT3 > 0.0f ? ((t - mT1 - mT2) / mT3) : 1.0f;
+                arcLength = (1.0f - p) * mMaxLength;
+                arcStart = mStartPos + mTotalDist - arcLength;
+            }
+
+            // Wrap arcStart to [0, 1) — the shader's arcInside handles the
+            // wrap-around at start+length, but the raw arcStart itself must
+            // live in [0, 1).
+            arcStart = arcStart - std::floor(arcStart);
+
+            cfg.neon.arcStart = arcStart;
+            cfg.neon.arcLength = arcLength;
+        }
+
+    protected:
+        void OnDurationChanged(float d) override { computePhases(d); }
+
+    private:
+        void computePhases(float duration)
+        {
+            // Unwrap endPos forward so an endPos <= startPos means "loop
+            // around through 0" — the wipe always advances CCW/forward, never
+            // reverses.
+            float endUnwrapped = mEndPos;
+            if (endUnwrapped <= mStartPos)
+            {
+                endUnwrapped += 1.0f;
+            }
+            mTotalDist = endUnwrapped - mStartPos;
+
+            // Constant-speed timing at rate s = (totalDist + maxLength) / duration:
+            //   Phase 1: head advances maxLength while tail sits at startPos.
+            //   Phase 2: both head and tail advance (totalDist - maxLength);
+            //            ends when the head reaches endPos.
+            //   Phase 3: head parked at endPos; tail closes the final
+            //            maxLength stretch as arcLength winds down to 0.
+            //   t1 = t3 = maxLength / s  ;  t2 = (totalDist - maxLength) / s
+            if (duration > 0.0f)
+            {
+                float speed = (mTotalDist + mMaxLength) / duration;
+                mT1 = (speed > 0.0f) ? (mMaxLength / speed) : 0.0f;
+                mT3 = mT1;
+                mT2 = duration - mT1 - mT3;
+                if (mT2 < 0.0f)
+                {
+                    // Degenerate: maxLength > totalDist — the arc is longer
+                    // than the sweep. Fall back to just grow + shrink with
+                    // no chase, each taking half the duration.
+                    mT2 = 0.0f;
+                    mT1 = mT3 = duration * 0.5f;
+                }
+            }
+            else
+            {
+                mT1 = mT2 = mT3 = 0.0f;
+            }
+        }
+
+        float mStartPos;
+        float mEndPos;
+        float mMaxLength;
+        EasingFunction::Curve mCurve;
+        float mTotalDist = 0.0f;
+        float mT1 = 0.0f;
+        float mT2 = 0.0f;
+        float mT3 = 0.0f;
     };
 
     // -------------------------------------------------------------------------
