@@ -278,6 +278,36 @@ namespace
                 cfg.neon.glowSideSoftness = v;
                 break;
             }
+            case EL_FIELD_NEON_HUE_ROTATION_RATE:
+            {
+                cfg.neon.hueRotationRate = v;
+                break;
+            }
+            case EL_FIELD_NEON_SEGMENT_POSITION:
+            {
+                cfg.neon.segmentPosition = v;
+                break;
+            }
+            case EL_FIELD_NEON_SEGMENT_LENGTH:
+            {
+                cfg.neon.segmentLength = v;
+                break;
+            }
+            case EL_FIELD_NEON_SEGMENT_BOOST:
+            {
+                cfg.neon.segmentBoost = v;
+                break;
+            }
+            case EL_FIELD_NEON_ARC_START:
+            {
+                cfg.neon.arcStart = v;
+                break;
+            }
+            case EL_FIELD_NEON_ARC_LENGTH:
+            {
+                cfg.neon.arcLength = v;
+                break;
+            }
             default:
             {
                 // Unknown field id — no-op rather than crash. Handles
@@ -706,6 +736,14 @@ extern "C"
             a = std::make_shared<HueRotationReverse>(0.4f, 6.0f);
             break;
         }
+        case EL_ANIM_ARC_WIPE:
+        {
+            // Full-loop wipe (startPos == endPos): the arc races once around
+            // the perimeter over 3 s. Matches the demo's ARC_WIPE preset.
+            a = std::make_shared<ArcWipe>(3.0f, 0.1f, 0.1f, 0.5f,
+                                          EasingFunction::Linear);
+            break;
+        }
         default:
         {
             setError("el_animation_create: unknown preset");
@@ -758,6 +796,12 @@ extern "C"
     EL_Animation *el_animation_outline_tracer(float duration, int32_t easing)
     {
         return new EL_Animation{std::make_shared<EdgeLighting::OutlineTracer>(duration, toEasing(easing))};
+    }
+    EL_Animation *el_animation_arc_wipe(float duration, float startPos, float endPos,
+                                        float maxLength, int32_t easing)
+    {
+        return new EL_Animation{std::make_shared<EdgeLighting::ArcWipe>(
+            duration, startPos, endPos, maxLength, toEasing(easing))};
     }
 
     void el_animation_destroy(EL_Animation *anim) { delete anim; }

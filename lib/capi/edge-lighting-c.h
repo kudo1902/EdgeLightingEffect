@@ -325,7 +325,8 @@ typedef enum EL_AnimationPreset
     EL_ANIM_COMET = 10,
     EL_ANIM_OUTLINE_TRACER = 11,
     EL_ANIM_FADE_OUT = 12,
-    EL_ANIM_HUE_REVERSE = 13
+    EL_ANIM_HUE_REVERSE = 13,
+    EL_ANIM_ARC_WIPE = 14 ///< Three-phase grow/chase/shrink wipe around perimeter.
 } EL_AnimationPreset;
 
 /**
@@ -347,6 +348,21 @@ EL_API EL_Animation *el_animation_hue_rotation_ease_reverse(float maxRate, float
 EL_API EL_Animation *el_animation_segment_travel(float duration, float length, float boost);
 EL_API EL_Animation *el_animation_segment_bounce(float duration, float length, float boost);
 EL_API EL_Animation *el_animation_outline_tracer(float duration, int32_t easing /*EL_Easing*/);
+
+/**
+ * @brief Three-phase arc wipe (grow / chase / shrink) around the perimeter.
+ * @param duration  Total wipe time in seconds.
+ * @param startPos  Perimeter position [0, 1) where the tail begins.
+ * @param endPos    Perimeter position [0, 1) where both ends meet at the end.
+ *                  Equal to @p startPos → full loop.
+ * @param maxLength Arc length during the chase phase, in [0, 1).
+ * @param easing    One of EL_Easing; shapes the wall-clock progression.
+ */
+EL_API EL_Animation *el_animation_arc_wipe(float duration,
+                                           float startPos,
+                                           float endPos,
+                                           float maxLength,
+                                           int32_t easing /*EL_Easing*/);
 
 /** @brief Destroy an animation. Safe to pass null. */
 EL_API void el_animation_destroy(EL_Animation *anim);
@@ -426,8 +442,12 @@ typedef enum EL_Waveform
 } EL_Waveform;
 
 /** Config fields that @ref el_animation_from_modulator can drive.
- *  Currently only single-value NeonConfig scalars. Per-segment / vector fields
- *  (colour stops, segment positions, geometry vec2s) are not exposed yet. */
+ *  Single-value NeonConfig scalars only. Vector / enum / geometry fields
+ *  (colour stops, glowSide, position vec2) are not exposed yet.
+ *
+ *  New values are appended at the end so existing binaries stay ABI-compatible
+ *  with headers that add fields — old code will simply return the default
+ *  branch (no-op) for enum values it doesn't recognise. */
 typedef enum EL_ConfigField
 {
     EL_FIELD_NEON_INTENSITY = 0,
@@ -435,7 +455,15 @@ typedef enum EL_ConfigField
     EL_FIELD_NEON_GLOW_RADIUS = 2,
     EL_FIELD_NEON_BLOOM_STRENGTH = 3,
     EL_FIELD_NEON_FILAMENT_FALLOFF = 4,
-    EL_FIELD_NEON_GLOW_SIDE_SOFTNESS = 5
+    EL_FIELD_NEON_GLOW_SIDE_SOFTNESS = 5,
+
+    /* Extended animation-worthy scalars — added after the initial ship. */
+    EL_FIELD_NEON_HUE_ROTATION_RATE = 6,
+    EL_FIELD_NEON_SEGMENT_POSITION = 7,
+    EL_FIELD_NEON_SEGMENT_LENGTH = 8,
+    EL_FIELD_NEON_SEGMENT_BOOST = 9,
+    EL_FIELD_NEON_ARC_START = 10,
+    EL_FIELD_NEON_ARC_LENGTH = 11
 } EL_ConfigField;
 
 /* --- Modulator factories ---
