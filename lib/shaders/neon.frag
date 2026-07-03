@@ -96,22 +96,43 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
 // starts at @p start and extends forwards by @p length. Length 0 = empty,
 // length 1 = full (start becomes an irrelevant phase). Anything in between
 // is a wrap-aware [start, start+length] range over the unit circle.
+// Fractional [0, 1] contribution of the sample at @p si to the lit arc.
+// Two design points:
+//   1. Smooth feather (~1 sample-width) at each end via smoothstep, so a
+//      sample crossing a boundary ramps up/down instead of snapping on/off.
+//   2. Wrap-aware via testing both @p si and @p si + 1 and taking the max.
+//      When the arc extends past 1.0 (end > 1.0), a sample near position 0
+//      is physically close to end via the perimeter loop; the virtual
+//      @p si + 1 test picks that up. Same expression handles the non-wrap
+//      case because @p si + 1 always falls outside a sub-unit arc there.
+//
+// Both together fix the "sample-density gap" — without them, when the arc's
+// head sweeps across the wrap point between the last and first samples,
+// there's no sample position to represent the head for ~1/N of the
+// perimeter, so the arc visually stalls. With smooth + wrap check, sample 0
+// starts contributing before sample N-1 stops.
 float arcInside(float si, float start, float length) {
     if (length >= 1.0 - 1e-6) return 1.0;   // full coverage
     if (length <= 1e-6)       return 0.0;   // empty
+    // Feather = 1 sample width OUTSIDE the arc on each side. Placement
+    // OUTSIDE (i.e. smoothstep runs from start-f to start, not through
+    // start±f) ensures the sample sitting exactly at `start` or exactly at
+    // `end` gets weight 1.0 — so the arc's visible ends line up with the
+    // debug markers with no gap. The 1-sample-width span means the next
+    // sample past `end` gets weight 0, avoiding a soft-glow bleed just
+    // past the endpoint. Motion transitions cover ~1 sample per ~1 frame
+    // at typical speeds, which reads as smooth in practice.
+    float f   = 1.0 / float(NEON_NUM_SAMPLES);
     float end = start + length;
-    // Use strict '<' so that end == 1.0 exactly takes the wrap path — the
-    // sample at si == 0 sits at the same physical point as si == 1 (perimeter
-    // is a loop), so it must be included when the arc "reaches" the wrap
-    // point. Otherwise animations that park the head at position 1.0 (e.g.
-    // ArcWipe's phase 3) leave a one-sample gap at the top-left corner.
-    if (end < 1.0) {
-        // non-wrap: [start, end] fits strictly inside [0, 1)
-        return (si >= start && si <= end) ? 1.0 : 0.0;
-    }
-    // wrap: lit region is [start, 1] ∪ [0, end - 1]
-    end -= 1.0;
-    return (si >= start || si <= end) ? 1.0 : 0.0;
+    // Direct: g1 ramps 0→1 across [start-f, start]; g2 ramps 1→0 across
+    // [end, end+f]. inside = g1*g2 is exactly 1 for si in [start, end].
+    float g1a = smoothstep(start - f, start, si);
+    float g2a = 1.0 - smoothstep(end, end + f, si);
+    // Virtual sample at si+1 handles arcs that wrap past 1.0 — the sample at
+    // physical position 0 lives at virtual position 1 from the arc's POV.
+    float g1b = smoothstep(start - f, start, si + 1.0);
+    float g2b = 1.0 - smoothstep(end, end + f, si + 1.0);
+    return max(g1a * g2a, g1b * g2b);
 }
 
 // ---------------------------------------------------------------------------

@@ -4,6 +4,7 @@
 #include "animation/animation.h"
 #include "animation/easing-function.h"
 #include "animation/modulator.h"
+#include "util/log-util.h"
 #include <cmath>
 
 namespace EdgeLighting
@@ -460,10 +461,13 @@ namespace EdgeLighting
     public:
         /// @param duration   Total wipe time in seconds.
         /// @param startPos   Perimeter position [0, 1) where the tail begins;
-        ///                   the arcStart stays here during phase 1.
-        /// @param endPos     Perimeter position [0, 1) where the head parks
-        ///                   at the end of phase 2 (and stays during phase 3).
-        ///                   Equal to @p startPos → full loop.
+        ///                   arcStart stays here during phase 1.
+        /// @param endPos     Perimeter position [0, 1) where both ends meet
+        ///                   at the end of the wipe. The head parks here at
+        ///                   the end of phase 2; the tail closes the gap
+        ///                   during phase 3 and reaches @p endPos exactly
+        ///                   when arcLength hits 0. Equal to @p startPos →
+        ///                   full loop.
         /// @param maxLength  Arc length during the chase phase [0, 1).
         /// @param curve      Easing applied to the whole wipe timeline.
         ArcWipe(float duration = 2.0f,
@@ -497,22 +501,25 @@ namespace EdgeLighting
 
             if (t <= mT1)
             {
-                // Phase 1: grow. Tail fixed, head advances.
+                // Phase 1: grow. Tail fixed at startPos, head advances.
                 float p = mT1 > 0.0f ? (t / mT1) : 1.0f;
                 arcStart = mStartPos;
                 arcLength = p * mMaxLength;
             }
             else if (t <= mT1 + mT2)
             {
-                // Phase 2: chase. Both head and tail advance, length constant.
+                // Phase 2: chase. Both head and tail advance in lockstep,
+                // length constant. Chase ends when the HEAD reaches endPos,
+                // so the tail has covered (totalDist - maxLength).
                 float p = mT2 > 0.0f ? ((t - mT1) / mT2) : 1.0f;
                 arcStart = mStartPos + p * (mTotalDist - mMaxLength);
                 arcLength = mMaxLength;
             }
             else
             {
-                // Phase 3: shrink. Head parked at endPos, tail catches up.
-                // arcLength shrinks; arcStart derived from head = endPos.
+                // Phase 3: shrink. Head parks at endPos; the tail travels its
+                // final maxLength stretch to reach endPos as arcLength winds
+                // down to 0. arcStart at end == endPos, arcLength == 0.
                 float p = mT3 > 0.0f ? ((t - mT1 - mT2) / mT3) : 1.0f;
                 arcLength = (1.0f - p) * mMaxLength;
                 arcStart = mStartPos + mTotalDist - arcLength;
@@ -543,10 +550,13 @@ namespace EdgeLighting
             }
             mTotalDist = endUnwrapped - mStartPos;
 
-            // Constant-speed timing: head sweeps totalDist over (t1 + t2),
-            // tail sweeps totalDist over (t2 + t3), and t1 = t3 = maxLength/s.
-            // Solving t1 + t2 + t3 = duration gives:
-            //     s = (totalDist + maxLength) / duration
+            // Constant-speed timing at rate s = (totalDist + maxLength) / duration:
+            //   Phase 1: head advances maxLength while tail sits at startPos.
+            //   Phase 2: both head and tail advance (totalDist - maxLength);
+            //            ends when the head reaches endPos.
+            //   Phase 3: head parked at endPos; tail closes the final
+            //            maxLength stretch as arcLength winds down to 0.
+            //   t1 = t3 = maxLength / s  ;  t2 = (totalDist - maxLength) / s
             if (duration > 0.0f)
             {
                 float speed = (mTotalDist + mMaxLength) / duration;

@@ -207,7 +207,7 @@ namespace EdgeLightingDemo
                 /*duration=*/3.0f,
                 /*startPos=*/0.1f,
                 /*endPos=*/0.1f,
-                /*maxLength=*/0.25f,
+                /*maxLength=*/0.5f,
                 EdgeLighting::EasingFunction::Linear);
         }
 
