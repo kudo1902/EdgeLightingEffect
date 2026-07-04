@@ -504,24 +504,24 @@ namespace EdgeLighting
                 // Phase 1: grow. Tail fixed at startPos, head advances.
                 float p = mT1 > 0.0f ? (t / mT1) : 1.0f;
                 arcStart = mStartPos;
-                arcLength = p * mMaxLength;
+                arcLength = p * mEffMaxLength;
             }
             else if (t <= mT1 + mT2)
             {
                 // Phase 2: chase. Both head and tail advance in lockstep,
                 // length constant. Chase ends when the HEAD reaches endPos,
-                // so the tail has covered (totalDist - maxLength).
+                // so the tail has covered (totalDist - effMaxLength).
                 float p = mT2 > 0.0f ? ((t - mT1) / mT2) : 1.0f;
-                arcStart = mStartPos + p * (mTotalDist - mMaxLength);
-                arcLength = mMaxLength;
+                arcStart = mStartPos + p * (mTotalDist - mEffMaxLength);
+                arcLength = mEffMaxLength;
             }
             else
             {
                 // Phase 3: shrink. Head parks at endPos; the tail travels its
-                // final maxLength stretch to reach endPos as arcLength winds
+                // final effMaxLength stretch to reach endPos as arcLength winds
                 // down to 0. arcStart at end == endPos, arcLength == 0.
                 float p = mT3 > 0.0f ? ((t - mT1 - mT2) / mT3) : 1.0f;
-                arcLength = (1.0f - p) * mMaxLength;
+                arcLength = (1.0f - p) * mEffMaxLength;
                 arcStart = mStartPos + mTotalDist - arcLength;
             }
 
@@ -549,28 +549,25 @@ namespace EdgeLighting
                 endUnwrapped += 1.0f;
             }
             mTotalDist = endUnwrapped - mStartPos;
+            // Effective max length: clamp to totalDist so a wipe from 0.1 → 0.2
+            // with maxLength=0.5 doesn't overshoot endPos by growing the arc
+            // to 0.5. With effMax == totalDist the chase phase vanishes (t2=0)
+            // and the wipe becomes grow-then-shrink between the two endpoints.
+            mEffMaxLength = std::min(mMaxLength, mTotalDist);
 
-            // Constant-speed timing at rate s = (totalDist + maxLength) / duration:
-            //   Phase 1: head advances maxLength while tail sits at startPos.
-            //   Phase 2: both head and tail advance (totalDist - maxLength);
+            // Constant-speed timing at rate s = (totalDist + effMaxLength) / duration:
+            //   Phase 1: head advances effMaxLength while tail sits at startPos.
+            //   Phase 2: both head and tail advance (totalDist - effMaxLength);
             //            ends when the head reaches endPos.
             //   Phase 3: head parked at endPos; tail closes the final
-            //            maxLength stretch as arcLength winds down to 0.
-            //   t1 = t3 = maxLength / s  ;  t2 = (totalDist - maxLength) / s
+            //            effMaxLength stretch as arcLength winds down to 0.
+            //   t1 = t3 = effMaxLength / s  ;  t2 = (totalDist - effMaxLength) / s
             if (duration > 0.0f)
             {
-                float speed = (mTotalDist + mMaxLength) / duration;
-                mT1 = (speed > 0.0f) ? (mMaxLength / speed) : 0.0f;
+                float speed = (mTotalDist + mEffMaxLength) / duration;
+                mT1 = (speed > 0.0f) ? (mEffMaxLength / speed) : 0.0f;
                 mT3 = mT1;
                 mT2 = duration - mT1 - mT3;
-                if (mT2 < 0.0f)
-                {
-                    // Degenerate: maxLength > totalDist — the arc is longer
-                    // than the sweep. Fall back to just grow + shrink with
-                    // no chase, each taking half the duration.
-                    mT2 = 0.0f;
-                    mT1 = mT3 = duration * 0.5f;
-                }
             }
             else
             {
@@ -583,6 +580,7 @@ namespace EdgeLighting
         float mMaxLength;
         EasingFunction::Curve mCurve;
         float mTotalDist = 0.0f;
+        float mEffMaxLength = 0.0f;
         float mT1 = 0.0f;
         float mT2 = 0.0f;
         float mT3 = 0.0f;
