@@ -138,12 +138,6 @@ namespace EdgeLighting
             {
                 return glm::vec3(stops[0].color);
             }
-            if (count == 2)
-            {
-                float tri = 1.0f - std::abs(2.0f * pos - 1.0f);
-                return BlendStops(glm::vec3(stops[0].color),
-                                  glm::vec3(stops[1].color), tri, blendSpace);
-            }
             for (int i = 0; i < count; i++)
             {
                 int next = (i + 1 < count) ? i + 1 : 0;
