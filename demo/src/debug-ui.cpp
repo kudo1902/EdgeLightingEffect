@@ -210,7 +210,7 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
 
     ImGui::Checkbox("Opaque (no blend)##Neon", &cfg.neon.opaque);
     ImGui::SliderFloat("Line Width##Neon", &cfg.neon.lineWidth, 0.0f, 20.0f, "%.0f");
-    ImGui::SliderFloat("Filament Falloff##Neon", &cfg.neon.filamentFalloff, 0.5f, 5.0f, "%.2f");
+    ImGui::SliderFloat("Filament Falloff##Neon", &cfg.neon.filamentFalloff, 0.0f, 5.0f, "%.2f");
     ImGui::SliderFloat("Intensity##Neon", &cfg.neon.intensity, 0.0f, 3.0f, "%.2f");
     ImGui::SliderFloat("Glow Radius##Neon", &cfg.neon.glowRadius, 0.0f, 80.0f, "%.0f");
     ImGui::SliderFloat("Bloom Strength##Neon", &cfg.neon.bloomStrength, 0.0f, 2.0f, "%.2f");
@@ -538,7 +538,8 @@ namespace
         // after one cycle. Toggling is live: switching a Playing looper to
         // ONE_SHOT will complete on the next Update if elapsed already >= dur.
         int modeIdx = (anim.GetPlaybackMode() == EdgeLighting::PlaybackMode::LOOP)
-                          ? 0 : 1;
+                          ? 0
+                          : 1;
         const char *modeItems[] = {"Loop", "One-shot"};
         ImGui::SetNextItemWidth(160.0f);
         if (ImGui::Combo("Mode", &modeIdx, modeItems, IM_ARRAYSIZE(modeItems)))
@@ -611,7 +612,8 @@ namespace
         // Iterate a snapshot so an inline Remove from within a child row
         // doesn't invalidate our loop over the group's children vector.
         const auto children = group.GetChildren();
-        if (children.empty()) return;
+        if (children.empty())
+            return;
 
         ImGui::Indent(18.0f);
         for (size_t i = 0; i < children.size(); ++i)
@@ -669,10 +671,18 @@ void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg, float clockTime)
                 const char *stateName = "?";
                 switch (now)
                 {
-                case EdgeLighting::AnimationState::Playing:   stateName = "Playing"; break;
-                case EdgeLighting::AnimationState::Paused:    stateName = "Paused"; break;
-                case EdgeLighting::AnimationState::Stopped:   stateName = "Stopped"; break;
-                case EdgeLighting::AnimationState::Completed: stateName = "Completed"; break;
+                case EdgeLighting::AnimationState::Playing:
+                    stateName = "Playing";
+                    break;
+                case EdgeLighting::AnimationState::Paused:
+                    stateName = "Paused";
+                    break;
+                case EdgeLighting::AnimationState::Stopped:
+                    stateName = "Stopped";
+                    break;
+                case EdgeLighting::AnimationState::Completed:
+                    stateName = "Completed";
+                    break;
                 }
                 LOG_I("Animation '%s' → %s", presetName, stateName);
             };
@@ -704,7 +714,7 @@ void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg, float clockTime)
     for (size_t i = 0; i < children.size(); ++i)
     {
         const char *presetName = i < mActiveNames.size() ? mActiveNames[i]
-                                                          : "Animation";
+                                                         : "Animation";
         char label[80];
         std::snprintf(label, sizeof(label), "%s##%zu", presetName, i);
         if (DrawAnimationRow(label, *children[i], cfg, /*allowRemove=*/true))

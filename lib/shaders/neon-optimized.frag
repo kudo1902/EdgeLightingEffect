@@ -37,7 +37,7 @@ out vec4 fragColor;
 uniform vec2  uRectSize;
 uniform float uCornerRadius;
 uniform float uLineWidth;
-uniform float uFilamentFalloff; ///< Super-Lorentzian exponent scale (N = 2 * value); higher = thinner core.
+uniform float uFilamentFalloff; ///< Generalized-Gaussian exponent (N = value * 2); 1.0 = pure Gaussian, lower = smoother (Laplace-like), higher = flatter top.
 uniform float uIntensity;
 uniform float uTime;
 uniform float uHueRotationRate;
@@ -141,32 +141,30 @@ void main() {
     if (uGlowSide == GLOW_SIDE_OUTSIDE && d < -softEdge) discard;
 
     // --- Filament -----------------------------------------------------
-    // Neon-tube profile via a super-Lorentzian falloff (matches the base
-    // NeonRenderer so the two look identical):
+    // Generalized-Gaussian profile with exponentially smooth falloff (matches
+    // the base NeonRenderer so the two look identical):
     //
-    //   core(ad) = 1 / (1 + (ad / k)^N)
+    //   core(ad) = exp(-ln(2) * (ad / sigma)^N)
     //
-    // k = halfWidth is the half-brightness radius (core = 0.5 at ad = k), and
-    // N = 2 * uFilamentFalloff controls the sharpness of the transition:
-    //   uFilamentFalloff = 0.5 → N = 1   (heavy tail; blends smoothly into halo)
-    //   uFilamentFalloff = 1.0 → N = 2   (pure Lorentzian; default)
-    //   uFilamentFalloff = 2.0 → N = 4   (flat plateau of width ~= lineWidth,
-    //                                     then sharper falloff)
-    //   uFilamentFalloff = 5.0 → N = 10  (near-rectangular; the plateau IS
-    //                                     the line, edges are crisp)
+    // sigma = half-brightness radius (core = 0.5 at ad = sigma).
+    // N = 2 * uFilamentFalloff controls the shape:
+    //   uFilamentFalloff = 0.5 → N = 1   (Laplace — heavy tails, smooth peak)
+    //   uFilamentFalloff = 1.0 → N = 2   (Gaussian — pure smooth falloff; default)
+    //   uFilamentFalloff = 2.0 → N = 4   (platykurtic — flatter top, sharper shoulder)
+    //   uFilamentFalloff = 5.0 → N = 10  (near-rectangular)
     //
-    // Peak at ad = 0 is always exactly 1.0. The 2×2 supersampling used by the
-    // old flat-top profile isn't needed — the Lorentzian has no sharp shoulder
-    // to alias, so smoothness is intrinsic to the shape.
+    // The Gaussian has no power-law tail, so the filament reads as a clean
+    // thin line with a naturally smooth roll-off.
+    //
+    // Peak at ad = 0 is always exactly 1.0.
     //
     // lineGate fades the filament from 0 at lineWidth = 0 up to full at
     // lineWidth = FILAMENT_MIN_HALF_WIDTH * 2, so lineWidth = 0 means "no
     // line" instead of a single-pixel bright dot.
     float halfWidth = uLineWidth * 0.5;
-    float k         = max(halfWidth, 1.0);
+    float sigma     = max(halfWidth, 0.5);
     float N         = 2.0 * max(uFilamentFalloff, 1e-3);
-    float r         = ad / k;
-    float core      = 1.0 / (1.0 + pow(r, N));
+    float core      = exp2(-pow(ad / sigma, N));
     float lineGate  = clamp(uLineWidth / (FILAMENT_MIN_HALF_WIDTH * 2.0), 0.0, 1.0);
 
     // --- Kernel widths ------------------------------------------------

@@ -81,18 +81,18 @@ namespace EdgeLighting
         /// Sets the line *width*; peak brightness stays constant regardless of value.
         float lineWidth = 4.0f;
 
-        /// Filament brightness falloff rate from the axis outward. The shader
-        /// uses a super-Lorentzian `1 / (1 + (ad/k)^N)` profile where
-        /// N = 2 * filamentFalloff. Peak brightness on the axis (ad = 0) is
-        /// always exactly 1.0; this value controls how the sides fall off and
-        /// how much of a flat plateau the core has:
-        ///   0.5 = heavy Lorentzian tail (N=1) — blends smoothly into the halo
-        ///   1.0 = default pure Lorentzian (N=2) — tight neon look, no plateau
-        ///   2.0 = plateau roughly the width of lineWidth, sharper shoulder
-        ///   >3  = near-rectangular: plateau IS the line, edges are crisp
-        /// Higher values also make lineWidth read as a proper visible width,
-        /// not just brightness, because the flat top of the profile scales
-        /// with halfWidth.
+        /// Filament brightness falloff shape from the axis outward. The shader
+        /// uses a generalized Gaussian `exp(-ln(2) * (ad/sigma)^N)` where
+        /// N = 2 * filamentFalloff and sigma = half-brightness radius. Peak
+        /// brightness on the axis (ad = 0) is always exactly 1.0; this value
+        /// controls how the sides fall off:
+        ///   0.5 = Laplace-like (N=1) — heavier tails, very smooth peak
+        ///   1.0 = pure Gaussian (N=2) — clean smooth falloff (default)
+        ///   2.0 = platykurtic (N=4) — flatter top, sharper shoulder
+        ///   >3  = near-rectangular (N>=6) — plateau IS the line, edges crisp
+        /// The Gaussian has no power-law tail, so the filament reads as a
+        /// cleaner thin line even at wider lineWidth values. Lower values
+        /// give a smoother, softer roll-off; higher values sharpen the edge.
         float filamentFalloff = 1.0f;
 
         // --- Glow ---
