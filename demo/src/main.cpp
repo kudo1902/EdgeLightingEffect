@@ -5,6 +5,7 @@
 #include "renderer/neon-renderer.h"
 #include "renderer/neon-multi-pass-renderer.h"
 #include "renderer/neon-optimized-renderer.h"
+#include "renderer/particle-renderer.h"
 #include "animation/neon-animations.h"
 #include "debug-ui.h"
 #include "background-quad.h"
@@ -93,11 +94,14 @@ int main()
     auto neonRenderer = std::make_shared<EdgeLighting::NeonRenderer>();
     auto neonMultiPassRenderer = std::make_shared<EdgeLighting::NeonMultiPassRenderer>();
     auto neonOptimizedRenderer = std::make_shared<EdgeLighting::NeonOptimizedRenderer>();
+    auto particleRenderer = std::make_shared<EdgeLighting::ParticleRenderer>();
 
     gEffect->AddRenderer(wireframeRenderer);
     gEffect->AddRenderer(neonRenderer);
     gEffect->AddRenderer(neonMultiPassRenderer);
     gEffect->AddRenderer(neonOptimizedRenderer);
+    // Particles render LAST so their sparks lay on top of the neon glow.
+    gEffect->AddRenderer(particleRenderer);
 
     EdgeLighting::Config config;
     config.geometry.width = displayW / 2;

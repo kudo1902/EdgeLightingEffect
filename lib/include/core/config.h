@@ -259,6 +259,54 @@ namespace EdgeLighting
         glm::vec4 color = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f); ///< Wireframe color
     } WireframeConfig;
 
+    /// Particle system configuration.
+    ///
+    /// Emits point-sprite sparks from the head and/or tail of every arc in
+    /// @ref NeonConfig::arcs. Physics runs CPU-side each frame (position +=
+    /// vel * dt, vel *= exp(-drag * dt)); particles die when their life hits
+    /// zero and are recycled from a pool. Rendered as GL_POINTS in the same
+    /// local (rect-centered) coord space as the neon quad, composited over
+    /// the neon output with premultiplied-alpha "over" blending.
+    typedef struct ParticleConfig
+    {
+        bool enable = false;
+
+        /// Particles spawned per second per emitter site.
+        float emissionRate = 200.0f;
+
+        /// Lifetime in seconds. Longer lives = more particles alive at once.
+        float lifetime = 0.7f;
+
+        /// Initial speed in pixels/second. Actual speed randomised in
+        /// [0.5, 1.0] × this so sparks don't fly in a rigid line.
+        float speed = 90.0f;
+
+        /// Exponential drag coefficient (1/s). Larger = sparks decelerate faster.
+        float drag = 2.5f;
+
+        /// Spawn size in pixels. gl_PointSize shrinks to zero as the particle
+        /// ages, so this is the visible size right at spawn.
+        float sizeStart = 5.0f;
+
+        /// Fraction of the initial velocity aimed outward from the rect
+        /// centre. 0 = purely tangential, 1 = purely outward. In-between mixes.
+        float outwardBias = 0.7f;
+
+        /// Full spread cone in degrees around the emit direction. 0 = all
+        /// particles fly the same way; 180 = random omnidirectional.
+        float spreadDeg = 40.0f;
+
+        /// Emit from the head end of each arc (position + length).
+        bool emitFromHead = true;
+
+        /// Emit from the tail end of each arc (position).
+        bool emitFromTail = true;
+
+        /// Upper bound on the particle pool. Emission stops when this cap is
+        /// hit; long-lived sparks trickle out and free slots come back.
+        int maxParticles = 1024;
+    } ParticleConfig;
+
     // -----------------------------------------------------------------------
     // Top-level configuration
     // -----------------------------------------------------------------------
@@ -274,6 +322,7 @@ namespace EdgeLighting
         MultiPassNeonConfig multipassNeon; ///< Multi-pass neon settings
         OptimizedNeonConfig optimizedNeon; ///< Half-res optimized neon settings
         WireframeConfig wireframe;         ///< Wireframe overlay settings
+        ParticleConfig particle;           ///< Point-sprite sparks emitted from arc endpoints
     } Config;
 
 } // namespace EdgeLighting

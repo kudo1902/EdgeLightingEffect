@@ -95,6 +95,7 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     buildMultiPassNeonSection(cfg);
     buildOptimizedNeonSection(cfg);
     buildAnimationSection(cfg, effect.GetClock().GetTime());
+    buildParticleSection(cfg);
     buildBackgroundSection();
 
     ImGui::Checkbox("Wireframe", &cfg.wireframe.enable);
@@ -739,6 +740,32 @@ void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg, float clockTime)
 
     ImGui::TextDisabled(
         "Sliders for animated fields will be overwritten each frame.");
+}
+
+void DebugUI::buildParticleSection(EdgeLighting::Config &cfg)
+{
+    if (!ImGui::CollapsingHeader("Particles", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+
+    ImGui::Checkbox("Enable##Particle", &cfg.particle.enable);
+    if (!cfg.particle.enable)
+    {
+        return;
+    }
+
+    ImGui::SliderFloat("Rate (per sec)##Particle", &cfg.particle.emissionRate, 0.0f, 2000.0f, "%.0f");
+    ImGui::SliderFloat("Lifetime (s)##Particle", &cfg.particle.lifetime, 0.05f, 3.0f, "%.2f");
+    ImGui::SliderFloat("Speed (px/s)##Particle", &cfg.particle.speed, 0.0f, 400.0f, "%.0f");
+    ImGui::SliderFloat("Drag##Particle", &cfg.particle.drag, 0.0f, 10.0f, "%.2f");
+    ImGui::SliderFloat("Size (px)##Particle", &cfg.particle.sizeStart, 1.0f, 30.0f, "%.1f");
+    ImGui::SliderFloat("Outward bias##Particle", &cfg.particle.outwardBias, 0.0f, 1.0f, "%.2f");
+    ImGui::SliderFloat("Spread (deg)##Particle", &cfg.particle.spreadDeg, 0.0f, 180.0f, "%.0f");
+    ImGui::Checkbox("Emit from head##Particle", &cfg.particle.emitFromHead);
+    ImGui::SameLine();
+    ImGui::Checkbox("Emit from tail##Particle", &cfg.particle.emitFromTail);
+    ImGui::SliderInt("Max alive##Particle", &cfg.particle.maxParticles, 32, 4096);
 }
 
 void DebugUI::buildBackgroundSection()
