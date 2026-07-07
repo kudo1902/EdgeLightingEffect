@@ -1,7 +1,5 @@
 precision highp float;
 
-#define NEON_NUM_SAMPLES 128
-
 // ---------------------------------------------------------------------------
 // Tuning constants
 // ---------------------------------------------------------------------------
@@ -111,25 +109,20 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
 // there's no sample position to represent the head for ~1/N of the
 // perimeter, so the arc visually stalls. With smooth + wrap check, sample 0
 // starts contributing before sample N-1 stops.
-float arcInside(float si, float start, float length) {
+float arcInside(float si, float start, float length, float invNumSamples) {
     if (length >= 1.0 - 1e-6) return 1.0;   // full coverage
     if (length <= 1e-6)       return 0.0;   // empty
-    // Feather = 1 sample width OUTSIDE the arc on each side. Placement
-    // OUTSIDE (i.e. smoothstep runs from start-f to start, not through
-    // start±f) ensures the sample sitting exactly at `start` or exactly at
-    // `end` gets weight 1.0 — so the arc's visible ends line up with the
-    // debug markers with no gap. The 1-sample-width span means the next
-    // sample past `end` gets weight 0, avoiding a soft-glow bleed just
-    // past the endpoint. Motion transitions cover ~1 sample per ~1 frame
-    // at typical speeds, which reads as smooth in practice.
-    float f   = 1.0 / float(NEON_NUM_SAMPLES);
+    // Feather = ½ sample width OUTSIDE the arc on each side. Placement
+    // OUTSIDE ensures the sample sitting exactly at `start` or `end` gets
+    // weight 1.0 — visible ends line up with debug markers. The ½-sample
+    // span reduces bleed on long arcs (length ≈ 1) where the small dark gap
+    // would otherwise glow from the feather overlapping the boundary sample.
+    // invNumSamples comes from the loop-sample texture width so the feather
+    // automatically matches the number of gather points.
+    float f   = 0.5 * invNumSamples;
     float end = start + length;
-    // Direct: g1 ramps 0→1 across [start-f, start]; g2 ramps 1→0 across
-    // [end, end+f]. inside = g1*g2 is exactly 1 for si in [start, end].
     float g1a = smoothstep(start - f, start, si);
     float g2a = 1.0 - smoothstep(end, end + f, si);
-    // Virtual sample at si+1 handles arcs that wrap past 1.0 — the sample at
-    // physical position 0 lives at virtual position 1 from the arc's POV.
     float g1b = smoothstep(start - f, start, si + 1.0);
     float g2b = 1.0 - smoothstep(end, end + f, si + 1.0);
     return max(g1a * g2a, g1b * g2b);
@@ -206,21 +199,26 @@ void main() {
     float wsumArc   = 0.0; // ∑ lit g — for the sharp filament gate
     float headWSum  = 0.0; // ∑ headW(i) · g(i)  — for the position-weighted average
 
+    // Read the sample count from the loop-sample texture itself — no hardcoded
+    // #define needed. The C++ side controls it when rebuilding the texture.
+    int numSamples = textureSize(uLoopSamplesTex, 0).x;
+    float invNumSamples = 1.0 / float(max(numSamples, 1));
+
     // Negate the time term so a positive hueRotationRate scrolls the colours
     // WITH the winding (sample index i advances in the winding direction; the
     // REPEAT-wrapped LUT handles the resulting negative coordinate).
     float ti   = -uTime * uHueRotationRate;
-    float dti  = 1.0 / float(NEON_NUM_SAMPLES);
+    float dti  = invNumSamples;
     float invSegSigma = 1.0 / max(uSegmentLength * 0.5, 1e-3);
     float si   = 0.0; // sample's normalised perimeter position
 
-    for (int i = 0; i < NEON_NUM_SAMPLES; i++) {
+    for (int i = 0; i < numSamples; i++) {
         vec2  dv  = vPos - decodeSample(texelFetch(uLoopSamplesTex, ivec2(i, 0), 0));
         float dd  = dot(dv, dv);
 
         float g   = 1.0 / (dd + kg2);
         // Arc gating: arcW is 0 (off) or 1 (on). lg = "lit g".
-        float arcW = arcInside(si, uArcStart, uArcLength);
+        float arcW = arcInside(si, uArcStart, uArcLength, invNumSamples);
         float lg   = g * arcW;
 
         glow  += lg * sqrt(g);              // -> ~1/D^2 neon halo, arc-gated

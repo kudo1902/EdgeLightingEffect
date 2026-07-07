@@ -10,7 +10,6 @@ precision highp float;
 // dots". highp is mandatory for fragment shaders in GLES 3.0 (#version 300
 // es), so this is safe on every 3.0 target; the mediump ALU savings weren't
 // worth the precision breakage.
-#define NEON_NUM_SAMPLES 64
 
 // ---------------------------------------------------------------------------
 // Tuning constants
@@ -62,9 +61,6 @@ uniform float uQuadMargin;
 uniform sampler2D uLoopSamplesTex;
 uniform float     uSampleMaxCoord;
 
-// Dynamic sample count (≤ NEON_NUM_SAMPLES). Lower = fewer ALU ops.
-uniform int uNumSamples;
-
 // Travelling segment — Gaussian brightness peak at uSegmentPosition along
 // the perimeter. When uSegmentBoost == 0 the feature is effectively inactive
 // (headW is uniformly 1, just a few wasted ops per sample).
@@ -109,10 +105,10 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
 // See neon.frag for full rationale: feather sits OUTSIDE the arc's
 // mathematical bounds so a sample exactly at start / end gets weight 1.
 // The virtual si+1 check keeps the arc continuous across the wrap point.
-float arcInside(float si, float start, float length) {
+float arcInside(float si, float start, float length, float invNumSamples) {
     if (length >= 1.0 - 1e-6) return 1.0;
     if (length <= 1e-6)       return 0.0;
-    float f   = 1.0 / float(NEON_NUM_SAMPLES);
+    float f   = 0.5 * invNumSamples;
     float end = start + length;
     float g1a = smoothstep(start - f, start, si);
     float g2a = 1.0 - smoothstep(end, end + f, si);
@@ -187,12 +183,13 @@ void main() {
     float wsumArc   = 0.0;
     float headWSum  = 0.0;
 
-    int n = min(uNumSamples, NEON_NUM_SAMPLES);
+    int n = textureSize(uLoopSamplesTex, 0).x;
+    float invNumSamples = 1.0 / float(max(n, 1));
     // Negate the time term so a positive hueRotationRate scrolls the colours
     // WITH the winding (i advances in the winding direction; REPEAT wrap handles
     // the negative LUT coordinate).
     float ti   = -uTime * uHueRotationRate;
-    float dti  = 1.0 / float(n);
+    float dti  = invNumSamples;
     float invSegSigma = 1.0 / max(uSegmentLength * 0.5, 1e-3);
     float si   = 0.0;
 
@@ -201,7 +198,7 @@ void main() {
         float dd  = dot(dv, dv);
 
         float g   = 1.0 / (dd + kg2);
-        float arcW = arcInside(si, uArcStart, uArcLength);
+        float arcW = arcInside(si, uArcStart, uArcLength, invNumSamples);
         float lg   = g * arcW;
 
         glow  += lg * sqrt(g);

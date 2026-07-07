@@ -91,7 +91,6 @@ namespace EdgeLighting
         mNeonShader.SetUniform("uArcStart", config.neon.arcStart);
         mNeonShader.SetUniform("uArcLength", config.neon.arcLength);
 
-        mNeonShader.SetUniform("uNumSamples", config.optimizedNeon.numSamples);
         mNeonShader.SetUniform("uSampleSpacing", mSampleSpacing);
         mNeonShader.SetUniform("uQuadMargin", mQuadMargin);
 
