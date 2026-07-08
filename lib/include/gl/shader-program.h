@@ -334,6 +334,36 @@ namespace EdgeLighting
 #endif
         }
 
+        void SetUniform(const char *name, const glm::vec3 *values, int count)
+        {
+#if UNIFORM_ARRAY_DIRECT
+            GLint loc = getLocation(name);
+            if (loc < 0 || count <= 0)
+            {
+                return;
+            }
+
+            if (!isArrayChanged(loc, values, sizeof(glm::vec3) * static_cast<size_t>(count)))
+            {
+                return;
+            }
+
+            glUniform3fv(loc, count, glm::value_ptr(*values));
+#else
+            if (count <= 0)
+            {
+                return;
+            }
+
+            for (int i = 0; i < count; ++i)
+            {
+                char elemName[128];
+                snprintf(elemName, sizeof(elemName), "%s[%d]", name, i);
+                SetUniform(elemName, values[i]);
+            }
+#endif
+        }
+
         void SetUniform(const char *name, const glm::vec4 *values, int count)
         {
 #if UNIFORM_ARRAY_DIRECT

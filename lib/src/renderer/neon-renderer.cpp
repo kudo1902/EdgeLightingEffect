@@ -103,9 +103,22 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uBloomStrength", config.neon.bloomStrength);
         mShaderProgram.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
         mShaderProgram.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness);
-        mShaderProgram.SetUniform("uSegmentPosition", config.neon.segmentPosition);
-        mShaderProgram.SetUniform("uSegmentLength", config.neon.segmentLength);
-        mShaderProgram.SetUniform("uSegmentBoost", config.neon.segmentBoost);
+        // Pack the segment vector as vec3(position, invSigma, boost). Empty
+        // vector → uSegmentCount=0 and the shader skips the whole feature.
+        glm::vec3 segs[MAX_SEGMENT_BOOSTS];
+        int segCount = std::min(static_cast<int>(config.neon.segmentBoosts.size()),
+                                int(MAX_SEGMENT_BOOSTS));
+        for (int i = 0; i < segCount; ++i)
+        {
+            const auto &s = config.neon.segmentBoosts[i];
+            float invSigma = 1.0f / std::max(s.length * 0.5f, 1e-3f);
+            segs[i] = glm::vec3(s.position, invSigma, s.boost);
+        }
+        mShaderProgram.SetUniform("uSegmentCount", segCount);
+        if (segCount > 0)
+        {
+            mShaderProgram.SetUniform("uSegments", segs, segCount);
+        }
         mShaderProgram.SetUniform("uArcStart", config.neon.arcStart);
         mShaderProgram.SetUniform("uArcLength", config.neon.arcLength);
 

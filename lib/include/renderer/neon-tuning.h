@@ -37,6 +37,9 @@
 #define BLOOM_SPACING_FLOOR       4.0
 #define BLOOM_NORM_FACTOR         0.32
 
+// --- Travelling-segment array size (shared by C++ vector cap + GLSL uniform array) ---
+#define MAX_SEGMENT_BOOSTS        8
+
 // --- Grading ---
 #define TONE_MAP_SHOULDER         0.6
 #define GAMMA_EXPONENT            0.85

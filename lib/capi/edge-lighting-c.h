@@ -52,10 +52,13 @@ extern "C"
 #endif
 
 /** ABI version. Bump on any breaking change to a struct layout or signature. */
-#define EL_ABI_VERSION 2
+#define EL_ABI_VERSION 3
 
 /** Maximum colour stops per gradient (mirrors NeonConfig::MAX_COLOR_STOPS). */
 #define EL_MAX_COLOR_STOPS 16
+
+/** Maximum travelling segment boosts (mirrors MAX_SEGMENT_BOOSTS in neon-tuning.h). */
+#define EL_MAX_SEGMENT_BOOSTS 8
 
 /** 32-bit boolean (0 = false, non-zero = true) for unambiguous marshalling. */
 typedef int32_t EL_Bool;
@@ -143,6 +146,15 @@ typedef struct EL_ColorStop
     float a;
 } EL_ColorStop;
 
+/** One travelling brightness peak. Several can be active at once; the shader
+ *  sums their Gaussian bells per sample so peaks can overlap. */
+typedef struct EL_SegmentBoost
+{
+    float position; ///< Centre in [0, 1) perimeter position.
+    float length;   ///< Width as a fraction of the perimeter (~2σ).
+    float boost;    ///< Peak brightness multiplier at the centre.
+} EL_SegmentBoost;
+
 /** Geometry of the target rounded rectangle. */
 typedef struct EL_RectGeometry
 {
@@ -168,9 +180,8 @@ typedef struct EL_NeonConfig
     int32_t colorStopCount; ///< Number of valid entries in colorStops.
     EL_ColorStop colorStops[EL_MAX_COLOR_STOPS];
     float hueRotationRate;
-    float segmentPosition;
-    float segmentLength;
-    float segmentBoost;
+    int32_t segmentBoostCount; ///< Number of valid entries in segmentBoosts.
+    EL_SegmentBoost segmentBoosts[EL_MAX_SEGMENT_BOOSTS];
     float arcStart;
     float arcLength;
 } EL_NeonConfig;
@@ -459,9 +470,14 @@ typedef enum EL_ConfigField
 
     /* Extended animation-worthy scalars — added after the initial ship. */
     EL_FIELD_NEON_HUE_ROTATION_RATE = 6,
+
+    /* Segment boost scalars target entry 0 of neon.segmentBoosts and
+     * auto-grow the vector to include it. To animate a specific entry other
+     * than index 0, use a preset factory that takes an index. */
     EL_FIELD_NEON_SEGMENT_POSITION = 7,
     EL_FIELD_NEON_SEGMENT_LENGTH = 8,
     EL_FIELD_NEON_SEGMENT_BOOST = 9,
+
     EL_FIELD_NEON_ARC_START = 10,
     EL_FIELD_NEON_ARC_LENGTH = 11
 } EL_ConfigField;

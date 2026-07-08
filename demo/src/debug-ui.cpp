@@ -227,10 +227,40 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
         ImGui::SliderFloat("Side Softness##Neon", &cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
     }
 
-    // --- Travelling segment (set Boost > 0 to enable) ---
-    ImGui::SliderFloat("Segment Pos##Neon", &cfg.neon.segmentPosition, 0.0f, 1.0f, "%.2f");
-    ImGui::SliderFloat("Segment Length##Neon", &cfg.neon.segmentLength, 0.02f, 0.5f, "%.2f");
-    ImGui::SliderFloat("Segment Boost##Neon", &cfg.neon.segmentBoost, 0.0f, 10.0f, "%.1f");
+    // --- Travelling segments (zero or more Gaussian brightness peaks) ---
+    ImGui::TextDisabled("Segment Boosts (%zu / %d)",
+                        cfg.neon.segmentBoosts.size(),
+                        EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP);
+    for (size_t i = 0; i < cfg.neon.segmentBoosts.size(); ++i)
+    {
+        ImGui::PushID(static_cast<int>(300 + i));
+        auto &seg = cfg.neon.segmentBoosts[i];
+        ImGui::SetNextItemWidth(90.0f);
+        ImGui::SliderFloat("Pos##Seg", &seg.position, 0.0f, 1.0f, "%.2f");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90.0f);
+        ImGui::SliderFloat("Len##Seg", &seg.length, 0.02f, 0.5f, "%.2f");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90.0f);
+        ImGui::SliderFloat("Boost##Seg", &seg.boost, 0.0f, 10.0f, "%.1f");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("X"))
+        {
+            cfg.neon.segmentBoosts.erase(cfg.neon.segmentBoosts.begin() +
+                                         static_cast<ptrdiff_t>(i));
+            ImGui::PopID();
+            break;
+        }
+        ImGui::PopID();
+    }
+    if (static_cast<int>(cfg.neon.segmentBoosts.size()) <
+        EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP)
+    {
+        if (ImGui::Button("+ Add Segment##Neon"))
+        {
+            cfg.neon.segmentBoosts.push_back({0.0f, 0.15f, 4.0f});
+        }
+    }
 
     // --- Arc gating (0..1 = full perimeter; shrink to "draw" part of the rect) ---
     ImGui::SliderFloat("Arc Start##Neon", &cfg.neon.arcStart, 0.0f, 1.0f, "%.2f");
@@ -392,9 +422,39 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg)
     // live avoids the slider vanishing when Glow Side is Both).
     ImGui::SliderFloat("Side Softness##Opt", &cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
 
-    ImGui::SliderFloat("Segment Pos##Opt", &cfg.neon.segmentPosition, 0.0f, 1.0f, "%.2f");
-    ImGui::SliderFloat("Segment Length##Opt", &cfg.neon.segmentLength, 0.02f, 0.5f, "%.2f");
-    ImGui::SliderFloat("Segment Boost##Opt", &cfg.neon.segmentBoost, 0.0f, 10.0f, "%.1f");
+    ImGui::TextDisabled("Segment Boosts (%zu / %d)",
+                        cfg.neon.segmentBoosts.size(),
+                        EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP);
+    for (size_t i = 0; i < cfg.neon.segmentBoosts.size(); ++i)
+    {
+        ImGui::PushID(static_cast<int>(400 + i));
+        auto &seg = cfg.neon.segmentBoosts[i];
+        ImGui::SetNextItemWidth(90.0f);
+        ImGui::SliderFloat("Pos##Seg", &seg.position, 0.0f, 1.0f, "%.2f");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90.0f);
+        ImGui::SliderFloat("Len##Seg", &seg.length, 0.02f, 0.5f, "%.2f");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90.0f);
+        ImGui::SliderFloat("Boost##Seg", &seg.boost, 0.0f, 10.0f, "%.1f");
+        ImGui::SameLine();
+        if (ImGui::SmallButton("X"))
+        {
+            cfg.neon.segmentBoosts.erase(cfg.neon.segmentBoosts.begin() +
+                                         static_cast<ptrdiff_t>(i));
+            ImGui::PopID();
+            break;
+        }
+        ImGui::PopID();
+    }
+    if (static_cast<int>(cfg.neon.segmentBoosts.size()) <
+        EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP)
+    {
+        if (ImGui::Button("+ Add Segment##Opt"))
+        {
+            cfg.neon.segmentBoosts.push_back({0.0f, 0.15f, 4.0f});
+        }
+    }
 
     ImGui::SliderFloat("Arc Start##Opt", &cfg.neon.arcStart, 0.0f, 1.0f, "%.2f");
     ImGui::SliderFloat("Arc Length##Opt", &cfg.neon.arcLength, 0.0f, 1.0f, "%.2f");
