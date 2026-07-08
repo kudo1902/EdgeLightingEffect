@@ -1,6 +1,7 @@
 #ifndef _EDGE_LIGHTING_CONFIG_H_
 #define _EDGE_LIGHTING_CONFIG_H_
 
+#include "renderer/neon-tuning.h" // MAX_SEGMENT_BOOSTS shared with the shaders
 #include <glm/glm.hpp>
 #include <vector>
 
@@ -38,6 +39,15 @@ namespace EdgeLighting
         float position;  ///< Normalised position along the perimeter [0-1].
         glm::vec4 color; ///< RGBA colour at this stop.
     } ColorStop;
+
+    /// A travelling brightness peak on the perimeter. Several of these can be
+    /// active at once; the shader sums their Gaussian bells per sample.
+    typedef struct SegmentBoost
+    {
+        float position = 0.0f; ///< Centre in [0, 1) perimeter position.
+        float length = 0.15f;  ///< Width as a fraction of the perimeter (~2σ).
+        float boost = 0.0f;    ///< Peak brightness multiplier at the centre.
+    } SegmentBoost;
 
     // -----------------------------------------------------------------------
     // Per-renderer configuration
@@ -131,21 +141,21 @@ namespace EdgeLighting
         /// Hue rotation rate in revolutions per second around the perimeter. 0 = static.
         float hueRotationRate = 0.5f;
 
-        // --- Travelling segment (spatial brightness bump) ---
+        // --- Travelling segments (spatial brightness bumps) ---
         //
-        // A Gaussian-shaped brightness peak rides on top of the base neon
-        // line. When @c segmentBoost == 0 (default) the feature is effectively
-        // inactive. Drive @c segmentPosition over time with @ref SegmentTravel
-        // for a moving spot.
+        // Zero or more Gaussian-shaped brightness peaks ride on top of the base
+        // neon line. Each entry has its own position / length / boost. The
+        // shader sums the per-entry bell weights, so peaks can overlap.
+        // Empty vector (default) means "no boost anywhere" — the feature costs
+        // one skip in the gather loop and is otherwise free.
+        //
+        // Drive an entry's `position` over time with @ref SegmentTravel or
+        // @ref SegmentBounce for a moving spot; keep another entry static for
+        // a fixed hotspot, etc.
 
-        /// Centre of the bright segment, in [0, 1) perimeter position
-        /// (same parametrisation as the colour ring).
-        float segmentPosition = 0.0f;
-        /// Segment width as a fraction of the perimeter (~Gaussian σ × 2).
-        /// 0.15 ≈ "comfortable spot", 0.05 ≈ "tight dot", 0.5 ≈ "broad swell".
-        float segmentLength = 0.15f;
-        /// Brightness multiplier added at the head. 0 = disabled, 4 = strong.
-        float segmentBoost = 0.0f;
+        /// Maximum number of active segment boosts (matches the shader array size).
+        static constexpr int MAX_SEGMENT_BOOSTS_CAP = MAX_SEGMENT_BOOSTS;
+        std::vector<SegmentBoost> segmentBoosts;
 
         // --- Arc gating (which slice of the perimeter is "on") ---
         //

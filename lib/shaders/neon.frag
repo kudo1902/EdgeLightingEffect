@@ -48,12 +48,12 @@ uniform float uSampleSpacing;
 uniform sampler2D uLoopSamplesTex;
 uniform float     uSampleMaxCoord;
 
-// Travelling segment — Gaussian brightness peak at uSegmentPosition along
-// the perimeter. When uSegmentBoost == 0 the feature is effectively inactive
-// (headW is uniformly 1, just a few wasted ops per sample).
-uniform float uSegmentPosition;
-uniform float uSegmentLength;
-uniform float uSegmentBoost;
+// Travelling segments — up to MAX_SEGMENT_BOOSTS Gaussian brightness peaks.
+// Each vec3 is packed as (position, invSigma, boost) so the shader avoids the
+// per-sample divide. When uSegmentCount == 0 the whole feature is skipped in
+// the gather loop.
+uniform int  uSegmentCount;
+uniform vec3 uSegments[MAX_SEGMENT_BOOSTS];
 
 // Arc gating — only samples whose perimeter position falls within an arc of
 // uArcLength starting at uArcStart contribute. Defaults (0, 1) = full lit.
@@ -187,11 +187,10 @@ void main() {
 
     // --- Additive gather --------------------------------------------------
     // Per iteration: 1 texture fetch + decode for the sample position, 1 sub,
-    // 1 dot, 2 reciprocals, 1 sqrt, 1 gradient-LUT lookup, 1 exp() + a couple
-    // of mul/adds for the travelling-segment head weight (unconditional — when
-    // uSegmentBoost == 0 the bell becomes headW = 1 so it's a no-op result,
-    // but the exp still runs). No pow(), no in-shader stops walk, no HSV math.
-    // Sweep advance is folded into the GL_REPEAT-wrapped LUT — no fract() either.
+    // 1 dot, 2 reciprocals, 1 sqrt, 1 gradient-LUT lookup, plus one exp() per
+    // active segment boost (skipped entirely when uSegmentCount == 0).
+    // No pow(), no in-shader stops walk, no HSV math. Sweep advance is folded
+    // into the GL_REPEAT-wrapped LUT — no fract() either.
     float glow      = 0.0;
     float bloom     = 0.0;
     vec3  acc       = vec3(0.0);
@@ -209,7 +208,6 @@ void main() {
     // REPEAT-wrapped LUT handles the resulting negative coordinate).
     float ti   = -uTime * uHueRotationRate;
     float dti  = invNumSamples;
-    float invSegSigma = 1.0 / max(uSegmentLength * 0.5, 1e-3);
     float si   = 0.0; // sample's normalised perimeter position
 
     for (int i = 0; i < numSamples; i++) {
@@ -235,13 +233,19 @@ void main() {
         wsum    += g;
         wsumArc += lg;
 
-        // --- Travelling-segment head weight (Gaussian, wrap-around) -------
-        // Only lit samples contribute to the bell average so the segment
-        // boost can't "shine through" into the off-arc region.
-        float segDist = abs(si - uSegmentPosition);
-        segDist = min(segDist, 1.0 - segDist);
-        float bell = exp(-(segDist * invSegSigma) * (segDist * invSegSigma));
-        float headW = 1.0 + uSegmentBoost * bell;
+        // --- Travelling-segment head weight (sum of Gaussians, wrap-around) ---
+        // Sum a bell contribution from every entry in uSegments. Only lit
+        // samples feed headWSum so a boost can't "shine through" into the
+        // off-arc region. When uSegmentCount == 0 the loop body is skipped
+        // and headW stays at 1 (no-op).
+        float headW = 1.0;
+        for (int s = 0; s < uSegmentCount; s++) {
+            vec3  seg      = uSegments[s];
+            float segDist  = abs(si - seg.x);
+            segDist        = min(segDist, 1.0 - segDist);
+            float e        = segDist * seg.y;
+            headW         += seg.z * exp(-e * e);
+        }
         headWSum += headW * lg;
 
         ti  += dti;
@@ -252,7 +256,7 @@ void main() {
 
     vec3 col = acc / max(wsum, WSUM_EPSILON);
     // Position-weighted average head-multiplier for this fragment.
-    // When uSegmentBoost == 0 every headW is 1 → headWAvg == 1 → no-op.
+    // With uSegmentCount == 0 every headW is 1 → headWAvg == 1 → no-op.
     float headWAvg = headWSum / max(wsum, WSUM_EPSILON);
 
     // Sharp gate for the SDF-derived filament. `col` already softly fades at

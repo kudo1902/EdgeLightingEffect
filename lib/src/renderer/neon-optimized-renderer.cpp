@@ -85,9 +85,23 @@ namespace EdgeLighting
         mNeonShader.SetUniform("uBloomStrength", config.neon.bloomStrength);
         mNeonShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
         mNeonShader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness * scale);
-        mNeonShader.SetUniform("uSegmentPosition", config.neon.segmentPosition);
-        mNeonShader.SetUniform("uSegmentLength", config.neon.segmentLength);
-        mNeonShader.SetUniform("uSegmentBoost", config.neon.segmentBoost);
+        // Pack the segment vector as vec3(position, invSigma, boost). Same
+        // packing as NeonRenderer; segment `position` is a normalised
+        // perimeter coord in [0, 1), so the resolutionScale does not apply.
+        glm::vec3 segs[MAX_SEGMENT_BOOSTS];
+        int segCount = std::min(static_cast<int>(config.neon.segmentBoosts.size()),
+                                int(MAX_SEGMENT_BOOSTS));
+        for (int i = 0; i < segCount; ++i)
+        {
+            const auto &s = config.neon.segmentBoosts[i];
+            float invSigma = 1.0f / std::max(s.length * 0.5f, 1e-3f);
+            segs[i] = glm::vec3(s.position, invSigma, s.boost);
+        }
+        mNeonShader.SetUniform("uSegmentCount", segCount);
+        if (segCount > 0)
+        {
+            mNeonShader.SetUniform("uSegments", segs, segCount);
+        }
         mNeonShader.SetUniform("uArcStart", config.neon.arcStart);
         mNeonShader.SetUniform("uArcLength", config.neon.arcLength);
 

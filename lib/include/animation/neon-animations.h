@@ -301,29 +301,52 @@ namespace EdgeLighting
     // Travelling segment
     // -------------------------------------------------------------------------
 
+    namespace
+    {
+        /// Grow @c cfg.neon.segmentBoosts up to @p index inclusive so a
+        /// travelling-segment animation can safely write to
+        /// @c segmentBoosts[index] regardless of the current size.
+        /// New entries are initialised with the animation's own length/boost
+        /// so a freshly added animation immediately produces a visible bump.
+        inline SegmentBoost &EnsureSegmentSlot(Config &cfg, size_t index,
+                                               float defaultLength, float defaultBoost)
+        {
+            if (cfg.neon.segmentBoosts.size() <= index)
+            {
+                cfg.neon.segmentBoosts.resize(index + 1, SegmentBoost{0.0f, defaultLength, defaultBoost});
+            }
+            return cfg.neon.segmentBoosts[index];
+        }
+    }
+
     /// @brief Spin a bright Gaussian peak around the perimeter.
-    /// @details Uses a sawtooth on @c segmentPosition so the peak wraps around
-    ///          and restarts from 0.
+    /// @details Uses a sawtooth on the target segment's @c position so the peak
+    ///          wraps around and restarts from 0. Writes into
+    ///          @c cfg.neon.segmentBoosts[index], auto-growing the vector to
+    ///          include that slot if needed.
     class SegmentTravel : public Animation
     {
     public:
         /// @param duration Seconds for one full revolution.
         /// @param length   Width of the bright peak [0, 1].
         /// @param boost    Peak intensity multiplier.
+        /// @param index    Which entry in @c segmentBoosts to drive (default 0).
         SegmentTravel(float duration = 3.0f,
                       float length = 0.15f,
-                      float boost = 4.0f)
+                      float boost = 4.0f,
+                      size_t index = 0)
             : mPosOsc(1.0f / duration, 0.0f, 1.0f, 0.0f, Waveform::SAWTOOTH),
-              mLength(length), mBoost(boost)
+              mLength(length), mBoost(boost), mIndex(index)
         {
             SetDuration(duration);
         }
 
         void ApplyAt(Config &cfg, float elapsed) const override
         {
-            cfg.neon.segmentPosition = mPosOsc.Evaluate(elapsed);
-            cfg.neon.segmentLength = mLength;
-            cfg.neon.segmentBoost = mBoost;
+            auto &s = EnsureSegmentSlot(cfg, mIndex, mLength, mBoost);
+            s.position = mPosOsc.Evaluate(elapsed);
+            s.length = mLength;
+            s.boost = mBoost;
         }
 
     protected:
@@ -336,30 +359,35 @@ namespace EdgeLighting
         Oscillator mPosOsc;
         float mLength;
         float mBoost;
+        size_t mIndex;
     };
 
     /// @brief Swing the bright spot back and forth.
-    /// @details Uses a triangle wave on @c segmentPosition.
+    /// @details Uses a triangle wave on the target segment's @c position.
+    ///          Writes into @c cfg.neon.segmentBoosts[index] (auto-grown).
     class SegmentBounce : public Animation
     {
     public:
         /// @param duration Seconds for one full back-and-forth cycle.
         /// @param length   Width of the bright peak [0, 1].
         /// @param boost    Peak intensity multiplier.
+        /// @param index    Which entry in @c segmentBoosts to drive (default 0).
         SegmentBounce(float duration = 4.0f,
                       float length = 0.20f,
-                      float boost = 4.0f)
+                      float boost = 4.0f,
+                      size_t index = 0)
             : mPosOsc(1.0f / duration, 0.0f, 1.0f, 0.0f, Waveform::TRIANGLE),
-              mLength(length), mBoost(boost)
+              mLength(length), mBoost(boost), mIndex(index)
         {
             SetDuration(duration);
         }
 
         void ApplyAt(Config &cfg, float elapsed) const override
         {
-            cfg.neon.segmentPosition = mPosOsc.Evaluate(elapsed);
-            cfg.neon.segmentLength = mLength;
-            cfg.neon.segmentBoost = mBoost;
+            auto &s = EnsureSegmentSlot(cfg, mIndex, mLength, mBoost);
+            s.position = mPosOsc.Evaluate(elapsed);
+            s.length = mLength;
+            s.boost = mBoost;
         }
 
     protected:
@@ -372,6 +400,7 @@ namespace EdgeLighting
         Oscillator mPosOsc;
         float mLength;
         float mBoost;
+        size_t mIndex;
     };
 
     // -------------------------------------------------------------------------

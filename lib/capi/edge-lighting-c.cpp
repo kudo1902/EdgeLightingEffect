@@ -124,6 +124,41 @@ namespace
         return out;
     }
 
+    void copySegmentsToC(const std::vector<EdgeLighting::SegmentBoost> &src,
+                         EL_SegmentBoost *dst, int32_t &count)
+    {
+        count = static_cast<int32_t>(std::min<size_t>(src.size(), EL_MAX_SEGMENT_BOOSTS));
+        for (int32_t i = 0; i < count; ++i)
+        {
+            dst[i].position = src[i].position;
+            dst[i].length = src[i].length;
+            dst[i].boost = src[i].boost;
+        }
+    }
+
+    std::vector<EdgeLighting::SegmentBoost> segmentsFromC(const EL_SegmentBoost *src, int32_t count)
+    {
+        std::vector<EdgeLighting::SegmentBoost> out;
+        int32_t n = std::max(0, std::min(count, EL_MAX_SEGMENT_BOOSTS));
+        out.reserve(static_cast<size_t>(n));
+        for (int32_t i = 0; i < n; ++i)
+        {
+            out.push_back({src[i].position, src[i].length, src[i].boost});
+        }
+        return out;
+    }
+
+    /// Ensure @c segmentBoosts has at least one entry so the scalar
+    /// EL_FIELD_NEON_SEGMENT_* fields have something to write into.
+    EdgeLighting::SegmentBoost &ensureFirstSegment(EdgeLighting::Config &cfg)
+    {
+        if (cfg.neon.segmentBoosts.empty())
+        {
+            cfg.neon.segmentBoosts.push_back({0.0f, 0.15f, 4.0f});
+        }
+        return cfg.neon.segmentBoosts.front();
+    }
+
     EdgeLighting::Config toConfig(const EL_Config &c)
     {
         using namespace EdgeLighting;
@@ -145,9 +180,7 @@ namespace
         out.neon.blendSpace = static_cast<BlendSpace>(c.neon.blendSpace);
         out.neon.colorStops = stopsFromC(c.neon.colorStops, c.neon.colorStopCount);
         out.neon.hueRotationRate = c.neon.hueRotationRate;
-        out.neon.segmentPosition = c.neon.segmentPosition;
-        out.neon.segmentLength = c.neon.segmentLength;
-        out.neon.segmentBoost = c.neon.segmentBoost;
+        out.neon.segmentBoosts = segmentsFromC(c.neon.segmentBoosts, c.neon.segmentBoostCount);
         out.neon.arcStart = c.neon.arcStart;
         out.neon.arcLength = c.neon.arcLength;
 
@@ -195,9 +228,7 @@ namespace
         out.neon.blendSpace = static_cast<int32_t>(c.neon.blendSpace);
         copyStopsToC(c.neon.colorStops, out.neon.colorStops, out.neon.colorStopCount);
         out.neon.hueRotationRate = c.neon.hueRotationRate;
-        out.neon.segmentPosition = c.neon.segmentPosition;
-        out.neon.segmentLength = c.neon.segmentLength;
-        out.neon.segmentBoost = c.neon.segmentBoost;
+        copySegmentsToC(c.neon.segmentBoosts, out.neon.segmentBoosts, out.neon.segmentBoostCount);
         out.neon.arcStart = c.neon.arcStart;
         out.neon.arcLength = c.neon.arcLength;
 
@@ -285,17 +316,17 @@ namespace
             }
             case EL_FIELD_NEON_SEGMENT_POSITION:
             {
-                cfg.neon.segmentPosition = v;
+                ensureFirstSegment(cfg).position = v;
                 break;
             }
             case EL_FIELD_NEON_SEGMENT_LENGTH:
             {
-                cfg.neon.segmentLength = v;
+                ensureFirstSegment(cfg).length = v;
                 break;
             }
             case EL_FIELD_NEON_SEGMENT_BOOST:
             {
-                cfg.neon.segmentBoost = v;
+                ensureFirstSegment(cfg).boost = v;
                 break;
             }
             case EL_FIELD_NEON_ARC_START:

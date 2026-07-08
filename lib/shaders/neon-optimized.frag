@@ -61,12 +61,12 @@ uniform float uQuadMargin;
 uniform sampler2D uLoopSamplesTex;
 uniform float     uSampleMaxCoord;
 
-// Travelling segment — Gaussian brightness peak at uSegmentPosition along
-// the perimeter. When uSegmentBoost == 0 the feature is effectively inactive
-// (headW is uniformly 1, just a few wasted ops per sample).
-uniform float uSegmentPosition;
-uniform float uSegmentLength;
-uniform float uSegmentBoost;
+// Travelling segments — up to MAX_SEGMENT_BOOSTS Gaussian brightness peaks.
+// Each vec3 is packed as (position, invSigma, boost) so the shader avoids the
+// per-sample divide. When uSegmentCount == 0 the whole feature is skipped in
+// the gather loop.
+uniform int  uSegmentCount;
+uniform vec3 uSegments[MAX_SEGMENT_BOOSTS];
 
 // Arc gating — only samples whose perimeter position falls within an arc of
 // uArcLength starting at uArcStart contribute. Defaults (0, 1) = full lit.
@@ -190,7 +190,6 @@ void main() {
     // the negative LUT coordinate).
     float ti   = -uTime * uHueRotationRate;
     float dti  = invNumSamples;
-    float invSegSigma = 1.0 / max(uSegmentLength * 0.5, 1e-3);
     float si   = 0.0;
 
     for (int i = 0; i < n; i++) {
@@ -209,17 +208,22 @@ void main() {
         wsum    += g;
         wsumArc += lg;
 
-        // Travelling-segment head weight. The exp() bell is the most expensive
-        // op in the loop, so skip it entirely in the common case where the
-        // segment feature is off (uSegmentBoost == 0). This is a uniform
-        // branch — coherent across the whole draw, so effectively free.
-        if (uSegmentBoost > 0.0) {
-            float segDist = abs(si - uSegmentPosition);
-            segDist = min(segDist, 1.0 - segDist);
-            float bell = exp(-(segDist * invSegSigma) * (segDist * invSegSigma));
-            headWSum += (1.0 + uSegmentBoost * bell) * lg;
+        // Travelling-segment head weight — sum of Gaussian bells over the
+        // uSegments array. The uSegmentCount == 0 case skips the whole loop
+        // (uniform branch, coherent across the draw) so the common "no boost"
+        // path avoids the exp() entirely.
+        if (uSegmentCount > 0) {
+            float headW = 1.0;
+            for (int s = 0; s < uSegmentCount; s++) {
+                vec3  seg      = uSegments[s];
+                float segDist  = abs(si - seg.x);
+                segDist        = min(segDist, 1.0 - segDist);
+                float e        = segDist * seg.y;
+                headW         += seg.z * exp(-e * e);
+            }
+            headWSum += headW * lg;
         } else {
-            headWSum += lg; // headW == 1 → same as the bell branch with boost 0
+            headWSum += lg; // headW == 1 -> same as the bell branch with no segments
         }
 
         ti  += dti;
