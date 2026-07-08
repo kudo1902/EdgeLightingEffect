@@ -3,6 +3,7 @@
 
 #include "renderer/base-renderer.h"
 #include "gl/shader-program.h"
+#include "gl/uniform-buffer.h"
 #include "gl/vertex-array.h"
 #include "gl/texture-2d.h"
 #include <glm/glm.hpp>
@@ -39,6 +40,10 @@ namespace EdgeLighting
         ShaderProgram mBlackRectShader;                    ///< Opaque-mode black background fill (black-rect.frag).
         VertexArray mVertexArray{"NeonRenderer"};          ///< Tight glow quad (rect + earlyOut).
         VertexArray mFullVertexArray{"NeonRenderer.Full"}; ///< Viewport-covering quad for the opaque fill.
+
+        /// Backs neon.frag's std140 `SegmentBlock` (DALi-compatible uniform
+        /// block holding uSegmentCount + uSegments[]).
+        UniformBuffer mSegmentBlock{"NeonRenderer.SegmentBlock"};
 
         std::vector<glm::vec2> mLoopSamples;
         float mSampleSpacing = 0.0f;
