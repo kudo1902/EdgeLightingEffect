@@ -3,6 +3,7 @@
 
 #include "renderer/base-renderer.h"
 #include "gl/shader-program.h"
+#include "gl/uniform-buffer.h"
 #include "gl/vertex-array.h"
 #include "gl/texture-2d.h"
 #include "gl/framebuffer.h"
@@ -53,6 +54,10 @@ namespace EdgeLighting
         Framebuffer mHalfResBuffer{"NeonOptimized.HalfRes"};
         VertexArray mNeonVertexArray{"NeonOpt.Pass1"};
         VertexArray mBlitVertexArray{"NeonOpt.Blit"};
+
+        /// Backs neon-optimized.frag's std140 `SegmentBlock` (DALi-compatible
+        /// uniform block holding uSegmentCount + uSegments[]).
+        UniformBuffer mSegmentBlock{"NeonOpt.SegmentBlock"};
 
         std::vector<glm::vec2> mLoopSamples;
         float mSampleSpacing = 0.0f;

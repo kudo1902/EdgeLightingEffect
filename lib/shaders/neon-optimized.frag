@@ -65,8 +65,18 @@ uniform float     uSampleMaxCoord;
 // Each vec3 is packed as (position, invSigma, boost) so the shader avoids the
 // per-sample divide. When uSegmentCount == 0 the whole feature is skipped in
 // the gather loop.
-uniform int  uSegmentCount;
-uniform vec3 uSegments[MAX_SEGMENT_BOOSTS];
+//
+// Declared in a std140 uniform block (the DALi PunctualLightBlock pattern)
+// instead of loose array uniforms: DALi/Tizen writes array elements one at
+// a time into the block's UBO ("uSegments[0]", "uSegments[1]", …) using the
+// std140 stride, with no bulk-array upload path. On desktop GL the block is
+// fed from a UBO in neon-optimized-renderer.cpp. std140 pads each vec3
+// element to a 16-byte stride.
+layout(std140) uniform SegmentBlock
+{
+    int  uSegmentCount;
+    vec3 uSegments[MAX_SEGMENT_BOOSTS];
+};
 
 // Arc gating — only samples whose perimeter position falls within an arc of
 // uArcLength starting at uArcStart contribute. Defaults (0, 1) = full lit.

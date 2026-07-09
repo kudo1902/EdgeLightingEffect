@@ -8,9 +8,27 @@
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
 
 namespace EdgeLighting
 {
+    namespace
+    {
+        /// CPU-side mirror of neon-optimized.frag's std140 `SegmentBlock`:
+        /// int padded to 16 bytes, each vec3 element padded to a vec4 stride.
+        typedef struct SegmentBlockData
+        {
+            int32_t count;
+            float pad[3];
+            glm::vec4 segments[MAX_SEGMENT_BOOSTS];
+        } SegmentBlockData;
+
+        static_assert(sizeof(SegmentBlockData) == 16 + 16 * MAX_SEGMENT_BOOSTS,
+                      "SegmentBlockData must match the shader's std140 layout");
+
+        constexpr GLuint SEGMENT_BLOCK_BINDING = 0;
+    }
+
     // -------------------------------------------------------------------------
     // -------------------------------------------------------------------------
 
@@ -85,23 +103,22 @@ namespace EdgeLighting
         mNeonShader.SetUniform("uBloomStrength", config.neon.bloomStrength);
         mNeonShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
         mNeonShader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness * scale);
-        // Pack the segment vector as vec3(position, invSigma, boost). Same
-        // packing as NeonRenderer; segment `position` is a normalised
+        // Pack the segment vector as vec3(position, invSigma, boost) into the
+        // std140 SegmentBlock UBO (DALi-compatible pattern — see the shader).
+        // Same packing as NeonRenderer; segment `position` is a normalised
         // perimeter coord in [0, 1), so the resolutionScale does not apply.
-        glm::vec3 segs[MAX_SEGMENT_BOOSTS];
+        SegmentBlockData segBlock = {};
         int segCount = std::min(static_cast<int>(config.neon.segmentBoosts.size()),
                                 int(MAX_SEGMENT_BOOSTS));
+        segBlock.count = segCount;
         for (int i = 0; i < segCount; ++i)
         {
             const auto &s = config.neon.segmentBoosts[i];
             float invSigma = 1.0f / std::max(s.length * 0.5f, 1e-3f);
-            segs[i] = glm::vec3(s.position, invSigma, s.boost);
+            segBlock.segments[i] = glm::vec4(s.position, invSigma, s.boost, 0.0f);
         }
-        mNeonShader.SetUniform("uSegmentCount", segCount);
-        if (segCount > 0)
-        {
-            mNeonShader.SetUniform("uSegments", segs, segCount);
-        }
+        mSegmentBlock.SetData(&segBlock, sizeof(segBlock));
+        mSegmentBlock.BindBase(SEGMENT_BLOCK_BINDING);
         mNeonShader.SetUniform("uArcStart", config.neon.arcStart);
         mNeonShader.SetUniform("uArcLength", config.neon.arcLength);
 
@@ -213,7 +230,13 @@ namespace EdgeLighting
         mBlitShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                     ShaderSource::NEON_BLIT_FRAG_SRC,
                                     "NeonBlit");
-        return mNeonShader.IsValid() && mBlackRectShader.IsValid() && mBlitShader.IsValid();
+        if (!mNeonShader.IsValid() || !mBlackRectShader.IsValid() || !mBlitShader.IsValid())
+        {
+            return false;
+        }
+
+        mNeonShader.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
+        return true;
     }
 
     void NeonOptimizedRenderer::setupGeometry(const Config &config)
