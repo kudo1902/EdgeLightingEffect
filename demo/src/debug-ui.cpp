@@ -209,6 +209,7 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
     }
 
     ImGui::Checkbox("Opaque (no blend)##Neon", &cfg.neon.opaque);
+    ImGui::Checkbox("Show Gradient LUT##Neon", &cfg.neon.showGradientLUT);
     ImGui::SliderFloat("Line Width##Neon", &cfg.neon.lineWidth, 0.0f, 20.0f, "%.0f");
     ImGui::SliderFloat("Filament Falloff##Neon", &cfg.neon.filamentFalloff, 0.0f, 5.0f, "%.2f");
     ImGui::SliderFloat("Intensity##Neon", &cfg.neon.intensity, 0.0f, 3.0f, "%.2f");

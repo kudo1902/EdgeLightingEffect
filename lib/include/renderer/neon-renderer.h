@@ -38,8 +38,11 @@ namespace EdgeLighting
         Config mCurrentConfig;
         ShaderProgram mShaderProgram;
         ShaderProgram mBlackRectShader;                    ///< Opaque-mode black background fill (black-rect.frag).
+        ShaderProgram mLUTDebugShader;                     ///< Debug LUT strip (neon-lut-debug.frag).
         VertexArray mVertexArray{"NeonRenderer"};          ///< Tight glow quad (rect + earlyOut).
         VertexArray mFullVertexArray{"NeonRenderer.Full"}; ///< Viewport-covering quad for the opaque fill.
+        VertexArray mLUTStripVertexArray{"NeonRenderer.LUTStrip"}; ///< Small centred quad for the LUT debug strip.
+        glm::vec2 mLUTStripHalfSize{0.0f}; ///< Half extents of the LUT strip in local px (matches mLUTStripVertexArray).
 
         /// Backs neon.frag's std140 `SegmentBlock` (DALi-compatible uniform
         /// block holding uSegmentCount + uSegments[]).

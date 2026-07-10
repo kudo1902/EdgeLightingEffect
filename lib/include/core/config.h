@@ -75,6 +75,13 @@ namespace EdgeLighting
     {
         bool enable = false; ///< Enable or disable the neon renderer
 
+        // --- Debug visualisations ---
+
+        /// Debug: draw the baked gradient LUT texture as a horizontal strip at
+        /// the centre of the rectangle so you can eyeball the colour ring
+        /// that's actually going to the shader.
+        bool showGradientLUT = false;
+
         // --- Compositing ---
 
         /// How the effect combines with whatever is already in the framebuffer.

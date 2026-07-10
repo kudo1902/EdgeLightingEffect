@@ -45,6 +45,10 @@ namespace EdgeLighting
         setupGeometry(mCurrentConfig);
         rebuildGradientLUT(mCurrentConfig);
 
+        // Static NDC-order attribs for the LUT debug strip; the actual verts
+        // are (re)uploaded from setupGeometry() so the strip tracks rect size.
+        mLUTStripVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+
         // Static fullscreen NDC quad for the opaque-mode black fill (identity
         // MVP; the fill shader derives its shape from gl_FragCoord, not aPos).
         // clang-format off
@@ -159,6 +163,23 @@ namespace EdgeLighting
 
         mShaderProgram.Unuse();
 
+        // --- Debug: gradient LUT strip at the geometry centre -----------------
+        // Overwrites the neon output within the strip rect so the baked ring is
+        // readable regardless of the glow's tone-mapped brightness.
+        if (config.neon.showGradientLUT)
+        {
+            glDisable(GL_BLEND);
+            mLUTDebugShader.Use();
+            mLUTDebugShader.SetUniform("uMVP", mvp);
+            mLUTDebugShader.SetUniform("uStripHalfSize", mLUTStripHalfSize);
+            mLUTDebugShader.SetUniform("uTime", time);
+            mLUTDebugShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
+            mGradientLUT.Bind(0);
+            mLUTDebugShader.SetUniform("uGradientLUT", 0);
+            mLUTStripVertexArray.DrawArrays(GL_TRIANGLES, 6);
+            mLUTDebugShader.Unuse();
+        }
+
         // Restore a known blend state for following renderers (the opaque path
         // disables blending).
         glEnable(GL_BLEND);
@@ -187,7 +208,12 @@ namespace EdgeLighting
         mBlackRectShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                          ShaderSource::BLACK_RECT_FRAG_SRC,
                                          "NeonRenderer.BlackRect");
-        if (!mShaderProgram.IsValid() || !mBlackRectShader.IsValid())
+        // Debug LUT strip — reuses the standard neon vertex shader (uMVP + aPos → vPos)
+        // so the strip quad respects the same rect-local transform as the glow quad.
+        mLUTDebugShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
+                                        ShaderSource::NEON_LUT_DEBUG_FRAG_SRC,
+                                        "NeonRenderer.LUTDebug");
+        if (!mShaderProgram.IsValid() || !mBlackRectShader.IsValid() || !mLUTDebugShader.IsValid())
         {
             return false;
         }
@@ -229,6 +255,20 @@ namespace EdgeLighting
 
         mVertexArray.SetVertexData(verts, sizeof(verts));
         mVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+
+        // Debug LUT strip: 60% of rect width × min(rect_height / 6, 40 px),
+        // centred on the geometry origin so it sits inside the rounded box.
+        float stripHalfW = halfW * 0.6f;
+        float stripHalfH = std::min(halfH / 6.0f, 20.0f);
+        mLUTStripHalfSize = glm::vec2(stripHalfW, stripHalfH);
+        // clang-format off
+        float stripVerts[] = {
+            -stripHalfW,  stripHalfH,  -stripHalfW, -stripHalfH,   stripHalfW, -stripHalfH,
+            -stripHalfW,  stripHalfH,   stripHalfW, -stripHalfH,   stripHalfW,  stripHalfH,
+        };
+        // clang-format on
+        mLUTStripVertexArray.SetVertexData(stripVerts, sizeof(stripVerts));
+        mLUTStripVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
     }
 
     void NeonRenderer::rebuildLoopSamples(const Config &config)
