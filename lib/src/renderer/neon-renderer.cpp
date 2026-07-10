@@ -45,6 +45,23 @@ namespace EdgeLighting
         setupGeometry(mCurrentConfig);
         rebuildGradientLUT(mCurrentConfig);
 
+        // Static NDC-order attribs for the LUT debug strip; the actual verts
+        // are (re)uploaded from setupGeometry() so the strip tracks rect size.
+        mLUTStripVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+
+        // Unit quad for the per-stop debug markers ([-1,+1] on both axes). Each
+        // stop's marker is drawn by scaling+translating this quad via uMVP so
+        // it lands at that stop's perimeter position; the marker fragment
+        // shader treats vPos in [-1,+1] as disc space.
+        // clang-format off
+        float unitQuad[] = {
+            -1.0f,  1.0f,  -1.0f, -1.0f,   1.0f, -1.0f,
+            -1.0f,  1.0f,   1.0f, -1.0f,   1.0f,  1.0f,
+        };
+        // clang-format on
+        mStopMarkerVertexArray.SetVertexData(unitQuad, sizeof(unitQuad));
+        mStopMarkerVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+
         // Static fullscreen NDC quad for the opaque-mode black fill (identity
         // MVP; the fill shader derives its shape from gl_FragCoord, not aPos).
         // clang-format off
@@ -159,6 +176,51 @@ namespace EdgeLighting
 
         mShaderProgram.Unuse();
 
+        // --- Debug: gradient LUT strip at the geometry centre -----------------
+        // Overwrites the neon output within the strip rect so the baked ring is
+        // readable regardless of the glow's tone-mapped brightness.
+        if (config.neon.showGradientLUT)
+        {
+            glDisable(GL_BLEND);
+            mLUTDebugShader.Use();
+            mLUTDebugShader.SetUniform("uMVP", mvp);
+            mLUTDebugShader.SetUniform("uStripHalfSize", mLUTStripHalfSize);
+            mLUTDebugShader.SetUniform("uTime", time);
+            mLUTDebugShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
+            mGradientLUT.Bind(0);
+            mLUTDebugShader.SetUniform("uGradientLUT", 0);
+            mLUTStripVertexArray.DrawArrays(GL_TRIANGLES, 6);
+            mLUTDebugShader.Unuse();
+        }
+
+        // --- Debug: per-stop markers on the perimeter -------------------------
+        // Draws a filled disc in each stop's colour at its perimeter position,
+        // so the raw (position, colour) inputs can be checked against the LUT
+        // strip and the on-screen glow. Uses standard alpha blending for the
+        // ring / anti-aliased edge to composite cleanly.
+        if (config.neon.showColorStops && !config.neon.colorStops.empty())
+        {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+            // Scale marker with the smaller half-extent so it stays inside the
+            // rect on very tall/thin geometries; cap at 12 px so it's not huge
+            // on large rects. min(halfRect) → smaller of width/2, height/2.
+            float markerRadius = std::min(std::min(halfRectW, halfRectH) * 0.06f, 12.0f);
+            mStopMarkerShader.Use();
+            for (const auto &stop : config.neon.colorStops)
+            {
+                glm::vec2 localPt = GeometryUtils::GetPointOnRectangle(stop.position, config.geometry);
+                glm::mat4 markerModel =
+                    glm::translate(glm::mat4(1.0f), glm::vec3(center + localPt, 0.0f)) *
+                    glm::scale(glm::mat4(1.0f), glm::vec3(markerRadius, markerRadius, 1.0f));
+                mStopMarkerShader.SetUniform("uMVP", proj * markerModel);
+                mStopMarkerShader.SetUniform("uMarkerColor", stop.color);
+                mStopMarkerVertexArray.DrawArrays(GL_TRIANGLES, 6);
+            }
+            mStopMarkerShader.Unuse();
+        }
+
         // Restore a known blend state for following renderers (the opaque path
         // disables blending).
         glEnable(GL_BLEND);
@@ -187,7 +249,17 @@ namespace EdgeLighting
         mBlackRectShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                          ShaderSource::BLACK_RECT_FRAG_SRC,
                                          "NeonRenderer.BlackRect");
-        if (!mShaderProgram.IsValid() || !mBlackRectShader.IsValid())
+        // Debug LUT strip — reuses the standard neon vertex shader (uMVP + aPos → vPos)
+        // so the strip quad respects the same rect-local transform as the glow quad.
+        mLUTDebugShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
+                                        ShaderSource::NEON_LUT_DEBUG_FRAG_SRC,
+                                        "NeonRenderer.LUTDebug");
+        // Debug stop markers — same vertex shader, filled-disc fragment.
+        mStopMarkerShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
+                                          ShaderSource::NEON_STOP_MARKER_FRAG_SRC,
+                                          "NeonRenderer.StopMarker");
+        if (!mShaderProgram.IsValid() || !mBlackRectShader.IsValid() ||
+            !mLUTDebugShader.IsValid() || !mStopMarkerShader.IsValid())
         {
             return false;
         }
@@ -229,6 +301,20 @@ namespace EdgeLighting
 
         mVertexArray.SetVertexData(verts, sizeof(verts));
         mVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+
+        // Debug LUT strip: 60% of rect width × min(rect_height / 6, 40 px),
+        // centred on the geometry origin so it sits inside the rounded box.
+        float stripHalfW = halfW * 0.6f;
+        float stripHalfH = std::min(halfH / 6.0f, 20.0f);
+        mLUTStripHalfSize = glm::vec2(stripHalfW, stripHalfH);
+        // clang-format off
+        float stripVerts[] = {
+            -stripHalfW,  stripHalfH,  -stripHalfW, -stripHalfH,   stripHalfW, -stripHalfH,
+            -stripHalfW,  stripHalfH,   stripHalfW, -stripHalfH,   stripHalfW,  stripHalfH,
+        };
+        // clang-format on
+        mLUTStripVertexArray.SetVertexData(stripVerts, sizeof(stripVerts));
+        mLUTStripVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
     }
 
     void NeonRenderer::rebuildLoopSamples(const Config &config)
