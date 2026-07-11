@@ -25,6 +25,8 @@ There is no test target. The build produces:
 
 `RES_DIR` is baked into the demo binary as a compile definition pointing at the in-tree `res/` directory, so the demo can be launched from anywhere.
 
+Third-party image assets under `res/` (the `.jpg` files from Unsplash) are covered by the [Unsplash License](https://unsplash.com/license); see `res/CREDITS.md` for the per-file attribution table.
+
 GLFW is an imported shared library at `external/lib/arm64/libglfw.3.dylib`; GLAD is built from `external/src/glad.c`. ImGui sources are compiled directly into the demo target (see `demo/CMakeLists.txt`).
 
 ## Shaders are embedded at configure time
