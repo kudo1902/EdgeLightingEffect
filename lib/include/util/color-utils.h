@@ -103,12 +103,82 @@ namespace EdgeLighting
             return glm::vec3(r, g, b);
         }
 
+        inline glm::vec3 RgbToHsl(glm::vec3 c)
+        {
+            float r = c.r, g = c.g, b = c.b;
+            float mx = std::max({r, g, b});
+            float mn = std::min({r, g, b});
+            float l = 0.5f * (mx + mn);
+            float h = 0.0f, s = 0.0f;
+            float d = mx - mn;
+            if (d > 1e-10f)
+            {
+                s = (l > 0.5f) ? d / (2.0f - mx - mn) : d / (mx + mn);
+                if (mx == r)
+                {
+                    h = std::fmod((g - b) / d, 6.0f);
+                }
+                else if (mx == g)
+                {
+                    h = (b - r) / d + 2.0f;
+                }
+                else
+                {
+                    h = (r - g) / d + 4.0f;
+                }
+                h /= 6.0f;
+                if (h < 0.0f)
+                {
+                    h += 1.0f;
+                }
+            }
+            return glm::vec3(h, s, l);
+        }
+
+        inline glm::vec3 HslToRgb(glm::vec3 c)
+        {
+            float h = c.x, s = c.y, l = c.z;
+            if (s < 1e-10f)
+            {
+                return glm::vec3(l);
+            }
+            auto hueToRgb = [](float p, float q, float t)
+            {
+                if (t < 0.0f)
+                {
+                    t += 1.0f;
+                }
+                if (t > 1.0f)
+                {
+                    t -= 1.0f;
+                }
+                if (t < 1.0f / 6.0f)
+                {
+                    return p + (q - p) * 6.0f * t;
+                }
+                if (t < 0.5f)
+                {
+                    return q;
+                }
+                if (t < 2.0f / 3.0f)
+                {
+                    return p + (q - p) * (2.0f / 3.0f - t) * 6.0f;
+                }
+                return p;
+            };
+            float q = (l < 0.5f) ? l * (1.0f + s) : l + s - l * s;
+            float p = 2.0f * l - q;
+            return glm::vec3(hueToRgb(p, q, h + 1.0f / 3.0f),
+                             hueToRgb(p, q, h),
+                             hueToRgb(p, q, h - 1.0f / 3.0f));
+        }
+
         inline glm::vec3 BlendStops(glm::vec3 a, glm::vec3 b, float t, BlendSpace space)
         {
-            if (space == BlendSpace::HSV)
+            if (space == BlendSpace::HSV || space == BlendSpace::HSL)
             {
-                glm::vec3 ha = RgbToHsv(a);
-                glm::vec3 hb = RgbToHsv(b);
+                glm::vec3 ha = (space == BlendSpace::HSV) ? RgbToHsv(a) : RgbToHsl(a);
+                glm::vec3 hb = (space == BlendSpace::HSV) ? RgbToHsv(b) : RgbToHsl(b);
                 float dh = hb.x - ha.x;
                 if (dh > 0.5f)
                 {
@@ -118,9 +188,10 @@ namespace EdgeLighting
                 {
                     dh += 1.0f;
                 }
-                return HsvToRgb(glm::vec3(ha.x + dh * t,
-                                          glm::mix(ha.y, hb.y, t),
-                                          glm::mix(ha.z, hb.z, t)));
+                glm::vec3 mid(ha.x + dh * t,
+                              glm::mix(ha.y, hb.y, t),
+                              glm::mix(ha.z, hb.z, t));
+                return (space == BlendSpace::HSV) ? HsvToRgb(mid) : HslToRgb(mid);
             }
             return glm::mix(a, b, t);
         }

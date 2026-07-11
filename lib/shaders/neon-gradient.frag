@@ -10,8 +10,8 @@ uniform float uHueRotationRate;
 uniform float uLineWidth;
 
 uniform int   uColorStopCount;
-uniform float uColorStopPositions[16];
-uniform vec4  uColorStopColors[16];
+uniform float uColorStopPositions[20];
+uniform vec4  uColorStopColors[20];
 uniform int   uBlendSpace;
 
 // Debug: when true, write the gradient colour at every pixel (no perimeter mask)
@@ -59,8 +59,57 @@ vec3 blendHSV(vec3 a, vec3 b, float t) {
     return hsv2rgb(vec3(ha.x + dh * t, mix(ha.y, hb.y, t), mix(ha.z, hb.z, t)));
 }
 
+// HSL helpers — L = (max+min)/2 instead of HSV's V = max.
+vec3 rgb2hsl(vec3 c) {
+    float mx = max(max(c.r, c.g), c.b);
+    float mn = min(min(c.r, c.g), c.b);
+    float l  = 0.5 * (mx + mn);
+    float d  = mx - mn;
+    float h  = 0.0;
+    float s  = 0.0;
+    if (d > 1e-6) {
+        s = (l > 0.5) ? d / (2.0 - mx - mn) : d / (mx + mn);
+        if (mx == c.r)      h = mod((c.g - c.b) / d, 6.0);
+        else if (mx == c.g) h = (c.b - c.r) / d + 2.0;
+        else                h = (c.r - c.g) / d + 4.0;
+        h /= 6.0;
+        if (h < 0.0) h += 1.0;
+    }
+    return vec3(h, s, l);
+}
+
+float hslHue2rgb(float p, float q, float t) {
+    if (t < 0.0) t += 1.0;
+    if (t > 1.0) t -= 1.0;
+    if (t < 1.0/6.0) return p + (q - p) * 6.0 * t;
+    if (t < 0.5)     return q;
+    if (t < 2.0/3.0) return p + (q - p) * (2.0/3.0 - t) * 6.0;
+    return p;
+}
+
+vec3 hsl2rgb(vec3 c) {
+    float h = c.x, s = c.y, l = c.z;
+    if (s < 1e-6) return vec3(l);
+    float q = (l < 0.5) ? l * (1.0 + s) : l + s - l * s;
+    float p = 2.0 * l - q;
+    return vec3(hslHue2rgb(p, q, h + 1.0/3.0),
+                hslHue2rgb(p, q, h),
+                hslHue2rgb(p, q, h - 1.0/3.0));
+}
+
+vec3 blendHSL(vec3 a, vec3 b, float t) {
+    vec3 ha = rgb2hsl(a);
+    vec3 hb = rgb2hsl(b);
+    float dh = hb.x - ha.x;
+    if (dh > 0.5)  dh -= 1.0;
+    if (dh < -0.5) dh += 1.0;
+    return hsl2rgb(vec3(ha.x + dh * t, mix(ha.y, hb.y, t), mix(ha.z, hb.z, t)));
+}
+
 vec3 blend(vec3 a, vec3 b, float t) {
-    return (uBlendSpace == 1) ? blendHSV(a, b, t) : blendRGB(a, b, t);
+    if (uBlendSpace == 1) return blendHSV(a, b, t);
+    if (uBlendSpace == 2) return blendHSL(a, b, t);
+    return blendRGB(a, b, t);
 }
 
 vec3 sampleStops(float pos) {

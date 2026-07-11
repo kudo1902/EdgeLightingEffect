@@ -96,7 +96,10 @@ void main() {
     else if (uGlowSide == GLOW_SIDE_OUTSIDE) result *= smoothstep(-softEdge,  softEdge, d);
 
     // --- Grade -------------------------------------------------------------
-    result = result / (result + vec3(TONE_MAP_SHOULDER));
+    // Hue-preserving Reinhard (see neon.frag for the rationale).
+    float peak = max(max(result.r, result.g), result.b);
+    float mapped = peak / (peak + TONE_MAP_SHOULDER);
+    result = result * (mapped / max(peak, 1e-6));
     result = pow(result, vec3(GAMMA_EXPONENT));
     result += (hash(gl_FragCoord.xy + uTime) - 0.5) * FILM_GRAIN_AMOUNT;
 

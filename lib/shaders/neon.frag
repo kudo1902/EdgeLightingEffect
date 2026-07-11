@@ -297,7 +297,13 @@ void main() {
     result *= 1.0 - smoothstep(uQuadMargin * 0.8, uQuadMargin, d);
 
     // --- Grade --------------------------------------------------------
-    result = result / (result + vec3(TONE_MAP_SHOULDER));
+    // Hue-preserving Reinhard: tonemap the peak channel and scale the
+    // others by the same ratio. Per-channel tonemap desaturates warm mixes
+    // (orange → peach) because R saturates while G/B are still linear;
+    // scaling by the peak's compression preserves the original R:G:B ratio.
+    float peak = max(max(result.r, result.g), result.b);
+    float mapped = peak / (peak + TONE_MAP_SHOULDER);
+    result = result * (mapped / max(peak, 1e-6));
     result = pow(result, vec3(GAMMA_EXPONENT));
 
     // Premultiplied-alpha output so the effect composites over arbitrary

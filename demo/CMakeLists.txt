@@ -1,6 +1,7 @@
 add_executable(edge-lighting-demo
     src/main.cpp
     src/debug-ui.cpp
+    src/border-color-picker.cpp
     ${CMAKE_SOURCE_DIR}/external/include/imgui/imgui.cpp
     ${CMAKE_SOURCE_DIR}/external/include/imgui/imgui_draw.cpp
     ${CMAKE_SOURCE_DIR}/external/include/imgui/imgui_tables.cpp
