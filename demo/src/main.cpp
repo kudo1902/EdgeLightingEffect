@@ -8,6 +8,7 @@
 #include "animation/neon-animations.h"
 #include "debug-ui.h"
 #include "background-quad.h"
+#include "image-quad.h"
 #include "ui-controls.h"
 #include "util/log-util.h"
 #include <memory>
@@ -127,6 +128,14 @@ int main()
         LOG_W("Background debug quad failed to initialise; continuing without it.");
     }
 
+    // Textured quad used by the border color picker to render its source
+    // image inside the rect (behind the neon) for visual verification.
+    EdgeLightingDemo::ImageQuad imageQuad;
+    if (!imageQuad.Init())
+    {
+        LOG_W("Image backdrop quad failed to initialise; continuing without it.");
+    }
+
     EdgeLightingDemo::PrintControls();
     EdgeLightingDemo::PrintCurrentConfig(gEffect->GetConfig(), gEffect->GetClock().IsPlaying());
 
@@ -164,6 +173,17 @@ int main()
                 background.Draw(debugUI.GetBackgroundCheckerSize(),
                                 debugUI.GetBackgroundColorA(),
                                 debugUI.GetBackgroundColorB());
+            }
+
+            // Border color picker backdrop: draw the source image inside the
+            // rect so the sampled colours can be verified against it. Neon
+            // composites on top so the glow appears to trace the image edge.
+            if (debugUI.IsImageBackdropEnabled())
+            {
+                const auto &g = gEffect->GetConfig().geometry;
+                imageQuad.Draw(fbW, fbH, g.position.x, g.position.y,
+                               g.width, g.height,
+                               debugUI.GetImageBackdropTextureId());
             }
 
             gEffect->Update(deltaTime);

@@ -9,6 +9,10 @@
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 
+#include <algorithm>
+#include <cmath>
+#include <cstdio>
+#include <filesystem>
 #include <memory>
 
 // ---------------------------------------------------------------------------
@@ -94,6 +98,7 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     buildNeonSection(cfg);
     buildMultiPassNeonSection(cfg);
     buildOptimizedNeonSection(cfg);
+    buildColorPickerSection(cfg);
     buildAnimationSection(cfg, effect.GetClock().GetTime());
     buildBackgroundSection();
 
@@ -268,7 +273,7 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
     ImGui::SliderFloat("Arc Start##Neon", &cfg.neon.arcStart, 0.0f, 1.0f, "%.2f");
     ImGui::SliderFloat("Arc Length##Neon", &cfg.neon.arcLength, 0.0f, 1.0f, "%.2f");
 
-    const char *blendItems[] = {"RGB", "HSV"};
+    const char *blendItems[] = {"RGB", "HSV", "HSL"};
     int blendIdx = static_cast<int>(cfg.neon.blendSpace);
     if (ImGui::Combo("Blend Space##Neon", &blendIdx, blendItems, IM_ARRAYSIZE(blendItems)))
     {
@@ -342,7 +347,7 @@ void DebugUI::buildMultiPassNeonSection(EdgeLighting::Config &cfg)
         ImGui::SliderFloat("Side Softness##MP", &cfg.multipassNeon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
     }
 
-    const char *blendItems[] = {"RGB", "HSV"};
+    const char *blendItems[] = {"RGB", "HSV", "HSL"};
     int blendIdx = static_cast<int>(cfg.multipassNeon.blendSpace);
     if (ImGui::Combo("Blend Space##MP", &blendIdx, blendItems, IM_ARRAYSIZE(blendItems)))
     {
@@ -461,7 +466,7 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg)
     ImGui::SliderFloat("Arc Start##Opt", &cfg.neon.arcStart, 0.0f, 1.0f, "%.2f");
     ImGui::SliderFloat("Arc Length##Opt", &cfg.neon.arcLength, 0.0f, 1.0f, "%.2f");
 
-    const char *blendItems[] = {"RGB", "HSV"};
+    const char *blendItems[] = {"RGB", "HSV", "HSL"};
     int blendIdx = static_cast<int>(cfg.neon.blendSpace);
     if (ImGui::Combo("Blend Space##Opt", &blendIdx, blendItems, IM_ARRAYSIZE(blendItems)))
     {
@@ -820,4 +825,254 @@ void DebugUI::buildBackgroundSection()
     ImGui::SliderFloat("Checker Size##Bg", &mBgCheckerSize, 4.0f, 128.0f, "%.0f");
     ImGui::ColorEdit3("Color A##Bg", &mBgColorA.x, ImGuiColorEditFlags_NoInputs);
     ImGui::ColorEdit3("Color B##Bg", &mBgColorB.x, ImGuiColorEditFlags_NoInputs);
+}
+
+void DebugUI::scanColorPickerFiles()
+{
+    static const std::vector<std::string> exts = {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".bmp",
+        ".tga",
+    };
+    // Remember the currently selected filename so we can restore it after
+    // a refresh, in case its index shifted.
+    std::string prev;
+    if (mColorPickerSelectedIdx >= 0 &&
+        mColorPickerSelectedIdx < static_cast<int>(mColorPickerFiles.size()))
+    {
+        prev = mColorPickerFiles[mColorPickerSelectedIdx];
+    }
+    mColorPickerFiles.clear();
+
+    std::error_code ec;
+    for (auto &entry : std::filesystem::directory_iterator(RES_DIR, ec))
+    {
+        if (ec || !entry.is_regular_file())
+        {
+            continue;
+        }
+        std::string ext = entry.path().extension().string();
+        std::transform(ext.begin(), ext.end(), ext.begin(),
+                       [](unsigned char c)
+                       { return std::tolower(c); });
+        if (std::find(exts.begin(), exts.end(), ext) == exts.end())
+        {
+            continue;
+        }
+        mColorPickerFiles.push_back(entry.path().filename().string());
+    }
+    std::sort(mColorPickerFiles.begin(), mColorPickerFiles.end());
+
+    mColorPickerSelectedIdx = 0;
+    if (!prev.empty())
+    {
+        auto it = std::find(mColorPickerFiles.begin(), mColorPickerFiles.end(), prev);
+        if (it != mColorPickerFiles.end())
+        {
+            mColorPickerSelectedIdx =
+                static_cast<int>(std::distance(mColorPickerFiles.begin(), it));
+        }
+    }
+}
+
+void DebugUI::buildColorPickerSection(EdgeLighting::Config &cfg)
+{
+    if (!ImGui::CollapsingHeader("Border Color Picker", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+
+    ImGui::TextDisabled("Pick an image from res/; sample its border into color stops.");
+
+    if (mColorPickerFiles.empty())
+    {
+        scanColorPickerFiles();
+    }
+
+    // File dropdown + Refresh + Load, all on one line.
+    ImGui::SetNextItemWidth(-160.0f);
+    const char *current =
+        (mColorPickerSelectedIdx >= 0 &&
+         mColorPickerSelectedIdx < static_cast<int>(mColorPickerFiles.size()))
+            ? mColorPickerFiles[mColorPickerSelectedIdx].c_str()
+            : "(no images in res/)";
+    if (ImGui::BeginCombo("##CPFile", current))
+    {
+        for (int i = 0; i < static_cast<int>(mColorPickerFiles.size()); ++i)
+        {
+            bool selected = (i == mColorPickerSelectedIdx);
+            if (ImGui::Selectable(mColorPickerFiles[i].c_str(), selected))
+            {
+                mColorPickerSelectedIdx = i;
+            }
+            if (selected)
+            {
+                ImGui::SetItemDefaultFocus();
+            }
+        }
+        ImGui::EndCombo();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Refresh##CP"))
+    {
+        scanColorPickerFiles();
+    }
+    ImGui::SameLine();
+    const bool canLoad = mColorPickerSelectedIdx >= 0 &&
+                         mColorPickerSelectedIdx < static_cast<int>(mColorPickerFiles.size());
+    ImGui::BeginDisabled(!canLoad);
+    if (ImGui::Button("Load##CP") && canLoad)
+    {
+        std::string path = std::string(RES_DIR) + "/" +
+                           mColorPickerFiles[mColorPickerSelectedIdx];
+        if (mColorPicker.Load(path))
+        {
+            if (!mColorPickerThumb)
+            {
+                mColorPickerThumb = std::make_unique<EdgeLighting::Texture2D>();
+                mColorPickerThumb->SetParams(GL_LINEAR, GL_LINEAR, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
+            }
+            while (glGetError() != GL_NO_ERROR)
+            {
+            }
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+            mColorPickerThumb->SetData(mColorPicker.Pixels().data(),
+                                       mColorPicker.Width(),
+                                       mColorPicker.Height());
+            glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+            GLenum err = glGetError();
+            if (err != GL_NO_ERROR)
+            {
+                LOG_E("BorderColorPicker: glTexImage2D(%dx%d) failed: 0x%04x",
+                      mColorPicker.Width(), mColorPicker.Height(), err);
+            }
+        }
+    }
+    ImGui::EndDisabled();
+
+    if (!mColorPicker.HasImage())
+    {
+        ImGui::TextDisabled("(no image loaded)");
+        return;
+    }
+
+    ImGui::Text("Loaded: %dx%d", mColorPicker.Width(), mColorPicker.Height());
+    ImGui::Checkbox("Show as backdrop##CP", &mShowImageBackdrop);
+
+    if (mColorPickerThumb && mColorPickerThumb->IsValid())
+    {
+        const float maxW = 200.0f;
+        const float aspect = static_cast<float>(mColorPicker.Height()) /
+                             static_cast<float>(mColorPicker.Width());
+        const ImVec2 size(maxW, maxW * aspect);
+        ImGui::Image(static_cast<ImTextureID>(
+                         static_cast<uintptr_t>(mColorPickerThumb->GetId())),
+                     size);
+    }
+
+    // Single-pass NeonConfig caps at 128 (matches shader NUM_LOOP_SAMPLES);
+    // MultiPassNeonConfig caps lower because its shader array is fixed size.
+    // Picker uses the single-pass cap so image fidelity is available even
+    // though a multipass Apply will clamp to the smaller cap at upload time.
+    ImGui::SliderInt("Stop Count##CP", &mColorPickerStopCount, 2,
+                     EdgeLighting::NeonConfig::MAX_COLOR_STOPS);
+    ImGui::TextDisabled("(higher = closer image match; multipass clamps to %d)",
+                        EdgeLighting::MultiPassNeonConfig::MAX_COLOR_STOPS);
+
+    ImGui::SliderFloat("Contrast (gamma)##CP", &mColorPickerGamma, 0.5f, 4.0f, "%.2f");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(1 = linear, >1 darkens shadows)");
+
+    // Preview the sampled stops as a horizontal color strip so the user sees
+    // what will be applied before clicking Apply.
+    auto stops = mColorPicker.SampleBorder(mColorPickerStopCount,
+                                           cfg.geometry.winding,
+                                           static_cast<int>(cfg.geometry.width),
+                                           static_cast<int>(cfg.geometry.height));
+
+    // Contrast gamma: pow(c, gamma) — dark stops shrink toward 0 while bright
+    // stops stay near 1 (0.9^2 = 0.81, 0.06^2 = 0.0036). Applied before Apply
+    // so the LUT baked into the shader reflects the compressed range.
+    if (std::abs(mColorPickerGamma - 1.0f) > 1e-3f)
+    {
+        for (auto &s : stops)
+        {
+            s.color.r = std::pow(std::clamp(s.color.r, 0.0f, 1.0f), mColorPickerGamma);
+            s.color.g = std::pow(std::clamp(s.color.g, 0.0f, 1.0f), mColorPickerGamma);
+            s.color.b = std::pow(std::clamp(s.color.b, 0.0f, 1.0f), mColorPickerGamma);
+        }
+    }
+
+    if (!stops.empty())
+    {
+        ImDrawList *dl = ImGui::GetWindowDrawList();
+        ImVec2 p = ImGui::GetCursorScreenPos();
+        const float stripW = ImGui::GetContentRegionAvail().x;
+        const float stripH = 20.0f;
+        const float cellW = stripW / static_cast<float>(stops.size());
+        for (size_t i = 0; i < stops.size(); ++i)
+        {
+            const glm::vec4 &c = stops[i].color;
+            ImU32 col = ImGui::ColorConvertFloat4ToU32(ImVec4(c.r, c.g, c.b, c.a));
+            dl->AddRectFilled(ImVec2(p.x + cellW * i, p.y),
+                              ImVec2(p.x + cellW * (i + 1), p.y + stripH),
+                              col);
+        }
+        ImGui::Dummy(ImVec2(stripW, stripH));
+    }
+
+    // Compute an intensity that keeps the brightest sampled colour near the
+    // tone-map knee (pre-tonemap ~3.5, output ~0.85) so dark stops still show
+    // as dark. FILAMENT_GAIN in the shader is 12, and the tone map is
+    // x / (x + 0.6); solving for `output ≈ 0.85` at brightest gives
+    // intensity ≈ 3.5 / (12 * maxChan). Only applied when the auto toggle is
+    // on so users who want the classic HDR-neon look can opt out.
+    float maxChan = 0.0f;
+    for (const auto &s : stops)
+    {
+        maxChan = std::max(maxChan, std::max({s.color.r, s.color.g, s.color.b}));
+    }
+    const float autoIntensity = maxChan > 1e-3f
+                                    ? std::clamp(3.5f / (12.0f * maxChan), 0.05f, 1.0f)
+                                    : 1.0f;
+
+    ImGui::Checkbox("Auto-adjust intensity##CP", &mColorPickerAutoIntensity);
+    if (mColorPickerAutoIntensity)
+    {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(→ %.2f)", autoIntensity);
+    }
+
+    auto applyStops = [&](std::vector<EdgeLighting::ColorStop> &target,
+                          float &hueRate, float &intensity)
+    {
+        target = stops;
+        // Applying picker-sampled colours pins each colour to a specific
+        // perimeter position, so hue-rotation would drift the halo away.
+        hueRate = 0.0f;
+        if (mColorPickerAutoIntensity)
+        {
+            intensity = autoIntensity;
+        }
+    };
+
+    if (ImGui::Button("Apply to Neon##CP"))
+    {
+        applyStops(cfg.neon.colorStops, cfg.neon.hueRotationRate, cfg.neon.intensity);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Apply to Multipass##CP"))
+    {
+        applyStops(cfg.multipassNeon.colorStops, cfg.multipassNeon.hueRotationRate,
+                   cfg.multipassNeon.intensity);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Apply to Both##CP"))
+    {
+        applyStops(cfg.neon.colorStops, cfg.neon.hueRotationRate, cfg.neon.intensity);
+        applyStops(cfg.multipassNeon.colorStops, cfg.multipassNeon.hueRotationRate,
+                   cfg.multipassNeon.intensity);
+    }
 }
