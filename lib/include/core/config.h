@@ -39,6 +39,12 @@ namespace EdgeLighting
     {
         float position;  ///< Normalised position along the perimeter [0-1].
         glm::vec4 color; ///< RGBA colour at this stop.
+
+        bool operator==(const ColorStop &o) const
+        {
+            return position == o.position && color == o.color;
+        }
+        bool operator!=(const ColorStop &o) const { return !(*this == o); }
     } ColorStop;
 
     /// A travelling brightness peak on the perimeter. Several of these can be
@@ -48,6 +54,14 @@ namespace EdgeLighting
         float position = 0.0f; ///< Centre in [0, 1) perimeter position.
         float length = 0.15f;  ///< Width as a fraction of the perimeter (~2σ).
         float boost = 0.0f;    ///< Peak brightness multiplier at the centre.
+
+        bool operator==(const SegmentBoost &o) const
+        {
+            return position == o.position &&
+                   length == o.length &&
+                   boost == o.boost;
+        }
+        bool operator!=(const SegmentBoost &o) const { return !(*this == o); }
     } SegmentBoost;
 
     // -----------------------------------------------------------------------
@@ -65,6 +79,16 @@ namespace EdgeLighting
         /// CW starts at top-left and goes top → right → bottom → left (clockwise).
         /// CCW starts at top-left and goes left → bottom → right → top (counter-clockwise).
         Winding winding = Winding::COUNTER_CLOCKWISE;
+
+        bool operator==(const RectGeometry &o) const
+        {
+            return width == o.width &&
+                   height == o.height &&
+                   position == o.position &&
+                   cornerRadius == o.cornerRadius &&
+                   winding == o.winding;
+        }
+        bool operator!=(const RectGeometry &o) const { return !(*this == o); }
     } RectGeometry;
 
     /// Neon-style LED strip rendering configuration.
@@ -192,6 +216,28 @@ namespace EdgeLighting
         // "draw" the rect outline (with @c arcStart fixed at the start phase).
         float arcStart = 0.0f;
         float arcLength = 1.0f;
+
+        bool operator==(const NeonConfig &o) const
+        {
+            return enable == o.enable &&
+                   showGradientLUT == o.showGradientLUT &&
+                   showColorStops == o.showColorStops &&
+                   opaque == o.opaque &&
+                   lineWidth == o.lineWidth &&
+                   filamentFalloff == o.filamentFalloff &&
+                   intensity == o.intensity &&
+                   glowRadius == o.glowRadius &&
+                   bloomStrength == o.bloomStrength &&
+                   glowSide == o.glowSide &&
+                   glowSideSoftness == o.glowSideSoftness &&
+                   blendSpace == o.blendSpace &&
+                   colorStops == o.colorStops &&
+                   hueRotationRate == o.hueRotationRate &&
+                   segmentBoosts == o.segmentBoosts &&
+                   arcStart == o.arcStart &&
+                   arcLength == o.arcLength;
+        }
+        bool operator!=(const NeonConfig &o) const { return !(*this == o); }
     } NeonConfig;
 
     /// Half-resolution optimized neon renderer configuration.
@@ -218,6 +264,16 @@ namespace EdgeLighting
         /// Show the raw half-res FBO (nearest-neighbour upscale) instead of
         /// the bilinear-blitted result. Useful to verify pass-1 rendering.
         bool showHalfRes = false;
+
+        bool operator==(const OptimizedNeonConfig &o) const
+        {
+            return enable == o.enable &&
+                   resolutionScale == o.resolutionScale &&
+                   numSamples == o.numSamples &&
+                   gradientLutSize == o.gradientLutSize &&
+                   showHalfRes == o.showHalfRes;
+        }
+        bool operator!=(const OptimizedNeonConfig &o) const { return !(*this == o); }
     } OptimizedNeonConfig;
 
     /// Wireframe debug overlay configuration.
@@ -225,6 +281,12 @@ namespace EdgeLighting
     {
         bool enable = true;                                  ///< Show or hide the wireframe bounding box
         glm::vec4 color = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f); ///< Wireframe color
+
+        bool operator==(const WireframeConfig &o) const
+        {
+            return enable == o.enable && color == o.color;
+        }
+        bool operator!=(const WireframeConfig &o) const { return !(*this == o); }
     } WireframeConfig;
 
     // -----------------------------------------------------------------------
@@ -241,6 +303,15 @@ namespace EdgeLighting
         NeonConfig neon;                   ///< Single-pass neon settings
         OptimizedNeonConfig optimizedNeon; ///< Half-res optimized neon settings
         WireframeConfig wireframe;         ///< Wireframe overlay settings
+
+        bool operator==(const Config &o) const
+        {
+            return geometry == o.geometry &&
+                   neon == o.neon &&
+                   optimizedNeon == o.optimizedNeon &&
+                   wireframe == o.wireframe;
+        }
+        bool operator!=(const Config &o) const { return !(*this == o); }
     } Config;
 
 } // namespace EdgeLighting
