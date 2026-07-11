@@ -52,7 +52,7 @@ extern "C"
 #endif
 
 /** ABI version. Bump on any breaking change to a struct layout or signature. */
-#define EL_ABI_VERSION 7
+#define EL_ABI_VERSION 8
 
 /** Maximum colour stops per gradient (mirrors NeonConfig::MAX_COLOR_STOPS). */
 #define EL_MAX_COLOR_STOPS 128
@@ -170,6 +170,10 @@ typedef struct EL_RectGeometry
 typedef struct EL_NeonConfig
 {
     EL_Bool enable;
+    EL_Bool opaque;
+    float opaqueColorR; ///< Opaque-mode background fill colour, linear RGB.
+    float opaqueColorG;
+    float opaqueColorB;
     float lineWidth;
     float intensity;
     float glowRadius;

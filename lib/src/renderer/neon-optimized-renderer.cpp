@@ -172,6 +172,7 @@ namespace EdgeLighting
             mBlackRectShader.SetUniform("uRectCenter", centerFull);
             mBlackRectShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
             mBlackRectShader.SetUniform("uSoftEdge", softEdge);
+            mBlackRectShader.SetUniform("uOpaqueColor", config.neon.opaqueColor);
             mBlitVertexArray.DrawArrays(GL_TRIANGLES, 6);
             mBlackRectShader.Unuse();
         }

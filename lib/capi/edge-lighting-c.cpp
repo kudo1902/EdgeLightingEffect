@@ -170,6 +170,10 @@ namespace
         out.geometry.winding = static_cast<Winding>(c.geometry.winding);
 
         out.neon.enable = c.neon.enable != 0;
+        out.neon.opaque = c.neon.opaque != 0;
+        out.neon.opaqueColor = glm::vec3(c.neon.opaqueColorR,
+                                         c.neon.opaqueColorG,
+                                         c.neon.opaqueColorB);
         out.neon.lineWidth = c.neon.lineWidth;
         out.neon.intensity = c.neon.intensity;
         out.neon.glowRadius = c.neon.glowRadius;
@@ -205,6 +209,10 @@ namespace
         out.geometry.winding = static_cast<int32_t>(c.geometry.winding);
 
         out.neon.enable = c.neon.enable ? 1 : 0;
+        out.neon.opaque = c.neon.opaque ? 1 : 0;
+        out.neon.opaqueColorR = c.neon.opaqueColor.r;
+        out.neon.opaqueColorG = c.neon.opaqueColor.g;
+        out.neon.opaqueColorB = c.neon.opaqueColor.b;
         out.neon.lineWidth = c.neon.lineWidth;
         out.neon.intensity = c.neon.intensity;
         out.neon.glowRadius = c.neon.glowRadius;

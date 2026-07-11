@@ -117,10 +117,13 @@ namespace EdgeLighting
         /// How the effect combines with whatever is already in the framebuffer.
         /// false (default): premultiplied-alpha "over" — the dark surround is
         ///   transparent, so the effect composites onto the background.
-        /// true: opaque — blending is disabled and the effect's pixels (a dark
-        ///   surround around the lit line) are written directly, occluding the
-        ///   background within the effect's draw region.
+        /// true: opaque — the effect's surround pixels are filled with
+        ///   @c opaqueColor, occluding the background within the effect's draw
+        ///   region. The neon glow is composited on top.
         bool opaque = false;
+        /// Fill colour for the opaque-mode background pass. Applied only when
+        /// @c opaque is true. Linear RGB in [0,1]; default is black.
+        glm::vec3 opaqueColor = glm::vec3(0.0f);
 
         // --- Filament (the bright line itself) ---
 
@@ -223,6 +226,7 @@ namespace EdgeLighting
                    showGradientLUT == o.showGradientLUT &&
                    showColorStops == o.showColorStops &&
                    opaque == o.opaque &&
+                   opaqueColor == o.opaqueColor &&
                    lineWidth == o.lineWidth &&
                    filamentFalloff == o.filamentFalloff &&
                    intensity == o.intensity &&

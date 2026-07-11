@@ -1,15 +1,17 @@
 precision highp float;
 
-// Opaque-black pass drawn behind the neon when config.neon.opaque is on.
-// Drawn as a fullscreen NDC quad so the fragment shader sees every pixel in the
-// viewport; the silhouette comes from the analytic rounded-box SDF below, read
-// from gl_FragCoord (NOT an interpolated varying). highp + gl_FragCoord keeps
-// the SDF exact on mobile GLES (Mali/Tizen), where a mediump varying carrying
-// pixel coordinates would lose precision and a vertex(highp)->fragment(mediump)
-// varying mismatch can even fail to link.
+// Opaque background pass drawn behind the neon when config.neon.opaque is on.
+// Fills the silhouette with `uOpaqueColor` (default black) — see config.h's
+// NeonConfig::opaqueColor. Drawn as a fullscreen NDC quad so the fragment
+// shader sees every pixel in the viewport; the silhouette comes from the
+// analytic rounded-box SDF below, read from gl_FragCoord (NOT an interpolated
+// varying). highp + gl_FragCoord keeps the SDF exact on mobile GLES
+// (Mali/Tizen), where a mediump varying carrying pixel coordinates would lose
+// precision and a vertex(highp)->fragment(mediump) varying mismatch can even
+// fail to link.
 //
-//   BOTH    — black covers the whole viewport (coverage = 1 everywhere).
-//   INSIDE  — black only where d <= softEdge (rect interior + feather); pixels
+//   BOTH    — fill covers the whole viewport (coverage = 1 everywhere).
+//   INSIDE  — fill only where d <= softEdge (rect interior + feather); pixels
 //             further outside stay transparent so the off-side shows through.
 //   OUTSIDE — mirror of INSIDE.
 //
@@ -26,6 +28,7 @@ uniform float uCornerRadius;
 uniform vec2  uRectCenter; // rect centre in window pixels (gl_FragCoord space, y-up)
 uniform int   uGlowSide;
 uniform float uSoftEdge;   // matches the neon shader's softEdge
+uniform vec3  uOpaqueColor; // opaque fill colour (linear RGB, non-premultiplied)
 
 float sdRoundBox(vec2 p, vec2 b, float r) {
     vec2 q = abs(p) - b + r;
@@ -53,8 +56,8 @@ void main() {
     }
     if (coverage <= 0.0) discard;
 
-    // Premultiplied black for glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA):
-    // opaque black where coverage == 1, smooth AA at the INSIDE/OUTSIDE cut, and
-    // the off-side leaves the background untouched.
-    fragColor = vec4(0.0, 0.0, 0.0, coverage);
+    // Premultiplied colour for glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA):
+    // opaque uOpaqueColor where coverage == 1, smooth AA at the INSIDE/OUTSIDE
+    // cut, and the off-side leaves the background untouched.
+    fragColor = vec4(uOpaqueColor * coverage, coverage);
 }
