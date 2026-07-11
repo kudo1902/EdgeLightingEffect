@@ -8,7 +8,7 @@
 #include <vector>
 
 /// Samples colours from the border of an image and produces ColorStops that
-/// can be dropped into NeonConfig::colorStops or MultiPassNeonConfig::colorStops.
+/// can be dropped into NeonConfig::colorStops.
 ///
 /// The sample walk starts at the top-left corner of the image and follows the
 /// same winding direction as EdgeLighting::RectGeometry::winding, so stop i's

@@ -96,7 +96,6 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
 
     buildGeometrySection(cfg);
     buildNeonSection(cfg);
-    buildMultiPassNeonSection(cfg);
     buildOptimizedNeonSection(cfg);
     buildColorPickerSection(cfg);
     buildAnimationSection(cfg, effect.GetClock().GetTime());
@@ -308,80 +307,6 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
         {
             float lastPos = cfg.neon.colorStops.empty() ? 0.0f : cfg.neon.colorStops.back().position;
             cfg.neon.colorStops.push_back(
-                {std::min(1.0f, lastPos + 0.1f), glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)});
-        }
-    }
-}
-
-void DebugUI::buildMultiPassNeonSection(EdgeLighting::Config &cfg)
-{
-    if (!ImGui::CollapsingHeader("MultiPass Neon", ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        return;
-    }
-
-    ImGui::Checkbox("Enable##MultiPass", &cfg.multipassNeon.enable);
-    ImGui::SameLine();
-    ImGui::Checkbox("Show Perimeter##MP", &cfg.multipassNeon.showPerimeterGradient);
-    ImGui::SameLine();
-    ImGui::Checkbox("Show Full Grad##MP", &cfg.multipassNeon.showFullGradient);
-    if (!cfg.multipassNeon.enable)
-    {
-        return;
-    }
-
-    ImGui::SliderFloat("Line Width##MP", &cfg.multipassNeon.lineWidth, 1.0f, 20.0f, "%.0f");
-    ImGui::SliderFloat("Intensity##MP", &cfg.multipassNeon.intensity, 0.0f, 3.0f, "%.2f");
-    ImGui::SliderFloat("Glow Radius##MP", &cfg.multipassNeon.glowRadius, 1.0f, 80.0f, "%.0f");
-    ImGui::SliderFloat("Bloom Strength##MP", &cfg.multipassNeon.bloomStrength, 0.0f, 2.0f, "%.2f");
-    ImGui::SliderFloat("Hue Rotation Rate##MP", &cfg.multipassNeon.hueRotationRate, 0.0f, 2.0f, "%.2f");
-
-    const char *mpSideItems[] = {"Both", "Inside", "Outside"};
-    int mpSideIdx = static_cast<int>(cfg.multipassNeon.glowSide);
-    if (ImGui::Combo("Glow Side##MP", &mpSideIdx, mpSideItems, IM_ARRAYSIZE(mpSideItems)))
-    {
-        cfg.multipassNeon.glowSide = static_cast<EdgeLighting::GlowSide>(mpSideIdx);
-    }
-    if (cfg.multipassNeon.glowSide != EdgeLighting::GlowSide::BOTH)
-    {
-        ImGui::SliderFloat("Side Softness##MP", &cfg.multipassNeon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
-    }
-
-    const char *blendItems[] = {"RGB", "HSV", "HSL"};
-    int blendIdx = static_cast<int>(cfg.multipassNeon.blendSpace);
-    if (ImGui::Combo("Blend Space##MP", &blendIdx, blendItems, IM_ARRAYSIZE(blendItems)))
-    {
-        cfg.multipassNeon.blendSpace = static_cast<EdgeLighting::BlendSpace>(blendIdx);
-    }
-
-    for (size_t i = 0; i < cfg.multipassNeon.colorStops.size(); ++i)
-    {
-        ImGui::PushID(static_cast<int>(i + 100));
-        float p = cfg.multipassNeon.colorStops[i].position;
-        if (ImGui::SliderFloat("Pos##MP", &p, 0.0f, 1.0f, "%.2f"))
-        {
-            cfg.multipassNeon.colorStops[i].position = p;
-        }
-        ImGui::SameLine();
-        glm::vec4 c = cfg.multipassNeon.colorStops[i].color;
-        if (ImGui::ColorEdit4("Col##MP", &c.x, ImGuiColorEditFlags_NoInputs))
-        {
-            cfg.multipassNeon.colorStops[i].color = c;
-        }
-        ImGui::SameLine();
-        if (cfg.multipassNeon.colorStops.size() > 1 && ImGui::SmallButton("X"))
-        {
-            cfg.multipassNeon.colorStops.erase(cfg.multipassNeon.colorStops.begin() + static_cast<ptrdiff_t>(i));
-        }
-        ImGui::PopID();
-    }
-
-    if (cfg.multipassNeon.colorStops.size() < EdgeLighting::MultiPassNeonConfig::MAX_COLOR_STOPS)
-    {
-        if (ImGui::Button("+ Add Stop##MP"))
-        {
-            float lastPos = cfg.multipassNeon.colorStops.empty() ? 0.0f : cfg.multipassNeon.colorStops.back().position;
-            cfg.multipassNeon.colorStops.push_back(
                 {std::min(1.0f, lastPos + 0.1f), glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)});
         }
     }
@@ -972,14 +897,12 @@ void DebugUI::buildColorPickerSection(EdgeLighting::Config &cfg)
                      size);
     }
 
-    // Single-pass NeonConfig caps at 128 (matches shader NUM_LOOP_SAMPLES);
-    // MultiPassNeonConfig caps lower because its shader array is fixed size.
-    // Picker uses the single-pass cap so image fidelity is available even
-    // though a multipass Apply will clamp to the smaller cap at upload time.
+    // Cap matches NeonConfig::MAX_COLOR_STOPS (also equals NUM_LOOP_SAMPLES) so
+    // the picker can produce one stop per shader loop sample for near-1:1
+    // image-to-neon colour reproduction.
     ImGui::SliderInt("Stop Count##CP", &mColorPickerStopCount, 2,
                      EdgeLighting::NeonConfig::MAX_COLOR_STOPS);
-    ImGui::TextDisabled("(higher = closer image match; multipass clamps to %d)",
-                        EdgeLighting::MultiPassNeonConfig::MAX_COLOR_STOPS);
+    ImGui::TextDisabled("(higher = closer image match)");
 
     ImGui::SliderFloat("Contrast (gamma)##CP", &mColorPickerGamma, 0.5f, 4.0f, "%.2f");
     ImGui::SameLine();
@@ -1061,18 +984,5 @@ void DebugUI::buildColorPickerSection(EdgeLighting::Config &cfg)
     if (ImGui::Button("Apply to Neon##CP"))
     {
         applyStops(cfg.neon.colorStops, cfg.neon.hueRotationRate, cfg.neon.intensity);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Apply to Multipass##CP"))
-    {
-        applyStops(cfg.multipassNeon.colorStops, cfg.multipassNeon.hueRotationRate,
-                   cfg.multipassNeon.intensity);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Apply to Both##CP"))
-    {
-        applyStops(cfg.neon.colorStops, cfg.neon.hueRotationRate, cfg.neon.intensity);
-        applyStops(cfg.multipassNeon.colorStops, cfg.multipassNeon.hueRotationRate,
-                   cfg.multipassNeon.intensity);
     }
 }

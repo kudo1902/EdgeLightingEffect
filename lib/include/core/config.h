@@ -194,65 +194,6 @@ namespace EdgeLighting
         float arcLength = 1.0f;
     } NeonConfig;
 
-    /// Multi-pass gradient-to-texture neon configuration.
-    ///
-    /// Pass 1 bakes the coloured stroke band into a screen-sized FBO.
-    /// Pass 2 reads that texture via analytical closest-point projection
-    /// and adds SDF-based filament / halo / bloom layers around it.
-    typedef struct MultiPassNeonConfig
-    {
-        bool enable = false; ///< Enable or disable the multi-pass neon renderer
-
-        // --- Debug visualisations (FBO verification) ---
-
-        /// Debug: bypass the glow composite and show the gradient FBO directly
-        /// as it was baked along the perimeter. Useful to verify that Pass 1 wrote
-        /// the right colours in the right places.
-        bool showPerimeterGradient = false;
-        /// Debug: tell Pass 1 to write the gradient at *every* pixel (no perimeter
-        /// mask), then show the FBO. Useful to verify the colour ring is correct
-        /// across the whole rect.
-        bool showFullGradient = false;
-
-        // --- Filament (the bright line itself) ---
-
-        /// Width of the bright filament line in pixels.
-        float lineWidth = 4.0f;
-
-        // --- Glow ---
-
-        /// Master brightness multiplier applied to filament + halo + bloom.
-        float intensity = 1.0f;
-        /// Halo reach in pixels — how far the coloured glow spreads from the line.
-        float glowRadius = 5.0f;
-        /// Strength of the wide soft background spill layered on top of the halo.
-        float bloomStrength = 0.30f;
-        /// Restrict the glow to one side of the line, or let it spill both ways.
-        GlowSide glowSide = GlowSide::BOTH;
-        /// Softness of the one-sided cut in pixels. 0 = hard edge.
-        float glowSideSoftness = 0.0f;
-
-        // --- Color ---
-
-        /// Maximum number of colour stops.
-        static constexpr int MAX_COLOR_STOPS = 20;
-        /// Blend space for interpolating between colour stops.
-        BlendSpace blendSpace = BlendSpace::RGB;
-        /// Colour stops around the perimeter
-        /// (1 stop = solid, 2 = gradient, 3+ = multi-stop circular).
-        std::vector<ColorStop> colorStops = {
-            {0.00f, glm::vec4(1.0f, 0.0f, 0.0f, 1.0f)},
-            {0.25f, glm::vec4(0.0f, 1.0f, 0.0f, 1.0f)},
-            {0.50f, glm::vec4(0.0f, 0.0f, 1.0f, 1.0f)},
-            {0.75f, glm::vec4(1.0f, 1.0f, 0.0f, 1.0f)},
-        };
-
-        // --- Animation ---
-
-        /// Hue rotation rate in revolutions per second around the perimeter. 0 = static.
-        float hueRotationRate = 0.5f;
-    } MultiPassNeonConfig;
-
     /// Half-resolution optimized neon renderer configuration.
     ///
     /// Renders the neon shader at half resolution then bilinear-blits to full res.
@@ -298,7 +239,6 @@ namespace EdgeLighting
     {
         RectGeometry geometry;             ///< Rectangle geometry
         NeonConfig neon;                   ///< Single-pass neon settings
-        MultiPassNeonConfig multipassNeon; ///< Multi-pass neon settings
         OptimizedNeonConfig optimizedNeon; ///< Half-res optimized neon settings
         WireframeConfig wireframe;         ///< Wireframe overlay settings
     } Config;

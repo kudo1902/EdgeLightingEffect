@@ -28,18 +28,6 @@ namespace EdgeLighting
 @NEON_FRAG_CONTENT@
 )shadersrc";
 
-                static const char *const NEON_GRADIENT_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
-@NEON_GRADIENT_FRAG_CONTENT@
-)shadersrc";
-
-                static const char *const NEON_BLUR_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
-@NEON_BLUR_FRAG_CONTENT@
-)shadersrc";
-
-                static const char *const NEON_GLOW_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
-@NEON_GLOW_FRAG_CONTENT@
-)shadersrc";
-
                 static const char *const NEON_OPTIMIZED_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
 @NEON_TUNING@
 @NEON_OPTIMIZED_FRAG_CONTENT@

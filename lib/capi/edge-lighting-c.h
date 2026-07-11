@@ -52,7 +52,7 @@ extern "C"
 #endif
 
 /** ABI version. Bump on any breaking change to a struct layout or signature. */
-#define EL_ABI_VERSION 6
+#define EL_ABI_VERSION 7
 
 /** Maximum colour stops per gradient (mirrors NeonConfig::MAX_COLOR_STOPS). */
 #define EL_MAX_COLOR_STOPS 128
@@ -102,10 +102,9 @@ typedef enum EL_BlendSpace
  *  Values match the registration order in @ref el_effect_create. */
 typedef enum EL_RendererKind
 {
-    EL_RENDERER_WIREFRAME = 0,      ///< 1px line-loop debug box.
-    EL_RENDERER_NEON = 1,           ///< Single-pass neon stroke.
-    EL_RENDERER_MULTIPASS_NEON = 2, ///< Multi-pass (FBO + separable blur) neon.
-    EL_RENDERER_OPTIMIZED_NEON = 3  ///< Half-resolution neon for edge devices.
+    EL_RENDERER_WIREFRAME = 0,     ///< 1px line-loop debug box.
+    EL_RENDERER_NEON = 1,          ///< Single-pass neon stroke.
+    EL_RENDERER_OPTIMIZED_NEON = 2 ///< Half-resolution neon for edge devices.
 } EL_RendererKind;
 
 /** Playback mode of an animation (mirror EdgeLighting::PlaybackMode). */
@@ -187,24 +186,6 @@ typedef struct EL_NeonConfig
     float arcLength;
 } EL_NeonConfig;
 
-/** Multi-pass (gradient-to-FBO + separable blur) neon renderer settings. */
-typedef struct EL_MultiPassNeonConfig
-{
-    EL_Bool enable;
-    EL_Bool showPerimeterGradient; ///< Debug: show baked perimeter gradient FBO.
-    EL_Bool showFullGradient;      ///< Debug: show full-screen gradient FBO.
-    float lineWidth;
-    float intensity;
-    float glowRadius;
-    float bloomStrength;
-    int32_t glowSide; ///< EL_GlowSide.
-    float glowSideSoftness;
-    int32_t blendSpace;     ///< EL_BlendSpace.
-    int32_t colorStopCount; ///< Number of valid entries in colorStops.
-    EL_ColorStop colorStops[EL_MAX_COLOR_STOPS];
-    float hueRotationRate;
-} EL_MultiPassNeonConfig;
-
 /** Half-resolution optimised neon renderer settings (shares NeonConfig visuals). */
 typedef struct EL_OptimizedNeonConfig
 {
@@ -230,7 +211,6 @@ typedef struct EL_Config
 {
     EL_RectGeometry geometry;
     EL_NeonConfig neon;
-    EL_MultiPassNeonConfig multipassNeon;
     EL_OptimizedNeonConfig optimizedNeon;
     EL_WireframeConfig wireframe;
 } EL_Config;
