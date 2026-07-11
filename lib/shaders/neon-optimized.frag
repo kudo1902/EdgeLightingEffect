@@ -267,7 +267,10 @@ void main() {
     result *= 1.0 - smoothstep(uQuadMargin * 0.8, uQuadMargin, d);
 
     // --- Grade --------------------------------------------------------
-    result = result / (result + vec3(TONE_MAP_SHOULDER));
+    // Hue-preserving Reinhard (see neon.frag for the rationale).
+    float peak = max(max(result.r, result.g), result.b);
+    float mapped = peak / (peak + TONE_MAP_SHOULDER);
+    result = result * (mapped / max(peak, 1e-6));
     result = pow(result, vec3(GAMMA_EXPONENT));
 
     // Premultiplied-alpha output (coverage = brightest channel). Rendered into
