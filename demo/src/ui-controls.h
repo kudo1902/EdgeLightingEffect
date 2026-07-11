@@ -18,8 +18,7 @@ namespace EdgeLightingDemo
         std::cout << "  [I / O]        - Inc / Dec Neon Intensity\n";
         std::cout << "  [[ / ]]        - Dec / Inc Neon Glow Radius\n";
         std::cout << "  [P / L]        - Inc / Dec Neon Sweep Speed\n";
-        std::cout << "  [N]            - Toggle Single-pass Neon\n";
-        std::cout << "  [Shift+N]      - Toggle Multi-pass Neon\n";
+        std::cout << "  [N]            - Toggle Neon\n";
         std::cout << "  [G]            - Toggle Wireframe Bounding Box\n";
         std::cout << "  [W]            - Toggle Winding (CW / CCW)\n";
         std::cout << "  [SPACE]        - Pause / Resume Animation\n";
@@ -30,9 +29,9 @@ namespace EdgeLightingDemo
     inline void PrintCurrentConfig(const EdgeLighting::Config &config, bool isPlaying)
     {
         std::string neonStr = config.neon.enable ? "ON " : "OFF";
-        std::string mpNeonStr = config.multipassNeon.enable ? "ON " : "OFF";
         std::string windingStr = (config.geometry.winding == EdgeLighting::Winding::CLOCKWISE) ? "CW" : "CCW";
-        std::string blendStr = (config.neon.blendSpace == EdgeLighting::BlendSpace::HSV) ? "HSV" : "RGB";
+        const char *blendItems[] = {"RGB", "HSV", "HSL"};
+        std::string blendStr = blendItems[static_cast<int>(config.neon.blendSpace)];
 
         std::cout << "\r[Neon] LineW: " << std::setw(3) << config.neon.lineWidth
                   << " | En: " << neonStr
@@ -40,7 +39,6 @@ namespace EdgeLightingDemo
                   << " | GlowR: " << std::setprecision(0) << std::setw(3) << config.neon.glowRadius
                   << " | Bloom: " << std::setprecision(2) << std::setw(4) << config.neon.bloomStrength
                   << " | HueRate: " << std::setprecision(2) << std::setw(4) << config.neon.hueRotationRate
-                  << " | MP: " << mpNeonStr
                   << " | " << windingStr
                   << " | " << blendStr
                   << " | Anim: " << (isPlaying ? "PLAY" : "PAUS")

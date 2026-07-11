@@ -78,7 +78,6 @@ public:
 private:
     void buildGeometrySection(EdgeLighting::Config &cfg);
     void buildNeonSection(EdgeLighting::Config &cfg);
-    void buildMultiPassNeonSection(EdgeLighting::Config &cfg);
     void buildOptimizedNeonSection(EdgeLighting::Config &cfg);
     void buildAnimationSection(EdgeLighting::Config &cfg, float clockTime);
     void buildBackgroundSection();

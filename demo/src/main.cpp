@@ -3,7 +3,6 @@
 #include "core/edge-lighting.h"
 #include "renderer/wireframe-renderer.h"
 #include "renderer/neon-renderer.h"
-#include "renderer/neon-multi-pass-renderer.h"
 #include "renderer/neon-optimized-renderer.h"
 #include "animation/neon-animations.h"
 #include "debug-ui.h"
@@ -92,12 +91,10 @@ int main()
 
     auto wireframeRenderer = std::make_shared<EdgeLighting::WireframeRenderer>();
     auto neonRenderer = std::make_shared<EdgeLighting::NeonRenderer>();
-    auto neonMultiPassRenderer = std::make_shared<EdgeLighting::NeonMultiPassRenderer>();
     auto neonOptimizedRenderer = std::make_shared<EdgeLighting::NeonOptimizedRenderer>();
 
     gEffect->AddRenderer(wireframeRenderer);
     gEffect->AddRenderer(neonRenderer);
-    gEffect->AddRenderer(neonMultiPassRenderer);
     gEffect->AddRenderer(neonOptimizedRenderer);
 
     EdgeLighting::Config config;
@@ -293,14 +290,7 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
     }
     case GLFW_KEY_N:
     {
-        if (mods & GLFW_MOD_SHIFT)
-        {
-            config.multipassNeon.enable = !config.multipassNeon.enable;
-        }
-        else
-        {
-            config.neon.enable = !config.neon.enable;
-        }
+        config.neon.enable = !config.neon.enable;
         break;
     }
     case GLFW_KEY_G:

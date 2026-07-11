@@ -12,7 +12,6 @@
 #include "core/edge-lighting.h"
 #include "renderer/wireframe-renderer.h"
 #include "renderer/neon-renderer.h"
-#include "renderer/neon-multi-pass-renderer.h"
 #include "renderer/neon-optimized-renderer.h"
 #include "animation/neon-animations.h"
 #include "animation/modulator.h"
@@ -184,19 +183,6 @@ namespace
         out.neon.arcStart = c.neon.arcStart;
         out.neon.arcLength = c.neon.arcLength;
 
-        out.multipassNeon.enable = c.multipassNeon.enable != 0;
-        out.multipassNeon.showPerimeterGradient = c.multipassNeon.showPerimeterGradient != 0;
-        out.multipassNeon.showFullGradient = c.multipassNeon.showFullGradient != 0;
-        out.multipassNeon.lineWidth = c.multipassNeon.lineWidth;
-        out.multipassNeon.intensity = c.multipassNeon.intensity;
-        out.multipassNeon.glowRadius = c.multipassNeon.glowRadius;
-        out.multipassNeon.bloomStrength = c.multipassNeon.bloomStrength;
-        out.multipassNeon.glowSide = static_cast<GlowSide>(c.multipassNeon.glowSide);
-        out.multipassNeon.glowSideSoftness = c.multipassNeon.glowSideSoftness;
-        out.multipassNeon.blendSpace = static_cast<BlendSpace>(c.multipassNeon.blendSpace);
-        out.multipassNeon.colorStops = stopsFromC(c.multipassNeon.colorStops, c.multipassNeon.colorStopCount);
-        out.multipassNeon.hueRotationRate = c.multipassNeon.hueRotationRate;
-
         out.optimizedNeon.enable = c.optimizedNeon.enable != 0;
         out.optimizedNeon.resolutionScale = c.optimizedNeon.resolutionScale;
         out.optimizedNeon.numSamples = c.optimizedNeon.numSamples;
@@ -231,19 +217,6 @@ namespace
         copySegmentsToC(c.neon.segmentBoosts, out.neon.segmentBoosts, out.neon.segmentBoostCount);
         out.neon.arcStart = c.neon.arcStart;
         out.neon.arcLength = c.neon.arcLength;
-
-        out.multipassNeon.enable = c.multipassNeon.enable ? 1 : 0;
-        out.multipassNeon.showPerimeterGradient = c.multipassNeon.showPerimeterGradient ? 1 : 0;
-        out.multipassNeon.showFullGradient = c.multipassNeon.showFullGradient ? 1 : 0;
-        out.multipassNeon.lineWidth = c.multipassNeon.lineWidth;
-        out.multipassNeon.intensity = c.multipassNeon.intensity;
-        out.multipassNeon.glowRadius = c.multipassNeon.glowRadius;
-        out.multipassNeon.bloomStrength = c.multipassNeon.bloomStrength;
-        out.multipassNeon.glowSide = static_cast<int32_t>(c.multipassNeon.glowSide);
-        out.multipassNeon.glowSideSoftness = c.multipassNeon.glowSideSoftness;
-        out.multipassNeon.blendSpace = static_cast<int32_t>(c.multipassNeon.blendSpace);
-        copyStopsToC(c.multipassNeon.colorStops, out.multipassNeon.colorStops, out.multipassNeon.colorStopCount);
-        out.multipassNeon.hueRotationRate = c.multipassNeon.hueRotationRate;
 
         out.optimizedNeon.enable = c.optimizedNeon.enable ? 1 : 0;
         out.optimizedNeon.resolutionScale = c.optimizedNeon.resolutionScale;
@@ -431,7 +404,6 @@ extern "C"
             // Register all renderers, mirroring demo/src/main.cpp.
             fx->effect.AddRenderer(std::make_shared<EdgeLighting::WireframeRenderer>());
             fx->effect.AddRenderer(std::make_shared<EdgeLighting::NeonRenderer>());
-            fx->effect.AddRenderer(std::make_shared<EdgeLighting::NeonMultiPassRenderer>());
             fx->effect.AddRenderer(std::make_shared<EdgeLighting::NeonOptimizedRenderer>());
             return fx;
         }
@@ -571,11 +543,6 @@ extern "C"
                 cfg.neon.enable = b;
                 break;
             }
-            case EL_RENDERER_MULTIPASS_NEON:
-            {
-                cfg.multipassNeon.enable = b;
-                break;
-            }
             case EL_RENDERER_OPTIMIZED_NEON:
             {
                 cfg.optimizedNeon.enable = b;
@@ -613,10 +580,6 @@ extern "C"
         case EL_RENDERER_NEON:
         {
             return cfg.neon.enable ? 1 : 0;
-        }
-        case EL_RENDERER_MULTIPASS_NEON:
-        {
-            return cfg.multipassNeon.enable ? 1 : 0;
         }
         case EL_RENDERER_OPTIMIZED_NEON:
         {
