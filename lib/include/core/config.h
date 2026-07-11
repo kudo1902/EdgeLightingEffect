@@ -30,7 +30,8 @@ namespace EdgeLighting
     typedef enum class BlendSpace
     {
         RGB, ///< Blend directly in linear RGB.
-        HSV  ///< Convert to HSV, interpolate, convert back (avoids muddy mid-tones).
+        HSV, ///< Convert to HSV, interpolate, convert back (avoids muddy mid-tones).
+        HSL  ///< Convert to HSL, interpolate; smoother mid-tones through neutral gray.
     } BlendSpace;
 
     /// A colour stop along the perimeter.
@@ -135,8 +136,12 @@ namespace EdgeLighting
 
         // --- Color ---
 
-        /// Maximum number of colour stops.
-        static constexpr int MAX_COLOR_STOPS = 16;
+        /// Maximum number of colour stops. Sized to match the shader's
+        /// perimeter loop-sample count (NUM_LOOP_SAMPLES = 128) so the picker
+        /// can produce one stop per loop sample for near-1:1 image-to-neon
+        /// colour reproduction. LUT baking is CPU-side, so no shader array
+        /// limit applies.
+        static constexpr int MAX_COLOR_STOPS = 128;
         /// Blend space for interpolating between colour stops.
         BlendSpace blendSpace = BlendSpace::RGB;
         /// Colour stops around the perimeter
@@ -230,7 +235,7 @@ namespace EdgeLighting
         // --- Color ---
 
         /// Maximum number of colour stops.
-        static constexpr int MAX_COLOR_STOPS = 16;
+        static constexpr int MAX_COLOR_STOPS = 20;
         /// Blend space for interpolating between colour stops.
         BlendSpace blendSpace = BlendSpace::RGB;
         /// Colour stops around the perimeter

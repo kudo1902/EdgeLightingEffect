@@ -52,10 +52,10 @@ extern "C"
 #endif
 
 /** ABI version. Bump on any breaking change to a struct layout or signature. */
-#define EL_ABI_VERSION 3
+#define EL_ABI_VERSION 6
 
 /** Maximum colour stops per gradient (mirrors NeonConfig::MAX_COLOR_STOPS). */
-#define EL_MAX_COLOR_STOPS 16
+#define EL_MAX_COLOR_STOPS 128
 
 /** Maximum travelling segment boosts (mirrors MAX_SEGMENT_BOOSTS in neon-tuning.h). */
 #define EL_MAX_SEGMENT_BOOSTS 8
@@ -94,7 +94,8 @@ typedef enum EL_GlowSide
 typedef enum EL_BlendSpace
 {
     EL_BLEND_SPACE_RGB = 0,
-    EL_BLEND_SPACE_HSV = 1
+    EL_BLEND_SPACE_HSV = 1,
+    EL_BLEND_SPACE_HSL = 2
 } EL_BlendSpace;
 
 /** Identifies one of the built-in renderers for enable/disable toggling.
