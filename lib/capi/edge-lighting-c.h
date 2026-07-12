@@ -54,7 +54,9 @@ extern "C"
 /** ABI version. Bump on any breaking change to a struct layout or signature. */
 #define EL_ABI_VERSION 8
 
-/** Maximum colour stops per gradient (mirrors NeonConfig::MAX_COLOR_STOPS). */
+/** Maximum colour stops per gradient — hard cap because the EL_NeonConfig
+ *  struct's colorStops[] array is fixed-size at the ABI boundary. The core C++
+ *  library imposes no cap; only the C surface does. */
 #define EL_MAX_COLOR_STOPS 128
 
 /** Maximum travelling segment boosts (mirrors MAX_SEGMENT_BOOSTS in neon-tuning.h). */

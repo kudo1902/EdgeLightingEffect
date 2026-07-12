@@ -162,13 +162,6 @@ namespace EdgeLighting
         float glowSideSoftness = 0.0f;
 
         // --- Color ---
-
-        /// Maximum number of colour stops. Sized to match the shader's
-        /// perimeter loop-sample count (NUM_LOOP_SAMPLES = 128) so the picker
-        /// can produce one stop per loop sample for near-1:1 image-to-neon
-        /// colour reproduction. LUT baking is CPU-side, so no shader array
-        /// limit applies.
-        static constexpr int MAX_COLOR_STOPS = 128;
         /// Blend space for interpolating between colour stops.
         BlendSpace blendSpace = BlendSpace::RGB;
         /// Colour stops around the perimeter
