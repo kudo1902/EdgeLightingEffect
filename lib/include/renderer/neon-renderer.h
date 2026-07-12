@@ -22,12 +22,6 @@ namespace EdgeLighting
         virtual void Render(int viewportWidth, int viewportHeight, float time, const Config &config) override;
         virtual void OnConfigChanged(const Config &config) override;
 
-        /// Width of the precomputed gradient look-up texture (RGBA32F, REPEAT wrap).
-        /// 256 is more than enough for any 4-stop gradient the human eye can resolve.
-        static constexpr int GRADIENT_LUT_SIZE = 256;
-        /// Must match NEON_NUM_SAMPLES in lib/shaders/neon.frag.
-        static constexpr int NUM_LOOP_SAMPLES = 128;
-
     private:
         bool setupShaders();
         void setupGeometry(const Config &config);
@@ -37,35 +31,29 @@ namespace EdgeLighting
     private:
         Config mCurrentConfig;
         ShaderProgram mShaderProgram;
-        ShaderProgram mBlackRectShader;                    ///< Opaque-mode black background fill (black-rect.frag).
-        ShaderProgram mLUTDebugShader;                     ///< Debug LUT strip (neon-lut-debug.frag).
-        ShaderProgram mStopMarkerShader;                   ///< Debug per-stop marker (neon-stop-marker.frag).
-        VertexArray mVertexArray{"NeonRenderer"};          ///< Tight glow quad (rect + earlyOut).
-        VertexArray mFullVertexArray{"NeonRenderer.Full"}; ///< Viewport-covering quad for the opaque fill.
-        VertexArray mLUTStripVertexArray{"NeonRenderer.LUTStrip"}; ///< Small centred quad for the LUT debug strip.
+        ShaderProgram mBlackRectShader;                                ///< Opaque-mode black background fill (black-rect.frag).
+        ShaderProgram mLUTDebugShader;                                 ///< Debug LUT strip (neon-lut-debug.frag).
+        ShaderProgram mStopMarkerShader;                               ///< Debug per-stop marker (neon-stop-marker.frag).
+        VertexArray mVertexArray{"NeonRenderer"};                      ///< Tight glow quad (rect + earlyOut).
+        VertexArray mFullVertexArray{"NeonRenderer.Full"};             ///< Viewport-covering quad for the opaque fill.
+        VertexArray mLUTStripVertexArray{"NeonRenderer.LUTStrip"};     ///< Small centred quad for the LUT debug strip.
         VertexArray mStopMarkerVertexArray{"NeonRenderer.StopMarker"}; ///< Unit quad ([-1,+1]) used to draw each stop marker.
-        glm::vec2 mLUTStripHalfSize{0.0f}; ///< Half extents of the LUT strip in local px (matches mLUTStripVertexArray).
+        glm::vec2 mLUTStripHalfSize{0.0f};                             ///< Half extents of the LUT strip in local px (matches mLUTStripVertexArray).
 
         /// Backs neon.frag's std140 `SegmentBlock` (DALi-compatible uniform
         /// block holding uSegmentCount + uSegments[]).
         UniformBuffer mSegmentBlock{"NeonRenderer.SegmentBlock"};
+        /// Backs neon.frag's std140 `LoopSamplesBlock` — vec4[NUM_LOOP_SAMPLES]
+        /// where .xy holds the perimeter point in rect-local pixels.
+        UniformBuffer mLoopSamplesBlock{"NeonRenderer.LoopSamplesBlock"};
 
-        std::vector<glm::vec2> mLoopSamples;
         float mSampleSpacing = 0.0f;
+        float mQuadMargin = 0.0f; ///< Draw-quad margin (px from rect edge); shader fades the bloom out by here.
 
         /// Baked colour ring as a 1×N RGBA32F texture (sampled with v=0.5 in the shader).
         /// Each shader sample becomes a single texture lookup instead of an in-shader stops loop + HSV blend
         Texture2D mGradientLUT;
-        std::vector<float> mLUTScratch; ///< Float scratch for CPU gradient baking (GRADIENT_LUT_SIZE * 4).
-
-        /// Loop sample positions as an N×1 RGBA8 data texture (16-bit-packed xy),
-        /// texelFetch'd in the shader instead of a `uniform vec2[]` array. Only
-        /// byte textures are guaranteed on Tizen/Mali, so positions are encoded
-        /// over [-mSampleMaxCoord, mSampleMaxCoord] (see GeometryUtils::PackLoopSamplesRGBA8).
-        Texture2D mLoopSamplesTex;
-        std::vector<unsigned char> mLoopSamplesBytes;
-        float mSampleMaxCoord = 1.0f;
-        float mQuadMargin = 0.0f; ///< Draw-quad margin (px from rect edge); shader fades the bloom out by here.
+        std::vector<float> mLUTScratch; ///< Float scratch for CPU gradient baking (LUT width * 4).
     };
 }
 

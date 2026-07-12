@@ -52,14 +52,16 @@ uniform float uSampleSpacing;
 // a hard rectangular cutoff where a strong bloom is clipped.
 uniform float uQuadMargin;
 
-// Loop sample positions (perimeter points) as an N×1 data texture, texelFetch'd
-// in the gather loop instead of a `uniform vec2[]` array (some mobile GLES
-// drivers don't accept large uniform arrays / blow the uniform-vector limit).
-// RGBA8 (only byte textures are guaranteed): each position is packed as two
-// 16-bit fixed-point coords (x = R:hi G:lo, y = B:hi A:lo) over
-// [-uSampleMaxCoord, uSampleMaxCoord]; decodeSample() reconstructs it.
-uniform sampler2D uLoopSamplesTex;
-uniform float     uSampleMaxCoord;
+// Loop sample positions (perimeter points, scaled to FBO space) as a std140
+// uniform block. Each entry is (x, y, 0, 0); std140 pads vec2 to 16 bytes so
+// we store as vec4 and read .xy. Sized to the shader-side max; the actual
+// count in use is uNumSamples (driven by optimizedNeon.numSamples on the CPU
+// side), so a smaller slider value really does iterate less.
+layout(std140) uniform LoopSamplesBlock
+{
+    vec4 uLoopSamples[NEON_MAX_LOOP_SAMPLES];
+};
+uniform int uNumSamples; ///< Actual sample count in use; 1..NEON_MAX_LOOP_SAMPLES.
 
 // Travelling segments — up to MAX_SEGMENT_BOOSTS Gaussian brightness peaks.
 // Each vec3 is packed as (position, invSigma, boost) so the shader avoids the
@@ -93,15 +95,6 @@ uniform sampler2D uGradientLUT;
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-// Decode a byte-packed loop sample. Per coord: hi + lo/255 reconstructs the
-// 16-bit value in [0,1]; (2*n - 1) maps it to [-1,1]; * uSampleMaxCoord scales
-// back to pixels in [-uSampleMaxCoord, uSampleMaxCoord]. The /255 keeps the
-// intermediate < 1 so it stays fp16-safe in this mediump shader.
-vec2 decodeSample(vec4 e) {
-    vec2 n = vec2(e.r + e.g * (1.0 / 255.0), e.b + e.a * (1.0 / 255.0));
-    return (2.0 * n - 1.0) * uSampleMaxCoord;
-}
 
 float sdRoundBox(vec2 p, vec2 b, float r) {
     vec2 q = abs(p) - b + r;
@@ -193,7 +186,10 @@ void main() {
     float wsumArc   = 0.0;
     float headWSum  = 0.0;
 
-    int n = textureSize(uLoopSamplesTex, 0).x;
+    // uNumSamples is dynamic so the perf slider actually reduces work; the
+    // upper bound stays baked in the UBO array size so GL still knows the
+    // maximum register pressure.
+    int n = uNumSamples;
     float invNumSamples = 1.0 / float(max(n, 1));
     // Negate the time term so a positive hueRotationRate scrolls the colours
     // WITH the winding (i advances in the winding direction; REPEAT wrap handles
@@ -203,7 +199,7 @@ void main() {
     float si   = 0.0;
 
     for (int i = 0; i < n; i++) {
-        vec2  dv  = vPos - decodeSample(texelFetch(uLoopSamplesTex, ivec2(i, 0), 0));
+        vec2  dv  = vPos - uLoopSamples[i].xy;
         float dd  = dot(dv, dv);
 
         float g   = 1.0 / (dd + kg2);

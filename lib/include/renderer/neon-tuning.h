@@ -40,6 +40,12 @@
 // --- Travelling-segment array size (shared by C++ vector cap + GLSL uniform array) ---
 #define MAX_SEGMENT_BOOSTS        8
 
+// --- Perimeter gather-loop upper bound. Sizes the LoopSamplesBlock UBO in
+//     both shaders. NeonRenderer runs the full loop at compile-time-fixed
+//     count; NeonOptimizedRenderer's shader iterates only uNumSamples of them
+//     (its numSamples slider), so this is a ceiling, not a fixed cost. ---
+#define NEON_MAX_LOOP_SAMPLES     128
+
 // --- Grading ---
 #define TONE_MAP_SHOULDER         0.6
 #define GAMMA_EXPONENT            0.85

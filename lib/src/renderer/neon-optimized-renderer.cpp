@@ -26,7 +26,19 @@ namespace EdgeLighting
         static_assert(sizeof(SegmentBlockData) == 16 + 16 * MAX_SEGMENT_BOOSTS,
                       "SegmentBlockData must match the shader's std140 layout");
 
+        /// CPU-side mirror of neon-optimized.frag's std140 `LoopSamplesBlock`.
+        /// Sized by NEON_MAX_LOOP_SAMPLES (neon-tuning.h) — the ceiling; the
+        /// shader iterates only uNumSamples of them per frame.
+        typedef struct LoopSamplesBlockData
+        {
+            glm::vec4 samples[NEON_MAX_LOOP_SAMPLES];
+        } LoopSamplesBlockData;
+
+        static_assert(sizeof(LoopSamplesBlockData) == 16 * NEON_MAX_LOOP_SAMPLES,
+                      "LoopSamplesBlockData must match the shader's std140 layout");
+
         constexpr GLuint SEGMENT_BLOCK_BINDING = 0;
+        constexpr GLuint LOOP_SAMPLES_BLOCK_BINDING = 1;
     }
 
     // -------------------------------------------------------------------------
@@ -125,11 +137,11 @@ namespace EdgeLighting
         mNeonShader.SetUniform("uSampleSpacing", mSampleSpacing);
         mNeonShader.SetUniform("uQuadMargin", mQuadMargin);
 
-        // Loop sample positions from a data texture (unit 1) the shader
-        // texelFetches, instead of a uniform vec2[] array.
-        mLoopSamplesTex.Bind(1);
-        mNeonShader.SetUniform("uLoopSamplesTex", 1);
-        mNeonShader.SetUniform("uSampleMaxCoord", mSampleMaxCoord);
+        // Loop sample positions from the LoopSamplesBlock UBO (see the shader)
+        // — raw float32 vec4[N], .xy holds the perimeter point in FBO pixels.
+        mLoopSamplesBlock.BindBase(LOOP_SAMPLES_BLOCK_BINDING);
+        mNeonShader.SetUniform("uNumSamples", std::min(config.optimizedNeon.numSamples,
+                                                       NEON_MAX_LOOP_SAMPLES));
 
         mGradientLUT.Bind(0);
         mNeonShader.SetUniform("uGradientLUT", 0);
@@ -237,6 +249,7 @@ namespace EdgeLighting
         }
 
         mNeonShader.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
+        mNeonShader.SetUniformBlockBinding("LoopSamplesBlock", LOOP_SAMPLES_BLOCK_BINDING);
         return true;
     }
 
@@ -301,22 +314,19 @@ namespace EdgeLighting
     void NeonOptimizedRenderer::rebuildLoopSamples(const Config &config)
     {
         float scale = config.optimizedNeon.resolutionScale;
-        int n = std::min(config.optimizedNeon.numSamples, MAX_LOOP_SAMPLES);
+        int n = std::max(1, std::min(config.optimizedNeon.numSamples, NEON_MAX_LOOP_SAMPLES));
 
-        mLoopSamples.resize(MAX_LOOP_SAMPLES);
-        for (int i = 0; i < MAX_LOOP_SAMPLES; ++i)
+        // Only n unique perimeter points are in use per frame (shader loop
+        // bound is uNumSamples). The remaining UBO slots stay at (0,0,0,0)
+        // — never read because the loop stops before them.
+        LoopSamplesBlockData block = {};
+        for (int i = 0; i < n; ++i)
         {
             float t = static_cast<float>(i) / static_cast<float>(n);
-            mLoopSamples[i] = GeometryUtils::GetPointOnRectangle(t, config.geometry) * scale;
+            glm::vec2 p = GeometryUtils::GetPointOnRectangle(t, config.geometry) * scale;
+            block.samples[i] = glm::vec4(p, 0.0f, 0.0f);
         }
-
-        // Upload the (scaled) positions as an N×1 RGBA8 data texture (16-bit-packed
-        // xy; byte texture only on the target). The shader texelFetches + decodes
-        // this instead of a uniform vec2[].
-        GeometryUtils::PackLoopSamplesRGBA8(mLoopSamples, MAX_LOOP_SAMPLES, mLoopSamplesBytes, mSampleMaxCoord);
-        mLoopSamplesTex.SetData(mLoopSamplesBytes.data(), MAX_LOOP_SAMPLES, /*height=*/1,
-                                GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
-        mLoopSamplesTex.SetParams(GL_NEAREST, GL_NEAREST, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
+        mLoopSamplesBlock.SetData(&block, sizeof(block));
 
         float w = config.geometry.width;
         float h = config.geometry.height;
