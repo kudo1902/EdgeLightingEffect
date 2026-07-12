@@ -1,6 +1,7 @@
 #include "debug-ui.h"
 #include "core/config.h"
 #include "core/edge-lighting.h"
+#include "renderer/neon-tuning.h"
 #include "ui-controls.h"
 #include "util/log-util.h"
 #include "util/screenshot-util.h"
@@ -335,7 +336,7 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg)
     ImGui::Checkbox("Show Half-Res##Optimized", &cfg.optimizedNeon.showHalfRes);
 
     ImGui::SliderFloat("Res Scale##Opt", &cfg.optimizedNeon.resolutionScale, 0.125f, 1.0f, "%.3f");
-    ImGui::SliderInt("Samples##Opt", &cfg.optimizedNeon.numSamples, 8, 64);
+    ImGui::SliderInt("Samples##Opt", &cfg.optimizedNeon.numSamples, 8, NEON_MAX_LOOP_SAMPLES);
     ImGui::SliderInt("LUT Size##Opt", &cfg.optimizedNeon.gradientLutSize, 32, 256);
 
     ImGui::Separator();

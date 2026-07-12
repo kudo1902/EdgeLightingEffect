@@ -258,7 +258,8 @@ namespace EdgeLighting
 
         /// Resolution scale factor for the internal FBO (0.5 = half, 0.25 = quarter).
         float resolutionScale = 0.5f;
-        /// Number of gather samples per fragment (max 64, lower = faster).
+        /// Number of gather samples per fragment (max = NEON_MAX_LOOP_SAMPLES,
+        /// lower = faster). Clamped by the renderer at upload time.
         int numSamples = 64;
         /// Size of the precomputed gradient look-up texture (power-of-two, 32–256).
         int gradientLutSize = 256;
