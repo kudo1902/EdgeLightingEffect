@@ -217,11 +217,38 @@ namespace EdgeLighting
 
     void NeonOptimizedRenderer::OnConfigChanged(const Config &config)
     {
+        // Same gating scheme as NeonRenderer, with extra deps from the
+        // optimized sub-config: numSamples/resolutionScale affect the sample
+        // walk + FBO scale; gradientLutSize picks the LUT texture width.
+        const bool samplesDirty = config.geometry != mCurrentConfig.geometry ||
+                                  config.optimizedNeon.resolutionScale != mCurrentConfig.optimizedNeon.resolutionScale ||
+                                  config.optimizedNeon.numSamples != mCurrentConfig.optimizedNeon.numSamples;
+        const bool geometryDirty = samplesDirty ||
+                                   config.neon.glowRadius != mCurrentConfig.neon.glowRadius ||
+                                   config.neon.bloomStrength != mCurrentConfig.neon.bloomStrength ||
+                                   config.neon.intensity != mCurrentConfig.neon.intensity;
+        const bool lutDirty = config.neon.colorStops != mCurrentConfig.neon.colorStops ||
+                              config.neon.blendSpace != mCurrentConfig.neon.blendSpace ||
+                              config.optimizedNeon.gradientLutSize != mCurrentConfig.optimizedNeon.gradientLutSize;
+
         mCurrentConfig = config;
-        if (mNeonShader.IsValid())
+        if (!mNeonShader.IsValid())
         {
-            rebuildLoopSamples(config); // updates mSampleSpacing, used by setupGeometry
+            return;
+        }
+
+        if (samplesDirty)
+        {
+            rebuildLoopSamples(config); // updates mSampleSpacing, read by setupGeometry
+        }
+
+        if (geometryDirty)
+        {
             setupGeometry(config);
+        }
+
+        if (lutDirty)
+        {
             rebuildGradientLUT(config);
         }
     }

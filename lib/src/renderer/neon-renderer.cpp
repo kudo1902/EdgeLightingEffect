@@ -246,11 +246,37 @@ namespace EdgeLighting
 
     void NeonRenderer::OnConfigChanged(const Config &config)
     {
+        // Snapshot dirtiness before we overwrite mCurrentConfig. Each rebuild
+        // is gated on the exact set of fields it reads (see the corresponding
+        // methods below) — dragging a slider like `bloomStrength` used to
+        // re-upload the whole LUT and loop-samples UBO every frame; now only
+        // the geometry quad refreshes.
+        const bool samplesDirty = config.geometry != mCurrentConfig.geometry;
+        const bool geometryDirty = samplesDirty ||
+                                   config.neon.glowRadius != mCurrentConfig.neon.glowRadius ||
+                                   config.neon.bloomStrength != mCurrentConfig.neon.bloomStrength ||
+                                   config.neon.intensity != mCurrentConfig.neon.intensity;
+        const bool lutDirty = config.neon.colorStops != mCurrentConfig.neon.colorStops ||
+                              config.neon.blendSpace != mCurrentConfig.neon.blendSpace;
+
         mCurrentConfig = config;
-        if (mShaderProgram.IsValid())
+        if (!mShaderProgram.IsValid())
         {
-            rebuildLoopSamples(config); // updates mSampleSpacing, used by setupGeometry
+            return;
+        }
+
+        if (samplesDirty)
+        {
+            rebuildLoopSamples(config); // updates mSampleSpacing, read by setupGeometry
+        }
+
+        if (geometryDirty)
+        {
             setupGeometry(config);
+        }
+
+        if (lutDirty)
+        {
             rebuildGradientLUT(config);
         }
     }
