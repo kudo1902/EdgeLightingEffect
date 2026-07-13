@@ -104,7 +104,7 @@ namespace EdgeLighting
         mNeonShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
         mNeonShader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness * scale);
         // Pack the segment vector as vec3(position, invSigma, boost) into the
-        // std140 SegmentBlock UBO (DALi-compatible pattern — see the shader).
+        // std140 SegmentBlock UBO (DALi-compatible pattern - see the shader).
         // Same packing as NeonRenderer; segment `position` is a normalised
         // perimeter coord in [0, 1), so the resolutionScale does not apply.
         SegmentBlockData segBlock = {};
@@ -146,7 +146,7 @@ namespace EdgeLighting
         //   BOTH    -> whole viewport opaque black.
         //   INSIDE  -> black only where d <= softEdge; off-side stays clear.
         //   OUTSIDE -> mirror of INSIDE.
-        // Rounded corners AA cleanly via fwidth(d) — no discard, no stair-step.
+        // Rounded corners AA cleanly via fwidth(d) - no discard, no stair-step.
         Framebuffer::BindDefault();
         glViewport(0, 0, viewportWidth, viewportHeight);
 
@@ -222,7 +222,7 @@ namespace EdgeLighting
 
         // Opaque-mode fullscreen black fill (shared with NeonRenderer): the
         // analytic SDF in the fragment shader shapes the silhouette with
-        // softness-aware feathering, so rounded corners AA cleanly — no more
+        // softness-aware feathering, so rounded corners AA cleanly - no more
         // stair-stepping like the old per-fragment discard in neon-blit.frag.
         mBlackRectShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                          ShaderSource::BLACK_RECT_FRAG_SRC,
@@ -255,7 +255,7 @@ namespace EdgeLighting
         {
             // Use the SAME early-out factors as the base NeonRenderer so the
             // bloom's wide 1/D tail reaches exactly as far here as it does
-            // there — a smaller margin faded the bloom out sooner and made the
+            // there - a smaller margin faded the bloom out sooner and made the
             // optimized output look visibly shorter than the base (mismatch).
             // The factors come from the shared neon-tuning.h (also fed to the
             // base renderer's setupGeometry).

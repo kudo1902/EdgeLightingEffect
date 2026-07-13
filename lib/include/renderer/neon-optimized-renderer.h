@@ -15,12 +15,12 @@ namespace EdgeLighting
     /// Half-resolution single-pass neon renderer for edge devices.
     ///
     /// Two-pass approach:
-    ///   Pass 1 — render the neon shader (highp, up to 64 gather samples) into
+    ///   Pass 1 - render the neon shader (highp, up to 64 gather samples) into
     ///             a half-resolution RGBA8 FBO.
-    ///   Pass 2 — bilinear blit the half-res FBO to the full-res backbuffer.
+    ///   Pass 2 - bilinear blit the half-res FBO to the full-res backbuffer.
     ///
     /// The perf wins are the half-res FBO, reduced sample count, data-texture
-    /// sample lookup and baked colour LUT — not reduced precision. The shader
+    /// sample lookup and baked colour LUT - not reduced precision. The shader
     /// uses highp: on desktop GLES (ANGLE) mediump = fp16, which overflows on
     /// the large fragment coordinates and produced NaN "noise dots".
     ///
@@ -48,9 +48,9 @@ namespace EdgeLighting
 
     private:
         Config mCurrentConfig;
-        ShaderProgram mNeonShader;      // Pass 1 — half-res neon
+        ShaderProgram mNeonShader;      // Pass 1 - half-res neon
         ShaderProgram mBlackRectShader; // Opaque-mode fullscreen black fill
-        ShaderProgram mBlitShader;      // Pass 2 — upscale to full-res
+        ShaderProgram mBlitShader;      // Pass 2 - upscale to full-res
         Framebuffer mHalfResBuffer{"NeonOptimized.HalfRes"};
         VertexArray mNeonVertexArray{"NeonOpt.Pass1"};
         VertexArray mBlitVertexArray{"NeonOpt.Blit"};

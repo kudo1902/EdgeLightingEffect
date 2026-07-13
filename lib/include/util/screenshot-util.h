@@ -1,5 +1,5 @@
-#ifndef _SCREENSHOT_UTIL_H_
-#define _SCREENSHOT_UTIL_H_
+#ifndef _EDGE_LIGHTING_SCREENSHOT_UTIL_H_
+#define _EDGE_LIGHTING_SCREENSHOT_UTIL_H_
 
 #include <string>
 #include <vector>

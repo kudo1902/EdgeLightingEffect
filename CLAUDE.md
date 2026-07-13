@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 OpenGL 3.3 Core renderer that draws an animated neon-style glow along the perimeter of a rounded rectangle. macOS arm64, CMake + GLFW + GLAD + GLM, ImGui for the debug UI.
 
-The repo is currently on the `big_refactor` branch — the legacy stroke/particle/path/animation system was removed in favour of a smaller neon-focused pipeline. `docs/architecture-design.md` describes the old design and is stale; treat the headers under `lib/include/` as the source of truth.
+The legacy stroke/particle/path/animation system was removed in favour of a smaller neon-focused pipeline. Architecture is documented in [`docs/architecture-design.md`](docs/architecture-design.md); when it goes out of date, treat the headers under `lib/include/` as the source of truth.
 
 ## Build & run
 
@@ -20,8 +20,8 @@ cmake --build build
 
 There is no test target. The build produces:
 
-- `build/lib/libedge-lighting.a` — the library
-- `build/demo/edge-lighting-demo` — the demo executable
+- `build/lib/libedge-lighting.a` - the library
+- `build/demo/edge-lighting-demo` - the demo executable
 
 `RES_DIR` is baked into the demo binary as a compile definition pointing at the in-tree `res/` directory, so the demo can be launched from anywhere.
 
@@ -45,23 +45,23 @@ Shader sources under `lib/shaders/*.{vert,frag}` are read by `lib/CMakeLists.txt
 - a `Clock` (play/pause time accumulator)
 - a `vector<shared_ptr<BaseRenderer>>` registered by the host
 
-Per-frame contract: `Update(dt)` ticks the clock and forwards `(dt, clockTime, config)` to every renderer; `Render(w, h)` does the same for drawing. `SetConfig` replaces the config and notifies all renderers via `OnConfigChanged`. Renderers are independent visual layers and composite by additive blending — enable any subset.
+Per-frame contract: `Update(dt)` ticks the clock and forwards `(dt, clockTime, config)` to every renderer; `Render(w, h)` does the same for drawing. `SetConfig` replaces the config and notifies all renderers via `OnConfigChanged`. Renderers are independent visual layers and composite by additive blending - enable any subset.
 
 Current renderers (all under `lib/include/renderer/`):
 
-- `WireframeRenderer` — 1px `GL_LINE_LOOP` debug box, blending temporarily disabled.
-- `NeonRenderer` — single-pass neon stroke. Uses an analytic rounded-box SDF + a precomputed 1D `GRADIENT_LUT` texture (RGBA32F, 256px, REPEAT wrap) so each shader sample is one texture lookup instead of an in-shader colour-stops loop. Also precomputes `NUM_LOOP_SAMPLES` (128) sample positions on the perimeter.
-- `NeonOptimizedRenderer` — half-resolution variant of the single-pass neon that renders into a scaled FBO and bilinear-blits back to full res; visual params are read from `Config::neon`.
+- `WireframeRenderer` - 1px `GL_LINE_LOOP` debug box, blending temporarily disabled.
+- `NeonRenderer` - single-pass neon stroke. Uses an analytic rounded-box SDF + a precomputed 1D `GRADIENT_LUT` texture (RGBA32F, 256px, REPEAT wrap) so each shader sample is one texture lookup instead of an in-shader colour-stops loop. Also precomputes `NUM_LOOP_SAMPLES` (128) sample positions on the perimeter.
+- `NeonOptimizedRenderer` - half-resolution variant of the single-pass neon that renders into a scaled FBO and bilinear-blits back to full res; visual params are read from `Config::neon`.
 
 To add a renderer, subclass `BaseRenderer`, add a sub-config struct to `Config`, register it in `demo/src/main.cpp`, and add an ImGui section in `DebugUI`.
 
 ### Animation: Clock + Modulators (pure functions of time)
 
-`EdgeLightingEffect` only advances the clock; it does **not** mutate config values. Parameter animation lives entirely outside in the `Modulator` family (`lib/include/animation/modulator.h`) — header-only, pure functions `time -> float`. Concrete shapes: `Constant`, `Oscillator` (SINE/TRIANGLE/SQUARE/SAWTOOTH), `Ease` (with an `Easing::Curve` function pointer), `Sequence`, `Multiplier`, `Adder`, `Remap`. The intended pattern is: the host computes each frame's animated value with `modulator.Evaluate(clock.GetTime())`, writes it into a `Config` copy, and calls `SetConfig`. No coupling between modulators and `Config`.
+`EdgeLightingEffect` only advances the clock; it does **not** mutate config values. Parameter animation lives entirely outside in the `Modulator` family (`lib/include/animation/modulator.h`) - header-only, pure functions `time -> float`. Concrete shapes: `Constant`, `Oscillator` (SINE/TRIANGLE/SQUARE/SAWTOOTH), `Ease` (with an `Easing::Curve` function pointer), `Sequence`, `Multiplier`, `Adder`, `Remap`. The intended pattern is: the host computes each frame's animated value with `modulator.Evaluate(clock.GetTime())`, writes it into a `Config` copy, and calls `SetConfig`. No coupling between modulators and `Config`.
 
 ### RAII GL wrappers
 
-`lib/include/gl/` provides move-only RAII wrappers: `ShaderProgram`, `VertexArray`, `Framebuffer`, `Texture` (base) + `Texture1D` / `Texture2D`. `gl-header.h` is the single include for `<glad/glad.h>`. Use these wrappers — do not call `glGen*` / `glDelete*` directly in renderer code.
+`lib/include/gl/` provides move-only RAII wrappers: `ShaderProgram`, `VertexArray`, `Framebuffer`, `Texture` (base) + `Texture1D` / `Texture2D`. `gl-header.h` is the single include for `<glad/glad.h>`. Use these wrappers - do not call `glGen*` / `glDelete*` directly in renderer code.
 
 ### Demo
 
@@ -69,7 +69,7 @@ To add a renderer, subclass `BaseRenderer`, add a sub-config struct to `Config`,
 
 ## Conventions
 
-Naming and formatting are defined in `AGENTS.md` and enforced by hand — there is no formatter config. Key points:
+Naming and formatting are defined in `AGENTS.md` and enforced by hand - there is no formatter config. Key points:
 
 - Files: `kebab-case.{h,cpp}`. Namespaces, classes, structs, enums, public methods, event callbacks: `PascalCase` (callbacks prefixed with `On`). Private methods, locals, parameters: `camelCase`. Enum values and constants: `ALL_CAPS_WITH_UNDERSCORES`.
 - Variables: members `mFoo`, globals `gFoo`. Header guards `_NAME_OF_FILE_H_`.

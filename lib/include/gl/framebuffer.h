@@ -68,7 +68,7 @@ namespace EdgeLighting
         }
 
         /// Allocates or resizes the RGBA8 colour attachment to @p width × @p height.
-        /// No-op when the FBO already exists at the requested size — safe to call
+        /// No-op when the FBO already exists at the requested size - safe to call
         /// every frame from the render loop. Logs a warning with the FBO's name
         /// if the framebuffer ends up incomplete.
         /// @return @c true on success (or no-op); @c false on failure.
@@ -125,7 +125,7 @@ namespace EdgeLighting
             glViewport(0, 0, mWidth, mHeight);
         }
 
-        /// Restores the default framebuffer. Does NOT touch the viewport — the
+        /// Restores the default framebuffer. Does NOT touch the viewport - the
         /// caller is responsible for setting it back to the window size.
         static void BindDefault()
         {

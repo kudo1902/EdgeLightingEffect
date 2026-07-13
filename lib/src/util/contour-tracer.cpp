@@ -24,10 +24,10 @@ namespace EdgeLighting
             {1, 3, -1, -1},   // 3:  A+B
             {2, 3, -1, -1},   // 4:  C
             {0, 2, -1, -1},   // 5:  A+C
-            {0, 1, 2, 3},     // 6:  B+C (saddle — see resolveSaddle)
+            {0, 1, 2, 3},     // 6:  B+C (saddle - see resolveSaddle)
             {1, 2, -1, -1},   // 7:  A+B+C
             {1, 2, -1, -1},   // 8:  D
-            {0, 1, 2, 3},     // 9:  A+D (saddle — see resolveSaddle)
+            {0, 1, 2, 3},     // 9:  A+D (saddle - see resolveSaddle)
             {0, 2, -1, -1},   // 10: B+D
             {2, 3, -1, -1},   // 11: A+B+D
             {1, 3, -1, -1},   // 12: C+D
@@ -197,7 +197,7 @@ namespace EdgeLighting
             chain.push_back(posMap[startKey]);
 
             Key curKey = startKey;
-            Key prevKey(-1, -1); // sentinel — never matches a real key
+            Key prevKey(-1, -1); // sentinel - never matches a real key
 
             size_t maxSteps = adj.size() * 2;
             for (size_t step = 0; step < maxSteps; ++step)

@@ -273,7 +273,7 @@ namespace EdgeLighting
         }
 
         /// Packs @p count loop-sample positions into an RGBA8 buffer (4 bytes each)
-        /// for upload as a byte data texture — Tizen/Mali only guarantee byte
+        /// for upload as a byte data texture - Tizen/Mali only guarantee byte
         /// textures, so positions can't be stored as float. Each coord is encoded
         /// as 16-bit fixed point (x -> R:hi G:lo, y -> B:hi A:lo), normalised over
         /// [-maxCoord, maxCoord] where @p outMaxCoord is the largest |coordinate|.

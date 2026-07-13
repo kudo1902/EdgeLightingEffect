@@ -10,7 +10,7 @@ precision highp float;
 
 // All other tuning constants (FILAMENT_*, HALO_*, BLOOM_*, grading, epsilons)
 // are injected from lib/include/renderer/neon-tuning.h via @NEON_TUNING@ in
-// shaders.h.in — single source of truth shared with the C++ renderer.
+// shaders.h.in - single source of truth shared with the C++ renderer.
 //
 // (Far early-out lives on the CPU: the draw quad is sized to rect + earlyOut,
 //  so there's no per-fragment discard here. See neon-renderer.cpp.)
@@ -48,14 +48,14 @@ uniform float uSampleSpacing;
 uniform sampler2D uLoopSamplesTex;
 uniform float     uSampleMaxCoord;
 
-// Travelling segments — up to MAX_SEGMENT_BOOSTS Gaussian brightness peaks.
+// Travelling segments - up to MAX_SEGMENT_BOOSTS Gaussian brightness peaks.
 // Each vec3 is packed as (position, invSigma, boost) so the shader avoids the
 // per-sample divide. When uSegmentCount == 0 the whole feature is skipped in
 // the gather loop.
 //
 // Declared in a std140 uniform block (the DALi PunctualLightBlock pattern)
 // instead of loose array uniforms: DALi/Tizen cannot upload a whole uniform
-// array in one call — it writes one element per registered property
+// array in one call - it writes one element per registered property
 // ("uSegments[0]", "uSegments[1]", …) into the block's UBO at the reflected
 // std140 array stride. On desktop GL the block is fed from a UBO in
 // neon-renderer.cpp. std140 pads each vec3 element to a 16-byte stride.
@@ -65,7 +65,7 @@ layout(std140) uniform SegmentBlock
     vec3 uSegments[MAX_SEGMENT_BOOSTS];
 };
 
-// Arc gating — only samples whose perimeter position falls within an arc of
+// Arc gating - only samples whose perimeter position falls within an arc of
 // uArcLength starting at uArcStart contribute. Defaults (0, 1) = full lit.
 //   uArcLength = 0 → nothing lit
 //   uArcLength = 1 → fully lit, regardless of start (start is just a phase)
@@ -79,7 +79,7 @@ uniform sampler2D uGradientLUT;
 
 // Distance (in pixels, from the rect edge) to the draw quad's edge. The whole
 // emission is faded to zero just before this, so the bloom never shows a hard
-// rectangular cutoff where the quad clips it — independent of bloom strength.
+// rectangular cutoff where the quad clips it - independent of bloom strength.
 uniform float uQuadMargin;
 
 // ---------------------------------------------------------------------------
@@ -114,7 +114,7 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
 //      @p si + 1 test picks that up. Same expression handles the non-wrap
 //      case because @p si + 1 always falls outside a sub-unit arc there.
 //
-// Both together fix the "sample-density gap" — without them, when the arc's
+// Both together fix the "sample-density gap" - without them, when the arc's
 // head sweeps across the wrap point between the last and first samples,
 // there's no sample position to represent the head for ~1/N of the
 // perimeter, so the arc visually stalls. With smooth + wrap check, sample 0
@@ -124,7 +124,7 @@ float arcInside(float si, float start, float length, float invNumSamples) {
     if (length <= 1e-6)       return 0.0;   // empty
     // Feather = ½ sample width OUTSIDE the arc on each side. Placement
     // OUTSIDE ensures the sample sitting exactly at `start` or `end` gets
-    // weight 1.0 — visible ends line up with debug markers. The ½-sample
+    // weight 1.0 - visible ends line up with debug markers. The ½-sample
     // span reduces bleed on long arcs (length ≈ 1) where the small dark gap
     // would otherwise glow from the feather overlapping the boundary sample.
     // invNumSamples comes from the loop-sample texture width so the feather
@@ -145,7 +145,7 @@ void main() {
     float d  = sdRoundBox(vPos, halfSize, uCornerRadius);
     float ad = abs(d);
 
-    // Note: the far-exterior early-out is handled on the CPU — the draw quad is
+    // Note: the far-exterior early-out is handled on the CPU - the draw quad is
     // sized to rect + earlyOut in NeonRenderer::setupGeometry, so geometry culls
     // the far region instead of a per-fragment discard (tiler-friendly).
     // The one-sided cuts below stay as discards: they cull a useful half-band
@@ -161,14 +161,14 @@ void main() {
     //
     // sigma = half-brightness radius (core = 0.5 at ad = sigma).
     // N = 2 * uFilamentFalloff controls the shape:
-    //   uFilamentFalloff = 0.5 → N = 1   (Laplace — heavy tails, smooth peak)
-    //   uFilamentFalloff = 1.0 → N = 2   (Gaussian — pure smooth falloff; default)
-    //   uFilamentFalloff = 2.0 → N = 4   (platykurtic — flatter top, sharper shoulder)
+    //   uFilamentFalloff = 0.5 → N = 1   (Laplace - heavy tails, smooth peak)
+    //   uFilamentFalloff = 1.0 → N = 2   (Gaussian - pure smooth falloff; default)
+    //   uFilamentFalloff = 2.0 → N = 4   (platykurtic - flatter top, sharper shoulder)
     //   uFilamentFalloff = 5.0 → N = 10  (near-rectangular)
     //
     // The Gaussian has no power-law tail (unlike the old super-Lorentzian),
     // so the filament reads as a clean thin line with a naturally smooth
-    // roll-off — no heavy glow bleed far from the line axis.
+    // roll-off - no heavy glow bleed far from the line axis.
     //
     // Peak at ad = 0 is always exactly 1.0.
     //
@@ -200,15 +200,15 @@ void main() {
     // 1 dot, 2 reciprocals, 1 sqrt, 1 gradient-LUT lookup, plus one exp() per
     // active segment boost (skipped entirely when uSegmentCount == 0).
     // No pow(), no in-shader stops walk, no HSV math. Sweep advance is folded
-    // into the GL_REPEAT-wrapped LUT — no fract() either.
+    // into the GL_REPEAT-wrapped LUT - no fract() either.
     float glow      = 0.0;
     float bloom     = 0.0;
     vec3  acc       = vec3(0.0);
     float wsum      = 0.0;
-    float wsumArc   = 0.0; // ∑ lit g — for the sharp filament gate
-    float headWSum  = 0.0; // ∑ headW(i) · g(i)  — for the position-weighted average
+    float wsumArc   = 0.0; // ∑ lit g - for the sharp filament gate
+    float headWSum  = 0.0; // ∑ headW(i) · g(i)  - for the position-weighted average
 
-    // Read the sample count from the loop-sample texture itself — no hardcoded
+    // Read the sample count from the loop-sample texture itself - no hardcoded
     // #define needed. The C++ side controls it when rebuilding the texture.
     int numSamples = textureSize(uLoopSamplesTex, 0).x;
     float invNumSamples = 1.0 / float(max(numSamples, 1));
@@ -234,11 +234,11 @@ void main() {
 
         acc  += texture(uGradientLUT, vec2(ti, 0.5)).rgb * lg;
         // wsum accumulates ALL samples (not arc-gated). This way `col` and
-        // `headWAvg` divide by the full local sample density — fragments far
+        // `headWAvg` divide by the full local sample density - fragments far
         // from the lit arc get a denominator that grows even as `acc` and
         // `headWSum` stay near zero, so the SDF-derived filament naturally
         // fades to black instead of showing the lit colour everywhere.
-        // wsumArc is the arc-gated counterpart — used to compute a sharper
+        // wsumArc is the arc-gated counterpart - used to compute a sharper
         // litFraction below for hard-cutting the filament past the arc edge.
         wsum    += g;
         wsumArc += lg;
@@ -279,7 +279,7 @@ void main() {
 
     // Halo visibility follows glowRadius so glowRadius == 0 means "filament
     // only". Below the anti-bead floor the kernel can't shrink further, so we
-    // dim instead — fading the halo to nothing at glowRadius=0.
+    // dim instead - fading the halo to nothing at glowRadius=0.
     float haloGate = clamp(uGlowRadius / max(haloFloor, 1e-4), 0.0, 1.0);
 
     vec3 result  = col * core  * FILAMENT_GAIN  * uIntensity * headWAvg * filamentGate * lineGate;

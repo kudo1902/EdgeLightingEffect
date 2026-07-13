@@ -115,9 +115,9 @@ namespace EdgeLighting
         // --- Compositing ---
 
         /// How the effect combines with whatever is already in the framebuffer.
-        /// false (default): premultiplied-alpha "over" — the dark surround is
+        /// false (default): premultiplied-alpha "over" - the dark surround is
         ///   transparent, so the effect composites onto the background.
-        /// true: opaque — the effect's surround pixels are filled with
+        /// true: opaque - the effect's surround pixels are filled with
         ///   @c opaqueColor, occluding the background within the effect's draw
         ///   region. The neon glow is composited on top.
         bool opaque = false;
@@ -136,10 +136,10 @@ namespace EdgeLighting
         /// N = 2 * filamentFalloff and sigma = half-brightness radius. Peak
         /// brightness on the axis (ad = 0) is always exactly 1.0; this value
         /// controls how the sides fall off:
-        ///   0.5 = Laplace-like (N=1) — heavier tails, very smooth peak
-        ///   1.0 = pure Gaussian (N=2) — clean smooth falloff (default)
-        ///   2.0 = platykurtic (N=4) — flatter top, sharper shoulder
-        ///   >3  = near-rectangular (N>=6) — plateau IS the line, edges crisp
+        ///   0.5 = Laplace-like (N=1) - heavier tails, very smooth peak
+        ///   1.0 = pure Gaussian (N=2) - clean smooth falloff (default)
+        ///   2.0 = platykurtic (N=4) - flatter top, sharper shoulder
+        ///   >3  = near-rectangular (N>=6) - plateau IS the line, edges crisp
         /// The Gaussian has no power-law tail, so the filament reads as a
         /// cleaner thin line even at wider lineWidth values. Lower values
         /// give a smoother, softer roll-off; higher values sharpen the edge.
@@ -149,7 +149,7 @@ namespace EdgeLighting
 
         /// Master brightness multiplier applied to filament + halo + bloom.
         float intensity = 1.0f;
-        /// Halo reach in pixels — how far the coloured glow spreads from the line.
+        /// Halo reach in pixels - how far the coloured glow spreads from the line.
         /// Also seeds the wider background bloom and corner colour cross-fade widths.
         float glowRadius = 5.0f;
         /// Strength of the wide soft background spill layered on top of the halo.
@@ -190,7 +190,7 @@ namespace EdgeLighting
         // Zero or more Gaussian-shaped brightness peaks ride on top of the base
         // neon line. Each entry has its own position / length / boost. The
         // shader sums the per-entry bell weights, so peaks can overlap.
-        // Empty vector (default) means "no boost anywhere" — the feature costs
+        // Empty vector (default) means "no boost anywhere" - the feature costs
         // one skip in the gather loop and is otherwise free.
         //
         // Drive an entry's `position` over time with @ref SegmentTravel or
@@ -220,6 +220,14 @@ namespace EdgeLighting
         float arcStart = 0.0f;
         float arcLength = 1.0f;
 
+        // --- Colour transition ---
+
+        /// Seconds to cross-fade the baked gradient when the colour stops (or
+        /// blend space) change. 0 = instant snap (the old behaviour). Because
+        /// the fade blends the whole 256-texel LUT rather than pairing stops,
+        /// it works even when the two stop sets differ in count or position.
+        float colorTransitionDuration = 0.3f;
+
         bool operator==(const NeonConfig &o) const
         {
             return enable == o.enable &&
@@ -239,7 +247,8 @@ namespace EdgeLighting
                    hueRotationRate == o.hueRotationRate &&
                    segmentBoosts == o.segmentBoosts &&
                    arcStart == o.arcStart &&
-                   arcLength == o.arcLength;
+                   arcLength == o.arcLength &&
+                   colorTransitionDuration == o.colorTransitionDuration;
         }
         bool operator!=(const NeonConfig &o) const { return !(*this == o); }
     } NeonConfig;
@@ -248,10 +257,10 @@ namespace EdgeLighting
     ///
     /// Renders the neon shader at half resolution then bilinear-blits to full res.
     /// The perf wins are the half-res FBO + reduced gather samples (not reduced
-    /// precision — the shader uses highp; mediump = fp16 on ANGLE overflowed the
+    /// precision - the shader uses highp; mediump = fp16 on ANGLE overflowed the
     /// large fragment coordinates and produced NaN "noise dots").
     /// Visual parameters (line width, intensity, colour stops, etc.) are shared
-    /// with Config::neon — adjust them in the Neon section of the debug UI.
+    /// with Config::neon - adjust them in the Neon section of the debug UI.
     typedef struct OptimizedNeonConfig
     {
         bool enable = false; ///< Enable or disable the optimized neon renderer
@@ -299,7 +308,7 @@ namespace EdgeLighting
 
     /// Top-level configuration for the EdgeLightingEffect pipeline.
     ///
-    /// Holds one sub-config per renderer. Renderers are independent — enable
+    /// Holds one sub-config per renderer. Renderers are independent - enable
     /// any subset; their visual layers composite via additive blending.
     typedef struct Config
     {
