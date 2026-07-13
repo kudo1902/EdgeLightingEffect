@@ -37,13 +37,13 @@ public:
     /// what will be rendered under it when the image is displayed inside a
     /// @p rectWidth × @p rectHeight rectangle (as the demo backdrop does).
     ///
-    /// The walk is parameterised on the *target rectangle's* perimeter — not
-    /// the image's — so aspect-ratio differences don't cause the picker and
+    /// The walk is parameterised on the *target rectangle's* perimeter - not
+    /// the image's - so aspect-ratio differences don't cause the picker and
     /// the shader to disagree. For each i in [0, stopCount) at parameter
     /// t = i/stopCount, we find the point (rx, ry) on the rect perimeter,
     /// then look up the image at (rx/rectW × imgW, ry/rectH × imgH).
     ///
-    /// Corner arcs are ignored (rect treated as sharp) — good enough when the
+    /// Corner arcs are ignored (rect treated as sharp) - good enough when the
     /// corner radius is a small fraction of the rect's dimensions.
     /// Returns empty if no image is loaded or stopCount < 1.
     std::vector<EdgeLighting::ColorStop>

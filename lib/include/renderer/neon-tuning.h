@@ -2,7 +2,7 @@
 #define _EDGE_LIGHTING_NEON_TUNING_H_
 
 // ---------------------------------------------------------------------------
-// Shared neon tuning constants — single source of truth.
+// Shared neon tuning constants - single source of truth.
 //
 // Consumed by BOTH:
 //   - the single-pass neon shaders (neon.frag, neon-optimized.frag), where
@@ -14,7 +14,7 @@
 // rejects the 'f' float-literal suffix, so a `const float X = 0.9f;` cannot
 // be written once and stay valid in both languages. Plain #define is the only
 // form that compiles identically as GLSL and as C++ from a single file.
-// (For C++-only constants, prefer constexpr — macros are used here strictly
+// (For C++-only constants, prefer constexpr - macros are used here strictly
 // because these values must also live inside the shaders.)
 //
 // ASCII only: keep this file free of non-ASCII so every GLSL compiler accepts

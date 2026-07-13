@@ -96,7 +96,7 @@ namespace EdgeLighting
 
         // Premultiplied-alpha "over": final = src.rgb + dst * (1 - src.a). Used
         // for both the opaque black fill and the neon, so the neon composites
-        // cleanly over the black. (Blending stays ON the whole time — toggling
+        // cleanly over the black. (Blending stays ON the whole time - toggling
         // GL_BLEND mid-draw is a common cross-driver footgun on mobile GLES.)
         glEnable(GL_BLEND);
         glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
@@ -104,7 +104,7 @@ namespace EdgeLighting
         // --- Opaque-mode black background pass -----------------------------
         // A fullscreen NDC quad (identity MVP); the fragment shader shapes the
         // black coverage from an analytic rounded-box SDF read off gl_FragCoord
-        // (highp — exact on Mali/Tizen):
+        // (highp - exact on Mali/Tizen):
         //   BOTH    -> black everywhere (whole viewport opaque).
         //   INSIDE  -> black only where d <= softEdge (off-side stays clear).
         //   OUTSIDE -> mirror of INSIDE.
@@ -140,7 +140,7 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
         mShaderProgram.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness);
         // Pack the segment vector as vec3(position, invSigma, boost) into the
-        // std140 SegmentBlock UBO (DALi-compatible pattern — see neon.frag).
+        // std140 SegmentBlock UBO (DALi-compatible pattern - see neon.frag).
         // Empty vector → uSegmentCount=0 and the shader skips the whole feature.
         SegmentBlockData segBlock = {};
         int segCount = std::min(static_cast<int>(config.neon.segmentBoosts.size()),
@@ -171,7 +171,7 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uGradientLUT", 0);
         mShaderProgram.SetUniform("uQuadMargin", mQuadMargin);
 
-        // Tight glow quad in both modes — opaque's far region is covered by the
+        // Tight glow quad in both modes - opaque's far region is covered by the
         // Pass 1 black fill above, so the gather never runs fullscreen.
         mVertexArray.DrawArrays(GL_TRIANGLES, 6);
 
@@ -250,12 +250,12 @@ namespace EdgeLighting
         mBlackRectShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                          ShaderSource::BLACK_RECT_FRAG_SRC,
                                          "NeonRenderer.BlackRect");
-        // Debug LUT strip — reuses the standard neon vertex shader (uMVP + aPos → vPos)
+        // Debug LUT strip - reuses the standard neon vertex shader (uMVP + aPos → vPos)
         // so the strip quad respects the same rect-local transform as the glow quad.
         mLUTDebugShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                         ShaderSource::NEON_LUT_DEBUG_FRAG_SRC,
                                         "NeonRenderer.LUTDebug");
-        // Debug stop markers — same vertex shader, filled-disc fragment.
+        // Debug stop markers - same vertex shader, filled-disc fragment.
         mStopMarkerShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                           ShaderSource::NEON_STOP_MARKER_FRAG_SRC,
                                           "NeonRenderer.StopMarker");
@@ -279,7 +279,7 @@ namespace EdgeLighting
                                 mSampleSpacing * float(EARLY_OUT_SPACING_FACTOR));
 
         // The wide bloom (1/D tail) stays visible further out as bloomStrength /
-        // intensity rise, so grow the quad with them — otherwise a strong bloom
+        // intensity rise, so grow the quad with them - otherwise a strong bloom
         // gets chopped at a hard rectangular edge, worst on small geometry. The
         // shader still soft-fades the emission to zero at mQuadMargin, so even
         // if this under-estimates there's no hard cutoff.

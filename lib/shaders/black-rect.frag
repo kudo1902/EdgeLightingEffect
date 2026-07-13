@@ -1,7 +1,7 @@
 precision highp float;
 
 // Opaque background pass drawn behind the neon when config.neon.opaque is on.
-// Fills the silhouette with `uOpaqueColor` (default black) — see config.h's
+// Fills the silhouette with `uOpaqueColor` (default black) - see config.h's
 // NeonConfig::opaqueColor. Drawn as a fullscreen NDC quad so the fragment
 // shader sees every pixel in the viewport; the silhouette comes from the
 // analytic rounded-box SDF below, read from gl_FragCoord (NOT an interpolated
@@ -10,10 +10,10 @@ precision highp float;
 // precision and a vertex(highp)->fragment(mediump) varying mismatch can even
 // fail to link.
 //
-//   BOTH    — fill covers the whole viewport (coverage = 1 everywhere).
-//   INSIDE  — fill only where d <= softEdge (rect interior + feather); pixels
+//   BOTH    - fill covers the whole viewport (coverage = 1 everywhere).
+//   INSIDE  - fill only where d <= softEdge (rect interior + feather); pixels
 //             further outside stay transparent so the off-side shows through.
-//   OUTSIDE — mirror of INSIDE.
+//   OUTSIDE - mirror of INSIDE.
 //
 // Boundaries are SDF-anti-aliased over ~1 px via fwidth(d).
 

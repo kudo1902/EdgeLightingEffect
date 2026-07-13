@@ -1,4 +1,4 @@
-# EdgeLightingEffect — Naming Conventions
+# EdgeLightingEffect - Naming Conventions
 
 ## Files
 - Source/header files: `kebab-case`
@@ -57,8 +57,8 @@
 
 ## Class layout / Access specifiers
 - Use separate `private:` (or `public:`) labels for methods vs member variables
-  - First `private:` — methods
-  - Second `private:` — member variables
+  - First `private:` - methods
+  - Second `private:` - member variables
   - *Correct:*
     ```
     class Foo : public BaseRenderer

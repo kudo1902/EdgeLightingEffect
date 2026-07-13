@@ -6,11 +6,11 @@
 
 ### 1.1 Design Goals
 
-- **Composable renderers** — Each visual layer is a `BaseRenderer` subclass; add/remove/reorder independently.
-- **CPU-driven head position** — The moving head position is computed once per frame by `EdgeLightingEffect` (with start/end mapping and winding) and passed as a uniform, keeping the shader stateless.
-- **Polyline SDF branching** — CUSTOM/MASK paths use a 1D texture-based polyline SDF (`sdPolyline`) in the shader, while RECT uses the analytic `sdRoundedBox`.
-- **Single-pass glow** — Fake double-pass glow (wider + fainter behind core stroke) avoids expensive FBO/blur.
-- **No runtime file I/O** — Shaders are embedded as C++ string literals at build time via CMake `configure_file()`.
+- **Composable renderers** - Each visual layer is a `BaseRenderer` subclass; add/remove/reorder independently.
+- **CPU-driven head position** - The moving head position is computed once per frame by `EdgeLightingEffect` (with start/end mapping and winding) and passed as a uniform, keeping the shader stateless.
+- **Polyline SDF branching** - CUSTOM/MASK paths use a 1D texture-based polyline SDF (`sdPolyline`) in the shader, while RECT uses the analytic `sdRoundedBox`.
+- **Single-pass glow** - Fake double-pass glow (wider + fainter behind core stroke) avoids expensive FBO/blur.
+- **No runtime file I/O** - Shaders are embedded as C++ string literals at build time via CMake `configure_file()`.
 
 ---
 
@@ -21,7 +21,7 @@
 ├── CMakeLists.txt                  # Root build: GLAD static lib, GLFW imported, subdirs
 ├── AGENTS.md                       # Naming conventions
 │
-├── lib/                            # Library — builds edge-lighting.a
+├── lib/                            # Library - builds edge-lighting.a
 │   ├── CMakeLists.txt              # Reads shaders, generates shaders.h, builds static lib
 │   ├── include/
 │   │   ├── core/
@@ -120,7 +120,7 @@ EdgeLightingEffect  (orchestrator)
 
 ### 3.1 Lifetime & Ownership
 
-- `EdgeLightingEffect` owns `shared_ptr<BaseRenderer>` — shared ownership allows external code to query or reconfigure individual renderers.
+- `EdgeLightingEffect` owns `shared_ptr<BaseRenderer>` - shared ownership allows external code to query or reconfigure individual renderers.
 - `ParticleRenderer` uniquely owns `ParticleSystem` via `unique_ptr`.
 - `ShaderProgram`, `VertexArray`, `Texture`, `Texture1D`, `Texture2D` are move-only RAII wrappers; they delete OpenGL resources on destruction.
 
@@ -212,9 +212,9 @@ main.cpp loop:
 
 ### 5.2 Registration Order (in `main.cpp`)
 
-1. **StrokeRenderer** — SDF-based edge stroke (bottommost layer)
-2. **WireframeRenderer** — Green bounding box overlay
-3. **ParticleRenderer** — Particle trail on top
+1. **StrokeRenderer** - SDF-based edge stroke (bottommost layer)
+2. **WireframeRenderer** - Green bounding box overlay
+3. **ParticleRenderer** - Particle trail on top
 
 ### 5.3 MVP Matrix (shared convention)
 
@@ -229,12 +229,12 @@ All renderers use this same formula, so local-space quad vertices (origin at cen
 
 ---
 
-## 6. StrokeRenderer — Core Edge Stroke
+## 6. StrokeRenderer - Core Edge Stroke
 
 ### 6.1 Vertex Geometry
 
 - A 6-vertex quad (2 triangles) covering `±(halfSize + margin)` in local space.
-- `margin = thickness + glowSize + 5.0f` — enough room for glow falloff and all alignment modes.
+- `margin = thickness + glowSize + 5.0f` - enough room for glow falloff and all alignment modes.
 - For CUSTOM/MASK modes: quad sized to path AABB (via `PathUtils::GetPathAABB`) + margin.
 - For RECT mode: quad sized to rectangle half-extents + margin.
 - Rebuilt on `OnConfigChanged()`.
@@ -255,19 +255,19 @@ All renderers use this same formula, so local-space quad vertices (origin at cen
 | `uFadeMode` | `int` | Feathering |
 | `uStrokeAnimation` | `int` | Animation |
 | `uSegmentLength` | `float` | Animation |
-| `uHeadPosition` | `float` | Animation — CPU-mapped head pos [0, 1] |
+| `uHeadPosition` | `float` | Animation - CPU-mapped head pos [0, 1] |
 | `uTime` | `float` | Animation |
 | `uColorMode` | `int` | Color |
 | `uLineCount` | `int` | Animation |
 | `uGlowSize` | `float` | Glow |
-| `uWinding` | `int` | 0=CW, 1=CCW — controls getPerimeterPos direction |
-| `uPathSource` | `int` | Path — 0=RECT, 1=CUSTOM, 2=MASK |
-| `uPathTexture` | `sampler1D` | Path — polyline points as RG32F (CUSTOM/MASK) |
-| `uPathPointCount` | `int` | Path — number of polyline points |
-| `uPathClosed` | `bool` | Path — is the path closed? |
-| `uPathTotalLength` | `float` | Path — total polyline length (CPU-computed) |
+| `uWinding` | `int` | 0=CW, 1=CCW - controls getPerimeterPos direction |
+| `uPathSource` | `int` | Path - 0=RECT, 1=CUSTOM, 2=MASK |
+| `uPathTexture` | `sampler1D` | Path - polyline points as RG32F (CUSTOM/MASK) |
+| `uPathPointCount` | `int` | Path - number of polyline points |
+| `uPathClosed` | `bool` | Path - is the path closed? |
+| `uPathTotalLength` | `float` | Path - total polyline length (CPU-computed) |
 
-### 6.3 SDF — `sdRoundedBox(p, b, r)`
+### 6.3 SDF - `sdRoundedBox(p, b, r)`
 
 ```glsl
 vec2 q = abs(p) - b + r;
@@ -278,16 +278,16 @@ return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
 - `d < 0` = inside, `d > 0` = outside, `d = 0` = exactly on the edge.
 - Used only for RECT mode. CUSTOM/MASK modes use `sdPolyline`.
 
-### 6.4 Perimeter Mapping — `getPerimeterPos(p, b, r)`
+### 6.4 Perimeter Mapping - `getPerimeterPos(p, b, r)`
 
 Branches on `uWinding`:
 
-- **CW** (`uWinding == 0`): `getPerimeterPosCW` — top→right→bottom→left from top-left.
-- **CCW** (`uWinding == 1`): `getPerimeterPosCCW` — left→bottom→right→top from top-left.
+- **CW** (`uWinding == 0`): `getPerimeterPosCW` - top→right→bottom→left from top-left.
+- **CCW** (`uWinding == 1`): `getPerimeterPosCCW` - left→bottom→right→top from top-left.
 
 Both handle sharp corners (linear edge fractions) and rounded corners (quarter-circle arcs via `atan()`).
 
-### 6.5 Polyline SDF — `sdPolyline(p)`
+### 6.5 Polyline SDF - `sdPolyline(p)`
 
 Used for CUSTOM/MASK paths. Iterates over segments stored in `uPathTexture` (1D, `GL_RG32F`):
 
@@ -334,7 +334,7 @@ for each line i in [0, lineCount):
 
 | Alignment | Limit | EdgeDist | Discard condition |
 |---|---|---|---|
-| `CENTER` (0) | `thickness/2 + glowSize` | `abs(d)` | — |
+| `CENTER` (0) | `thickness/2 + glowSize` | `abs(d)` | - |
 | `INNER` (1) | `thickness + glowSize` | `abs(d)` | `d > 0` (outside) |
 | `OUTER` (2) | `thickness + glowSize` | `d` | `d < 0` (inside) |
 
@@ -351,8 +351,8 @@ lineAlpha *= smoothstep(0, fadeRange, edgeDist);
 
 When `glowEnable` is true, the quad is drawn **twice**:
 
-1. **Glow pass**: `uGlowSize = glowSize`, `uIntensity = glowIntensity` — wider, fainter glow.
-2. **Core pass**: `uGlowSize = 0`, `uIntensity = stroke.intensity` — core stroke on top.
+1. **Glow pass**: `uGlowSize = glowSize`, `uIntensity = glowIntensity` - wider, fainter glow.
+2. **Core pass**: `uGlowSize = 0`, `uIntensity = stroke.intensity` - core stroke on top.
 
 The shader extends the `limit` by `glowSize`, making `smoothstep` produce a wider visible region at lower opacity. No FBO or blur needed.
 
@@ -360,7 +360,7 @@ The shader extends the `limit` by `glowSize`, making `smoothstep` produce a wide
 
 Both passes use **additive blending** (`GL_SRC_ALPHA, GL_ONE`) so glow and core accumulate naturally, and overlapping segments brighten correctly.
 
-### 6.10 Texture Upload — `uploadPathTexture()`
+### 6.10 Texture Upload - `uploadPathTexture()`
 
 - RECT mode: uploads a 1-pixel fallback texture (avoids macOS GL warning about unbound 1D sampler).
 - CUSTOM/MASK modes:
@@ -386,7 +386,7 @@ For CUSTOM/MASK with CW winding, the uploaded texture has reversed points, so th
 |---|---|---|
 | `STATIC` | 0 | `primaryColor` (uniform across stroke) |
 | `GRADIENT` | 1 | `mix(primary, secondary, 1.0 - abs(2*t - 1))` |
-| `RAINBOW` | 2 | `hsv2rgb(vec3(t, 0.8, 1.0))` — hue = perimPos |
+| `RAINBOW` | 2 | `hsv2rgb(vec3(t, 0.8, 1.0))` - hue = perimPos |
 | `RAINBOW_TIME` | 3 | `hsv2rgb(vec3(fract(time*0.15), 0.8, 1.0))` |
 | `PULSE` | 4 | `mix(primary, secondary, sin(time*2)*0.5+0.5)` |
 
@@ -529,7 +529,7 @@ class Animation {
 - `Winding::COUNTER_CLOCKWISE` (default): vertex order defines the traversal direction.
 - `Winding::CLOCKWISE`: reverses the vertex order for CUSTOM/MASK (texture upload + particle lookup).
 - For RECT, the `getPerimeterPosCW`/`getPerimeterPosCCW` shader functions are selected accordingly.
-- No automatic winding detection — the vertex order is taken as-is.
+- No automatic winding detection - the vertex order is taken as-is.
 
 ---
 
@@ -565,36 +565,36 @@ Marching Squares with sub-pixel linear interpolation. Handles saddle cases (patt
 
 ### 12.1 Texture (base)
 
-- `Texture()` — `glGenTextures(1, &mId)`
-- `~Texture()` — `glDeleteTextures(1, &mId)`
+- `Texture()` - `glGenTextures(1, &mId)`
+- `~Texture()` - `glDeleteTextures(1, &mId)`
 - Move-only. Provides `GetId()`, `IsValid()`.
 
 ### 12.2 Texture1D : Texture
 
-- `Bind(unit)`, `Unbind(unit)` — `glActiveTexture + glBindTexture(GL_TEXTURE_1D)`.
-- `SetData(data, count, ...)` — `glTexImage1D(GL_TEXTURE_1D, ..., GL_RG32F, count, ..., GL_RG, GL_FLOAT, data)`.
-- `SetParams(minFilter, magFilter, wrapS)` — nearest filtering, clamp-to-edge by default.
+- `Bind(unit)`, `Unbind(unit)` - `glActiveTexture + glBindTexture(GL_TEXTURE_1D)`.
+- `SetData(data, count, ...)` - `glTexImage1D(GL_TEXTURE_1D, ..., GL_RG32F, count, ..., GL_RG, GL_FLOAT, data)`.
+- `SetParams(minFilter, magFilter, wrapS)` - nearest filtering, clamp-to-edge by default.
 
 ### 12.3 Texture2D : Texture
 
-- `SetData(data, w, h, ...)` — `glTexImage2D`.
-- `SetDataFromFile(path, ...)` — loads via stb_image, uploads, frees.
-- `SetParams(minFilter, magFilter, wrapS, wrapT)` — linear filtering, clamp-to-edge by default.
+- `SetData(data, w, h, ...)` - `glTexImage2D`.
+- `SetDataFromFile(path, ...)` - loads via stb_image, uploads, frees.
+- `SetParams(minFilter, magFilter, wrapS, wrapT)` - linear filtering, clamp-to-edge by default.
 
 ### 12.4 ShaderProgram
 
 - Constructor compiles and links a vertex + fragment shader pair.
-- `SetUniform(name, value)` — typed wrappers for `int`, `float`, `vec2`, `vec4`, `mat4`.
+- `SetUniform(name, value)` - typed wrappers for `int`, `float`, `vec2`, `vec4`, `mat4`.
 - Move-only (deleted copy). Destructor calls `glDeleteProgram()`.
 - Logs compile/link errors through `LOG_E`; `mId = 0` on failure.
 
 ### 12.5 VertexArray
 
 - Constructor creates VAO + VBO via `glGenVertexArrays` + `glGenBuffers`.
-- `SetVertexData(data, size, usage)` — uploads vertices to VBO.
-- `SetAttribPointer(location, size, type, stride, offset)` — configures vertex attribute.
-- `DrawArrays(mode, count)` — binds VAO, draws, unbinds.
-- `BindBuffer()` — required before `glBufferSubData` (VAO doesn't restore `GL_ARRAY_BUFFER`).
+- `SetVertexData(data, size, usage)` - uploads vertices to VBO.
+- `SetAttribPointer(location, size, type, stride, offset)` - configures vertex attribute.
+- `DrawArrays(mode, count)` - binds VAO, draws, unbinds.
+- `BindBuffer()` - required before `glBufferSubData` (VAO doesn't restore `GL_ARRAY_BUFFER`).
 - Move-only. Destructor deletes VBO then VAO.
 
 ---
@@ -680,8 +680,8 @@ The console HUD (via `PrintCurrentConfig`) shows:
 
 ### 14.3 Preset Paths
 
-- `MakeTrianglePath()` — 3-point triangle near rectangle edges.
-- `MakeDiamondPath()` — 4-point diamond near rectangle edges.
+- `MakeTrianglePath()` - 3-point triangle near rectangle edges.
+- `MakeDiamondPath()` - 4-point diamond near rectangle edges.
 - Both return hardcoded app-space pixel coordinates.
 
 ---

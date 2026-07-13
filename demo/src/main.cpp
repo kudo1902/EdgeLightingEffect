@@ -25,7 +25,7 @@ int main()
         return -1;
     }
 
-    // Context hints — Core 3.3 on macOS, OpenGL ES 3.0 on Windows / Linux.
+    // Context hints - Core 3.3 on macOS, OpenGL ES 3.0 on Windows / Linux.
     // The PLATFORM_* defines come from lib/CMakeLists.txt.
 #if defined(PLATFORM_MACOS)
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
@@ -49,7 +49,7 @@ int main()
 
     glfwMakeContextCurrent(window);
 
-    // GL function loader — only desktop GL and ANGLE-on-Windows need GLAD.
+    // GL function loader - only desktop GL and ANGLE-on-Windows need GLAD.
     // Linux uses native <GLES3/gl3.h> whose symbols are already linked.
 #if defined(PLATFORM_MACOS)
     if (!gladLoadGLLoader((GLADloadproc)glfwGetProcAddress))

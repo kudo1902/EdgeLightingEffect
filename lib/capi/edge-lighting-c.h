@@ -405,14 +405,14 @@ EL_API void el_animation_set_speed(EL_Animation *anim, float speed);
 /* --------------------------------------------------------------------------
  * Modulators (compose your own animations)
  *
- * Mirrors EdgeLighting::Modulator — pure `time -> float` primitives that can
+ * Mirrors EdgeLighting::Modulator - pure `time -> float` primitives that can
  * be composed (multiplied, added, sequenced) into arbitrarily complex signals.
  *
  * Ownership model
  * ---------------
  * All factories return an owning EL_Modulator* the caller must destroy.
  * Composition factories (multiplier/adder/remap/sequence_append) SHARE
- * ownership of their inputs — the caller may destroy their handle right after
+ * ownership of their inputs - the caller may destroy their handle right after
  * composing, the composition keeps the underlying modulator alive internally.
  *
  * Typical use
@@ -433,7 +433,7 @@ typedef enum EL_Waveform
 {
     EL_WAVE_SINE = 0,     ///< Smooth periodic (default).
     EL_WAVE_TRIANGLE = 1, ///< Linear up + linear down.
-    EL_WAVE_SQUARE = 2,   ///< Hard on/off — useful for strobes.
+    EL_WAVE_SQUARE = 2,   ///< Hard on/off - useful for strobes.
     EL_WAVE_SAWTOOTH = 3  ///< Linear ramp 0->1, snap back.
 } EL_Waveform;
 
@@ -442,7 +442,7 @@ typedef enum EL_Waveform
  *  (colour stops, glowSide, position vec2) are not exposed yet.
  *
  *  New values are appended at the end so existing binaries stay ABI-compatible
- *  with headers that add fields — old code will simply return the default
+ *  with headers that add fields - old code will simply return the default
  *  branch (no-op) for enum values it doesn't recognise. */
 typedef enum EL_ConfigField
 {
@@ -453,7 +453,7 @@ typedef enum EL_ConfigField
     EL_FIELD_NEON_FILAMENT_FALLOFF = 4,
     EL_FIELD_NEON_GLOW_SIDE_SOFTNESS = 5,
 
-    /* Extended animation-worthy scalars — added after the initial ship. */
+    /* Extended animation-worthy scalars - added after the initial ship. */
     EL_FIELD_NEON_HUE_ROTATION_RATE = 6,
 
     /* Segment boost scalars target entry 0 of neon.segmentBoosts and
@@ -526,7 +526,7 @@ EL_API float el_modulator_evaluate(EL_Modulator *mod, float time);
  * @param field  One of EL_ConfigField.
  * @param mod    Modulator to evaluate each Apply. Shared ownership.
  * @return An EL_Animation the caller destroys with @ref el_animation_destroy.
- *         Loops forever (playback mode LOOP) — set one-shot via
+ *         Loops forever (playback mode LOOP) - set one-shot via
  *         @ref el_animation_set_playback_mode if desired.
  */
 EL_API EL_Animation *el_animation_from_modulator(int32_t field /*EL_ConfigField*/, EL_Modulator *mod);

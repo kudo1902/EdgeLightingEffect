@@ -23,7 +23,7 @@ Attribution is not required but is appreciated.
 
 | File | Photographer | Photo URL |
 | ---- | ------------ | --------- |
-| `mask.png` | authored in this repo | — |
+| `mask.png` | authored in this repo | - |
 | `josie-weiss-V2Q6zllnFgo-unsplash.jpg` | [Josie Weiss](https://unsplash.com/@scarlettweiss?utm_source=unsplash&utm_medium=referral&utm_content=creditCopyText) | [A sunset with trees](https://unsplash.com/photos/a-sunset-with-trees-V2Q6zllnFgo?utm_source=unsplash&utm_medium=referral&utm_content=creditCopyText) |
 | `lucas-k-wQLAGv4_OYs-unsplash.jpg` | [Lucas K](https://unsplash.com/@aznbokchoy?utm_source=unsplash&utm_medium=referral&utm_content=creditCopyText) | [Blue and orange smoke](https://unsplash.com/photos/blue-and-orange-smoke-wQLAGv4_OYs?utm_source=unsplash&utm_medium=referral&utm_content=creditCopyText) |
 | `fatih-kgqu_qs3B78-unsplash.jpg` | [Fatih](https://unsplash.com/@fatihwashere?utm_source=unsplash&utm_medium=referral&utm_content=creditCopyText) | [Pink and yellow wall paint](https://unsplash.com/photos/pink-and-yellow-wall-paint-kgqu_qs3B78?utm_source=unsplash&utm_medium=referral&utm_content=creditCopyText) |

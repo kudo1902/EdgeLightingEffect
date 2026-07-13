@@ -24,10 +24,10 @@ namespace EdgeLighting
     /// @brief How an animation behaves once it finishes one full cycle.
     ///
     /// @ref Animation::GetDuration is the length of ONE cycle in both modes:
-    /// - @c LOOP     — the cycle repeats forever; elapsed wraps at duration
+    /// - @c LOOP     - the cycle repeats forever; elapsed wraps at duration
     ///                 (matches how DOM / CSS / GreenSock / Unity Animator
     ///                 all define animation duration).
-    /// - @c ONE_SHOT — the animation completes after exactly one cycle and
+    /// - @c ONE_SHOT - the animation completes after exactly one cycle and
     ///                 fires @ref Animation::OnComplete.
     ///
     /// If @c mDuration is 0 the modulator inside the subclass is expected to
@@ -43,22 +43,22 @@ namespace EdgeLighting
     /// @brief Per-animation state.
     ///
     /// Every @ref Animation carries its own state independent of any other
-    /// animation and independent of the effect's @ref Clock — pausing one
+    /// animation and independent of the effect's @ref Clock - pausing one
     /// animation does not affect the others, and the driver still calls
     /// @ref Animation::Update / @ref Animation::Apply on paused animations so
     /// they can hold their last-written value.
     ///
-    ///   Stopped   — initial state and after @ref Animation::Stop.  Elapsed
+    ///   Stopped   - initial state and after @ref Animation::Stop.  Elapsed
     ///               is 0 and does NOT advance.  @ref Animation::Apply is a
     ///               no-op: the target config field is left as-is (use
     ///               @ref Animation::Reset to write the modulator's t=0
     ///               baseline explicitly).
-    ///   Playing   — @ref Animation::Update advances elapsed by
+    ///   Playing   - @ref Animation::Update advances elapsed by
     ///               @c dt * @ref Animation::GetSpeed.  @ref Animation::Apply
     ///               writes the current modulator value.
-    ///   Paused    — elapsed is frozen at its last-Playing value.
+    ///   Paused    - elapsed is frozen at its last-Playing value.
     ///               @ref Animation::Apply still runs and holds that value.
-    ///   Completed — set automatically when a @c ONE_SHOT animation's elapsed
+    ///   Completed - set automatically when a @c ONE_SHOT animation's elapsed
     ///               crosses @ref Animation::GetDuration.  Elapsed is clamped
     ///               to duration, does not advance, and @ref Animation::Apply
     ///               keeps writing the modulator's final value.  Fires
@@ -80,24 +80,24 @@ namespace EdgeLighting
     /// with the frame delta; the animation advances elapsed only when it is
     /// @c Playing.  @ref Apply is then called and writes the modulator's
     /// value into the target @ref Config field (unless the animation is
-    /// @c Stopped, in which case Apply is a no-op — call @ref Reset to force
+    /// @c Stopped, in which case Apply is a no-op - call @ref Reset to force
     /// the t=0 baseline into the config once).
     ///
     /// ## State control (per-animation)
     ///
-    /// - @ref Play  — Stopped/Completed → Playing (elapsed = 0);
+    /// - @ref Play  - Stopped/Completed → Playing (elapsed = 0);
     ///                Paused → Playing (elapsed continues).
-    /// - @ref Pause — Playing → Paused (elapsed frozen).
-    /// - @ref Stop  — any → Stopped (elapsed = 0, frozen; Apply becomes no-op).
-    /// - @ref Reset — writes the modulator's t=0 value into config and
+    /// - @ref Pause - Playing → Paused (elapsed frozen).
+    /// - @ref Stop  - any → Stopped (elapsed = 0, frozen; Apply becomes no-op).
+    /// - @ref Reset - writes the modulator's t=0 value into config and
     ///                zeroes elapsed; does NOT change state.  Works from any
     ///                state so it can act as "rewind while playing" or
     ///                "restore baseline while stopped".
     ///
     /// ## Playback mode and duration
     ///
-    /// - @ref PlaybackMode — does this animation loop forever or stop?
-    /// - @c mDuration      — length of ONE animation cycle in seconds.
+    /// - @ref PlaybackMode - does this animation loop forever or stop?
+    /// - @c mDuration      - length of ONE animation cycle in seconds.
     ///                       Consulted by both modes:
     ///                         * @c LOOP wraps elapsed at duration so the
     ///                           modulator sees a periodic signal;
@@ -111,10 +111,10 @@ namespace EdgeLighting
     ///
     /// ## Callbacks
     ///
-    /// - @ref OnComplete       — fired once when a @c ONE_SHOT transitions
+    /// - @ref OnComplete       - fired once when a @c ONE_SHOT transitions
     ///                           into @c Completed.  Never fires for loopers.
     ///                           Use it to chain animations sequentially.
-    /// - @ref OnStateChanged   — fired on every state transition with (old, new).
+    /// - @ref OnStateChanged   - fired on every state transition with (old, new).
     ///                           Redundant with @c OnComplete for the completion
     ///                           edge but composes cleaner for arbitrary graphs
     ///                           (e.g. UI indicators that need to track all four
@@ -143,7 +143,7 @@ namespace EdgeLighting
         ///          t=0 output baked into the config immediately (so the
         ///          animated field starts at the modulator's baseline
         ///          instead of whatever value was previously there), call
-        ///          @ref Reset once on the fresh animation — it writes
+        ///          @ref Reset once on the fresh animation - it writes
         ///          ApplyAt(cfg, 0) without changing state.
         Animation() = default;
 
@@ -158,7 +158,7 @@ namespace EdgeLighting
         /// @brief Enter the @c Playing state.
         /// @details From @c Stopped or @c Completed, elapsed is reset to 0.
         ///          From @c Paused, elapsed continues from its frozen value
-        ///          (there is no separate "Resume" method — @c Play from
+        ///          (there is no separate "Resume" method - @c Play from
         ///          @c Paused *is* resume).  From @c Playing, this is a
         ///          no-op (no state change, no callback).
         virtual void Play()
@@ -186,7 +186,7 @@ namespace EdgeLighting
         }
 
         /// @brief Reset elapsed to 0 and enter @c Stopped.
-        /// @details @ref Apply becomes a no-op after @c Stop — the target
+        /// @details @ref Apply becomes a no-op after @c Stop - the target
         ///          config field is left as-is.  Call @ref Reset if you want
         ///          the modulator's t=0 baseline written back into config.
         ///          No-op if already Stopped.
@@ -229,9 +229,9 @@ namespace EdgeLighting
             mElapsed += dt * mSpeed;
             // Duration semantics: mDuration is the length of ONE animation
             // cycle, uniform across both modes.
-            //   LOOP     — wrap mElapsed at mDuration so ApplyAt sees a
+            //   LOOP     - wrap mElapsed at mDuration so ApplyAt sees a
             //              periodic signal that resets every cycle.
-            //   ONE_SHOT — complete after exactly one cycle.
+            //   ONE_SHOT - complete after exactly one cycle.
             //   mDuration == 0 opts out: the modulator is expected to own its
             //   own periodicity (e.g. an internal Oscillator with its own
             //   period) and elapsed advances monotonically. All existing
@@ -259,7 +259,7 @@ namespace EdgeLighting
         ///          @c Completed the subclass's @ref ApplyAt is invoked with
         ///          the current @c mElapsed.
         /// @note Virtual so composite animations (@ref AnimationGroup) can
-        ///       bypass the Stopped-skip and always forward to children —
+        ///       bypass the Stopped-skip and always forward to children -
         ///       the group's own state is a broadcast label, not a gate on
         ///       whether children execute.
         virtual void Apply(Config &cfg) const
@@ -294,7 +294,7 @@ namespace EdgeLighting
         /// @details In @c LOOP mode, elapsed wraps at this value so the
         ///          modulator sees a periodic signal. In @c ONE_SHOT mode,
         ///          the animation completes after one cycle. A value of 0
-        ///          opts out — the modulator owns its own periodicity and
+        ///          opts out - the modulator owns its own periodicity and
         ///          elapsed advances monotonically. Virtual so composite
         ///          animations can derive it from their children.
         virtual float GetDuration() const { return mDuration; }
@@ -316,7 +316,7 @@ namespace EdgeLighting
         /// @brief Set the playback rate multiplier.
         /// @details 1.0 = normal speed (default), 2.0 = double, 0.5 = half.
         ///          Setting it to 0 keeps the animation Playing but freezes
-        ///          elapsed accumulation — semantically equivalent to Pause
+        ///          elapsed accumulation - semantically equivalent to Pause
         ///          for the value, but the state stays Playing.  Use
         ///          @ref Pause when you want the state to reflect it.
         void SetSpeed(float speed) { mSpeed = std::max(0.0f, speed); }
@@ -337,7 +337,7 @@ namespace EdgeLighting
         std::function<void(AnimationState /*prev*/, AnimationState /*now*/)> OnStateChanged;
 
     protected:
-        /// @brief Subclass hook — write the modulator@elapsed value into @p cfg.
+        /// @brief Subclass hook - write the modulator@elapsed value into @p cfg.
         /// @details The public @ref Apply routes through here (skipping the
         ///          call entirely when @c Stopped), and @ref Reset invokes it
         ///          with @c elapsed = 0.  Subclasses should keep this pure
@@ -364,11 +364,11 @@ namespace EdgeLighting
             }
         }
 
-        // Default state is Stopped — a newly-constructed animation does
+        // Default state is Stopped - a newly-constructed animation does
         // nothing on Apply until the caller explicitly Play()s it. Callers
         // that want the modulator's t=0 baseline written into the config
         // (typical "seed the field so a Stopped animation still shows its
-        // initial value") should call @ref Reset(cfg) once at setup — that
+        // initial value") should call @ref Reset(cfg) once at setup - that
         // triggers @ref ApplyAt(cfg, 0) without changing state. The C ABI
         // (@c el_animation_apply) preserves its old stateless semantics by
         // auto-Playing when it finds the animation Stopped.
@@ -384,7 +384,7 @@ namespace EdgeLighting
         ///          setting is useful for stateless callers (like the C ABI
         ///          where the caller tracks elapsed themselves) and for
         ///          scrubbing / testing. Does NOT change state or trigger
-        ///          @ref OnComplete on its own — the next @ref Update tick
+        ///          @ref OnComplete on its own - the next @ref Update tick
         ///          will complete a one-shot whose elapsed has crossed
         ///          @ref GetDuration.
         void SetElapsed(float elapsed) { mElapsed = std::max(0.0f, elapsed); }
@@ -396,7 +396,7 @@ namespace EdgeLighting
     /// @brief Container of animations updated and applied in registration order.
     ///
     /// @details Behaviour:
-    /// - @ref Add / @ref Remove work live — children can be added or removed
+    /// - @ref Add / @ref Remove work live - children can be added or removed
     ///   while the group's other children keep running.
     /// - @ref Play / @ref Pause / @ref Stop / @ref Reset are broadcast to
     ///   every child (convenience for "control everything at once"); each
@@ -407,7 +407,7 @@ namespace EdgeLighting
     ///     * Mode is LOOP if any child loops, else ONE_SHOT.
     ///     * Duration is the longest child duration (0 if any child loops).
     ///
-    /// Later-added children write their fields on top of earlier ones — the
+    /// Later-added children write their fields on top of earlier ones - the
     /// natural "base → modulation" layering.  Prefer @ref OnComplete on
     /// individual children for sequencing (chain B to fire when A finishes).
     class AnimationGroup : public Animation
@@ -418,7 +418,7 @@ namespace EdgeLighting
         // --- Composition -------------------------------------------------
 
         /// @brief Append a child. Added children start in whatever state they
-        ///        already carry (typically Stopped — call @c child->Play() or
+        ///        already carry (typically Stopped - call @c child->Play() or
         ///        @ref Play on the group to start them).
         void Add(AnimationPtr animation)
         {

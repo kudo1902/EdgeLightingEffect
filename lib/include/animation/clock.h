@@ -5,7 +5,7 @@ namespace EdgeLighting
 {
     /// @brief Play/pause time accumulator.
     ///
-    /// Drives all @ref Modulator evaluations — `clock.GetTime()` is the
+    /// Drives all @ref Modulator evaluations - `clock.GetTime()` is the
     /// canonical input to any animation in the system.
     ///
     /// Pausing freezes time accumulation, so any modulator sampled with the

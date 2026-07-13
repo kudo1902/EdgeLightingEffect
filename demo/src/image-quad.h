@@ -17,7 +17,7 @@ namespace EdgeLightingDemo
     /// origin at the top-left of the framebuffer, y grows downward. The shader
     /// flips y into GL clip space; texture coordinates are passed through
     /// directly (aPos.y = 0 → texcoord.y = 0), which samples row 0 of the
-    /// uploaded pixel buffer — stb_image loads with row 0 = image top, so this
+    /// uploaded pixel buffer - stb_image loads with row 0 = image top, so this
     /// renders the image upright.
     class ImageQuad
     {

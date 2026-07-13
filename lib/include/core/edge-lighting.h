@@ -19,7 +19,7 @@ namespace EdgeLighting
     ///
     /// This class only ticks the clock and forwards its time to renderers.
     /// Parameter modulation (oscillators / easing / sequences) lives outside
-    /// in the @ref Modulator family — callers compose them however they like
+    /// in the @ref Modulator family - callers compose them however they like
     /// and write into a @ref Config before calling @ref SetConfig.
     class EdgeLightingEffect
     {
