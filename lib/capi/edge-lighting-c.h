@@ -52,7 +52,7 @@ extern "C"
 #endif
 
 /** ABI version. Bump on any breaking change to a struct layout or signature. */
-#define EL_ABI_VERSION 8
+#define EL_ABI_VERSION 9
 
 /** Maximum colour stops per gradient — hard cap because the EL_NeonConfig
  *  struct's colorStops[] array is fixed-size at the ABI boundary. The core C++
@@ -532,6 +532,32 @@ extern "C"
      *         @ref el_animation_set_playback_mode if desired.
      */
     EL_API EL_Animation *el_animation_from_modulator(int32_t field /*EL_ConfigField*/, EL_Modulator *mod);
+
+    /**
+     * @brief Create an empty field-bound animation, ready to accept multiple
+     *        @ref el_animation_add_field bindings.
+     * @details All bindings share the animation's elapsed and duration, so they
+     *          stay phase-locked - use this to drive several fields off one
+     *          clock (e.g. a "breathing" effect that pulses intensity, glow,
+     *          and bloom together). For independent parallel animations, keep
+     *          them as separate handles and update each with its own
+     *          @ref el_animation_apply call.
+     * @return An EL_Animation the caller destroys with @ref el_animation_destroy.
+     */
+    EL_API EL_Animation *el_animation_empty(void);
+
+    /**
+     * @brief Append a (field, modulator) binding to a field-bound animation.
+     * @param anim  Animation created via @ref el_animation_empty or
+     *              @ref el_animation_from_modulator. Not a preset animation
+     *              (@ref el_animation_create) - those bind their own fields
+     *              internally and return @c EL_ERR_NULL_ARG here.
+     * @param field One of EL_ConfigField.
+     * @param mod   Modulator to evaluate each Apply. Shared ownership.
+     */
+    EL_API EL_Result el_animation_add_field(EL_Animation *anim,
+                                            int32_t field /*EL_ConfigField*/,
+                                            EL_Modulator *mod);
 
 #ifdef __cplusplus
 } // extern "C"

@@ -14,6 +14,7 @@
 #include "renderer/neon-renderer.h"
 #include "renderer/neon-optimized-renderer.h"
 #include "animation/neon-animations.h"
+#include "animation/field-bound-animation.h"
 #include "animation/modulator.h"
 
 #include <algorithm>
@@ -147,17 +148,6 @@ namespace
         return out;
     }
 
-    /// Ensure @c segmentBoosts has at least one entry so the scalar
-    /// EL_FIELD_NEON_SEGMENT_* fields have something to write into.
-    EdgeLighting::SegmentBoost &ensureFirstSegment(EdgeLighting::Config &cfg)
-    {
-        if (cfg.neon.segmentBoosts.empty())
-        {
-            cfg.neon.segmentBoosts.push_back({0.0f, 0.15f, 4.0f});
-        }
-        return cfg.neon.segmentBoosts.front();
-    }
-
     EdgeLighting::Config toConfig(const EL_Config &c)
     {
         using namespace EdgeLighting;
@@ -239,101 +229,14 @@ namespace
         out.wireframe.a = c.wireframe.color.a;
     }
 
-    // ----------------------------------------------------------------------
-    // FieldBoundAnimation - writes a modulator's value into one Config field
-    // named by EL_ConfigField. Backs el_animation_from_modulator.
-    // ----------------------------------------------------------------------
-    class FieldBoundAnimation : public EdgeLighting::Animation
+    /// EL_ConfigField values mirror EdgeLighting::AnimatableField 1:1 (both
+    /// enum sets append at the end, so old binaries stay ABI-compatible with
+    /// new headers). Unknown values become the default branch of the switch
+    /// in FieldBoundAnimation::ApplyAt — i.e. a silent no-op.
+    inline EdgeLighting::AnimatableField toAnimatableField(int32_t f)
     {
-    public:
-        FieldBoundAnimation(int32_t field, EdgeLighting::ModulatorPtr mod)
-            : mField(field), mMod(std::move(mod))
-        {
-        }
-
-        void ApplyAt(EdgeLighting::Config &cfg, float elapsed) const override
-        {
-            if (!mMod)
-            {
-                return;
-            }
-            float v = mMod->Evaluate(elapsed);
-            switch (mField)
-            {
-            case EL_FIELD_NEON_INTENSITY:
-            {
-                cfg.neon.intensity = v;
-                break;
-            }
-            case EL_FIELD_NEON_LINE_WIDTH:
-            {
-                cfg.neon.lineWidth = v;
-                break;
-            }
-            case EL_FIELD_NEON_GLOW_RADIUS:
-            {
-                cfg.neon.glowRadius = v;
-                break;
-            }
-            case EL_FIELD_NEON_BLOOM_STRENGTH:
-            {
-                cfg.neon.bloomStrength = v;
-                break;
-            }
-            case EL_FIELD_NEON_FILAMENT_FALLOFF:
-            {
-                cfg.neon.filamentFalloff = v;
-                break;
-            }
-            case EL_FIELD_NEON_GLOW_SIDE_SOFTNESS:
-            {
-                cfg.neon.glowSideSoftness = v;
-                break;
-            }
-            case EL_FIELD_NEON_HUE_ROTATION_RATE:
-            {
-                cfg.neon.hueRotationRate = v;
-                break;
-            }
-            case EL_FIELD_NEON_SEGMENT_POSITION:
-            {
-                ensureFirstSegment(cfg).position = v;
-                break;
-            }
-            case EL_FIELD_NEON_SEGMENT_LENGTH:
-            {
-                ensureFirstSegment(cfg).length = v;
-                break;
-            }
-            case EL_FIELD_NEON_SEGMENT_BOOST:
-            {
-                ensureFirstSegment(cfg).boost = v;
-                break;
-            }
-            case EL_FIELD_NEON_ARC_START:
-            {
-                cfg.neon.arcStart = v;
-                break;
-            }
-            case EL_FIELD_NEON_ARC_LENGTH:
-            {
-                cfg.neon.arcLength = v;
-                break;
-            }
-            default:
-            {
-                // Unknown field id - no-op rather than crash. Handles
-                // forward-compatibility if a newer header emits an enum value
-                // the current binary doesn't know.
-                break;
-            }
-            }
-        }
-
-    private:
-        int32_t mField;
-        EdgeLighting::ModulatorPtr mMod;
-    };
+        return static_cast<EdgeLighting::AnimatableField>(f);
+    }
 } // namespace
 
 // ==========================================================================
@@ -1098,12 +1001,59 @@ extern "C"
         }
         try
         {
-            return new EL_Animation{std::make_shared<FieldBoundAnimation>(field, mod->ptr)};
+            return new EL_Animation{std::make_shared<EdgeLighting::FieldBoundAnimation>(
+                toAnimatableField(field), mod->ptr)};
         }
         catch (const std::exception &e)
         {
             setError(e.what());
             return nullptr;
+        }
+    }
+
+    EL_Animation *el_animation_empty(void)
+    {
+        try
+        {
+            return new EL_Animation{std::make_shared<EdgeLighting::FieldBoundAnimation>()};
+        }
+        catch (const std::exception &e)
+        {
+            setError(e.what());
+            return nullptr;
+        }
+    }
+
+    EL_Result el_animation_add_field(EL_Animation *anim, int32_t field, EL_Modulator *mod)
+    {
+        if (!anim || !anim->ptr)
+        {
+            setError("el_animation_add_field: null animation");
+            return EL_ERR_NULL_ARG;
+        }
+        if (!mod || !mod->ptr)
+        {
+            setError("el_animation_add_field: null modulator");
+            return EL_ERR_NULL_ARG;
+        }
+        auto *fba = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
+        if (!fba)
+        {
+            setError("el_animation_add_field: animation is not field-bound "
+                     "(created via el_animation_create() preset or a purpose-built "
+                     "factory - only el_animation_empty() and el_animation_from_modulator() "
+                     "return field-bound animations)");
+            return EL_ERR_NULL_ARG;
+        }
+        try
+        {
+            fba->AddField(toAnimatableField(field), mod->ptr);
+            return EL_OK;
+        }
+        catch (const std::exception &e)
+        {
+            setError(e.what());
+            return EL_ERR_EXCEPTION;
         }
     }
 
