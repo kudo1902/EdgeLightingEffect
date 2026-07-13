@@ -58,17 +58,16 @@ namespace EdgeLighting
     ///               writes the current modulator value.
     ///   Paused    - elapsed is frozen at its last-Playing value.
     ///               @ref Animation::Apply still runs and holds that value.
-    ///   Completed - set automatically when a @c ONE_SHOT animation's elapsed
-    ///               crosses @ref Animation::GetDuration.  Elapsed is clamped
-    ///               to duration, does not advance, and @ref Animation::Apply
-    ///               keeps writing the modulator's final value.  Fires
-    ///               @ref Animation::OnComplete on entry.
+    ///
+    /// When a @c ONE_SHOT animation's elapsed crosses
+    /// @ref Animation::GetDuration it auto-transitions to @c Stopped (elapsed
+    /// reset to 0) and fires @ref Animation::OnComplete once. There is no
+    /// separate "Completed" state - completion is just Stopped-with-callback.
     typedef enum class AnimationState
     {
         Stopped,
         Playing,
-        Paused,
-        Completed
+        Paused
     } AnimationState;
 
     /// @brief Base class for all animations.
@@ -85,7 +84,7 @@ namespace EdgeLighting
     ///
     /// ## State control (per-animation)
     ///
-    /// - @ref Play  - Stopped/Completed → Playing (elapsed = 0);
+    /// - @ref Play  - Stopped → Playing (elapsed = 0);
     ///                Paused → Playing (elapsed continues).
     /// - @ref Pause - Playing → Paused (elapsed frozen).
     /// - @ref Stop  - any → Stopped (elapsed = 0, frozen; Apply becomes no-op).
@@ -111,14 +110,13 @@ namespace EdgeLighting
     ///
     /// ## Callbacks
     ///
-    /// - @ref OnComplete       - fired once when a @c ONE_SHOT transitions
-    ///                           into @c Completed.  Never fires for loopers.
-    ///                           Use it to chain animations sequentially.
+    /// - @ref OnComplete       - fired once when a @c ONE_SHOT finishes its
+    ///                           cycle (Playing → Stopped auto-transition).
+    ///                           Never fires for loopers.  Use it to chain
+    ///                           animations sequentially.
     /// - @ref OnStateChanged   - fired on every state transition with (old, new).
-    ///                           Redundant with @c OnComplete for the completion
-    ///                           edge but composes cleaner for arbitrary graphs
-    ///                           (e.g. UI indicators that need to track all four
-    ///                           states).
+    ///                           Composes cleanly for UI indicators that need
+    ///                           to track all three states.
     ///
     /// @code
     ///     auto pulse = std::make_shared<IntensityPulse>(0.5f);
@@ -156,18 +154,18 @@ namespace EdgeLighting
         // --- Control -----------------------------------------------------
 
         /// @brief Enter the @c Playing state.
-        /// @details From @c Stopped or @c Completed, elapsed is reset to 0.
-        ///          From @c Paused, elapsed continues from its frozen value
-        ///          (there is no separate "Resume" method - @c Play from
-        ///          @c Paused *is* resume).  From @c Playing, this is a
-        ///          no-op (no state change, no callback).
+        /// @details From @c Stopped, elapsed is reset to 0. From @c Paused,
+        ///          elapsed continues from its frozen value (there is no
+        ///          separate "Resume" method - @c Play from @c Paused *is*
+        ///          resume).  From @c Playing, this is a no-op (no state
+        ///          change, no callback).
         virtual void Play()
         {
             if (mState == AnimationState::Playing)
             {
                 return;
             }
-            if (mState == AnimationState::Stopped || mState == AnimationState::Completed)
+            if (mState == AnimationState::Stopped)
             {
                 mElapsed = 0.0f;
             }
@@ -215,10 +213,10 @@ namespace EdgeLighting
         // --- Drive -------------------------------------------------------
 
         /// @brief Advance elapsed by @p dt when Playing; may transition
-        ///        Playing → Completed for one-shots.
+        ///        Playing → Stopped for a completed one-shot.
         /// @param dt Frame delta in seconds.
-        /// @details No-op when Paused, Stopped, or Completed (elapsed is
-        ///          frozen).  Speed is folded in: elapsed accumulates
+        /// @details No-op when Paused or Stopped (elapsed is frozen).
+        ///          Speed is folded in: elapsed accumulates
         ///          @c dt * @ref GetSpeed.
         virtual void Update(float dt)
         {
@@ -231,7 +229,8 @@ namespace EdgeLighting
             // cycle, uniform across both modes.
             //   LOOP     - wrap mElapsed at mDuration so ApplyAt sees a
             //              periodic signal that resets every cycle.
-            //   ONE_SHOT - complete after exactly one cycle.
+            //   ONE_SHOT - complete after exactly one cycle, transitioning to
+            //              Stopped and firing OnComplete once.
             //   mDuration == 0 opts out: the modulator is expected to own its
             //   own periodicity (e.g. an internal Oscillator with its own
             //   period) and elapsed advances monotonically. All existing
@@ -244,8 +243,8 @@ namespace EdgeLighting
                 }
                 else if (mMode == PlaybackMode::ONE_SHOT && mElapsed >= mDuration)
                 {
-                    mElapsed = mDuration;
-                    transitionTo(AnimationState::Completed);
+                    mElapsed = 0.0f;
+                    transitionTo(AnimationState::Stopped);
                     if (OnComplete)
                     {
                         OnComplete();
@@ -255,9 +254,9 @@ namespace EdgeLighting
         }
 
         /// @brief Write the modulator's current value into @p cfg.
-        /// @details No-op when @c Stopped.  For @c Playing / @c Paused /
-        ///          @c Completed the subclass's @ref ApplyAt is invoked with
-        ///          the current @c mElapsed.
+        /// @details No-op when @c Stopped.  For @c Playing / @c Paused the
+        ///          subclass's @ref ApplyAt is invoked with the current
+        ///          @c mElapsed.
         /// @note Virtual so composite animations (@ref AnimationGroup) can
         ///       bypass the Stopped-skip and always forward to children -
         ///       the group's own state is a broadcast label, not a gate on
@@ -278,7 +277,6 @@ namespace EdgeLighting
         bool IsPlaying() const { return mState == AnimationState::Playing; }
         bool IsPaused() const { return mState == AnimationState::Paused; }
         bool IsStopped() const { return mState == AnimationState::Stopped; }
-        bool IsCompleted() const { return mState == AnimationState::Completed; }
 
         // --- Playback mode / duration / speed ----------------------------
 
@@ -326,14 +324,15 @@ namespace EdgeLighting
 
         // --- Callbacks ---------------------------------------------------
 
-        /// @brief Fired exactly once when a @c ONE_SHOT completes.
+        /// @brief Fired exactly once when a @c ONE_SHOT completes its cycle.
         /// @note Never fires for @c LOOP animations.  Prefer for the
         ///       common "chain B after A" case.
         std::function<void()> OnComplete;
 
         /// @brief Fired on every state transition, with (previous, current).
-        /// @note Redundant with @ref OnComplete for the completion edge but
-        ///       lets UI code observe all four states with a single callback.
+        /// @note Lets UI code observe all state changes (including the
+        ///       auto Playing → Stopped edge that also fires OnComplete)
+        ///       with a single callback.
         std::function<void(AnimationState /*prev*/, AnimationState /*now*/)> OnStateChanged;
 
     protected:
@@ -403,7 +402,7 @@ namespace EdgeLighting
     ///   child can also be controlled individually via its own methods.
     /// - @ref Update / @ref Apply are forwarded to every child.
     /// - Group state / duration / mode are derived aggregates:
-    ///     * Playing if any child is Playing (else Paused > Completed > Stopped).
+    ///     * Playing if any child is Playing (else Paused > Stopped).
     ///     * Mode is LOOP if any child loops, else ONE_SHOT.
     ///     * Duration is the longest child duration (0 if any child loops).
     ///

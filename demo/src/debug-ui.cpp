@@ -467,10 +467,6 @@ namespace
             col = ImVec4(0.55f, 0.55f, 0.60f, 1.0f);
             label = "STOPPED";
             break;
-        case EdgeLighting::AnimationState::Completed:
-            col = ImVec4(0.40f, 0.70f, 1.00f, 1.0f);
-            label = "DONE";
-            break;
         }
         ImGui::TextColored(col, "%-7s", label);
     }
@@ -593,7 +589,7 @@ namespace
         }
         else
         {
-            const char *status = anim.IsCompleted() ? "done" : "running";
+            const char *status = anim.IsPlaying() ? "running" : "stopped";
             ImGui::TextDisabled("t=%.2fs / dur=%.2fs (%s)", elapsed, dur, status);
         }
 
@@ -683,9 +679,6 @@ void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg, float clockTime)
                     break;
                 case EdgeLighting::AnimationState::Stopped:
                     stateName = "Stopped";
-                    break;
-                case EdgeLighting::AnimationState::Completed:
-                    stateName = "Completed";
                     break;
                 }
                 LOG_I("Animation '%s' → %s", presetName, stateName);
