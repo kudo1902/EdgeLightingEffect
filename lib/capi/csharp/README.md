@@ -1,4 +1,4 @@
-# EdgeLighting — C# bindings
+# EdgeLighting - C# bindings
 
 P/Invoke bindings for the EdgeLighting C API (`lib/capi/edge-lighting-c.h`) plus
 a runnable OpenTK sample.
@@ -62,19 +62,19 @@ effect.Render(framebufferWidth, framebufferHeight);
 
 ## Things to know
 
-- **GL thread affinity.** Every call that touches GL — `Initialize`, `Update`,
-  `Render`, and `Dispose` (it deletes GL resources) — must run on the thread
+- **GL thread affinity.** Every call that touches GL - `Initialize`, `Update`,
+  `Render`, and `Dispose` (it deletes GL resources) - must run on the thread
   that owns the GL context. `EdgeLightingEffect` has no finalizer for this
   reason; dispose it explicitly on the GL thread.
 - **The library is context-less.** It renders into whatever framebuffer is
-  current; it never clears the screen. Clear and draw your own scene first — the
+  current; it never clears the screen. Clear and draw your own scene first - the
   neon composites over it (premultiplied-alpha "over").
 - **HiDPI.** Pass the *framebuffer* pixel size (not logical client size) to
   `Render` and position geometry in those pixels. The sample uses
   `FramebufferSize`.
 - **Platform / context.** The macOS build is desktop GL 3.3 Core, so the host
   context must be 3.3 Core forward-compatible (the sample sets this). The
-  Windows/Linux builds target GLES 3.0 — create a matching context there.
+  Windows/Linux builds target GLES 3.0 - create a matching context there.
 - **Architecture match.** The managed process and the native `.dylib`/`.so`/
   `.dll` must be the same architecture (e.g. arm64 .NET with an arm64 build).
 ```

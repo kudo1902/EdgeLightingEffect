@@ -296,6 +296,10 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
         cfg.neon.blendSpace = static_cast<EdgeLighting::BlendSpace>(blendIdx);
     }
 
+    // Cross-fade time when the stop set / blend space changes (0 = instant).
+    ImGui::SliderFloat("Color Transition (s)##Neon", &cfg.neon.colorTransitionDuration,
+                       0.0f, 2.0f, "%.2f");
+
     for (size_t i = 0; i < cfg.neon.colorStops.size(); ++i)
     {
         ImGui::PushID(static_cast<int>(i));
@@ -467,21 +471,17 @@ namespace
         const char *label = "?";
         switch (s)
         {
-        case EdgeLighting::AnimationState::Playing:
+        case EdgeLighting::AnimationState::PLAYING:
             col = ImVec4(0.30f, 0.85f, 0.35f, 1.0f);
             label = "PLAYING";
             break;
-        case EdgeLighting::AnimationState::Paused:
+        case EdgeLighting::AnimationState::PAUSED:
             col = ImVec4(0.95f, 0.75f, 0.15f, 1.0f);
             label = "PAUSED";
             break;
-        case EdgeLighting::AnimationState::Stopped:
+        case EdgeLighting::AnimationState::STOPPED:
             col = ImVec4(0.55f, 0.55f, 0.60f, 1.0f);
             label = "STOPPED";
-            break;
-        case EdgeLighting::AnimationState::Completed:
-            col = ImVec4(0.40f, 0.70f, 1.00f, 1.0f);
-            label = "DONE";
             break;
         }
         ImGui::TextColored(col, "%-7s", label);
@@ -518,7 +518,7 @@ namespace
         }
         ImGui::SameLine();
         // Reset rewinds elapsed to 0 AND writes the modulator@t=0 baseline
-        // into cfg — leaves state unchanged (Playing keeps playing from the
+        // into cfg - leaves state unchanged (Playing keeps playing from the
         // top; Stopped stays Stopped but the config field is restored).
         if (ImGui::SmallButton("Reset"))
         {
@@ -540,9 +540,9 @@ namespace
         // every subclass. Editing them here is a "live tweak" of the added
         // instance; subclass-specific ctor arguments (baseRate, easing,
         // segment length, …) are still baked in at Add-time via the preset
-        // — those would need a per-subclass params panel to expose here.
+        // - those would need a per-subclass params panel to expose here.
 
-        // Speed multiplier — 0 acts as "pause at the value level".
+        // Speed multiplier - 0 acts as "pause at the value level".
         float speed = anim.GetSpeed();
         ImGui::SetNextItemWidth(160.0f);
         if (ImGui::SliderFloat("Speed", &speed, 0.0f, 4.0f, "%.2fx"))
@@ -550,7 +550,7 @@ namespace
             anim.SetSpeed(speed);
         }
 
-        // Playback mode — LOOP wraps elapsed at duration; ONE_SHOT completes
+        // Playback mode - LOOP wraps elapsed at duration; ONE_SHOT completes
         // after one cycle. Toggling is live: switching a Playing looper to
         // ONE_SHOT will complete on the next Update if elapsed already >= dur.
         int modeIdx = (anim.GetPlaybackMode() == EdgeLighting::PlaybackMode::LOOP)
@@ -565,7 +565,7 @@ namespace
                                      : EdgeLighting::PlaybackMode::ONE_SHOT);
         }
 
-        // Duration — cycle length in seconds. Subclasses with internal
+        // Duration - cycle length in seconds. Subclasses with internal
         // modulators (FadeIn/FadeOut/OutlineTracer) rebuild them via
         // OnDurationChanged so the visual matches the completion latch.
         // 0 means "modulator owns its own periodicity" (oscillator-based
@@ -605,7 +605,7 @@ namespace
         }
         else
         {
-            const char *status = anim.IsCompleted() ? "done" : "running";
+            const char *status = anim.IsPlaying() ? "running" : "stopped";
             ImGui::TextDisabled("t=%.2fs / dur=%.2fs (%s)", elapsed, dur, status);
         }
 
@@ -659,7 +659,7 @@ void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg, float clockTime)
         return;
     }
 
-    // --- Add row: preset combo (no separate Add button — changing the
+    // --- Add row: preset combo (no separate Add button - changing the
     // selection commits immediately, so picking a preset is a single click). ---
     static constexpr int PRESET_COUNT = static_cast<int>(EdgeLightingDemo::AnimationPreset::COUNT);
     const char *names[PRESET_COUNT];
@@ -687,23 +687,20 @@ void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg, float clockTime)
                 const char *stateName = "?";
                 switch (now)
                 {
-                case EdgeLighting::AnimationState::Playing:
+                case EdgeLighting::AnimationState::PLAYING:
                     stateName = "Playing";
                     break;
-                case EdgeLighting::AnimationState::Paused:
+                case EdgeLighting::AnimationState::PAUSED:
                     stateName = "Paused";
                     break;
-                case EdgeLighting::AnimationState::Stopped:
+                case EdgeLighting::AnimationState::STOPPED:
                     stateName = "Stopped";
-                    break;
-                case EdgeLighting::AnimationState::Completed:
-                    stateName = "Completed";
                     break;
                 }
                 LOG_I("Animation '%s' → %s", presetName, stateName);
             };
             // Added animations start Stopped and DON'T touch the config
-            // yet — the animated field keeps whatever value it was showing
+            // yet - the animated field keeps whatever value it was showing
             // in the sliders. The animation only starts writing when the
             // user clicks Play on the row. (Reset(cfg) is available on the
             // row's Reset button for the "seed baseline before Play" case,
@@ -741,7 +738,7 @@ void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg, float clockTime)
                 mActiveNames.erase(mActiveNames.begin() + static_cast<ptrdiff_t>(i));
             }
             continue; // vector snapshot means the iterator is still valid,
-                      // but the child is gone — skip its group-children draw.
+                      // but the child is gone - skip its group-children draw.
         }
         // If this preset is an AnimationGroup (Shimmer, Aurora, …), expose
         // its children as indented sub-rows so the per-child Duration slider
@@ -939,7 +936,7 @@ void DebugUI::buildColorPickerSection(EdgeLighting::Config &cfg)
                                            static_cast<int>(cfg.geometry.width),
                                            static_cast<int>(cfg.geometry.height));
 
-    // Contrast gamma: pow(c, gamma) — dark stops shrink toward 0 while bright
+    // Contrast gamma: pow(c, gamma) - dark stops shrink toward 0 while bright
     // stops stay near 1 (0.9^2 = 0.81, 0.06^2 = 0.0036). Applied before Apply
     // so the LUT baked into the shader reflects the compressed range.
     if (std::abs(mColorPickerGamma - 1.0f) > 1e-3f)

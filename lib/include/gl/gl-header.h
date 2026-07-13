@@ -21,7 +21,7 @@
 #include <glad/glad.h>
 #define GLSL_VERSION "#version 330 core"
 #else
-#error "Unknown platform — set PLATFORM_MACOS / _WINDOWS / _LINUX via CMake or rely on compiler built-ins"
+#error "Unknown platform - set PLATFORM_MACOS / _WINDOWS / _LINUX via CMake or rely on compiler built-ins"
 #endif
 
 #endif // _EDGE_LIGHTING_GL_HEADER_H_

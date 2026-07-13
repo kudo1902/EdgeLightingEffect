@@ -28,7 +28,7 @@ namespace EdgeLighting
     ///     cfg.neon.glowRadius = glowSweep.Evaluate(t);
     /// @endcode
     ///
-    /// No coupling to Config / no internal pointer state — modulators are pure
+    /// No coupling to Config / no internal pointer state - modulators are pure
     /// functions of time, so they're trivially shareable, testable, and
     /// composable.
     ///
@@ -72,7 +72,7 @@ namespace EdgeLighting
     {
         SINE,     ///< Smooth periodic (default).
         TRIANGLE, ///< Linear up + linear down.
-        SQUARE,   ///< Hard on/off — useful for strobes.
+        SQUARE,   ///< Hard on/off - useful for strobes.
         SAWTOOTH  ///< Linear ramp 0→1, snap back.
     } Waveform;
 

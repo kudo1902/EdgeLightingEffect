@@ -15,7 +15,7 @@ namespace EdgeLighting
     ///
     /// Each class wraps one particular use of the @ref Modulator primitives.
     /// Constructors take only the parameters that matter for the effect,
-    /// defaulting the rest to sensible values — call sites are typically one
+    /// defaulting the rest to sensible values - call sites are typically one
     /// line.
     ///
     /// Looping animations use the default `Animation()` ctor (duration = -1).
@@ -268,7 +268,7 @@ namespace EdgeLighting
     };
 
     /// @brief Smoothly ease the hue rotation direction.
-    /// @details Uses a triangle wave so direction reverses gradually — no
+    /// @details Uses a triangle wave so direction reverses gradually - no
     ///          abrupt flips.
     class HueRotationEaseReverse : public Animation
     {
@@ -409,7 +409,7 @@ namespace EdgeLighting
 
     /// @brief One-shot animation that progressively lights up the outline.
     /// @details Sweeps @c neon.arcLength from 0 to 1 over @p duration seconds,
-    ///          ending fully lit and held. Does NOT touch @c neon.arcStart —
+    ///          ending fully lit and held. Does NOT touch @c neon.arcStart -
     ///          set that externally (slider, code, another animation) to
     ///          choose where the trace begins. This separation lets users
     ///          drag the Arc Start slider freely while the tracer is running.
@@ -452,18 +452,18 @@ namespace EdgeLighting
     ///          around the perimeter at a fixed maximum length, and shrinks it
     ///          away as the tail reaches @c endPos.
     ///
-    /// - **Phase 1 — grow**  : @c arcStart stays at @c startPos; @c arcLength
+    /// - **Phase 1 - grow**  : @c arcStart stays at @c startPos; @c arcLength
     ///                         grows 0 → @c maxLength.  The head moves out
     ///                         from @c startPos.
-    /// - **Phase 2 — chase** : @c arcLength stays at @c maxLength; both head
+    /// - **Phase 2 - chase** : @c arcLength stays at @c maxLength; both head
     ///                         and tail advance at the same speed.  The head
     ///                         travels from @c (startPos + maxLength) to
     ///                         @c endPos.
-    /// - **Phase 3 — shrink**: head parks at @c endPos; tail catches up.
+    /// - **Phase 3 - shrink**: head parks at @c endPos; tail catches up.
     ///                         @c arcLength shrinks @c maxLength → 0.
     ///
     /// The per-phase durations are chosen so the head and tail move at the
-    /// same constant speed across all three phases — no visible acceleration
+    /// same constant speed across all three phases - no visible acceleration
     /// at phase boundaries.  Given a total @c duration D:
     ///     speed = (totalDist + maxLength) / D
     ///     t1 = t3 = maxLength / speed
@@ -554,7 +554,7 @@ namespace EdgeLighting
                 arcStart = mStartPos + mTotalDist - arcLength;
             }
 
-            // Wrap arcStart to [0, 1) — the shader's arcInside handles the
+            // Wrap arcStart to [0, 1) - the shader's arcInside handles the
             // wrap-around at start+length, but the raw arcStart itself must
             // live in [0, 1).
             arcStart = arcStart - std::floor(arcStart);
@@ -570,7 +570,7 @@ namespace EdgeLighting
         void computePhases(float duration)
         {
             // Unwrap endPos forward so an endPos <= startPos means "loop
-            // around through 0" — the wipe always advances CCW/forward, never
+            // around through 0" - the wipe always advances CCW/forward, never
             // reverses.
             float endUnwrapped = mEndPos;
             if (endUnwrapped <= mStartPos)
@@ -625,7 +625,7 @@ namespace EdgeLighting
     // Two constructors:
     //   - one-arg : loops forever (duration = 0)
     //   - two-arg : one-shot for the given duration
-    // Mode and duration are independent at runtime — see Animation::SetPlaybackMode
+    // Mode and duration are independent at runtime - see Animation::SetPlaybackMode
     // and Animation::SetDuration.
 
     /// @brief Drive @c neon.intensity with an arbitrary modulator.

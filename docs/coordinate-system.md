@@ -4,7 +4,7 @@
 
 | Space | Origin | +X | +Y | Usage |
 |---|---|---|---|---|
-| **App** | viewport top-left | right | down | `Config::position` — rectangle top-left corner |
+| **App** | viewport top-left | right | down | `Config::position` - rectangle top-left corner |
 | **Local** | rectangle center | right | up | SDF, `GeometryUtils::GetPointOnRectangle`, particle spawn positions |
 | **OpenGL** | viewport bottom-left | right | up | MVP model `translate()` (Y flipped from app space) |
 | **NDC** | screen center | right | up | `gl_Position` output |

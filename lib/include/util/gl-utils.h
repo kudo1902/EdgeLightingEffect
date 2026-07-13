@@ -128,7 +128,7 @@ namespace EdgeLighting
         /// Macro wrapper that passes file:line as context automatically.
 #define GL_UTILS_STR(x) #x
 #define GL_UTILS_XSTR(x) GL_UTILS_STR(x)
-#define GL_CHECK_ERROR() ::EdgeLighting::GLUtil::CheckGLError(__FILE__ ":" GL_UTILS_XSTR(__LINE__))
+#define GL_CHECK_ERROR() ::EdgeLighting::GLUtils::CheckGLError(__FILE__ ":" GL_UTILS_XSTR(__LINE__))
 
         /// Return the value of a GL integer cap (e.g. GL_MAX_TEXTURE_SIZE).
         inline int GetCap(GLenum cap)

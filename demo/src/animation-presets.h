@@ -13,7 +13,7 @@ namespace EdgeLightingDemo
     /// the debug UI flips between them to demonstrate what the system can do.
     typedef enum class AnimationPreset
     {
-        NONE,           ///< No animation — Config is used verbatim.
+        NONE,           ///< No animation - Config is used verbatim.
         BREATHING,      ///< Slow sine pulse on intensity. Calm "alive" look.
         STROBE,         ///< Hard 6 Hz on/off square wave on intensity.
         HEARTBEAT,      ///< lub-DUB rhythm on intensity, rest, loop.
@@ -23,7 +23,7 @@ namespace EdgeLightingDemo
         FADE_IN,        ///< One-shot ease-in of intensity from 0 to 1.
         SEGMENT_TRAVEL, ///< Bright Gaussian spot revolves around the perimeter.
         SEGMENT_BOUNCE, ///< Bright spot swings back and forth (triangle wave).
-        COMET,          ///< Tight fast spot — single-revolution comet feel.
+        COMET,          ///< Tight fast spot - single-revolution comet feel.
         OUTLINE_TRACER, ///< One-shot: rect dark, then arc grows 0→1 to light it.
         ARC_WIPE,       ///< One-shot: 3-phase grow/chase/shrink wipe around perimeter.
         FADE_OUT,       ///< One-shot ease-out of intensity to 0.
@@ -117,7 +117,7 @@ namespace EdgeLightingDemo
 
         case AnimationPreset::BREATHING:
         {
-            // Calm ~1.67 s sine — about 36 BPM.
+            // Calm ~1.67 s sine - about 36 BPM.
             return std::make_shared<IntensityPulse>(1.0f / 0.6f, 0.4f, 1.0f);
         }
 
@@ -142,7 +142,7 @@ namespace EdgeLightingDemo
 
         case AnimationPreset::SHIMMER:
         {
-            // Intensity + glow radius pulse together every 0.5 s — gives the
+            // Intensity + glow radius pulse together every 0.5 s - gives the
             // line a fast "twinkle". Use AnimationGroup to stack.
             auto group = std::make_shared<AnimationGroup>();
             group->Add(std::make_shared<IntensityPulse>(0.5f, 0.65f, 1.0f));
@@ -163,7 +163,7 @@ namespace EdgeLightingDemo
 
         case AnimationPreset::REVERSE_SWEEP:
         {
-            // Triangle wave between -0.8 and +0.8 over 6 s — smooth direction flip.
+            // Triangle wave between -0.8 and +0.8 over 6 s - smooth direction flip.
             return std::make_shared<HueRotationEaseReverse>(0.8f, 6.0f);
         }
 
@@ -186,13 +186,13 @@ namespace EdgeLightingDemo
 
         case AnimationPreset::COMET:
         {
-            // Tight, fast, bright spot — half a second per loop.
+            // Tight, fast, bright spot - half a second per loop.
             return std::make_shared<SegmentTravel>(0.6f, 0.05f, 6.0f);
         }
 
         case AnimationPreset::OUTLINE_TRACER:
         {
-            // One-shot 2 s draw — rect goes from dark to fully lit.
+            // One-shot 2 s draw - rect goes from dark to fully lit.
             return std::make_shared<OutlineTracer>(2.0f, EdgeLighting::EasingFunction::OutCubic);
         }
 

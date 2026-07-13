@@ -41,7 +41,7 @@ public:
     /// its output to @p config.
     /// @p clockTime is the effect's clock time; we use its per-frame delta
     /// to drive @c Animation::Update. The animation owns its own state,
-    /// elapsed accumulator, and completion latching — pausing the effect
+    /// elapsed accumulator, and completion latching - pausing the effect
     /// clock freezes dt to 0 and effectively pauses every animation.
     void ApplyActiveAnimation(EdgeLighting::Config &config, float clockTime);
 
@@ -104,7 +104,7 @@ private:
     /// mActiveGroup->GetChildren(). Kept because AnimationGroup only stores
     /// AnimationPtr, and we want each row header to say "Breathing" instead
     /// of "Animation #3". Preset name pointers come from PresetName() which
-    /// returns string literals — safe to hold as raw const char*.
+    /// returns string literals - safe to hold as raw const char*.
     std::vector<const char *> mActiveNames;
     float mLastClockTime = 0.0f; ///< Clock time at last ApplyActiveAnimation tick.
 
@@ -135,7 +135,7 @@ private:
     bool mColorPickerAutoIntensity = true;
     /// Contrast gamma applied to sampled colours before Apply. Values > 1
     /// darken dark stops (compressing shadows toward black) while leaving
-    /// bright stops nearly untouched — useful for images with a wide
+    /// bright stops nearly untouched - useful for images with a wide
     /// dynamic range where you want the dim regions to read as dim.
     float mColorPickerGamma = 1.0f;
 

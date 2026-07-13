@@ -2,7 +2,7 @@ precision highp float;
 
 // Precision: highp (NOT mediump). This renderer's "optimized" wins come from
 // the half-res FBO, reduced gather sample count, data-texture sample lookup
-// and the baked colour LUT — NOT from mediump. On desktop GLES (ANGLE on
+// and the baked colour LUT - NOT from mediump. On desktop GLES (ANGLE on
 // Windows) mediump maps to fp16, whose 65504 max and ~11-bit mantissa can't
 // hold the fragment coordinates: the draw quad extends hundreds of px past
 // the rect, so the interpolated vPos and dot(dv, dv) overflow/quantise and
@@ -21,7 +21,7 @@ precision highp float;
 
 // All other tuning constants (FILAMENT_*, HALO_*, BLOOM_*, grading, epsilons)
 // are injected from lib/include/renderer/neon-tuning.h via @NEON_TUNING@ in
-// shaders.h.in — single source of truth shared with the C++ renderer.
+// shaders.h.in - single source of truth shared with the C++ renderer.
 //
 // (Far early-out lives on the CPU: the Pass-1 quad is sized to rect + earlyOut,
 //  so there's no per-fragment discard here. See neon-optimized-renderer.cpp.)
@@ -63,7 +63,7 @@ layout(std140) uniform LoopSamplesBlock
 };
 uniform int uNumSamples; ///< Actual sample count in use; 1..NEON_MAX_LOOP_SAMPLES.
 
-// Travelling segments — up to MAX_SEGMENT_BOOSTS Gaussian brightness peaks.
+// Travelling segments - up to MAX_SEGMENT_BOOSTS Gaussian brightness peaks.
 // Each vec3 is packed as (position, invSigma, boost) so the shader avoids the
 // per-sample divide. When uSegmentCount == 0 the whole feature is skipped in
 // the gather loop.
@@ -80,7 +80,7 @@ layout(std140) uniform SegmentBlock
     vec3 uSegments[MAX_SEGMENT_BOOSTS];
 };
 
-// Arc gating — only samples whose perimeter position falls within an arc of
+// Arc gating - only samples whose perimeter position falls within an arc of
 // uArcLength starting at uArcStart contribute. Defaults (0, 1) = full lit.
 //   uArcLength = 0 → nothing lit
 //   uArcLength = 1 → fully lit, regardless of start (start is just a phase)
@@ -130,7 +130,7 @@ void main() {
     // Note: the far-exterior early-out (ad > earlyOut → discard) that the
     // standard NeonRenderer uses is intentionally absent here. The Pass-1
     // quad is sized on the CPU to exactly rect + earlyOut, so geometry culls
-    // the far region instead — friendlier to tile-based mobile GPUs, which
+    // the far region instead - friendlier to tile-based mobile GPUs, which
     // pay a hidden-surface-removal penalty for any discard in the shader.
     //
     // The one-sided cuts below stay as discards: they cull a useful half of
@@ -147,9 +147,9 @@ void main() {
     //
     // sigma = half-brightness radius (core = 0.5 at ad = sigma).
     // N = 2 * uFilamentFalloff controls the shape:
-    //   uFilamentFalloff = 0.5 → N = 1   (Laplace — heavy tails, smooth peak)
-    //   uFilamentFalloff = 1.0 → N = 2   (Gaussian — pure smooth falloff; default)
-    //   uFilamentFalloff = 2.0 → N = 4   (platykurtic — flatter top, sharper shoulder)
+    //   uFilamentFalloff = 0.5 → N = 1   (Laplace - heavy tails, smooth peak)
+    //   uFilamentFalloff = 1.0 → N = 2   (Gaussian - pure smooth falloff; default)
+    //   uFilamentFalloff = 2.0 → N = 4   (platykurtic - flatter top, sharper shoulder)
     //   uFilamentFalloff = 5.0 → N = 10  (near-rectangular)
     //
     // The Gaussian has no power-law tail, so the filament reads as a clean
@@ -214,7 +214,7 @@ void main() {
         wsum    += g;
         wsumArc += lg;
 
-        // Travelling-segment head weight — sum of Gaussian bells over the
+        // Travelling-segment head weight - sum of Gaussian bells over the
         // uSegments array. The uSegmentCount == 0 case skips the whole loop
         // (uniform branch, coherent across the draw) so the common "no boost"
         // path avoids the exp() entirely.
@@ -258,7 +258,7 @@ void main() {
     // --- Quad-edge fade: the draw quad ends at d == uQuadMargin (all in
     // scaled/FBO space). Fade the emission to zero over the last stretch so a
     // strong bloom never shows a hard rectangular cutoff where the quad clips
-    // it — mirrors the base NeonRenderer so the two match. Interior pixels
+    // it - mirrors the base NeonRenderer so the two match. Interior pixels
     // have d < 0, well below the band.
     result *= 1.0 - smoothstep(uQuadMargin * 0.8, uQuadMargin, d);
 

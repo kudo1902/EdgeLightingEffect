@@ -4,7 +4,7 @@ An OpenGL 3.3 Core renderer that draws an animated neon-style glow along the
 perimeter of a rounded rectangle. macOS arm64, CMake + GLFW + GLAD + GLM, with
 ImGui for the debug UI.
 
-The library is embeddable — a static C++ library (`libedge-lighting.a`) plus a
+The library is embeddable - a static C++ library (`libedge-lighting.a`) plus a
 `extern "C"` shared library (`libedge-lighting-c.dylib`) for FFI. The demo app
 under `demo/` drives it with a live ImGui control panel.
 
@@ -20,9 +20,9 @@ cmake --build build
 
 Build outputs:
 
-- `build/lib/libedge-lighting.a` — the static library
-- `build/lib/libedge-lighting-c.dylib` — flat C ABI surface for FFI / P/Invoke
-- `build/demo/edge-lighting-demo` — the demo executable
+- `build/lib/libedge-lighting.a` - the static library
+- `build/lib/libedge-lighting-c.dylib` - flat C ABI surface for FFI / P/Invoke
+- `build/demo/edge-lighting-demo` - the demo executable
 
 The demo opens two windows sharing a GL context: the main render surface and a
 floating debug panel with all the sliders. `RES_DIR` is baked into the demo
@@ -32,44 +32,44 @@ binary at compile time, so the demo can be launched from anywhere.
 
 Three visual layers, independent and additive. Enable any subset via `Config`.
 
-- **WireframeRenderer** — 1 px `GL_LINE_LOOP` debug outline of the rect.
-- **NeonRenderer** — single-pass neon stroke. Analytic rounded-box SDF + a
+- **WireframeRenderer** - 1 px `GL_LINE_LOOP` debug outline of the rect.
+- **NeonRenderer** - single-pass neon stroke. Analytic rounded-box SDF + a
   precomputed 1D gradient LUT (RGBA32F, 256 px) so each shader sample is one
   texture lookup. Precomputes 128 sample positions on the perimeter.
-- **NeonOptimizedRenderer** — half-resolution variant that renders to a scaled
+- **NeonOptimizedRenderer** - half-resolution variant that renders to a scaled
   FBO and bilinear-blits back to full res. Shares visual params with the
   single-pass renderer.
 
 ## Debug UI (ImGui)
 
-- **Geometry** — width/height/position/corner radius/winding
-- **Neon** — line width, filament falloff, intensity, glow radius, bloom,
+- **Geometry** - width/height/position/corner radius/winding
+- **Neon** - line width, filament falloff, intensity, glow radius, bloom,
   glow side + softness, blend space (RGB / HSV / HSL), color stops (up to 128),
   hue rotation rate, segment boosts (travelling brightness peaks), arc gating
-- **Optimized Neon (½-res)** — internal resolution scale, sample count, LUT
+- **Optimized Neon (½-res)** - internal resolution scale, sample count, LUT
   size, plus reuses the Neon section's visual params
-- **Border Color Picker** — pick any image from `res/`, sample colors from its
+- **Border Color Picker** - pick any image from `res/`, sample colors from its
   border, and apply them as neon color stops. See below.
-- **Animation** — add / remove presets from an animation group; play / pause /
+- **Animation** - add / remove presets from an animation group; play / pause /
   reset. Presets include `HueRotationReverse`, `SegmentTravel`, `SegmentBounce`,
   `OutlineTracer`, `Breathing`, etc.
-- **Background (debug)** — optional checker pattern behind the effect to
+- **Background (debug)** - optional checker pattern behind the effect to
   verify blend vs. occlude compositing.
 
 ## Border color picker
 
 Load an image (JPG / PNG / BMP / TGA), sample colors from the pixels along its
 border, and apply them as color stops so the neon "wears" the image's edge
-palette. Walking is parameterized on the *target rectangle's* perimeter — not
-the image's — so aspect ratios don't matter.
+palette. Walking is parameterized on the *target rectangle's* perimeter - not
+the image's - so aspect ratios don't matter.
 
 Sliders:
 
-- **Stop Count** (2–128) — more stops → the LUT interpolation between adjacent
+- **Stop Count** (2–128) - more stops → the LUT interpolation between adjacent
   samples is tighter, so sharp image transitions render sharply.
-- **Contrast (gamma)** — non-linearly compresses dark stops toward 0 without
+- **Contrast (gamma)** - non-linearly compresses dark stops toward 0 without
   touching bright stops.
-- **Auto-adjust intensity** — sets `neon.intensity` so the brightest sampled
+- **Auto-adjust intensity** - sets `neon.intensity` so the brightest sampled
   color lands at the tonemap knee, keeping dark stops readably dark and bright
   stops vivid.
 
@@ -141,7 +141,7 @@ Bundled image assets under `res/` are photographs from Unsplash under the
 [Unsplash License](https://unsplash.com/license). See
 [`res/CREDITS.md`](res/CREDITS.md) for per-file attribution.
 
-`external/` vendors GLFW, GLAD, GLM, ImGui, and stb — each under its own
+`external/` vendors GLFW, GLAD, GLM, ImGui, and stb - each under its own
 upstream license.
 
 ## Working on this repo

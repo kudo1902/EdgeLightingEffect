@@ -10,7 +10,7 @@ namespace EdgeLighting
     /// Each function maps a normalised input @p t in [0,1] to a shaped output
     /// (typically also in [0,1]) that accelerates, decelerates, or overshoots
     /// according to the curve name.  Useful anywhere a linear ramp feels too
-    /// mechanical — animation keyframes, UI transitions, bloom/glow sweeps, etc.
+    /// mechanical - animation keyframes, UI transitions, bloom/glow sweeps, etc.
     ///
     /// All functions are pure (no state, no side effects) and thread-safe.
     namespace EasingFunction

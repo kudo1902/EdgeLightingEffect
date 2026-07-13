@@ -240,7 +240,7 @@ namespace
     }
 
     // ----------------------------------------------------------------------
-    // FieldBoundAnimation — writes a modulator's value into one Config field
+    // FieldBoundAnimation - writes a modulator's value into one Config field
     // named by EL_ConfigField. Backs el_animation_from_modulator.
     // ----------------------------------------------------------------------
     class FieldBoundAnimation : public EdgeLighting::Animation
@@ -322,7 +322,7 @@ namespace
             }
             default:
             {
-                // Unknown field id — no-op rather than crash. Handles
+                // Unknown field id - no-op rather than crash. Handles
                 // forward-compatibility if a newer header emits an enum value
                 // the current binary doesn't know.
                 break;
@@ -384,7 +384,7 @@ extern "C"
             return EL_ERR_GL_NOT_LOADED;
         }
 #endif
-        // Linux uses native GLES symbols linked at build time — nothing to load.
+        // Linux uses native GLES symbols linked at build time - nothing to load.
         gGlLoaded = true;
         setError("");
         return EL_OK;
@@ -846,7 +846,7 @@ extern "C"
 
     EL_Bool el_animation_is_complete(EL_Animation *anim, float elapsed)
     {
-        // Stateless check — the animation's own mElapsed may not match what
+        // Stateless check - the animation's own mElapsed may not match what
         // the CAPI caller has tracked. Use the arithmetic condition directly.
         if (!anim || !anim->ptr)
             return 0;

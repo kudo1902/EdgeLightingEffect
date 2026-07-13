@@ -1,5 +1,5 @@
-#ifndef _GENERATED_SHADERS_H_
-#define _GENERATED_SHADERS_H_
+#ifndef _EDGE_LIGHTING_SHADERS_H_
+#define _EDGE_LIGHTING_SHADERS_H_
 
 // Auto-generated from lib/shaders/*.{vert,frag}.
 // The GLSL version line is injected by CMake based on platform:
@@ -52,4 +52,4 @@ namespace EdgeLighting
         }
 }
 
-#endif
+#endif // _EDGE_LIGHTING_SHADERS_H_

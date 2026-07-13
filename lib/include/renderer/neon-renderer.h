@@ -27,6 +27,9 @@ namespace EdgeLighting
         void setupGeometry(const Config &config);
         void rebuildLoopSamples(const Config &config);
         void rebuildGradientLUT(const Config &config);
+        /// Quantise a float LUT (GRADIENT_LUT_SIZE * 4 RGBA) to RGBA8 and
+        /// upload it to mGradientLUT.
+        void uploadGradientLUT(const std::vector<float> &lut);
 
     private:
         Config mCurrentConfig;
@@ -53,7 +56,27 @@ namespace EdgeLighting
         /// Baked colour ring as a 1×N RGBA32F texture (sampled with v=0.5 in the shader).
         /// Each shader sample becomes a single texture lookup instead of an in-shader stops loop + HSV blend
         Texture2D mGradientLUT;
-        std::vector<float> mLUTScratch; ///< Float scratch for CPU gradient baking (LUT width * 4).
+
+        // --- Gradient cross-fade -------------------------------------------
+        // When the colour stops change we don't snap the LUT: we bake the new
+        // ring into mLUTTarget, snapshot the currently-shown ring into mLUTFrom,
+        // and let Update() blend From->Target into mLUTDisplay over
+        // colorTransitionDuration seconds. All three are float RGBA
+        // (GRADIENT_LUT_SIZE * 4); mLUTDisplay is what gets quantised+uploaded.
+        // Cross-fading in LUT space handles stop sets that differ in count or
+        // position (there's no per-stop pairing to worry about).
+        std::vector<float> mLUTTarget;  ///< Freshly baked destination ring.
+        std::vector<float> mLUTFrom;    ///< Ring shown when the current fade began.
+        std::vector<float> mLUTDisplay; ///< Currently-uploaded (blended) ring.
+        bool mHasBakedLUT = false;      ///< False until the first bake seeds the buffers.
+        bool mFading = false;           ///< True while a cross-fade is in flight.
+        float mFadeElapsed = 0.0f;      ///< Seconds into the current fade.
+        float mFadeDuration = 0.0f;     ///< Snapshot of the duration for this fade.
+        /// (stops, blendSpace) behind mLUTTarget - a new bake only restarts the
+        /// fade when these actually change (SetConfig fires OnConfigChanged
+        /// every frame with an unchanged config).
+        std::vector<ColorStop> mTargetStops;
+        BlendSpace mTargetBlendSpace = BlendSpace::RGB;
     };
 }
 

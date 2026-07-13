@@ -17,7 +17,7 @@ namespace EdgeLighting
         {
             if (!(*it)->Initialize())
             {
-                LOG_E("EdgeLightingEffect: a renderer failed to initialize — removing it.");
+                LOG_E("EdgeLightingEffect: a renderer failed to initialize - removing it.");
                 it = mRenderers.erase(it);
                 allOk = false;
             }

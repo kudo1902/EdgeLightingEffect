@@ -27,7 +27,7 @@ namespace EdgeLighting
     /// - Caches @c glGetUniformLocation results so each uniform name is resolved
     ///   exactly once per program lifetime.
     /// - Caches the last value uploaded for every uniform and skips the GL call
-    ///   when the new value is identical — substantial savings when a renderer
+    ///   when the new value is identical - substantial savings when a renderer
     ///   uploads ~20 uniforms per frame but only a couple actually change.
     /// - Warns once if a uniform name doesn't exist in the program (then stays
     ///   silent on subsequent calls so render loops don't spam the log).
@@ -39,7 +39,7 @@ namespace EdgeLighting
         ShaderProgram() = default;
 
         /// Compile @p vertSrc + @p fragSrc and link them. @p name (optional) is
-        /// only used for log messages — pass the renderer / shader name so
+        /// only used for log messages - pass the renderer / shader name so
         /// errors are attributable when several programs live in one process.
         ShaderProgram(const char *vertSrc, const char *fragSrc, const char *name = nullptr)
             : mName(name ? name : "unnamed")
@@ -285,11 +285,11 @@ namespace EdgeLighting
 
         // -------------------------------------------------------------------
         // Array uniform setters
-        // Cached by memcmp on the value buffer — collapses N per-element calls
+        // Cached by memcmp on the value buffer - collapses N per-element calls
         // into one and skips the upload when the array hasn't changed.
         //
         // Contract (applies to every overload below):
-        //   1. count == 0 is a legal no-op — callers pass N=0 when the feature
+        //   1. count == 0 is a legal no-op - callers pass N=0 when the feature
         //      is off, and this must NOT log "uniform not found" for arrays
         //      the linker optimised away. Check `count <= 0` before touching
         //      getLocation() so the direct and fallback paths behave the same.
@@ -314,7 +314,7 @@ namespace EdgeLighting
                       "glUniform2fv array upload requires tightly packed glm::vec2");
         static_assert(sizeof(glm::vec3) == 3 * sizeof(float),
                       "glUniform3fv array upload requires tightly packed glm::vec3 "
-                      "(GLM_FORCE_DEFAULT_ALIGNED_GENTYPES pads to 16 bytes — don't set it)");
+                      "(GLM_FORCE_DEFAULT_ALIGNED_GENTYPES pads to 16 bytes - don't set it)");
         static_assert(sizeof(glm::vec4) == 4 * sizeof(float),
                       "glUniform4fv array upload requires tightly packed glm::vec4");
 
