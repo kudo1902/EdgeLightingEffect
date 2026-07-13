@@ -38,8 +38,6 @@ namespace EdgeLighting
         virtual void Render(int viewportWidth, int viewportHeight, float time, const Config &config) override;
         virtual void OnConfigChanged(const Config &config) override;
 
-        static constexpr int MAX_LOOP_SAMPLES = 64;
-
     private:
         bool setupShaders();
         void setupGeometry(const Config &config);
@@ -58,20 +56,15 @@ namespace EdgeLighting
         /// Backs neon-optimized.frag's std140 `SegmentBlock` (DALi-compatible
         /// uniform block holding uSegmentCount + uSegments[]).
         UniformBuffer mSegmentBlock{"NeonOpt.SegmentBlock"};
+        /// Backs neon-optimized.frag's std140 `LoopSamplesBlock` — vec4 array
+        /// where .xy holds the perimeter point in FBO pixels.
+        UniformBuffer mLoopSamplesBlock{"NeonOpt.LoopSamplesBlock"};
 
-        std::vector<glm::vec2> mLoopSamples;
         float mSampleSpacing = 0.0f;
         float mQuadMargin = 0.0f; ///< Scaled/FBO-space margin to the Pass-1 quad edge (shader soft-fade).
 
         Texture2D mGradientLUT;
         std::vector<float> mLUTScratch;
-
-        /// Loop sample positions as an N×1 RGBA8 data texture (16-bit-packed xy),
-        /// texelFetch'd in the shader instead of a `uniform vec2[]` array. Byte
-        /// texture only (Tizen/Mali), encoded over [-mSampleMaxCoord, mSampleMaxCoord].
-        Texture2D mLoopSamplesTex;
-        std::vector<unsigned char> mLoopSamplesBytes;
-        float mSampleMaxCoord = 1.0f;
     };
 
 } // namespace EdgeLighting

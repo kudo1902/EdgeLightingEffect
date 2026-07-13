@@ -1,6 +1,7 @@
 #include "debug-ui.h"
 #include "core/config.h"
 #include "core/edge-lighting.h"
+#include "renderer/neon-tuning.h"
 #include "ui-controls.h"
 #include "util/log-util.h"
 #include "util/screenshot-util.h"
@@ -14,6 +15,16 @@
 #include <cstdio>
 #include <filesystem>
 #include <memory>
+
+namespace
+{
+    /// Upper bound the debug UI enforces on colour-stop lists.
+    constexpr int MAX_COLOR_STOPS = 128;
+    /// Max value for the OptimizedNeon "LUT Size" slider. Matches the LUT
+    /// width baked by NeonRenderer (256), which is more than enough for any
+    /// gradient the human eye can resolve.
+    constexpr int MAX_GRADIENT_LUT_SIZE = 256;
+}
 
 // ---------------------------------------------------------------------------
 // Lifecycle
@@ -311,7 +322,7 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
         ImGui::PopID();
     }
 
-    if (cfg.neon.colorStops.size() < EdgeLighting::NeonConfig::MAX_COLOR_STOPS)
+    if (cfg.neon.colorStops.size() < MAX_COLOR_STOPS)
     {
         if (ImGui::Button("+ Add Stop##Neon"))
         {
@@ -339,8 +350,9 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg)
     ImGui::Checkbox("Show Half-Res##Optimized", &cfg.optimizedNeon.showHalfRes);
 
     ImGui::SliderFloat("Res Scale##Opt", &cfg.optimizedNeon.resolutionScale, 0.125f, 1.0f, "%.3f");
-    ImGui::SliderInt("Samples##Opt", &cfg.optimizedNeon.numSamples, 8, 64);
-    ImGui::SliderInt("LUT Size##Opt", &cfg.optimizedNeon.gradientLutSize, 32, 256);
+    ImGui::SliderInt("Samples##Opt", &cfg.optimizedNeon.numSamples, 8, NEON_MAX_LOOP_SAMPLES);
+    ImGui::SliderInt("LUT Size##Opt", &cfg.optimizedNeon.gradientLutSize, 32,
+                     MAX_GRADIENT_LUT_SIZE);
 
     ImGui::Separator();
     ImGui::TextDisabled("Visual params (shared with Neon)");
@@ -437,7 +449,7 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg)
         ImGui::PopID();
     }
 
-    if (cfg.neon.colorStops.size() < EdgeLighting::NeonConfig::MAX_COLOR_STOPS)
+    if (cfg.neon.colorStops.size() < MAX_COLOR_STOPS)
     {
         if (ImGui::Button("+ Add Stop##Opt"))
         {
@@ -906,11 +918,11 @@ void DebugUI::buildColorPickerSection(EdgeLighting::Config &cfg)
                      size);
     }
 
-    // Cap matches NeonConfig::MAX_COLOR_STOPS (also equals NUM_LOOP_SAMPLES) so
-    // the picker can produce one stop per shader loop sample for near-1:1
-    // image-to-neon colour reproduction.
+    // Cap matches the file-scope MAX_COLOR_STOPS (which mirrors the C ABI's
+    // fixed-size array cap) so the picker can produce one stop per shader
+    // loop sample for near-1:1 image-to-neon colour reproduction.
     ImGui::SliderInt("Stop Count##CP", &mColorPickerStopCount, 2,
-                     EdgeLighting::NeonConfig::MAX_COLOR_STOPS);
+                     MAX_COLOR_STOPS);
     ImGui::TextDisabled("(higher = closer image match)");
 
     ImGui::SliderFloat("Contrast (gamma)##CP", &mColorPickerGamma, 0.5f, 4.0f, "%.2f");

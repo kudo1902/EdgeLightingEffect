@@ -36,17 +36,15 @@ uniform float uGlowSideSoftness;
 
 uniform float uSampleSpacing;
 
-// Loop sample positions (perimeter points) as an N×1 RGBA8 data texture,
-// texelFetch'd in the gather loop. Using a texture instead of a
-// `uniform vec2 uLoopSamples[N]` array avoids the large per-element uniform
-// allocation, which can blow the fragment uniform-vector limit (and silently
-// fail to link) on some mobile GLES drivers.
-//
-// RGBA8 is the only guaranteed byte texture: each position is packed as two
-// 16-bit fixed-point coords (x = R:hi G:lo, y = B:hi A:lo), normalised to
-// [0,1] over [-uSampleMaxCoord, uSampleMaxCoord] and decoded below.
-uniform sampler2D uLoopSamplesTex;
-uniform float     uSampleMaxCoord;
+// Loop sample positions (perimeter points) as a std140 uniform block. Each
+// entry is packed as a vec4 (only .xy is meaningful; std140 pads vec2 to a
+// 16-byte stride anyway) so the shader reads raw float32 out of the constant
+// cache in the gather loop. Fixed size at compile time — see the shared
+// NEON_MAX_LOOP_SAMPLES tuning constant.
+layout(std140) uniform LoopSamplesBlock
+{
+    vec4 uLoopSamples[NEON_MAX_LOOP_SAMPLES];
+};
 
 // Travelling segments - up to MAX_SEGMENT_BOOSTS Gaussian brightness peaks.
 // Each vec3 is packed as (position, invSigma, boost) so the shader avoids the
@@ -85,15 +83,6 @@ uniform float uQuadMargin;
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-// Decode a byte-packed loop sample. Per coord: hi(channel) + lo(channel)/255
-// reconstructs the 16-bit value in [0,1]; (2*n - 1) maps it to [-1,1];
-// * uSampleMaxCoord scales back to pixels in [-uSampleMaxCoord, uSampleMaxCoord].
-// The /255 keeps the intermediate < 1 so it stays fp16-safe.
-vec2 decodeSample(vec4 e) {
-    vec2 n = vec2(e.r + e.g * (1.0 / 255.0), e.b + e.a * (1.0 / 255.0));
-    return (2.0 * n - 1.0) * uSampleMaxCoord;
-}
 
 float sdRoundBox(vec2 p, vec2 b, float r) {
     vec2 q = abs(p) - b + r;
@@ -208,10 +197,11 @@ void main() {
     float wsumArc   = 0.0; // ∑ lit g - for the sharp filament gate
     float headWSum  = 0.0; // ∑ headW(i) · g(i)  - for the position-weighted average
 
-    // Read the sample count from the loop-sample texture itself - no hardcoded
-    // #define needed. The C++ side controls it when rebuilding the texture.
-    int numSamples = textureSize(uLoopSamplesTex, 0).x;
-    float invNumSamples = 1.0 / float(max(numSamples, 1));
+    // Compile-time constant loop bound: matches the LoopSamplesBlock UBO size
+    // and the C++-side NEON_MAX_LOOP_SAMPLES so the compiler can unroll if it
+    // wants to.
+    const int numSamples = NEON_MAX_LOOP_SAMPLES;
+    const float invNumSamples = 1.0 / float(numSamples);
 
     // Negate the time term so a positive hueRotationRate scrolls the colours
     // WITH the winding (sample index i advances in the winding direction; the
@@ -221,7 +211,7 @@ void main() {
     float si   = 0.0; // sample's normalised perimeter position
 
     for (int i = 0; i < numSamples; i++) {
-        vec2  dv  = vPos - decodeSample(texelFetch(uLoopSamplesTex, ivec2(i, 0), 0));
+        vec2  dv  = vPos - uLoopSamples[i].xy;
         float dd  = dot(dv, dv);
 
         float g   = 1.0 / (dd + kg2);

@@ -26,7 +26,25 @@ namespace EdgeLighting
         static_assert(sizeof(SegmentBlockData) == 16 + 16 * MAX_SEGMENT_BOOSTS,
                       "SegmentBlockData must match the shader's std140 layout");
 
+        /// CPU-side mirror of neon.frag's std140 `LoopSamplesBlock`. std140
+        /// pads each vec2 to a 16-byte stride, so we store as vec4 and the
+        /// shader reads .xy. Sized by NEON_MAX_LOOP_SAMPLES (neon-tuning.h),
+        /// which also sizes the shader's uLoopSamples array.
+        typedef struct LoopSamplesBlockData
+        {
+            glm::vec4 samples[NEON_MAX_LOOP_SAMPLES];
+        } LoopSamplesBlockData;
+
+        static_assert(sizeof(LoopSamplesBlockData) == 16 * NEON_MAX_LOOP_SAMPLES,
+                      "LoopSamplesBlockData must match the shader's std140 layout");
+
         constexpr GLuint SEGMENT_BLOCK_BINDING = 0;
+        constexpr GLuint LOOP_SAMPLES_BLOCK_BINDING = 1;
+
+        /// Width of the precomputed colour-ring LUT texture (RGBA8, REPEAT
+        /// wrap). 256 is more than enough for any gradient the human eye can
+        /// resolve.
+        constexpr int GRADIENT_LUT_SIZE = 256;
     }
 
     // -------------------------------------------------------------------------
@@ -185,11 +203,9 @@ namespace EdgeLighting
 
         mShaderProgram.SetUniform("uSampleSpacing", mSampleSpacing);
 
-        // Loop sample positions come from a data texture (unit 1) that the shader
-        // texelFetches, instead of a uniform vec2[] array (see neon.frag).
-        mLoopSamplesTex.Bind(1);
-        mShaderProgram.SetUniform("uLoopSamplesTex", 1);
-        mShaderProgram.SetUniform("uSampleMaxCoord", mSampleMaxCoord);
+        // Loop sample positions come from the LoopSamplesBlock UBO (see
+        // neon.frag) — raw float32 vec4[N], .xy holds the perimeter point.
+        mLoopSamplesBlock.BindBase(LOOP_SAMPLES_BLOCK_BINDING);
 
         // Bind the precomputed gradient LUT to texture unit 0. The shader
         // pulls per-sample colour from this in a single texture() call.
@@ -256,11 +272,37 @@ namespace EdgeLighting
 
     void NeonRenderer::OnConfigChanged(const Config &config)
     {
+        // Snapshot dirtiness before we overwrite mCurrentConfig. Each rebuild
+        // is gated on the exact set of fields it reads (see the corresponding
+        // methods below) — dragging a slider like `bloomStrength` used to
+        // re-upload the whole LUT and loop-samples UBO every frame; now only
+        // the geometry quad refreshes.
+        const bool samplesDirty = config.geometry != mCurrentConfig.geometry;
+        const bool geometryDirty = samplesDirty ||
+                                   config.neon.glowRadius != mCurrentConfig.neon.glowRadius ||
+                                   config.neon.bloomStrength != mCurrentConfig.neon.bloomStrength ||
+                                   config.neon.intensity != mCurrentConfig.neon.intensity;
+        const bool lutDirty = config.neon.colorStops != mCurrentConfig.neon.colorStops ||
+                              config.neon.blendSpace != mCurrentConfig.neon.blendSpace;
+
         mCurrentConfig = config;
-        if (mShaderProgram.IsValid())
+        if (!mShaderProgram.IsValid())
         {
-            rebuildLoopSamples(config); // updates mSampleSpacing, used by setupGeometry
+            return;
+        }
+
+        if (samplesDirty)
+        {
+            rebuildLoopSamples(config); // updates mSampleSpacing, read by setupGeometry
+        }
+
+        if (geometryDirty)
+        {
             setupGeometry(config);
+        }
+
+        if (lutDirty)
+        {
             rebuildGradientLUT(config);
         }
     }
@@ -292,6 +334,7 @@ namespace EdgeLighting
         }
 
         mShaderProgram.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
+        mShaderProgram.SetUniformBlockBinding("LoopSamplesBlock", LOOP_SAMPLES_BLOCK_BINDING);
         return true;
     }
 
@@ -348,27 +391,24 @@ namespace EdgeLighting
     {
         // Evenly spaced points (by arc length) around the rounded-rect perimeter.
         // Drives the additive halo/spill/colour gather in the fragment shader.
-        mLoopSamples.resize(NUM_LOOP_SAMPLES);
-        for (int i = 0; i < NUM_LOOP_SAMPLES; ++i)
+        // Uploaded directly to the std140 UBO: vec4[N] where .xy holds the
+        // position — raw float32 through the constant cache, no decode step
+        // in the shader.
+        LoopSamplesBlockData block = {};
+        for (int i = 0; i < NEON_MAX_LOOP_SAMPLES; ++i)
         {
-            float t = static_cast<float>(i) / static_cast<float>(NUM_LOOP_SAMPLES);
-            mLoopSamples[i] = GeometryUtils::GetPointOnRectangle(t, config.geometry);
+            float t = static_cast<float>(i) / static_cast<float>(NEON_MAX_LOOP_SAMPLES);
+            glm::vec2 p = GeometryUtils::GetPointOnRectangle(t, config.geometry);
+            block.samples[i] = glm::vec4(p, 0.0f, 0.0f);
         }
-
-        // Upload the positions as an N×1 RGBA8 data texture (16-bit-packed xy;
-        // only byte textures are guaranteed on the target). The shader texelFetches
-        // and decodes this instead of reading a uniform vec2[] array.
-        GeometryUtils::PackLoopSamplesRGBA8(mLoopSamples, NUM_LOOP_SAMPLES, mLoopSamplesBytes, mSampleMaxCoord);
-        mLoopSamplesTex.SetData(mLoopSamplesBytes.data(), NUM_LOOP_SAMPLES, /*height=*/1,
-                                GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
-        mLoopSamplesTex.SetParams(GL_NEAREST, GL_NEAREST, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
+        mLoopSamplesBlock.SetData(&block, sizeof(block));
 
         float w = config.geometry.width;
         float h = config.geometry.height;
         float r = std::max(0.0f, std::min(config.geometry.cornerRadius, std::min(w, h) * 0.5f));
 
         float perimeter = 2.0f * (w - 2.0f * r) + 2.0f * (h - 2.0f * r) + 2.0f * PI * r;
-        mSampleSpacing = perimeter / static_cast<float>(NUM_LOOP_SAMPLES);
+        mSampleSpacing = perimeter / static_cast<float>(NEON_MAX_LOOP_SAMPLES);
     }
 
     void NeonRenderer::rebuildGradientLUT(const Config &config)
