@@ -75,8 +75,34 @@ namespace EdgeLighting
         return true;
     }
 
-    void NeonRenderer::Update(float, float, const Config &)
+    void NeonRenderer::Update(float deltaTime, float, const Config &)
     {
+        // Drive the gradient cross-fade (see rebuildGradientLUT). Uses the raw
+        // frame delta, not clock time, so a colour change still fades smoothly
+        // even while the animation clock is paused.
+        if (!mFading)
+        {
+            return;
+        }
+
+        mFadeElapsed += deltaTime;
+        float u = (mFadeDuration > 0.0f) ? (mFadeElapsed / mFadeDuration) : 1.0f;
+        u = std::clamp(u, 0.0f, 1.0f);
+        float s = u * u * (3.0f - 2.0f * u); // smoothstep ease-in-out
+
+        const int n = GRADIENT_LUT_SIZE * 4;
+        mLUTDisplay.resize(n);
+        for (int i = 0; i < n; ++i)
+        {
+            mLUTDisplay[i] = mLUTFrom[i] + (mLUTTarget[i] - mLUTFrom[i]) * s;
+        }
+        uploadGradientLUT(mLUTDisplay);
+
+        if (u >= 1.0f)
+        {
+            mLUTDisplay = mLUTTarget; // land exactly on the target
+            mFading = false;
+        }
     }
 
     void NeonRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
@@ -347,25 +373,71 @@ namespace EdgeLighting
 
     void NeonRenderer::rebuildGradientLUT(const Config &config)
     {
-        // Bake the entire colour ring once on CPU; the shader then becomes
-        // colour-stop-agnostic. Keeps HSV-vs-RGB blend cost off the GPU hot path.
-        mLUTScratch.resize(GRADIENT_LUT_SIZE * 4);
+        // Bake the entire colour ring on CPU into mLUTTarget; the shader then
+        // becomes colour-stop-agnostic. Keeps HSV-vs-RGB blend cost off the GPU
+        // hot path.
+        mLUTTarget.resize(GRADIENT_LUT_SIZE * 4);
         for (int i = 0; i < GRADIENT_LUT_SIZE; ++i)
         {
             float t = static_cast<float>(i) / static_cast<float>(GRADIENT_LUT_SIZE);
             glm::vec3 c = ColorUtils::SampleStops(t, config.neon.colorStops, config.neon.blendSpace);
-            mLUTScratch[i * 4 + 0] = c.r;
-            mLUTScratch[i * 4 + 1] = c.g;
-            mLUTScratch[i * 4 + 2] = c.b;
-            mLUTScratch[i * 4 + 3] = 1.0f;
+            mLUTTarget[i * 4 + 0] = c.r;
+            mLUTTarget[i * 4 + 1] = c.g;
+            mLUTTarget[i * 4 + 2] = c.b;
+            mLUTTarget[i * 4 + 3] = 1.0f;
         }
 
+        // First bake (Initialize): seed every buffer and upload immediately -
+        // there's nothing to fade from at startup.
+        if (!mHasBakedLUT)
+        {
+            mLUTFrom = mLUTTarget;
+            mLUTDisplay = mLUTTarget;
+            uploadGradientLUT(mLUTDisplay);
+            mTargetStops = config.neon.colorStops;
+            mTargetBlendSpace = config.neon.blendSpace;
+            mHasBakedLUT = true;
+            mFading = false;
+            return;
+        }
+
+        // OnConfigChanged fires every frame with an unchanged config, so only
+        // (re)start a fade when the gradient inputs actually changed.
+        bool inputsChanged = config.neon.blendSpace != mTargetBlendSpace ||
+                             config.neon.colorStops != mTargetStops;
+        if (!inputsChanged)
+        {
+            return;
+        }
+        mTargetStops = config.neon.colorStops;
+        mTargetBlendSpace = config.neon.blendSpace;
+
+        // Instant path: no cross-fade requested - snap the display to target.
+        if (config.neon.colorTransitionDuration <= 0.0f)
+        {
+            mLUTDisplay = mLUTTarget;
+            uploadGradientLUT(mLUTDisplay);
+            mFading = false;
+            return;
+        }
+
+        // Fade from whatever is currently on screen (mid-fade or settled)
+        // toward the new target. Update() does the first blended upload this
+        // same frame (SetConfig -> OnConfigChanged runs before Update).
+        mLUTFrom = mLUTDisplay;
+        mFadeElapsed = 0.0f;
+        mFadeDuration = config.neon.colorTransitionDuration;
+        mFading = true;
+    }
+
+    void NeonRenderer::uploadGradientLUT(const std::vector<float> &lut)
+    {
         // Edge devices often lack float-texture support; pack into ubyte RGBA8.
         std::vector<unsigned char> lutBytes(GRADIENT_LUT_SIZE * 4);
         for (int i = 0; i < GRADIENT_LUT_SIZE * 4; ++i)
         {
             lutBytes[i] = static_cast<unsigned char>(
-                std::clamp(mLUTScratch[i] * 255.0f, 0.0f, 255.0f));
+                std::clamp(lut[i] * 255.0f, 0.0f, 255.0f));
         }
 
         // 1-row 2D texture (sampled with v = 0.5 in the shader). REPEAT on

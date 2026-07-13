@@ -220,6 +220,14 @@ namespace EdgeLighting
         float arcStart = 0.0f;
         float arcLength = 1.0f;
 
+        // --- Colour transition ---
+
+        /// Seconds to cross-fade the baked gradient when the colour stops (or
+        /// blend space) change. 0 = instant snap (the old behaviour). Because
+        /// the fade blends the whole 256-texel LUT rather than pairing stops,
+        /// it works even when the two stop sets differ in count or position.
+        float colorTransitionDuration = 0.3f;
+
         bool operator==(const NeonConfig &o) const
         {
             return enable == o.enable &&
@@ -239,7 +247,8 @@ namespace EdgeLighting
                    hueRotationRate == o.hueRotationRate &&
                    segmentBoosts == o.segmentBoosts &&
                    arcStart == o.arcStart &&
-                   arcLength == o.arcLength;
+                   arcLength == o.arcLength &&
+                   colorTransitionDuration == o.colorTransitionDuration;
         }
         bool operator!=(const NeonConfig &o) const { return !(*this == o); }
     } NeonConfig;

@@ -285,6 +285,10 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
         cfg.neon.blendSpace = static_cast<EdgeLighting::BlendSpace>(blendIdx);
     }
 
+    // Cross-fade time when the stop set / blend space changes (0 = instant).
+    ImGui::SliderFloat("Color Transition (s)##Neon", &cfg.neon.colorTransitionDuration,
+                       0.0f, 2.0f, "%.2f");
+
     for (size_t i = 0; i < cfg.neon.colorStops.size(); ++i)
     {
         ImGui::PushID(static_cast<int>(i));
