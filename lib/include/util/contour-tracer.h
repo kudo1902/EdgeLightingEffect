@@ -1,5 +1,5 @@
-#ifndef _CONTOUR_TRACER_H_
-#define _CONTOUR_TRACER_H_
+#ifndef _EDGE_LIGHTING_CONTOUR_TRACER_H_
+#define _EDGE_LIGHTING_CONTOUR_TRACER_H_
 
 #include <vector>
 #include <cstdint>
@@ -22,4 +22,4 @@ namespace EdgeLighting
 
 } // namespace EdgeLighting
 
-#endif // _CONTOUR_TRACER_H_
+#endif // _EDGE_LIGHTING_CONTOUR_TRACER_H_

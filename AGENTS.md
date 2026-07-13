@@ -21,7 +21,7 @@
 
 ## Enum values
 - `ALL_CAPS` with underscores
-  - e.g. `STATIC`, `GRADIENT`, `AMBIENT_RAINBOW`
+  - e.g. `CLOCKWISE`, `COUNTER_CLOCKWISE`, `LOOP`, `ONE_SHOT`, `SINE`
 
 ## Functions / Methods
 - Public methods: `PascalCase`

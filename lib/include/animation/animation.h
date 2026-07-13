@@ -65,9 +65,9 @@ namespace EdgeLighting
     /// separate "Completed" state - completion is just Stopped-with-callback.
     typedef enum class AnimationState
     {
-        Stopped,
-        Playing,
-        Paused
+        STOPPED,
+        PLAYING,
+        PAUSED
     } AnimationState;
 
     /// @brief Base class for all animations.
@@ -161,26 +161,26 @@ namespace EdgeLighting
         ///          change, no callback).
         virtual void Play()
         {
-            if (mState == AnimationState::Playing)
+            if (mState == AnimationState::PLAYING)
             {
                 return;
             }
-            if (mState == AnimationState::Stopped)
+            if (mState == AnimationState::STOPPED)
             {
                 mElapsed = 0.0f;
             }
-            transitionTo(AnimationState::Playing);
+            transitionTo(AnimationState::PLAYING);
         }
 
         /// @brief Freeze elapsed at its current value; @ref Apply keeps writing it.
         /// @note Only valid from @c Playing; no-op otherwise.
         virtual void Pause()
         {
-            if (mState != AnimationState::Playing)
+            if (mState != AnimationState::PLAYING)
             {
                 return;
             }
-            transitionTo(AnimationState::Paused);
+            transitionTo(AnimationState::PAUSED);
         }
 
         /// @brief Reset elapsed to 0 and enter @c Stopped.
@@ -190,12 +190,12 @@ namespace EdgeLighting
         ///          No-op if already Stopped.
         virtual void Stop()
         {
-            if (mState == AnimationState::Stopped)
+            if (mState == AnimationState::STOPPED)
             {
                 return;
             }
             mElapsed = 0.0f;
-            transitionTo(AnimationState::Stopped);
+            transitionTo(AnimationState::STOPPED);
         }
 
         /// @brief Zero elapsed and write the modulator's t=0 value into @p cfg.
@@ -220,7 +220,7 @@ namespace EdgeLighting
         ///          @c dt * @ref GetSpeed.
         virtual void Update(float dt)
         {
-            if (mState != AnimationState::Playing)
+            if (mState != AnimationState::PLAYING)
             {
                 return;
             }
@@ -244,7 +244,7 @@ namespace EdgeLighting
                 else if (mMode == PlaybackMode::ONE_SHOT && mElapsed >= mDuration)
                 {
                     mElapsed = 0.0f;
-                    transitionTo(AnimationState::Stopped);
+                    transitionTo(AnimationState::STOPPED);
                     if (OnComplete)
                     {
                         OnComplete();
@@ -263,7 +263,7 @@ namespace EdgeLighting
         ///       whether children execute.
         virtual void Apply(Config &cfg) const
         {
-            if (mState == AnimationState::Stopped)
+            if (mState == AnimationState::STOPPED)
             {
                 return;
             }
@@ -274,9 +274,9 @@ namespace EdgeLighting
 
         AnimationState GetState() const { return mState; }
         float GetElapsed() const { return mElapsed; }
-        bool IsPlaying() const { return mState == AnimationState::Playing; }
-        bool IsPaused() const { return mState == AnimationState::Paused; }
-        bool IsStopped() const { return mState == AnimationState::Stopped; }
+        bool IsPlaying() const { return mState == AnimationState::PLAYING; }
+        bool IsPaused() const { return mState == AnimationState::PAUSED; }
+        bool IsStopped() const { return mState == AnimationState::STOPPED; }
 
         // --- Playback mode / duration / speed ----------------------------
 
@@ -371,7 +371,7 @@ namespace EdgeLighting
         // triggers @ref ApplyAt(cfg, 0) without changing state. The C ABI
         // (@c el_animation_apply) preserves its old stateless semantics by
         // auto-Playing when it finds the animation Stopped.
-        AnimationState mState = AnimationState::Stopped;
+        AnimationState mState = AnimationState::STOPPED;
         float mElapsed = 0.0f;
         PlaybackMode mMode = PlaybackMode::LOOP;
         float mDuration = 0.0f;
@@ -457,22 +457,37 @@ namespace EdgeLighting
         void Play() override
         {
             Animation::Play();
-            for (const auto &a : mAnimations) a->Play();
+            for (const auto &a : mAnimations)
+            {
+                a->Play();
+            }
         }
+
         void Pause() override
         {
             Animation::Pause();
-            for (const auto &a : mAnimations) a->Pause();
+            for (const auto &a : mAnimations)
+            {
+                a->Pause();
+            }
         }
+
         void Stop() override
         {
             Animation::Stop();
-            for (const auto &a : mAnimations) a->Stop();
+            for (const auto &a : mAnimations)
+            {
+                a->Stop();
+            }
         }
+
         void Reset(Config &cfg) override
         {
             Animation::Reset(cfg);
-            for (const auto &a : mAnimations) a->Reset(cfg);
+            for (const auto &a : mAnimations)
+            {
+                a->Reset(cfg);
+            }
         }
 
         // --- Drive -------------------------------------------------------
@@ -480,7 +495,10 @@ namespace EdgeLighting
         void Update(float dt) override
         {
             Animation::Update(dt);
-            for (const auto &a : mAnimations) a->Update(dt);
+            for (const auto &a : mAnimations)
+            {
+                a->Update(dt);
+            }
         }
 
         /// @brief Forward Apply to every child unconditionally.
@@ -492,7 +510,10 @@ namespace EdgeLighting
         ///          own Apply performs its own state check.
         void Apply(Config &cfg) const override
         {
-            for (const auto &a : mAnimations) a->Apply(cfg);
+            for (const auto &a : mAnimations)
+            {
+                a->Apply(cfg);
+            }
         }
 
         // --- Derived introspection --------------------------------------

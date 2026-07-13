@@ -459,15 +459,15 @@ namespace
         const char *label = "?";
         switch (s)
         {
-        case EdgeLighting::AnimationState::Playing:
+        case EdgeLighting::AnimationState::PLAYING:
             col = ImVec4(0.30f, 0.85f, 0.35f, 1.0f);
             label = "PLAYING";
             break;
-        case EdgeLighting::AnimationState::Paused:
+        case EdgeLighting::AnimationState::PAUSED:
             col = ImVec4(0.95f, 0.75f, 0.15f, 1.0f);
             label = "PAUSED";
             break;
-        case EdgeLighting::AnimationState::Stopped:
+        case EdgeLighting::AnimationState::STOPPED:
             col = ImVec4(0.55f, 0.55f, 0.60f, 1.0f);
             label = "STOPPED";
             break;
@@ -675,13 +675,13 @@ void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg, float clockTime)
                 const char *stateName = "?";
                 switch (now)
                 {
-                case EdgeLighting::AnimationState::Playing:
+                case EdgeLighting::AnimationState::PLAYING:
                     stateName = "Playing";
                     break;
-                case EdgeLighting::AnimationState::Paused:
+                case EdgeLighting::AnimationState::PAUSED:
                     stateName = "Paused";
                     break;
-                case EdgeLighting::AnimationState::Stopped:
+                case EdgeLighting::AnimationState::STOPPED:
                     stateName = "Stopped";
                     break;
                 }
