@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 OpenGL 3.3 Core renderer that draws an animated neon-style glow along the perimeter of a rounded rectangle. macOS arm64, CMake + GLFW + GLAD + GLM, ImGui for the debug UI.
 
-The repo is currently on the `big_refactor` branch - the legacy stroke/particle/path/animation system was removed in favour of a smaller neon-focused pipeline. `docs/architecture-design.md` describes the old design and is stale; treat the headers under `lib/include/` as the source of truth.
+The legacy stroke/particle/path/animation system was removed in favour of a smaller neon-focused pipeline. Architecture is documented in [`docs/architecture-design.md`](docs/architecture-design.md); when it goes out of date, treat the headers under `lib/include/` as the source of truth.
 
 ## Build & run
 
