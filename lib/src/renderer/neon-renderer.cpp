@@ -204,7 +204,7 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uSampleSpacing", mSampleSpacing);
 
         // Loop sample positions come from the LoopSamplesBlock UBO (see
-        // neon.frag) — raw float32 vec4[N], .xy holds the perimeter point.
+        // neon.frag) - raw float32 vec4[N], .xy holds the perimeter point.
         mLoopSamplesBlock.BindBase(LOOP_SAMPLES_BLOCK_BINDING);
 
         // Bind the precomputed gradient LUT to texture unit 0. The shader
@@ -274,7 +274,7 @@ namespace EdgeLighting
     {
         // Snapshot dirtiness before we overwrite mCurrentConfig. Each rebuild
         // is gated on the exact set of fields it reads (see the corresponding
-        // methods below) — dragging a slider like `bloomStrength` used to
+        // methods below) - dragging a slider like `bloomStrength` used to
         // re-upload the whole LUT and loop-samples UBO every frame; now only
         // the geometry quad refreshes.
         const bool samplesDirty = config.geometry != mCurrentConfig.geometry;
@@ -392,7 +392,7 @@ namespace EdgeLighting
         // Evenly spaced points (by arc length) around the rounded-rect perimeter.
         // Drives the additive halo/spill/colour gather in the fragment shader.
         // Uploaded directly to the std140 UBO: vec4[N] where .xy holds the
-        // position — raw float32 through the constant cache, no decode step
+        // position - raw float32 through the constant cache, no decode step
         // in the shader.
         LoopSamplesBlockData block = {};
         for (int i = 0; i < NEON_MAX_LOOP_SAMPLES; ++i)

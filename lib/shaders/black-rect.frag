@@ -59,7 +59,7 @@ void main() {
     // Coverage-weighted premultiplied output for
     // glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA): opaque uOpaqueColor.rgb
     // where coverage == 1, smooth AA at the INSIDE/OUTSIDE cut, off-side
-    // untouched. uOpaqueColor.a is intentionally not applied yet — reserved
+    // untouched. uOpaqueColor.a is intentionally not applied yet - reserved
     // for a later premultiplied partial-fill pass.
     fragColor = vec4(uOpaqueColor.rgb * coverage, coverage);
 }

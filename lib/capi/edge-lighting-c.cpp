@@ -234,7 +234,7 @@ namespace
     /// EL_ConfigField values mirror EdgeLighting::AnimatableField 1:1 (both
     /// enum sets append at the end, so old binaries stay ABI-compatible with
     /// new headers). Unknown values become the default branch of the switch
-    /// in FieldBoundAnimation::ApplyAt — i.e. a silent no-op.
+    /// in FieldBoundAnimation::ApplyAt - i.e. a silent no-op.
     inline EdgeLighting::AnimatableField toAnimatableField(int32_t f)
     {
         return static_cast<EdgeLighting::AnimatableField>(f);

@@ -27,7 +27,7 @@ namespace EdgeLighting
                       "SegmentBlockData must match the shader's std140 layout");
 
         /// CPU-side mirror of neon-optimized.frag's std140 `LoopSamplesBlock`.
-        /// Sized by NEON_MAX_LOOP_SAMPLES (neon-tuning.h) — the ceiling; the
+        /// Sized by NEON_MAX_LOOP_SAMPLES (neon-tuning.h) - the ceiling; the
         /// shader iterates only uNumSamples of them per frame.
         typedef struct LoopSamplesBlockData
         {
@@ -138,7 +138,7 @@ namespace EdgeLighting
         mNeonShader.SetUniform("uQuadMargin", mQuadMargin);
 
         // Loop sample positions from the LoopSamplesBlock UBO (see the shader)
-        // — raw float32 vec4[N], .xy holds the perimeter point in FBO pixels.
+        // - raw float32 vec4[N], .xy holds the perimeter point in FBO pixels.
         mLoopSamplesBlock.BindBase(LOOP_SAMPLES_BLOCK_BINDING);
         mNeonShader.SetUniform("uNumSamples", std::min(config.optimizedNeon.numSamples,
                                                        NEON_MAX_LOOP_SAMPLES));
@@ -345,7 +345,7 @@ namespace EdgeLighting
 
         // Only n unique perimeter points are in use per frame (shader loop
         // bound is uNumSamples). The remaining UBO slots stay at (0,0,0,0)
-        // — never read because the loop stops before them.
+        // - never read because the loop stops before them.
         LoopSamplesBlockData block = {};
         for (int i = 0; i < n; ++i)
         {

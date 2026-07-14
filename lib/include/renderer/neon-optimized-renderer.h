@@ -56,7 +56,7 @@ namespace EdgeLighting
         /// Backs neon-optimized.frag's std140 `SegmentBlock` (DALi-compatible
         /// uniform block holding uSegmentCount + uSegments[]).
         UniformBuffer mSegmentBlock{"NeonOpt.SegmentBlock"};
-        /// Backs neon-optimized.frag's std140 `LoopSamplesBlock` — vec4 array
+        /// Backs neon-optimized.frag's std140 `LoopSamplesBlock` - vec4 array
         /// where .xy holds the perimeter point in FBO pixels.
         UniformBuffer mLoopSamplesBlock{"NeonOpt.LoopSamplesBlock"};
 

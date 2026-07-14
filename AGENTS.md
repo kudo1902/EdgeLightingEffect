@@ -85,6 +85,16 @@
     };
     ```
 
+## Comments / Text
+- Do not use the em-dash character (Unicode U+2014). Use a plain hyphen `-`
+  instead, in comments, doc comments, log strings, and Markdown. The whole
+  repo - including this file - is kept free of the glyph, so a recursive
+  grep for U+2014 over the source can enforce the rule with no false positives.
+  - *Correct:* `// premultiplied output - reserved for a later pass`
+  - *Incorrect:* the same line with a U+2014 dash where the hyphen is.
+- Keep shader sources (`.vert`/`.frag`) ASCII-only so every GLSL compiler
+  accepts the CMake-injected text (see `lib/shaders/neon-tuning.h`).
+
 ## Braces / Formatting
 - Always use braces for control flow statements, even single-line bodies
   - *Correct:*

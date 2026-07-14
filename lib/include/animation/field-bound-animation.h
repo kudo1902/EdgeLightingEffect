@@ -11,7 +11,7 @@ namespace EdgeLighting
     /// @brief Single-float Config leaves that a @ref FieldBoundAnimation can
     ///        drive.
     ///
-    /// Enum values are numerically ABI-stable — the C API's @c EL_ConfigField
+    /// Enum values are numerically ABI-stable - the C API's @c EL_ConfigField
     /// mirrors them 1:1 and static_casts between the two. Append new fields at
     /// the end so both C and C++ callers stay forward-compatible.
     ///
@@ -43,7 +43,7 @@ namespace EdgeLighting
     /// binding's modulator is evaluated with the same @c elapsed and the
     /// result is written to its bound field.
     ///
-    /// The shared elapsed / duration / play state phase-locks all bindings —
+    /// The shared elapsed / duration / play state phase-locks all bindings -
     /// use this class for "one animation, several fields moving together"
     /// (e.g. a heartbeat that pulses intensity + glow + bloom in unison). For
     /// independent parallel animations with different rates, put separate
@@ -95,7 +95,7 @@ namespace EdgeLighting
 
         /// @brief Bind an additional field to a modulator.
         /// @note Bindings are evaluated in insertion order. Modulators can be
-        ///       shared across bindings — pass the same @c ModulatorPtr to
+        ///       shared across bindings - pass the same @c ModulatorPtr to
         ///       drive several fields off one signal (or wrap in @ref Remap
         ///       per binding for per-field ranges).
         void AddField(AnimatableField field, ModulatorPtr modulator)

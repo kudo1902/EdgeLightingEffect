@@ -122,7 +122,7 @@ namespace EdgeLighting
         ///   region. The neon glow is composited on top.
         bool opaque = false;
         /// Fill colour for the opaque-mode background pass. Applied only when
-        /// @c opaque is true. Linear RGBA in [0,1]; only @c .rgb is used today —
+        /// @c opaque is true. Linear RGBA in [0,1]; only @c .rgb is used today -
         /// the @c .a channel is reserved for a later premultiplied partial-fill
         /// pass and is applied by neither the renderer nor the shader yet.
         /// Default is black.

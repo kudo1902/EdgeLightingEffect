@@ -61,7 +61,7 @@ external/             GLFW binary, GLAD, GLM, ImGui, stb (vendored)
 res/                  Demo images (see res/CREDITS.md)
 ```
 
-## 3. `Config` — single-shot state
+## 3. `Config` - single-shot state
 
 `Config` is a plain aggregate. All fields have sensible defaults, all sub-
 structs implement `operator==` / `operator!=` so change detection is a
@@ -97,7 +97,7 @@ effect.Render(w, h)
   for r in renderers: r.Render(w, h, clock.time, config)
 ```
 
-Renderers composite via **additive blending** — enable any subset and layers
+Renderers composite via **additive blending** - enable any subset and layers
 sum in HDR.
 
 ### 4.1 NeonRenderer (`lib/src/renderer/neon-renderer.cpp` + `shaders/neon.frag`)
@@ -112,9 +112,9 @@ Single-pass full-resolution neon stroke. Highlights:
   gathers all 128 with distance-weighted contribution → halo, filament core,
   bloom. Iteration count is compile-time constant (128) so the driver can
   unroll.
-- **Hue-preserving Reinhard tonemap** — peak channel drives compression,
+- **Hue-preserving Reinhard tonemap** - peak channel drives compression,
   R/G/B scale by the same ratio. Prevents "orange → peach" desaturation.
-- **Opaque-mode background pass** — a fullscreen NDC quad drawn *behind* the
+- **Opaque-mode background pass** - a fullscreen NDC quad drawn *behind* the
   neon with `NeonConfig::opaqueColor`. Shape from an SDF read off
   `gl_FragCoord`; corners AA cleanly via `fwidth`.
 
@@ -123,7 +123,7 @@ Single-pass full-resolution neon stroke. Highlights:
 Two-pass half-resolution variant. Pass 1 renders into a scaled RGBA8 FBO
 with a dynamic shader loop bound (`uNumSamples = optimizedNeon.numSamples`,
 1..128). Pass 2 bilinear-blits back to full res. Shares all visual params
-with `NeonConfig`. Meant for edge devices — the resolution-scale + sample-
+with `NeonConfig`. Meant for edge devices - the resolution-scale + sample-
 count sliders are the primary perf knobs.
 
 ### 4.3 WireframeRenderer
@@ -131,7 +131,7 @@ count sliders are the primary perf knobs.
 A `GL_LINE_LOOP` debug outline. Blending briefly disabled for crisp 1 px
 lines.
 
-## 5. Animation — Clock + Modulators
+## 5. Animation - Clock + Modulators
 
 The effect only advances its clock; it never touches `Config`. Parameter
 animation lives entirely in the host, via the **Modulator** family
@@ -154,7 +154,7 @@ effect.SetConfig(cfg);
 This decoupling means pausing the clock freezes every animation without
 special-casing anywhere.
 
-## 6. Change detection — equality-gated rebuilds
+## 6. Change detection - equality-gated rebuilds
 
 Every `Config` sub-struct defines `operator==` field-wise. Renderers use it
 in `OnConfigChanged` to skip rebuilds when the fields the rebuild reads
@@ -204,8 +204,8 @@ source of truth. Currently holds:
 Both the segment-boost array and the perimeter loop samples cross the
 CPU/GPU boundary through **std140 UBOs**:
 
-- `SegmentBlock` — `int count + vec3[8]` (padded to vec4 stride).
-- `LoopSamplesBlock` — `vec4[NEON_MAX_LOOP_SAMPLES]` where `.xy` is the
+- `SegmentBlock` - `int count + vec3[8]` (padded to vec4 stride).
+- `LoopSamplesBlock` - `vec4[NEON_MAX_LOOP_SAMPLES]` where `.xy` is the
   perimeter point in rect-local pixels.
 
 Each renderer defines a POD mirror in its `.cpp`'s anonymous namespace with a
@@ -225,7 +225,7 @@ in `CMAKE_CONFIGURE_DEPENDS` so editing a shader triggers a re-configure on
 the next build. Adding a new shader means updating three spots:
 `CMAKE_CONFIGURE_DEPENDS`, `file(READ ...)`, and `shaders.h.in`.
 
-Runtime shader loading is *not* implemented — every shader edit currently
+Runtime shader loading is *not* implemented - every shader edit currently
 requires a rebuild of the TU that includes `shaders.h`.
 
 ## 8. RAII GL wrappers
@@ -234,15 +234,15 @@ Everything under `lib/include/gl/` wraps a GL handle in a move-only class
 that generates on construction and deletes on destruction. Renderer code
 must not touch `glGen*` / `glDelete*` directly.
 
-- `ShaderProgram` — compile + link a vert/frag pair. Typed `SetUniform`
+- `ShaderProgram` - compile + link a vert/frag pair. Typed `SetUniform`
   overloads (int, float, vec2/3/4, mat4, arrays). Per-uniform value cache
   skips redundant GL calls.
-- `VertexArray` — VAO + VBO with `SetVertexData` / `SetAttribPointer` /
+- `VertexArray` - VAO + VBO with `SetVertexData` / `SetAttribPointer` /
   `DrawArrays`.
-- `Texture` (base) + `Texture1D` / `Texture2D` — `Bind(unit)`, `SetData`,
+- `Texture` (base) + `Texture1D` / `Texture2D` - `Bind(unit)`, `SetData`,
   `SetParams`, plus `Texture2D::SetDataFromFile` (stb_image).
-- `Framebuffer` — with a colour texture, resize-idempotent.
-- `UniformBuffer` — std140-shaped buffer with a byte-level upload cache
+- `Framebuffer` - with a colour texture, resize-idempotent.
+- `UniformBuffer` - std140-shaped buffer with a byte-level upload cache
   (skips `glBufferData` when the block bytes are unchanged).
 
 ## 9. Coordinate spaces
@@ -265,16 +265,16 @@ center_ogl.y = viewportH - position.y - halfH;
 All renderers use the same MVP formula so local-space vertices (origin at
 rect center, +Y up) render correctly on screen (origin at top-left, +Y down).
 
-## 10. Demo — the ImGui side
+## 10. Demo - the ImGui side
 
 The demo opens two GLFW windows sharing a GL context: the main render surface
 and a floating **Debug Controls** panel. Per frame:
 
 1. Copy `effect.GetConfig()` into a local `cfg`.
-2. `debugUI.Build(cfg, effect)` — ImGui widgets mutate `cfg` in place.
-3. `debugUI.ApplyActiveAnimation(cfg, clockTime)` — any preset Modulators
+2. `debugUI.Build(cfg, effect)` - ImGui widgets mutate `cfg` in place.
+3. `debugUI.ApplyActiveAnimation(cfg, clockTime)` - any preset Modulators
    overwrite fields they animate.
-4. `effect.SetConfig(cfg)` — round-trip triggers `OnConfigChanged`, which
+4. `effect.SetConfig(cfg)` - round-trip triggers `OnConfigChanged`, which
    gates rebuilds by dirtiness.
 5. `debugUI.Render()` draws into the debug window.
 6. Main context current → optional backdrops (checker / picker image) →
@@ -294,5 +294,5 @@ opaque `EL_Effect*`.
 
 `EL_ABI_VERSION` (currently 8) bumps on any struct-layout or enum-value
 change. The C# interop scaffolding under `lib/capi/csharp/` targets this
-surface but has not been kept in lockstep with recent ABI bumps — treat it
+surface but has not been kept in lockstep with recent ABI bumps - treat it
 as stale until refreshed.

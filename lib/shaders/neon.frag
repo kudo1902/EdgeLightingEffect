@@ -39,7 +39,7 @@ uniform float uSampleSpacing;
 // Loop sample positions (perimeter points) as a std140 uniform block. Each
 // entry is packed as a vec4 (only .xy is meaningful; std140 pads vec2 to a
 // 16-byte stride anyway) so the shader reads raw float32 out of the constant
-// cache in the gather loop. Fixed size at compile time — see the shared
+// cache in the gather loop. Fixed size at compile time - see the shared
 // NEON_MAX_LOOP_SAMPLES tuning constant.
 layout(std140) uniform LoopSamplesBlock
 {

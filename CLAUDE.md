@@ -75,3 +75,4 @@ Naming and formatting are defined in `AGENTS.md` and enforced by hand - there is
 - Variables: members `mFoo`, globals `gFoo`. Header guards `_NAME_OF_FILE_H_`.
 - Structs/enums always get a `typedef` self-alias: `typedef struct Config { ... } Config;`, `typedef enum class Winding { ... } Winding;`.
 - Always brace single-statement bodies, including every `case` body inside a `switch`. See `AGENTS.md` for the canonical examples.
+- Never use the em-dash character (Unicode U+2014); use a plain hyphen `-` instead (comments, doc comments, log strings, Markdown). Keep shader sources ASCII-only.
