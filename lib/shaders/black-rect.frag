@@ -28,7 +28,7 @@ uniform float uCornerRadius;
 uniform vec2  uRectCenter; // rect centre in window pixels (gl_FragCoord space, y-up)
 uniform int   uGlowSide;
 uniform float uSoftEdge;   // matches the neon shader's softEdge
-uniform vec3  uOpaqueColor; // opaque fill colour (linear RGB, non-premultiplied)
+uniform vec4  uOpaqueColor; // fill colour; only .rgb used today, .a reserved for a later partial-fill pass
 
 float sdRoundBox(vec2 p, vec2 b, float r) {
     vec2 q = abs(p) - b + r;
@@ -56,8 +56,10 @@ void main() {
     }
     if (coverage <= 0.0) discard;
 
-    // Premultiplied colour for glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA):
-    // opaque uOpaqueColor where coverage == 1, smooth AA at the INSIDE/OUTSIDE
-    // cut, and the off-side leaves the background untouched.
-    fragColor = vec4(uOpaqueColor * coverage, coverage);
+    // Coverage-weighted premultiplied output for
+    // glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA): opaque uOpaqueColor.rgb
+    // where coverage == 1, smooth AA at the INSIDE/OUTSIDE cut, off-side
+    // untouched. uOpaqueColor.a is intentionally not applied yet — reserved
+    // for a later premultiplied partial-fill pass.
+    fragColor = vec4(uOpaqueColor.rgb * coverage, coverage);
 }

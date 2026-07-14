@@ -227,8 +227,8 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
     if (cfg.neon.opaque)
     {
         ImGui::SameLine();
-        ImGui::ColorEdit3("Opaque Color##Neon", &cfg.neon.opaqueColor.x,
-                          ImGuiColorEditFlags_NoInputs);
+        ImGui::ColorEdit4("Opaque Color##Neon", &cfg.neon.opaqueColor.x,
+                          ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
     }
     ImGui::Checkbox("Show Gradient LUT##Neon", &cfg.neon.showGradientLUT);
     ImGui::Checkbox("Show Color Stops##Neon", &cfg.neon.showColorStops);
@@ -361,8 +361,8 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg)
     if (cfg.neon.opaque)
     {
         ImGui::SameLine();
-        ImGui::ColorEdit3("Opaque Color##Opt", &cfg.neon.opaqueColor.x,
-                          ImGuiColorEditFlags_NoInputs);
+        ImGui::ColorEdit4("Opaque Color##Opt", &cfg.neon.opaqueColor.x,
+                          ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
     }
     ImGui::SliderFloat("Line Width##Opt", &cfg.neon.lineWidth, 0.0f, 20.0f, "%.0f");
     ImGui::SliderFloat("Filament Falloff##Opt", &cfg.neon.filamentFalloff, 0.5f, 5.0f, "%.2f");

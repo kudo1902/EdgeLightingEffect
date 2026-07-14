@@ -161,9 +161,10 @@ namespace
 
         out.neon.enable = c.neon.enable != 0;
         out.neon.opaque = c.neon.opaque != 0;
-        out.neon.opaqueColor = glm::vec3(c.neon.opaqueColorR,
+        out.neon.opaqueColor = glm::vec4(c.neon.opaqueColorR,
                                          c.neon.opaqueColorG,
-                                         c.neon.opaqueColorB);
+                                         c.neon.opaqueColorB,
+                                         c.neon.opaqueColorA);
         out.neon.lineWidth = c.neon.lineWidth;
         out.neon.intensity = c.neon.intensity;
         out.neon.glowRadius = c.neon.glowRadius;
@@ -203,6 +204,7 @@ namespace
         out.neon.opaqueColorR = c.neon.opaqueColor.r;
         out.neon.opaqueColorG = c.neon.opaqueColor.g;
         out.neon.opaqueColorB = c.neon.opaqueColor.b;
+        out.neon.opaqueColorA = c.neon.opaqueColor.a;
         out.neon.lineWidth = c.neon.lineWidth;
         out.neon.intensity = c.neon.intensity;
         out.neon.glowRadius = c.neon.glowRadius;

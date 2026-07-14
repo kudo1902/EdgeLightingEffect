@@ -173,9 +173,10 @@ extern "C"
     {
         EL_Bool enable;
         EL_Bool opaque;
-        float opaqueColorR; ///< Opaque-mode background fill colour, linear RGB.
+        float opaqueColorR; ///< Opaque-mode background fill colour, straight linear RGBA.
         float opaqueColorG;
         float opaqueColorB;
+        float opaqueColorA; ///< Fill alpha; < 1 makes the surround a partial fill.
         float lineWidth;
         float intensity;
         float glowRadius;
