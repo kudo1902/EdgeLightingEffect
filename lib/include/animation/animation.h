@@ -168,6 +168,7 @@ namespace EdgeLighting
             if (mState == AnimationState::STOPPED)
             {
                 mElapsed = 0.0f;
+                mHeldAtEnd = false; // fresh start; drop any settled end value
             }
             transitionTo(AnimationState::PLAYING);
         }
@@ -187,14 +188,17 @@ namespace EdgeLighting
         /// @details @ref Apply becomes a no-op after @c Stop - the target
         ///          config field is left as-is.  Call @ref Reset if you want
         ///          the modulator's t=0 baseline written back into config.
-        ///          No-op if already Stopped.
+        ///          Also drops a settled hold-final-value (so stopping a
+        ///          held-at-end one-shot reverts its field). No-op if already
+        ///          cleanly Stopped.
         virtual void Stop()
         {
-            if (mState == AnimationState::STOPPED)
+            if (mState == AnimationState::STOPPED && !mHeldAtEnd)
             {
                 return;
             }
             mElapsed = 0.0f;
+            mHeldAtEnd = false;
             transitionTo(AnimationState::STOPPED);
         }
 
@@ -207,6 +211,7 @@ namespace EdgeLighting
         virtual void Reset(Config &cfg)
         {
             mElapsed = 0.0f;
+            mHeldAtEnd = false;
             ApplyAt(cfg, 0.0f);
         }
 
@@ -243,7 +248,12 @@ namespace EdgeLighting
                 }
                 else if (mMode == PlaybackMode::ONE_SHOT && mElapsed >= mDuration)
                 {
-                    mElapsed = 0.0f;
+                    // A hold-final-value one-shot parks elapsed at the end so
+                    // @ref Apply keeps writing its terminal value while Stopped
+                    // (the field settles at B). Others rewind to 0 so their
+                    // field reverts to the base value once Stopped.
+                    mElapsed = mHoldFinalValue ? mDuration : 0.0f;
+                    mHeldAtEnd = mHoldFinalValue;
                     transitionTo(AnimationState::STOPPED);
                     if (OnComplete)
                     {
@@ -254,7 +264,11 @@ namespace EdgeLighting
         }
 
         /// @brief Write the modulator's current value into @p cfg.
-        /// @details No-op when @c Stopped.  For @c Playing / @c Paused the
+        /// @details No-op when @c Stopped, so the field reverts to the base
+        ///          value - unless this is a hold-final-value one-shot that
+        ///          completed naturally, in which case elapsed is parked at the
+        ///          end and @ref ApplyAt keeps writing the terminal value (the
+        ///          field settles at B). For @c Playing / @c Paused the
         ///          subclass's @ref ApplyAt is invoked with the current
         ///          @c mElapsed.
         /// @note Virtual so composite animations (@ref AnimationGroup) can
@@ -263,7 +277,7 @@ namespace EdgeLighting
         ///       whether children execute.
         virtual void Apply(Config &cfg) const
         {
-            if (mState == AnimationState::STOPPED)
+            if (mState == AnimationState::STOPPED && !mHeldAtEnd)
             {
                 return;
             }
@@ -322,6 +336,29 @@ namespace EdgeLighting
         /// @brief Current playback rate multiplier. 1.0 = normal.
         float GetSpeed() const { return mSpeed; }
 
+        /// @brief When this animation completes, should its final value persist
+        ///        (true) or should the field revert to the base value (false,
+        ///        the default)?
+        /// @details Intended for @c ONE_SHOT playback. When set, a one-shot
+        ///          that finishes its cycle parks @c mElapsed at @ref
+        ///          GetDuration and stays Stopped, so @ref Apply keeps writing
+        ///          the terminal value - an A->B transition settles at B
+        ///          instead of snapping back. This is self-contained in the
+        ///          animation: no manager or base-config mutation is involved.
+        ///          A manual @ref Stop or @ref Reset drops the settled value and
+        ///          reverts. Clearing the flag also drops any settled value.
+        void SetHoldFinalValue(bool hold)
+        {
+            mHoldFinalValue = hold;
+            if (!hold)
+            {
+                mHeldAtEnd = false;
+            }
+        }
+
+        /// @brief Whether this animation settles at its final value on completion.
+        bool GetHoldFinalValue() const { return mHoldFinalValue; }
+
         // --- Callbacks ---------------------------------------------------
 
         /// @brief Fired exactly once when a @c ONE_SHOT completes its cycle.
@@ -376,6 +413,8 @@ namespace EdgeLighting
         PlaybackMode mMode = PlaybackMode::LOOP;
         float mDuration = 0.0f;
         float mSpeed = 1.0f;
+        bool mHoldFinalValue = false;
+        bool mHeldAtEnd = false; ///< A hold one-shot has completed and is settled at its end value.
 
     public:
         /// @brief Directly set the elapsed accumulator (advanced).

@@ -1,6 +1,7 @@
 #include "debug-ui.h"
 #include "core/config.h"
 #include "core/edge-lighting.h"
+#include "animation/animation-manager.h"
 #include "renderer/neon-tuning.h"
 #include "ui-controls.h"
 #include "util/log-util.h"
@@ -109,7 +110,7 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     buildNeonSection(cfg);
     buildOptimizedNeonSection(cfg);
     buildColorPickerSection(cfg);
-    buildAnimationSection(cfg, effect.GetClock().GetTime());
+    buildAnimationSection(cfg, effect.Animations());
     buildBackgroundSection();
 
     ImGui::Checkbox("Wireframe", &cfg.wireframe.enable);
@@ -148,27 +149,6 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
         std::cout << "\n";
     }
     ImGui::End();
-}
-
-void DebugUI::ApplyActiveAnimation(EdgeLighting::Config &config, float clockTime)
-{
-    // Compute the frame delta ourselves: main.cpp still hands us the effect's
-    // clock time so we can freeze animations by pausing that clock, but the
-    // animation itself now owns state / elapsed / completion latching, so we
-    // just forward dt to Update() and call Apply().
-    float dt = clockTime - mLastClockTime;
-    mLastClockTime = clockTime;
-
-    // AnimationGroup::Update / Apply broadcast to each child, respecting each
-    // child's own state (Stopped → skip, Paused → hold, Playing → advance).
-    // The shader consumes cfg.neon.hueRotationRate directly via uTime; a
-    // preset that modulates the rate (HueRotationReverse etc.) writes into
-    // config and the next frame's Render sends the new rate to the shader.
-    if (mActiveGroup)
-    {
-        mActiveGroup->Update(dt);
-        mActiveGroup->Apply(config);
-    }
 }
 
 void DebugUI::Render()
@@ -565,6 +545,16 @@ namespace
                                      : EdgeLighting::PlaybackMode::ONE_SHOT);
         }
 
+        // Hold-final-value - when set, the manager bakes this animation's end
+        // value into its base config on the Playing->Stopped edge, so a
+        // one-shot A->B transition settles at B instead of reverting. Only
+        // meaningful for ONE_SHOT (a looper has no final value to hold).
+        bool hold = anim.GetHoldFinalValue();
+        if (ImGui::Checkbox("Hold final value", &hold))
+        {
+            anim.SetHoldFinalValue(hold);
+        }
+
         // Duration - cycle length in seconds. Subclasses with internal
         // modulators (FadeIn/FadeOut/OutlineTracer) rebuild them via
         // OnDurationChanged so the visual matches the completion latch.
@@ -652,7 +642,8 @@ namespace
     }
 }
 
-void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg, float clockTime)
+void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg,
+                                    EdgeLighting::AnimationManager &manager)
 {
     if (!ImGui::CollapsingHeader("Animations", ImGuiTreeNodeFlags_DefaultOpen))
     {
@@ -699,27 +690,30 @@ void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg, float clockTime)
                 }
                 LOG_I("Animation '%s' → %s", presetName, stateName);
             };
-            // Added animations start Stopped and DON'T touch the config
-            // yet - the animated field keeps whatever value it was showing
-            // in the sliders. The animation only starts writing when the
-            // user clicks Play on the row. (Reset(cfg) is available on the
-            // row's Reset button for the "seed baseline before Play" case,
-            // but we don't force it here.)
-            mActiveGroup->Add(anim);
+            // Added animations start Stopped and DON'T touch the config yet -
+            // the animated field keeps its base value until the user clicks
+            // Play on the row. On Stop it reverts to that base value (the
+            // manager rebuilds the live config from its base each frame),
+            // unless the row's Hold toggle is set for a settle-at-end one-shot.
+            manager.Attach(anim);
             // Remember the human-readable name so the row header reads
             // "Breathing" instead of "Animation #3". Parallel vector because
-            // AnimationGroup only stores AnimationPtr, not names.
+            // the manager only stores AnimationPtr, not names.
             mActiveNames.push_back(presetName);
         }
-        mLastClockTime = clockTime;
     }
 
     ImGui::Separator();
 
     // --- Added animation rows ---
-    // Iterate a snapshot of the children so removing during iteration is
-    // safe (mActiveGroup->Remove(...) invalidates any iterator otherwise).
-    const auto children = mActiveGroup->GetChildren();
+    // Snapshot the manager's attached animations so a Detach during iteration
+    // stays safe (Detach erases from the manager's own vector).
+    std::vector<EdgeLighting::AnimationPtr> children;
+    children.reserve(manager.GetCount());
+    for (size_t i = 0; i < manager.GetCount(); ++i)
+    {
+        children.push_back(manager.GetAnimation(i));
+    }
     if (children.empty())
     {
         ImGui::TextDisabled("No animations added. Pick a preset above to add one.");
@@ -732,7 +726,7 @@ void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg, float clockTime)
         std::snprintf(label, sizeof(label), "%s##%zu", presetName, i);
         if (DrawAnimationRow(label, *children[i], cfg, /*allowRemove=*/true))
         {
-            mActiveGroup->Remove(children[i]);
+            manager.Detach(children[i]);
             if (i < mActiveNames.size())
             {
                 mActiveNames.erase(mActiveNames.begin() + static_cast<ptrdiff_t>(i));
@@ -751,7 +745,7 @@ void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg, float clockTime)
     }
 
     ImGui::TextDisabled(
-        "Sliders for animated fields will be overwritten each frame.");
+        "Animated fields revert to their base (slider) value on Stop.");
 }
 
 void DebugUI::buildBackgroundSection()
