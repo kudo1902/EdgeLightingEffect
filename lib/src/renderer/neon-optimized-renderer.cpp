@@ -59,8 +59,34 @@ namespace EdgeLighting
         return true;
     }
 
-    void NeonOptimizedRenderer::Update(float, float, const Config &)
+    void NeonOptimizedRenderer::Update(float deltaTime, float, const Config &)
     {
+        // Drive the gradient cross-fade (see rebuildGradientLUT). Uses the raw
+        // frame delta, not clock time, so a colour change still fades smoothly
+        // even while the animation clock is paused.
+        if (!mFading)
+        {
+            return;
+        }
+
+        mFadeElapsed += deltaTime;
+        float u = (mFadeDuration > 0.0f) ? (mFadeElapsed / mFadeDuration) : 1.0f;
+        u = std::clamp(u, 0.0f, 1.0f);
+        float s = u * u * (3.0f - 2.0f * u); // smoothstep ease-in-out
+
+        const int n = mLUTBakedSize * 4;
+        mLUTDisplay.resize(n);
+        for (int i = 0; i < n; ++i)
+        {
+            mLUTDisplay[i] = mLUTFrom[i] + (mLUTTarget[i] - mLUTFrom[i]) * s;
+        }
+        uploadGradientLUT(mLUTDisplay, mLUTBakedSize);
+
+        if (u >= 1.0f)
+        {
+            mLUTDisplay = mLUTTarget; // land exactly on the target
+            mFading = false;
+        }
     }
 
     void NeonOptimizedRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
@@ -365,23 +391,64 @@ namespace EdgeLighting
 
     void NeonOptimizedRenderer::rebuildGradientLUT(const Config &config)
     {
+        // OnConfigChanged already gates this call behind a lutDirty check
+        // (colorStops / blendSpace / gradientLutSize), so a re-entry here
+        // always means the inputs actually changed.
         int lutSize = std::max(config.optimizedNeon.gradientLutSize, 4);
-        mLUTScratch.resize(lutSize * 4);
+        mLUTTarget.resize(lutSize * 4);
         for (int i = 0; i < lutSize; ++i)
         {
             float t = static_cast<float>(i) / static_cast<float>(lutSize);
             glm::vec3 c = ColorUtils::SampleStops(t, config.neon.colorStops, config.neon.blendSpace);
-            mLUTScratch[i * 4 + 0] = c.r;
-            mLUTScratch[i * 4 + 1] = c.g;
-            mLUTScratch[i * 4 + 2] = c.b;
-            mLUTScratch[i * 4 + 3] = 1.0f;
+            mLUTTarget[i * 4 + 0] = c.r;
+            mLUTTarget[i * 4 + 1] = c.g;
+            mLUTTarget[i * 4 + 2] = c.b;
+            mLUTTarget[i * 4 + 3] = 1.0f;
         }
 
-        std::vector<unsigned char> lutBytes(lutSize * 4);
+        // First bake (Initialize): seed every buffer and upload immediately -
+        // there's nothing to fade from at startup.
+        if (!mHasBakedLUT)
+        {
+            mLUTFrom = mLUTTarget;
+            mLUTDisplay = mLUTTarget;
+            mLUTBakedSize = lutSize;
+            uploadGradientLUT(mLUTDisplay, mLUTBakedSize);
+            mHasBakedLUT = true;
+            mFading = false;
+            return;
+        }
+
+        // Snap paths: no fade requested, or the LUT width changed (buffers
+        // have different sizes, can't lerp element-wise). Re-seed everything
+        // to the target so the next same-size change can fade from here.
+        bool sizeChanged = lutSize != mLUTBakedSize;
+        if (sizeChanged || config.neon.colorTransitionDuration <= 0.0f)
+        {
+            mLUTFrom = mLUTTarget;
+            mLUTDisplay = mLUTTarget;
+            mLUTBakedSize = lutSize;
+            uploadGradientLUT(mLUTDisplay, mLUTBakedSize);
+            mFading = false;
+            return;
+        }
+
+        // Fade from whatever is currently on screen (mid-fade or settled)
+        // toward the new target. Update() does the first blended upload this
+        // same frame (SetConfig -> OnConfigChanged runs before Update).
+        mLUTFrom = mLUTDisplay;
+        mFadeElapsed = 0.0f;
+        mFadeDuration = config.neon.colorTransitionDuration;
+        mFading = true;
+    }
+
+    void NeonOptimizedRenderer::uploadGradientLUT(const std::vector<float> &lut, int lutSize)
+    {
+        std::vector<unsigned char> lutBytes(static_cast<size_t>(lutSize) * 4);
         for (int i = 0; i < lutSize * 4; ++i)
         {
             lutBytes[i] = static_cast<unsigned char>(
-                std::clamp(mLUTScratch[i] * 255.0f, 0.0f, 255.0f));
+                std::clamp(lut[i] * 255.0f, 0.0f, 255.0f));
         }
 
         mGradientLUT.SetData(lutBytes.data(), lutSize, /*height=*/1, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
