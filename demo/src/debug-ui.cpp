@@ -296,6 +296,12 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
         cfg.neon.blendSpace = static_cast<EdgeLighting::BlendSpace>(blendIdx);
     }
 
+    // WYSIWYG colour: render stops at their true brightness (dark stops stay
+    // dark) instead of the HDR look that amplifies every colour to neon-bright.
+    // The border colour picker turns this on so a sampled palette matches the
+    // source image.
+    ImGui::Checkbox("Faithful Color (WYSIWYG)##Neon", &cfg.neon.faithfulColor);
+
     // Cross-fade time when the stop set / blend space changes (0 = instant).
     ImGui::SliderFloat("Color Transition (s)##Neon", &cfg.neon.colorTransitionDuration,
                        0.0f, 2.0f, "%.2f");
@@ -929,6 +935,10 @@ void DebugUI::buildColorPickerSection(EdgeLighting::Config &cfg)
     ImGui::SameLine();
     ImGui::TextDisabled("(1 = linear, >1 darkens shadows)");
 
+    ImGui::SliderFloat("Vividness##CP", &mColorPickerVividness, 0.0f, 1.0f, "%.2f");
+    ImGui::SameLine();
+    ImGui::TextDisabled("(hue-preserving brightness boost; 0 = raw)");
+
     // Preview the sampled stops as a horizontal color strip so the user sees
     // what will be applied before clicking Apply.
     auto stops = mColorPicker.SampleBorder(mColorPickerStopCount,
@@ -946,6 +956,31 @@ void DebugUI::buildColorPickerSection(EdgeLighting::Config &cfg)
             s.color.r = std::pow(std::clamp(s.color.r, 0.0f, 1.0f), mColorPickerGamma);
             s.color.g = std::pow(std::clamp(s.color.g, 0.0f, 1.0f), mColorPickerGamma);
             s.color.b = std::pow(std::clamp(s.color.b, 0.0f, 1.0f), mColorPickerGamma);
+        }
+    }
+
+    // Hue-preserving brightness boost. A card edge / vignette makes many border
+    // pixels dark, which under faithful colour renders as a dim glow. Scale
+    // each stop so its brightest channel reaches mColorPickerVividness,
+    // preserving hue (uniform per-colour scale) and capped so a near-black
+    // pixel isn't amplified into noise. Stops already >= target are untouched.
+    if (mColorPickerVividness > 1e-3f)
+    {
+        constexpr float MAX_BOOST = 8.0f;
+        for (auto &s : stops)
+        {
+            const float m = std::max({s.color.r, s.color.g, s.color.b});
+            if (m <= 1e-4f)
+            {
+                continue;
+            }
+            const float k = std::min(mColorPickerVividness / m, MAX_BOOST);
+            if (k > 1.0f)
+            {
+                s.color.r *= k;
+                s.color.g *= k;
+                s.color.b *= k;
+            }
         }
     }
 
@@ -967,43 +1002,16 @@ void DebugUI::buildColorPickerSection(EdgeLighting::Config &cfg)
         ImGui::Dummy(ImVec2(stripW, stripH));
     }
 
-    // Compute an intensity that keeps the brightest sampled colour near the
-    // tone-map knee (pre-tonemap ~3.5, output ~0.85) so dark stops still show
-    // as dark. FILAMENT_GAIN in the shader is 12, and the tone map is
-    // x / (x + 0.6); solving for `output ≈ 0.85` at brightest gives
-    // intensity ≈ 3.5 / (12 * maxChan). Only applied when the auto toggle is
-    // on so users who want the classic HDR-neon look can opt out.
-    float maxChan = 0.0f;
-    for (const auto &s : stops)
-    {
-        maxChan = std::max(maxChan, std::max({s.color.r, s.color.g, s.color.b}));
-    }
-    const float autoIntensity = maxChan > 1e-3f
-                                    ? std::clamp(3.5f / (12.0f * maxChan), 0.05f, 1.0f)
-                                    : 1.0f;
-
-    ImGui::Checkbox("Auto-adjust intensity##CP", &mColorPickerAutoIntensity);
-    if (mColorPickerAutoIntensity)
-    {
-        ImGui::SameLine();
-        ImGui::TextDisabled("(→ %.2f)", autoIntensity);
-    }
-
-    auto applyStops = [&](std::vector<EdgeLighting::ColorStop> &target,
-                          float &hueRate, float &intensity)
-    {
-        target = stops;
-        // Applying picker-sampled colours pins each colour to a specific
-        // perimeter position, so hue-rotation would drift the halo away.
-        hueRate = 0.0f;
-        if (mColorPickerAutoIntensity)
-        {
-            intensity = autoIntensity;
-        }
-    };
-
     if (ImGui::Button("Apply to Neon##CP"))
     {
-        applyStops(cfg.neon.colorStops, cfg.neon.hueRotationRate, cfg.neon.intensity);
+        cfg.neon.colorStops = stops;
+        // Pin each colour to its perimeter position - hue rotation would drift
+        // the sampled palette away from the image it was picked from.
+        cfg.neon.hueRotationRate = 0.0f;
+        // Faithful (WYSIWYG) mode reproduces the sampled colours at their true
+        // brightness so the neon matches the source image (dark edges stay
+        // dark). Shown 1:1 - no HDR amplification, so no intensity fudge.
+        cfg.neon.faithfulColor = true;
+        cfg.neon.intensity = 1.0f;
     }
 }

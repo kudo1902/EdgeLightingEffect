@@ -45,6 +45,11 @@ uniform float uBloomStrength;
 uniform int   uGlowSide;
 uniform float uGlowSideSoftness;
 
+// Faithful (WYSIWYG) colour mode - see neon.frag. 0 = HDR look, 1 = the stop
+// colour is the emissive colour modulated by a scalar [0,1] brightness
+// envelope, so the glow renders picked colours at their true brightness.
+uniform int   uFaithfulColor;
+
 uniform float uSampleSpacing;
 
 // Distance (in scaled/FBO px, from the rect edge) to the draw quad's edge.
@@ -247,9 +252,22 @@ void main() {
     // Halo visibility follows glowRadius (glowRadius == 0 -> filament only).
     float haloGate = clamp(uGlowRadius / max(haloFloor, 1e-4), 0.0, 1.0);
 
-    vec3 result  = col * core  * FILAMENT_GAIN  * uIntensity * headWAvg * filamentGate * lineGate;
-    result      += col * glow  * HALO_GAIN      * uIntensity * headWAvg * haloGate;
-    result      += col * bloom * uBloomStrength * uIntensity * headWAvg;
+    // --- Compose: HDR look vs faithful (WYSIWYG) colour (see neon.frag) ---
+    vec3 result;
+    if (uFaithfulColor != 0) {
+        // Faithful: scalar brightness envelope, then modulate the picked colour
+        // by it - hue exact, dark stops stay dark.
+        float env = core  * FILAMENT_GAIN  * filamentGate * lineGate
+                  + glow  * HALO_GAIN      * haloGate
+                  + bloom * uBloomStrength;
+        env *= uIntensity * headWAvg;
+        env  = env / (env + TONE_MAP_SHOULDER); // scalar Reinhard -> [0,1)
+        result = col * env;
+    } else {
+        result  = col * core  * FILAMENT_GAIN  * uIntensity * headWAvg * filamentGate * lineGate;
+        result += col * glow  * HALO_GAIN      * uIntensity * headWAvg * haloGate;
+        result += col * bloom * uBloomStrength * uIntensity * headWAvg;
+    }
 
     // --- One-sided cut ---
     if (uGlowSide == GLOW_SIDE_INSIDE)       result *= smoothstep( softEdge, -softEdge, d);
@@ -262,12 +280,15 @@ void main() {
     // have d < 0, well below the band.
     result *= 1.0 - smoothstep(uQuadMargin * 0.8, uQuadMargin, d);
 
-    // --- Grade --------------------------------------------------------
-    // Hue-preserving Reinhard (see neon.frag for the rationale).
-    float peak = max(max(result.r, result.g), result.b);
-    float mapped = peak / (peak + TONE_MAP_SHOULDER);
-    result = result * (mapped / max(peak, 1e-6));
-    result = pow(result, vec3(GAMMA_EXPONENT));
+    // --- Grade (HDR mode only) ---------------------------------------
+    // Hue-preserving Reinhard (see neon.frag for the rationale). The faithful
+    // path already produced a display-ready colour, so it skips this.
+    if (uFaithfulColor == 0) {
+        float peak = max(max(result.r, result.g), result.b);
+        float mapped = peak / (peak + TONE_MAP_SHOULDER);
+        result = result * (mapped / max(peak, 1e-6));
+        result = pow(result, vec3(GAMMA_EXPONENT));
+    }
 
     // Premultiplied-alpha output (coverage = brightest channel). Rendered into
     // the cleared-transparent half-res FBO with GL_ONE,GL_ONE_MINUS_SRC_ALPHA so

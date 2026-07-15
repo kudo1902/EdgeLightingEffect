@@ -34,6 +34,12 @@ uniform float uBloomStrength;
 uniform int   uGlowSide;
 uniform float uGlowSideSoftness;
 
+// Faithful (WYSIWYG) colour mode. 0 = HDR look (stop colour amplified by
+// FILAMENT_GAIN + per-channel tone-map). 1 = the stop colour is the emissive
+// colour, modulated by a scalar [0,1] brightness envelope, so the glow renders
+// the picked colours at their true brightness with hue preserved exactly.
+uniform int   uFaithfulColor;
+
 uniform float uSampleSpacing;
 
 // Loop sample positions (perimeter points) as a std140 uniform block. Each
@@ -272,9 +278,27 @@ void main() {
     // dim instead - fading the halo to nothing at glowRadius=0.
     float haloGate = clamp(uGlowRadius / max(haloFloor, 1e-4), 0.0, 1.0);
 
-    vec3 result  = col * core  * FILAMENT_GAIN  * uIntensity * headWAvg * filamentGate * lineGate;
-    result      += col * glow  * HALO_GAIN      * uIntensity * headWAvg * haloGate;
-    result      += col * bloom * uBloomStrength * uIntensity * headWAvg;
+    // --- Compose: HDR look vs faithful (WYSIWYG) colour -----------------
+    // Both modes share the same core/halo/bloom profiles; they differ only in
+    // how the picked colour `col` maps to output brightness.
+    vec3 result;
+    if (uFaithfulColor != 0) {
+        // Faithful: build a SCALAR brightness envelope from the profiles, then
+        // modulate the picked colour by it. Because col is applied after a
+        // scalar tone-map, hue is exact and a dark stop stays dark - the core
+        // renders ~= the picked colour instead of being amplified to white.
+        float env = core  * FILAMENT_GAIN  * filamentGate * lineGate
+                  + glow  * HALO_GAIN      * haloGate
+                  + bloom * uBloomStrength;
+        env *= uIntensity * headWAvg;
+        env  = env / (env + TONE_MAP_SHOULDER); // scalar Reinhard -> [0,1)
+        result = col * env;
+    } else {
+        // HDR neon: amplify the colour itself; tone-map per-channel below.
+        result  = col * core  * FILAMENT_GAIN  * uIntensity * headWAvg * filamentGate * lineGate;
+        result += col * glow  * HALO_GAIN      * uIntensity * headWAvg * haloGate;
+        result += col * bloom * uBloomStrength * uIntensity * headWAvg;
+    }
 
     // --- One-sided cut: mask the WHOLE emission at the line ----------
     if (uGlowSide == GLOW_SIDE_INSIDE)       result *= smoothstep( softEdge, -softEdge, d);
@@ -286,15 +310,18 @@ void main() {
     // have d < 0, well below the fade band, so they're unaffected.
     result *= 1.0 - smoothstep(uQuadMargin * 0.8, uQuadMargin, d);
 
-    // --- Grade --------------------------------------------------------
-    // Hue-preserving Reinhard: tonemap the peak channel and scale the
-    // others by the same ratio. Per-channel tonemap desaturates warm mixes
-    // (orange → peach) because R saturates while G/B are still linear;
-    // scaling by the peak's compression preserves the original R:G:B ratio.
-    float peak = max(max(result.r, result.g), result.b);
-    float mapped = peak / (peak + TONE_MAP_SHOULDER);
-    result = result * (mapped / max(peak, 1e-6));
-    result = pow(result, vec3(GAMMA_EXPONENT));
+    // --- Grade (HDR mode only) ---------------------------------------
+    // Hue-preserving Reinhard: tonemap the peak channel and scale the others by
+    // the same ratio. Per-channel tonemap desaturates warm mixes (orange ->
+    // peach) because R saturates while G/B are still linear; scaling by the
+    // peak's compression preserves the original R:G:B ratio. The faithful path
+    // already produced a display-ready colour, so it skips this.
+    if (uFaithfulColor == 0) {
+        float peak = max(max(result.r, result.g), result.b);
+        float mapped = peak / (peak + TONE_MAP_SHOULDER);
+        result = result * (mapped / max(peak, 1e-6));
+        result = pow(result, vec3(GAMMA_EXPONENT));
+    }
 
     // Premultiplied-alpha output so the effect composites over arbitrary
     // background objects instead of only adding light. Coverage = brightest

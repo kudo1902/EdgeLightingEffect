@@ -167,6 +167,15 @@ namespace EdgeLighting
         // --- Color ---
         /// Blend space for interpolating between colour stops.
         BlendSpace blendSpace = BlendSpace::RGB;
+        /// Faithful (WYSIWYG) colour mode. When false (default) the neon uses
+        /// its HDR look: the stop colour is amplified by FILAMENT_GAIN and
+        /// tone-mapped, so even a dark stop glows bright. When true the stop
+        /// colour is the emissive colour, modulated by a scalar [0,1]
+        /// brightness envelope, so the glow reproduces the picked colours at
+        /// their true brightness (dark stops render dark) with hue preserved
+        /// exactly. Set by the border colour picker so a sampled palette looks
+        /// like the source image.
+        bool faithfulColor = false;
         /// Colour stops around the perimeter
         /// (1 stop = solid, 2 = gradient, 3+ = multi-stop circular).
         std::vector<ColorStop> colorStops = {
@@ -239,6 +248,7 @@ namespace EdgeLighting
                    glowSide == o.glowSide &&
                    glowSideSoftness == o.glowSideSoftness &&
                    blendSpace == o.blendSpace &&
+                   faithfulColor == o.faithfulColor &&
                    colorStops == o.colorStops &&
                    hueRotationRate == o.hueRotationRate &&
                    segmentBoosts == o.segmentBoosts &&

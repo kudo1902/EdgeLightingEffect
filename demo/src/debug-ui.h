@@ -129,10 +129,12 @@ private:
     /// When true, the demo draws the loaded image inside the rect geometry
     /// behind the neon effect.
     bool mShowImageBackdrop = false;
-    /// When true, Apply-to-* also computes an intensity that keeps the
-    /// brightest sampled colour near the tone-map knee so dark stops stay
-    /// legibly dark instead of being pushed to white by FILAMENT_GAIN.
-    bool mColorPickerAutoIntensity = true;
+    /// Hue-preserving brightness boost for sampled colours: each stop is scaled
+    /// so its brightest channel reaches this target (capped so near-black
+    /// pixels aren't amplified into noise), preserving hue. Lets a palette
+    /// picked from a dark image border render as vivid neon under faithful
+    /// colour instead of a dim glow. 0 = raw (no boost), 1 = boost to full.
+    float mColorPickerVividness = 0.9f;
     /// Contrast gamma applied to sampled colours before Apply. Values > 1
     /// darken dark stops (compressing shadows toward black) while leaving
     /// bright stops nearly untouched - useful for images with a wide

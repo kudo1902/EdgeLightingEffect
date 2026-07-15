@@ -141,6 +141,7 @@ namespace EdgeLighting
         mNeonShader.SetUniform("uBloomStrength", config.neon.bloomStrength);
         mNeonShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
         mNeonShader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness * scale);
+        mNeonShader.SetUniform("uFaithfulColor", config.neon.faithfulColor ? 1 : 0);
         // Pack the segment vector as vec3(position, invSigma, boost) into the
         // std140 SegmentBlock UBO (DALi-compatible pattern - see the shader).
         // Same packing as NeonRenderer; segment `position` is a normalised
