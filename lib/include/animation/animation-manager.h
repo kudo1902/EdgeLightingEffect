@@ -26,16 +26,16 @@ namespace EdgeLighting
     ///
     /// ## Field lifetime (the three phases)
     ///
-    ///   Before Play - field == base value (Stopped animations no-op in Apply).
+    ///   Before Play - field == base value (never-played animations no-op in Apply).
     ///   During Play - field == modulator output.
-    ///   After Stop  - field reverts to the base value (active is rebuilt from
-    ///                 base each frame).
-    ///
-    /// The exception is a @c ONE_SHOT flagged with
-    /// @ref Animation::SetHoldFinalValue(true): once it completes it stays
-    /// parked at its end value and keeps applying it in @ref Apply, so the
-    /// field settles at the target instead of snapping back. That behaviour
-    /// lives entirely in @ref Animation; the manager just applies it.
+    ///   After Stop  - field settles at whatever the animation's
+    ///                 @ref Animation::EndAction specifies (HOLD_CURRENT by
+    ///                 default: the value the modulator was writing at the
+    ///                 moment of stop). HOLD_END / HOLD_START / RESTORE pick
+    ///                 different resting values. To let the base config show
+    ///                 through after Stop, @ref Detach the animation - there's
+    ///                 no dedicated "revert" mode because Detach already gives
+    ///                 that behaviour.
     ///
     /// An @ref AnimationGroup is itself an @ref Animation, so a whole group can
     /// be @ref Attach ed as a single phase-locked unit.

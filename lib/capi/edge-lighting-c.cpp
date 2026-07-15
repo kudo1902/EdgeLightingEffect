@@ -505,6 +505,62 @@ extern "C"
         }
     }
 
+    // --- Animation attach / detach ---
+    //
+    // Thin wrappers over EdgeLightingEffect::Attach / Detach and the manager's
+    // introspection helpers. Ownership: the C handle keeps a shared_ptr, and
+    // Attach takes another, so the underlying Animation stays alive as long
+    // as either side holds it.
+
+    EL_Result el_effect_attach_animation(EL_Effect *fx, EL_Animation *anim)
+    {
+        if (!fx || !anim)
+        {
+            setError("el_effect_attach_animation: null argument");
+            return EL_ERR_NULL_ARG;
+        }
+        if (anim->ptr)
+        {
+            fx->effect.Attach(anim->ptr);
+        }
+        return EL_OK;
+    }
+
+    EL_Bool el_effect_detach_animation(EL_Effect *fx, EL_Animation *anim)
+    {
+        if (!fx || !anim || !anim->ptr)
+        {
+            return 0;
+        }
+        return fx->effect.Detach(anim->ptr) ? 1 : 0;
+    }
+
+    void el_effect_detach_all_animations(EL_Effect *fx)
+    {
+        if (fx)
+        {
+            fx->effect.Animations().DetachAll();
+        }
+    }
+
+    int32_t el_effect_get_animation_count(EL_Effect *fx)
+    {
+        if (!fx)
+        {
+            return 0;
+        }
+        return static_cast<int32_t>(fx->effect.Animations().GetCount());
+    }
+
+    EL_Bool el_effect_contains_animation(EL_Effect *fx, EL_Animation *anim)
+    {
+        if (!fx || !anim || !anim->ptr)
+        {
+            return 0;
+        }
+        return fx->effect.Animations().Contains(anim->ptr) ? 1 : 0;
+    }
+
     // --- Clock ---
     void el_effect_play(EL_Effect *fx)
     {
@@ -713,7 +769,68 @@ extern "C"
 
     void el_animation_destroy(EL_Animation *anim) { delete anim; }
 
-    EL_Result el_animation_apply(EL_Animation *anim, EL_Config *cfg, float elapsed)
+    // ----------------------------------------------------------------------
+    // Stateful lifecycle
+    // ----------------------------------------------------------------------
+
+    void el_animation_play(EL_Animation *anim)
+    {
+        if (anim && anim->ptr)
+        {
+            anim->ptr->Play();
+        }
+    }
+
+    void el_animation_pause(EL_Animation *anim)
+    {
+        if (anim && anim->ptr)
+        {
+            anim->ptr->Pause();
+        }
+    }
+
+    void el_animation_stop(EL_Animation *anim)
+    {
+        if (anim && anim->ptr)
+        {
+            anim->ptr->Stop();
+        }
+    }
+
+    EL_Result el_animation_reset(EL_Animation *anim, EL_Config *cfg)
+    {
+        if (!anim || !cfg)
+        {
+            setError("el_animation_reset: null argument");
+            return EL_ERR_NULL_ARG;
+        }
+        if (!anim->ptr)
+        {
+            return EL_OK;
+        }
+        try
+        {
+            EdgeLighting::Config c = toConfig(*cfg);
+            anim->ptr->Reset(c);
+            fromConfig(c, *cfg);
+            return EL_OK;
+        }
+        catch (const std::exception &e)
+        {
+            setError(e.what());
+            return EL_ERR_EXCEPTION;
+        }
+    }
+
+    void el_animation_update(EL_Animation *anim, float dt)
+    {
+        if (anim && anim->ptr)
+        {
+            anim->ptr->Update(dt);
+        }
+    }
+
+    EL_Result el_animation_apply(EL_Animation *anim, EL_Config *cfg)
     {
         if (!anim || !cfg)
         {
@@ -727,17 +844,9 @@ extern "C"
         try
         {
             EdgeLighting::Config c = toConfig(*cfg);
-            // Bridge the stateless CAPI (caller tracks elapsed) to the
-            // stateful Animation: inject the caller-supplied elapsed then
-            // Apply. Default state is Playing so Apply writes; if the caller
-            // Stop()ed via a future CAPI extension, we restore Playing here
-            // to preserve the historical el_animation_apply behaviour.
-            anim->ptr->SetElapsed(elapsed);
-            if (anim->ptr->IsStopped())
-            {
-                anim->ptr->Play();
-                anim->ptr->SetElapsed(elapsed); // Play from Stopped zeros elapsed; restore.
-            }
+            // Stateful: the animation's own state / elapsed drive Apply.
+            // Never-played STOPPED is a no-op inside Animation::Apply; after
+            // a real Play + Stop cycle the end-action dispatch takes over.
             anim->ptr->Apply(c);
             fromConfig(c, *cfg);
             return EL_OK;
@@ -749,16 +858,106 @@ extern "C"
         }
     }
 
-    EL_Bool el_animation_is_complete(EL_Animation *anim, float elapsed)
+    // ----------------------------------------------------------------------
+    // Elapsed / state introspection
+    // ----------------------------------------------------------------------
+
+    EL_AnimationState el_animation_get_state(EL_Animation *anim)
     {
-        // Stateless check - the animation's own mElapsed may not match what
-        // the CAPI caller has tracked. Use the arithmetic condition directly.
         if (!anim || !anim->ptr)
-            return 0;
-        return (anim->ptr->GetPlaybackMode() == EdgeLighting::PlaybackMode::ONE_SHOT
-                && elapsed >= anim->ptr->GetDuration())
-                   ? 1
-                   : 0;
+        {
+            return EL_ANIM_STATE_STOPPED;
+        }
+        switch (anim->ptr->GetState())
+        {
+        case EdgeLighting::AnimationState::PLAYING:
+            return EL_ANIM_STATE_PLAYING;
+        case EdgeLighting::AnimationState::PAUSED:
+            return EL_ANIM_STATE_PAUSED;
+        case EdgeLighting::AnimationState::STOPPED:
+        default:
+            return EL_ANIM_STATE_STOPPED;
+        }
+    }
+
+    float el_animation_get_elapsed(EL_Animation *anim)
+    {
+        return (anim && anim->ptr) ? anim->ptr->GetElapsed() : 0.0f;
+    }
+
+    void el_animation_set_elapsed(EL_Animation *anim, float elapsed)
+    {
+        if (anim && anim->ptr)
+        {
+            anim->ptr->SetElapsed(elapsed);
+        }
+    }
+
+    // ----------------------------------------------------------------------
+    // End-action policy + RESTORE hooks
+    // ----------------------------------------------------------------------
+
+    EL_EndAction el_animation_get_end_action(EL_Animation *anim)
+    {
+        if (!anim || !anim->ptr)
+        {
+            return EL_END_ACTION_HOLD_CURRENT;
+        }
+        switch (anim->ptr->GetEndAction())
+        {
+        case EdgeLighting::EndAction::HOLD_END:
+            return EL_END_ACTION_HOLD_END;
+        case EdgeLighting::EndAction::HOLD_START:
+            return EL_END_ACTION_HOLD_START;
+        case EdgeLighting::EndAction::RESTORE:
+            return EL_END_ACTION_RESTORE;
+        case EdgeLighting::EndAction::HOLD_CURRENT:
+        default:
+            return EL_END_ACTION_HOLD_CURRENT;
+        }
+    }
+
+    void el_animation_set_end_action(EL_Animation *anim, EL_EndAction action)
+    {
+        if (!anim || !anim->ptr)
+        {
+            return;
+        }
+        EdgeLighting::EndAction cxxAction;
+        switch (action)
+        {
+        case EL_END_ACTION_HOLD_END:
+            cxxAction = EdgeLighting::EndAction::HOLD_END;
+            break;
+        case EL_END_ACTION_HOLD_START:
+            cxxAction = EdgeLighting::EndAction::HOLD_START;
+            break;
+        case EL_END_ACTION_RESTORE:
+            cxxAction = EdgeLighting::EndAction::RESTORE;
+            break;
+        case EL_END_ACTION_HOLD_CURRENT:
+        default:
+            cxxAction = EdgeLighting::EndAction::HOLD_CURRENT;
+            break;
+        }
+        anim->ptr->SetEndAction(cxxAction);
+    }
+
+    void el_animation_capture_baseline(EL_Animation *anim, const EL_Config *cfg)
+    {
+        if (!anim || !anim->ptr || !cfg)
+        {
+            return;
+        }
+        try
+        {
+            EdgeLighting::Config c = toConfig(*cfg);
+            anim->ptr->CaptureBaseline(c);
+        }
+        catch (const std::exception &e)
+        {
+            setError(e.what());
+        }
     }
 
     EL_PlaybackMode el_animation_get_playback_mode(EL_Animation *anim)

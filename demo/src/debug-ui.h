@@ -91,12 +91,6 @@ private:
     // composites them each Update.
     /// Preset index selected in the Add combo.
     int mAddPresetIdx = 0;
-    /// Human-readable preset name per attached animation, parallel to the
-    /// manager's attach order (GetAnimation(i)). Kept because the manager only
-    /// stores AnimationPtr, and we want each row header to say "Breathing"
-    /// instead of "Animation #3". Preset name pointers come from PresetName()
-    /// which returns string literals - safe to hold as raw const char*.
-    std::vector<const char *> mActiveNames;
 
     // --- Debug background quad (demo verification aid) ---
     bool mShowBackground = false;

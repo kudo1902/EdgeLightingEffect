@@ -54,8 +54,16 @@ namespace EdgeLighting
 
     // Config: SetConfig sets the authored base; GetActiveConfig is that base
     // with every attached animation overlaid (what the renderers draw).
+    //
+    // The demo's frame loop calls SetConfig(GetConfig()) every frame - a no-op
+    // when the sliders haven't moved. Guard on operator!= so idle frames don't
+    // pay for the copy + Apply-loop + deep compare + renderer notifications.
     void EdgeLightingEffect::SetConfig(const Config &config)
     {
+        if (config == mBaseConfig)
+        {
+            return;
+        }
         mBaseConfig = config;
         refreshActiveConfig();
     }
@@ -83,16 +91,31 @@ namespace EdgeLighting
 
     // Rebuild the active config = base + every animation overlay, notifying
     // renderers only when it actually changed so idle frames don't rebuild
-    // derived GPU state.
+    // derived GPU state. Two fast paths avoid unnecessary work:
+    //   - No animations attached: active is just the base; skip Apply and the
+    //     temporary Config copy (which allocates for the internal vectors).
+    //   - Composed value equals last frame: skip the notify fan-out.
     void EdgeLightingEffect::refreshActiveConfig()
     {
-        Config active = mBaseConfig;
-        mAnimationManager.Apply(active);
-        if (active == mActiveConfig)
+        if (mAnimationManager.GetCount() == 0)
         {
-            return;
+            if (mActiveConfig == mBaseConfig)
+            {
+                return;
+            }
+            mActiveConfig = mBaseConfig;
         }
-        mActiveConfig = active;
+        else
+        {
+            Config active = mBaseConfig;
+            mAnimationManager.Apply(active);
+            if (active == mActiveConfig)
+            {
+                return;
+            }
+            mActiveConfig = std::move(active);
+        }
+
         for (auto &renderer : mRenderers)
         {
             renderer->OnConfigChanged(mActiveConfig);

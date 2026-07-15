@@ -115,8 +115,26 @@ namespace EdgeLighting
         /// @brief Evaluate every binding at @p elapsed and write into @p cfg.
         void ApplyAt(Config &cfg, float elapsed) const override;
 
+        // --- RESTORE support ------------------------------------------
+        // Generic implementation: for each binding, snapshots the current
+        // value of the bound field and restores every one on demand. Works
+        // for any combination of bindings the caller has added; N bindings
+        // capture N floats. Call @ref CaptureBaseline BEFORE @ref Play so
+        // the snapshot reflects the pre-animation value. RestoreBaseline is
+        // protected because only the base's Apply invokes it.
+        void CaptureBaseline(const Config &cfg) override;
+
+    protected:
+        void RestoreBaseline(Config &cfg) const override;
+
     private:
         std::vector<FieldBinding> mBindings;
+        /// One saved-baseline value per binding, index-aligned with
+        /// @c mBindings at the moment @ref CaptureBaseline was called.
+        /// If bindings are added or removed after snapshotting, the vector
+        /// may be shorter than @c mBindings on Restore - excess bindings
+        /// are left alone (their pre-play state wasn't captured).
+        std::vector<float> mSavedValues;
     };
 
 } // namespace EdgeLighting

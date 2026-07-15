@@ -1,5 +1,7 @@
 #include "animation/field-bound-animation.h"
 
+#include <algorithm>
+
 namespace EdgeLighting
 {
     namespace
@@ -82,6 +84,67 @@ namespace EdgeLighting
             }
             }
         }
+
+        /// Read the current float value of the bound field. Mirrors writeField.
+        /// For segment scalars, an empty segmentBoosts is treated as 0 - the
+        /// snapshot captures "no segment yet", and RestoreBaseline puts that
+        /// zero back into the same slot (writeField will grow the vector as
+        /// needed, matching the pre-play state that only had the seed values).
+        float readField(const Config &cfg, AnimatableField field)
+        {
+            switch (field)
+            {
+            case AnimatableField::NEON_INTENSITY:
+            {
+                return cfg.neon.intensity;
+            }
+            case AnimatableField::NEON_LINE_WIDTH:
+            {
+                return cfg.neon.lineWidth;
+            }
+            case AnimatableField::NEON_GLOW_RADIUS:
+            {
+                return cfg.neon.glowRadius;
+            }
+            case AnimatableField::NEON_BLOOM_STRENGTH:
+            {
+                return cfg.neon.bloomStrength;
+            }
+            case AnimatableField::NEON_FILAMENT_FALLOFF:
+            {
+                return cfg.neon.filamentFalloff;
+            }
+            case AnimatableField::NEON_GLOW_SIDE_SOFTNESS:
+            {
+                return cfg.neon.glowSideSoftness;
+            }
+            case AnimatableField::NEON_HUE_ROTATION_RATE:
+            {
+                return cfg.neon.hueRotationRate;
+            }
+            case AnimatableField::NEON_SEGMENT_POSITION:
+            {
+                return cfg.neon.segmentBoosts.empty() ? 0.0f : cfg.neon.segmentBoosts.front().position;
+            }
+            case AnimatableField::NEON_SEGMENT_LENGTH:
+            {
+                return cfg.neon.segmentBoosts.empty() ? 0.0f : cfg.neon.segmentBoosts.front().length;
+            }
+            case AnimatableField::NEON_SEGMENT_BOOST:
+            {
+                return cfg.neon.segmentBoosts.empty() ? 0.0f : cfg.neon.segmentBoosts.front().boost;
+            }
+            case AnimatableField::NEON_ARC_START:
+            {
+                return cfg.neon.arcStart;
+            }
+            case AnimatableField::NEON_ARC_LENGTH:
+            {
+                return cfg.neon.arcLength;
+            }
+            }
+            return 0.0f;
+        }
     } // namespace
 
     void FieldBoundAnimation::ApplyAt(Config &cfg, float elapsed) const
@@ -92,6 +155,28 @@ namespace EdgeLighting
             {
                 writeField(cfg, b.field, b.modulator->Evaluate(elapsed));
             }
+        }
+    }
+
+    void FieldBoundAnimation::CaptureBaseline(const Config &cfg)
+    {
+        mSavedValues.clear();
+        mSavedValues.reserve(mBindings.size());
+        for (const FieldBinding &b : mBindings)
+        {
+            mSavedValues.push_back(readField(cfg, b.field));
+        }
+    }
+
+    void FieldBoundAnimation::RestoreBaseline(Config &cfg) const
+    {
+        // Walk the pair-wise minimum: if bindings were added or removed since
+        // CaptureBaseline was called, only the bindings that had a value
+        // captured get restored.
+        const size_t n = std::min(mBindings.size(), mSavedValues.size());
+        for (size_t i = 0; i < n; ++i)
+        {
+            writeField(cfg, mBindings[i].field, mSavedValues[i]);
         }
     }
 
