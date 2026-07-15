@@ -30,6 +30,11 @@ namespace EdgeLighting
         /// Quantise a float LUT (GRADIENT_LUT_SIZE * 4 RGBA) to RGBA8 and
         /// upload it to mGradientLUT.
         void uploadGradientLUT(const std::vector<float> &lut);
+        /// Bake each segment's colorStops into one row of mSegmentLUT
+        /// (SEGMENT_LUT_WIDTH x MAX_SEGMENT_BOOSTS). Rows for segments with
+        /// empty stops are left zero-filled - the shader falls back to the
+        /// base gradient in that case (see the vec4.w flag in SegmentBlock).
+        void rebuildSegmentLUT(const Config &config);
 
     private:
         Config mCurrentConfig;
@@ -56,6 +61,17 @@ namespace EdgeLighting
         /// Baked colour ring as a 1×N RGBA32F texture (sampled with v=0.5 in the shader).
         /// Each shader sample becomes a single texture lookup instead of an in-shader stops loop + HSV blend
         Texture2D mGradientLUT;
+
+        /// Per-segment gradient atlas - one row per segment, each row is that
+        /// segment's stops baked head-to-tail across its span. Empty-stops
+        /// segments leave their row zero; the shader detects that via the
+        /// per-segment hasStops flag (SegmentBlock's vec4.w) and falls back to
+        /// the base gradient at those samples.
+        Texture2D mSegmentLUT;
+        /// Cached snapshot of the last-baked segments so per-frame
+        /// OnConfigChanged only re-uploads mSegmentLUT when they actually
+        /// changed (matches how mTargetStops guards mGradientLUT rebuilds).
+        std::vector<SegmentBoost> mBakedSegments;
 
         // --- Gradient cross-fade -------------------------------------------
         // When the colour stops change we don't snap the LUT: we bake the new

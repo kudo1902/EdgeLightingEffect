@@ -37,6 +37,71 @@ namespace
     /// (dragging) or active (idle / animating). The base is written whenever
     /// the widget reports a change; the animation on the next @c
     /// EdgeLightingEffect::Update then overlays on top of the new base.
+    /// Draw one segment-lights row (Pos/Len/Boost + collapsible per-segment
+    /// stops editor). Caller wraps in @c PushID so both the Neon and
+    /// OptimizedNeon sections can share the same widget IDs without colliding.
+    /// @return true if the row's remove button was clicked - caller erases.
+    inline bool DrawSegmentRow(EdgeLighting::SegmentBoost &seg)
+    {
+        ImGui::SetNextItemWidth(90.0f);
+        ImGui::SliderFloat("Pos##Seg", &seg.position, 0.0f, 1.0f, "%.2f");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90.0f);
+        ImGui::SliderFloat("Len##Seg", &seg.length, 0.02f, 0.5f, "%.2f");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90.0f);
+        ImGui::SliderFloat("Boost##Seg", &seg.boost, 0.0f, 10.0f, "%.1f");
+        ImGui::SameLine();
+        bool remove = ImGui::SmallButton("X");
+
+        // Collapsible per-segment stops editor. Header shows the count and an
+        // "inherits base" hint when empty (which is the default and means the
+        // segment reads its colour from the base gradient at each sample).
+        char stopsHdr[64];
+        std::snprintf(stopsHdr, sizeof(stopsHdr),
+                      "Stops (%zu)%s##SegStops",
+                      seg.colorStops.size(),
+                      seg.colorStops.empty() ? " - inherits base" : "");
+        ImGui::Indent();
+        if (ImGui::CollapsingHeader(stopsHdr))
+        {
+            const char *blendItems[] = {"RGB", "HSV", "HSL"};
+            int blendIdx = static_cast<int>(seg.blendSpace);
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::Combo("Blend##Seg", &blendIdx, blendItems, IM_ARRAYSIZE(blendItems)))
+            {
+                seg.blendSpace = static_cast<EdgeLighting::BlendSpace>(blendIdx);
+            }
+            for (size_t j = 0; j < seg.colorStops.size(); ++j)
+            {
+                ImGui::PushID(static_cast<int>(j));
+                ImGui::SetNextItemWidth(90.0f);
+                ImGui::SliderFloat("Pos##SegStop", &seg.colorStops[j].position, 0.0f, 1.0f, "%.2f");
+                ImGui::SameLine();
+                ImGui::ColorEdit4("Col##SegStop", &seg.colorStops[j].color.x,
+                                  ImGuiColorEditFlags_NoInputs);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("X"))
+                {
+                    seg.colorStops.erase(seg.colorStops.begin() +
+                                         static_cast<ptrdiff_t>(j));
+                    ImGui::PopID();
+                    break;
+                }
+                ImGui::PopID();
+            }
+            if (seg.colorStops.size() < MAX_COLOR_STOPS && ImGui::Button("+ Add Stop##Seg"))
+            {
+                float lastPos = seg.colorStops.empty() ? 0.0f
+                                                       : seg.colorStops.back().position;
+                seg.colorStops.push_back(
+                    {std::min(1.0f, lastPos + 0.25f), glm::vec4(1.0f)});
+            }
+        }
+        ImGui::Unindent();
+        return remove;
+    }
+
     inline bool AnimatedSlider(const char *label, float &baseVal, float activeVal,
                                float minVal, float maxVal, const char *fmt = "%.2f")
     {
@@ -268,31 +333,21 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
         ImGui::SliderFloat("Side Softness##Neon", &cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
     }
 
-    // --- Travelling segments (zero or more Gaussian brightness peaks) ---
-    ImGui::TextDisabled("Segment Boosts (%zu / %d)",
+    // --- Travelling segments (independent additive lights on the perimeter) ---
+    ImGui::TextDisabled("Segment Lights (%zu / %d) - additive, independent of intensity",
                         cfg.neon.segmentBoosts.size(),
                         EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP);
     for (size_t i = 0; i < cfg.neon.segmentBoosts.size(); ++i)
     {
         ImGui::PushID(static_cast<int>(300 + i));
-        auto &seg = cfg.neon.segmentBoosts[i];
-        ImGui::SetNextItemWidth(90.0f);
-        ImGui::SliderFloat("Pos##Seg", &seg.position, 0.0f, 1.0f, "%.2f");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(90.0f);
-        ImGui::SliderFloat("Len##Seg", &seg.length, 0.02f, 0.5f, "%.2f");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(90.0f);
-        ImGui::SliderFloat("Boost##Seg", &seg.boost, 0.0f, 10.0f, "%.1f");
-        ImGui::SameLine();
-        if (ImGui::SmallButton("X"))
+        bool remove = DrawSegmentRow(cfg.neon.segmentBoosts[i]);
+        ImGui::PopID();
+        if (remove)
         {
             cfg.neon.segmentBoosts.erase(cfg.neon.segmentBoosts.begin() +
                                          static_cast<ptrdiff_t>(i));
-            ImGui::PopID();
             break;
         }
-        ImGui::PopID();
     }
     if (static_cast<int>(cfg.neon.segmentBoosts.size()) <
         EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP)
@@ -401,30 +456,20 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg,
     // live avoids the slider vanishing when Glow Side is Both).
     ImGui::SliderFloat("Side Softness##Opt", &cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
 
-    ImGui::TextDisabled("Segment Boosts (%zu / %d)",
+    ImGui::TextDisabled("Segment Lights (%zu / %d) - additive, independent of intensity",
                         cfg.neon.segmentBoosts.size(),
                         EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP);
     for (size_t i = 0; i < cfg.neon.segmentBoosts.size(); ++i)
     {
         ImGui::PushID(static_cast<int>(400 + i));
-        auto &seg = cfg.neon.segmentBoosts[i];
-        ImGui::SetNextItemWidth(90.0f);
-        ImGui::SliderFloat("Pos##Seg", &seg.position, 0.0f, 1.0f, "%.2f");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(90.0f);
-        ImGui::SliderFloat("Len##Seg", &seg.length, 0.02f, 0.5f, "%.2f");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(90.0f);
-        ImGui::SliderFloat("Boost##Seg", &seg.boost, 0.0f, 10.0f, "%.1f");
-        ImGui::SameLine();
-        if (ImGui::SmallButton("X"))
+        bool remove = DrawSegmentRow(cfg.neon.segmentBoosts[i]);
+        ImGui::PopID();
+        if (remove)
         {
             cfg.neon.segmentBoosts.erase(cfg.neon.segmentBoosts.begin() +
                                          static_cast<ptrdiff_t>(i));
-            ImGui::PopID();
             break;
         }
-        ImGui::PopID();
     }
     if (static_cast<int>(cfg.neon.segmentBoosts.size()) <
         EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP)

@@ -63,22 +63,27 @@ layout(std140) uniform LoopSamplesBlock
 };
 uniform int uNumSamples; ///< Actual sample count in use; 1..NEON_MAX_LOOP_SAMPLES.
 
-// Travelling segments - up to MAX_SEGMENT_BOOSTS Gaussian brightness peaks.
-// Each vec3 is packed as (position, invSigma, boost) so the shader avoids the
-// per-sample divide. When uSegmentCount == 0 the whole feature is skipped in
-// the gather loop.
+// Travelling segments - up to MAX_SEGMENT_BOOSTS independent coloured lights
+// on the perimeter. Each vec4 is packed as (position, invSigma, boost,
+// hasStops): when .w > 0.5 the segment's colour comes from row `s` of
+// uSegmentLUT (its own head-to-tail gradient); when .w == 0 it inherits the
+// current base gradient sample. When uSegmentCount == 0 the whole feature is
+// skipped in the gather loop.
 //
-// Declared in a std140 uniform block (the DALi PunctualLightBlock pattern)
-// instead of loose array uniforms: DALi/Tizen writes array elements one at
-// a time into the block's UBO ("uSegments[0]", "uSegments[1]", …) using the
-// std140 stride, with no bulk-array upload path. On desktop GL the block is
-// fed from a UBO in neon-optimized-renderer.cpp. std140 pads each vec3
-// element to a 16-byte stride.
+// Declared in a std140 uniform block (the DALi PunctualLightBlock pattern):
+// DALi writes array elements one at a time into the block's UBO
+// ("uSegments[0]", …) at the std140 stride. On desktop GL the block is fed
+// from a UBO in neon-optimized-renderer.cpp.
 layout(std140) uniform SegmentBlock
 {
     int  uSegmentCount;
-    vec3 uSegments[MAX_SEGMENT_BOOSTS];
+    vec4 uSegments[MAX_SEGMENT_BOOSTS];
 };
+
+// Per-segment gradient atlas (RGBA8, CLAMP both axes). One row per segment,
+// each row baked head-to-tail across its span. Sampled only when the
+// segment's hasStops flag is set.
+uniform sampler2D uSegmentLUT;
 
 // Arc gating - only samples whose perimeter position falls within an arc of
 // uArcLength starting at uArcStart contribute. Defaults (0, 1) = full lit.
@@ -181,10 +186,10 @@ void main() {
     // --- Additive gather --------------------------------------------------
     float glow      = 0.0;
     float bloom     = 0.0;
-    vec3  acc       = vec3(0.0);
+    vec3  acc       = vec3(0.0); // base colour × per-sample gather weight
+    vec3  segAcc    = vec3(0.0); // segment additive colour × bell × gather weight
     float wsum      = 0.0;
     float wsumArc   = 0.0;
-    float headWSum  = 0.0;
 
     // uNumSamples is dynamic so the perf slider actually reduces work; the
     // upper bound stays baked in the UBO array size so GL still knows the
@@ -209,27 +214,33 @@ void main() {
         glow  += lg * sqrt(g);
         bloom += arcW / (dd + bw2);
 
-        acc  += texture(uGradientLUT, vec2(ti, 0.5)).rgb * lg;
+        vec3 baseColI = texture(uGradientLUT, vec2(ti, 0.5)).rgb;
+        acc  += baseColI * lg;
 
         wsum    += g;
         wsumArc += lg;
 
-        // Travelling-segment head weight - sum of Gaussian bells over the
-        // uSegments array. The uSegmentCount == 0 case skips the whole loop
-        // (uniform branch, coherent across the draw) so the common "no boost"
-        // path avoids the exp() entirely.
-        if (uSegmentCount > 0) {
-            float headW = 1.0;
-            for (int s = 0; s < uSegmentCount; s++) {
-                vec3  seg      = uSegments[s];
-                float segDist  = abs(si - seg.x);
-                segDist        = min(segDist, 1.0 - segDist);
-                float e        = segDist * seg.y;
-                headW         += seg.z * exp(-e * e);
+        // --- Travelling segments (independent additive lights) ---
+        // See neon.frag for the model - segments contribute segColor * bell *
+        // gather-weight, composed outside uIntensity so segments stay lit even
+        // at intensity 0. Skipped whole-loop when uSegmentCount == 0.
+        for (int s = 0; s < uSegmentCount; s++) {
+            vec4  seg  = uSegments[s];
+            float rel  = si - seg.x;
+            rel       -= floor(rel + 0.5);              // wrap to [-0.5, 0.5]
+            float e    = rel * seg.y;
+            float bell = seg.z * exp(-e * e);
+            if (bell < 0.005) continue;
+
+            vec3 segColor;
+            if (seg.w > 0.5) {
+                float tLocal = clamp(0.5 + e * 0.5, 0.0, 1.0);
+                float rowY   = (float(s) + 0.5) / float(MAX_SEGMENT_BOOSTS);
+                segColor     = texture(uSegmentLUT, vec2(tLocal, rowY)).rgb;
+            } else {
+                segColor = baseColI;
             }
-            headWSum += headW * lg;
-        } else {
-            headWSum += lg; // headW == 1 -> same as the bell branch with no segments
+            segAcc += segColor * bell * lg;
         }
 
         ti  += dti;
@@ -238,8 +249,8 @@ void main() {
     glow  *= uSampleSpacing * kg2 * HALO_NORM_FACTOR;
     bloom *= uSampleSpacing * bw  * BLOOM_NORM_FACTOR;
 
-    vec3 col = acc / max(wsum, WSUM_EPSILON);
-    float headWAvg = headWSum / max(wsum, WSUM_EPSILON);
+    vec3 col    = acc    / max(wsum, WSUM_EPSILON);
+    vec3 segCol = segAcc / max(wsum, WSUM_EPSILON);
 
     float litFraction = wsumArc / max(wsum, WSUM_EPSILON);
     float filamentGate = smoothstep(0.5, 1.0, litFraction);
@@ -247,9 +258,12 @@ void main() {
     // Halo visibility follows glowRadius (glowRadius == 0 -> filament only).
     float haloGate = clamp(uGlowRadius / max(haloFloor, 1e-4), 0.0, 1.0);
 
-    vec3 result  = col * core  * FILAMENT_GAIN  * uIntensity * headWAvg * filamentGate * lineGate;
-    result      += col * glow  * HALO_GAIN      * uIntensity * headWAvg * haloGate;
-    result      += col * bloom * uBloomStrength * uIntensity * headWAvg;
+    // Base gates on uIntensity; segments are independent (stay lit at intensity 0).
+    vec3 lightCol = col * uIntensity + segCol;
+
+    vec3 result  = lightCol * core  * FILAMENT_GAIN  * filamentGate * lineGate;
+    result      += lightCol * glow  * HALO_GAIN      * haloGate;
+    result      += lightCol * bloom * uBloomStrength;
 
     // --- One-sided cut ---
     if (uGlowSide == GLOW_SIDE_INSIDE)       result *= smoothstep( softEdge, -softEdge, d);

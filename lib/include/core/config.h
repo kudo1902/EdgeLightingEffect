@@ -47,19 +47,39 @@ namespace EdgeLighting
         bool operator!=(const ColorStop &o) const { return !(*this == o); }
     } ColorStop;
 
-    /// A travelling brightness peak on the perimeter. Several of these can be
-    /// active at once; the shader sums their Gaussian bells per sample.
+    /// A travelling coloured light on the perimeter. Several can be active at
+    /// once; each contributes additively to the shader output (independent of
+    /// @c NeonConfig::intensity), so a segment can shine on a dark arc.
+    ///
+    /// The @c boost sets its peak brightness (was a multiplier under the old
+    /// multiplicative model; now the segment's absolute amplitude in the
+    /// additive compose). The @c length sets the segment's visible span on the
+    /// perimeter - @c colorStops are laid across that span head-to-tail.
+    ///
+    /// If @c colorStops is empty, the segment inherits the base gradient at
+    /// its current perimeter samples - so a plain boost without stops looks
+    /// like a bright spot in the base colour, matching the old feel.
     typedef struct SegmentBoost
     {
         float position = 0.0f; ///< Centre in [0, 1) perimeter position.
         float length = 0.15f;  ///< Width as a fraction of the perimeter (~2σ).
-        float boost = 0.0f;    ///< Peak brightness multiplier at the centre.
+        float boost = 0.0f;    ///< Peak brightness (absolute; added on top of the base arc).
+        /// Colour stops laid across the segment's span, head-to-tail. Empty
+        /// means "inherit the base gradient" - the segment then reads its
+        /// colour from @c NeonConfig::colorStops at each perimeter sample it
+        /// touches.
+        std::vector<ColorStop> colorStops;
+        /// Blend space for interpolating @c colorStops. Ignored when
+        /// @c colorStops is empty (the base gradient's blend space applies).
+        BlendSpace blendSpace = BlendSpace::RGB;
 
         bool operator==(const SegmentBoost &o) const
         {
             return position == o.position &&
                    length == o.length &&
-                   boost == o.boost;
+                   boost == o.boost &&
+                   colorStops == o.colorStops &&
+                   blendSpace == o.blendSpace;
         }
         bool operator!=(const SegmentBoost &o) const { return !(*this == o); }
     } SegmentBoost;

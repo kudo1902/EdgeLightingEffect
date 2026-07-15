@@ -53,6 +53,7 @@ namespace EdgeLighting
         }
         // rebuildLoopSamples must run before setupGeometry: the Pass-1 quad
         // size depends on mSampleSpacing (computed in rebuildLoopSamples).
+        rebuildSegmentLUT(mCurrentConfig);
         rebuildLoopSamples(mCurrentConfig);
         setupGeometry(mCurrentConfig);
         rebuildGradientLUT(mCurrentConfig);
@@ -153,7 +154,9 @@ namespace EdgeLighting
         {
             const auto &s = config.neon.segmentBoosts[i];
             float invSigma = 1.0f / std::max(s.length * 0.5f, 1e-3f);
-            segBlock.segments[i] = glm::vec4(s.position, invSigma, s.boost, 0.0f);
+            // .w = hasOwnStops flag (see NeonRenderer for details).
+            float hasStops = s.colorStops.empty() ? 0.0f : 1.0f;
+            segBlock.segments[i] = glm::vec4(s.position, invSigma, s.boost, hasStops);
         }
         mSegmentBlock.SetData(&segBlock, sizeof(segBlock));
         mSegmentBlock.BindBase(SEGMENT_BLOCK_BINDING);
@@ -171,6 +174,9 @@ namespace EdgeLighting
 
         mGradientLUT.Bind(0);
         mNeonShader.SetUniform("uGradientLUT", 0);
+        // Per-segment gradient atlas on unit 1 (see NeonRenderer for the shape).
+        mSegmentLUT.Bind(1);
+        mNeonShader.SetUniform("uSegmentLUT", 1);
 
         mNeonVertexArray.DrawArrays(GL_TRIANGLES, 6);
 
@@ -256,6 +262,9 @@ namespace EdgeLighting
         const bool lutDirty = config.neon.colorStops != mCurrentConfig.neon.colorStops ||
                               config.neon.blendSpace != mCurrentConfig.neon.blendSpace ||
                               config.optimizedNeon.gradientLutSize != mCurrentConfig.optimizedNeon.gradientLutSize;
+        // See NeonRenderer for the same guard - only per-segment stops/blend
+        // affect the atlas; live position/length/boost don't.
+        const bool segLutDirty = config.neon.segmentBoosts != mBakedSegments;
 
         mCurrentConfig = config;
         if (!mNeonShader.IsValid())
@@ -276,6 +285,11 @@ namespace EdgeLighting
         if (lutDirty)
         {
             rebuildGradientLUT(config);
+        }
+
+        if (segLutDirty)
+        {
+            rebuildSegmentLUT(config);
         }
     }
 
@@ -453,6 +467,44 @@ namespace EdgeLighting
 
         mGradientLUT.SetData(lutBytes.data(), lutSize, /*height=*/1, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
         mGradientLUT.SetParams(GL_LINEAR, GL_LINEAR, GL_REPEAT, GL_CLAMP_TO_EDGE);
+    }
+
+    void NeonOptimizedRenderer::rebuildSegmentLUT(const Config &config)
+    {
+        // Same atlas shape as NeonRenderer (see there for the full rationale):
+        // SEGMENT_LUT_WIDTH x MAX_SEGMENT_BOOSTS RGBA8; row `i` = segment i's
+        // baked stops or zero if it has none. Fixed width here (128) rather
+        // than the tunable base gradientLutSize - segments are short so extra
+        // resolution wouldn't be visible.
+        constexpr int W = 128;
+        constexpr int H = MAX_SEGMENT_BOOSTS;
+        std::vector<unsigned char> atlas(W * H * 4, 0);
+
+        const int segCount = std::min(static_cast<int>(config.neon.segmentBoosts.size()),
+                                      int(MAX_SEGMENT_BOOSTS));
+        for (int s = 0; s < segCount; ++s)
+        {
+            const auto &seg = config.neon.segmentBoosts[s];
+            if (seg.colorStops.empty())
+            {
+                continue;
+            }
+            unsigned char *row = atlas.data() + (s * W * 4);
+            for (int x = 0; x < W; ++x)
+            {
+                float t = static_cast<float>(x) / static_cast<float>(W - 1);
+                glm::vec3 c = ColorUtils::SampleStops(t, seg.colorStops, seg.blendSpace);
+                row[x * 4 + 0] = static_cast<unsigned char>(std::clamp(c.r * 255.0f, 0.0f, 255.0f));
+                row[x * 4 + 1] = static_cast<unsigned char>(std::clamp(c.g * 255.0f, 0.0f, 255.0f));
+                row[x * 4 + 2] = static_cast<unsigned char>(std::clamp(c.b * 255.0f, 0.0f, 255.0f));
+                row[x * 4 + 3] = 255;
+            }
+        }
+
+        mSegmentLUT.SetData(atlas.data(), W, H, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
+        mSegmentLUT.SetParams(GL_LINEAR, GL_LINEAR, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
+
+        mBakedSegments = config.neon.segmentBoosts;
     }
 
 } // namespace EdgeLighting

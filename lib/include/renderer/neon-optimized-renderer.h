@@ -46,6 +46,9 @@ namespace EdgeLighting
         /// Quantise a float LUT (@p lutSize * 4 RGBA) to RGBA8 and upload it
         /// to mGradientLUT.
         void uploadGradientLUT(const std::vector<float> &lut, int lutSize);
+        /// See NeonRenderer::rebuildSegmentLUT - same atlas shape (one row
+        /// per segment) so the shader's sampling code stays identical.
+        void rebuildSegmentLUT(const Config &config);
 
     private:
         Config mCurrentConfig;
@@ -67,6 +70,11 @@ namespace EdgeLighting
         float mQuadMargin = 0.0f; ///< Scaled/FBO-space margin to the Pass-1 quad edge (shader soft-fade).
 
         Texture2D mGradientLUT;
+        /// Per-segment gradient atlas (see NeonRenderer::mSegmentLUT).
+        Texture2D mSegmentLUT;
+        /// Snapshot of the last-baked segments so OnConfigChanged only
+        /// re-uploads when they actually differ.
+        std::vector<SegmentBoost> mBakedSegments;
 
         // --- Gradient cross-fade -------------------------------------------
         // Same shape as NeonRenderer: bake into mLUTTarget, snapshot the
