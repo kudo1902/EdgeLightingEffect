@@ -51,8 +51,18 @@ extern "C"
 #define EL_API __attribute__((visibility("default")))
 #endif
 
-/** ABI version. Bump on any breaking change to a struct layout or signature. */
-#define EL_ABI_VERSION 9
+/** ABI version. Bump on any breaking change to a struct layout or signature.
+ *  v10: animations became stateful. el_animation_apply lost its `elapsed`
+ *       parameter; the animation carries its own state now. New lifecycle
+ *       entry points (play/pause/stop/reset/update), state / end-action
+ *       accessors, effect-level attach/detach (el_effect_attach_animation,
+ *       el_effect_detach_animation, ...), and el_animation_capture_baseline
+ *       for RESTORE. el_animation_is_complete(elapsed) removed - check
+ *       el_animation_get_state instead. EL_ConfigField dropped its three
+ *       NEON_SEGMENT_* values and renumbered NEON_ARC_START / _LENGTH;
+ *       segment scalars now live in EL_SegmentField and bind via
+ *       el_animation_add_segment_field so the segment index is required. */
+#define EL_ABI_VERSION 10
 
 /** Maximum colour stops per gradient - hard cap because the EL_NeonConfig
  *  struct's colorStops[] array is fixed-size at the ABI boundary. The core C++
@@ -115,6 +125,26 @@ extern "C"
         EL_PLAYBACK_LOOP = 0,    ///< Plays forever; never completes.
         EL_PLAYBACK_ONE_SHOT = 1 ///< Plays for the configured duration, then stops.
     } EL_PlaybackMode;
+
+    /** Per-animation lifecycle state (mirror EdgeLighting::AnimationState). */
+    typedef enum EL_AnimationState
+    {
+        EL_ANIM_STATE_STOPPED = 0, ///< Not advancing; Apply's behaviour depends on end action.
+        EL_ANIM_STATE_PLAYING = 1, ///< Elapsed advances on Update; Apply writes current value.
+        EL_ANIM_STATE_PAUSED = 2   ///< Elapsed frozen; Apply keeps writing the held value.
+    } EL_AnimationState;
+
+    /** What the animation writes into its field once it enters STOPPED
+     *  (mirror EdgeLighting::EndAction). Only takes effect after the animation
+     *  has actually run at least once; a never-played animation is a no-op
+     *  regardless. To let the base config show through, detach the animation. */
+    typedef enum EL_EndAction
+    {
+        EL_END_ACTION_HOLD_CURRENT = 0, ///< Settle at elapsed-at-stop. (Default.)
+        EL_END_ACTION_HOLD_END = 1,     ///< Settle at ApplyAt(cfg, duration).
+        EL_END_ACTION_HOLD_START = 2,   ///< Settle at ApplyAt(cfg, 0).
+        EL_END_ACTION_RESTORE = 3       ///< Settle at pre-play snapshot (subclass-hooked; base is a no-op).
+    } EL_EndAction;
 
     /** Easing curves (mirror EdgeLighting::EasingFunction::*). */
     typedef enum EL_Easing
@@ -304,6 +334,55 @@ extern "C"
     EL_API float el_effect_get_time(EL_Effect *fx);
     EL_API EL_Bool el_effect_is_playing(EL_Effect *fx);
 
+    /* --- Animation attachment (mirror EdgeLightingEffect::Attach / Detach) ---
+     *
+     * Attached animations are advanced automatically by @ref el_effect_update
+     * (using the clock's delta, so a paused clock freezes them) and composited
+     * onto the base config so @ref el_effect_render draws the animated result.
+     * Once an animation is attached, the caller does NOT call
+     * @ref el_animation_update or @ref el_animation_apply for it - those remain
+     * available for advanced "manual driver" flows where the caller wants to
+     * run an animation without going through the effect's manager.
+     *
+     * The C handle keeps a shared_ptr to the underlying animation, and Attach
+     * takes another, so the animation stays alive as long as either side holds
+     * it. Destroying the C handle after Attach is legal but leaves you no way
+     * to Detach by identity (use @ref el_effect_detach_all_animations to clear).
+     *
+     * Recommended lifecycle:
+     * @code
+     *   EL_Animation *a = el_animation_intensity_fade_in(1.0f, 0.4f, EL_EASE_OUT_CUBIC);
+     *   el_animation_set_end_action(a, EL_END_ACTION_HOLD_END);
+     *   el_effect_attach_animation(fx, a);
+     *   el_animation_play(a);
+     *   // per frame - no per-animation calls needed:
+     *   el_effect_update(fx, dt);
+     *   el_effect_render(fx, w, h);
+     *   // when done:
+     *   el_effect_detach_animation(fx, a);
+     *   el_animation_destroy(a);
+     * @endcode
+     */
+
+    /** @brief Attach @p anim so the effect's Update advances it and composites
+     *         it onto the base config. Ignores null; a duplicate attach of the
+     *         same animation is silently ignored. */
+    EL_API EL_Result el_effect_attach_animation(EL_Effect *fx, EL_Animation *anim);
+
+    /** @brief Detach @p anim (by identity). The animation object stays alive
+     *         as long as the caller holds the handle.
+     *  @return 1 if the animation was attached and removed, 0 otherwise. */
+    EL_API EL_Bool el_effect_detach_animation(EL_Effect *fx, EL_Animation *anim);
+
+    /** @brief Detach every animation from the effect. */
+    EL_API void el_effect_detach_all_animations(EL_Effect *fx);
+
+    /** @brief Number of animations currently attached to the effect. */
+    EL_API int32_t el_effect_get_animation_count(EL_Effect *fx);
+
+    /** @brief True if @p anim is currently attached to the effect. */
+    EL_API EL_Bool el_effect_contains_animation(EL_Effect *fx, EL_Animation *anim);
+
     /* --------------------------------------------------------------------------
      * Neon animations
      * ------------------------------------------------------------------------ */
@@ -366,13 +445,80 @@ extern "C"
     /** @brief Destroy an animation. Safe to pass null. */
     EL_API void el_animation_destroy(EL_Animation *anim);
 
-    /**
-     * @brief Apply the animation at @p elapsed seconds into @p cfg (in place).
-     * @param elapsed Seconds since the animation began (not absolute clock time).
-     * @details Typical use: pass `el_effect_get_time(fx) - startTime`, write the
-     *          result back with @ref el_effect_set_config.
+    /* --- Lifecycle ------------------------------------------------------
+     *
+     * Animations are stateful. The recommended flow is to attach the animation
+     * to an effect (@ref el_effect_attach_animation) and let @ref el_effect_update
+     * drive Update+Apply for you - see the example there.
+     *
+     * The manual-driver entry points below (@ref el_animation_update /
+     * @ref el_animation_apply) let you run an animation without going through
+     * the effect - useful for composing your own manager, unit testing, or
+     * driving an animation whose output you plan to consume outside the
+     * effect's config. Skip them entirely for the standard flow.
      */
-    EL_API EL_Result el_animation_apply(EL_Animation *anim, EL_Config *cfg, float elapsed);
+
+    /** @brief Enter the PLAYING state. From STOPPED, elapsed is reset to 0;
+     *         from PAUSED, elapsed continues from its frozen value. No-op if
+     *         already PLAYING. */
+    EL_API void el_animation_play(EL_Animation *anim);
+
+    /** @brief Freeze elapsed; Apply keeps writing the held value. No-op unless PLAYING. */
+    EL_API void el_animation_pause(EL_Animation *anim);
+
+    /** @brief Enter the STOPPED state. Elapsed at the moment of stop is captured
+     *         for HOLD_CURRENT; the next Apply writes per @ref el_animation_set_end_action. */
+    EL_API void el_animation_stop(EL_Animation *anim);
+
+    /** @brief Zero elapsed and write the modulator's t=0 value into @p cfg.
+     *         Does NOT change state. Useful as "rewind while playing" or
+     *         "restore baseline while stopped". */
+    EL_API EL_Result el_animation_reset(EL_Animation *anim, EL_Config *cfg);
+
+    /** @brief Advance elapsed by @p dt seconds (multiplied by speed). No-op unless PLAYING.
+     *         A ONE_SHOT crossing its duration transitions to STOPPED and captures
+     *         the completion elapsed. */
+    EL_API void el_animation_update(EL_Animation *anim, float dt);
+
+    /** @brief Write the animation's current value into @p cfg (in place).
+     *         PLAYING / PAUSED write ApplyAt at the current elapsed;
+     *         STOPPED writes per @ref el_animation_set_end_action (or no-ops
+     *         if the animation has never played). */
+    EL_API EL_Result el_animation_apply(EL_Animation *anim, EL_Config *cfg);
+
+    /* --- Elapsed / state introspection --- */
+
+    /** @brief Current lifecycle state. */
+    EL_API EL_AnimationState el_animation_get_state(EL_Animation *anim);
+
+    /** @brief Current elapsed accumulator, in seconds. */
+    EL_API float el_animation_get_elapsed(EL_Animation *anim);
+
+    /** @brief Directly overwrite the elapsed accumulator. Does NOT change state
+     *         or fire OnComplete; use for scrubbing / testing. */
+    EL_API void el_animation_set_elapsed(EL_Animation *anim, float elapsed);
+
+    /* --- End-action policy --- */
+
+    /** @brief What Apply writes once the animation is STOPPED. */
+    EL_API EL_EndAction el_animation_get_end_action(EL_Animation *anim);
+
+    /** @brief Set what Apply writes once the animation is STOPPED. */
+    EL_API void el_animation_set_end_action(EL_Animation *anim, EL_EndAction action);
+
+    /* --- RESTORE snapshot entry point ---------------------------------
+     *
+     * Only meaningful when @ref el_animation_set_end_action is
+     * EL_END_ACTION_RESTORE. Every built-in animation (presets + generic
+     * FieldBoundAnimation) implements the underlying snapshot / restore
+     * hooks, so RESTORE works out of the box after a single snapshot call.
+     *
+     * Call this BEFORE Play so the snapshot captures the pre-animation
+     * value. The corresponding restore fires automatically from
+     * @ref el_animation_apply while STOPPED - no explicit restore call. */
+
+    /** @brief Snapshot the pre-play field value(s) into the animation. */
+    EL_API void el_animation_capture_baseline(EL_Animation *anim, const EL_Config *cfg);
 
     /* --- Playback mode (loop vs one-shot) --- */
 
@@ -393,9 +539,6 @@ extern "C"
      *          fades) rebuild them in lockstep so the visual matches the latch.
      */
     EL_API void el_animation_set_duration(EL_Animation *anim, float seconds);
-
-    /** @brief True if mode is ONE_SHOT and @p elapsed has reached the duration. */
-    EL_API EL_Bool el_animation_is_complete(EL_Animation *anim, float elapsed);
 
     /* --- Speed (playback-rate multiplier; 1.0 = normal) --- */
 
@@ -428,7 +571,8 @@ extern "C"
      *
      *   EL_Animation *anim = el_animation_from_modulator(EL_FIELD_NEON_INTENSITY, signal);
      *   el_modulator_destroy(signal);
-     *   // per frame: el_animation_apply(anim, &cfg, elapsedTime);
+     *   el_animation_play(anim);
+     *   // per frame: el_animation_update(anim, dt); el_animation_apply(anim, &cfg);
      * ------------------------------------------------------------------------ */
 
     /** Periodic waveform shapes for @ref el_modulator_oscillator. */
@@ -440,13 +584,20 @@ extern "C"
         EL_WAVE_SAWTOOTH = 3  ///< Linear ramp 0->1, snap back.
     } EL_Waveform;
 
-    /** Config fields that @ref el_animation_from_modulator can drive.
-     *  Single-value NeonConfig scalars only. Vector / enum / geometry fields
-     *  (colour stops, glowSide, position vec2) are not exposed yet.
+    /** Scalar Config leaves that @ref el_animation_from_modulator and
+     *  @ref el_animation_add_field can drive. Single-value NeonConfig
+     *  scalars only. Vector / enum / geometry fields (colour stops,
+     *  glowSide, position vec2) are not exposed yet.
      *
-     *  New values are appended at the end so existing binaries stay ABI-compatible
-     *  with headers that add fields - old code will simply return the default
-     *  branch (no-op) for enum values it doesn't recognise. */
+     *  Segment struct scalars (position / length / boost inside
+     *  neon.segmentBoosts[i]) live in @ref EL_SegmentField - drive them via
+     *  @ref el_animation_add_segment_field so the index is required at bind
+     *  time.
+     *
+     *  New values are appended at the end so existing binaries stay
+     *  ABI-compatible with headers that add fields - old code will simply
+     *  return the default branch (no-op) for enum values it doesn't
+     *  recognise. */
     typedef enum EL_ConfigField
     {
         EL_FIELD_NEON_INTENSITY = 0,
@@ -455,20 +606,21 @@ extern "C"
         EL_FIELD_NEON_BLOOM_STRENGTH = 3,
         EL_FIELD_NEON_FILAMENT_FALLOFF = 4,
         EL_FIELD_NEON_GLOW_SIDE_SOFTNESS = 5,
-
-        /* Extended animation-worthy scalars - added after the initial ship. */
         EL_FIELD_NEON_HUE_ROTATION_RATE = 6,
-
-        /* Segment boost scalars target entry 0 of neon.segmentBoosts and
-         * auto-grow the vector to include it. To animate a specific entry other
-         * than index 0, use a preset factory that takes an index. */
-        EL_FIELD_NEON_SEGMENT_POSITION = 7,
-        EL_FIELD_NEON_SEGMENT_LENGTH = 8,
-        EL_FIELD_NEON_SEGMENT_BOOST = 9,
-
-        EL_FIELD_NEON_ARC_START = 10,
-        EL_FIELD_NEON_ARC_LENGTH = 11
+        EL_FIELD_NEON_ARC_START = 7,
+        EL_FIELD_NEON_ARC_LENGTH = 8
     } EL_ConfigField;
+
+    /** Which scalar to drive inside a neon.segmentBoosts entry.
+     *  Paired with an index at bind time via
+     *  @ref el_animation_add_segment_field. Mirrors
+     *  EdgeLighting::SegmentField 1:1. */
+    typedef enum EL_SegmentField
+    {
+        EL_SEGMENT_FIELD_POSITION = 0,
+        EL_SEGMENT_FIELD_LENGTH = 1,
+        EL_SEGMENT_FIELD_BOOST = 2
+    } EL_SegmentField;
 
     /* --- Modulator factories ---
      * Each returns an owning handle (null on allocation failure). */
@@ -548,7 +700,7 @@ extern "C"
     EL_API EL_Animation *el_animation_empty(void);
 
     /**
-     * @brief Append a (field, modulator) binding to a field-bound animation.
+     * @brief Append a scalar (field, modulator) binding to a field-bound animation.
      * @param anim  Animation created via @ref el_animation_empty or
      *              @ref el_animation_from_modulator. Not a preset animation
      *              (@ref el_animation_create) - those bind their own fields
@@ -559,6 +711,24 @@ extern "C"
     EL_API EL_Result el_animation_add_field(EL_Animation *anim,
                                             int32_t field /*EL_ConfigField*/,
                                             EL_Modulator *mod);
+
+    /**
+     * @brief Append a segment (index, field, modulator) binding to a
+     *        field-bound animation. Drives one scalar inside
+     *        @c cfg.neon.segmentBoosts[index], auto-growing the vector to
+     *        that slot.
+     * @param anim  Animation created via @ref el_animation_empty or
+     *              @ref el_animation_from_modulator. Not a preset animation.
+     * @param index Which entry in segmentBoosts to drive.
+     * @param field One of EL_SegmentField (POSITION / LENGTH / BOOST).
+     * @param mod   Modulator to evaluate each Apply. Shared ownership.
+     * @details Use multiple calls with different indices to drive several
+     *          segments off one phase-locked clock.
+     */
+    EL_API EL_Result el_animation_add_segment_field(EL_Animation *anim,
+                                                    int32_t index,
+                                                    int32_t field /*EL_SegmentField*/,
+                                                    EL_Modulator *mod);
 
 #ifdef __cplusplus
 } // extern "C"

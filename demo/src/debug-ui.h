@@ -18,6 +18,7 @@ namespace EdgeLighting
 {
     struct Config;
     class EdgeLightingEffect;
+    class AnimationManager;
 }
 
 class DebugUI
@@ -36,14 +37,6 @@ public:
 
     /// Feed the last frame's render time (only gEffect->Render, no ImGui) for display.
     void SetLastRenderTimeMs(float ms) { mLastRenderTimeMs = ms; }
-
-    /// Update the currently selected animation preset (if any) and apply
-    /// its output to @p config.
-    /// @p clockTime is the effect's clock time; we use its per-frame delta
-    /// to drive @c Animation::Update. The animation owns its own state,
-    /// elapsed accumulator, and completion latching - pausing the effect
-    /// clock freezes dt to 0 and effectively pauses every animation.
-    void ApplyActiveAnimation(EdgeLighting::Config &config, float clockTime);
 
     /// Render the ImGui frame into the debug window. Must be called after Build() each frame.
     void Render();
@@ -79,7 +72,8 @@ private:
     void buildGeometrySection(EdgeLighting::Config &cfg);
     void buildNeonSection(EdgeLighting::Config &cfg);
     void buildOptimizedNeonSection(EdgeLighting::Config &cfg);
-    void buildAnimationSection(EdgeLighting::Config &cfg, float clockTime);
+    void buildAnimationSection(EdgeLighting::Config &cfg,
+                               EdgeLighting::AnimationManager &manager);
     void buildBackgroundSection();
     void buildColorPickerSection(EdgeLighting::Config &cfg);
 
@@ -91,22 +85,12 @@ private:
     float mLastRenderTimeMs = 0.0f;
 
     // --- Animation state ---
-    // Multi-animation UX: mActiveGroup owns any presets the user has added.
-    // AnimationGroup broadcasts Play/Pause/Stop/Reset/Update/Apply, so the
-    // section-level "Play all" / "Pause all" controls fall out for free, and
-    // each child can still be controlled individually via its own Animation
-    // methods.
-    std::shared_ptr<EdgeLighting::AnimationGroup> mActiveGroup =
-        std::make_shared<EdgeLighting::AnimationGroup>();
+    // Animations are owned by the effect's AnimationManager (via
+    // effect.Animations()); this section only attaches/detaches presets to it
+    // and drives each row's per-animation controls. The effect advances and
+    // composites them each Update.
     /// Preset index selected in the Add combo.
     int mAddPresetIdx = 0;
-    /// Human-readable preset name per active child, parallel to
-    /// mActiveGroup->GetChildren(). Kept because AnimationGroup only stores
-    /// AnimationPtr, and we want each row header to say "Breathing" instead
-    /// of "Animation #3". Preset name pointers come from PresetName() which
-    /// returns string literals - safe to hold as raw const char*.
-    std::vector<const char *> mActiveNames;
-    float mLastClockTime = 0.0f; ///< Clock time at last ApplyActiveAnimation tick.
 
     // --- Debug background quad (demo verification aid) ---
     bool mShowBackground = false;
