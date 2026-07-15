@@ -58,7 +58,10 @@ extern "C"
  *       accessors, effect-level attach/detach (el_effect_attach_animation,
  *       el_effect_detach_animation, ...), and el_animation_capture_baseline
  *       for RESTORE. el_animation_is_complete(elapsed) removed - check
- *       el_animation_get_state instead. */
+ *       el_animation_get_state instead. EL_ConfigField dropped its three
+ *       NEON_SEGMENT_* values and renumbered NEON_ARC_START / _LENGTH;
+ *       segment scalars now live in EL_SegmentField and bind via
+ *       el_animation_add_segment_field so the segment index is required. */
 #define EL_ABI_VERSION 10
 
 /** Maximum colour stops per gradient - hard cap because the EL_NeonConfig
@@ -581,13 +584,20 @@ extern "C"
         EL_WAVE_SAWTOOTH = 3  ///< Linear ramp 0->1, snap back.
     } EL_Waveform;
 
-    /** Config fields that @ref el_animation_from_modulator can drive.
-     *  Single-value NeonConfig scalars only. Vector / enum / geometry fields
-     *  (colour stops, glowSide, position vec2) are not exposed yet.
+    /** Scalar Config leaves that @ref el_animation_from_modulator and
+     *  @ref el_animation_add_field can drive. Single-value NeonConfig
+     *  scalars only. Vector / enum / geometry fields (colour stops,
+     *  glowSide, position vec2) are not exposed yet.
      *
-     *  New values are appended at the end so existing binaries stay ABI-compatible
-     *  with headers that add fields - old code will simply return the default
-     *  branch (no-op) for enum values it doesn't recognise. */
+     *  Segment struct scalars (position / length / boost inside
+     *  neon.segmentBoosts[i]) live in @ref EL_SegmentField - drive them via
+     *  @ref el_animation_add_segment_field so the index is required at bind
+     *  time.
+     *
+     *  New values are appended at the end so existing binaries stay
+     *  ABI-compatible with headers that add fields - old code will simply
+     *  return the default branch (no-op) for enum values it doesn't
+     *  recognise. */
     typedef enum EL_ConfigField
     {
         EL_FIELD_NEON_INTENSITY = 0,
@@ -596,20 +606,21 @@ extern "C"
         EL_FIELD_NEON_BLOOM_STRENGTH = 3,
         EL_FIELD_NEON_FILAMENT_FALLOFF = 4,
         EL_FIELD_NEON_GLOW_SIDE_SOFTNESS = 5,
-
-        /* Extended animation-worthy scalars - added after the initial ship. */
         EL_FIELD_NEON_HUE_ROTATION_RATE = 6,
-
-        /* Segment boost scalars target entry 0 of neon.segmentBoosts and
-         * auto-grow the vector to include it. To animate a specific entry other
-         * than index 0, use a preset factory that takes an index. */
-        EL_FIELD_NEON_SEGMENT_POSITION = 7,
-        EL_FIELD_NEON_SEGMENT_LENGTH = 8,
-        EL_FIELD_NEON_SEGMENT_BOOST = 9,
-
-        EL_FIELD_NEON_ARC_START = 10,
-        EL_FIELD_NEON_ARC_LENGTH = 11
+        EL_FIELD_NEON_ARC_START = 7,
+        EL_FIELD_NEON_ARC_LENGTH = 8
     } EL_ConfigField;
+
+    /** Which scalar to drive inside a neon.segmentBoosts entry.
+     *  Paired with an index at bind time via
+     *  @ref el_animation_add_segment_field. Mirrors
+     *  EdgeLighting::SegmentField 1:1. */
+    typedef enum EL_SegmentField
+    {
+        EL_SEGMENT_FIELD_POSITION = 0,
+        EL_SEGMENT_FIELD_LENGTH = 1,
+        EL_SEGMENT_FIELD_BOOST = 2
+    } EL_SegmentField;
 
     /* --- Modulator factories ---
      * Each returns an owning handle (null on allocation failure). */
@@ -689,7 +700,7 @@ extern "C"
     EL_API EL_Animation *el_animation_empty(void);
 
     /**
-     * @brief Append a (field, modulator) binding to a field-bound animation.
+     * @brief Append a scalar (field, modulator) binding to a field-bound animation.
      * @param anim  Animation created via @ref el_animation_empty or
      *              @ref el_animation_from_modulator. Not a preset animation
      *              (@ref el_animation_create) - those bind their own fields
@@ -700,6 +711,24 @@ extern "C"
     EL_API EL_Result el_animation_add_field(EL_Animation *anim,
                                             int32_t field /*EL_ConfigField*/,
                                             EL_Modulator *mod);
+
+    /**
+     * @brief Append a segment (index, field, modulator) binding to a
+     *        field-bound animation. Drives one scalar inside
+     *        @c cfg.neon.segmentBoosts[index], auto-growing the vector to
+     *        that slot.
+     * @param anim  Animation created via @ref el_animation_empty or
+     *              @ref el_animation_from_modulator. Not a preset animation.
+     * @param index Which entry in segmentBoosts to drive.
+     * @param field One of EL_SegmentField (POSITION / LENGTH / BOOST).
+     * @param mod   Modulator to evaluate each Apply. Shared ownership.
+     * @details Use multiple calls with different indices to drive several
+     *          segments off one phase-locked clock.
+     */
+    EL_API EL_Result el_animation_add_segment_field(EL_Animation *anim,
+                                                    int32_t index,
+                                                    int32_t field /*EL_SegmentField*/,
+                                                    EL_Modulator *mod);
 
 #ifdef __cplusplus
 } // extern "C"

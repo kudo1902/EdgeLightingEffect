@@ -1258,4 +1258,44 @@ extern "C"
         }
     }
 
+    EL_Result el_animation_add_segment_field(EL_Animation *anim, int32_t index,
+                                             int32_t field, EL_Modulator *mod)
+    {
+        if (!anim || !anim->ptr)
+        {
+            setError("el_animation_add_segment_field: null animation");
+            return EL_ERR_NULL_ARG;
+        }
+        if (!mod || !mod->ptr)
+        {
+            setError("el_animation_add_segment_field: null modulator");
+            return EL_ERR_NULL_ARG;
+        }
+        if (index < 0)
+        {
+            setError("el_animation_add_segment_field: negative segment index");
+            return EL_ERR_NULL_ARG;
+        }
+        auto *fba = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
+        if (!fba)
+        {
+            setError("el_animation_add_segment_field: animation is not field-bound "
+                     "(only el_animation_empty() and el_animation_from_modulator() "
+                     "return field-bound animations)");
+            return EL_ERR_NULL_ARG;
+        }
+        try
+        {
+            fba->AddSegmentField(static_cast<size_t>(index),
+                                 static_cast<EdgeLighting::SegmentField>(field),
+                                 mod->ptr);
+            return EL_OK;
+        }
+        catch (const std::exception &e)
+        {
+            setError(e.what());
+            return EL_ERR_EXCEPTION;
+        }
+    }
+
 } // extern "C"
