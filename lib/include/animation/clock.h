@@ -34,17 +34,13 @@ namespace EdgeLighting
 
         /// @brief Advance the clock by @p deltaTime.
         /// @param deltaTime Frame delta in seconds.
-        /// @return How far the clock advanced this call - @p deltaTime while
-        ///         playing, 0 while paused. Lets callers drive animations in
-        ///         lockstep with the clock's play state.
-        float Update(float deltaTime)
+        /// @note No-op when paused.
+        void Update(float deltaTime)
         {
-            if (!mIsPlaying)
+            if (mIsPlaying)
             {
-                return 0.0f;
+                mTime += deltaTime;
             }
-            mTime += deltaTime;
-            return deltaTime;
         }
 
         /// @brief Jump to an explicit time value.

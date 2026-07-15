@@ -144,13 +144,13 @@ int main()
         lastFrameTime = currentFrameTime;
 
         // --- Debug UI (ImGui widgets + render to debug window) ---
-        // Sliders / preset picks edit the effect's BASE config. gEffect->Update
-        // (in the render block below) advances the attached animations and
-        // composites them onto the base to produce the active config.
+        // Build the UI (mutates cfg from slider drags / preset picks), then
+        // overlay the currently-active animation preset, then push back.
         {
-            EdgeLighting::Config base = gEffect->GetConfig();
-            debugUI.Build(base, *gEffect);
-            gEffect->SetConfig(base);
+            EdgeLighting::Config cfg = gEffect->GetConfig();
+            debugUI.Build(cfg, *gEffect);
+            debugUI.ApplyActiveAnimation(cfg, gEffect->GetClock().GetTime());
+            gEffect->SetConfig(cfg);
         }
         debugUI.Render();
 

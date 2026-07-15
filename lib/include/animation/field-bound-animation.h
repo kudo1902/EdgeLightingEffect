@@ -8,17 +8,16 @@
 
 namespace EdgeLighting
 {
-    /// @brief Scalar Config leaves that a @ref FieldBoundAnimation can drive
-    ///        through @ref FieldBoundAnimation::AddField.
+    /// @brief Single-float Config leaves that a @ref FieldBoundAnimation can
+    ///        drive.
     ///
     /// Enum values are numerically ABI-stable - the C API's @c EL_ConfigField
     /// mirrors them 1:1 and static_casts between the two. Append new fields at
     /// the end so both C and C++ callers stay forward-compatible.
     ///
-    /// Segment struct fields (position / length / boost inside
-    /// @c NeonConfig::segmentBoosts[i]) live in @ref SegmentField because
-    /// they need an index; use @ref FieldBoundAnimation::AddSegmentField for
-    /// those.
+    /// Segment fields target entry 0 of @c NeonConfig::segmentBoosts and
+    /// auto-grow the vector to include it. For a specific index other than 0,
+    /// write your own subclass or drive the vector directly from the host.
     typedef enum class AnimatableField
     {
         NEON_INTENSITY = 0,
@@ -28,42 +27,26 @@ namespace EdgeLighting
         NEON_FILAMENT_FALLOFF = 4,
         NEON_GLOW_SIDE_SOFTNESS = 5,
         NEON_HUE_ROTATION_RATE = 6,
-        NEON_ARC_START = 7,
-        NEON_ARC_LENGTH = 8,
+        NEON_SEGMENT_POSITION = 7,
+        NEON_SEGMENT_LENGTH = 8,
+        NEON_SEGMENT_BOOST = 9,
+        NEON_ARC_START = 10,
+        NEON_ARC_LENGTH = 11,
     } AnimatableField;
 
-    /// @brief Which scalar to drive inside a @c NeonConfig::segmentBoosts entry.
-    ///
-    /// Paired with an index at bind time via
-    /// @ref FieldBoundAnimation::AddSegmentField. Numerically mirrored by
-    /// @c EL_SegmentField in the C ABI.
-    typedef enum class SegmentField
-    {
-        POSITION = 0,
-        LENGTH = 1,
-        BOOST = 2,
-    } SegmentField;
-
     /// @brief Animation whose per-frame behaviour is defined at runtime by
-    ///        binding modulators to Config fields.
+    ///        binding modulators to @ref AnimatableField values.
     ///
     /// While the neon-animations.h subclasses each hard-code a specific field
     /// (e.g. @c IntensityPulse writes @c neon.intensity), @c FieldBoundAnimation
-    /// carries a list of bindings. Two kinds:
-    ///
-    /// - @ref AddField(AnimatableField, ModulatorPtr) - drive a scalar leaf.
-    /// - @ref AddSegmentField(size_t, SegmentField, ModulatorPtr) - drive one
-    ///   scalar inside @c NeonConfig::segmentBoosts[index], auto-growing the
-    ///   vector to that slot.
-    ///
-    /// On each @ref ApplyAt every binding's modulator is evaluated with the
-    /// same @c elapsed and the result is written to its bound target.
+    /// carries a list of @ref FieldBinding entries. On each @ref ApplyAt every
+    /// binding's modulator is evaluated with the same @c elapsed and the
+    /// result is written to its bound field.
     ///
     /// The shared elapsed / duration / play state phase-locks all bindings -
     /// use this class for "one animation, several fields moving together"
-    /// (e.g. a heartbeat that pulses intensity + glow + bloom in unison, or
-    /// two segments travelling with a fixed phase offset). For independent
-    /// parallel animations with different rates, put separate
+    /// (e.g. a heartbeat that pulses intensity + glow + bloom in unison). For
+    /// independent parallel animations with different rates, put separate
     /// @c FieldBoundAnimation instances into an @ref AnimationGroup.
     ///
     /// @code
@@ -71,36 +54,25 @@ namespace EdgeLighting
     ///     FieldBoundAnimation breathing(AnimatableField::NEON_INTENSITY, pulse);
     ///     breathing.AddField(AnimatableField::NEON_GLOW_RADIUS,
     ///                        std::make_shared<Remap>(pulse, 3.0f, 20.0f));
-    ///
-    ///     // Two travelling segments, phase-locked:
-    ///     auto lead = std::make_shared<Oscillator>(1.0f / 3.0f, 0.0f, 1.0f, 0.0f, Waveform::SAWTOOTH);
-    ///     auto tail = std::make_shared<Oscillator>(1.0f / 3.0f, 0.0f, 1.0f, 0.5f, Waveform::SAWTOOTH);
-    ///     breathing.AddSegmentField(0, SegmentField::POSITION, lead);
-    ///     breathing.AddSegmentField(1, SegmentField::POSITION, tail);
     ///     breathing.Play();
+    ///
+    ///     // per frame:
+    ///     breathing.Update(dt);
+    ///     Config cfg = effect.GetConfig();
+    ///     breathing.Apply(cfg);
+    ///     effect.SetConfig(cfg);
     /// @endcode
     class FieldBoundAnimation : public Animation
     {
     public:
-        /// @brief A single (scalar field, modulator) binding.
-        typedef struct ScalarBinding
+        /// @brief A single (field, modulator) pair driven by this animation.
+        typedef struct FieldBinding
         {
             AnimatableField field;
             ModulatorPtr modulator;
-        } ScalarBinding;
+        } FieldBinding;
 
-        /// @brief A single (segmentBoosts[index].field, modulator) binding.
-        typedef struct SegmentBinding
-        {
-            size_t index;
-            SegmentField field;
-            ModulatorPtr modulator;
-        } SegmentBinding;
-
-        // --- Construction ------------------------------------------------
-
-        /// @brief Zero-binding animation. Extend via @ref AddField /
-        ///        @ref AddSegmentField.
+        /// @brief Zero-binding animation. Extend via @ref AddField.
         /// @param duration Length of one cycle in seconds; 0 = modulator owns
         ///                 its own periodicity (matches @ref Animation base).
         /// @param mode     LOOP (default) or ONE_SHOT.
@@ -111,7 +83,7 @@ namespace EdgeLighting
             SetPlaybackMode(mode);
         }
 
-        /// @brief One-binding convenience constructor for a scalar field.
+        /// @brief One-binding convenience constructor.
         FieldBoundAnimation(AnimatableField field,
                             ModulatorPtr modulator,
                             float duration = 0.0f,
@@ -121,79 +93,30 @@ namespace EdgeLighting
             AddField(field, std::move(modulator));
         }
 
-        // --- Bindings ----------------------------------------------------
-
-        /// @brief Bind a scalar field to a modulator.
+        /// @brief Bind an additional field to a modulator.
         /// @note Bindings are evaluated in insertion order. Modulators can be
         ///       shared across bindings - pass the same @c ModulatorPtr to
         ///       drive several fields off one signal (or wrap in @ref Remap
         ///       per binding for per-field ranges).
         void AddField(AnimatableField field, ModulatorPtr modulator)
         {
-            mScalarBindings.push_back({field, std::move(modulator)});
+            mBindings.push_back({field, std::move(modulator)});
         }
 
-        /// @brief Bind a scalar inside @c segmentBoosts[index] to a modulator.
-        /// @details @p index auto-grows the vector at write time. Multiple
-        ///          segment bindings can target different indices for
-        ///          multi-segment animations phase-locked to one clock.
-        void AddSegmentField(size_t index, SegmentField field, ModulatorPtr modulator)
-        {
-            mSegmentBindings.push_back({index, field, std::move(modulator)});
-        }
+        /// @brief Read-only view of the current binding list.
+        const std::vector<FieldBinding> &GetBindings() const { return mBindings; }
 
-        // --- Introspection -----------------------------------------------
+        /// @brief Number of bindings currently attached.
+        size_t GetBindingCount() const { return mBindings.size(); }
 
-        /// @brief Read-only view of the scalar-field bindings.
-        const std::vector<ScalarBinding> &GetScalarBindings() const { return mScalarBindings; }
-
-        /// @brief Read-only view of the segment-field bindings.
-        const std::vector<SegmentBinding> &GetSegmentBindings() const { return mSegmentBindings; }
-
-        /// @brief Total number of bindings (scalar + segment).
-        size_t GetBindingCount() const
-        {
-            return mScalarBindings.size() + mSegmentBindings.size();
-        }
-
-        /// @brief Drop every binding (leaves state / duration alone).
-        void ClearBindings()
-        {
-            mScalarBindings.clear();
-            mSegmentBindings.clear();
-        }
-
-        // --- Drive -------------------------------------------------------
+        /// @brief Drop all bindings (leaves state / duration alone).
+        void ClearBindings() { mBindings.clear(); }
 
         /// @brief Evaluate every binding at @p elapsed and write into @p cfg.
         void ApplyAt(Config &cfg, float elapsed) const override;
 
-        // --- RESTORE support ------------------------------------------
-        // Generic implementation. For scalar bindings we snapshot per-binding
-        // float values; for segment bindings we snapshot the whole
-        // @c segmentBoosts vector (same reason SegmentTravel / SegmentBounce
-        // do: bindings auto-grow the vector, so per-slot snapshot loses the
-        // "vector was empty" case). Call @ref CaptureBaseline BEFORE
-        // @ref Play so the snapshot reflects the pre-animation value.
-        void CaptureBaseline(const Config &cfg) override;
-
-    protected:
-        void RestoreBaseline(Config &cfg) const override;
-
     private:
-        std::vector<ScalarBinding> mScalarBindings;
-        std::vector<SegmentBinding> mSegmentBindings;
-        /// One saved value per scalar binding, index-aligned with
-        /// @c mScalarBindings at the moment @ref CaptureBaseline was called.
-        std::vector<float> mSavedScalarValues;
-        /// Snapshot of the whole @c segmentBoosts vector. Captured only when
-        /// there is at least one segment binding at snapshot time; otherwise
-        /// left empty and skipped on restore.
-        std::vector<SegmentBoost> mSavedSegmentBoosts;
-        /// Whether @ref CaptureBaseline captured @c mSavedSegmentBoosts (so
-        /// we can distinguish "no segment bindings then" from "empty vector
-        /// then").
-        bool mSegmentBoostsCaptured = false;
+        std::vector<FieldBinding> mBindings;
     };
 
 } // namespace EdgeLighting

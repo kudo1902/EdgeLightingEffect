@@ -67,7 +67,6 @@ configure_file(
 )
 
 add_library(edge-lighting STATIC
-    src/animation/animation-manager.cpp
     src/animation/easing-function.cpp
     src/animation/field-bound-animation.cpp
     src/core/edge-lighting.cpp
