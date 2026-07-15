@@ -25,6 +25,41 @@ namespace
     /// width baked by NeonRenderer (256), which is more than enough for any
     /// gradient the human eye can resolve.
     constexpr int MAX_GRADIENT_LUT_SIZE = 256;
+
+    /// Slider whose knob follows the currently-animated (active) value each
+    /// frame so the user sees what the shader is actually drawing. Dragging
+    /// still edits the BASE (authored) value: while the user is actively
+    /// dragging THIS slider, the display is pinned to the base to avoid a
+    /// tug-of-war between the drag and the per-frame animation overlay.
+    ///
+    /// Detected via @c ImGui::GetActiveID() - we compute the slider's ID
+    /// before drawing so we know whether to seed the shown value from base
+    /// (dragging) or active (idle / animating). The base is written whenever
+    /// the widget reports a change; the animation on the next @c
+    /// EdgeLightingEffect::Update then overlays on top of the new base.
+    inline bool AnimatedSlider(const char *label, float &baseVal, float activeVal,
+                               float minVal, float maxVal, const char *fmt = "%.2f")
+    {
+        // "Was I actively dragged last frame?" - stored per-slider via ImGui's
+        // built-in state storage keyed by the slider's ID. We can't call
+        // IsItemActive() BEFORE drawing (there's no item yet), so we consult
+        // the previous frame's result to decide what to show, then record this
+        // frame's active state for the next call.
+        ImGuiStorage *storage = ImGui::GetStateStorage();
+        const ImGuiID id = ImGui::GetID(label);
+        const bool wasDragging = storage->GetBool(id, false);
+
+        float shown = wasDragging ? baseVal : activeVal;
+        const bool changed = ImGui::SliderFloat(label, &shown, minVal, maxVal, fmt);
+        const bool isDragging = ImGui::IsItemActive();
+        storage->SetBool(id, isDragging);
+
+        if (changed && isDragging)
+        {
+            baseVal = shown;
+        }
+        return changed;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -106,9 +141,11 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
                 io.Framerate, 1000.0f / io.Framerate, mLastRenderTimeMs);
     ImGui::Separator();
 
+    // The active config carries every animation's current overlay values
+    const EdgeLighting::Config &active = effect.GetActiveConfig();
     buildGeometrySection(cfg);
-    buildNeonSection(cfg);
-    buildOptimizedNeonSection(cfg);
+    buildNeonSection(cfg, active);
+    buildOptimizedNeonSection(cfg, active);
     buildColorPickerSection(cfg);
     buildAnimationSection(cfg, effect.Animations());
     buildBackgroundSection();
@@ -190,7 +227,8 @@ void DebugUI::buildGeometrySection(EdgeLighting::Config &cfg)
     }
 }
 
-void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
+void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
+                               const EdgeLighting::Config &active)
 {
     if (!ImGui::CollapsingHeader("Neon", ImGuiTreeNodeFlags_DefaultOpen))
     {
@@ -212,12 +250,12 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
     }
     ImGui::Checkbox("Show Gradient LUT##Neon", &cfg.neon.showGradientLUT);
     ImGui::Checkbox("Show Color Stops##Neon", &cfg.neon.showColorStops);
-    ImGui::SliderFloat("Line Width##Neon", &cfg.neon.lineWidth, 0.0f, 20.0f, "%.0f");
-    ImGui::SliderFloat("Filament Falloff##Neon", &cfg.neon.filamentFalloff, 0.0f, 5.0f, "%.2f");
-    ImGui::SliderFloat("Intensity##Neon", &cfg.neon.intensity, 0.0f, 3.0f, "%.2f");
-    ImGui::SliderFloat("Glow Radius##Neon", &cfg.neon.glowRadius, 0.0f, 80.0f, "%.0f");
-    ImGui::SliderFloat("Bloom Strength##Neon", &cfg.neon.bloomStrength, 0.0f, 2.0f, "%.2f");
-    ImGui::SliderFloat("Hue Rotation Rate##Neon", &cfg.neon.hueRotationRate, 0.0f, 2.0f, "%.2f");
+    AnimatedSlider("Line Width##Neon", cfg.neon.lineWidth, active.neon.lineWidth, 0.0f, 20.0f, "%.0f");
+    AnimatedSlider("Filament Falloff##Neon", cfg.neon.filamentFalloff, active.neon.filamentFalloff, 0.0f, 5.0f);
+    AnimatedSlider("Intensity##Neon", cfg.neon.intensity, active.neon.intensity, 0.0f, 3.0f);
+    AnimatedSlider("Glow Radius##Neon", cfg.neon.glowRadius, active.neon.glowRadius, 0.0f, 80.0f, "%.0f");
+    AnimatedSlider("Bloom Strength##Neon", cfg.neon.bloomStrength, active.neon.bloomStrength, 0.0f, 2.0f);
+    AnimatedSlider("Hue Rotation Rate##Neon", cfg.neon.hueRotationRate, active.neon.hueRotationRate, 0.0f, 2.0f);
 
     const char *sideItems[] = {"Both", "Inside", "Outside"};
     int sideIdx = static_cast<int>(cfg.neon.glowSide);
@@ -266,8 +304,8 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
     }
 
     // --- Arc gating (0..1 = full perimeter; shrink to "draw" part of the rect) ---
-    ImGui::SliderFloat("Arc Start##Neon", &cfg.neon.arcStart, 0.0f, 1.0f, "%.2f");
-    ImGui::SliderFloat("Arc Length##Neon", &cfg.neon.arcLength, 0.0f, 1.0f, "%.2f");
+    AnimatedSlider("Arc Start##Neon", cfg.neon.arcStart, active.neon.arcStart, 0.0f, 1.0f);
+    AnimatedSlider("Arc Length##Neon", cfg.neon.arcLength, active.neon.arcLength, 0.0f, 1.0f);
 
     const char *blendItems[] = {"RGB", "HSV", "HSL"};
     int blendIdx = static_cast<int>(cfg.neon.blendSpace);
@@ -313,7 +351,8 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
     }
 }
 
-void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg)
+void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg,
+                                        const EdgeLighting::Config &active)
 {
     if (!ImGui::CollapsingHeader("Optimized Neon (½-res)", ImGuiTreeNodeFlags_DefaultOpen))
     {
@@ -344,12 +383,12 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg)
         ImGui::ColorEdit4("Opaque Color##Opt", &cfg.neon.opaqueColor.x,
                           ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
     }
-    ImGui::SliderFloat("Line Width##Opt", &cfg.neon.lineWidth, 0.0f, 20.0f, "%.0f");
-    ImGui::SliderFloat("Filament Falloff##Opt", &cfg.neon.filamentFalloff, 0.5f, 5.0f, "%.2f");
-    ImGui::SliderFloat("Intensity##Opt", &cfg.neon.intensity, 0.0f, 3.0f, "%.2f");
-    ImGui::SliderFloat("Glow Radius##Opt", &cfg.neon.glowRadius, 0.0f, 80.0f, "%.0f");
-    ImGui::SliderFloat("Bloom Strength##Opt", &cfg.neon.bloomStrength, 0.0f, 2.0f, "%.2f");
-    ImGui::SliderFloat("Hue Rotation Rate##Opt", &cfg.neon.hueRotationRate, 0.0f, 2.0f, "%.2f");
+    AnimatedSlider("Line Width##Opt", cfg.neon.lineWidth, active.neon.lineWidth, 0.0f, 20.0f, "%.0f");
+    AnimatedSlider("Filament Falloff##Opt", cfg.neon.filamentFalloff, active.neon.filamentFalloff, 0.5f, 5.0f);
+    AnimatedSlider("Intensity##Opt", cfg.neon.intensity, active.neon.intensity, 0.0f, 3.0f);
+    AnimatedSlider("Glow Radius##Opt", cfg.neon.glowRadius, active.neon.glowRadius, 0.0f, 80.0f, "%.0f");
+    AnimatedSlider("Bloom Strength##Opt", cfg.neon.bloomStrength, active.neon.bloomStrength, 0.0f, 2.0f);
+    AnimatedSlider("Hue Rotation Rate##Opt", cfg.neon.hueRotationRate, active.neon.hueRotationRate, 0.0f, 2.0f);
 
     const char *sideItems[] = {"Both", "Inside", "Outside"};
     int sideIdx = static_cast<int>(cfg.neon.glowSide);
@@ -554,7 +593,10 @@ namespace
         // freshly-added Stopped animation is a no-op regardless. If you want
         // the base config to show through after Stop, detach the animation.
         const char *endActionItems[] = {
-            "Hold current", "Hold end", "Hold start", "Restore",
+            "Hold current",
+            "Hold end",
+            "Hold start",
+            "Restore",
         };
         int endActionIdx = static_cast<int>(anim.GetEndAction());
         ImGui::SetNextItemWidth(160.0f);

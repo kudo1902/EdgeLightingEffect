@@ -70,8 +70,10 @@ public:
 
 private:
     void buildGeometrySection(EdgeLighting::Config &cfg);
-    void buildNeonSection(EdgeLighting::Config &cfg);
-    void buildOptimizedNeonSection(EdgeLighting::Config &cfg);
+    void buildNeonSection(EdgeLighting::Config &cfg,
+                          const EdgeLighting::Config &active);
+    void buildOptimizedNeonSection(EdgeLighting::Config &cfg,
+                                   const EdgeLighting::Config &active);
     void buildAnimationSection(EdgeLighting::Config &cfg,
                                EdgeLighting::AnimationManager &manager);
     void buildBackgroundSection();
