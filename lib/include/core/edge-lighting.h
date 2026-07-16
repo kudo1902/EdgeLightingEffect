@@ -76,8 +76,8 @@ namespace EdgeLighting
         bool Detach(const AnimationPtr &animation);
 
         /// @brief The animation manager (attach list + broadcast control).
-        AnimationManager &Animations();
-        const AnimationManager &Animations() const;
+        AnimationManager &GetAnimationManager();
+        const AnimationManager &GetAnimationManager() const;
 
         /// @brief Register a renderer to be updated and rendered each frame.
         /// @param renderer Shared pointer to a @ref BaseRenderer subclass.

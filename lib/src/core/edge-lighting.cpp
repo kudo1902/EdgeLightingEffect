@@ -71,8 +71,8 @@ namespace EdgeLighting
 
     void EdgeLightingEffect::Attach(const AnimationPtr &a) { mAnimationManager->Attach(a); }
     bool EdgeLightingEffect::Detach(const AnimationPtr &a) { return mAnimationManager->Detach(a); }
-    AnimationManager &EdgeLightingEffect::Animations() { return *mAnimationManager; }
-    const AnimationManager &EdgeLightingEffect::Animations() const { return *mAnimationManager; }
+    AnimationManager &EdgeLightingEffect::GetAnimationManager() { return *mAnimationManager; }
+    const AnimationManager &EdgeLightingEffect::GetAnimationManager() const { return *mAnimationManager; }
 
     void EdgeLightingEffect::AddRenderer(std::shared_ptr<BaseRenderer> renderer)
     {

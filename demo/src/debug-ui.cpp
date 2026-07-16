@@ -212,7 +212,7 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     buildNeonSection(cfg, active);
     buildOptimizedNeonSection(cfg, active);
     buildColorPickerSection(cfg);
-    buildAnimationSection(cfg, effect.Animations());
+    buildAnimationSection(cfg, effect.GetAnimationManager());
     buildBackgroundSection();
 
     ImGui::Checkbox("Wireframe", &cfg.wireframe.enable);

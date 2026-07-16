@@ -88,7 +88,7 @@ private:
 
     // --- Animation state ---
     // Animations are owned by the effect's AnimationManager (via
-    // effect.Animations()); this section only attaches/detaches presets to it
+    // effect.GetAnimationManager()); this section only attaches/detaches presets to it
     // and drives each row's per-animation controls. The effect advances and
     // composites them each Update.
     /// Preset index selected in the Add combo.

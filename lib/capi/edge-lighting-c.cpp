@@ -10,6 +10,7 @@
 
 #include "gl/gl-header.h" // gladLoad* + GL symbols
 #include "core/edge-lighting.h"
+#include "animation/animation-manager.h"
 #include "renderer/wireframe-renderer.h"
 #include "renderer/neon-renderer.h"
 #include "renderer/neon-optimized-renderer.h"
@@ -539,7 +540,7 @@ extern "C"
     {
         if (fx)
         {
-            fx->effect.Animations().DetachAll();
+            fx->effect.GetAnimationManager().DetachAll();
         }
     }
 
@@ -549,7 +550,7 @@ extern "C"
         {
             return 0;
         }
-        return static_cast<int32_t>(fx->effect.Animations().GetCount());
+        return static_cast<int32_t>(fx->effect.GetAnimationManager().GetCount());
     }
 
     EL_Bool el_effect_contains_animation(EL_Effect *fx, EL_Animation *anim)
@@ -558,7 +559,7 @@ extern "C"
         {
             return 0;
         }
-        return fx->effect.Animations().Contains(anim->ptr) ? 1 : 0;
+        return fx->effect.GetAnimationManager().Contains(anim->ptr) ? 1 : 0;
     }
 
     // --- Clock ---
