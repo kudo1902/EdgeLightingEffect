@@ -40,6 +40,11 @@
 // --- Travelling-segment array size (shared by C++ vector cap + GLSL uniform array) ---
 #define MAX_SEGMENT_BOOSTS        8
 
+// --- Arc range array size (shared by C++ vector cap + GLSL uniform array).
+//     Each arc gates a slice of the perimeter with its own colour + intensity.
+//     Overlap resolves winner-take-all (max mask*intensity wins). ---
+#define MAX_ARCS                  8
+
 // --- Perimeter gather-loop upper bound. Sizes the LoopSamplesBlock UBO in
 //     both shaders. NeonRenderer runs the full loop at compile-time-fixed
 //     count; NeonOptimizedRenderer's shader iterates only uNumSamples of them

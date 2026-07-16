@@ -35,6 +35,11 @@ namespace EdgeLighting
         /// empty stops are left zero-filled - the shader falls back to the
         /// base gradient in that case (see the vec4.w flag in SegmentBlock).
         void rebuildSegmentLUT(const Config &config);
+        /// Bake each arc's colorStops into one row of mArcLUT
+        /// (ARC_LUT_WIDTH x MAX_ARCS). Rows for arcs with empty stops are
+        /// left zero-filled - the shader falls back to the base gradient at
+        /// those samples (see the vec4.w flag in ArcBlock).
+        void rebuildArcLUT(const Config &config);
 
     private:
         Config mCurrentConfig;
@@ -54,6 +59,8 @@ namespace EdgeLighting
         /// Backs neon.frag's std140 `LoopSamplesBlock` - vec4[NUM_LOOP_SAMPLES]
         /// where .xy holds the perimeter point in rect-local pixels.
         UniformBuffer mLoopSamplesBlock{"NeonRenderer.LoopSamplesBlock"};
+        /// Backs neon.frag's std140 `ArcBlock` (uArcCount + uArcs[MAX_ARCS]).
+        UniformBuffer mArcBlock{"NeonRenderer.ArcBlock"};
 
         float mSampleSpacing = 0.0f;
         float mQuadMargin = 0.0f; ///< Draw-quad margin (px from rect edge); shader fades the bloom out by here.
@@ -72,6 +79,13 @@ namespace EdgeLighting
         /// OnConfigChanged only re-uploads mSegmentLUT when they actually
         /// changed (matches how mTargetStops guards mGradientLUT rebuilds).
         std::vector<SegmentBoost> mBakedSegments;
+
+        /// Per-arc gradient atlas - one row per arc, each row is that arc's
+        /// stops baked head-to-tail. Same shape/purpose as mSegmentLUT; the
+        /// shader uses ArcBlock's vec4.w to skip the fetch when an arc has
+        /// no stops (inherit-base case).
+        Texture2D mArcLUT;
+        std::vector<Arc> mBakedArcs;
 
         // --- Gradient cross-fade -------------------------------------------
         // When the colour stops change we don't snap the LUT: we bake the new

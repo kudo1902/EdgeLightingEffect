@@ -52,6 +52,12 @@ extern "C"
 #endif
 
 /** ABI version. Bump on any breaking change to a struct layout or signature.
+ *  v11: multiple arcs. EL_NeonConfig::arcStart / arcLength replaced by
+ *       arcs[EL_MAX_ARCS] + arcCount (EL_Arc). EL_ConfigField dropped
+ *       its NEON_ARC_START / NEON_ARC_LENGTH values; arc scalars now live in
+ *       EL_ArcField and bind via el_animation_add_arc_field so the arc index
+ *       is required. New: el_animation_add_arc_stop_field for per-arc
+ *       colour-stop channel bindings.
  *  v10: animations became stateful. el_animation_apply lost its `elapsed`
  *       parameter; the animation carries its own state now. New lifecycle
  *       entry points (play/pause/stop/reset/update), state / end-action
@@ -62,7 +68,7 @@ extern "C"
  *       NEON_SEGMENT_* values and renumbered NEON_ARC_START / _LENGTH;
  *       segment scalars now live in EL_SegmentField and bind via
  *       el_animation_add_segment_field so the segment index is required. */
-#define EL_ABI_VERSION 10
+#define EL_ABI_VERSION 11
 
 /** Maximum colour stops per gradient - hard cap because the EL_NeonConfig
  *  struct's colorStops[] array is fixed-size at the ABI boundary. The core C++
@@ -71,6 +77,9 @@ extern "C"
 
 /** Maximum travelling segment boosts (mirrors MAX_SEGMENT_BOOSTS in neon-tuning.h). */
 #define EL_MAX_SEGMENT_BOOSTS 8
+
+/** Maximum concurrent perimeter arcs (mirrors MAX_ARCS in neon-tuning.h). */
+#define EL_MAX_ARCS 8
 
     /** 32-bit boolean (0 = false, non-zero = true) for unambiguous marshalling. */
     typedef int32_t EL_Bool;
@@ -187,6 +196,21 @@ extern "C"
         float boost;    ///< Peak brightness multiplier at the centre.
     } EL_SegmentBoost;
 
+    /** One perimeter arc: a contiguous slice that is "on", with its own
+     *  intensity and (optionally) its own colour stops. Overlapping arcs
+     *  resolve winner-take-all (the arc with the largest mask * intensity at
+     *  a sample contributes its colour there); leaving colorStops empty (0
+     *  count) inherits the base gradient at that arc's samples. */
+    typedef struct EL_Arc
+    {
+        float start;             ///< Perimeter start in [0, 1).
+        float length;            ///< Fraction of the perimeter lit (0 = off, 1 = full).
+        float intensity;         ///< Per-arc brightness multiplier.
+        int32_t colorStopCount;  ///< Valid entries in colorStops (0 = inherit base gradient).
+        EL_ColorStop colorStops[EL_MAX_COLOR_STOPS];
+        int32_t blendSpace;      ///< EL_BlendSpace; ignored when colorStopCount == 0.
+    } EL_Arc;
+
     /** Geometry of the target rounded rectangle. */
     typedef struct EL_RectGeometry
     {
@@ -219,8 +243,8 @@ extern "C"
         float hueRotationRate;
         int32_t segmentBoostCount; ///< Number of valid entries in segmentBoosts.
         EL_SegmentBoost segmentBoosts[EL_MAX_SEGMENT_BOOSTS];
-        float arcStart;
-        float arcLength;
+        int32_t arcCount;          ///< Number of valid entries in arcs.
+        EL_Arc arcs[EL_MAX_ARCS];
     } EL_NeonConfig;
 
     /** Half-resolution optimised neon renderer settings (shares NeonConfig visuals). */
@@ -606,9 +630,7 @@ extern "C"
         EL_FIELD_NEON_BLOOM_STRENGTH = 3,
         EL_FIELD_NEON_FILAMENT_FALLOFF = 4,
         EL_FIELD_NEON_GLOW_SIDE_SOFTNESS = 5,
-        EL_FIELD_NEON_HUE_ROTATION_RATE = 6,
-        EL_FIELD_NEON_ARC_START = 7,
-        EL_FIELD_NEON_ARC_LENGTH = 8
+        EL_FIELD_NEON_HUE_ROTATION_RATE = 6
     } EL_ConfigField;
 
     /** Which scalar to drive inside a neon.segmentBoosts entry.
@@ -621,6 +643,30 @@ extern "C"
         EL_SEGMENT_FIELD_LENGTH = 1,
         EL_SEGMENT_FIELD_BOOST = 2
     } EL_SegmentField;
+
+    /** Which scalar to drive inside a neon.arcs entry.
+     *  Paired with an index at bind time via
+     *  @ref el_animation_add_arc_field. Mirrors
+     *  EdgeLighting::ArcField 1:1. */
+    typedef enum EL_ArcField
+    {
+        EL_ARC_FIELD_START = 0,
+        EL_ARC_FIELD_LENGTH = 1,
+        EL_ARC_FIELD_INTENSITY = 2
+    } EL_ArcField;
+
+    /** Which channel of a colour stop to drive.
+     *  Paired with (containerIdx, stopIdx) at bind time via
+     *  @ref el_animation_add_arc_stop_field. Mirrors
+     *  EdgeLighting::ColorStopField 1:1. */
+    typedef enum EL_ColorStopField
+    {
+        EL_STOP_FIELD_POSITION = 0,
+        EL_STOP_FIELD_R = 1,
+        EL_STOP_FIELD_G = 2,
+        EL_STOP_FIELD_B = 3,
+        EL_STOP_FIELD_A = 4
+    } EL_ColorStopField;
 
     /* --- Modulator factories ---
      * Each returns an owning handle (null on allocation failure). */
@@ -729,6 +775,40 @@ extern "C"
                                                     int32_t index,
                                                     int32_t field /*EL_SegmentField*/,
                                                     EL_Modulator *mod);
+
+    /**
+     * @brief Append an arc (index, field, modulator) binding to a field-bound
+     *        animation. Drives one scalar inside @c cfg.neon.arcs[index],
+     *        auto-growing the vector to that slot if needed.
+     * @param anim  Animation created via @ref el_animation_empty or
+     *              @ref el_animation_from_modulator. Not a preset animation.
+     * @param index Which entry in arcs to drive.
+     * @param field One of EL_ArcField (START / LENGTH / INTENSITY).
+     * @param mod   Modulator to evaluate each Apply. Shared ownership.
+     */
+    EL_API EL_Result el_animation_add_arc_field(EL_Animation *anim,
+                                                int32_t index,
+                                                int32_t field /*EL_ArcField*/,
+                                                EL_Modulator *mod);
+
+    /**
+     * @brief Append an arc-stop (arcIdx, stopIdx, field, modulator) binding.
+     *        Drives one channel of @c cfg.neon.arcs[arcIdx].colorStops[stopIdx],
+     *        auto-growing both vectors as needed. New stops seed to a
+     *        mid-position opaque-white default so binding a single channel
+     *        still shows a colour.
+     * @param anim   Animation created via @ref el_animation_empty or
+     *               @ref el_animation_from_modulator. Not a preset animation.
+     * @param arcIdx Which arc to target.
+     * @param stopIdx Which colour stop inside that arc.
+     * @param field  One of EL_ColorStopField (POSITION / R / G / B / A).
+     * @param mod    Modulator to evaluate each Apply. Shared ownership.
+     */
+    EL_API EL_Result el_animation_add_arc_stop_field(EL_Animation *anim,
+                                                     int32_t arcIdx,
+                                                     int32_t stopIdx,
+                                                     int32_t field /*EL_ColorStopField*/,
+                                                     EL_Modulator *mod);
 
 #ifdef __cplusplus
 } // extern "C"

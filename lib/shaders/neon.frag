@@ -68,12 +68,27 @@ layout(std140) uniform SegmentBlock
 // only when the segment's hasStops flag is set (see uSegments.w above).
 uniform sampler2D uSegmentLUT;
 
-// Arc gating - only samples whose perimeter position falls within an arc of
-// uArcLength starting at uArcStart contribute. Defaults (0, 1) = full lit.
-//   uArcLength = 0 → nothing lit
-//   uArcLength = 1 → fully lit, regardless of start (start is just a phase)
-uniform float uArcStart;
-uniform float uArcLength;
+// Arc gating - up to MAX_ARCS independent perimeter slices, each with its own
+// start, length, intensity, and optional colour stops. Each vec4 is
+// (start, length, intensity, hasStops). Overlap resolves winner-take-all:
+// per sample, the arc with the largest effective mask (arcInside * intensity)
+// contributes its colour and its mask to the emission. Because arcInside is
+// smoothstepped 1-sample-wide at each end, adjacent arcs of different colours
+// crossfade at the seam rather than snapping.
+//
+// When uArcCount == 0 the entire perimeter is dark; the default config seeds
+// one full-perimeter arc so this only happens if the host wipes the vector.
+layout(std140) uniform ArcBlock
+{
+    int  uArcCount;
+    vec4 uArcs[MAX_ARCS];
+};
+
+// Per-arc gradient atlas (RGBA8, CLAMP-wrapped both axes). One row per arc,
+// same layout convention as uSegmentLUT. Sampled only when the winning arc's
+// hasStops flag is set; the loser rows are never read, so leaving them stale
+// is fine.
+uniform sampler2D uArcLUT;
 
 // 1-row 2D LUT (REPEAT-wrapped) holding the precomputed colour ring.
 // Replaces the in-shader sampleStops loop + HSV blend on the hot path.
@@ -220,14 +235,43 @@ void main() {
         float dd  = dot(dv, dv);
 
         float g   = 1.0 / (dd + kg2);
-        // Arc gating: arcW is 0 (off) or 1 (on). lg = "lit g".
-        float arcW = arcInside(si, uArcStart, uArcLength, invNumSamples);
+
+        // Arc winner-take-all: find the arc with the largest effective mask
+        // (arcInside * intensity) at this sample. That arc owns both the
+        // emission mask (arcW) and the colour at this sample. Because
+        // arcInside is smoothstepped one-sample-wide at each end, adjacent
+        // arcs of different colours crossfade smoothly at the seam.
+        float bestMask = 0.0;
+        int   bestIdx  = -1;
+        for (int a = 0; a < uArcCount; a++) {
+            vec4  arc  = uArcs[a];
+            float mask = arcInside(si, arc.x, arc.y, invNumSamples) * arc.z;
+            if (mask > bestMask) {
+                bestMask = mask;
+                bestIdx  = a;
+            }
+        }
+        float arcW = bestMask;
         float lg   = g * arcW;
 
         glow  += lg * sqrt(g);              // -> ~1/D^2 neon halo, arc-gated
         bloom += arcW / (dd + bw2);         // -> ~1/D   wide spill, arc-gated
 
-        vec3 baseColI = texture(uGradientLUT, vec2(ti, 0.5)).rgb;
+        // Winner's colour at this sample: from its own LUT row (hasStops)
+        // or the base gradient (empty stops = inherit). No winner (bestIdx < 0)
+        // means every arc had 0 mask here - contributes nothing anyway.
+        vec3 baseColI;
+        if (bestIdx >= 0) {
+            vec4 winner = uArcs[bestIdx];
+            if (winner.w > 0.5) {
+                float rowY = (float(bestIdx) + 0.5) / float(MAX_ARCS);
+                baseColI   = texture(uArcLUT, vec2(ti, rowY)).rgb;
+            } else {
+                baseColI = texture(uGradientLUT, vec2(ti, 0.5)).rgb;
+            }
+        } else {
+            baseColI = vec3(0.0);
+        }
         acc  += baseColI * lg;
         // wsum accumulates ALL samples (not arc-gated). This way `col` divides
         // by the full local sample density - fragments far from the lit arc

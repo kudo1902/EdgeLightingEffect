@@ -149,6 +149,38 @@ namespace
         return out;
     }
 
+    void copyArcsToC(const std::vector<EdgeLighting::Arc> &src,
+                     EL_Arc *dst, int32_t &count)
+    {
+        count = static_cast<int32_t>(std::min<size_t>(src.size(), EL_MAX_ARCS));
+        for (int32_t i = 0; i < count; ++i)
+        {
+            dst[i].start = src[i].start;
+            dst[i].length = src[i].length;
+            dst[i].intensity = src[i].intensity;
+            dst[i].blendSpace = static_cast<int32_t>(src[i].blendSpace);
+            copyStopsToC(src[i].colorStops, dst[i].colorStops, dst[i].colorStopCount);
+        }
+    }
+
+    std::vector<EdgeLighting::Arc> arcsFromC(const EL_Arc *src, int32_t count)
+    {
+        std::vector<EdgeLighting::Arc> out;
+        int32_t n = std::max(0, std::min(count, EL_MAX_ARCS));
+        out.reserve(static_cast<size_t>(n));
+        for (int32_t i = 0; i < n; ++i)
+        {
+            EdgeLighting::Arc arc;
+            arc.start = src[i].start;
+            arc.length = src[i].length;
+            arc.intensity = src[i].intensity;
+            arc.blendSpace = static_cast<EdgeLighting::BlendSpace>(src[i].blendSpace);
+            arc.colorStops = stopsFromC(src[i].colorStops, src[i].colorStopCount);
+            out.push_back(std::move(arc));
+        }
+        return out;
+    }
+
     EdgeLighting::Config toConfig(const EL_Config &c)
     {
         using namespace EdgeLighting;
@@ -176,8 +208,7 @@ namespace
         out.neon.colorStops = stopsFromC(c.neon.colorStops, c.neon.colorStopCount);
         out.neon.hueRotationRate = c.neon.hueRotationRate;
         out.neon.segmentBoosts = segmentsFromC(c.neon.segmentBoosts, c.neon.segmentBoostCount);
-        out.neon.arcStart = c.neon.arcStart;
-        out.neon.arcLength = c.neon.arcLength;
+        out.neon.arcs = arcsFromC(c.neon.arcs, c.neon.arcCount);
 
         out.optimizedNeon.enable = c.optimizedNeon.enable != 0;
         out.optimizedNeon.resolutionScale = c.optimizedNeon.resolutionScale;
@@ -216,8 +247,7 @@ namespace
         copyStopsToC(c.neon.colorStops, out.neon.colorStops, out.neon.colorStopCount);
         out.neon.hueRotationRate = c.neon.hueRotationRate;
         copySegmentsToC(c.neon.segmentBoosts, out.neon.segmentBoosts, out.neon.segmentBoostCount);
-        out.neon.arcStart = c.neon.arcStart;
-        out.neon.arcLength = c.neon.arcLength;
+        copyArcsToC(c.neon.arcs, out.neon.arcs, out.neon.arcCount);
 
         out.optimizedNeon.enable = c.optimizedNeon.enable ? 1 : 0;
         out.optimizedNeon.resolutionScale = c.optimizedNeon.resolutionScale;
@@ -1289,6 +1319,88 @@ extern "C"
         {
             fba->AddSegmentField(static_cast<size_t>(index),
                                  static_cast<EdgeLighting::SegmentField>(field),
+                                 mod->ptr);
+            return EL_OK;
+        }
+        catch (const std::exception &e)
+        {
+            setError(e.what());
+            return EL_ERR_EXCEPTION;
+        }
+    }
+
+    EL_Result el_animation_add_arc_field(EL_Animation *anim, int32_t index,
+                                         int32_t field, EL_Modulator *mod)
+    {
+        if (!anim || !anim->ptr)
+        {
+            setError("el_animation_add_arc_field: null animation");
+            return EL_ERR_NULL_ARG;
+        }
+        if (!mod || !mod->ptr)
+        {
+            setError("el_animation_add_arc_field: null modulator");
+            return EL_ERR_NULL_ARG;
+        }
+        if (index < 0)
+        {
+            setError("el_animation_add_arc_field: negative arc index");
+            return EL_ERR_NULL_ARG;
+        }
+        auto *fba = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
+        if (!fba)
+        {
+            setError("el_animation_add_arc_field: animation is not field-bound "
+                     "(only el_animation_empty() and el_animation_from_modulator() "
+                     "return field-bound animations)");
+            return EL_ERR_NULL_ARG;
+        }
+        try
+        {
+            fba->AddArcField(static_cast<size_t>(index),
+                             static_cast<EdgeLighting::ArcField>(field),
+                             mod->ptr);
+            return EL_OK;
+        }
+        catch (const std::exception &e)
+        {
+            setError(e.what());
+            return EL_ERR_EXCEPTION;
+        }
+    }
+
+    EL_Result el_animation_add_arc_stop_field(EL_Animation *anim, int32_t arcIdx,
+                                              int32_t stopIdx, int32_t field,
+                                              EL_Modulator *mod)
+    {
+        if (!anim || !anim->ptr)
+        {
+            setError("el_animation_add_arc_stop_field: null animation");
+            return EL_ERR_NULL_ARG;
+        }
+        if (!mod || !mod->ptr)
+        {
+            setError("el_animation_add_arc_stop_field: null modulator");
+            return EL_ERR_NULL_ARG;
+        }
+        if (arcIdx < 0 || stopIdx < 0)
+        {
+            setError("el_animation_add_arc_stop_field: negative index");
+            return EL_ERR_NULL_ARG;
+        }
+        auto *fba = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
+        if (!fba)
+        {
+            setError("el_animation_add_arc_stop_field: animation is not field-bound "
+                     "(only el_animation_empty() and el_animation_from_modulator() "
+                     "return field-bound animations)");
+            return EL_ERR_NULL_ARG;
+        }
+        try
+        {
+            fba->AddArcStopField(static_cast<size_t>(arcIdx),
+                                 static_cast<size_t>(stopIdx),
+                                 static_cast<EdgeLighting::ColorStopField>(field),
                                  mod->ptr);
             return EL_OK;
         }

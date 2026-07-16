@@ -85,12 +85,19 @@ layout(std140) uniform SegmentBlock
 // segment's hasStops flag is set.
 uniform sampler2D uSegmentLUT;
 
-// Arc gating - only samples whose perimeter position falls within an arc of
-// uArcLength starting at uArcStart contribute. Defaults (0, 1) = full lit.
-//   uArcLength = 0 → nothing lit
-//   uArcLength = 1 → fully lit, regardless of start (start is just a phase)
-uniform float uArcStart;
-uniform float uArcLength;
+// Arc gating - up to MAX_ARCS independent perimeter slices, each with its own
+// start, length, intensity, and optional colour stops. Each vec4 is
+// (start, length, intensity, hasStops). Overlap resolves winner-take-all;
+// see neon.frag for full rationale.
+layout(std140) uniform ArcBlock
+{
+    int  uArcCount;
+    vec4 uArcs[MAX_ARCS];
+};
+
+// Per-arc gradient atlas (RGBA8, CLAMP both axes). One row per arc, same
+// convention as uSegmentLUT. Sampled only when the winning arc has stops.
+uniform sampler2D uArcLUT;
 
 // 1-row 2D LUT (REPEAT-wrapped) holding the precomputed colour ring.
 // Replaces the in-shader sampleStops loop + HSV blend on the hot path.
@@ -208,13 +215,36 @@ void main() {
         float dd  = dot(dv, dv);
 
         float g   = 1.0 / (dd + kg2);
-        float arcW = arcInside(si, uArcStart, uArcLength, invNumSamples);
+
+        // Arc winner-take-all: see neon.frag for rationale.
+        float bestMask = 0.0;
+        int   bestIdx  = -1;
+        for (int a = 0; a < uArcCount; a++) {
+            vec4  arc  = uArcs[a];
+            float mask = arcInside(si, arc.x, arc.y, invNumSamples) * arc.z;
+            if (mask > bestMask) {
+                bestMask = mask;
+                bestIdx  = a;
+            }
+        }
+        float arcW = bestMask;
         float lg   = g * arcW;
 
         glow  += lg * sqrt(g);
         bloom += arcW / (dd + bw2);
 
-        vec3 baseColI = texture(uGradientLUT, vec2(ti, 0.5)).rgb;
+        vec3 baseColI;
+        if (bestIdx >= 0) {
+            vec4 winner = uArcs[bestIdx];
+            if (winner.w > 0.5) {
+                float rowY = (float(bestIdx) + 0.5) / float(MAX_ARCS);
+                baseColI   = texture(uArcLUT, vec2(ti, rowY)).rgb;
+            } else {
+                baseColI = texture(uGradientLUT, vec2(ti, 0.5)).rgb;
+            }
+        } else {
+            baseColI = vec3(0.0);
+        }
         acc  += baseColI * lg;
 
         wsum    += g;

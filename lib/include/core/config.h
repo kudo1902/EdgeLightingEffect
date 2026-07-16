@@ -1,7 +1,7 @@
 #ifndef _EDGE_LIGHTING_CONFIG_H_
 #define _EDGE_LIGHTING_CONFIG_H_
 
-#include "renderer/neon-tuning.h" // MAX_SEGMENT_BOOSTS shared with the shaders
+#include "renderer/neon-tuning.h" // MAX_SEGMENT_BOOSTS + MAX_ARCS shared with the shaders
 #include <glm/glm.hpp>
 #include <vector>
 
@@ -83,6 +83,41 @@ namespace EdgeLighting
         }
         bool operator!=(const SegmentBoost &o) const { return !(*this == o); }
     } SegmentBoost;
+
+    /// A slice of the perimeter that is "on". Several can coexist; overlap
+    /// resolves winner-take-all (the arc with the largest mask * intensity
+    /// at a given sample owns the emission there), so two adjacent arcs of
+    /// different colours crossfade smoothly at the seam because the arc mask
+    /// is already smoothstepped one sample-wide.
+    ///
+    /// The @c intensity multiplier is independent of @c NeonConfig::intensity -
+    /// dropping one arc's intensity to 0 leaves the others unaffected.
+    ///
+    /// If @c colorStops is empty, the arc inherits the base gradient at its
+    /// current perimeter samples, matching the pre-multi-arc behaviour.
+    typedef struct Arc
+    {
+        float start = 0.0f;     ///< Arc start in [0, 1) perimeter position.
+        float length = 1.0f;    ///< Fraction of the perimeter lit (0 = off, 1 = full).
+        float intensity = 1.0f; ///< Per-arc brightness multiplier (independent of NeonConfig::intensity).
+        /// Colour stops laid across the arc's span, head-to-tail. Empty means
+        /// "inherit the base gradient" - the arc then reads its colour from
+        /// @c NeonConfig::colorStops at each perimeter sample it touches.
+        std::vector<ColorStop> colorStops;
+        /// Blend space for interpolating @c colorStops. Ignored when
+        /// @c colorStops is empty (the base gradient's blend space applies).
+        BlendSpace blendSpace = BlendSpace::RGB;
+
+        bool operator==(const Arc &o) const
+        {
+            return start == o.start &&
+                   length == o.length &&
+                   intensity == o.intensity &&
+                   colorStops == o.colorStops &&
+                   blendSpace == o.blendSpace;
+        }
+        bool operator!=(const Arc &o) const { return !(*this == o); }
+    } Arc;
 
     // -----------------------------------------------------------------------
     // Per-renderer configuration
@@ -217,24 +252,25 @@ namespace EdgeLighting
         static constexpr int MAX_SEGMENT_BOOSTS_CAP = MAX_SEGMENT_BOOSTS;
         std::vector<SegmentBoost> segmentBoosts;
 
-        // --- Arc gating (which slice of the perimeter is "on") ---
+        // --- Arc gating (which slices of the perimeter are "on") ---
         //
-        // The lit region starts at @c arcStart and extends @c arcLength of the
-        // perimeter forwards (wrapping over 0/1 if needed). Samples outside
-        // contribute zero brightness, so the bar / halo / bloom render only
-        // inside the arc.
+        // Each @ref Arc in @c arcs is a slice of the perimeter that
+        // emits: it starts at @c Arc::start and extends @c length of the
+        // perimeter forwards (wrapping over 0/1 if needed). Overlapping arcs
+        // resolve winner-take-all in the shader - the arc with the largest
+        // effective mask (arcMask * intensity) at a sample owns its colour
+        // and intensity there.
         //
-        //   arcStart = 0.0, arcLength = 1.0 → full perimeter lit (default)
-        //   arcStart = 0.0, arcLength = 0.0 → nothing lit
-        //   arcStart = 0.0, arcLength = 0.5 → first half lit
-        //   arcStart = 0.5, arcLength = 1.0 → still full, but the implicit
-        //                                    "draw direction" is 0.5 → 1 → 0 → 0.5
-        //   arcStart = 0.8, arcLength = 0.4 → wraps: lit from 0.8 to 0.2
+        //   arcs = { {0, 1, 1} }         → full perimeter lit (default)
+        //   arcs = { {0, 0.5, 1} }       → first half lit
+        //   arcs = { {0.8, 0.4, 1} }     → wraps: lit from 0.8 to 0.2
+        //   arcs = { {0, 0.3, 1},
+        //            {0.5, 0.3, 0.5} }   → two independent slices, second dimmer
         //
-        // The @ref OutlineTracer animation drives @c arcLength from 0 → 1 to
-        // "draw" the rect outline (with @c arcStart fixed at the start phase).
-        float arcStart = 0.0f;
-        float arcLength = 1.0f;
+        // The @ref OutlineTracer / @ref ArcWipe animations drive @c arcs[0]
+        // for backward-compat with the pre-multi-arc single-slice API.
+        static constexpr int MAX_ARCS_CAP = MAX_ARCS;
+        std::vector<Arc> arcs = {Arc{}};
 
         // --- Colour transition ---
 
@@ -262,8 +298,7 @@ namespace EdgeLighting
                    colorStops == o.colorStops &&
                    hueRotationRate == o.hueRotationRate &&
                    segmentBoosts == o.segmentBoosts &&
-                   arcStart == o.arcStart &&
-                   arcLength == o.arcLength &&
+                   arcs == o.arcs &&
                    colorTransitionDuration == o.colorTransitionDuration;
         }
         bool operator!=(const NeonConfig &o) const { return !(*this == o); }
