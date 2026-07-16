@@ -3,13 +3,15 @@
 
 #include "core/config.h"
 #include "animation/clock.h"
-#include "animation/animation-manager.h"
+#include "animation/animation.h"
 #include "renderer/base-renderer.h"
 #include <vector>
 #include <memory>
 
 namespace EdgeLighting
 {
+    class AnimationManager;
+
     /// @brief Top-level orchestrator for the edge-lighting effect.
     ///
     /// Owns the base configuration, the time clock, a list of renderers, and an
@@ -37,7 +39,7 @@ namespace EdgeLighting
     {
     public:
         EdgeLightingEffect();
-        ~EdgeLightingEffect() = default;
+        ~EdgeLightingEffect();
 
         /// @brief Initialise all registered renderers.
         /// @returns false if any renderer fails to initialise.
@@ -46,11 +48,6 @@ namespace EdgeLighting
         /// @brief Advance the clock and every attached animation, recompute the
         ///        active config, and propagate updates to renderers.
         /// @param deltaTime Seconds since the last frame.
-        /// @details Animations advance by the clock's delta for this frame, so
-        ///          a paused clock (@ref GetClock) freezes them. The active
-        ///          config is rebuilt as base + all overlays; renderers are
-        ///          notified via @c OnConfigChanged only when it actually
-        ///          changes.
         void Update(float deltaTime);
 
         /// @brief Render all active renderers in registration order.
@@ -65,20 +62,13 @@ namespace EdgeLighting
         void SetConfig(const Config &config);
 
         /// @brief The base (authored) configuration.
-        /// @returns Const reference to the base @ref Config - the value set by
-        ///          @ref SetConfig, safe to read-modify-write without folding
-        ///          in animated values.
         const Config &GetConfig() const;
 
-        /// @brief The active (composited) configuration renderers draw.
-        /// @returns Const reference to base + all attached-animation overlays,
-        ///          as of the last @ref Update / @ref SetConfig.
+        /// @brief The active (composited) configuration - base + animation overlays.
         const Config &GetActiveConfig() const;
 
         /// @brief Attach a standalone animation to be advanced and composited
         ///        each @ref Update. Ignores null and duplicates.
-        /// @details Sugar for @c Animations().Attach. The animation keeps its
-        ///          play state - call @c anim->Play() to start it.
         void Attach(const AnimationPtr &animation);
 
         /// @brief Detach a previously attached animation (by identity).
@@ -94,20 +84,16 @@ namespace EdgeLighting
         void AddRenderer(std::shared_ptr<BaseRenderer> renderer);
 
         /// @brief Access the shared clock for play/pause/time control.
-        /// @details Modulators outside the effect read its time to stay in
-        ///          lockstep with the renderer.
         Clock &GetClock();
         const Clock &GetClock() const;
 
     private:
-        /// @brief Rebuild @c mActiveConfig = base + overlays; notify renderers
-        ///        via @c OnConfigChanged only when it actually changed.
         void refreshActiveConfig();
 
-        Config mBaseConfig;   ///< Authored config; what SetConfig sets, animations overlay.
-        Config mActiveConfig; ///< Composited config forwarded to renderers each frame.
+        Config mBaseConfig;   ///< Authored config - what SetConfig sets.
+        Config mActiveConfig; ///< Base + animation overlays - forwarded to renderers.
         Clock mClock;
-        AnimationManager mAnimationManager;
+        std::unique_ptr<AnimationManager> mAnimationManager;
         std::vector<std::shared_ptr<BaseRenderer>> mRenderers;
     };
 
