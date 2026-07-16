@@ -44,6 +44,21 @@ namespace EdgeLighting
         BOOST = 2,
     } SegmentField;
 
+    /// @brief Which scalar to drive inside a single stop of
+    ///        @c NeonConfig::segmentBoosts[segIdx].colorStops[stopIdx].
+    ///
+    /// Paired with @c (segIdx, stopIdx) at bind time via
+    /// @ref FieldBoundAnimation::AddStopField. Numerically mirrored by
+    /// @c EL_ColorStopField in the C ABI when that binding is added.
+    typedef enum class ColorStopField
+    {
+        POSITION = 0, ///< @c ColorStop::position - normalised offset within the segment span.
+        R = 1,        ///< @c ColorStop::color.r
+        G = 2,        ///< @c ColorStop::color.g
+        B = 3,        ///< @c ColorStop::color.b
+        A = 4,        ///< @c ColorStop::color.a
+    } ColorStopField;
+
     /// @brief Animation whose per-frame behaviour is defined at runtime by
     ///        binding modulators to Config fields.
     ///
@@ -55,6 +70,11 @@ namespace EdgeLighting
     /// - @ref AddSegmentField(size_t, SegmentField, ModulatorPtr) - drive one
     ///   scalar inside @c NeonConfig::segmentBoosts[index], auto-growing the
     ///   vector to that slot.
+    /// - @ref AddStopField(size_t, size_t, ColorStopField, ModulatorPtr) -
+    ///   drive one scalar inside
+    ///   @c NeonConfig::segmentBoosts[segIdx].colorStops[stopIdx],
+    ///   auto-growing both the segments vector and that segment's stops
+    ///   vector as needed.
     ///
     /// On each @ref ApplyAt every binding's modulator is evaluated with the
     /// same @c elapsed and the result is written to its bound target.
@@ -77,6 +97,9 @@ namespace EdgeLighting
     ///     auto tail = std::make_shared<Oscillator>(1.0f / 3.0f, 0.0f, 1.0f, 0.5f, Waveform::SAWTOOTH);
     ///     breathing.AddSegmentField(0, SegmentField::POSITION, lead);
     ///     breathing.AddSegmentField(1, SegmentField::POSITION, tail);
+    ///
+    ///     // Pulse the red channel of segment 0's first stop:
+    ///     breathing.AddStopField(0, 0, ColorStopField::R, pulse);
     ///     breathing.Play();
     /// @endcode
     class FieldBoundAnimation : public Animation
@@ -96,6 +119,16 @@ namespace EdgeLighting
             SegmentField field;
             ModulatorPtr modulator;
         } SegmentBinding;
+
+        /// @brief A single (segmentBoosts[segIdx].colorStops[stopIdx].field,
+        ///        modulator) binding.
+        typedef struct SegmentStopBinding
+        {
+            size_t segIndex;
+            size_t stopIndex;
+            ColorStopField field;
+            ModulatorPtr modulator;
+        } SegmentStopBinding;
 
         // --- Construction ------------------------------------------------
 
@@ -142,6 +175,19 @@ namespace EdgeLighting
             mSegmentBindings.push_back({index, field, std::move(modulator)});
         }
 
+        /// @brief Bind a scalar inside
+        ///        @c segmentBoosts[segIdx].colorStops[stopIdx] to a modulator.
+        /// @details Both @p segIdx (segments vector) and @p stopIdx (that
+        ///          segment's stops vector) auto-grow at write time. New
+        ///          stops are seeded to a visible default (mid-position,
+        ///          opaque white) so binding only a single channel still
+        ///          shows something.
+        void AddStopField(size_t segIdx, size_t stopIdx,
+                          ColorStopField field, ModulatorPtr modulator)
+        {
+            mSegmentStopBindings.push_back({segIdx, stopIdx, field, std::move(modulator)});
+        }
+
         // --- Introspection -----------------------------------------------
 
         /// @brief Read-only view of the scalar-field bindings.
@@ -150,10 +196,16 @@ namespace EdgeLighting
         /// @brief Read-only view of the segment-field bindings.
         const std::vector<SegmentBinding> &GetSegmentBindings() const { return mSegmentBindings; }
 
-        /// @brief Total number of bindings (scalar + segment).
+        /// @brief Read-only view of the segment-stop-field bindings.
+        const std::vector<SegmentStopBinding> &GetSegmentStopBindings() const
+        {
+            return mSegmentStopBindings;
+        }
+
+        /// @brief Total number of bindings (scalar + segment + segment-stop).
         size_t GetBindingCount() const
         {
-            return mScalarBindings.size() + mSegmentBindings.size();
+            return mScalarBindings.size() + mSegmentBindings.size() + mSegmentStopBindings.size();
         }
 
         /// @brief Drop every binding (leaves state / duration alone).
@@ -161,6 +213,7 @@ namespace EdgeLighting
         {
             mScalarBindings.clear();
             mSegmentBindings.clear();
+            mSegmentStopBindings.clear();
         }
 
         // --- Drive -------------------------------------------------------
@@ -170,10 +223,12 @@ namespace EdgeLighting
 
         // --- RESTORE support ------------------------------------------
         // Generic implementation. For scalar bindings we snapshot per-binding
-        // float values; for segment bindings we snapshot the whole
-        // @c segmentBoosts vector (same reason SegmentTravel / SegmentBounce
-        // do: bindings auto-grow the vector, so per-slot snapshot loses the
-        // "vector was empty" case). Call @ref CaptureBaseline BEFORE
+        // float values; for segment / segment-stop bindings we snapshot the
+        // whole @c segmentBoosts vector (same reason SegmentTravel /
+        // SegmentBounce do: bindings auto-grow the vector, so per-slot
+        // snapshot loses the "vector was empty" case). The whole-struct copy
+        // also covers the non-scalar segment fields (@c colorStops,
+        // @c blendSpace) automatically. Call @ref CaptureBaseline BEFORE
         // @ref Play so the snapshot reflects the pre-animation value.
         void CaptureBaseline(const Config &cfg) override;
 
@@ -183,12 +238,15 @@ namespace EdgeLighting
     private:
         std::vector<ScalarBinding> mScalarBindings;
         std::vector<SegmentBinding> mSegmentBindings;
+        std::vector<SegmentStopBinding> mSegmentStopBindings;
         /// One saved value per scalar binding, index-aligned with
         /// @c mScalarBindings at the moment @ref CaptureBaseline was called.
         std::vector<float> mSavedScalarValues;
-        /// Snapshot of the whole @c segmentBoosts vector. Captured only when
-        /// there is at least one segment binding at snapshot time; otherwise
-        /// left empty and skipped on restore.
+        /// Snapshot of the whole @c segmentBoosts vector - covers every
+        /// @c SegmentBoost field (position/length/boost + colorStops +
+        /// blendSpace). Captured only when there is at least one segment or
+        /// segment-stop binding at snapshot time; otherwise left empty and
+        /// skipped on restore.
         std::vector<SegmentBoost> mSavedSegmentBoosts;
         /// Whether @ref CaptureBaseline captured @c mSavedSegmentBoosts (so
         /// we can distinguish "no segment bindings then" from "empty vector

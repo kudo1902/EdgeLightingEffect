@@ -138,6 +138,55 @@ namespace EdgeLighting
             }
             }
         }
+
+        /// Grow @c seg.colorStops up to @p stopIdx inclusive so a stop
+        /// binding can safely write to that entry. New entries are seeded
+        /// with a visible mid-segment opaque-white default, so binding a
+        /// single channel (e.g. R) still produces something visible.
+        ColorStop &ensureStopSlot(SegmentBoost &seg, size_t stopIdx)
+        {
+            if (seg.colorStops.size() <= stopIdx)
+            {
+                seg.colorStops.resize(stopIdx + 1,
+                                      ColorStop{0.5f, glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)});
+            }
+            return seg.colorStops[stopIdx];
+        }
+
+        void writeStop(Config &cfg, size_t segIdx, size_t stopIdx,
+                       ColorStopField field, float value)
+        {
+            SegmentBoost &s = ensureSegmentSlot(cfg, segIdx);
+            ColorStop &c = ensureStopSlot(s, stopIdx);
+            switch (field)
+            {
+            case ColorStopField::POSITION:
+            {
+                c.position = value;
+                break;
+            }
+            case ColorStopField::R:
+            {
+                c.color.r = value;
+                break;
+            }
+            case ColorStopField::G:
+            {
+                c.color.g = value;
+                break;
+            }
+            case ColorStopField::B:
+            {
+                c.color.b = value;
+                break;
+            }
+            case ColorStopField::A:
+            {
+                c.color.a = value;
+                break;
+            }
+            }
+        }
     } // namespace
 
     void FieldBoundAnimation::ApplyAt(Config &cfg, float elapsed) const
@@ -156,6 +205,14 @@ namespace EdgeLighting
                 writeSegment(cfg, b.index, b.field, b.modulator->Evaluate(elapsed));
             }
         }
+        for (const SegmentStopBinding &b : mSegmentStopBindings)
+        {
+            if (b.modulator)
+            {
+                writeStop(cfg, b.segIndex, b.stopIndex, b.field,
+                          b.modulator->Evaluate(elapsed));
+            }
+        }
     }
 
     void FieldBoundAnimation::CaptureBaseline(const Config &cfg)
@@ -168,10 +225,11 @@ namespace EdgeLighting
             mSavedScalarValues.push_back(readScalar(cfg, b.field));
         }
 
-        // Segment bindings: whole-vector snapshot when any segment binding
-        // is present. Auto-grow means a per-slot save would drop the "vector
-        // was empty at snapshot" case.
-        if (!mSegmentBindings.empty())
+        // Segment / segment-stop bindings share one whole-vector snapshot
+        // (auto-grow means a per-slot save would drop the "vector was
+        // empty at snapshot" case). Copying the whole SegmentBoost also
+        // covers colorStops + blendSpace for free on restore.
+        if (!mSegmentBindings.empty() || !mSegmentStopBindings.empty())
         {
             mSavedSegmentBoosts = cfg.neon.segmentBoosts;
             mSegmentBoostsCaptured = true;
