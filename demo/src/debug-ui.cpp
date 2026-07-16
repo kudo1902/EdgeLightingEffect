@@ -1,4 +1,5 @@
 #include "debug-ui.h"
+#include "animation/animation-manager.h"
 #include "core/config.h"
 #include "core/edge-lighting.h"
 #include "renderer/neon-tuning.h"
@@ -24,6 +25,106 @@ namespace
     /// width baked by NeonRenderer (256), which is more than enough for any
     /// gradient the human eye can resolve.
     constexpr int MAX_GRADIENT_LUT_SIZE = 256;
+
+    /// Slider whose knob follows the currently-animated (active) value each
+    /// frame so the user sees what the shader is actually drawing. Dragging
+    /// still edits the BASE (authored) value: while the user is actively
+    /// dragging THIS slider, the display is pinned to the base to avoid a
+    /// tug-of-war between the drag and the per-frame animation overlay.
+    ///
+    /// Detected via @c ImGui::GetActiveID() - we compute the slider's ID
+    /// before drawing so we know whether to seed the shown value from base
+    /// (dragging) or active (idle / animating). The base is written whenever
+    /// the widget reports a change; the animation on the next @c
+    /// EdgeLightingEffect::Update then overlays on top of the new base.
+    /// Draw one segment-lights row (Pos/Len/Boost + collapsible per-segment
+    /// stops editor). Caller wraps in @c PushID so both the Neon and
+    /// OptimizedNeon sections can share the same widget IDs without colliding.
+    /// @return true if the row's remove button was clicked - caller erases.
+    inline bool DrawSegmentRow(EdgeLighting::SegmentBoost &seg)
+    {
+        ImGui::SetNextItemWidth(90.0f);
+        ImGui::SliderFloat("Pos##Seg", &seg.position, 0.0f, 1.0f, "%.2f");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90.0f);
+        ImGui::SliderFloat("Len##Seg", &seg.length, 0.02f, 0.5f, "%.2f");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(90.0f);
+        ImGui::SliderFloat("Boost##Seg", &seg.boost, 0.0f, 10.0f, "%.1f");
+        ImGui::SameLine();
+        bool remove = ImGui::SmallButton("X");
+
+        // Collapsible per-segment stops editor. Header shows the count and an
+        // "inherits base" hint when empty (which is the default and means the
+        // segment reads its colour from the base gradient at each sample).
+        char stopsHdr[64];
+        std::snprintf(stopsHdr, sizeof(stopsHdr),
+                      "Stops (%zu)%s##SegStops",
+                      seg.colorStops.size(),
+                      seg.colorStops.empty() ? " - inherits base" : "");
+        ImGui::Indent();
+        if (ImGui::CollapsingHeader(stopsHdr))
+        {
+            const char *blendItems[] = {"RGB", "HSV", "HSL"};
+            int blendIdx = static_cast<int>(seg.blendSpace);
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::Combo("Blend##Seg", &blendIdx, blendItems, IM_ARRAYSIZE(blendItems)))
+            {
+                seg.blendSpace = static_cast<EdgeLighting::BlendSpace>(blendIdx);
+            }
+            for (size_t j = 0; j < seg.colorStops.size(); ++j)
+            {
+                ImGui::PushID(static_cast<int>(j));
+                ImGui::SetNextItemWidth(90.0f);
+                ImGui::SliderFloat("Pos##SegStop", &seg.colorStops[j].position, 0.0f, 1.0f, "%.2f");
+                ImGui::SameLine();
+                ImGui::ColorEdit4("Col##SegStop", &seg.colorStops[j].color.x,
+                                  ImGuiColorEditFlags_NoInputs);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("X"))
+                {
+                    seg.colorStops.erase(seg.colorStops.begin() +
+                                         static_cast<ptrdiff_t>(j));
+                    ImGui::PopID();
+                    break;
+                }
+                ImGui::PopID();
+            }
+            if (seg.colorStops.size() < MAX_COLOR_STOPS && ImGui::Button("+ Add Stop##Seg"))
+            {
+                float lastPos = seg.colorStops.empty() ? 0.0f
+                                                       : seg.colorStops.back().position;
+                seg.colorStops.push_back(
+                    {std::min(1.0f, lastPos + 0.25f), glm::vec4(1.0f)});
+            }
+        }
+        ImGui::Unindent();
+        return remove;
+    }
+
+    inline bool AnimatedSlider(const char *label, float &baseVal, float activeVal,
+                               float minVal, float maxVal, const char *fmt = "%.2f")
+    {
+        // "Was I actively dragged last frame?" - stored per-slider via ImGui's
+        // built-in state storage keyed by the slider's ID. We can't call
+        // IsItemActive() BEFORE drawing (there's no item yet), so we consult
+        // the previous frame's result to decide what to show, then record this
+        // frame's active state for the next call.
+        ImGuiStorage *storage = ImGui::GetStateStorage();
+        const ImGuiID id = ImGui::GetID(label);
+        const bool wasDragging = storage->GetBool(id, false);
+
+        float shown = wasDragging ? baseVal : activeVal;
+        const bool changed = ImGui::SliderFloat(label, &shown, minVal, maxVal, fmt);
+        const bool isDragging = ImGui::IsItemActive();
+        storage->SetBool(id, isDragging);
+
+        if (changed && isDragging)
+        {
+            baseVal = shown;
+        }
+        return changed;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -105,11 +206,13 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
                 io.Framerate, 1000.0f / io.Framerate, mLastRenderTimeMs);
     ImGui::Separator();
 
+    // The active config carries every animation's current overlay values
+    const EdgeLighting::Config &active = effect.GetActiveConfig();
     buildGeometrySection(cfg);
-    buildNeonSection(cfg);
-    buildOptimizedNeonSection(cfg);
+    buildNeonSection(cfg, active);
+    buildOptimizedNeonSection(cfg, active);
     buildColorPickerSection(cfg);
-    buildAnimationSection(cfg, effect.GetClock().GetTime());
+    buildAnimationSection(cfg, effect.GetAnimationManager());
     buildBackgroundSection();
 
     ImGui::Checkbox("Wireframe", &cfg.wireframe.enable);
@@ -148,27 +251,6 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
         std::cout << "\n";
     }
     ImGui::End();
-}
-
-void DebugUI::ApplyActiveAnimation(EdgeLighting::Config &config, float clockTime)
-{
-    // Compute the frame delta ourselves: main.cpp still hands us the effect's
-    // clock time so we can freeze animations by pausing that clock, but the
-    // animation itself now owns state / elapsed / completion latching, so we
-    // just forward dt to Update() and call Apply().
-    float dt = clockTime - mLastClockTime;
-    mLastClockTime = clockTime;
-
-    // AnimationGroup::Update / Apply broadcast to each child, respecting each
-    // child's own state (Stopped → skip, Paused → hold, Playing → advance).
-    // The shader consumes cfg.neon.hueRotationRate directly via uTime; a
-    // preset that modulates the rate (HueRotationReverse etc.) writes into
-    // config and the next frame's Render sends the new rate to the shader.
-    if (mActiveGroup)
-    {
-        mActiveGroup->Update(dt);
-        mActiveGroup->Apply(config);
-    }
 }
 
 void DebugUI::Render()
@@ -210,7 +292,8 @@ void DebugUI::buildGeometrySection(EdgeLighting::Config &cfg)
     }
 }
 
-void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
+void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
+                               const EdgeLighting::Config &active)
 {
     if (!ImGui::CollapsingHeader("Neon", ImGuiTreeNodeFlags_DefaultOpen))
     {
@@ -232,12 +315,12 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
     }
     ImGui::Checkbox("Show Gradient LUT##Neon", &cfg.neon.showGradientLUT);
     ImGui::Checkbox("Show Color Stops##Neon", &cfg.neon.showColorStops);
-    ImGui::SliderFloat("Line Width##Neon", &cfg.neon.lineWidth, 0.0f, 20.0f, "%.0f");
-    ImGui::SliderFloat("Filament Falloff##Neon", &cfg.neon.filamentFalloff, 0.0f, 5.0f, "%.2f");
-    ImGui::SliderFloat("Intensity##Neon", &cfg.neon.intensity, 0.0f, 3.0f, "%.2f");
-    ImGui::SliderFloat("Glow Radius##Neon", &cfg.neon.glowRadius, 0.0f, 80.0f, "%.0f");
-    ImGui::SliderFloat("Bloom Strength##Neon", &cfg.neon.bloomStrength, 0.0f, 2.0f, "%.2f");
-    ImGui::SliderFloat("Hue Rotation Rate##Neon", &cfg.neon.hueRotationRate, 0.0f, 2.0f, "%.2f");
+    AnimatedSlider("Line Width##Neon", cfg.neon.lineWidth, active.neon.lineWidth, 0.0f, 20.0f, "%.0f");
+    AnimatedSlider("Filament Falloff##Neon", cfg.neon.filamentFalloff, active.neon.filamentFalloff, 0.0f, 5.0f);
+    AnimatedSlider("Intensity##Neon", cfg.neon.intensity, active.neon.intensity, 0.0f, 3.0f);
+    AnimatedSlider("Glow Radius##Neon", cfg.neon.glowRadius, active.neon.glowRadius, 0.0f, 80.0f, "%.0f");
+    AnimatedSlider("Bloom Strength##Neon", cfg.neon.bloomStrength, active.neon.bloomStrength, 0.0f, 2.0f);
+    AnimatedSlider("Hue Rotation Rate##Neon", cfg.neon.hueRotationRate, active.neon.hueRotationRate, 0.0f, 2.0f);
 
     const char *sideItems[] = {"Both", "Inside", "Outside"};
     int sideIdx = static_cast<int>(cfg.neon.glowSide);
@@ -250,31 +333,21 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
         ImGui::SliderFloat("Side Softness##Neon", &cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
     }
 
-    // --- Travelling segments (zero or more Gaussian brightness peaks) ---
-    ImGui::TextDisabled("Segment Boosts (%zu / %d)",
+    // --- Travelling segments (independent additive lights on the perimeter) ---
+    ImGui::TextDisabled("Segment Lights (%zu / %d) - additive, independent of intensity",
                         cfg.neon.segmentBoosts.size(),
                         EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP);
     for (size_t i = 0; i < cfg.neon.segmentBoosts.size(); ++i)
     {
         ImGui::PushID(static_cast<int>(300 + i));
-        auto &seg = cfg.neon.segmentBoosts[i];
-        ImGui::SetNextItemWidth(90.0f);
-        ImGui::SliderFloat("Pos##Seg", &seg.position, 0.0f, 1.0f, "%.2f");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(90.0f);
-        ImGui::SliderFloat("Len##Seg", &seg.length, 0.02f, 0.5f, "%.2f");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(90.0f);
-        ImGui::SliderFloat("Boost##Seg", &seg.boost, 0.0f, 10.0f, "%.1f");
-        ImGui::SameLine();
-        if (ImGui::SmallButton("X"))
+        bool remove = DrawSegmentRow(cfg.neon.segmentBoosts[i]);
+        ImGui::PopID();
+        if (remove)
         {
             cfg.neon.segmentBoosts.erase(cfg.neon.segmentBoosts.begin() +
                                          static_cast<ptrdiff_t>(i));
-            ImGui::PopID();
             break;
         }
-        ImGui::PopID();
     }
     if (static_cast<int>(cfg.neon.segmentBoosts.size()) <
         EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP)
@@ -286,8 +359,8 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
     }
 
     // --- Arc gating (0..1 = full perimeter; shrink to "draw" part of the rect) ---
-    ImGui::SliderFloat("Arc Start##Neon", &cfg.neon.arcStart, 0.0f, 1.0f, "%.2f");
-    ImGui::SliderFloat("Arc Length##Neon", &cfg.neon.arcLength, 0.0f, 1.0f, "%.2f");
+    AnimatedSlider("Arc Start##Neon", cfg.neon.arcStart, active.neon.arcStart, 0.0f, 1.0f);
+    AnimatedSlider("Arc Length##Neon", cfg.neon.arcLength, active.neon.arcLength, 0.0f, 1.0f);
 
     const char *blendItems[] = {"RGB", "HSV", "HSL"};
     int blendIdx = static_cast<int>(cfg.neon.blendSpace);
@@ -333,7 +406,8 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg)
     }
 }
 
-void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg)
+void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg,
+                                        const EdgeLighting::Config &active)
 {
     if (!ImGui::CollapsingHeader("Optimized Neon (½-res)", ImGuiTreeNodeFlags_DefaultOpen))
     {
@@ -364,12 +438,12 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg)
         ImGui::ColorEdit4("Opaque Color##Opt", &cfg.neon.opaqueColor.x,
                           ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
     }
-    ImGui::SliderFloat("Line Width##Opt", &cfg.neon.lineWidth, 0.0f, 20.0f, "%.0f");
-    ImGui::SliderFloat("Filament Falloff##Opt", &cfg.neon.filamentFalloff, 0.5f, 5.0f, "%.2f");
-    ImGui::SliderFloat("Intensity##Opt", &cfg.neon.intensity, 0.0f, 3.0f, "%.2f");
-    ImGui::SliderFloat("Glow Radius##Opt", &cfg.neon.glowRadius, 0.0f, 80.0f, "%.0f");
-    ImGui::SliderFloat("Bloom Strength##Opt", &cfg.neon.bloomStrength, 0.0f, 2.0f, "%.2f");
-    ImGui::SliderFloat("Hue Rotation Rate##Opt", &cfg.neon.hueRotationRate, 0.0f, 2.0f, "%.2f");
+    AnimatedSlider("Line Width##Opt", cfg.neon.lineWidth, active.neon.lineWidth, 0.0f, 20.0f, "%.0f");
+    AnimatedSlider("Filament Falloff##Opt", cfg.neon.filamentFalloff, active.neon.filamentFalloff, 0.5f, 5.0f);
+    AnimatedSlider("Intensity##Opt", cfg.neon.intensity, active.neon.intensity, 0.0f, 3.0f);
+    AnimatedSlider("Glow Radius##Opt", cfg.neon.glowRadius, active.neon.glowRadius, 0.0f, 80.0f, "%.0f");
+    AnimatedSlider("Bloom Strength##Opt", cfg.neon.bloomStrength, active.neon.bloomStrength, 0.0f, 2.0f);
+    AnimatedSlider("Hue Rotation Rate##Opt", cfg.neon.hueRotationRate, active.neon.hueRotationRate, 0.0f, 2.0f);
 
     const char *sideItems[] = {"Both", "Inside", "Outside"};
     int sideIdx = static_cast<int>(cfg.neon.glowSide);
@@ -382,30 +456,20 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg)
     // live avoids the slider vanishing when Glow Side is Both).
     ImGui::SliderFloat("Side Softness##Opt", &cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
 
-    ImGui::TextDisabled("Segment Boosts (%zu / %d)",
+    ImGui::TextDisabled("Segment Lights (%zu / %d) - additive, independent of intensity",
                         cfg.neon.segmentBoosts.size(),
                         EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP);
     for (size_t i = 0; i < cfg.neon.segmentBoosts.size(); ++i)
     {
         ImGui::PushID(static_cast<int>(400 + i));
-        auto &seg = cfg.neon.segmentBoosts[i];
-        ImGui::SetNextItemWidth(90.0f);
-        ImGui::SliderFloat("Pos##Seg", &seg.position, 0.0f, 1.0f, "%.2f");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(90.0f);
-        ImGui::SliderFloat("Len##Seg", &seg.length, 0.02f, 0.5f, "%.2f");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(90.0f);
-        ImGui::SliderFloat("Boost##Seg", &seg.boost, 0.0f, 10.0f, "%.1f");
-        ImGui::SameLine();
-        if (ImGui::SmallButton("X"))
+        bool remove = DrawSegmentRow(cfg.neon.segmentBoosts[i]);
+        ImGui::PopID();
+        if (remove)
         {
             cfg.neon.segmentBoosts.erase(cfg.neon.segmentBoosts.begin() +
                                          static_cast<ptrdiff_t>(i));
-            ImGui::PopID();
             break;
         }
-        ImGui::PopID();
     }
     if (static_cast<int>(cfg.neon.segmentBoosts.size()) <
         EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP)
@@ -565,6 +629,28 @@ namespace
                                      : EdgeLighting::PlaybackMode::ONE_SHOT);
         }
 
+        // End action - what STOPPED-Apply writes to the target field:
+        //   Hold current : field settles at wherever elapsed was when stopped. (Default.)
+        //   Hold end     : field settles at ApplyAt(cfg, duration).
+        //   Hold start   : field settles at ApplyAt(cfg, 0).
+        //   Restore      : field settles at the pre-play value (subclass hook).
+        // Only meaningful once the animation has played at least once; a
+        // freshly-added Stopped animation is a no-op regardless. If you want
+        // the base config to show through after Stop, detach the animation.
+        const char *endActionItems[] = {
+            "Hold current",
+            "Hold end",
+            "Hold start",
+            "Restore",
+        };
+        int endActionIdx = static_cast<int>(anim.GetEndAction());
+        ImGui::SetNextItemWidth(160.0f);
+        if (ImGui::Combo("End action", &endActionIdx,
+                         endActionItems, IM_ARRAYSIZE(endActionItems)))
+        {
+            anim.SetEndAction(static_cast<EdgeLighting::EndAction>(endActionIdx));
+        }
+
         // Duration - cycle length in seconds. Subclasses with internal
         // modulators (FadeIn/FadeOut/OutlineTracer) rebuild them via
         // OnDurationChanged so the visual matches the completion latch.
@@ -652,7 +738,8 @@ namespace
     }
 }
 
-void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg, float clockTime)
+void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg,
+                                    EdgeLighting::AnimationManager &manager)
 {
     if (!ImGui::CollapsingHeader("Animations", ImGuiTreeNodeFlags_DefaultOpen))
     {
@@ -674,75 +761,74 @@ void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg, float clockTime)
         auto preset = static_cast<EdgeLightingDemo::AnimationPreset>(mAddPresetIdx);
         if (auto anim = EdgeLightingDemo::CreateAnimation(preset))
         {
-            const char *presetName = EdgeLightingDemo::PresetName(preset);
-            // Log completion + state changes for the added animation. In a
-            // real app these hooks would drive UI transitions, chain the
-            // next animation, etc.
-            anim->OnComplete = [presetName]()
-            { LOG_I("Animation '%s' completed.", presetName); };
+            anim->SetName(EdgeLightingDemo::PresetName(preset));
+
+            std::weak_ptr<EdgeLighting::Animation> weakAnim = anim;
+            anim->OnComplete = [weakAnim]()
+            {
+                if (auto a = weakAnim.lock())
+                {
+                    LOG_I("Animation '%s' completed.", a->GetName().c_str());
+                }
+            };
             anim->OnStateChanged =
-                [presetName](EdgeLighting::AnimationState /*prev*/,
-                             EdgeLighting::AnimationState now)
+                [weakAnim](EdgeLighting::AnimationState /*prev*/,
+                           EdgeLighting::AnimationState now)
             {
                 const char *stateName = "?";
                 switch (now)
                 {
                 case EdgeLighting::AnimationState::PLAYING:
+                {
                     stateName = "Playing";
                     break;
+                }
                 case EdgeLighting::AnimationState::PAUSED:
+                {
                     stateName = "Paused";
                     break;
+                }
                 case EdgeLighting::AnimationState::STOPPED:
+                {
                     stateName = "Stopped";
                     break;
                 }
-                LOG_I("Animation '%s' → %s", presetName, stateName);
+                }
+                if (auto a = weakAnim.lock())
+                {
+                    LOG_I("Animation '%s' -> %s", a->GetName().c_str(), stateName);
+                }
             };
-            // Added animations start Stopped and DON'T touch the config
-            // yet - the animated field keeps whatever value it was showing
-            // in the sliders. The animation only starts writing when the
-            // user clicks Play on the row. (Reset(cfg) is available on the
-            // row's Reset button for the "seed baseline before Play" case,
-            // but we don't force it here.)
-            mActiveGroup->Add(anim);
-            // Remember the human-readable name so the row header reads
-            // "Breathing" instead of "Animation #3". Parallel vector because
-            // AnimationGroup only stores AnimationPtr, not names.
-            mActiveNames.push_back(presetName);
+            manager.Attach(anim);
         }
-        mLastClockTime = clockTime;
     }
 
     ImGui::Separator();
 
     // --- Added animation rows ---
-    // Iterate a snapshot of the children so removing during iteration is
-    // safe (mActiveGroup->Remove(...) invalidates any iterator otherwise).
-    const auto children = mActiveGroup->GetChildren();
+    // Snapshot the manager's attached animations so a Detach during iteration
+    // stays safe (Detach erases from the manager's own vector).
+    std::vector<EdgeLighting::AnimationPtr> children;
+    children.reserve(manager.GetCount());
+    for (size_t i = 0; i < manager.GetCount(); ++i)
+    {
+        children.push_back(manager.GetAnimation(i));
+    }
     if (children.empty())
     {
         ImGui::TextDisabled("No animations added. Pick a preset above to add one.");
     }
     for (size_t i = 0; i < children.size(); ++i)
     {
-        const char *presetName = i < mActiveNames.size() ? mActiveNames[i]
-                                                         : "Animation";
+        const std::string &name = children[i]->GetName();
+        const char *presetName = name.empty() ? "Animation" : name.c_str();
         char label[80];
         std::snprintf(label, sizeof(label), "%s##%zu", presetName, i);
         if (DrawAnimationRow(label, *children[i], cfg, /*allowRemove=*/true))
         {
-            mActiveGroup->Remove(children[i]);
-            if (i < mActiveNames.size())
-            {
-                mActiveNames.erase(mActiveNames.begin() + static_cast<ptrdiff_t>(i));
-            }
-            continue; // vector snapshot means the iterator is still valid,
-                      // but the child is gone - skip its group-children draw.
+            manager.Detach(children[i]);
+            continue;
         }
-        // If this preset is an AnimationGroup (Shimmer, Aurora, …), expose
-        // its children as indented sub-rows so the per-child Duration slider
-        // is reachable. Non-group animations skip this branch.
         if (auto sub = std::dynamic_pointer_cast<EdgeLighting::AnimationGroup>(
                 children[i]))
         {
@@ -751,7 +837,7 @@ void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg, float clockTime)
     }
 
     ImGui::TextDisabled(
-        "Sliders for animated fields will be overwritten each frame.");
+        "Animated fields revert to their base (slider) value on Stop.");
 }
 
 void DebugUI::buildBackgroundSection()

@@ -46,22 +46,27 @@ layout(std140) uniform LoopSamplesBlock
     vec4 uLoopSamples[NEON_MAX_LOOP_SAMPLES];
 };
 
-// Travelling segments - up to MAX_SEGMENT_BOOSTS Gaussian brightness peaks.
-// Each vec3 is packed as (position, invSigma, boost) so the shader avoids the
-// per-sample divide. When uSegmentCount == 0 the whole feature is skipped in
-// the gather loop.
+// Travelling segments - up to MAX_SEGMENT_BOOSTS independent coloured lights
+// on the perimeter. Each vec4 is packed as (position, invSigma, boost,
+// hasStops): when .w > 0.5 the segment's colour comes from row `s` of
+// uSegmentLUT (its own head-to-tail gradient); when .w == 0 it inherits the
+// current base gradient sample. When uSegmentCount == 0 the whole feature is
+// skipped in the gather loop.
 //
-// Declared in a std140 uniform block (the DALi PunctualLightBlock pattern)
-// instead of loose array uniforms: DALi/Tizen cannot upload a whole uniform
-// array in one call - it writes one element per registered property
-// ("uSegments[0]", "uSegments[1]", …) into the block's UBO at the reflected
-// std140 array stride. On desktop GL the block is fed from a UBO in
-// neon-renderer.cpp. std140 pads each vec3 element to a 16-byte stride.
+// Declared in a std140 uniform block (the DALi PunctualLightBlock pattern):
+// DALi writes one element per registered property ("uSegments[0]", …) into
+// the block's UBO at the reflected std140 array stride. On desktop GL the
+// block is fed from a UBO in neon-renderer.cpp.
 layout(std140) uniform SegmentBlock
 {
     int  uSegmentCount;
-    vec3 uSegments[MAX_SEGMENT_BOOSTS];
+    vec4 uSegments[MAX_SEGMENT_BOOSTS];
 };
+
+// Per-segment gradient atlas (RGBA8, CLAMP-wrapped both axes). One row per
+// segment, laid out head-to-tail across the segment's visible span. Sampled
+// only when the segment's hasStops flag is set (see uSegments.w above).
+uniform sampler2D uSegmentLUT;
 
 // Arc gating - only samples whose perimeter position falls within an arc of
 // uArcLength starting at uArcStart contribute. Defaults (0, 1) = full lit.
@@ -192,10 +197,10 @@ void main() {
     // into the GL_REPEAT-wrapped LUT - no fract() either.
     float glow      = 0.0;
     float bloom     = 0.0;
-    vec3  acc       = vec3(0.0);
+    vec3  acc       = vec3(0.0); // base colour × per-sample gather weight
+    vec3  segAcc    = vec3(0.0); // segment additive colour × bell × gather weight
     float wsum      = 0.0;
     float wsumArc   = 0.0; // ∑ lit g - for the sharp filament gate
-    float headWSum  = 0.0; // ∑ headW(i) · g(i)  - for the position-weighted average
 
     // Compile-time constant loop bound: matches the LoopSamplesBlock UBO size
     // and the C++-side NEON_MAX_LOOP_SAMPLES so the compiler can unroll if it
@@ -222,31 +227,47 @@ void main() {
         glow  += lg * sqrt(g);              // -> ~1/D^2 neon halo, arc-gated
         bloom += arcW / (dd + bw2);         // -> ~1/D   wide spill, arc-gated
 
-        acc  += texture(uGradientLUT, vec2(ti, 0.5)).rgb * lg;
-        // wsum accumulates ALL samples (not arc-gated). This way `col` and
-        // `headWAvg` divide by the full local sample density - fragments far
-        // from the lit arc get a denominator that grows even as `acc` and
-        // `headWSum` stay near zero, so the SDF-derived filament naturally
-        // fades to black instead of showing the lit colour everywhere.
-        // wsumArc is the arc-gated counterpart - used to compute a sharper
-        // litFraction below for hard-cutting the filament past the arc edge.
+        vec3 baseColI = texture(uGradientLUT, vec2(ti, 0.5)).rgb;
+        acc  += baseColI * lg;
+        // wsum accumulates ALL samples (not arc-gated). This way `col` divides
+        // by the full local sample density - fragments far from the lit arc
+        // get a denominator that grows even as `acc` stays near zero, so the
+        // SDF-derived filament naturally fades to black instead of showing the
+        // lit colour everywhere. wsumArc is the arc-gated counterpart - used
+        // to compute a sharper litFraction below for hard-cutting the filament
+        // past the arc edge.
         wsum    += g;
         wsumArc += lg;
 
-        // --- Travelling-segment head weight (sum of Gaussians, wrap-around) ---
-        // Sum a bell contribution from every entry in uSegments. Only lit
-        // samples feed headWSum so a boost can't "shine through" into the
-        // off-arc region. When uSegmentCount == 0 the loop body is skipped
-        // and headW stays at 1 (no-op).
-        float headW = 1.0;
+        // --- Travelling segments (independent additive lights) ---
+        // Each segment contributes segColor * bell * gather-weight, additively
+        // to segAcc. Composed outside uIntensity so segments stay lit even at
+        // intensity 0. Skipped whole-loop when uSegmentCount == 0.
         for (int s = 0; s < uSegmentCount; s++) {
-            vec3  seg      = uSegments[s];
-            float segDist  = abs(si - seg.x);
-            segDist        = min(segDist, 1.0 - segDist);
-            float e        = segDist * seg.y;
-            headW         += seg.z * exp(-e * e);
+            vec4  seg     = uSegments[s];
+            // Signed wrap-distance along the perimeter in [-0.5, 0.5]. The
+            // shader uses it for both the bell weight (magnitude) and the
+            // head-to-tail sampling within the segment's own gradient (sign).
+            float rel     = si - seg.x;
+            rel          -= floor(rel + 0.5);            // wrap to [-0.5, 0.5]
+            float e       = rel * seg.y;                 // normalise by invSigma
+            float bell    = seg.z * exp(-e * e);         // boost * gaussian
+            if (bell < 0.005) continue;                  // cheap early-out for distant fragments/segments
+
+            // Colour: own stops from row `s` of uSegmentLUT if hasStops set,
+            // else inherit the base gradient at this sample.
+            vec3 segColor;
+            if (seg.w > 0.5) {
+                // tLocal: 0 at seg head (rel = -1/invSigma), 1 at seg tail. e
+                // already normalises rel by invSigma, so clamp/rescale.
+                float tLocal = clamp(0.5 + e * 0.5, 0.0, 1.0);
+                float rowY   = (float(s) + 0.5) / float(MAX_SEGMENT_BOOSTS);
+                segColor     = texture(uSegmentLUT, vec2(tLocal, rowY)).rgb;
+            } else {
+                segColor = baseColI;
+            }
+            segAcc += segColor * bell * lg;
         }
-        headWSum += headW * lg;
 
         ti  += dti;
         si  += dti;
@@ -254,10 +275,8 @@ void main() {
     glow  *= uSampleSpacing * kg2 * HALO_NORM_FACTOR;
     bloom *= uSampleSpacing * bw  * BLOOM_NORM_FACTOR;
 
-    vec3 col = acc / max(wsum, WSUM_EPSILON);
-    // Position-weighted average head-multiplier for this fragment.
-    // With uSegmentCount == 0 every headW is 1 → headWAvg == 1 → no-op.
-    float headWAvg = headWSum / max(wsum, WSUM_EPSILON);
+    vec3 col    = acc    / max(wsum, WSUM_EPSILON); // base perimeter colour
+    vec3 segCol = segAcc / max(wsum, WSUM_EPSILON); // segments' additive contribution
 
     // Sharp gate for the SDF-derived filament. `col` already softly fades at
     // the arc boundary (acc/wsum dilution), but with FILAMENT_GAIN at 12 even
@@ -272,9 +291,14 @@ void main() {
     // dim instead - fading the halo to nothing at glowRadius=0.
     float haloGate = clamp(uGlowRadius / max(haloFloor, 1e-4), 0.0, 1.0);
 
-    vec3 result  = col * core  * FILAMENT_GAIN  * uIntensity * headWAvg * filamentGate * lineGate;
-    result      += col * glow  * HALO_GAIN      * uIntensity * headWAvg * haloGate;
-    result      += col * bloom * uBloomStrength * uIntensity * headWAvg;
+    // Compose: base arc × intensity + segments (independent of intensity, so
+    // a segment stays lit even on a dark arc - the whole point of the
+    // additive segment model).
+    vec3 lightCol = col * uIntensity + segCol;
+
+    vec3 result  = lightCol * core  * FILAMENT_GAIN  * filamentGate * lineGate;
+    result      += lightCol * glow  * HALO_GAIN      * haloGate;
+    result      += lightCol * bloom * uBloomStrength;
 
     // --- One-sided cut: mask the WHOLE emission at the line ----------
     if (uGlowSide == GLOW_SIDE_INSIDE)       result *= smoothstep( softEdge, -softEdge, d);

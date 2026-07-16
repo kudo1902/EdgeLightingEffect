@@ -50,7 +50,10 @@ namespace EdgeLighting
             cfg.neon.intensity = mOsc.Evaluate(elapsed);
         }
 
+        void CaptureBaseline(const Config &cfg) override { mSavedIntensity = cfg.neon.intensity; }
+
     protected:
+        void RestoreBaseline(Config &cfg) const override { cfg.neon.intensity = mSavedIntensity; }
         void OnDurationChanged(float d) override
         {
             mOsc = Oscillator(1.0f / d, mMin, mMax);
@@ -60,6 +63,7 @@ namespace EdgeLighting
         Oscillator mOsc;
         float mMin;
         float mMax;
+        float mSavedIntensity = 0.0f;
     };
 
     /// @brief Square-wave on/off strobe on @c neon.intensity.
@@ -82,7 +86,10 @@ namespace EdgeLighting
             cfg.neon.intensity = mOsc.Evaluate(elapsed);
         }
 
+        void CaptureBaseline(const Config &cfg) override { mSavedIntensity = cfg.neon.intensity; }
+
     protected:
+        void RestoreBaseline(Config &cfg) const override { cfg.neon.intensity = mSavedIntensity; }
         void OnDurationChanged(float d) override
         {
             mOsc = Oscillator(1.0f / d, mOff, mOn, 0.0f, Waveform::SQUARE);
@@ -92,6 +99,7 @@ namespace EdgeLighting
         Oscillator mOsc;
         float mOff;
         float mOn;
+        float mSavedIntensity = 0.0f;
     };
 
     /// @brief One-shot eased fade-in on @c neon.intensity.
@@ -116,7 +124,10 @@ namespace EdgeLighting
             cfg.neon.intensity = mEase.Evaluate(elapsed);
         }
 
+        void CaptureBaseline(const Config &cfg) override { mSavedIntensity = cfg.neon.intensity; }
+
     protected:
+        void RestoreBaseline(Config &cfg) const override { cfg.neon.intensity = mSavedIntensity; }
         void OnDurationChanged(float d) override
         {
             mEase = Ease(0.0f, mTarget, d, mCurve, false);
@@ -126,6 +137,7 @@ namespace EdgeLighting
         float mTarget;
         EasingFunction::Curve mCurve;
         Ease mEase;
+        float mSavedIntensity = 0.0f;
     };
 
     /// @brief One-shot eased fade-out on @c neon.intensity to 0.
@@ -148,7 +160,10 @@ namespace EdgeLighting
             cfg.neon.intensity = mEase.Evaluate(elapsed);
         }
 
+        void CaptureBaseline(const Config &cfg) override { mSavedIntensity = cfg.neon.intensity; }
+
     protected:
+        void RestoreBaseline(Config &cfg) const override { cfg.neon.intensity = mSavedIntensity; }
         void OnDurationChanged(float d) override
         {
             mEase = Ease(mStart, 0.0f, d, mCurve, false);
@@ -158,6 +173,7 @@ namespace EdgeLighting
         float mStart;
         EasingFunction::Curve mCurve;
         Ease mEase;
+        float mSavedIntensity = 0.0f;
     };
 
     // -------------------------------------------------------------------------
@@ -185,7 +201,10 @@ namespace EdgeLighting
             cfg.neon.glowRadius = mOsc.Evaluate(elapsed);
         }
 
+        void CaptureBaseline(const Config &cfg) override { mSavedGlowRadius = cfg.neon.glowRadius; }
+
     protected:
+        void RestoreBaseline(Config &cfg) const override { cfg.neon.glowRadius = mSavedGlowRadius; }
         void OnDurationChanged(float d) override
         {
             mOsc = Oscillator(1.0f / d, mMin, mMax);
@@ -195,6 +214,7 @@ namespace EdgeLighting
         Oscillator mOsc;
         float mMin;
         float mMax;
+        float mSavedGlowRadius = 0.0f;
     };
 
     // -------------------------------------------------------------------------
@@ -221,7 +241,10 @@ namespace EdgeLighting
             cfg.neon.bloomStrength = mOsc.Evaluate(elapsed);
         }
 
+        void CaptureBaseline(const Config &cfg) override { mSavedBloom = cfg.neon.bloomStrength; }
+
     protected:
+        void RestoreBaseline(Config &cfg) const override { cfg.neon.bloomStrength = mSavedBloom; }
         void OnDurationChanged(float d) override
         {
             mOsc = Oscillator(1.0f / d, mMin, mMax);
@@ -231,6 +254,7 @@ namespace EdgeLighting
         Oscillator mOsc;
         float mMin;
         float mMax;
+        float mSavedBloom = 0.0f;
     };
 
     // -------------------------------------------------------------------------
@@ -256,7 +280,10 @@ namespace EdgeLighting
             cfg.neon.hueRotationRate = (n & 1) ? -mBaseRate : mBaseRate;
         }
 
+        void CaptureBaseline(const Config &cfg) override { mSavedHueRate = cfg.neon.hueRotationRate; }
+
     protected:
+        void RestoreBaseline(Config &cfg) const override { cfg.neon.hueRotationRate = mSavedHueRate; }
         void OnDurationChanged(float d) override
         {
             mHalfPeriod = d * 0.5f;
@@ -265,6 +292,7 @@ namespace EdgeLighting
     private:
         float mBaseRate;
         float mHalfPeriod;
+        float mSavedHueRate = 0.0f;
     };
 
     /// @brief Smoothly ease the hue rotation direction.
@@ -286,7 +314,10 @@ namespace EdgeLighting
             cfg.neon.hueRotationRate = mOsc.Evaluate(elapsed);
         }
 
+        void CaptureBaseline(const Config &cfg) override { mSavedHueRate = cfg.neon.hueRotationRate; }
+
     protected:
+        void RestoreBaseline(Config &cfg) const override { cfg.neon.hueRotationRate = mSavedHueRate; }
         void OnDurationChanged(float d) override
         {
             mOsc = Oscillator(1.0f / d, -mMaxRate, mMaxRate, 0.0f, Waveform::TRIANGLE);
@@ -295,6 +326,7 @@ namespace EdgeLighting
     private:
         Oscillator mOsc;
         float mMaxRate;
+        float mSavedHueRate = 0.0f;
     };
 
     // -------------------------------------------------------------------------
@@ -349,7 +381,14 @@ namespace EdgeLighting
             s.boost = mBoost;
         }
 
+        // Segment animations auto-grow segmentBoosts and mutate a specific
+        // slot in-place. Snapshotting the whole vector is the simplest way
+        // to restore the pre-play state - including "vector was empty" or
+        // "other segments had different values at snapshot time".
+        void CaptureBaseline(const Config &cfg) override { mSavedBoosts = cfg.neon.segmentBoosts; }
+
     protected:
+        void RestoreBaseline(Config &cfg) const override { cfg.neon.segmentBoosts = mSavedBoosts; }
         void OnDurationChanged(float d) override
         {
             mPosOsc = Oscillator(1.0f / d, 0.0f, 1.0f, 0.0f, Waveform::SAWTOOTH);
@@ -360,6 +399,7 @@ namespace EdgeLighting
         float mLength;
         float mBoost;
         size_t mIndex;
+        std::vector<SegmentBoost> mSavedBoosts;
     };
 
     /// @brief Swing the bright spot back and forth.
@@ -390,7 +430,10 @@ namespace EdgeLighting
             s.boost = mBoost;
         }
 
+        void CaptureBaseline(const Config &cfg) override { mSavedBoosts = cfg.neon.segmentBoosts; }
+
     protected:
+        void RestoreBaseline(Config &cfg) const override { cfg.neon.segmentBoosts = mSavedBoosts; }
         void OnDurationChanged(float d) override
         {
             mPosOsc = Oscillator(1.0f / d, 0.0f, 1.0f, 0.0f, Waveform::TRIANGLE);
@@ -401,6 +444,7 @@ namespace EdgeLighting
         float mLength;
         float mBoost;
         size_t mIndex;
+        std::vector<SegmentBoost> mSavedBoosts;
     };
 
     // -------------------------------------------------------------------------
@@ -436,7 +480,10 @@ namespace EdgeLighting
             cfg.neon.arcLength = mEase.Evaluate(elapsed);
         }
 
+        void CaptureBaseline(const Config &cfg) override { mSavedArcLength = cfg.neon.arcLength; }
+
     protected:
+        void RestoreBaseline(Config &cfg) const override { cfg.neon.arcLength = mSavedArcLength; }
         void OnDurationChanged(float d) override
         {
             mEase = Ease(0.0f, 1.0f, d, mCurve, false);
@@ -445,6 +492,7 @@ namespace EdgeLighting
     private:
         EasingFunction::Curve mCurve;
         Ease mEase;
+        float mSavedArcLength = 1.0f;
     };
 
     /// @brief Three-phase arc wipe: grow, chase, shrink.
@@ -563,7 +611,18 @@ namespace EdgeLighting
             cfg.neon.arcLength = arcLength;
         }
 
+        void CaptureBaseline(const Config &cfg) override
+        {
+            mSavedArcStart = cfg.neon.arcStart;
+            mSavedArcLength = cfg.neon.arcLength;
+        }
+
     protected:
+        void RestoreBaseline(Config &cfg) const override
+        {
+            cfg.neon.arcStart = mSavedArcStart;
+            cfg.neon.arcLength = mSavedArcLength;
+        }
         void OnDurationChanged(float d) override { computePhases(d); }
 
     private:
@@ -613,6 +672,8 @@ namespace EdgeLighting
         float mT1 = 0.0f;
         float mT2 = 0.0f;
         float mT3 = 0.0f;
+        float mSavedArcStart = 0.0f;
+        float mSavedArcLength = 1.0f;
     };
 
     // -------------------------------------------------------------------------
@@ -646,8 +707,14 @@ namespace EdgeLighting
             }
         }
 
+        void CaptureBaseline(const Config &cfg) override { mSavedIntensity = cfg.neon.intensity; }
+
+    protected:
+        void RestoreBaseline(Config &cfg) const override { cfg.neon.intensity = mSavedIntensity; }
+
     private:
         ModulatorPtr mMod;
+        float mSavedIntensity = 0.0f;
     };
 
     /// @brief Drive @c neon.glowRadius with an arbitrary modulator.
@@ -664,8 +731,14 @@ namespace EdgeLighting
             }
         }
 
+        void CaptureBaseline(const Config &cfg) override { mSavedGlowRadius = cfg.neon.glowRadius; }
+
+    protected:
+        void RestoreBaseline(Config &cfg) const override { cfg.neon.glowRadius = mSavedGlowRadius; }
+
     private:
         ModulatorPtr mMod;
+        float mSavedGlowRadius = 0.0f;
     };
 
     /// @brief Drive @c neon.bloomStrength with an arbitrary modulator.
@@ -682,8 +755,14 @@ namespace EdgeLighting
             }
         }
 
+        void CaptureBaseline(const Config &cfg) override { mSavedBloom = cfg.neon.bloomStrength; }
+
+    protected:
+        void RestoreBaseline(Config &cfg) const override { cfg.neon.bloomStrength = mSavedBloom; }
+
     private:
         ModulatorPtr mMod;
+        float mSavedBloom = 0.0f;
     };
 
     /// @brief Drive @c neon.hueRotationRate with an arbitrary modulator.
@@ -700,8 +779,14 @@ namespace EdgeLighting
             }
         }
 
+        void CaptureBaseline(const Config &cfg) override { mSavedHueRate = cfg.neon.hueRotationRate; }
+
+    protected:
+        void RestoreBaseline(Config &cfg) const override { cfg.neon.hueRotationRate = mSavedHueRate; }
+
     private:
         ModulatorPtr mMod;
+        float mSavedHueRate = 0.0f;
     };
 
     /// @}

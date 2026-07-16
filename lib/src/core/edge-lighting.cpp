@@ -1,11 +1,17 @@
 #include "core/edge-lighting.h"
+#include "animation/animation-manager.h"
 #include "util/log-util.h"
 #include "util/gl-utils.h"
 
 namespace EdgeLighting
 {
 
-    EdgeLightingEffect::EdgeLightingEffect() = default;
+    EdgeLightingEffect::EdgeLightingEffect()
+        : mAnimationManager(std::make_unique<AnimationManager>())
+    {
+    }
+
+    EdgeLightingEffect::~EdgeLightingEffect() = default;
 
     bool EdgeLightingEffect::Initialize()
     {
@@ -31,11 +37,13 @@ namespace EdgeLighting
 
     void EdgeLightingEffect::Update(float deltaTime)
     {
-        mClock.Update(deltaTime);
-        float t = mClock.GetTime();
+        mAnimationManager->Update(mClock.Update(deltaTime));
+        refreshActiveConfig();
+
+        float time = mClock.GetTime();
         for (auto &renderer : mRenderers)
         {
-            renderer->Update(deltaTime, t, mConfig);
+            renderer->Update(deltaTime, time, mActiveConfig);
         }
     }
 
@@ -44,34 +52,65 @@ namespace EdgeLighting
         float t = mClock.GetTime();
         for (auto &renderer : mRenderers)
         {
-            renderer->Render(viewportWidth, viewportHeight, t, mConfig);
+            renderer->Render(viewportWidth, viewportHeight, t, mActiveConfig);
         }
     }
 
     void EdgeLightingEffect::SetConfig(const Config &config)
     {
-        mConfig = config;
-        for (auto &renderer : mRenderers)
+        if (config == mBaseConfig)
         {
-            renderer->OnConfigChanged(mConfig);
+            return;
         }
+        mBaseConfig = config;
+        refreshActiveConfig();
     }
 
-    const Config &EdgeLightingEffect::GetConfig() const
-    {
-        return mConfig;
-    }
+    const Config &EdgeLightingEffect::GetConfig() const { return mBaseConfig; }
+    const Config &EdgeLightingEffect::GetActiveConfig() const { return mActiveConfig; }
+
+    void EdgeLightingEffect::Attach(const AnimationPtr &a) { mAnimationManager->Attach(a); }
+    bool EdgeLightingEffect::Detach(const AnimationPtr &a) { return mAnimationManager->Detach(a); }
+    AnimationManager &EdgeLightingEffect::GetAnimationManager() { return *mAnimationManager; }
+    const AnimationManager &EdgeLightingEffect::GetAnimationManager() const { return *mAnimationManager; }
 
     void EdgeLightingEffect::AddRenderer(std::shared_ptr<BaseRenderer> renderer)
     {
         if (renderer)
         {
             mRenderers.push_back(renderer);
-            renderer->OnConfigChanged(mConfig);
+            renderer->OnConfigChanged(mActiveConfig);
         }
     }
 
     Clock &EdgeLightingEffect::GetClock() { return mClock; }
     const Clock &EdgeLightingEffect::GetClock() const { return mClock; }
+
+    void EdgeLightingEffect::refreshActiveConfig()
+    {
+        if (mAnimationManager->GetCount() == 0)
+        {
+            if (mActiveConfig == mBaseConfig)
+            {
+                return;
+            }
+            mActiveConfig = mBaseConfig;
+        }
+        else
+        {
+            Config active = mBaseConfig;
+            mAnimationManager->Apply(active);
+            if (active == mActiveConfig)
+            {
+                return;
+            }
+            mActiveConfig = std::move(active);
+        }
+
+        for (auto &renderer : mRenderers)
+        {
+            renderer->OnConfigChanged(mActiveConfig);
+        }
+    }
 
 } // namespace EdgeLighting

@@ -45,6 +45,11 @@ namespace EdgeLighting
         /// wrap). 256 is more than enough for any gradient the human eye can
         /// resolve.
         constexpr int GRADIENT_LUT_SIZE = 256;
+        /// Width of each segment's row in the segment gradient atlas. Half
+        /// the base LUT is enough - a segment's visible span is short so
+        /// higher resolution wouldn't be visible; segments also don't wrap
+        /// (CLAMP on X), so the extra texels would only pad head/tail.
+        constexpr int SEGMENT_LUT_WIDTH = 128;
     }
 
     // -------------------------------------------------------------------------
@@ -62,6 +67,7 @@ namespace EdgeLighting
         rebuildLoopSamples(mCurrentConfig);
         setupGeometry(mCurrentConfig);
         rebuildGradientLUT(mCurrentConfig);
+        rebuildSegmentLUT(mCurrentConfig);
 
         // Static NDC-order attribs for the LUT debug strip; the actual verts
         // are (re)uploaded from setupGeometry() so the strip tracks rect size.
@@ -194,7 +200,11 @@ namespace EdgeLighting
         {
             const auto &s = config.neon.segmentBoosts[i];
             float invSigma = 1.0f / std::max(s.length * 0.5f, 1e-3f);
-            segBlock.segments[i] = glm::vec4(s.position, invSigma, s.boost, 0.0f);
+            // .w = hasOwnStops flag; the shader reads its colour from row `i`
+            // of the segment LUT atlas when set, else falls back to the base
+            // gradient at that sample.
+            float hasStops = s.colorStops.empty() ? 0.0f : 1.0f;
+            segBlock.segments[i] = glm::vec4(s.position, invSigma, s.boost, hasStops);
         }
         mSegmentBlock.SetData(&segBlock, sizeof(segBlock));
         mSegmentBlock.BindBase(SEGMENT_BLOCK_BINDING);
@@ -211,6 +221,10 @@ namespace EdgeLighting
         // pulls per-sample colour from this in a single texture() call.
         mGradientLUT.Bind(0);
         mShaderProgram.SetUniform("uGradientLUT", 0);
+        // Per-segment gradient atlas on unit 1; sampled by the segment inner
+        // loop only when a segment's hasStops flag is set.
+        mSegmentLUT.Bind(1);
+        mShaderProgram.SetUniform("uSegmentLUT", 1);
         mShaderProgram.SetUniform("uQuadMargin", mQuadMargin);
 
         // Tight glow quad in both modes - opaque's far region is covered by the
@@ -284,6 +298,11 @@ namespace EdgeLighting
                                    config.neon.intensity != mCurrentConfig.neon.intensity;
         const bool lutDirty = config.neon.colorStops != mCurrentConfig.neon.colorStops ||
                               config.neon.blendSpace != mCurrentConfig.neon.blendSpace;
+        // Only the segments' colour stops + blend space affect the atlas
+        // texture; position/length/boost don't (they're read live from the
+        // UBO). Cheap deep-compare via mBakedSegments (each SegmentBoost's
+        // operator== includes its stops).
+        const bool segLutDirty = config.neon.segmentBoosts != mBakedSegments;
 
         mCurrentConfig = config;
         if (!mShaderProgram.IsValid())
@@ -304,6 +323,11 @@ namespace EdgeLighting
         if (lutDirty)
         {
             rebuildGradientLUT(config);
+        }
+
+        if (segLutDirty)
+        {
+            rebuildSegmentLUT(config);
         }
     }
 
@@ -485,5 +509,44 @@ namespace EdgeLighting
         // single row, so CLAMP is fine.
         mGradientLUT.SetData(lutBytes.data(), GRADIENT_LUT_SIZE, /*height=*/1, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
         mGradientLUT.SetParams(GL_LINEAR, GL_LINEAR, GL_REPEAT, GL_CLAMP_TO_EDGE);
+    }
+
+    void NeonRenderer::rebuildSegmentLUT(const Config &config)
+    {
+        // Atlas of size SEGMENT_LUT_WIDTH x MAX_SEGMENT_BOOSTS; row `i` holds
+        // segment i's baked stops (or zeros if it has none / doesn't exist).
+        // The shader treats zeros as "no own colour" via the vec4.w hasStops
+        // flag in SegmentBlock, so leaving unused rows zero is safe.
+        constexpr int W = SEGMENT_LUT_WIDTH;
+        constexpr int H = MAX_SEGMENT_BOOSTS;
+        std::vector<unsigned char> atlas(W * H * 4, 0);
+
+        const int segCount = std::min(static_cast<int>(config.neon.segmentBoosts.size()),
+                                      int(MAX_SEGMENT_BOOSTS));
+        for (int s = 0; s < segCount; ++s)
+        {
+            const auto &seg = config.neon.segmentBoosts[s];
+            if (seg.colorStops.empty())
+            {
+                continue; // row stays zero; shader falls back to base gradient
+            }
+            unsigned char *row = atlas.data() + (s * W * 4);
+            for (int x = 0; x < W; ++x)
+            {
+                float t = static_cast<float>(x) / static_cast<float>(W - 1);
+                glm::vec3 c = ColorUtils::SampleStops(t, seg.colorStops, seg.blendSpace);
+                row[x * 4 + 0] = static_cast<unsigned char>(std::clamp(c.r * 255.0f, 0.0f, 255.0f));
+                row[x * 4 + 1] = static_cast<unsigned char>(std::clamp(c.g * 255.0f, 0.0f, 255.0f));
+                row[x * 4 + 2] = static_cast<unsigned char>(std::clamp(c.b * 255.0f, 0.0f, 255.0f));
+                row[x * 4 + 3] = 255;
+            }
+        }
+
+        // CLAMP on both axes: a segment's gradient runs head-to-tail (no wrap
+        // at its own ends), and rows outside [0, segCount) are unused.
+        mSegmentLUT.SetData(atlas.data(), W, H, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
+        mSegmentLUT.SetParams(GL_LINEAR, GL_LINEAR, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
+
+        mBakedSegments = config.neon.segmentBoosts;
     }
 }

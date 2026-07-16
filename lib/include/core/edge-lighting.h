@@ -3,12 +3,15 @@
 
 #include "core/config.h"
 #include "animation/clock.h"
+#include "animation/animation.h"
 #include "renderer/base-renderer.h"
 #include <vector>
 #include <memory>
 
 namespace EdgeLighting
 {
+    class AnimationManager;
+
     /// @brief Top-level orchestrator for the edge-lighting effect.
     ///
     /// Owns the configuration, the time clock, and a list of renderers.
@@ -25,7 +28,7 @@ namespace EdgeLighting
     {
     public:
         EdgeLightingEffect();
-        ~EdgeLightingEffect() = default;
+        ~EdgeLightingEffect();
 
         /// @brief Initialise all registered renderers.
         /// @returns false if any renderer fails to initialise.
@@ -44,23 +47,39 @@ namespace EdgeLighting
         /// @param config New configuration to apply.
         void SetConfig(const Config &config);
 
-        /// @brief Current active configuration.
-        /// @returns Const reference to the internal @ref Config.
+        /// @brief The base (authored) configuration.
         const Config &GetConfig() const;
+
+        /// @brief The active (composited) configuration - base + animation overlays.
+        const Config &GetActiveConfig() const;
+
+        /// @brief Attach a standalone animation to be advanced and composited
+        ///        each @ref Update. Ignores null and duplicates.
+        void Attach(const AnimationPtr &animation);
+
+        /// @brief Detach a previously attached animation (by identity).
+        /// @return true if it was attached and removed.
+        bool Detach(const AnimationPtr &animation);
+
+        /// @brief The animation manager (attach list + broadcast control).
+        AnimationManager &GetAnimationManager();
+        const AnimationManager &GetAnimationManager() const;
 
         /// @brief Register a renderer to be updated and rendered each frame.
         /// @param renderer Shared pointer to a @ref BaseRenderer subclass.
         void AddRenderer(std::shared_ptr<BaseRenderer> renderer);
 
         /// @brief Access the shared clock for play/pause/time control.
-        /// @details Modulators outside the effect read its time to stay in
-        ///          lockstep with the renderer.
         Clock &GetClock();
         const Clock &GetClock() const;
 
     private:
-        Config mConfig;
+        void refreshActiveConfig();
+
+        Config mBaseConfig;   ///< Authored config - what SetConfig sets.
+        Config mActiveConfig; ///< Base + animation overlays - forwarded to renderers.
         Clock mClock;
+        std::unique_ptr<AnimationManager> mAnimationManager;
         std::vector<std::shared_ptr<BaseRenderer>> mRenderers;
     };
 
