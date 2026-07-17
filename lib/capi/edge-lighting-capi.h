@@ -27,10 +27,10 @@ extern "C"
     typedef enum el_result_e
     {
         EL_OK = 0,
-        EL_ERR_NULL_ARG = 1,     /**< A required pointer argument was null. */
-        EL_ERR_INIT_FAILED = 2,  /**< Renderer/GL initialisation failed. */
-        EL_ERR_EXCEPTION = 3,    /**< A C++ exception was caught at the ABI boundary. */
-        EL_ERR_INVALID_ARG = 4   /**< A non-null arg was out of range or the wrong shape. */
+        EL_ERR_NULL_ARG = 1,    /**< A required pointer argument was null. */
+        EL_ERR_INIT_FAILED = 2, /**< Renderer/GL initialisation failed. */
+        EL_ERR_EXCEPTION = 3,   /**< A C++ exception was caught at the ABI boundary. */
+        EL_ERR_INVALID_ARG = 4  /**< A non-null arg was out of range or the wrong shape. */
     } el_result_e;
 
     /* --------------------------------------------------------------------------
@@ -175,128 +175,128 @@ extern "C"
     EL_API el_result_e el_effect_set_winding(el_effect_handle_t *fx, el_winding_e winding);
     EL_API el_result_e el_effect_get_winding(const el_effect_handle_t *fx, el_winding_e *outWinding);
 
-    EL_API el_result_e el_effect_set_neon_enabled(el_effect_handle_t *fx, int enabled);
-    EL_API el_result_e el_effect_get_neon_enabled(const el_effect_handle_t *fx, int *outEnabled);
+    EL_API el_result_e el_effect_set_neon_renderer_enabled(el_effect_handle_t *fx, int enabled);
+    EL_API el_result_e el_effect_get_neon_renderer_enabled(const el_effect_handle_t *fx, int *outEnabled);
 
-    EL_API el_result_e el_effect_set_neon_show_gradient_lut(el_effect_handle_t *fx, int show);
-    EL_API el_result_e el_effect_get_neon_show_gradient_lut(const el_effect_handle_t *fx, int *outShow);
+    EL_API el_result_e el_effect_set_show_gradient_lut(el_effect_handle_t *fx, int show);
+    EL_API el_result_e el_effect_get_show_gradient_lut(const el_effect_handle_t *fx, int *outShow);
 
-    EL_API el_result_e el_effect_set_neon_show_color_stops(el_effect_handle_t *fx, int show);
-    EL_API el_result_e el_effect_get_neon_show_color_stops(const el_effect_handle_t *fx, int *outShow);
+    EL_API el_result_e el_effect_set_show_color_stops(el_effect_handle_t *fx, int show);
+    EL_API el_result_e el_effect_get_show_color_stops(const el_effect_handle_t *fx, int *outShow);
 
-    EL_API el_result_e el_effect_set_neon_opaque(el_effect_handle_t *fx, int opaque);
-    EL_API el_result_e el_effect_get_neon_opaque(const el_effect_handle_t *fx, int *outOpaque);
+    EL_API el_result_e el_effect_set_opaque(el_effect_handle_t *fx, int opaque);
+    EL_API el_result_e el_effect_get_opaque(const el_effect_handle_t *fx, int *outOpaque);
 
-    EL_API el_result_e el_effect_set_neon_opaque_color(el_effect_handle_t *fx,
-                                                       float r, float g, float b, float a);
-    EL_API el_result_e el_effect_get_neon_opaque_color(const el_effect_handle_t *fx,
-                                                       float *outR, float *outG, float *outB, float *outA);
+    EL_API el_result_e el_effect_set_opaque_color(el_effect_handle_t *fx,
+                                                  float r, float g, float b, float a);
+    EL_API el_result_e el_effect_get_opaque_color(const el_effect_handle_t *fx,
+                                                  float *outR, float *outG, float *outB, float *outA);
 
-    EL_API el_result_e el_effect_set_neon_line_width(el_effect_handle_t *fx, float width);
-    EL_API el_result_e el_effect_get_neon_line_width(const el_effect_handle_t *fx, float *outWidth);
+    EL_API el_result_e el_effect_set_line_width(el_effect_handle_t *fx, float width);
+    EL_API el_result_e el_effect_get_line_width(const el_effect_handle_t *fx, float *outWidth);
 
-    EL_API el_result_e el_effect_set_neon_filament_falloff(el_effect_handle_t *fx, float falloff);
-    EL_API el_result_e el_effect_get_neon_filament_falloff(const el_effect_handle_t *fx, float *outFalloff);
+    EL_API el_result_e el_effect_set_filament_falloff(el_effect_handle_t *fx, float falloff);
+    EL_API el_result_e el_effect_get_filament_falloff(const el_effect_handle_t *fx, float *outFalloff);
 
-    EL_API el_result_e el_effect_set_neon_intensity(el_effect_handle_t *fx, float val);
-    EL_API el_result_e el_effect_get_neon_intensity(const el_effect_handle_t *fx, float *outVal);
+    EL_API el_result_e el_effect_set_intensity(el_effect_handle_t *fx, float val);
+    EL_API el_result_e el_effect_get_intensity(const el_effect_handle_t *fx, float *outVal);
 
-    EL_API el_result_e el_effect_set_neon_glow_radius(el_effect_handle_t *fx, float radius);
-    EL_API el_result_e el_effect_get_neon_glow_radius(const el_effect_handle_t *fx, float *outRadius);
+    EL_API el_result_e el_effect_set_glow_radius(el_effect_handle_t *fx, float radius);
+    EL_API el_result_e el_effect_get_glow_radius(const el_effect_handle_t *fx, float *outRadius);
 
-    EL_API el_result_e el_effect_set_neon_bloom_strength(el_effect_handle_t *fx, float val);
-    EL_API el_result_e el_effect_get_neon_bloom_strength(const el_effect_handle_t *fx, float *outVal);
+    EL_API el_result_e el_effect_set_bloom_strength(el_effect_handle_t *fx, float val);
+    EL_API el_result_e el_effect_get_bloom_strength(const el_effect_handle_t *fx, float *outVal);
 
-    EL_API el_result_e el_effect_set_neon_glow_side(el_effect_handle_t *fx, el_glow_side_e side);
-    EL_API el_result_e el_effect_get_neon_glow_side(const el_effect_handle_t *fx, el_glow_side_e *outSide);
+    EL_API el_result_e el_effect_set_glow_side(el_effect_handle_t *fx, el_glow_side_e side);
+    EL_API el_result_e el_effect_get_glow_side(const el_effect_handle_t *fx, el_glow_side_e *outSide);
 
-    EL_API el_result_e el_effect_set_neon_glow_side_softness(el_effect_handle_t *fx, float val);
-    EL_API el_result_e el_effect_get_neon_glow_side_softness(const el_effect_handle_t *fx, float *outVal);
+    EL_API el_result_e el_effect_set_glow_side_softness(el_effect_handle_t *fx, float val);
+    EL_API el_result_e el_effect_get_glow_side_softness(const el_effect_handle_t *fx, float *outVal);
 
-    EL_API el_result_e el_effect_set_neon_blend_space(el_effect_handle_t *fx, el_blend_space_e space);
-    EL_API el_result_e el_effect_get_neon_blend_space(const el_effect_handle_t *fx, el_blend_space_e *outSpace);
+    EL_API el_result_e el_effect_set_blend_space(el_effect_handle_t *fx, el_blend_space_e space);
+    EL_API el_result_e el_effect_get_blend_space(const el_effect_handle_t *fx, el_blend_space_e *outSpace);
 
-    EL_API el_result_e el_effect_set_neon_hue_rotation_rate(el_effect_handle_t *fx, float rate);
-    EL_API el_result_e el_effect_get_neon_hue_rotation_rate(const el_effect_handle_t *fx, float *outRate);
+    EL_API el_result_e el_effect_set_hue_rotation_rate(el_effect_handle_t *fx, float rate);
+    EL_API el_result_e el_effect_get_hue_rotation_rate(const el_effect_handle_t *fx, float *outRate);
 
-    EL_API el_result_e el_effect_set_neon_color_transition_duration(el_effect_handle_t *fx, float seconds);
-    EL_API el_result_e el_effect_get_neon_color_transition_duration(const el_effect_handle_t *fx, float *outSeconds);
+    EL_API el_result_e el_effect_set_color_transition_duration(el_effect_handle_t *fx, float seconds);
+    EL_API el_result_e el_effect_get_color_transition_duration(const el_effect_handle_t *fx, float *outSeconds);
 
-    EL_API el_result_e el_effect_set_neon_color_stop_count(el_effect_handle_t *fx, int32_t count);
-    EL_API el_result_e el_effect_get_neon_color_stop_count(const el_effect_handle_t *fx, int32_t *outCount);
+    EL_API el_result_e el_effect_set_color_stop_count(el_effect_handle_t *fx, int32_t count);
+    EL_API el_result_e el_effect_get_color_stop_count(const el_effect_handle_t *fx, int32_t *outCount);
 
-    EL_API el_result_e el_effect_set_neon_color_stop(el_effect_handle_t *fx, int32_t index,
-                                                     float position, float r, float g, float b, float a);
-    EL_API el_result_e el_effect_get_neon_color_stop(const el_effect_handle_t *fx, int32_t index,
-                                                     float *outPosition, float *outR, float *outG, float *outB, float *outA);
-    EL_API el_result_e el_effect_clear_neon_color_stops(el_effect_handle_t *fx);
+    EL_API el_result_e el_effect_set_color_stop(el_effect_handle_t *fx, int32_t index,
+                                                float position, float r, float g, float b, float a);
+    EL_API el_result_e el_effect_get_color_stop(const el_effect_handle_t *fx, int32_t index,
+                                                float *outPosition, float *outR, float *outG, float *outB, float *outA);
+    EL_API el_result_e el_effect_clear_color_stops(el_effect_handle_t *fx);
 
-    EL_API el_result_e el_effect_set_neon_segment_boost_count(el_effect_handle_t *fx, int32_t count);
-    EL_API el_result_e el_effect_get_neon_segment_boost_count(const el_effect_handle_t *fx, int32_t *outCount);
+    EL_API el_result_e el_effect_set_segment_boost_count(el_effect_handle_t *fx, int32_t count);
+    EL_API el_result_e el_effect_get_segment_boost_count(const el_effect_handle_t *fx, int32_t *outCount);
 
-    EL_API el_result_e el_effect_set_neon_segment_boost(el_effect_handle_t *fx, int32_t index,
-                                                        float position, float length, float boost);
-    EL_API el_result_e el_effect_get_neon_segment_boost(const el_effect_handle_t *fx, int32_t index,
-                                                        float *outPosition, float *outLength, float *outBoost);
-    EL_API el_result_e el_effect_clear_neon_segment_boosts(el_effect_handle_t *fx);
+    EL_API el_result_e el_effect_set_segment_boost(el_effect_handle_t *fx, int32_t index,
+                                                   float position, float length, float boost);
+    EL_API el_result_e el_effect_get_segment_boost(const el_effect_handle_t *fx, int32_t index,
+                                                   float *outPosition, float *outLength, float *outBoost);
+    EL_API el_result_e el_effect_clear_segment_boosts(el_effect_handle_t *fx);
 
-    EL_API el_result_e el_effect_set_neon_segment_blend_space(el_effect_handle_t *fx,
-                                                              int32_t segmentIndex, el_blend_space_e blendSpace);
-    EL_API el_result_e el_effect_get_neon_segment_blend_space(const el_effect_handle_t *fx,
-                                                              int32_t segmentIndex, el_blend_space_e *outBlendSpace);
+    EL_API el_result_e el_effect_set_segment_blend_space(el_effect_handle_t *fx,
+                                                         int32_t segmentIndex, el_blend_space_e blendSpace);
+    EL_API el_result_e el_effect_get_segment_blend_space(const el_effect_handle_t *fx,
+                                                         int32_t segmentIndex, el_blend_space_e *outBlendSpace);
 
-    EL_API el_result_e el_effect_set_neon_segment_color_stop_count(el_effect_handle_t *fx,
-                                                                   int32_t segmentIndex, int32_t count);
-    EL_API el_result_e el_effect_get_neon_segment_color_stop_count(const el_effect_handle_t *fx,
-                                                                   int32_t segmentIndex, int32_t *outCount);
+    EL_API el_result_e el_effect_set_segment_color_stop_count(el_effect_handle_t *fx,
+                                                              int32_t segmentIndex, int32_t count);
+    EL_API el_result_e el_effect_get_segment_color_stop_count(const el_effect_handle_t *fx,
+                                                              int32_t segmentIndex, int32_t *outCount);
 
-    EL_API el_result_e el_effect_set_neon_segment_color_stop(el_effect_handle_t *fx,
-                                                             int32_t segmentIndex, int32_t stopIndex,
-                                                             float position, float r, float g, float b, float a);
-    EL_API el_result_e el_effect_get_neon_segment_color_stop(const el_effect_handle_t *fx,
-                                                             int32_t segmentIndex, int32_t stopIndex,
-                                                             float *outPosition, float *outR, float *outG, float *outB, float *outA);
-    EL_API el_result_e el_effect_clear_neon_segment_color_stops(el_effect_handle_t *fx, int32_t segmentIndex);
+    EL_API el_result_e el_effect_set_segment_color_stop(el_effect_handle_t *fx,
+                                                        int32_t segmentIndex, int32_t stopIndex,
+                                                        float position, float r, float g, float b, float a);
+    EL_API el_result_e el_effect_get_segment_color_stop(const el_effect_handle_t *fx,
+                                                        int32_t segmentIndex, int32_t stopIndex,
+                                                        float *outPosition, float *outR, float *outG, float *outB, float *outA);
+    EL_API el_result_e el_effect_clear_segment_color_stops(el_effect_handle_t *fx, int32_t segmentIndex);
 
-    EL_API el_result_e el_effect_set_neon_arc_count(el_effect_handle_t *fx, int32_t count);
-    EL_API el_result_e el_effect_get_neon_arc_count(const el_effect_handle_t *fx, int32_t *outCount);
+    EL_API el_result_e el_effect_set_arc_count(el_effect_handle_t *fx, int32_t count);
+    EL_API el_result_e el_effect_get_arc_count(const el_effect_handle_t *fx, int32_t *outCount);
 
-    EL_API el_result_e el_effect_set_neon_arc(el_effect_handle_t *fx, int32_t index,
-                                              float start, float length, float intensity, el_blend_space_e blendSpace);
-    EL_API el_result_e el_effect_get_neon_arc(const el_effect_handle_t *fx, int32_t index,
-                                              float *outStart, float *outLength, float *outIntensity, el_blend_space_e *outBlendSpace);
-    EL_API el_result_e el_effect_clear_neon_arcs(el_effect_handle_t *fx);
+    EL_API el_result_e el_effect_set_arc(el_effect_handle_t *fx, int32_t index,
+                                         float start, float length, float intensity, el_blend_space_e blendSpace);
+    EL_API el_result_e el_effect_get_arc(const el_effect_handle_t *fx, int32_t index,
+                                         float *outStart, float *outLength, float *outIntensity, el_blend_space_e *outBlendSpace);
+    EL_API el_result_e el_effect_clear_arcs(el_effect_handle_t *fx);
 
-    EL_API el_result_e el_effect_set_neon_arc_color_stop_count(el_effect_handle_t *fx,
-                                                               int32_t arcIndex, int32_t count);
-    EL_API el_result_e el_effect_get_neon_arc_color_stop_count(const el_effect_handle_t *fx,
-                                                               int32_t arcIndex, int32_t *outCount);
+    EL_API el_result_e el_effect_set_arc_color_stop_count(el_effect_handle_t *fx,
+                                                          int32_t arcIndex, int32_t count);
+    EL_API el_result_e el_effect_get_arc_color_stop_count(const el_effect_handle_t *fx,
+                                                          int32_t arcIndex, int32_t *outCount);
 
-    EL_API el_result_e el_effect_set_neon_arc_color_stop(el_effect_handle_t *fx,
-                                                         int32_t arcIndex, int32_t stopIndex,
-                                                         float position, float r, float g, float b, float a);
-    EL_API el_result_e el_effect_get_neon_arc_color_stop(const el_effect_handle_t *fx,
-                                                         int32_t arcIndex, int32_t stopIndex,
-                                                         float *outPosition, float *outR, float *outG, float *outB, float *outA);
-    EL_API el_result_e el_effect_clear_neon_arc_color_stops(el_effect_handle_t *fx, int32_t arcIndex);
+    EL_API el_result_e el_effect_set_arc_color_stop(el_effect_handle_t *fx,
+                                                    int32_t arcIndex, int32_t stopIndex,
+                                                    float position, float r, float g, float b, float a);
+    EL_API el_result_e el_effect_get_arc_color_stop(const el_effect_handle_t *fx,
+                                                    int32_t arcIndex, int32_t stopIndex,
+                                                    float *outPosition, float *outR, float *outG, float *outB, float *outA);
+    EL_API el_result_e el_effect_clear_arc_color_stops(el_effect_handle_t *fx, int32_t arcIndex);
 
-    EL_API el_result_e el_effect_set_optimized_neon_enabled(el_effect_handle_t *fx, int enabled);
-    EL_API el_result_e el_effect_get_optimized_neon_enabled(const el_effect_handle_t *fx, int *outEnabled);
+    EL_API el_result_e el_effect_set_optimized_renderer_enabled(el_effect_handle_t *fx, int enabled);
+    EL_API el_result_e el_effect_get_optimized_renderer_enabled(const el_effect_handle_t *fx, int *outEnabled);
 
-    EL_API el_result_e el_effect_set_optimized_neon_resolution_scale(el_effect_handle_t *fx, float scale);
-    EL_API el_result_e el_effect_get_optimized_neon_resolution_scale(const el_effect_handle_t *fx, float *outScale);
+    EL_API el_result_e el_effect_set_optimized_resolution_scale(el_effect_handle_t *fx, float scale);
+    EL_API el_result_e el_effect_get_optimized_resolution_scale(const el_effect_handle_t *fx, float *outScale);
 
-    EL_API el_result_e el_effect_set_optimized_neon_num_samples(el_effect_handle_t *fx, int32_t samples);
-    EL_API el_result_e el_effect_get_optimized_neon_num_samples(const el_effect_handle_t *fx, int32_t *outSamples);
+    EL_API el_result_e el_effect_set_optimized_num_samples(el_effect_handle_t *fx, int32_t samples);
+    EL_API el_result_e el_effect_get_optimized_num_samples(const el_effect_handle_t *fx, int32_t *outSamples);
 
-    EL_API el_result_e el_effect_set_optimized_neon_gradient_lut_size(el_effect_handle_t *fx, int32_t size);
-    EL_API el_result_e el_effect_get_optimized_neon_gradient_lut_size(const el_effect_handle_t *fx, int32_t *outSize);
+    EL_API el_result_e el_effect_set_optimized_gradient_lut_size(el_effect_handle_t *fx, int32_t size);
+    EL_API el_result_e el_effect_get_optimized_gradient_lut_size(const el_effect_handle_t *fx, int32_t *outSize);
 
-    EL_API el_result_e el_effect_set_optimized_neon_show_half_res(el_effect_handle_t *fx, int show);
-    EL_API el_result_e el_effect_get_optimized_neon_show_half_res(const el_effect_handle_t *fx, int *outShow);
+    EL_API el_result_e el_effect_set_optimized_show_half_res(el_effect_handle_t *fx, int show);
+    EL_API el_result_e el_effect_get_optimized_show_half_res(const el_effect_handle_t *fx, int *outShow);
 
-    EL_API el_result_e el_effect_set_wireframe_enabled(el_effect_handle_t *fx, int enabled);
-    EL_API el_result_e el_effect_get_wireframe_enabled(const el_effect_handle_t *fx, int *outEnabled);
+    EL_API el_result_e el_effect_set_wireframe_renderer_enabled(el_effect_handle_t *fx, int enabled);
+    EL_API el_result_e el_effect_get_wireframe_renderer_enabled(const el_effect_handle_t *fx, int *outEnabled);
 
     EL_API el_result_e el_effect_set_wireframe_color(el_effect_handle_t *fx,
                                                      float r, float g, float b, float a);
