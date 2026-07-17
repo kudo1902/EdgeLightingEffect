@@ -14,20 +14,67 @@
 #include <memory>
 
 // ==========================================================================
+// Enum ABI parity - fires at compile time if a C++ enum reorder ever silently
+// diverges from its el_* mirror. Keep asserts one-per-value; that way a broken
+// build tells you exactly which enumerator moved.
+// ==========================================================================
+static_assert(static_cast<int>(EdgeLighting::Winding::CLOCKWISE) == EL_WINDING_CLOCKWISE);
+static_assert(static_cast<int>(EdgeLighting::Winding::COUNTER_CLOCKWISE) == EL_WINDING_COUNTER_CLOCKWISE);
+
+static_assert(static_cast<int>(EdgeLighting::GlowSide::BOTH) == EL_GLOW_SIDE_BOTH);
+static_assert(static_cast<int>(EdgeLighting::GlowSide::INSIDE) == EL_GLOW_SIDE_INSIDE);
+static_assert(static_cast<int>(EdgeLighting::GlowSide::OUTSIDE) == EL_GLOW_SIDE_OUTSIDE);
+
+static_assert(static_cast<int>(EdgeLighting::BlendSpace::RGB) == EL_BLEND_SPACE_RGB);
+static_assert(static_cast<int>(EdgeLighting::BlendSpace::HSV) == EL_BLEND_SPACE_HSV);
+static_assert(static_cast<int>(EdgeLighting::BlendSpace::HSL) == EL_BLEND_SPACE_HSL);
+
+static_assert(static_cast<int>(EdgeLighting::Waveform::SINE) == EL_WAVE_SINE);
+static_assert(static_cast<int>(EdgeLighting::Waveform::TRIANGLE) == EL_WAVE_TRIANGLE);
+static_assert(static_cast<int>(EdgeLighting::Waveform::SQUARE) == EL_WAVE_SQUARE);
+static_assert(static_cast<int>(EdgeLighting::Waveform::SAWTOOTH) == EL_WAVE_SAWTOOTH);
+
+static_assert(static_cast<int>(EdgeLighting::AnimatableField::NEON_INTENSITY) == EL_FIELD_NEON_INTENSITY);
+static_assert(static_cast<int>(EdgeLighting::AnimatableField::NEON_LINE_WIDTH) == EL_FIELD_NEON_LINE_WIDTH);
+static_assert(static_cast<int>(EdgeLighting::AnimatableField::NEON_GLOW_RADIUS) == EL_FIELD_NEON_GLOW_RADIUS);
+static_assert(static_cast<int>(EdgeLighting::AnimatableField::NEON_BLOOM_STRENGTH) == EL_FIELD_NEON_BLOOM_STRENGTH);
+static_assert(static_cast<int>(EdgeLighting::AnimatableField::NEON_FILAMENT_FALLOFF) == EL_FIELD_NEON_FILAMENT_FALLOFF);
+static_assert(static_cast<int>(EdgeLighting::AnimatableField::NEON_GLOW_SIDE_SOFTNESS) == EL_FIELD_NEON_GLOW_SIDE_SOFTNESS);
+static_assert(static_cast<int>(EdgeLighting::AnimatableField::NEON_HUE_ROTATION_RATE) == EL_FIELD_NEON_HUE_ROTATION_RATE);
+
+static_assert(static_cast<int>(EdgeLighting::SegmentField::POSITION) == EL_SEGMENT_FIELD_POSITION);
+static_assert(static_cast<int>(EdgeLighting::SegmentField::LENGTH) == EL_SEGMENT_FIELD_LENGTH);
+static_assert(static_cast<int>(EdgeLighting::SegmentField::BOOST) == EL_SEGMENT_FIELD_BOOST);
+
+static_assert(static_cast<int>(EdgeLighting::ArcField::START) == EL_ARC_FIELD_START);
+static_assert(static_cast<int>(EdgeLighting::ArcField::LENGTH) == EL_ARC_FIELD_LENGTH);
+static_assert(static_cast<int>(EdgeLighting::ArcField::INTENSITY) == EL_ARC_FIELD_INTENSITY);
+
+static_assert(static_cast<int>(EdgeLighting::ColorStopField::POSITION) == EL_STOP_FIELD_POSITION);
+static_assert(static_cast<int>(EdgeLighting::ColorStopField::R) == EL_STOP_FIELD_R);
+static_assert(static_cast<int>(EdgeLighting::ColorStopField::G) == EL_STOP_FIELD_G);
+static_assert(static_cast<int>(EdgeLighting::ColorStopField::B) == EL_STOP_FIELD_B);
+static_assert(static_cast<int>(EdgeLighting::ColorStopField::A) == EL_STOP_FIELD_A);
+
+// PlaybackMode / EndAction / AnimationState use dedicated to*/from* helpers,
+// so their ABI decoupling is enforced at the switch site rather than by
+// parity - no static_asserts needed.
+
+// ==========================================================================
 // Opaque handle definitions
 // ==========================================================================
-struct _el_effect_handle_t
+struct el_effect_handle_impl
 {
     EdgeLighting::Config config;
     EdgeLighting::EdgeLightingEffect effect;
 };
 
-struct _el_animation_handle_t
+struct el_animation_handle_impl
 {
     EdgeLighting::AnimationPtr ptr;
 };
 
-struct _el_modulator_handle_t
+struct el_modulator_handle_impl
 {
     EdgeLighting::ModulatorPtr ptr;
 };
@@ -364,6 +411,23 @@ extern "C"
         return EL_OK;
     }
 
+    el_result_e el_effect_set_neon_filament_falloff(el_effect_handle_t *fx, float falloff)
+    {
+        LOG_I("fx=%p, falloff=%f", (void *)fx, falloff);
+        VALIDATE_FX(fx, "el_effect_set_neon_filament_falloff");
+        fx->config.neon.filamentFalloff = falloff;
+        return EL_OK;
+    }
+
+    el_result_e el_effect_get_neon_filament_falloff(const el_effect_handle_t *fx, float *outFalloff)
+    {
+        LOG_I("fx=%p, outFalloff=%p", (void *)fx, (void *)outFalloff);
+        VALIDATE_FX(fx, "el_effect_get_neon_filament_falloff");
+        VALIDATE_OUT_PTR(outFalloff, "el_effect_get_neon_filament_falloff");
+        *outFalloff = fx->config.neon.filamentFalloff;
+        return EL_OK;
+    }
+
     el_result_e el_effect_set_neon_intensity(el_effect_handle_t *fx, float val)
     {
         LOG_I("fx=%p, val=%f", (void *)fx, val);
@@ -483,6 +547,23 @@ extern "C"
         return EL_OK;
     }
 
+    el_result_e el_effect_set_neon_color_transition_duration(el_effect_handle_t *fx, float seconds)
+    {
+        LOG_I("fx=%p, seconds=%f", (void *)fx, seconds);
+        VALIDATE_FX(fx, "el_effect_set_neon_color_transition_duration");
+        fx->config.neon.colorTransitionDuration = seconds;
+        return EL_OK;
+    }
+
+    el_result_e el_effect_get_neon_color_transition_duration(const el_effect_handle_t *fx, float *outSeconds)
+    {
+        LOG_I("fx=%p, outSeconds=%p", (void *)fx, (void *)outSeconds);
+        VALIDATE_FX(fx, "el_effect_get_neon_color_transition_duration");
+        VALIDATE_OUT_PTR(outSeconds, "el_effect_get_neon_color_transition_duration");
+        *outSeconds = fx->config.neon.colorTransitionDuration;
+        return EL_OK;
+    }
+
     // --- Neon colour stops ---
 
     el_result_e el_effect_set_neon_color_stop_count(el_effect_handle_t *fx, int32_t count)
@@ -492,7 +573,7 @@ extern "C"
         if (count < 0)
         {
             LOG_E("el_effect_set_neon_color_stop_count: negative count");
-            return EL_ERR_NULL_ARG;
+            return EL_ERR_INVALID_ARG;
         }
         fx->config.neon.colorStops.resize(static_cast<size_t>(count));
         return EL_OK;
@@ -515,7 +596,7 @@ extern "C"
         if (index < 0)
         {
             LOG_E("el_effect_set_neon_color_stop: negative index");
-            return EL_ERR_NULL_ARG;
+            return EL_ERR_INVALID_ARG;
         }
         auto &stops = fx->config.neon.colorStops;
         size_t uIndex = static_cast<size_t>(index);
@@ -540,7 +621,7 @@ extern "C"
         if (index < 0 || static_cast<size_t>(index) >= fx->config.neon.colorStops.size())
         {
             LOG_E("el_effect_get_neon_color_stop: index out of range");
-            return EL_ERR_NULL_ARG;
+            return EL_ERR_INVALID_ARG;
         }
         const auto &s = fx->config.neon.colorStops[static_cast<size_t>(index)];
         *outPosition = s.position;
@@ -568,7 +649,7 @@ extern "C"
         if (count < 0)
         {
             LOG_E("el_effect_set_neon_segment_boost_count: negative count");
-            return EL_ERR_NULL_ARG;
+            return EL_ERR_INVALID_ARG;
         }
         fx->config.neon.segmentBoosts.resize(static_cast<size_t>(count));
         return EL_OK;
@@ -591,7 +672,7 @@ extern "C"
         if (index < 0)
         {
             LOG_E("el_effect_set_neon_segment_boost: negative index");
-            return EL_ERR_NULL_ARG;
+            return EL_ERR_INVALID_ARG;
         }
         auto &boosts = fx->config.neon.segmentBoosts;
         size_t uIndex = static_cast<size_t>(index);
@@ -614,7 +695,7 @@ extern "C"
         if (index < 0 || static_cast<size_t>(index) >= fx->config.neon.segmentBoosts.size())
         {
             LOG_E("el_effect_get_neon_segment_boost: index out of range");
-            return EL_ERR_NULL_ARG;
+            return EL_ERR_INVALID_ARG;
         }
         const auto &b = fx->config.neon.segmentBoosts[static_cast<size_t>(index)];
         *outPosition = b.position;
@@ -631,6 +712,161 @@ extern "C"
         return EL_OK;
     }
 
+    // --- Neon segment blend space + colour stops ---
+    // Each SegmentBoost carries its own gradient (colorStops laid head-to-tail
+    // across the segment's visible span) and a per-segment blendSpace.
+    // Segments with no stops fall back to the base NeonConfig gradient.
+
+    el_result_e el_effect_set_neon_segment_blend_space(el_effect_handle_t *fx,
+                                                       int32_t segmentIndex, el_blend_space_e blendSpace)
+    {
+        LOG_I("fx=%p, segmentIndex=%d, blendSpace=%d", (void *)fx, segmentIndex, (int)blendSpace);
+        VALIDATE_FX(fx, "el_effect_set_neon_segment_blend_space");
+        if (segmentIndex < 0)
+        {
+            LOG_E("el_effect_set_neon_segment_blend_space: negative segmentIndex");
+            return EL_ERR_INVALID_ARG;
+        }
+        auto &boosts = fx->config.neon.segmentBoosts;
+        size_t uSeg = static_cast<size_t>(segmentIndex);
+        if (uSeg >= boosts.size())
+        {
+            boosts.resize(uSeg + 1);
+        }
+        boosts[uSeg].blendSpace = static_cast<EdgeLighting::BlendSpace>(blendSpace);
+        return EL_OK;
+    }
+
+    el_result_e el_effect_get_neon_segment_blend_space(const el_effect_handle_t *fx,
+                                                       int32_t segmentIndex, el_blend_space_e *outBlendSpace)
+    {
+        LOG_I("fx=%p, segmentIndex=%d, outBlendSpace=%p", (void *)fx, segmentIndex, (void *)outBlendSpace);
+        VALIDATE_FX(fx, "el_effect_get_neon_segment_blend_space");
+        VALIDATE_OUT_PTR(outBlendSpace, "el_effect_get_neon_segment_blend_space");
+        if (segmentIndex < 0 || static_cast<size_t>(segmentIndex) >= fx->config.neon.segmentBoosts.size())
+        {
+            LOG_E("el_effect_get_neon_segment_blend_space: segmentIndex out of range");
+            return EL_ERR_INVALID_ARG;
+        }
+        *outBlendSpace = static_cast<el_blend_space_e>(
+            fx->config.neon.segmentBoosts[static_cast<size_t>(segmentIndex)].blendSpace);
+        return EL_OK;
+    }
+
+    el_result_e el_effect_set_neon_segment_color_stop_count(el_effect_handle_t *fx,
+                                                            int32_t segmentIndex, int32_t count)
+    {
+        LOG_I("fx=%p, segmentIndex=%d, count=%d", (void *)fx, segmentIndex, count);
+        VALIDATE_FX(fx, "el_effect_set_neon_segment_color_stop_count");
+        if (segmentIndex < 0)
+        {
+            LOG_E("el_effect_set_neon_segment_color_stop_count: negative segmentIndex");
+            return EL_ERR_INVALID_ARG;
+        }
+        if (count < 0)
+        {
+            LOG_E("el_effect_set_neon_segment_color_stop_count: negative count");
+            return EL_ERR_INVALID_ARG;
+        }
+        auto &boosts = fx->config.neon.segmentBoosts;
+        size_t uSeg = static_cast<size_t>(segmentIndex);
+        if (uSeg >= boosts.size())
+        {
+            boosts.resize(uSeg + 1);
+        }
+        boosts[uSeg].colorStops.resize(static_cast<size_t>(count));
+        return EL_OK;
+    }
+
+    el_result_e el_effect_get_neon_segment_color_stop_count(const el_effect_handle_t *fx,
+                                                            int32_t segmentIndex, int32_t *outCount)
+    {
+        LOG_I("fx=%p, segmentIndex=%d, outCount=%p", (void *)fx, segmentIndex, (void *)outCount);
+        VALIDATE_FX(fx, "el_effect_get_neon_segment_color_stop_count");
+        VALIDATE_OUT_PTR(outCount, "el_effect_get_neon_segment_color_stop_count");
+        if (segmentIndex < 0 || static_cast<size_t>(segmentIndex) >= fx->config.neon.segmentBoosts.size())
+        {
+            LOG_E("el_effect_get_neon_segment_color_stop_count: segmentIndex out of range");
+            return EL_ERR_INVALID_ARG;
+        }
+        *outCount = static_cast<int32_t>(
+            fx->config.neon.segmentBoosts[static_cast<size_t>(segmentIndex)].colorStops.size());
+        return EL_OK;
+    }
+
+    el_result_e el_effect_set_neon_segment_color_stop(el_effect_handle_t *fx,
+                                                      int32_t segmentIndex, int32_t stopIndex,
+                                                      float position, float r, float g, float b, float a)
+    {
+        LOG_I("fx=%p, segmentIndex=%d, stopIndex=%d, position=%f, r=%f, g=%f, b=%f, a=%f",
+              (void *)fx, segmentIndex, stopIndex, position, r, g, b, a);
+        VALIDATE_FX(fx, "el_effect_set_neon_segment_color_stop");
+        if (segmentIndex < 0 || stopIndex < 0)
+        {
+            LOG_E("el_effect_set_neon_segment_color_stop: negative index");
+            return EL_ERR_INVALID_ARG;
+        }
+        auto &boosts = fx->config.neon.segmentBoosts;
+        size_t uSeg = static_cast<size_t>(segmentIndex);
+        if (uSeg >= boosts.size())
+        {
+            boosts.resize(uSeg + 1);
+        }
+        auto &stops = boosts[uSeg].colorStops;
+        size_t uStop = static_cast<size_t>(stopIndex);
+        if (uStop >= stops.size())
+        {
+            stops.resize(uStop + 1);
+        }
+        stops[uStop] = {position, glm::vec4(r, g, b, a)};
+        return EL_OK;
+    }
+
+    el_result_e el_effect_get_neon_segment_color_stop(const el_effect_handle_t *fx,
+                                                      int32_t segmentIndex, int32_t stopIndex,
+                                                      float *outPosition, float *outR, float *outG, float *outB, float *outA)
+    {
+        LOG_I("fx=%p, segmentIndex=%d, stopIndex=%d, outPosition=%p, outR=%p, outG=%p, outB=%p, outA=%p",
+              (void *)fx, segmentIndex, stopIndex, (void *)outPosition, (void *)outR, (void *)outG, (void *)outB, (void *)outA);
+        VALIDATE_FX(fx, "el_effect_get_neon_segment_color_stop");
+        VALIDATE_OUT_PTR(outPosition, "el_effect_get_neon_segment_color_stop");
+        VALIDATE_OUT_PTR(outR, "el_effect_get_neon_segment_color_stop");
+        VALIDATE_OUT_PTR(outG, "el_effect_get_neon_segment_color_stop");
+        VALIDATE_OUT_PTR(outB, "el_effect_get_neon_segment_color_stop");
+        VALIDATE_OUT_PTR(outA, "el_effect_get_neon_segment_color_stop");
+        if (segmentIndex < 0 || static_cast<size_t>(segmentIndex) >= fx->config.neon.segmentBoosts.size())
+        {
+            LOG_E("el_effect_get_neon_segment_color_stop: segmentIndex out of range");
+            return EL_ERR_INVALID_ARG;
+        }
+        const auto &seg = fx->config.neon.segmentBoosts[static_cast<size_t>(segmentIndex)];
+        if (stopIndex < 0 || static_cast<size_t>(stopIndex) >= seg.colorStops.size())
+        {
+            LOG_E("el_effect_get_neon_segment_color_stop: stopIndex out of range");
+            return EL_ERR_INVALID_ARG;
+        }
+        const auto &s = seg.colorStops[static_cast<size_t>(stopIndex)];
+        *outPosition = s.position;
+        *outR = s.color.r;
+        *outG = s.color.g;
+        *outB = s.color.b;
+        *outA = s.color.a;
+        return EL_OK;
+    }
+
+    el_result_e el_effect_clear_neon_segment_color_stops(el_effect_handle_t *fx, int32_t segmentIndex)
+    {
+        LOG_I("fx=%p, segmentIndex=%d", (void *)fx, segmentIndex);
+        VALIDATE_FX(fx, "el_effect_clear_neon_segment_color_stops");
+        if (segmentIndex < 0 || static_cast<size_t>(segmentIndex) >= fx->config.neon.segmentBoosts.size())
+        {
+            LOG_E("el_effect_clear_neon_segment_color_stops: segmentIndex out of range");
+            return EL_ERR_INVALID_ARG;
+        }
+        fx->config.neon.segmentBoosts[static_cast<size_t>(segmentIndex)].colorStops.clear();
+        return EL_OK;
+    }
+
     // --- Neon arcs ---
 
     el_result_e el_effect_set_neon_arc_count(el_effect_handle_t *fx, int32_t count)
@@ -640,7 +876,7 @@ extern "C"
         if (count < 0)
         {
             LOG_E("el_effect_set_neon_arc_count: negative count");
-            return EL_ERR_NULL_ARG;
+            return EL_ERR_INVALID_ARG;
         }
         fx->config.neon.arcs.resize(static_cast<size_t>(count));
         return EL_OK;
@@ -663,7 +899,7 @@ extern "C"
         if (index < 0)
         {
             LOG_E("el_effect_set_neon_arc: negative index");
-            return EL_ERR_NULL_ARG;
+            return EL_ERR_INVALID_ARG;
         }
         auto &arcs = fx->config.neon.arcs;
         size_t uIndex = static_cast<size_t>(index);
@@ -691,7 +927,7 @@ extern "C"
         if (index < 0 || static_cast<size_t>(index) >= fx->config.neon.arcs.size())
         {
             LOG_E("el_effect_get_neon_arc: index out of range");
-            return EL_ERR_NULL_ARG;
+            return EL_ERR_INVALID_ARG;
         }
         const auto &a = fx->config.neon.arcs[static_cast<size_t>(index)];
         *outStart = a.start;
@@ -719,12 +955,12 @@ extern "C"
         if (arcIndex < 0)
         {
             LOG_E("el_effect_set_neon_arc_color_stop_count: negative arcIndex");
-            return EL_ERR_NULL_ARG;
+            return EL_ERR_INVALID_ARG;
         }
         if (count < 0)
         {
             LOG_E("el_effect_set_neon_arc_color_stop_count: negative count");
-            return EL_ERR_NULL_ARG;
+            return EL_ERR_INVALID_ARG;
         }
         auto &arcs = fx->config.neon.arcs;
         size_t uArc = static_cast<size_t>(arcIndex);
@@ -745,7 +981,7 @@ extern "C"
         if (arcIndex < 0 || static_cast<size_t>(arcIndex) >= fx->config.neon.arcs.size())
         {
             LOG_E("el_effect_get_neon_arc_color_stop_count: arcIndex out of range");
-            return EL_ERR_NULL_ARG;
+            return EL_ERR_INVALID_ARG;
         }
         *outCount = static_cast<int32_t>(
             fx->config.neon.arcs[static_cast<size_t>(arcIndex)].colorStops.size());
@@ -761,7 +997,7 @@ extern "C"
         if (arcIndex < 0 || stopIndex < 0)
         {
             LOG_E("el_effect_set_neon_arc_color_stop: negative index");
-            return EL_ERR_NULL_ARG;
+            return EL_ERR_INVALID_ARG;
         }
         auto &arcs = fx->config.neon.arcs;
         size_t uArc = static_cast<size_t>(arcIndex);
@@ -793,13 +1029,13 @@ extern "C"
         if (arcIndex < 0 || static_cast<size_t>(arcIndex) >= fx->config.neon.arcs.size())
         {
             LOG_E("el_effect_get_neon_arc_color_stop: arcIndex out of range");
-            return EL_ERR_NULL_ARG;
+            return EL_ERR_INVALID_ARG;
         }
         const auto &arc = fx->config.neon.arcs[static_cast<size_t>(arcIndex)];
         if (stopIndex < 0 || static_cast<size_t>(stopIndex) >= arc.colorStops.size())
         {
             LOG_E("el_effect_get_neon_arc_color_stop: stopIndex out of range");
-            return EL_ERR_NULL_ARG;
+            return EL_ERR_INVALID_ARG;
         }
         const auto &s = arc.colorStops[static_cast<size_t>(stopIndex)];
         *outPosition = s.position;
@@ -817,7 +1053,7 @@ extern "C"
         if (arcIndex < 0 || static_cast<size_t>(arcIndex) >= fx->config.neon.arcs.size())
         {
             LOG_E("el_effect_clear_neon_arc_color_stops: arcIndex out of range");
-            return EL_ERR_NULL_ARG;
+            return EL_ERR_INVALID_ARG;
         }
         fx->config.neon.arcs[static_cast<size_t>(arcIndex)].colorStops.clear();
         return EL_OK;
@@ -963,7 +1199,7 @@ extern "C"
         LOG_I("called");
         try
         {
-            auto *fx = new _el_effect_handle_t();
+            auto *fx = new el_effect_handle_impl();
             fx->effect.AddRenderer(std::make_shared<EdgeLighting::WireframeRenderer>());
             fx->effect.AddRenderer(std::make_shared<EdgeLighting::NeonRenderer>());
             fx->effect.AddRenderer(std::make_shared<EdgeLighting::NeonOptimizedRenderer>());
@@ -1756,7 +1992,7 @@ extern "C"
         if (!fb)
         {
             LOG_E("el_animation_add_field: animation is not a FieldBoundAnimation");
-            return EL_ERR_NULL_ARG;
+            return EL_ERR_INVALID_ARG;
         }
         fb->AddField(toAnimatableField(field), mod->ptr);
         return EL_OK;
@@ -1772,7 +2008,7 @@ extern "C"
         if (!fb)
         {
             LOG_E("el_animation_add_segment_field: animation is not a FieldBoundAnimation");
-            return EL_ERR_NULL_ARG;
+            return EL_ERR_INVALID_ARG;
         }
         fb->AddSegmentField(static_cast<size_t>(index),
                             static_cast<EdgeLighting::SegmentField>(field), mod->ptr);
@@ -1789,7 +2025,7 @@ extern "C"
         if (!fb)
         {
             LOG_E("el_animation_add_arc_field: animation is not a FieldBoundAnimation");
-            return EL_ERR_NULL_ARG;
+            return EL_ERR_INVALID_ARG;
         }
         fb->AddArcField(static_cast<size_t>(index),
                         static_cast<EdgeLighting::ArcField>(field), mod->ptr);
@@ -1807,10 +2043,28 @@ extern "C"
         if (!fb)
         {
             LOG_E("el_animation_add_arc_stop_field: animation is not a FieldBoundAnimation");
-            return EL_ERR_NULL_ARG;
+            return EL_ERR_INVALID_ARG;
         }
         fb->AddArcStopField(static_cast<size_t>(arcIdx), static_cast<size_t>(stopIdx),
                             static_cast<EdgeLighting::ColorStopField>(field), mod->ptr);
+        return EL_OK;
+    }
+
+    el_result_e el_animation_add_segment_stop_field(el_animation_handle_t *anim,
+                                                    int32_t segIdx, int32_t stopIdx, el_color_stop_field_e field,
+                                                    el_modulator_handle_t *mod)
+    {
+        LOG_I("anim=%p, segIdx=%d, stopIdx=%d, field=%d, mod=%p", (void *)anim, segIdx, stopIdx, (int)field, (void *)mod);
+        VALIDATE_ANM(anim, "el_animation_add_segment_stop_field");
+        VALIDATE_MOD(mod, "el_animation_add_segment_stop_field");
+        auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
+        if (!fb)
+        {
+            LOG_E("el_animation_add_segment_stop_field: animation is not a FieldBoundAnimation");
+            return EL_ERR_INVALID_ARG;
+        }
+        fb->AddStopField(static_cast<size_t>(segIdx), static_cast<size_t>(stopIdx),
+                         static_cast<EdgeLighting::ColorStopField>(field), mod->ptr);
         return EL_OK;
     }
 
@@ -1890,7 +2144,7 @@ extern "C"
         if (!s)
         {
             LOG_E("el_modulator_sequence_append: seq is not a Sequence");
-            return EL_ERR_NULL_ARG;
+            return EL_ERR_INVALID_ARG;
         }
         s->Append(segment->ptr, duration);
         return EL_OK;

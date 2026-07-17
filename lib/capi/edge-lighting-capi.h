@@ -2,8 +2,8 @@
  * @file edge-lighting-capi.h
  * @brief Flat C ABI over the EdgeLighting C++ renderer for FFI / C# interop.
  */
-#ifndef _EDGE_LIGHTING_C_H_
-#define _EDGE_LIGHTING_C_H_
+#ifndef _EDGE_LIGHTING_CAPI_H_
+#define _EDGE_LIGHTING_CAPI_H_
 
 #include <stdint.h>
 
@@ -27,9 +27,10 @@ extern "C"
     typedef enum el_result_e
     {
         EL_OK = 0,
-        EL_ERR_NULL_ARG = 1,
-        EL_ERR_INIT_FAILED = 2,
-        EL_ERR_EXCEPTION = 3
+        EL_ERR_NULL_ARG = 1,     /**< A required pointer argument was null. */
+        EL_ERR_INIT_FAILED = 2,  /**< Renderer/GL initialisation failed. */
+        EL_ERR_EXCEPTION = 3,    /**< A C++ exception was caught at the ABI boundary. */
+        EL_ERR_INVALID_ARG = 4   /**< A non-null arg was out of range or the wrong shape. */
     } el_result_e;
 
     /* --------------------------------------------------------------------------
@@ -157,9 +158,9 @@ extern "C"
     /* --------------------------------------------------------------------------
      * Opaque handles
      * ------------------------------------------------------------------------ */
-    typedef struct _el_effect_handle_t el_effect_handle_t;
-    typedef struct _el_animation_handle_t el_animation_handle_t;
-    typedef struct _el_modulator_handle_t el_modulator_handle_t;
+    typedef struct el_effect_handle_impl el_effect_handle_t;
+    typedef struct el_animation_handle_impl el_animation_handle_t;
+    typedef struct el_modulator_handle_impl el_modulator_handle_t;
 
     /* --------------------------------------------------------------------------
      * Effect - config setters (each setter modifies the handle's staging config)
@@ -194,6 +195,9 @@ extern "C"
     EL_API el_result_e el_effect_set_neon_line_width(el_effect_handle_t *fx, float width);
     EL_API el_result_e el_effect_get_neon_line_width(const el_effect_handle_t *fx, float *outWidth);
 
+    EL_API el_result_e el_effect_set_neon_filament_falloff(el_effect_handle_t *fx, float falloff);
+    EL_API el_result_e el_effect_get_neon_filament_falloff(const el_effect_handle_t *fx, float *outFalloff);
+
     EL_API el_result_e el_effect_set_neon_intensity(el_effect_handle_t *fx, float val);
     EL_API el_result_e el_effect_get_neon_intensity(const el_effect_handle_t *fx, float *outVal);
 
@@ -215,6 +219,9 @@ extern "C"
     EL_API el_result_e el_effect_set_neon_hue_rotation_rate(el_effect_handle_t *fx, float rate);
     EL_API el_result_e el_effect_get_neon_hue_rotation_rate(const el_effect_handle_t *fx, float *outRate);
 
+    EL_API el_result_e el_effect_set_neon_color_transition_duration(el_effect_handle_t *fx, float seconds);
+    EL_API el_result_e el_effect_get_neon_color_transition_duration(const el_effect_handle_t *fx, float *outSeconds);
+
     EL_API el_result_e el_effect_set_neon_color_stop_count(el_effect_handle_t *fx, int32_t count);
     EL_API el_result_e el_effect_get_neon_color_stop_count(const el_effect_handle_t *fx, int32_t *outCount);
 
@@ -232,6 +239,24 @@ extern "C"
     EL_API el_result_e el_effect_get_neon_segment_boost(const el_effect_handle_t *fx, int32_t index,
                                                         float *outPosition, float *outLength, float *outBoost);
     EL_API el_result_e el_effect_clear_neon_segment_boosts(el_effect_handle_t *fx);
+
+    EL_API el_result_e el_effect_set_neon_segment_blend_space(el_effect_handle_t *fx,
+                                                              int32_t segmentIndex, el_blend_space_e blendSpace);
+    EL_API el_result_e el_effect_get_neon_segment_blend_space(const el_effect_handle_t *fx,
+                                                              int32_t segmentIndex, el_blend_space_e *outBlendSpace);
+
+    EL_API el_result_e el_effect_set_neon_segment_color_stop_count(el_effect_handle_t *fx,
+                                                                   int32_t segmentIndex, int32_t count);
+    EL_API el_result_e el_effect_get_neon_segment_color_stop_count(const el_effect_handle_t *fx,
+                                                                   int32_t segmentIndex, int32_t *outCount);
+
+    EL_API el_result_e el_effect_set_neon_segment_color_stop(el_effect_handle_t *fx,
+                                                             int32_t segmentIndex, int32_t stopIndex,
+                                                             float position, float r, float g, float b, float a);
+    EL_API el_result_e el_effect_get_neon_segment_color_stop(const el_effect_handle_t *fx,
+                                                             int32_t segmentIndex, int32_t stopIndex,
+                                                             float *outPosition, float *outR, float *outG, float *outB, float *outA);
+    EL_API el_result_e el_effect_clear_neon_segment_color_stops(el_effect_handle_t *fx, int32_t segmentIndex);
 
     EL_API el_result_e el_effect_set_neon_arc_count(el_effect_handle_t *fx, int32_t count);
     EL_API el_result_e el_effect_get_neon_arc_count(const el_effect_handle_t *fx, int32_t *outCount);
@@ -286,7 +311,11 @@ extern "C"
     EL_API el_result_e el_effect_destroy(el_effect_handle_t *fx);
     EL_API el_result_e el_effect_initialize(el_effect_handle_t *fx);
 
-    /** @brief Pull the effect's active config back into the handle's staging config. */
+    /** @brief Pull the effect's base config back into the handle's staging config.
+     *  @details Snapshots the last-authored values (what SetConfig received) -
+     *           does NOT include animation overlays. Use this to re-sync the
+     *           staging config after external mutation (e.g. presets applied
+     *           inside the effect). */
     EL_API el_result_e el_effect_capture(el_effect_handle_t *fx);
 
     /** @brief Apply staging config then tick clock, animations, and renderers. */
@@ -387,6 +416,9 @@ extern "C"
     EL_API el_result_e el_animation_add_arc_stop_field(el_animation_handle_t *anim,
                                                        int32_t arcIdx, int32_t stopIdx, el_color_stop_field_e field,
                                                        el_modulator_handle_t *mod);
+    EL_API el_result_e el_animation_add_segment_stop_field(el_animation_handle_t *anim,
+                                                           int32_t segIdx, int32_t stopIdx, el_color_stop_field_e field,
+                                                           el_modulator_handle_t *mod);
 
     /* --------------------------------------------------------------------------
      * Modulator factories
@@ -414,4 +446,4 @@ extern "C"
 } // extern "C"
 #endif
 
-#endif // _EDGE_LIGHTING_C_H_
+#endif // _EDGE_LIGHTING_CAPI_H_
