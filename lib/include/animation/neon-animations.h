@@ -505,17 +505,19 @@ namespace EdgeLighting
     /// @brief Three-phase arc wipe: grow, chase, shrink.
     /// @details A "wipe" that draws the neon arc from @c startPos, races it
     ///          around the perimeter at a fixed maximum length, and shrinks it
-    ///          away as the tail reaches @c endPos.
+    ///          away as the tail reaches @c endPos. Writes to @c arcs[0]
+    ///          (auto-grows the vector if empty), mirroring the segment
+    ///          presets' `segmentBoosts[0]` convention.
     ///
-    /// - **Phase 1 - grow**  : @c arcStart stays at @c startPos; @c arcLength
-    ///                         grows 0 → @c maxLength.  The head moves out
-    ///                         from @c startPos.
-    /// - **Phase 2 - chase** : @c arcLength stays at @c maxLength; both head
-    ///                         and tail advance at the same speed.  The head
-    ///                         travels from @c (startPos + maxLength) to
+    /// - **Phase 1 - grow**  : @c arcs[0].start stays at @c startPos;
+    ///                         @c arcs[0].length grows 0 → @c maxLength. The
+    ///                         head moves out from @c startPos.
+    /// - **Phase 2 - chase** : @c arcs[0].length stays at @c maxLength; both
+    ///                         head and tail advance at the same speed. The
+    ///                         head travels from @c (startPos + maxLength) to
     ///                         @c endPos.
     /// - **Phase 3 - shrink**: head parks at @c endPos; tail catches up.
-    ///                         @c arcLength shrinks @c maxLength → 0.
+    ///                         @c arcs[0].length shrinks @c maxLength → 0.
     ///
     /// The per-phase durations are chosen so the head and tail move at the
     /// same constant speed across all three phases - no visible acceleration
@@ -545,13 +547,13 @@ namespace EdgeLighting
     public:
         /// @param duration   Total wipe time in seconds.
         /// @param startPos   Perimeter position [0, 1) where the tail begins;
-        ///                   arcStart stays here during phase 1.
+        ///                   @c arcs[0].start stays here during phase 1.
         /// @param endPos     Perimeter position [0, 1) where both ends meet
         ///                   at the end of the wipe. The head parks here at
         ///                   the end of phase 2; the tail closes the gap
         ///                   during phase 3 and reaches @p endPos exactly
-        ///                   when arcLength hits 0. Equal to @p startPos →
-        ///                   full loop.
+        ///                   when @c arcs[0].length hits 0. Equal to
+        ///                   @p startPos → full loop.
         /// @param maxLength  Arc length during the chase phase [0, 1).
         /// @param curve      Easing applied to the whole wipe timeline.
         ArcWipe(float duration = 2.0f,

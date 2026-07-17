@@ -11,9 +11,10 @@ namespace EdgeLighting
     /// @brief Scalar Config leaves that a @ref FieldBoundAnimation can drive
     ///        through @ref FieldBoundAnimation::AddField.
     ///
-    /// Enum values are numerically ABI-stable - the C API's @c EL_ConfigField
-    /// mirrors them 1:1 and static_casts between the two. Append new fields at
-    /// the end so both C and C++ callers stay forward-compatible.
+    /// Enum values are numerically ABI-stable - the C API's @c el_config_field_e
+    /// mirrors them 1:1 (parity enforced by @c static_assert at the top of
+    /// @c edge-lighting-capi.cpp). Append new fields at the end so both C
+    /// and C++ callers stay forward-compatible.
     ///
     /// Segment struct fields (position / length / boost inside
     /// @c NeonConfig::segmentBoosts[i]) live in @ref SegmentField because
@@ -34,7 +35,7 @@ namespace EdgeLighting
     ///
     /// Paired with an index at bind time via
     /// @ref FieldBoundAnimation::AddSegmentField. Numerically mirrored by
-    /// @c EL_SegmentField in the C ABI.
+    /// @c el_segment_field_e in the C ABI.
     typedef enum class SegmentField
     {
         POSITION = 0,
@@ -46,7 +47,7 @@ namespace EdgeLighting
     ///
     /// Paired with an index at bind time via
     /// @ref FieldBoundAnimation::AddArcField. Numerically mirrored by
-    /// @c EL_ArcField in the C ABI.
+    /// @c el_arc_field_e in the C ABI.
     typedef enum class ArcField
     {
         START = 0,
@@ -58,8 +59,9 @@ namespace EdgeLighting
     ///        @c NeonConfig::segmentBoosts[segIdx].colorStops[stopIdx].
     ///
     /// Paired with @c (segIdx, stopIdx) at bind time via
-    /// @ref FieldBoundAnimation::AddStopField. Numerically mirrored by
-    /// @c EL_ColorStopField in the C ABI when that binding is added.
+    /// @ref FieldBoundAnimation::AddStopField (or @ref FieldBoundAnimation::AddArcStopField
+    /// for arc-stop bindings). Numerically mirrored by
+    /// @c el_color_stop_field_e in the C ABI.
     typedef enum class ColorStopField
     {
         POSITION = 0, ///< @c ColorStop::position - normalised offset within the segment span.

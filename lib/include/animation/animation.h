@@ -75,11 +75,13 @@ namespace EdgeLighting
     /// @ref Animation::Update / @ref Animation::Apply on paused animations so
     /// they can hold their last-written value.
     ///
-    ///   Stopped   - initial state and after @ref Animation::Stop.  Elapsed
-    ///               is 0 and does NOT advance.  @ref Animation::Apply is a
-    ///               no-op: the target config field is left as-is (use
-    ///               @ref Animation::Reset to write the modulator's t=0
-    ///               baseline explicitly).
+    ///   Stopped   - initial state and after @ref Animation::Stop or a
+    ///               one-shot completion. Elapsed is preserved at the
+    ///               stop-time position (a completed one-shot clamps to
+    ///               duration, so @ref GetProgress reads 1). A never-played
+    ///               Stopped animation has elapsed = 0 and Apply is a
+    ///               no-op regardless of end action; after a run, Apply
+    ///               dispatches per @ref EndAction.
     ///   Playing   - @ref Animation::Update advances elapsed by
     ///               @c dt * @ref Animation::GetSpeed.  @ref Animation::Apply
     ///               writes the current modulator value.
@@ -88,8 +90,10 @@ namespace EdgeLighting
     ///
     /// When a @c ONE_SHOT animation's elapsed crosses
     /// @ref Animation::GetDuration it auto-transitions to @c Stopped (elapsed
-    /// reset to 0) and fires @ref Animation::OnComplete once. There is no
-    /// separate "Completed" state - completion is just Stopped-with-callback.
+    /// clamped to duration) and fires @ref Animation::OnComplete once. A
+    /// subsequent @ref Play from @c Stopped zeros elapsed so the animation
+    /// restarts from the beginning. There is no separate "Completed" state -
+    /// completion is just Stopped-with-callback.
     typedef enum class AnimationState
     {
         STOPPED,

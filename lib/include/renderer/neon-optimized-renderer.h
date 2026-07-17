@@ -15,18 +15,23 @@ namespace EdgeLighting
     /// Half-resolution single-pass neon renderer for edge devices.
     ///
     /// Two-pass approach:
-    ///   Pass 1 - render the neon shader (highp, up to 64 gather samples) into
-    ///             a half-resolution RGBA8 FBO.
+    ///   Pass 1 - render the neon shader (highp, up to @c NEON_MAX_LOOP_SAMPLES
+    ///             gather samples per fragment) into a half-resolution RGBA8 FBO.
     ///   Pass 2 - bilinear blit the half-res FBO to the full-res backbuffer.
     ///
-    /// The perf wins are the half-res FBO, reduced sample count, data-texture
-    /// sample lookup and baked colour LUT - not reduced precision. The shader
-    /// uses highp: on desktop GLES (ANGLE) mediump = fp16, which overflows on
-    /// the large fragment coordinates and produced NaN "noise dots".
+    /// The perf wins are the half-res FBO, the runtime-tunable
+    /// @c OptimizedNeonConfig::numSamples slider (the shader iterates only
+    /// that many perimeter samples per fragment), and the baked colour LUTs
+    /// (base gradient + per-segment atlas + per-arc atlas) - not reduced
+    /// precision. The shader uses highp: on desktop GLES (ANGLE) mediump =
+    /// fp16, which overflows on the large fragment coordinates and produced
+    /// NaN "noise dots".
     ///
-    /// Visual parameters are read from Config::neon (shared with the
-    /// standard single-pass NeonRenderer), so switching between them for
-    /// comparison is a one-click toggle.
+    /// Visual parameters are read from @c Config::neon (shared with the
+    /// standard single-pass @ref NeonRenderer), so switching between them
+    /// for comparison is a one-click toggle. @c Config::optimizedNeon carries
+    /// the tuning knobs specific to this renderer (resolution scale, sample
+    /// count, LUT size, half-res debug toggle).
     class NeonOptimizedRenderer : public BaseRenderer
     {
     public:

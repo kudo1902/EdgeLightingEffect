@@ -205,7 +205,11 @@ namespace EdgeLighting
 
         // --- Glow ---
 
-        /// Master brightness multiplier applied to filament + halo + bloom.
+        /// Master brightness multiplier applied to the arc emission
+        /// (filament + halo + bloom). Multiplies the whole effect uniformly -
+        /// use per-arc @c Arc::intensity to fade an individual slice while
+        /// others stay lit. Segments deliberately bypass this multiplier so
+        /// a segment can shine on a dark arc.
         float intensity = 1.0f;
         /// Halo reach in pixels - how far the coloured glow spreads from the line.
         /// Also seeds the wider background bloom and corner colour cross-fade widths.

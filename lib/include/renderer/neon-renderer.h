@@ -11,6 +11,22 @@
 
 namespace EdgeLighting
 {
+    /// Full-resolution single-pass neon renderer.
+    ///
+    /// Draws a tight quad over the rect + earlyOut margin and runs one
+    /// fragment shader that composes filament + halo + bloom in one pass.
+    /// Per-fragment work: an analytic rounded-box SDF, a gather loop over
+    /// @c NEON_MAX_LOOP_SAMPLES perimeter samples (positions live in a UBO),
+    /// and per-sample lookups into three baked LUTs:
+    ///   - @c uGradientLUT      - the base colour ring.
+    ///   - @c uSegmentLUT       - per-segment gradient atlas (one row per segment).
+    ///   - @c uArcLUT           - per-arc gradient atlas (one row per arc).
+    ///
+    /// Arc gating uses winner-take-all: for each sample the arc with the
+    /// largest @c mask*intensity owns the colour and emission there. See
+    /// neon.frag for the full compose. Visual parameters come from
+    /// @c Config::neon; @c Config::arcs / @c Config::segmentBoosts drive
+    /// their respective UBOs and atlases.
     class NeonRenderer : public BaseRenderer
     {
     public:

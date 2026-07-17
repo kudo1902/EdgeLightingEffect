@@ -5,11 +5,14 @@ namespace EdgeLighting
 {
     /// @brief Play/pause time accumulator.
     ///
-    /// Drives all @ref Modulator evaluations - `clock.GetTime()` is the
-    /// canonical input to any animation in the system.
+    /// Owned by @ref EdgeLightingEffect. Each frame, @ref Update returns the
+    /// delta that gets forwarded to every attached animation - a paused clock
+    /// returns 0, so all animations freeze in lockstep without needing per-
+    /// animation state changes.
     ///
-    /// Pausing freezes time accumulation, so any modulator sampled with the
-    /// clock's time will hold its last value until play resumes.
+    /// The absolute @ref GetTime is still available for renderers whose shaders
+    /// use it directly (e.g. the neon hue-rotation animation reads @c uTime
+    /// and multiplies by @c hueRotationRate).
     class Clock
     {
     public:

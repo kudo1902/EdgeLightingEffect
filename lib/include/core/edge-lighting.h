@@ -14,16 +14,29 @@ namespace EdgeLighting
 
     /// @brief Top-level orchestrator for the edge-lighting effect.
     ///
-    /// Owns the configuration, the time clock, and a list of renderers.
-    /// Callers compose modulators externally and write the resulting values
-    /// into a @ref Config before calling @ref SetConfig.
+    /// Owns:
+    /// - a base @ref Config (authored - what @ref SetConfig writes),
+    /// - an active @ref Config (base + animation overlays - what renderers see),
+    /// - a time @ref Clock, and
+    /// - an internal @ref AnimationManager plus a vector of renderers.
+    ///
+    /// ## Config split
+    ///
+    /// Callers write to the base config via @ref SetConfig / @ref GetConfig -
+    /// this is the authored / slider-driven value. Each @ref Update ticks
+    /// the clock, advances every attached animation by the clock delta,
+    /// then rebuilds the active config as base + overlay and hands it to
+    /// the renderers. Read the composited value with @ref GetActiveConfig
+    /// (useful for UI slider hints that follow animated values).
     ///
     /// ## Animation policy
     ///
-    /// This class only ticks the clock and forwards its time to renderers.
-    /// Parameter modulation (oscillators / easing / sequences) lives outside
-    /// in the @ref Modulator family - callers compose them however they like
-    /// and write into a @ref Config before calling @ref SetConfig.
+    /// Attach animations to the effect via @ref Attach - the manager owns
+    /// the run loop, states, and end-action dispatch. Modulator composition
+    /// (oscillators / easing / sequences) still lives outside in the
+    /// @ref Modulator family; the animation subclasses (@ref IntensityPulse,
+    /// @ref ArcWipe, @ref FieldBoundAnimation, ...) wrap those into @ref Config
+    /// writes.
     class EdgeLightingEffect
     {
     public:
