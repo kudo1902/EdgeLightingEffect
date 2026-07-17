@@ -33,6 +33,11 @@ extern "C"
         EL_ERR_INVALID_ARG = 4  /**< A non-null arg was out of range or the wrong shape. */
     } el_result_e;
 
+    /** @brief Fixed-width boolean for ABI stability. 0 = false, non-zero = true.
+     *  Use anywhere a semantic boolean crosses the FFI boundary - avoids the
+     *  platform-dependent width of a bare @c int and self-documents the intent. */
+    typedef int32_t el_bool_t;
+
     /* --------------------------------------------------------------------------
      * Enums
      * ------------------------------------------------------------------------ */
@@ -163,144 +168,144 @@ extern "C"
     typedef struct el_modulator_handle_impl *el_modulator_handle_t;
 
     /* --------------------------------------------------------------------------
-     * Effect - config setters (each setter modifies the handle's staging config)
+     * Effect - config setters (each setter modifies the effect's staging config)
      * ------------------------------------------------------------------------ */
 
-    EL_API el_result_e el_effect_set_geometry(el_effect_handle_t fx,
+    EL_API el_result_e el_effect_set_geometry(el_effect_handle_t effect,
                                               float width, float height, float posX, float posY, float cornerRadius);
-    EL_API el_result_e el_effect_get_geometry(el_effect_handle_t fx,
+    EL_API el_result_e el_effect_get_geometry(el_effect_handle_t effect,
                                               float *outWidth, float *outHeight, float *outPosX, float *outPosY,
                                               float *outCornerRadius);
 
-    EL_API el_result_e el_effect_set_winding(el_effect_handle_t fx, el_winding_e winding);
-    EL_API el_result_e el_effect_get_winding(el_effect_handle_t fx, el_winding_e *outWinding);
+    EL_API el_result_e el_effect_set_winding(el_effect_handle_t effect, el_winding_e winding);
+    EL_API el_result_e el_effect_get_winding(el_effect_handle_t effect, el_winding_e *outWinding);
 
-    EL_API el_result_e el_effect_set_neon_renderer_enabled(el_effect_handle_t fx, int enabled);
-    EL_API el_result_e el_effect_get_neon_renderer_enabled(el_effect_handle_t fx, int *outEnabled);
+    EL_API el_result_e el_effect_set_neon_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled);
+    EL_API el_result_e el_effect_get_neon_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
 
-    EL_API el_result_e el_effect_set_show_gradient_lut(el_effect_handle_t fx, int show);
-    EL_API el_result_e el_effect_get_show_gradient_lut(el_effect_handle_t fx, int *outShow);
+    EL_API el_result_e el_effect_set_show_gradient_lut(el_effect_handle_t effect, el_bool_t show);
+    EL_API el_result_e el_effect_get_show_gradient_lut(el_effect_handle_t effect, el_bool_t *outShow);
 
-    EL_API el_result_e el_effect_set_show_color_stops(el_effect_handle_t fx, int show);
-    EL_API el_result_e el_effect_get_show_color_stops(el_effect_handle_t fx, int *outShow);
+    EL_API el_result_e el_effect_set_show_color_stops(el_effect_handle_t effect, el_bool_t show);
+    EL_API el_result_e el_effect_get_show_color_stops(el_effect_handle_t effect, el_bool_t *outShow);
 
-    EL_API el_result_e el_effect_set_opaque(el_effect_handle_t fx, int opaque);
-    EL_API el_result_e el_effect_get_opaque(el_effect_handle_t fx, int *outOpaque);
+    EL_API el_result_e el_effect_set_opaque(el_effect_handle_t effect, el_bool_t opaque);
+    EL_API el_result_e el_effect_get_opaque(el_effect_handle_t effect, el_bool_t *outOpaque);
 
-    EL_API el_result_e el_effect_set_opaque_color(el_effect_handle_t fx,
+    EL_API el_result_e el_effect_set_opaque_color(el_effect_handle_t effect,
                                                   float r, float g, float b, float a);
-    EL_API el_result_e el_effect_get_opaque_color(el_effect_handle_t fx,
+    EL_API el_result_e el_effect_get_opaque_color(el_effect_handle_t effect,
                                                   float *outR, float *outG, float *outB, float *outA);
 
-    EL_API el_result_e el_effect_set_line_width(el_effect_handle_t fx, float width);
-    EL_API el_result_e el_effect_get_line_width(el_effect_handle_t fx, float *outWidth);
+    EL_API el_result_e el_effect_set_line_width(el_effect_handle_t effect, float width);
+    EL_API el_result_e el_effect_get_line_width(el_effect_handle_t effect, float *outWidth);
 
-    EL_API el_result_e el_effect_set_filament_falloff(el_effect_handle_t fx, float falloff);
-    EL_API el_result_e el_effect_get_filament_falloff(el_effect_handle_t fx, float *outFalloff);
+    EL_API el_result_e el_effect_set_filament_falloff(el_effect_handle_t effect, float falloff);
+    EL_API el_result_e el_effect_get_filament_falloff(el_effect_handle_t effect, float *outFalloff);
 
-    EL_API el_result_e el_effect_set_intensity(el_effect_handle_t fx, float val);
-    EL_API el_result_e el_effect_get_intensity(el_effect_handle_t fx, float *outVal);
+    EL_API el_result_e el_effect_set_intensity(el_effect_handle_t effect, float intensity);
+    EL_API el_result_e el_effect_get_intensity(el_effect_handle_t effect, float *outIntensity);
 
-    EL_API el_result_e el_effect_set_glow_radius(el_effect_handle_t fx, float radius);
-    EL_API el_result_e el_effect_get_glow_radius(el_effect_handle_t fx, float *outRadius);
+    EL_API el_result_e el_effect_set_glow_radius(el_effect_handle_t effect, float radius);
+    EL_API el_result_e el_effect_get_glow_radius(el_effect_handle_t effect, float *outRadius);
 
-    EL_API el_result_e el_effect_set_bloom_strength(el_effect_handle_t fx, float val);
-    EL_API el_result_e el_effect_get_bloom_strength(el_effect_handle_t fx, float *outVal);
+    EL_API el_result_e el_effect_set_bloom_strength(el_effect_handle_t effect, float strength);
+    EL_API el_result_e el_effect_get_bloom_strength(el_effect_handle_t effect, float *outStrength);
 
-    EL_API el_result_e el_effect_set_glow_side(el_effect_handle_t fx, el_glow_side_e side);
-    EL_API el_result_e el_effect_get_glow_side(el_effect_handle_t fx, el_glow_side_e *outSide);
+    EL_API el_result_e el_effect_set_glow_side(el_effect_handle_t effect, el_glow_side_e side);
+    EL_API el_result_e el_effect_get_glow_side(el_effect_handle_t effect, el_glow_side_e *outSide);
 
-    EL_API el_result_e el_effect_set_glow_side_softness(el_effect_handle_t fx, float val);
-    EL_API el_result_e el_effect_get_glow_side_softness(el_effect_handle_t fx, float *outVal);
+    EL_API el_result_e el_effect_set_glow_side_softness(el_effect_handle_t effect, float softness);
+    EL_API el_result_e el_effect_get_glow_side_softness(el_effect_handle_t effect, float *outSoftness);
 
-    EL_API el_result_e el_effect_set_blend_space(el_effect_handle_t fx, el_blend_space_e space);
-    EL_API el_result_e el_effect_get_blend_space(el_effect_handle_t fx, el_blend_space_e *outSpace);
+    EL_API el_result_e el_effect_set_blend_space(el_effect_handle_t effect, el_blend_space_e space);
+    EL_API el_result_e el_effect_get_blend_space(el_effect_handle_t effect, el_blend_space_e *outSpace);
 
-    EL_API el_result_e el_effect_set_hue_rotation_rate(el_effect_handle_t fx, float rate);
-    EL_API el_result_e el_effect_get_hue_rotation_rate(el_effect_handle_t fx, float *outRate);
+    EL_API el_result_e el_effect_set_hue_rotation_rate(el_effect_handle_t effect, float rate);
+    EL_API el_result_e el_effect_get_hue_rotation_rate(el_effect_handle_t effect, float *outRate);
 
-    EL_API el_result_e el_effect_set_color_transition_duration(el_effect_handle_t fx, float seconds);
-    EL_API el_result_e el_effect_get_color_transition_duration(el_effect_handle_t fx, float *outSeconds);
+    EL_API el_result_e el_effect_set_color_transition_duration(el_effect_handle_t effect, float seconds);
+    EL_API el_result_e el_effect_get_color_transition_duration(el_effect_handle_t effect, float *outSeconds);
 
-    EL_API el_result_e el_effect_set_color_stop_count(el_effect_handle_t fx, int32_t count);
-    EL_API el_result_e el_effect_get_color_stop_count(el_effect_handle_t fx, int32_t *outCount);
+    EL_API el_result_e el_effect_set_color_stop_count(el_effect_handle_t effect, int32_t count);
+    EL_API el_result_e el_effect_get_color_stop_count(el_effect_handle_t effect, int32_t *outCount);
 
-    EL_API el_result_e el_effect_set_color_stop(el_effect_handle_t fx, int32_t index,
+    EL_API el_result_e el_effect_set_color_stop(el_effect_handle_t effect, int32_t index,
                                                 float position, float r, float g, float b, float a);
-    EL_API el_result_e el_effect_get_color_stop(el_effect_handle_t fx, int32_t index,
+    EL_API el_result_e el_effect_get_color_stop(el_effect_handle_t effect, int32_t index,
                                                 float *outPosition, float *outR, float *outG, float *outB, float *outA);
-    EL_API el_result_e el_effect_clear_color_stops(el_effect_handle_t fx);
+    EL_API el_result_e el_effect_clear_color_stops(el_effect_handle_t effect);
 
-    EL_API el_result_e el_effect_set_segment_boost_count(el_effect_handle_t fx, int32_t count);
-    EL_API el_result_e el_effect_get_segment_boost_count(el_effect_handle_t fx, int32_t *outCount);
+    EL_API el_result_e el_effect_set_segment_boost_count(el_effect_handle_t effect, int32_t count);
+    EL_API el_result_e el_effect_get_segment_boost_count(el_effect_handle_t effect, int32_t *outCount);
 
-    EL_API el_result_e el_effect_set_segment_boost(el_effect_handle_t fx, int32_t index,
+    EL_API el_result_e el_effect_set_segment_boost(el_effect_handle_t effect, int32_t index,
                                                    float position, float length, float boost);
-    EL_API el_result_e el_effect_get_segment_boost(el_effect_handle_t fx, int32_t index,
+    EL_API el_result_e el_effect_get_segment_boost(el_effect_handle_t effect, int32_t index,
                                                    float *outPosition, float *outLength, float *outBoost);
-    EL_API el_result_e el_effect_clear_segment_boosts(el_effect_handle_t fx);
+    EL_API el_result_e el_effect_clear_segment_boosts(el_effect_handle_t effect);
 
-    EL_API el_result_e el_effect_set_segment_blend_space(el_effect_handle_t fx,
+    EL_API el_result_e el_effect_set_segment_blend_space(el_effect_handle_t effect,
                                                          int32_t segmentIndex, el_blend_space_e blendSpace);
-    EL_API el_result_e el_effect_get_segment_blend_space(el_effect_handle_t fx,
+    EL_API el_result_e el_effect_get_segment_blend_space(el_effect_handle_t effect,
                                                          int32_t segmentIndex, el_blend_space_e *outBlendSpace);
 
-    EL_API el_result_e el_effect_set_segment_color_stop_count(el_effect_handle_t fx,
+    EL_API el_result_e el_effect_set_segment_color_stop_count(el_effect_handle_t effect,
                                                               int32_t segmentIndex, int32_t count);
-    EL_API el_result_e el_effect_get_segment_color_stop_count(el_effect_handle_t fx,
+    EL_API el_result_e el_effect_get_segment_color_stop_count(el_effect_handle_t effect,
                                                               int32_t segmentIndex, int32_t *outCount);
 
-    EL_API el_result_e el_effect_set_segment_color_stop(el_effect_handle_t fx,
+    EL_API el_result_e el_effect_set_segment_color_stop(el_effect_handle_t effect,
                                                         int32_t segmentIndex, int32_t stopIndex,
                                                         float position, float r, float g, float b, float a);
-    EL_API el_result_e el_effect_get_segment_color_stop(el_effect_handle_t fx,
+    EL_API el_result_e el_effect_get_segment_color_stop(el_effect_handle_t effect,
                                                         int32_t segmentIndex, int32_t stopIndex,
                                                         float *outPosition, float *outR, float *outG, float *outB, float *outA);
-    EL_API el_result_e el_effect_clear_segment_color_stops(el_effect_handle_t fx, int32_t segmentIndex);
+    EL_API el_result_e el_effect_clear_segment_color_stops(el_effect_handle_t effect, int32_t segmentIndex);
 
-    EL_API el_result_e el_effect_set_arc_count(el_effect_handle_t fx, int32_t count);
-    EL_API el_result_e el_effect_get_arc_count(el_effect_handle_t fx, int32_t *outCount);
+    EL_API el_result_e el_effect_set_arc_count(el_effect_handle_t effect, int32_t count);
+    EL_API el_result_e el_effect_get_arc_count(el_effect_handle_t effect, int32_t *outCount);
 
-    EL_API el_result_e el_effect_set_arc(el_effect_handle_t fx, int32_t index,
+    EL_API el_result_e el_effect_set_arc(el_effect_handle_t effect, int32_t index,
                                          float start, float length, float intensity, el_blend_space_e blendSpace);
-    EL_API el_result_e el_effect_get_arc(el_effect_handle_t fx, int32_t index,
+    EL_API el_result_e el_effect_get_arc(el_effect_handle_t effect, int32_t index,
                                          float *outStart, float *outLength, float *outIntensity, el_blend_space_e *outBlendSpace);
-    EL_API el_result_e el_effect_clear_arcs(el_effect_handle_t fx);
+    EL_API el_result_e el_effect_clear_arcs(el_effect_handle_t effect);
 
-    EL_API el_result_e el_effect_set_arc_color_stop_count(el_effect_handle_t fx,
+    EL_API el_result_e el_effect_set_arc_color_stop_count(el_effect_handle_t effect,
                                                           int32_t arcIndex, int32_t count);
-    EL_API el_result_e el_effect_get_arc_color_stop_count(el_effect_handle_t fx,
+    EL_API el_result_e el_effect_get_arc_color_stop_count(el_effect_handle_t effect,
                                                           int32_t arcIndex, int32_t *outCount);
 
-    EL_API el_result_e el_effect_set_arc_color_stop(el_effect_handle_t fx,
+    EL_API el_result_e el_effect_set_arc_color_stop(el_effect_handle_t effect,
                                                     int32_t arcIndex, int32_t stopIndex,
                                                     float position, float r, float g, float b, float a);
-    EL_API el_result_e el_effect_get_arc_color_stop(el_effect_handle_t fx,
+    EL_API el_result_e el_effect_get_arc_color_stop(el_effect_handle_t effect,
                                                     int32_t arcIndex, int32_t stopIndex,
                                                     float *outPosition, float *outR, float *outG, float *outB, float *outA);
-    EL_API el_result_e el_effect_clear_arc_color_stops(el_effect_handle_t fx, int32_t arcIndex);
+    EL_API el_result_e el_effect_clear_arc_color_stops(el_effect_handle_t effect, int32_t arcIndex);
 
-    EL_API el_result_e el_effect_set_optimized_renderer_enabled(el_effect_handle_t fx, int enabled);
-    EL_API el_result_e el_effect_get_optimized_renderer_enabled(el_effect_handle_t fx, int *outEnabled);
+    EL_API el_result_e el_effect_set_optimized_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled);
+    EL_API el_result_e el_effect_get_optimized_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
 
-    EL_API el_result_e el_effect_set_optimized_resolution_scale(el_effect_handle_t fx, float scale);
-    EL_API el_result_e el_effect_get_optimized_resolution_scale(el_effect_handle_t fx, float *outScale);
+    EL_API el_result_e el_effect_set_optimized_resolution_scale(el_effect_handle_t effect, float scale);
+    EL_API el_result_e el_effect_get_optimized_resolution_scale(el_effect_handle_t effect, float *outScale);
 
-    EL_API el_result_e el_effect_set_optimized_num_samples(el_effect_handle_t fx, int32_t samples);
-    EL_API el_result_e el_effect_get_optimized_num_samples(el_effect_handle_t fx, int32_t *outSamples);
+    EL_API el_result_e el_effect_set_optimized_num_samples(el_effect_handle_t effect, int32_t samples);
+    EL_API el_result_e el_effect_get_optimized_num_samples(el_effect_handle_t effect, int32_t *outSamples);
 
-    EL_API el_result_e el_effect_set_optimized_gradient_lut_size(el_effect_handle_t fx, int32_t size);
-    EL_API el_result_e el_effect_get_optimized_gradient_lut_size(el_effect_handle_t fx, int32_t *outSize);
+    EL_API el_result_e el_effect_set_optimized_gradient_lut_size(el_effect_handle_t effect, int32_t size);
+    EL_API el_result_e el_effect_get_optimized_gradient_lut_size(el_effect_handle_t effect, int32_t *outSize);
 
-    EL_API el_result_e el_effect_set_optimized_show_half_res(el_effect_handle_t fx, int show);
-    EL_API el_result_e el_effect_get_optimized_show_half_res(el_effect_handle_t fx, int *outShow);
+    EL_API el_result_e el_effect_set_optimized_show_half_res(el_effect_handle_t effect, el_bool_t show);
+    EL_API el_result_e el_effect_get_optimized_show_half_res(el_effect_handle_t effect, el_bool_t *outShow);
 
-    EL_API el_result_e el_effect_set_wireframe_renderer_enabled(el_effect_handle_t fx, int enabled);
-    EL_API el_result_e el_effect_get_wireframe_renderer_enabled(el_effect_handle_t fx, int *outEnabled);
+    EL_API el_result_e el_effect_set_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled);
+    EL_API el_result_e el_effect_get_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
 
-    EL_API el_result_e el_effect_set_wireframe_color(el_effect_handle_t fx,
+    EL_API el_result_e el_effect_set_wireframe_color(el_effect_handle_t effect,
                                                      float r, float g, float b, float a);
-    EL_API el_result_e el_effect_get_wireframe_color(el_effect_handle_t fx,
+    EL_API el_result_e el_effect_get_wireframe_color(el_effect_handle_t effect,
                                                      float *outR, float *outG, float *outB, float *outA);
 
     /* --------------------------------------------------------------------------
@@ -308,27 +313,27 @@ extern "C"
      * ------------------------------------------------------------------------ */
 
     EL_API el_effect_handle_t el_effect_create(void);
-    EL_API el_result_e el_effect_destroy(el_effect_handle_t fx);
-    EL_API el_result_e el_effect_initialize(el_effect_handle_t fx);
+    EL_API el_result_e el_effect_destroy(el_effect_handle_t effect);
+    EL_API el_result_e el_effect_init(el_effect_handle_t effect);
 
-    /** @brief Pull the effect's base config back into the handle's staging config.
+    /** @brief Pull the effect's base config back into the effect's staging config.
      *  @details Snapshots the last-authored values (what SetConfig received) -
      *           does NOT include animation overlays. Use this to re-sync the
      *           staging config after external mutation (e.g. presets applied
      *           inside the effect). */
-    EL_API el_result_e el_effect_capture(el_effect_handle_t fx);
+    EL_API el_result_e el_effect_capture(el_effect_handle_t effect);
 
     /** @brief Apply staging config then tick clock, animations, and renderers. */
-    EL_API el_result_e el_effect_update(el_effect_handle_t fx, float deltaTime);
-    EL_API el_result_e el_effect_render(el_effect_handle_t fx,
+    EL_API el_result_e el_effect_update(el_effect_handle_t effect, float deltaTime);
+    EL_API el_result_e el_effect_render(el_effect_handle_t effect,
                                         int32_t viewportWidth, int32_t viewportHeight);
 
-    EL_API el_result_e el_effect_attach_animation(el_effect_handle_t fx, el_animation_handle_t anim);
-    EL_API el_result_e el_effect_detach_animation(el_effect_handle_t fx, el_animation_handle_t anim);
-    EL_API el_result_e el_effect_detach_all_animations(el_effect_handle_t fx);
-    EL_API el_result_e el_effect_get_animation_count(el_effect_handle_t fx, int32_t *outCount);
-    EL_API el_result_e el_effect_contains_animation(el_effect_handle_t fx,
-                                                    el_animation_handle_t anim, int *outContains);
+    EL_API el_result_e el_effect_attach_animation(el_effect_handle_t effect, el_animation_handle_t anim);
+    EL_API el_result_e el_effect_detach_animation(el_effect_handle_t effect, el_animation_handle_t anim);
+    EL_API el_result_e el_effect_detach_all_animations(el_effect_handle_t effect);
+    EL_API el_result_e el_effect_get_animation_count(el_effect_handle_t effect, int32_t *outCount);
+    EL_API el_result_e el_effect_contains_animation(el_effect_handle_t effect,
+                                                    el_animation_handle_t anim, el_bool_t *outContains);
 
     /* --------------------------------------------------------------------------
      * Animation lifecycle
@@ -338,20 +343,20 @@ extern "C"
     EL_API el_result_e el_animation_destroy(el_animation_handle_t anim);
 
     EL_API el_animation_handle_t el_animation_create_intensity_pulse(float duration,
-                                                                     float min, float max);
+                                                                     float minIntensity, float maxIntensity);
     EL_API el_animation_handle_t el_animation_create_intensity_strobe(float duration,
                                                                       float offIntensity, float onIntensity);
-    EL_API el_animation_handle_t el_animation_create_intensity_fade_in(float target,
+    EL_API el_animation_handle_t el_animation_create_intensity_fade_in(float targetIntensity,
                                                                        float duration, el_easing_e easing);
-    EL_API el_animation_handle_t el_animation_create_intensity_fade_out(float start,
+    EL_API el_animation_handle_t el_animation_create_intensity_fade_out(float startIntensity,
                                                                         float duration, el_easing_e easing);
     EL_API el_animation_handle_t el_animation_create_glow_radius_breath(float duration,
                                                                         float minRadius, float maxRadius);
     EL_API el_animation_handle_t el_animation_create_bloom_pulse(float duration,
-                                                                 float min, float max);
-    EL_API el_animation_handle_t el_animation_create_hue_rotation_reverse(float baseRate,
+                                                                 float minStrength, float maxStrength);
+    EL_API el_animation_handle_t el_animation_create_hue_rotation_reverse(float peakRate,
                                                                           float duration);
-    EL_API el_animation_handle_t el_animation_create_hue_rotation_ease_reverse(float maxRate,
+    EL_API el_animation_handle_t el_animation_create_hue_rotation_ease_reverse(float peakRate,
                                                                                float duration);
     EL_API el_animation_handle_t el_animation_create_segment_travel(float duration,
                                                                     float length, float boost);
@@ -360,15 +365,15 @@ extern "C"
     EL_API el_animation_handle_t el_animation_create_outline_tracer(float duration,
                                                                     el_easing_e easing);
     EL_API el_animation_handle_t el_animation_create_arc_wipe(float duration,
-                                                              float startPos, float endPos, float maxLength,
+                                                              float startPosition, float endPosition, float maxLength,
                                                               el_easing_e easing);
 
     EL_API el_result_e el_animation_play(el_animation_handle_t anim);
     EL_API el_result_e el_animation_pause(el_animation_handle_t anim);
     EL_API el_result_e el_animation_stop(el_animation_handle_t anim);
-    EL_API el_result_e el_animation_reset(el_animation_handle_t anim, el_effect_handle_t fx);
+    EL_API el_result_e el_animation_reset(el_animation_handle_t anim, el_effect_handle_t effect);
     EL_API el_result_e el_animation_update(el_animation_handle_t anim, float dt);
-    EL_API el_result_e el_animation_apply(el_animation_handle_t anim, el_effect_handle_t fx);
+    EL_API el_result_e el_animation_apply(el_animation_handle_t anim, el_effect_handle_t effect);
 
     EL_API el_result_e el_animation_get_state(el_animation_handle_t anim,
                                               el_animation_state_e *outState);
@@ -389,7 +394,7 @@ extern "C"
     EL_API el_result_e el_animation_set_end_action(el_animation_handle_t anim,
                                                    el_end_action_e action);
     EL_API el_result_e el_animation_capture_baseline(el_animation_handle_t anim,
-                                                     el_effect_handle_t fx);
+                                                     el_effect_handle_t effect);
 
     EL_API el_result_e el_animation_get_playback_mode(el_animation_handle_t anim,
                                                       el_playback_mode_e *outMode);
@@ -406,7 +411,9 @@ extern "C"
      * Animation callbacks (C function pointer + user data)
      * ------------------------------------------------------------------------ */
     typedef void (*el_animation_on_completed_callback)(void *userData);
-    typedef void (*el_animation_on_state_changed_callback)(int prevState, int currState, void *userData);
+    typedef void (*el_animation_on_state_changed_callback)(el_animation_state_e previous,
+                                                           el_animation_state_e current,
+                                                           void *userData);
 
     EL_API el_result_e el_animation_set_on_complete_callback(el_animation_handle_t anim,
                                                              el_animation_on_completed_callback callback, void *userData);
@@ -423,10 +430,10 @@ extern "C"
     EL_API el_result_e el_animation_add_arc_field(el_animation_handle_t anim,
                                                   int32_t index, el_arc_field_e field, el_modulator_handle_t mod);
     EL_API el_result_e el_animation_add_arc_stop_field(el_animation_handle_t anim,
-                                                       int32_t arcIdx, int32_t stopIdx, el_color_stop_field_e field,
+                                                       int32_t arcIndex, int32_t stopIndex, el_color_stop_field_e field,
                                                        el_modulator_handle_t mod);
     EL_API el_result_e el_animation_add_segment_stop_field(el_animation_handle_t anim,
-                                                           int32_t segIdx, int32_t stopIdx, el_color_stop_field_e field,
+                                                           int32_t segmentIndex, int32_t stopIndex, el_color_stop_field_e field,
                                                            el_modulator_handle_t mod);
 
     /* --------------------------------------------------------------------------
@@ -435,12 +442,12 @@ extern "C"
 
     EL_API el_modulator_handle_t el_modulator_create_constant(float value);
     EL_API el_modulator_handle_t el_modulator_create_oscillator(float frequency,
-                                                                float min, float max, float phase, el_waveform_e waveform);
+                                                                float minValue, float maxValue, float phase, el_waveform_e waveform);
     EL_API el_modulator_handle_t el_modulator_create_ease(float from, float to,
-                                                          float duration, el_easing_e easing, int loop);
-    EL_API el_modulator_handle_t el_modulator_create_sequence(int loop);
+                                                          float duration, el_easing_e easing, el_bool_t loop);
+    EL_API el_modulator_handle_t el_modulator_create_sequence(el_bool_t loop);
     EL_API el_result_e el_modulator_sequence_append(el_modulator_handle_t seq,
-                                                    el_modulator_handle_t segment, float duration);
+                                                    el_modulator_handle_t stage, float duration);
     EL_API el_modulator_handle_t el_modulator_create_multiplier(el_modulator_handle_t a,
                                                                 el_modulator_handle_t b);
     EL_API el_modulator_handle_t el_modulator_create_adder(el_modulator_handle_t a,
