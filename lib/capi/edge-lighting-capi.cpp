@@ -1787,6 +1787,26 @@ extern "C"
         return EL_OK;
     }
 
+    el_result_e el_animation_get_progress(el_animation_handle_t anim, float *outProgress)
+    {
+        LOG_I("anim=%p, outProgress=%p", (void *)anim, (void *)outProgress);
+        VALIDATE_ANM(anim, "el_animation_get_progress");
+        VALIDATE_OUT_PTR(outProgress, "el_animation_get_progress");
+        *outProgress = anim->ptr ? anim->ptr->GetProgress() : 0.0f;
+        return EL_OK;
+    }
+
+    el_result_e el_animation_set_progress(el_animation_handle_t anim, float progress)
+    {
+        LOG_I("anim=%p, progress=%f", (void *)anim, progress);
+        VALIDATE_ANM(anim, "el_animation_set_progress");
+        if (anim->ptr)
+        {
+            anim->ptr->SetProgress(progress);
+        }
+        return EL_OK;
+    }
+
     // --- End action ---
 
     el_result_e el_animation_get_end_action(el_animation_handle_t anim, el_end_action_e *outAction)

@@ -375,6 +375,15 @@ extern "C"
     EL_API el_result_e el_animation_get_elapsed(el_animation_handle_t anim, float *outElapsed);
     EL_API el_result_e el_animation_set_elapsed(el_animation_handle_t anim, float elapsed);
 
+    /** @brief Normalised playback position (elapsed / duration) in [0, 1].
+     *         Returns 0 when the animation's duration is 0 (its modulator
+     *         owns its own periodicity). */
+    EL_API el_result_e el_animation_get_progress(el_animation_handle_t anim, float *outProgress);
+    /** @brief Set the normalised playback position; @p progress is clamped to
+     *         [0, 1] before scaling. No-op when the animation's duration is 0.
+     *         Same "does not change state" caveat as @ref el_animation_set_elapsed. */
+    EL_API el_result_e el_animation_set_progress(el_animation_handle_t anim, float progress);
+
     EL_API el_result_e el_animation_get_end_action(el_animation_handle_t anim,
                                                    el_end_action_e *outAction);
     EL_API el_result_e el_animation_set_end_action(el_animation_handle_t anim,
