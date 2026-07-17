@@ -251,7 +251,7 @@ extern "C"
 
     // --- Geometry ---
 
-    el_result_e el_effect_set_geometry(el_effect_handle_t *fx,
+    el_result_e el_effect_set_geometry(el_effect_handle_t fx,
                                        float width, float height, float posX, float posY, float cornerRadius)
     {
         LOG_I("fx=%p, width=%f, height=%f, posX=%f, posY=%f, cornerRadius=%f", (void *)fx, width, height, posX, posY, cornerRadius);
@@ -263,7 +263,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_geometry(const el_effect_handle_t *fx,
+    el_result_e el_effect_get_geometry(el_effect_handle_t fx,
                                        float *outWidth, float *outHeight, float *outPosX, float *outPosY,
                                        float *outCornerRadius)
     {
@@ -282,7 +282,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_winding(el_effect_handle_t *fx, el_winding_e winding)
+    el_result_e el_effect_set_winding(el_effect_handle_t fx, el_winding_e winding)
     {
         LOG_I("fx=%p, winding=%d", (void *)fx, (int)winding);
         VALIDATE_FX(fx, "el_effect_set_winding");
@@ -290,7 +290,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_winding(const el_effect_handle_t *fx, el_winding_e *outWinding)
+    el_result_e el_effect_get_winding(el_effect_handle_t fx, el_winding_e *outWinding)
     {
         LOG_I("fx=%p, outWinding=%p", (void *)fx, (void *)outWinding);
         VALIDATE_FX(fx, "el_effect_get_winding");
@@ -301,7 +301,7 @@ extern "C"
 
     // --- Neon scalars ---
 
-    el_result_e el_effect_set_neon_renderer_enabled(el_effect_handle_t *fx, int enabled)
+    el_result_e el_effect_set_neon_renderer_enabled(el_effect_handle_t fx, int enabled)
     {
         LOG_I("fx=%p, enabled=%d", (void *)fx, enabled);
         VALIDATE_FX(fx, "el_effect_set_neon_renderer_enabled");
@@ -309,7 +309,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_neon_renderer_enabled(const el_effect_handle_t *fx, int *outEnabled)
+    el_result_e el_effect_get_neon_renderer_enabled(el_effect_handle_t fx, int *outEnabled)
     {
         LOG_I("fx=%p, outEnabled=%p", (void *)fx, (void *)outEnabled);
         VALIDATE_FX(fx, "el_effect_get_neon_renderer_enabled");
@@ -318,7 +318,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_show_gradient_lut(el_effect_handle_t *fx, int show)
+    el_result_e el_effect_set_show_gradient_lut(el_effect_handle_t fx, int show)
     {
         LOG_I("fx=%p, show=%d", (void *)fx, show);
         VALIDATE_FX(fx, "el_effect_set_show_gradient_lut");
@@ -326,7 +326,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_show_gradient_lut(const el_effect_handle_t *fx, int *outShow)
+    el_result_e el_effect_get_show_gradient_lut(el_effect_handle_t fx, int *outShow)
     {
         LOG_I("fx=%p, outShow=%p", (void *)fx, (void *)outShow);
         VALIDATE_FX(fx, "el_effect_get_show_gradient_lut");
@@ -335,7 +335,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_show_color_stops(el_effect_handle_t *fx, int show)
+    el_result_e el_effect_set_show_color_stops(el_effect_handle_t fx, int show)
     {
         LOG_I("fx=%p, show=%d", (void *)fx, show);
         VALIDATE_FX(fx, "el_effect_set_show_color_stops");
@@ -343,7 +343,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_show_color_stops(const el_effect_handle_t *fx, int *outShow)
+    el_result_e el_effect_get_show_color_stops(el_effect_handle_t fx, int *outShow)
     {
         LOG_I("fx=%p, outShow=%p", (void *)fx, (void *)outShow);
         VALIDATE_FX(fx, "el_effect_get_show_color_stops");
@@ -352,7 +352,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_opaque(el_effect_handle_t *fx, int opaque)
+    el_result_e el_effect_set_opaque(el_effect_handle_t fx, int opaque)
     {
         LOG_I("fx=%p, opaque=%d", (void *)fx, opaque);
         VALIDATE_FX(fx, "el_effect_set_opaque");
@@ -360,7 +360,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_opaque(const el_effect_handle_t *fx, int *outOpaque)
+    el_result_e el_effect_get_opaque(el_effect_handle_t fx, int *outOpaque)
     {
         LOG_I("fx=%p, outOpaque=%p", (void *)fx, (void *)outOpaque);
         VALIDATE_FX(fx, "el_effect_get_opaque");
@@ -369,7 +369,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_opaque_color(el_effect_handle_t *fx,
+    el_result_e el_effect_set_opaque_color(el_effect_handle_t fx,
                                            float r, float g, float b, float a)
     {
         LOG_I("fx=%p, r=%f, g=%f, b=%f, a=%f", (void *)fx, r, g, b, a);
@@ -378,7 +378,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_opaque_color(const el_effect_handle_t *fx,
+    el_result_e el_effect_get_opaque_color(el_effect_handle_t fx,
                                            float *outR, float *outG, float *outB, float *outA)
     {
         LOG_I("fx=%p, outR=%p, outG=%p, outB=%p, outA=%p", (void *)fx, (void *)outR, (void *)outG, (void *)outB, (void *)outA);
@@ -394,7 +394,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_line_width(el_effect_handle_t *fx, float width)
+    el_result_e el_effect_set_line_width(el_effect_handle_t fx, float width)
     {
         LOG_I("fx=%p, width=%f", (void *)fx, width);
         VALIDATE_FX(fx, "el_effect_set_line_width");
@@ -402,7 +402,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_line_width(const el_effect_handle_t *fx, float *outWidth)
+    el_result_e el_effect_get_line_width(el_effect_handle_t fx, float *outWidth)
     {
         LOG_I("fx=%p, outWidth=%p", (void *)fx, (void *)outWidth);
         VALIDATE_FX(fx, "el_effect_get_line_width");
@@ -411,7 +411,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_filament_falloff(el_effect_handle_t *fx, float falloff)
+    el_result_e el_effect_set_filament_falloff(el_effect_handle_t fx, float falloff)
     {
         LOG_I("fx=%p, falloff=%f", (void *)fx, falloff);
         VALIDATE_FX(fx, "el_effect_set_filament_falloff");
@@ -419,7 +419,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_filament_falloff(const el_effect_handle_t *fx, float *outFalloff)
+    el_result_e el_effect_get_filament_falloff(el_effect_handle_t fx, float *outFalloff)
     {
         LOG_I("fx=%p, outFalloff=%p", (void *)fx, (void *)outFalloff);
         VALIDATE_FX(fx, "el_effect_get_filament_falloff");
@@ -428,7 +428,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_intensity(el_effect_handle_t *fx, float val)
+    el_result_e el_effect_set_intensity(el_effect_handle_t fx, float val)
     {
         LOG_I("fx=%p, val=%f", (void *)fx, val);
         VALIDATE_FX(fx, "el_effect_set_intensity");
@@ -436,7 +436,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_intensity(const el_effect_handle_t *fx, float *outVal)
+    el_result_e el_effect_get_intensity(el_effect_handle_t fx, float *outVal)
     {
         LOG_I("fx=%p, outVal=%p", (void *)fx, (void *)outVal);
         VALIDATE_FX(fx, "el_effect_get_intensity");
@@ -445,7 +445,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_glow_radius(el_effect_handle_t *fx, float radius)
+    el_result_e el_effect_set_glow_radius(el_effect_handle_t fx, float radius)
     {
         LOG_I("fx=%p, radius=%f", (void *)fx, radius);
         VALIDATE_FX(fx, "el_effect_set_glow_radius");
@@ -453,7 +453,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_glow_radius(const el_effect_handle_t *fx, float *outRadius)
+    el_result_e el_effect_get_glow_radius(el_effect_handle_t fx, float *outRadius)
     {
         LOG_I("fx=%p, outRadius=%p", (void *)fx, (void *)outRadius);
         VALIDATE_FX(fx, "el_effect_get_glow_radius");
@@ -462,7 +462,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_bloom_strength(el_effect_handle_t *fx, float val)
+    el_result_e el_effect_set_bloom_strength(el_effect_handle_t fx, float val)
     {
         LOG_I("fx=%p, val=%f", (void *)fx, val);
         VALIDATE_FX(fx, "el_effect_set_bloom_strength");
@@ -470,7 +470,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_bloom_strength(const el_effect_handle_t *fx, float *outVal)
+    el_result_e el_effect_get_bloom_strength(el_effect_handle_t fx, float *outVal)
     {
         LOG_I("fx=%p, outVal=%p", (void *)fx, (void *)outVal);
         VALIDATE_FX(fx, "el_effect_get_bloom_strength");
@@ -479,7 +479,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_glow_side(el_effect_handle_t *fx, el_glow_side_e side)
+    el_result_e el_effect_set_glow_side(el_effect_handle_t fx, el_glow_side_e side)
     {
         LOG_I("fx=%p, side=%d", (void *)fx, (int)side);
         VALIDATE_FX(fx, "el_effect_set_glow_side");
@@ -487,7 +487,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_glow_side(const el_effect_handle_t *fx, el_glow_side_e *outSide)
+    el_result_e el_effect_get_glow_side(el_effect_handle_t fx, el_glow_side_e *outSide)
     {
         LOG_I("fx=%p, outSide=%p", (void *)fx, (void *)outSide);
         VALIDATE_FX(fx, "el_effect_get_glow_side");
@@ -496,7 +496,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_glow_side_softness(el_effect_handle_t *fx, float val)
+    el_result_e el_effect_set_glow_side_softness(el_effect_handle_t fx, float val)
     {
         LOG_I("fx=%p, val=%f", (void *)fx, val);
         VALIDATE_FX(fx, "el_effect_set_glow_side_softness");
@@ -504,7 +504,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_glow_side_softness(const el_effect_handle_t *fx, float *outVal)
+    el_result_e el_effect_get_glow_side_softness(el_effect_handle_t fx, float *outVal)
     {
         LOG_I("fx=%p, outVal=%p", (void *)fx, (void *)outVal);
         VALIDATE_FX(fx, "el_effect_get_glow_side_softness");
@@ -513,7 +513,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_blend_space(el_effect_handle_t *fx, el_blend_space_e space)
+    el_result_e el_effect_set_blend_space(el_effect_handle_t fx, el_blend_space_e space)
     {
         LOG_I("fx=%p, space=%d", (void *)fx, (int)space);
         VALIDATE_FX(fx, "el_effect_set_blend_space");
@@ -521,7 +521,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_blend_space(const el_effect_handle_t *fx, el_blend_space_e *outSpace)
+    el_result_e el_effect_get_blend_space(el_effect_handle_t fx, el_blend_space_e *outSpace)
     {
         LOG_I("fx=%p, outSpace=%p", (void *)fx, (void *)outSpace);
         VALIDATE_FX(fx, "el_effect_get_blend_space");
@@ -530,7 +530,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_hue_rotation_rate(el_effect_handle_t *fx, float rate)
+    el_result_e el_effect_set_hue_rotation_rate(el_effect_handle_t fx, float rate)
     {
         LOG_I("fx=%p, rate=%f", (void *)fx, rate);
         VALIDATE_FX(fx, "el_effect_set_hue_rotation_rate");
@@ -538,7 +538,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_hue_rotation_rate(const el_effect_handle_t *fx, float *outRate)
+    el_result_e el_effect_get_hue_rotation_rate(el_effect_handle_t fx, float *outRate)
     {
         LOG_I("fx=%p, outRate=%p", (void *)fx, (void *)outRate);
         VALIDATE_FX(fx, "el_effect_get_hue_rotation_rate");
@@ -547,7 +547,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_color_transition_duration(el_effect_handle_t *fx, float seconds)
+    el_result_e el_effect_set_color_transition_duration(el_effect_handle_t fx, float seconds)
     {
         LOG_I("fx=%p, seconds=%f", (void *)fx, seconds);
         VALIDATE_FX(fx, "el_effect_set_color_transition_duration");
@@ -555,7 +555,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_color_transition_duration(const el_effect_handle_t *fx, float *outSeconds)
+    el_result_e el_effect_get_color_transition_duration(el_effect_handle_t fx, float *outSeconds)
     {
         LOG_I("fx=%p, outSeconds=%p", (void *)fx, (void *)outSeconds);
         VALIDATE_FX(fx, "el_effect_get_color_transition_duration");
@@ -566,7 +566,7 @@ extern "C"
 
     // --- Neon colour stops ---
 
-    el_result_e el_effect_set_color_stop_count(el_effect_handle_t *fx, int32_t count)
+    el_result_e el_effect_set_color_stop_count(el_effect_handle_t fx, int32_t count)
     {
         LOG_I("fx=%p, count=%d", (void *)fx, count);
         VALIDATE_FX(fx, "el_effect_set_color_stop_count");
@@ -579,7 +579,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_color_stop_count(const el_effect_handle_t *fx, int32_t *outCount)
+    el_result_e el_effect_get_color_stop_count(el_effect_handle_t fx, int32_t *outCount)
     {
         LOG_I("fx=%p, outCount=%p", (void *)fx, (void *)outCount);
         VALIDATE_FX(fx, "el_effect_get_color_stop_count");
@@ -588,7 +588,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_color_stop(el_effect_handle_t *fx, int32_t index,
+    el_result_e el_effect_set_color_stop(el_effect_handle_t fx, int32_t index,
                                          float position, float r, float g, float b, float a)
     {
         LOG_I("fx=%p, index=%d, position=%f, r=%f, g=%f, b=%f, a=%f", (void *)fx, index, position, r, g, b, a);
@@ -608,7 +608,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_color_stop(const el_effect_handle_t *fx, int32_t index,
+    el_result_e el_effect_get_color_stop(el_effect_handle_t fx, int32_t index,
                                          float *outPosition, float *outR, float *outG, float *outB, float *outA)
     {
         LOG_I("fx=%p, index=%d, outPosition=%p, outR=%p, outG=%p, outB=%p, outA=%p", (void *)fx, index, (void *)outPosition, (void *)outR, (void *)outG, (void *)outB, (void *)outA);
@@ -632,7 +632,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_clear_color_stops(el_effect_handle_t *fx)
+    el_result_e el_effect_clear_color_stops(el_effect_handle_t fx)
     {
         LOG_I("fx=%p", (void *)fx);
         VALIDATE_FX(fx, "el_effect_clear_color_stops");
@@ -642,7 +642,7 @@ extern "C"
 
     // --- Neon segment boosts ---
 
-    el_result_e el_effect_set_segment_boost_count(el_effect_handle_t *fx, int32_t count)
+    el_result_e el_effect_set_segment_boost_count(el_effect_handle_t fx, int32_t count)
     {
         LOG_I("fx=%p, count=%d", (void *)fx, count);
         VALIDATE_FX(fx, "el_effect_set_segment_boost_count");
@@ -655,7 +655,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_segment_boost_count(const el_effect_handle_t *fx, int32_t *outCount)
+    el_result_e el_effect_get_segment_boost_count(el_effect_handle_t fx, int32_t *outCount)
     {
         LOG_I("fx=%p, outCount=%p", (void *)fx, (void *)outCount);
         VALIDATE_FX(fx, "el_effect_get_segment_boost_count");
@@ -664,7 +664,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_segment_boost(el_effect_handle_t *fx, int32_t index,
+    el_result_e el_effect_set_segment_boost(el_effect_handle_t fx, int32_t index,
                                             float position, float length, float boost)
     {
         LOG_I("fx=%p, index=%d, position=%f, length=%f, boost=%f", (void *)fx, index, position, length, boost);
@@ -684,7 +684,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_segment_boost(const el_effect_handle_t *fx, int32_t index,
+    el_result_e el_effect_get_segment_boost(el_effect_handle_t fx, int32_t index,
                                             float *outPosition, float *outLength, float *outBoost)
     {
         LOG_I("fx=%p, index=%d, outPosition=%p, outLength=%p, outBoost=%p", (void *)fx, index, (void *)outPosition, (void *)outLength, (void *)outBoost);
@@ -704,7 +704,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_clear_segment_boosts(el_effect_handle_t *fx)
+    el_result_e el_effect_clear_segment_boosts(el_effect_handle_t fx)
     {
         LOG_I("fx=%p", (void *)fx);
         VALIDATE_FX(fx, "el_effect_clear_segment_boosts");
@@ -717,7 +717,7 @@ extern "C"
     // across the segment's visible span) and a per-segment blendSpace.
     // Segments with no stops fall back to the base NeonConfig gradient.
 
-    el_result_e el_effect_set_segment_blend_space(el_effect_handle_t *fx,
+    el_result_e el_effect_set_segment_blend_space(el_effect_handle_t fx,
                                                   int32_t segmentIndex, el_blend_space_e blendSpace)
     {
         LOG_I("fx=%p, segmentIndex=%d, blendSpace=%d", (void *)fx, segmentIndex, (int)blendSpace);
@@ -737,7 +737,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_segment_blend_space(const el_effect_handle_t *fx,
+    el_result_e el_effect_get_segment_blend_space(el_effect_handle_t fx,
                                                   int32_t segmentIndex, el_blend_space_e *outBlendSpace)
     {
         LOG_I("fx=%p, segmentIndex=%d, outBlendSpace=%p", (void *)fx, segmentIndex, (void *)outBlendSpace);
@@ -753,7 +753,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_segment_color_stop_count(el_effect_handle_t *fx,
+    el_result_e el_effect_set_segment_color_stop_count(el_effect_handle_t fx,
                                                        int32_t segmentIndex, int32_t count)
     {
         LOG_I("fx=%p, segmentIndex=%d, count=%d", (void *)fx, segmentIndex, count);
@@ -778,7 +778,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_segment_color_stop_count(const el_effect_handle_t *fx,
+    el_result_e el_effect_get_segment_color_stop_count(el_effect_handle_t fx,
                                                        int32_t segmentIndex, int32_t *outCount)
     {
         LOG_I("fx=%p, segmentIndex=%d, outCount=%p", (void *)fx, segmentIndex, (void *)outCount);
@@ -794,7 +794,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_segment_color_stop(el_effect_handle_t *fx,
+    el_result_e el_effect_set_segment_color_stop(el_effect_handle_t fx,
                                                  int32_t segmentIndex, int32_t stopIndex,
                                                  float position, float r, float g, float b, float a)
     {
@@ -822,7 +822,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_segment_color_stop(const el_effect_handle_t *fx,
+    el_result_e el_effect_get_segment_color_stop(el_effect_handle_t fx,
                                                  int32_t segmentIndex, int32_t stopIndex,
                                                  float *outPosition, float *outR, float *outG, float *outB, float *outA)
     {
@@ -854,7 +854,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_clear_segment_color_stops(el_effect_handle_t *fx, int32_t segmentIndex)
+    el_result_e el_effect_clear_segment_color_stops(el_effect_handle_t fx, int32_t segmentIndex)
     {
         LOG_I("fx=%p, segmentIndex=%d", (void *)fx, segmentIndex);
         VALIDATE_FX(fx, "el_effect_clear_segment_color_stops");
@@ -869,7 +869,7 @@ extern "C"
 
     // --- Neon arcs ---
 
-    el_result_e el_effect_set_arc_count(el_effect_handle_t *fx, int32_t count)
+    el_result_e el_effect_set_arc_count(el_effect_handle_t fx, int32_t count)
     {
         LOG_I("fx=%p, count=%d", (void *)fx, count);
         VALIDATE_FX(fx, "el_effect_set_arc_count");
@@ -882,7 +882,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_arc_count(const el_effect_handle_t *fx, int32_t *outCount)
+    el_result_e el_effect_get_arc_count(el_effect_handle_t fx, int32_t *outCount)
     {
         LOG_I("fx=%p, outCount=%p", (void *)fx, (void *)outCount);
         VALIDATE_FX(fx, "el_effect_get_arc_count");
@@ -891,7 +891,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_arc(el_effect_handle_t *fx, int32_t index,
+    el_result_e el_effect_set_arc(el_effect_handle_t fx, int32_t index,
                                   float start, float length, float intensity, el_blend_space_e blendSpace)
     {
         LOG_I("fx=%p, index=%d, start=%f, length=%f, intensity=%f, blendSpace=%d", (void *)fx, index, start, length, intensity, (int)blendSpace);
@@ -914,7 +914,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_arc(const el_effect_handle_t *fx, int32_t index,
+    el_result_e el_effect_get_arc(el_effect_handle_t fx, int32_t index,
                                   float *outStart, float *outLength, float *outIntensity,
                                   el_blend_space_e *outBlendSpace)
     {
@@ -937,7 +937,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_clear_arcs(el_effect_handle_t *fx)
+    el_result_e el_effect_clear_arcs(el_effect_handle_t fx)
     {
         LOG_I("fx=%p", (void *)fx);
         VALIDATE_FX(fx, "el_effect_clear_arcs");
@@ -947,7 +947,7 @@ extern "C"
 
     // --- Neon arc colour stops ---
 
-    el_result_e el_effect_set_arc_color_stop_count(el_effect_handle_t *fx,
+    el_result_e el_effect_set_arc_color_stop_count(el_effect_handle_t fx,
                                                    int32_t arcIndex, int32_t count)
     {
         LOG_I("fx=%p, arcIndex=%d, count=%d", (void *)fx, arcIndex, count);
@@ -972,7 +972,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_arc_color_stop_count(const el_effect_handle_t *fx,
+    el_result_e el_effect_get_arc_color_stop_count(el_effect_handle_t fx,
                                                    int32_t arcIndex, int32_t *outCount)
     {
         LOG_I("fx=%p, arcIndex=%d, outCount=%p", (void *)fx, arcIndex, (void *)outCount);
@@ -988,7 +988,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_arc_color_stop(el_effect_handle_t *fx,
+    el_result_e el_effect_set_arc_color_stop(el_effect_handle_t fx,
                                              int32_t arcIndex, int32_t stopIndex,
                                              float position, float r, float g, float b, float a)
     {
@@ -1015,7 +1015,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_arc_color_stop(const el_effect_handle_t *fx,
+    el_result_e el_effect_get_arc_color_stop(el_effect_handle_t fx,
                                              int32_t arcIndex, int32_t stopIndex,
                                              float *outPosition, float *outR, float *outG, float *outB, float *outA)
     {
@@ -1046,7 +1046,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_clear_arc_color_stops(el_effect_handle_t *fx, int32_t arcIndex)
+    el_result_e el_effect_clear_arc_color_stops(el_effect_handle_t fx, int32_t arcIndex)
     {
         LOG_I("fx=%p, arcIndex=%d", (void *)fx, arcIndex);
         VALIDATE_FX(fx, "el_effect_clear_arc_color_stops");
@@ -1061,7 +1061,7 @@ extern "C"
 
     // --- Optimized neon ---
 
-    el_result_e el_effect_set_optimized_renderer_enabled(el_effect_handle_t *fx, int enabled)
+    el_result_e el_effect_set_optimized_renderer_enabled(el_effect_handle_t fx, int enabled)
     {
         LOG_I("fx=%p, enabled=%d", (void *)fx, enabled);
         VALIDATE_FX(fx, "el_effect_set_optimized_renderer_enabled");
@@ -1069,7 +1069,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_optimized_renderer_enabled(const el_effect_handle_t *fx, int *outEnabled)
+    el_result_e el_effect_get_optimized_renderer_enabled(el_effect_handle_t fx, int *outEnabled)
     {
         LOG_I("fx=%p, outEnabled=%p", (void *)fx, (void *)outEnabled);
         VALIDATE_FX(fx, "el_effect_get_optimized_renderer_enabled");
@@ -1078,7 +1078,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_optimized_resolution_scale(el_effect_handle_t *fx, float scale)
+    el_result_e el_effect_set_optimized_resolution_scale(el_effect_handle_t fx, float scale)
     {
         LOG_I("fx=%p, scale=%f", (void *)fx, scale);
         VALIDATE_FX(fx, "el_effect_set_optimized_resolution_scale");
@@ -1086,7 +1086,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_optimized_resolution_scale(const el_effect_handle_t *fx, float *outScale)
+    el_result_e el_effect_get_optimized_resolution_scale(el_effect_handle_t fx, float *outScale)
     {
         LOG_I("fx=%p, outScale=%p", (void *)fx, (void *)outScale);
         VALIDATE_FX(fx, "el_effect_get_optimized_resolution_scale");
@@ -1095,7 +1095,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_optimized_num_samples(el_effect_handle_t *fx, int32_t samples)
+    el_result_e el_effect_set_optimized_num_samples(el_effect_handle_t fx, int32_t samples)
     {
         LOG_I("fx=%p, samples=%d", (void *)fx, samples);
         VALIDATE_FX(fx, "el_effect_set_optimized_num_samples");
@@ -1103,7 +1103,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_optimized_num_samples(const el_effect_handle_t *fx, int32_t *outSamples)
+    el_result_e el_effect_get_optimized_num_samples(el_effect_handle_t fx, int32_t *outSamples)
     {
         LOG_I("fx=%p, outSamples=%p", (void *)fx, (void *)outSamples);
         VALIDATE_FX(fx, "el_effect_get_optimized_num_samples");
@@ -1112,7 +1112,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_optimized_gradient_lut_size(el_effect_handle_t *fx, int32_t size)
+    el_result_e el_effect_set_optimized_gradient_lut_size(el_effect_handle_t fx, int32_t size)
     {
         LOG_I("fx=%p, size=%d", (void *)fx, size);
         VALIDATE_FX(fx, "el_effect_set_optimized_gradient_lut_size");
@@ -1120,7 +1120,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_optimized_gradient_lut_size(const el_effect_handle_t *fx, int32_t *outSize)
+    el_result_e el_effect_get_optimized_gradient_lut_size(el_effect_handle_t fx, int32_t *outSize)
     {
         LOG_I("fx=%p, outSize=%p", (void *)fx, (void *)outSize);
         VALIDATE_FX(fx, "el_effect_get_optimized_gradient_lut_size");
@@ -1129,7 +1129,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_optimized_show_half_res(el_effect_handle_t *fx, int show)
+    el_result_e el_effect_set_optimized_show_half_res(el_effect_handle_t fx, int show)
     {
         LOG_I("fx=%p, show=%d", (void *)fx, show);
         VALIDATE_FX(fx, "el_effect_set_optimized_show_half_res");
@@ -1137,7 +1137,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_optimized_show_half_res(const el_effect_handle_t *fx, int *outShow)
+    el_result_e el_effect_get_optimized_show_half_res(el_effect_handle_t fx, int *outShow)
     {
         LOG_I("fx=%p, outShow=%p", (void *)fx, (void *)outShow);
         VALIDATE_FX(fx, "el_effect_get_optimized_show_half_res");
@@ -1148,7 +1148,7 @@ extern "C"
 
     // --- Wireframe ---
 
-    el_result_e el_effect_set_wireframe_renderer_enabled(el_effect_handle_t *fx, int enabled)
+    el_result_e el_effect_set_wireframe_renderer_enabled(el_effect_handle_t fx, int enabled)
     {
         LOG_I("fx=%p, enabled=%d", (void *)fx, enabled);
         VALIDATE_FX(fx, "el_effect_set_wireframe_renderer_enabled");
@@ -1156,7 +1156,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_wireframe_renderer_enabled(const el_effect_handle_t *fx, int *outEnabled)
+    el_result_e el_effect_get_wireframe_renderer_enabled(el_effect_handle_t fx, int *outEnabled)
     {
         LOG_I("fx=%p, outEnabled=%p", (void *)fx, (void *)outEnabled);
         VALIDATE_FX(fx, "el_effect_get_wireframe_renderer_enabled");
@@ -1165,7 +1165,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_wireframe_color(el_effect_handle_t *fx,
+    el_result_e el_effect_set_wireframe_color(el_effect_handle_t fx,
                                               float r, float g, float b, float a)
     {
         LOG_I("fx=%p, r=%f, g=%f, b=%f, a=%f", (void *)fx, r, g, b, a);
@@ -1174,7 +1174,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_wireframe_color(const el_effect_handle_t *fx,
+    el_result_e el_effect_get_wireframe_color(el_effect_handle_t fx,
                                               float *outR, float *outG, float *outB, float *outA)
     {
         LOG_I("fx=%p, outR=%p, outG=%p, outB=%p, outA=%p", (void *)fx, (void *)outR, (void *)outG, (void *)outB, (void *)outA);
@@ -1194,7 +1194,7 @@ extern "C"
     // Effect lifecycle
     // ==========================================================================
 
-    el_effect_handle_t *el_effect_create(void)
+    el_effect_handle_t el_effect_create(void)
     {
         LOG_I("called");
         try
@@ -1212,7 +1212,7 @@ extern "C"
         }
     }
 
-    el_result_e el_effect_destroy(el_effect_handle_t *fx)
+    el_result_e el_effect_destroy(el_effect_handle_t fx)
     {
         LOG_I("fx=%p", (void *)fx);
         if (!fx)
@@ -1223,7 +1223,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_initialize(el_effect_handle_t *fx)
+    el_result_e el_effect_initialize(el_effect_handle_t fx)
     {
         LOG_I("fx=%p", (void *)fx);
         VALIDATE_FX(fx, "el_effect_initialize");
@@ -1243,7 +1243,7 @@ extern "C"
         }
     }
 
-    el_result_e el_effect_capture(el_effect_handle_t *fx)
+    el_result_e el_effect_capture(el_effect_handle_t fx)
     {
         LOG_I("fx=%p", (void *)fx);
         VALIDATE_FX(fx, "el_effect_capture");
@@ -1259,7 +1259,7 @@ extern "C"
         }
     }
 
-    el_result_e el_effect_update(el_effect_handle_t *fx, float deltaTime)
+    el_result_e el_effect_update(el_effect_handle_t fx, float deltaTime)
     {
         LOG_I("fx=%p, deltaTime=%f", (void *)fx, deltaTime);
         VALIDATE_FX(fx, "el_effect_update");
@@ -1276,7 +1276,7 @@ extern "C"
         }
     }
 
-    el_result_e el_effect_render(el_effect_handle_t *fx,
+    el_result_e el_effect_render(el_effect_handle_t fx,
                                  int32_t viewportWidth, int32_t viewportHeight)
     {
         LOG_I("fx=%p, viewportWidth=%d, viewportHeight=%d", (void *)fx, viewportWidth, viewportHeight);
@@ -1295,7 +1295,7 @@ extern "C"
 
     // --- Animation attachment ---
 
-    el_result_e el_effect_attach_animation(el_effect_handle_t *fx, el_animation_handle_t *anim)
+    el_result_e el_effect_attach_animation(el_effect_handle_t fx, el_animation_handle_t anim)
     {
         LOG_I("fx=%p, anim=%p", (void *)fx, (void *)anim);
         VALIDATE_FX(fx, "el_effect_attach_animation");
@@ -1307,7 +1307,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_detach_animation(el_effect_handle_t *fx, el_animation_handle_t *anim)
+    el_result_e el_effect_detach_animation(el_effect_handle_t fx, el_animation_handle_t anim)
     {
         LOG_I("fx=%p, anim=%p", (void *)fx, (void *)anim);
         VALIDATE_FX(fx, "el_effect_detach_animation");
@@ -1319,7 +1319,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_detach_all_animations(el_effect_handle_t *fx)
+    el_result_e el_effect_detach_all_animations(el_effect_handle_t fx)
     {
         LOG_I("fx=%p", (void *)fx);
         VALIDATE_FX(fx, "el_effect_detach_all_animations");
@@ -1327,7 +1327,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_get_animation_count(el_effect_handle_t *fx, int32_t *outCount)
+    el_result_e el_effect_get_animation_count(el_effect_handle_t fx, int32_t *outCount)
     {
         LOG_I("fx=%p, outCount=%p", (void *)fx, (void *)outCount);
         VALIDATE_FX(fx, "el_effect_get_animation_count");
@@ -1336,8 +1336,8 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_contains_animation(el_effect_handle_t *fx,
-                                             el_animation_handle_t *anim, int *outContains)
+    el_result_e el_effect_contains_animation(el_effect_handle_t fx,
+                                             el_animation_handle_t anim, int *outContains)
     {
         LOG_I("fx=%p, anim=%p, outContains=%p", (void *)fx, (void *)anim, (void *)outContains);
         VALIDATE_FX(fx, "el_effect_contains_animation");
@@ -1351,7 +1351,7 @@ extern "C"
     // Animation lifecycle
     // ==========================================================================
 
-    el_animation_handle_t *el_animation_create(el_animation_preset_e preset)
+    el_animation_handle_t el_animation_create(el_animation_preset_e preset)
     {
         LOG_I("preset=%d", (int)preset);
         using namespace EdgeLighting;
@@ -1455,7 +1455,7 @@ extern "C"
         }
         try
         {
-            return new el_animation_handle_t{std::move(a)};
+            return new el_animation_handle_impl{std::move(a)};
         }
         catch (const std::exception &e)
         {
@@ -1464,7 +1464,7 @@ extern "C"
         }
     }
 
-    el_result_e el_animation_destroy(el_animation_handle_t *anim)
+    el_result_e el_animation_destroy(el_animation_handle_t anim)
     {
         LOG_I("anim=%p", (void *)anim);
         if (!anim)
@@ -1477,13 +1477,13 @@ extern "C"
 
     // --- Parametric factories ---
 
-    el_animation_handle_t *el_animation_create_intensity_pulse(float duration,
-                                                               float min, float max)
+    el_animation_handle_t el_animation_create_intensity_pulse(float duration,
+                                                              float min, float max)
     {
         LOG_I("duration=%f, min=%f, max=%f", duration, min, max);
         try
         {
-            return new el_animation_handle_t{std::make_shared<EdgeLighting::IntensityPulse>(duration, min, max)};
+            return new el_animation_handle_impl{std::make_shared<EdgeLighting::IntensityPulse>(duration, min, max)};
         }
         catch (const std::exception &e)
         {
@@ -1492,13 +1492,13 @@ extern "C"
         }
     }
 
-    el_animation_handle_t *el_animation_create_intensity_strobe(float duration,
-                                                                float offIntensity, float onIntensity)
+    el_animation_handle_t el_animation_create_intensity_strobe(float duration,
+                                                               float offIntensity, float onIntensity)
     {
         LOG_I("duration=%f, offIntensity=%f, onIntensity=%f", duration, offIntensity, onIntensity);
         try
         {
-            return new el_animation_handle_t{std::make_shared<EdgeLighting::IntensityStrobe>(duration, offIntensity, onIntensity)};
+            return new el_animation_handle_impl{std::make_shared<EdgeLighting::IntensityStrobe>(duration, offIntensity, onIntensity)};
         }
         catch (const std::exception &e)
         {
@@ -1507,13 +1507,13 @@ extern "C"
         }
     }
 
-    el_animation_handle_t *el_animation_create_intensity_fade_in(float target,
-                                                                 float duration, el_easing_e easing)
+    el_animation_handle_t el_animation_create_intensity_fade_in(float target,
+                                                                float duration, el_easing_e easing)
     {
         LOG_I("target=%f, duration=%f, easing=%d", target, duration, (int)easing);
         try
         {
-            return new el_animation_handle_t{std::make_shared<EdgeLighting::IntensityFadeIn>(target, duration, toEasing(easing))};
+            return new el_animation_handle_impl{std::make_shared<EdgeLighting::IntensityFadeIn>(target, duration, toEasing(easing))};
         }
         catch (const std::exception &e)
         {
@@ -1522,13 +1522,13 @@ extern "C"
         }
     }
 
-    el_animation_handle_t *el_animation_create_intensity_fade_out(float start,
-                                                                  float duration, el_easing_e easing)
+    el_animation_handle_t el_animation_create_intensity_fade_out(float start,
+                                                                 float duration, el_easing_e easing)
     {
         LOG_I("start=%f, duration=%f, easing=%d", start, duration, (int)easing);
         try
         {
-            return new el_animation_handle_t{std::make_shared<EdgeLighting::IntensityFadeOut>(start, duration, toEasing(easing))};
+            return new el_animation_handle_impl{std::make_shared<EdgeLighting::IntensityFadeOut>(start, duration, toEasing(easing))};
         }
         catch (const std::exception &e)
         {
@@ -1537,13 +1537,13 @@ extern "C"
         }
     }
 
-    el_animation_handle_t *el_animation_create_glow_radius_breath(float duration,
-                                                                  float minRadius, float maxRadius)
+    el_animation_handle_t el_animation_create_glow_radius_breath(float duration,
+                                                                 float minRadius, float maxRadius)
     {
         LOG_I("duration=%f, minRadius=%f, maxRadius=%f", duration, minRadius, maxRadius);
         try
         {
-            return new el_animation_handle_t{std::make_shared<EdgeLighting::GlowRadiusBreath>(duration, minRadius, maxRadius)};
+            return new el_animation_handle_impl{std::make_shared<EdgeLighting::GlowRadiusBreath>(duration, minRadius, maxRadius)};
         }
         catch (const std::exception &e)
         {
@@ -1552,13 +1552,13 @@ extern "C"
         }
     }
 
-    el_animation_handle_t *el_animation_create_bloom_pulse(float duration,
-                                                           float min, float max)
+    el_animation_handle_t el_animation_create_bloom_pulse(float duration,
+                                                          float min, float max)
     {
         LOG_I("duration=%f, min=%f, max=%f", duration, min, max);
         try
         {
-            return new el_animation_handle_t{std::make_shared<EdgeLighting::BloomPulse>(duration, min, max)};
+            return new el_animation_handle_impl{std::make_shared<EdgeLighting::BloomPulse>(duration, min, max)};
         }
         catch (const std::exception &e)
         {
@@ -1567,13 +1567,13 @@ extern "C"
         }
     }
 
-    el_animation_handle_t *el_animation_create_hue_rotation_reverse(float baseRate,
-                                                                    float duration)
+    el_animation_handle_t el_animation_create_hue_rotation_reverse(float baseRate,
+                                                                   float duration)
     {
         LOG_I("baseRate=%f, duration=%f", baseRate, duration);
         try
         {
-            return new el_animation_handle_t{std::make_shared<EdgeLighting::HueRotationReverse>(baseRate, duration)};
+            return new el_animation_handle_impl{std::make_shared<EdgeLighting::HueRotationReverse>(baseRate, duration)};
         }
         catch (const std::exception &e)
         {
@@ -1582,13 +1582,13 @@ extern "C"
         }
     }
 
-    el_animation_handle_t *el_animation_create_hue_rotation_ease_reverse(float maxRate,
-                                                                         float duration)
+    el_animation_handle_t el_animation_create_hue_rotation_ease_reverse(float maxRate,
+                                                                        float duration)
     {
         LOG_I("maxRate=%f, duration=%f", maxRate, duration);
         try
         {
-            return new el_animation_handle_t{std::make_shared<EdgeLighting::HueRotationEaseReverse>(maxRate, duration)};
+            return new el_animation_handle_impl{std::make_shared<EdgeLighting::HueRotationEaseReverse>(maxRate, duration)};
         }
         catch (const std::exception &e)
         {
@@ -1597,13 +1597,13 @@ extern "C"
         }
     }
 
-    el_animation_handle_t *el_animation_create_segment_travel(float duration,
-                                                              float length, float boost)
+    el_animation_handle_t el_animation_create_segment_travel(float duration,
+                                                             float length, float boost)
     {
         LOG_I("duration=%f, length=%f, boost=%f", duration, length, boost);
         try
         {
-            return new el_animation_handle_t{std::make_shared<EdgeLighting::SegmentTravel>(duration, length, boost)};
+            return new el_animation_handle_impl{std::make_shared<EdgeLighting::SegmentTravel>(duration, length, boost)};
         }
         catch (const std::exception &e)
         {
@@ -1612,13 +1612,13 @@ extern "C"
         }
     }
 
-    el_animation_handle_t *el_animation_create_segment_bounce(float duration,
-                                                              float length, float boost)
+    el_animation_handle_t el_animation_create_segment_bounce(float duration,
+                                                             float length, float boost)
     {
         LOG_I("duration=%f, length=%f, boost=%f", duration, length, boost);
         try
         {
-            return new el_animation_handle_t{std::make_shared<EdgeLighting::SegmentBounce>(duration, length, boost)};
+            return new el_animation_handle_impl{std::make_shared<EdgeLighting::SegmentBounce>(duration, length, boost)};
         }
         catch (const std::exception &e)
         {
@@ -1627,13 +1627,13 @@ extern "C"
         }
     }
 
-    el_animation_handle_t *el_animation_create_outline_tracer(float duration,
-                                                              el_easing_e easing)
+    el_animation_handle_t el_animation_create_outline_tracer(float duration,
+                                                             el_easing_e easing)
     {
         LOG_I("duration=%f, easing=%d", duration, (int)easing);
         try
         {
-            return new el_animation_handle_t{std::make_shared<EdgeLighting::OutlineTracer>(duration, toEasing(easing))};
+            return new el_animation_handle_impl{std::make_shared<EdgeLighting::OutlineTracer>(duration, toEasing(easing))};
         }
         catch (const std::exception &e)
         {
@@ -1642,14 +1642,14 @@ extern "C"
         }
     }
 
-    el_animation_handle_t *el_animation_create_arc_wipe(float duration,
-                                                        float startPos, float endPos, float maxLength,
-                                                        el_easing_e easing)
+    el_animation_handle_t el_animation_create_arc_wipe(float duration,
+                                                       float startPos, float endPos, float maxLength,
+                                                       el_easing_e easing)
     {
         LOG_I("duration=%f, startPos=%f, endPos=%f, maxLength=%f, easing=%d", duration, startPos, endPos, maxLength, (int)easing);
         try
         {
-            return new el_animation_handle_t{std::make_shared<EdgeLighting::ArcWipe>(
+            return new el_animation_handle_impl{std::make_shared<EdgeLighting::ArcWipe>(
                 duration, startPos, endPos, maxLength, toEasing(easing))};
         }
         catch (const std::exception &e)
@@ -1661,7 +1661,7 @@ extern "C"
 
     // --- Stateful lifecycle ---
 
-    el_result_e el_animation_play(el_animation_handle_t *anim)
+    el_result_e el_animation_play(el_animation_handle_t anim)
     {
         LOG_I("anim=%p", (void *)anim);
         VALIDATE_ANM(anim, "el_animation_play");
@@ -1672,7 +1672,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_animation_pause(el_animation_handle_t *anim)
+    el_result_e el_animation_pause(el_animation_handle_t anim)
     {
         LOG_I("anim=%p", (void *)anim);
         VALIDATE_ANM(anim, "el_animation_pause");
@@ -1683,7 +1683,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_animation_stop(el_animation_handle_t *anim)
+    el_result_e el_animation_stop(el_animation_handle_t anim)
     {
         LOG_I("anim=%p", (void *)anim);
         VALIDATE_ANM(anim, "el_animation_stop");
@@ -1694,7 +1694,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_animation_reset(el_animation_handle_t *anim, el_effect_handle_t *fx)
+    el_result_e el_animation_reset(el_animation_handle_t anim, el_effect_handle_t fx)
     {
         LOG_I("anim=%p, fx=%p", (void *)anim, (void *)fx);
         VALIDATE_ANM(anim, "el_animation_reset");
@@ -1711,7 +1711,7 @@ extern "C"
         }
     }
 
-    el_result_e el_animation_update(el_animation_handle_t *anim, float dt)
+    el_result_e el_animation_update(el_animation_handle_t anim, float dt)
     {
         LOG_I("anim=%p, dt=%f", (void *)anim, dt);
         VALIDATE_ANM(anim, "el_animation_update");
@@ -1722,7 +1722,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_animation_apply(el_animation_handle_t *anim, el_effect_handle_t *fx)
+    el_result_e el_animation_apply(el_animation_handle_t anim, el_effect_handle_t fx)
     {
         LOG_I("anim=%p, fx=%p", (void *)anim, (void *)fx);
         VALIDATE_ANM(anim, "el_animation_apply");
@@ -1741,7 +1741,7 @@ extern "C"
 
     // --- Elapsed / state ---
 
-    el_result_e el_animation_get_state(el_animation_handle_t *anim, el_animation_state_e *outState)
+    el_result_e el_animation_get_state(el_animation_handle_t anim, el_animation_state_e *outState)
     {
         LOG_I("anim=%p, outState=%p", (void *)anim, (void *)outState);
         VALIDATE_ANM(anim, "el_animation_get_state");
@@ -1767,7 +1767,7 @@ extern "C"
         }
     }
 
-    el_result_e el_animation_get_elapsed(el_animation_handle_t *anim, float *outElapsed)
+    el_result_e el_animation_get_elapsed(el_animation_handle_t anim, float *outElapsed)
     {
         LOG_I("anim=%p, outElapsed=%p", (void *)anim, (void *)outElapsed);
         VALIDATE_ANM(anim, "el_animation_get_elapsed");
@@ -1776,7 +1776,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_animation_set_elapsed(el_animation_handle_t *anim, float elapsed)
+    el_result_e el_animation_set_elapsed(el_animation_handle_t anim, float elapsed)
     {
         LOG_I("anim=%p, elapsed=%f", (void *)anim, elapsed);
         VALIDATE_ANM(anim, "el_animation_set_elapsed");
@@ -1789,7 +1789,7 @@ extern "C"
 
     // --- End action ---
 
-    el_result_e el_animation_get_end_action(el_animation_handle_t *anim, el_end_action_e *outAction)
+    el_result_e el_animation_get_end_action(el_animation_handle_t anim, el_end_action_e *outAction)
     {
         LOG_I("anim=%p, outAction=%p", (void *)anim, (void *)outAction);
         VALIDATE_ANM(anim, "el_animation_get_end_action");
@@ -1798,7 +1798,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_animation_set_end_action(el_animation_handle_t *anim, el_end_action_e action)
+    el_result_e el_animation_set_end_action(el_animation_handle_t anim, el_end_action_e action)
     {
         LOG_I("anim=%p, action=%d", (void *)anim, (int)action);
         VALIDATE_ANM(anim, "el_animation_set_end_action");
@@ -1809,7 +1809,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_animation_capture_baseline(el_animation_handle_t *anim, const el_effect_handle_t *fx)
+    el_result_e el_animation_capture_baseline(el_animation_handle_t anim, el_effect_handle_t fx)
     {
         LOG_I("anim=%p, fx=%p", (void *)anim, (void *)fx);
         VALIDATE_ANM(anim, "el_animation_capture_baseline");
@@ -1831,7 +1831,7 @@ extern "C"
 
     // --- Playback mode ---
 
-    el_result_e el_animation_get_playback_mode(el_animation_handle_t *anim, el_playback_mode_e *outMode)
+    el_result_e el_animation_get_playback_mode(el_animation_handle_t anim, el_playback_mode_e *outMode)
     {
         LOG_I("anim=%p, outMode=%p", (void *)anim, (void *)outMode);
         VALIDATE_ANM(anim, "el_animation_get_playback_mode");
@@ -1840,7 +1840,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_animation_set_playback_mode(el_animation_handle_t *anim, el_playback_mode_e mode)
+    el_result_e el_animation_set_playback_mode(el_animation_handle_t anim, el_playback_mode_e mode)
     {
         LOG_I("anim=%p, mode=%d", (void *)anim, (int)mode);
         VALIDATE_ANM(anim, "el_animation_set_playback_mode");
@@ -1853,7 +1853,7 @@ extern "C"
 
     // --- Duration ---
 
-    el_result_e el_animation_get_duration(el_animation_handle_t *anim, float *outSeconds)
+    el_result_e el_animation_get_duration(el_animation_handle_t anim, float *outSeconds)
     {
         LOG_I("anim=%p, outSeconds=%p", (void *)anim, (void *)outSeconds);
         VALIDATE_ANM(anim, "el_animation_get_duration");
@@ -1862,7 +1862,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_animation_set_duration(el_animation_handle_t *anim, float seconds)
+    el_result_e el_animation_set_duration(el_animation_handle_t anim, float seconds)
     {
         LOG_I("anim=%p, seconds=%f", (void *)anim, seconds);
         VALIDATE_ANM(anim, "el_animation_set_duration");
@@ -1875,7 +1875,7 @@ extern "C"
 
     // --- Speed ---
 
-    el_result_e el_animation_get_speed(el_animation_handle_t *anim, float *outSpeed)
+    el_result_e el_animation_get_speed(el_animation_handle_t anim, float *outSpeed)
     {
         LOG_I("anim=%p, outSpeed=%p", (void *)anim, (void *)outSpeed);
         VALIDATE_ANM(anim, "el_animation_get_speed");
@@ -1884,7 +1884,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_animation_set_speed(el_animation_handle_t *anim, float speed)
+    el_result_e el_animation_set_speed(el_animation_handle_t anim, float speed)
     {
         LOG_I("anim=%p, speed=%f", (void *)anim, speed);
         VALIDATE_ANM(anim, "el_animation_set_speed");
@@ -1897,7 +1897,7 @@ extern "C"
 
     // --- Callbacks ---
 
-    el_result_e el_animation_set_on_complete_callback(el_animation_handle_t *anim,
+    el_result_e el_animation_set_on_complete_callback(el_animation_handle_t anim,
                                                       el_animation_on_completed_callback callback, void *userData)
     {
         LOG_I("anim=%p, callback=%s, userData=%p", (void *)anim, callback, userData);
@@ -1918,7 +1918,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_animation_set_on_state_changed_callback(el_animation_handle_t *anim,
+    el_result_e el_animation_set_on_state_changed_callback(el_animation_handle_t anim,
                                                            el_animation_on_state_changed_callback callback,
                                                            void *userData)
     {
@@ -1945,8 +1945,8 @@ extern "C"
     // Field-bound animation
     // ==========================================================================
 
-    el_animation_handle_t *el_animation_from_modulator(el_config_field_e field,
-                                                       el_modulator_handle_t *mod)
+    el_animation_handle_t el_animation_from_modulator(el_config_field_e field,
+                                                      el_modulator_handle_t mod)
     {
         LOG_I("field=%d, mod=%p", (int)field, (void *)mod);
         if (!mod)
@@ -1958,7 +1958,7 @@ extern "C"
         {
             auto a = std::make_shared<EdgeLighting::FieldBoundAnimation>(
                 toAnimatableField(field), mod->ptr);
-            return new el_animation_handle_t{std::move(a)};
+            return new el_animation_handle_impl{std::move(a)};
         }
         catch (const std::exception &e)
         {
@@ -1967,13 +1967,13 @@ extern "C"
         }
     }
 
-    el_animation_handle_t *el_animation_create_field_bound(void)
+    el_animation_handle_t el_animation_create_field_bound(void)
     {
         LOG_I("called");
         try
         {
             auto a = std::make_shared<EdgeLighting::FieldBoundAnimation>();
-            return new el_animation_handle_t{std::move(a)};
+            return new el_animation_handle_impl{std::move(a)};
         }
         catch (const std::exception &e)
         {
@@ -1982,8 +1982,8 @@ extern "C"
         }
     }
 
-    el_result_e el_animation_add_field(el_animation_handle_t *anim,
-                                       el_config_field_e field, el_modulator_handle_t *mod)
+    el_result_e el_animation_add_field(el_animation_handle_t anim,
+                                       el_config_field_e field, el_modulator_handle_t mod)
     {
         LOG_I("anim=%p, field=%d, mod=%p", (void *)anim, (int)field, (void *)mod);
         VALIDATE_ANM(anim, "el_animation_add_field");
@@ -1998,8 +1998,8 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_animation_add_segment_field(el_animation_handle_t *anim,
-                                               int32_t index, el_segment_field_e field, el_modulator_handle_t *mod)
+    el_result_e el_animation_add_segment_field(el_animation_handle_t anim,
+                                               int32_t index, el_segment_field_e field, el_modulator_handle_t mod)
     {
         LOG_I("anim=%p, index=%d, field=%d, mod=%p", (void *)anim, index, (int)field, (void *)mod);
         VALIDATE_ANM(anim, "el_animation_add_segment_field");
@@ -2015,8 +2015,8 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_animation_add_arc_field(el_animation_handle_t *anim,
-                                           int32_t index, el_arc_field_e field, el_modulator_handle_t *mod)
+    el_result_e el_animation_add_arc_field(el_animation_handle_t anim,
+                                           int32_t index, el_arc_field_e field, el_modulator_handle_t mod)
     {
         LOG_I("anim=%p, index=%d, field=%d, mod=%p", (void *)anim, index, (int)field, (void *)mod);
         VALIDATE_ANM(anim, "el_animation_add_arc_field");
@@ -2032,9 +2032,9 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_animation_add_arc_stop_field(el_animation_handle_t *anim,
+    el_result_e el_animation_add_arc_stop_field(el_animation_handle_t anim,
                                                 int32_t arcIdx, int32_t stopIdx, el_color_stop_field_e field,
-                                                el_modulator_handle_t *mod)
+                                                el_modulator_handle_t mod)
     {
         LOG_I("anim=%p, arcIdx=%d, stopIdx=%d, field=%d, mod=%p", (void *)anim, arcIdx, stopIdx, (int)field, (void *)mod);
         VALIDATE_ANM(anim, "el_animation_add_arc_stop_field");
@@ -2050,9 +2050,9 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_animation_add_segment_stop_field(el_animation_handle_t *anim,
+    el_result_e el_animation_add_segment_stop_field(el_animation_handle_t anim,
                                                     int32_t segIdx, int32_t stopIdx, el_color_stop_field_e field,
-                                                    el_modulator_handle_t *mod)
+                                                    el_modulator_handle_t mod)
     {
         LOG_I("anim=%p, segIdx=%d, stopIdx=%d, field=%d, mod=%p", (void *)anim, segIdx, stopIdx, (int)field, (void *)mod);
         VALIDATE_ANM(anim, "el_animation_add_segment_stop_field");
@@ -2072,12 +2072,12 @@ extern "C"
     // Modulator factories
     // ==========================================================================
 
-    el_modulator_handle_t *el_modulator_create_constant(float value)
+    el_modulator_handle_t el_modulator_create_constant(float value)
     {
         LOG_I("value=%f", value);
         try
         {
-            return new el_modulator_handle_t{std::make_shared<EdgeLighting::Constant>(value)};
+            return new el_modulator_handle_impl{std::make_shared<EdgeLighting::Constant>(value)};
         }
         catch (const std::exception &e)
         {
@@ -2086,13 +2086,13 @@ extern "C"
         }
     }
 
-    el_modulator_handle_t *el_modulator_create_oscillator(float frequency,
-                                                          float min, float max, float phase, el_waveform_e waveform)
+    el_modulator_handle_t el_modulator_create_oscillator(float frequency,
+                                                         float min, float max, float phase, el_waveform_e waveform)
     {
         LOG_I("frequency=%f, min=%f, max=%f, phase=%f, waveform=%d", frequency, min, max, phase, (int)waveform);
         try
         {
-            return new el_modulator_handle_t{std::make_shared<EdgeLighting::Oscillator>(
+            return new el_modulator_handle_impl{std::make_shared<EdgeLighting::Oscillator>(
                 frequency, min, max, phase, toWaveform(waveform))};
         }
         catch (const std::exception &e)
@@ -2102,13 +2102,13 @@ extern "C"
         }
     }
 
-    el_modulator_handle_t *el_modulator_create_ease(float from, float to,
-                                                    float duration, el_easing_e easing, int loop)
+    el_modulator_handle_t el_modulator_create_ease(float from, float to,
+                                                   float duration, el_easing_e easing, int loop)
     {
         LOG_I("from=%f, to=%f, duration=%f, easing=%d, loop=%d", from, to, duration, (int)easing, loop);
         try
         {
-            return new el_modulator_handle_t{std::make_shared<EdgeLighting::Ease>(
+            return new el_modulator_handle_impl{std::make_shared<EdgeLighting::Ease>(
                 from, to, duration, toEasing(easing), loop != 0)};
         }
         catch (const std::exception &e)
@@ -2118,14 +2118,14 @@ extern "C"
         }
     }
 
-    el_modulator_handle_t *el_modulator_create_sequence(int loop)
+    el_modulator_handle_t el_modulator_create_sequence(int loop)
     {
         LOG_I("loop=%d", loop);
         try
         {
             auto seq = std::make_shared<EdgeLighting::Sequence>();
             seq->SetLoop(loop != 0);
-            return new el_modulator_handle_t{std::move(seq)};
+            return new el_modulator_handle_impl{std::move(seq)};
         }
         catch (const std::exception &e)
         {
@@ -2134,8 +2134,8 @@ extern "C"
         }
     }
 
-    el_result_e el_modulator_sequence_append(el_modulator_handle_t *seq,
-                                             el_modulator_handle_t *segment, float duration)
+    el_result_e el_modulator_sequence_append(el_modulator_handle_t seq,
+                                             el_modulator_handle_t segment, float duration)
     {
         LOG_I("seq=%p, segment=%p, duration=%f", (void *)seq, (void *)segment, duration);
         VALIDATE_MOD(seq, "el_modulator_sequence_append");
@@ -2150,8 +2150,8 @@ extern "C"
         return EL_OK;
     }
 
-    el_modulator_handle_t *el_modulator_create_multiplier(el_modulator_handle_t *a,
-                                                          el_modulator_handle_t *b)
+    el_modulator_handle_t el_modulator_create_multiplier(el_modulator_handle_t a,
+                                                         el_modulator_handle_t b)
     {
         LOG_I("a=%p, b=%p", (void *)a, (void *)b);
         if (!a || !b)
@@ -2161,7 +2161,7 @@ extern "C"
         }
         try
         {
-            return new el_modulator_handle_t{std::make_shared<EdgeLighting::Multiplier>(a->ptr, b->ptr)};
+            return new el_modulator_handle_impl{std::make_shared<EdgeLighting::Multiplier>(a->ptr, b->ptr)};
         }
         catch (const std::exception &e)
         {
@@ -2170,8 +2170,8 @@ extern "C"
         }
     }
 
-    el_modulator_handle_t *el_modulator_create_adder(el_modulator_handle_t *a,
-                                                     el_modulator_handle_t *b)
+    el_modulator_handle_t el_modulator_create_adder(el_modulator_handle_t a,
+                                                    el_modulator_handle_t b)
     {
         LOG_I("a=%p, b=%p", (void *)a, (void *)b);
         if (!a || !b)
@@ -2181,7 +2181,7 @@ extern "C"
         }
         try
         {
-            return new el_modulator_handle_t{std::make_shared<EdgeLighting::Adder>(a->ptr, b->ptr)};
+            return new el_modulator_handle_impl{std::make_shared<EdgeLighting::Adder>(a->ptr, b->ptr)};
         }
         catch (const std::exception &e)
         {
@@ -2190,8 +2190,8 @@ extern "C"
         }
     }
 
-    el_modulator_handle_t *el_modulator_create_remap(el_modulator_handle_t *inner,
-                                                     float outMin, float outMax)
+    el_modulator_handle_t el_modulator_create_remap(el_modulator_handle_t inner,
+                                                    float outMin, float outMax)
     {
         LOG_I("inner=%p, outMin=%f, outMax=%f", (void *)inner, outMin, outMax);
         if (!inner)
@@ -2201,7 +2201,7 @@ extern "C"
         }
         try
         {
-            return new el_modulator_handle_t{std::make_shared<EdgeLighting::Remap>(inner->ptr, outMin, outMax)};
+            return new el_modulator_handle_impl{std::make_shared<EdgeLighting::Remap>(inner->ptr, outMin, outMax)};
         }
         catch (const std::exception &e)
         {
@@ -2210,7 +2210,7 @@ extern "C"
         }
     }
 
-    el_result_e el_modulator_destroy(el_modulator_handle_t *mod)
+    el_result_e el_modulator_destroy(el_modulator_handle_t mod)
     {
         LOG_I("mod=%p", (void *)mod);
         if (!mod)
@@ -2221,7 +2221,7 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_modulator_evaluate(el_modulator_handle_t *mod, float time, float *outValue)
+    el_result_e el_modulator_evaluate(el_modulator_handle_t mod, float time, float *outValue)
     {
         LOG_I("mod=%p, time=%f, outValue=%p", (void *)mod, time, (void *)outValue);
         VALIDATE_MOD(mod, "el_modulator_evaluate");
