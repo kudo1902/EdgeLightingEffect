@@ -1920,7 +1920,7 @@ extern "C"
     el_result_e el_animation_set_on_complete_callback(el_animation_handle_t anim,
                                                       el_animation_on_completed_callback callback, void *userData)
     {
-        LOG_I("anim=%p, callback=%s, userData=%p", (void *)anim, callback, userData);
+        LOG_I("anim=%p, callback=%p, userData=%p", (void *)anim, (void *)callback, userData);
         VALIDATE_ANM(anim, "el_animation_set_on_complete_callback");
         if (!anim->ptr)
         {
@@ -1942,7 +1942,7 @@ extern "C"
                                                            el_animation_on_state_changed_callback callback,
                                                            void *userData)
     {
-        LOG_I("anim=%p, callback=%s, userData=%p", (void *)anim, callback, userData);
+        LOG_I("anim=%p, callback=%p, userData=%p", (void *)anim, (void *)callback, userData);
         VALIDATE_ANM(anim, "el_animation_set_on_state_changed_callback");
         if (!anim->ptr)
         {
