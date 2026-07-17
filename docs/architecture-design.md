@@ -287,12 +287,20 @@ and its knobs (Stop Count, Contrast gamma, Auto-adjust intensity).
 
 ## 11. C API surface
 
-`lib/capi/edge-lighting-c.{h,cpp}` mirrors `Config` as a POD `EL_Config`
-(flat fields, fixed-size arrays for stops/segments). Marshalling functions
-copy between the two representations; the C++ effect is held behind an
-opaque `EL_Effect*`.
+`lib/capi/edge-lighting-capi.{h,cpp}` is a flat `extern "C"` ABI over the
+same `EdgeLighting::EdgeLightingEffect` orchestrator. It is compiled into
+`libedge-lighting-c.{dylib,so,dll}` for FFI / P/Invoke hosts.
 
-`EL_ABI_VERSION` (currently 8) bumps on any struct-layout or enum-value
-change. The C# interop scaffolding under `lib/capi/csharp/` targets this
-surface but has not been kept in lockstep with recent ABI bumps - treat it
-as stale until refreshed.
+The API uses **field-by-field setters/getters against a staging
+`Config`** held on the effect handle, rather than a flat POD mirror. Each
+`el_effect_set_*` call mutates the handle's staging config; `el_effect_update`
+flushes it into the effect via `SetConfig` and then ticks time and
+animations. `el_effect_capture` pulls the effect's current base config
+back into staging when the host needs to re-sync (e.g. after animations
+mutate values internally).
+
+Handles are opaque: `el_effect_handle_t`, `el_animation_handle_t`,
+`el_modulator_handle_t`. Enum parity between the C++ enums and their
+`el_*_e` mirrors is enforced by `static_assert` blocks at the top of
+`edge-lighting-capi.cpp`, so a silent enum reorder fails the build rather
+than corrupting the ABI.

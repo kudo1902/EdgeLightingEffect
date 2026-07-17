@@ -330,8 +330,8 @@ Edited:
 - `lib/include/animation/neon-animations.h` -- retarget `ArcWipe` / `OutlineTracer` to `arcs[0]`
 - `lib/include/animation/field-bound-animation.h`  -- `ArcField`, `AddArcField`, `AddArcStopField`, drop `NEON_ARC_*`
 - `lib/src/animation/field-bound-animation.cpp`    -- `writeArc`, `writeArcStop`, capture/restore
-- `lib/capi/edge-lighting-c.h`              -- `EL_Arc`, `EL_ArcField`, arcs on `EL_NeonConfig`, bump ABI
-- `lib/capi/edge-lighting-c.cpp`            -- helpers + new entry points
+- `lib/capi/edge-lighting-capi.h`              -- `EL_Arc`, `EL_ArcField`, arcs on `EL_NeonConfig`, bump ABI
+- `lib/capi/edge-lighting-capi.cpp`            -- helpers + new entry points
 - `demo/src/debug-ui.h/.cpp`                -- per-arc rows in Neon section
 
 ## 10. Verification plan
