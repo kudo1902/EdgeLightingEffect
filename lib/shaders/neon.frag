@@ -257,15 +257,24 @@ void main() {
         glow  += lg * sqrt(g);              // -> ~1/D^2 neon halo, arc-gated
         bloom += arcW / (dd + bw2);         // -> ~1/D   wide spill, arc-gated
 
-        // Winner's colour at this sample: from its own LUT row (hasStops)
-        // or the base gradient (empty stops = inherit). No winner (bestIdx < 0)
-        // means every arc had 0 mask here - contributes nothing anyway.
+        // Winner's colour at this sample. Two cases:
+        //  - hasStops: the arc has its own gradient. Sample it in ARC-LOCAL
+        //    space so position 0 is the arc's start and position 1 is its end.
+        //    The uTime term still scrolls the LUT (REPEAT wrap) at the global
+        //    hueRotationRate so hue rotation reads as the gradient marching
+        //    through the arc window, not as position offsetting.
+        //  - empty stops: fall back to the base gradient IN PERIMETER SPACE
+        //    (ti = perimeter position + time offset) so the arc stays visually
+        //    continuous with the rest of the perimeter.
+        // bestIdx < 0 means every arc had 0 mask here - contributes nothing.
         vec3 baseColI;
         if (bestIdx >= 0) {
             vec4 winner = uArcs[bestIdx];
             if (winner.w > 0.5) {
-                float rowY = (float(bestIdx) + 0.5) / float(MAX_ARCS);
-                baseColI   = texture(uArcLUT, vec2(ti, rowY)).rgb;
+                float rowY  = (float(bestIdx) + 0.5) / float(MAX_ARCS);
+                float uArc  = (si - winner.x) / max(winner.y, 1e-4);
+                uArc       -= uTime * uHueRotationRate; // match base sign convention
+                baseColI    = texture(uArcLUT, vec2(uArc, rowY)).rgb;
             } else {
                 baseColI = texture(uGradientLUT, vec2(ti, 0.5)).rgb;
             }

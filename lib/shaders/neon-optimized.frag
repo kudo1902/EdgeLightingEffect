@@ -233,12 +233,17 @@ void main() {
         glow  += lg * sqrt(g);
         bloom += arcW / (dd + bw2);
 
+        // Arc-local sampling for hasStops; perimeter-space fall-back for empty
+        // stops so the arc reads continuously with the rest of the base gradient.
+        // See neon.frag for the full write-up.
         vec3 baseColI;
         if (bestIdx >= 0) {
             vec4 winner = uArcs[bestIdx];
             if (winner.w > 0.5) {
-                float rowY = (float(bestIdx) + 0.5) / float(MAX_ARCS);
-                baseColI   = texture(uArcLUT, vec2(ti, rowY)).rgb;
+                float rowY  = (float(bestIdx) + 0.5) / float(MAX_ARCS);
+                float uArc  = (si - winner.x) / max(winner.y, 1e-4);
+                uArc       -= uTime * uHueRotationRate;
+                baseColI    = texture(uArcLUT, vec2(uArc, rowY)).rgb;
             } else {
                 baseColI = texture(uGradientLUT, vec2(ti, 0.5)).rgb;
             }
