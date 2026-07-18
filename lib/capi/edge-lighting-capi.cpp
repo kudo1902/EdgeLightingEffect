@@ -13,6 +13,11 @@
 #include <algorithm>
 #include <memory>
 
+#if defined(PLATFORM_MACOS) || defined(PLATFORM_WINDOWS)
+#undef LOG_D
+#define LOG_D(fmt, ...) ((void)0)
+#endif
+
 // ==========================================================================
 // Enum ABI parity - fires at compile time if a C++ enum reorder ever silently
 // diverges from its el_* mirror. Keep asserts one-per-value; that way a broken
@@ -301,7 +306,7 @@ extern "C"
         *outPosX = effect->config.geometry.position.x;
         *outPosY = effect->config.geometry.position.y;
         *outCornerRadius = effect->config.geometry.cornerRadius;
-        LOG_I("effect=%p, width=%f, height=%f, posX=%f, posY=%f, cornerRadius=%f", (void *)effect, *outWidth, *outHeight, *outPosX, *outPosY, *outCornerRadius);
+        LOG_D("effect=%p, width=%f, height=%f, posX=%f, posY=%f, cornerRadius=%f", (void *)effect, *outWidth, *outHeight, *outPosX, *outPosY, *outCornerRadius);
         return EL_OK;
     }
 
@@ -317,7 +322,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_winding");
         VALIDATE_OUT_PTR(outWinding, "el_effect_get_winding");
         *outWinding = static_cast<el_winding_e>(effect->config.geometry.winding);
-        LOG_I("effect=%p, winding=%d", (void *)effect, (int)*outWinding);
+        LOG_D("effect=%p, winding=%d", (void *)effect, (int)*outWinding);
         return EL_OK;
     }
 
@@ -335,7 +340,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_neon_renderer_enabled");
         VALIDATE_OUT_PTR(outEnabled, "el_effect_get_neon_renderer_enabled");
         *outEnabled = effect->config.neon.enable ? 1 : 0;
-        LOG_I("effect=%p, enabled=%d", (void *)effect, *outEnabled);
+        LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled);
         return EL_OK;
     }
 
@@ -351,7 +356,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_show_gradient_lut");
         VALIDATE_OUT_PTR(outShow, "el_effect_get_show_gradient_lut");
         *outShow = effect->config.neon.showGradientLUT ? 1 : 0;
-        LOG_I("effect=%p, show=%d", (void *)effect, *outShow);
+        LOG_D("effect=%p, show=%d", (void *)effect, *outShow);
         return EL_OK;
     }
 
@@ -367,7 +372,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_show_color_stops");
         VALIDATE_OUT_PTR(outShow, "el_effect_get_show_color_stops");
         *outShow = effect->config.neon.showColorStops ? 1 : 0;
-        LOG_I("effect=%p, show=%d", (void *)effect, *outShow);
+        LOG_D("effect=%p, show=%d", (void *)effect, *outShow);
         return EL_OK;
     }
 
@@ -383,7 +388,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_opaque");
         VALIDATE_OUT_PTR(outOpaque, "el_effect_get_opaque");
         *outOpaque = effect->config.neon.opaque ? 1 : 0;
-        LOG_I("effect=%p, opaque=%d", (void *)effect, *outOpaque);
+        LOG_D("effect=%p, opaque=%d", (void *)effect, *outOpaque);
         return EL_OK;
     }
 
@@ -407,7 +412,7 @@ extern "C"
         *outG = effect->config.neon.opaqueColor.g;
         *outB = effect->config.neon.opaqueColor.b;
         *outA = effect->config.neon.opaqueColor.a;
-        LOG_I("effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, *outR, *outG, *outB, *outA);
+        LOG_D("effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, *outR, *outG, *outB, *outA);
         return EL_OK;
     }
 
@@ -423,7 +428,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_line_width");
         VALIDATE_OUT_PTR(outWidth, "el_effect_get_line_width");
         *outWidth = effect->config.neon.lineWidth;
-        LOG_I("effect=%p, width=%f", (void *)effect, *outWidth);
+        LOG_D("effect=%p, width=%f", (void *)effect, *outWidth);
         return EL_OK;
     }
 
@@ -439,7 +444,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_filament_falloff");
         VALIDATE_OUT_PTR(outFalloff, "el_effect_get_filament_falloff");
         *outFalloff = effect->config.neon.filamentFalloff;
-        LOG_I("effect=%p, falloff=%f", (void *)effect, *outFalloff);
+        LOG_D("effect=%p, falloff=%f", (void *)effect, *outFalloff);
         return EL_OK;
     }
 
@@ -455,7 +460,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_intensity");
         VALIDATE_OUT_PTR(outIntensity, "el_effect_get_intensity");
         *outIntensity = effect->config.neon.intensity;
-        LOG_I("effect=%p, intensity=%f", (void *)effect, *outIntensity);
+        LOG_D("effect=%p, intensity=%f", (void *)effect, *outIntensity);
         return EL_OK;
     }
 
@@ -471,7 +476,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_glow_radius");
         VALIDATE_OUT_PTR(outRadius, "el_effect_get_glow_radius");
         *outRadius = effect->config.neon.glowRadius;
-        LOG_I("effect=%p, radius=%f", (void *)effect, *outRadius);
+        LOG_D("effect=%p, radius=%f", (void *)effect, *outRadius);
         return EL_OK;
     }
 
@@ -487,7 +492,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_bloom_strength");
         VALIDATE_OUT_PTR(outStrength, "el_effect_get_bloom_strength");
         *outStrength = effect->config.neon.bloomStrength;
-        LOG_I("effect=%p, strength=%f", (void *)effect, *outStrength);
+        LOG_D("effect=%p, strength=%f", (void *)effect, *outStrength);
         return EL_OK;
     }
 
@@ -503,7 +508,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_glow_side");
         VALIDATE_OUT_PTR(outSide, "el_effect_get_glow_side");
         *outSide = static_cast<el_glow_side_e>(effect->config.neon.glowSide);
-        LOG_I("effect=%p, side=%d", (void *)effect, (int)*outSide);
+        LOG_D("effect=%p, side=%d", (void *)effect, (int)*outSide);
         return EL_OK;
     }
 
@@ -519,7 +524,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_glow_side_softness");
         VALIDATE_OUT_PTR(outSoftness, "el_effect_get_glow_side_softness");
         *outSoftness = effect->config.neon.glowSideSoftness;
-        LOG_I("effect=%p, softness=%f", (void *)effect, *outSoftness);
+        LOG_D("effect=%p, softness=%f", (void *)effect, *outSoftness);
         return EL_OK;
     }
 
@@ -535,7 +540,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_blend_space");
         VALIDATE_OUT_PTR(outSpace, "el_effect_get_blend_space");
         *outSpace = static_cast<el_blend_space_e>(effect->config.neon.blendSpace);
-        LOG_I("effect=%p, space=%d", (void *)effect, (int)*outSpace);
+        LOG_D("effect=%p, space=%d", (void *)effect, (int)*outSpace);
         return EL_OK;
     }
 
@@ -551,7 +556,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_hue_rotation_rate");
         VALIDATE_OUT_PTR(outRate, "el_effect_get_hue_rotation_rate");
         *outRate = effect->config.neon.hueRotationRate;
-        LOG_I("effect=%p, rate=%f", (void *)effect, *outRate);
+        LOG_D("effect=%p, rate=%f", (void *)effect, *outRate);
         return EL_OK;
     }
 
@@ -567,7 +572,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_color_transition_duration");
         VALIDATE_OUT_PTR(outSeconds, "el_effect_get_color_transition_duration");
         *outSeconds = effect->config.neon.colorTransitionDuration;
-        LOG_I("effect=%p, seconds=%f", (void *)effect, *outSeconds);
+        LOG_D("effect=%p, seconds=%f", (void *)effect, *outSeconds);
         return EL_OK;
     }
 
@@ -596,7 +601,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_color_stop_count");
         VALIDATE_OUT_PTR(outCount, "el_effect_get_color_stop_count");
         *outCount = static_cast<int32_t>(effect->config.neon.colorStops.size());
-        LOG_I("effect=%p, count=%d", (void *)effect, *outCount);
+        LOG_D("effect=%p, count=%d", (void *)effect, *outCount);
         return EL_OK;
     }
 
@@ -646,7 +651,7 @@ extern "C"
         *outG = s.color.g;
         *outB = s.color.b;
         *outA = s.color.a;
-        LOG_I("effect=%p, index=%d, position=%f, r=%f, g=%f, b=%f, a=%f", (void *)effect, index, *outPosition, *outR, *outG, *outB, *outA);
+        LOG_D("effect=%p, index=%d, position=%f, r=%f, g=%f, b=%f, a=%f", (void *)effect, index, *outPosition, *outR, *outG, *outB, *outA);
         return EL_OK;
     }
 
@@ -687,7 +692,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_segment_boost_count");
         VALIDATE_OUT_PTR(outCount, "el_effect_get_segment_boost_count");
         *outCount = static_cast<int32_t>(effect->config.neon.segmentBoosts.size());
-        LOG_I("effect=%p, count=%d", (void *)effect, *outCount);
+        LOG_D("effect=%p, count=%d", (void *)effect, *outCount);
         return EL_OK;
     }
 
@@ -738,7 +743,7 @@ extern "C"
         *outPosition = b.position;
         *outLength = b.length;
         *outBoost = b.boost;
-        LOG_I("effect=%p, index=%d, position=%f, length=%f, boost=%f", (void *)effect, index, *outPosition, *outLength, *outBoost);
+        LOG_D("effect=%p, index=%d, position=%f, length=%f, boost=%f", (void *)effect, index, *outPosition, *outLength, *outBoost);
         return EL_OK;
     }
 
@@ -797,7 +802,7 @@ extern "C"
         }
         *outBlendSpace = static_cast<el_blend_space_e>(
             effect->config.neon.segmentBoosts[static_cast<size_t>(segmentIndex)].blendSpace);
-        LOG_I("effect=%p, segmentIndex=%d, blendSpace=%d", (void *)effect, segmentIndex, (int)*outBlendSpace);
+        LOG_D("effect=%p, segmentIndex=%d, blendSpace=%d", (void *)effect, segmentIndex, (int)*outBlendSpace);
         return EL_OK;
     }
 
@@ -844,7 +849,7 @@ extern "C"
         }
         *outCount = static_cast<int32_t>(
             effect->config.neon.segmentBoosts[static_cast<size_t>(segmentIndex)].colorStops.size());
-        LOG_I("effect=%p, segmentIndex=%d, count=%d", (void *)effect, segmentIndex, *outCount);
+        LOG_D("effect=%p, segmentIndex=%d, count=%d", (void *)effect, segmentIndex, *outCount);
         return EL_OK;
     }
 
@@ -911,7 +916,7 @@ extern "C"
         *outG = s.color.g;
         *outB = s.color.b;
         *outA = s.color.a;
-        LOG_I("effect=%p, segmentIndex=%d, stopIndex=%d, position=%f, r=%f, g=%f, b=%f, a=%f",
+        LOG_D("effect=%p, segmentIndex=%d, stopIndex=%d, position=%f, r=%f, g=%f, b=%f, a=%f",
               (void *)effect, segmentIndex, stopIndex, *outPosition, *outR, *outG, *outB, *outA);
         return EL_OK;
     }
@@ -959,7 +964,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_arc_count");
         VALIDATE_OUT_PTR(outCount, "el_effect_get_arc_count");
         *outCount = static_cast<int32_t>(effect->config.neon.arcs.size());
-        LOG_I("effect=%p, count=%d", (void *)effect, *outCount);
+        LOG_D("effect=%p, count=%d", (void *)effect, *outCount);
         return EL_OK;
     }
 
@@ -1015,7 +1020,7 @@ extern "C"
         *outLength = a.length;
         *outIntensity = a.intensity;
         *outBlendSpace = static_cast<el_blend_space_e>(a.blendSpace);
-        LOG_I("effect=%p, index=%d, start=%f, length=%f, intensity=%f, blendSpace=%d", (void *)effect, index, *outStart, *outLength, *outIntensity, (int)*outBlendSpace);
+        LOG_D("effect=%p, index=%d, start=%f, length=%f, intensity=%f, blendSpace=%d", (void *)effect, index, *outStart, *outLength, *outIntensity, (int)*outBlendSpace);
         return EL_OK;
     }
 
@@ -1076,7 +1081,7 @@ extern "C"
         }
         *outCount = static_cast<int32_t>(
             effect->config.neon.arcs[static_cast<size_t>(arcIndex)].colorStops.size());
-        LOG_I("effect=%p, arcIndex=%d, count=%d", (void *)effect, arcIndex, *outCount);
+        LOG_D("effect=%p, arcIndex=%d, count=%d", (void *)effect, arcIndex, *outCount);
         return EL_OK;
     }
 
@@ -1142,7 +1147,7 @@ extern "C"
         *outG = s.color.g;
         *outB = s.color.b;
         *outA = s.color.a;
-        LOG_I("effect=%p, arcIndex=%d, stopIndex=%d, position=%f, r=%f, g=%f, b=%f, a=%f", (void *)effect, arcIndex, stopIndex, *outPosition, *outR, *outG, *outB, *outA);
+        LOG_D("effect=%p, arcIndex=%d, stopIndex=%d, position=%f, r=%f, g=%f, b=%f, a=%f", (void *)effect, arcIndex, stopIndex, *outPosition, *outR, *outG, *outB, *outA);
         return EL_OK;
     }
 
@@ -1178,7 +1183,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_renderer_enabled");
         VALIDATE_OUT_PTR(outEnabled, "el_effect_get_optimized_renderer_enabled");
         *outEnabled = effect->config.optimizedNeon.enable ? 1 : 0;
-        LOG_I("effect=%p, enabled=%d", (void *)effect, *outEnabled);
+        LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled);
         return EL_OK;
     }
 
@@ -1194,7 +1199,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_resolution_scale");
         VALIDATE_OUT_PTR(outScale, "el_effect_get_optimized_resolution_scale");
         *outScale = effect->config.optimizedNeon.resolutionScale;
-        LOG_I("effect=%p, scale=%f", (void *)effect, *outScale);
+        LOG_D("effect=%p, scale=%f", (void *)effect, *outScale);
         return EL_OK;
     }
 
@@ -1210,7 +1215,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_num_samples");
         VALIDATE_OUT_PTR(outSamples, "el_effect_get_optimized_num_samples");
         *outSamples = effect->config.optimizedNeon.numSamples;
-        LOG_I("effect=%p, samples=%d", (void *)effect, *outSamples);
+        LOG_D("effect=%p, samples=%d", (void *)effect, *outSamples);
         return EL_OK;
     }
 
@@ -1226,7 +1231,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_gradient_lut_size");
         VALIDATE_OUT_PTR(outSize, "el_effect_get_optimized_gradient_lut_size");
         *outSize = effect->config.optimizedNeon.gradientLutSize;
-        LOG_I("effect=%p, size=%d", (void *)effect, *outSize);
+        LOG_D("effect=%p, size=%d", (void *)effect, *outSize);
         return EL_OK;
     }
 
@@ -1242,7 +1247,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_show_half_res");
         VALIDATE_OUT_PTR(outShow, "el_effect_get_optimized_show_half_res");
         *outShow = effect->config.optimizedNeon.showHalfRes ? 1 : 0;
-        LOG_I("effect=%p, show=%d", (void *)effect, *outShow);
+        LOG_D("effect=%p, show=%d", (void *)effect, *outShow);
         return EL_OK;
     }
 
@@ -1260,7 +1265,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_wireframe_renderer_enabled");
         VALIDATE_OUT_PTR(outEnabled, "el_effect_get_wireframe_renderer_enabled");
         *outEnabled = effect->config.wireframe.enable ? 1 : 0;
-        LOG_I("effect=%p, enabled=%d", (void *)effect, *outEnabled);
+        LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled);
         return EL_OK;
     }
 
@@ -1284,7 +1289,7 @@ extern "C"
         *outG = effect->config.wireframe.color.g;
         *outB = effect->config.wireframe.color.b;
         *outA = effect->config.wireframe.color.a;
-        LOG_I("effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, *outR, *outG, *outB, *outA);
+        LOG_D("effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, *outR, *outG, *outB, *outA);
         return EL_OK;
     }
 
@@ -1390,6 +1395,39 @@ extern "C"
         }
     }
 
+    el_result_e el_effect_clock_play(el_effect_handle_t effect)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_clock_play");
+        if (effect->impl->GetClock().IsPlaying())
+        {
+            return EL_OK;
+        }
+        LOG_I("effect=%p", (void *)effect);
+        effect->impl->GetClock().Play();
+        return EL_OK;
+    }
+
+    el_result_e el_effect_clock_pause(el_effect_handle_t effect)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_clock_pause");
+        if (!effect->impl->GetClock().IsPlaying())
+        {
+            return EL_OK;
+        }
+        LOG_I("effect=%p", (void *)effect);
+        effect->impl->GetClock().Pause();
+        return EL_OK;
+    }
+
+    el_result_e el_effect_clock_is_playing(el_effect_handle_t effect, el_bool_t *outPlaying)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_clock_is_playing");
+        VALIDATE_OUT_PTR(outPlaying, "el_effect_clock_is_playing");
+        *outPlaying = effect->impl->GetClock().IsPlaying() ? 1 : 0;
+        LOG_D("effect=%p, playing=%d", (void *)effect, *outPlaying);
+        return EL_OK;
+    }
+
     // --- Animation attachment ---
 
     el_result_e el_effect_attach_animation(el_effect_handle_t effect, el_animation_handle_t anim)
@@ -1429,7 +1467,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_animation_count");
         VALIDATE_OUT_PTR(outCount, "el_effect_get_animation_count");
         *outCount = static_cast<int32_t>(effect->impl->GetAnimationManager().GetCount());
-        LOG_I("effect=%p, count=%d", (void *)effect, *outCount);
+        LOG_D("effect=%p, count=%d", (void *)effect, *outCount);
         return EL_OK;
     }
 
@@ -1440,7 +1478,7 @@ extern "C"
         VALIDATE_ANIM_PTR(anim, "el_effect_contains_animation");
         VALIDATE_OUT_PTR(outContains, "el_effect_contains_animation");
         *outContains = (anim->ptr && effect->impl->GetAnimationManager().Contains(anim->ptr)) ? 1 : 0;
-        LOG_I("effect=%p, anim=%p, contains=%d", (void *)effect, (void *)anim, *outContains);
+        LOG_D("effect=%p, anim=%p, contains=%d", (void *)effect, (void *)anim, *outContains);
         return EL_OK;
     }
 
@@ -1877,7 +1915,7 @@ extern "C"
                 break;
             }
         }
-        LOG_I("anim=%p, state=%d", (void *)anim, (int)*outState);
+        LOG_D("anim=%p, state=%d", (void *)anim, (int)*outState);
         return EL_OK;
     }
 
@@ -1886,7 +1924,7 @@ extern "C"
         VALIDATE_ANIM_PTR(anim, "el_animation_get_elapsed");
         VALIDATE_OUT_PTR(outElapsed, "el_animation_get_elapsed");
         *outElapsed = anim->ptr ? anim->ptr->GetElapsed() : 0.0f;
-        LOG_I("anim=%p, elapsed=%f", (void *)anim, *outElapsed);
+        LOG_D("anim=%p, elapsed=%f", (void *)anim, *outElapsed);
         return EL_OK;
     }
 
@@ -1907,7 +1945,7 @@ extern "C"
         VALIDATE_ANIM_PTR(anim, "el_animation_get_progress");
         VALIDATE_OUT_PTR(outProgress, "el_animation_get_progress");
         *outProgress = anim->ptr ? anim->ptr->GetProgress() : 0.0f;
-        LOG_I("anim=%p, progress=%f", (void *)anim, *outProgress);
+        LOG_D("anim=%p, progress=%f", (void *)anim, *outProgress);
         return EL_OK;
     }
 
@@ -1930,7 +1968,7 @@ extern "C"
         VALIDATE_ANIM_PTR(anim, "el_animation_get_end_action");
         VALIDATE_OUT_PTR(outAction, "el_animation_get_end_action");
         *outAction = anim->ptr ? fromEndAction(anim->ptr->GetEndAction()) : EL_END_ACTION_HOLD_CURRENT;
-        LOG_I("anim=%p, action=%d", (void *)anim, (int)*outAction);
+        LOG_D("anim=%p, action=%d", (void *)anim, (int)*outAction);
         return EL_OK;
     }
 
@@ -1974,7 +2012,7 @@ extern "C"
         VALIDATE_ANIM_PTR(anim, "el_animation_get_playback_mode");
         VALIDATE_OUT_PTR(outMode, "el_animation_get_playback_mode");
         *outMode = anim->ptr ? fromPlaybackMode(anim->ptr->GetPlaybackMode()) : EL_PLAYBACK_LOOP;
-        LOG_I("anim=%p, mode=%d", (void *)anim, (int)*outMode);
+        LOG_D("anim=%p, mode=%d", (void *)anim, (int)*outMode);
         return EL_OK;
     }
 
@@ -1998,7 +2036,7 @@ extern "C"
         VALIDATE_ANIM_PTR(anim, "el_animation_get_duration");
         VALIDATE_OUT_PTR(outSeconds, "el_animation_get_duration");
         *outSeconds = anim->ptr ? anim->ptr->GetDuration() : 0.0f;
-        LOG_I("anim=%p, seconds=%f", (void *)anim, *outSeconds);
+        LOG_D("anim=%p, seconds=%f", (void *)anim, *outSeconds);
         return EL_OK;
     }
 
@@ -2021,7 +2059,7 @@ extern "C"
         VALIDATE_ANIM_PTR(anim, "el_animation_get_speed");
         VALIDATE_OUT_PTR(outSpeed, "el_animation_get_speed");
         *outSpeed = anim->ptr ? anim->ptr->GetSpeed() : 1.0f;
-        LOG_I("anim=%p, speed=%f", (void *)anim, *outSpeed);
+        LOG_D("anim=%p, speed=%f", (void *)anim, *outSpeed);
         return EL_OK;
     }
 
@@ -2380,8 +2418,13 @@ extern "C"
         VALIDATE_MOD_PTR(mod, "el_modulator_evaluate");
         VALIDATE_OUT_PTR(outValue, "el_modulator_evaluate");
         *outValue = mod->ptr ? mod->ptr->Evaluate(time) : 0.0f;
-        LOG_I("mod=%p, time=%f, value=%f", (void *)mod, time, *outValue);
+        LOG_D("mod=%p, time=%f, value=%f", (void *)mod, time, *outValue);
         return EL_OK;
     }
 
 } // extern "C"
+
+// Undo the local LOG_D override so nothing downstream inherits it.
+#if defined(PLATFORM_MACOS) || defined(PLATFORM_WINDOWS)
+#undef LOG_D
+#endif

@@ -328,6 +328,18 @@ extern "C"
     EL_API el_result_e el_effect_render(el_effect_handle_t effect,
                                         int32_t viewportWidth, int32_t viewportHeight);
 
+    /** @brief Start the effect's clock (default state after init).
+     *  Attached animations advance in lockstep with @ref el_effect_update while
+     *  the clock is playing. */
+    EL_API el_result_e el_effect_clock_play(el_effect_handle_t effect);
+    /** @brief Freeze the effect's clock. @ref el_effect_update still runs but
+     *  the reported deltaTime to animations is 0 - the shader also stops advancing
+     *  its internal time (hue rotation, etc.). */
+    EL_API el_result_e el_effect_clock_pause(el_effect_handle_t effect);
+    /** @brief Report whether the effect's clock is currently playing. */
+    EL_API el_result_e el_effect_clock_is_playing(el_effect_handle_t effect,
+                                                  el_bool_t *outPlaying);
+
     EL_API el_result_e el_effect_attach_animation(el_effect_handle_t effect, el_animation_handle_t anim);
     EL_API el_result_e el_effect_detach_animation(el_effect_handle_t effect, el_animation_handle_t anim);
     EL_API el_result_e el_effect_detach_all_animations(el_effect_handle_t effect);
