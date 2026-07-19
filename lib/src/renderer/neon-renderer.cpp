@@ -38,8 +38,22 @@ namespace EdgeLighting
         static_assert(sizeof(LoopSamplesBlockData) == 16 * NEON_MAX_LOOP_SAMPLES,
                       "LoopSamplesBlockData must match the shader's std140 layout");
 
+        /// CPU-side mirror of neon.frag's std140 `ArcBlock`. Same layout
+        /// pattern as SegmentBlockData: int padded to 16 bytes, then a vec4
+        /// per array element (start, length, intensity, hasStops).
+        typedef struct ArcBlockData
+        {
+            int32_t count;
+            float pad[3];
+            glm::vec4 arcs[MAX_ARCS];
+        } ArcBlockData;
+
+        static_assert(sizeof(ArcBlockData) == 16 + 16 * MAX_ARCS,
+                      "ArcBlockData must match the shader's std140 layout");
+
         constexpr GLuint SEGMENT_BLOCK_BINDING = 0;
         constexpr GLuint LOOP_SAMPLES_BLOCK_BINDING = 1;
+        constexpr GLuint ARC_BLOCK_BINDING = 2;
 
         /// Width of the precomputed colour-ring LUT texture (RGBA8, REPEAT
         /// wrap). 256 is more than enough for any gradient the human eye can
@@ -50,6 +64,11 @@ namespace EdgeLighting
         /// higher resolution wouldn't be visible; segments also don't wrap
         /// (CLAMP on X), so the extra texels would only pad head/tail.
         constexpr int SEGMENT_LUT_WIDTH = 128;
+        /// Width of each arc's row in the arc gradient atlas. Same rationale
+        /// as SEGMENT_LUT_WIDTH: an arc's LUT is sampled over the perimeter
+        /// hue coordinate (uTime * rate) which cycles slowly, so 128 texels
+        /// look identical to 256.
+        constexpr int ARC_LUT_WIDTH = 128;
     }
 
     // -------------------------------------------------------------------------
@@ -68,6 +87,7 @@ namespace EdgeLighting
         setupGeometry(mCurrentConfig);
         rebuildGradientLUT(mCurrentConfig);
         rebuildSegmentLUT(mCurrentConfig);
+        rebuildArcLUT(mCurrentConfig);
 
         // Static NDC-order attribs for the LUT debug strip; the actual verts
         // are (re)uploaded from setupGeometry() so the strip tracks rect size.
@@ -208,8 +228,22 @@ namespace EdgeLighting
         }
         mSegmentBlock.SetData(&segBlock, sizeof(segBlock));
         mSegmentBlock.BindBase(SEGMENT_BLOCK_BINDING);
-        mShaderProgram.SetUniform("uArcStart", config.neon.arcStart);
-        mShaderProgram.SetUniform("uArcLength", config.neon.arcLength);
+
+        // Pack the arcs vector into ArcBlock: vec4(start, length, intensity,
+        // hasStops) per entry. .w picks between the winner arc's own atlas row
+        // and the base gradient in the shader's winner-take-all branch.
+        ArcBlockData arcBlock = {};
+        int arcCount = std::min(static_cast<int>(config.neon.arcs.size()),
+                                int(MAX_ARCS));
+        arcBlock.count = arcCount;
+        for (int i = 0; i < arcCount; ++i)
+        {
+            const auto &a = config.neon.arcs[i];
+            float hasStops = a.colorStops.empty() ? 0.0f : 1.0f;
+            arcBlock.arcs[i] = glm::vec4(a.start, a.length, a.intensity, hasStops);
+        }
+        mArcBlock.SetData(&arcBlock, sizeof(arcBlock));
+        mArcBlock.BindBase(ARC_BLOCK_BINDING);
 
         mShaderProgram.SetUniform("uSampleSpacing", mSampleSpacing);
 
@@ -225,6 +259,10 @@ namespace EdgeLighting
         // loop only when a segment's hasStops flag is set.
         mSegmentLUT.Bind(1);
         mShaderProgram.SetUniform("uSegmentLUT", 1);
+        // Per-arc gradient atlas on unit 2; sampled by the arc winner branch
+        // only when the winning arc has stops (see ArcBlock's vec4.w).
+        mArcLUT.Bind(2);
+        mShaderProgram.SetUniform("uArcLUT", 2);
         mShaderProgram.SetUniform("uQuadMargin", mQuadMargin);
 
         // Tight glow quad in both modes - opaque's far region is covered by the
@@ -303,6 +341,9 @@ namespace EdgeLighting
         // UBO). Cheap deep-compare via mBakedSegments (each SegmentBoost's
         // operator== includes its stops).
         const bool segLutDirty = config.neon.segmentBoosts != mBakedSegments;
+        // Same idea for arcs - start/length/intensity ride the UBO, only
+        // colorStops + blendSpace changes require a re-bake of the atlas.
+        const bool arcLutDirty = config.neon.arcs != mBakedArcs;
 
         mCurrentConfig = config;
         if (!mShaderProgram.IsValid())
@@ -328,6 +369,11 @@ namespace EdgeLighting
         if (segLutDirty)
         {
             rebuildSegmentLUT(config);
+        }
+
+        if (arcLutDirty)
+        {
+            rebuildArcLUT(config);
         }
     }
 
@@ -359,6 +405,7 @@ namespace EdgeLighting
 
         mShaderProgram.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
         mShaderProgram.SetUniformBlockBinding("LoopSamplesBlock", LOOP_SAMPLES_BLOCK_BINDING);
+        mShaderProgram.SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
         return true;
     }
 
@@ -548,5 +595,48 @@ namespace EdgeLighting
         mSegmentLUT.SetParams(GL_LINEAR, GL_LINEAR, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
 
         mBakedSegments = config.neon.segmentBoosts;
+    }
+
+    void NeonRenderer::rebuildArcLUT(const Config &config)
+    {
+        // Atlas of size ARC_LUT_WIDTH x MAX_ARCS; row `i` holds arc i's baked
+        // stops (or zeros if it has none / doesn't exist). Same convention as
+        // rebuildSegmentLUT - the shader treats zeros as "no own colour" via
+        // the vec4.w hasStops flag in ArcBlock, so leaving unused rows zero
+        // is safe.
+        //
+        // REPEAT on U (colours cycle around the perimeter, matching the base
+        // gradient's REPEAT wrap so an arc that inherits stops from the same
+        // source looks continuous); CLAMP on V (rows outside [0, arcCount)
+        // are unused).
+        constexpr int W = ARC_LUT_WIDTH;
+        constexpr int H = MAX_ARCS;
+        std::vector<unsigned char> atlas(W * H * 4, 0);
+
+        const int arcCount = std::min(static_cast<int>(config.neon.arcs.size()),
+                                      int(MAX_ARCS));
+        for (int a = 0; a < arcCount; ++a)
+        {
+            const auto &arc = config.neon.arcs[a];
+            if (arc.colorStops.empty())
+            {
+                continue; // row stays zero; shader falls back to base gradient
+            }
+            unsigned char *row = atlas.data() + (a * W * 4);
+            for (int x = 0; x < W; ++x)
+            {
+                float t = static_cast<float>(x) / static_cast<float>(W - 1);
+                glm::vec3 c = ColorUtils::SampleStops(t, arc.colorStops, arc.blendSpace);
+                row[x * 4 + 0] = static_cast<unsigned char>(std::clamp(c.r * 255.0f, 0.0f, 255.0f));
+                row[x * 4 + 1] = static_cast<unsigned char>(std::clamp(c.g * 255.0f, 0.0f, 255.0f));
+                row[x * 4 + 2] = static_cast<unsigned char>(std::clamp(c.b * 255.0f, 0.0f, 255.0f));
+                row[x * 4 + 3] = 255;
+            }
+        }
+
+        mArcLUT.SetData(atlas.data(), W, H, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
+        mArcLUT.SetParams(GL_LINEAR, GL_LINEAR, GL_REPEAT, GL_CLAMP_TO_EDGE);
+
+        mBakedArcs = config.neon.arcs;
     }
 }

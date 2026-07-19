@@ -89,3 +89,4 @@ set_target_properties(glfw PROPERTIES
 
 add_subdirectory(lib)
 add_subdirectory(demo)
+add_subdirectory(demo-capi)

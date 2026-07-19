@@ -102,6 +102,71 @@ namespace
         return remove;
     }
 
+    /// Draw one arc row (Start / Length / Intensity + collapsible per-arc
+    /// stops editor). Mirrors DrawSegmentRow. Caller wraps in @c PushID so
+    /// the Neon and OptimizedNeon sections share widget IDs without collision.
+    /// @return true if the row's remove button was clicked - caller erases.
+    inline bool DrawArcRow(EdgeLighting::Arc &arc)
+    {
+        ImGui::SetNextItemWidth(80.0f);
+        ImGui::SliderFloat("Start##Arc", &arc.start, 0.0f, 1.0f, "%.2f");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80.0f);
+        ImGui::SliderFloat("Len##Arc", &arc.length, 0.0f, 1.0f, "%.2f");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(80.0f);
+        ImGui::SliderFloat("Int##Arc", &arc.intensity, 0.0f, 4.0f, "%.2f");
+        ImGui::SameLine();
+        bool remove = ImGui::SmallButton("X");
+
+        // Collapsible per-arc stops editor. Header shows the count and an
+        // "inherits base" hint when empty (default = read colour from the
+        // base gradient at each sample the arc touches).
+        char stopsHdr[64];
+        std::snprintf(stopsHdr, sizeof(stopsHdr),
+                      "Stops (%zu)%s##ArcStops",
+                      arc.colorStops.size(),
+                      arc.colorStops.empty() ? " - inherits base" : "");
+        ImGui::Indent();
+        if (ImGui::CollapsingHeader(stopsHdr))
+        {
+            const char *blendItems[] = {"RGB", "HSV", "HSL"};
+            int blendIdx = static_cast<int>(arc.blendSpace);
+            ImGui::SetNextItemWidth(120.0f);
+            if (ImGui::Combo("Blend##Arc", &blendIdx, blendItems, IM_ARRAYSIZE(blendItems)))
+            {
+                arc.blendSpace = static_cast<EdgeLighting::BlendSpace>(blendIdx);
+            }
+            for (size_t j = 0; j < arc.colorStops.size(); ++j)
+            {
+                ImGui::PushID(static_cast<int>(j));
+                ImGui::SetNextItemWidth(90.0f);
+                ImGui::SliderFloat("Pos##ArcStop", &arc.colorStops[j].position, 0.0f, 1.0f, "%.2f");
+                ImGui::SameLine();
+                ImGui::ColorEdit4("Col##ArcStop", &arc.colorStops[j].color.x,
+                                  ImGuiColorEditFlags_NoInputs);
+                ImGui::SameLine();
+                if (ImGui::SmallButton("X"))
+                {
+                    arc.colorStops.erase(arc.colorStops.begin() +
+                                         static_cast<ptrdiff_t>(j));
+                    ImGui::PopID();
+                    break;
+                }
+                ImGui::PopID();
+            }
+            if (arc.colorStops.size() < MAX_COLOR_STOPS && ImGui::Button("+ Add Stop##Arc"))
+            {
+                float lastPos = arc.colorStops.empty() ? 0.0f
+                                                       : arc.colorStops.back().position;
+                arc.colorStops.push_back(
+                    {std::min(1.0f, lastPos + 0.25f), glm::vec4(1.0f)});
+            }
+        }
+        ImGui::Unindent();
+        return remove;
+    }
+
     inline bool AnimatedSlider(const char *label, float &baseVal, float activeVal,
                                float minVal, float maxVal, const char *fmt = "%.2f")
     {
@@ -358,9 +423,30 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
         }
     }
 
-    // --- Arc gating (0..1 = full perimeter; shrink to "draw" part of the rect) ---
-    AnimatedSlider("Arc Start##Neon", cfg.neon.arcStart, active.neon.arcStart, 0.0f, 1.0f);
-    AnimatedSlider("Arc Length##Neon", cfg.neon.arcLength, active.neon.arcLength, 0.0f, 1.0f);
+    // --- Arcs (multiple lit slices; winner-take-all in overlap regions) ---
+    ImGui::TextDisabled("Arcs (%zu / %d) - overlap resolves winner-take-all",
+                        cfg.neon.arcs.size(),
+                        EdgeLighting::NeonConfig::MAX_ARCS_CAP);
+    for (size_t i = 0; i < cfg.neon.arcs.size(); ++i)
+    {
+        ImGui::PushID(static_cast<int>(500 + i));
+        bool remove = DrawArcRow(cfg.neon.arcs[i]);
+        ImGui::PopID();
+        if (remove)
+        {
+            cfg.neon.arcs.erase(cfg.neon.arcs.begin() +
+                                static_cast<ptrdiff_t>(i));
+            break;
+        }
+    }
+    if (static_cast<int>(cfg.neon.arcs.size()) <
+        EdgeLighting::NeonConfig::MAX_ARCS_CAP)
+    {
+        if (ImGui::Button("+ Add Arc##Neon"))
+        {
+            cfg.neon.arcs.push_back(EdgeLighting::Arc{});
+        }
+    }
 
     const char *blendItems[] = {"RGB", "HSV", "HSL"};
     int blendIdx = static_cast<int>(cfg.neon.blendSpace);
@@ -480,8 +566,29 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg,
         }
     }
 
-    ImGui::SliderFloat("Arc Start##Opt", &cfg.neon.arcStart, 0.0f, 1.0f, "%.2f");
-    ImGui::SliderFloat("Arc Length##Opt", &cfg.neon.arcLength, 0.0f, 1.0f, "%.2f");
+    ImGui::TextDisabled("Arcs (%zu / %d) - winner-take-all",
+                        cfg.neon.arcs.size(),
+                        EdgeLighting::NeonConfig::MAX_ARCS_CAP);
+    for (size_t i = 0; i < cfg.neon.arcs.size(); ++i)
+    {
+        ImGui::PushID(static_cast<int>(600 + i));
+        bool remove = DrawArcRow(cfg.neon.arcs[i]);
+        ImGui::PopID();
+        if (remove)
+        {
+            cfg.neon.arcs.erase(cfg.neon.arcs.begin() +
+                                static_cast<ptrdiff_t>(i));
+            break;
+        }
+    }
+    if (static_cast<int>(cfg.neon.arcs.size()) <
+        EdgeLighting::NeonConfig::MAX_ARCS_CAP)
+    {
+        if (ImGui::Button("+ Add Arc##Opt"))
+        {
+            cfg.neon.arcs.push_back(EdgeLighting::Arc{});
+        }
+    }
 
     const char *blendItems[] = {"RGB", "HSV", "HSL"};
     int blendIdx = static_cast<int>(cfg.neon.blendSpace);

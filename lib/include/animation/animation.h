@@ -75,11 +75,13 @@ namespace EdgeLighting
     /// @ref Animation::Update / @ref Animation::Apply on paused animations so
     /// they can hold their last-written value.
     ///
-    ///   Stopped   - initial state and after @ref Animation::Stop.  Elapsed
-    ///               is 0 and does NOT advance.  @ref Animation::Apply is a
-    ///               no-op: the target config field is left as-is (use
-    ///               @ref Animation::Reset to write the modulator's t=0
-    ///               baseline explicitly).
+    ///   Stopped   - initial state and after @ref Animation::Stop or a
+    ///               one-shot completion. Elapsed is preserved at the
+    ///               stop-time position (a completed one-shot clamps to
+    ///               duration, so @ref GetProgress reads 1). A never-played
+    ///               Stopped animation has elapsed = 0 and Apply is a
+    ///               no-op regardless of end action; after a run, Apply
+    ///               dispatches per @ref EndAction.
     ///   Playing   - @ref Animation::Update advances elapsed by
     ///               @c dt * @ref Animation::GetSpeed.  @ref Animation::Apply
     ///               writes the current modulator value.
@@ -88,8 +90,10 @@ namespace EdgeLighting
     ///
     /// When a @c ONE_SHOT animation's elapsed crosses
     /// @ref Animation::GetDuration it auto-transitions to @c Stopped (elapsed
-    /// reset to 0) and fires @ref Animation::OnComplete once. There is no
-    /// separate "Completed" state - completion is just Stopped-with-callback.
+    /// clamped to duration) and fires @ref Animation::OnComplete once. A
+    /// subsequent @ref Play from @c Stopped zeros elapsed so the animation
+    /// restarts from the beginning. There is no separate "Completed" state -
+    /// completion is just Stopped-with-callback.
     typedef enum class AnimationState
     {
         STOPPED,
@@ -115,8 +119,9 @@ namespace EdgeLighting
     /// - @ref Play  - Stopped -> Playing (elapsed = 0);
     ///                Paused -> Playing (elapsed continues).
     /// - @ref Pause - Playing -> Paused (elapsed frozen).
-    /// - @ref Stop  - any -> Stopped (elapsed captured into @c mHeldElapsed,
-    ///                then zeroed). Apply then writes per @ref EndAction.
+    /// - @ref Stop  - any -> Stopped (elapsed preserved so HOLD_CURRENT and
+    ///                @ref GetProgress reflect the stop-time position).
+    ///                Apply then writes per @ref EndAction.
     /// - @ref Reset - writes the modulator's t=0 value into config and
     ///                zeroes elapsed; does NOT change state. Works from any
     ///                state so it can act as "rewind while playing" or
@@ -183,11 +188,13 @@ namespace EdgeLighting
         // --- Control -----------------------------------------------------
 
         /// @brief Enter the @c PLAYING state.
-        /// @details From @c STOPPED, elapsed is reset to 0. From @c PAUSED,
-        ///          elapsed continues from its frozen value (there is no
-        ///          separate "Resume" method - @c Play from @c PAUSED *is*
-        ///          resume). From @c PLAYING, this is a no-op (no state
-        ///          change, no callback).
+        /// @details From @c STOPPED, elapsed is reset to 0 (so a completed
+        ///          one-shot restarts from the beginning, and the settled
+        ///          HOLD_* state parked at the stop-time value is dropped).
+        ///          From @c PAUSED, elapsed continues from its frozen value
+        ///          (there is no separate "Resume" method - @c Play from
+        ///          @c PAUSED *is* resume). From @c PLAYING, this is a no-op
+        ///          (no state change, no callback).
         virtual void Play()
         {
             if (mState == AnimationState::PLAYING)
@@ -196,11 +203,6 @@ namespace EdgeLighting
             }
             if (mState == AnimationState::STOPPED)
             {
-                // Fresh start; zeroing elapsed also drops any HOLD_END /
-                // HOLD_CURRENT settled state a completed run may have parked
-                // here. mHeldElapsed is stale after this too, but it's only
-                // consulted while STOPPED and mHasRun, and the next Stop will
-                // rewrite it.
                 mElapsed = 0.0f;
             }
             transitionTo(AnimationState::PLAYING);
@@ -219,19 +221,17 @@ namespace EdgeLighting
 
         /// @brief Enter the @c STOPPED state; @ref Apply then writes per @ref EndAction.
         /// @details Symmetric with the natural one-shot completion path in
-        ///          @ref Update: elapsed at the moment of stop is captured
-        ///          into @c mHeldElapsed (read by @c HOLD_CURRENT), then
-        ///          @c mElapsed is zeroed, @c mHasRun is set, and the state
-        ///          flips. No-op if already cleanly Stopped at elapsed = 0.
+        ///          @ref Update. @c mElapsed is preserved so @ref GetProgress
+        ///          and @c HOLD_CURRENT read the stop-time value; @c mHasRun
+        ///          is set so subsequent @ref Apply calls honour the end
+        ///          action. No-op if already @c STOPPED.
         virtual void Stop()
         {
-            if (mState == AnimationState::STOPPED && mElapsed == 0.0f)
+            if (mState == AnimationState::STOPPED)
             {
                 return;
             }
-            mHeldElapsed = mElapsed;
             mHasRun = true;
-            mElapsed = 0.0f;
             transitionTo(AnimationState::STOPPED);
         }
 
@@ -247,7 +247,6 @@ namespace EdgeLighting
         virtual void Reset(Config &cfg)
         {
             mElapsed = 0.0f;
-            mHeldElapsed = 0.0f;
             mHasRun = false;
             ApplyAt(cfg, 0.0f);
         }
@@ -286,14 +285,12 @@ namespace EdgeLighting
                 else if (mMode == PlaybackMode::ONE_SHOT && mElapsed >= mDuration)
                 {
                     // Natural one-shot completion. Symmetric with Stop():
-                    // capture the stop-time elapsed into mHeldElapsed (for
-                    // the naturally-completed case that's == mDuration by
-                    // construction), mark mHasRun, zero mElapsed, then fire
-                    // OnComplete. Which value STOPPED-Apply writes is
-                    // decided by mEndAction, not by mElapsed.
-                    mHeldElapsed = mDuration;
+                    // clamp the elapsed overshoot to duration for a clean
+                    // GetProgress = 1, mark mHasRun, and transition. Which
+                    // value STOPPED-Apply writes is decided by mEndAction,
+                    // not by mElapsed.
+                    mElapsed = mDuration;
                     mHasRun = true;
-                    mElapsed = 0.0f;
                     transitionTo(AnimationState::STOPPED);
                     if (OnComplete)
                     {
@@ -330,7 +327,7 @@ namespace EdgeLighting
             {
             case EndAction::HOLD_CURRENT:
             {
-                ApplyAt(cfg, mHeldElapsed);
+                ApplyAt(cfg, mElapsed);
                 return;
             }
             case EndAction::HOLD_END:
@@ -367,6 +364,40 @@ namespace EdgeLighting
         ///          the next @ref Update tick will complete a one-shot whose
         ///          elapsed has crossed @ref GetDuration.
         void SetElapsed(float elapsed) { mElapsed = std::max(0.0f, elapsed); }
+
+        /// @brief Normalised playback position in @c [0, 1].
+        /// @details @c elapsed / @c duration - the reciprocal of a duration
+        ///          slider for timeline UIs. Loop mode wraps elapsed at
+        ///          duration in @ref Update so a playing looper lives in
+        ///          @c [0, 1). A completed one-shot reports 1 (elapsed is
+        ///          clamped to duration on completion). An explicitly
+        ///          @ref Stop -ped animation reports the stop-time position.
+        ///          A never-played animation reports 0.
+        /// @returns 0 when @ref GetDuration is 0 - the animation's modulator
+        ///          owns its own periodicity and there is no natural
+        ///          normalisation.
+        float GetProgress() const
+        {
+            const float d = GetDuration();
+            return (d > 0.0f) ? (mElapsed / d) : 0.0f;
+        }
+
+        /// @brief Set the normalised playback position.
+        /// @param progress Clamped to @c [0, 1] before scaling; values outside
+        ///                 that range are silently pulled in.
+        /// @details Same "does not change state" caveat as @ref SetElapsed -
+        ///          a @c ONE_SHOT animation set past its end still needs an
+        ///          @ref Update tick to fire @ref OnComplete. No-op when
+        ///          @ref GetDuration is 0 (modulator owns its periodicity).
+        void SetProgress(float progress)
+        {
+            const float d = GetDuration();
+            if (d <= 0.0f)
+            {
+                return;
+            }
+            mElapsed = std::clamp(progress, 0.0f, 1.0f) * d;
+        }
 
         // --- Identity ----------------------------------------------------
         //
@@ -516,9 +547,8 @@ namespace EdgeLighting
         float mDuration = 0.0f;
         float mSpeed = 1.0f;
         EndAction mEndAction = EndAction::HOLD_CURRENT;
-        float mHeldElapsed = 0.0f; ///< Snapshot of mElapsed at the moment of Stop; read by HOLD_CURRENT.
-        bool mHasRun = false;      ///< True once the animation has advanced past Play at least once.
-        std::string mName;         ///< Optional label; see SetName / GetName.
+        bool mHasRun = false; ///< True once the animation has advanced past Play at least once.
+        std::string mName;    ///< Optional label; see SetName / GetName.
     };
 
     /// @brief Shared owning reference to an Animation.

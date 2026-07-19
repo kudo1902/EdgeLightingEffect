@@ -95,6 +95,23 @@
 - Keep shader sources (`.vert`/`.frag`) ASCII-only so every GLSL compiler
   accepts the CMake-injected text (see `lib/shaders/neon-tuning.h`).
 
+## C API (`lib/capi/`)
+
+- Files: `kebab-case` with `-capi` suffix
+  - e.g. `edge-lighting-capi.h`, `edge-lighting-capi.cpp`
+- Functions: `snake_case` with `el_` prefix
+  - e.g. `el_config_create`, `el_effect_render`, `el_animation_play`
+- Enum types: `snake_case` with `_e` suffix
+  - e.g. `el_result_e`, `el_winding_e`, `el_animation_state_e`
+- Handle types: `snake_case` with `_handle_t` suffix
+  - e.g. `el_config_handle_t`, `el_effect_handle_t`, `el_animation_handle_t`, `el_modulator_handle_t`
+- Struct / typedef types: `snake_case` with `_t` suffix
+  - e.g. `el_bool_t`, `el_gl_get_proc_address_t`
+- Enum values / macros: `ALL_CAPS` with underscores (unchanged)
+  - e.g. `EL_OK`, `EL_ERR_NULL_ARG`, `EL_API`, `EL_ABI_VERSION`
+- Function-pointer typedef: `snake_case` with `_t` suffix
+  - e.g. `el_gl_get_proc_address_t`
+
 ## Braces / Formatting
 - Always use braces for control flow statements, even single-line bodies
   - *Correct:*

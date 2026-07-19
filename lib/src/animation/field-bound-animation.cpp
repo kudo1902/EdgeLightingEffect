@@ -45,16 +45,6 @@ namespace EdgeLighting
                 cfg.neon.hueRotationRate = value;
                 break;
             }
-            case AnimatableField::NEON_ARC_START:
-            {
-                cfg.neon.arcStart = value;
-                break;
-            }
-            case AnimatableField::NEON_ARC_LENGTH:
-            {
-                cfg.neon.arcLength = value;
-                break;
-            }
             }
         }
 
@@ -89,14 +79,6 @@ namespace EdgeLighting
             case AnimatableField::NEON_HUE_ROTATION_RATE:
             {
                 return cfg.neon.hueRotationRate;
-            }
-            case AnimatableField::NEON_ARC_START:
-            {
-                return cfg.neon.arcStart;
-            }
-            case AnimatableField::NEON_ARC_LENGTH:
-            {
-                return cfg.neon.arcLength;
             }
             }
             return 0.0f;
@@ -179,6 +161,83 @@ namespace EdgeLighting
             }
             }
         }
+
+        Arc &ensureArcSlot(Config &cfg, size_t index)
+        {
+            if (cfg.neon.arcs.size() <= index)
+            {
+                cfg.neon.arcs.resize(index + 1, Arc{});
+            }
+            return cfg.neon.arcs[index];
+        }
+
+        void writeArc(Config &cfg, size_t index, ArcField field, float value)
+        {
+            Arc &a = ensureArcSlot(cfg, index);
+            switch (field)
+            {
+            case ArcField::START:
+            {
+                a.start = value;
+                break;
+            }
+            case ArcField::LENGTH:
+            {
+                a.length = value;
+                break;
+            }
+            case ArcField::INTENSITY:
+            {
+                a.intensity = value;
+                break;
+            }
+            }
+        }
+
+        ColorStop &ensureArcStopSlot(Arc &arc, size_t stopIdx)
+        {
+            if (arc.colorStops.size() <= stopIdx)
+            {
+                arc.colorStops.resize(stopIdx + 1,
+                                      ColorStop{0.5f, glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)});
+            }
+            return arc.colorStops[stopIdx];
+        }
+
+        void writeArcStop(Config &cfg, size_t arcIdx, size_t stopIdx,
+                          ColorStopField field, float value)
+        {
+            Arc &a = ensureArcSlot(cfg, arcIdx);
+            ColorStop &c = ensureArcStopSlot(a, stopIdx);
+            switch (field)
+            {
+            case ColorStopField::POSITION:
+            {
+                c.position = value;
+                break;
+            }
+            case ColorStopField::R:
+            {
+                c.color.r = value;
+                break;
+            }
+            case ColorStopField::G:
+            {
+                c.color.g = value;
+                break;
+            }
+            case ColorStopField::B:
+            {
+                c.color.b = value;
+                break;
+            }
+            case ColorStopField::A:
+            {
+                c.color.a = value;
+                break;
+            }
+            }
+        }
     } // namespace
 
     void FieldBoundAnimation::ApplyAt(Config &cfg, float elapsed) const
@@ -205,6 +264,21 @@ namespace EdgeLighting
                           b.modulator->Evaluate(elapsed));
             }
         }
+        for (const ArcBinding &b : mArcBindings)
+        {
+            if (b.modulator)
+            {
+                writeArc(cfg, b.index, b.field, b.modulator->Evaluate(elapsed));
+            }
+        }
+        for (const ArcStopBinding &b : mArcStopBindings)
+        {
+            if (b.modulator)
+            {
+                writeArcStop(cfg, b.arcIndex, b.stopIndex, b.field,
+                             b.modulator->Evaluate(elapsed));
+            }
+        }
     }
 
     void FieldBoundAnimation::CaptureBaseline(const Config &cfg)
@@ -226,6 +300,17 @@ namespace EdgeLighting
             mSavedSegmentBoosts.clear();
             mSegmentBoostsCaptured = false;
         }
+
+        if (!mArcBindings.empty() || !mArcStopBindings.empty())
+        {
+            mSavedArcs = cfg.neon.arcs;
+            mArcsCaptured = true;
+        }
+        else
+        {
+            mSavedArcs.clear();
+            mArcsCaptured = false;
+        }
     }
 
     void FieldBoundAnimation::RestoreBaseline(Config &cfg) const
@@ -238,6 +323,10 @@ namespace EdgeLighting
         if (mSegmentBoostsCaptured)
         {
             cfg.neon.segmentBoosts = mSavedSegmentBoosts;
+        }
+        if (mArcsCaptured)
+        {
+            cfg.neon.arcs = mSavedArcs;
         }
     }
 

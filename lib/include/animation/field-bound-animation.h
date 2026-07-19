@@ -11,9 +11,10 @@ namespace EdgeLighting
     /// @brief Scalar Config leaves that a @ref FieldBoundAnimation can drive
     ///        through @ref FieldBoundAnimation::AddField.
     ///
-    /// Enum values are numerically ABI-stable - the C API's @c EL_ConfigField
-    /// mirrors them 1:1 and static_casts between the two. Append new fields at
-    /// the end so both C and C++ callers stay forward-compatible.
+    /// Enum values are numerically ABI-stable - the C API's @c el_config_field_e
+    /// mirrors them 1:1 (parity enforced by @c static_assert at the top of
+    /// @c edge-lighting-capi.cpp). Append new fields at the end so both C
+    /// and C++ callers stay forward-compatible.
     ///
     /// Segment struct fields (position / length / boost inside
     /// @c NeonConfig::segmentBoosts[i]) live in @ref SegmentField because
@@ -28,15 +29,13 @@ namespace EdgeLighting
         NEON_FILAMENT_FALLOFF = 4,
         NEON_GLOW_SIDE_SOFTNESS = 5,
         NEON_HUE_ROTATION_RATE = 6,
-        NEON_ARC_START = 7,
-        NEON_ARC_LENGTH = 8,
     } AnimatableField;
 
     /// @brief Which scalar to drive inside a @c NeonConfig::segmentBoosts entry.
     ///
     /// Paired with an index at bind time via
     /// @ref FieldBoundAnimation::AddSegmentField. Numerically mirrored by
-    /// @c EL_SegmentField in the C ABI.
+    /// @c el_segment_field_e in the C ABI.
     typedef enum class SegmentField
     {
         POSITION = 0,
@@ -44,12 +43,25 @@ namespace EdgeLighting
         BOOST = 2,
     } SegmentField;
 
+    /// @brief Which scalar to drive inside a @c NeonConfig::arcs entry.
+    ///
+    /// Paired with an index at bind time via
+    /// @ref FieldBoundAnimation::AddArcField. Numerically mirrored by
+    /// @c el_arc_field_e in the C ABI.
+    typedef enum class ArcField
+    {
+        START = 0,
+        LENGTH = 1,
+        INTENSITY = 2,
+    } ArcField;
+
     /// @brief Which scalar to drive inside a single stop of
     ///        @c NeonConfig::segmentBoosts[segIdx].colorStops[stopIdx].
     ///
     /// Paired with @c (segIdx, stopIdx) at bind time via
-    /// @ref FieldBoundAnimation::AddStopField. Numerically mirrored by
-    /// @c EL_ColorStopField in the C ABI when that binding is added.
+    /// @ref FieldBoundAnimation::AddStopField (or @ref FieldBoundAnimation::AddArcStopField
+    /// for arc-stop bindings). Numerically mirrored by
+    /// @c el_color_stop_field_e in the C ABI.
     typedef enum class ColorStopField
     {
         POSITION = 0, ///< @c ColorStop::position - normalised offset within the segment span.
@@ -135,6 +147,24 @@ namespace EdgeLighting
             ModulatorPtr modulator;
         } SegmentStopBinding;
 
+        /// @brief A single (arcs[index].field, modulator) binding.
+        typedef struct ArcBinding
+        {
+            size_t index;
+            ArcField field;
+            ModulatorPtr modulator;
+        } ArcBinding;
+
+        /// @brief A single (arcs[arcIdx].colorStops[stopIdx].field,
+        ///        modulator) binding.
+        typedef struct ArcStopBinding
+        {
+            size_t arcIndex;
+            size_t stopIndex;
+            ColorStopField field;
+            ModulatorPtr modulator;
+        } ArcStopBinding;
+
         // --- Construction ------------------------------------------------
 
         /// @brief Zero-binding animation. Extend via @ref AddField /
@@ -191,6 +221,28 @@ namespace EdgeLighting
             mSegmentStopBindings.push_back({segIdx, stopIdx, field, std::move(modulator)});
         }
 
+        /// @brief Bind a scalar inside @c arcs[index] to a modulator.
+        /// @details @p index auto-grows @c cfg.neon.arcs at write time. New
+        ///          entries are seeded with the default @ref Arc
+        ///          (start=0, length=1, intensity=1) so binding only one
+        ///          field still shows something.
+        void AddArcField(size_t index, ArcField field, ModulatorPtr modulator)
+        {
+            mArcBindings.push_back({index, field, std::move(modulator)});
+        }
+
+        /// @brief Bind a scalar inside
+        ///        @c arcs[arcIdx].colorStops[stopIdx] to a modulator.
+        /// @details Both @p arcIdx (arcs vector) and @p stopIdx (that arc's
+        ///          stops vector) auto-grow at write time. New stops are
+        ///          seeded to a mid-position opaque-white default so binding
+        ///          only a single channel still produces a visible colour.
+        void AddArcStopField(size_t arcIdx, size_t stopIdx,
+                             ColorStopField field, ModulatorPtr modulator)
+        {
+            mArcStopBindings.push_back({arcIdx, stopIdx, field, std::move(modulator)});
+        }
+
         // --- Introspection -----------------------------------------------
 
         /// @brief Read-only view of the scalar-field bindings.
@@ -205,10 +257,21 @@ namespace EdgeLighting
             return mSegmentStopBindings;
         }
 
-        /// @brief Total number of bindings (scalar + segment + segment-stop).
+        /// @brief Read-only view of the arc-field bindings.
+        const std::vector<ArcBinding> &GetArcBindings() const { return mArcBindings; }
+
+        /// @brief Read-only view of the arc-stop-field bindings.
+        const std::vector<ArcStopBinding> &GetArcStopBindings() const
+        {
+            return mArcStopBindings;
+        }
+
+        /// @brief Total number of bindings across every kind.
         size_t GetBindingCount() const
         {
-            return mScalarBindings.size() + mSegmentBindings.size() + mSegmentStopBindings.size();
+            return mScalarBindings.size() + mSegmentBindings.size() +
+                   mSegmentStopBindings.size() + mArcBindings.size() +
+                   mArcStopBindings.size();
         }
 
         /// @brief Drop every binding (leaves state / duration alone).
@@ -217,6 +280,8 @@ namespace EdgeLighting
             mScalarBindings.clear();
             mSegmentBindings.clear();
             mSegmentStopBindings.clear();
+            mArcBindings.clear();
+            mArcStopBindings.clear();
         }
 
         // --- Drive -------------------------------------------------------
@@ -242,6 +307,8 @@ namespace EdgeLighting
         std::vector<ScalarBinding> mScalarBindings;
         std::vector<SegmentBinding> mSegmentBindings;
         std::vector<SegmentStopBinding> mSegmentStopBindings;
+        std::vector<ArcBinding> mArcBindings;
+        std::vector<ArcStopBinding> mArcStopBindings;
         /// One saved value per scalar binding, index-aligned with
         /// @c mScalarBindings at the moment @ref CaptureBaseline was called.
         std::vector<float> mSavedScalarValues;
@@ -255,6 +322,10 @@ namespace EdgeLighting
         /// we can distinguish "no segment bindings then" from "empty vector
         /// then").
         bool mSegmentBoostsCaptured = false;
+        /// Snapshot of the whole @c arcs vector - same rationale as
+        /// mSavedSegmentBoosts.
+        std::vector<Arc> mSavedArcs;
+        bool mArcsCaptured = false;
     };
 
 } // namespace EdgeLighting

@@ -452,11 +452,14 @@ namespace EdgeLighting
     // -------------------------------------------------------------------------
 
     /// @brief One-shot animation that progressively lights up the outline.
-    /// @details Sweeps @c neon.arcLength from 0 to 1 over @p duration seconds,
-    ///          ending fully lit and held. Does NOT touch @c neon.arcStart -
-    ///          set that externally (slider, code, another animation) to
-    ///          choose where the trace begins. This separation lets users
-    ///          drag the Arc Start slider freely while the tracer is running.
+    /// @details Sweeps @c neon.arcs[0].length from 0 to 1 over @p duration
+    ///          seconds, ending fully lit and held. Does NOT touch
+    ///          @c arcs[0].start - set that externally (slider, code, another
+    ///          animation) to choose where the trace begins.
+    ///
+    /// Auto-grows @c cfg.neon.arcs to contain at least entry [0] on first
+    /// write (default config already has one full-perimeter arc, so this is
+    /// only a safety net for hosts that clear the vector).
     ///
     /// Combine with @ref IntensityFadeIn for a smoother appearance, or chain
     /// into a @ref SegmentTravel afterwards via @ref Animation::OnComplete for
@@ -477,13 +480,17 @@ namespace EdgeLighting
 
         void ApplyAt(Config &cfg, float elapsed) const override
         {
-            cfg.neon.arcLength = mEase.Evaluate(elapsed);
+            if (cfg.neon.arcs.empty())
+            {
+                cfg.neon.arcs.push_back(Arc{});
+            }
+            cfg.neon.arcs[0].length = mEase.Evaluate(elapsed);
         }
 
-        void CaptureBaseline(const Config &cfg) override { mSavedArcLength = cfg.neon.arcLength; }
+        void CaptureBaseline(const Config &cfg) override { mSavedArcs = cfg.neon.arcs; }
 
     protected:
-        void RestoreBaseline(Config &cfg) const override { cfg.neon.arcLength = mSavedArcLength; }
+        void RestoreBaseline(Config &cfg) const override { cfg.neon.arcs = mSavedArcs; }
         void OnDurationChanged(float d) override
         {
             mEase = Ease(0.0f, 1.0f, d, mCurve, false);
@@ -492,23 +499,25 @@ namespace EdgeLighting
     private:
         EasingFunction::Curve mCurve;
         Ease mEase;
-        float mSavedArcLength = 1.0f;
+        std::vector<Arc> mSavedArcs;
     };
 
     /// @brief Three-phase arc wipe: grow, chase, shrink.
     /// @details A "wipe" that draws the neon arc from @c startPos, races it
     ///          around the perimeter at a fixed maximum length, and shrinks it
-    ///          away as the tail reaches @c endPos.
+    ///          away as the tail reaches @c endPos. Writes to @c arcs[0]
+    ///          (auto-grows the vector if empty), mirroring the segment
+    ///          presets' `segmentBoosts[0]` convention.
     ///
-    /// - **Phase 1 - grow**  : @c arcStart stays at @c startPos; @c arcLength
-    ///                         grows 0 → @c maxLength.  The head moves out
-    ///                         from @c startPos.
-    /// - **Phase 2 - chase** : @c arcLength stays at @c maxLength; both head
-    ///                         and tail advance at the same speed.  The head
-    ///                         travels from @c (startPos + maxLength) to
+    /// - **Phase 1 - grow**  : @c arcs[0].start stays at @c startPos;
+    ///                         @c arcs[0].length grows 0 → @c maxLength. The
+    ///                         head moves out from @c startPos.
+    /// - **Phase 2 - chase** : @c arcs[0].length stays at @c maxLength; both
+    ///                         head and tail advance at the same speed. The
+    ///                         head travels from @c (startPos + maxLength) to
     ///                         @c endPos.
     /// - **Phase 3 - shrink**: head parks at @c endPos; tail catches up.
-    ///                         @c arcLength shrinks @c maxLength → 0.
+    ///                         @c arcs[0].length shrinks @c maxLength → 0.
     ///
     /// The per-phase durations are chosen so the head and tail move at the
     /// same constant speed across all three phases - no visible acceleration
@@ -538,13 +547,13 @@ namespace EdgeLighting
     public:
         /// @param duration   Total wipe time in seconds.
         /// @param startPos   Perimeter position [0, 1) where the tail begins;
-        ///                   arcStart stays here during phase 1.
+        ///                   @c arcs[0].start stays here during phase 1.
         /// @param endPos     Perimeter position [0, 1) where both ends meet
         ///                   at the end of the wipe. The head parks here at
         ///                   the end of phase 2; the tail closes the gap
         ///                   during phase 3 and reaches @p endPos exactly
-        ///                   when arcLength hits 0. Equal to @p startPos →
-        ///                   full loop.
+        ///                   when @c arcs[0].length hits 0. Equal to
+        ///                   @p startPos → full loop.
         /// @param maxLength  Arc length during the chase phase [0, 1).
         /// @param curve      Easing applied to the whole wipe timeline.
         ArcWipe(float duration = 2.0f,
@@ -607,22 +616,18 @@ namespace EdgeLighting
             // live in [0, 1).
             arcStart = arcStart - std::floor(arcStart);
 
-            cfg.neon.arcStart = arcStart;
-            cfg.neon.arcLength = arcLength;
+            if (cfg.neon.arcs.empty())
+            {
+                cfg.neon.arcs.push_back(Arc{});
+            }
+            cfg.neon.arcs[0].start = arcStart;
+            cfg.neon.arcs[0].length = arcLength;
         }
 
-        void CaptureBaseline(const Config &cfg) override
-        {
-            mSavedArcStart = cfg.neon.arcStart;
-            mSavedArcLength = cfg.neon.arcLength;
-        }
+        void CaptureBaseline(const Config &cfg) override { mSavedArcs = cfg.neon.arcs; }
 
     protected:
-        void RestoreBaseline(Config &cfg) const override
-        {
-            cfg.neon.arcStart = mSavedArcStart;
-            cfg.neon.arcLength = mSavedArcLength;
-        }
+        void RestoreBaseline(Config &cfg) const override { cfg.neon.arcs = mSavedArcs; }
         void OnDurationChanged(float d) override { computePhases(d); }
 
     private:
@@ -672,8 +677,7 @@ namespace EdgeLighting
         float mT1 = 0.0f;
         float mT2 = 0.0f;
         float mT3 = 0.0f;
-        float mSavedArcStart = 0.0f;
-        float mSavedArcLength = 1.0f;
+        std::vector<Arc> mSavedArcs;
     };
 
     // -------------------------------------------------------------------------
