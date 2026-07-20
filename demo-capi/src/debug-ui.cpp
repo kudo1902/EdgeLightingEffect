@@ -41,10 +41,22 @@ namespace
     {
         switch (s)
         {
-        case EL_ANIM_STATE_PLAYING: { return "PLAYING"; }
-        case EL_ANIM_STATE_PAUSED:  { return "PAUSED"; }
-        case EL_ANIM_STATE_STOPPED: { return "STOPPED"; }
-        default:                    { return "?"; }
+        case EL_ANIM_STATE_PLAYING:
+        {
+            return "PLAYING";
+        }
+        case EL_ANIM_STATE_PAUSED:
+        {
+            return "PAUSED";
+        }
+        case EL_ANIM_STATE_STOPPED:
+        {
+            return "STOPPED";
+        }
+        default:
+        {
+            return "?";
+        }
         }
     }
 
@@ -52,10 +64,22 @@ namespace
     {
         switch (s)
         {
-        case EL_ANIM_STATE_PLAYING: { return ImVec4(0.30f, 0.85f, 0.35f, 1.0f); }
-        case EL_ANIM_STATE_PAUSED:  { return ImVec4(0.95f, 0.75f, 0.15f, 1.0f); }
-        case EL_ANIM_STATE_STOPPED: { return ImVec4(0.55f, 0.55f, 0.60f, 1.0f); }
-        default:                    { return ImVec4(1.0f, 1.0f, 1.0f, 1.0f); }
+        case EL_ANIM_STATE_PLAYING:
+        {
+            return ImVec4(0.30f, 0.85f, 0.35f, 1.0f);
+        }
+        case EL_ANIM_STATE_PAUSED:
+        {
+            return ImVec4(0.95f, 0.75f, 0.15f, 1.0f);
+        }
+        case EL_ANIM_STATE_STOPPED:
+        {
+            return ImVec4(0.55f, 0.55f, 0.60f, 1.0f);
+        }
+        default:
+        {
+            return ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
+        }
         }
     }
 } // namespace
@@ -163,8 +187,10 @@ void DebugUI::Build(el_effect_handle_t effect)
     ImGui::Text("Clock: %s", playing ? "PLAYING" : "PAUSED");
     if (ImGui::Button(playing ? "Pause" : "Play"))
     {
-        if (playing) el_effect_clock_pause(effect);
-        else         el_effect_clock_play(effect);
+        if (playing)
+            el_effect_clock_pause(effect);
+        else
+            el_effect_clock_play(effect);
     }
     ImGui::End();
 }
@@ -598,7 +624,8 @@ void DebugUI::buildNeonSection(el_effect_handle_t effect)
     {
         el_effect_set_neon_renderer_enabled(effect, en ? 1 : 0);
     }
-    if (!en) return;
+    if (!en)
+        return;
 
     el_bool_t opaque = 0;
     el_effect_get_opaque(effect, &opaque);
@@ -669,7 +696,8 @@ void DebugUI::buildOptimizedNeonSection(el_effect_handle_t effect)
     {
         el_effect_set_optimized_renderer_enabled(effect, en ? 1 : 0);
     }
-    if (!en) return;
+    if (!en)
+        return;
 
     el_bool_t showHalf = 0;
     el_effect_get_optimized_show_half_res(effect, &showHalf);
@@ -735,7 +763,8 @@ void DebugUI::buildDropletsSection(el_effect_handle_t effect)
     {
         el_effect_set_droplets_renderer_enabled(effect, en ? 1 : 0);
     }
-    if (!en) return;
+    if (!en)
+        return;
 
     float amount = 0.0f;
     el_effect_get_droplets_amount(effect, &amount);
@@ -751,11 +780,11 @@ void DebugUI::buildDropletsSection(el_effect_handle_t effect)
         el_effect_set_droplets_speed(effect, speed);
     }
 
-    float scale = 0.0f;
-    el_effect_get_droplets_scale(effect, &scale);
-    if (ImGui::SliderFloat("Scale##Drop", &scale, 0.25f, 4.0f))
+    int lanes = 1;
+    el_effect_get_droplets_lanes(effect, &lanes);
+    if (ImGui::SliderInt("Lanes##Drop", &lanes, 1, 6))
     {
-        el_effect_set_droplets_scale(effect, scale);
+        el_effect_set_droplets_lanes(effect, lanes);
     }
 
     float distortion = 0.0f;
@@ -845,13 +874,25 @@ void DebugUI::buildAnimationSection(el_effect_handle_t effect)
         ImGui::Text("%s", entry.name.c_str());
 
         ImGui::SameLine();
-        if (ImGui::SmallButton("Play"))  { el_animation_play(h); }
+        if (ImGui::SmallButton("Play"))
+        {
+            el_animation_play(h);
+        }
         ImGui::SameLine();
-        if (ImGui::SmallButton("Pause")) { el_animation_pause(h); }
+        if (ImGui::SmallButton("Pause"))
+        {
+            el_animation_pause(h);
+        }
         ImGui::SameLine();
-        if (ImGui::SmallButton("Stop"))  { el_animation_stop(h); }
+        if (ImGui::SmallButton("Stop"))
+        {
+            el_animation_stop(h);
+        }
         ImGui::SameLine();
-        if (ImGui::SmallButton("Reset")) { el_animation_reset(h, effect); }
+        if (ImGui::SmallButton("Reset"))
+        {
+            el_animation_reset(h, effect);
+        }
         ImGui::SameLine();
         bool wantRemove = ImGui::SmallButton("Remove");
 
@@ -945,7 +986,8 @@ void DebugUI::buildBackgroundSection()
 
     ImGui::Checkbox("Show Checker##Bg", &mShowBackground);
     ImGui::TextDisabled("Toggle Neon > 'Opaque' to see blend vs occlude.");
-    if (!mShowBackground) return;
+    if (!mShowBackground)
+        return;
 
     ImGui::SliderFloat("Checker Size##Bg", &mBgCheckerSize, 4.0f, 128.0f, "%.0f");
     ImGui::ColorEdit3("Color A##Bg", mBgColorA, ImGuiColorEditFlags_NoInputs);
@@ -983,7 +1025,11 @@ void DebugUI::buildWireframeSection(el_effect_handle_t effect)
 void DebugUI::scanColorPickerFiles()
 {
     static const std::vector<std::string> exts = {
-        ".png", ".jpg", ".jpeg", ".bmp", ".tga",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".bmp",
+        ".tga",
     };
     std::string prev;
     if (mColorPickerSelectedIdx >= 0 &&
@@ -1002,7 +1048,8 @@ void DebugUI::scanColorPickerFiles()
         }
         std::string ext = entry.path().extension().string();
         std::transform(ext.begin(), ext.end(), ext.begin(),
-                       [](unsigned char c) { return std::tolower(c); });
+                       [](unsigned char c)
+                       { return std::tolower(c); });
         if (std::find(exts.begin(), exts.end(), ext) == exts.end())
         {
             continue;

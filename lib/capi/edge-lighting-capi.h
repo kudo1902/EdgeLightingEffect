@@ -634,9 +634,22 @@ extern "C"
     EL_API el_result_e el_effect_set_droplets_speed(el_effect_handle_t effect, float speed);
     EL_API el_result_e el_effect_get_droplets_speed(el_effect_handle_t effect, float *outSpeed);
 
-    /** @brief Droplet field zoom (higher = more, smaller droplets). */
-    EL_API el_result_e el_effect_set_droplets_scale(el_effect_handle_t effect, float scale);
-    EL_API el_result_e el_effect_get_droplets_scale(el_effect_handle_t effect, float *outScale);
+    /** @brief Number of droplet lanes across the band (clamped to >= 1).
+     *  @details 1 = drops as wide as the band, 2 = two lanes of half-width
+     *           drops. Droplet size follows @ref el_effect_set_droplets_band_width,
+     *           so drops fit the band at any thickness. */
+    EL_API el_result_e el_effect_set_droplets_lanes(el_effect_handle_t effect, int lanes);
+    EL_API el_result_e el_effect_get_droplets_lanes(el_effect_handle_t effect, int *outLanes);
+
+    /** @brief Band thickness in pixels - the droplets' entire world.
+     *  @details The side of the rect edge the band occupies comes from the
+     *           neon glow side, not from here. */
+    EL_API el_result_e el_effect_set_droplets_band_width(el_effect_handle_t effect, float bandWidth);
+    EL_API el_result_e el_effect_get_droplets_band_width(el_effect_handle_t effect, float *outBandWidth);
+
+    /** @brief Gap in pixels between the rect edge and the band's inner boundary. */
+    EL_API el_result_e el_effect_set_droplets_band_offset(el_effect_handle_t effect, float bandOffset);
+    EL_API el_result_e el_effect_get_droplets_band_offset(el_effect_handle_t effect, float *outBandOffset);
 
     /** @brief Refraction strength through droplets (0 disables the lensing). */
     EL_API el_result_e el_effect_set_droplets_distortion(el_effect_handle_t effect, float distortion);

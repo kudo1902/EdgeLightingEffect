@@ -8,21 +8,27 @@
 
 namespace EdgeLighting
 {
-    /// Rain-on-glass droplets renderer ("wet window pane").
+    /// Rain-on-glass droplets renderer.
     ///
     /// Each frame it snapshots the current framebuffer into an internal
-    /// texture with glCopyTexSubImage2D, then draws a quad over the rect
-    /// interior whose fragment shader (droplets.frag) repaints the snapshot
-    /// as wet glass: frost blur (mip LOD of the snapshot) everywhere, plus
-    /// grid-hashed trickling droplets that refract the snapshot sharply.
+    /// texture with glCopyTexSubImage2D, then draws a fullscreen quad whose
+    /// fragment shader (droplets.frag) paints trickling droplets into a band
+    /// hugging the rounded-rect perimeter.
+    ///
+    /// The droplet field is hashed in screen space under a single global
+    /// gravity, so rain falls straight down rather than circulating around the
+    /// perimeter. What the rect geometry contributes is the band mask and the
+    /// droplet size, which is derived from @c DropletsConfig::bandWidth - that
+    /// is what lets the effect hold up in a band only a handful of pixels
+    /// thick. Layer amplitudes are weighted by how vertical the local edge is,
+    /// so rain streaks down the sides and beads along the top and bottom.
     ///
     /// Because the snapshot is taken at Render() time, everything drawn
     /// before this renderer - the demo background and the neon glow layers -
-    /// shows through the pane. Register it last so the glow gets frosted and
-    /// lensed by the drops.
+    /// is what the drops refract. Register it last.
     ///
-    /// Parameters come from @c Config::droplets; the pane is clipped to the
-    /// rounded rect of @c Config::geometry.
+    /// Parameters come from @c Config::droplets; the band's side comes from
+    /// @c Config::neon::glowSide and its geometry from @c Config::geometry.
     class DropletsRenderer : public BaseRenderer
     {
     public:

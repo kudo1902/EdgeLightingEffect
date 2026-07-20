@@ -2,6 +2,7 @@
 #include "shaders.h"
 #include "util/log-util.h"
 #include <glm/gtc/matrix_transform.hpp>
+#include <algorithm>
 
 namespace EdgeLighting
 {
@@ -73,7 +74,9 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uTime", time);
         mShaderProgram.SetUniform("uAmount", config.droplets.amount);
         mShaderProgram.SetUniform("uSpeed", config.droplets.speed);
-        mShaderProgram.SetUniform("uScale", config.droplets.scale);
+        mShaderProgram.SetUniform("uLanes", std::max(config.droplets.lanes, 1));
+        mShaderProgram.SetUniform("uBandWidth", config.droplets.bandWidth);
+        mShaderProgram.SetUniform("uBandOffset", config.droplets.bandOffset);
         mShaderProgram.SetUniform("uDistortion", config.droplets.distortion);
         mShaderProgram.SetUniform("uBlur", config.droplets.blur);
         mShaderProgram.SetUniform("uTint", config.droplets.tint);

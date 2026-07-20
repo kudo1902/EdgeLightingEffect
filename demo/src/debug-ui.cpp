@@ -859,9 +859,11 @@ void DebugUI::buildDropletsSection(EdgeLighting::Config &cfg)
         return;
     }
 
+    ImGui::SliderFloat("Band Width##Droplets", &cfg.droplets.bandWidth, 4.0f, 200.0f);
+    ImGui::SliderFloat("Band Offset##Droplets", &cfg.droplets.bandOffset, -50.0f, 50.0f);
     ImGui::SliderFloat("Rain Amount##Droplets", &cfg.droplets.amount, 0.0f, 1.0f);
     ImGui::SliderFloat("Speed##Droplets", &cfg.droplets.speed, 0.0f, 4.0f);
-    ImGui::SliderFloat("Scale##Droplets", &cfg.droplets.scale, 0.25f, 4.0f);
+    ImGui::SliderInt("Lanes##Droplets", &cfg.droplets.lanes, 1, 6);
     ImGui::SliderFloat("Distortion##Droplets", &cfg.droplets.distortion, 0.0f, 3.0f);
     const char *modeItems[] = {"Wet Glass", "Lens", "Highlights"};
     int modeIdx = static_cast<int>(cfg.droplets.mode);

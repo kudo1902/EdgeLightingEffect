@@ -372,13 +372,15 @@ namespace EdgeLighting
         HIGHLIGHTS = 2
     } DropletsMode;
 
-    /// Rain-on-glass droplets configuration ("wet window pane").
+    /// Rain-on-glass droplets configuration.
     ///
-    /// The renderer captures the framebuffer content beneath the rect each
-    /// frame (background + any renderers drawn before it) and repaints the
-    /// rect interior as wet glass: a frost blur everywhere, with trickling
-    /// droplets that refract the captured content sharply. Register the
-    /// renderer after the neon renderers so the glow shines through the pane.
+    /// Droplets live in a band that follows the rounded-rect perimeter, whose
+    /// thickness is @c bandWidth and whose side comes from
+    /// @c NeonConfig::glowSide. Rain falls with screen-space gravity, so it
+    /// streaks down the vertical runs of the band and beads along the
+    /// horizontal ones. Droplet size scales with @c bandWidth, so the effect
+    /// holds up however thin the band is. Register the renderer after the neon
+    /// renderers so the glow is what the drops refract.
     typedef struct DropletsConfig
     {
         bool enable = false; ///< Enable or disable the droplets renderer
@@ -389,9 +391,22 @@ namespace EdgeLighting
         float amount = 0.7f;
         /// Trickle speed multiplier. 1 = the reference pace; 0 freezes the rain.
         float speed = 1.0f;
-        /// Droplet field zoom. Higher = more, smaller droplets. Droplet size
-        /// is normalised to the rect height, so the look is resolution-stable.
-        float scale = 1.0f;
+        /// Number of droplet lanes across the band, clamped to >= 1.
+        /// 1 = drops as wide as the band; 2 = two lanes of half-width drops,
+        /// and so on. Cell size follows from this and @c bandWidth: one lane
+        /// is @c bandWidth / @c lanes pixels wide, so drops fit the band at
+        /// any thickness.
+        int lanes = 1;
+
+        /// Band thickness in pixels. This is the droplets' entire world: the
+        /// field is parameterised across it, and droplet size scales with it.
+        /// Which side of the rect edge the band occupies is taken from
+        /// @c NeonConfig::glowSide - OUTSIDE grows outward, INSIDE inward,
+        /// BOTH straddles the edge centred on it.
+        float bandWidth = 24.0f;
+        /// Gap in pixels between the rect edge and the band's inner boundary.
+        /// 0 puts the band flush against the edge.
+        float bandOffset = 0.0f;
         /// Refraction strength - how far a droplet bends the background
         /// sample. 0 disables the lensing (droplets become invisible against
         /// an unblurred pane).
@@ -416,7 +431,9 @@ namespace EdgeLighting
             return enable == o.enable &&
                    amount == o.amount &&
                    speed == o.speed &&
-                   scale == o.scale &&
+                   lanes == o.lanes &&
+                   bandWidth == o.bandWidth &&
+                   bandOffset == o.bandOffset &&
                    distortion == o.distortion &&
                    blur == o.blur &&
                    tint == o.tint &&

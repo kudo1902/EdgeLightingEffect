@@ -132,28 +132,28 @@ namespace
         }                                   \
     } while (0)
 
-#define VALIDATE_OUT_PTR(ptr, fn)                  \
-    do                                             \
-    {                                              \
-        if (!(ptr))                                \
-        {                                          \
-            LOG_E("%s: out pointer is null", fn);  \
-            return EL_ERROR_INVALID_PARAMETER;     \
-        }                                          \
+#define VALIDATE_OUT_PTR(ptr, fn)                 \
+    do                                            \
+    {                                             \
+        if (!(ptr))                               \
+        {                                         \
+            LOG_E("%s: out pointer is null", fn); \
+            return EL_ERROR_INVALID_PARAMETER;    \
+        }                                         \
     } while (0)
 
-/// Map a caught @c std::exception to the closest @c el_result_e. Allocation
-/// failures get @ref EL_ERROR_OUT_OF_MEMORY (both @c std::bad_alloc and
-/// @c std::bad_array_new_length derive from it); every other exception is a
-/// programmer bug at the ABI boundary and lands in @ref EL_ERROR_INVALID_PARAMETER.
-static inline el_result_e mapExceptionToResult(const std::exception &e)
-{
-    if (dynamic_cast<const std::bad_alloc *>(&e) != nullptr)
+    /// Map a caught @c std::exception to the closest @c el_result_e. Allocation
+    /// failures get @ref EL_ERROR_OUT_OF_MEMORY (both @c std::bad_alloc and
+    /// @c std::bad_array_new_length derive from it); every other exception is a
+    /// programmer bug at the ABI boundary and lands in @ref EL_ERROR_INVALID_PARAMETER.
+    static inline el_result_e mapExceptionToResult(const std::exception &e)
     {
-        return EL_ERROR_OUT_OF_MEMORY;
+        if (dynamic_cast<const std::bad_alloc *>(&e) != nullptr)
+        {
+            return EL_ERROR_OUT_OF_MEMORY;
+        }
+        return EL_ERROR_INVALID_PARAMETER;
     }
-    return EL_ERROR_INVALID_PARAMETER;
-}
 
 /// Short-circuit setter that only logs + assigns when the incoming value
 /// actually differs from what @c field already holds, then returns @c EL_SUCCESS.
@@ -165,11 +165,11 @@ static inline el_result_e mapExceptionToResult(const std::exception &e)
     {                                   \
         if ((field) == (newVal))        \
         {                               \
-            return EL_SUCCESS;               \
+            return EL_SUCCESS;          \
         }                               \
         LOG_I(__VA_ARGS__);             \
         (field) = (newVal);             \
-        return EL_SUCCESS;                   \
+        return EL_SUCCESS;              \
     } while (0)
 
     // ==========================================================================
@@ -1323,19 +1323,51 @@ extern "C"
         return EL_SUCCESS;
     }
 
-    el_result_e el_effect_set_droplets_scale(el_effect_handle_t effect, float scale)
+    el_result_e el_effect_set_droplets_lanes(el_effect_handle_t effect, int lanes)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_scale");
-        SET_AND_LOG(effect->config.droplets.scale, scale,
-                    "effect=%p, scale=%f", (void *)effect, scale);
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_lanes");
+        SET_AND_LOG(effect->config.droplets.lanes, lanes,
+                    "effect=%p, lanes=%d", (void *)effect, lanes);
     }
 
-    el_result_e el_effect_get_droplets_scale(el_effect_handle_t effect, float *outScale)
+    el_result_e el_effect_get_droplets_lanes(el_effect_handle_t effect, int *outLanes)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_scale");
-        VALIDATE_OUT_PTR(outScale, "el_effect_get_droplets_scale");
-        *outScale = effect->config.droplets.scale;
-        LOG_D("effect=%p, scale=%f", (void *)effect, *outScale);
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_lanes");
+        VALIDATE_OUT_PTR(outLanes, "el_effect_get_droplets_lanes");
+        *outLanes = effect->config.droplets.lanes;
+        LOG_D("effect=%p, lanes=%d", (void *)effect, *outLanes);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_droplets_band_width(el_effect_handle_t effect, float bandWidth)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_band_width");
+        SET_AND_LOG(effect->config.droplets.bandWidth, bandWidth,
+                    "effect=%p, bandWidth=%f", (void *)effect, bandWidth);
+    }
+
+    el_result_e el_effect_get_droplets_band_width(el_effect_handle_t effect, float *outBandWidth)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_band_width");
+        VALIDATE_OUT_PTR(outBandWidth, "el_effect_get_droplets_band_width");
+        *outBandWidth = effect->config.droplets.bandWidth;
+        LOG_D("effect=%p, bandWidth=%f", (void *)effect, *outBandWidth);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_droplets_band_offset(el_effect_handle_t effect, float bandOffset)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_band_offset");
+        SET_AND_LOG(effect->config.droplets.bandOffset, bandOffset,
+                    "effect=%p, bandOffset=%f", (void *)effect, bandOffset);
+    }
+
+    el_result_e el_effect_get_droplets_band_offset(el_effect_handle_t effect, float *outBandOffset)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_band_offset");
+        VALIDATE_OUT_PTR(outBandOffset, "el_effect_get_droplets_band_offset");
+        *outBandOffset = effect->config.droplets.bandOffset;
+        LOG_D("effect=%p, bandOffset=%f", (void *)effect, *outBandOffset);
         return EL_SUCCESS;
     }
 
