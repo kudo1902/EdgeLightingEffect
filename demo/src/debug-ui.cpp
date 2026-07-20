@@ -874,16 +874,7 @@ void DebugUI::buildDropletsSection(EdgeLighting::Config &cfg)
     ImGui::EndDisabled();
     ImGui::ColorEdit3("Tint##Droplets", &cfg.droplets.tint.x);
 
-    const char *sideItems[] = {"Both", "Inside", "Outside"};
-    int sideIdx = static_cast<int>(cfg.droplets.glowSide);
-    if (ImGui::Combo("Side##Droplets", &sideIdx, sideItems, IM_ARRAYSIZE(sideItems)))
-    {
-        cfg.droplets.glowSide = static_cast<EdgeLighting::GlowSide>(sideIdx);
-    }
-    if (cfg.droplets.glowSide != EdgeLighting::GlowSide::BOTH)
-    {
-        ImGui::SliderFloat("Side Softness##Droplets", &cfg.droplets.glowSideSoftness, 0.0f, 20.0f, "%.1f");
-    }
+    ImGui::TextDisabled("Side follows Neon > Glow Side / Softness");
 }
 
 void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg,

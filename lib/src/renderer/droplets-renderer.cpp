@@ -77,8 +77,11 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uDistortion", config.droplets.distortion);
         mShaderProgram.SetUniform("uBlur", config.droplets.blur);
         mShaderProgram.SetUniform("uTint", config.droplets.tint);
-        mShaderProgram.SetUniform("uGlowSide", static_cast<int>(config.droplets.glowSide));
-        mShaderProgram.SetUniform("uGlowSideSoftness", config.droplets.glowSideSoftness);
+        // The pane's side-mask tracks the neon's live glow-side directly -
+        // there is no droplet-side duplicate. Change the neon's side (or
+        // softness) and the wet region re-masks automatically.
+        mShaderProgram.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
+        mShaderProgram.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness);
         mShaderProgram.SetUniform("uMode", static_cast<int>(config.droplets.mode));
 
         mBackgroundCapture.Bind(0);

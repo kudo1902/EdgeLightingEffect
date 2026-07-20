@@ -404,18 +404,6 @@ namespace EdgeLighting
         /// default for a cold-glass cast; white = untinted.
         glm::vec4 tint = glm::vec4(0.85f, 0.90f, 1.0f, 1.0f);
 
-        /// Where the pane is drawn relative to the rect. The pane always
-        /// covers the whole viewport; this masks it:
-        ///   BOTH    -> whole screen wet (default).
-        ///   INSIDE  -> only inside the rect.
-        ///   OUTSIDE -> only outside the rect.
-        /// Independent of @c NeonConfig::glowSide - set both to the same value
-        /// to make the wet region track the glow.
-        GlowSide glowSide = GlowSide::BOTH;
-        /// Softness of the INSIDE / OUTSIDE cut in pixels (0 = hard edge).
-        /// Ignored when @c glowSide == BOTH.
-        float glowSideSoftness = 1.0f;
-
         /// Visual style - see @ref DropletsMode for the tradeoffs. Defaults
         /// to LENS: drops act as water lenses that refract the framebuffer,
         /// pixels between drops stay fully transparent. That's the one most
@@ -432,8 +420,6 @@ namespace EdgeLighting
                    distortion == o.distortion &&
                    blur == o.blur &&
                    tint == o.tint &&
-                   glowSide == o.glowSide &&
-                   glowSideSoftness == o.glowSideSoftness &&
                    mode == o.mode;
         }
         bool operator!=(const DropletsConfig &o) const { return !(*this == o); }

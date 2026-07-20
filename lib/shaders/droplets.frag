@@ -197,6 +197,13 @@ void main() {
         vec3 refracted = textureLod(uBackground, screenUV + normal * uDistortion, 0.0).rgb;
         col = refracted * uTint.rgb;
         dropAlpha = clamp(c.x * 0.6 + c.y * 0.45, 0.0, 1.0);
+        // Luminance gate: where the refracted sample is dark (e.g. under
+        // the neon's opaque-black interior fill) the drop has nothing
+        // meaningful to refract, so fade its alpha out. Rec.601 luma is
+        // close enough; smoothstep 0.02->0.15 kills near-black without
+        // touching mid-tones.
+        float lum = dot(refracted, vec3(0.299, 0.587, 0.114));
+        dropAlpha *= smoothstep(0.02, 0.15, lum);
     } else {
         // WET_GLASS - fullscreen frost + sharp refraction inside drops.
         float focus = mix(max(uBlur - c.y * uBlur, 0.0), 0.0, S(0.1, 0.2, c.x));

@@ -1395,38 +1395,6 @@ extern "C"
         return EL_SUCCESS;
     }
 
-    el_result_e el_effect_set_droplets_glow_side(el_effect_handle_t effect, el_glow_side_e side)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_glow_side");
-        SET_AND_LOG(effect->config.droplets.glowSide, static_cast<EdgeLighting::GlowSide>(side),
-                    "effect=%p, side=%d", (void *)effect, side);
-    }
-
-    el_result_e el_effect_get_droplets_glow_side(el_effect_handle_t effect, el_glow_side_e *outSide)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_glow_side");
-        VALIDATE_OUT_PTR(outSide, "el_effect_get_droplets_glow_side");
-        *outSide = static_cast<el_glow_side_e>(effect->config.droplets.glowSide);
-        LOG_D("effect=%p, side=%d", (void *)effect, *outSide);
-        return EL_SUCCESS;
-    }
-
-    el_result_e el_effect_set_droplets_glow_side_softness(el_effect_handle_t effect, float softness)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_glow_side_softness");
-        SET_AND_LOG(effect->config.droplets.glowSideSoftness, softness,
-                    "effect=%p, softness=%f", (void *)effect, softness);
-    }
-
-    el_result_e el_effect_get_droplets_glow_side_softness(el_effect_handle_t effect, float *outSoftness)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_glow_side_softness");
-        VALIDATE_OUT_PTR(outSoftness, "el_effect_get_droplets_glow_side_softness");
-        *outSoftness = effect->config.droplets.glowSideSoftness;
-        LOG_D("effect=%p, softness=%f", (void *)effect, *outSoftness);
-        return EL_SUCCESS;
-    }
-
     el_result_e el_effect_set_droplets_mode(el_effect_handle_t effect, el_droplets_mode_e mode)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_mode");

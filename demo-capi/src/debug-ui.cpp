@@ -790,23 +790,7 @@ void DebugUI::buildDropletsSection(el_effect_handle_t effect)
         el_effect_set_droplets_tint(effect, tint[0], tint[1], tint[2], tint[3]);
     }
 
-    el_glow_side_e side = EL_GLOW_SIDE_BOTH;
-    el_effect_get_droplets_glow_side(effect, &side);
-    const char *sideItems[] = {"Both", "Inside", "Outside"};
-    int sideIdx = static_cast<int>(side);
-    if (ImGui::Combo("Side##Drop", &sideIdx, sideItems, IM_ARRAYSIZE(sideItems)))
-    {
-        el_effect_set_droplets_glow_side(effect, static_cast<el_glow_side_e>(sideIdx));
-    }
-    if (side != EL_GLOW_SIDE_BOTH)
-    {
-        float soft = 0.0f;
-        el_effect_get_droplets_glow_side_softness(effect, &soft);
-        if (ImGui::SliderFloat("Side Softness##Drop", &soft, 0.0f, 20.0f, "%.1f"))
-        {
-            el_effect_set_droplets_glow_side_softness(effect, soft);
-        }
-    }
+    ImGui::TextDisabled("Side follows Neon > Glow Side / Softness");
 }
 
 // ---------------------------------------------------------------------------

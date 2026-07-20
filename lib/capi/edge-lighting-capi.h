@@ -654,16 +654,13 @@ extern "C"
     EL_API el_result_e el_effect_get_droplets_tint(el_effect_handle_t effect,
                                                    float *outR, float *outG, float *outB, float *outA);
 
-    /** @brief Restrict the pane to one side of the rect, or paint the whole
-     *         viewport. Mirrors @ref el_effect_set_glow_side but is
-     *         independent - set both to the same value to make the wet region
-     *         track the neon glow. */
-    EL_API el_result_e el_effect_set_droplets_glow_side(el_effect_handle_t effect, el_glow_side_e side);
-    EL_API el_result_e el_effect_get_droplets_glow_side(el_effect_handle_t effect, el_glow_side_e *outSide);
-
-    /** @brief Softness (px) of the INSIDE / OUTSIDE cut. Ignored for BOTH. */
-    EL_API el_result_e el_effect_set_droplets_glow_side_softness(el_effect_handle_t effect, float softness);
-    EL_API el_result_e el_effect_get_droplets_glow_side_softness(el_effect_handle_t effect, float *outSoftness);
+    /**
+     *  @note The droplets pane's side-mask is not configured here - it always
+     *  mirrors @ref el_effect_set_glow_side / @ref el_effect_set_glow_side_softness
+     *  live, so the wet region tracks whatever slice of the pane the neon is
+     *  currently lighting. Change the neon's side and the drops re-mask
+     *  automatically with no extra call.
+     */
 
     /** @brief Visual style - see @ref el_droplets_mode_e for the tradeoffs.
      *  @details Default is @ref EL_DROPLETS_MODE_LENS: drops act as water
