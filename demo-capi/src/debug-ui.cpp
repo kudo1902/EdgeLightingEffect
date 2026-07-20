@@ -787,30 +787,6 @@ void DebugUI::buildDropletsSection(el_effect_handle_t effect)
         el_effect_set_droplets_lanes(effect, lanes);
     }
 
-    float distortion = 0.0f;
-    el_effect_get_droplets_distortion(effect, &distortion);
-    if (ImGui::SliderFloat("Distortion##Drop", &distortion, 0.0f, 3.0f))
-    {
-        el_effect_set_droplets_distortion(effect, distortion);
-    }
-
-    el_droplets_mode_e mode = EL_DROPLETS_MODE_LENS;
-    el_effect_get_droplets_mode(effect, &mode);
-    const char *modeItems[] = {"Wet Glass", "Lens", "Highlights"};
-    int modeIdx = static_cast<int>(mode);
-    if (ImGui::Combo("Mode##Drop", &modeIdx, modeItems, IM_ARRAYSIZE(modeItems)))
-    {
-        el_effect_set_droplets_mode(effect, static_cast<el_droplets_mode_e>(modeIdx));
-    }
-
-    ImGui::BeginDisabled(mode != EL_DROPLETS_MODE_WET_GLASS);
-    float blur = 0.0f;
-    el_effect_get_droplets_blur(effect, &blur);
-    if (ImGui::SliderFloat("Frost Blur##Drop", &blur, 0.0f, 6.0f))
-    {
-        el_effect_set_droplets_blur(effect, blur);
-    }
-    ImGui::EndDisabled();
 
     float tint[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     el_effect_get_droplets_tint(effect, &tint[0], &tint[1], &tint[2], &tint[3]);

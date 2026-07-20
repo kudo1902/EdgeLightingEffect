@@ -114,13 +114,13 @@ extern "C"
      *           or ignore. */
     typedef enum el_result_e
     {
-        EL_SUCCESS = 0,                     /**< Success. */
-        EL_ERROR_INVALID_HANDLE = -1,       /**< A required handle (effect/animation/modulator) was null or destroyed. */
-        EL_ERROR_INIT_FAILED = -2,          /**< Renderer/GL initialisation failed (see native log). */
-        EL_ERROR_OUT_OF_MEMORY = -3,        /**< Allocation failed (@c std::bad_alloc caught at the ABI boundary). */
-        EL_ERROR_INVALID_PARAMETER = -4,    /**< A non-handle argument was null, out of range, or the wrong shape; also the catch-all for other C++ exceptions caught at the ABI boundary. */
-        EL_ERROR_FILE_NOT_FOUND = -5,       /**< A referenced file could not be opened. Reserved for future file-loading APIs. */
-        EL_ERROR_UNSUPPORTED_FORMAT = -6    /**< A file / asset was found but its format is not supported. Reserved for future file-loading APIs. */
+        EL_SUCCESS = 0,                  /**< Success. */
+        EL_ERROR_INVALID_HANDLE = -1,    /**< A required handle (effect/animation/modulator) was null or destroyed. */
+        EL_ERROR_INIT_FAILED = -2,       /**< Renderer/GL initialisation failed (see native log). */
+        EL_ERROR_OUT_OF_MEMORY = -3,     /**< Allocation failed (@c std::bad_alloc caught at the ABI boundary). */
+        EL_ERROR_INVALID_PARAMETER = -4, /**< A non-handle argument was null, out of range, or the wrong shape; also the catch-all for other C++ exceptions caught at the ABI boundary. */
+        EL_ERROR_FILE_NOT_FOUND = -5,    /**< A referenced file could not be opened. Reserved for future file-loading APIs. */
+        EL_ERROR_UNSUPPORTED_FORMAT = -6 /**< A file / asset was found but its format is not supported. Reserved for future file-loading APIs. */
     } el_result_e;
 
     /** @brief Fixed-width boolean for ABI stability. 0 = false, non-zero = true.
@@ -242,15 +242,6 @@ extern "C"
         EL_ANIM_HUE_REVERSE = 13,    /**< Hue rate reverses under a smooth envelope. */
         EL_ANIM_ARC_WIPE = 14        /**< Arc grows from a start position to an end. */
     } el_animation_preset_e;
-
-    /** @brief Visual style produced by the droplets renderer.
-     *  @details Mirrors @c EdgeLighting::DropletsMode. */
-    typedef enum el_droplets_mode_e
-    {
-        EL_DROPLETS_MODE_WET_GLASS = 0,  /**< Fullscreen frost + refracted drops (photo-behind-glass look). */
-        EL_DROPLETS_MODE_LENS = 1,       /**< Drops act as translucent lenses that refract the framebuffer; between drops is transparent. Default. */
-        EL_DROPLETS_MODE_HIGHLIGHTS = 2  /**< No framebuffer capture; drops read as pure rim / specular / trail highlights on transparent. */
-    } el_droplets_mode_e;
 
     /** @brief Periodic shape for @ref el_modulator_create_oscillator.
      *  @details Mirrors @c EdgeLighting::Waveform. */
@@ -651,39 +642,13 @@ extern "C"
     EL_API el_result_e el_effect_set_droplets_band_offset(el_effect_handle_t effect, float bandOffset);
     EL_API el_result_e el_effect_get_droplets_band_offset(el_effect_handle_t effect, float *outBandOffset);
 
-    /** @brief Refraction strength through droplets (0 disables the lensing). */
-    EL_API el_result_e el_effect_set_droplets_distortion(el_effect_handle_t effect, float distortion);
-    EL_API el_result_e el_effect_get_droplets_distortion(el_effect_handle_t effect, float *outDistortion);
-
-    /** @brief Frost blur outside droplets, expressed as a mip LOD of the
-     *         captured background (0 = clear glass, ~3 = heavy frost). */
-    EL_API el_result_e el_effect_set_droplets_blur(el_effect_handle_t effect, float blur);
-    EL_API el_result_e el_effect_get_droplets_blur(el_effect_handle_t effect, float *outBlur);
-
-    /** @brief Pane colour multiplier (linear RGBA in [0, 1]; only @c rgb is
-     *         read today, @c a is reserved). */
+    /** @brief Drop colour multiplier (linear RGBA in [0, 1]; only @c rgb is
+     *         read today, @c a is reserved). Tints the faint drop body only -
+     *         the rim and specular highlights stay white. */
     EL_API el_result_e el_effect_set_droplets_tint(el_effect_handle_t effect,
                                                    float r, float g, float b, float a);
     EL_API el_result_e el_effect_get_droplets_tint(el_effect_handle_t effect,
                                                    float *outR, float *outG, float *outB, float *outA);
-
-    /**
-     *  @note The droplets pane's side-mask is not configured here - it always
-     *  mirrors @ref el_effect_set_glow_side / @ref el_effect_set_glow_side_softness
-     *  live, so the wet region tracks whatever slice of the pane the neon is
-     *  currently lighting. Change the neon's side and the drops re-mask
-     *  automatically with no extra call.
-     */
-
-    /** @brief Visual style - see @ref el_droplets_mode_e for the tradeoffs.
-     *  @details Default is @ref EL_DROPLETS_MODE_LENS: drops act as water
-     *           lenses that refract the framebuffer, pixels between drops
-     *           stay fully transparent. Use @ref EL_DROPLETS_MODE_WET_GLASS
-     *           for the classic photo-behind-rain-covered-glass look, or
-     *           @ref EL_DROPLETS_MODE_HIGHLIGHTS to skip the framebuffer
-     *           snapshot entirely and render drops as highlights only. */
-    EL_API el_result_e el_effect_set_droplets_mode(el_effect_handle_t effect, el_droplets_mode_e mode);
-    EL_API el_result_e el_effect_get_droplets_mode(el_effect_handle_t effect, el_droplets_mode_e *outMode);
 
     /** @} */
 

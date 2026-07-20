@@ -345,33 +345,6 @@ namespace EdgeLighting
         bool operator!=(const OptimizedNeonConfig &o) const { return !(*this == o); }
     } OptimizedNeonConfig;
 
-    /// Which visual style the droplets renderer produces.
-    ///
-    /// The renderer always draws a fullscreen quad, but the shader's per-pixel
-    /// output differs sharply between modes:
-    ///
-    ///   WET_GLASS - fullscreen frosted pane; drops refract the captured
-    ///               framebuffer sharply, everything else reads through a
-    ///               mip-blur frost. Alpha = 1 everywhere inside the pane, so
-    ///               the pane fully replaces the framebuffer. Best when there
-    ///               is rich content behind (a photo, a scene, a video).
-    ///   LENS      - only drop shapes are drawn; each drop is a translucent
-    ///               window that refracts the captured framebuffer through
-    ///               itself. Between drops, alpha = 0 - the framebuffer is
-    ///               left untouched. Best when the pane sits over host UI or
-    ///               a transparent surface; drops read as real water lenses.
-    ///   HIGHLIGHTS - no framebuffer capture at all; drops read as pure
-    ///                rim + specular + trail highlights on a transparent
-    ///                background. Cheapest (no glCopyTexSubImage2D). Reads
-    ///                as decorative wet glass without needing anything to
-    ///                refract.
-    typedef enum class DropletsMode
-    {
-        WET_GLASS = 0,
-        LENS = 1,
-        HIGHLIGHTS = 2
-    } DropletsMode;
-
     /// Rain-on-glass droplets configuration.
     ///
     /// Droplets live in a band that follows the rounded-rect perimeter, whose
@@ -379,8 +352,12 @@ namespace EdgeLighting
     /// @c NeonConfig::glowSide. Rain falls with screen-space gravity, so it
     /// streaks down the vertical runs of the band and beads along the
     /// horizontal ones. Droplet size scales with @c bandWidth, so the effect
-    /// holds up however thin the band is. Register the renderer after the neon
-    /// renderers so the glow is what the drops refract.
+    /// holds up however thin the band is.
+    ///
+    /// Drops are self-lit (transparent body + crescent rim + specular dot);
+    /// there is no framebuffer capture or refraction pass. Refraction had
+    /// nothing to displace over the smooth neon gradient this band lives on,
+    /// so the whole capture/lens/wet-glass path was removed.
     typedef struct DropletsConfig
     {
         bool enable = false; ///< Enable or disable the droplets renderer
@@ -407,24 +384,11 @@ namespace EdgeLighting
         /// Gap in pixels between the rect edge and the band's inner boundary.
         /// 0 puts the band flush against the edge.
         float bandOffset = 0.0f;
-        /// Refraction strength - how far a droplet bends the background
-        /// sample. 0 disables the lensing (droplets become invisible against
-        /// an unblurred pane).
-        float distortion = 1.0f;
-        /// Frost blur outside droplets, expressed as a mip LOD of the
-        /// captured background (0 = clear glass, ~3 = heavy frost). Fresh
-        /// droplet trails wipe the frost until they dry.
-        float blur = 3.0f;
-        /// Pane colour multiplier (.rgb used; .a reserved). Slightly blue by
-        /// default for a cold-glass cast; white = untinted.
+        /// Drop colour multiplier (.rgb used; .a reserved). Slightly blue by
+        /// default for a cold-water cast; white = untinted. Only the drop's
+        /// faint body tint uses this; the rim and specular highlights stay
+        /// white so drops read against any glow colour.
         glm::vec4 tint = glm::vec4(0.85f, 0.90f, 1.0f, 1.0f);
-
-        /// Visual style - see @ref DropletsMode for the tradeoffs. Defaults
-        /// to LENS: drops act as water lenses that refract the framebuffer,
-        /// pixels between drops stay fully transparent. That's the one most
-        /// callers want; WET_GLASS is the "photo behind rain-covered glass"
-        /// look, HIGHLIGHTS is decorative-only.
-        DropletsMode mode = DropletsMode::LENS;
 
         bool operator==(const DropletsConfig &o) const
         {
@@ -434,10 +398,7 @@ namespace EdgeLighting
                    lanes == o.lanes &&
                    bandWidth == o.bandWidth &&
                    bandOffset == o.bandOffset &&
-                   distortion == o.distortion &&
-                   blur == o.blur &&
-                   tint == o.tint &&
-                   mode == o.mode;
+                   tint == o.tint;
         }
         bool operator!=(const DropletsConfig &o) const { return !(*this == o); }
     } DropletsConfig;

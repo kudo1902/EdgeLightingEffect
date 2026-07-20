@@ -33,10 +33,6 @@ static_assert(static_cast<int>(EdgeLighting::GlowSide::BOTH) == EL_GLOW_SIDE_BOT
 static_assert(static_cast<int>(EdgeLighting::GlowSide::INSIDE) == EL_GLOW_SIDE_INSIDE);
 static_assert(static_cast<int>(EdgeLighting::GlowSide::OUTSIDE) == EL_GLOW_SIDE_OUTSIDE);
 
-static_assert(static_cast<int>(EdgeLighting::DropletsMode::WET_GLASS) == EL_DROPLETS_MODE_WET_GLASS);
-static_assert(static_cast<int>(EdgeLighting::DropletsMode::LENS) == EL_DROPLETS_MODE_LENS);
-static_assert(static_cast<int>(EdgeLighting::DropletsMode::HIGHLIGHTS) == EL_DROPLETS_MODE_HIGHLIGHTS);
-
 static_assert(static_cast<int>(EdgeLighting::BlendSpace::RGB) == EL_BLEND_SPACE_RGB);
 static_assert(static_cast<int>(EdgeLighting::BlendSpace::HSV) == EL_BLEND_SPACE_HSV);
 static_assert(static_cast<int>(EdgeLighting::BlendSpace::HSL) == EL_BLEND_SPACE_HSL);
@@ -1371,38 +1367,6 @@ extern "C"
         return EL_SUCCESS;
     }
 
-    el_result_e el_effect_set_droplets_distortion(el_effect_handle_t effect, float distortion)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_distortion");
-        SET_AND_LOG(effect->config.droplets.distortion, distortion,
-                    "effect=%p, distortion=%f", (void *)effect, distortion);
-    }
-
-    el_result_e el_effect_get_droplets_distortion(el_effect_handle_t effect, float *outDistortion)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_distortion");
-        VALIDATE_OUT_PTR(outDistortion, "el_effect_get_droplets_distortion");
-        *outDistortion = effect->config.droplets.distortion;
-        LOG_D("effect=%p, distortion=%f", (void *)effect, *outDistortion);
-        return EL_SUCCESS;
-    }
-
-    el_result_e el_effect_set_droplets_blur(el_effect_handle_t effect, float blur)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_blur");
-        SET_AND_LOG(effect->config.droplets.blur, blur,
-                    "effect=%p, blur=%f", (void *)effect, blur);
-    }
-
-    el_result_e el_effect_get_droplets_blur(el_effect_handle_t effect, float *outBlur)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_blur");
-        VALIDATE_OUT_PTR(outBlur, "el_effect_get_droplets_blur");
-        *outBlur = effect->config.droplets.blur;
-        LOG_D("effect=%p, blur=%f", (void *)effect, *outBlur);
-        return EL_SUCCESS;
-    }
-
     el_result_e el_effect_set_droplets_tint(el_effect_handle_t effect,
                                             float r, float g, float b, float a)
     {
@@ -1424,22 +1388,6 @@ extern "C"
         *outB = effect->config.droplets.tint.b;
         *outA = effect->config.droplets.tint.a;
         LOG_D("effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, *outR, *outG, *outB, *outA);
-        return EL_SUCCESS;
-    }
-
-    el_result_e el_effect_set_droplets_mode(el_effect_handle_t effect, el_droplets_mode_e mode)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_mode");
-        SET_AND_LOG(effect->config.droplets.mode, static_cast<EdgeLighting::DropletsMode>(mode),
-                    "effect=%p, mode=%d", (void *)effect, mode);
-    }
-
-    el_result_e el_effect_get_droplets_mode(el_effect_handle_t effect, el_droplets_mode_e *outMode)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_mode");
-        VALIDATE_OUT_PTR(outMode, "el_effect_get_droplets_mode");
-        *outMode = static_cast<el_droplets_mode_e>(effect->config.droplets.mode);
-        LOG_D("effect=%p, mode=%d", (void *)effect, *outMode);
         return EL_SUCCESS;
     }
 

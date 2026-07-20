@@ -30,6 +30,12 @@ precision highp float;
 //   INSIDE  -> band grows inward.
 //   BOTH    -> band straddles the edge, centred on it.
 //
+// Drops are self-lit: transparent body plus a crescent rim and a specular dot.
+// There is no framebuffer capture and no refraction pass - refraction was
+// invisible over the smooth neon gradient (the only backdrop this band ever
+// sees), so the whole capture/lens/wet-glass path was removed and only this
+// highlight-only shading remains.
+//
 // Droplet field adapted from the well-known Shadertoy rain technique
 // (grid-hashed trickling drops with trails; see "Heartfelt" by Martijn
 // Steinrucken / The Art of Code and its many forks, e.g. tdG3Rw).
@@ -38,10 +44,6 @@ precision highp float;
 #define GLOW_SIDE_BOTH    0
 #define GLOW_SIDE_INSIDE  1
 #define GLOW_SIDE_OUTSIDE 2
-
-#define DROPLETS_MODE_WET_GLASS  0
-#define DROPLETS_MODE_LENS       1
-#define DROPLETS_MODE_HIGHLIGHTS 2
 
 /// One droplet cell spans this many uv units. The droplet grid inside
 /// DropLayer is (12, 2) cells per uv unit with a 6:1 tall aspect, so dividing
@@ -60,15 +62,11 @@ uniform float uTime;
 uniform float uAmount;
 uniform float uSpeed;
 uniform int   uLanes;             ///< Droplet lanes across the band (>= 1).
-uniform float uDistortion;
-uniform float uBlur;
 uniform vec4  uTint;
 uniform int   uGlowSide;          ///< GLOW_SIDE_BOTH / INSIDE / OUTSIDE.
 uniform float uGlowSideSoftness;  ///< Band-boundary feather width in pixels.
 uniform float uBandWidth;         ///< Band thickness in pixels; also sets droplet size.
 uniform float uBandOffset;        ///< Gap in pixels between the rect edge and the band's inner boundary.
-uniform int   uMode;              ///< See DROPLETS_MODE_* above.
-uniform sampler2D uBackground;    ///< Framebuffer snapshot; ignored when uMode == HIGHLIGHTS.
 
 #define S(a, b, t) smoothstep(a, b, t)
 
@@ -149,11 +147,12 @@ vec2 DropLayer(vec2 uv, float t) {
 /// Static condensation beads - they fade in and out in place rather than
 /// running, which is what rain actually does on a near-horizontal surface.
 ///
-/// Cells are deliberately twice the trickling grid's width: these beads carry
-/// the whole look along the top and bottom runs, so at cell-width they read as
-/// specks rather than as drops.
+/// These beads are the ONLY thing that shows on horizontal runs of the band
+/// (rain cannot streak down a horizontal edge), so the cell size is tuned to
+/// give a comfortable per-band count rather than the sparse "condensation on
+/// a windowpane" look the original tuning aimed for.
 float StaticDrops(vec2 uv, float t) {
-    uv *= CELL_UV * 0.5;
+    uv *= CELL_UV * 0.85;
     vec2 id = floor(uv);
     uv = fract(uv) - 0.5;
     vec3 n = N13(id.x * 107.45 + id.y * 3543.654);
@@ -176,7 +175,6 @@ vec2 Drops(vec2 uv, float t, float l0, float l1, float l2) {
 // ---------------------------------------------------------------------------
 
 void main() {
-    vec2 screenUV = gl_FragCoord.xy / uViewport;
     vec2 p = gl_FragCoord.xy - uRectCenter; ///< Rect-local pixels.
     vec2 halfSize = uRectSize * 0.5;
 
@@ -226,21 +224,24 @@ void main() {
     float t = uTime * 0.2 * uSpeed;
 
     // --- Orientation-aware layer mix -------------------------------------
-    // Outward edge normal, from the SDF gradient; the band runs along the
-    // perpendicular. A vertical band (|tangent.y| -> 1) lets rain streak down
-    // it; a horizontal one (|tangent.y| -> 0) can only bead.
+    // Outward edge normal, from the SDF gradient. A vertical band has the
+    // normal running horizontally (|grad.x| dominates), so rain can streak
+    // down it. A horizontal band has |grad.y| dominant and can only bead.
     vec2 grad = vec2(sdRoundBox(p + vec2(1.0, 0.0), halfSize, uCornerRadius) - sd,
                      sdRoundBox(p + vec2(0.0, 1.0), halfSize, uCornerRadius) - sd);
-    vec2 nrmDir = normalize(grad + vec2(1e-6));
-    vec2 tanDir = vec2(-nrmDir.y, nrmDir.x);
-    float runs = S(0.25, 0.8, abs(tanDir.y)); ///< 1 where the band is vertical.
+    float horizontality = abs(grad.x) / max(length(grad), 1e-6);
+    float runs = S(0.25, 0.8, horizontality); ///< 1 where the band is vertical.
 
     float rain = clamp(uAmount, 0.0, 1.0);
-    // Condensation everywhere, but it carries the look where rain cannot run,
-    // so it is weighted up markedly on the horizontal runs.
-    float staticDrops = S(-0.5, 1.0, rain) * mix(2.6, 0.6, runs);
-    float layer1 = S(0.25, 0.75, rain) * runs;
-    float layer2 = S(0.0, 0.5, rain) * runs;
+    // Gravity is global: the trickling layers are active everywhere, not just
+    // on vertical runs. On horizontal runs the drops just cross the band
+    // vertically instead of streaking along its length, which is what falling
+    // rain looks like passing through a narrow slit. Static condensation stays
+    // as a mild base density and is still weighted a little higher on the
+    // horizontal runs, where drops pass through quickly and beads sit longer.
+    float staticDrops = S(-0.5, 1.0, rain) * mix(1.6, 0.5, runs);
+    float layer1 = S(0.25, 0.75, rain);
+    float layer2 = S(0.0, 0.5, rain);
 
     vec2 c = Drops(uv, t, staticDrops, layer1, layer2);
 
@@ -249,94 +250,35 @@ void main() {
     float cx = Drops(uv + e.xy, t, staticDrops, layer1, layer2).x;
     float cy = Drops(uv + e.yx, t, staticDrops, layer1, layer2).x;
     vec2 normal = vec2(cx - c.x, cy - c.x);
+    vec2 nrm = normal / max(length(normal), 1e-5);
 
     // --- Water shading ---------------------------------------------------
     // Water has no pigment. A drop is legible only through what it does to the
-    // light behind it, so its body must stay mostly TRANSPARENT and let the
-    // glow read through. Only two features are actually bright: a thin edge
-    // rim and a small specular dot. Filling the body with opaque white is what
-    // makes drops look like splatter rather than water.
-    float slope = length(normal);
-    vec2 nrm = normal / max(slope, 1e-5);
-
-    // Rim: a band peaking halfway up the drop mask's own falloff. Derived from
-    // the mask rather than from the gradient magnitude, because the gradient
-    // saturates to 1 across the whole drop at any reasonable gain - which is
-    // exactly the "solid white blob" failure. This form stays a thin outline
-    // at any drop size.
+    // light behind it, so its body stays mostly transparent and the two things
+    // that actually read as water are drawn on top:
+    //
+    //   rim  - a crescent at the drop's edge, derived from the drop MASK
+    //          (c.x * (1 - c.x) * 4), not from the height-field gradient. The
+    //          gradient saturates to 1 across the whole drop at any usable
+    //          gain, which is what made older passes fill drops solid white.
+    //          The mask-based form stays a thin outline at any drop size.
+    //   spec - one tight hotspot per drop, exponent 16 so it's a dot, not a
+    //          broad sheen.
     float rim = pow(clamp(c.x * (1.0 - c.x) * 4.0, 0.0, 1.0), 1.5);
-
     vec2 lightDir = normalize(vec2(-0.4, 0.8));
-
-    // Weight the rim toward the lit side. An evenly bright ring all the way
-    // round reads as a soap bubble; a real drop catches the light as a
-    // crescent.
+    // Weight the rim toward the lit side. An evenly bright ring reads as a
+    // soap bubble; a real drop catches the light as a crescent.
     float facing = dot(nrm, lightDir) * 0.5 + 0.5;
     rim *= 0.35 + 0.65 * facing;
-
-    // Specular: one tight hotspot per drop, not a broad sheen - hence the
-    // high exponent.
     float spec = pow(max(0.0, dot(nrm, lightDir)), 16.0) * c.x;
 
-    // The self-lit, near-white part of the drop. Everything else takes its
-    // colour from whatever is behind the band.
     float bright = clamp(rim * 0.5 + spec * 0.6 + c.y * 0.25, 0.0, 1.0);
 
-    // Contributions are accumulated PREMULTIPLIED: the body is a colour with a
-    // low alpha, the bright features are self-lit light added on top.
-    vec3 bodyColor;
-    float bodyAlpha;
-    if (uMode == DROPLETS_MODE_HIGHLIGHTS)
-    {
-        // No background sample. The body is barely there - just enough tint to
-        // suggest a lens - so the glow behind shows through almost unchanged.
-        bodyColor = uTint.rgb;
-        bodyAlpha = c.x * 0.10;
-    }
-    else
-    {
-        // Both refracting modes displace the background sample along the
-        // *local* band axes - outward edge normal for the across component,
-        // edge tangent for the along component - then clamp the result to the
-        // band width. Without the clamp a drop in a 16px band would sample
-        // content from tens of pixels outside it.
-        vec2 offsetPx = (normal.x * nrmDir + normal.y * tanDir) * cellPx * uDistortion * 60.0;
-        float maxPx = bandWidth * 0.75;
-        if (length(offsetPx) > maxPx)
-        {
-            offsetPx = normalize(offsetPx) * maxPx;
-        }
-        vec2 sampleUV = screenUV + offsetPx / uViewport;
+    // Composite premultiplied: a faint tinted body suggests refraction the
+    // drop doesn't actually do, then self-lit highlights add on top.
+    vec3 bodyColor = uTint.rgb;
+    float bodyAlpha = c.x * 0.10;
 
-        float focus = 0.0;
-        if (uMode == DROPLETS_MODE_WET_GLASS)
-        {
-            // Frosted band: blurred everywhere except where a fresh drop or
-            // its trail has wiped the glass clear.
-            focus = mix(max(uBlur - c.y * uBlur, 0.0), 0.0, S(0.1, 0.2, c.x));
-        }
-
-        vec3 refracted = textureLod(uBackground, sampleUV, focus).rgb;
-        // The body IS the refracted glow - that is where a drop's colour comes
-        // from. It is never whitened; the specular is added separately below.
-        bodyColor = refracted * uTint.rgb;
-        bodyAlpha = (uMode == DROPLETS_MODE_LENS)
-                        ? clamp(c.x * 0.5 + c.y * 0.35, 0.0, 1.0)
-                        : 1.0;
-
-        // Luminance gate on the *refracted* body only: where the sampled
-        // background is near-black (under the neon's opaque interior fill, or
-        // beyond the glow falloff) the drop has nothing meaningful to refract,
-        // so fade that part out rather than smearing black over the band. The
-        // specular term is self-lit and must not be gated.
-        float lum = dot(refracted, vec3(0.299, 0.587, 0.114));
-        bodyAlpha *= S(0.02, 0.15, lum);
-    }
-
-    // Composite premultiplied: tinted body plus self-lit highlights. Refraction
-    // alone is invisible over a smooth gradient like the neon glow, so the
-    // specular is what actually makes a drop legible - but only as a rim and a
-    // dot, never as a fill.
     vec3 premul = bodyColor * bodyAlpha + vec3(1.0) * bright;
     float dropAlpha = clamp(bodyAlpha + bright, 0.0, 1.0);
 
