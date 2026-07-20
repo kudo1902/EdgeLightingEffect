@@ -41,7 +41,7 @@ namespace
     void Nudge(Getter get, Setter set, float delta, float lo, float hi)
     {
         float v = 0.0f;
-        if (get(gEffect, &v) != EL_OK)
+        if (get(gEffect, &v) != EL_SUCCESS)
         {
             return;
         }
@@ -236,7 +236,7 @@ int main()
         return -1;
     }
 
-    if (el_effect_init(gEffect) != EL_OK)
+    if (el_effect_init(gEffect) != EL_SUCCESS)
     {
         std::fprintf(stderr, "el_effect_init failed\n");
         el_effect_destroy(gEffect);
