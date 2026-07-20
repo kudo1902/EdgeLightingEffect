@@ -207,9 +207,15 @@ void main() {
     } else {
         // WET_GLASS - fullscreen frost + sharp refraction inside drops.
         float focus = mix(max(uBlur - c.y * uBlur, 0.0), 0.0, S(0.1, 0.2, c.x));
-        col = textureLod(uBackground, screenUV + normal * uDistortion, focus).rgb;
-        col *= uTint.rgb;
-        dropAlpha = 1.0;
+        vec3 refracted = textureLod(uBackground, screenUV + normal * uDistortion, focus).rgb;
+        col = refracted * uTint.rgb;
+        // Luminance gate: same idea as LENS - where the frosted sample is
+        // near-black (e.g. under the neon's opaque-black interior fill) the
+        // frosted pane has nothing meaningful to show, so fade its alpha
+        // out entirely. Elsewhere the pane stays fully opaque so the frost
+        // + drop refraction reads through unchanged.
+        float lum = dot(refracted, vec3(0.299, 0.587, 0.114));
+        dropAlpha = smoothstep(0.02, 0.15, lum);
     }
 
     // Side mask: fullscreen when BOTH, else clip to the corresponding half of
