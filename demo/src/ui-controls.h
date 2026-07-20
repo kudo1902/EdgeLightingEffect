@@ -20,6 +20,7 @@ namespace EdgeLightingDemo
         std::cout << "  [P / L]        - Inc / Dec Neon Sweep Speed\n";
         std::cout << "  [N]            - Toggle Neon\n";
         std::cout << "  [G]            - Toggle Wireframe Bounding Box\n";
+        std::cout << "  [D]            - Toggle Water Droplets Pane\n";
         std::cout << "  [W]            - Toggle Winding (CW / CCW)\n";
         std::cout << "  [SPACE]        - Pause / Resume Animation\n";
         std::cout << "  [ESC]          - Exit\n";

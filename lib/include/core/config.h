@@ -345,6 +345,76 @@ namespace EdgeLighting
         bool operator!=(const OptimizedNeonConfig &o) const { return !(*this == o); }
     } OptimizedNeonConfig;
 
+    /// Rain-on-glass droplets configuration ("wet window pane").
+    ///
+    /// The renderer captures the framebuffer content beneath the rect each
+    /// frame (background + any renderers drawn before it) and repaints the
+    /// rect interior as wet glass: a frost blur everywhere, with trickling
+    /// droplets that refract the captured content sharply. Register the
+    /// renderer after the neon renderers so the glow shines through the pane.
+    typedef struct DropletsConfig
+    {
+        bool enable = false; ///< Enable or disable the droplets renderer
+
+        /// Rain amount [0-1]. Drives the density of all droplet layers:
+        /// low values leave only static condensation, high values add two
+        /// trickling layers with trails.
+        float amount = 0.7f;
+        /// Trickle speed multiplier. 1 = the reference pace; 0 freezes the rain.
+        float speed = 1.0f;
+        /// Droplet field zoom. Higher = more, smaller droplets. Droplet size
+        /// is normalised to the rect height, so the look is resolution-stable.
+        float scale = 1.0f;
+        /// Refraction strength - how far a droplet bends the background
+        /// sample. 0 disables the lensing (droplets become invisible against
+        /// an unblurred pane).
+        float distortion = 1.0f;
+        /// Frost blur outside droplets, expressed as a mip LOD of the
+        /// captured background (0 = clear glass, ~3 = heavy frost). Fresh
+        /// droplet trails wipe the frost until they dry.
+        float blur = 3.0f;
+        /// Pane colour multiplier (.rgb used; .a reserved). Slightly blue by
+        /// default for a cold-glass cast; white = untinted.
+        glm::vec4 tint = glm::vec4(0.85f, 0.90f, 1.0f, 1.0f);
+
+        /// Where the pane is drawn relative to the rect. The pane always
+        /// covers the whole viewport; this masks it:
+        ///   BOTH    -> whole screen wet (default).
+        ///   INSIDE  -> only inside the rect.
+        ///   OUTSIDE -> only outside the rect.
+        /// Independent of @c NeonConfig::glowSide - set both to the same value
+        /// to make the wet region track the glow.
+        GlowSide glowSide = GlowSide::BOTH;
+        /// Softness of the INSIDE / OUTSIDE cut in pixels (0 = hard edge).
+        /// Ignored when @c glowSide == BOTH.
+        float glowSideSoftness = 1.0f;
+
+        /// If true, the pane is drawn as a translucent overlay: the shader
+        /// skips the background snapshot entirely (no @c glCopyTexSubImage2D,
+        /// no mip generation) and instead composites water-shaped highlights
+        /// straight over the framebuffer via standard alpha blending.
+        /// @c distortion and @c blur have no effect in this mode - drops
+        /// become decorative rims/streaks rather than lenses. Useful when
+        /// there is nothing behind the pane to refract, or to keep the neon
+        /// crisp while still adding a wet-glass surface.
+        bool overlayOnly = false;
+
+        bool operator==(const DropletsConfig &o) const
+        {
+            return enable == o.enable &&
+                   amount == o.amount &&
+                   speed == o.speed &&
+                   scale == o.scale &&
+                   distortion == o.distortion &&
+                   blur == o.blur &&
+                   tint == o.tint &&
+                   glowSide == o.glowSide &&
+                   glowSideSoftness == o.glowSideSoftness &&
+                   overlayOnly == o.overlayOnly;
+        }
+        bool operator!=(const DropletsConfig &o) const { return !(*this == o); }
+    } DropletsConfig;
+
     /// Wireframe debug overlay configuration.
     typedef struct WireframeConfig
     {
@@ -371,6 +441,7 @@ namespace EdgeLighting
         RectGeometry geometry;             ///< Rectangle geometry
         NeonConfig neon;                   ///< Single-pass neon settings
         OptimizedNeonConfig optimizedNeon; ///< Half-res optimized neon settings
+        DropletsConfig droplets;           ///< Rain-on-glass droplets settings
         WireframeConfig wireframe;         ///< Wireframe overlay settings
 
         bool operator==(const Config &o) const
@@ -378,6 +449,7 @@ namespace EdgeLighting
             return geometry == o.geometry &&
                    neon == o.neon &&
                    optimizedNeon == o.optimizedNeon &&
+                   droplets == o.droplets &&
                    wireframe == o.wireframe;
         }
         bool operator!=(const Config &o) const { return !(*this == o); }

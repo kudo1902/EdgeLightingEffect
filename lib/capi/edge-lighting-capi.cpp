@@ -5,6 +5,7 @@
 #include "renderer/wireframe-renderer.h"
 #include "renderer/neon-renderer.h"
 #include "renderer/neon-optimized-renderer.h"
+#include "renderer/droplets-renderer.h"
 #include "animation/neon-animations.h"
 #include "animation/field-bound-animation.h"
 #include "animation/modulator.h"
@@ -1251,6 +1252,176 @@ extern "C"
         return EL_OK;
     }
 
+    // --- Droplets ---
+
+    el_result_e el_effect_set_droplets_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_renderer_enabled");
+        SET_AND_LOG(effect->config.droplets.enable, enabled != 0,
+                    "effect=%p, enabled=%d", (void *)effect, enabled);
+    }
+
+    el_result_e el_effect_get_droplets_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_renderer_enabled");
+        VALIDATE_OUT_PTR(outEnabled, "el_effect_get_droplets_renderer_enabled");
+        *outEnabled = effect->config.droplets.enable ? 1 : 0;
+        LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled);
+        return EL_OK;
+    }
+
+    el_result_e el_effect_set_droplets_amount(el_effect_handle_t effect, float amount)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_amount");
+        SET_AND_LOG(effect->config.droplets.amount, amount,
+                    "effect=%p, amount=%f", (void *)effect, amount);
+    }
+
+    el_result_e el_effect_get_droplets_amount(el_effect_handle_t effect, float *outAmount)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_amount");
+        VALIDATE_OUT_PTR(outAmount, "el_effect_get_droplets_amount");
+        *outAmount = effect->config.droplets.amount;
+        LOG_D("effect=%p, amount=%f", (void *)effect, *outAmount);
+        return EL_OK;
+    }
+
+    el_result_e el_effect_set_droplets_speed(el_effect_handle_t effect, float speed)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_speed");
+        SET_AND_LOG(effect->config.droplets.speed, speed,
+                    "effect=%p, speed=%f", (void *)effect, speed);
+    }
+
+    el_result_e el_effect_get_droplets_speed(el_effect_handle_t effect, float *outSpeed)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_speed");
+        VALIDATE_OUT_PTR(outSpeed, "el_effect_get_droplets_speed");
+        *outSpeed = effect->config.droplets.speed;
+        LOG_D("effect=%p, speed=%f", (void *)effect, *outSpeed);
+        return EL_OK;
+    }
+
+    el_result_e el_effect_set_droplets_scale(el_effect_handle_t effect, float scale)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_scale");
+        SET_AND_LOG(effect->config.droplets.scale, scale,
+                    "effect=%p, scale=%f", (void *)effect, scale);
+    }
+
+    el_result_e el_effect_get_droplets_scale(el_effect_handle_t effect, float *outScale)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_scale");
+        VALIDATE_OUT_PTR(outScale, "el_effect_get_droplets_scale");
+        *outScale = effect->config.droplets.scale;
+        LOG_D("effect=%p, scale=%f", (void *)effect, *outScale);
+        return EL_OK;
+    }
+
+    el_result_e el_effect_set_droplets_distortion(el_effect_handle_t effect, float distortion)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_distortion");
+        SET_AND_LOG(effect->config.droplets.distortion, distortion,
+                    "effect=%p, distortion=%f", (void *)effect, distortion);
+    }
+
+    el_result_e el_effect_get_droplets_distortion(el_effect_handle_t effect, float *outDistortion)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_distortion");
+        VALIDATE_OUT_PTR(outDistortion, "el_effect_get_droplets_distortion");
+        *outDistortion = effect->config.droplets.distortion;
+        LOG_D("effect=%p, distortion=%f", (void *)effect, *outDistortion);
+        return EL_OK;
+    }
+
+    el_result_e el_effect_set_droplets_blur(el_effect_handle_t effect, float blur)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_blur");
+        SET_AND_LOG(effect->config.droplets.blur, blur,
+                    "effect=%p, blur=%f", (void *)effect, blur);
+    }
+
+    el_result_e el_effect_get_droplets_blur(el_effect_handle_t effect, float *outBlur)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_blur");
+        VALIDATE_OUT_PTR(outBlur, "el_effect_get_droplets_blur");
+        *outBlur = effect->config.droplets.blur;
+        LOG_D("effect=%p, blur=%f", (void *)effect, *outBlur);
+        return EL_OK;
+    }
+
+    el_result_e el_effect_set_droplets_tint(el_effect_handle_t effect,
+                                            float r, float g, float b, float a)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_tint");
+        SET_AND_LOG(effect->config.droplets.tint, glm::vec4(r, g, b, a),
+                    "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a);
+    }
+
+    el_result_e el_effect_get_droplets_tint(el_effect_handle_t effect,
+                                            float *outR, float *outG, float *outB, float *outA)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_tint");
+        VALIDATE_OUT_PTR(outR, "el_effect_get_droplets_tint");
+        VALIDATE_OUT_PTR(outG, "el_effect_get_droplets_tint");
+        VALIDATE_OUT_PTR(outB, "el_effect_get_droplets_tint");
+        VALIDATE_OUT_PTR(outA, "el_effect_get_droplets_tint");
+        *outR = effect->config.droplets.tint.r;
+        *outG = effect->config.droplets.tint.g;
+        *outB = effect->config.droplets.tint.b;
+        *outA = effect->config.droplets.tint.a;
+        LOG_D("effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, *outR, *outG, *outB, *outA);
+        return EL_OK;
+    }
+
+    el_result_e el_effect_set_droplets_glow_side(el_effect_handle_t effect, el_glow_side_e side)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_glow_side");
+        SET_AND_LOG(effect->config.droplets.glowSide, static_cast<EdgeLighting::GlowSide>(side),
+                    "effect=%p, side=%d", (void *)effect, side);
+    }
+
+    el_result_e el_effect_get_droplets_glow_side(el_effect_handle_t effect, el_glow_side_e *outSide)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_glow_side");
+        VALIDATE_OUT_PTR(outSide, "el_effect_get_droplets_glow_side");
+        *outSide = static_cast<el_glow_side_e>(effect->config.droplets.glowSide);
+        LOG_D("effect=%p, side=%d", (void *)effect, *outSide);
+        return EL_OK;
+    }
+
+    el_result_e el_effect_set_droplets_glow_side_softness(el_effect_handle_t effect, float softness)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_glow_side_softness");
+        SET_AND_LOG(effect->config.droplets.glowSideSoftness, softness,
+                    "effect=%p, softness=%f", (void *)effect, softness);
+    }
+
+    el_result_e el_effect_get_droplets_glow_side_softness(el_effect_handle_t effect, float *outSoftness)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_glow_side_softness");
+        VALIDATE_OUT_PTR(outSoftness, "el_effect_get_droplets_glow_side_softness");
+        *outSoftness = effect->config.droplets.glowSideSoftness;
+        LOG_D("effect=%p, softness=%f", (void *)effect, *outSoftness);
+        return EL_OK;
+    }
+
+    el_result_e el_effect_set_droplets_overlay_only(el_effect_handle_t effect, el_bool_t overlayOnly)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_overlay_only");
+        SET_AND_LOG(effect->config.droplets.overlayOnly, overlayOnly != 0,
+                    "effect=%p, overlayOnly=%d", (void *)effect, overlayOnly);
+    }
+
+    el_result_e el_effect_get_droplets_overlay_only(el_effect_handle_t effect, el_bool_t *outOverlayOnly)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_overlay_only");
+        VALIDATE_OUT_PTR(outOverlayOnly, "el_effect_get_droplets_overlay_only");
+        *outOverlayOnly = effect->config.droplets.overlayOnly ? 1 : 0;
+        LOG_D("effect=%p, overlayOnly=%d", (void *)effect, *outOverlayOnly);
+        return EL_OK;
+    }
+
     // --- Wireframe ---
 
     el_result_e el_effect_set_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
@@ -1333,6 +1504,10 @@ extern "C"
             effect->impl->AddRenderer(std::make_shared<EdgeLighting::WireframeRenderer>());
             effect->impl->AddRenderer(std::make_shared<EdgeLighting::NeonRenderer>());
             effect->impl->AddRenderer(std::make_shared<EdgeLighting::NeonOptimizedRenderer>());
+            // Registered last: droplets snapshot the framebuffer at render
+            // time, so the neon layers must already be drawn for the pane to
+            // refract them.
+            effect->impl->AddRenderer(std::make_shared<EdgeLighting::DropletsRenderer>());
             if (!effect->impl->Initialize())
             {
                 LOG_E("el_effect_init: renderer initialisation failed");

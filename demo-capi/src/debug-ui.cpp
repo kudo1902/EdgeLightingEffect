@@ -153,6 +153,7 @@ void DebugUI::Build(el_effect_handle_t effect)
     buildGeometrySection(effect);
     buildNeonSection(effect);
     buildOptimizedNeonSection(effect);
+    buildDropletsSection(effect);
     buildColorPickerSection(effect);
     buildAnimationSection(effect);
     buildBackgroundSection();
@@ -714,6 +715,97 @@ void DebugUI::buildOptimizedNeonSection(el_effect_handle_t effect)
     }
 
     DrawColorStopsList(effect, "Opt");
+}
+
+// ---------------------------------------------------------------------------
+// Droplets
+// ---------------------------------------------------------------------------
+
+void DebugUI::buildDropletsSection(el_effect_handle_t effect)
+{
+    if (!ImGui::CollapsingHeader("Droplets (rain on glass)", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+
+    el_bool_t on = 0;
+    el_effect_get_droplets_renderer_enabled(effect, &on);
+    bool en = on;
+    if (ImGui::Checkbox("Enable##Drop", &en))
+    {
+        el_effect_set_droplets_renderer_enabled(effect, en ? 1 : 0);
+    }
+    if (!en) return;
+
+    float amount = 0.0f;
+    el_effect_get_droplets_amount(effect, &amount);
+    if (ImGui::SliderFloat("Rain Amount##Drop", &amount, 0.0f, 1.0f))
+    {
+        el_effect_set_droplets_amount(effect, amount);
+    }
+
+    float speed = 0.0f;
+    el_effect_get_droplets_speed(effect, &speed);
+    if (ImGui::SliderFloat("Speed##Drop", &speed, 0.0f, 4.0f))
+    {
+        el_effect_set_droplets_speed(effect, speed);
+    }
+
+    float scale = 0.0f;
+    el_effect_get_droplets_scale(effect, &scale);
+    if (ImGui::SliderFloat("Scale##Drop", &scale, 0.25f, 4.0f))
+    {
+        el_effect_set_droplets_scale(effect, scale);
+    }
+
+    float distortion = 0.0f;
+    el_effect_get_droplets_distortion(effect, &distortion);
+    if (ImGui::SliderFloat("Distortion##Drop", &distortion, 0.0f, 3.0f))
+    {
+        el_effect_set_droplets_distortion(effect, distortion);
+    }
+
+    el_bool_t overlay = 0;
+    el_effect_get_droplets_overlay_only(effect, &overlay);
+    bool ov = overlay;
+    if (ImGui::Checkbox("Overlay only (no bg sample)##Drop", &ov))
+    {
+        el_effect_set_droplets_overlay_only(effect, ov ? 1 : 0);
+    }
+
+    ImGui::BeginDisabled(ov);
+    float blur = 0.0f;
+    el_effect_get_droplets_blur(effect, &blur);
+    if (ImGui::SliderFloat("Frost Blur##Drop", &blur, 0.0f, 6.0f))
+    {
+        el_effect_set_droplets_blur(effect, blur);
+    }
+    ImGui::EndDisabled();
+
+    float tint[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    el_effect_get_droplets_tint(effect, &tint[0], &tint[1], &tint[2], &tint[3]);
+    if (ImGui::ColorEdit3("Tint##Drop", tint))
+    {
+        el_effect_set_droplets_tint(effect, tint[0], tint[1], tint[2], tint[3]);
+    }
+
+    el_glow_side_e side = EL_GLOW_SIDE_BOTH;
+    el_effect_get_droplets_glow_side(effect, &side);
+    const char *sideItems[] = {"Both", "Inside", "Outside"};
+    int sideIdx = static_cast<int>(side);
+    if (ImGui::Combo("Side##Drop", &sideIdx, sideItems, IM_ARRAYSIZE(sideItems)))
+    {
+        el_effect_set_droplets_glow_side(effect, static_cast<el_glow_side_e>(sideIdx));
+    }
+    if (side != EL_GLOW_SIDE_BOTH)
+    {
+        float soft = 0.0f;
+        el_effect_get_droplets_glow_side_softness(effect, &soft);
+        if (ImGui::SliderFloat("Side Softness##Drop", &soft, 0.0f, 20.0f, "%.1f"))
+        {
+            el_effect_set_droplets_glow_side_softness(effect, soft);
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

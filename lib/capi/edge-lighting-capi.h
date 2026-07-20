@@ -604,6 +604,66 @@ extern "C"
 
     /** @} */
 
+    /** @name Rain-on-glass droplets
+     *  Fullscreen "wet window pane" that snapshots the framebuffer under it
+     *  each frame, then repaints it with a frost blur and grid-hashed
+     *  trickling droplets that refract the capture sharply. Register order in
+     *  @ref el_effect_init places droplets last, so the neon layers show
+     *  through the pane. Mirrors @c EdgeLighting::DropletsConfig.
+     *  @{ */
+
+    EL_API el_result_e el_effect_set_droplets_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled);
+    EL_API el_result_e el_effect_get_droplets_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
+
+    /** @brief Rain amount [0, 1] - density of all droplet layers. */
+    EL_API el_result_e el_effect_set_droplets_amount(el_effect_handle_t effect, float amount);
+    EL_API el_result_e el_effect_get_droplets_amount(el_effect_handle_t effect, float *outAmount);
+
+    /** @brief Trickle speed multiplier (1 = reference pace; 0 freezes rain). */
+    EL_API el_result_e el_effect_set_droplets_speed(el_effect_handle_t effect, float speed);
+    EL_API el_result_e el_effect_get_droplets_speed(el_effect_handle_t effect, float *outSpeed);
+
+    /** @brief Droplet field zoom (higher = more, smaller droplets). */
+    EL_API el_result_e el_effect_set_droplets_scale(el_effect_handle_t effect, float scale);
+    EL_API el_result_e el_effect_get_droplets_scale(el_effect_handle_t effect, float *outScale);
+
+    /** @brief Refraction strength through droplets (0 disables the lensing). */
+    EL_API el_result_e el_effect_set_droplets_distortion(el_effect_handle_t effect, float distortion);
+    EL_API el_result_e el_effect_get_droplets_distortion(el_effect_handle_t effect, float *outDistortion);
+
+    /** @brief Frost blur outside droplets, expressed as a mip LOD of the
+     *         captured background (0 = clear glass, ~3 = heavy frost). */
+    EL_API el_result_e el_effect_set_droplets_blur(el_effect_handle_t effect, float blur);
+    EL_API el_result_e el_effect_get_droplets_blur(el_effect_handle_t effect, float *outBlur);
+
+    /** @brief Pane colour multiplier (linear RGBA in [0, 1]; only @c rgb is
+     *         read today, @c a is reserved). */
+    EL_API el_result_e el_effect_set_droplets_tint(el_effect_handle_t effect,
+                                                   float r, float g, float b, float a);
+    EL_API el_result_e el_effect_get_droplets_tint(el_effect_handle_t effect,
+                                                   float *outR, float *outG, float *outB, float *outA);
+
+    /** @brief Restrict the pane to one side of the rect, or paint the whole
+     *         viewport. Mirrors @ref el_effect_set_glow_side but is
+     *         independent - set both to the same value to make the wet region
+     *         track the neon glow. */
+    EL_API el_result_e el_effect_set_droplets_glow_side(el_effect_handle_t effect, el_glow_side_e side);
+    EL_API el_result_e el_effect_get_droplets_glow_side(el_effect_handle_t effect, el_glow_side_e *outSide);
+
+    /** @brief Softness (px) of the INSIDE / OUTSIDE cut. Ignored for BOTH. */
+    EL_API el_result_e el_effect_set_droplets_glow_side_softness(el_effect_handle_t effect, float softness);
+    EL_API el_result_e el_effect_get_droplets_glow_side_softness(el_effect_handle_t effect, float *outSoftness);
+
+    /** @brief Switch the pane between refraction+frost (default, 0) and pure
+     *         overlay (non-zero). Overlay mode skips the per-frame
+     *         framebuffer snapshot entirely - drops become translucent
+     *         water-shaped highlights composited straight over whatever is
+     *         behind the pane, and @c distortion / @c blur have no effect. */
+    EL_API el_result_e el_effect_set_droplets_overlay_only(el_effect_handle_t effect, el_bool_t overlayOnly);
+    EL_API el_result_e el_effect_get_droplets_overlay_only(el_effect_handle_t effect, el_bool_t *outOverlayOnly);
+
+    /** @} */
+
     /** @name Wireframe overlay
      *  Debug: 1 px line loop around the target rectangle.
      *  @{ */

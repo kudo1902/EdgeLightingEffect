@@ -276,6 +276,7 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     buildGeometrySection(cfg);
     buildNeonSection(cfg, active);
     buildOptimizedNeonSection(cfg, active);
+    buildDropletsSection(cfg);
     buildColorPickerSection(cfg);
     buildAnimationSection(cfg, effect.GetAnimationManager());
     buildBackgroundSection();
@@ -842,6 +843,41 @@ namespace
             }
         }
         ImGui::Unindent(18.0f);
+    }
+}
+
+void DebugUI::buildDropletsSection(EdgeLighting::Config &cfg)
+{
+    if (!ImGui::CollapsingHeader("Droplets (rain on glass)", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+
+    ImGui::Checkbox("Enable##Droplets", &cfg.droplets.enable);
+    if (!cfg.droplets.enable)
+    {
+        return;
+    }
+
+    ImGui::SliderFloat("Rain Amount##Droplets", &cfg.droplets.amount, 0.0f, 1.0f);
+    ImGui::SliderFloat("Speed##Droplets", &cfg.droplets.speed, 0.0f, 4.0f);
+    ImGui::SliderFloat("Scale##Droplets", &cfg.droplets.scale, 0.25f, 4.0f);
+    ImGui::SliderFloat("Distortion##Droplets", &cfg.droplets.distortion, 0.0f, 3.0f);
+    ImGui::Checkbox("Overlay only (no bg sample)##Droplets", &cfg.droplets.overlayOnly);
+    ImGui::BeginDisabled(cfg.droplets.overlayOnly);
+    ImGui::SliderFloat("Frost Blur##Droplets", &cfg.droplets.blur, 0.0f, 6.0f);
+    ImGui::EndDisabled();
+    ImGui::ColorEdit3("Tint##Droplets", &cfg.droplets.tint.x);
+
+    const char *sideItems[] = {"Both", "Inside", "Outside"};
+    int sideIdx = static_cast<int>(cfg.droplets.glowSide);
+    if (ImGui::Combo("Side##Droplets", &sideIdx, sideItems, IM_ARRAYSIZE(sideItems)))
+    {
+        cfg.droplets.glowSide = static_cast<EdgeLighting::GlowSide>(sideIdx);
+    }
+    if (cfg.droplets.glowSide != EdgeLighting::GlowSide::BOTH)
+    {
+        ImGui::SliderFloat("Side Softness##Droplets", &cfg.droplets.glowSideSoftness, 0.0f, 20.0f, "%.1f");
     }
 }
 
