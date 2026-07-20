@@ -31,6 +31,10 @@ static_assert(static_cast<int>(EdgeLighting::GlowSide::BOTH) == EL_GLOW_SIDE_BOT
 static_assert(static_cast<int>(EdgeLighting::GlowSide::INSIDE) == EL_GLOW_SIDE_INSIDE);
 static_assert(static_cast<int>(EdgeLighting::GlowSide::OUTSIDE) == EL_GLOW_SIDE_OUTSIDE);
 
+static_assert(static_cast<int>(EdgeLighting::DropletsMode::WET_GLASS) == EL_DROPLETS_MODE_WET_GLASS);
+static_assert(static_cast<int>(EdgeLighting::DropletsMode::LENS) == EL_DROPLETS_MODE_LENS);
+static_assert(static_cast<int>(EdgeLighting::DropletsMode::HIGHLIGHTS) == EL_DROPLETS_MODE_HIGHLIGHTS);
+
 static_assert(static_cast<int>(EdgeLighting::BlendSpace::RGB) == EL_BLEND_SPACE_RGB);
 static_assert(static_cast<int>(EdgeLighting::BlendSpace::HSV) == EL_BLEND_SPACE_HSV);
 static_assert(static_cast<int>(EdgeLighting::BlendSpace::HSL) == EL_BLEND_SPACE_HSL);
@@ -1406,19 +1410,19 @@ extern "C"
         return EL_OK;
     }
 
-    el_result_e el_effect_set_droplets_overlay_only(el_effect_handle_t effect, el_bool_t overlayOnly)
+    el_result_e el_effect_set_droplets_mode(el_effect_handle_t effect, el_droplets_mode_e mode)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_overlay_only");
-        SET_AND_LOG(effect->config.droplets.overlayOnly, overlayOnly != 0,
-                    "effect=%p, overlayOnly=%d", (void *)effect, overlayOnly);
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_mode");
+        SET_AND_LOG(effect->config.droplets.mode, static_cast<EdgeLighting::DropletsMode>(mode),
+                    "effect=%p, mode=%d", (void *)effect, mode);
     }
 
-    el_result_e el_effect_get_droplets_overlay_only(el_effect_handle_t effect, el_bool_t *outOverlayOnly)
+    el_result_e el_effect_get_droplets_mode(el_effect_handle_t effect, el_droplets_mode_e *outMode)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_overlay_only");
-        VALIDATE_OUT_PTR(outOverlayOnly, "el_effect_get_droplets_overlay_only");
-        *outOverlayOnly = effect->config.droplets.overlayOnly ? 1 : 0;
-        LOG_D("effect=%p, overlayOnly=%d", (void *)effect, *outOverlayOnly);
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_mode");
+        VALIDATE_OUT_PTR(outMode, "el_effect_get_droplets_mode");
+        *outMode = static_cast<el_droplets_mode_e>(effect->config.droplets.mode);
+        LOG_D("effect=%p, mode=%d", (void *)effect, *outMode);
         return EL_OK;
     }
 

@@ -345,6 +345,33 @@ namespace EdgeLighting
         bool operator!=(const OptimizedNeonConfig &o) const { return !(*this == o); }
     } OptimizedNeonConfig;
 
+    /// Which visual style the droplets renderer produces.
+    ///
+    /// The renderer always draws a fullscreen quad, but the shader's per-pixel
+    /// output differs sharply between modes:
+    ///
+    ///   WET_GLASS - fullscreen frosted pane; drops refract the captured
+    ///               framebuffer sharply, everything else reads through a
+    ///               mip-blur frost. Alpha = 1 everywhere inside the pane, so
+    ///               the pane fully replaces the framebuffer. Best when there
+    ///               is rich content behind (a photo, a scene, a video).
+    ///   LENS      - only drop shapes are drawn; each drop is a translucent
+    ///               window that refracts the captured framebuffer through
+    ///               itself. Between drops, alpha = 0 - the framebuffer is
+    ///               left untouched. Best when the pane sits over host UI or
+    ///               a transparent surface; drops read as real water lenses.
+    ///   HIGHLIGHTS - no framebuffer capture at all; drops read as pure
+    ///                rim + specular + trail highlights on a transparent
+    ///                background. Cheapest (no glCopyTexSubImage2D). Reads
+    ///                as decorative wet glass without needing anything to
+    ///                refract.
+    typedef enum class DropletsMode
+    {
+        WET_GLASS = 0,
+        LENS = 1,
+        HIGHLIGHTS = 2
+    } DropletsMode;
+
     /// Rain-on-glass droplets configuration ("wet window pane").
     ///
     /// The renderer captures the framebuffer content beneath the rect each
@@ -389,15 +416,12 @@ namespace EdgeLighting
         /// Ignored when @c glowSide == BOTH.
         float glowSideSoftness = 1.0f;
 
-        /// If true, the pane is drawn as a translucent overlay: the shader
-        /// skips the background snapshot entirely (no @c glCopyTexSubImage2D,
-        /// no mip generation) and instead composites water-shaped highlights
-        /// straight over the framebuffer via standard alpha blending.
-        /// @c distortion and @c blur have no effect in this mode - drops
-        /// become decorative rims/streaks rather than lenses. Useful when
-        /// there is nothing behind the pane to refract, or to keep the neon
-        /// crisp while still adding a wet-glass surface.
-        bool overlayOnly = false;
+        /// Visual style - see @ref DropletsMode for the tradeoffs. Defaults
+        /// to LENS: drops act as water lenses that refract the framebuffer,
+        /// pixels between drops stay fully transparent. That's the one most
+        /// callers want; WET_GLASS is the "photo behind rain-covered glass"
+        /// look, HIGHLIGHTS is decorative-only.
+        DropletsMode mode = DropletsMode::LENS;
 
         bool operator==(const DropletsConfig &o) const
         {
@@ -410,7 +434,7 @@ namespace EdgeLighting
                    tint == o.tint &&
                    glowSide == o.glowSide &&
                    glowSideSoftness == o.glowSideSoftness &&
-                   overlayOnly == o.overlayOnly;
+                   mode == o.mode;
         }
         bool operator!=(const DropletsConfig &o) const { return !(*this == o); }
     } DropletsConfig;

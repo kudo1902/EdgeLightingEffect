@@ -863,8 +863,13 @@ void DebugUI::buildDropletsSection(EdgeLighting::Config &cfg)
     ImGui::SliderFloat("Speed##Droplets", &cfg.droplets.speed, 0.0f, 4.0f);
     ImGui::SliderFloat("Scale##Droplets", &cfg.droplets.scale, 0.25f, 4.0f);
     ImGui::SliderFloat("Distortion##Droplets", &cfg.droplets.distortion, 0.0f, 3.0f);
-    ImGui::Checkbox("Overlay only (no bg sample)##Droplets", &cfg.droplets.overlayOnly);
-    ImGui::BeginDisabled(cfg.droplets.overlayOnly);
+    const char *modeItems[] = {"Wet Glass", "Lens", "Highlights"};
+    int modeIdx = static_cast<int>(cfg.droplets.mode);
+    if (ImGui::Combo("Mode##Droplets", &modeIdx, modeItems, IM_ARRAYSIZE(modeItems)))
+    {
+        cfg.droplets.mode = static_cast<EdgeLighting::DropletsMode>(modeIdx);
+    }
+    ImGui::BeginDisabled(cfg.droplets.mode != EdgeLighting::DropletsMode::WET_GLASS);
     ImGui::SliderFloat("Frost Blur##Droplets", &cfg.droplets.blur, 0.0f, 6.0f);
     ImGui::EndDisabled();
     ImGui::ColorEdit3("Tint##Droplets", &cfg.droplets.tint.x);

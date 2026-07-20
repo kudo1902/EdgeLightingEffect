@@ -38,8 +38,12 @@ uniform float uBlur;
 uniform vec4  uTint;
 uniform int   uGlowSide;          ///< GLOW_SIDE_BOTH / INSIDE / OUTSIDE.
 uniform float uGlowSideSoftness;  ///< SDF-mask feather width in pixels.
-uniform int   uOverlayOnly;       ///< 0 = sample uBackground (refract+frost); 1 = translucent overlay only.
-uniform sampler2D uBackground;    ///< Framebuffer snapshot; ignored when uOverlayOnly != 0.
+#define DROPLETS_MODE_WET_GLASS  0
+#define DROPLETS_MODE_LENS       1
+#define DROPLETS_MODE_HIGHLIGHTS 2
+
+uniform int   uMode;              ///< See DROPLETS_MODE_* above.
+uniform sampler2D uBackground;    ///< Framebuffer snapshot; ignored when uMode == HIGHLIGHTS.
 
 #define S(a, b, t) smoothstep(a, b, t)
 
@@ -160,17 +164,41 @@ void main() {
 
     vec3 col;
     float dropAlpha;
-    if (uOverlayOnly != 0) {
-        // Overlay path: no background sample. Body reads as a soft translucent
-        // fill in the tint colour; length(normal) peaks at drop edges so it
-        // doubles as a fake rim highlight; trails add a thin bright streak.
-        float body = c.x;
-        float rim  = clamp(length(normal) * 40.0, 0.0, 1.0);
+    if (uMode == DROPLETS_MODE_HIGHLIGHTS) {
+        // No background sample. Drops read as clear water - transparent
+        // centres, bright rims + a single specular dot per drop. Between
+        // drops alpha stays 0 so whatever is behind the pane shows through.
+        //
+        //   rim   - length(normal) peaks at drop edges; that's the water's
+        //           edge highlight (total internal reflection at grazing).
+        //   spec  - fake directional light dotted against the height-field
+        //           normal, giving each drop a bright specular hotspot.
+        //   trail - thin bright streak left by the trickle.
+        float rim = clamp(length(normal) * 55.0, 0.0, 1.0);
+        vec2 lightDir = normalize(vec2(-0.4, 0.8));
+        vec2 nrm = normal / max(length(normal), 1e-5);
+        float spec = pow(max(0.0, dot(nrm, lightDir)), 6.0) * c.x;
         float trail = c.y;
-        dropAlpha = clamp(body * 0.5 + rim * 0.7 + trail * 0.35, 0.0, 1.0);
-        col = uTint.rgb * (0.75 + rim * 1.4 + trail * 0.6);
+
+        float highlight = clamp(rim * 0.9 + spec * 0.9 + trail * 0.5, 0.0, 1.0);
+        dropAlpha = highlight;
+        col = mix(vec3(1.0), uTint.rgb, 0.35) * highlight;
+    } else if (uMode == DROPLETS_MODE_LENS) {
+        // Drops act as water lenses - each drop refracts the captured
+        // framebuffer through itself. Between drops alpha = 0 so the pane
+        // leaves the framebuffer untouched (transparent everywhere the
+        // drop mask is 0). Inside a drop, the alpha stays partial so the
+        // refracted sample blends with whatever is already there instead
+        // of hard-replacing it: at the drop centre the framebuffer under
+        // the drop is the same pixel we're refracting, so ~60% opacity
+        // reads as a subtle displaced tint (mirrors how WET_GLASS looks
+        // in flat regions) rather than a hard body fill. This is the
+        // "wet glass over UI" look.
+        vec3 refracted = textureLod(uBackground, screenUV + normal * uDistortion, 0.0).rgb;
+        col = refracted * uTint.rgb;
+        dropAlpha = clamp(c.x * 0.6 + c.y * 0.45, 0.0, 1.0);
     } else {
-        // Refraction + frost path: sample the captured framebuffer.
+        // WET_GLASS - fullscreen frost + sharp refraction inside drops.
         float focus = mix(max(uBlur - c.y * uBlur, 0.0), 0.0, S(0.1, 0.2, c.x));
         col = textureLod(uBackground, screenUV + normal * uDistortion, focus).rgb;
         col *= uTint.rgb;

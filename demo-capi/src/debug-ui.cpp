@@ -765,15 +765,16 @@ void DebugUI::buildDropletsSection(el_effect_handle_t effect)
         el_effect_set_droplets_distortion(effect, distortion);
     }
 
-    el_bool_t overlay = 0;
-    el_effect_get_droplets_overlay_only(effect, &overlay);
-    bool ov = overlay;
-    if (ImGui::Checkbox("Overlay only (no bg sample)##Drop", &ov))
+    el_droplets_mode_e mode = EL_DROPLETS_MODE_LENS;
+    el_effect_get_droplets_mode(effect, &mode);
+    const char *modeItems[] = {"Wet Glass", "Lens", "Highlights"};
+    int modeIdx = static_cast<int>(mode);
+    if (ImGui::Combo("Mode##Drop", &modeIdx, modeItems, IM_ARRAYSIZE(modeItems)))
     {
-        el_effect_set_droplets_overlay_only(effect, ov ? 1 : 0);
+        el_effect_set_droplets_mode(effect, static_cast<el_droplets_mode_e>(modeIdx));
     }
 
-    ImGui::BeginDisabled(ov);
+    ImGui::BeginDisabled(mode != EL_DROPLETS_MODE_WET_GLASS);
     float blur = 0.0f;
     el_effect_get_droplets_blur(effect, &blur);
     if (ImGui::SliderFloat("Frost Blur##Drop", &blur, 0.0f, 6.0f))

@@ -241,6 +241,15 @@ extern "C"
         EL_ANIM_ARC_WIPE = 14        /**< Arc grows from a start position to an end. */
     } el_animation_preset_e;
 
+    /** @brief Visual style produced by the droplets renderer.
+     *  @details Mirrors @c EdgeLighting::DropletsMode. */
+    typedef enum el_droplets_mode_e
+    {
+        EL_DROPLETS_MODE_WET_GLASS = 0,  /**< Fullscreen frost + refracted drops (photo-behind-glass look). */
+        EL_DROPLETS_MODE_LENS = 1,       /**< Drops act as translucent lenses that refract the framebuffer; between drops is transparent. Default. */
+        EL_DROPLETS_MODE_HIGHLIGHTS = 2  /**< No framebuffer capture; drops read as pure rim / specular / trail highlights on transparent. */
+    } el_droplets_mode_e;
+
     /** @brief Periodic shape for @ref el_modulator_create_oscillator.
      *  @details Mirrors @c EdgeLighting::Waveform. */
     typedef enum el_waveform_e
@@ -654,13 +663,15 @@ extern "C"
     EL_API el_result_e el_effect_set_droplets_glow_side_softness(el_effect_handle_t effect, float softness);
     EL_API el_result_e el_effect_get_droplets_glow_side_softness(el_effect_handle_t effect, float *outSoftness);
 
-    /** @brief Switch the pane between refraction+frost (default, 0) and pure
-     *         overlay (non-zero). Overlay mode skips the per-frame
-     *         framebuffer snapshot entirely - drops become translucent
-     *         water-shaped highlights composited straight over whatever is
-     *         behind the pane, and @c distortion / @c blur have no effect. */
-    EL_API el_result_e el_effect_set_droplets_overlay_only(el_effect_handle_t effect, el_bool_t overlayOnly);
-    EL_API el_result_e el_effect_get_droplets_overlay_only(el_effect_handle_t effect, el_bool_t *outOverlayOnly);
+    /** @brief Visual style - see @ref el_droplets_mode_e for the tradeoffs.
+     *  @details Default is @ref EL_DROPLETS_MODE_LENS: drops act as water
+     *           lenses that refract the framebuffer, pixels between drops
+     *           stay fully transparent. Use @ref EL_DROPLETS_MODE_WET_GLASS
+     *           for the classic photo-behind-rain-covered-glass look, or
+     *           @ref EL_DROPLETS_MODE_HIGHLIGHTS to skip the framebuffer
+     *           snapshot entirely and render drops as highlights only. */
+    EL_API el_result_e el_effect_set_droplets_mode(el_effect_handle_t effect, el_droplets_mode_e mode);
+    EL_API el_result_e el_effect_get_droplets_mode(el_effect_handle_t effect, el_droplets_mode_e *outMode);
 
     /** @} */
 

@@ -37,13 +37,15 @@ namespace EdgeLighting
         }
 
         // Snapshot everything rendered so far this frame (background + neon
-        // layers) - the pane shader refracts and frosts this capture. Mips
-        // are only needed when the frost blur samples LODs above 0. Overlay
-        // mode skips this entirely (drops become translucent highlights that
-        // do not read the framebuffer), so we save the copy + mipmap cost.
-        if (!config.droplets.overlayOnly)
+        // layers) - the pane shader either frosts (WET_GLASS) or refracts
+        // (WET_GLASS, LENS) this capture. Mips are only needed for the
+        // WET_GLASS frost blur; LENS samples LOD 0 only. HIGHLIGHTS mode
+        // needs no capture at all - drops become translucent highlights that
+        // never read the framebuffer.
+        if (config.droplets.mode != DropletsMode::HIGHLIGHTS)
         {
-            const bool wantMips = config.droplets.blur > 0.0f;
+            const bool wantMips = config.droplets.mode == DropletsMode::WET_GLASS &&
+                                  config.droplets.blur > 0.0f;
             captureBackground(viewportWidth, viewportHeight, wantMips);
         }
 
@@ -77,7 +79,7 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uTint", config.droplets.tint);
         mShaderProgram.SetUniform("uGlowSide", static_cast<int>(config.droplets.glowSide));
         mShaderProgram.SetUniform("uGlowSideSoftness", config.droplets.glowSideSoftness);
-        mShaderProgram.SetUniform("uOverlayOnly", config.droplets.overlayOnly ? 1 : 0);
+        mShaderProgram.SetUniform("uMode", static_cast<int>(config.droplets.mode));
 
         mBackgroundCapture.Bind(0);
         mShaderProgram.SetUniform("uBackground", 0);
