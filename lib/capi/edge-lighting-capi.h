@@ -652,6 +652,59 @@ extern "C"
 
     /** @} */
 
+    /** @name Sunlight glints + rays
+     *  Companion phenomenon layer to droplets: paints star-shaped glints and
+     *  a soft ray spill into a band along the perimeter, both running
+     *  uniformly around the whole rect. Purely additive - adds light on top
+     *  of the neon layers, occludes nothing. Register order in
+     *  @ref el_effect_init places sunny after the neon layers (so it lights
+     *  them) and before droplets. Mirrors @c EdgeLighting::SunnyConfig.
+     *  @{ */
+
+    EL_API el_result_e el_effect_set_sunny_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled);
+    EL_API el_result_e el_effect_get_sunny_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
+
+    /** @brief Glint density [0, 1] - fraction of edge cells that sparkle. */
+    EL_API el_result_e el_effect_set_sunny_amount(el_effect_handle_t effect, float amount);
+    EL_API el_result_e el_effect_get_sunny_amount(el_effect_handle_t effect, float *outAmount);
+
+    /** @brief Twinkle / ray-drift speed multiplier (1 = reference pace; 0 freezes). */
+    EL_API el_result_e el_effect_set_sunny_speed(el_effect_handle_t effect, float speed);
+    EL_API el_result_e el_effect_get_sunny_speed(el_effect_handle_t effect, float *outSpeed);
+
+    /** @brief Number of glint lanes across the band (clamped to >= 1).
+     *  @details 1 = sparkles as big as the band, 2 = two lanes of half-size
+     *           sparkles. Glint size follows @ref el_effect_set_sunny_band_width,
+     *           so sparkles fit the band at any thickness. */
+    EL_API el_result_e el_effect_set_sunny_lanes(el_effect_handle_t effect, int lanes);
+    EL_API el_result_e el_effect_get_sunny_lanes(el_effect_handle_t effect, int *outLanes);
+
+    /** @brief Ray-spill brightness - short shafts of light bleeding across the
+     *         band from its edge-side boundary. 0 disables rays, leaving
+     *         glints only. */
+    EL_API el_result_e el_effect_set_sunny_ray_strength(el_effect_handle_t effect, float rayStrength);
+    EL_API el_result_e el_effect_get_sunny_ray_strength(el_effect_handle_t effect, float *outRayStrength);
+
+    /** @brief Band thickness in pixels - the sunny layer's entire world.
+     *  @details The side of the rect edge the band occupies comes from the
+     *           neon glow side, not from here. */
+    EL_API el_result_e el_effect_set_sunny_band_width(el_effect_handle_t effect, float bandWidth);
+    EL_API el_result_e el_effect_get_sunny_band_width(el_effect_handle_t effect, float *outBandWidth);
+
+    /** @brief Gap in pixels between the rect edge and the band's inner boundary. */
+    EL_API el_result_e el_effect_set_sunny_band_offset(el_effect_handle_t effect, float bandOffset);
+    EL_API el_result_e el_effect_get_sunny_band_offset(el_effect_handle_t effect, float *outBandOffset);
+
+    /** @brief Sunlight colour (linear RGBA in [0, 1]). @c rgb tints the
+     *         additive spill; @c a scales the whole layer's opacity. Warm
+     *         white by default. */
+    EL_API el_result_e el_effect_set_sunny_tint(el_effect_handle_t effect,
+                                                float r, float g, float b, float a);
+    EL_API el_result_e el_effect_get_sunny_tint(el_effect_handle_t effect,
+                                                float *outR, float *outG, float *outB, float *outA);
+
+    /** @} */
+
     /** @name Wireframe overlay
      *  Debug: 1 px line loop around the target rectangle.
      *  @{ */

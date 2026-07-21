@@ -277,6 +277,7 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     buildNeonSection(cfg, active);
     buildOptimizedNeonSection(cfg, active);
     buildDropletsSection(cfg);
+    buildSunnySection(cfg);
     buildColorPickerSection(cfg);
     buildAnimationSection(cfg, effect.GetAnimationManager());
     buildBackgroundSection();
@@ -865,6 +866,32 @@ void DebugUI::buildDropletsSection(EdgeLighting::Config &cfg)
     ImGui::SliderFloat("Speed##Droplets", &cfg.droplets.speed, 0.0f, 4.0f);
     ImGui::SliderInt("Lanes##Droplets", &cfg.droplets.lanes, 1, 6);
     ImGui::ColorEdit4("Tint##Droplets", &cfg.droplets.tint.x,
+                      ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreview);
+
+    ImGui::TextDisabled("Side follows Neon > Glow Side / Softness");
+}
+
+void DebugUI::buildSunnySection(EdgeLighting::Config &cfg)
+{
+    if (!ImGui::CollapsingHeader("Sunny (glints + rays)", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+
+    ImGui::Checkbox("Enable##Sunny", &cfg.sunny.enable);
+    if (!cfg.sunny.enable)
+    {
+        return;
+    }
+
+    ImGui::SliderFloat("Band Width##Sunny", &cfg.sunny.bandWidth, 4.0f, 200.0f);
+    ImGui::SliderFloat("Band Offset##Sunny", &cfg.sunny.bandOffset, -50.0f, 50.0f);
+    ImGui::SliderFloat("Glint Amount##Sunny", &cfg.sunny.amount, 0.0f, 1.0f);
+    ImGui::SliderInt("Lanes##Sunny", &cfg.sunny.lanes, 1, 6);
+    ImGui::SliderFloat("Speed##Sunny", &cfg.sunny.speed, 0.0f, 4.0f);
+    ImGui::SliderFloat("Ray Strength##Sunny", &cfg.sunny.rayStrength, 0.0f, 2.0f);
+
+    ImGui::ColorEdit4("Tint##Sunny", &cfg.sunny.tint.x,
                       ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreview);
 
     ImGui::TextDisabled("Side follows Neon > Glow Side / Softness");

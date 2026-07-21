@@ -403,6 +403,69 @@ namespace EdgeLighting
         bool operator!=(const DropletsConfig &o) const { return !(*this == o); }
     } DropletsConfig;
 
+    /// Sunlight glints + rays configuration.
+    ///
+    /// A companion phenomenon layer to @c DropletsConfig: where droplets put
+    /// rain on the perimeter, this puts sunlight on it. Two elements, both
+    /// running uniformly around the whole perimeter:
+    ///
+    ///   * Glints - star-shaped twinkles hugging the edge, like sun catching
+    ///     a lit rim.
+    ///   * Rays - soft light shafts bleeding across the band, brightest at
+    ///     the edge-side boundary and fading outward.
+    ///
+    /// The layer is purely additive (it adds light, occludes nothing), so it
+    /// sits naturally on top of any neon colouring - pair it with a warm
+    /// gradient preset for the full sunny look.
+    ///
+    /// Like @c DropletsConfig, everything lives in a band that follows the
+    /// perimeter: thickness is @c bandWidth, side comes from
+    /// @c NeonConfig::glowSide, and glint size derives from @c bandWidth, so
+    /// the effect holds up in a band only a handful of pixels thick.
+    typedef struct SunnyConfig
+    {
+        bool enable = false; ///< Enable or disable the sunny renderer
+
+        /// Glint density [0-1]: the fraction of edge cells that sparkle.
+        float amount = 0.6f;
+        /// Twinkle / ray-drift speed multiplier. 1 = reference pace, 0 = frozen.
+        float speed = 1.0f;
+        /// Number of glint lanes across the band, clamped to >= 1.
+        /// 1 = sparkles as big as the band; 2 = two lanes of half-size
+        /// sparkles, and so on. Cell size follows from this and @c bandWidth.
+        int lanes = 1;
+        /// Ray-spill brightness - short shafts of light bleeding across the
+        /// band from its edge-side boundary. 0 disables rays, leaving glints
+        /// only. Rays cover the whole perimeter uniformly.
+        float rayStrength = 0.8f;
+
+        /// Band thickness in pixels. This is the layer's entire world: glint
+        /// size derives from it and the ray spill fades across it. Which side
+        /// of the rect edge the band occupies is taken from
+        /// @c NeonConfig::glowSide - OUTSIDE grows outward, INSIDE inward,
+        /// BOTH straddles the edge centred on it.
+        float bandWidth = 20.0f;
+        /// Gap in pixels between the rect edge and the band's inner boundary.
+        /// 0 puts the band flush against the edge.
+        float bandOffset = 0.0f;
+
+        /// Sunlight colour (.rgb) and master opacity (.a). Warm white default.
+        glm::vec4 tint = glm::vec4(1.0f, 0.93f, 0.75f, 1.0f);
+
+        bool operator==(const SunnyConfig &o) const
+        {
+            return enable == o.enable &&
+                   amount == o.amount &&
+                   speed == o.speed &&
+                   lanes == o.lanes &&
+                   rayStrength == o.rayStrength &&
+                   bandWidth == o.bandWidth &&
+                   bandOffset == o.bandOffset &&
+                   tint == o.tint;
+        }
+        bool operator!=(const SunnyConfig &o) const { return !(*this == o); }
+    } SunnyConfig;
+
     /// Wireframe debug overlay configuration.
     typedef struct WireframeConfig
     {
@@ -430,6 +493,7 @@ namespace EdgeLighting
         NeonConfig neon;                   ///< Single-pass neon settings
         OptimizedNeonConfig optimizedNeon; ///< Half-res optimized neon settings
         DropletsConfig droplets;           ///< Rain-on-glass droplets settings
+        SunnyConfig sunny;                 ///< Sunlight glints + rays settings
         WireframeConfig wireframe;         ///< Wireframe overlay settings
 
         bool operator==(const Config &o) const
@@ -438,6 +502,7 @@ namespace EdgeLighting
                    neon == o.neon &&
                    optimizedNeon == o.optimizedNeon &&
                    droplets == o.droplets &&
+                   sunny == o.sunny &&
                    wireframe == o.wireframe;
         }
         bool operator!=(const Config &o) const { return !(*this == o); }

@@ -5,6 +5,7 @@
 #include "renderer/neon-renderer.h"
 #include "renderer/neon-optimized-renderer.h"
 #include "renderer/droplets-renderer.h"
+#include "renderer/sunny-renderer.h"
 #include "animation/neon-animations.h"
 #include "debug-ui.h"
 #include "background-quad.h"
@@ -14,9 +15,51 @@
 #include <memory>
 
 std::unique_ptr<EdgeLighting::EdgeLightingEffect> gEffect;
+EdgeLighting::AnimationPtr gSunnyAnimation;
 
 void OnResize(GLFWwindow *window, int width, int height);
 void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods);
+
+/// Sunny-weather preset: warm sky gradient on the neon ring plus a
+/// warm-white "sun" hotspot in segment slot 0. The slot's colour stops are
+/// authored here; SegmentTravel only drives position/length/boost, so the
+/// sun keeps its colour while it revolves.
+static void ApplySunnyWeather(EdgeLighting::Config &config)
+{
+    using namespace EdgeLighting;
+
+    config.neon.enable = true;
+    config.droplets.enable = false;
+
+    config.neon.blendSpace = BlendSpace::HSV;
+    config.neon.colorStops = {
+        {0.00f, glm::vec4(1.00f, 0.85f, 0.30f, 1.0f)}, // golden yellow
+        {0.25f, glm::vec4(1.00f, 0.60f, 0.15f, 1.0f)}, // orange
+        {0.50f, glm::vec4(1.00f, 0.95f, 0.75f, 1.0f)}, // warm white
+        {0.75f, glm::vec4(1.00f, 0.72f, 0.20f, 1.0f)}, // amber
+    };
+    config.neon.hueRotationRate = 0.02f;
+    config.neon.glowRadius = 12.0f;
+    config.neon.bloomStrength = 0.6f;
+    config.neon.intensity = 1.2f;
+    // Match the production target: everything lives in a thin band on the
+    // outside of the edge. The sunny band follows this side automatically.
+    config.neon.glowSide = GlowSide::OUTSIDE;
+
+    // The actual sun phenomenon layer: glints + ray spill in a 20px band.
+    config.sunny.enable = true;
+    config.sunny.bandWidth = 20.0f;
+
+    SegmentBoost sun;
+    sun.length = 0.18f;
+    sun.boost = 1.8f;
+    sun.colorStops = {
+        {0.0f, glm::vec4(1.0f, 0.95f, 0.80f, 1.0f)},
+        {0.5f, glm::vec4(1.0f, 1.00f, 0.90f, 1.0f)},
+        {1.0f, glm::vec4(1.0f, 0.95f, 0.80f, 1.0f)},
+    };
+    config.neon.segmentBoosts = {sun};
+}
 
 int main()
 {
@@ -94,10 +137,13 @@ int main()
     auto neonRenderer = std::make_shared<EdgeLighting::NeonRenderer>();
     auto neonOptimizedRenderer = std::make_shared<EdgeLighting::NeonOptimizedRenderer>();
     auto dropletsRenderer = std::make_shared<EdgeLighting::DropletsRenderer>();
+    auto sunnyRenderer = std::make_shared<EdgeLighting::SunnyRenderer>();
 
     gEffect->AddRenderer(wireframeRenderer);
     gEffect->AddRenderer(neonRenderer);
     gEffect->AddRenderer(neonOptimizedRenderer);
+    // Registered after the neon layers: sunlight adds on top of the glow.
+    gEffect->AddRenderer(sunnyRenderer);
     // Registered last: droplets snapshot the framebuffer at render time, so
     // the neon layers must already be drawn for the pane to refract them.
     gEffect->AddRenderer(dropletsRenderer);
@@ -318,6 +364,23 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
         {
             config.neon.intensity = std::max(0.0f, config.neon.intensity - 0.1f);
         }
+        break;
+    }
+    case GLFW_KEY_S:
+    {
+        ApplySunnyWeather(config);
+        if (!gSunnyAnimation)
+        {
+            // Slow revolution of the sun spot + a gentle heat-shimmer breathe
+            // on the halo. Travel length/boost match the authored sun slot.
+            auto group = std::make_shared<EdgeLighting::AnimationGroup>();
+            group->Add(std::make_shared<EdgeLighting::SegmentTravel>(14.0f, 0.18f, 1.8f));
+            group->Add(std::make_shared<EdgeLighting::GlowRadiusBreath>(6.0f, 10.0f, 16.0f));
+            group->SetName("Sunny");
+            gSunnyAnimation = group;
+            gEffect->Attach(gSunnyAnimation);
+        }
+        gSunnyAnimation->Play();
         break;
     }
     case GLFW_KEY_W:

@@ -178,6 +178,7 @@ void DebugUI::Build(el_effect_handle_t effect)
     buildNeonSection(effect);
     buildOptimizedNeonSection(effect);
     buildDropletsSection(effect);
+    buildSunnySection(effect);
     buildColorPickerSection(effect);
     buildAnimationSection(effect);
     buildBackgroundSection();
@@ -794,6 +795,82 @@ void DebugUI::buildDropletsSection(el_effect_handle_t effect)
                           ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreview))
     {
         el_effect_set_droplets_tint(effect, tint[0], tint[1], tint[2], tint[3]);
+    }
+
+    ImGui::TextDisabled("Side follows Neon > Glow Side / Softness");
+}
+
+// ---------------------------------------------------------------------------
+// Sunny (glints + rays)
+// ---------------------------------------------------------------------------
+
+void DebugUI::buildSunnySection(el_effect_handle_t effect)
+{
+    if (!ImGui::CollapsingHeader("Sunny (glints + rays)", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+
+    el_bool_t on = 0;
+    el_effect_get_sunny_renderer_enabled(effect, &on);
+    bool en = on;
+    if (ImGui::Checkbox("Enable##Sunny", &en))
+    {
+        el_effect_set_sunny_renderer_enabled(effect, en ? 1 : 0);
+    }
+    if (!en)
+    {
+        return;
+    }
+
+    float bandWidth = 0.0f;
+    el_effect_get_sunny_band_width(effect, &bandWidth);
+    if (ImGui::SliderFloat("Band Width##Sunny", &bandWidth, 4.0f, 200.0f))
+    {
+        el_effect_set_sunny_band_width(effect, bandWidth);
+    }
+
+    float bandOffset = 0.0f;
+    el_effect_get_sunny_band_offset(effect, &bandOffset);
+    if (ImGui::SliderFloat("Band Offset##Sunny", &bandOffset, -50.0f, 50.0f))
+    {
+        el_effect_set_sunny_band_offset(effect, bandOffset);
+    }
+
+    float amount = 0.0f;
+    el_effect_get_sunny_amount(effect, &amount);
+    if (ImGui::SliderFloat("Glint Amount##Sunny", &amount, 0.0f, 1.0f))
+    {
+        el_effect_set_sunny_amount(effect, amount);
+    }
+
+    int lanes = 1;
+    el_effect_get_sunny_lanes(effect, &lanes);
+    if (ImGui::SliderInt("Lanes##Sunny", &lanes, 1, 6))
+    {
+        el_effect_set_sunny_lanes(effect, lanes);
+    }
+
+    float speed = 0.0f;
+    el_effect_get_sunny_speed(effect, &speed);
+    if (ImGui::SliderFloat("Speed##Sunny", &speed, 0.0f, 4.0f))
+    {
+        el_effect_set_sunny_speed(effect, speed);
+    }
+
+    float rayStrength = 0.0f;
+    el_effect_get_sunny_ray_strength(effect, &rayStrength);
+    if (ImGui::SliderFloat("Ray Strength##Sunny", &rayStrength, 0.0f, 2.0f))
+    {
+        el_effect_set_sunny_ray_strength(effect, rayStrength);
+    }
+
+    float tint[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    el_effect_get_sunny_tint(effect, &tint[0], &tint[1], &tint[2], &tint[3]);
+    if (ImGui::ColorEdit4("Tint##Sunny", tint,
+                          ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreview))
+    {
+        el_effect_set_sunny_tint(effect, tint[0], tint[1], tint[2], tint[3]);
     }
 
     ImGui::TextDisabled("Side follows Neon > Glow Side / Softness");

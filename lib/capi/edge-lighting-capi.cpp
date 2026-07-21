@@ -6,6 +6,7 @@
 #include "renderer/neon-renderer.h"
 #include "renderer/neon-optimized-renderer.h"
 #include "renderer/droplets-renderer.h"
+#include "renderer/sunny-renderer.h"
 #include "animation/neon-animations.h"
 #include "animation/field-bound-animation.h"
 #include "animation/modulator.h"
@@ -1391,6 +1392,144 @@ extern "C"
         return EL_SUCCESS;
     }
 
+    // --- Sunny (glints + rays) ---
+
+    el_result_e el_effect_set_sunny_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_sunny_renderer_enabled");
+        SET_AND_LOG(effect->config.sunny.enable, enabled != 0,
+                    "effect=%p, enabled=%d", (void *)effect, enabled);
+    }
+
+    el_result_e el_effect_get_sunny_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_sunny_renderer_enabled");
+        VALIDATE_OUT_PTR(outEnabled, "el_effect_get_sunny_renderer_enabled");
+        *outEnabled = effect->config.sunny.enable ? 1 : 0;
+        LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_sunny_amount(el_effect_handle_t effect, float amount)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_sunny_amount");
+        SET_AND_LOG(effect->config.sunny.amount, amount,
+                    "effect=%p, amount=%f", (void *)effect, amount);
+    }
+
+    el_result_e el_effect_get_sunny_amount(el_effect_handle_t effect, float *outAmount)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_sunny_amount");
+        VALIDATE_OUT_PTR(outAmount, "el_effect_get_sunny_amount");
+        *outAmount = effect->config.sunny.amount;
+        LOG_D("effect=%p, amount=%f", (void *)effect, *outAmount);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_sunny_speed(el_effect_handle_t effect, float speed)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_sunny_speed");
+        SET_AND_LOG(effect->config.sunny.speed, speed,
+                    "effect=%p, speed=%f", (void *)effect, speed);
+    }
+
+    el_result_e el_effect_get_sunny_speed(el_effect_handle_t effect, float *outSpeed)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_sunny_speed");
+        VALIDATE_OUT_PTR(outSpeed, "el_effect_get_sunny_speed");
+        *outSpeed = effect->config.sunny.speed;
+        LOG_D("effect=%p, speed=%f", (void *)effect, *outSpeed);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_sunny_lanes(el_effect_handle_t effect, int lanes)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_sunny_lanes");
+        SET_AND_LOG(effect->config.sunny.lanes, lanes,
+                    "effect=%p, lanes=%d", (void *)effect, lanes);
+    }
+
+    el_result_e el_effect_get_sunny_lanes(el_effect_handle_t effect, int *outLanes)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_sunny_lanes");
+        VALIDATE_OUT_PTR(outLanes, "el_effect_get_sunny_lanes");
+        *outLanes = effect->config.sunny.lanes;
+        LOG_D("effect=%p, lanes=%d", (void *)effect, *outLanes);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_sunny_ray_strength(el_effect_handle_t effect, float rayStrength)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_sunny_ray_strength");
+        SET_AND_LOG(effect->config.sunny.rayStrength, rayStrength,
+                    "effect=%p, rayStrength=%f", (void *)effect, rayStrength);
+    }
+
+    el_result_e el_effect_get_sunny_ray_strength(el_effect_handle_t effect, float *outRayStrength)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_sunny_ray_strength");
+        VALIDATE_OUT_PTR(outRayStrength, "el_effect_get_sunny_ray_strength");
+        *outRayStrength = effect->config.sunny.rayStrength;
+        LOG_D("effect=%p, rayStrength=%f", (void *)effect, *outRayStrength);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_sunny_band_width(el_effect_handle_t effect, float bandWidth)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_sunny_band_width");
+        SET_AND_LOG(effect->config.sunny.bandWidth, bandWidth,
+                    "effect=%p, bandWidth=%f", (void *)effect, bandWidth);
+    }
+
+    el_result_e el_effect_get_sunny_band_width(el_effect_handle_t effect, float *outBandWidth)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_sunny_band_width");
+        VALIDATE_OUT_PTR(outBandWidth, "el_effect_get_sunny_band_width");
+        *outBandWidth = effect->config.sunny.bandWidth;
+        LOG_D("effect=%p, bandWidth=%f", (void *)effect, *outBandWidth);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_sunny_band_offset(el_effect_handle_t effect, float bandOffset)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_sunny_band_offset");
+        SET_AND_LOG(effect->config.sunny.bandOffset, bandOffset,
+                    "effect=%p, bandOffset=%f", (void *)effect, bandOffset);
+    }
+
+    el_result_e el_effect_get_sunny_band_offset(el_effect_handle_t effect, float *outBandOffset)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_sunny_band_offset");
+        VALIDATE_OUT_PTR(outBandOffset, "el_effect_get_sunny_band_offset");
+        *outBandOffset = effect->config.sunny.bandOffset;
+        LOG_D("effect=%p, bandOffset=%f", (void *)effect, *outBandOffset);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_sunny_tint(el_effect_handle_t effect,
+                                         float r, float g, float b, float a)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_sunny_tint");
+        SET_AND_LOG(effect->config.sunny.tint, glm::vec4(r, g, b, a),
+                    "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a);
+    }
+
+    el_result_e el_effect_get_sunny_tint(el_effect_handle_t effect,
+                                         float *outR, float *outG, float *outB, float *outA)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_sunny_tint");
+        VALIDATE_OUT_PTR(outR, "el_effect_get_sunny_tint");
+        VALIDATE_OUT_PTR(outG, "el_effect_get_sunny_tint");
+        VALIDATE_OUT_PTR(outB, "el_effect_get_sunny_tint");
+        VALIDATE_OUT_PTR(outA, "el_effect_get_sunny_tint");
+        *outR = effect->config.sunny.tint.r;
+        *outG = effect->config.sunny.tint.g;
+        *outB = effect->config.sunny.tint.b;
+        *outA = effect->config.sunny.tint.a;
+        LOG_D("effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, *outR, *outG, *outB, *outA);
+        return EL_SUCCESS;
+    }
+
     // --- Wireframe ---
 
     el_result_e el_effect_set_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
@@ -1473,6 +1612,8 @@ extern "C"
             effect->impl->AddRenderer(std::make_shared<EdgeLighting::WireframeRenderer>());
             effect->impl->AddRenderer(std::make_shared<EdgeLighting::NeonRenderer>());
             effect->impl->AddRenderer(std::make_shared<EdgeLighting::NeonOptimizedRenderer>());
+            // Registered after the neon layers: sunlight adds on top of the glow.
+            effect->impl->AddRenderer(std::make_shared<EdgeLighting::SunnyRenderer>());
             // Registered last: droplets snapshot the framebuffer at render
             // time, so the neon layers must already be drawn for the pane to
             // refract them.
