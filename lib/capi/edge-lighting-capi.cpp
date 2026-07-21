@@ -6,6 +6,7 @@
 #include "renderer/neon-renderer.h"
 #include "renderer/neon-optimized-renderer.h"
 #include "renderer/droplets-renderer.h"
+#include "renderer/snowy-renderer.h"
 #include "animation/neon-animations.h"
 #include "animation/field-bound-animation.h"
 #include "animation/modulator.h"
@@ -1391,6 +1392,144 @@ extern "C"
         return EL_SUCCESS;
     }
 
+    // --- Snowy (flakes + pile) ---
+
+    el_result_e el_effect_set_snowy_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_snowy_renderer_enabled");
+        SET_AND_LOG(effect->config.snowy.enable, enabled != 0,
+                    "effect=%p, enabled=%d", (void *)effect, enabled);
+    }
+
+    el_result_e el_effect_get_snowy_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_snowy_renderer_enabled");
+        VALIDATE_OUT_PTR(outEnabled, "el_effect_get_snowy_renderer_enabled");
+        *outEnabled = effect->config.snowy.enable ? 1 : 0;
+        LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_snowy_amount(el_effect_handle_t effect, float amount)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_snowy_amount");
+        SET_AND_LOG(effect->config.snowy.amount, amount,
+                    "effect=%p, amount=%f", (void *)effect, amount);
+    }
+
+    el_result_e el_effect_get_snowy_amount(el_effect_handle_t effect, float *outAmount)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_snowy_amount");
+        VALIDATE_OUT_PTR(outAmount, "el_effect_get_snowy_amount");
+        *outAmount = effect->config.snowy.amount;
+        LOG_D("effect=%p, amount=%f", (void *)effect, *outAmount);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_snowy_fall_speed(el_effect_handle_t effect, float fallSpeed)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_snowy_fall_speed");
+        SET_AND_LOG(effect->config.snowy.fallSpeed, fallSpeed,
+                    "effect=%p, fallSpeed=%f", (void *)effect, fallSpeed);
+    }
+
+    el_result_e el_effect_get_snowy_fall_speed(el_effect_handle_t effect, float *outFallSpeed)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_snowy_fall_speed");
+        VALIDATE_OUT_PTR(outFallSpeed, "el_effect_get_snowy_fall_speed");
+        *outFallSpeed = effect->config.snowy.fallSpeed;
+        LOG_D("effect=%p, fallSpeed=%f", (void *)effect, *outFallSpeed);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_snowy_lanes(el_effect_handle_t effect, int lanes)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_snowy_lanes");
+        SET_AND_LOG(effect->config.snowy.lanes, lanes,
+                    "effect=%p, lanes=%d", (void *)effect, lanes);
+    }
+
+    el_result_e el_effect_get_snowy_lanes(el_effect_handle_t effect, int *outLanes)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_snowy_lanes");
+        VALIDATE_OUT_PTR(outLanes, "el_effect_get_snowy_lanes");
+        *outLanes = effect->config.snowy.lanes;
+        LOG_D("effect=%p, lanes=%d", (void *)effect, *outLanes);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_snowy_density(el_effect_handle_t effect, int density)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_snowy_density");
+        SET_AND_LOG(effect->config.snowy.density, density,
+                    "effect=%p, density=%d", (void *)effect, density);
+    }
+
+    el_result_e el_effect_get_snowy_density(el_effect_handle_t effect, int *outDensity)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_snowy_density");
+        VALIDATE_OUT_PTR(outDensity, "el_effect_get_snowy_density");
+        *outDensity = effect->config.snowy.density;
+        LOG_D("effect=%p, density=%d", (void *)effect, *outDensity);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_snowy_band_width(el_effect_handle_t effect, float bandWidth)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_snowy_band_width");
+        SET_AND_LOG(effect->config.snowy.bandWidth, bandWidth,
+                    "effect=%p, bandWidth=%f", (void *)effect, bandWidth);
+    }
+
+    el_result_e el_effect_get_snowy_band_width(el_effect_handle_t effect, float *outBandWidth)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_snowy_band_width");
+        VALIDATE_OUT_PTR(outBandWidth, "el_effect_get_snowy_band_width");
+        *outBandWidth = effect->config.snowy.bandWidth;
+        LOG_D("effect=%p, bandWidth=%f", (void *)effect, *outBandWidth);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_snowy_band_offset(el_effect_handle_t effect, float bandOffset)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_snowy_band_offset");
+        SET_AND_LOG(effect->config.snowy.bandOffset, bandOffset,
+                    "effect=%p, bandOffset=%f", (void *)effect, bandOffset);
+    }
+
+    el_result_e el_effect_get_snowy_band_offset(el_effect_handle_t effect, float *outBandOffset)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_snowy_band_offset");
+        VALIDATE_OUT_PTR(outBandOffset, "el_effect_get_snowy_band_offset");
+        *outBandOffset = effect->config.snowy.bandOffset;
+        LOG_D("effect=%p, bandOffset=%f", (void *)effect, *outBandOffset);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_snowy_tint(el_effect_handle_t effect,
+                                         float r, float g, float b, float a)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_snowy_tint");
+        SET_AND_LOG(effect->config.snowy.tint, glm::vec4(r, g, b, a),
+                    "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a);
+    }
+
+    el_result_e el_effect_get_snowy_tint(el_effect_handle_t effect,
+                                         float *outR, float *outG, float *outB, float *outA)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_snowy_tint");
+        VALIDATE_OUT_PTR(outR, "el_effect_get_snowy_tint");
+        VALIDATE_OUT_PTR(outG, "el_effect_get_snowy_tint");
+        VALIDATE_OUT_PTR(outB, "el_effect_get_snowy_tint");
+        VALIDATE_OUT_PTR(outA, "el_effect_get_snowy_tint");
+        *outR = effect->config.snowy.tint.r;
+        *outG = effect->config.snowy.tint.g;
+        *outB = effect->config.snowy.tint.b;
+        *outA = effect->config.snowy.tint.a;
+        LOG_D("effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, *outR, *outG, *outB, *outA);
+        return EL_SUCCESS;
+    }
+
     // --- Wireframe ---
 
     el_result_e el_effect_set_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
@@ -1473,6 +1612,8 @@ extern "C"
             effect->impl->AddRenderer(std::make_shared<EdgeLighting::WireframeRenderer>());
             effect->impl->AddRenderer(std::make_shared<EdgeLighting::NeonRenderer>());
             effect->impl->AddRenderer(std::make_shared<EdgeLighting::NeonOptimizedRenderer>());
+            // Registered after the neon layers so snow composites on top of the glow.
+            effect->impl->AddRenderer(std::make_shared<EdgeLighting::SnowyRenderer>());
             // Registered last: droplets snapshot the framebuffer at render
             // time, so the neon layers must already be drawn for the pane to
             // refract them.

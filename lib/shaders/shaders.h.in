@@ -53,6 +53,10 @@ namespace EdgeLighting
 @DROPLETS_FRAG_CONTENT@
 )shadersrc";
 
+                static const char *const SNOWY_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
+@SNOWY_FRAG_CONTENT@
+)shadersrc";
+
         }
 }
 

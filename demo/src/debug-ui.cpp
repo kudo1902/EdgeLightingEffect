@@ -277,6 +277,7 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     buildNeonSection(cfg, active);
     buildOptimizedNeonSection(cfg, active);
     buildDropletsSection(cfg);
+    buildSnowySection(cfg);
     buildColorPickerSection(cfg);
     buildAnimationSection(cfg, effect.GetAnimationManager());
     buildBackgroundSection();
@@ -865,6 +866,31 @@ void DebugUI::buildDropletsSection(EdgeLighting::Config &cfg)
     ImGui::SliderFloat("Speed##Droplets", &cfg.droplets.speed, 0.0f, 4.0f);
     ImGui::SliderInt("Lanes##Droplets", &cfg.droplets.lanes, 1, 6);
     ImGui::ColorEdit4("Tint##Droplets", &cfg.droplets.tint.x,
+                      ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreview);
+
+    ImGui::TextDisabled("Side follows Neon > Glow Side / Softness");
+}
+
+void DebugUI::buildSnowySection(EdgeLighting::Config &cfg)
+{
+    if (!ImGui::CollapsingHeader("Snowy (flakes + pile)", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+
+    ImGui::Checkbox("Enable##Snowy", &cfg.snowy.enable);
+    if (!cfg.snowy.enable)
+    {
+        return;
+    }
+
+    ImGui::SliderFloat("Band Width##Snowy", &cfg.snowy.bandWidth, 4.0f, 200.0f);
+    ImGui::SliderFloat("Band Offset##Snowy", &cfg.snowy.bandOffset, -50.0f, 50.0f);
+    ImGui::SliderFloat("Flake Amount##Snowy", &cfg.snowy.amount, 0.0f, 1.0f);
+    ImGui::SliderInt("Lanes##Snowy", &cfg.snowy.lanes, 1, 6);
+    ImGui::SliderInt("Density (layers)##Snowy", &cfg.snowy.density, 1, 3);
+    ImGui::SliderFloat("Fall Speed##Snowy", &cfg.snowy.fallSpeed, 0.0f, 4.0f);
+    ImGui::ColorEdit4("Tint##Snowy", &cfg.snowy.tint.x,
                       ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreview);
 
     ImGui::TextDisabled("Side follows Neon > Glow Side / Softness");

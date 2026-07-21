@@ -5,6 +5,7 @@
 #include "renderer/neon-renderer.h"
 #include "renderer/neon-optimized-renderer.h"
 #include "renderer/droplets-renderer.h"
+#include "renderer/snowy-renderer.h"
 #include "animation/neon-animations.h"
 #include "debug-ui.h"
 #include "background-quad.h"
@@ -94,10 +95,14 @@ int main()
     auto neonRenderer = std::make_shared<EdgeLighting::NeonRenderer>();
     auto neonOptimizedRenderer = std::make_shared<EdgeLighting::NeonOptimizedRenderer>();
     auto dropletsRenderer = std::make_shared<EdgeLighting::DropletsRenderer>();
+    auto snowyRenderer = std::make_shared<EdgeLighting::SnowyRenderer>();
 
     gEffect->AddRenderer(wireframeRenderer);
     gEffect->AddRenderer(neonRenderer);
     gEffect->AddRenderer(neonOptimizedRenderer);
+    // Registered after the neon layers so the snowfall composites on top of
+    // the glow.
+    gEffect->AddRenderer(snowyRenderer);
     // Registered last: droplets snapshot the framebuffer at render time, so
     // the neon layers must already be drawn for the pane to refract them.
     gEffect->AddRenderer(dropletsRenderer);
@@ -306,6 +311,18 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
     case GLFW_KEY_D:
     {
         config.droplets.enable = !config.droplets.enable;
+        break;
+    }
+    case GLFW_KEY_T:
+    {
+        // Toggle snowfall. Also set an outside 20px band so the pile has a
+        // top edge to accumulate on when first turned on.
+        config.snowy.enable = !config.snowy.enable;
+        if (config.snowy.enable)
+        {
+            config.neon.glowSide = EdgeLighting::GlowSide::OUTSIDE;
+            config.snowy.bandWidth = 20.0f;
+        }
         break;
     }
     case GLFW_KEY_O:

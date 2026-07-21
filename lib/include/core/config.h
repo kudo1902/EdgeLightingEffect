@@ -403,6 +403,59 @@ namespace EdgeLighting
         bool operator!=(const DropletsConfig &o) const { return !(*this == o); }
     } DropletsConfig;
 
+    /// Snowfall configuration.
+    ///
+    /// A companion phenomenon layer alongside droplets: soft snowflakes
+    /// drifting downward through the band, appearing randomly in
+    /// grid-hashed cells. Purely animated, no accumulation.
+    ///
+    /// Everything lives in a band; band thickness is @c bandWidth, side is
+    /// taken from @c NeonConfig::glowSide, and flake size derives from
+    /// @c bandWidth so the effect holds up in a thin strip.
+    typedef struct SnowyConfig
+    {
+        bool enable = false; ///< Enable or disable the snowy renderer
+
+        /// Flake density [0-1]: fraction of grid cells that host a flake.
+        float amount = 0.5f;
+        /// Fall-speed multiplier. 1 = reference pace; 0 freezes the flakes.
+        float fallSpeed = 1.0f;
+        /// Number of flake lanes across the band, clamped to >= 1.
+        /// 1 = flakes as wide as the band; 2 = two lanes of half-size flakes.
+        int lanes = 3;
+        /// Number of stacked flake grids [1-3]. Each additional layer runs
+        /// the SnowLayer at a different UV scale, so more flakes appear at
+        /// slightly different sizes - the total flake population multiplies
+        /// and the differently-sized layers read as parallax depth. Cost
+        /// grows linearly with density; 1 is a single grid (default), 3 is
+        /// a heavy snowstorm.
+        int density = 1;
+
+        /// Band thickness in pixels. This is the snow layer's entire world:
+        /// flake size derives from it. Which side of the rect edge the band
+        /// occupies is taken from @c NeonConfig::glowSide - OUTSIDE grows
+        /// outward, INSIDE inward, BOTH straddles the edge centred on it.
+        float bandWidth = 20.0f;
+        /// Gap in pixels between the rect edge and the band's inner boundary.
+        float bandOffset = 0.0f;
+
+        /// Snow colour (.rgb) and master opacity (.a). Cool white default.
+        glm::vec4 tint = glm::vec4(0.98f, 0.99f, 1.0f, 1.0f);
+
+        bool operator==(const SnowyConfig &o) const
+        {
+            return enable == o.enable &&
+                   amount == o.amount &&
+                   fallSpeed == o.fallSpeed &&
+                   lanes == o.lanes &&
+                   density == o.density &&
+                   bandWidth == o.bandWidth &&
+                   bandOffset == o.bandOffset &&
+                   tint == o.tint;
+        }
+        bool operator!=(const SnowyConfig &o) const { return !(*this == o); }
+    } SnowyConfig;
+
     /// Wireframe debug overlay configuration.
     typedef struct WireframeConfig
     {
@@ -430,6 +483,7 @@ namespace EdgeLighting
         NeonConfig neon;                   ///< Single-pass neon settings
         OptimizedNeonConfig optimizedNeon; ///< Half-res optimized neon settings
         DropletsConfig droplets;           ///< Rain-on-glass droplets settings
+        SnowyConfig snowy;                 ///< Snowfall + accumulation settings
         WireframeConfig wireframe;         ///< Wireframe overlay settings
 
         bool operator==(const Config &o) const
@@ -438,6 +492,7 @@ namespace EdgeLighting
                    neon == o.neon &&
                    optimizedNeon == o.optimizedNeon &&
                    droplets == o.droplets &&
+                   snowy == o.snowy &&
                    wireframe == o.wireframe;
         }
         bool operator!=(const Config &o) const { return !(*this == o); }

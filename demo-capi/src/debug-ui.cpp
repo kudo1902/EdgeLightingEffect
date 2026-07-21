@@ -178,6 +178,7 @@ void DebugUI::Build(el_effect_handle_t effect)
     buildNeonSection(effect);
     buildOptimizedNeonSection(effect);
     buildDropletsSection(effect);
+    buildSnowySection(effect);
     buildColorPickerSection(effect);
     buildAnimationSection(effect);
     buildBackgroundSection();
@@ -794,6 +795,82 @@ void DebugUI::buildDropletsSection(el_effect_handle_t effect)
                           ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreview))
     {
         el_effect_set_droplets_tint(effect, tint[0], tint[1], tint[2], tint[3]);
+    }
+
+    ImGui::TextDisabled("Side follows Neon > Glow Side / Softness");
+}
+
+// ---------------------------------------------------------------------------
+// Snowy (flakes + pile)
+// ---------------------------------------------------------------------------
+
+void DebugUI::buildSnowySection(el_effect_handle_t effect)
+{
+    if (!ImGui::CollapsingHeader("Snowy (flakes + pile)", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+
+    el_bool_t on = 0;
+    el_effect_get_snowy_renderer_enabled(effect, &on);
+    bool en = on;
+    if (ImGui::Checkbox("Enable##Snowy", &en))
+    {
+        el_effect_set_snowy_renderer_enabled(effect, en ? 1 : 0);
+    }
+    if (!en)
+    {
+        return;
+    }
+
+    float bandWidth = 0.0f;
+    el_effect_get_snowy_band_width(effect, &bandWidth);
+    if (ImGui::SliderFloat("Band Width##Snowy", &bandWidth, 4.0f, 200.0f))
+    {
+        el_effect_set_snowy_band_width(effect, bandWidth);
+    }
+
+    float bandOffset = 0.0f;
+    el_effect_get_snowy_band_offset(effect, &bandOffset);
+    if (ImGui::SliderFloat("Band Offset##Snowy", &bandOffset, -50.0f, 50.0f))
+    {
+        el_effect_set_snowy_band_offset(effect, bandOffset);
+    }
+
+    float amount = 0.0f;
+    el_effect_get_snowy_amount(effect, &amount);
+    if (ImGui::SliderFloat("Flake Amount##Snowy", &amount, 0.0f, 1.0f))
+    {
+        el_effect_set_snowy_amount(effect, amount);
+    }
+
+    int lanes = 1;
+    el_effect_get_snowy_lanes(effect, &lanes);
+    if (ImGui::SliderInt("Lanes##Snowy", &lanes, 1, 6))
+    {
+        el_effect_set_snowy_lanes(effect, lanes);
+    }
+
+    int density = 1;
+    el_effect_get_snowy_density(effect, &density);
+    if (ImGui::SliderInt("Density (layers)##Snowy", &density, 1, 3))
+    {
+        el_effect_set_snowy_density(effect, density);
+    }
+
+    float fallSpeed = 0.0f;
+    el_effect_get_snowy_fall_speed(effect, &fallSpeed);
+    if (ImGui::SliderFloat("Fall Speed##Snowy", &fallSpeed, 0.0f, 4.0f))
+    {
+        el_effect_set_snowy_fall_speed(effect, fallSpeed);
+    }
+
+    float tint[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    el_effect_get_snowy_tint(effect, &tint[0], &tint[1], &tint[2], &tint[3]);
+    if (ImGui::ColorEdit4("Tint##Snowy", tint,
+                          ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreview))
+    {
+        el_effect_set_snowy_tint(effect, tint[0], tint[1], tint[2], tint[3]);
     }
 
     ImGui::TextDisabled("Side follows Neon > Glow Side / Softness");

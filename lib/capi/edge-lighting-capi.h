@@ -652,6 +652,58 @@ extern "C"
 
     /** @} */
 
+    /** @name Snowfall
+     *  Soft snowflakes drifting downward through a band along the perimeter.
+     *  Grid-hashed cells with per-cell density gating, so flakes appear
+     *  randomly and fall through. No accumulation. Register order in
+     *  @ref el_effect_init places snowy between the neon layers and droplets.
+     *  Mirrors @c EdgeLighting::SnowyConfig.
+     *  @{ */
+
+    EL_API el_result_e el_effect_set_snowy_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled);
+    EL_API el_result_e el_effect_get_snowy_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
+
+    /** @brief Flake density [0, 1] - fraction of grid cells that host a flake. */
+    EL_API el_result_e el_effect_set_snowy_amount(el_effect_handle_t effect, float amount);
+    EL_API el_result_e el_effect_get_snowy_amount(el_effect_handle_t effect, float *outAmount);
+
+    /** @brief Fall-speed multiplier (1 = reference pace; 0 freezes flakes). */
+    EL_API el_result_e el_effect_set_snowy_fall_speed(el_effect_handle_t effect, float fallSpeed);
+    EL_API el_result_e el_effect_get_snowy_fall_speed(el_effect_handle_t effect, float *outFallSpeed);
+
+    /** @brief Number of flake lanes across the band (clamped to >= 1).
+     *  @details Flake size follows @ref el_effect_set_snowy_band_width, so
+     *           flakes fit the band at any thickness. */
+    EL_API el_result_e el_effect_set_snowy_lanes(el_effect_handle_t effect, int lanes);
+    EL_API el_result_e el_effect_get_snowy_lanes(el_effect_handle_t effect, int *outLanes);
+
+    /** @brief Number of stacked flake grids [1-3].
+     *  @details Each extra layer runs the flake grid at a different UV scale,
+     *           so the total flake population multiplies and the differently
+     *           sized layers read as parallax depth. 1 = default, 3 = a
+     *           heavy snowstorm. Cost grows linearly. */
+    EL_API el_result_e el_effect_set_snowy_density(el_effect_handle_t effect, int density);
+    EL_API el_result_e el_effect_get_snowy_density(el_effect_handle_t effect, int *outDensity);
+
+    /** @brief Band thickness in pixels - the snow layer's entire world.
+     *  @details The side of the rect edge the band occupies comes from the
+     *           neon glow side, not from here. */
+    EL_API el_result_e el_effect_set_snowy_band_width(el_effect_handle_t effect, float bandWidth);
+    EL_API el_result_e el_effect_get_snowy_band_width(el_effect_handle_t effect, float *outBandWidth);
+
+    /** @brief Gap in pixels between the rect edge and the band's inner boundary. */
+    EL_API el_result_e el_effect_set_snowy_band_offset(el_effect_handle_t effect, float bandOffset);
+    EL_API el_result_e el_effect_get_snowy_band_offset(el_effect_handle_t effect, float *outBandOffset);
+
+    /** @brief Snow colour (linear RGBA in [0, 1]). @c rgb tints the flakes;
+     *         @c a scales the whole layer's opacity. Cool white by default. */
+    EL_API el_result_e el_effect_set_snowy_tint(el_effect_handle_t effect,
+                                                float r, float g, float b, float a);
+    EL_API el_result_e el_effect_get_snowy_tint(el_effect_handle_t effect,
+                                                float *outR, float *outG, float *outB, float *outA);
+
+    /** @} */
+
     /** @name Wireframe overlay
      *  Debug: 1 px line loop around the target rectangle.
      *  @{ */

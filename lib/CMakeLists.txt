@@ -43,6 +43,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-lut-debug.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-stop-marker.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/droplets.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/snowy.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/neon-tuning.h"
 )
 
@@ -56,6 +57,7 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/black-rect.frag" BLACK_RECT_FRAG_
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-lut-debug.frag" NEON_LUT_DEBUG_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-stop-marker.frag" NEON_STOP_MARKER_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/droplets.frag" DROPLETS_FRAG_CONTENT)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/snowy.frag" SNOWY_FRAG_CONTENT)
 
 # Shared neon tuning #defines, injected into the single-pass neon shaders via
 # @NEON_TUNING@ in shaders.h.in (also #included by the C++ renderers).
@@ -77,6 +79,7 @@ add_library(edge-lighting STATIC
     src/renderer/neon-renderer.cpp
     src/renderer/neon-optimized-renderer.cpp
     src/renderer/droplets-renderer.cpp
+    src/renderer/snowy-renderer.cpp
     src/util/contour-tracer.cpp
     src/util/stb-image.cpp
 )
