@@ -47,8 +47,6 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
         mShaderProgram.SetUniform("uRectCenter", rectCenter);
         mShaderProgram.SetUniform("uCornerRadius", config.geometry.cornerRadius);
-        mShaderProgram.SetUniform("uViewport", glm::vec2(static_cast<float>(viewportWidth),
-                                                         static_cast<float>(viewportHeight)));
         mShaderProgram.SetUniform("uTime", time);
         mShaderProgram.SetUniform("uAmount", config.droplets.amount);
         mShaderProgram.SetUniform("uSpeed", config.droplets.speed);

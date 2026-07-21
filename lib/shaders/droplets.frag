@@ -57,7 +57,6 @@ out vec4 fragColor;
 uniform vec2  uRectSize;          ///< Rect size (px).
 uniform vec2  uRectCenter;        ///< Rect centre (px) in framebuffer space.
 uniform float uCornerRadius;
-uniform vec2  uViewport;          ///< Framebuffer size in pixels.
 uniform float uTime;
 uniform float uAmount;
 uniform float uSpeed;
@@ -282,11 +281,14 @@ void main() {
     vec3 premul = bodyColor * bodyAlpha + vec3(1.0) * bright;
     float dropAlpha = clamp(bodyAlpha + bright, 0.0, 1.0);
 
-    float alpha = bandMask * dropAlpha;
+    // uTint.a scales the whole drop's visibility. Because we output
+    // premultiplied, both the RGB and the alpha have to be scaled by it
+    // uniformly - scaling alpha alone would darken drops without fading them.
+    float alpha = bandMask * dropAlpha * uTint.a;
     if (alpha <= 0.0)
     {
         discard;
     }
 
-    fragColor = vec4(premul * bandMask, alpha);
+    fragColor = vec4(premul * bandMask * uTint.a, alpha);
 }

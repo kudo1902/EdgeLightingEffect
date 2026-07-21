@@ -790,7 +790,8 @@ void DebugUI::buildDropletsSection(el_effect_handle_t effect)
 
     float tint[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     el_effect_get_droplets_tint(effect, &tint[0], &tint[1], &tint[2], &tint[3]);
-    if (ImGui::ColorEdit3("Tint##Drop", tint))
+    if (ImGui::ColorEdit4("Tint##Drop", tint,
+                          ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreview))
     {
         el_effect_set_droplets_tint(effect, tint[0], tint[1], tint[2], tint[3]);
     }

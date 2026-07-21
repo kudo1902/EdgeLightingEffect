@@ -864,7 +864,8 @@ void DebugUI::buildDropletsSection(EdgeLighting::Config &cfg)
     ImGui::SliderFloat("Rain Amount##Droplets", &cfg.droplets.amount, 0.0f, 1.0f);
     ImGui::SliderFloat("Speed##Droplets", &cfg.droplets.speed, 0.0f, 4.0f);
     ImGui::SliderInt("Lanes##Droplets", &cfg.droplets.lanes, 1, 6);
-    ImGui::ColorEdit3("Tint##Droplets", &cfg.droplets.tint.x);
+    ImGui::ColorEdit4("Tint##Droplets", &cfg.droplets.tint.x,
+                      ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreview);
 
     ImGui::TextDisabled("Side follows Neon > Glow Side / Softness");
 }
