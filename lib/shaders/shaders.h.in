@@ -49,6 +49,10 @@ namespace EdgeLighting
 @NEON_STOP_MARKER_FRAG_CONTENT@
 )shadersrc";
 
+                static const char *const DROPLETS_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
+@DROPLETS_FRAG_CONTENT@
+)shadersrc";
+
         }
 }
 

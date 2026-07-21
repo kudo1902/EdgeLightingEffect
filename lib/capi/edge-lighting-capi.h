@@ -8,7 +8,7 @@
  * managed callers (P/Invoke, ctypes, cgo, ...). Every symbol has C linkage,
  * uses only fixed-width scalar types + opaque pointers, and never leaks a
  * C++ exception - anything thrown at the boundary is caught and mapped to
- * @ref EL_ERR_EXCEPTION. Higher-level C++ features (RAII wrappers,
+ * @ref EL_ERROR_OUT_OF_MEMORY (on @c std::bad_alloc) or @ref EL_ERROR_INVALID_PARAMETER (on other C++ exceptions). Higher-level C++ features (RAII wrappers,
  * @c std::vector, @c glm) are hidden behind opaque handles.
  *
  * The C++ types the API mirrors live under @c lib/include/:
@@ -49,7 +49,7 @@
  *
  * Handles are opaque pointer types - never dereference or pointer-arithmetic
  * them from the FFI side. Passing a null handle to any function returns
- * @ref EL_ERR_NULL_ARG; passing an already-destroyed handle is undefined
+ * @ref EL_ERROR_INVALID_HANDLE; passing an already-destroyed handle is undefined
  * behaviour (mirror the same lifetime discipline you use for any handle).
  *
  * @section staging Staging config semantics
@@ -71,10 +71,10 @@
  * All fallible functions return an @ref el_result_e code. Value-returning
  * factories (@c el_effect_create / @c el_animation_create* /
  * @c el_modulator_create*) return @c NULL on failure. A caught exception at
- * the ABI boundary always maps to @ref EL_ERR_EXCEPTION; look at the native
+ * the ABI boundary always maps to @ref EL_ERROR_OUT_OF_MEMORY (on @c std::bad_alloc) or @ref EL_ERROR_INVALID_PARAMETER (on other C++ exceptions); look at the native
  * log stream (see @c LOG_E) for the diagnostic message. Setters are also
  * idempotent - if the incoming value equals the staging value, no work is
- * done and @ref EL_OK is returned.
+ * done and @ref EL_SUCCESS is returned.
  *
  * @section threading Threading
  *
@@ -108,17 +108,19 @@ extern "C"
      * ==================================================================== */
 
     /** @brief Return code shared by every fallible @c el_* function.
-     *  @details @ref EL_OK is 0 so callers can use the classic
+     *  @details @ref EL_SUCCESS is 0 so callers can use the classic
      *           @c if (rc) branch-on-error idiom. Non-zero values are
      *           distinct so a caller can decide whether to retry, surface,
      *           or ignore. */
     typedef enum el_result_e
     {
-        EL_OK = 0,              /**< Success. */
-        EL_ERR_NULL_ARG = 1,    /**< A required pointer argument was null. */
-        EL_ERR_INIT_FAILED = 2, /**< Renderer/GL initialisation failed (see native log). */
-        EL_ERR_EXCEPTION = 3,   /**< A C++ exception was caught at the ABI boundary. */
-        EL_ERR_INVALID_ARG = 4  /**< A non-null arg was out of range or the wrong shape. */
+        EL_SUCCESS = 0,                  /**< Success. */
+        EL_ERROR_INVALID_HANDLE = -1,    /**< A required handle (effect/animation/modulator) was null or destroyed. */
+        EL_ERROR_INIT_FAILED = -2,       /**< Renderer/GL initialisation failed (see native log). */
+        EL_ERROR_OUT_OF_MEMORY = -3,     /**< Allocation failed (@c std::bad_alloc caught at the ABI boundary). */
+        EL_ERROR_INVALID_PARAMETER = -4, /**< A non-handle argument was null, out of range, or the wrong shape; also the catch-all for other C++ exceptions caught at the ABI boundary. */
+        EL_ERROR_FILE_NOT_FOUND = -5,    /**< A referenced file could not be opened. Reserved for future file-loading APIs. */
+        EL_ERROR_UNSUPPORTED_FORMAT = -6 /**< A file / asset was found but its format is not supported. Reserved for future file-loading APIs. */
     } el_result_e;
 
     /** @brief Fixed-width boolean for ABI stability. 0 = false, non-zero = true.
@@ -322,7 +324,7 @@ extern "C"
      * always require a non-null @p out* pointer.
      *
      * Setters are idempotent: assigning the same value twice is a cheap
-     * no-op and still returns @ref EL_OK.
+     * no-op and still returns @ref EL_SUCCESS.
      * ==================================================================== */
 
     /** @name Geometry
@@ -469,7 +471,7 @@ extern "C"
      *  @param r,g,b,a  Linear RGBA in [0, 1]. */
     EL_API el_result_e el_effect_set_color_stop(el_effect_handle_t effect, int32_t index,
                                                 float position, float r, float g, float b, float a);
-    /** @brief Read one colour stop. Returns @ref EL_ERR_INVALID_ARG on OOB index. */
+    /** @brief Read one colour stop. Returns @ref EL_ERROR_INVALID_PARAMETER on OOB index. */
     EL_API el_result_e el_effect_get_color_stop(el_effect_handle_t effect, int32_t index,
                                                 float *outPosition, float *outR, float *outG, float *outB, float *outA);
     /** @brief Drop every base colour stop. */
@@ -486,7 +488,7 @@ extern "C"
 
     /** @brief Resize the segment-boosts vector.
      *  @details Cap is @c NeonConfig::MAX_SEGMENT_BOOSTS_CAP; values above
-     *           that return @ref EL_ERR_INVALID_ARG. */
+     *           that return @ref EL_ERROR_INVALID_PARAMETER. */
     EL_API el_result_e el_effect_set_segment_boost_count(el_effect_handle_t effect, int32_t count);
     EL_API el_result_e el_effect_get_segment_boost_count(el_effect_handle_t effect, int32_t *outCount);
 
@@ -537,7 +539,7 @@ extern "C"
 
     /** @brief Resize the arcs vector.
      *  @details Cap is @c NeonConfig::MAX_ARCS_CAP; values above that
-     *           return @ref EL_ERR_INVALID_ARG. */
+     *           return @ref EL_ERROR_INVALID_PARAMETER. */
     EL_API el_result_e el_effect_set_arc_count(el_effect_handle_t effect, int32_t count);
     EL_API el_result_e el_effect_get_arc_count(el_effect_handle_t effect, int32_t *outCount);
 
@@ -604,6 +606,52 @@ extern "C"
 
     /** @} */
 
+    /** @name Rain-on-glass droplets
+     *  Fullscreen "wet window pane" that snapshots the framebuffer under it
+     *  each frame, then repaints it with a frost blur and grid-hashed
+     *  trickling droplets that refract the capture sharply. Register order in
+     *  @ref el_effect_init places droplets last, so the neon layers show
+     *  through the pane. Mirrors @c EdgeLighting::DropletsConfig.
+     *  @{ */
+
+    EL_API el_result_e el_effect_set_droplets_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled);
+    EL_API el_result_e el_effect_get_droplets_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
+
+    /** @brief Rain amount [0, 1] - density of all droplet layers. */
+    EL_API el_result_e el_effect_set_droplets_amount(el_effect_handle_t effect, float amount);
+    EL_API el_result_e el_effect_get_droplets_amount(el_effect_handle_t effect, float *outAmount);
+
+    /** @brief Trickle speed multiplier (1 = reference pace; 0 freezes rain). */
+    EL_API el_result_e el_effect_set_droplets_speed(el_effect_handle_t effect, float speed);
+    EL_API el_result_e el_effect_get_droplets_speed(el_effect_handle_t effect, float *outSpeed);
+
+    /** @brief Number of droplet lanes across the band (clamped to >= 1).
+     *  @details 1 = drops as wide as the band, 2 = two lanes of half-width
+     *           drops. Droplet size follows @ref el_effect_set_droplets_band_width,
+     *           so drops fit the band at any thickness. */
+    EL_API el_result_e el_effect_set_droplets_lanes(el_effect_handle_t effect, int lanes);
+    EL_API el_result_e el_effect_get_droplets_lanes(el_effect_handle_t effect, int *outLanes);
+
+    /** @brief Band thickness in pixels - the droplets' entire world.
+     *  @details The side of the rect edge the band occupies comes from the
+     *           neon glow side, not from here. */
+    EL_API el_result_e el_effect_set_droplets_band_width(el_effect_handle_t effect, float bandWidth);
+    EL_API el_result_e el_effect_get_droplets_band_width(el_effect_handle_t effect, float *outBandWidth);
+
+    /** @brief Gap in pixels between the rect edge and the band's inner boundary. */
+    EL_API el_result_e el_effect_set_droplets_band_offset(el_effect_handle_t effect, float bandOffset);
+    EL_API el_result_e el_effect_get_droplets_band_offset(el_effect_handle_t effect, float *outBandOffset);
+
+    /** @brief Drop colour multiplier (linear RGBA in [0, 1]; only @c rgb is
+     *         read today, @c a is reserved). Tints the faint drop body only -
+     *         the rim and specular highlights stay white. */
+    EL_API el_result_e el_effect_set_droplets_tint(el_effect_handle_t effect,
+                                                   float r, float g, float b, float a);
+    EL_API el_result_e el_effect_get_droplets_tint(el_effect_handle_t effect,
+                                                   float *outR, float *outG, float *outB, float *outA);
+
+    /** @} */
+
     /** @name Wireframe overlay
      *  Debug: 1 px line loop around the target rectangle.
      *  @{ */
@@ -637,11 +685,11 @@ extern "C"
     /** @brief Destroy an effect handle.
      *  @details Releases GL resources allocated by @ref el_effect_init and
      *           any C++ owned state. Passing @c NULL returns
-     *           @ref EL_ERR_NULL_ARG. */
+     *           @ref EL_ERROR_INVALID_HANDLE. */
     EL_API el_result_e el_effect_destroy(el_effect_handle_t effect);
 
     /** @brief Initialise the effect's renderers under the current GL context.
-     *  @returns @ref EL_ERR_INIT_FAILED if a renderer fails to initialise
+     *  @returns @ref EL_ERROR_INIT_FAILED if a renderer fails to initialise
      *           (usually a shader compile / link error - see native log). */
     EL_API el_result_e el_effect_init(el_effect_handle_t effect);
 

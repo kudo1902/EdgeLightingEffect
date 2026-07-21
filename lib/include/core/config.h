@@ -345,6 +345,64 @@ namespace EdgeLighting
         bool operator!=(const OptimizedNeonConfig &o) const { return !(*this == o); }
     } OptimizedNeonConfig;
 
+    /// Rain-on-glass droplets configuration.
+    ///
+    /// Droplets live in a band that follows the rounded-rect perimeter, whose
+    /// thickness is @c bandWidth and whose side comes from
+    /// @c NeonConfig::glowSide. Rain falls with screen-space gravity, so it
+    /// streaks down the vertical runs of the band and beads along the
+    /// horizontal ones. Droplet size scales with @c bandWidth, so the effect
+    /// holds up however thin the band is.
+    ///
+    /// Drops are self-lit (transparent body + crescent rim + specular dot);
+    /// there is no framebuffer capture or refraction pass. Refraction had
+    /// nothing to displace over the smooth neon gradient this band lives on,
+    /// so the whole capture/lens/wet-glass path was removed.
+    typedef struct DropletsConfig
+    {
+        bool enable = false; ///< Enable or disable the droplets renderer
+
+        /// Rain amount [0-1]. Drives the density of all droplet layers:
+        /// low values leave only static condensation, high values add two
+        /// trickling layers with trails.
+        float amount = 0.7f;
+        /// Trickle speed multiplier. 1 = the reference pace; 0 freezes the rain.
+        float speed = 1.0f;
+        /// Number of droplet lanes across the band, clamped to >= 1.
+        /// 1 = drops as wide as the band; 2 = two lanes of half-width drops,
+        /// and so on. Cell size follows from this and @c bandWidth: one lane
+        /// is @c bandWidth / @c lanes pixels wide, so drops fit the band at
+        /// any thickness.
+        int lanes = 1;
+
+        /// Band thickness in pixels. This is the droplets' entire world: the
+        /// field is parameterised across it, and droplet size scales with it.
+        /// Which side of the rect edge the band occupies is taken from
+        /// @c NeonConfig::glowSide - OUTSIDE grows outward, INSIDE inward,
+        /// BOTH straddles the edge centred on it.
+        float bandWidth = 24.0f;
+        /// Gap in pixels between the rect edge and the band's inner boundary.
+        /// 0 puts the band flush against the edge.
+        float bandOffset = 0.0f;
+        /// Drop colour multiplier (.rgb used; .a reserved). Slightly blue by
+        /// default for a cold-water cast; white = untinted. Only the drop's
+        /// faint body tint uses this; the rim and specular highlights stay
+        /// white so drops read against any glow colour.
+        glm::vec4 tint = glm::vec4(0.85f, 0.90f, 1.0f, 1.0f);
+
+        bool operator==(const DropletsConfig &o) const
+        {
+            return enable == o.enable &&
+                   amount == o.amount &&
+                   speed == o.speed &&
+                   lanes == o.lanes &&
+                   bandWidth == o.bandWidth &&
+                   bandOffset == o.bandOffset &&
+                   tint == o.tint;
+        }
+        bool operator!=(const DropletsConfig &o) const { return !(*this == o); }
+    } DropletsConfig;
+
     /// Wireframe debug overlay configuration.
     typedef struct WireframeConfig
     {
@@ -371,6 +429,7 @@ namespace EdgeLighting
         RectGeometry geometry;             ///< Rectangle geometry
         NeonConfig neon;                   ///< Single-pass neon settings
         OptimizedNeonConfig optimizedNeon; ///< Half-res optimized neon settings
+        DropletsConfig droplets;           ///< Rain-on-glass droplets settings
         WireframeConfig wireframe;         ///< Wireframe overlay settings
 
         bool operator==(const Config &o) const
@@ -378,6 +437,7 @@ namespace EdgeLighting
             return geometry == o.geometry &&
                    neon == o.neon &&
                    optimizedNeon == o.optimizedNeon &&
+                   droplets == o.droplets &&
                    wireframe == o.wireframe;
         }
         bool operator!=(const Config &o) const { return !(*this == o); }

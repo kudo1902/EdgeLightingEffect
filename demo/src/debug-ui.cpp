@@ -276,6 +276,7 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     buildGeometrySection(cfg);
     buildNeonSection(cfg, active);
     buildOptimizedNeonSection(cfg, active);
+    buildDropletsSection(cfg);
     buildColorPickerSection(cfg);
     buildAnimationSection(cfg, effect.GetAnimationManager());
     buildBackgroundSection();
@@ -843,6 +844,30 @@ namespace
         }
         ImGui::Unindent(18.0f);
     }
+}
+
+void DebugUI::buildDropletsSection(EdgeLighting::Config &cfg)
+{
+    if (!ImGui::CollapsingHeader("Droplets (rain on glass)", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+
+    ImGui::Checkbox("Enable##Droplets", &cfg.droplets.enable);
+    if (!cfg.droplets.enable)
+    {
+        return;
+    }
+
+    ImGui::SliderFloat("Band Width##Droplets", &cfg.droplets.bandWidth, 4.0f, 200.0f);
+    ImGui::SliderFloat("Band Offset##Droplets", &cfg.droplets.bandOffset, -50.0f, 50.0f);
+    ImGui::SliderFloat("Rain Amount##Droplets", &cfg.droplets.amount, 0.0f, 1.0f);
+    ImGui::SliderFloat("Speed##Droplets", &cfg.droplets.speed, 0.0f, 4.0f);
+    ImGui::SliderInt("Lanes##Droplets", &cfg.droplets.lanes, 1, 6);
+    ImGui::ColorEdit4("Tint##Droplets", &cfg.droplets.tint.x,
+                      ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreview);
+
+    ImGui::TextDisabled("Side follows Neon > Glow Side / Softness");
 }
 
 void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg,
