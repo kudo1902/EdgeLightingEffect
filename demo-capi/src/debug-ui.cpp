@@ -178,6 +178,7 @@ void DebugUI::Build(el_effect_handle_t effect)
     buildNeonSection(effect);
     buildOptimizedNeonSection(effect);
     buildDropletsSection(effect);
+    buildLensFlareSection(effect);
     buildColorPickerSection(effect);
     buildAnimationSection(effect);
     buildBackgroundSection();
@@ -831,6 +832,65 @@ void DebugUI::buildDropletsSection(el_effect_handle_t effect)
     }
 
     ImGui::TextDisabled("Side follows Neon > Glow Side / Softness");
+}
+
+// ---------------------------------------------------------------------------
+// Lens flare
+// ---------------------------------------------------------------------------
+
+void DebugUI::buildLensFlareSection(el_effect_handle_t effect)
+{
+    if (!ImGui::CollapsingHeader("Lens Flare", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+
+    el_bool_t on = 0;
+    el_effect_get_lens_flare_renderer_enabled(effect, &on);
+    bool en = on;
+    if (ImGui::Checkbox("Enable##Lens", &en))
+    {
+        el_effect_set_lens_flare_renderer_enabled(effect, en ? 1 : 0);
+    }
+    if (!en)
+        return;
+
+    float pos = 0.0f;
+    el_effect_get_lens_flare_perimeter_position(effect, &pos);
+    if (ImGui::SliderFloat("Perimeter Pos##Lens", &pos, 0.0f, 1.0f, "%.3f"))
+    {
+        el_effect_set_lens_flare_perimeter_position(effect, pos);
+    }
+
+    float size = 1.0f;
+    el_effect_get_lens_flare_size(effect, &size);
+    if (ImGui::SliderFloat("Size##Lens", &size, 0.1f, 5.0f, "%.2f"))
+    {
+        el_effect_set_lens_flare_size(effect, size);
+    }
+
+    float color[4] = {0, 0, 0, 0};
+    el_effect_get_lens_flare_color(effect, &color[0], &color[1], &color[2], &color[3]);
+    if (ImGui::ColorEdit4("Color##Lens", color,
+                          ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_HDR |
+                              ImGuiColorEditFlags_Float))
+    {
+        el_effect_set_lens_flare_color(effect, color[0], color[1], color[2], color[3]);
+    }
+
+    float intensity = 1.0f;
+    el_effect_get_lens_flare_intensity(effect, &intensity);
+    if (ImGui::SliderFloat("Intensity##Lens", &intensity, 0.0f, 4.0f, "%.2f"))
+    {
+        el_effect_set_lens_flare_intensity(effect, intensity);
+    }
+
+    float spread = 1.0f;
+    el_effect_get_lens_flare_spread(effect, &spread);
+    if (ImGui::SliderFloat("Spread##Lens", &spread, 0.0f, 3.0f, "%.2f"))
+    {
+        el_effect_set_lens_flare_spread(effect, spread);
+    }
 }
 
 // ---------------------------------------------------------------------------

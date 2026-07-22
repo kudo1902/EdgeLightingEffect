@@ -696,6 +696,40 @@ extern "C"
 
     /** @} */
 
+    /** @name Lens flare
+     *  Sun + hex-aperture lens flare drawn as a single fullscreen pass. The
+     *  sun rides the rect perimeter (same parameter space as segments / arcs)
+     *  so it moves with the geometry.
+     *  @{ */
+
+    EL_API el_result_e el_effect_set_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled);
+    EL_API el_result_e el_effect_get_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
+
+    /** @brief Sun position as a perimeter progress in [0, 1).
+     *  @details 0 = top-left corner; winding follows the geometry's winding. */
+    EL_API el_result_e el_effect_set_lens_flare_perimeter_position(el_effect_handle_t effect, float position);
+    EL_API el_result_e el_effect_get_lens_flare_perimeter_position(el_effect_handle_t effect, float *outPosition);
+
+    /** @brief Size scale for the sun core + rays (1.0 = reference look). */
+    EL_API el_result_e el_effect_set_lens_flare_size(el_effect_handle_t effect, float size);
+    EL_API el_result_e el_effect_get_lens_flare_size(el_effect_handle_t effect, float *outSize);
+
+    /** @brief Sun tint (linear RGBA, HDR allowed - the reference uses (1.4, 1.2, 1.0)). */
+    EL_API el_result_e el_effect_set_lens_flare_color(el_effect_handle_t effect,
+                                                      float r, float g, float b, float a);
+    EL_API el_result_e el_effect_get_lens_flare_color(el_effect_handle_t effect,
+                                                      float *outR, float *outG, float *outB, float *outA);
+
+    /** @brief Master brightness multiplier. */
+    EL_API el_result_e el_effect_set_lens_flare_intensity(el_effect_handle_t effect, float intensity);
+    EL_API el_result_e el_effect_get_lens_flare_intensity(el_effect_handle_t effect, float *outIntensity);
+
+    /** @brief Ghost / hex-aperture strength (0 = disc only, 1 = reference look). */
+    EL_API el_result_e el_effect_set_lens_flare_spread(el_effect_handle_t effect, float spread);
+    EL_API el_result_e el_effect_get_lens_flare_spread(el_effect_handle_t effect, float *outSpread);
+
+    /** @} */
+
     /** @name Wireframe overlay
      *  Debug: 1 px line loop around the target rectangle.
      *  @{ */

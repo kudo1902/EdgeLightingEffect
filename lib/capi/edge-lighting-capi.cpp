@@ -6,6 +6,7 @@
 #include "renderer/neon-renderer.h"
 #include "renderer/neon-optimized-renderer.h"
 #include "renderer/droplets-renderer.h"
+#include "renderer/lens-flare-renderer.h"
 #include "animation/neon-animations.h"
 #include "animation/field-bound-animation.h"
 #include "animation/modulator.h"
@@ -1472,6 +1473,112 @@ extern "C"
         return EL_SUCCESS;
     }
 
+    // --- Lens flare ---
+
+    el_result_e el_effect_set_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_renderer_enabled");
+        SET_AND_LOG(effect->config.lensFlare.enable, enabled != 0,
+                    "effect=%p, enabled=%d", (void *)effect, enabled);
+    }
+
+    el_result_e el_effect_get_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_renderer_enabled");
+        VALIDATE_OUT_PTR(outEnabled, "el_effect_get_lens_flare_renderer_enabled");
+        *outEnabled = effect->config.lensFlare.enable ? 1 : 0;
+        LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_lens_flare_perimeter_position(el_effect_handle_t effect, float position)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_perimeter_position");
+        SET_AND_LOG(effect->config.lensFlare.perimeterPosition, position,
+                    "effect=%p, position=%f", (void *)effect, position);
+    }
+
+    el_result_e el_effect_get_lens_flare_perimeter_position(el_effect_handle_t effect, float *outPosition)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_perimeter_position");
+        VALIDATE_OUT_PTR(outPosition, "el_effect_get_lens_flare_perimeter_position");
+        *outPosition = effect->config.lensFlare.perimeterPosition;
+        LOG_D("effect=%p, position=%f", (void *)effect, *outPosition);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_lens_flare_size(el_effect_handle_t effect, float size)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_size");
+        SET_AND_LOG(effect->config.lensFlare.size, size,
+                    "effect=%p, size=%f", (void *)effect, size);
+    }
+
+    el_result_e el_effect_get_lens_flare_size(el_effect_handle_t effect, float *outSize)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_size");
+        VALIDATE_OUT_PTR(outSize, "el_effect_get_lens_flare_size");
+        *outSize = effect->config.lensFlare.size;
+        LOG_D("effect=%p, size=%f", (void *)effect, *outSize);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_lens_flare_color(el_effect_handle_t effect,
+                                               float r, float g, float b, float a)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_color");
+        SET_AND_LOG(effect->config.lensFlare.color, glm::vec4(r, g, b, a),
+                    "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a);
+    }
+
+    el_result_e el_effect_get_lens_flare_color(el_effect_handle_t effect,
+                                               float *outR, float *outG, float *outB, float *outA)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_color");
+        VALIDATE_OUT_PTR(outR, "el_effect_get_lens_flare_color");
+        VALIDATE_OUT_PTR(outG, "el_effect_get_lens_flare_color");
+        VALIDATE_OUT_PTR(outB, "el_effect_get_lens_flare_color");
+        VALIDATE_OUT_PTR(outA, "el_effect_get_lens_flare_color");
+        *outR = effect->config.lensFlare.color.r;
+        *outG = effect->config.lensFlare.color.g;
+        *outB = effect->config.lensFlare.color.b;
+        *outA = effect->config.lensFlare.color.a;
+        LOG_D("effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, *outR, *outG, *outB, *outA);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_lens_flare_intensity(el_effect_handle_t effect, float intensity)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_intensity");
+        SET_AND_LOG(effect->config.lensFlare.intensity, intensity,
+                    "effect=%p, intensity=%f", (void *)effect, intensity);
+    }
+
+    el_result_e el_effect_get_lens_flare_intensity(el_effect_handle_t effect, float *outIntensity)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_intensity");
+        VALIDATE_OUT_PTR(outIntensity, "el_effect_get_lens_flare_intensity");
+        *outIntensity = effect->config.lensFlare.intensity;
+        LOG_D("effect=%p, intensity=%f", (void *)effect, *outIntensity);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_lens_flare_spread(el_effect_handle_t effect, float spread)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_spread");
+        SET_AND_LOG(effect->config.lensFlare.spread, spread,
+                    "effect=%p, spread=%f", (void *)effect, spread);
+    }
+
+    el_result_e el_effect_get_lens_flare_spread(el_effect_handle_t effect, float *outSpread)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_spread");
+        VALIDATE_OUT_PTR(outSpread, "el_effect_get_lens_flare_spread");
+        *outSpread = effect->config.lensFlare.spread;
+        LOG_D("effect=%p, spread=%f", (void *)effect, *outSpread);
+        return EL_SUCCESS;
+    }
+
     // --- Wireframe ---
 
     el_result_e el_effect_set_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
@@ -1558,6 +1665,10 @@ extern "C"
             // time, so the neon layers must already be drawn for the pane to
             // refract them.
             effect->impl->AddRenderer(std::make_shared<EdgeLighting::DropletsRenderer>());
+            // Lens flare is a purely additive fullscreen pass; drawing it
+            // after the droplets keeps the sun on top of everything, which
+            // reads best for "sun peeks over the frame".
+            effect->impl->AddRenderer(std::make_shared<EdgeLighting::LensFlareRenderer>());
             if (!effect->impl->Initialize())
             {
                 LOG_E("el_effect_init: renderer initialisation failed");
