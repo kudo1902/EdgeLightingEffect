@@ -157,6 +157,20 @@ extern "C"
         EL_GLOW_SIDE_OUTSIDE = 2 /**< Glow only outside the rectangle. */
     } el_glow_side_e;
 
+    /** @brief Where the opaque-mode fill covers pixels.
+     *  @details Mirrors @c EdgeLighting::OpaqueMode. The fill is a rounded
+     *           band sized by @ref el_effect_set_inside_cutoff /
+     *           @ref el_effect_set_outside_cutoff; the neon emission still
+     *           composites on top inside the glow band. */
+    typedef enum el_opaque_mode_e
+    {
+        EL_OPAQUE_MODE_NONE = 0,    /**< No opaque pass; effect composites transparently. */
+        EL_OPAQUE_MODE_OUTSIDE = 1, /**< Fill outer half of the band: 0 <= d <= outsideCutoff. */
+        EL_OPAQUE_MODE_INSIDE = 2,  /**< Fill inner half of the band: -insideCutoff <= d <= 0. */
+        EL_OPAQUE_MODE_BOTH = 3,    /**< Fill the whole band: -insideCutoff <= d <= +outsideCutoff. */
+        EL_OPAQUE_MODE_ALL = 4      /**< Fill the whole viewport. */
+    } el_opaque_mode_e;
+
     /** @brief Colour space used when interpolating between colour stops.
      *  @details Mirrors @c EdgeLighting::BlendSpace. HSV/HSL avoid the muddy
      *           mid-tones that a straight-line RGB interpolation produces
@@ -373,12 +387,14 @@ extern "C"
      *  How the effect blends with the framebuffer.
      *  @{ */
 
-    /** @brief Switch between transparent (default) and opaque compositing.
-     *  @details When opaque, pixels outside the neon glow are filled with
-     *           @ref el_effect_set_opaque_color, occluding the background
-     *           within the effect's draw region. */
-    EL_API el_result_e el_effect_set_opaque(el_effect_handle_t effect, el_bool_t opaque);
-    EL_API el_result_e el_effect_get_opaque(el_effect_handle_t effect, el_bool_t *outOpaque);
+    /** @brief Where the opaque-mode fill covers pixels.
+     *  @details See @ref el_opaque_mode_e. NONE keeps the effect purely
+     *           transparent; the other modes rasterise a coloured band shaped
+     *           by @ref el_effect_set_inside_cutoff /
+     *           @ref el_effect_set_outside_cutoff and filled with
+     *           @ref el_effect_set_opaque_color. */
+    EL_API el_result_e el_effect_set_opaque_mode(el_effect_handle_t effect, el_opaque_mode_e mode);
+    EL_API el_result_e el_effect_get_opaque_mode(el_effect_handle_t effect, el_opaque_mode_e *outMode);
 
     /** @brief Set the background fill colour used when opaque compositing is on.
      *  @details Linear RGBA in [0,1]. Only the @c rgb channels are read
@@ -387,6 +403,34 @@ extern "C"
                                                   float r, float g, float b, float a);
     EL_API el_result_e el_effect_get_opaque_color(el_effect_handle_t effect,
                                                   float *outR, float *outG, float *outB, float *outA);
+
+    /** @brief Feather width in pixels at the opaque fill's cutoff boundaries.
+     *  @details Applied only when @c opaqueMode != NONE. 0 = hard fill edge;
+     *           larger values soften where the fill fades to background. Kept
+     *           independent of the per-side cutoff softness so the emission
+     *           and the fill can taper at different rates. */
+    EL_API el_result_e el_effect_set_opaque_softness(el_effect_handle_t effect, float softness);
+    EL_API el_result_e el_effect_get_opaque_softness(el_effect_handle_t effect, float *outSoftness);
+
+    /** @brief Inside cutoff (rect interior side): hard geometric limit for the neon glow.
+     *  @details @c enable = 0 leaves the interior uncapped (natural halo/bloom
+     *           decay bounds the emission). @c size is the pixel distance from
+     *           the rect edge to the cutoff boundary along the interior side
+     *           (always positive). @c softness is the feather width in pixels
+     *           at the boundary (0 = hard, larger = smoother fade). Also caps
+     *           the geometric footprint of @c INSIDE / @c BOTH opaque fills. */
+    EL_API el_result_e el_effect_set_inside_cutoff(el_effect_handle_t effect,
+                                                   el_bool_t enable, float size, float softness);
+    EL_API el_result_e el_effect_get_inside_cutoff(el_effect_handle_t effect,
+                                                   el_bool_t *outEnable, float *outSize, float *outSoftness);
+
+    /** @brief Outside cutoff (rect exterior side). Mirror of @ref el_effect_set_inside_cutoff.
+     *  @details Also caps @c OUTSIDE / @c BOTH opaque fills and sizes the neon
+     *           draw quad so far-exterior pixels are rasteriser-culled. */
+    EL_API el_result_e el_effect_set_outside_cutoff(el_effect_handle_t effect,
+                                                    el_bool_t enable, float size, float softness);
+    EL_API el_result_e el_effect_get_outside_cutoff(el_effect_handle_t effect,
+                                                    el_bool_t *outEnable, float *outSize, float *outSoftness);
 
     /** @} */
 

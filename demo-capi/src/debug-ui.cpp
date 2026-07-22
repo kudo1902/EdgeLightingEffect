@@ -290,6 +290,34 @@ namespace
         {
             el_effect_set_glow_side_softness(effect, softness);
         }
+
+        auto cutoffRow = [&](const char *base,
+                             auto getFn, auto setFn)
+        {
+            el_bool_t enable = 0;
+            float size = 0.0f, soft = 0.0f;
+            getFn(effect, &enable, &size, &soft);
+            bool en = enable != 0;
+            char enableLabel[64], sizeLabel[64], softLabelInner[64];
+            std::snprintf(enableLabel, sizeof(enableLabel), "%s##%s", base, idSuffix);
+            std::snprintf(sizeLabel, sizeof(sizeLabel), "%s size##%s", base, idSuffix);
+            std::snprintf(softLabelInner, sizeof(softLabelInner), "%s softness##%s", base, idSuffix);
+            bool changed = ImGui::Checkbox(enableLabel, &en);
+            ImGui::Indent();
+            if (!en)
+                ImGui::BeginDisabled();
+            changed |= ImGui::SliderFloat(sizeLabel, &size, 0.0f, 200.0f, "%.0f");
+            changed |= ImGui::SliderFloat(softLabelInner, &soft, 0.0f, 20.0f, "%.1f");
+            if (!en)
+                ImGui::EndDisabled();
+            ImGui::Unindent();
+            if (changed)
+            {
+                setFn(effect, en ? 1 : 0, size, soft);
+            }
+        };
+        cutoffRow("Inside Cutoff", el_effect_get_inside_cutoff, el_effect_set_inside_cutoff);
+        cutoffRow("Outside Cutoff", el_effect_get_outside_cutoff, el_effect_set_outside_cutoff);
     }
 
     // Segment boost row: reads/writes one segment through capi accessors.
@@ -627,14 +655,15 @@ void DebugUI::buildNeonSection(el_effect_handle_t effect)
     if (!en)
         return;
 
-    el_bool_t opaque = 0;
-    el_effect_get_opaque(effect, &opaque);
-    bool op = opaque;
-    if (ImGui::Checkbox("Opaque (no blend)##Neon", &op))
+    el_opaque_mode_e opaqueMode = EL_OPAQUE_MODE_NONE;
+    el_effect_get_opaque_mode(effect, &opaqueMode);
+    const char *opaqueItems[] = {"None", "Outside", "Inside", "Both", "All"};
+    int opaqueIdx = static_cast<int>(opaqueMode);
+    if (ImGui::Combo("Opaque##Neon", &opaqueIdx, opaqueItems, IM_ARRAYSIZE(opaqueItems)))
     {
-        el_effect_set_opaque(effect, op ? 1 : 0);
+        el_effect_set_opaque_mode(effect, static_cast<el_opaque_mode_e>(opaqueIdx));
     }
-    if (op)
+    if (opaqueMode != EL_OPAQUE_MODE_NONE)
     {
         float r = 0, g = 0, b = 0, a = 0;
         el_effect_get_opaque_color(effect, &r, &g, &b, &a);
@@ -644,6 +673,12 @@ void DebugUI::buildNeonSection(el_effect_handle_t effect)
                               ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview))
         {
             el_effect_set_opaque_color(effect, col[0], col[1], col[2], col[3]);
+        }
+        float opaqueSoftness = 0.0f;
+        el_effect_get_opaque_softness(effect, &opaqueSoftness);
+        if (ImGui::SliderFloat("Opaque Softness##Neon", &opaqueSoftness, 0.0f, 20.0f, "%.1f"))
+        {
+            el_effect_set_opaque_softness(effect, opaqueSoftness);
         }
     }
 
@@ -786,7 +821,6 @@ void DebugUI::buildDropletsSection(el_effect_handle_t effect)
     {
         el_effect_set_droplets_lanes(effect, lanes);
     }
-
 
     float tint[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     el_effect_get_droplets_tint(effect, &tint[0], &tint[1], &tint[2], &tint[3]);

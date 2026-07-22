@@ -394,30 +394,20 @@ extern "C"
         return EL_SUCCESS;
     }
 
-    el_result_e el_effect_set_opaque(el_effect_handle_t effect, el_bool_t opaque)
+    el_result_e el_effect_set_opaque_mode(el_effect_handle_t effect, el_opaque_mode_e mode)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque");
-        // Legacy shim: bool opaque used to control a single "fill everywhere"
-        // pass. The renderer now supports NONE/OUTSIDE/INSIDE/BOTH/ALL modes
-        // (see NeonConfig::opaqueMode). Preserve the old semantics for callers:
-        // true → ALL (whole viewport), false → NONE. Callers wanting the newer
-        // per-side fills should be migrated to a dedicated capi shim later.
-        EdgeLighting::OpaqueMode newMode = (opaque != 0)
-            ? EdgeLighting::OpaqueMode::ALL
-            : EdgeLighting::OpaqueMode::NONE;
-        SET_AND_LOG(effect->config.neon.opaqueMode, newMode,
-                    "effect=%p, opaque=%d", (void *)effect, opaque);
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque_mode");
+        SET_AND_LOG(effect->config.neon.opaqueMode,
+                    static_cast<EdgeLighting::OpaqueMode>(mode),
+                    "effect=%p, mode=%d", (void *)effect, static_cast<int>(mode));
     }
 
-    el_result_e el_effect_get_opaque(el_effect_handle_t effect, el_bool_t *outOpaque)
+    el_result_e el_effect_get_opaque_mode(el_effect_handle_t effect, el_opaque_mode_e *outMode)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_opaque");
-        VALIDATE_OUT_PTR(outOpaque, "el_effect_get_opaque");
-        // Legacy shim: report true iff any opaque fill is active. Loses the
-        // NONE-vs-OUTSIDE/INSIDE/BOTH/ALL distinction; add a dedicated getter
-        // once the capi grows an opaque-mode enum.
-        *outOpaque = (effect->config.neon.opaqueMode != EdgeLighting::OpaqueMode::NONE) ? 1 : 0;
-        LOG_D("effect=%p, opaque=%d", (void *)effect, *outOpaque);
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_opaque_mode");
+        VALIDATE_OUT_PTR(outMode, "el_effect_get_opaque_mode");
+        *outMode = static_cast<el_opaque_mode_e>(effect->config.neon.opaqueMode);
+        LOG_D("effect=%p, mode=%d", (void *)effect, static_cast<int>(*outMode));
         return EL_SUCCESS;
     }
 
@@ -442,6 +432,86 @@ extern "C"
         *outB = effect->config.neon.opaqueColor.b;
         *outA = effect->config.neon.opaqueColor.a;
         LOG_D("effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, *outR, *outG, *outB, *outA);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_opaque_softness(el_effect_handle_t effect, float softness)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque_softness");
+        SET_AND_LOG(effect->config.neon.opaqueSoftness, softness,
+                    "effect=%p, softness=%f", (void *)effect, softness);
+    }
+
+    el_result_e el_effect_get_opaque_softness(el_effect_handle_t effect, float *outSoftness)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_opaque_softness");
+        VALIDATE_OUT_PTR(outSoftness, "el_effect_get_opaque_softness");
+        *outSoftness = effect->config.neon.opaqueSoftness;
+        LOG_D("effect=%p, softness=%f", (void *)effect, *outSoftness);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_inside_cutoff(el_effect_handle_t effect,
+                                            el_bool_t enable, float size, float softness)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_inside_cutoff");
+        auto &c = effect->config.neon.insideCutoff;
+        bool en = (enable != 0);
+        if (c.enable == en && c.size == size && c.softness == softness)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, enable=%d, size=%f, softness=%f", (void *)effect, enable, size, softness);
+        c.enable = en;
+        c.size = size;
+        c.softness = softness;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_inside_cutoff(el_effect_handle_t effect,
+                                            el_bool_t *outEnable, float *outSize, float *outSoftness)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_inside_cutoff");
+        VALIDATE_OUT_PTR(outEnable, "el_effect_get_inside_cutoff");
+        VALIDATE_OUT_PTR(outSize, "el_effect_get_inside_cutoff");
+        VALIDATE_OUT_PTR(outSoftness, "el_effect_get_inside_cutoff");
+        const auto &c = effect->config.neon.insideCutoff;
+        *outEnable = c.enable ? 1 : 0;
+        *outSize = c.size;
+        *outSoftness = c.softness;
+        LOG_D("effect=%p, enable=%d, size=%f, softness=%f", (void *)effect, *outEnable, *outSize, *outSoftness);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_outside_cutoff(el_effect_handle_t effect,
+                                             el_bool_t enable, float size, float softness)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_outside_cutoff");
+        auto &c = effect->config.neon.outsideCutoff;
+        bool en = (enable != 0);
+        if (c.enable == en && c.size == size && c.softness == softness)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, enable=%d, size=%f, softness=%f", (void *)effect, enable, size, softness);
+        c.enable = en;
+        c.size = size;
+        c.softness = softness;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_outside_cutoff(el_effect_handle_t effect,
+                                             el_bool_t *outEnable, float *outSize, float *outSoftness)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_outside_cutoff");
+        VALIDATE_OUT_PTR(outEnable, "el_effect_get_outside_cutoff");
+        VALIDATE_OUT_PTR(outSize, "el_effect_get_outside_cutoff");
+        VALIDATE_OUT_PTR(outSoftness, "el_effect_get_outside_cutoff");
+        const auto &c = effect->config.neon.outsideCutoff;
+        *outEnable = c.enable ? 1 : 0;
+        *outSize = c.size;
+        *outSoftness = c.softness;
+        LOG_D("effect=%p, enable=%d, size=%f, softness=%f", (void *)effect, *outEnable, *outSize, *outSoftness);
         return EL_SUCCESS;
     }
 
