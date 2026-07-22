@@ -397,7 +397,15 @@ extern "C"
     el_result_e el_effect_set_opaque(el_effect_handle_t effect, el_bool_t opaque)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque");
-        SET_AND_LOG(effect->config.neon.opaque, opaque != 0,
+        // Legacy shim: bool opaque used to control a single "fill everywhere"
+        // pass. The renderer now supports NONE/OUTSIDE/INSIDE/BOTH/ALL modes
+        // (see NeonConfig::opaqueMode). Preserve the old semantics for callers:
+        // true → ALL (whole viewport), false → NONE. Callers wanting the newer
+        // per-side fills should be migrated to a dedicated capi shim later.
+        EdgeLighting::OpaqueMode newMode = (opaque != 0)
+            ? EdgeLighting::OpaqueMode::ALL
+            : EdgeLighting::OpaqueMode::NONE;
+        SET_AND_LOG(effect->config.neon.opaqueMode, newMode,
                     "effect=%p, opaque=%d", (void *)effect, opaque);
     }
 
@@ -405,7 +413,10 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_opaque");
         VALIDATE_OUT_PTR(outOpaque, "el_effect_get_opaque");
-        *outOpaque = effect->config.neon.opaque ? 1 : 0;
+        // Legacy shim: report true iff any opaque fill is active. Loses the
+        // NONE-vs-OUTSIDE/INSIDE/BOTH/ALL distinction; add a dedicated getter
+        // once the capi grows an opaque-mode enum.
+        *outOpaque = (effect->config.neon.opaqueMode != EdgeLighting::OpaqueMode::NONE) ? 1 : 0;
         LOG_D("effect=%p, opaque=%d", (void *)effect, *outOpaque);
         return EL_SUCCESS;
     }

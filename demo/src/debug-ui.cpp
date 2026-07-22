@@ -190,6 +190,36 @@ namespace
         }
         return changed;
     }
+
+    /// One row per Cutoff struct: enable checkbox on the left, size + softness
+    /// sliders indented on the right. Grays out the sliders when enable is off
+    /// so the "unbounded on this side" state reads at a glance.
+    inline void CutoffRow(const char *label, const char *idSuffix,
+                          EdgeLighting::Cutoff &cutoff,
+                          const EdgeLighting::Cutoff &activeCutoff)
+    {
+        ImGui::PushID(idSuffix);
+        char enableLabel[64];
+        std::snprintf(enableLabel, sizeof(enableLabel), "%s##Enable", label);
+        ImGui::Checkbox(enableLabel, &cutoff.enable);
+        ImGui::Indent();
+        if (!cutoff.enable)
+        {
+            ImGui::BeginDisabled();
+        }
+        char sizeLabel[64];
+        char softLabel[64];
+        std::snprintf(sizeLabel, sizeof(sizeLabel), "size##%s", idSuffix);
+        std::snprintf(softLabel, sizeof(softLabel), "softness##%s", idSuffix);
+        AnimatedSlider(sizeLabel, cutoff.size, activeCutoff.size, 0.0f, 200.0f, "%.0f");
+        AnimatedSlider(softLabel, cutoff.softness, activeCutoff.softness, 0.0f, 20.0f, "%.1f");
+        if (!cutoff.enable)
+        {
+            ImGui::EndDisabled();
+        }
+        ImGui::Unindent();
+        ImGui::PopID();
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -372,12 +402,18 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
         return;
     }
 
-    ImGui::Checkbox("Opaque (no blend)##Neon", &cfg.neon.opaque);
-    if (cfg.neon.opaque)
+    const char *opaqueItems[] = {"None", "Outside", "Inside", "Both", "All"};
+    int opaqueIdx = static_cast<int>(cfg.neon.opaqueMode);
+    if (ImGui::Combo("Opaque##Neon", &opaqueIdx, opaqueItems, IM_ARRAYSIZE(opaqueItems)))
+    {
+        cfg.neon.opaqueMode = static_cast<EdgeLighting::OpaqueMode>(opaqueIdx);
+    }
+    if (cfg.neon.opaqueMode != EdgeLighting::OpaqueMode::NONE)
     {
         ImGui::SameLine();
         ImGui::ColorEdit4("Opaque Color##Neon", &cfg.neon.opaqueColor.x,
                           ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
+        ImGui::SliderFloat("Opaque Softness##Neon", &cfg.neon.opaqueSoftness, 0.0f, 20.0f, "%.1f");
     }
     ImGui::Checkbox("Show Gradient LUT##Neon", &cfg.neon.showGradientLUT);
     ImGui::Checkbox("Show Color Stops##Neon", &cfg.neon.showColorStops);
@@ -398,6 +434,9 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
     {
         ImGui::SliderFloat("Side Softness##Neon", &cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
     }
+
+    CutoffRow("Inside Cutoff", "NeonInside", cfg.neon.insideCutoff, active.neon.insideCutoff);
+    CutoffRow("Outside Cutoff", "NeonOutside", cfg.neon.outsideCutoff, active.neon.outsideCutoff);
 
     // --- Travelling segments (independent additive lights on the perimeter) ---
     ImGui::TextDisabled("Segment Lights (%zu / %d) - additive, independent of intensity",
@@ -518,12 +557,18 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg,
     ImGui::Separator();
     ImGui::TextDisabled("Visual params (shared with Neon)");
 
-    ImGui::Checkbox("Opaque (no blend)##Opt", &cfg.neon.opaque);
-    if (cfg.neon.opaque)
+    const char *opaqueItemsOpt[] = {"None", "Outside", "Inside", "Both", "All"};
+    int opaqueIdxOpt = static_cast<int>(cfg.neon.opaqueMode);
+    if (ImGui::Combo("Opaque##Opt", &opaqueIdxOpt, opaqueItemsOpt, IM_ARRAYSIZE(opaqueItemsOpt)))
+    {
+        cfg.neon.opaqueMode = static_cast<EdgeLighting::OpaqueMode>(opaqueIdxOpt);
+    }
+    if (cfg.neon.opaqueMode != EdgeLighting::OpaqueMode::NONE)
     {
         ImGui::SameLine();
         ImGui::ColorEdit4("Opaque Color##Opt", &cfg.neon.opaqueColor.x,
                           ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
+        ImGui::SliderFloat("Opaque Softness##Opt", &cfg.neon.opaqueSoftness, 0.0f, 20.0f, "%.1f");
     }
     AnimatedSlider("Line Width##Opt", cfg.neon.lineWidth, active.neon.lineWidth, 0.0f, 20.0f, "%.0f");
     AnimatedSlider("Filament Falloff##Opt", cfg.neon.filamentFalloff, active.neon.filamentFalloff, 0.5f, 5.0f);
@@ -542,6 +587,9 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg,
     // the Glow Side mode (it only feathers the one-sided cut, but keeping it
     // live avoids the slider vanishing when Glow Side is Both).
     ImGui::SliderFloat("Side Softness##Opt", &cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
+
+    CutoffRow("Inside Cutoff", "OptInside", cfg.neon.insideCutoff, active.neon.insideCutoff);
+    CutoffRow("Outside Cutoff", "OptOutside", cfg.neon.outsideCutoff, active.neon.outsideCutoff);
 
     ImGui::TextDisabled("Segment Lights (%zu / %d) - additive, independent of intensity",
                         cfg.neon.segmentBoosts.size(),

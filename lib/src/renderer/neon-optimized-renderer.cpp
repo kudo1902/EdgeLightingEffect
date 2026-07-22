@@ -233,21 +233,29 @@ namespace EdgeLighting
         glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
         glm::mat4 identity(1.0f);
-        if (config.neon.opaque)
+        if (config.neon.opaqueMode != OpaqueMode::NONE)
         {
             // Rect centre in full-res gl_FragCoord space (y-up).
             glm::vec2 centerFull(config.geometry.position.x + halfRectW,
                                  static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
-            float softEdge = std::max(config.neon.glowSideSoftness,
-                                      static_cast<float>(SIDE_SOFT_EPSILON));
 
             mBlackRectShader.Use();
             mBlackRectShader.SetUniform("uMVP", identity);
             mBlackRectShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
             mBlackRectShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
             mBlackRectShader.SetUniform("uRectCenter", centerFull);
-            mBlackRectShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
-            mBlackRectShader.SetUniform("uSoftEdge", softEdge);
+            float opaqueSoft = std::max(config.neon.opaqueSoftness,
+                                        static_cast<float>(SIDE_SOFT_EPSILON));
+            mBlackRectShader.SetUniform("uOpaqueMode", static_cast<int>(config.neon.opaqueMode));
+            // Disabled cutoffs collapse to a huge size so their shader branch
+            // no-ops (mirrors ResolveCutoffSize in neon-renderer.cpp; kept
+            // local here to avoid an extra include).
+            constexpr float DISABLED_CUTOFF = 1.0e6f;
+            float inSize  = config.neon.insideCutoff.enable  ? config.neon.insideCutoff.size  : DISABLED_CUTOFF;
+            float outSize = config.neon.outsideCutoff.enable ? config.neon.outsideCutoff.size : DISABLED_CUTOFF;
+            mBlackRectShader.SetUniform("uInsideCutoff", inSize);
+            mBlackRectShader.SetUniform("uOutsideCutoff", outSize);
+            mBlackRectShader.SetUniform("uOpaqueSoftness", opaqueSoft);
             mBlackRectShader.SetUniform("uOpaqueColor", config.neon.opaqueColor);
             mBlitVertexArray.DrawArrays(GL_TRIANGLES, 6);
             mBlackRectShader.Unuse();

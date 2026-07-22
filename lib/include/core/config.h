@@ -26,6 +26,45 @@ namespace EdgeLighting
         OUTSIDE ///< Glow only outside the rectangle (interior goes dark)
     } GlowSide;
 
+    /// Per-side hard geometric limit for the neon glow, packaged as a small
+    /// struct so both sides can be toggled and tuned independently.
+    ///
+    ///   enable   - true = clamp the emission at @c size (with a @c softness
+    ///              feather); false = the side is uncapped and the emission's
+    ///              natural halo/bloom decay bounds it.
+    ///   size     - distance in pixels from the rect edge to the cutoff
+    ///              boundary along this side (always positive; sign is
+    ///              implicit in whether it's the inside or outside cutoff).
+    ///   softness - feather width in pixels at the cutoff boundary. 0 = hard
+    ///              edge; larger values fade the neon emission smoothly to
+    ///              zero over the boundary. Independent per side.
+    typedef struct Cutoff
+    {
+        bool enable = true;
+        float size = 32.0f;
+        float softness = 4.0f;
+
+        bool operator==(const Cutoff &o) const
+        {
+            return enable == o.enable && size == o.size && softness == o.softness;
+        }
+        bool operator!=(const Cutoff &o) const { return !(*this == o); }
+    } Cutoff;
+
+    /// Where the opaque-mode fill covers pixels. All modes fill @c
+    /// NeonConfig::opaqueColor; the neon emission still composites on top of the
+    /// fill inside the glow band. Cutoff distances come from @c
+    /// NeonConfig::insideCutoff / @c outsideCutoff (both positive pixel values
+    /// measured from the rect edge along their respective sides).
+    typedef enum class OpaqueMode
+    {
+        NONE,    ///< No opaque pass; the effect composites transparently over whatever's behind it.
+        OUTSIDE, ///< Fill only the outer half of the band: 0 <= d <= outsideCutoff.
+        INSIDE,  ///< Fill only the inner half of the band: -insideCutoff <= d <= 0.
+        BOTH,    ///< Fill the whole band: -insideCutoff <= d <= +outsideCutoff.
+        ALL      ///< Fill the whole viewport (matches the old opaque=true + glowSide=BOTH behaviour).
+    } OpaqueMode;
+
     /// Interpolation colour space for multi-stop blending.
     typedef enum class BlendSpace
     {
@@ -169,18 +208,18 @@ namespace EdgeLighting
 
         // --- Compositing ---
 
-        /// How the effect combines with whatever is already in the framebuffer.
-        /// false (default): premultiplied-alpha "over" - the dark surround is
-        ///   transparent, so the effect composites onto the background.
-        /// true: opaque - the effect's surround pixels are filled with
-        ///   @c opaqueColor, occluding the background within the effect's draw
-        ///   region. The neon glow is composited on top.
-        bool opaque = false;
-        /// Fill colour for the opaque-mode background pass. Applied only when
-        /// @c opaque is true. Linear RGBA in [0,1]; only @c .rgb is used today -
-        /// the @c .a channel is reserved for a later premultiplied partial-fill
-        /// pass and is applied by neither the renderer nor the shader yet.
-        /// Default is black.
+        /// Where (if anywhere) an opaque background fill is drawn behind the
+        /// neon emission. NONE keeps the effect purely additive over whatever
+        /// was previously in the framebuffer; the other modes rasterise a
+        /// coloured shape defined by @c insideCutoff / @c outsideCutoff (see
+        /// the @c OpaqueMode enum for exact geometry). The neon glow composites
+        /// on top of the fill inside the band.
+        OpaqueMode opaqueMode = OpaqueMode::NONE;
+        /// Fill colour for the opaque-mode background pass. Applied whenever
+        /// @c opaqueMode != NONE. Linear RGBA in [0,1]; only @c .rgb is used
+        /// today - the @c .a channel is reserved for a later premultiplied
+        /// partial-fill pass and is applied by neither the renderer nor the
+        /// shader yet. Default is black.
         glm::vec4 opaqueColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
 
         // --- Filament (the bright line itself) ---
@@ -220,8 +259,32 @@ namespace EdgeLighting
         /// Restrict the glow to one side of the line, or let it spill both ways.
         GlowSide glowSide = GlowSide::BOTH;
         /// Softness of the one-sided cut in pixels. 0 = hard edge, 2 = subtle
-        /// feather. Ignored when glowSide == BOTH.
+        /// feather. Ignored when glowSide == BOTH. Does NOT affect the
+        /// inside/outside cutoff boundaries - those use @c cutoffSoftness
+        /// below so the two feathers can be tuned independently.
         float glowSideSoftness = 0.0f;
+
+        /// Inside cutoff (rect interior side). See @ref Cutoff for the fields.
+        /// The emission fades to zero over @c insideCutoff.softness at
+        /// @c d = -insideCutoff.size and is culled past it. Also caps the
+        /// geometric footprint of @c OpaqueMode::INSIDE / @c BOTH fills.
+        /// @c insideCutoff.enable = false leaves the interior uncapped.
+        Cutoff insideCutoff = {true, 32.0f, 4.0f};
+
+        /// Outside cutoff (rect exterior side). Mirror of @c insideCutoff.
+        /// Also caps @c OpaqueMode::OUTSIDE / @c BOTH fills and sizes the
+        /// neon draw quad so far-exterior pixels are rasteriser-culled.
+        /// @c outsideCutoff.enable = false leaves the exterior uncapped
+        /// (natural halo / bloom decay bounds the emission instead).
+        Cutoff outsideCutoff = {true, 32.0f, 4.0f};
+
+        /// Feather width in pixels applied at the opaque-mode fill's cutoff
+        /// boundaries. Used only when @c opaqueMode != NONE. 0 = hard fill
+        /// edge; larger values soften where the fill fades into the
+        /// background. Kept independent of the per-side @c Cutoff::softness
+        /// so the emission and the fill can taper at different rates - e.g.
+        /// a wide fill fade under a tight emission fall-off.
+        float opaqueSoftness = 4.0f;
 
         // --- Color ---
         /// Blend space for interpolating between colour stops.
@@ -289,7 +352,7 @@ namespace EdgeLighting
             return enable == o.enable &&
                    showGradientLUT == o.showGradientLUT &&
                    showColorStops == o.showColorStops &&
-                   opaque == o.opaque &&
+                   opaqueMode == o.opaqueMode &&
                    opaqueColor == o.opaqueColor &&
                    lineWidth == o.lineWidth &&
                    filamentFalloff == o.filamentFalloff &&
@@ -298,6 +361,9 @@ namespace EdgeLighting
                    bloomStrength == o.bloomStrength &&
                    glowSide == o.glowSide &&
                    glowSideSoftness == o.glowSideSoftness &&
+                   insideCutoff == o.insideCutoff &&
+                   outsideCutoff == o.outsideCutoff &&
+                   opaqueSoftness == o.opaqueSoftness &&
                    blendSpace == o.blendSpace &&
                    colorStops == o.colorStops &&
                    hueRotationRate == o.hueRotationRate &&
