@@ -5,6 +5,18 @@
 
 namespace EdgeLighting
 {
+    namespace
+    {
+        /// Same sentinel + resolver as neon-renderer.cpp: a disabled Cutoff
+        /// collapses to a huge pixel size so the shader's smoothstep / discard
+        /// naturally no-ops. Duplicated here to keep the renderer self-contained.
+        constexpr float CUTOFF_DISABLED_SIZE = 1.0e6f;
+        inline float GetCutoffSize(const Cutoff &c)
+        {
+            return c.enable ? c.size : CUTOFF_DISABLED_SIZE;
+        }
+    }
+
     bool LensFlareRenderer::Initialize()
     {
         if (!setupShaders())
@@ -38,8 +50,8 @@ namespace EdgeLighting
         // The sun rides the rect perimeter: sample the shared helper (same
         // parameter space as segments/arcs), convert local -> app pixel space
         // (rect top-left origin, y-down), then flip Y for gl_FragCoord.
-        glm::vec2  local = GeometryUtils::GetPointOnRectangle(config.lensFlare.perimeterPosition,
-                                                              config.geometry);
+        glm::vec2 local = GeometryUtils::GetPointOnRectangle(config.lensFlare.perimeterPosition,
+                                                             config.geometry);
         float halfW = config.geometry.width * 0.5f;
         float halfH = config.geometry.height * 0.5f;
         glm::vec2 sunApp(config.geometry.position.x + local.x + halfW,
@@ -54,6 +66,19 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uIntensity", config.lensFlare.intensity);
         mShaderProgram.SetUniform("uSpread", config.lensFlare.spread);
         mShaderProgram.SetUniform("uSize", config.lensFlare.size);
+
+        // Rect + cutoffs (reused from NeonConfig so the two layers stay in
+        // lockstep). Rect centre in gl_FragCoord space (y-up), same convention
+        // as sunPosFrag above.
+        glm::vec2 rectCenter(config.geometry.position.x + halfW,
+                             resolution.y - config.geometry.position.y - halfH);
+        mShaderProgram.SetUniform("uRectCenter", rectCenter);
+        mShaderProgram.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
+        mShaderProgram.SetUniform("uCornerRadius", config.geometry.cornerRadius);
+        mShaderProgram.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
+        mShaderProgram.SetUniform("uInsideCutoffSoftness", config.neon.insideCutoff.softness);
+        mShaderProgram.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
+        mShaderProgram.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness);
 
         mVertexArray.DrawArrays(GL_TRIANGLES, 6);
 

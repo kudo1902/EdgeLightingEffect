@@ -36,8 +36,26 @@ uniform float uIntensity;    // Master brightness multiplier.
 uniform float uSpread;       // Ghost strength (0 = suppress ghosts, 1 = reference look).
 uniform float uSize;         // Sun-core / rays size scale (1 = reference); ghosts unaffected.
 
+// --- Rect / cutoff uniforms (shared with the neon shader). The flare gets
+// culled outside the [-uInsideCutoff, +uOutsideCutoff] band around the rect
+// edge so the two layers stay visually consistent. Disabled sides arrive
+// with a huge sentinel value CPU-side, making the branches no-op.
+uniform vec2  uRectCenter;             ///< Rect centre in gl_FragCoord pixels (y-up).
+uniform vec2  uRectSize;               ///< Rect size in pixels.
+uniform float uCornerRadius;
+uniform float uInsideCutoff;
+uniform float uInsideCutoffSoftness;
+uniform float uOutsideCutoff;
+uniform float uOutsideCutoffSoftness;
+
 float rnd(vec2 p) { return fract(sin(dot(p, vec2(12.1234, 72.8392)) * 45123.2)); }
 float rnd(float w) { return fract(sin(w) * 1000.0); }
+
+float sdRoundBox(vec2 p, vec2 b, float r)
+{
+    vec2 q = abs(p) - b + r;
+    return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
+}
 
 // N-gon aperture shape (N=6 gives hex ghosts). Returns 0 inside, 1 outside
 // via smoothstep at the polygon edge.
@@ -66,6 +84,17 @@ vec3 circle(vec2 p, float size, float dist, vec2 sunUV)
 
 void main()
 {
+    // --- Rect-relative distance for cutoffs. Signed: negative inside, positive
+    // outside. Hard-discard past the band so we don't waste cycles evaluating
+    // the flare loop for pixels that would be masked to zero anyway. Softness
+    // floored to a small epsilon; the soft-mask below uses the same width.
+    vec2  localPixel = gl_FragCoord.xy - uRectCenter;
+    float d          = sdRoundBox(localPixel, uRectSize * 0.5, uCornerRadius);
+    float inSoft     = max(uInsideCutoffSoftness,  1e-5);
+    float outSoft    = max(uOutsideCutoffSoftness, 1e-5);
+    if (d >  uOutsideCutoff + outSoft) discard;
+    if (d < -uInsideCutoff  - inSoft ) discard;
+
     vec2  uv     = gl_FragCoord.xy / uResolution - 0.5;
     vec2  sunUV  = uSunPos         / uResolution - 0.5;
     float aspect = uResolution.x / uResolution.y;
@@ -98,6 +127,12 @@ void main()
 
     // --- Global falloff around the sun (kept from reference).
     color *= exp(1.0 - sunDist) / 5.0;
+
+    // --- Cutoff soft masks. Disabled sides push their boundary to a huge
+    // sentinel CPU-side so the smoothstep naturally evaluates to a
+    // pass-through 1.0. Same treatment as the neon shader.
+    color *= smoothstep(-uInsideCutoff - inSoft, -uInsideCutoff + inSoft, d);
+    color *= 1.0 - smoothstep(uOutsideCutoff - outSoft, uOutsideCutoff + outSoft, d);
 
     color = max(color, 0.0) * uIntensity;
 
