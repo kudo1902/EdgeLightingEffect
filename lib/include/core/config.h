@@ -483,6 +483,45 @@ namespace EdgeLighting
         bool operator!=(const WireframeConfig &o) const { return !(*this == o); }
     } WireframeConfig;
 
+    /// Lens-flare renderer configuration. Draws a full lens flare (sun core
+    /// with rays + hex-aperture chromatic ghosts) as a single fullscreen pass.
+    /// See lens-flare.frag for the port notes and licence caveat.
+    ///
+    /// The sun rides the rectangle's perimeter (same parameter space as
+    /// @c SegmentBoost::position and @c Arc::start) so it animates with
+    /// the same modulators the neon uses, and stays visually tied to the
+    /// frame no matter where the geometry moves.
+    typedef struct LensFlareConfig
+    {
+        bool enable = false;
+        /// Sun position as a perimeter progress in [0, 1). 0 = top-left,
+        /// winding follows @c RectGeometry::winding. The renderer converts
+        /// this to a viewport pixel via @c GeometryUtils::GetPointOnRectangle.
+        float perimeterPosition = 0.0f;
+        /// Size scale for the sun core + rays. 1.0 = reference look; larger
+        /// values grow the visible disc and rays proportionally. Ghosts sit
+        /// along the axis in normalised viewport space, so they are not
+        /// affected by size.
+        float size = 1.0f;
+        /// Warm tint applied to the sun core + rays. Ghosts stay procedural.
+        glm::vec4 color = glm::vec4(1.0f, 0.92f, 0.75f, 1.0f);
+        /// Master brightness multiplier.
+        float intensity = 1.0f;
+        /// Ghost / hex-aperture strength (0 = suppress ghosts, 1 = reference).
+        float spread = 1.0f;
+
+        bool operator==(const LensFlareConfig &o) const
+        {
+            return enable == o.enable &&
+                   perimeterPosition == o.perimeterPosition &&
+                   size == o.size &&
+                   color == o.color &&
+                   intensity == o.intensity &&
+                   spread == o.spread;
+        }
+        bool operator!=(const LensFlareConfig &o) const { return !(*this == o); }
+    } LensFlareConfig;
+
     // -----------------------------------------------------------------------
     // Top-level configuration
     // -----------------------------------------------------------------------
@@ -498,6 +537,7 @@ namespace EdgeLighting
         OptimizedNeonConfig optimizedNeon; ///< Half-res optimized neon settings
         DropletsConfig droplets;           ///< Rain-on-glass droplets settings
         WireframeConfig wireframe;         ///< Wireframe overlay settings
+        LensFlareConfig lensFlare;         ///< Sun + lens flare (rays, chromatic ghosts)
 
         bool operator==(const Config &o) const
         {
@@ -505,7 +545,8 @@ namespace EdgeLighting
                    neon == o.neon &&
                    optimizedNeon == o.optimizedNeon &&
                    droplets == o.droplets &&
-                   wireframe == o.wireframe;
+                   wireframe == o.wireframe &&
+                   lensFlare == o.lensFlare;
         }
         bool operator!=(const Config &o) const { return !(*this == o); }
     } Config;

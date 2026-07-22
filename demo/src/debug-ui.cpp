@@ -307,6 +307,7 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     buildNeonSection(cfg, active);
     buildOptimizedNeonSection(cfg, active);
     buildDropletsSection(cfg);
+    buildLensFlareSection(cfg);
     buildColorPickerSection(cfg);
     buildAnimationSection(cfg, effect.GetAnimationManager());
     buildBackgroundSection();
@@ -916,6 +917,29 @@ void DebugUI::buildDropletsSection(EdgeLighting::Config &cfg)
                       ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreview);
 
     ImGui::TextDisabled("Side follows Neon > Glow Side / Softness");
+}
+
+void DebugUI::buildLensFlareSection(EdgeLighting::Config &cfg)
+{
+    if (!ImGui::CollapsingHeader("Lens Flare", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+
+    ImGui::Checkbox("Enable##Lens", &cfg.lensFlare.enable);
+
+    if (!cfg.lensFlare.enable)
+    {
+        return;
+    }
+
+    ImGui::SliderFloat("Perimeter Pos##Lens", &cfg.lensFlare.perimeterPosition, 0.0f, 1.0f, "%.3f");
+    ImGui::SliderFloat("Size##Lens", &cfg.lensFlare.size, 0.1f, 5.0f, "%.2f");
+    ImGui::ColorEdit4("Color##Lens", &cfg.lensFlare.color.x,
+                      ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_HDR |
+                          ImGuiColorEditFlags_Float);
+    ImGui::SliderFloat("Intensity##Lens", &cfg.lensFlare.intensity, 0.0f, 4.0f, "%.2f");
+    ImGui::SliderFloat("Spread##Lens", &cfg.lensFlare.spread, 0.0f, 3.0f, "%.2f");
 }
 
 void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg,
