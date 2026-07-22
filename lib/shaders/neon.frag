@@ -33,9 +33,9 @@ uniform float uGlowRadius;
 uniform float uBloomStrength;
 uniform int   uGlowSide;
 uniform float uGlowSideSoftness;
-uniform float uInsideCutoff;          ///< Positive px distance INSIDE the rect edge past which the emission is culled. Disabled-side maps to a huge value CPU-side.
+uniform float uInsideCutoff;          ///< Positive px distance INSIDE the rect edge past which the emission is culled. Disabled sides collapse to a huge sentinel CPU-side so this branch no-ops.
 uniform float uInsideCutoffSoftness;  ///< Feather width in px at the inside cutoff boundary.
-uniform float uOutsideCutoff;         ///< Positive px distance OUTSIDE the rect edge past which the emission is culled. Disabled-side maps to a huge value CPU-side.
+uniform float uOutsideCutoff;         ///< Positive px distance OUTSIDE the rect edge past which the emission is culled. Disabled sides collapse to a huge sentinel CPU-side.
 uniform float uOutsideCutoffSoftness; ///< Feather width in px at the outside cutoff boundary.
 
 uniform float uSampleSpacing;
@@ -173,8 +173,8 @@ void main() {
     // artist's stated reach even if uGlowRadius says otherwise. Softness is
     // decoupled from uGlowSideSoftness so the one-sided cut at d=0 can stay
     // razor-sharp while the cutoff joins fade smoothly, and per-side so the
-    // interior and exterior can taper at different rates. Disabled cutoffs
-    // arrive with a huge size, so these branches naturally no-op.
+    // interior and exterior can taper at different rates. Disabled sides
+    // arrive with size = a huge sentinel, so these branches no-op.
     float inSoft  = max(uInsideCutoffSoftness,  SIDE_SOFT_EPSILON);
     float outSoft = max(uOutsideCutoffSoftness, SIDE_SOFT_EPSILON);
     if (d >  uOutsideCutoff + outSoft) discard;
@@ -378,6 +378,8 @@ void main() {
     // softness on each side of the [-uInsideCutoff, +uOutsideCutoff] band so
     // bloom/halo never punch past the stated reach. Feather is symmetric
     // around the boundary so the mid-boundary sample sees ~50% weight.
+    // Disabled sides push their boundary to a huge sentinel, so the
+    // smoothstep naturally evaluates to a pass-through 1.0.
     result *= smoothstep(-uInsideCutoff - inSoft,  -uInsideCutoff + inSoft,  d);
     result *= 1.0 - smoothstep(uOutsideCutoff - outSoft, uOutsideCutoff + outSoft, d);
 

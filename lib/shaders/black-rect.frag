@@ -33,8 +33,8 @@ uniform vec2  uRectSize;
 uniform float uCornerRadius;
 uniform vec2  uRectCenter;     // rect centre in window pixels (gl_FragCoord space, y-up)
 uniform int   uOpaqueMode;
-uniform float uInsideCutoff;   // positive distance INSIDE the edge (d = -uInsideCutoff at boundary)
-uniform float uOutsideCutoff;  // positive distance OUTSIDE the edge (d = +uOutsideCutoff at boundary)
+uniform float uInsideCutoff;   // positive distance INSIDE the edge (d = -uInsideCutoff at boundary). Disabled sides collapse to a huge sentinel CPU-side.
+uniform float uOutsideCutoff;  // positive distance OUTSIDE the edge (d = +uOutsideCutoff at boundary). Disabled sides collapse to a huge sentinel CPU-side.
 uniform float uOpaqueSoftness; // feather width in px at the fill's cutoff boundaries (NeonConfig::opaqueSoftness).
 uniform vec4  uOpaqueColor;    // fill colour; only .rgb used today, .a reserved for a later partial-fill pass
 

@@ -215,12 +215,21 @@ namespace EdgeLighting
         /// the @c OpaqueMode enum for exact geometry). The neon glow composites
         /// on top of the fill inside the band.
         OpaqueMode opaqueMode = OpaqueMode::NONE;
+
         /// Fill colour for the opaque-mode background pass. Applied whenever
         /// @c opaqueMode != NONE. Linear RGBA in [0,1]; only @c .rgb is used
         /// today - the @c .a channel is reserved for a later premultiplied
         /// partial-fill pass and is applied by neither the renderer nor the
         /// shader yet. Default is black.
         glm::vec4 opaqueColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+
+        /// Feather width in pixels applied at the opaque-mode fill's cutoff
+        /// boundaries. Used only when @c opaqueMode != NONE. 0 = hard fill
+        /// edge; larger values soften where the fill fades into the
+        /// background. Kept independent of the per-side @c Cutoff::softness
+        /// so the emission and the fill can taper at different rates - e.g.
+        /// a wide fill fade under a tight emission fall-off.
+        float opaqueSoftness = 0.0f;
 
         // --- Filament (the bright line itself) ---
 
@@ -269,22 +278,14 @@ namespace EdgeLighting
         /// @c d = -insideCutoff.size and is culled past it. Also caps the
         /// geometric footprint of @c OpaqueMode::INSIDE / @c BOTH fills.
         /// @c insideCutoff.enable = false leaves the interior uncapped.
-        Cutoff insideCutoff = {true, 32.0f, 4.0f};
+        Cutoff insideCutoff = {false, 0.0f, 0.0f};
 
         /// Outside cutoff (rect exterior side). Mirror of @c insideCutoff.
         /// Also caps @c OpaqueMode::OUTSIDE / @c BOTH fills and sizes the
         /// neon draw quad so far-exterior pixels are rasteriser-culled.
         /// @c outsideCutoff.enable = false leaves the exterior uncapped
         /// (natural halo / bloom decay bounds the emission instead).
-        Cutoff outsideCutoff = {true, 32.0f, 4.0f};
-
-        /// Feather width in pixels applied at the opaque-mode fill's cutoff
-        /// boundaries. Used only when @c opaqueMode != NONE. 0 = hard fill
-        /// edge; larger values soften where the fill fades into the
-        /// background. Kept independent of the per-side @c Cutoff::softness
-        /// so the emission and the fill can taper at different rates - e.g.
-        /// a wide fill fade under a tight emission fall-off.
-        float opaqueSoftness = 4.0f;
+        Cutoff outsideCutoff = {false, 0.0f, 0.0f};
 
         // --- Color ---
         /// Blend space for interpolating between colour stops.

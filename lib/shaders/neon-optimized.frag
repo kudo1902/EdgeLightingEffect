@@ -44,6 +44,10 @@ uniform float uGlowRadius;
 uniform float uBloomStrength;
 uniform int   uGlowSide;
 uniform float uGlowSideSoftness;
+uniform float uInsideCutoff;          ///< Positive scaled-px distance INSIDE the rect edge past which the emission is culled. Disabled sides collapse to a huge sentinel * scale CPU-side.
+uniform float uInsideCutoffSoftness;  ///< Feather width (scaled px) at the inside cutoff boundary.
+uniform float uOutsideCutoff;         ///< Positive scaled-px distance OUTSIDE the rect edge past which the emission is culled. Disabled sides collapse to a huge sentinel * scale CPU-side.
+uniform float uOutsideCutoffSoftness; ///< Feather width (scaled px) at the outside cutoff boundary.
 
 uniform float uSampleSpacing;
 
@@ -150,6 +154,15 @@ void main() {
     float softEdge = max(uGlowSideSoftness, SIDE_SOFT_EPSILON);
     if (uGlowSide == GLOW_SIDE_INSIDE  && d >  softEdge) discard;
     if (uGlowSide == GLOW_SIDE_OUTSIDE && d < -softEdge) discard;
+
+    // Hard geometric cutoffs (see neon.frag for the full rationale). Sizes
+    // and softness arrive pre-scaled into FBO space to match `d`. Disabled
+    // sides collapse to a huge sentinel * scale CPU-side, so these
+    // branches no-op.
+    float inSoft  = max(uInsideCutoffSoftness,  SIDE_SOFT_EPSILON);
+    float outSoft = max(uOutsideCutoffSoftness, SIDE_SOFT_EPSILON);
+    if (d >  uOutsideCutoff + outSoft) discard;
+    if (d < -uInsideCutoff  - inSoft ) discard;
 
     // --- Filament -----------------------------------------------------
     // Generalized-Gaussian profile with exponentially smooth falloff (matches
@@ -303,6 +316,14 @@ void main() {
     // --- One-sided cut ---
     if (uGlowSide == GLOW_SIDE_INSIDE)       result *= smoothstep( softEdge, -softEdge, d);
     else if (uGlowSide == GLOW_SIDE_OUTSIDE) result *= smoothstep(-softEdge,  softEdge, d);
+
+    // --- Hard cutoff soft masks: fade the emission over the per-side
+    // softness on each side of the [-uInsideCutoff, +uOutsideCutoff] band so
+    // bloom/halo never punch past the stated reach. Mirrors neon.frag.
+    // Disabled sides push their boundary to a huge value so the smoothstep
+    // naturally evaluates to a pass-through 1.0.
+    result *= smoothstep(-uInsideCutoff - inSoft,  -uInsideCutoff + inSoft,  d);
+    result *= 1.0 - smoothstep(uOutsideCutoff - outSoft, uOutsideCutoff + outSoft, d);
 
     // --- Quad-edge fade: the draw quad ends at d == uQuadMargin (all in
     // scaled/FBO space). Fade the emission to zero over the last stretch so a

@@ -14,14 +14,12 @@ namespace EdgeLighting
 {
     namespace
     {
-        /// Resolves a @c Cutoff to its effective pixel size for the shader.
-        /// Disabled cutoffs collapse to a value large enough that the shader's
-        /// discard / softmask branches never fire on realistic geometry - one
-        /// value shared with the black-rect fill so both agree on where the
-        /// "no cap" boundary sits.
+        /// Pixel distance the shader should treat as the cutoff boundary.
+        /// Disabled cutoffs collapse to a huge sentinel so the shader's
+        /// smoothstep / discard math naturally no-ops on realistic geometry;
+        /// only the CPU knows this number, shaders see it as a plain uniform.
         constexpr float CUTOFF_DISABLED_SIZE = 1.0e6f;
-
-        inline float ResolveCutoffSize(const Cutoff &c)
+        inline float GetCutoffSize(const Cutoff &c)
         {
             return c.enable ? c.size : CUTOFF_DISABLED_SIZE;
         }
@@ -200,8 +198,8 @@ namespace EdgeLighting
             float opaqueSoft = std::max(config.neon.opaqueSoftness,
                                         static_cast<float>(SIDE_SOFT_EPSILON));
             mBlackRectShader.SetUniform("uOpaqueMode", static_cast<int>(config.neon.opaqueMode));
-            mBlackRectShader.SetUniform("uInsideCutoff", ResolveCutoffSize(config.neon.insideCutoff));
-            mBlackRectShader.SetUniform("uOutsideCutoff", ResolveCutoffSize(config.neon.outsideCutoff));
+            mBlackRectShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
+            mBlackRectShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
             mBlackRectShader.SetUniform("uOpaqueSoftness", opaqueSoft);
             mBlackRectShader.SetUniform("uOpaqueColor", config.neon.opaqueColor);
             mFullVertexArray.DrawArrays(GL_TRIANGLES, 6);
@@ -223,9 +221,9 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uBloomStrength", config.neon.bloomStrength);
         mShaderProgram.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
         mShaderProgram.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness);
-        mShaderProgram.SetUniform("uInsideCutoff", ResolveCutoffSize(config.neon.insideCutoff));
+        mShaderProgram.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
         mShaderProgram.SetUniform("uInsideCutoffSoftness", config.neon.insideCutoff.softness);
-        mShaderProgram.SetUniform("uOutsideCutoff", ResolveCutoffSize(config.neon.outsideCutoff));
+        mShaderProgram.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
         mShaderProgram.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness);
         // Pack the segment vector as vec3(position, invSigma, boost) into the
         // std140 SegmentBlock UBO (DALi-compatible pattern - see neon.frag).

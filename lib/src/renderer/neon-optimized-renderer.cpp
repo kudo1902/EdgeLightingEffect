@@ -14,6 +14,16 @@ namespace EdgeLighting
 {
     namespace
     {
+        /// Pixel distance the shader should treat as the cutoff boundary.
+        /// Disabled cutoffs collapse to a huge sentinel so the shader's
+        /// smoothstep / discard math naturally no-ops on realistic geometry;
+        /// only the CPU knows this number, shaders see it as a plain uniform.
+        constexpr float CUTOFF_DISABLED_SIZE = 1.0e6f;
+        inline float GetCutoffSize(const Cutoff &c)
+        {
+            return c.enable ? c.size : CUTOFF_DISABLED_SIZE;
+        }
+
         /// CPU-side mirror of neon-optimized.frag's std140 `SegmentBlock`:
         /// int padded to 16 bytes, each vec3 element padded to a vec4 stride.
         typedef struct SegmentBlockData
@@ -155,6 +165,10 @@ namespace EdgeLighting
         mNeonShader.SetUniform("uBloomStrength", config.neon.bloomStrength);
         mNeonShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
         mNeonShader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness * scale);
+        mNeonShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff) * scale);
+        mNeonShader.SetUniform("uInsideCutoffSoftness", config.neon.insideCutoff.softness * scale);
+        mNeonShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff) * scale);
+        mNeonShader.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness * scale);
         // Pack the segment vector as vec3(position, invSigma, boost) into the
         // std140 SegmentBlock UBO (DALi-compatible pattern - see the shader).
         // Same packing as NeonRenderer; segment `position` is a normalised
@@ -247,14 +261,8 @@ namespace EdgeLighting
             float opaqueSoft = std::max(config.neon.opaqueSoftness,
                                         static_cast<float>(SIDE_SOFT_EPSILON));
             mBlackRectShader.SetUniform("uOpaqueMode", static_cast<int>(config.neon.opaqueMode));
-            // Disabled cutoffs collapse to a huge size so their shader branch
-            // no-ops (mirrors ResolveCutoffSize in neon-renderer.cpp; kept
-            // local here to avoid an extra include).
-            constexpr float DISABLED_CUTOFF = 1.0e6f;
-            float inSize  = config.neon.insideCutoff.enable  ? config.neon.insideCutoff.size  : DISABLED_CUTOFF;
-            float outSize = config.neon.outsideCutoff.enable ? config.neon.outsideCutoff.size : DISABLED_CUTOFF;
-            mBlackRectShader.SetUniform("uInsideCutoff", inSize);
-            mBlackRectShader.SetUniform("uOutsideCutoff", outSize);
+            mBlackRectShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
+            mBlackRectShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
             mBlackRectShader.SetUniform("uOpaqueSoftness", opaqueSoft);
             mBlackRectShader.SetUniform("uOpaqueColor", config.neon.opaqueColor);
             mBlitVertexArray.DrawArrays(GL_TRIANGLES, 6);
@@ -298,7 +306,8 @@ namespace EdgeLighting
         const bool geometryDirty = samplesDirty ||
                                    config.neon.glowRadius != mCurrentConfig.neon.glowRadius ||
                                    config.neon.bloomStrength != mCurrentConfig.neon.bloomStrength ||
-                                   config.neon.intensity != mCurrentConfig.neon.intensity;
+                                   config.neon.intensity != mCurrentConfig.neon.intensity ||
+                                   config.neon.outsideCutoff != mCurrentConfig.neon.outsideCutoff;
         const bool lutDirty = config.neon.colorStops != mCurrentConfig.neon.colorStops ||
                               config.neon.blendSpace != mCurrentConfig.neon.blendSpace ||
                               config.optimizedNeon.gradientLutSize != mCurrentConfig.optimizedNeon.gradientLutSize;
@@ -393,6 +402,19 @@ namespace EdgeLighting
             // 1/D bloom tail reaches further as those rise. The uQuadMargin
             // soft-fade (below, also mirrored from the base) guards the edge.
             float margin = earlyOut * (1.0f + config.neon.bloomStrength * config.neon.intensity);
+
+            // Hard cap: when the outside cutoff is enabled the shader discards
+            // emission past size + softness, so there's no point rasterising
+            // further. Everything is in scaled/FBO space here; cutoff sizes
+            // are unscaled pixels so multiply by `scale`. +1 (scaled) safety
+            // so the shader's own softmask fades to zero before the quad edge.
+            if (config.neon.outsideCutoff.enable)
+            {
+                float outSoft = std::max(config.neon.outsideCutoff.softness,
+                                         static_cast<float>(SIDE_SOFT_EPSILON));
+                float cutoffCap = (config.neon.outsideCutoff.size + outSoft) * scale + 1.0f;
+                margin = std::min(margin, cutoffCap);
+            }
             mQuadMargin = margin;
             float halfW = config.geometry.width * 0.5f * scale;
             float halfH = config.geometry.height * 0.5f * scale;
