@@ -20,7 +20,7 @@ namespace EdgeLighting
     {
     }
 
-    void LensFlareRenderer::Render(int viewportWidth, int viewportHeight, float, const Config &config)
+    void LensFlareRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
     {
         if (!config.lensFlare.enable)
         {
@@ -80,6 +80,9 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uIntensity", config.lensFlare.intensity);
         mShaderProgram.SetUniform("uSpread", config.lensFlare.spread);
         mShaderProgram.SetUniform("uSize", config.lensFlare.size);
+
+        constexpr float TWO_PI = 6.28318530717958647692f;
+        mShaderProgram.SetUniform("uRotation", time * config.lensFlare.rotationRate * TWO_PI);
 
         mVertexArray.DrawArrays(GL_TRIANGLES, 6);
 

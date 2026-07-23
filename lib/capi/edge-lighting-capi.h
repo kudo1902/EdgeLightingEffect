@@ -734,6 +734,12 @@ extern "C"
     EL_API el_result_e el_effect_set_lens_flare_spread(el_effect_handle_t effect, float spread);
     EL_API el_result_e el_effect_get_lens_flare_spread(el_effect_handle_t effect, float *outSpread);
 
+    /** @brief Sun / ray rotation rate in revolutions per second (0 = static).
+     *  @details Ghost groups stay anchored on the sun-to-centre axis; only
+     *           the sun disc and rays spin. */
+    EL_API el_result_e el_effect_set_lens_flare_rotation_rate(el_effect_handle_t effect, float rate);
+    EL_API el_result_e el_effect_get_lens_flare_rotation_rate(el_effect_handle_t effect, float *outRate);
+
     /** @} */
 
     /** @name Wireframe overlay

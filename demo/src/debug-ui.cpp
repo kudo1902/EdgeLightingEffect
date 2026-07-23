@@ -941,6 +941,7 @@ void DebugUI::buildLensFlareSection(EdgeLighting::Config &cfg)
                           ImGuiColorEditFlags_Float);
     ImGui::SliderFloat("Intensity##Lens", &cfg.lensFlare.intensity, 0.0f, 4.0f, "%.2f");
     ImGui::SliderFloat("Spread##Lens", &cfg.lensFlare.spread, 0.0f, 3.0f, "%.2f");
+    ImGui::SliderFloat("Rotation Rate##Lens", &cfg.lensFlare.rotationRate, -2.0f, 2.0f, "%.3f rev/s");
 }
 
 void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg,

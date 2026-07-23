@@ -513,6 +513,10 @@ namespace EdgeLighting
         float intensity = 1.0f;
         /// Ghost / hex-aperture strength (0 = suppress ghosts, 1 = reference).
         float spread = 1.0f;
+        /// Sun / ray rotation rate in revolutions per second. 0 = static;
+        /// positive = counter-clockwise (screen space, y-up). Ghosts stay
+        /// anchored on the sun-to-centre axis and are not rotated.
+        float rotationRate = 0.0f;
 
         bool operator==(const LensFlareConfig &o) const
         {
@@ -522,7 +526,8 @@ namespace EdgeLighting
                    size == o.size &&
                    color == o.color &&
                    intensity == o.intensity &&
-                   spread == o.spread;
+                   spread == o.spread &&
+                   rotationRate == o.rotationRate;
         }
         bool operator!=(const LensFlareConfig &o) const { return !(*this == o); }
     } LensFlareConfig;

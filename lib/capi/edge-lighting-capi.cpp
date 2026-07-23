@@ -1595,6 +1595,22 @@ extern "C"
         return EL_SUCCESS;
     }
 
+    el_result_e el_effect_set_lens_flare_rotation_rate(el_effect_handle_t effect, float rate)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_rotation_rate");
+        SET_AND_LOG(effect->config.lensFlare.rotationRate, rate,
+                    "effect=%p, rate=%f", (void *)effect, rate);
+    }
+
+    el_result_e el_effect_get_lens_flare_rotation_rate(el_effect_handle_t effect, float *outRate)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_rotation_rate");
+        VALIDATE_OUT_PTR(outRate, "el_effect_get_lens_flare_rotation_rate");
+        *outRate = effect->config.lensFlare.rotationRate;
+        LOG_D("effect=%p, rate=%f", (void *)effect, *outRate);
+        return EL_SUCCESS;
+    }
+
     // --- Wireframe ---
 
     el_result_e el_effect_set_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)

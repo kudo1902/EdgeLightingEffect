@@ -35,6 +35,7 @@ uniform vec4  uSunColor;     // Sun-core / rays tint. Ghosts stay procedural.
 uniform float uIntensity;    // Master brightness multiplier.
 uniform float uSpread;       // Ghost strength (0 = suppress ghosts, 1 = reference look).
 uniform float uSize;         // Sun-core / rays size scale (1 = reference); ghosts unaffected.
+uniform float uRotation;     // Ray-angle offset in radians; drives sun/ray spin.
 
 float rnd(vec2 p) { return fract(sin(dot(p, vec2(12.1234, 72.8392)) * 45123.2)); }
 float rnd(float w) { return fract(sin(w) * 1000.0); }
@@ -85,7 +86,7 @@ void main()
     // --- Sun rays + core; tint governed by uSunColor. Size scale divides the
     // distance so uSize > 1 grows the disc/rays and uSize < 1 shrinks them;
     // the reference constants (5, 10, 4) stay so uSize = 1 matches Xlc3D2.
-    float a       = atan(uv.y - sunUV.y, uv.x - sunUV.x);
+    float a       = atan(uv.y - sunUV.y, uv.x - sunUV.x) + uRotation;
     float sunDist = length(uv - sunUV);
     float sDist   = sunDist / max(uSize, 1e-3);
     vec3  sunTint = uSunColor.rgb;

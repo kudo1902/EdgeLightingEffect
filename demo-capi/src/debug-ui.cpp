@@ -898,6 +898,13 @@ void DebugUI::buildLensFlareSection(el_effect_handle_t effect)
     {
         el_effect_set_lens_flare_spread(effect, spread);
     }
+
+    float rotationRate = 0.0f;
+    el_effect_get_lens_flare_rotation_rate(effect, &rotationRate);
+    if (ImGui::SliderFloat("Rotation Rate##Lens", &rotationRate, -2.0f, 2.0f, "%.3f rev/s"))
+    {
+        el_effect_set_lens_flare_rotation_rate(effect, rotationRate);
+    }
 }
 
 // ---------------------------------------------------------------------------
