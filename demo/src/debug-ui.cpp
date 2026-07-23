@@ -934,6 +934,7 @@ void DebugUI::buildLensFlareSection(EdgeLighting::Config &cfg)
     }
 
     ImGui::SliderFloat("Perimeter Pos##Lens", &cfg.lensFlare.perimeterPosition, 0.0f, 1.0f, "%.3f");
+    ImGui::SliderFloat("Perimeter Offset##Lens", &cfg.lensFlare.perimeterOffset, -500.0f, 500.0f, "%.1f px");
     ImGui::SliderFloat("Size##Lens", &cfg.lensFlare.size, 0.1f, 5.0f, "%.2f");
     ImGui::ColorEdit4("Color##Lens", &cfg.lensFlare.color.x,
                       ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_HDR |

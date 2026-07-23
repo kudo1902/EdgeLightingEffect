@@ -498,6 +498,10 @@ namespace EdgeLighting
         /// winding follows @c RectGeometry::winding. The renderer converts
         /// this to a viewport pixel via @c GeometryUtils::GetPointOnRectangle.
         float perimeterPosition = 0.0f;
+        /// Signed offset in pixels along the edge normal at
+        /// @c perimeterPosition. Positive pushes the sun outward (away from
+        /// the rect centre), negative pulls it inward.
+        float perimeterOffset = 0.0f;
         /// Size scale for the sun core + rays. 1.0 = reference look; larger
         /// values grow the visible disc and rays proportionally. Ghosts sit
         /// along the axis in normalised viewport space, so they are not
@@ -514,6 +518,7 @@ namespace EdgeLighting
         {
             return enable == o.enable &&
                    perimeterPosition == o.perimeterPosition &&
+                   perimeterOffset == o.perimeterOffset &&
                    size == o.size &&
                    color == o.color &&
                    intensity == o.intensity &&

@@ -862,6 +862,13 @@ void DebugUI::buildLensFlareSection(el_effect_handle_t effect)
         el_effect_set_lens_flare_perimeter_position(effect, pos);
     }
 
+    float offset = 0.0f;
+    el_effect_get_lens_flare_perimeter_offset(effect, &offset);
+    if (ImGui::SliderFloat("Perimeter Offset##Lens", &offset, -500.0f, 500.0f, "%.1f px"))
+    {
+        el_effect_set_lens_flare_perimeter_offset(effect, offset);
+    }
+
     float size = 1.0f;
     el_effect_get_lens_flare_size(effect, &size);
     if (ImGui::SliderFloat("Size##Lens", &size, 0.1f, 5.0f, "%.2f"))

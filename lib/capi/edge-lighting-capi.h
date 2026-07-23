@@ -710,6 +710,12 @@ extern "C"
     EL_API el_result_e el_effect_set_lens_flare_perimeter_position(el_effect_handle_t effect, float position);
     EL_API el_result_e el_effect_get_lens_flare_perimeter_position(el_effect_handle_t effect, float *outPosition);
 
+    /** @brief Signed offset in pixels along the edge normal at the sun's
+     *         perimeter position. Positive = outward (away from rect centre),
+     *         negative = inward. */
+    EL_API el_result_e el_effect_set_lens_flare_perimeter_offset(el_effect_handle_t effect, float offset);
+    EL_API el_result_e el_effect_get_lens_flare_perimeter_offset(el_effect_handle_t effect, float *outOffset);
+
     /** @brief Size scale for the sun core + rays (1.0 = reference look). */
     EL_API el_result_e el_effect_set_lens_flare_size(el_effect_handle_t effect, float size);
     EL_API el_result_e el_effect_get_lens_flare_size(el_effect_handle_t effect, float *outSize);

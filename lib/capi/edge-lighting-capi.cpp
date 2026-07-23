@@ -1507,6 +1507,22 @@ extern "C"
         return EL_SUCCESS;
     }
 
+    el_result_e el_effect_set_lens_flare_perimeter_offset(el_effect_handle_t effect, float offset)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_perimeter_offset");
+        SET_AND_LOG(effect->config.lensFlare.perimeterOffset, offset,
+                    "effect=%p, offset=%f", (void *)effect, offset);
+    }
+
+    el_result_e el_effect_get_lens_flare_perimeter_offset(el_effect_handle_t effect, float *outOffset)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_perimeter_offset");
+        VALIDATE_OUT_PTR(outOffset, "el_effect_get_lens_flare_perimeter_offset");
+        *outOffset = effect->config.lensFlare.perimeterOffset;
+        LOG_D("effect=%p, offset=%f", (void *)effect, *outOffset);
+        return EL_SUCCESS;
+    }
+
     el_result_e el_effect_set_lens_flare_size(el_effect_handle_t effect, float size)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_size");
