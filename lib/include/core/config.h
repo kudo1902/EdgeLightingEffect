@@ -56,6 +56,11 @@ namespace EdgeLighting
     /// fill inside the glow band. Cutoff distances come from @c
     /// NeonConfig::insideCutoff / @c outsideCutoff (both positive pixel values
     /// measured from the rect edge along their respective sides).
+    ///
+    /// A side whose @c Cutoff is disabled has no stated boundary, so the fill
+    /// falls back to the distance at which the emission itself has faded out
+    /// (and feathers generously there) rather than covering the whole
+    /// half-plane. Use @c ALL when the intent really is the whole viewport.
     typedef enum class OpaqueMode
     {
         NONE,    ///< No opaque pass; the effect composites transparently over whatever's behind it.
@@ -214,21 +219,38 @@ namespace EdgeLighting
         /// coloured shape defined by @c insideCutoff / @c outsideCutoff (see
         /// the @c OpaqueMode enum for exact geometry). The neon glow composites
         /// on top of the fill inside the band.
+        ///
+        /// Note what enabling a fill does to apparent brightness: the emission
+        /// is premultiplied with alpha = its own brightness, so halo and bloom
+        /// are semi-transparent and pick up light from whatever is behind
+        /// them. Filling one side replaces that background with
+        /// @c opaqueColor, so the glow on the filled side reads dimmer than it
+        /// does with NONE - most visible with @c glowSide == BOTH, where only
+        /// one side changes. The emission itself is untouched; use
+        /// @c opaqueColor's alpha to occlude only partly.
         OpaqueMode opaqueMode = OpaqueMode::NONE;
 
         /// Fill colour for the opaque-mode background pass. Applied whenever
-        /// @c opaqueMode != NONE. Linear RGBA in [0,1]; only @c .rgb is used
-        /// today - the @c .a channel is reserved for a later premultiplied
-        /// partial-fill pass and is applied by neither the renderer nor the
-        /// shader yet. Default is black.
+        /// @c opaqueMode != NONE. Linear RGBA in [0,1]; default opaque black.
+        ///
+        /// @c .a scales how much background the fill removes: 1 occludes it
+        /// completely, 0.5 halves it (the neon then still composites over a
+        /// partly visible background, so the halo keeps some of the brightness
+        /// it had under NONE), 0 disables the fill entirely.
         glm::vec4 opaqueColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
 
-        /// Feather width in pixels applied at the opaque-mode fill's cutoff
-        /// boundaries. Used only when @c opaqueMode != NONE. 0 = hard fill
-        /// edge; larger values soften where the fill fades into the
-        /// background. Kept independent of the per-side @c Cutoff::softness
-        /// so the emission and the fill can taper at different rates - e.g.
-        /// a wide fill fade under a tight emission fall-off.
+        /// Feather width in pixels at the opaque-mode fill's far boundaries
+        /// (the d = 0 rect edge always stays pixel-crisp). Used only when
+        /// @c opaqueMode != NONE, and applied to both sides.
+        ///
+        /// 0 means "follow the emission": each side takes its
+        /// @c Cutoff::softness when that cutoff is enabled, so the fill's edge
+        /// and the emission's fade land together - mismatched feathers leave a
+        /// dark trough where the fill is still opaque but the emission has
+        /// already faded, ending in a hard step where the background returns.
+        /// A side with no cutoff feathers over a wide fraction of the glow's
+        /// reach instead, since nothing else is there to hide the edge.
+        /// Set non-zero only to override both sides explicitly.
         float opaqueSoftness = 0.0f;
 
         // --- Filament (the bright line itself) ---

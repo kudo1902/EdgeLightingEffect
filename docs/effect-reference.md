@@ -62,7 +62,9 @@ comes out. Every value is the compiler-visible default from `config.h`.
 | Geometry | cornerRadius | 40 px |
 | Geometry | winding | CCW (top-left -> left -> bottom -> right -> top) |
 | Neon | enable | **false** - the renderer is off by default; the host opts in |
-| Neon | opaque | false (premultiplied blend onto the framebuffer) |
+| Neon | opaqueMode | NONE (premultiplied blend onto the framebuffer) |
+| Neon | opaqueColor | black (0, 0, 0, 1) - fully occluding |
+| Neon | opaqueSoftness | 0 - fill feather follows each side's cutoff softness |
 | Neon | lineWidth | 4 px |
 | Neon | filamentFalloff | 1.0 (pure Gaussian) |
 | Neon | intensity | 1.0 |
@@ -127,16 +129,50 @@ Master switch for the single-pass neon renderer. Nothing renders when
 The host must set this to `true` to see any neon at all; the demo does this
 in its startup code.
 
-**`neon.opaque`** (default `false`)
-- `false`: premultiplied "over" blend - dark surround is transparent, the
-  effect composites onto whatever was in the framebuffer.
-- `true`: the surround is filled with `neon.opaqueColor` first (occluding
-  the background), and the neon glow is composited on top. Useful when you
-  want the effect to *replace* the background inside its draw region.
+**`neon.opaqueMode`** (default `NONE`)
+Where a background fill is drawn *behind* the emission. The fill is drawn
+first, then the neon composites on top of it.
+
+| Mode | Filled region |
+|---|---|
+| `NONE` | nothing - premultiplied "over" onto whatever was in the framebuffer |
+| `OUTSIDE` | `0 <= d <= outsideCutoff` |
+| `INSIDE` | `-insideCutoff <= d <= 0` |
+| `BOTH` | `-insideCutoff <= d <= +outsideCutoff` |
+| `ALL` | the whole viewport |
+
+A side whose `Cutoff` is disabled has no stated boundary. Outside, the fill
+then stops at the draw-quad margin - past that the emission is zero, so
+covering the rest of the viewport would be pure occlusion - and feathers over
+half that distance. Inside, it fills the whole interior, because the emission
+does too: the bloom's 1/D tail plus the far edges leave the rect interior lit
+end to end (~30% coverage dead centre of an 800x400 rect at defaults), so a
+finite bound would cut the backing plate short of the glow it backs.
+
+**Expect the glow to read dimmer on a filled side.** The emission is
+premultiplied with `alpha = its own brightness`, so halo and bloom are
+semi-transparent and pick up light from whatever is behind them. Filling one
+side replaces that with `opaqueColor`. The emission itself is byte-identical -
+over a black backdrop the two modes match exactly - but over a bright
+wallpaper the filled side loses the background's contribution. It shows up
+most with `glowSide = BOTH`, where only one of the two sides changes. Measured
+over a mid-grey backdrop: -20% at 5 px from the edge, -32% at 40 px. Use
+`opaqueColor`'s alpha if you want the occlusion without the full drop.
 
 **`neon.opaqueColor`** (default black `(0, 0, 0, 1)`)
-RGBA colour used to fill the surround when `neon.opaque = true`. Only the
-`.rgb` is used today; `.a` is reserved.
+RGBA fill colour, used whenever `opaqueMode != NONE`. `.a` scales how much
+background the fill removes: `1` occludes it completely, `0.5` halves it (the
+neon then still composites over a partly visible background, so the halo keeps
+some of the brightness it had under `NONE`), `0` disables the fill.
+
+**`neon.opaqueSoftness`** (default `0`)
+Feather width in px at the fill's far boundaries; the `d = 0` rect edge always
+stays pixel-crisp. `0` means "follow the emission": each side takes its own
+`Cutoff::softness` when that cutoff is enabled, so the fill's edge and the
+emission's fade land together. Mismatched feathers are visible - a fill edge
+1 px wide under an 8 px emission fade leaves a dark trough where the fill is
+still opaque but the glow has gone, ending in a hard step where the background
+snaps back. Set non-zero only to override both sides explicitly.
 
 ### 3.3 Filament (the bright line)
 

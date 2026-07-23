@@ -169,6 +169,10 @@ extern "C"
         EL_OPAQUE_MODE_INSIDE = 2,  /**< Fill inner half of the band: -insideCutoff <= d <= 0. */
         EL_OPAQUE_MODE_BOTH = 3,    /**< Fill the whole band: -insideCutoff <= d <= +outsideCutoff. */
         EL_OPAQUE_MODE_ALL = 4      /**< Fill the whole viewport. */
+        /* A side whose cutoff is disabled has no stated boundary, so the fill
+           falls back to where the emission has faded out (feathering
+           generously there) instead of covering the whole half-plane. Use
+           EL_OPAQUE_MODE_ALL when the whole viewport is the intent. */
     } el_opaque_mode_e;
 
     /** @brief Colour space used when interpolating between colour stops.
@@ -392,23 +396,41 @@ extern "C"
      *           transparent; the other modes rasterise a coloured band shaped
      *           by @ref el_effect_set_inside_cutoff /
      *           @ref el_effect_set_outside_cutoff and filled with
-     *           @ref el_effect_set_opaque_color. */
+     *           @ref el_effect_set_opaque_color.
+     *
+     *           The emission is premultiplied with alpha = its own brightness,
+     *           so halo and bloom are semi-transparent and pick up light from
+     *           whatever is behind them. Enabling a fill replaces that
+     *           background, so the glow on the filled side reads dimmer than
+     *           it does under NONE - most visible with glowSide BOTH, where
+     *           only one side changes. The emission is not altered; pass an
+     *           alpha below 1 to @ref el_effect_set_opaque_color to occlude
+     *           the background only partly. */
     EL_API el_result_e el_effect_set_opaque_mode(el_effect_handle_t effect, el_opaque_mode_e mode);
     EL_API el_result_e el_effect_get_opaque_mode(el_effect_handle_t effect, el_opaque_mode_e *outMode);
 
     /** @brief Set the background fill colour used when opaque compositing is on.
-     *  @details Linear RGBA in [0,1]. Only the @c rgb channels are read
-     *           today; @c a is reserved for a future partial-fill pass. */
+     *  @details Linear RGBA in [0,1]. @c a scales how much background the fill
+     *           removes: 1 occludes it completely, 0.5 halves it (the neon
+     *           then still composites over a partly visible background, so the
+     *           halo keeps some of the brightness it had under NONE), 0
+     *           disables the fill. */
     EL_API el_result_e el_effect_set_opaque_color(el_effect_handle_t effect,
                                                   float r, float g, float b, float a);
     EL_API el_result_e el_effect_get_opaque_color(el_effect_handle_t effect,
                                                   float *outR, float *outG, float *outB, float *outA);
 
-    /** @brief Feather width in pixels at the opaque fill's cutoff boundaries.
-     *  @details Applied only when @c opaqueMode != NONE. 0 = hard fill edge;
-     *           larger values soften where the fill fades to background. Kept
-     *           independent of the per-side cutoff softness so the emission
-     *           and the fill can taper at different rates. */
+    /** @brief Feather width in pixels at the opaque fill's far boundaries.
+     *  @details Applied only when @c opaqueMode != NONE, to both sides; the
+     *           d = 0 rect edge always stays pixel-crisp.
+     *
+     *           0 means "follow the emission": each side takes its own cutoff
+     *           softness when that cutoff is enabled, so the fill's edge and
+     *           the emission's fade land together (mismatched feathers leave a
+     *           dark trough ending in a hard step where the background
+     *           returns), and a side with no cutoff feathers over a wide
+     *           fraction of the glow's reach. Set non-zero only to override
+     *           both sides explicitly. */
     EL_API el_result_e el_effect_set_opaque_softness(el_effect_handle_t effect, float softness);
     EL_API el_result_e el_effect_get_opaque_softness(el_effect_handle_t effect, float *outSoftness);
 

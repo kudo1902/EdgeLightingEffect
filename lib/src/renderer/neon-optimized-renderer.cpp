@@ -1,5 +1,6 @@
 #include "renderer/neon-optimized-renderer.h"
 #include "renderer/neon-tuning.h"
+#include "renderer/neon-cutoff.h"
 #include "util/color-utils.h"
 #include "util/constants.h"
 #include "util/geometry-utils.h"
@@ -14,16 +15,6 @@ namespace EdgeLighting
 {
     namespace
     {
-        /// Pixel distance the shader should treat as the cutoff boundary.
-        /// Disabled cutoffs collapse to a huge sentinel so the shader's
-        /// smoothstep / discard math naturally no-ops on realistic geometry;
-        /// only the CPU knows this number, shaders see it as a plain uniform.
-        constexpr float CUTOFF_DISABLED_SIZE = 1.0e6f;
-        inline float GetCutoffSize(const Cutoff &c)
-        {
-            return c.enable ? c.size : CUTOFF_DISABLED_SIZE;
-        }
-
         /// CPU-side mirror of neon-optimized.frag's std140 `SegmentBlock`:
         /// int padded to 16 bytes, each vec3 element padded to a vec4 stride.
         typedef struct SegmentBlockData
@@ -229,14 +220,14 @@ namespace EdgeLighting
         mNeonShader.Unuse();
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-        // --- Pass 2a (opaque only): fullscreen black fill on the backbuffer ---
+        // --- Pass 2a (opaque only): fullscreen fill on the backbuffer ---
         // A single NDC quad + identity MVP; the black-rect fragment shader
         // shapes the silhouette from the analytic rounded-box SDF read off
-        // gl_FragCoord, with softness-aware feathering:
-        //   BOTH    -> whole viewport opaque black.
-        //   INSIDE  -> black only where d <= softEdge; off-side stays clear.
-        //   OUTSIDE -> mirror of INSIDE.
-        // Rounded corners AA cleanly via fwidth(d) - no discard, no stair-step.
+        // gl_FragCoord, with per-side softness-aware feathering. Bounds come
+        // from GetOpaqueFillParams (shared with NeonRenderer), which also
+        // stops an unbounded exterior from filling the whole viewport.
+        // Rounded corners AA cleanly via fwidth(d) - no discard, no
+        // stair-step.
         Framebuffer::BindDefault();
         glViewport(0, 0, viewportWidth, viewportHeight);
 
@@ -253,17 +244,22 @@ namespace EdgeLighting
             glm::vec2 centerFull(config.geometry.position.x + halfRectW,
                                  static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
 
+            // This pass runs at full resolution, but mQuadMargin is in
+            // scaled/FBO space - unscale it so the fallback bound matches the
+            // emission's real on-screen reach.
+            OpaqueFillParams fill = GetOpaqueFillParams(config.neon,
+                                                        mQuadMargin / std::max(scale, 1e-3f));
+
             mBlackRectShader.Use();
             mBlackRectShader.SetUniform("uMVP", identity);
             mBlackRectShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
             mBlackRectShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
             mBlackRectShader.SetUniform("uRectCenter", centerFull);
-            float opaqueSoft = std::max(config.neon.opaqueSoftness,
-                                        static_cast<float>(SIDE_SOFT_EPSILON));
             mBlackRectShader.SetUniform("uOpaqueMode", static_cast<int>(config.neon.opaqueMode));
-            mBlackRectShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
-            mBlackRectShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
-            mBlackRectShader.SetUniform("uOpaqueSoftness", opaqueSoft);
+            mBlackRectShader.SetUniform("uInsideBound", fill.insideBound);
+            mBlackRectShader.SetUniform("uOutsideBound", fill.outsideBound);
+            mBlackRectShader.SetUniform("uInsideSoftness", fill.insideSoftness);
+            mBlackRectShader.SetUniform("uOutsideSoftness", fill.outsideSoftness);
             mBlackRectShader.SetUniform("uOpaqueColor", config.neon.opaqueColor);
             mBlitVertexArray.DrawArrays(GL_TRIANGLES, 6);
             mBlackRectShader.Unuse();

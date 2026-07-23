@@ -97,7 +97,7 @@ Config
  │                         Default = one arc covering the whole perimeter.
  │                       - segments: vector<SegmentBoost> (position, length,
  │                         boost, own colorStops + blendSpace). Default empty.
- │                       - compositing: opaque + opaqueColor
+ │                       - compositing: opaqueMode + opaqueColor + opaqueSoftness
  │                       - debug: showGradientLUT, showColorStops
  ├── OptimizedNeonConfig half-res knobs (enable, resolutionScale, numSamples,
  │                       gradientLutSize, showHalfRes). *Shares* NeonConfig
@@ -159,8 +159,12 @@ Single-pass full-resolution neon stroke. Highlights:
   colour stops or blend space change. The fade blends the whole 256-texel
   LUT (not per-stop pairing), so it works even when stop counts differ.
 - **Opaque-mode background pass** - a fullscreen NDC quad drawn *behind* the
-  neon with `NeonConfig::opaqueColor`. Shape from an SDF read off
-  `gl_FragCoord`; corners AA cleanly via `fwidth`.
+  neon with `NeonConfig::opaqueColor` (its alpha scales how much background
+  the fill removes). Shape from an SDF read off `gl_FragCoord`; corners AA
+  cleanly via `fwidth`. Per-side bounds and feathers are resolved CPU-side by
+  `GetOpaqueFillParams` (`renderer/neon-cutoff.h`), shared with the optimized
+  renderer - it is also what keeps a side with no cutoff from filling the
+  whole viewport exterior.
 
 ### 4.1a Two colour-sampling spaces
 

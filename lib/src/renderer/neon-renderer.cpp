@@ -1,5 +1,6 @@
 #include "renderer/neon-renderer.h"
 #include "renderer/neon-tuning.h"
+#include "renderer/neon-cutoff.h"
 #include "util/color-utils.h"
 #include "util/constants.h"
 #include "util/geometry-utils.h"
@@ -14,16 +15,6 @@ namespace EdgeLighting
 {
     namespace
     {
-        /// Pixel distance the shader should treat as the cutoff boundary.
-        /// Disabled cutoffs collapse to a huge sentinel so the shader's
-        /// smoothstep / discard math naturally no-ops on realistic geometry;
-        /// only the CPU knows this number, shaders see it as a plain uniform.
-        constexpr float CUTOFF_DISABLED_SIZE = 1.0e6f;
-        inline float GetCutoffSize(const Cutoff &c)
-        {
-            return c.enable ? c.size : CUTOFF_DISABLED_SIZE;
-        }
-
         /// CPU-side mirror of neon.frag's std140 `SegmentBlock`: the int is
         /// padded to 16 bytes and each vec3 element to a vec4 stride.
         typedef struct SegmentBlockData
@@ -181,26 +172,26 @@ namespace EdgeLighting
         glEnable(GL_BLEND);
         glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
-        // --- Opaque-mode black background pass -----------------------------
+        // --- Opaque-mode background fill pass ------------------------------
         // A fullscreen NDC quad (identity MVP); the fragment shader shapes the
-        // black coverage from an analytic rounded-box SDF read off gl_FragCoord
-        // (highp - exact on Mali/Tizen):
-        //   BOTH    -> black everywhere (whole viewport opaque).
-        //   INSIDE  -> black only where d <= softEdge (off-side stays clear).
-        //   OUTSIDE -> mirror of INSIDE.
+        // coverage from an analytic rounded-box SDF read off gl_FragCoord
+        // (highp - exact on Mali/Tizen). Bounds and per-side feathers come
+        // from GetOpaqueFillParams, which is also what keeps an unbounded
+        // exterior from painting the whole viewport.
         if (config.neon.opaqueMode != OpaqueMode::NONE)
         {
+            OpaqueFillParams fill = GetOpaqueFillParams(config.neon, mQuadMargin);
+
             mBlackRectShader.Use();
             mBlackRectShader.SetUniform("uMVP", glm::mat4(1.0f));
             mBlackRectShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
             mBlackRectShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
             mBlackRectShader.SetUniform("uRectCenter", center);
-            float opaqueSoft = std::max(config.neon.opaqueSoftness,
-                                        static_cast<float>(SIDE_SOFT_EPSILON));
             mBlackRectShader.SetUniform("uOpaqueMode", static_cast<int>(config.neon.opaqueMode));
-            mBlackRectShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
-            mBlackRectShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
-            mBlackRectShader.SetUniform("uOpaqueSoftness", opaqueSoft);
+            mBlackRectShader.SetUniform("uInsideBound", fill.insideBound);
+            mBlackRectShader.SetUniform("uOutsideBound", fill.outsideBound);
+            mBlackRectShader.SetUniform("uInsideSoftness", fill.insideSoftness);
+            mBlackRectShader.SetUniform("uOutsideSoftness", fill.outsideSoftness);
             mBlackRectShader.SetUniform("uOpaqueColor", config.neon.opaqueColor);
             mFullVertexArray.DrawArrays(GL_TRIANGLES, 6);
             mBlackRectShader.Unuse();
