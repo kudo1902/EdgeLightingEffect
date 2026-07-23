@@ -2,6 +2,8 @@
 #include "shaders.h"
 #include "util/geometry-utils.h"
 #include "util/log-util.h"
+#include <algorithm>
+#include <cmath>
 
 namespace EdgeLighting
 {
@@ -83,6 +85,14 @@ namespace EdgeLighting
 
         constexpr float TWO_PI = 6.28318530717958647692f;
         mShaderProgram.SetUniform("uRotation", time * config.lensFlare.rotationRate * TWO_PI);
+        // Quantise the [0, 1] density into an integer slot count for the
+        // shader; the shader needs an integer so `abs(sin(a * N/2))` closes
+        // cleanly at 2 PI. MAX_RAY_SLOTS caps the top of the range so
+        // extreme densities stay artist-friendly (rays too thin to see).
+        constexpr int MAX_RAY_SLOTS = 80;
+        float clampedDensity = std::clamp(config.lensFlare.rayDensity, 0.0f, 1.0f);
+        int slots = std::max(1, static_cast<int>(std::round(clampedDensity * MAX_RAY_SLOTS)));
+        mShaderProgram.SetUniform("uRayDensity", static_cast<float>(slots));
 
         mVertexArray.DrawArrays(GL_TRIANGLES, 6);
 

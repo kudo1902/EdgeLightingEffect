@@ -899,6 +899,13 @@ void DebugUI::buildLensFlareSection(el_effect_handle_t effect)
         el_effect_set_lens_flare_spread(effect, spread);
     }
 
+    float rayDensity = 0.25f;
+    el_effect_get_lens_flare_ray_density(effect, &rayDensity);
+    if (ImGui::SliderFloat("Ray Density##Lens", &rayDensity, 0.0f, 1.0f, "%.2f"))
+    {
+        el_effect_set_lens_flare_ray_density(effect, rayDensity);
+    }
+
     float rotationRate = 0.0f;
     el_effect_get_lens_flare_rotation_rate(effect, &rotationRate);
     if (ImGui::SliderFloat("Rotation Rate##Lens", &rotationRate, -2.0f, 2.0f, "%.3f rev/s"))

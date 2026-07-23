@@ -513,6 +513,16 @@ namespace EdgeLighting
         float intensity = 1.0f;
         /// Ghost / hex-aperture strength (0 = suppress ghosts, 1 = reference).
         float spread = 1.0f;
+        /// Angular density of the ray pattern in [0, 1]. 0 = a single broad
+        /// ray, 1 = the densest packed sunburst. The renderer quantises this
+        /// to an integer slot count internally (so the shader's ray pattern
+        /// closes cleanly at the 2 PI wrap); this field is a fraction so the
+        /// caller doesn't have to think in slot counts.
+        ///
+        /// Not directly countable on screen: each slot's ray gets a random
+        /// length in [0.15x, 1.0x] (see lens-flare.frag), so some slots
+        /// produce visible spikes and others produce short stubs.
+        float rayDensity = 0.25f;
         /// Sun / ray rotation rate in revolutions per second. 0 = static;
         /// positive = counter-clockwise (screen space, y-up). Ghosts stay
         /// anchored on the sun-to-centre axis and are not rotated.
@@ -527,6 +537,7 @@ namespace EdgeLighting
                    color == o.color &&
                    intensity == o.intensity &&
                    spread == o.spread &&
+                   rayDensity == o.rayDensity &&
                    rotationRate == o.rotationRate;
         }
         bool operator!=(const LensFlareConfig &o) const { return !(*this == o); }

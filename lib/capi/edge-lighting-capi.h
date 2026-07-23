@@ -734,6 +734,15 @@ extern "C"
     EL_API el_result_e el_effect_set_lens_flare_spread(el_effect_handle_t effect, float spread);
     EL_API el_result_e el_effect_get_lens_flare_spread(el_effect_handle_t effect, float *outSpread);
 
+    /** @brief Angular density of the ray pattern in [0, 1].
+     *  @details 0 = a single broad ray, 1 = the densest sunburst. The value
+     *           is quantised to an integer slot count internally so the
+     *           pattern closes cleanly at the 2 PI wrap. NOT a literal count
+     *           of visible rays - per-ray length randomisation hides some
+     *           slots as short stubs. */
+    EL_API el_result_e el_effect_set_lens_flare_ray_density(el_effect_handle_t effect, float rayDensity);
+    EL_API el_result_e el_effect_get_lens_flare_ray_density(el_effect_handle_t effect, float *outRayDensity);
+
     /** @brief Sun / ray rotation rate in revolutions per second (0 = static).
      *  @details Ghost groups stay anchored on the sun-to-centre axis; only
      *           the sun disc and rays spin. */

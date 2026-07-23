@@ -1595,6 +1595,22 @@ extern "C"
         return EL_SUCCESS;
     }
 
+    el_result_e el_effect_set_lens_flare_ray_density(el_effect_handle_t effect, float rayDensity)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ray_density");
+        SET_AND_LOG(effect->config.lensFlare.rayDensity, rayDensity,
+                    "effect=%p, rayDensity=%f", (void *)effect, rayDensity);
+    }
+
+    el_result_e el_effect_get_lens_flare_ray_density(el_effect_handle_t effect, float *outRayDensity)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ray_density");
+        VALIDATE_OUT_PTR(outRayDensity, "el_effect_get_lens_flare_ray_density");
+        *outRayDensity = effect->config.lensFlare.rayDensity;
+        LOG_D("effect=%p, rayDensity=%f", (void *)effect, *outRayDensity);
+        return EL_SUCCESS;
+    }
+
     el_result_e el_effect_set_lens_flare_rotation_rate(el_effect_handle_t effect, float rate)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_rotation_rate");

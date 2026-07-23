@@ -36,6 +36,7 @@ uniform float uIntensity;    // Master brightness multiplier.
 uniform float uSpread;       // Ghost strength (0 = suppress ghosts, 1 = reference look).
 uniform float uSize;         // Sun-core / rays size scale (1 = reference); ghosts unaffected.
 uniform float uRotation;     // Ray-angle offset in radians; drives sun/ray spin.
+uniform float uRayDensity;   // Angular density of the ray pattern (see the doc block on the ray recipe).
 
 float rnd(vec2 p) { return fract(sin(dot(p, vec2(12.1234, 72.8392)) * 45123.2)); }
 float rnd(float w) { return fract(sin(w) * 1000.0); }
@@ -84,16 +85,36 @@ void main()
     }
 
     // --- Sun rays + core; tint governed by uSunColor. Size scale divides the
-    // distance so uSize > 1 grows the disc/rays and uSize < 1 shrinks them;
-    // the reference constants (5, 10, 4) stay so uSize = 1 matches Xlc3D2.
+    // distance so uSize > 1 grows the disc/rays and uSize < 1 shrinks them.
+    //
+    // Ray recipe for a "sunburst" look:
+    //   primary  = pow(|sin(a * N/2)|, 8)  -> N very thin countable spikes.
+    //   sub      = pow(|cos(a * N/2)|, 20) -> even thinner "sparkle" needles
+    //              at the half-angles between primaries. Fainter (0.15 weight).
+    //   lenMod   = per-ray hash-based length scale in [0.15, 1.0]. Slots are
+    //              indexed off @c mod(a, 2 PI) so the hash is stable across
+    //              rotation, and slot boundaries land at primary valleys
+    //              (primary = 0) so hash discontinuities are invisible.
+    //              Applied to both primary and sub, so short rays are short
+    //              in ALL their layers - avoids "flower" uniformity.
+    const float TWO_PI = 6.28318530717958647692;
     float a       = atan(uv.y - sunUV.y, uv.x - sunUV.x) + uRotation;
     float sunDist = length(uv - sunUV);
     float sDist   = sunDist / max(uSize, 1e-3);
     vec3  sunTint = uSunColor.rgb;
 
-    color += max(0.1 / pow(sDist * 5.0,  5.0), 0.0) * abs(sin(a * 5.0 + cos(a * 9.0))) / 20.0 * sunTint;
+    float N        = float(uRayDensity);
+    float aWrapped = mod(a, TWO_PI);
+    float slot     = floor(aWrapped * N / TWO_PI);
+    float rand     = fract(sin(slot * 43.7583) * 12345.67);
+    float lenMod   = 0.15 + 0.85 * rand;
+    float primary  = pow(abs(sin(a * N * 0.5)), 8.0)  * lenMod;
+    float sub      = pow(abs(cos(a * N * 0.5)), 20.0) * lenMod * 0.15;
+    float ray      = primary + sub;
+
+    color += max(0.1 / pow(sDist * 5.0,  5.0), 0.0) * ray / 20.0 * sunTint;
     color += (max(0.1 / pow(sDist * 10.0, 1.0 / 20.0), 0.0)
-              + abs(sin(a * 3.0 + cos(a * 9.0))) / 8.0 * abs(sin(a * 9.0))) * sunTint;
+              + ray / 8.0) * sunTint;
     color += max(0.1 / pow(sDist * 4.0, 0.5), 0.0) * 4.0
              * vec3(0.2, 0.21, 0.3) * 4.0 * sunTint;
 
