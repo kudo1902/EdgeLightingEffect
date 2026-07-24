@@ -537,6 +537,20 @@ namespace EdgeLighting
         /// to a single @c ghostColor for every ghost (1.0). Ghost brightness /
         /// falloff is unaffected; only the hue is tinted.
         float ghostTint = 0.0f;
+        /// When true, the ghost cluster spins around the sun together with the
+        /// rays (driven by @c rotationRate); when false it stays anchored on
+        /// the sun-to-centre axis (the original behaviour). No effect when
+        /// @c rotationRate is 0.
+        bool ghostsFollowRotation = true;
+        /// Static starting angle in degrees for the ghost trail, measured from
+        /// the screen X axis (horizontal, counter-clockwise, screen space
+        /// y-up). The trail direction is absolute in screen space through the
+        /// sun, so it no longer depends on where the sun sits relative to the
+        /// centre. Added on top of the animated rotation, so it sets the phase
+        /// at time 0 when @c ghostsFollowRotation is true and a fixed
+        /// orientation when it is false. 0 = a horizontal trail through the
+        /// sun; 90 = vertical.
+        float ghostRotationOffset = 0.0f;
         /// Angular density of the ray pattern in [0, 1]. 0 = a single broad
         /// ray, 1 = the densest packed sunburst. The renderer quantises this
         /// to an integer slot count internally (so the shader's ray pattern
@@ -548,8 +562,8 @@ namespace EdgeLighting
         /// produce visible spikes and others produce short stubs.
         float rayDensity = 0.25f;
         /// Sun / ray rotation rate in revolutions per second. 0 = static;
-        /// positive = counter-clockwise (screen space, y-up). Ghosts stay
-        /// anchored on the sun-to-centre axis and are not rotated.
+        /// positive = counter-clockwise (screen space, y-up). The ghost cluster
+        /// spins along with the rays unless @c ghostsFollowRotation is false.
         float rotationRate = 0.0f;
 
         bool operator==(const LensFlareConfig &o) const
@@ -566,6 +580,8 @@ namespace EdgeLighting
                    ghostOffset == o.ghostOffset &&
                    ghostColor == o.ghostColor &&
                    ghostTint == o.ghostTint &&
+                   ghostsFollowRotation == o.ghostsFollowRotation &&
+                   ghostRotationOffset == o.ghostRotationOffset &&
                    rayDensity == o.rayDensity &&
                    rotationRate == o.rotationRate;
         }

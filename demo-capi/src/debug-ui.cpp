@@ -947,6 +947,21 @@ void DebugUI::buildLensFlareSection(el_effect_handle_t effect)
     {
         el_effect_set_lens_flare_rotation_rate(effect, rotationRate);
     }
+
+    el_bool_t ghostsFollowRotation = 1;
+    el_effect_get_lens_flare_ghosts_follow_rotation(effect, &ghostsFollowRotation);
+    bool follow = ghostsFollowRotation != 0;
+    if (ImGui::Checkbox("Ghosts Follow Rotation##Lens", &follow))
+    {
+        el_effect_set_lens_flare_ghosts_follow_rotation(effect, follow ? 1 : 0);
+    }
+
+    float ghostRotOffset = 0.0f;
+    el_effect_get_lens_flare_ghost_rotation_offset(effect, &ghostRotOffset);
+    if (ImGui::SliderFloat("Ghost Rot Offset##Lens", &ghostRotOffset, -180.0f, 180.0f, "%.1f deg"))
+    {
+        el_effect_set_lens_flare_ghost_rotation_offset(effect, ghostRotOffset);
+    }
 }
 
 // ---------------------------------------------------------------------------

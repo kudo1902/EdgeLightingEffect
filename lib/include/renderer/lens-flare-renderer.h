@@ -32,6 +32,14 @@ namespace EdgeLighting
         Config mCurrentConfig;
         ShaderProgram mShaderProgram;
         VertexArray mVertexArray{"LensFlare"};
+        /// Ghost spin angle in radians, accumulated per-frame from the clock
+        /// delta so changing the rate or toggling follow never applies a rate
+        /// to past time (which would jump the trail), and so it freezes with
+        /// the clock on pause just like the rays. Held at 0 while the ghosts
+        /// are not following, so enabling rotation always starts at the offset.
+        float mGhostSpin = 0.0f;
+        /// Previous clock time seen in Update, for the clock-delta above.
+        float mPrevClockTime = 0.0f;
     };
 }
 

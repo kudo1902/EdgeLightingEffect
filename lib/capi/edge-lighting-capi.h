@@ -771,6 +771,24 @@ extern "C"
     EL_API el_result_e el_effect_set_lens_flare_ghost_tint(el_effect_handle_t effect, float ghostTint);
     EL_API el_result_e el_effect_get_lens_flare_ghost_tint(el_effect_handle_t effect, float *outGhostTint);
 
+    /** @brief Whether the ghost cluster spins around the sun together with the
+     *         rays (driven by the rotation rate).
+     *  @details EL_TRUE (default) = ghosts follow the ray rotation; EL_FALSE =
+     *           ghosts stay anchored on the sun-to-centre axis. No effect when
+     *           the rotation rate is 0. */
+    EL_API el_result_e el_effect_set_lens_flare_ghosts_follow_rotation(el_effect_handle_t effect, el_bool_t follow);
+    EL_API el_result_e el_effect_get_lens_flare_ghosts_follow_rotation(el_effect_handle_t effect, el_bool_t *outFollow);
+
+    /** @brief Static starting angle (degrees) for the ghost trail, measured
+     *         from the screen X axis (horizontal, counter-clockwise, y-up).
+     *  @details The trail direction is absolute in screen space through the sun
+     *           (it no longer tracks the sun-to-centre line). Added on top of
+     *           the animated rotation: sets the phase at time 0 when ghosts
+     *           follow rotation, and a fixed orientation when they do not.
+     *           0 = horizontal trail, 90 = vertical. */
+    EL_API el_result_e el_effect_set_lens_flare_ghost_rotation_offset(el_effect_handle_t effect, float degrees);
+    EL_API el_result_e el_effect_get_lens_flare_ghost_rotation_offset(el_effect_handle_t effect, float *outDegrees);
+
     /** @brief Angular density of the ray pattern in [0, 1].
      *  @details 0 = a single broad ray, 1 = the densest sunburst. The value
      *           is quantised to an integer slot count internally so the

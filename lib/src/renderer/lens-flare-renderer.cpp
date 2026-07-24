@@ -18,8 +18,28 @@ namespace EdgeLighting
         return true;
     }
 
-    void LensFlareRenderer::Update(float, float, const Config &)
+    void LensFlareRenderer::Update(float, float time, const Config &config)
     {
+        constexpr float TWO_PI = 6.28318530717958647692f;
+        // Clock delta (frozen on pause), so ghosts integrate the same time the
+        // rays do rather than raw frame time.
+        float clockDelta = time - mPrevClockTime;
+        mPrevClockTime = time;
+
+        if (config.lensFlare.ghostsFollowRotation)
+        {
+            // Integrate the spin from the instantaneous rate so a rate change
+            // takes effect from *now*, never retroactively over the whole
+            // clock. Wrap to keep the float bounded over long runs.
+            mGhostSpin += clockDelta * config.lensFlare.rotationRate * TWO_PI;
+            mGhostSpin = fmodf(mGhostSpin, TWO_PI);
+        }
+        else
+        {
+            // Not following: hold at 0 so the trail rests at the offset and the
+            // next enable starts the rotation cleanly from there.
+            mGhostSpin = 0.0f;
+        }
     }
 
     void LensFlareRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
@@ -86,6 +106,10 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uGhostOffset", config.lensFlare.ghostOffset);
         mShaderProgram.SetUniform("uGhostColor", config.lensFlare.ghostColor);
         mShaderProgram.SetUniform("uGhostTint", config.lensFlare.ghostTint);
+        mShaderProgram.SetUniform("uGhostSpin", mGhostSpin);
+        constexpr float DEG_TO_RAD = 3.14159265358979323846f / 180.0f;
+        mShaderProgram.SetUniform("uGhostRotationOffset",
+                                  config.lensFlare.ghostRotationOffset * DEG_TO_RAD);
         mShaderProgram.SetUniform("uSize", config.lensFlare.size);
 
         constexpr float TWO_PI = 6.28318530717958647692f;

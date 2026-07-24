@@ -948,6 +948,8 @@ void DebugUI::buildLensFlareSection(EdgeLighting::Config &cfg)
     ImGui::SliderFloat("Ghost Tint##Lens", &cfg.lensFlare.ghostTint, 0.0f, 1.0f, "%.2f");
     ImGui::SliderFloat("Ray Density##Lens", &cfg.lensFlare.rayDensity, 0.0f, 1.0f, "%.2f");
     ImGui::SliderFloat("Rotation Rate##Lens", &cfg.lensFlare.rotationRate, -2.0f, 2.0f, "%.3f rev/s");
+    ImGui::Checkbox("Ghosts Follow Rotation##Lens", &cfg.lensFlare.ghostsFollowRotation);
+    ImGui::SliderFloat("Ghost Rot Offset##Lens", &cfg.lensFlare.ghostRotationOffset, -180.0f, 180.0f, "%.1f deg");
 }
 
 void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg,

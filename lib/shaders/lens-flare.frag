@@ -42,6 +42,8 @@ uniform float uGhostSize;     // Uniform per-ghost size/falloff exponent, shared
 uniform float uGhostOffset;   // Signed shift of every ghost's distance along the sun axis. 0 = reference (blooms at centre); negative pulls the cluster toward the sun/border.
 uniform vec3  uGhostColor;    // Tint the ghosts lean toward when uGhostTint > 0.
 uniform float uGhostTint;     // Blend from the procedural rainbow (0) to a single uGhostColor (1).
+uniform float uGhostSpin;           // Accumulated ghost spin angle (radians). Host holds it at 0 while not following and grows it from 0 when enabled, so rotation starts at the offset with no jump.
+uniform float uGhostRotationOffset; // Static starting angle (radians) measured from the screen X axis; makes the trail direction screen-absolute.
 
 float rnd(vec2 p) { return fract(sin(dot(p, vec2(12.1234, 72.8392)) * 45123.2)); }
 float rnd(float w) { return fract(sin(w) * 1000.0); }
@@ -89,6 +91,25 @@ void main()
     // uGhostSpacing stretches the placement axis so ghosts spread further
     // apart without touching their per-ghost colour/size (both keyed off
     // ghostDist, which is left unscaled).
+    //
+    // Spin the whole cluster around the sun by rotating the ghost SAMPLE point
+    // about the sun. uGhostSpin is the host-accumulated spin angle (0 while not
+    // following, growing from 0 once enabled) so the motion starts at the
+    // offset with no jump.
+    //
+    // The trail direction is measured absolutely in screen space. As dist
+    // varies, a ghost moves along -R(-grot)*sunUV, whose angle is
+    // (sunToCentre - grot). Setting grot = sunToCentre - offset + spin makes
+    // the resulting trail angle = offset - spin, i.e. offset degrees from the
+    // screen X axis (0 = horizontal, PI/2 = vertical), independent of where the
+    // sun sits, spinning in the rays' direction from that start.
+    float sunToCentre = atan(-sunUV.y, -sunUV.x);
+    float grot = sunToCentre - uGhostRotationOffset + uGhostSpin;
+    float gcos = cos(grot);
+    float gsin = sin(grot);
+    vec2  gd   = uv - sunUV;
+    vec2  guv  = sunUV + vec2(gcos * gd.x - gsin * gd.y,
+                              gsin * gd.x + gcos * gd.y);
     vec2 ghostAxis = sunUV * uGhostSpacing;
     for (float i = 0.0; i < 10.0; i++)
     {
@@ -98,7 +119,7 @@ void main()
         // screen centre and dist ~ -1 is the sun, so a negative offset pulls
         // the ghosts off centre and up against the sun / border edge.
         float ghostDist = rnd(i * 20.0) * 3.0 + 0.2 - 0.5 + uGhostOffset;
-        color += circle(uv, uGhostSize, ghostDist, ghostAxis) * uSpread;
+        color += circle(guv, uGhostSize, ghostDist, ghostAxis) * uSpread;
     }
 
     // --- Sun rays + core; tint governed by uSunColor. Size scale divides the

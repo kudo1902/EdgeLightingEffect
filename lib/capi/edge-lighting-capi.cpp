@@ -1681,6 +1681,38 @@ extern "C"
         return EL_SUCCESS;
     }
 
+    el_result_e el_effect_set_lens_flare_ghosts_follow_rotation(el_effect_handle_t effect, el_bool_t follow)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghosts_follow_rotation");
+        SET_AND_LOG(effect->config.lensFlare.ghostsFollowRotation, follow != 0,
+                    "effect=%p, follow=%d", (void *)effect, follow);
+    }
+
+    el_result_e el_effect_get_lens_flare_ghosts_follow_rotation(el_effect_handle_t effect, el_bool_t *outFollow)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghosts_follow_rotation");
+        VALIDATE_OUT_PTR(outFollow, "el_effect_get_lens_flare_ghosts_follow_rotation");
+        *outFollow = effect->config.lensFlare.ghostsFollowRotation ? 1 : 0;
+        LOG_D("effect=%p, follow=%d", (void *)effect, *outFollow);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_lens_flare_ghost_rotation_offset(el_effect_handle_t effect, float degrees)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_rotation_offset");
+        SET_AND_LOG(effect->config.lensFlare.ghostRotationOffset, degrees,
+                    "effect=%p, degrees=%f", (void *)effect, degrees);
+    }
+
+    el_result_e el_effect_get_lens_flare_ghost_rotation_offset(el_effect_handle_t effect, float *outDegrees)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_rotation_offset");
+        VALIDATE_OUT_PTR(outDegrees, "el_effect_get_lens_flare_ghost_rotation_offset");
+        *outDegrees = effect->config.lensFlare.ghostRotationOffset;
+        LOG_D("effect=%p, degrees=%f", (void *)effect, *outDegrees);
+        return EL_SUCCESS;
+    }
+
     el_result_e el_effect_set_lens_flare_ray_density(el_effect_handle_t effect, float rayDensity)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ray_density");
