@@ -1681,6 +1681,24 @@ extern "C"
         return EL_SUCCESS;
     }
 
+    el_result_e el_effect_set_lens_flare_flare_center(el_effect_handle_t effect, float x, float y)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_flare_center");
+        SET_AND_LOG(effect->config.lensFlare.flareCenter, glm::vec2(x, y),
+                    "effect=%p, x=%f, y=%f", (void *)effect, x, y);
+    }
+
+    el_result_e el_effect_get_lens_flare_flare_center(el_effect_handle_t effect, float *outX, float *outY)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_flare_center");
+        VALIDATE_OUT_PTR(outX, "el_effect_get_lens_flare_flare_center");
+        VALIDATE_OUT_PTR(outY, "el_effect_get_lens_flare_flare_center");
+        *outX = effect->config.lensFlare.flareCenter.x;
+        *outY = effect->config.lensFlare.flareCenter.y;
+        LOG_D("effect=%p, x=%f, y=%f", (void *)effect, *outX, *outY);
+        return EL_SUCCESS;
+    }
+
     el_result_e el_effect_set_lens_flare_ray_density(el_effect_handle_t effect, float rayDensity)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ray_density");

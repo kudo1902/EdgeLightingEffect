@@ -42,6 +42,7 @@ uniform float uGhostSize;     // Uniform per-ghost size/falloff exponent, shared
 uniform float uGhostOffset;   // Signed shift of every ghost's distance along the sun axis. 0 = reference (blooms at centre); negative pulls the cluster toward the sun/border.
 uniform vec3  uGhostColor;    // Tint the ghosts lean toward when uGhostTint > 0.
 uniform float uGhostTint;     // Blend from the procedural rainbow (0) to a single uGhostColor (1).
+uniform vec2  uFlareCenter;   // Ghost convergence point in normalised screen coords (0..1, y-down). (0.5, 0.5) = screen centre.
 
 float rnd(vec2 p) { return fract(sin(dot(p, vec2(12.1234, 72.8392)) * 45123.2)); }
 float rnd(float w) { return fract(sin(w) * 1000.0); }
@@ -85,20 +86,29 @@ void main()
 
     vec3 color = vec3(0.0);
 
-    // --- 10 ghost groups scattered along the sun -> centre axis.
-    // uGhostSpacing stretches the placement axis so ghosts spread further
-    // apart without touching their per-ghost colour/size (both keyed off
-    // ghostDist, which is left unscaled).
-    vec2 ghostAxis = sunUV * uGhostSpacing;
+    // Ghost convergence point ("optical centre"). Converts the normalised
+    // screen coord (0..1, y-down) into this shader's aspect-corrected, y-up,
+    // centre-origin space. (0.5, 0.5) maps to (0, 0) = the screen centre, which
+    // is the reference the ghosts historically pivoted about.
+    vec2 flareCentre = vec2((uFlareCenter.x - 0.5) * aspect,
+                            0.5 - uFlareCenter.y);
+
+    // --- 10 ghost groups scattered along the sun -> flare-centre axis.
+    // Working relative to flareCentre re-anchors the whole cluster: ghostP puts
+    // dist 0 at flareCentre, and ghostAxis is the flareCentre -> sun direction,
+    // so the ghost line runs through flareCentre and the sun. uGhostSpacing
+    // stretches the placement axis without touching per-ghost colour/size.
+    vec2 ghostP    = uv    - flareCentre;
+    vec2 ghostAxis = (sunUV - flareCentre) * uGhostSpacing;
     for (float i = 0.0; i < 10.0; i++)
     {
         // uGhostSize replaces the reference's per-ghost random size so every
         // ghost reads the same size; only distance (placement) still varies.
         // uGhostOffset slides the whole cluster along the axis: dist 0 is the
-        // screen centre and dist ~ -1 is the sun, so a negative offset pulls
+        // flare centre and dist ~ -1 is the sun, so a negative offset pulls
         // the ghosts off centre and up against the sun / border edge.
         float ghostDist = rnd(i * 20.0) * 3.0 + 0.2 - 0.5 + uGhostOffset;
-        color += circle(uv, uGhostSize, ghostDist, ghostAxis) * uSpread;
+        color += circle(ghostP, uGhostSize, ghostDist, ghostAxis) * uSpread;
     }
 
     // --- Sun rays + core; tint governed by uSunColor. Size scale divides the

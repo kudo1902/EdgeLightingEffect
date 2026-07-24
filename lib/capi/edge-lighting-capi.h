@@ -771,6 +771,14 @@ extern "C"
     EL_API el_result_e el_effect_set_lens_flare_ghost_tint(el_effect_handle_t effect, float ghostTint);
     EL_API el_result_e el_effect_get_lens_flare_ghost_tint(el_effect_handle_t effect, float *outGhostTint);
 
+    /** @brief Ghost convergence / reference point in normalised screen coords
+     *         (0..1, origin top-left, y-down); (0.5, 0.5) = screen centre.
+     *  @details The ghosts pivot about this point and their sun-to-centre axis
+     *           runs through it instead of the screen centre. The sun's own
+     *           rays and vignette are unaffected. */
+    EL_API el_result_e el_effect_set_lens_flare_flare_center(el_effect_handle_t effect, float x, float y);
+    EL_API el_result_e el_effect_get_lens_flare_flare_center(el_effect_handle_t effect, float *outX, float *outY);
+
     /** @brief Angular density of the ray pattern in [0, 1].
      *  @details 0 = a single broad ray, 1 = the densest sunburst. The value
      *           is quantised to an integer slot count internally so the

@@ -946,6 +946,7 @@ void DebugUI::buildLensFlareSection(EdgeLighting::Config &cfg)
     ImGui::SliderFloat("Ghost Offset##Lens", &cfg.lensFlare.ghostOffset, -4.0f, 3.0f, "%.2f");
     ImGui::ColorEdit3("Ghost Color##Lens", &cfg.lensFlare.ghostColor.x);
     ImGui::SliderFloat("Ghost Tint##Lens", &cfg.lensFlare.ghostTint, 0.0f, 1.0f, "%.2f");
+    ImGui::SliderFloat2("Flare Center##Lens", &cfg.lensFlare.flareCenter.x, 0.0f, 1.0f, "%.2f");
     ImGui::SliderFloat("Ray Density##Lens", &cfg.lensFlare.rayDensity, 0.0f, 1.0f, "%.2f");
     ImGui::SliderFloat("Rotation Rate##Lens", &cfg.lensFlare.rotationRate, -2.0f, 2.0f, "%.3f rev/s");
 }

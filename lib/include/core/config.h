@@ -537,6 +537,12 @@ namespace EdgeLighting
         /// to a single @c ghostColor for every ghost (1.0). Ghost brightness /
         /// falloff is unaffected; only the hue is tinted.
         float ghostTint = 0.0f;
+        /// Ghost convergence / reference point in normalised screen coords
+        /// (0..1, origin top-left, y-down). The ghosts pivot about this point
+        /// and their sun->centre axis runs through it, instead of always using
+        /// the screen centre. (0.5, 0.5) = screen centre = the historical look.
+        /// The sun's own rays and vignette are unaffected.
+        glm::vec2 flareCenter = glm::vec2(0.5f, 0.5f);
         /// Angular density of the ray pattern in [0, 1]. 0 = a single broad
         /// ray, 1 = the densest packed sunburst. The renderer quantises this
         /// to an integer slot count internally (so the shader's ray pattern
@@ -566,6 +572,7 @@ namespace EdgeLighting
                    ghostOffset == o.ghostOffset &&
                    ghostColor == o.ghostColor &&
                    ghostTint == o.ghostTint &&
+                   flareCenter == o.flareCenter &&
                    rayDensity == o.rayDensity &&
                    rotationRate == o.rotationRate;
         }

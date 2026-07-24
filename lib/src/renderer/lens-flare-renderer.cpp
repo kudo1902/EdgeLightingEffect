@@ -86,6 +86,7 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uGhostOffset", config.lensFlare.ghostOffset);
         mShaderProgram.SetUniform("uGhostColor", config.lensFlare.ghostColor);
         mShaderProgram.SetUniform("uGhostTint", config.lensFlare.ghostTint);
+        mShaderProgram.SetUniform("uFlareCenter", config.lensFlare.flareCenter);
         mShaderProgram.SetUniform("uSize", config.lensFlare.size);
 
         constexpr float TWO_PI = 6.28318530717958647692f;

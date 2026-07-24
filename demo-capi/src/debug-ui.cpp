@@ -934,6 +934,13 @@ void DebugUI::buildLensFlareSection(el_effect_handle_t effect)
         el_effect_set_lens_flare_ghost_tint(effect, ghostTint);
     }
 
+    float flareCenter[2] = {0.5f, 0.5f};
+    el_effect_get_lens_flare_flare_center(effect, &flareCenter[0], &flareCenter[1]);
+    if (ImGui::SliderFloat2("Flare Center##Lens", flareCenter, 0.0f, 1.0f, "%.2f"))
+    {
+        el_effect_set_lens_flare_flare_center(effect, flareCenter[0], flareCenter[1]);
+    }
+
     float rayDensity = 0.25f;
     el_effect_get_lens_flare_ray_density(effect, &rayDensity);
     if (ImGui::SliderFloat("Ray Density##Lens", &rayDensity, 0.0f, 1.0f, "%.2f"))
