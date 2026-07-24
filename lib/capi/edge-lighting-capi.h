@@ -734,6 +734,43 @@ extern "C"
     EL_API el_result_e el_effect_set_lens_flare_spread(el_effect_handle_t effect, float spread);
     EL_API el_result_e el_effect_get_lens_flare_spread(el_effect_handle_t effect, float *outSpread);
 
+    /** @brief Stretch of the ghost placement along the sun-to-centre axis
+     *         (1.0 = reference spacing).
+     *  @details Reference spacing scales with the sun-to-centre distance, so
+     *           ghosts crowd together when the sun sits near a screen edge
+     *           (e.g. top-centre) and spread out at a corner. Raise this to
+     *           push them apart. Placement only - colour and size are
+     *           unchanged. */
+    EL_API el_result_e el_effect_set_lens_flare_ghost_spacing(el_effect_handle_t effect, float ghostSpacing);
+    EL_API el_result_e el_effect_get_lens_flare_ghost_spacing(el_effect_handle_t effect, float *outGhostSpacing);
+
+    /** @brief Uniform ghost size / falloff exponent shared by every ghost
+     *         (default 2.2 = reference average).
+     *  @details The reference gave each ghost a random size; this fixes them
+     *           all to one value so they read as the same size. Larger =
+     *           bigger, softer ghosts. */
+    EL_API el_result_e el_effect_set_lens_flare_ghost_size(el_effect_handle_t effect, float ghostSize);
+    EL_API el_result_e el_effect_get_lens_flare_ghost_size(el_effect_handle_t effect, float *outGhostSize);
+
+    /** @brief Signed shift of the ghost cluster along the sun-to-centre axis
+     *         (0.0 = reference, negative pulls toward the sun / border).
+     *  @details dist 0 is the screen centre and dist ~ -1 sits on the sun, so
+     *           negative values move the ghosts off centre and up against the
+     *           border edge where the sun rides. Default is -1.5. */
+    EL_API el_result_e el_effect_set_lens_flare_ghost_offset(el_effect_handle_t effect, float ghostOffset);
+    EL_API el_result_e el_effect_get_lens_flare_ghost_offset(el_effect_handle_t effect, float *outGhostOffset);
+
+    /** @brief Colour the ghosts lean toward when the tint amount > 0 (linear RGB). */
+    EL_API el_result_e el_effect_set_lens_flare_ghost_color(el_effect_handle_t effect,
+                                                            float r, float g, float b);
+    EL_API el_result_e el_effect_get_lens_flare_ghost_color(el_effect_handle_t effect,
+                                                            float *outR, float *outG, float *outB);
+
+    /** @brief Blend from the procedural ghost rainbow (0.0) to a single ghost
+     *         colour for every ghost (1.0). Hue only - brightness unaffected. */
+    EL_API el_result_e el_effect_set_lens_flare_ghost_tint(el_effect_handle_t effect, float ghostTint);
+    EL_API el_result_e el_effect_get_lens_flare_ghost_tint(el_effect_handle_t effect, float *outGhostTint);
+
     /** @brief Angular density of the ray pattern in [0, 1].
      *  @details 0 = a single broad ray, 1 = the densest sunburst. The value
      *           is quantised to an integer slot count internally so the

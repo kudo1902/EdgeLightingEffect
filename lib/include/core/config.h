@@ -513,6 +513,30 @@ namespace EdgeLighting
         float intensity = 1.0f;
         /// Ghost / hex-aperture strength (0 = suppress ghosts, 1 = reference).
         float spread = 1.0f;
+        /// Stretches the ghost placement along the sun-to-centre axis
+        /// (1.0 = reference spacing). Because reference spacing is
+        /// proportional to the sun-to-centre distance, ghosts crowd together
+        /// when the sun sits near a screen edge (e.g. top-centre) and spread
+        /// out at a corner; raise this to push them apart in the crowded case.
+        /// Affects placement only - per-ghost colour and size are unchanged.
+        float ghostSpacing = 1.0f;
+        /// Uniform ghost size / falloff exponent shared by every ghost. The
+        /// reference gave each ghost a random size in ~[1.4, 4.7]; this fixes
+        /// them all to one value so they read as the same size. Larger = bigger
+        /// softer ghosts. Default matches the reference's average look.
+        float ghostSize = 2.2f;
+        /// Signed shift of every ghost's distance along the sun-to-centre
+        /// axis. dist 0 is the screen centre and dist ~ -1 sits on the sun, so
+        /// 0.0 = reference (ghosts bloom around the centre) and negative values
+        /// pull the whole cluster off centre and up against the sun / border
+        /// edge. Default biases the ghosts toward the border.
+        float ghostOffset = -1.5f;
+        /// Colour the ghosts lean toward when @c ghostTint > 0 (linear RGB).
+        glm::vec3 ghostColor = glm::vec3(1.0f, 1.0f, 1.0f);
+        /// Blend from the procedural per-ghost rainbow (0.0 = reference look)
+        /// to a single @c ghostColor for every ghost (1.0). Ghost brightness /
+        /// falloff is unaffected; only the hue is tinted.
+        float ghostTint = 0.0f;
         /// Angular density of the ray pattern in [0, 1]. 0 = a single broad
         /// ray, 1 = the densest packed sunburst. The renderer quantises this
         /// to an integer slot count internally (so the shader's ray pattern
@@ -537,6 +561,11 @@ namespace EdgeLighting
                    color == o.color &&
                    intensity == o.intensity &&
                    spread == o.spread &&
+                   ghostSpacing == o.ghostSpacing &&
+                   ghostSize == o.ghostSize &&
+                   ghostOffset == o.ghostOffset &&
+                   ghostColor == o.ghostColor &&
+                   ghostTint == o.ghostTint &&
                    rayDensity == o.rayDensity &&
                    rotationRate == o.rotationRate;
         }

@@ -1595,6 +1595,92 @@ extern "C"
         return EL_SUCCESS;
     }
 
+    el_result_e el_effect_set_lens_flare_ghost_spacing(el_effect_handle_t effect, float ghostSpacing)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_spacing");
+        SET_AND_LOG(effect->config.lensFlare.ghostSpacing, ghostSpacing,
+                    "effect=%p, ghostSpacing=%f", (void *)effect, ghostSpacing);
+    }
+
+    el_result_e el_effect_get_lens_flare_ghost_spacing(el_effect_handle_t effect, float *outGhostSpacing)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_spacing");
+        VALIDATE_OUT_PTR(outGhostSpacing, "el_effect_get_lens_flare_ghost_spacing");
+        *outGhostSpacing = effect->config.lensFlare.ghostSpacing;
+        LOG_D("effect=%p, ghostSpacing=%f", (void *)effect, *outGhostSpacing);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_lens_flare_ghost_size(el_effect_handle_t effect, float ghostSize)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_size");
+        SET_AND_LOG(effect->config.lensFlare.ghostSize, ghostSize,
+                    "effect=%p, ghostSize=%f", (void *)effect, ghostSize);
+    }
+
+    el_result_e el_effect_get_lens_flare_ghost_size(el_effect_handle_t effect, float *outGhostSize)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_size");
+        VALIDATE_OUT_PTR(outGhostSize, "el_effect_get_lens_flare_ghost_size");
+        *outGhostSize = effect->config.lensFlare.ghostSize;
+        LOG_D("effect=%p, ghostSize=%f", (void *)effect, *outGhostSize);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_lens_flare_ghost_offset(el_effect_handle_t effect, float ghostOffset)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_offset");
+        SET_AND_LOG(effect->config.lensFlare.ghostOffset, ghostOffset,
+                    "effect=%p, ghostOffset=%f", (void *)effect, ghostOffset);
+    }
+
+    el_result_e el_effect_get_lens_flare_ghost_offset(el_effect_handle_t effect, float *outGhostOffset)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_offset");
+        VALIDATE_OUT_PTR(outGhostOffset, "el_effect_get_lens_flare_ghost_offset");
+        *outGhostOffset = effect->config.lensFlare.ghostOffset;
+        LOG_D("effect=%p, ghostOffset=%f", (void *)effect, *outGhostOffset);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_lens_flare_ghost_color(el_effect_handle_t effect,
+                                                     float r, float g, float b)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_color");
+        SET_AND_LOG(effect->config.lensFlare.ghostColor, glm::vec3(r, g, b),
+                    "effect=%p, r=%f, g=%f, b=%f", (void *)effect, r, g, b);
+    }
+
+    el_result_e el_effect_get_lens_flare_ghost_color(el_effect_handle_t effect,
+                                                     float *outR, float *outG, float *outB)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_color");
+        VALIDATE_OUT_PTR(outR, "el_effect_get_lens_flare_ghost_color");
+        VALIDATE_OUT_PTR(outG, "el_effect_get_lens_flare_ghost_color");
+        VALIDATE_OUT_PTR(outB, "el_effect_get_lens_flare_ghost_color");
+        *outR = effect->config.lensFlare.ghostColor.r;
+        *outG = effect->config.lensFlare.ghostColor.g;
+        *outB = effect->config.lensFlare.ghostColor.b;
+        LOG_D("effect=%p, r=%f, g=%f, b=%f", (void *)effect, *outR, *outG, *outB);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_lens_flare_ghost_tint(el_effect_handle_t effect, float ghostTint)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_tint");
+        SET_AND_LOG(effect->config.lensFlare.ghostTint, ghostTint,
+                    "effect=%p, ghostTint=%f", (void *)effect, ghostTint);
+    }
+
+    el_result_e el_effect_get_lens_flare_ghost_tint(el_effect_handle_t effect, float *outGhostTint)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_tint");
+        VALIDATE_OUT_PTR(outGhostTint, "el_effect_get_lens_flare_ghost_tint");
+        *outGhostTint = effect->config.lensFlare.ghostTint;
+        LOG_D("effect=%p, ghostTint=%f", (void *)effect, *outGhostTint);
+        return EL_SUCCESS;
+    }
+
     el_result_e el_effect_set_lens_flare_ray_density(el_effect_handle_t effect, float rayDensity)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ray_density");

@@ -81,6 +81,11 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uSunColor", config.lensFlare.color);
         mShaderProgram.SetUniform("uIntensity", config.lensFlare.intensity);
         mShaderProgram.SetUniform("uSpread", config.lensFlare.spread);
+        mShaderProgram.SetUniform("uGhostSpacing", config.lensFlare.ghostSpacing);
+        mShaderProgram.SetUniform("uGhostSize", config.lensFlare.ghostSize);
+        mShaderProgram.SetUniform("uGhostOffset", config.lensFlare.ghostOffset);
+        mShaderProgram.SetUniform("uGhostColor", config.lensFlare.ghostColor);
+        mShaderProgram.SetUniform("uGhostTint", config.lensFlare.ghostTint);
         mShaderProgram.SetUniform("uSize", config.lensFlare.size);
 
         constexpr float TWO_PI = 6.28318530717958647692f;

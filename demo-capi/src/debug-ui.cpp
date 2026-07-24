@@ -899,6 +899,41 @@ void DebugUI::buildLensFlareSection(el_effect_handle_t effect)
         el_effect_set_lens_flare_spread(effect, spread);
     }
 
+    float ghostSpacing = 1.0f;
+    el_effect_get_lens_flare_ghost_spacing(effect, &ghostSpacing);
+    if (ImGui::SliderFloat("Ghost Spacing##Lens", &ghostSpacing, 0.1f, 4.0f, "%.2f"))
+    {
+        el_effect_set_lens_flare_ghost_spacing(effect, ghostSpacing);
+    }
+
+    float ghostSize = 2.2f;
+    el_effect_get_lens_flare_ghost_size(effect, &ghostSize);
+    if (ImGui::SliderFloat("Ghost Size##Lens", &ghostSize, 1.0f, 5.0f, "%.2f"))
+    {
+        el_effect_set_lens_flare_ghost_size(effect, ghostSize);
+    }
+
+    float ghostOffset = -1.5f;
+    el_effect_get_lens_flare_ghost_offset(effect, &ghostOffset);
+    if (ImGui::SliderFloat("Ghost Offset##Lens", &ghostOffset, -4.0f, 3.0f, "%.2f"))
+    {
+        el_effect_set_lens_flare_ghost_offset(effect, ghostOffset);
+    }
+
+    float ghostColor[3] = {1.0f, 1.0f, 1.0f};
+    el_effect_get_lens_flare_ghost_color(effect, &ghostColor[0], &ghostColor[1], &ghostColor[2]);
+    if (ImGui::ColorEdit3("Ghost Color##Lens", ghostColor))
+    {
+        el_effect_set_lens_flare_ghost_color(effect, ghostColor[0], ghostColor[1], ghostColor[2]);
+    }
+
+    float ghostTint = 0.0f;
+    el_effect_get_lens_flare_ghost_tint(effect, &ghostTint);
+    if (ImGui::SliderFloat("Ghost Tint##Lens", &ghostTint, 0.0f, 1.0f, "%.2f"))
+    {
+        el_effect_set_lens_flare_ghost_tint(effect, ghostTint);
+    }
+
     float rayDensity = 0.25f;
     el_effect_get_lens_flare_ray_density(effect, &rayDensity);
     if (ImGui::SliderFloat("Ray Density##Lens", &rayDensity, 0.0f, 1.0f, "%.2f"))

@@ -14,8 +14,8 @@ precision highp float;
 //
 // Structure (matches the reference so the visual reads the same):
 //   10x ghosts    - `circle()` called in a loop. Each iteration is a group of
-//                   {big pow-based ghost, ring, tiny bright dot, hex sprite}
-//                   at a pseudo-random distance / size along the sun axis.
+//                   {big pow-based ghost, ring, hex sprite} at a pseudo-random
+//                   distance / size along the sun axis.
 //                   Hex shape comes from regShape(N=6).
 //   sun rays+core - three layered terms on top of the ghosts, tinted by
 //                   uSunColor so the sun's temperature is controllable.
@@ -37,6 +37,11 @@ uniform float uSpread;       // Ghost strength (0 = suppress ghosts, 1 = referen
 uniform float uSize;         // Sun-core / rays size scale (1 = reference); ghosts unaffected.
 uniform float uRotation;     // Ray-angle offset in radians; drives sun/ray spin.
 uniform float uRayDensity;   // Angular density of the ray pattern (see the doc block on the ray recipe).
+uniform float uGhostSpacing;  // Ghost placement stretch along the sun axis (1 = reference). Scales spread only, not colour/size.
+uniform float uGhostSize;     // Uniform per-ghost size/falloff exponent, shared by every ghost so they all read the same size.
+uniform float uGhostOffset;   // Signed shift of every ghost's distance along the sun axis. 0 = reference (blooms at centre); negative pulls the cluster toward the sun/border.
+uniform vec3  uGhostColor;    // Tint the ghosts lean toward when uGhostTint > 0.
+uniform float uGhostTint;     // Blend from the procedural rainbow (0) to a single uGhostColor (1).
 
 float rnd(vec2 p) { return fract(sin(dot(p, vec2(12.1234, 72.8392)) * 45123.2)); }
 float rnd(float w) { return fract(sin(w) * 1000.0); }
@@ -56,14 +61,18 @@ vec3 circle(vec2 p, float size, float dist, vec2 sunUV)
     float l  = length(p + sunUV * (dist * 4.0)) + size / 2.0;
     float c  = max(0.01 - pow(length(p + sunUV * dist), size * 1.4), 0.0) * 50.0;
     float c1 = max(0.001 - pow(l - 0.3, 1.0 / 40.0) + sin(l * 30.0), 0.0) * 3.0;
-    float c2 = max(0.04 / pow(length(p - sunUV * dist / 2.0 + 0.09), 1.0), 0.0) / 20.0;
     float s  = max(0.01 - pow(regShape(p * 5.0 + sunUV * dist * 5.0 + 0.9, 6.0), 1.0), 0.0) * 5.0;
 
     // Procedural per-ghost palette; distance-modulated so no two ghosts read
     // the same colour. This overrode the reference's caller-supplied colour
     // params, so those params are dropped in this port.
     vec3 color = cos(vec3(0.44, 0.24, 0.2) * 8.0 + dist * 4.0) * 0.5 + 0.5;
-    return (c + c1 + c2 + s) * color - 0.01;
+    // Lean the per-ghost hue toward a caller tint. uGhostTint 0 keeps the
+    // procedural rainbow; 1 makes every ghost the same uGhostColor. Brightness
+    // still comes from the (c + c1 + s) shape terms, so ghosts keep their
+    // falloff either way.
+    color = mix(color, uGhostColor, uGhostTint);
+    return (c + c1 + s) * color - 0.01;
 }
 
 void main()
@@ -77,11 +86,19 @@ void main()
     vec3 color = vec3(0.0);
 
     // --- 10 ghost groups scattered along the sun -> centre axis.
+    // uGhostSpacing stretches the placement axis so ghosts spread further
+    // apart without touching their per-ghost colour/size (both keyed off
+    // ghostDist, which is left unscaled).
+    vec2 ghostAxis = sunUV * uGhostSpacing;
     for (float i = 0.0; i < 10.0; i++)
     {
-        float ghostSize = pow(rnd(i * 2000.0) * 1.8, 2.0) + 1.41;
-        float ghostDist = rnd(i * 20.0) * 3.0 + 0.2 - 0.5;
-        color += circle(uv, ghostSize, ghostDist, sunUV) * uSpread;
+        // uGhostSize replaces the reference's per-ghost random size so every
+        // ghost reads the same size; only distance (placement) still varies.
+        // uGhostOffset slides the whole cluster along the axis: dist 0 is the
+        // screen centre and dist ~ -1 is the sun, so a negative offset pulls
+        // the ghosts off centre and up against the sun / border edge.
+        float ghostDist = rnd(i * 20.0) * 3.0 + 0.2 - 0.5 + uGhostOffset;
+        color += circle(uv, uGhostSize, ghostDist, ghostAxis) * uSpread;
     }
 
     // --- Sun rays + core; tint governed by uSunColor. Size scale divides the
