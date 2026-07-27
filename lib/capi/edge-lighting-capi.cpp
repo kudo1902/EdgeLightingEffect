@@ -11,6 +11,7 @@
 #include "animation/field-bound-animation.h"
 #include "animation/modulator.h"
 #include "util/log-util.h"
+#include "util/segment-utils.h"
 
 #include <algorithm>
 #include <memory>
@@ -856,6 +857,279 @@ extern "C"
         }
         LOG_I("effect=%p", (void *)effect);
         effect->config.neon.segmentBoosts.clear();
+        return EL_SUCCESS;
+    }
+
+    // --- Preserved segment boosts (id-addressed, override-proof) ---
+    // A second pool, separate from segmentBoosts above. Keyed by SegmentBoost::id
+    // (handed out by AcquireSegment, never reused). None of the transient-pool
+    // bulk ops (clear_segment_boosts / set_segment_boost_count) touch it, so an
+    // entry acquired here survives being "overridden" wholesale.
+
+    el_result_e el_effect_acquire_preserved_segment(el_effect_handle_t effect, uint32_t *outId)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_acquire_preserved_segment");
+        VALIDATE_OUT_PTR(outId, "el_effect_acquire_preserved_segment");
+        uint32_t id = EdgeLighting::SegmentUtils::AcquireSegment(effect->config.neon);
+        if (id == 0)
+        {
+            LOG_E("el_effect_acquire_preserved_segment: pool full (cap=%d)",
+                  EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        *outId = id;
+        LOG_I("effect=%p, id=%u", (void *)effect, id);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_preserved_segment(el_effect_handle_t effect, uint32_t id,
+                                                float position, float length, float boost)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_preserved_segment");
+        int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
+        if (idx < 0)
+        {
+            LOG_E("el_effect_set_preserved_segment: no preserved entry with id %u", id);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        auto &b = effect->config.neon.preservedSegmentBoosts[static_cast<size_t>(idx)].segment;
+        if (b.position == position && b.length == length && b.boost == boost)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, id=%u, position=%f, length=%f, boost=%f", (void *)effect, id, position, length, boost);
+        b.position = position;
+        b.length = length;
+        b.boost = boost;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_preserved_segment(el_effect_handle_t effect, uint32_t id,
+                                                float *outPosition, float *outLength, float *outBoost)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_preserved_segment");
+        VALIDATE_OUT_PTR(outPosition, "el_effect_get_preserved_segment");
+        VALIDATE_OUT_PTR(outLength, "el_effect_get_preserved_segment");
+        VALIDATE_OUT_PTR(outBoost, "el_effect_get_preserved_segment");
+        int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
+        if (idx < 0)
+        {
+            LOG_E("el_effect_get_preserved_segment: no preserved entry with id %u", id);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        const auto &b = effect->config.neon.preservedSegmentBoosts[static_cast<size_t>(idx)].segment;
+        *outPosition = b.position;
+        *outLength = b.length;
+        *outBoost = b.boost;
+        LOG_D("effect=%p, id=%u, position=%f, length=%f, boost=%f", (void *)effect, id, *outPosition, *outLength, *outBoost);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_release_preserved_segment(el_effect_handle_t effect, uint32_t id)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_release_preserved_segment");
+        if (!EdgeLighting::SegmentUtils::ReleaseSegment(effect->config.neon, id))
+        {
+            LOG_E("el_effect_release_preserved_segment: no preserved entry with id %u", id);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        LOG_I("effect=%p, id=%u", (void *)effect, id);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_preserved_segment_count(el_effect_handle_t effect, int32_t *outCount)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_preserved_segment_count");
+        VALIDATE_OUT_PTR(outCount, "el_effect_get_preserved_segment_count");
+        *outCount = static_cast<int32_t>(effect->config.neon.preservedSegmentBoosts.size());
+        LOG_D("effect=%p, count=%d", (void *)effect, *outCount);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_clear_preserved_segments(el_effect_handle_t effect)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_clear_preserved_segments");
+        if (effect->config.neon.preservedSegmentBoosts.empty())
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p", (void *)effect);
+        effect->config.neon.preservedSegmentBoosts.clear();
+        return EL_SUCCESS;
+    }
+
+    // --- Preserved segment blend space + colour stops (by id) ---
+    // Mirror of the transient segment stop/blend-space API below, addressed by
+    // stable id instead of array index. Each operates on the .segment of the
+    // PreservedSegment owning `id`; an id with no live entry (including a
+    // released one) returns EL_ERROR_INVALID_PARAMETER. Rendering already reads
+    // these fields via SegmentUtils::FillEffectiveSegments, so a preserved
+    // segment with stops shows its own gradient just like a transient one.
+
+    el_result_e el_effect_set_preserved_segment_blend_space(el_effect_handle_t effect,
+                                                            uint32_t id, el_blend_space_e blendSpace)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_preserved_segment_blend_space");
+        int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
+        if (idx < 0)
+        {
+            LOG_E("el_effect_set_preserved_segment_blend_space: no preserved entry with id %u", id);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        auto &seg = effect->config.neon.preservedSegmentBoosts[static_cast<size_t>(idx)].segment;
+        auto newVal = static_cast<EdgeLighting::BlendSpace>(blendSpace);
+        if (seg.blendSpace == newVal)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, id=%u, blendSpace=%d", (void *)effect, id, (int)blendSpace);
+        seg.blendSpace = newVal;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_preserved_segment_blend_space(el_effect_handle_t effect,
+                                                            uint32_t id, el_blend_space_e *outBlendSpace)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_preserved_segment_blend_space");
+        VALIDATE_OUT_PTR(outBlendSpace, "el_effect_get_preserved_segment_blend_space");
+        int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
+        if (idx < 0)
+        {
+            LOG_E("el_effect_get_preserved_segment_blend_space: no preserved entry with id %u", id);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        *outBlendSpace = static_cast<el_blend_space_e>(
+            effect->config.neon.preservedSegmentBoosts[static_cast<size_t>(idx)].segment.blendSpace);
+        LOG_D("effect=%p, id=%u, blendSpace=%d", (void *)effect, id, (int)*outBlendSpace);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_preserved_segment_color_stop_count(el_effect_handle_t effect,
+                                                                 uint32_t id, int32_t count)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_preserved_segment_color_stop_count");
+        if (count < 0)
+        {
+            LOG_E("el_effect_set_preserved_segment_color_stop_count: negative count");
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
+        if (idx < 0)
+        {
+            LOG_E("el_effect_set_preserved_segment_color_stop_count: no preserved entry with id %u", id);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        auto &stops = effect->config.neon.preservedSegmentBoosts[static_cast<size_t>(idx)].segment.colorStops;
+        size_t newSize = static_cast<size_t>(count);
+        if (stops.size() == newSize)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, id=%u, count=%d", (void *)effect, id, count);
+        stops.resize(newSize);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_preserved_segment_color_stop_count(el_effect_handle_t effect,
+                                                                 uint32_t id, int32_t *outCount)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_preserved_segment_color_stop_count");
+        VALIDATE_OUT_PTR(outCount, "el_effect_get_preserved_segment_color_stop_count");
+        int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
+        if (idx < 0)
+        {
+            LOG_E("el_effect_get_preserved_segment_color_stop_count: no preserved entry with id %u", id);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        *outCount = static_cast<int32_t>(
+            effect->config.neon.preservedSegmentBoosts[static_cast<size_t>(idx)].segment.colorStops.size());
+        LOG_D("effect=%p, id=%u, count=%d", (void *)effect, id, *outCount);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_preserved_segment_color_stop(el_effect_handle_t effect,
+                                                           uint32_t id, int32_t stopIndex,
+                                                           float position, float r, float g, float b, float a)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_preserved_segment_color_stop");
+        if (stopIndex < 0)
+        {
+            LOG_E("el_effect_set_preserved_segment_color_stop: negative stopIndex");
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
+        if (idx < 0)
+        {
+            LOG_E("el_effect_set_preserved_segment_color_stop: no preserved entry with id %u", id);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        auto &stops = effect->config.neon.preservedSegmentBoosts[static_cast<size_t>(idx)].segment.colorStops;
+        size_t stopIdx = static_cast<size_t>(stopIndex);
+        if (stopIdx >= stops.size())
+        {
+            LOG_E("el_effect_set_preserved_segment_color_stop: stopIndex %d out of range (size=%zu)", stopIndex, stops.size());
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        EdgeLighting::ColorStop newStop{position, glm::vec4(r, g, b, a)};
+        if (stops[stopIdx] == newStop)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, id=%u, stopIndex=%d, position=%f, r=%f, g=%f, b=%f, a=%f",
+              (void *)effect, id, stopIndex, position, r, g, b, a);
+        stops[stopIdx] = newStop;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_preserved_segment_color_stop(el_effect_handle_t effect,
+                                                           uint32_t id, int32_t stopIndex,
+                                                           float *outPosition, float *outR, float *outG, float *outB, float *outA)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_preserved_segment_color_stop");
+        VALIDATE_OUT_PTR(outPosition, "el_effect_get_preserved_segment_color_stop");
+        VALIDATE_OUT_PTR(outR, "el_effect_get_preserved_segment_color_stop");
+        VALIDATE_OUT_PTR(outG, "el_effect_get_preserved_segment_color_stop");
+        VALIDATE_OUT_PTR(outB, "el_effect_get_preserved_segment_color_stop");
+        VALIDATE_OUT_PTR(outA, "el_effect_get_preserved_segment_color_stop");
+        int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
+        if (idx < 0)
+        {
+            LOG_E("el_effect_get_preserved_segment_color_stop: no preserved entry with id %u", id);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        const auto &seg = effect->config.neon.preservedSegmentBoosts[static_cast<size_t>(idx)].segment;
+        if (stopIndex < 0 || static_cast<size_t>(stopIndex) >= seg.colorStops.size())
+        {
+            LOG_E("el_effect_get_preserved_segment_color_stop: stopIndex %d out of range (size=%zu)", stopIndex, seg.colorStops.size());
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        const auto &s = seg.colorStops[static_cast<size_t>(stopIndex)];
+        *outPosition = s.position;
+        *outR = s.color.r;
+        *outG = s.color.g;
+        *outB = s.color.b;
+        *outA = s.color.a;
+        LOG_D("effect=%p, id=%u, stopIndex=%d, position=%f, r=%f, g=%f, b=%f, a=%f",
+              (void *)effect, id, stopIndex, *outPosition, *outR, *outG, *outB, *outA);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_clear_preserved_segment_color_stops(el_effect_handle_t effect, uint32_t id)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_clear_preserved_segment_color_stops");
+        int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
+        if (idx < 0)
+        {
+            LOG_E("el_effect_clear_preserved_segment_color_stops: no preserved entry with id %u", id);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        auto &stops = effect->config.neon.preservedSegmentBoosts[static_cast<size_t>(idx)].segment.colorStops;
+        if (stops.empty())
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, id=%u", (void *)effect, id);
+        stops.clear();
         return EL_SUCCESS;
     }
 
@@ -2685,6 +2959,45 @@ extern "C"
         }
         fb->AddSegmentField(static_cast<size_t>(index),
                             static_cast<EdgeLighting::SegmentField>(field), mod->ptr);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_animation_add_preserved_segment_field(el_animation_handle_t anim,
+                                                         uint32_t id, el_segment_field_e field, el_modulator_handle_t mod)
+    {
+        LOG_I("anim=%p, id=%u, field=%d, mod=%p", (void *)anim, id, (int)field, (void *)mod);
+        VALIDATE_ANIM_PTR(anim, "el_animation_add_preserved_segment_field");
+        VALIDATE_MOD_PTR(mod, "el_animation_add_preserved_segment_field");
+        auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
+        if (!fb)
+        {
+            LOG_E("el_animation_add_preserved_segment_field: animation is not a FieldBoundAnimation");
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        fb->AddPreservedSegmentField(id, static_cast<EdgeLighting::SegmentField>(field), mod->ptr);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_animation_add_preserved_segment_stop_field(el_animation_handle_t anim,
+                                                              uint32_t id, int32_t stopIndex,
+                                                              el_color_stop_field_e field, el_modulator_handle_t mod)
+    {
+        LOG_I("anim=%p, id=%u, stopIndex=%d, field=%d, mod=%p", (void *)anim, id, stopIndex, (int)field, (void *)mod);
+        VALIDATE_ANIM_PTR(anim, "el_animation_add_preserved_segment_stop_field");
+        VALIDATE_MOD_PTR(mod, "el_animation_add_preserved_segment_stop_field");
+        if (stopIndex < 0)
+        {
+            LOG_E("el_animation_add_preserved_segment_stop_field: negative stopIndex");
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
+        if (!fb)
+        {
+            LOG_E("el_animation_add_preserved_segment_stop_field: animation is not a FieldBoundAnimation");
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        fb->AddPreservedSegmentStopField(id, static_cast<size_t>(stopIndex),
+                                         static_cast<EdgeLighting::ColorStopField>(field), mod->ptr);
         return EL_SUCCESS;
     }
 

@@ -3,6 +3,7 @@
 #include "util/color-utils.h"
 #include "util/constants.h"
 #include "util/geometry-utils.h"
+#include "util/segment-utils.h"
 #include "shaders.h"
 #include "util/log-util.h"
 #include <glm/gtc/matrix_transform.hpp>
@@ -174,12 +175,14 @@ namespace EdgeLighting
         // Same packing as NeonRenderer; segment `position` is a normalised
         // perimeter coord in [0, 1), so the resolutionScale does not apply.
         SegmentBlockData segBlock = {};
-        int segCount = std::min(static_cast<int>(config.neon.segmentBoosts.size()),
+        SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
+        const std::vector<SegmentBoost> &effSegments = mEffectiveSegments;
+        int segCount = std::min(static_cast<int>(effSegments.size()),
                                 int(MAX_SEGMENT_BOOSTS));
         segBlock.count = segCount;
         for (int i = 0; i < segCount; ++i)
         {
-            const auto &s = config.neon.segmentBoosts[i];
+            const auto &s = effSegments[i];
             float invSigma = 1.0f / std::max(s.length * 0.5f, 1e-3f);
             // .w = hasOwnStops flag (see NeonRenderer for details).
             float hasStops = s.colorStops.empty() ? 0.0f : 1.0f;
@@ -313,7 +316,8 @@ namespace EdgeLighting
                               config.optimizedNeon.gradientLutSize != mCurrentConfig.optimizedNeon.gradientLutSize;
         // See NeonRenderer for the same guard - only per-segment stops/blend
         // affect the atlas; live position/length/boost don't.
-        const bool segLutDirty = config.neon.segmentBoosts != mBakedSegments;
+        SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
+        const bool segLutDirty = mEffectiveSegments != mBakedSegments;
         const bool arcLutDirty = config.neon.arcs != mBakedArcs;
 
         mCurrentConfig = config;
@@ -549,11 +553,13 @@ namespace EdgeLighting
         constexpr int H = MAX_SEGMENT_BOOSTS;
         std::vector<unsigned char> atlas(W * H * 4, 0);
 
-        const int segCount = std::min(static_cast<int>(config.neon.segmentBoosts.size()),
+        SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
+        const std::vector<SegmentBoost> &effSegments = mEffectiveSegments;
+        const int segCount = std::min(static_cast<int>(effSegments.size()),
                                       int(MAX_SEGMENT_BOOSTS));
         for (int s = 0; s < segCount; ++s)
         {
-            const auto &seg = config.neon.segmentBoosts[s];
+            const auto &seg = effSegments[s];
             if (seg.colorStops.empty())
             {
                 continue;
@@ -573,7 +579,7 @@ namespace EdgeLighting
         mSegmentLUT.SetData(atlas.data(), W, H, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
         mSegmentLUT.SetParams(GL_LINEAR, GL_LINEAR, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
 
-        mBakedSegments = config.neon.segmentBoosts;
+        mBakedSegments = mEffectiveSegments;
     }
 
     void NeonOptimizedRenderer::rebuildArcLUT(const Config &config)

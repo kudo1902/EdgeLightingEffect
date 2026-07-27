@@ -85,6 +85,9 @@ namespace EdgeLighting
         /// Snapshot of the last-baked segments so OnConfigChanged only
         /// re-uploads when they actually differ.
         std::vector<SegmentBoost> mBakedSegments;
+        /// Reusable scratch for the merged transient+preserved segment list
+        /// (Config::FillEffectiveSegments); avoids per-frame heap allocation.
+        std::vector<SegmentBoost> mEffectiveSegments;
 
         /// Per-arc gradient atlas (see NeonRenderer::mArcLUT).
         Texture2D mArcLUT;

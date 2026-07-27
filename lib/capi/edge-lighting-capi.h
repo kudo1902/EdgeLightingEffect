@@ -574,6 +574,84 @@ extern "C"
 
     /** @} */
 
+    /** @name Preserved segment boosts (id-addressed, override-proof)
+     *  @details A **second, independent** pool of hotspots, addressed by a stable
+     *  id instead of by array index. Its whole reason to exist: the index-based
+     *  segment API above makes the array index the identity, so a
+     *  @c el_effect_clear_segment_boosts, a shrinking @c el_effect_set_segment_boost_count,
+     *  or an index-based animation can wipe or overwrite an entry another caller
+     *  cared about. Preserved entries live outside that pool - none of those bulk
+     *  operations touch them.
+     *
+     *  Usage: @ref el_effect_acquire_preserved_segment once to reserve an entry
+     *  and get its id, then only ever mutate through that id. Ids are stable for
+     *  the entry's lifetime and never reused, so a write/read by id can never
+     *  land on another owner's entry. The renderer composites the preserved and
+     *  transient pools together (preserved take shader-slot priority), capped at
+     *  @c NeonConfig::MAX_SEGMENT_BOOSTS_CAP total.
+     *  @{ */
+
+    /** @brief Reserve a preserved segment and return its stable, non-reused id.
+     *  @param outId Receives the id (always >= 1) on success.
+     *  @return @ref EL_ERROR_INVALID_PARAMETER if the preserved pool is already
+     *          at @c NeonConfig::MAX_SEGMENT_BOOSTS_CAP. The new entry starts
+     *          with default params (boost 0) - set them via
+     *          @ref el_effect_set_preserved_segment. */
+    EL_API el_result_e el_effect_acquire_preserved_segment(el_effect_handle_t effect, uint32_t *outId);
+
+    /** @brief Write the scalar fields of the preserved entry owning @p id.
+     *  @return @ref EL_ERROR_INVALID_PARAMETER if no preserved entry has @p id. */
+    EL_API el_result_e el_effect_set_preserved_segment(el_effect_handle_t effect, uint32_t id,
+                                                       float position, float length, float boost);
+    /** @brief Read the scalar fields of the preserved entry owning @p id. */
+    EL_API el_result_e el_effect_get_preserved_segment(el_effect_handle_t effect, uint32_t id,
+                                                       float *outPosition, float *outLength, float *outBoost);
+
+    /** @brief Remove the preserved entry owning @p id; others keep their ids.
+     *  @return @ref EL_ERROR_INVALID_PARAMETER if no preserved entry has @p id. */
+    EL_API el_result_e el_effect_release_preserved_segment(el_effect_handle_t effect, uint32_t id);
+
+    /** @brief Number of live entries in the preserved pool. */
+    EL_API el_result_e el_effect_get_preserved_segment_count(el_effect_handle_t effect, int32_t *outCount);
+
+    /** @brief Drop every preserved entry (transient @c segmentBoosts untouched). */
+    EL_API el_result_e el_effect_clear_preserved_segments(el_effect_handle_t effect);
+
+    // Preserved segment gradient (blend space + colour stops), by id. By-id
+    // mirror of the transient el_effect_set_segment_blend_space /
+    // el_effect_set_segment_color_stop family above. A preserved entry with its
+    // own stops shows that gradient across its span; with no stops it inherits
+    // the base NeonConfig gradient. Every call resolves id to the owning entry
+    // (immune to reindexing); an id with no live entry returns
+    // EL_ERROR_INVALID_PARAMETER.
+
+    /** @brief Set the blend space used for the preserved entry's own stops.
+     *  @details Ignored at render time when the entry has no stops. */
+    EL_API el_result_e el_effect_set_preserved_segment_blend_space(el_effect_handle_t effect,
+                                                                   uint32_t id, el_blend_space_e blendSpace);
+    EL_API el_result_e el_effect_get_preserved_segment_blend_space(el_effect_handle_t effect,
+                                                                   uint32_t id, el_blend_space_e *outBlendSpace);
+
+    /** @brief Resize the preserved entry's own colour-stops list (0 = inherit
+     *         the base gradient). */
+    EL_API el_result_e el_effect_set_preserved_segment_color_stop_count(el_effect_handle_t effect,
+                                                                        uint32_t id, int32_t count);
+    EL_API el_result_e el_effect_get_preserved_segment_color_stop_count(el_effect_handle_t effect,
+                                                                        uint32_t id, int32_t *outCount);
+
+    /** @brief Write one colour stop inside a preserved entry's stops list. */
+    EL_API el_result_e el_effect_set_preserved_segment_color_stop(el_effect_handle_t effect,
+                                                                  uint32_t id, int32_t stopIndex,
+                                                                  float position, float r, float g, float b, float a);
+    EL_API el_result_e el_effect_get_preserved_segment_color_stop(el_effect_handle_t effect,
+                                                                  uint32_t id, int32_t stopIndex,
+                                                                  float *outPosition, float *outR, float *outG, float *outB, float *outA);
+
+    /** @brief Drop the preserved entry's own colour stops (revert to inherit-base). */
+    EL_API el_result_e el_effect_clear_preserved_segment_color_stops(el_effect_handle_t effect, uint32_t id);
+
+    /** @} */
+
     /** @name Arcs (perimeter slices that are "on")
      *  Multiple arcs can coexist. Overlap resolves winner-take-all in the
      *  shader (largest mask*intensity owns the emission at each sample).
@@ -1145,12 +1223,39 @@ extern "C"
                                               el_config_field_e field, el_modulator_handle_t mod);
 
     /** @brief Add a segment-field binding.
-     *  @param index Segment slot. Auto-grows @c segmentBoosts at write time. */
+     *  @param index Segment slot. Must already exist in @c segmentBoosts (no
+     *               auto-grow; an out-of-range index is a logged no-op). */
     EL_API el_result_e el_animation_add_segment_field(el_animation_handle_t anim,
                                                       int32_t index, el_segment_field_e field, el_modulator_handle_t mod);
 
+    /** @brief Add a preserved-segment-field binding, addressed by stable id.
+     *  @details Drives a scalar of the preserved entry owning @p id (see
+     *  @ref el_effect_acquire_preserved_segment). Unlike
+     *  @ref el_animation_add_segment_field this never creates the entry - acquire
+     *  it first; a binding whose id is not live at apply time is skipped. Because
+     *  it targets the preserved pool by id, the animation is immune to overrides
+     *  of the transient @c segmentBoosts pool.
+     *  @param id Stable id from @ref el_effect_acquire_preserved_segment. */
+    EL_API el_result_e el_animation_add_preserved_segment_field(el_animation_handle_t anim,
+                                                                uint32_t id, el_segment_field_e field, el_modulator_handle_t mod);
+
+    /** @brief Add a binding into one channel of one colour stop inside the
+     *         preserved entry owning @p id.
+     *  @details By-id analogue of @ref el_animation_add_segment_stop_field.
+     *  Nothing auto-grows: acquire the entry and size its stops first (via
+     *  @ref el_effect_set_preserved_segment_color_stop_count). A binding whose id
+     *  is not live, or whose @p stopIndex is past the current stop count, is a
+     *  skipped no-op at apply time.
+     *  @param id        Stable id from @ref el_effect_acquire_preserved_segment.
+     *  @param stopIndex Stop slot within that entry's colour-stops list.
+     *  @param field     Which channel (position / R / G / B / A) to drive. */
+    EL_API el_result_e el_animation_add_preserved_segment_stop_field(el_animation_handle_t anim,
+                                                                     uint32_t id, int32_t stopIndex,
+                                                                     el_color_stop_field_e field, el_modulator_handle_t mod);
+
     /** @brief Add an arc-field binding.
-     *  @param index Arc slot. Auto-grows @c arcs at write time. */
+     *  @param index Arc slot. Must already exist in @c arcs (no auto-grow; an
+     *               out-of-range index is a logged no-op). */
     EL_API el_result_e el_animation_add_arc_field(el_animation_handle_t anim,
                                                   int32_t index, el_arc_field_e field, el_modulator_handle_t mod);
 

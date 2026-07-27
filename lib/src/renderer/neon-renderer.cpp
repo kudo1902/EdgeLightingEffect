@@ -3,6 +3,7 @@
 #include "util/color-utils.h"
 #include "util/constants.h"
 #include "util/geometry-utils.h"
+#include "util/segment-utils.h"
 #include "shaders.h"
 #include "util/log-util.h"
 #include <glm/gtc/matrix_transform.hpp>
@@ -229,12 +230,14 @@ namespace EdgeLighting
         // std140 SegmentBlock UBO (DALi-compatible pattern - see neon.frag).
         // Empty vector → uSegmentCount=0 and the shader skips the whole feature.
         SegmentBlockData segBlock = {};
-        int segCount = std::min(static_cast<int>(config.neon.segmentBoosts.size()),
+        SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
+        const std::vector<SegmentBoost> &effSegments = mEffectiveSegments;
+        int segCount = std::min(static_cast<int>(effSegments.size()),
                                 int(MAX_SEGMENT_BOOSTS));
         segBlock.count = segCount;
         for (int i = 0; i < segCount; ++i)
         {
-            const auto &s = config.neon.segmentBoosts[i];
+            const auto &s = effSegments[i];
             float invSigma = 1.0f / std::max(s.length * 0.5f, 1e-3f);
             // .w = hasOwnStops flag; the shader reads its colour from row `i`
             // of the segment LUT atlas when set, else falls back to the base
@@ -356,8 +359,10 @@ namespace EdgeLighting
         // Only the segments' colour stops + blend space affect the atlas
         // texture; position/length/boost don't (they're read live from the
         // UBO). Cheap deep-compare via mBakedSegments (each SegmentBoost's
-        // operator== includes its stops).
-        const bool segLutDirty = config.neon.segmentBoosts != mBakedSegments;
+        // operator== includes its stops). Compares the merged view so a change
+        // in either the transient or preserved pool triggers a re-bake.
+        SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
+        const bool segLutDirty = mEffectiveSegments != mBakedSegments;
         // Same idea for arcs - start/length/intensity ride the UBO, only
         // colorStops + blendSpace changes require a re-bake of the atlas.
         const bool arcLutDirty = config.neon.arcs != mBakedArcs;
@@ -599,11 +604,13 @@ namespace EdgeLighting
         constexpr int H = MAX_SEGMENT_BOOSTS;
         std::vector<unsigned char> atlas(W * H * 4, 0);
 
-        const int segCount = std::min(static_cast<int>(config.neon.segmentBoosts.size()),
+        SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
+        const std::vector<SegmentBoost> &effSegments = mEffectiveSegments;
+        const int segCount = std::min(static_cast<int>(effSegments.size()),
                                       int(MAX_SEGMENT_BOOSTS));
         for (int s = 0; s < segCount; ++s)
         {
-            const auto &seg = config.neon.segmentBoosts[s];
+            const auto &seg = effSegments[s];
             if (seg.colorStops.empty())
             {
                 continue; // row stays zero; shader falls back to base gradient
@@ -625,7 +632,7 @@ namespace EdgeLighting
         mSegmentLUT.SetData(atlas.data(), W, H, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
         mSegmentLUT.SetParams(GL_LINEAR, GL_LINEAR, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
 
-        mBakedSegments = config.neon.segmentBoosts;
+        mBakedSegments = mEffectiveSegments;
     }
 
     void NeonRenderer::rebuildArcLUT(const Config &config)

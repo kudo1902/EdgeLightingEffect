@@ -3,6 +3,7 @@
 
 #include "animation/animation.h"
 #include "animation/modulator.h"
+#include <cstdint>
 #include <utility>
 #include <vector>
 
@@ -80,13 +81,13 @@ namespace EdgeLighting
     ///
     /// - @ref AddField(AnimatableField, ModulatorPtr) - drive a scalar leaf.
     /// - @ref AddSegmentField(size_t, SegmentField, ModulatorPtr) - drive one
-    ///   scalar inside @c NeonConfig::segmentBoosts[index], auto-growing the
-    ///   vector to that slot.
+    ///   scalar inside @c NeonConfig::segmentBoosts[index]. The slot must
+    ///   already exist; an out-of-range index is a logged no-op.
     /// - @ref AddStopField(size_t, size_t, ColorStopField, ModulatorPtr) -
     ///   drive one scalar inside
-    ///   @c NeonConfig::segmentBoosts[segIdx].colorStops[stopIdx],
-    ///   auto-growing both the segments vector and that segment's stops
-    ///   vector as needed.
+    ///   @c NeonConfig::segmentBoosts[segIdx].colorStops[stopIdx]. Both the
+    ///   segment and the stop must already exist; out-of-range is a logged
+    ///   no-op.
     ///
     /// On each @ref ApplyAt every binding's modulator is evaluated with the
     /// same @c elapsed and the result is written to its bound target.
@@ -136,6 +137,33 @@ namespace EdgeLighting
             SegmentField field;
             ModulatorPtr modulator;
         } SegmentBinding;
+
+        /// @brief A single (preservedSegmentBoosts{id}.field, modulator) binding.
+        /// @details Addresses the preserved pool by stable id, so - unlike
+        ///          @ref SegmentBinding - it never auto-grows anything: the
+        ///          entry must already exist (acquired via
+        ///          @c SegmentUtils::AcquireSegment). If no preserved entry has
+        ///          @c id at apply time the binding is a no-op.
+        typedef struct PreservedSegmentBinding
+        {
+            uint32_t id;
+            SegmentField field;
+            ModulatorPtr modulator;
+        } PreservedSegmentBinding;
+
+        /// @brief A single (preservedSegmentBoosts{id}.colorStops[stopIdx].field,
+        ///        modulator) binding.
+        /// @details Like @ref PreservedSegmentBinding, addresses the preserved
+        ///          entry by stable id and grows nothing: neither a missing id
+        ///          nor a @c stopIndex past the entry's current stop count is
+        ///          created - both are logged no-ops at apply time.
+        typedef struct PreservedSegmentStopBinding
+        {
+            uint32_t id;
+            size_t stopIndex;
+            ColorStopField field;
+            ModulatorPtr modulator;
+        } PreservedSegmentStopBinding;
 
         /// @brief A single (segmentBoosts[segIdx].colorStops[stopIdx].field,
         ///        modulator) binding.
@@ -200,21 +228,43 @@ namespace EdgeLighting
         }
 
         /// @brief Bind a scalar inside @c segmentBoosts[index] to a modulator.
-        /// @details @p index auto-grows the @c segmentBoosts vector at write
-        ///          time. New entries are seeded with a visible length/boost so
-        ///          binding only @c POSITION still shows a moving spot.
+        /// @details No auto-grow: @c segmentBoosts must already hold @p index
+        ///          (size it via the C API first). A binding whose @p index is
+        ///          out of range at apply time is a logged no-op.
         void AddSegmentField(size_t index, SegmentField field, ModulatorPtr modulator)
         {
             mSegmentBindings.push_back({index, field, std::move(modulator)});
         }
 
+        /// @brief Bind a scalar inside the preserved-pool entry owning @p id.
+        /// @details Unlike @ref AddSegmentField this never creates the entry -
+        ///          acquire it first via @c SegmentUtils::AcquireSegment (or the
+        ///          C API's @c el_effect_acquire_preserved_segment). At apply
+        ///          time the entry is looked up by id, so it is immune to
+        ///          reindexing and to overrides of the transient pool. A binding
+        ///          whose id is not found is silently skipped.
+        void AddPreservedSegmentField(uint32_t id, SegmentField field, ModulatorPtr modulator)
+        {
+            mPreservedSegmentBindings.push_back({id, field, std::move(modulator)});
+        }
+
+        /// @brief Bind a colour-stop channel of the preserved entry owning @p id.
+        /// @details Nothing auto-grows: acquire the entry and size its stops
+        ///          first. A binding to a released id, or to a @p stopIdx past
+        ///          the current stop count, is a skipped no-op (unlike
+        ///          @ref AddStopField, which grows the slot).
+        void AddPreservedSegmentStopField(uint32_t id, size_t stopIdx,
+                                          ColorStopField field, ModulatorPtr modulator)
+        {
+            mPreservedSegmentStopBindings.push_back({id, stopIdx, field, std::move(modulator)});
+        }
+
         /// @brief Bind a scalar inside
         ///        @c segmentBoosts[segIdx].colorStops[stopIdx] to a modulator.
-        /// @details Both @p segIdx (segments vector) and @p stopIdx (that
-        ///          segment's stops vector) auto-grow at write time. New
-        ///          stops are seeded to a visible default (mid-position,
-        ///          opaque white) so binding only a single channel still
-        ///          shows something.
+        /// @details No auto-grow: both @p segIdx and, within that segment,
+        ///          @p stopIdx must already exist (size the segment's stops via
+        ///          the C API first). An out-of-range segment or stop is a
+        ///          logged no-op at apply time.
         void AddStopField(size_t segIdx, size_t stopIdx,
                           ColorStopField field, ModulatorPtr modulator)
         {
@@ -222,10 +272,9 @@ namespace EdgeLighting
         }
 
         /// @brief Bind a scalar inside @c arcs[index] to a modulator.
-        /// @details @p index auto-grows @c cfg.neon.arcs at write time. New
-        ///          entries are seeded with the default @ref Arc
-        ///          (start=0, length=1, intensity=1) so binding only one
-        ///          field still shows something.
+        /// @details No auto-grow: @c cfg.neon.arcs must already hold @p index. A
+        ///          binding whose @p index is out of range at apply time is a
+        ///          logged no-op.
         void AddArcField(size_t index, ArcField field, ModulatorPtr modulator)
         {
             mArcBindings.push_back({index, field, std::move(modulator)});
@@ -233,10 +282,9 @@ namespace EdgeLighting
 
         /// @brief Bind a scalar inside
         ///        @c arcs[arcIdx].colorStops[stopIdx] to a modulator.
-        /// @details Both @p arcIdx (arcs vector) and @p stopIdx (that arc's
-        ///          stops vector) auto-grow at write time. New stops are
-        ///          seeded to a mid-position opaque-white default so binding
-        ///          only a single channel still produces a visible colour.
+        /// @details No auto-grow: both @p arcIdx and, within that arc,
+        ///          @p stopIdx must already exist. An out-of-range arc or stop
+        ///          is a logged no-op at apply time.
         void AddArcStopField(size_t arcIdx, size_t stopIdx,
                              ColorStopField field, ModulatorPtr modulator)
         {
@@ -250,6 +298,18 @@ namespace EdgeLighting
 
         /// @brief Read-only view of the segment-field bindings.
         const std::vector<SegmentBinding> &GetSegmentBindings() const { return mSegmentBindings; }
+
+        /// @brief Read-only view of the preserved-segment-field bindings.
+        const std::vector<PreservedSegmentBinding> &GetPreservedSegmentBindings() const
+        {
+            return mPreservedSegmentBindings;
+        }
+
+        /// @brief Read-only view of the preserved-segment-stop-field bindings.
+        const std::vector<PreservedSegmentStopBinding> &GetPreservedSegmentStopBindings() const
+        {
+            return mPreservedSegmentStopBindings;
+        }
 
         /// @brief Read-only view of the segment-stop-field bindings.
         const std::vector<SegmentStopBinding> &GetSegmentStopBindings() const
@@ -270,6 +330,7 @@ namespace EdgeLighting
         size_t GetBindingCount() const
         {
             return mScalarBindings.size() + mSegmentBindings.size() +
+                   mPreservedSegmentBindings.size() + mPreservedSegmentStopBindings.size() +
                    mSegmentStopBindings.size() + mArcBindings.size() +
                    mArcStopBindings.size();
         }
@@ -279,6 +340,8 @@ namespace EdgeLighting
         {
             mScalarBindings.clear();
             mSegmentBindings.clear();
+            mPreservedSegmentBindings.clear();
+            mPreservedSegmentStopBindings.clear();
             mSegmentStopBindings.clear();
             mArcBindings.clear();
             mArcStopBindings.clear();
@@ -292,12 +355,10 @@ namespace EdgeLighting
         // --- RESTORE support ------------------------------------------
         // Generic implementation. For scalar bindings we snapshot per-binding
         // float values; for segment / segment-stop bindings we snapshot the
-        // whole @c segmentBoosts vector (same reason SegmentTravel /
-        // SegmentBounce do: bindings auto-grow the vector, so per-slot
-        // snapshot loses the "vector was empty" case). The whole-struct copy
-        // also covers the non-scalar segment fields (@c colorStops,
-        // @c blendSpace) automatically. Call @ref CaptureBaseline BEFORE
-        // @ref Play so the snapshot reflects the pre-animation value.
+        // whole @c segmentBoosts vector. The whole-vector copy sidesteps per-slot
+        // bookkeeping and also covers the non-scalar segment fields
+        // (@c colorStops, @c blendSpace) automatically. Call @ref CaptureBaseline
+        // BEFORE @ref Play so the snapshot reflects the pre-animation value.
         void CaptureBaseline(const Config &cfg) override;
 
     protected:
@@ -306,6 +367,8 @@ namespace EdgeLighting
     private:
         std::vector<ScalarBinding> mScalarBindings;
         std::vector<SegmentBinding> mSegmentBindings;
+        std::vector<PreservedSegmentBinding> mPreservedSegmentBindings;
+        std::vector<PreservedSegmentStopBinding> mPreservedSegmentStopBindings;
         std::vector<SegmentStopBinding> mSegmentStopBindings;
         std::vector<ArcBinding> mArcBindings;
         std::vector<ArcStopBinding> mArcStopBindings;
@@ -322,6 +385,11 @@ namespace EdgeLighting
         /// we can distinguish "no segment bindings then" from "empty vector
         /// then").
         bool mSegmentBoostsCaptured = false;
+        /// Snapshot of the whole @c preservedSegmentBoosts vector - same
+        /// rationale as @c mSavedSegmentBoosts, captured only when there is at
+        /// least one preserved-segment binding.
+        std::vector<PreservedSegment> mSavedPreservedSegmentBoosts;
+        bool mPreservedSegmentBoostsCaptured = false;
         /// Snapshot of the whole @c arcs vector - same rationale as
         /// mSavedSegmentBoosts.
         std::vector<Arc> mSavedArcs;

@@ -95,6 +95,10 @@ namespace EdgeLighting
         /// OnConfigChanged only re-uploads mSegmentLUT when they actually
         /// changed (matches how mTargetStops guards mGradientLUT rebuilds).
         std::vector<SegmentBoost> mBakedSegments;
+        /// Reusable scratch for the merged transient+preserved segment list
+        /// (Config::FillEffectiveSegments). Held as a member so the per-frame
+        /// UBO pack / dirty check do no heap allocation after warmup.
+        std::vector<SegmentBoost> mEffectiveSegments;
 
         /// Per-arc gradient atlas - one row per arc, each row is that arc's
         /// stops baked head-to-tail. Same shape/purpose as mSegmentLUT; the

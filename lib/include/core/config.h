@@ -3,6 +3,7 @@
 
 #include "renderer/neon-tuning.h" // MAX_SEGMENT_BOOSTS + MAX_ARCS shared with the shaders
 #include <glm/glm.hpp>
+#include <cstdint>
 #include <vector>
 
 namespace EdgeLighting
@@ -122,6 +123,26 @@ namespace EdgeLighting
         }
         bool operator!=(const SegmentBoost &o) const { return !(*this == o); }
     } SegmentBoost;
+
+    /// A @ref SegmentBoost tagged with a stable identity for the preserved pool
+    /// (@c NeonConfig::preservedSegmentBoosts). Keeping the id out of
+    /// @c SegmentBoost leaves that struct pure render data; identity is layered
+    /// on only where it is needed. The id is handed out by
+    /// @c SegmentUtils::AcquireSegment, is stable for the entry's lifetime, and
+    /// is never reused - so an owner can address "its" entry by id regardless of
+    /// resizes / releases / compaction, and independent callers never clobber
+    /// each other. @c id 0 is never handed out (means "invalid").
+    typedef struct PreservedSegment
+    {
+        uint32_t id = 0;      ///< Stable, non-reused identity (>= 1 when live).
+        SegmentBoost segment; ///< The hotspot's render parameters.
+
+        bool operator==(const PreservedSegment &o) const
+        {
+            return id == o.id && segment == o.segment;
+        }
+        bool operator!=(const PreservedSegment &o) const { return !(*this == o); }
+    } PreservedSegment;
 
     /// A slice of the perimeter that is "on". Several can coexist; overlap
     /// resolves winner-take-all (the arc with the largest mask * intensity
@@ -316,9 +337,41 @@ namespace EdgeLighting
         // @ref SegmentBounce for a moving spot; keep another entry static for
         // a fixed hotspot, etc.
 
-        /// Maximum number of active segment boosts (matches the shader array size).
+        /// Maximum number of active segment boosts (matches the shader array
+        /// size). This is the cap on the *merged* set
+        /// (@c SegmentUtils::FillEffectiveSegments) - the transient and preserved
+        /// pools share these slots.
         static constexpr int MAX_SEGMENT_BOOSTS_CAP = MAX_SEGMENT_BOOSTS;
+
+        /// Transient, index-addressed hotspots. This is the "freely overwritten"
+        /// pool: @c set_segment_boost_count resizes it, @c clear_segment_boosts
+        /// empties it, and the index-based animations (@ref SegmentTravel etc.)
+        /// write into it by slot. Because index *is* identity here, independent
+        /// writers to the same slot clobber each other - by design, for callers
+        /// that own the whole pool. Use @c preservedSegmentBoosts when you need
+        /// an entry that survives those bulk overrides.
         std::vector<SegmentBoost> segmentBoosts;
+
+        // --- Preserved segment boosts (id-addressed, override-proof) ---------
+        //
+        // A second, independent pool. Its entries are addressed by
+        // @c PreservedSegment::id (handed out by @c SegmentUtils::AcquireSegment),
+        // never by index, and nothing that overrides the *transient* pool touches it:
+        // clearing / resizing / rebuilding @c segmentBoosts leaves preserved
+        // entries intact. This is the storage a caller reaches for when a
+        // hotspot must persist regardless of what other actions do to the
+        // segment set. The renderer composites both pools
+        // (@c SegmentUtils::FillEffectiveSegments).
+
+        /// Preserved, id-addressed hotspots (each a @ref PreservedSegment: an id
+        /// plus its @c SegmentBoost). Only the id-based API / animation bindings
+        /// mutate these; the transient bulk operations never do.
+        ///
+        /// The id allocator and the pool operations (acquire / find-by-id /
+        /// release) live in util/segment-utils.h (@c SegmentUtils::AcquireSegment
+        /// etc.), not here - this struct is just the data. The allocator is a
+        /// process-global counter, so ids are not stored in the config.
+        std::vector<PreservedSegment> preservedSegmentBoosts;
 
         // --- Arc gating (which slices of the perimeter are "on") ---
         //
@@ -369,6 +422,7 @@ namespace EdgeLighting
                    colorStops == o.colorStops &&
                    hueRotationRate == o.hueRotationRate &&
                    segmentBoosts == o.segmentBoosts &&
+                   preservedSegmentBoosts == o.preservedSegmentBoosts &&
                    arcs == o.arcs &&
                    colorTransitionDuration == o.colorTransitionDuration;
         }
