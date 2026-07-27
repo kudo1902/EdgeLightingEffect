@@ -317,6 +317,27 @@ extern "C"
         EL_STOP_FIELD_A = 4         /**< Alpha channel. */
     } el_color_stop_field_e;
 
+    /** @brief Bitmask selecting which renderer layers @ref el_effect_init_with_renderers
+     *         registers on the effect.
+     *  @details OR the flags for the layers you want. Registration always
+     *           happens in the fixed compositing order (wireframe, neon,
+     *           optimized, droplets, lens flare) regardless of how the bits
+     *           are combined - the mask only decides inclusion, not order.
+     *           A layer that is not included is never constructed, so it pays
+     *           no GL cost (no shader compile, no FBO allocation); its
+     *           @c el_effect_set_*_renderer_enabled flag still writes to the
+     *           staging config but has no visual effect. */
+    typedef enum el_renderer_flags_e
+    {
+        EL_RENDERER_NONE = 0,                /**< Register no renderers. */
+        EL_RENDERER_WIREFRAME = 1 << 0,      /**< 1 px debug line loop. */
+        EL_RENDERER_NEON = 1 << 1,           /**< Single-pass neon stroke. */
+        EL_RENDERER_NEON_OPTIMIZED = 1 << 2, /**< Half-res neon variant. */
+        EL_RENDERER_DROPLETS = 1 << 3,       /**< Rain-on-glass droplets. */
+        EL_RENDERER_LENS_FLARE = 1 << 4,     /**< Sun + hex-aperture lens flare. */
+        EL_RENDERER_ALL = 0x7FFFFFFF         /**< Every renderer (what @ref el_effect_init uses). */
+    } el_renderer_flags_e;
+
     /* ======================================================================
      * Opaque handles
      * ==================================================================== */
@@ -910,10 +931,31 @@ extern "C"
      *           @ref EL_ERROR_INVALID_HANDLE. */
     EL_API el_result_e el_effect_destroy(el_effect_handle_t effect);
 
-    /** @brief Initialise the effect's renderers under the current GL context.
+    /** @brief Initialise every renderer layer under the current GL context.
+     *  @details Convenience wrapper for @ref el_effect_init_with_renderers with
+     *           @ref EL_RENDERER_ALL - registers the full stack (wireframe,
+     *           neon, optimized, droplets, lens flare).
      *  @returns @ref EL_ERROR_INIT_FAILED if a renderer fails to initialise
      *           (usually a shader compile / link error - see native log). */
     EL_API el_result_e el_effect_init(el_effect_handle_t effect);
+
+    /** @brief Initialise a selected subset of renderer layers under the current GL context.
+     *  @param effect       Effect handle.
+     *  @param rendererMask OR of @ref el_renderer_flags_e bits naming the
+     *                      layers to register. @ref EL_RENDERER_NONE registers
+     *                      nothing (render becomes a no-op until layers are
+     *                      added C++-side); @ref EL_RENDERER_ALL is the full
+     *                      stack.
+     *  @details Layers are always registered in the fixed compositing order
+     *           regardless of the mask, so droplets still refract the neon
+     *           beneath them and the lens flare still sits on top. An omitted
+     *           layer is never constructed and pays no GL cost. Prefer this
+     *           over @ref el_effect_init when a host only needs some layers
+     *           (e.g. neon alone) and wants to skip the others' shader compiles.
+     *  @returns @ref EL_ERROR_INIT_FAILED if an included renderer fails to
+     *           initialise (usually a shader compile / link error - see native
+     *           log). */
+    EL_API el_result_e el_effect_init_with_renderers(el_effect_handle_t effect, uint32_t rendererMask);
 
     /** @brief Pull the effect's base config back into the effect's staging config.
      *  @details Snapshots the last-authored values (what @c SetConfig

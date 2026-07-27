@@ -2079,25 +2079,45 @@ extern "C"
 
     el_result_e el_effect_init(el_effect_handle_t effect)
     {
-        LOG_I("effect=%p", (void *)effect);
-        VALIDATE_EFFECT_PTR(effect, "el_effect_init");
+        return el_effect_init_with_renderers(effect, EL_RENDERER_ALL);
+    }
+
+    el_result_e el_effect_init_with_renderers(el_effect_handle_t effect, uint32_t rendererMask)
+    {
+        LOG_I("effect=%p, rendererMask=0x%x", (void *)effect, rendererMask);
+        VALIDATE_EFFECT_PTR(effect, "el_effect_init_with_renderers");
         try
         {
             effect->impl = std::make_unique<EdgeLighting::EdgeLightingEffect>();
-            effect->impl->AddRenderer(std::make_shared<EdgeLighting::WireframeRenderer>());
-            effect->impl->AddRenderer(std::make_shared<EdgeLighting::NeonRenderer>());
-            effect->impl->AddRenderer(std::make_shared<EdgeLighting::NeonOptimizedRenderer>());
-            // Registered last: droplets snapshot the framebuffer at render
-            // time, so the neon layers must already be drawn for the pane to
-            // refract them.
-            effect->impl->AddRenderer(std::make_shared<EdgeLighting::DropletsRenderer>());
-            // Lens flare is a purely additive fullscreen pass; drawing it
-            // after the droplets keeps the sun on top of everything, which
-            // reads best for "sun peeks over the frame".
-            effect->impl->AddRenderer(std::make_shared<EdgeLighting::LensFlareRenderer>());
+
+            if (rendererMask & EL_RENDERER_WIREFRAME)
+            {
+                LOG_I("registering WireframeRenderer");
+                effect->impl->AddRenderer(std::make_shared<EdgeLighting::WireframeRenderer>());
+            }
+            if (rendererMask & EL_RENDERER_NEON)
+            {
+                LOG_I("registering NeonRenderer");
+                effect->impl->AddRenderer(std::make_shared<EdgeLighting::NeonRenderer>());
+            }
+            if (rendererMask & EL_RENDERER_NEON_OPTIMIZED)
+            {
+                LOG_I("registering NeonOptimizedRenderer");
+                effect->impl->AddRenderer(std::make_shared<EdgeLighting::NeonOptimizedRenderer>());
+            }
+            if (rendererMask & EL_RENDERER_DROPLETS)
+            {
+                LOG_I("registering DropletsRenderer");
+                effect->impl->AddRenderer(std::make_shared<EdgeLighting::DropletsRenderer>());
+            }
+            if (rendererMask & EL_RENDERER_LENS_FLARE)
+            {
+                LOG_I("registering LensFlareRenderer");
+                effect->impl->AddRenderer(std::make_shared<EdgeLighting::LensFlareRenderer>());
+            }
             if (!effect->impl->Initialize())
             {
-                LOG_E("el_effect_init: renderer initialisation failed");
+                LOG_E("el_effect_init_with_renderers: renderer initialisation failed");
                 return EL_ERROR_INIT_FAILED;
             }
             return EL_SUCCESS;
