@@ -11,11 +11,12 @@ namespace EdgeLightingDemo
 {
     /// Demo-only debug aid: a fullscreen checkerboard drawn BEHIND the effect.
     ///
-    /// It exists to verify the neon renderer's compositing: with `neon.opaque`
-    /// off you should see the checker through the dark surround (and tinted
-    /// under the halo); with `neon.opaque` on the effect's draw region writes
-    /// opaquely and occludes the checker. A checkerboard makes partial-alpha
-    /// blending obvious in a way a flat colour can't.
+    /// It exists to verify the neon renderer's compositing: with
+    /// `neon.opaqueMode == NONE` you should see the checker through the dark
+    /// surround (and tinted under the halo); with any other opaque mode the
+    /// effect's fill region writes opaquely and occludes the checker there. A
+    /// checkerboard makes partial-alpha blending obvious in a way a flat
+    /// colour can't.
     class BackgroundQuad
     {
     public:

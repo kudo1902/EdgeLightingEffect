@@ -5,6 +5,7 @@
 #include "renderer/neon-renderer.h"
 #include "renderer/neon-optimized-renderer.h"
 #include "renderer/droplets-renderer.h"
+#include "renderer/lens-flare-renderer.h"
 #include "animation/neon-animations.h"
 #include "debug-ui.h"
 #include "background-quad.h"
@@ -90,6 +91,7 @@ int main()
     // --- Effect setup ---
     gEffect = std::make_unique<EdgeLighting::EdgeLightingEffect>();
 
+    auto lensFlareRenderer = std::make_shared<EdgeLighting::LensFlareRenderer>();
     auto wireframeRenderer = std::make_shared<EdgeLighting::WireframeRenderer>();
     auto neonRenderer = std::make_shared<EdgeLighting::NeonRenderer>();
     auto neonOptimizedRenderer = std::make_shared<EdgeLighting::NeonOptimizedRenderer>();
@@ -98,9 +100,8 @@ int main()
     gEffect->AddRenderer(wireframeRenderer);
     gEffect->AddRenderer(neonRenderer);
     gEffect->AddRenderer(neonOptimizedRenderer);
-    // Registered last: droplets snapshot the framebuffer at render time, so
-    // the neon layers must already be drawn for the pane to refract them.
     gEffect->AddRenderer(dropletsRenderer);
+    gEffect->AddRenderer(lensFlareRenderer);
 
     EdgeLighting::Config config;
     config.geometry.width = displayW / 2;

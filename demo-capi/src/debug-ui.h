@@ -47,6 +47,7 @@ private:
     void buildNeonSection(el_effect_handle_t effect);
     void buildOptimizedNeonSection(el_effect_handle_t effect);
     void buildDropletsSection(el_effect_handle_t effect);
+    void buildLensFlareSection(el_effect_handle_t effect);
     void buildColorPickerSection(el_effect_handle_t effect);
     void buildAnimationSection(el_effect_handle_t effect);
     void buildBackgroundSection();

@@ -75,6 +75,7 @@ private:
     void buildOptimizedNeonSection(EdgeLighting::Config &cfg,
                                    const EdgeLighting::Config &active);
     void buildDropletsSection(EdgeLighting::Config &cfg);
+    void buildLensFlareSection(EdgeLighting::Config &cfg);
     void buildAnimationSection(EdgeLighting::Config &cfg,
                                EdgeLighting::AnimationManager &manager);
     void buildBackgroundSection();

@@ -178,6 +178,7 @@ void DebugUI::Build(el_effect_handle_t effect)
     buildNeonSection(effect);
     buildOptimizedNeonSection(effect);
     buildDropletsSection(effect);
+    buildLensFlareSection(effect);
     buildColorPickerSection(effect);
     buildAnimationSection(effect);
     buildBackgroundSection();
@@ -290,6 +291,34 @@ namespace
         {
             el_effect_set_glow_side_softness(effect, softness);
         }
+
+        auto cutoffRow = [&](const char *base,
+                             auto getFn, auto setFn)
+        {
+            el_bool_t enable = 0;
+            float size = 0.0f, soft = 0.0f;
+            getFn(effect, &enable, &size, &soft);
+            bool en = enable != 0;
+            char enableLabel[64], sizeLabel[64], softLabelInner[64];
+            std::snprintf(enableLabel, sizeof(enableLabel), "%s##%s", base, idSuffix);
+            std::snprintf(sizeLabel, sizeof(sizeLabel), "%s size##%s", base, idSuffix);
+            std::snprintf(softLabelInner, sizeof(softLabelInner), "%s softness##%s", base, idSuffix);
+            bool changed = ImGui::Checkbox(enableLabel, &en);
+            ImGui::Indent();
+            if (!en)
+                ImGui::BeginDisabled();
+            changed |= ImGui::SliderFloat(sizeLabel, &size, 0.0f, 200.0f, "%.0f");
+            changed |= ImGui::SliderFloat(softLabelInner, &soft, 0.0f, 20.0f, "%.1f");
+            if (!en)
+                ImGui::EndDisabled();
+            ImGui::Unindent();
+            if (changed)
+            {
+                setFn(effect, en ? 1 : 0, size, soft);
+            }
+        };
+        cutoffRow("Inside Cutoff", el_effect_get_inside_cutoff, el_effect_set_inside_cutoff);
+        cutoffRow("Outside Cutoff", el_effect_get_outside_cutoff, el_effect_set_outside_cutoff);
     }
 
     // Segment boost row: reads/writes one segment through capi accessors.
@@ -627,14 +656,15 @@ void DebugUI::buildNeonSection(el_effect_handle_t effect)
     if (!en)
         return;
 
-    el_bool_t opaque = 0;
-    el_effect_get_opaque(effect, &opaque);
-    bool op = opaque;
-    if (ImGui::Checkbox("Opaque (no blend)##Neon", &op))
+    el_opaque_mode_e opaqueMode = EL_OPAQUE_MODE_NONE;
+    el_effect_get_opaque_mode(effect, &opaqueMode);
+    const char *opaqueItems[] = {"None", "Outside", "Inside", "Both", "All"};
+    int opaqueIdx = static_cast<int>(opaqueMode);
+    if (ImGui::Combo("Opaque##Neon", &opaqueIdx, opaqueItems, IM_ARRAYSIZE(opaqueItems)))
     {
-        el_effect_set_opaque(effect, op ? 1 : 0);
+        el_effect_set_opaque_mode(effect, static_cast<el_opaque_mode_e>(opaqueIdx));
     }
-    if (op)
+    if (opaqueMode != EL_OPAQUE_MODE_NONE)
     {
         float r = 0, g = 0, b = 0, a = 0;
         el_effect_get_opaque_color(effect, &r, &g, &b, &a);
@@ -644,6 +674,12 @@ void DebugUI::buildNeonSection(el_effect_handle_t effect)
                               ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview))
         {
             el_effect_set_opaque_color(effect, col[0], col[1], col[2], col[3]);
+        }
+        float opaqueSoftness = 0.0f;
+        el_effect_get_opaque_softness(effect, &opaqueSoftness);
+        if (ImGui::SliderFloat("Opaque Softness##Neon", &opaqueSoftness, 0.0f, 20.0f, "%.1f"))
+        {
+            el_effect_set_opaque_softness(effect, opaqueSoftness);
         }
     }
 
@@ -787,7 +823,6 @@ void DebugUI::buildDropletsSection(el_effect_handle_t effect)
         el_effect_set_droplets_lanes(effect, lanes);
     }
 
-
     float tint[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     el_effect_get_droplets_tint(effect, &tint[0], &tint[1], &tint[2], &tint[3]);
     if (ImGui::ColorEdit4("Tint##Drop", tint,
@@ -797,6 +832,128 @@ void DebugUI::buildDropletsSection(el_effect_handle_t effect)
     }
 
     ImGui::TextDisabled("Side follows Neon > Glow Side / Softness");
+}
+
+// ---------------------------------------------------------------------------
+// Lens flare
+// ---------------------------------------------------------------------------
+
+void DebugUI::buildLensFlareSection(el_effect_handle_t effect)
+{
+    if (!ImGui::CollapsingHeader("Lens Flare", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+
+    el_bool_t on = 0;
+    el_effect_get_lens_flare_renderer_enabled(effect, &on);
+    bool en = on;
+    if (ImGui::Checkbox("Enable##Lens", &en))
+    {
+        el_effect_set_lens_flare_renderer_enabled(effect, en ? 1 : 0);
+    }
+    if (!en)
+        return;
+
+    float pos = 0.0f;
+    el_effect_get_lens_flare_perimeter_position(effect, &pos);
+    if (ImGui::SliderFloat("Perimeter Pos##Lens", &pos, 0.0f, 1.0f, "%.3f"))
+    {
+        el_effect_set_lens_flare_perimeter_position(effect, pos);
+    }
+
+    float offset = 0.0f;
+    el_effect_get_lens_flare_perimeter_offset(effect, &offset);
+    if (ImGui::SliderFloat("Perimeter Offset##Lens", &offset, -500.0f, 500.0f, "%.1f px"))
+    {
+        el_effect_set_lens_flare_perimeter_offset(effect, offset);
+    }
+
+    float size = 1.0f;
+    el_effect_get_lens_flare_size(effect, &size);
+    if (ImGui::SliderFloat("Size##Lens", &size, 0.1f, 5.0f, "%.2f"))
+    {
+        el_effect_set_lens_flare_size(effect, size);
+    }
+
+    float color[4] = {0, 0, 0, 0};
+    el_effect_get_lens_flare_color(effect, &color[0], &color[1], &color[2], &color[3]);
+    if (ImGui::ColorEdit4("Color##Lens", color,
+                          ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_HDR |
+                              ImGuiColorEditFlags_Float))
+    {
+        el_effect_set_lens_flare_color(effect, color[0], color[1], color[2], color[3]);
+    }
+
+    float intensity = 1.0f;
+    el_effect_get_lens_flare_intensity(effect, &intensity);
+    if (ImGui::SliderFloat("Intensity##Lens", &intensity, 0.0f, 4.0f, "%.2f"))
+    {
+        el_effect_set_lens_flare_intensity(effect, intensity);
+    }
+
+    float spread = 1.0f;
+    el_effect_get_lens_flare_spread(effect, &spread);
+    if (ImGui::SliderFloat("Spread##Lens", &spread, 0.0f, 3.0f, "%.2f"))
+    {
+        el_effect_set_lens_flare_spread(effect, spread);
+    }
+
+    float ghostSpacing = 1.0f;
+    el_effect_get_lens_flare_ghost_spacing(effect, &ghostSpacing);
+    if (ImGui::SliderFloat("Ghost Spacing##Lens", &ghostSpacing, 0.1f, 4.0f, "%.2f"))
+    {
+        el_effect_set_lens_flare_ghost_spacing(effect, ghostSpacing);
+    }
+
+    float ghostSize = 2.2f;
+    el_effect_get_lens_flare_ghost_size(effect, &ghostSize);
+    if (ImGui::SliderFloat("Ghost Size##Lens", &ghostSize, 1.0f, 5.0f, "%.2f"))
+    {
+        el_effect_set_lens_flare_ghost_size(effect, ghostSize);
+    }
+
+    float ghostOffset = -1.5f;
+    el_effect_get_lens_flare_ghost_offset(effect, &ghostOffset);
+    if (ImGui::SliderFloat("Ghost Offset##Lens", &ghostOffset, -4.0f, 3.0f, "%.2f"))
+    {
+        el_effect_set_lens_flare_ghost_offset(effect, ghostOffset);
+    }
+
+    float ghostColor[3] = {1.0f, 1.0f, 1.0f};
+    el_effect_get_lens_flare_ghost_color(effect, &ghostColor[0], &ghostColor[1], &ghostColor[2]);
+    if (ImGui::ColorEdit3("Ghost Color##Lens", ghostColor))
+    {
+        el_effect_set_lens_flare_ghost_color(effect, ghostColor[0], ghostColor[1], ghostColor[2]);
+    }
+
+    float ghostTint = 0.0f;
+    el_effect_get_lens_flare_ghost_tint(effect, &ghostTint);
+    if (ImGui::SliderFloat("Ghost Tint##Lens", &ghostTint, 0.0f, 1.0f, "%.2f"))
+    {
+        el_effect_set_lens_flare_ghost_tint(effect, ghostTint);
+    }
+
+    float flareCenter[2] = {0.5f, 0.5f};
+    el_effect_get_lens_flare_flare_center(effect, &flareCenter[0], &flareCenter[1]);
+    if (ImGui::SliderFloat2("Flare Center##Lens", flareCenter, 0.0f, 1.0f, "%.2f"))
+    {
+        el_effect_set_lens_flare_flare_center(effect, flareCenter[0], flareCenter[1]);
+    }
+
+    float rayDensity = 0.25f;
+    el_effect_get_lens_flare_ray_density(effect, &rayDensity);
+    if (ImGui::SliderFloat("Ray Density##Lens", &rayDensity, 0.0f, 1.0f, "%.2f"))
+    {
+        el_effect_set_lens_flare_ray_density(effect, rayDensity);
+    }
+
+    float rotationRate = 0.0f;
+    el_effect_get_lens_flare_rotation_rate(effect, &rotationRate);
+    if (ImGui::SliderFloat("Rotation Rate##Lens", &rotationRate, -2.0f, 2.0f, "%.3f rev/s"))
+    {
+        el_effect_set_lens_flare_rotation_rate(effect, rotationRate);
+    }
 }
 
 // ---------------------------------------------------------------------------

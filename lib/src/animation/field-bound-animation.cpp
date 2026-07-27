@@ -1,4 +1,6 @@
 #include "animation/field-bound-animation.h"
+#include "util/segment-utils.h"
+#include "util/log-util.h"
 
 #include <algorithm>
 
@@ -84,19 +86,20 @@ namespace EdgeLighting
             return 0.0f;
         }
 
-        SegmentBoost &ensureSegmentSlot(Config &cfg, size_t index)
+        // No auto-grow: the slot must already exist (size the pool via the C
+        // API first). Returns nullptr when @p index is out of range; the write
+        // helpers log and skip in that case.
+        SegmentBoost *segmentSlot(Config &cfg, size_t index)
         {
-            if (cfg.neon.segmentBoosts.size() <= index)
+            if (index >= cfg.neon.segmentBoosts.size())
             {
-                cfg.neon.segmentBoosts.resize(index + 1,
-                                              SegmentBoost{0.0f, 0.15f, 4.0f});
+                return nullptr;
             }
-            return cfg.neon.segmentBoosts[index];
+            return &cfg.neon.segmentBoosts[index];
         }
 
-        void writeSegment(Config &cfg, size_t index, SegmentField field, float value)
+        void writeSegmentScalar(SegmentBoost &s, SegmentField field, float value)
         {
-            SegmentBoost &s = ensureSegmentSlot(cfg, index);
             switch (field)
             {
             case SegmentField::POSITION:
@@ -117,21 +120,43 @@ namespace EdgeLighting
             }
         }
 
-        ColorStop &ensureStopSlot(SegmentBoost &seg, size_t stopIdx)
+        void writeSegment(Config &cfg, size_t index, SegmentField field, float value)
         {
-            if (seg.colorStops.size() <= stopIdx)
+            SegmentBoost *s = segmentSlot(cfg, index);
+            if (!s)
             {
-                seg.colorStops.resize(stopIdx + 1,
-                                      ColorStop{0.5f, glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)});
+                LOG_E("writeSegment: index %zu out of range (size=%zu); skipping",
+                      index, cfg.neon.segmentBoosts.size());
+                return;
             }
-            return seg.colorStops[stopIdx];
+            writeSegmentScalar(*s, field, value);
         }
 
-        void writeStop(Config &cfg, size_t segIdx, size_t stopIdx,
-                       ColorStopField field, float value)
+        void writePreservedSegment(Config &cfg, uint32_t id, SegmentField field, float value)
         {
-            SegmentBoost &s = ensureSegmentSlot(cfg, segIdx);
-            ColorStop &c = ensureStopSlot(s, stopIdx);
+            // No auto-grow: the entry must have been acquired already. A binding
+            // to an id that no longer exists (released elsewhere) is a no-op.
+            int idx = SegmentUtils::FindPreservedSegment(cfg.neon, id);
+            if (idx < 0)
+            {
+                return;
+            }
+            writeSegmentScalar(cfg.neon.preservedSegmentBoosts[static_cast<size_t>(idx)].segment, field, value);
+        }
+
+        // No auto-grow: the stop must already exist within its segment/arc.
+        // Returns nullptr when @p stopIdx is out of range; callers log and skip.
+        ColorStop *colorStopSlot(std::vector<ColorStop> &stops, size_t stopIdx)
+        {
+            if (stopIdx >= stops.size())
+            {
+                return nullptr;
+            }
+            return &stops[stopIdx];
+        }
+
+        void writeColorStopScalar(ColorStop &c, ColorStopField field, float value)
+        {
             switch (field)
             {
             case ColorStopField::POSITION:
@@ -162,18 +187,70 @@ namespace EdgeLighting
             }
         }
 
-        Arc &ensureArcSlot(Config &cfg, size_t index)
+        void writeStop(Config &cfg, size_t segIdx, size_t stopIdx,
+                       ColorStopField field, float value)
         {
-            if (cfg.neon.arcs.size() <= index)
+            SegmentBoost *s = segmentSlot(cfg, segIdx);
+            if (!s)
             {
-                cfg.neon.arcs.resize(index + 1, Arc{});
+                LOG_E("writeStop: segment index %zu out of range (size=%zu); skipping",
+                      segIdx, cfg.neon.segmentBoosts.size());
+                return;
             }
-            return cfg.neon.arcs[index];
+            ColorStop *c = colorStopSlot(s->colorStops, stopIdx);
+            if (!c)
+            {
+                LOG_E("writeStop: stop index %zu out of range (size=%zu) for segment %zu; skipping",
+                      stopIdx, s->colorStops.size(), segIdx);
+                return;
+            }
+            writeColorStopScalar(*c, field, value);
+        }
+
+        void writePreservedStop(Config &cfg, uint32_t id, size_t stopIdx,
+                                 ColorStopField field, float value)
+        {
+            // Nothing is auto-grown here: the entry must have been acquired and
+            // its stops sized already (via el_effect_set_preserved_segment_color_stop_count).
+            // A binding to a released id, or to a stop past the current count, is
+            // a skipped no-op - out-of-range just logs and moves on.
+            int idx = SegmentUtils::FindPreservedSegment(cfg.neon, id);
+            if (idx < 0)
+            {
+                return;
+            }
+            SegmentBoost &s = cfg.neon.preservedSegmentBoosts[static_cast<size_t>(idx)].segment;
+            ColorStop *c = colorStopSlot(s.colorStops, stopIdx);
+            if (!c)
+            {
+                LOG_E("writePreservedStop: stopIdx %zu out of range (size=%zu) for preserved id %u; skipping",
+                      stopIdx, s.colorStops.size(), id);
+                return;
+            }
+            writeColorStopScalar(*c, field, value);
+        }
+
+        // No auto-grow, mirroring segmentSlot: nullptr when @p index is out of
+        // range, and the write helpers log and skip.
+        Arc *arcSlot(Config &cfg, size_t index)
+        {
+            if (index >= cfg.neon.arcs.size())
+            {
+                return nullptr;
+            }
+            return &cfg.neon.arcs[index];
         }
 
         void writeArc(Config &cfg, size_t index, ArcField field, float value)
         {
-            Arc &a = ensureArcSlot(cfg, index);
+            Arc *ap = arcSlot(cfg, index);
+            if (!ap)
+            {
+                LOG_E("writeArc: index %zu out of range (size=%zu); skipping",
+                      index, cfg.neon.arcs.size());
+                return;
+            }
+            Arc &a = *ap;
             switch (field)
             {
             case ArcField::START:
@@ -194,49 +271,24 @@ namespace EdgeLighting
             }
         }
 
-        ColorStop &ensureArcStopSlot(Arc &arc, size_t stopIdx)
-        {
-            if (arc.colorStops.size() <= stopIdx)
-            {
-                arc.colorStops.resize(stopIdx + 1,
-                                      ColorStop{0.5f, glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)});
-            }
-            return arc.colorStops[stopIdx];
-        }
-
         void writeArcStop(Config &cfg, size_t arcIdx, size_t stopIdx,
                           ColorStopField field, float value)
         {
-            Arc &a = ensureArcSlot(cfg, arcIdx);
-            ColorStop &c = ensureArcStopSlot(a, stopIdx);
-            switch (field)
+            Arc *a = arcSlot(cfg, arcIdx);
+            if (!a)
             {
-            case ColorStopField::POSITION:
+                LOG_E("writeArcStop: arc index %zu out of range (size=%zu); skipping",
+                      arcIdx, cfg.neon.arcs.size());
+                return;
+            }
+            ColorStop *c = colorStopSlot(a->colorStops, stopIdx);
+            if (!c)
             {
-                c.position = value;
-                break;
+                LOG_E("writeArcStop: stop index %zu out of range (size=%zu) for arc %zu; skipping",
+                      stopIdx, a->colorStops.size(), arcIdx);
+                return;
             }
-            case ColorStopField::R:
-            {
-                c.color.r = value;
-                break;
-            }
-            case ColorStopField::G:
-            {
-                c.color.g = value;
-                break;
-            }
-            case ColorStopField::B:
-            {
-                c.color.b = value;
-                break;
-            }
-            case ColorStopField::A:
-            {
-                c.color.a = value;
-                break;
-            }
-            }
+            writeColorStopScalar(*c, field, value);
         }
     } // namespace
 
@@ -254,6 +306,21 @@ namespace EdgeLighting
             if (b.modulator)
             {
                 writeSegment(cfg, b.index, b.field, b.modulator->Evaluate(elapsed));
+            }
+        }
+        for (const PreservedSegmentBinding &b : mPreservedSegmentBindings)
+        {
+            if (b.modulator)
+            {
+                writePreservedSegment(cfg, b.id, b.field, b.modulator->Evaluate(elapsed));
+            }
+        }
+        for (const PreservedSegmentStopBinding &b : mPreservedSegmentStopBindings)
+        {
+            if (b.modulator)
+            {
+                writePreservedStop(cfg, b.id, b.stopIndex, b.field,
+                                   b.modulator->Evaluate(elapsed));
             }
         }
         for (const SegmentStopBinding &b : mSegmentStopBindings)
@@ -301,6 +368,17 @@ namespace EdgeLighting
             mSegmentBoostsCaptured = false;
         }
 
+        if (!mPreservedSegmentBindings.empty() || !mPreservedSegmentStopBindings.empty())
+        {
+            mSavedPreservedSegmentBoosts = cfg.neon.preservedSegmentBoosts;
+            mPreservedSegmentBoostsCaptured = true;
+        }
+        else
+        {
+            mSavedPreservedSegmentBoosts.clear();
+            mPreservedSegmentBoostsCaptured = false;
+        }
+
         if (!mArcBindings.empty() || !mArcStopBindings.empty())
         {
             mSavedArcs = cfg.neon.arcs;
@@ -323,6 +401,10 @@ namespace EdgeLighting
         if (mSegmentBoostsCaptured)
         {
             cfg.neon.segmentBoosts = mSavedSegmentBoosts;
+        }
+        if (mPreservedSegmentBoostsCaptured)
+        {
+            cfg.neon.preservedSegmentBoosts = mSavedPreservedSegmentBoosts;
         }
         if (mArcsCaptured)
         {

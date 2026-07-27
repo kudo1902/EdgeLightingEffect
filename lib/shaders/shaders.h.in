@@ -53,6 +53,14 @@ namespace EdgeLighting
 @DROPLETS_FRAG_CONTENT@
 )shadersrc";
 
+                static const char *const LENS_FLARE_VERT_SRC = R"shadersrc(@GLSL_VERSION@
+@LENS_FLARE_VERT_CONTENT@
+)shadersrc";
+
+                static const char *const LENS_FLARE_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
+@LENS_FLARE_FRAG_CONTENT@
+)shadersrc";
+
         }
 }
 

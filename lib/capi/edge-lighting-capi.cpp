@@ -6,10 +6,12 @@
 #include "renderer/neon-renderer.h"
 #include "renderer/neon-optimized-renderer.h"
 #include "renderer/droplets-renderer.h"
+#include "renderer/lens-flare-renderer.h"
 #include "animation/neon-animations.h"
 #include "animation/field-bound-animation.h"
 #include "animation/modulator.h"
 #include "util/log-util.h"
+#include "util/segment-utils.h"
 
 #include <algorithm>
 #include <memory>
@@ -394,19 +396,20 @@ extern "C"
         return EL_SUCCESS;
     }
 
-    el_result_e el_effect_set_opaque(el_effect_handle_t effect, el_bool_t opaque)
+    el_result_e el_effect_set_opaque_mode(el_effect_handle_t effect, el_opaque_mode_e mode)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque");
-        SET_AND_LOG(effect->config.neon.opaque, opaque != 0,
-                    "effect=%p, opaque=%d", (void *)effect, opaque);
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque_mode");
+        SET_AND_LOG(effect->config.neon.opaqueMode,
+                    static_cast<EdgeLighting::OpaqueMode>(mode),
+                    "effect=%p, mode=%d", (void *)effect, static_cast<int>(mode));
     }
 
-    el_result_e el_effect_get_opaque(el_effect_handle_t effect, el_bool_t *outOpaque)
+    el_result_e el_effect_get_opaque_mode(el_effect_handle_t effect, el_opaque_mode_e *outMode)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_opaque");
-        VALIDATE_OUT_PTR(outOpaque, "el_effect_get_opaque");
-        *outOpaque = effect->config.neon.opaque ? 1 : 0;
-        LOG_D("effect=%p, opaque=%d", (void *)effect, *outOpaque);
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_opaque_mode");
+        VALIDATE_OUT_PTR(outMode, "el_effect_get_opaque_mode");
+        *outMode = static_cast<el_opaque_mode_e>(effect->config.neon.opaqueMode);
+        LOG_D("effect=%p, mode=%d", (void *)effect, static_cast<int>(*outMode));
         return EL_SUCCESS;
     }
 
@@ -431,6 +434,86 @@ extern "C"
         *outB = effect->config.neon.opaqueColor.b;
         *outA = effect->config.neon.opaqueColor.a;
         LOG_D("effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, *outR, *outG, *outB, *outA);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_opaque_softness(el_effect_handle_t effect, float softness)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque_softness");
+        SET_AND_LOG(effect->config.neon.opaqueSoftness, softness,
+                    "effect=%p, softness=%f", (void *)effect, softness);
+    }
+
+    el_result_e el_effect_get_opaque_softness(el_effect_handle_t effect, float *outSoftness)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_opaque_softness");
+        VALIDATE_OUT_PTR(outSoftness, "el_effect_get_opaque_softness");
+        *outSoftness = effect->config.neon.opaqueSoftness;
+        LOG_D("effect=%p, softness=%f", (void *)effect, *outSoftness);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_inside_cutoff(el_effect_handle_t effect,
+                                            el_bool_t enable, float size, float softness)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_inside_cutoff");
+        auto &c = effect->config.neon.insideCutoff;
+        bool en = (enable != 0);
+        if (c.enable == en && c.size == size && c.softness == softness)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, enable=%d, size=%f, softness=%f", (void *)effect, enable, size, softness);
+        c.enable = en;
+        c.size = size;
+        c.softness = softness;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_inside_cutoff(el_effect_handle_t effect,
+                                            el_bool_t *outEnable, float *outSize, float *outSoftness)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_inside_cutoff");
+        VALIDATE_OUT_PTR(outEnable, "el_effect_get_inside_cutoff");
+        VALIDATE_OUT_PTR(outSize, "el_effect_get_inside_cutoff");
+        VALIDATE_OUT_PTR(outSoftness, "el_effect_get_inside_cutoff");
+        const auto &c = effect->config.neon.insideCutoff;
+        *outEnable = c.enable ? 1 : 0;
+        *outSize = c.size;
+        *outSoftness = c.softness;
+        LOG_D("effect=%p, enable=%d, size=%f, softness=%f", (void *)effect, *outEnable, *outSize, *outSoftness);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_outside_cutoff(el_effect_handle_t effect,
+                                             el_bool_t enable, float size, float softness)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_outside_cutoff");
+        auto &c = effect->config.neon.outsideCutoff;
+        bool en = (enable != 0);
+        if (c.enable == en && c.size == size && c.softness == softness)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, enable=%d, size=%f, softness=%f", (void *)effect, enable, size, softness);
+        c.enable = en;
+        c.size = size;
+        c.softness = softness;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_outside_cutoff(el_effect_handle_t effect,
+                                             el_bool_t *outEnable, float *outSize, float *outSoftness)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_outside_cutoff");
+        VALIDATE_OUT_PTR(outEnable, "el_effect_get_outside_cutoff");
+        VALIDATE_OUT_PTR(outSize, "el_effect_get_outside_cutoff");
+        VALIDATE_OUT_PTR(outSoftness, "el_effect_get_outside_cutoff");
+        const auto &c = effect->config.neon.outsideCutoff;
+        *outEnable = c.enable ? 1 : 0;
+        *outSize = c.size;
+        *outSoftness = c.softness;
+        LOG_D("effect=%p, enable=%d, size=%f, softness=%f", (void *)effect, *outEnable, *outSize, *outSoftness);
         return EL_SUCCESS;
     }
 
@@ -774,6 +857,279 @@ extern "C"
         }
         LOG_I("effect=%p", (void *)effect);
         effect->config.neon.segmentBoosts.clear();
+        return EL_SUCCESS;
+    }
+
+    // --- Preserved segment boosts (id-addressed, override-proof) ---
+    // A second pool, separate from segmentBoosts above. Keyed by SegmentBoost::id
+    // (handed out by AcquireSegment, never reused). None of the transient-pool
+    // bulk ops (clear_segment_boosts / set_segment_boost_count) touch it, so an
+    // entry acquired here survives being "overridden" wholesale.
+
+    el_result_e el_effect_acquire_preserved_segment(el_effect_handle_t effect, uint32_t *outId)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_acquire_preserved_segment");
+        VALIDATE_OUT_PTR(outId, "el_effect_acquire_preserved_segment");
+        uint32_t id = EdgeLighting::SegmentUtils::AcquireSegment(effect->config.neon);
+        if (id == 0)
+        {
+            LOG_E("el_effect_acquire_preserved_segment: pool full (cap=%d)",
+                  EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        *outId = id;
+        LOG_I("effect=%p, id=%u", (void *)effect, id);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_preserved_segment(el_effect_handle_t effect, uint32_t id,
+                                                float position, float length, float boost)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_preserved_segment");
+        int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
+        if (idx < 0)
+        {
+            LOG_E("el_effect_set_preserved_segment: no preserved entry with id %u", id);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        auto &b = effect->config.neon.preservedSegmentBoosts[static_cast<size_t>(idx)].segment;
+        if (b.position == position && b.length == length && b.boost == boost)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, id=%u, position=%f, length=%f, boost=%f", (void *)effect, id, position, length, boost);
+        b.position = position;
+        b.length = length;
+        b.boost = boost;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_preserved_segment(el_effect_handle_t effect, uint32_t id,
+                                                float *outPosition, float *outLength, float *outBoost)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_preserved_segment");
+        VALIDATE_OUT_PTR(outPosition, "el_effect_get_preserved_segment");
+        VALIDATE_OUT_PTR(outLength, "el_effect_get_preserved_segment");
+        VALIDATE_OUT_PTR(outBoost, "el_effect_get_preserved_segment");
+        int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
+        if (idx < 0)
+        {
+            LOG_E("el_effect_get_preserved_segment: no preserved entry with id %u", id);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        const auto &b = effect->config.neon.preservedSegmentBoosts[static_cast<size_t>(idx)].segment;
+        *outPosition = b.position;
+        *outLength = b.length;
+        *outBoost = b.boost;
+        LOG_D("effect=%p, id=%u, position=%f, length=%f, boost=%f", (void *)effect, id, *outPosition, *outLength, *outBoost);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_release_preserved_segment(el_effect_handle_t effect, uint32_t id)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_release_preserved_segment");
+        if (!EdgeLighting::SegmentUtils::ReleaseSegment(effect->config.neon, id))
+        {
+            LOG_E("el_effect_release_preserved_segment: no preserved entry with id %u", id);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        LOG_I("effect=%p, id=%u", (void *)effect, id);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_preserved_segment_count(el_effect_handle_t effect, int32_t *outCount)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_preserved_segment_count");
+        VALIDATE_OUT_PTR(outCount, "el_effect_get_preserved_segment_count");
+        *outCount = static_cast<int32_t>(effect->config.neon.preservedSegmentBoosts.size());
+        LOG_D("effect=%p, count=%d", (void *)effect, *outCount);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_clear_preserved_segments(el_effect_handle_t effect)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_clear_preserved_segments");
+        if (effect->config.neon.preservedSegmentBoosts.empty())
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p", (void *)effect);
+        effect->config.neon.preservedSegmentBoosts.clear();
+        return EL_SUCCESS;
+    }
+
+    // --- Preserved segment blend space + colour stops (by id) ---
+    // Mirror of the transient segment stop/blend-space API below, addressed by
+    // stable id instead of array index. Each operates on the .segment of the
+    // PreservedSegment owning `id`; an id with no live entry (including a
+    // released one) returns EL_ERROR_INVALID_PARAMETER. Rendering already reads
+    // these fields via SegmentUtils::FillEffectiveSegments, so a preserved
+    // segment with stops shows its own gradient just like a transient one.
+
+    el_result_e el_effect_set_preserved_segment_blend_space(el_effect_handle_t effect,
+                                                            uint32_t id, el_blend_space_e blendSpace)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_preserved_segment_blend_space");
+        int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
+        if (idx < 0)
+        {
+            LOG_E("el_effect_set_preserved_segment_blend_space: no preserved entry with id %u", id);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        auto &seg = effect->config.neon.preservedSegmentBoosts[static_cast<size_t>(idx)].segment;
+        auto newVal = static_cast<EdgeLighting::BlendSpace>(blendSpace);
+        if (seg.blendSpace == newVal)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, id=%u, blendSpace=%d", (void *)effect, id, (int)blendSpace);
+        seg.blendSpace = newVal;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_preserved_segment_blend_space(el_effect_handle_t effect,
+                                                            uint32_t id, el_blend_space_e *outBlendSpace)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_preserved_segment_blend_space");
+        VALIDATE_OUT_PTR(outBlendSpace, "el_effect_get_preserved_segment_blend_space");
+        int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
+        if (idx < 0)
+        {
+            LOG_E("el_effect_get_preserved_segment_blend_space: no preserved entry with id %u", id);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        *outBlendSpace = static_cast<el_blend_space_e>(
+            effect->config.neon.preservedSegmentBoosts[static_cast<size_t>(idx)].segment.blendSpace);
+        LOG_D("effect=%p, id=%u, blendSpace=%d", (void *)effect, id, (int)*outBlendSpace);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_preserved_segment_color_stop_count(el_effect_handle_t effect,
+                                                                 uint32_t id, int32_t count)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_preserved_segment_color_stop_count");
+        if (count < 0)
+        {
+            LOG_E("el_effect_set_preserved_segment_color_stop_count: negative count");
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
+        if (idx < 0)
+        {
+            LOG_E("el_effect_set_preserved_segment_color_stop_count: no preserved entry with id %u", id);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        auto &stops = effect->config.neon.preservedSegmentBoosts[static_cast<size_t>(idx)].segment.colorStops;
+        size_t newSize = static_cast<size_t>(count);
+        if (stops.size() == newSize)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, id=%u, count=%d", (void *)effect, id, count);
+        stops.resize(newSize);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_preserved_segment_color_stop_count(el_effect_handle_t effect,
+                                                                 uint32_t id, int32_t *outCount)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_preserved_segment_color_stop_count");
+        VALIDATE_OUT_PTR(outCount, "el_effect_get_preserved_segment_color_stop_count");
+        int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
+        if (idx < 0)
+        {
+            LOG_E("el_effect_get_preserved_segment_color_stop_count: no preserved entry with id %u", id);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        *outCount = static_cast<int32_t>(
+            effect->config.neon.preservedSegmentBoosts[static_cast<size_t>(idx)].segment.colorStops.size());
+        LOG_D("effect=%p, id=%u, count=%d", (void *)effect, id, *outCount);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_preserved_segment_color_stop(el_effect_handle_t effect,
+                                                           uint32_t id, int32_t stopIndex,
+                                                           float position, float r, float g, float b, float a)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_preserved_segment_color_stop");
+        if (stopIndex < 0)
+        {
+            LOG_E("el_effect_set_preserved_segment_color_stop: negative stopIndex");
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
+        if (idx < 0)
+        {
+            LOG_E("el_effect_set_preserved_segment_color_stop: no preserved entry with id %u", id);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        auto &stops = effect->config.neon.preservedSegmentBoosts[static_cast<size_t>(idx)].segment.colorStops;
+        size_t stopIdx = static_cast<size_t>(stopIndex);
+        if (stopIdx >= stops.size())
+        {
+            LOG_E("el_effect_set_preserved_segment_color_stop: stopIndex %d out of range (size=%zu)", stopIndex, stops.size());
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        EdgeLighting::ColorStop newStop{position, glm::vec4(r, g, b, a)};
+        if (stops[stopIdx] == newStop)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, id=%u, stopIndex=%d, position=%f, r=%f, g=%f, b=%f, a=%f",
+              (void *)effect, id, stopIndex, position, r, g, b, a);
+        stops[stopIdx] = newStop;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_preserved_segment_color_stop(el_effect_handle_t effect,
+                                                           uint32_t id, int32_t stopIndex,
+                                                           float *outPosition, float *outR, float *outG, float *outB, float *outA)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_preserved_segment_color_stop");
+        VALIDATE_OUT_PTR(outPosition, "el_effect_get_preserved_segment_color_stop");
+        VALIDATE_OUT_PTR(outR, "el_effect_get_preserved_segment_color_stop");
+        VALIDATE_OUT_PTR(outG, "el_effect_get_preserved_segment_color_stop");
+        VALIDATE_OUT_PTR(outB, "el_effect_get_preserved_segment_color_stop");
+        VALIDATE_OUT_PTR(outA, "el_effect_get_preserved_segment_color_stop");
+        int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
+        if (idx < 0)
+        {
+            LOG_E("el_effect_get_preserved_segment_color_stop: no preserved entry with id %u", id);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        const auto &seg = effect->config.neon.preservedSegmentBoosts[static_cast<size_t>(idx)].segment;
+        if (stopIndex < 0 || static_cast<size_t>(stopIndex) >= seg.colorStops.size())
+        {
+            LOG_E("el_effect_get_preserved_segment_color_stop: stopIndex %d out of range (size=%zu)", stopIndex, seg.colorStops.size());
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        const auto &s = seg.colorStops[static_cast<size_t>(stopIndex)];
+        *outPosition = s.position;
+        *outR = s.color.r;
+        *outG = s.color.g;
+        *outB = s.color.b;
+        *outA = s.color.a;
+        LOG_D("effect=%p, id=%u, stopIndex=%d, position=%f, r=%f, g=%f, b=%f, a=%f",
+              (void *)effect, id, stopIndex, *outPosition, *outR, *outG, *outB, *outA);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_clear_preserved_segment_color_stops(el_effect_handle_t effect, uint32_t id)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_clear_preserved_segment_color_stops");
+        int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
+        if (idx < 0)
+        {
+            LOG_E("el_effect_clear_preserved_segment_color_stops: no preserved entry with id %u", id);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        auto &stops = effect->config.neon.preservedSegmentBoosts[static_cast<size_t>(idx)].segment.colorStops;
+        if (stops.empty())
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, id=%u", (void *)effect, id);
+        stops.clear();
         return EL_SUCCESS;
     }
 
@@ -1391,6 +1747,264 @@ extern "C"
         return EL_SUCCESS;
     }
 
+    // --- Lens flare ---
+
+    el_result_e el_effect_set_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_renderer_enabled");
+        SET_AND_LOG(effect->config.lensFlare.enable, enabled != 0,
+                    "effect=%p, enabled=%d", (void *)effect, enabled);
+    }
+
+    el_result_e el_effect_get_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_renderer_enabled");
+        VALIDATE_OUT_PTR(outEnabled, "el_effect_get_lens_flare_renderer_enabled");
+        *outEnabled = effect->config.lensFlare.enable ? 1 : 0;
+        LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_lens_flare_perimeter_position(el_effect_handle_t effect, float position)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_perimeter_position");
+        SET_AND_LOG(effect->config.lensFlare.perimeterPosition, position,
+                    "effect=%p, position=%f", (void *)effect, position);
+    }
+
+    el_result_e el_effect_get_lens_flare_perimeter_position(el_effect_handle_t effect, float *outPosition)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_perimeter_position");
+        VALIDATE_OUT_PTR(outPosition, "el_effect_get_lens_flare_perimeter_position");
+        *outPosition = effect->config.lensFlare.perimeterPosition;
+        LOG_D("effect=%p, position=%f", (void *)effect, *outPosition);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_lens_flare_perimeter_offset(el_effect_handle_t effect, float offset)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_perimeter_offset");
+        SET_AND_LOG(effect->config.lensFlare.perimeterOffset, offset,
+                    "effect=%p, offset=%f", (void *)effect, offset);
+    }
+
+    el_result_e el_effect_get_lens_flare_perimeter_offset(el_effect_handle_t effect, float *outOffset)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_perimeter_offset");
+        VALIDATE_OUT_PTR(outOffset, "el_effect_get_lens_flare_perimeter_offset");
+        *outOffset = effect->config.lensFlare.perimeterOffset;
+        LOG_D("effect=%p, offset=%f", (void *)effect, *outOffset);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_lens_flare_size(el_effect_handle_t effect, float size)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_size");
+        SET_AND_LOG(effect->config.lensFlare.size, size,
+                    "effect=%p, size=%f", (void *)effect, size);
+    }
+
+    el_result_e el_effect_get_lens_flare_size(el_effect_handle_t effect, float *outSize)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_size");
+        VALIDATE_OUT_PTR(outSize, "el_effect_get_lens_flare_size");
+        *outSize = effect->config.lensFlare.size;
+        LOG_D("effect=%p, size=%f", (void *)effect, *outSize);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_lens_flare_color(el_effect_handle_t effect,
+                                               float r, float g, float b, float a)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_color");
+        SET_AND_LOG(effect->config.lensFlare.color, glm::vec4(r, g, b, a),
+                    "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a);
+    }
+
+    el_result_e el_effect_get_lens_flare_color(el_effect_handle_t effect,
+                                               float *outR, float *outG, float *outB, float *outA)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_color");
+        VALIDATE_OUT_PTR(outR, "el_effect_get_lens_flare_color");
+        VALIDATE_OUT_PTR(outG, "el_effect_get_lens_flare_color");
+        VALIDATE_OUT_PTR(outB, "el_effect_get_lens_flare_color");
+        VALIDATE_OUT_PTR(outA, "el_effect_get_lens_flare_color");
+        *outR = effect->config.lensFlare.color.r;
+        *outG = effect->config.lensFlare.color.g;
+        *outB = effect->config.lensFlare.color.b;
+        *outA = effect->config.lensFlare.color.a;
+        LOG_D("effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, *outR, *outG, *outB, *outA);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_lens_flare_intensity(el_effect_handle_t effect, float intensity)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_intensity");
+        SET_AND_LOG(effect->config.lensFlare.intensity, intensity,
+                    "effect=%p, intensity=%f", (void *)effect, intensity);
+    }
+
+    el_result_e el_effect_get_lens_flare_intensity(el_effect_handle_t effect, float *outIntensity)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_intensity");
+        VALIDATE_OUT_PTR(outIntensity, "el_effect_get_lens_flare_intensity");
+        *outIntensity = effect->config.lensFlare.intensity;
+        LOG_D("effect=%p, intensity=%f", (void *)effect, *outIntensity);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_lens_flare_spread(el_effect_handle_t effect, float spread)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_spread");
+        SET_AND_LOG(effect->config.lensFlare.spread, spread,
+                    "effect=%p, spread=%f", (void *)effect, spread);
+    }
+
+    el_result_e el_effect_get_lens_flare_spread(el_effect_handle_t effect, float *outSpread)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_spread");
+        VALIDATE_OUT_PTR(outSpread, "el_effect_get_lens_flare_spread");
+        *outSpread = effect->config.lensFlare.spread;
+        LOG_D("effect=%p, spread=%f", (void *)effect, *outSpread);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_lens_flare_ghost_spacing(el_effect_handle_t effect, float ghostSpacing)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_spacing");
+        SET_AND_LOG(effect->config.lensFlare.ghostSpacing, ghostSpacing,
+                    "effect=%p, ghostSpacing=%f", (void *)effect, ghostSpacing);
+    }
+
+    el_result_e el_effect_get_lens_flare_ghost_spacing(el_effect_handle_t effect, float *outGhostSpacing)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_spacing");
+        VALIDATE_OUT_PTR(outGhostSpacing, "el_effect_get_lens_flare_ghost_spacing");
+        *outGhostSpacing = effect->config.lensFlare.ghostSpacing;
+        LOG_D("effect=%p, ghostSpacing=%f", (void *)effect, *outGhostSpacing);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_lens_flare_ghost_size(el_effect_handle_t effect, float ghostSize)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_size");
+        SET_AND_LOG(effect->config.lensFlare.ghostSize, ghostSize,
+                    "effect=%p, ghostSize=%f", (void *)effect, ghostSize);
+    }
+
+    el_result_e el_effect_get_lens_flare_ghost_size(el_effect_handle_t effect, float *outGhostSize)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_size");
+        VALIDATE_OUT_PTR(outGhostSize, "el_effect_get_lens_flare_ghost_size");
+        *outGhostSize = effect->config.lensFlare.ghostSize;
+        LOG_D("effect=%p, ghostSize=%f", (void *)effect, *outGhostSize);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_lens_flare_ghost_offset(el_effect_handle_t effect, float ghostOffset)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_offset");
+        SET_AND_LOG(effect->config.lensFlare.ghostOffset, ghostOffset,
+                    "effect=%p, ghostOffset=%f", (void *)effect, ghostOffset);
+    }
+
+    el_result_e el_effect_get_lens_flare_ghost_offset(el_effect_handle_t effect, float *outGhostOffset)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_offset");
+        VALIDATE_OUT_PTR(outGhostOffset, "el_effect_get_lens_flare_ghost_offset");
+        *outGhostOffset = effect->config.lensFlare.ghostOffset;
+        LOG_D("effect=%p, ghostOffset=%f", (void *)effect, *outGhostOffset);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_lens_flare_ghost_color(el_effect_handle_t effect,
+                                                     float r, float g, float b)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_color");
+        SET_AND_LOG(effect->config.lensFlare.ghostColor, glm::vec3(r, g, b),
+                    "effect=%p, r=%f, g=%f, b=%f", (void *)effect, r, g, b);
+    }
+
+    el_result_e el_effect_get_lens_flare_ghost_color(el_effect_handle_t effect,
+                                                     float *outR, float *outG, float *outB)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_color");
+        VALIDATE_OUT_PTR(outR, "el_effect_get_lens_flare_ghost_color");
+        VALIDATE_OUT_PTR(outG, "el_effect_get_lens_flare_ghost_color");
+        VALIDATE_OUT_PTR(outB, "el_effect_get_lens_flare_ghost_color");
+        *outR = effect->config.lensFlare.ghostColor.r;
+        *outG = effect->config.lensFlare.ghostColor.g;
+        *outB = effect->config.lensFlare.ghostColor.b;
+        LOG_D("effect=%p, r=%f, g=%f, b=%f", (void *)effect, *outR, *outG, *outB);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_lens_flare_ghost_tint(el_effect_handle_t effect, float ghostTint)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_tint");
+        SET_AND_LOG(effect->config.lensFlare.ghostTint, ghostTint,
+                    "effect=%p, ghostTint=%f", (void *)effect, ghostTint);
+    }
+
+    el_result_e el_effect_get_lens_flare_ghost_tint(el_effect_handle_t effect, float *outGhostTint)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_tint");
+        VALIDATE_OUT_PTR(outGhostTint, "el_effect_get_lens_flare_ghost_tint");
+        *outGhostTint = effect->config.lensFlare.ghostTint;
+        LOG_D("effect=%p, ghostTint=%f", (void *)effect, *outGhostTint);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_lens_flare_flare_center(el_effect_handle_t effect, float x, float y)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_flare_center");
+        SET_AND_LOG(effect->config.lensFlare.flareCenter, glm::vec2(x, y),
+                    "effect=%p, x=%f, y=%f", (void *)effect, x, y);
+    }
+
+    el_result_e el_effect_get_lens_flare_flare_center(el_effect_handle_t effect, float *outX, float *outY)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_flare_center");
+        VALIDATE_OUT_PTR(outX, "el_effect_get_lens_flare_flare_center");
+        VALIDATE_OUT_PTR(outY, "el_effect_get_lens_flare_flare_center");
+        *outX = effect->config.lensFlare.flareCenter.x;
+        *outY = effect->config.lensFlare.flareCenter.y;
+        LOG_D("effect=%p, x=%f, y=%f", (void *)effect, *outX, *outY);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_lens_flare_ray_density(el_effect_handle_t effect, float rayDensity)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ray_density");
+        SET_AND_LOG(effect->config.lensFlare.rayDensity, rayDensity,
+                    "effect=%p, rayDensity=%f", (void *)effect, rayDensity);
+    }
+
+    el_result_e el_effect_get_lens_flare_ray_density(el_effect_handle_t effect, float *outRayDensity)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ray_density");
+        VALIDATE_OUT_PTR(outRayDensity, "el_effect_get_lens_flare_ray_density");
+        *outRayDensity = effect->config.lensFlare.rayDensity;
+        LOG_D("effect=%p, rayDensity=%f", (void *)effect, *outRayDensity);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_lens_flare_rotation_rate(el_effect_handle_t effect, float rate)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_rotation_rate");
+        SET_AND_LOG(effect->config.lensFlare.rotationRate, rate,
+                    "effect=%p, rate=%f", (void *)effect, rate);
+    }
+
+    el_result_e el_effect_get_lens_flare_rotation_rate(el_effect_handle_t effect, float *outRate)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_rotation_rate");
+        VALIDATE_OUT_PTR(outRate, "el_effect_get_lens_flare_rotation_rate");
+        *outRate = effect->config.lensFlare.rotationRate;
+        LOG_D("effect=%p, rate=%f", (void *)effect, *outRate);
+        return EL_SUCCESS;
+    }
+
     // --- Wireframe ---
 
     el_result_e el_effect_set_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
@@ -1477,6 +2091,10 @@ extern "C"
             // time, so the neon layers must already be drawn for the pane to
             // refract them.
             effect->impl->AddRenderer(std::make_shared<EdgeLighting::DropletsRenderer>());
+            // Lens flare is a purely additive fullscreen pass; drawing it
+            // after the droplets keeps the sun on top of everything, which
+            // reads best for "sun peeks over the frame".
+            effect->impl->AddRenderer(std::make_shared<EdgeLighting::LensFlareRenderer>());
             if (!effect->impl->Initialize())
             {
                 LOG_E("el_effect_init: renderer initialisation failed");
@@ -2341,6 +2959,45 @@ extern "C"
         }
         fb->AddSegmentField(static_cast<size_t>(index),
                             static_cast<EdgeLighting::SegmentField>(field), mod->ptr);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_animation_add_preserved_segment_field(el_animation_handle_t anim,
+                                                         uint32_t id, el_segment_field_e field, el_modulator_handle_t mod)
+    {
+        LOG_I("anim=%p, id=%u, field=%d, mod=%p", (void *)anim, id, (int)field, (void *)mod);
+        VALIDATE_ANIM_PTR(anim, "el_animation_add_preserved_segment_field");
+        VALIDATE_MOD_PTR(mod, "el_animation_add_preserved_segment_field");
+        auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
+        if (!fb)
+        {
+            LOG_E("el_animation_add_preserved_segment_field: animation is not a FieldBoundAnimation");
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        fb->AddPreservedSegmentField(id, static_cast<EdgeLighting::SegmentField>(field), mod->ptr);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_animation_add_preserved_segment_stop_field(el_animation_handle_t anim,
+                                                              uint32_t id, int32_t stopIndex,
+                                                              el_color_stop_field_e field, el_modulator_handle_t mod)
+    {
+        LOG_I("anim=%p, id=%u, stopIndex=%d, field=%d, mod=%p", (void *)anim, id, stopIndex, (int)field, (void *)mod);
+        VALIDATE_ANIM_PTR(anim, "el_animation_add_preserved_segment_stop_field");
+        VALIDATE_MOD_PTR(mod, "el_animation_add_preserved_segment_stop_field");
+        if (stopIndex < 0)
+        {
+            LOG_E("el_animation_add_preserved_segment_stop_field: negative stopIndex");
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
+        if (!fb)
+        {
+            LOG_E("el_animation_add_preserved_segment_stop_field: animation is not a FieldBoundAnimation");
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        fb->AddPreservedSegmentStopField(id, static_cast<size_t>(stopIndex),
+                                         static_cast<EdgeLighting::ColorStopField>(field), mod->ptr);
         return EL_SUCCESS;
     }
 

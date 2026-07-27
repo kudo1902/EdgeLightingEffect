@@ -157,6 +157,20 @@ extern "C"
         EL_GLOW_SIDE_OUTSIDE = 2 /**< Glow only outside the rectangle. */
     } el_glow_side_e;
 
+    /** @brief Where the opaque-mode fill covers pixels.
+     *  @details Mirrors @c EdgeLighting::OpaqueMode. The fill is a rounded
+     *           band sized by @ref el_effect_set_inside_cutoff /
+     *           @ref el_effect_set_outside_cutoff; the neon emission still
+     *           composites on top inside the glow band. */
+    typedef enum el_opaque_mode_e
+    {
+        EL_OPAQUE_MODE_NONE = 0,    /**< No opaque pass; effect composites transparently. */
+        EL_OPAQUE_MODE_OUTSIDE = 1, /**< Fill outer half of the band: 0 <= d <= outsideCutoff. */
+        EL_OPAQUE_MODE_INSIDE = 2,  /**< Fill inner half of the band: -insideCutoff <= d <= 0. */
+        EL_OPAQUE_MODE_BOTH = 3,    /**< Fill the whole band: -insideCutoff <= d <= +outsideCutoff. */
+        EL_OPAQUE_MODE_ALL = 4      /**< Fill the whole viewport. */
+    } el_opaque_mode_e;
+
     /** @brief Colour space used when interpolating between colour stops.
      *  @details Mirrors @c EdgeLighting::BlendSpace. HSV/HSL avoid the muddy
      *           mid-tones that a straight-line RGB interpolation produces
@@ -373,12 +387,14 @@ extern "C"
      *  How the effect blends with the framebuffer.
      *  @{ */
 
-    /** @brief Switch between transparent (default) and opaque compositing.
-     *  @details When opaque, pixels outside the neon glow are filled with
-     *           @ref el_effect_set_opaque_color, occluding the background
-     *           within the effect's draw region. */
-    EL_API el_result_e el_effect_set_opaque(el_effect_handle_t effect, el_bool_t opaque);
-    EL_API el_result_e el_effect_get_opaque(el_effect_handle_t effect, el_bool_t *outOpaque);
+    /** @brief Where the opaque-mode fill covers pixels.
+     *  @details See @ref el_opaque_mode_e. NONE keeps the effect purely
+     *           transparent; the other modes rasterise a coloured band shaped
+     *           by @ref el_effect_set_inside_cutoff /
+     *           @ref el_effect_set_outside_cutoff and filled with
+     *           @ref el_effect_set_opaque_color. */
+    EL_API el_result_e el_effect_set_opaque_mode(el_effect_handle_t effect, el_opaque_mode_e mode);
+    EL_API el_result_e el_effect_get_opaque_mode(el_effect_handle_t effect, el_opaque_mode_e *outMode);
 
     /** @brief Set the background fill colour used when opaque compositing is on.
      *  @details Linear RGBA in [0,1]. Only the @c rgb channels are read
@@ -387,6 +403,34 @@ extern "C"
                                                   float r, float g, float b, float a);
     EL_API el_result_e el_effect_get_opaque_color(el_effect_handle_t effect,
                                                   float *outR, float *outG, float *outB, float *outA);
+
+    /** @brief Feather width in pixels at the opaque fill's cutoff boundaries.
+     *  @details Applied only when @c opaqueMode != NONE. 0 = hard fill edge;
+     *           larger values soften where the fill fades to background. Kept
+     *           independent of the per-side cutoff softness so the emission
+     *           and the fill can taper at different rates. */
+    EL_API el_result_e el_effect_set_opaque_softness(el_effect_handle_t effect, float softness);
+    EL_API el_result_e el_effect_get_opaque_softness(el_effect_handle_t effect, float *outSoftness);
+
+    /** @brief Inside cutoff (rect interior side): hard geometric limit for the neon glow.
+     *  @details @c enable = 0 leaves the interior uncapped (natural halo/bloom
+     *           decay bounds the emission). @c size is the pixel distance from
+     *           the rect edge to the cutoff boundary along the interior side
+     *           (always positive). @c softness is the feather width in pixels
+     *           at the boundary (0 = hard, larger = smoother fade). Also caps
+     *           the geometric footprint of @c INSIDE / @c BOTH opaque fills. */
+    EL_API el_result_e el_effect_set_inside_cutoff(el_effect_handle_t effect,
+                                                   el_bool_t enable, float size, float softness);
+    EL_API el_result_e el_effect_get_inside_cutoff(el_effect_handle_t effect,
+                                                   el_bool_t *outEnable, float *outSize, float *outSoftness);
+
+    /** @brief Outside cutoff (rect exterior side). Mirror of @ref el_effect_set_inside_cutoff.
+     *  @details Also caps @c OUTSIDE / @c BOTH opaque fills and sizes the neon
+     *           draw quad so far-exterior pixels are rasteriser-culled. */
+    EL_API el_result_e el_effect_set_outside_cutoff(el_effect_handle_t effect,
+                                                    el_bool_t enable, float size, float softness);
+    EL_API el_result_e el_effect_get_outside_cutoff(el_effect_handle_t effect,
+                                                    el_bool_t *outEnable, float *outSize, float *outSoftness);
 
     /** @} */
 
@@ -530,6 +574,84 @@ extern "C"
 
     /** @} */
 
+    /** @name Preserved segment boosts (id-addressed, override-proof)
+     *  @details A **second, independent** pool of hotspots, addressed by a stable
+     *  id instead of by array index. Its whole reason to exist: the index-based
+     *  segment API above makes the array index the identity, so a
+     *  @c el_effect_clear_segment_boosts, a shrinking @c el_effect_set_segment_boost_count,
+     *  or an index-based animation can wipe or overwrite an entry another caller
+     *  cared about. Preserved entries live outside that pool - none of those bulk
+     *  operations touch them.
+     *
+     *  Usage: @ref el_effect_acquire_preserved_segment once to reserve an entry
+     *  and get its id, then only ever mutate through that id. Ids are stable for
+     *  the entry's lifetime and never reused, so a write/read by id can never
+     *  land on another owner's entry. The renderer composites the preserved and
+     *  transient pools together (preserved take shader-slot priority), capped at
+     *  @c NeonConfig::MAX_SEGMENT_BOOSTS_CAP total.
+     *  @{ */
+
+    /** @brief Reserve a preserved segment and return its stable, non-reused id.
+     *  @param outId Receives the id (always >= 1) on success.
+     *  @return @ref EL_ERROR_INVALID_PARAMETER if the preserved pool is already
+     *          at @c NeonConfig::MAX_SEGMENT_BOOSTS_CAP. The new entry starts
+     *          with default params (boost 0) - set them via
+     *          @ref el_effect_set_preserved_segment. */
+    EL_API el_result_e el_effect_acquire_preserved_segment(el_effect_handle_t effect, uint32_t *outId);
+
+    /** @brief Write the scalar fields of the preserved entry owning @p id.
+     *  @return @ref EL_ERROR_INVALID_PARAMETER if no preserved entry has @p id. */
+    EL_API el_result_e el_effect_set_preserved_segment(el_effect_handle_t effect, uint32_t id,
+                                                       float position, float length, float boost);
+    /** @brief Read the scalar fields of the preserved entry owning @p id. */
+    EL_API el_result_e el_effect_get_preserved_segment(el_effect_handle_t effect, uint32_t id,
+                                                       float *outPosition, float *outLength, float *outBoost);
+
+    /** @brief Remove the preserved entry owning @p id; others keep their ids.
+     *  @return @ref EL_ERROR_INVALID_PARAMETER if no preserved entry has @p id. */
+    EL_API el_result_e el_effect_release_preserved_segment(el_effect_handle_t effect, uint32_t id);
+
+    /** @brief Number of live entries in the preserved pool. */
+    EL_API el_result_e el_effect_get_preserved_segment_count(el_effect_handle_t effect, int32_t *outCount);
+
+    /** @brief Drop every preserved entry (transient @c segmentBoosts untouched). */
+    EL_API el_result_e el_effect_clear_preserved_segments(el_effect_handle_t effect);
+
+    // Preserved segment gradient (blend space + colour stops), by id. By-id
+    // mirror of the transient el_effect_set_segment_blend_space /
+    // el_effect_set_segment_color_stop family above. A preserved entry with its
+    // own stops shows that gradient across its span; with no stops it inherits
+    // the base NeonConfig gradient. Every call resolves id to the owning entry
+    // (immune to reindexing); an id with no live entry returns
+    // EL_ERROR_INVALID_PARAMETER.
+
+    /** @brief Set the blend space used for the preserved entry's own stops.
+     *  @details Ignored at render time when the entry has no stops. */
+    EL_API el_result_e el_effect_set_preserved_segment_blend_space(el_effect_handle_t effect,
+                                                                   uint32_t id, el_blend_space_e blendSpace);
+    EL_API el_result_e el_effect_get_preserved_segment_blend_space(el_effect_handle_t effect,
+                                                                   uint32_t id, el_blend_space_e *outBlendSpace);
+
+    /** @brief Resize the preserved entry's own colour-stops list (0 = inherit
+     *         the base gradient). */
+    EL_API el_result_e el_effect_set_preserved_segment_color_stop_count(el_effect_handle_t effect,
+                                                                        uint32_t id, int32_t count);
+    EL_API el_result_e el_effect_get_preserved_segment_color_stop_count(el_effect_handle_t effect,
+                                                                        uint32_t id, int32_t *outCount);
+
+    /** @brief Write one colour stop inside a preserved entry's stops list. */
+    EL_API el_result_e el_effect_set_preserved_segment_color_stop(el_effect_handle_t effect,
+                                                                  uint32_t id, int32_t stopIndex,
+                                                                  float position, float r, float g, float b, float a);
+    EL_API el_result_e el_effect_get_preserved_segment_color_stop(el_effect_handle_t effect,
+                                                                  uint32_t id, int32_t stopIndex,
+                                                                  float *outPosition, float *outR, float *outG, float *outB, float *outA);
+
+    /** @brief Drop the preserved entry's own colour stops (revert to inherit-base). */
+    EL_API el_result_e el_effect_clear_preserved_segment_color_stops(el_effect_handle_t effect, uint32_t id);
+
+    /** @} */
+
     /** @name Arcs (perimeter slices that are "on")
      *  Multiple arcs can coexist. Overlap resolves winner-take-all in the
      *  shader (largest mask*intensity owns the emission at each sample).
@@ -649,6 +771,106 @@ extern "C"
                                                    float r, float g, float b, float a);
     EL_API el_result_e el_effect_get_droplets_tint(el_effect_handle_t effect,
                                                    float *outR, float *outG, float *outB, float *outA);
+
+    /** @} */
+
+    /** @name Lens flare
+     *  Sun + hex-aperture lens flare drawn as a single fullscreen pass. The
+     *  sun rides the rect perimeter (same parameter space as segments / arcs)
+     *  so it moves with the geometry.
+     *  @{ */
+
+    EL_API el_result_e el_effect_set_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled);
+    EL_API el_result_e el_effect_get_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
+
+    /** @brief Sun position as a perimeter progress in [0, 1).
+     *  @details 0 = top-left corner; winding follows the geometry's winding. */
+    EL_API el_result_e el_effect_set_lens_flare_perimeter_position(el_effect_handle_t effect, float position);
+    EL_API el_result_e el_effect_get_lens_flare_perimeter_position(el_effect_handle_t effect, float *outPosition);
+
+    /** @brief Signed offset in pixels along the edge normal at the sun's
+     *         perimeter position. Positive = outward (away from rect centre),
+     *         negative = inward. */
+    EL_API el_result_e el_effect_set_lens_flare_perimeter_offset(el_effect_handle_t effect, float offset);
+    EL_API el_result_e el_effect_get_lens_flare_perimeter_offset(el_effect_handle_t effect, float *outOffset);
+
+    /** @brief Size scale for the sun core + rays (1.0 = reference look). */
+    EL_API el_result_e el_effect_set_lens_flare_size(el_effect_handle_t effect, float size);
+    EL_API el_result_e el_effect_get_lens_flare_size(el_effect_handle_t effect, float *outSize);
+
+    /** @brief Sun tint (linear RGBA, HDR allowed - the reference uses (1.4, 1.2, 1.0)). */
+    EL_API el_result_e el_effect_set_lens_flare_color(el_effect_handle_t effect,
+                                                      float r, float g, float b, float a);
+    EL_API el_result_e el_effect_get_lens_flare_color(el_effect_handle_t effect,
+                                                      float *outR, float *outG, float *outB, float *outA);
+
+    /** @brief Master brightness multiplier. */
+    EL_API el_result_e el_effect_set_lens_flare_intensity(el_effect_handle_t effect, float intensity);
+    EL_API el_result_e el_effect_get_lens_flare_intensity(el_effect_handle_t effect, float *outIntensity);
+
+    /** @brief Ghost / hex-aperture strength (0 = disc only, 1 = reference look). */
+    EL_API el_result_e el_effect_set_lens_flare_spread(el_effect_handle_t effect, float spread);
+    EL_API el_result_e el_effect_get_lens_flare_spread(el_effect_handle_t effect, float *outSpread);
+
+    /** @brief Stretch of the ghost placement along the sun-to-centre axis
+     *         (1.0 = reference spacing).
+     *  @details Reference spacing scales with the sun-to-centre distance, so
+     *           ghosts crowd together when the sun sits near a screen edge
+     *           (e.g. top-centre) and spread out at a corner. Raise this to
+     *           push them apart. Placement only - colour and size are
+     *           unchanged. */
+    EL_API el_result_e el_effect_set_lens_flare_ghost_spacing(el_effect_handle_t effect, float ghostSpacing);
+    EL_API el_result_e el_effect_get_lens_flare_ghost_spacing(el_effect_handle_t effect, float *outGhostSpacing);
+
+    /** @brief Uniform ghost size / falloff exponent shared by every ghost
+     *         (default 2.2 = reference average).
+     *  @details The reference gave each ghost a random size; this fixes them
+     *           all to one value so they read as the same size. Larger =
+     *           bigger, softer ghosts. */
+    EL_API el_result_e el_effect_set_lens_flare_ghost_size(el_effect_handle_t effect, float ghostSize);
+    EL_API el_result_e el_effect_get_lens_flare_ghost_size(el_effect_handle_t effect, float *outGhostSize);
+
+    /** @brief Signed shift of the ghost cluster along the sun-to-centre axis
+     *         (0.0 = reference, negative pulls toward the sun / border).
+     *  @details dist 0 is the screen centre and dist ~ -1 sits on the sun, so
+     *           negative values move the ghosts off centre and up against the
+     *           border edge where the sun rides. Default is -1.5. */
+    EL_API el_result_e el_effect_set_lens_flare_ghost_offset(el_effect_handle_t effect, float ghostOffset);
+    EL_API el_result_e el_effect_get_lens_flare_ghost_offset(el_effect_handle_t effect, float *outGhostOffset);
+
+    /** @brief Colour the ghosts lean toward when the tint amount > 0 (linear RGB). */
+    EL_API el_result_e el_effect_set_lens_flare_ghost_color(el_effect_handle_t effect,
+                                                            float r, float g, float b);
+    EL_API el_result_e el_effect_get_lens_flare_ghost_color(el_effect_handle_t effect,
+                                                            float *outR, float *outG, float *outB);
+
+    /** @brief Blend from the procedural ghost rainbow (0.0) to a single ghost
+     *         colour for every ghost (1.0). Hue only - brightness unaffected. */
+    EL_API el_result_e el_effect_set_lens_flare_ghost_tint(el_effect_handle_t effect, float ghostTint);
+    EL_API el_result_e el_effect_get_lens_flare_ghost_tint(el_effect_handle_t effect, float *outGhostTint);
+
+    /** @brief Ghost convergence / reference point in normalised screen coords
+     *         (0..1, origin top-left, y-down); (0.5, 0.5) = screen centre.
+     *  @details The ghosts pivot about this point and their sun-to-centre axis
+     *           runs through it instead of the screen centre. The sun's own
+     *           rays and vignette are unaffected. */
+    EL_API el_result_e el_effect_set_lens_flare_flare_center(el_effect_handle_t effect, float x, float y);
+    EL_API el_result_e el_effect_get_lens_flare_flare_center(el_effect_handle_t effect, float *outX, float *outY);
+
+    /** @brief Angular density of the ray pattern in [0, 1].
+     *  @details 0 = a single broad ray, 1 = the densest sunburst. The value
+     *           is quantised to an integer slot count internally so the
+     *           pattern closes cleanly at the 2 PI wrap. NOT a literal count
+     *           of visible rays - per-ray length randomisation hides some
+     *           slots as short stubs. */
+    EL_API el_result_e el_effect_set_lens_flare_ray_density(el_effect_handle_t effect, float rayDensity);
+    EL_API el_result_e el_effect_get_lens_flare_ray_density(el_effect_handle_t effect, float *outRayDensity);
+
+    /** @brief Sun / ray rotation rate in revolutions per second (0 = static).
+     *  @details Ghost groups stay anchored on the sun-to-centre axis; only
+     *           the sun disc and rays spin. */
+    EL_API el_result_e el_effect_set_lens_flare_rotation_rate(el_effect_handle_t effect, float rate);
+    EL_API el_result_e el_effect_get_lens_flare_rotation_rate(el_effect_handle_t effect, float *outRate);
 
     /** @} */
 
@@ -1001,12 +1223,39 @@ extern "C"
                                               el_config_field_e field, el_modulator_handle_t mod);
 
     /** @brief Add a segment-field binding.
-     *  @param index Segment slot. Auto-grows @c segmentBoosts at write time. */
+     *  @param index Segment slot. Must already exist in @c segmentBoosts (no
+     *               auto-grow; an out-of-range index is a logged no-op). */
     EL_API el_result_e el_animation_add_segment_field(el_animation_handle_t anim,
                                                       int32_t index, el_segment_field_e field, el_modulator_handle_t mod);
 
+    /** @brief Add a preserved-segment-field binding, addressed by stable id.
+     *  @details Drives a scalar of the preserved entry owning @p id (see
+     *  @ref el_effect_acquire_preserved_segment). Unlike
+     *  @ref el_animation_add_segment_field this never creates the entry - acquire
+     *  it first; a binding whose id is not live at apply time is skipped. Because
+     *  it targets the preserved pool by id, the animation is immune to overrides
+     *  of the transient @c segmentBoosts pool.
+     *  @param id Stable id from @ref el_effect_acquire_preserved_segment. */
+    EL_API el_result_e el_animation_add_preserved_segment_field(el_animation_handle_t anim,
+                                                                uint32_t id, el_segment_field_e field, el_modulator_handle_t mod);
+
+    /** @brief Add a binding into one channel of one colour stop inside the
+     *         preserved entry owning @p id.
+     *  @details By-id analogue of @ref el_animation_add_segment_stop_field.
+     *  Nothing auto-grows: acquire the entry and size its stops first (via
+     *  @ref el_effect_set_preserved_segment_color_stop_count). A binding whose id
+     *  is not live, or whose @p stopIndex is past the current stop count, is a
+     *  skipped no-op at apply time.
+     *  @param id        Stable id from @ref el_effect_acquire_preserved_segment.
+     *  @param stopIndex Stop slot within that entry's colour-stops list.
+     *  @param field     Which channel (position / R / G / B / A) to drive. */
+    EL_API el_result_e el_animation_add_preserved_segment_stop_field(el_animation_handle_t anim,
+                                                                     uint32_t id, int32_t stopIndex,
+                                                                     el_color_stop_field_e field, el_modulator_handle_t mod);
+
     /** @brief Add an arc-field binding.
-     *  @param index Arc slot. Auto-grows @c arcs at write time. */
+     *  @param index Arc slot. Must already exist in @c arcs (no auto-grow; an
+     *               out-of-range index is a logged no-op). */
     EL_API el_result_e el_animation_add_arc_field(el_animation_handle_t anim,
                                                   int32_t index, el_arc_field_e field, el_modulator_handle_t mod);
 

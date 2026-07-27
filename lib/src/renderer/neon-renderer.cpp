@@ -3,6 +3,7 @@
 #include "util/color-utils.h"
 #include "util/constants.h"
 #include "util/geometry-utils.h"
+#include "util/segment-utils.h"
 #include "shaders.h"
 #include "util/log-util.h"
 #include <glm/gtc/matrix_transform.hpp>
@@ -14,6 +15,16 @@ namespace EdgeLighting
 {
     namespace
     {
+        /// Pixel distance the shader should treat as the cutoff boundary.
+        /// Disabled cutoffs collapse to a huge sentinel so the shader's
+        /// smoothstep / discard math naturally no-ops on realistic geometry;
+        /// only the CPU knows this number, shaders see it as a plain uniform.
+        constexpr float CUTOFF_DISABLED_SIZE = 1.0e6f;
+        inline float GetCutoffSize(const Cutoff &c)
+        {
+            return c.enable ? c.size : CUTOFF_DISABLED_SIZE;
+        }
+
         /// CPU-side mirror of neon.frag's std140 `SegmentBlock`: the int is
         /// padded to 16 bytes and each vec3 element to a vec4 stride.
         typedef struct SegmentBlockData
@@ -178,17 +189,19 @@ namespace EdgeLighting
         //   BOTH    -> black everywhere (whole viewport opaque).
         //   INSIDE  -> black only where d <= softEdge (off-side stays clear).
         //   OUTSIDE -> mirror of INSIDE.
-        if (config.neon.opaque)
+        if (config.neon.opaqueMode != OpaqueMode::NONE)
         {
-            float softEdge = std::max(config.neon.glowSideSoftness,
-                                      static_cast<float>(SIDE_SOFT_EPSILON));
             mBlackRectShader.Use();
             mBlackRectShader.SetUniform("uMVP", glm::mat4(1.0f));
             mBlackRectShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
             mBlackRectShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
             mBlackRectShader.SetUniform("uRectCenter", center);
-            mBlackRectShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
-            mBlackRectShader.SetUniform("uSoftEdge", softEdge);
+            float opaqueSoft = std::max(config.neon.opaqueSoftness,
+                                        static_cast<float>(SIDE_SOFT_EPSILON));
+            mBlackRectShader.SetUniform("uOpaqueMode", static_cast<int>(config.neon.opaqueMode));
+            mBlackRectShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
+            mBlackRectShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
+            mBlackRectShader.SetUniform("uOpaqueSoftness", opaqueSoft);
             mBlackRectShader.SetUniform("uOpaqueColor", config.neon.opaqueColor);
             mFullVertexArray.DrawArrays(GL_TRIANGLES, 6);
             mBlackRectShader.Unuse();
@@ -209,16 +222,22 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uBloomStrength", config.neon.bloomStrength);
         mShaderProgram.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
         mShaderProgram.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness);
+        mShaderProgram.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
+        mShaderProgram.SetUniform("uInsideCutoffSoftness", config.neon.insideCutoff.softness);
+        mShaderProgram.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
+        mShaderProgram.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness);
         // Pack the segment vector as vec3(position, invSigma, boost) into the
         // std140 SegmentBlock UBO (DALi-compatible pattern - see neon.frag).
         // Empty vector → uSegmentCount=0 and the shader skips the whole feature.
         SegmentBlockData segBlock = {};
-        int segCount = std::min(static_cast<int>(config.neon.segmentBoosts.size()),
+        SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
+        const std::vector<SegmentBoost> &effSegments = mEffectiveSegments;
+        int segCount = std::min(static_cast<int>(effSegments.size()),
                                 int(MAX_SEGMENT_BOOSTS));
         segBlock.count = segCount;
         for (int i = 0; i < segCount; ++i)
         {
-            const auto &s = config.neon.segmentBoosts[i];
+            const auto &s = effSegments[i];
             float invSigma = 1.0f / std::max(s.length * 0.5f, 1e-3f);
             // .w = hasOwnStops flag; the shader reads its colour from row `i`
             // of the segment LUT atlas when set, else falls back to the base
@@ -333,14 +352,17 @@ namespace EdgeLighting
         const bool geometryDirty = samplesDirty ||
                                    config.neon.glowRadius != mCurrentConfig.neon.glowRadius ||
                                    config.neon.bloomStrength != mCurrentConfig.neon.bloomStrength ||
-                                   config.neon.intensity != mCurrentConfig.neon.intensity;
+                                   config.neon.intensity != mCurrentConfig.neon.intensity ||
+                                   config.neon.outsideCutoff != mCurrentConfig.neon.outsideCutoff;
         const bool lutDirty = config.neon.colorStops != mCurrentConfig.neon.colorStops ||
                               config.neon.blendSpace != mCurrentConfig.neon.blendSpace;
         // Only the segments' colour stops + blend space affect the atlas
         // texture; position/length/boost don't (they're read live from the
         // UBO). Cheap deep-compare via mBakedSegments (each SegmentBoost's
-        // operator== includes its stops).
-        const bool segLutDirty = config.neon.segmentBoosts != mBakedSegments;
+        // operator== includes its stops). Compares the merged view so a change
+        // in either the transient or preserved pool triggers a re-bake.
+        SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
+        const bool segLutDirty = mEffectiveSegments != mBakedSegments;
         // Same idea for arcs - start/length/intensity ride the UBO, only
         // colorStops + blendSpace changes require a re-bake of the atlas.
         const bool arcLutDirty = config.neon.arcs != mBakedArcs;
@@ -424,6 +446,20 @@ namespace EdgeLighting
         // shader still soft-fades the emission to zero at mQuadMargin, so even
         // if this under-estimates there's no hard cutoff.
         margin *= 1.0f + config.neon.bloomStrength * config.neon.intensity;
+
+        // Hard cap: when the outside cutoff is enabled the shader discards
+        // emission past size + softness, so there's no point rasterising
+        // further. Disabled outside cutoff leaves the natural glowRadius /
+        // bloom-driven margin untouched. Add a 1 px safety so the shader's
+        // own softmask fades to zero *before* the quad edge and no
+        // rectangular seam leaks through.
+        if (config.neon.outsideCutoff.enable)
+        {
+            float outSoft = std::max(config.neon.outsideCutoff.softness,
+                                     static_cast<float>(SIDE_SOFT_EPSILON));
+            float cutoffCap = config.neon.outsideCutoff.size + outSoft + 1.0f;
+            margin = std::min(margin, cutoffCap);
+        }
         mQuadMargin = margin;
 
         float halfW = config.geometry.width * 0.5f;
@@ -568,11 +604,13 @@ namespace EdgeLighting
         constexpr int H = MAX_SEGMENT_BOOSTS;
         std::vector<unsigned char> atlas(W * H * 4, 0);
 
-        const int segCount = std::min(static_cast<int>(config.neon.segmentBoosts.size()),
+        SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
+        const std::vector<SegmentBoost> &effSegments = mEffectiveSegments;
+        const int segCount = std::min(static_cast<int>(effSegments.size()),
                                       int(MAX_SEGMENT_BOOSTS));
         for (int s = 0; s < segCount; ++s)
         {
-            const auto &seg = config.neon.segmentBoosts[s];
+            const auto &seg = effSegments[s];
             if (seg.colorStops.empty())
             {
                 continue; // row stays zero; shader falls back to base gradient
@@ -594,7 +632,7 @@ namespace EdgeLighting
         mSegmentLUT.SetData(atlas.data(), W, H, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
         mSegmentLUT.SetParams(GL_LINEAR, GL_LINEAR, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
 
-        mBakedSegments = config.neon.segmentBoosts;
+        mBakedSegments = mEffectiveSegments;
     }
 
     void NeonRenderer::rebuildArcLUT(const Config &config)
