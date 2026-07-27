@@ -366,12 +366,16 @@ namespace EdgeLighting
 
     private:
         std::vector<ScalarBinding> mScalarBindings;
+
         std::vector<SegmentBinding> mSegmentBindings;
+        std::vector<SegmentStopBinding> mSegmentStopBindings;
+
         std::vector<PreservedSegmentBinding> mPreservedSegmentBindings;
         std::vector<PreservedSegmentStopBinding> mPreservedSegmentStopBindings;
-        std::vector<SegmentStopBinding> mSegmentStopBindings;
+
         std::vector<ArcBinding> mArcBindings;
         std::vector<ArcStopBinding> mArcStopBindings;
+
         /// One saved value per scalar binding, index-aligned with
         /// @c mScalarBindings at the moment @ref CaptureBaseline was called.
         std::vector<float> mSavedScalarValues;
