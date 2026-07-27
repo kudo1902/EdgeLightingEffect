@@ -128,13 +128,17 @@ namespace EdgeLighting
     /// (@c NeonConfig::preservedSegmentBoosts). Keeping the id out of
     /// @c SegmentBoost leaves that struct pure render data; identity is layered
     /// on only where it is needed. The id is handed out by
-    /// @c SegmentUtils::AcquireSegment, is stable for the entry's lifetime, and
-    /// is never reused - so an owner can address "its" entry by id regardless of
-    /// resizes / releases / compaction, and independent callers never clobber
-    /// each other. @c id 0 is never handed out (means "invalid").
+    /// @c SegmentUtils::AcquireSegment and is stable for the entry's lifetime -
+    /// so an owner can address "its" entry by id regardless of resizes /
+    /// releases / compaction of other entries, and independent callers never
+    /// clobber each other while their ids are live. The id is unique among the
+    /// live entries but not permanently unique: releasing an entry can free its
+    /// id for a later acquire to reuse (see @c SegmentUtils::AcquireSegment), so
+    /// an id must not be used after its entry is released. @c id 0 is never
+    /// handed out (means "invalid").
     typedef struct PreservedSegment
     {
-        uint32_t id = 0;      ///< Stable, non-reused identity (>= 1 when live).
+        uint32_t id = 0;      ///< Stable for the entry's lifetime (>= 1 when live).
         SegmentBoost segment; ///< The hotspot's render parameters.
 
         bool operator==(const PreservedSegment &o) const
@@ -369,8 +373,10 @@ namespace EdgeLighting
         ///
         /// The id allocator and the pool operations (acquire / find-by-id /
         /// release) live in util/segment-utils.h (@c SegmentUtils::AcquireSegment
-        /// etc.), not here - this struct is just the data. The allocator is a
-        /// process-global counter, so ids are not stored in the config.
+        /// etc.), not here - this struct is just the data. Ids are derived from
+        /// the pool contents (one past the highest live id), so there is no
+        /// separate counter to store; the ids themselves travel with the config
+        /// in each @ref PreservedSegment entry and survive (de)serialization.
         std::vector<PreservedSegment> preservedSegmentBoosts;
 
         // --- Arc gating (which slices of the perimeter are "on") ---

@@ -605,14 +605,19 @@ extern "C"
      *  operations touch them.
      *
      *  Usage: @ref el_effect_acquire_preserved_segment once to reserve an entry
-     *  and get its id, then only ever mutate through that id. Ids are stable for
-     *  the entry's lifetime and never reused, so a write/read by id can never
-     *  land on another owner's entry. The renderer composites the preserved and
-     *  transient pools together (preserved take shader-slot priority), capped at
-     *  @c NeonConfig::MAX_SEGMENT_BOOSTS_CAP total.
+     *  and get its id, then only ever mutate through that id. An id is stable
+     *  for its entry's lifetime and unique among the entries that are live at
+     *  any moment, so while you hold a live id a write/read by it can never land
+     *  on another owner's entry. Ids are not permanently unique, though:
+     *  @ref el_effect_release_preserved_segment can free an id for a later
+     *  acquire to reuse, so stop using an id the moment you release it. The
+     *  renderer composites the preserved and transient pools together (preserved
+     *  take shader-slot priority), capped at @c NeonConfig::MAX_SEGMENT_BOOSTS_CAP
+     *  total.
      *  @{ */
 
-    /** @brief Reserve a preserved segment and return its stable, non-reused id.
+    /** @brief Reserve a preserved segment and return its id (stable for the
+     *         entry's lifetime; may be reused by a later acquire once released).
      *  @param outId Receives the id (always >= 1) on success.
      *  @return @ref EL_ERROR_INVALID_PARAMETER if the preserved pool is already
      *          at @c NeonConfig::MAX_SEGMENT_BOOSTS_CAP. The new entry starts

@@ -861,10 +861,11 @@ extern "C"
     }
 
     // --- Preserved segment boosts (id-addressed, override-proof) ---
-    // A second pool, separate from segmentBoosts above. Keyed by SegmentBoost::id
-    // (handed out by AcquireSegment, never reused). None of the transient-pool
-    // bulk ops (clear_segment_boosts / set_segment_boost_count) touch it, so an
-    // entry acquired here survives being "overridden" wholesale.
+    // A second pool, separate from segmentBoosts above. Keyed by PreservedSegment::id
+    // (handed out by AcquireSegment; unique among live entries, but a released id
+    // can be reused by a later acquire). None of the transient-pool bulk ops
+    // (clear_segment_boosts / set_segment_boost_count) touch it, so an entry
+    // acquired here survives being "overridden" wholesale.
 
     el_result_e el_effect_acquire_preserved_segment(el_effect_handle_t effect, uint32_t *outId)
     {
