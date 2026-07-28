@@ -105,7 +105,9 @@ target_link_libraries(edge-lighting PUBLIC glad)
 # that .NET P/Invoke (or any FFI) can load. Only the el_* symbols are exported;
 # everything else is hidden so the C++ ABI never leaks.
 add_library(edge-lighting-c SHARED
-    capi/edge-lighting-capi.cpp
+    capi/el-effect.cpp
+    capi/el-animation.cpp
+    capi/el-modulator.cpp
 )
 
 target_include_directories(edge-lighting-c PUBLIC
