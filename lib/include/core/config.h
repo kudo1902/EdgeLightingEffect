@@ -639,6 +639,37 @@ namespace EdgeLighting
         bool operator!=(const LensFlareConfig &o) const { return !(*this == o); }
     } LensFlareConfig;
 
+    /// Half-resolution variant of the lens flare. Renders the same lens-flare
+    /// shader into a scaled RGBA8 FBO then bilinear-blits to full res, so the
+    /// expensive per-pixel flare math (10-ghost loop, rays, ghosts) runs over
+    /// @c resolutionScale² fewer fragments. The flare is a smooth low-frequency
+    /// effect, so the bilinear upscale is nearly lossless.
+    ///
+    /// Visual parameters (sun position, colour, ghosts, rays, etc.) are shared
+    /// with @c Config::lensFlare - adjust them in the Lens Flare section of the
+    /// debug UI. This sub-config carries only the perf knobs specific to the
+    /// optimized path. Do not enable this and @c Config::lensFlare at the same
+    /// time; they draw the same flare and would double it.
+    typedef struct LensFlareOptimizedConfig
+    {
+        bool enable = false; ///< Enable or disable the optimized lens flare renderer
+
+        /// Resolution scale factor for the internal FBO (0.5 = half, 0.25 = quarter).
+        float resolutionScale = 0.5f;
+
+        /// Show the raw scaled FBO (nearest-neighbour upscale) instead of the
+        /// bilinear-blitted result. Useful to see how coarse the FBO is.
+        bool showScaled = false;
+
+        bool operator==(const LensFlareOptimizedConfig &o) const
+        {
+            return enable == o.enable &&
+                   resolutionScale == o.resolutionScale &&
+                   showScaled == o.showScaled;
+        }
+        bool operator!=(const LensFlareOptimizedConfig &o) const { return !(*this == o); }
+    } LensFlareOptimizedConfig;
+
     // -----------------------------------------------------------------------
     // Top-level configuration
     // -----------------------------------------------------------------------
@@ -649,12 +680,13 @@ namespace EdgeLighting
     /// any subset; their visual layers composite via additive blending.
     typedef struct Config
     {
-        RectGeometry geometry;             ///< Rectangle geometry
-        NeonConfig neon;                   ///< Single-pass neon settings
-        OptimizedNeonConfig optimizedNeon; ///< Half-res optimized neon settings
-        DropletsConfig droplets;           ///< Rain-on-glass droplets settings
-        WireframeConfig wireframe;         ///< Wireframe overlay settings
-        LensFlareConfig lensFlare;         ///< Sun + lens flare (rays, chromatic ghosts)
+        RectGeometry geometry;                       ///< Rectangle geometry
+        NeonConfig neon;                             ///< Single-pass neon settings
+        OptimizedNeonConfig optimizedNeon;           ///< Half-res optimized neon settings
+        DropletsConfig droplets;                     ///< Rain-on-glass droplets settings
+        WireframeConfig wireframe;                   ///< Wireframe overlay settings
+        LensFlareConfig lensFlare;                   ///< Sun + lens flare (rays, chromatic ghosts)
+        LensFlareOptimizedConfig optimizedLensFlare; ///< Half-res optimized lens flare settings
 
         bool operator==(const Config &o) const
         {
@@ -663,7 +695,8 @@ namespace EdgeLighting
                    optimizedNeon == o.optimizedNeon &&
                    droplets == o.droplets &&
                    wireframe == o.wireframe &&
-                   lensFlare == o.lensFlare;
+                   lensFlare == o.lensFlare &&
+                   optimizedLensFlare == o.optimizedLensFlare;
         }
         bool operator!=(const Config &o) const { return !(*this == o); }
     } Config;
