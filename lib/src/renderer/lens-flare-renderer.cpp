@@ -37,44 +37,12 @@ namespace EdgeLighting
 
         mShaderProgram.Use();
 
-        // The sun rides the rect perimeter: sample the shared helper (same
-        // parameter space as segments/arcs), convert local -> app pixel space
-        // (rect top-left origin, y-down), then flip Y for gl_FragCoord.
-        float t = config.lensFlare.perimeterPosition;
-        glm::vec2 local = GeometryUtils::GetPointOnRectangle(t, config.geometry);
-
-        // Apply signed offset along the edge outward normal. Estimate the
-        // tangent via a central finite difference in local space (y-up), then
-        // pick the perpendicular that points away from the centre - the rect
-        // is convex, so the outward normal has a positive dot with the local
-        // point position.
-        constexpr float NORMAL_EPS = 1e-3f;
-        float tPrev = t - NORMAL_EPS;
-        float tNext = t + NORMAL_EPS;
-        tPrev -= floorf(tPrev);
-        tNext -= floorf(tNext);
-        glm::vec2 pPrev = GeometryUtils::GetPointOnRectangle(tPrev, config.geometry);
-        glm::vec2 pNext = GeometryUtils::GetPointOnRectangle(tNext, config.geometry);
-        glm::vec2 tangent = pNext - pPrev;
-        glm::vec2 normal(tangent.y, -tangent.x);
-        float normalLen = sqrtf(normal.x * normal.x + normal.y * normal.y);
-        if (normalLen > 0.0f)
-        {
-            normal /= normalLen;
-        }
-        if (glm::dot(normal, local) < 0.0f)
-        {
-            normal = -normal;
-        }
-        local += normal * config.lensFlare.perimeterOffset;
-
-        float halfW = config.geometry.width * 0.5f;
-        float halfH = config.geometry.height * 0.5f;
-        glm::vec2 sunApp(config.geometry.position.x + local.x + halfW,
-                         config.geometry.position.y + (halfH - local.y));
-
+        // The sun rides the rect perimeter (same parameter space as
+        // segments/arcs); GetSunFragPosition does the perimeter sample, the
+        // signed outward-normal offset, and the flip into gl_FragCoord space.
         glm::vec2 resolution(static_cast<float>(viewportWidth), static_cast<float>(viewportHeight));
-        glm::vec2 sunPosFrag(sunApp.x, resolution.y - sunApp.y);
+        glm::vec2 sunPosFrag = GeometryUtils::GetSunFragPosition(config.lensFlare, config.geometry,
+                                                                 viewportWidth, viewportHeight);
 
         mShaderProgram.SetUniform("uResolution", resolution);
         mShaderProgram.SetUniform("uSunPos", sunPosFrag);

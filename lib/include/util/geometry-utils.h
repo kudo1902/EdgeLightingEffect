@@ -301,6 +301,55 @@ namespace EdgeLighting
             return AppToLocal(appPts, geom.width * 0.5f, geom.height * 0.5f);
         }
 
+        /// Position of the lens-flare sun in gl_FragCoord pixels (origin
+        /// bottom-left, +Y up) for a full-resolution viewport.
+        ///
+        /// The sun rides the rect perimeter at @c LensFlareConfig::perimeterPosition,
+        /// shifted along the edge outward normal by @c perimeterOffset. The
+        /// outward normal is estimated with a central finite difference of the
+        /// perimeter point (the rect is convex, so the outward normal has a
+        /// positive dot with the local point position). Shared by both lens-flare
+        /// renderers so the sun lands in the identical spot; the half-res variant
+        /// scales the result into its FBO by multiplying by its resolution scale.
+        inline glm::vec2 GetSunFragPosition(const LensFlareConfig &lensFlare,
+                                            const RectGeometry &geom,
+                                            int viewportWidth,
+                                            int viewportHeight)
+        {
+            (void)viewportWidth;
+
+            float t = lensFlare.perimeterPosition;
+            glm::vec2 local = GetPointOnRectangle(t, geom);
+
+            constexpr float NORMAL_EPS = 1e-3f;
+            float tPrev = t - NORMAL_EPS;
+            float tNext = t + NORMAL_EPS;
+            tPrev -= floorf(tPrev);
+            tNext -= floorf(tNext);
+            glm::vec2 pPrev = GetPointOnRectangle(tPrev, geom);
+            glm::vec2 pNext = GetPointOnRectangle(tNext, geom);
+            glm::vec2 tangent = pNext - pPrev;
+            glm::vec2 normal(tangent.y, -tangent.x);
+            float normalLen = sqrtf(normal.x * normal.x + normal.y * normal.y);
+            if (normalLen > 0.0f)
+            {
+                normal /= normalLen;
+            }
+            if (glm::dot(normal, local) < 0.0f)
+            {
+                normal = -normal;
+            }
+            local += normal * lensFlare.perimeterOffset;
+
+            float halfW = geom.width * 0.5f;
+            float halfH = geom.height * 0.5f;
+            // Local (y-up, centre origin) -> app pixel space (rect top-left
+            // origin, y-down) -> gl_FragCoord (y-up).
+            glm::vec2 sunApp(geom.position.x + local.x + halfW,
+                             geom.position.y + (halfH - local.y));
+            return glm::vec2(sunApp.x, static_cast<float>(viewportHeight) - sunApp.y);
+        }
+
     } // namespace GeometryUtils
 
 } // namespace EdgeLighting
