@@ -82,6 +82,7 @@ add_library(edge-lighting STATIC
     src/renderer/neon-optimized-renderer.cpp
     src/renderer/droplets-renderer.cpp
     src/renderer/lens-flare-renderer.cpp
+    src/renderer/lens-flare-optimized-renderer.cpp
     src/util/contour-tracer.cpp
     src/util/stb-image.cpp
 )
