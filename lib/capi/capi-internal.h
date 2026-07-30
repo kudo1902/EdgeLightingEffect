@@ -10,6 +10,7 @@
 #include "renderer/neon-optimized-renderer.h"
 #include "renderer/droplets-renderer.h"
 #include "renderer/lens-flare-renderer.h"
+#include "renderer/lens-flare-optimized-renderer.h"
 #include "animation/neon-animations.h"
 #include "animation/field-bound-animation.h"
 #include "animation/modulator.h"

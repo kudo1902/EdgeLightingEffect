@@ -1310,6 +1310,15 @@ extern "C"
     el_result_e el_effect_set_lens_flare_rotation_rate(el_effect_handle_t effect, float rate) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_rotation_rate"); SET_AND_LOG(effect->config.lensFlare.rotationRate, rate, "effect=%p, rate=%f", (void *)effect, rate); }
     el_result_e el_effect_get_lens_flare_rotation_rate(el_effect_handle_t effect, float *outRate) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_rotation_rate"); VALIDATE_OUT_PTR(outRate, "el_effect_get_lens_flare_rotation_rate"); *outRate = effect->config.lensFlare.rotationRate; LOG_D("effect=%p, rate=%f", (void *)effect, *outRate); return EL_SUCCESS; }
 
+    // --- Optimized (half-res) lens flare ---
+
+    el_result_e el_effect_set_optimized_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_lens_flare_renderer_enabled"); SET_AND_LOG(effect->config.optimizedLensFlare.enable, enabled != 0, "effect=%p, enabled=%d", (void *)effect, enabled); }
+    el_result_e el_effect_get_optimized_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_lens_flare_renderer_enabled"); VALIDATE_OUT_PTR(outEnabled, "el_effect_get_optimized_lens_flare_renderer_enabled"); *outEnabled = effect->config.optimizedLensFlare.enable ? 1 : 0; LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled); return EL_SUCCESS; }
+    el_result_e el_effect_set_optimized_lens_flare_resolution_scale(el_effect_handle_t effect, float scale) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_lens_flare_resolution_scale"); SET_AND_LOG(effect->config.optimizedLensFlare.resolutionScale, scale, "effect=%p, scale=%f", (void *)effect, scale); }
+    el_result_e el_effect_get_optimized_lens_flare_resolution_scale(el_effect_handle_t effect, float *outScale) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_lens_flare_resolution_scale"); VALIDATE_OUT_PTR(outScale, "el_effect_get_optimized_lens_flare_resolution_scale"); *outScale = effect->config.optimizedLensFlare.resolutionScale; LOG_D("effect=%p, scale=%f", (void *)effect, *outScale); return EL_SUCCESS; }
+    el_result_e el_effect_set_optimized_lens_flare_show_scaled(el_effect_handle_t effect, el_bool_t show) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_lens_flare_show_scaled"); SET_AND_LOG(effect->config.optimizedLensFlare.showScaled, show != 0, "effect=%p, show=%d", (void *)effect, show); }
+    el_result_e el_effect_get_optimized_lens_flare_show_scaled(el_effect_handle_t effect, el_bool_t *outShow) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_lens_flare_show_scaled"); VALIDATE_OUT_PTR(outShow, "el_effect_get_optimized_lens_flare_show_scaled"); *outShow = effect->config.optimizedLensFlare.showScaled ? 1 : 0; LOG_D("effect=%p, show=%d", (void *)effect, *outShow); return EL_SUCCESS; }
+
     // --- Wireframe ---
 
     el_result_e el_effect_set_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_wireframe_renderer_enabled"); SET_AND_LOG(effect->config.wireframe.enable, enabled != 0, "effect=%p, enabled=%d", (void *)effect, enabled); }
@@ -1384,6 +1393,11 @@ extern "C"
             {
                 LOG_I("registering LensFlareRenderer");
                 effect->impl->AddRenderer(std::make_shared<EdgeLighting::LensFlareRenderer>());
+            }
+            if (rendererMask & EL_RENDERER_LENS_FLARE_OPTIMIZED)
+            {
+                LOG_I("registering LensFlareOptimizedRenderer");
+                effect->impl->AddRenderer(std::make_shared<EdgeLighting::LensFlareOptimizedRenderer>());
             }
             if (!effect->impl->Initialize())
             {

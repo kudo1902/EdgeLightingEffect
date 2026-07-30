@@ -563,6 +563,29 @@ extern "C"
 
     /** @} */
 
+    /** @name Optimized (half-res) lens flare
+     *  A half-resolution lens-flare variant that renders the flare into a
+     *  scaled FBO and bilinear-blits back to full res. All visual parameters
+     *  are shared with the main lens-flare layer (set them via the
+     *  @c el_effect_set_lens_flare_* functions above); only the perf knobs
+     *  live here. Enabling this and the full-res lens flare at the same time
+     *  draws the flare twice.
+     *  @{ */
+
+    EL_API el_result_e el_effect_set_optimized_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled);
+    EL_API el_result_e el_effect_get_optimized_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
+
+    /** @brief Set the internal FBO scale factor (0.5 = half, 0.25 = quarter). */
+    EL_API el_result_e el_effect_set_optimized_lens_flare_resolution_scale(el_effect_handle_t effect, float scale);
+    EL_API el_result_e el_effect_get_optimized_lens_flare_resolution_scale(el_effect_handle_t effect, float *outScale);
+
+    /** @brief Show the raw scaled FBO (nearest-upscale) instead of the final
+     *         bilinear-blitted result. Diagnostic only. */
+    EL_API el_result_e el_effect_set_optimized_lens_flare_show_scaled(el_effect_handle_t effect, el_bool_t show);
+    EL_API el_result_e el_effect_get_optimized_lens_flare_show_scaled(el_effect_handle_t effect, el_bool_t *outShow);
+
+    /** @} */
+
     /** @name Wireframe overlay
      *  Debug: 1 px line loop around the target rectangle.
      *  @{ */
