@@ -198,7 +198,23 @@ extern "C"
         EL_FIELD_NEON_BLOOM_STRENGTH = 3,     /**< @c NeonConfig::bloomStrength */
         EL_FIELD_NEON_FILAMENT_FALLOFF = 4,   /**< @c NeonConfig::filamentFalloff */
         EL_FIELD_NEON_GLOW_SIDE_SOFTNESS = 5, /**< @c NeonConfig::glowSideSoftness */
-        EL_FIELD_NEON_HUE_ROTATION_RATE = 6   /**< @c NeonConfig::hueRotationRate */
+        EL_FIELD_NEON_HUE_ROTATION_RATE = 6,  /**< @c NeonConfig::hueRotationRate */
+
+        /* Lens flare scalar leaves (LensFlareConfig). Drive whichever lens
+         * flare renderer is enabled (full-res or half-res optimized). Numbered
+         * from 100 to leave a gap after the neon block, so future neon fields
+         * can append at 7+ without disturbing these values. */
+        EL_FIELD_LENS_FLARE_PERIMETER_POSITION = 100, /**< @c LensFlareConfig::perimeterPosition */
+        EL_FIELD_LENS_FLARE_PERIMETER_OFFSET = 101,   /**< @c LensFlareConfig::perimeterOffset */
+        EL_FIELD_LENS_FLARE_SIZE = 102,               /**< @c LensFlareConfig::size */
+        EL_FIELD_LENS_FLARE_INTENSITY = 103,          /**< @c LensFlareConfig::intensity */
+        EL_FIELD_LENS_FLARE_SPREAD = 104,             /**< @c LensFlareConfig::spread */
+        EL_FIELD_LENS_FLARE_GHOST_SPACING = 105,      /**< @c LensFlareConfig::ghostSpacing */
+        EL_FIELD_LENS_FLARE_GHOST_SIZE = 106,         /**< @c LensFlareConfig::ghostSize */
+        EL_FIELD_LENS_FLARE_GHOST_OFFSET = 107,       /**< @c LensFlareConfig::ghostOffset */
+        EL_FIELD_LENS_FLARE_GHOST_TINT = 108,         /**< @c LensFlareConfig::ghostTint */
+        EL_FIELD_LENS_FLARE_RAY_DENSITY = 109,        /**< @c LensFlareConfig::rayDensity */
+        EL_FIELD_LENS_FLARE_ROTATION_RATE = 110       /**< @c LensFlareConfig::rotationRate */
     } el_config_field_e;
 
     /** @brief Scalar inside a @c NeonConfig::segmentBoosts entry.

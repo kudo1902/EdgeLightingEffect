@@ -55,6 +55,18 @@ static_assert(static_cast<int>(EdgeLighting::AnimatableField::NEON_FILAMENT_FALL
 static_assert(static_cast<int>(EdgeLighting::AnimatableField::NEON_GLOW_SIDE_SOFTNESS) == EL_FIELD_NEON_GLOW_SIDE_SOFTNESS);
 static_assert(static_cast<int>(EdgeLighting::AnimatableField::NEON_HUE_ROTATION_RATE) == EL_FIELD_NEON_HUE_ROTATION_RATE);
 
+static_assert(static_cast<int>(EdgeLighting::AnimatableField::LENS_FLARE_PERIMETER_POSITION) == EL_FIELD_LENS_FLARE_PERIMETER_POSITION);
+static_assert(static_cast<int>(EdgeLighting::AnimatableField::LENS_FLARE_PERIMETER_OFFSET) == EL_FIELD_LENS_FLARE_PERIMETER_OFFSET);
+static_assert(static_cast<int>(EdgeLighting::AnimatableField::LENS_FLARE_SIZE) == EL_FIELD_LENS_FLARE_SIZE);
+static_assert(static_cast<int>(EdgeLighting::AnimatableField::LENS_FLARE_INTENSITY) == EL_FIELD_LENS_FLARE_INTENSITY);
+static_assert(static_cast<int>(EdgeLighting::AnimatableField::LENS_FLARE_SPREAD) == EL_FIELD_LENS_FLARE_SPREAD);
+static_assert(static_cast<int>(EdgeLighting::AnimatableField::LENS_FLARE_GHOST_SPACING) == EL_FIELD_LENS_FLARE_GHOST_SPACING);
+static_assert(static_cast<int>(EdgeLighting::AnimatableField::LENS_FLARE_GHOST_SIZE) == EL_FIELD_LENS_FLARE_GHOST_SIZE);
+static_assert(static_cast<int>(EdgeLighting::AnimatableField::LENS_FLARE_GHOST_OFFSET) == EL_FIELD_LENS_FLARE_GHOST_OFFSET);
+static_assert(static_cast<int>(EdgeLighting::AnimatableField::LENS_FLARE_GHOST_TINT) == EL_FIELD_LENS_FLARE_GHOST_TINT);
+static_assert(static_cast<int>(EdgeLighting::AnimatableField::LENS_FLARE_RAY_DENSITY) == EL_FIELD_LENS_FLARE_RAY_DENSITY);
+static_assert(static_cast<int>(EdgeLighting::AnimatableField::LENS_FLARE_ROTATION_RATE) == EL_FIELD_LENS_FLARE_ROTATION_RATE);
+
 static_assert(static_cast<int>(EdgeLighting::SegmentField::POSITION) == EL_SEGMENT_FIELD_POSITION);
 static_assert(static_cast<int>(EdgeLighting::SegmentField::LENGTH) == EL_SEGMENT_FIELD_LENGTH);
 static_assert(static_cast<int>(EdgeLighting::SegmentField::BOOST) == EL_SEGMENT_FIELD_BOOST);
@@ -155,120 +167,120 @@ struct el_modulator_handle_impl
 namespace capi
 {
 
-inline el_result_e mapExceptionToResult(const std::exception &e)
-{
-    if (dynamic_cast<const std::bad_alloc *>(&e) != nullptr)
+    inline el_result_e mapExceptionToResult(const std::exception &e)
     {
-        return EL_ERROR_OUT_OF_MEMORY;
+        if (dynamic_cast<const std::bad_alloc *>(&e) != nullptr)
+        {
+            return EL_ERROR_OUT_OF_MEMORY;
+        }
+        return EL_ERROR_INVALID_PARAMETER;
     }
-    return EL_ERROR_INVALID_PARAMETER;
-}
 
-inline EdgeLighting::EasingFunction::Curve toEasing(el_easing_e e)
-{
-    using namespace EdgeLighting;
-    switch (e)
+    inline EdgeLighting::EasingFunction::Curve toEasing(el_easing_e e)
     {
-    case EL_EASE_LINEAR:
-        return EasingFunction::Linear;
-    case EL_EASE_IN_QUAD:
-        return EasingFunction::InQuad;
-    case EL_EASE_OUT_QUAD:
-        return EasingFunction::OutQuad;
-    case EL_EASE_INOUT_QUAD:
-        return EasingFunction::InOutQuad;
-    case EL_EASE_IN_CUBIC:
-        return EasingFunction::InCubic;
-    case EL_EASE_OUT_CUBIC:
-        return EasingFunction::OutCubic;
-    case EL_EASE_INOUT_CUBIC:
-        return EasingFunction::InOutCubic;
-    case EL_EASE_IN_SINE:
-        return EasingFunction::InSine;
-    case EL_EASE_OUT_SINE:
-        return EasingFunction::OutSine;
-    case EL_EASE_INOUT_SINE:
-        return EasingFunction::InOutSine;
-    case EL_EASE_IN_EXPO:
-        return EasingFunction::InExpo;
-    case EL_EASE_OUT_EXPO:
-        return EasingFunction::OutExpo;
-    case EL_EASE_INOUT_EXPO:
-        return EasingFunction::InOutExpo;
-    default:
-        return EasingFunction::Linear;
+        using namespace EdgeLighting;
+        switch (e)
+        {
+        case EL_EASE_LINEAR:
+            return EasingFunction::Linear;
+        case EL_EASE_IN_QUAD:
+            return EasingFunction::InQuad;
+        case EL_EASE_OUT_QUAD:
+            return EasingFunction::OutQuad;
+        case EL_EASE_INOUT_QUAD:
+            return EasingFunction::InOutQuad;
+        case EL_EASE_IN_CUBIC:
+            return EasingFunction::InCubic;
+        case EL_EASE_OUT_CUBIC:
+            return EasingFunction::OutCubic;
+        case EL_EASE_INOUT_CUBIC:
+            return EasingFunction::InOutCubic;
+        case EL_EASE_IN_SINE:
+            return EasingFunction::InSine;
+        case EL_EASE_OUT_SINE:
+            return EasingFunction::OutSine;
+        case EL_EASE_INOUT_SINE:
+            return EasingFunction::InOutSine;
+        case EL_EASE_IN_EXPO:
+            return EasingFunction::InExpo;
+        case EL_EASE_OUT_EXPO:
+            return EasingFunction::OutExpo;
+        case EL_EASE_INOUT_EXPO:
+            return EasingFunction::InOutExpo;
+        default:
+            return EasingFunction::Linear;
+        }
     }
-}
 
-inline EdgeLighting::Waveform toWaveform(el_waveform_e w)
-{
-    using namespace EdgeLighting;
-    switch (w)
+    inline EdgeLighting::Waveform toWaveform(el_waveform_e w)
     {
-    case EL_WAVE_TRIANGLE:
-        return Waveform::TRIANGLE;
-    case EL_WAVE_SQUARE:
-        return Waveform::SQUARE;
-    case EL_WAVE_SAWTOOTH:
-        return Waveform::SAWTOOTH;
-    case EL_WAVE_SINE:
-    default:
-        return Waveform::SINE;
+        using namespace EdgeLighting;
+        switch (w)
+        {
+        case EL_WAVE_TRIANGLE:
+            return Waveform::TRIANGLE;
+        case EL_WAVE_SQUARE:
+            return Waveform::SQUARE;
+        case EL_WAVE_SAWTOOTH:
+            return Waveform::SAWTOOTH;
+        case EL_WAVE_SINE:
+        default:
+            return Waveform::SINE;
+        }
     }
-}
 
-inline EdgeLighting::EndAction toEndAction(el_end_action_e a)
-{
-    using namespace EdgeLighting;
-    switch (a)
+    inline EdgeLighting::EndAction toEndAction(el_end_action_e a)
     {
-    case EL_END_ACTION_HOLD_END:
-        return EndAction::HOLD_END;
-    case EL_END_ACTION_HOLD_START:
-        return EndAction::HOLD_START;
-    case EL_END_ACTION_RESTORE:
-        return EndAction::RESTORE;
-    case EL_END_ACTION_HOLD_CURRENT:
-    default:
-        return EndAction::HOLD_CURRENT;
+        using namespace EdgeLighting;
+        switch (a)
+        {
+        case EL_END_ACTION_HOLD_END:
+            return EndAction::HOLD_END;
+        case EL_END_ACTION_HOLD_START:
+            return EndAction::HOLD_START;
+        case EL_END_ACTION_RESTORE:
+            return EndAction::RESTORE;
+        case EL_END_ACTION_HOLD_CURRENT:
+        default:
+            return EndAction::HOLD_CURRENT;
+        }
     }
-}
 
-inline el_end_action_e fromEndAction(EdgeLighting::EndAction a)
-{
-    using namespace EdgeLighting;
-    switch (a)
+    inline el_end_action_e fromEndAction(EdgeLighting::EndAction a)
     {
-    case EndAction::HOLD_END:
-        return EL_END_ACTION_HOLD_END;
-    case EndAction::HOLD_START:
-        return EL_END_ACTION_HOLD_START;
-    case EndAction::RESTORE:
-        return EL_END_ACTION_RESTORE;
-    case EndAction::HOLD_CURRENT:
-    default:
-        return EL_END_ACTION_HOLD_CURRENT;
+        using namespace EdgeLighting;
+        switch (a)
+        {
+        case EndAction::HOLD_END:
+            return EL_END_ACTION_HOLD_END;
+        case EndAction::HOLD_START:
+            return EL_END_ACTION_HOLD_START;
+        case EndAction::RESTORE:
+            return EL_END_ACTION_RESTORE;
+        case EndAction::HOLD_CURRENT:
+        default:
+            return EL_END_ACTION_HOLD_CURRENT;
+        }
     }
-}
 
-inline EdgeLighting::PlaybackMode toPlaybackMode(el_playback_mode_e m)
-{
-    return m == EL_PLAYBACK_ONE_SHOT
-               ? EdgeLighting::PlaybackMode::ONE_SHOT
-               : EdgeLighting::PlaybackMode::LOOP;
-}
+    inline EdgeLighting::PlaybackMode toPlaybackMode(el_playback_mode_e m)
+    {
+        return m == EL_PLAYBACK_ONE_SHOT
+                   ? EdgeLighting::PlaybackMode::ONE_SHOT
+                   : EdgeLighting::PlaybackMode::LOOP;
+    }
 
-inline el_playback_mode_e fromPlaybackMode(EdgeLighting::PlaybackMode m)
-{
-    return m == EdgeLighting::PlaybackMode::ONE_SHOT
-               ? EL_PLAYBACK_ONE_SHOT
-               : EL_PLAYBACK_LOOP;
-}
+    inline el_playback_mode_e fromPlaybackMode(EdgeLighting::PlaybackMode m)
+    {
+        return m == EdgeLighting::PlaybackMode::ONE_SHOT
+                   ? EL_PLAYBACK_ONE_SHOT
+                   : EL_PLAYBACK_LOOP;
+    }
 
-inline EdgeLighting::AnimatableField toAnimatableField(el_config_field_e f)
-{
-    return static_cast<EdgeLighting::AnimatableField>(f);
-}
+    inline EdgeLighting::AnimatableField toAnimatableField(el_config_field_e f)
+    {
+        return static_cast<EdgeLighting::AnimatableField>(f);
+    }
 
 } // namespace capi
 

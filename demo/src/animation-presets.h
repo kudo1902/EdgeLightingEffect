@@ -3,6 +3,7 @@
 
 #include "animation/animation.h"
 #include "animation/neon-animations.h"
+#include "animation/field-bound-animation.h"
 #include "animation/modulator.h"
 #include <memory>
 
@@ -13,21 +14,25 @@ namespace EdgeLightingDemo
     /// the debug UI flips between them to demonstrate what the system can do.
     typedef enum class AnimationPreset
     {
-        NONE,           ///< No animation - Config is used verbatim.
-        BREATHING,      ///< Slow sine pulse on intensity. Calm "alive" look.
-        STROBE,         ///< Hard 6 Hz on/off square wave on intensity.
-        HEARTBEAT,      ///< lub-DUB rhythm on intensity, rest, loop.
-        SHIMMER,        ///< Intensity + glow radius pulse in phase, fast.
-        AURORA,         ///< Very slow layered motion across multiple params.
-        REVERSE_SWEEP,  ///< Hue ring sweeps forwards then backwards, smoothly.
-        FADE_IN,        ///< One-shot ease-in of intensity from 0 to 1.
-        SEGMENT_TRAVEL, ///< Bright Gaussian spot revolves around the perimeter.
-        SEGMENT_BOUNCE, ///< Bright spot swings back and forth (triangle wave).
-        COMET,          ///< Tight fast spot - single-revolution comet feel.
-        OUTLINE_TRACER, ///< One-shot: rect dark, then arc grows 0→1 to light it.
-        ARC_WIPE,       ///< One-shot: 3-phase grow/chase/shrink wipe around perimeter.
-        FADE_OUT,       ///< One-shot ease-out of intensity to 0.
-        HUE_REVERSE,    ///< Hue direction flips abruptly every few seconds.
+        NONE,             ///< No animation - Config is used verbatim.
+        BREATHING,        ///< Slow sine pulse on intensity. Calm "alive" look.
+        STROBE,           ///< Hard 6 Hz on/off square wave on intensity.
+        HEARTBEAT,        ///< lub-DUB rhythm on intensity, rest, loop.
+        SHIMMER,          ///< Intensity + glow radius pulse in phase, fast.
+        AURORA,           ///< Very slow layered motion across multiple params.
+        REVERSE_SWEEP,    ///< Hue ring sweeps forwards then backwards, smoothly.
+        FADE_IN,          ///< One-shot ease-in of intensity from 0 to 1.
+        SEGMENT_TRAVEL,   ///< Bright Gaussian spot revolves around the perimeter.
+        SEGMENT_BOUNCE,   ///< Bright spot swings back and forth (triangle wave).
+        COMET,            ///< Tight fast spot - single-revolution comet feel.
+        OUTLINE_TRACER,   ///< One-shot: rect dark, then arc grows 0→1 to light it.
+        ARC_WIPE,         ///< One-shot: 3-phase grow/chase/shrink wipe around perimeter.
+        FADE_OUT,         ///< One-shot ease-out of intensity to 0.
+        HUE_REVERSE,      ///< Hue direction flips abruptly every few seconds.
+        LENS_SUN_ORBIT,   ///< Lens-flare sun rides all the way around the perimeter.
+        LENS_SUN_BOUNCE,  ///< Lens-flare sun swings back and forth along the perimeter.
+        LENS_FLARE_PULSE, ///< Lens-flare intensity breathes in and out.
+        LENS_SUN_SWEEP,   ///< Sun orbits while the flare pulses and its core breathes.
         COUNT
     } AnimationPreset;
 
@@ -94,6 +99,22 @@ namespace EdgeLightingDemo
         case AnimationPreset::HUE_REVERSE:
         {
             return "Hue Reverse";
+        }
+        case AnimationPreset::LENS_SUN_ORBIT:
+        {
+            return "Lens Sun Orbit";
+        }
+        case AnimationPreset::LENS_SUN_BOUNCE:
+        {
+            return "Lens Sun Bounce";
+        }
+        case AnimationPreset::LENS_FLARE_PULSE:
+        {
+            return "Lens Flare Pulse";
+        }
+        case AnimationPreset::LENS_SUN_SWEEP:
+        {
+            return "Lens Sun Sweep";
         }
         default:
         {
@@ -221,6 +242,52 @@ namespace EdgeLightingDemo
         {
             // Abrupt direction flip every 3 seconds (6s full cycle).
             return std::make_shared<HueRotationReverse>(0.4f, 6.0f);
+        }
+
+        case AnimationPreset::LENS_SUN_ORBIT:
+        {
+            // Field-bound: a sawtooth drives lensFlare.perimeterPosition 0->1,
+            // so the sun rides once around the perimeter every 6 s. This is the
+            // template for a custom lens-flare animation - bind any field to any
+            // modulator; swap the field or the waveform to taste.
+            auto anim = std::make_shared<FieldBoundAnimation>();
+            anim->AddField(AnimatableField::LENS_FLARE_PERIMETER_POSITION,
+                           std::make_shared<Oscillator>(1.0f / 6.0f, 0.0f, 1.0f, 0.0f, Waveform::SAWTOOTH));
+            return anim;
+        }
+
+        case AnimationPreset::LENS_SUN_BOUNCE:
+        {
+            // Triangle wave: the sun swings across the perimeter and back over 5 s.
+            auto anim = std::make_shared<FieldBoundAnimation>();
+            anim->AddField(AnimatableField::LENS_FLARE_PERIMETER_POSITION,
+                           std::make_shared<Oscillator>(1.0f / 5.0f, 0.0f, 1.0f, 0.0f, Waveform::TRIANGLE));
+            return anim;
+        }
+
+        case AnimationPreset::LENS_FLARE_PULSE:
+        {
+            // Sine on intensity: the whole flare breathes 0.5x..1.4x every 2 s.
+            auto anim = std::make_shared<FieldBoundAnimation>();
+            anim->AddField(AnimatableField::LENS_FLARE_INTENSITY,
+                           std::make_shared<Oscillator>(1.0f / 2.0f, 0.5f, 1.4f));
+            return anim;
+        }
+
+        case AnimationPreset::LENS_SUN_SWEEP:
+        {
+            // Signature combo, all in ONE FieldBoundAnimation: three fields,
+            // three independent modulators on their own periods so they drift
+            // out of phase. Shows how a user composes a multi-field lens-flare
+            // animation without any dedicated subclass.
+            auto anim = std::make_shared<FieldBoundAnimation>();
+            anim->AddField(AnimatableField::LENS_FLARE_PERIMETER_POSITION,
+                           std::make_shared<Oscillator>(1.0f / 8.0f, 0.0f, 1.0f, 0.0f, Waveform::SAWTOOTH));
+            anim->AddField(AnimatableField::LENS_FLARE_INTENSITY,
+                           std::make_shared<Oscillator>(1.0f / 2.5f, 0.6f, 1.3f));
+            anim->AddField(AnimatableField::LENS_FLARE_SIZE,
+                           std::make_shared<Oscillator>(1.0f / 3.5f, 0.85f, 1.4f));
+            return anim;
         }
 
         default:

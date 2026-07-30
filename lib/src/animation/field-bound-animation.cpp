@@ -47,6 +47,61 @@ namespace EdgeLighting
                 cfg.neon.hueRotationRate = value;
                 break;
             }
+            case AnimatableField::LENS_FLARE_PERIMETER_POSITION:
+            {
+                cfg.lensFlare.perimeterPosition = value;
+                break;
+            }
+            case AnimatableField::LENS_FLARE_PERIMETER_OFFSET:
+            {
+                cfg.lensFlare.perimeterOffset = value;
+                break;
+            }
+            case AnimatableField::LENS_FLARE_SIZE:
+            {
+                cfg.lensFlare.size = value;
+                break;
+            }
+            case AnimatableField::LENS_FLARE_INTENSITY:
+            {
+                cfg.lensFlare.intensity = value;
+                break;
+            }
+            case AnimatableField::LENS_FLARE_SPREAD:
+            {
+                cfg.lensFlare.spread = value;
+                break;
+            }
+            case AnimatableField::LENS_FLARE_GHOST_SPACING:
+            {
+                cfg.lensFlare.ghostSpacing = value;
+                break;
+            }
+            case AnimatableField::LENS_FLARE_GHOST_SIZE:
+            {
+                cfg.lensFlare.ghostSize = value;
+                break;
+            }
+            case AnimatableField::LENS_FLARE_GHOST_OFFSET:
+            {
+                cfg.lensFlare.ghostOffset = value;
+                break;
+            }
+            case AnimatableField::LENS_FLARE_GHOST_TINT:
+            {
+                cfg.lensFlare.ghostTint = value;
+                break;
+            }
+            case AnimatableField::LENS_FLARE_RAY_DENSITY:
+            {
+                cfg.lensFlare.rayDensity = value;
+                break;
+            }
+            case AnimatableField::LENS_FLARE_ROTATION_RATE:
+            {
+                cfg.lensFlare.rotationRate = value;
+                break;
+            }
             }
         }
 
@@ -81,6 +136,50 @@ namespace EdgeLighting
             case AnimatableField::NEON_HUE_ROTATION_RATE:
             {
                 return cfg.neon.hueRotationRate;
+            }
+            case AnimatableField::LENS_FLARE_PERIMETER_POSITION:
+            {
+                return cfg.lensFlare.perimeterPosition;
+            }
+            case AnimatableField::LENS_FLARE_PERIMETER_OFFSET:
+            {
+                return cfg.lensFlare.perimeterOffset;
+            }
+            case AnimatableField::LENS_FLARE_SIZE:
+            {
+                return cfg.lensFlare.size;
+            }
+            case AnimatableField::LENS_FLARE_INTENSITY:
+            {
+                return cfg.lensFlare.intensity;
+            }
+            case AnimatableField::LENS_FLARE_SPREAD:
+            {
+                return cfg.lensFlare.spread;
+            }
+            case AnimatableField::LENS_FLARE_GHOST_SPACING:
+            {
+                return cfg.lensFlare.ghostSpacing;
+            }
+            case AnimatableField::LENS_FLARE_GHOST_SIZE:
+            {
+                return cfg.lensFlare.ghostSize;
+            }
+            case AnimatableField::LENS_FLARE_GHOST_OFFSET:
+            {
+                return cfg.lensFlare.ghostOffset;
+            }
+            case AnimatableField::LENS_FLARE_GHOST_TINT:
+            {
+                return cfg.lensFlare.ghostTint;
+            }
+            case AnimatableField::LENS_FLARE_RAY_DENSITY:
+            {
+                return cfg.lensFlare.rayDensity;
+            }
+            case AnimatableField::LENS_FLARE_ROTATION_RATE:
+            {
+                return cfg.lensFlare.rotationRate;
             }
             }
             return 0.0f;
@@ -208,7 +307,7 @@ namespace EdgeLighting
         }
 
         void writePreservedStop(Config &cfg, uint32_t id, size_t stopIdx,
-                                 ColorStopField field, float value)
+                                ColorStopField field, float value)
         {
             // Nothing is auto-grown here: the entry must have been acquired and
             // its stops sized already (via el_effect_set_preserved_segment_color_stop_count).

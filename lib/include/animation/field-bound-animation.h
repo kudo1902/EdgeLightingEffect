@@ -30,6 +30,24 @@ namespace EdgeLighting
         NEON_FILAMENT_FALLOFF = 4,
         NEON_GLOW_SIDE_SOFTNESS = 5,
         NEON_HUE_ROTATION_RATE = 6,
+
+        // Lens flare scalar leaves (LensFlareConfig). Shared by the full-res
+        // LensFlareRenderer and the half-res LensFlareOptimizedRenderer, so a
+        // binding drives whichever variant is enabled. Numbered from 100 (a gap
+        // after the neon block) so future neon fields can append at 7+ without
+        // disturbing these; mirrored 1:1 by el_config_field_e (parity
+        // static_assert in capi-internal.h).
+        LENS_FLARE_PERIMETER_POSITION = 100,
+        LENS_FLARE_PERIMETER_OFFSET = 101,
+        LENS_FLARE_SIZE = 102,
+        LENS_FLARE_INTENSITY = 103,
+        LENS_FLARE_SPREAD = 104,
+        LENS_FLARE_GHOST_SPACING = 105,
+        LENS_FLARE_GHOST_SIZE = 106,
+        LENS_FLARE_GHOST_OFFSET = 107,
+        LENS_FLARE_GHOST_TINT = 108,
+        LENS_FLARE_RAY_DENSITY = 109,
+        LENS_FLARE_ROTATION_RATE = 110,
     } AnimatableField;
 
     /// @brief Which scalar to drive inside a @c NeonConfig::segmentBoosts entry.
