@@ -6,6 +6,7 @@
 #include "renderer/neon-optimized-renderer.h"
 #include "renderer/droplets-renderer.h"
 #include "renderer/lens-flare-renderer.h"
+#include "renderer/lens-flare-optimized-renderer.h"
 #include "animation/neon-animations.h"
 #include "debug-ui.h"
 #include "background-quad.h"
@@ -92,6 +93,7 @@ int main()
     gEffect = std::make_unique<EdgeLighting::EdgeLightingEffect>();
 
     auto lensFlareRenderer = std::make_shared<EdgeLighting::LensFlareRenderer>();
+    auto lensFlareOptimizedRenderer = std::make_shared<EdgeLighting::LensFlareOptimizedRenderer>();
     auto wireframeRenderer = std::make_shared<EdgeLighting::WireframeRenderer>();
     auto neonRenderer = std::make_shared<EdgeLighting::NeonRenderer>();
     auto neonOptimizedRenderer = std::make_shared<EdgeLighting::NeonOptimizedRenderer>();
@@ -102,6 +104,7 @@ int main()
     gEffect->AddRenderer(neonOptimizedRenderer);
     gEffect->AddRenderer(dropletsRenderer);
     gEffect->AddRenderer(lensFlareRenderer);
+    gEffect->AddRenderer(lensFlareOptimizedRenderer);
 
     EdgeLighting::Config config;
     config.geometry.width = displayW / 2;
