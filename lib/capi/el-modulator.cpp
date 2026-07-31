@@ -28,7 +28,7 @@ extern "C"
         try
         {
             auto *handle = new el_modulator_handle_impl{std::make_shared<EdgeLighting::Oscillator>(
-                frequency, minValue, maxValue, phase, capi::toWaveform(waveform))};
+                frequency, minValue, maxValue, phase, toWaveform(waveform))};
             LOG_I("mod=%p, frequency=%f, minValue=%f, maxValue=%f, phase=%f, waveform=%d", (void *)handle, frequency, minValue, maxValue, phase, (int)waveform);
             return handle;
         }
@@ -45,7 +45,7 @@ extern "C"
         try
         {
             auto *handle = new el_modulator_handle_impl{std::make_shared<EdgeLighting::Ease>(
-                from, to, duration, capi::toEasing(easing), loop != 0)};
+                from, to, duration, toEasing(easing), loop != 0)};
             LOG_I("mod=%p, from=%f, to=%f, duration=%f, easing=%d, loop=%d", (void *)handle, from, to, duration, (int)easing, loop);
             return handle;
         }

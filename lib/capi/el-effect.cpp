@@ -1248,81 +1248,446 @@ extern "C"
 
     // --- Optimized neon ---
 
-    el_result_e el_effect_set_optimized_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_renderer_enabled"); SET_AND_LOG(effect->config.optimizedNeon.enable, enabled != 0, "effect=%p, enabled=%d", (void *)effect, enabled); }
-    el_result_e el_effect_get_optimized_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_renderer_enabled"); VALIDATE_OUT_PTR(outEnabled, "el_effect_get_optimized_renderer_enabled"); *outEnabled = effect->config.optimizedNeon.enable ? 1 : 0; LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled); return EL_SUCCESS; }
-    el_result_e el_effect_set_optimized_resolution_scale(el_effect_handle_t effect, float scale) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_resolution_scale"); SET_AND_LOG(effect->config.optimizedNeon.resolutionScale, scale, "effect=%p, scale=%f", (void *)effect, scale); }
-    el_result_e el_effect_get_optimized_resolution_scale(el_effect_handle_t effect, float *outScale) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_resolution_scale"); VALIDATE_OUT_PTR(outScale, "el_effect_get_optimized_resolution_scale"); *outScale = effect->config.optimizedNeon.resolutionScale; LOG_D("effect=%p, scale=%f", (void *)effect, *outScale); return EL_SUCCESS; }
-    el_result_e el_effect_set_optimized_num_samples(el_effect_handle_t effect, int32_t samples) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_num_samples"); SET_AND_LOG(effect->config.optimizedNeon.numSamples, samples, "effect=%p, samples=%d", (void *)effect, samples); }
-    el_result_e el_effect_get_optimized_num_samples(el_effect_handle_t effect, int32_t *outSamples) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_num_samples"); VALIDATE_OUT_PTR(outSamples, "el_effect_get_optimized_num_samples"); *outSamples = effect->config.optimizedNeon.numSamples; LOG_D("effect=%p, samples=%d", (void *)effect, *outSamples); return EL_SUCCESS; }
-    el_result_e el_effect_set_optimized_gradient_lut_size(el_effect_handle_t effect, int32_t size) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_gradient_lut_size"); SET_AND_LOG(effect->config.optimizedNeon.gradientLutSize, size, "effect=%p, size=%d", (void *)effect, size); }
-    el_result_e el_effect_get_optimized_gradient_lut_size(el_effect_handle_t effect, int32_t *outSize) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_gradient_lut_size"); VALIDATE_OUT_PTR(outSize, "el_effect_get_optimized_gradient_lut_size"); *outSize = effect->config.optimizedNeon.gradientLutSize; LOG_D("effect=%p, size=%d", (void *)effect, *outSize); return EL_SUCCESS; }
-    el_result_e el_effect_set_optimized_show_half_res(el_effect_handle_t effect, el_bool_t show) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_show_half_res"); SET_AND_LOG(effect->config.optimizedNeon.showHalfRes, show != 0, "effect=%p, show=%d", (void *)effect, show); }
-    el_result_e el_effect_get_optimized_show_half_res(el_effect_handle_t effect, el_bool_t *outShow) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_show_half_res"); VALIDATE_OUT_PTR(outShow, "el_effect_get_optimized_show_half_res"); *outShow = effect->config.optimizedNeon.showHalfRes ? 1 : 0; LOG_D("effect=%p, show=%d", (void *)effect, *outShow); return EL_SUCCESS; }
+    el_result_e el_effect_set_optimized_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_renderer_enabled");
+        SET_AND_LOG(effect->config.optimizedNeon.enable, enabled != 0, "effect=%p, enabled=%d", (void *)effect, enabled);
+    }
+    el_result_e el_effect_get_optimized_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_renderer_enabled");
+        VALIDATE_OUT_PTR(outEnabled, "el_effect_get_optimized_renderer_enabled");
+        *outEnabled = effect->config.optimizedNeon.enable ? 1 : 0;
+        LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_optimized_resolution_scale(el_effect_handle_t effect, float scale)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_resolution_scale");
+        SET_AND_LOG(effect->config.optimizedNeon.resolutionScale, scale, "effect=%p, scale=%f", (void *)effect, scale);
+    }
+    el_result_e el_effect_get_optimized_resolution_scale(el_effect_handle_t effect, float *outScale)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_resolution_scale");
+        VALIDATE_OUT_PTR(outScale, "el_effect_get_optimized_resolution_scale");
+        *outScale = effect->config.optimizedNeon.resolutionScale;
+        LOG_D("effect=%p, scale=%f", (void *)effect, *outScale);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_optimized_num_samples(el_effect_handle_t effect, int32_t samples)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_num_samples");
+        SET_AND_LOG(effect->config.optimizedNeon.numSamples, samples, "effect=%p, samples=%d", (void *)effect, samples);
+    }
+    el_result_e el_effect_get_optimized_num_samples(el_effect_handle_t effect, int32_t *outSamples)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_num_samples");
+        VALIDATE_OUT_PTR(outSamples, "el_effect_get_optimized_num_samples");
+        *outSamples = effect->config.optimizedNeon.numSamples;
+        LOG_D("effect=%p, samples=%d", (void *)effect, *outSamples);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_optimized_gradient_lut_size(el_effect_handle_t effect, int32_t size)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_gradient_lut_size");
+        SET_AND_LOG(effect->config.optimizedNeon.gradientLutSize, size, "effect=%p, size=%d", (void *)effect, size);
+    }
+    el_result_e el_effect_get_optimized_gradient_lut_size(el_effect_handle_t effect, int32_t *outSize)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_gradient_lut_size");
+        VALIDATE_OUT_PTR(outSize, "el_effect_get_optimized_gradient_lut_size");
+        *outSize = effect->config.optimizedNeon.gradientLutSize;
+        LOG_D("effect=%p, size=%d", (void *)effect, *outSize);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_optimized_show_half_res(el_effect_handle_t effect, el_bool_t show)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_show_half_res");
+        SET_AND_LOG(effect->config.optimizedNeon.showHalfRes, show != 0, "effect=%p, show=%d", (void *)effect, show);
+    }
+    el_result_e el_effect_get_optimized_show_half_res(el_effect_handle_t effect, el_bool_t *outShow)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_show_half_res");
+        VALIDATE_OUT_PTR(outShow, "el_effect_get_optimized_show_half_res");
+        *outShow = effect->config.optimizedNeon.showHalfRes ? 1 : 0;
+        LOG_D("effect=%p, show=%d", (void *)effect, *outShow);
+        return EL_SUCCESS;
+    }
 
     // --- Droplets ---
 
-    el_result_e el_effect_set_droplets_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_renderer_enabled"); SET_AND_LOG(effect->config.droplets.enable, enabled != 0, "effect=%p, enabled=%d", (void *)effect, enabled); }
-    el_result_e el_effect_get_droplets_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_renderer_enabled"); VALIDATE_OUT_PTR(outEnabled, "el_effect_get_droplets_renderer_enabled"); *outEnabled = effect->config.droplets.enable ? 1 : 0; LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled); return EL_SUCCESS; }
-    el_result_e el_effect_set_droplets_amount(el_effect_handle_t effect, float amount) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_amount"); SET_AND_LOG(effect->config.droplets.amount, amount, "effect=%p, amount=%f", (void *)effect, amount); }
-    el_result_e el_effect_get_droplets_amount(el_effect_handle_t effect, float *outAmount) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_amount"); VALIDATE_OUT_PTR(outAmount, "el_effect_get_droplets_amount"); *outAmount = effect->config.droplets.amount; LOG_D("effect=%p, amount=%f", (void *)effect, *outAmount); return EL_SUCCESS; }
-    el_result_e el_effect_set_droplets_speed(el_effect_handle_t effect, float speed) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_speed"); SET_AND_LOG(effect->config.droplets.speed, speed, "effect=%p, speed=%f", (void *)effect, speed); }
-    el_result_e el_effect_get_droplets_speed(el_effect_handle_t effect, float *outSpeed) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_speed"); VALIDATE_OUT_PTR(outSpeed, "el_effect_get_droplets_speed"); *outSpeed = effect->config.droplets.speed; LOG_D("effect=%p, speed=%f", (void *)effect, *outSpeed); return EL_SUCCESS; }
-    el_result_e el_effect_set_droplets_lanes(el_effect_handle_t effect, int lanes) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_lanes"); SET_AND_LOG(effect->config.droplets.lanes, lanes, "effect=%p, lanes=%d", (void *)effect, lanes); }
-    el_result_e el_effect_get_droplets_lanes(el_effect_handle_t effect, int *outLanes) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_lanes"); VALIDATE_OUT_PTR(outLanes, "el_effect_get_droplets_lanes"); *outLanes = effect->config.droplets.lanes; LOG_D("effect=%p, lanes=%d", (void *)effect, *outLanes); return EL_SUCCESS; }
-    el_result_e el_effect_set_droplets_band_width(el_effect_handle_t effect, float bandWidth) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_band_width"); SET_AND_LOG(effect->config.droplets.bandWidth, bandWidth, "effect=%p, bandWidth=%f", (void *)effect, bandWidth); }
-    el_result_e el_effect_get_droplets_band_width(el_effect_handle_t effect, float *outBandWidth) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_band_width"); VALIDATE_OUT_PTR(outBandWidth, "el_effect_get_droplets_band_width"); *outBandWidth = effect->config.droplets.bandWidth; LOG_D("effect=%p, bandWidth=%f", (void *)effect, *outBandWidth); return EL_SUCCESS; }
-    el_result_e el_effect_set_droplets_band_offset(el_effect_handle_t effect, float bandOffset) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_band_offset"); SET_AND_LOG(effect->config.droplets.bandOffset, bandOffset, "effect=%p, bandOffset=%f", (void *)effect, bandOffset); }
-    el_result_e el_effect_get_droplets_band_offset(el_effect_handle_t effect, float *outBandOffset) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_band_offset"); VALIDATE_OUT_PTR(outBandOffset, "el_effect_get_droplets_band_offset"); *outBandOffset = effect->config.droplets.bandOffset; LOG_D("effect=%p, bandOffset=%f", (void *)effect, *outBandOffset); return EL_SUCCESS; }
+    el_result_e el_effect_set_droplets_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_renderer_enabled");
+        SET_AND_LOG(effect->config.droplets.enable, enabled != 0, "effect=%p, enabled=%d", (void *)effect, enabled);
+    }
+    el_result_e el_effect_get_droplets_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_renderer_enabled");
+        VALIDATE_OUT_PTR(outEnabled, "el_effect_get_droplets_renderer_enabled");
+        *outEnabled = effect->config.droplets.enable ? 1 : 0;
+        LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_droplets_amount(el_effect_handle_t effect, float amount)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_amount");
+        SET_AND_LOG(effect->config.droplets.amount, amount, "effect=%p, amount=%f", (void *)effect, amount);
+    }
+    el_result_e el_effect_get_droplets_amount(el_effect_handle_t effect, float *outAmount)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_amount");
+        VALIDATE_OUT_PTR(outAmount, "el_effect_get_droplets_amount");
+        *outAmount = effect->config.droplets.amount;
+        LOG_D("effect=%p, amount=%f", (void *)effect, *outAmount);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_droplets_speed(el_effect_handle_t effect, float speed)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_speed");
+        SET_AND_LOG(effect->config.droplets.speed, speed, "effect=%p, speed=%f", (void *)effect, speed);
+    }
+    el_result_e el_effect_get_droplets_speed(el_effect_handle_t effect, float *outSpeed)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_speed");
+        VALIDATE_OUT_PTR(outSpeed, "el_effect_get_droplets_speed");
+        *outSpeed = effect->config.droplets.speed;
+        LOG_D("effect=%p, speed=%f", (void *)effect, *outSpeed);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_droplets_lanes(el_effect_handle_t effect, int lanes)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_lanes");
+        SET_AND_LOG(effect->config.droplets.lanes, lanes, "effect=%p, lanes=%d", (void *)effect, lanes);
+    }
+    el_result_e el_effect_get_droplets_lanes(el_effect_handle_t effect, int *outLanes)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_lanes");
+        VALIDATE_OUT_PTR(outLanes, "el_effect_get_droplets_lanes");
+        *outLanes = effect->config.droplets.lanes;
+        LOG_D("effect=%p, lanes=%d", (void *)effect, *outLanes);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_droplets_band_width(el_effect_handle_t effect, float bandWidth)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_band_width");
+        SET_AND_LOG(effect->config.droplets.bandWidth, bandWidth, "effect=%p, bandWidth=%f", (void *)effect, bandWidth);
+    }
+    el_result_e el_effect_get_droplets_band_width(el_effect_handle_t effect, float *outBandWidth)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_band_width");
+        VALIDATE_OUT_PTR(outBandWidth, "el_effect_get_droplets_band_width");
+        *outBandWidth = effect->config.droplets.bandWidth;
+        LOG_D("effect=%p, bandWidth=%f", (void *)effect, *outBandWidth);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_droplets_band_offset(el_effect_handle_t effect, float bandOffset)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_band_offset");
+        SET_AND_LOG(effect->config.droplets.bandOffset, bandOffset, "effect=%p, bandOffset=%f", (void *)effect, bandOffset);
+    }
+    el_result_e el_effect_get_droplets_band_offset(el_effect_handle_t effect, float *outBandOffset)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_band_offset");
+        VALIDATE_OUT_PTR(outBandOffset, "el_effect_get_droplets_band_offset");
+        *outBandOffset = effect->config.droplets.bandOffset;
+        LOG_D("effect=%p, bandOffset=%f", (void *)effect, *outBandOffset);
+        return EL_SUCCESS;
+    }
 
-    el_result_e el_effect_set_droplets_tint(el_effect_handle_t effect, float r, float g, float b, float a) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_tint"); SET_AND_LOG(effect->config.droplets.tint, glm::vec4(r, g, b, a), "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a); }
-    el_result_e el_effect_get_droplets_tint(el_effect_handle_t effect, float *outR, float *outG, float *outB, float *outA) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_tint"); VALIDATE_OUT_PTR(outR, "el_effect_get_droplets_tint"); VALIDATE_OUT_PTR(outG, "el_effect_get_droplets_tint"); VALIDATE_OUT_PTR(outB, "el_effect_get_droplets_tint"); VALIDATE_OUT_PTR(outA, "el_effect_get_droplets_tint"); *outR = effect->config.droplets.tint.r; *outG = effect->config.droplets.tint.g; *outB = effect->config.droplets.tint.b; *outA = effect->config.droplets.tint.a; LOG_D("effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, *outR, *outG, *outB, *outA); return EL_SUCCESS; }
+    el_result_e el_effect_set_droplets_tint(el_effect_handle_t effect, float r, float g, float b, float a)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_tint");
+        SET_AND_LOG(effect->config.droplets.tint, glm::vec4(r, g, b, a), "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a);
+    }
+    el_result_e el_effect_get_droplets_tint(el_effect_handle_t effect, float *outR, float *outG, float *outB, float *outA)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_tint");
+        VALIDATE_OUT_PTR(outR, "el_effect_get_droplets_tint");
+        VALIDATE_OUT_PTR(outG, "el_effect_get_droplets_tint");
+        VALIDATE_OUT_PTR(outB, "el_effect_get_droplets_tint");
+        VALIDATE_OUT_PTR(outA, "el_effect_get_droplets_tint");
+        *outR = effect->config.droplets.tint.r;
+        *outG = effect->config.droplets.tint.g;
+        *outB = effect->config.droplets.tint.b;
+        *outA = effect->config.droplets.tint.a;
+        LOG_D("effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, *outR, *outG, *outB, *outA);
+        return EL_SUCCESS;
+    }
 
     // --- Lens flare ---
 
-    el_result_e el_effect_set_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_renderer_enabled"); SET_AND_LOG(effect->config.lensFlare.enable, enabled != 0, "effect=%p, enabled=%d", (void *)effect, enabled); }
-    el_result_e el_effect_get_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_renderer_enabled"); VALIDATE_OUT_PTR(outEnabled, "el_effect_get_lens_flare_renderer_enabled"); *outEnabled = effect->config.lensFlare.enable ? 1 : 0; LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled); return EL_SUCCESS; }
-    el_result_e el_effect_set_lens_flare_perimeter_position(el_effect_handle_t effect, float position) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_perimeter_position"); SET_AND_LOG(effect->config.lensFlare.perimeterPosition, position, "effect=%p, position=%f", (void *)effect, position); }
-    el_result_e el_effect_get_lens_flare_perimeter_position(el_effect_handle_t effect, float *outPosition) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_perimeter_position"); VALIDATE_OUT_PTR(outPosition, "el_effect_get_lens_flare_perimeter_position"); *outPosition = effect->config.lensFlare.perimeterPosition; LOG_D("effect=%p, position=%f", (void *)effect, *outPosition); return EL_SUCCESS; }
-    el_result_e el_effect_set_lens_flare_perimeter_offset(el_effect_handle_t effect, float offset) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_perimeter_offset"); SET_AND_LOG(effect->config.lensFlare.perimeterOffset, offset, "effect=%p, offset=%f", (void *)effect, offset); }
-    el_result_e el_effect_get_lens_flare_perimeter_offset(el_effect_handle_t effect, float *outOffset) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_perimeter_offset"); VALIDATE_OUT_PTR(outOffset, "el_effect_get_lens_flare_perimeter_offset"); *outOffset = effect->config.lensFlare.perimeterOffset; LOG_D("effect=%p, offset=%f", (void *)effect, *outOffset); return EL_SUCCESS; }
-    el_result_e el_effect_set_lens_flare_size(el_effect_handle_t effect, float size) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_size"); SET_AND_LOG(effect->config.lensFlare.size, size, "effect=%p, size=%f", (void *)effect, size); }
-    el_result_e el_effect_get_lens_flare_size(el_effect_handle_t effect, float *outSize) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_size"); VALIDATE_OUT_PTR(outSize, "el_effect_get_lens_flare_size"); *outSize = effect->config.lensFlare.size; LOG_D("effect=%p, size=%f", (void *)effect, *outSize); return EL_SUCCESS; }
-    el_result_e el_effect_set_lens_flare_color(el_effect_handle_t effect, float r, float g, float b, float a) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_color"); SET_AND_LOG(effect->config.lensFlare.color, glm::vec4(r, g, b, a), "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a); }
-    el_result_e el_effect_get_lens_flare_color(el_effect_handle_t effect, float *outR, float *outG, float *outB, float *outA) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_color"); VALIDATE_OUT_PTR(outR, "el_effect_get_lens_flare_color"); VALIDATE_OUT_PTR(outG, "el_effect_get_lens_flare_color"); VALIDATE_OUT_PTR(outB, "el_effect_get_lens_flare_color"); VALIDATE_OUT_PTR(outA, "el_effect_get_lens_flare_color"); *outR = effect->config.lensFlare.color.r; *outG = effect->config.lensFlare.color.g; *outB = effect->config.lensFlare.color.b; *outA = effect->config.lensFlare.color.a; LOG_D("effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, *outR, *outG, *outB, *outA); return EL_SUCCESS; }
-    el_result_e el_effect_set_lens_flare_intensity(el_effect_handle_t effect, float intensity) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_intensity"); SET_AND_LOG(effect->config.lensFlare.intensity, intensity, "effect=%p, intensity=%f", (void *)effect, intensity); }
-    el_result_e el_effect_get_lens_flare_intensity(el_effect_handle_t effect, float *outIntensity) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_intensity"); VALIDATE_OUT_PTR(outIntensity, "el_effect_get_lens_flare_intensity"); *outIntensity = effect->config.lensFlare.intensity; LOG_D("effect=%p, intensity=%f", (void *)effect, *outIntensity); return EL_SUCCESS; }
-    el_result_e el_effect_set_lens_flare_spread(el_effect_handle_t effect, float spread) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_spread"); SET_AND_LOG(effect->config.lensFlare.spread, spread, "effect=%p, spread=%f", (void *)effect, spread); }
-    el_result_e el_effect_get_lens_flare_spread(el_effect_handle_t effect, float *outSpread) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_spread"); VALIDATE_OUT_PTR(outSpread, "el_effect_get_lens_flare_spread"); *outSpread = effect->config.lensFlare.spread; LOG_D("effect=%p, spread=%f", (void *)effect, *outSpread); return EL_SUCCESS; }
-    el_result_e el_effect_set_lens_flare_ghost_spacing(el_effect_handle_t effect, float ghostSpacing) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_spacing"); SET_AND_LOG(effect->config.lensFlare.ghostSpacing, ghostSpacing, "effect=%p, ghostSpacing=%f", (void *)effect, ghostSpacing); }
-    el_result_e el_effect_get_lens_flare_ghost_spacing(el_effect_handle_t effect, float *outGhostSpacing) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_spacing"); VALIDATE_OUT_PTR(outGhostSpacing, "el_effect_get_lens_flare_ghost_spacing"); *outGhostSpacing = effect->config.lensFlare.ghostSpacing; LOG_D("effect=%p, ghostSpacing=%f", (void *)effect, *outGhostSpacing); return EL_SUCCESS; }
-    el_result_e el_effect_set_lens_flare_ghost_size(el_effect_handle_t effect, float ghostSize) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_size"); SET_AND_LOG(effect->config.lensFlare.ghostSize, ghostSize, "effect=%p, ghostSize=%f", (void *)effect, ghostSize); }
-    el_result_e el_effect_get_lens_flare_ghost_size(el_effect_handle_t effect, float *outGhostSize) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_size"); VALIDATE_OUT_PTR(outGhostSize, "el_effect_get_lens_flare_ghost_size"); *outGhostSize = effect->config.lensFlare.ghostSize; LOG_D("effect=%p, ghostSize=%f", (void *)effect, *outGhostSize); return EL_SUCCESS; }
-    el_result_e el_effect_set_lens_flare_ghost_offset(el_effect_handle_t effect, float ghostOffset) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_offset"); SET_AND_LOG(effect->config.lensFlare.ghostOffset, ghostOffset, "effect=%p, ghostOffset=%f", (void *)effect, ghostOffset); }
-    el_result_e el_effect_get_lens_flare_ghost_offset(el_effect_handle_t effect, float *outGhostOffset) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_offset"); VALIDATE_OUT_PTR(outGhostOffset, "el_effect_get_lens_flare_ghost_offset"); *outGhostOffset = effect->config.lensFlare.ghostOffset; LOG_D("effect=%p, ghostOffset=%f", (void *)effect, *outGhostOffset); return EL_SUCCESS; }
-    el_result_e el_effect_set_lens_flare_ghost_color(el_effect_handle_t effect, float r, float g, float b) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_color"); SET_AND_LOG(effect->config.lensFlare.ghostColor, glm::vec3(r, g, b), "effect=%p, r=%f, g=%f, b=%f", (void *)effect, r, g, b); }
-    el_result_e el_effect_get_lens_flare_ghost_color(el_effect_handle_t effect, float *outR, float *outG, float *outB) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_color"); VALIDATE_OUT_PTR(outR, "el_effect_get_lens_flare_ghost_color"); VALIDATE_OUT_PTR(outG, "el_effect_get_lens_flare_ghost_color"); VALIDATE_OUT_PTR(outB, "el_effect_get_lens_flare_ghost_color"); *outR = effect->config.lensFlare.ghostColor.r; *outG = effect->config.lensFlare.ghostColor.g; *outB = effect->config.lensFlare.ghostColor.b; LOG_D("effect=%p, r=%f, g=%f, b=%f", (void *)effect, *outR, *outG, *outB); return EL_SUCCESS; }
-    el_result_e el_effect_set_lens_flare_ghost_tint(el_effect_handle_t effect, float ghostTint) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_tint"); SET_AND_LOG(effect->config.lensFlare.ghostTint, ghostTint, "effect=%p, ghostTint=%f", (void *)effect, ghostTint); }
-    el_result_e el_effect_get_lens_flare_ghost_tint(el_effect_handle_t effect, float *outGhostTint) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_tint"); VALIDATE_OUT_PTR(outGhostTint, "el_effect_get_lens_flare_ghost_tint"); *outGhostTint = effect->config.lensFlare.ghostTint; LOG_D("effect=%p, ghostTint=%f", (void *)effect, *outGhostTint); return EL_SUCCESS; }
-    el_result_e el_effect_set_lens_flare_flare_center(el_effect_handle_t effect, float x, float y) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_flare_center"); SET_AND_LOG(effect->config.lensFlare.flareCenter, glm::vec2(x, y), "effect=%p, x=%f, y=%f", (void *)effect, x, y); }
-    el_result_e el_effect_get_lens_flare_flare_center(el_effect_handle_t effect, float *outX, float *outY) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_flare_center"); VALIDATE_OUT_PTR(outX, "el_effect_get_lens_flare_flare_center"); VALIDATE_OUT_PTR(outY, "el_effect_get_lens_flare_flare_center"); *outX = effect->config.lensFlare.flareCenter.x; *outY = effect->config.lensFlare.flareCenter.y; LOG_D("effect=%p, x=%f, y=%f", (void *)effect, *outX, *outY); return EL_SUCCESS; }
-    el_result_e el_effect_set_lens_flare_ray_density(el_effect_handle_t effect, float rayDensity) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ray_density"); SET_AND_LOG(effect->config.lensFlare.rayDensity, rayDensity, "effect=%p, rayDensity=%f", (void *)effect, rayDensity); }
-    el_result_e el_effect_get_lens_flare_ray_density(el_effect_handle_t effect, float *outRayDensity) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ray_density"); VALIDATE_OUT_PTR(outRayDensity, "el_effect_get_lens_flare_ray_density"); *outRayDensity = effect->config.lensFlare.rayDensity; LOG_D("effect=%p, rayDensity=%f", (void *)effect, *outRayDensity); return EL_SUCCESS; }
-    el_result_e el_effect_set_lens_flare_rotation_rate(el_effect_handle_t effect, float rate) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_rotation_rate"); SET_AND_LOG(effect->config.lensFlare.rotationRate, rate, "effect=%p, rate=%f", (void *)effect, rate); }
-    el_result_e el_effect_get_lens_flare_rotation_rate(el_effect_handle_t effect, float *outRate) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_rotation_rate"); VALIDATE_OUT_PTR(outRate, "el_effect_get_lens_flare_rotation_rate"); *outRate = effect->config.lensFlare.rotationRate; LOG_D("effect=%p, rate=%f", (void *)effect, *outRate); return EL_SUCCESS; }
+    el_result_e el_effect_set_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_renderer_enabled");
+        SET_AND_LOG(effect->config.lensFlare.enable, enabled != 0, "effect=%p, enabled=%d", (void *)effect, enabled);
+    }
+    el_result_e el_effect_get_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_renderer_enabled");
+        VALIDATE_OUT_PTR(outEnabled, "el_effect_get_lens_flare_renderer_enabled");
+        *outEnabled = effect->config.lensFlare.enable ? 1 : 0;
+        LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_lens_flare_perimeter_position(el_effect_handle_t effect, float position)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_perimeter_position");
+        SET_AND_LOG(effect->config.lensFlare.perimeterPosition, position, "effect=%p, position=%f", (void *)effect, position);
+    }
+    el_result_e el_effect_get_lens_flare_perimeter_position(el_effect_handle_t effect, float *outPosition)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_perimeter_position");
+        VALIDATE_OUT_PTR(outPosition, "el_effect_get_lens_flare_perimeter_position");
+        *outPosition = effect->config.lensFlare.perimeterPosition;
+        LOG_D("effect=%p, position=%f", (void *)effect, *outPosition);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_lens_flare_perimeter_offset(el_effect_handle_t effect, float offset)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_perimeter_offset");
+        SET_AND_LOG(effect->config.lensFlare.perimeterOffset, offset, "effect=%p, offset=%f", (void *)effect, offset);
+    }
+    el_result_e el_effect_get_lens_flare_perimeter_offset(el_effect_handle_t effect, float *outOffset)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_perimeter_offset");
+        VALIDATE_OUT_PTR(outOffset, "el_effect_get_lens_flare_perimeter_offset");
+        *outOffset = effect->config.lensFlare.perimeterOffset;
+        LOG_D("effect=%p, offset=%f", (void *)effect, *outOffset);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_lens_flare_size(el_effect_handle_t effect, float size)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_size");
+        SET_AND_LOG(effect->config.lensFlare.size, size, "effect=%p, size=%f", (void *)effect, size);
+    }
+    el_result_e el_effect_get_lens_flare_size(el_effect_handle_t effect, float *outSize)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_size");
+        VALIDATE_OUT_PTR(outSize, "el_effect_get_lens_flare_size");
+        *outSize = effect->config.lensFlare.size;
+        LOG_D("effect=%p, size=%f", (void *)effect, *outSize);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_lens_flare_color(el_effect_handle_t effect, float r, float g, float b, float a)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_color");
+        SET_AND_LOG(effect->config.lensFlare.color, glm::vec4(r, g, b, a), "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a);
+    }
+    el_result_e el_effect_get_lens_flare_color(el_effect_handle_t effect, float *outR, float *outG, float *outB, float *outA)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_color");
+        VALIDATE_OUT_PTR(outR, "el_effect_get_lens_flare_color");
+        VALIDATE_OUT_PTR(outG, "el_effect_get_lens_flare_color");
+        VALIDATE_OUT_PTR(outB, "el_effect_get_lens_flare_color");
+        VALIDATE_OUT_PTR(outA, "el_effect_get_lens_flare_color");
+        *outR = effect->config.lensFlare.color.r;
+        *outG = effect->config.lensFlare.color.g;
+        *outB = effect->config.lensFlare.color.b;
+        *outA = effect->config.lensFlare.color.a;
+        LOG_D("effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, *outR, *outG, *outB, *outA);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_lens_flare_intensity(el_effect_handle_t effect, float intensity)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_intensity");
+        SET_AND_LOG(effect->config.lensFlare.intensity, intensity, "effect=%p, intensity=%f", (void *)effect, intensity);
+    }
+    el_result_e el_effect_get_lens_flare_intensity(el_effect_handle_t effect, float *outIntensity)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_intensity");
+        VALIDATE_OUT_PTR(outIntensity, "el_effect_get_lens_flare_intensity");
+        *outIntensity = effect->config.lensFlare.intensity;
+        LOG_D("effect=%p, intensity=%f", (void *)effect, *outIntensity);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_lens_flare_spread(el_effect_handle_t effect, float spread)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_spread");
+        SET_AND_LOG(effect->config.lensFlare.spread, spread, "effect=%p, spread=%f", (void *)effect, spread);
+    }
+    el_result_e el_effect_get_lens_flare_spread(el_effect_handle_t effect, float *outSpread)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_spread");
+        VALIDATE_OUT_PTR(outSpread, "el_effect_get_lens_flare_spread");
+        *outSpread = effect->config.lensFlare.spread;
+        LOG_D("effect=%p, spread=%f", (void *)effect, *outSpread);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_lens_flare_ghost_spacing(el_effect_handle_t effect, float ghostSpacing)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_spacing");
+        SET_AND_LOG(effect->config.lensFlare.ghostSpacing, ghostSpacing, "effect=%p, ghostSpacing=%f", (void *)effect, ghostSpacing);
+    }
+    el_result_e el_effect_get_lens_flare_ghost_spacing(el_effect_handle_t effect, float *outGhostSpacing)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_spacing");
+        VALIDATE_OUT_PTR(outGhostSpacing, "el_effect_get_lens_flare_ghost_spacing");
+        *outGhostSpacing = effect->config.lensFlare.ghostSpacing;
+        LOG_D("effect=%p, ghostSpacing=%f", (void *)effect, *outGhostSpacing);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_lens_flare_ghost_size(el_effect_handle_t effect, float ghostSize)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_size");
+        SET_AND_LOG(effect->config.lensFlare.ghostSize, ghostSize, "effect=%p, ghostSize=%f", (void *)effect, ghostSize);
+    }
+    el_result_e el_effect_get_lens_flare_ghost_size(el_effect_handle_t effect, float *outGhostSize)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_size");
+        VALIDATE_OUT_PTR(outGhostSize, "el_effect_get_lens_flare_ghost_size");
+        *outGhostSize = effect->config.lensFlare.ghostSize;
+        LOG_D("effect=%p, ghostSize=%f", (void *)effect, *outGhostSize);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_lens_flare_ghost_offset(el_effect_handle_t effect, float ghostOffset)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_offset");
+        SET_AND_LOG(effect->config.lensFlare.ghostOffset, ghostOffset, "effect=%p, ghostOffset=%f", (void *)effect, ghostOffset);
+    }
+    el_result_e el_effect_get_lens_flare_ghost_offset(el_effect_handle_t effect, float *outGhostOffset)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_offset");
+        VALIDATE_OUT_PTR(outGhostOffset, "el_effect_get_lens_flare_ghost_offset");
+        *outGhostOffset = effect->config.lensFlare.ghostOffset;
+        LOG_D("effect=%p, ghostOffset=%f", (void *)effect, *outGhostOffset);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_lens_flare_ghost_color(el_effect_handle_t effect, float r, float g, float b)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_color");
+        SET_AND_LOG(effect->config.lensFlare.ghostColor, glm::vec3(r, g, b), "effect=%p, r=%f, g=%f, b=%f", (void *)effect, r, g, b);
+    }
+    el_result_e el_effect_get_lens_flare_ghost_color(el_effect_handle_t effect, float *outR, float *outG, float *outB)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_color");
+        VALIDATE_OUT_PTR(outR, "el_effect_get_lens_flare_ghost_color");
+        VALIDATE_OUT_PTR(outG, "el_effect_get_lens_flare_ghost_color");
+        VALIDATE_OUT_PTR(outB, "el_effect_get_lens_flare_ghost_color");
+        *outR = effect->config.lensFlare.ghostColor.r;
+        *outG = effect->config.lensFlare.ghostColor.g;
+        *outB = effect->config.lensFlare.ghostColor.b;
+        LOG_D("effect=%p, r=%f, g=%f, b=%f", (void *)effect, *outR, *outG, *outB);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_lens_flare_ghost_tint(el_effect_handle_t effect, float ghostTint)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_tint");
+        SET_AND_LOG(effect->config.lensFlare.ghostTint, ghostTint, "effect=%p, ghostTint=%f", (void *)effect, ghostTint);
+    }
+    el_result_e el_effect_get_lens_flare_ghost_tint(el_effect_handle_t effect, float *outGhostTint)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_tint");
+        VALIDATE_OUT_PTR(outGhostTint, "el_effect_get_lens_flare_ghost_tint");
+        *outGhostTint = effect->config.lensFlare.ghostTint;
+        LOG_D("effect=%p, ghostTint=%f", (void *)effect, *outGhostTint);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_lens_flare_flare_center(el_effect_handle_t effect, float x, float y)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_flare_center");
+        SET_AND_LOG(effect->config.lensFlare.flareCenter, glm::vec2(x, y), "effect=%p, x=%f, y=%f", (void *)effect, x, y);
+    }
+    el_result_e el_effect_get_lens_flare_flare_center(el_effect_handle_t effect, float *outX, float *outY)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_flare_center");
+        VALIDATE_OUT_PTR(outX, "el_effect_get_lens_flare_flare_center");
+        VALIDATE_OUT_PTR(outY, "el_effect_get_lens_flare_flare_center");
+        *outX = effect->config.lensFlare.flareCenter.x;
+        *outY = effect->config.lensFlare.flareCenter.y;
+        LOG_D("effect=%p, x=%f, y=%f", (void *)effect, *outX, *outY);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_lens_flare_ray_density(el_effect_handle_t effect, float rayDensity)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ray_density");
+        SET_AND_LOG(effect->config.lensFlare.rayDensity, rayDensity, "effect=%p, rayDensity=%f", (void *)effect, rayDensity);
+    }
+    el_result_e el_effect_get_lens_flare_ray_density(el_effect_handle_t effect, float *outRayDensity)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ray_density");
+        VALIDATE_OUT_PTR(outRayDensity, "el_effect_get_lens_flare_ray_density");
+        *outRayDensity = effect->config.lensFlare.rayDensity;
+        LOG_D("effect=%p, rayDensity=%f", (void *)effect, *outRayDensity);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_lens_flare_rotation_rate(el_effect_handle_t effect, float rate)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_rotation_rate");
+        SET_AND_LOG(effect->config.lensFlare.rotationRate, rate, "effect=%p, rate=%f", (void *)effect, rate);
+    }
+    el_result_e el_effect_get_lens_flare_rotation_rate(el_effect_handle_t effect, float *outRate)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_rotation_rate");
+        VALIDATE_OUT_PTR(outRate, "el_effect_get_lens_flare_rotation_rate");
+        *outRate = effect->config.lensFlare.rotationRate;
+        LOG_D("effect=%p, rate=%f", (void *)effect, *outRate);
+        return EL_SUCCESS;
+    }
 
     // --- Optimized (half-res) lens flare ---
 
-    el_result_e el_effect_set_optimized_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_lens_flare_renderer_enabled"); SET_AND_LOG(effect->config.optimizedLensFlare.enable, enabled != 0, "effect=%p, enabled=%d", (void *)effect, enabled); }
-    el_result_e el_effect_get_optimized_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_lens_flare_renderer_enabled"); VALIDATE_OUT_PTR(outEnabled, "el_effect_get_optimized_lens_flare_renderer_enabled"); *outEnabled = effect->config.optimizedLensFlare.enable ? 1 : 0; LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled); return EL_SUCCESS; }
-    el_result_e el_effect_set_optimized_lens_flare_resolution_scale(el_effect_handle_t effect, float scale) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_lens_flare_resolution_scale"); SET_AND_LOG(effect->config.optimizedLensFlare.resolutionScale, scale, "effect=%p, scale=%f", (void *)effect, scale); }
-    el_result_e el_effect_get_optimized_lens_flare_resolution_scale(el_effect_handle_t effect, float *outScale) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_lens_flare_resolution_scale"); VALIDATE_OUT_PTR(outScale, "el_effect_get_optimized_lens_flare_resolution_scale"); *outScale = effect->config.optimizedLensFlare.resolutionScale; LOG_D("effect=%p, scale=%f", (void *)effect, *outScale); return EL_SUCCESS; }
+    el_result_e el_effect_set_optimized_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_lens_flare_renderer_enabled");
+        SET_AND_LOG(effect->config.optimizedLensFlare.enable, enabled != 0, "effect=%p, enabled=%d", (void *)effect, enabled);
+    }
+    el_result_e el_effect_get_optimized_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_lens_flare_renderer_enabled");
+        VALIDATE_OUT_PTR(outEnabled, "el_effect_get_optimized_lens_flare_renderer_enabled");
+        *outEnabled = effect->config.optimizedLensFlare.enable ? 1 : 0;
+        LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_optimized_lens_flare_resolution_scale(el_effect_handle_t effect, float scale)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_lens_flare_resolution_scale");
+        SET_AND_LOG(effect->config.optimizedLensFlare.resolutionScale, scale, "effect=%p, scale=%f", (void *)effect, scale);
+    }
+    el_result_e el_effect_get_optimized_lens_flare_resolution_scale(el_effect_handle_t effect, float *outScale)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_lens_flare_resolution_scale");
+        VALIDATE_OUT_PTR(outScale, "el_effect_get_optimized_lens_flare_resolution_scale");
+        *outScale = effect->config.optimizedLensFlare.resolutionScale;
+        LOG_D("effect=%p, scale=%f", (void *)effect, *outScale);
+        return EL_SUCCESS;
+    }
 
     // --- Wireframe ---
 
-    el_result_e el_effect_set_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_wireframe_renderer_enabled"); SET_AND_LOG(effect->config.wireframe.enable, enabled != 0, "effect=%p, enabled=%d", (void *)effect, enabled); }
-    el_result_e el_effect_get_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_wireframe_renderer_enabled"); VALIDATE_OUT_PTR(outEnabled, "el_effect_get_wireframe_renderer_enabled"); *outEnabled = effect->config.wireframe.enable ? 1 : 0; LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled); return EL_SUCCESS; }
-    el_result_e el_effect_set_wireframe_color(el_effect_handle_t effect, float r, float g, float b, float a) { VALIDATE_EFFECT_PTR(effect, "el_effect_set_wireframe_color"); SET_AND_LOG(effect->config.wireframe.color, glm::vec4(r, g, b, a), "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a); }
-    el_result_e el_effect_get_wireframe_color(el_effect_handle_t effect, float *outR, float *outG, float *outB, float *outA) { VALIDATE_EFFECT_PTR(effect, "el_effect_get_wireframe_color"); VALIDATE_OUT_PTR(outR, "el_effect_get_wireframe_color"); VALIDATE_OUT_PTR(outG, "el_effect_get_wireframe_color"); VALIDATE_OUT_PTR(outB, "el_effect_get_wireframe_color"); VALIDATE_OUT_PTR(outA, "el_effect_get_wireframe_color"); *outR = effect->config.wireframe.color.r; *outG = effect->config.wireframe.color.g; *outB = effect->config.wireframe.color.b; *outA = effect->config.wireframe.color.a; LOG_D("effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, *outR, *outG, *outB, *outA); return EL_SUCCESS; }
+    el_result_e el_effect_set_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_wireframe_renderer_enabled");
+        SET_AND_LOG(effect->config.wireframe.enable, enabled != 0, "effect=%p, enabled=%d", (void *)effect, enabled);
+    }
+    el_result_e el_effect_get_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_wireframe_renderer_enabled");
+        VALIDATE_OUT_PTR(outEnabled, "el_effect_get_wireframe_renderer_enabled");
+        *outEnabled = effect->config.wireframe.enable ? 1 : 0;
+        LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled);
+        return EL_SUCCESS;
+    }
+    el_result_e el_effect_set_wireframe_color(el_effect_handle_t effect, float r, float g, float b, float a)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_wireframe_color");
+        SET_AND_LOG(effect->config.wireframe.color, glm::vec4(r, g, b, a), "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a);
+    }
+    el_result_e el_effect_get_wireframe_color(el_effect_handle_t effect, float *outR, float *outG, float *outB, float *outA)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_wireframe_color");
+        VALIDATE_OUT_PTR(outR, "el_effect_get_wireframe_color");
+        VALIDATE_OUT_PTR(outG, "el_effect_get_wireframe_color");
+        VALIDATE_OUT_PTR(outB, "el_effect_get_wireframe_color");
+        VALIDATE_OUT_PTR(outA, "el_effect_get_wireframe_color");
+        *outR = effect->config.wireframe.color.r;
+        *outG = effect->config.wireframe.color.g;
+        *outB = effect->config.wireframe.color.b;
+        *outA = effect->config.wireframe.color.a;
+        LOG_D("effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, *outR, *outG, *outB, *outA);
+        return EL_SUCCESS;
+    }
 
     // ==========================================================================
     // Effect lifecycle
@@ -1407,7 +1772,7 @@ extern "C"
         catch (const std::exception &e)
         {
             LOG_E("exception: %s", e.what());
-            return capi::mapExceptionToResult(e);
+            return mapExceptionToResult(e);
         }
     }
 
@@ -1423,7 +1788,7 @@ extern "C"
         catch (const std::exception &e)
         {
             LOG_E("exception: %s", e.what());
-            return capi::mapExceptionToResult(e);
+            return mapExceptionToResult(e);
         }
     }
 
@@ -1439,7 +1804,7 @@ extern "C"
         catch (const std::exception &e)
         {
             LOG_E("exception: %s", e.what());
-            return capi::mapExceptionToResult(e);
+            return mapExceptionToResult(e);
         }
     }
 
@@ -1455,7 +1820,7 @@ extern "C"
         catch (const std::exception &e)
         {
             LOG_E("exception: %s", e.what());
-            return capi::mapExceptionToResult(e);
+            return mapExceptionToResult(e);
         }
     }
 
