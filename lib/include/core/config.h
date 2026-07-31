@@ -657,15 +657,10 @@ namespace EdgeLighting
         /// Resolution scale factor for the internal FBO (0.5 = half, 0.25 = quarter).
         float resolutionScale = 0.5f;
 
-        /// Show the raw scaled FBO (nearest-neighbour upscale) instead of the
-        /// bilinear-blitted result. Useful to see how coarse the FBO is.
-        bool showScaled = false;
-
         bool operator==(const LensFlareOptimizedConfig &o) const
         {
             return enable == o.enable &&
-                   resolutionScale == o.resolutionScale &&
-                   showScaled == o.showScaled;
+                   resolutionScale == o.resolutionScale;
         }
         bool operator!=(const LensFlareOptimizedConfig &o) const { return !(*this == o); }
     } LensFlareOptimizedConfig;

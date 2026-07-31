@@ -98,14 +98,6 @@ namespace EdgeLighting
         glm::mat4 identity(1.0f);
         mBlitShader.SetUniform("uMVP", identity);
 
-        // Debug toggle: nearest neighbour shows the raw scaled FBO pixels.
-        GLuint texId = mScaledBuffer.GetTextureId();
-        glBindTexture(GL_TEXTURE_2D, texId);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-                        config.optimizedLensFlare.showScaled ? GL_NEAREST : GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
-                        config.optimizedLensFlare.showScaled ? GL_NEAREST : GL_LINEAR);
-
         mScaledBuffer.BindTexture(0);
         mBlitShader.SetUniform("uSource", 0);
 

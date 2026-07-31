@@ -945,8 +945,6 @@ void DebugUI::buildLensFlareSection(EdgeLighting::Config &cfg)
     {
         ImGui::SliderFloat("Res Scale##LensOpt", &cfg.optimizedLensFlare.resolutionScale,
                            0.125f, 1.0f, "%.3f");
-        ImGui::SameLine();
-        ImGui::Checkbox("Show Scaled##LensOpt", &cfg.optimizedLensFlare.showScaled);
     }
 
     if (!cfg.lensFlare.enable && !cfg.optimizedLensFlare.enable)

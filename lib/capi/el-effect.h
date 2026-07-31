@@ -579,11 +579,6 @@ extern "C"
     EL_API el_result_e el_effect_set_optimized_lens_flare_resolution_scale(el_effect_handle_t effect, float scale);
     EL_API el_result_e el_effect_get_optimized_lens_flare_resolution_scale(el_effect_handle_t effect, float *outScale);
 
-    /** @brief Show the raw scaled FBO (nearest-upscale) instead of the final
-     *         bilinear-blitted result. Diagnostic only. */
-    EL_API el_result_e el_effect_set_optimized_lens_flare_show_scaled(el_effect_handle_t effect, el_bool_t show);
-    EL_API el_result_e el_effect_get_optimized_lens_flare_show_scaled(el_effect_handle_t effect, el_bool_t *outShow);
-
     /** @} */
 
     /** @name Wireframe overlay
