@@ -49,11 +49,23 @@ float rnd(float w) { return fract(sin(w) * 1000.0); }
 
 // N-gon aperture shape (N=6 gives hex ghosts). Returns 0 inside, 1 outside
 // via smoothstep at the polygon edge.
+//
+// The edge band is sized from the screen-space derivative of the polygon
+// distance (fwidth) instead of a fixed 0.5..0.51 width. A fixed band is only
+// ~1px at full resolution; when the optimized renderer draws into a half-res
+// FBO each pixel spans ~2x that band, so the hex edge (and the thin `s` rim
+// keyed off it) falls below one pixel and aliases - bilinear upscaling cannot
+// recover it. A derivative-sized band stays ~1px wide at whatever resolution
+// the pass runs at, so the hex ghosts resolve cleanly at half res too.
 float regShape(vec2 p, float N)
 {
     float a = atan(p.x, p.y) + 0.2;
     float b = 6.28319 / N;
-    return smoothstep(0.5, 0.51, cos(floor(0.5 + a / b) * b - a) * length(p));
+    float d = cos(floor(0.5 + a / b) * b - a) * length(p);
+    // Keep a small floor so full-res (tiny fwidth) still matches the original
+    // ~0.01 crispness instead of collapsing to a hard, re-aliasing edge.
+    float w = max(fwidth(d), 0.005);
+    return smoothstep(0.5 - w, 0.5 + w, d);
 }
 
 // One ghost group at parametric distance `dist` along the sun axis.
