@@ -232,7 +232,7 @@ void main() {
     vec3  acc       = vec3(0.0); // base colour × per-sample gather weight
     vec3  segAcc    = vec3(0.0); // segment additive colour × bell × gather weight
     float wsum      = 0.0;
-    float wsumArc   = 0.0; // ∑ lit g - for the sharp filament gate
+    float wsumCover = 0.0; // ∑ covered g (arc OR segment) - for the filament gate
 
     // Compile-time constant loop bound: matches the LoopSamplesBlock UBO size
     // and the C++-side NEON_MAX_LOOP_SAMPLES so the compiler can unroll if it
@@ -271,9 +271,6 @@ void main() {
         float arcW = bestMask;
         float lg   = g * arcW;
 
-        glow  += lg * sqrt(g);              // -> ~1/D^2 neon halo, arc-gated
-        bloom += arcW / (dd + bw2);         // -> ~1/D   wide spill, arc-gated
-
         // Winner's colour at this sample. Two cases:
         //  - hasStops: the arc has its own gradient. Sample it in ARC-LOCAL
         //    space so position 0 is the arc's start and position 1 is its end.
@@ -285,6 +282,7 @@ void main() {
         //    continuous with the rest of the perimeter.
         // bestIdx < 0 means every arc had 0 mask here - contributes nothing.
         vec3 baseColI;
+        vec3 segFallback;
         if (bestIdx >= 0) {
             vec4 winner = uArcs[bestIdx];
             if (winner.w > 0.5) {
@@ -295,24 +293,32 @@ void main() {
             } else {
                 baseColI = texture(uGradientLUT, vec2(ti, 0.5)).rgb;
             }
+            // Stop-less segments over an arc inherit that arc's colour.
+            segFallback = baseColI;
         } else {
-            baseColI = vec3(0.0);
+            // No arc covers this sample: the arc emission is black, but a
+            // stop-less segment still lights here, inheriting the base
+            // perimeter gradient so the whole ring stays hue-continuous.
+            baseColI    = vec3(0.0);
+            segFallback = texture(uGradientLUT, vec2(ti, 0.5)).rgb;
         }
         acc  += baseColI * lg;
-        // wsum accumulates ALL samples (not arc-gated). This way `col` divides
-        // by the full local sample density - fragments far from the lit arc
-        // get a denominator that grows even as `acc` stays near zero, so the
-        // SDF-derived filament naturally fades to black instead of showing the
-        // lit colour everywhere. wsumArc is the arc-gated counterpart - used
-        // to compute a sharper litFraction below for hard-cutting the filament
-        // past the arc edge.
-        wsum    += g;
-        wsumArc += lg;
+        // wsum accumulates ALL samples (not gated). This way `col`/`segCol`
+        // divide by the full local sample density - fragments far from any lit
+        // point get a denominator that grows even as the numerator stays near
+        // zero, so the SDF-derived filament fades to black instead of showing
+        // the lit colour everywhere. wsumCover is the coverage-gated
+        // counterpart (arc OR segment), used for the filament gate below.
+        wsum += g;
 
         // --- Travelling segments (independent additive lights) ---
-        // Each segment contributes segColor * bell * gather-weight, additively
-        // to segAcc. Composed outside uIntensity so segments stay lit even at
-        // intensity 0. Skipped whole-loop when uSegmentCount == 0.
+        // Gathered with the raw proximity weight `g`, NOT the arc-gated `lg`,
+        // so a segment lights even on perimeter stretches no arc covers.
+        // segMask sums the samples' bells and feeds the shared coverage below,
+        // giving the segment its own filament/halo/bloom there. Composed
+        // outside uIntensity so segments stay lit even at intensity 0. Skipped
+        // whole-loop when uSegmentCount == 0.
+        float segMask = 0.0;
         for (int s = 0; s < uSegmentCount; s++) {
             vec4  seg     = uSegments[s];
             // Signed wrap-distance along the perimeter in [-0.5, 0.5]. The
@@ -325,7 +331,8 @@ void main() {
             if (bell < 0.005) continue;                  // cheap early-out for distant fragments/segments
 
             // Colour: own stops from row `s` of uSegmentLUT if hasStops set,
-            // else inherit the base gradient at this sample.
+            // else inherit segFallback (the arc's colour where an arc covers,
+            // the base gradient where none does).
             vec3 segColor;
             if (seg.w > 0.5) {
                 // tLocal: 0 at seg head (rel = -1/invSigma), 1 at seg tail. e
@@ -334,10 +341,22 @@ void main() {
                 float rowY   = (float(s) + 0.5) / float(MAX_SEGMENT_BOOSTS);
                 segColor     = texture(uSegmentLUT, vec2(tLocal, rowY)).rgb;
             } else {
-                segColor = baseColI;
+                segColor = segFallback;
             }
-            segAcc += segColor * bell * lg;
+            segAcc  += segColor * bell * g;
+            segMask += bell;
         }
+
+        // Shared coverage: arc mask OR segment coverage (clamped so stacked
+        // segments can't push the halo/bloom past a single light's reach).
+        // Drives the halo, bloom and filament gate, so a segment-only stretch
+        // emits just like an arc-lit one. In a fully arc-covered stretch
+        // (arcW = 1 -> lg = g, cover = arcW) this reduces to the previous
+        // arc-gated behaviour exactly, so covered regions are unchanged.
+        float cover = max(arcW, min(segMask, 1.0));
+        glow      += cover * g * sqrt(g);   // -> ~1/D^2 neon halo
+        bloom     += cover / (dd + bw2);    // -> ~1/D   wide spill
+        wsumCover += cover * g;
 
         ti  += dti;
         si  += dti;
@@ -353,7 +372,7 @@ void main() {
     // a 50%-lit boundary still produces a visible line. litFraction is the
     // ratio of lit-to-total sample weight; smoothstepped above 0.5 it cleanly
     // suppresses the filament past the arc end without affecting halo/bloom.
-    float litFraction = wsumArc / max(wsum, WSUM_EPSILON);
+    float litFraction = wsumCover / max(wsum, WSUM_EPSILON);
     float filamentGate = smoothstep(0.5, 1.0, litFraction);
 
     // Halo visibility follows glowRadius so glowRadius == 0 means "filament
