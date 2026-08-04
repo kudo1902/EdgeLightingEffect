@@ -209,7 +209,7 @@ void main() {
     vec3  acc       = vec3(0.0); // base colour × per-sample gather weight
     vec3  segAcc    = vec3(0.0); // segment additive colour × bell × gather weight
     float wsum      = 0.0;
-    float wsumArc   = 0.0;
+    float wsumCover = 0.0; // ∑ covered g (arc OR segment) - for the filament gate
 
     // uNumSamples is dynamic so the perf slider actually reduces work; the
     // upper bound stays baked in the UBO array size so GL still knows the
@@ -243,13 +243,13 @@ void main() {
         float arcW = bestMask;
         float lg   = g * arcW;
 
-        glow  += lg * sqrt(g);
-        bloom += arcW / (dd + bw2);
-
         // Arc-local sampling for hasStops; perimeter-space fall-back for empty
         // stops so the arc reads continuously with the rest of the base gradient.
-        // See neon.frag for the full write-up.
+        // See neon.frag for the full write-up. segFallback is the colour a
+        // stop-less segment inherits: the arc's colour where an arc covers,
+        // the base gradient where none does (so the segment still lights).
         vec3 baseColI;
+        vec3 segFallback;
         if (bestIdx >= 0) {
             vec4 winner = uArcs[bestIdx];
             if (winner.w > 0.5) {
@@ -260,18 +260,22 @@ void main() {
             } else {
                 baseColI = texture(uGradientLUT, vec2(ti, 0.5)).rgb;
             }
+            segFallback = baseColI;
         } else {
-            baseColI = vec3(0.0);
+            baseColI    = vec3(0.0);
+            segFallback = texture(uGradientLUT, vec2(ti, 0.5)).rgb;
         }
         acc  += baseColI * lg;
 
-        wsum    += g;
-        wsumArc += lg;
+        wsum += g;
 
         // --- Travelling segments (independent additive lights) ---
-        // See neon.frag for the model - segments contribute segColor * bell *
-        // gather-weight, composed outside uIntensity so segments stay lit even
-        // at intensity 0. Skipped whole-loop when uSegmentCount == 0.
+        // Gathered with the raw proximity weight `g`, NOT the arc-gated `lg`,
+        // so a segment lights even where no arc covers; segMask feeds the
+        // shared coverage below. See neon.frag for the full model. Composed
+        // outside uIntensity so segments stay lit even at intensity 0. Skipped
+        // whole-loop when uSegmentCount == 0.
+        float segMask = 0.0;
         for (int s = 0; s < uSegmentCount; s++) {
             vec4  seg  = uSegments[s];
             float rel  = si - seg.x;
@@ -286,10 +290,20 @@ void main() {
                 float rowY   = (float(s) + 0.5) / float(MAX_SEGMENT_BOOSTS);
                 segColor     = texture(uSegmentLUT, vec2(tLocal, rowY)).rgb;
             } else {
-                segColor = baseColI;
+                segColor = segFallback;
             }
-            segAcc += segColor * bell * lg;
+            segAcc  += segColor * bell * g;
+            segMask += bell;
         }
+
+        // Shared coverage (arc mask OR segment coverage, clamped) drives halo,
+        // bloom and the filament gate so a segment-only stretch emits like an
+        // arc-lit one. arcW = 1 -> cover = arcW, matching the old behaviour in
+        // fully arc-covered stretches. See neon.frag.
+        float cover = max(arcW, min(segMask, 1.0));
+        glow      += cover * g * sqrt(g);
+        bloom     += cover / (dd + bw2);
+        wsumCover += cover * g;
 
         ti  += dti;
         si  += dti;
@@ -300,7 +314,7 @@ void main() {
     vec3 col    = acc    / max(wsum, WSUM_EPSILON);
     vec3 segCol = segAcc / max(wsum, WSUM_EPSILON);
 
-    float litFraction = wsumArc / max(wsum, WSUM_EPSILON);
+    float litFraction = wsumCover / max(wsum, WSUM_EPSILON);
     float filamentGate = smoothstep(0.5, 1.0, litFraction);
 
     // Halo visibility follows glowRadius (glowRadius == 0 -> filament only).
