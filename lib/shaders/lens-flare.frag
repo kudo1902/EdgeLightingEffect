@@ -47,13 +47,25 @@ uniform vec2  uFlareCenter;   // Ghost convergence point in normalised screen co
 float rnd(vec2 p) { return fract(sin(dot(p, vec2(12.1234, 72.8392)) * 45123.2)); }
 float rnd(float w) { return fract(sin(w) * 1000.0); }
 
-// N-gon aperture shape (N=6 gives hex ghosts). Returns 0 inside, 1 outside
-// via smoothstep at the polygon edge.
-float regShape(vec2 p, float N)
+// N-gon aperture sprite (N=6 gives hex ghosts). Returns anti-aliased *inside*
+// coverage: 1 within the polygon, 0 outside, with the edge feathered over the
+// pixel footprint of the polygon distance.
+//
+// The reference sliced the sprite out with `max(0.01 - regShape, 0)`, where
+// regShape was a 0.5..0.51 smoothstep. That threshold lands at the flat bottom
+// of the smoothstep, so the *visible* fill boundary was razor-thin (sub-pixel)
+// no matter how wide the smoothstep band was - it aliased into stair-steps,
+// and worse in the half-res optimized pass where a pixel spans ~2x the width.
+// Building coverage straight from the polygon distance with an fwidth-sized
+// edge keeps the boundary ~1px wide at whatever resolution the pass runs at,
+// so the hex ghosts resolve cleanly at full and half res alike.
+float hexCoverage(vec2 p, float N)
 {
     float a = atan(p.x, p.y) + 0.2;
     float b = 6.28319 / N;
-    return smoothstep(0.5, 0.51, cos(floor(0.5 + a / b) * b - a) * length(p));
+    float d = cos(floor(0.5 + a / b) * b - a) * length(p);
+    float w = max(fwidth(d), 1e-4);
+    return 1.0 - smoothstep(0.5 - w, 0.5 + w, d);
 }
 
 // One ghost group at parametric distance `dist` along the sun axis.
@@ -62,7 +74,9 @@ vec3 circle(vec2 p, float size, float dist, vec2 sunUV)
     float l  = length(p + sunUV * (dist * 4.0)) + size / 2.0;
     float c  = max(0.01 - pow(length(p + sunUV * dist), size * 1.4), 0.0) * 50.0;
     float c1 = max(0.001 - pow(l - 0.3, 1.0 / 40.0) + sin(l * 30.0), 0.0) * 3.0;
-    float s  = max(0.01 - pow(regShape(p * 5.0 + sunUV * dist * 5.0 + 0.9, 6.0), 1.0), 0.0) * 5.0;
+    // Flat-filled hex sprite (magnitude 0.05, matching the reference's
+    // 0.01 * 5) with an anti-aliased edge from hexCoverage.
+    float s  = hexCoverage(p * 5.0 + sunUV * dist * 5.0 + 0.9, 6.0) * 0.05;
 
     // Procedural per-ghost palette; distance-modulated so no two ghosts read
     // the same colour. This overrode the reference's caller-supplied colour
