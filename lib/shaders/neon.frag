@@ -135,20 +135,51 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
 float arcInside(float si, float start, float length, float invNumSamples) {
     if (length >= 1.0 - 1e-6) return 1.0;   // full coverage
     if (length <= 1e-6)       return 0.0;   // empty
-    // Feather = ½ sample width OUTSIDE the arc on each side. Placement
-    // OUTSIDE ensures the sample sitting exactly at `start` or `end` gets
-    // weight 1.0 - visible ends line up with debug markers. The ½-sample
-    // span reduces bleed on long arcs (length ≈ 1) where the small dark gap
-    // would otherwise glow from the feather overlapping the boundary sample.
-    // invNumSamples comes from the loop-sample texture width so the feather
-    // automatically matches the number of gather points.
-    float f   = 0.5 * invNumSamples;
+    // Feather = ONE full sample width OUTSIDE the arc on each side. Placement
+    // OUTSIDE still ensures the sample sitting exactly at `start` or `end`
+    // gets weight 1.0 (the ramp only extends outward), so visible ends stay
+    // lined up with debug markers regardless of the feather width.
+    //
+    // The width MUST be >= one sample spacing (invNumSamples) so that a
+    // moving arc end reads as smooth motion. A sample turns fully on once the
+    // end reaches its position and starts turning on when the end is one
+    // feather away; with a full-sample feather the fade-in ranges of adjacent
+    // samples are contiguous, so a continuously growing arc (e.g. a slow
+    // OutlineTracer over ~10 s) always has a leading sample mid-fade and the
+    // head glides between gather points. A narrower ½-sample feather left a
+    // ½-sample dead zone between samples where the head froze, then jumped -
+    // visible as stepping/stutter on long, slow sweeps.
+    //
+    // invNumSamples comes from the loop-sample count so the feather always
+    // matches the gather-point spacing.
+    float f   = invNumSamples;
     float end = start + length;
     float g1a = smoothstep(start - f, start, si);
     float g2a = 1.0 - smoothstep(end, end + f, si);
     float g1b = smoothstep(start - f, start, si + 1.0);
     float g2b = 1.0 - smoothstep(end, end + f, si + 1.0);
     return max(g1a * g2a, g1b * g2b);
+}
+
+// Continuous [0,1] coverage of a fragment at CONTINUOUS perimeter position
+// @p sPos by the arc [start, start+length]. Unlike arcInside (which samples
+// at the 128 fixed gather points and so quantises the arc head to 1/N of the
+// perimeter), this reads the arc directly at the fragment's own sub-sample
+// position, so a slowly growing arc head moves smoothly at ANY duration.
+// Used only to gate the sharp SDF filament; the halo/bloom stay on the
+// sample gather (they're wide and blurry, so their 1/N stepping is invisible).
+// @p f is the head/tail feather in perimeter-fraction units.
+float arcCoverContinuous(float sPos, float start, float length, float f) {
+    if (length >= 1.0 - 1e-6) return 1.0;   // full coverage
+    if (length <= 1e-6)       return 0.0;   // empty
+    float rel = sPos - start;
+    rel -= floor(rel);                       // fract -> [0,1): distance past start
+    // Feathered core [0, length]; head feather extends past `length`, tail
+    // feather rises again as rel -> 1 (i.e. sPos just BEFORE start), matching
+    // arcInside's "feather OUTSIDE the arc on each side" convention.
+    float headEdge = 1.0 - smoothstep(length, length + f, rel);
+    float tailEdge = smoothstep(1.0 - f, 1.0, rel);
+    return max(headEdge, tailEdge);
 }
 
 // ---------------------------------------------------------------------------
@@ -234,6 +265,13 @@ void main() {
     float wsum      = 0.0;
     float wsumCover = 0.0; // ∑ covered g (arc OR segment) - for the filament gate
 
+    // Proximity-weighted circular mean of the loop samples' perimeter angle,
+    // used to recover this fragment's OWN continuous perimeter position (see
+    // sPos below). uLoopSamples[i].zw hold (cos, sin) of 2*pi*(i/N), baked on
+    // the CPU, so this is two extra FMAs per sample and no per-fragment trig.
+    float sumCos    = 0.0;
+    float sumSin    = 0.0;
+
     // Compile-time constant loop bound: matches the LoopSamplesBlock UBO size
     // and the C++-side NEON_MAX_LOOP_SAMPLES so the compiler can unroll if it
     // wants to.
@@ -252,6 +290,13 @@ void main() {
         float dd  = dot(dv, dv);
 
         float g   = 1.0 / (dd + kg2);
+
+        // Accumulate the circular mean of perimeter angle (weighted by the
+        // same proximity g). Near the filament the 1-2 closest samples
+        // dominate, so this resolves the fragment's perimeter position to a
+        // small fraction of a sample - continuous, monotonic, wrap-safe.
+        sumCos += g * uLoopSamples[i].z;
+        sumSin += g * uLoopSamples[i].w;
 
         // Arc winner-take-all: find the arc with the largest effective mask
         // (arcInside * intensity) at this sample. That arc owns both the
@@ -374,6 +419,28 @@ void main() {
     // suppresses the filament past the arc end without affecting halo/bloom.
     float litFraction = wsumCover / max(wsum, WSUM_EPSILON);
     float filamentGate = smoothstep(0.5, 1.0, litFraction);
+
+    // --- Continuous arc head for the filament ----------------------------
+    // The sample-based litFraction above quantises the arc's head/tail to the
+    // 128 gather points, so a slow tracer (e.g. a ~10 s OutlineTracer) steps
+    // sample-to-sample. Recover this fragment's OWN continuous perimeter
+    // position from the circular mean accumulated in the loop, then gate the
+    // filament by the arc read directly at that position. atan2 of the two
+    // sums gives the mean angle in [-pi, pi]; map to [0, 1). Far-from-line
+    // fragments give a meaningless mean, but their filament core ~= 0 so it
+    // never shows. max() with litFraction keeps segment-lit stretches (which
+    // are gathered, not arc-gated) lighting their filament as before.
+    float sPos = atan(sumSin, sumCos) * 0.15915494;       // * 1/(2*pi)
+    sPos -= floor(sPos);                                  // -> [0, 1)
+    float contCover = 0.0;
+    for (int a = 0; a < uArcCount; a++) {
+        vec4 arc = uArcs[a];
+        if (arc.z <= 0.0) continue;                       // dark arc: no filament
+        // ~1.5-sample feather so the moving tip is soft but still crisp.
+        contCover = max(contCover,
+                        arcCoverContinuous(sPos, arc.x, arc.y, 1.5 * invNumSamples));
+    }
+    filamentGate = max(filamentGate, contCover);
 
     // Halo visibility follows glowRadius so glowRadius == 0 means "filament
     // only". Below the anti-bead floor the kernel can't shrink further, so we

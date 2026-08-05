@@ -124,16 +124,33 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
 // See neon.frag for full rationale: feather sits OUTSIDE the arc's
 // mathematical bounds so a sample exactly at start / end gets weight 1.
 // The virtual si+1 check keeps the arc continuous across the wrap point.
+// Feather is ONE full sample width so adjacent samples' fade-in ranges are
+// contiguous - a slowly growing arc head glides between gather points
+// instead of freezing in the gap and jumping (see neon.frag for details).
 float arcInside(float si, float start, float length, float invNumSamples) {
     if (length >= 1.0 - 1e-6) return 1.0;
     if (length <= 1e-6)       return 0.0;
-    float f   = 0.5 * invNumSamples;
+    float f   = invNumSamples;
     float end = start + length;
     float g1a = smoothstep(start - f, start, si);
     float g2a = 1.0 - smoothstep(end, end + f, si);
     float g1b = smoothstep(start - f, start, si + 1.0);
     float g2b = 1.0 - smoothstep(end, end + f, si + 1.0);
     return max(g1a * g2a, g1b * g2b);
+}
+
+// Continuous [0,1] arc coverage at a fragment's CONTINUOUS perimeter position
+// @p sPos - reads the arc directly instead of sampling the fixed gather
+// points, so a slow arc head moves smoothly at any duration. Gates only the
+// sharp filament (halo/bloom stay on the sample gather). See neon.frag.
+float arcCoverContinuous(float sPos, float start, float length, float f) {
+    if (length >= 1.0 - 1e-6) return 1.0;
+    if (length <= 1e-6)       return 0.0;
+    float rel = sPos - start;
+    rel -= floor(rel);
+    float headEdge = 1.0 - smoothstep(length, length + f, rel);
+    float tailEdge = smoothstep(1.0 - f, 1.0, rel);
+    return max(headEdge, tailEdge);
 }
 
 // ---------------------------------------------------------------------------
@@ -211,6 +228,11 @@ void main() {
     float wsum      = 0.0;
     float wsumCover = 0.0; // ∑ covered g (arc OR segment) - for the filament gate
 
+    // Circular-mean accumulators for this fragment's continuous perimeter
+    // position (uLoopSamples[i].zw hold cos/sin of 2*pi*t). See neon.frag.
+    float sumCos    = 0.0;
+    float sumSin    = 0.0;
+
     // uNumSamples is dynamic so the perf slider actually reduces work; the
     // upper bound stays baked in the UBO array size so GL still knows the
     // maximum register pressure.
@@ -228,6 +250,10 @@ void main() {
         float dd  = dot(dv, dv);
 
         float g   = 1.0 / (dd + kg2);
+
+        // Circular mean of perimeter angle, weighted by proximity g.
+        sumCos += g * uLoopSamples[i].z;
+        sumSin += g * uLoopSamples[i].w;
 
         // Arc winner-take-all: see neon.frag for rationale.
         float bestMask = 0.0;
@@ -316,6 +342,21 @@ void main() {
 
     float litFraction = wsumCover / max(wsum, WSUM_EPSILON);
     float filamentGate = smoothstep(0.5, 1.0, litFraction);
+
+    // Continuous arc head for the filament: gate by the arc read at this
+    // fragment's own perimeter position (circular mean) so a slow tracer's
+    // head moves smoothly instead of stepping across the gather points.
+    // See neon.frag for the full rationale.
+    float sPos = atan(sumSin, sumCos) * 0.15915494; // * 1/(2*pi)
+    sPos -= floor(sPos);
+    float contCover = 0.0;
+    for (int a = 0; a < uArcCount; a++) {
+        vec4 arc = uArcs[a];
+        if (arc.z <= 0.0) continue;
+        contCover = max(contCover,
+                        arcCoverContinuous(sPos, arc.x, arc.y, 1.5 * invNumSamples));
+    }
+    filamentGate = max(filamentGate, contCover);
 
     // Halo visibility follows glowRadius (glowRadius == 0 -> filament only).
     float haloGate = clamp(uGlowRadius / max(haloFloor, 1e-4), 0.0, 1.0);

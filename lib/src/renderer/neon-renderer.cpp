@@ -501,12 +501,17 @@ namespace EdgeLighting
         // Uploaded directly to the std140 UBO: vec4[N] where .xy holds the
         // position - raw float32 through the constant cache, no decode step
         // in the shader.
+        // .xy = perimeter point (px). .zw = (cos, sin) of the sample's
+        // perimeter angle 2*pi*t, so the shader can recover a fragment's
+        // continuous perimeter position via a proximity-weighted circular
+        // mean (used to smoothly gate the filament head - see neon.frag).
         LoopSamplesBlockData block = {};
         for (int i = 0; i < NEON_MAX_LOOP_SAMPLES; ++i)
         {
             float t = static_cast<float>(i) / static_cast<float>(NEON_MAX_LOOP_SAMPLES);
             glm::vec2 p = GeometryUtils::GetPointOnRectangle(t, config.geometry);
-            block.samples[i] = glm::vec4(p, 0.0f, 0.0f);
+            float angle = 2.0f * PI * t;
+            block.samples[i] = glm::vec4(p, std::cos(angle), std::sin(angle));
         }
         mLoopSamplesBlock.SetData(&block, sizeof(block));
 
