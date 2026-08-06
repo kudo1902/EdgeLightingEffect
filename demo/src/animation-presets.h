@@ -26,6 +26,7 @@ namespace EdgeLightingDemo
         SEGMENT_BOUNCE,   ///< Bright spot swings back and forth (triangle wave).
         COMET,            ///< Tight fast spot - single-revolution comet feel.
         OUTLINE_TRACER,   ///< One-shot: rect dark, then arc grows 0→1 to light it.
+        OUTLINE_COLLAPSE, ///< One-shot: arc shrinks 1→0 to erase it.
         ARC_WIPE,         ///< One-shot: 3-phase grow/chase/shrink wipe around perimeter.
         FADE_OUT,         ///< One-shot ease-out of intensity to 0.
         HUE_REVERSE,      ///< Hue direction flips abruptly every few seconds.
@@ -87,6 +88,10 @@ namespace EdgeLightingDemo
         case AnimationPreset::OUTLINE_TRACER:
         {
             return "Outline Tracer";
+        }
+        case AnimationPreset::OUTLINE_COLLAPSE:
+        {
+            return "Outline Collapse";
         }
         case AnimationPreset::ARC_WIPE:
         {
@@ -215,6 +220,12 @@ namespace EdgeLightingDemo
         {
             // One-shot 2 s draw - rect goes from dark to fully lit.
             return std::make_shared<OutlineTracer>(2.0f, EdgeLighting::EasingFunction::OutCubic);
+        }
+
+        case AnimationPreset::OUTLINE_COLLAPSE:
+        {
+            // One-shot 2 s erase - rect goes from fully lit to dark.
+            return std::make_shared<OutlineCollapse>(2.0f, EdgeLighting::EasingFunction::InCubic);
         }
 
         case AnimationPreset::ARC_WIPE:

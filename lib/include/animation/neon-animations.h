@@ -502,6 +502,57 @@ namespace EdgeLighting
         std::vector<Arc> mSavedArcs;
     };
 
+    /// @brief One-shot animation that progressively dims the outline.
+    /// @details Sweeps @c neon.arcs[0].length from 1 to 0 over @p duration
+    ///          seconds, ending fully dark and held. Does NOT touch
+    ///          @c arcs[0].start - set that externally (slider, code, another
+    ///          animation) to choose where the collapse ends.
+    ///
+    /// Auto-grows @c cfg.neon.arcs to contain at least entry [0] on first
+    /// write (default config already has one full-perimeter arc, so this is
+    /// only a safety net for hosts that clear the vector).
+    ///
+    /// Mirror of @ref OutlineTracer - combine the two (chain the collapse on
+    /// @ref OutlineTracer::OnComplete) for a "draw then erase" loop, or pair
+    /// with @ref IntensityFadeOut for a smoother exit.
+    ///
+    /// @ref SetDuration rebuilds the internal @ref Ease in lockstep with the
+    /// completion latch.
+    class OutlineCollapse : public Animation
+    {
+    public:
+        /// @param duration Total erase time in seconds.
+        /// @param curve    Easing curve for the sweep.
+        OutlineCollapse(float duration = 2.0f,
+                        EasingFunction::Curve curve = EasingFunction::InCubic)
+            : Animation(duration),
+              mCurve(curve),
+              mEase(1.0f, 0.0f, duration, curve, /*loop=*/false) {}
+
+        void ApplyAt(Config &cfg, float elapsed) const override
+        {
+            if (cfg.neon.arcs.empty())
+            {
+                cfg.neon.arcs.push_back(Arc{});
+            }
+            cfg.neon.arcs[0].length = mEase.Evaluate(elapsed);
+        }
+
+        void CaptureBaseline(const Config &cfg) override { mSavedArcs = cfg.neon.arcs; }
+
+    protected:
+        void RestoreBaseline(Config &cfg) const override { cfg.neon.arcs = mSavedArcs; }
+        void OnDurationChanged(float d) override
+        {
+            mEase = Ease(1.0f, 0.0f, d, mCurve, false);
+        }
+
+    private:
+        EasingFunction::Curve mCurve;
+        Ease mEase;
+        std::vector<Arc> mSavedArcs;
+    };
+
     /// @brief Three-phase arc wipe: grow, chase, shrink.
     /// @details A "wipe" that draws the neon arc from @c startPos, races it
     ///          around the perimeter at a fixed maximum length, and shrinks it

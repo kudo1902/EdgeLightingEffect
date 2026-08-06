@@ -375,11 +375,11 @@ void DebugUI::buildGeometrySection(EdgeLighting::Config &cfg)
         return;
     }
 
-    ImGui::SliderFloat("Width", &cfg.geometry.width, 100.0f, 1600.0f, "%.0f");
-    ImGui::SliderFloat("Height", &cfg.geometry.height, 100.0f, 1200.0f, "%.0f");
+    ImGui::SliderFloat("Width", &cfg.geometry.width, 100.0f, 1920.0f * 2, "%.0f");
+    ImGui::SliderFloat("Height", &cfg.geometry.height, 100.0f, 1080.0f * 2, "%.0f");
     ImGui::SliderFloat("Pos X", &cfg.geometry.position.x, 0.0f, 1600.0f, "%.0f");
     ImGui::SliderFloat("Pos Y", &cfg.geometry.position.y, 0.0f, 1200.0f, "%.0f");
-    ImGui::SliderFloat("Corner Radius", &cfg.geometry.cornerRadius, 0.0f, 200.0f, "%.0f");
+    ImGui::SliderFloat("Corner Radius", &cfg.geometry.cornerRadius, 0.0f, 1080.0f, "%.0f");
 
     const char *windingItems[] = {"CW", "CCW"};
     int windingIdx = static_cast<int>(cfg.geometry.winding);

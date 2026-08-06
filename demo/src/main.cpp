@@ -13,6 +13,7 @@
 #include "image-quad.h"
 #include "ui-controls.h"
 #include "util/log-util.h"
+#include "util/screenshot-util.h"
 #include <memory>
 
 std::unique_ptr<EdgeLighting::EdgeLightingEffect> gEffect;
@@ -41,7 +42,7 @@ int main()
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
 #endif
 
-    int mainW = 900, mainH = 700;
+    int mainW = 1920, mainH = 1080;
     GLFWwindow *window = glfwCreateWindow(mainW, mainH, "Edge Lighting Effect", nullptr, nullptr);
     if (!window)
     {
