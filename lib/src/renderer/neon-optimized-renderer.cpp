@@ -209,6 +209,7 @@ namespace EdgeLighting
         mArcBlock.BindBase(ARC_BLOCK_BINDING);
 
         mNeonShader.SetUniform("uSampleSpacing", mSampleSpacing);
+        mNeonShader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
         mNeonShader.SetUniform("uQuadMargin", mQuadMargin);
 
         // Loop sample positions from the LoopSamplesBlock UBO (see the shader)
@@ -459,17 +460,15 @@ namespace EdgeLighting
         // Only n unique perimeter points are in use per frame (shader loop
         // bound is uNumSamples). The remaining UBO slots stay at (0,0,0,0)
         // - never read because the loop stops before them.
-        // .xy = perimeter point (scaled px). .zw = (cos, sin) of the sample's
-        // perimeter angle 2*pi*t (unscaled - it's parameter space), so the
-        // shader can recover a fragment's continuous perimeter position via a
-        // proximity-weighted circular mean (smoothly gates the filament head).
+        // .xy = perimeter point (scaled px). (.zw stays 0 - the shader
+        // recovers a fragment's continuous perimeter position geometrically
+        // from vPos, so the per-sample phase pairs are no longer needed.)
         LoopSamplesBlockData block = {};
         for (int i = 0; i < n; ++i)
         {
             float t = static_cast<float>(i) / static_cast<float>(n);
             glm::vec2 p = GeometryUtils::GetPointOnRectangle(t, config.geometry) * scale;
-            float angle = 2.0f * PI * t;
-            block.samples[i] = glm::vec4(p, std::cos(angle), std::sin(angle));
+            block.samples[i] = glm::vec4(p, 0.0f, 0.0f);
         }
         mLoopSamplesBlock.SetData(&block, sizeof(block));
 

@@ -26,6 +26,18 @@
 #define FILAMENT_MIN_HALF_WIDTH   0.5
 #define FILAMENT_GAIN             12.0
 
+// --- Continuous-arc filament gate feathers (neon.frag / neon-optimized.frag).
+//     The continuous gate reads the arc at the fragment's own (geometrically
+//     recovered) perimeter position, so its feathers are PIXEL-space spans,
+//     not sample-spacing multiples - a sample-scaled tail would be 40+ px at
+//     64 samples and wrap most of the 63 px corner arc an arc starting at 0
+//     sits right after. HEAD_FEATHER_PX softens the arc end; TAIL_FEATHER_PX
+//     antialiases the start edge while staying small enough that it never
+//     visibly lights the corner curve before the start. Both are divided by
+//     the current perimeter at the call site. ---
+#define HEAD_FEATHER_PX           10.0
+#define TAIL_FEATHER_PX           2.0
+
 // --- Halo (sharp coloured glow). Kernel uses g * sqrt(g) ~ p = 1.5. The sum
 //     is normalised by kg^2 to recover unit-density brightness. ---
 #define HALO_GAIN                 0.90
