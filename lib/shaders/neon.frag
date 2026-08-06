@@ -171,18 +171,15 @@ float arcCoverContinuous(float sPos, float start, float length, float fHead, flo
     if (length <= 1e-6)       return 0.0;   // empty
     float rel = sPos - start;
     rel -= floor(rel);                       // fract -> [0,1): distance past start
-    // Tail ramps IN just inside the start (clean, no bleed before start). The
-    // head AA is CENTERED on `length` (fHead is a half-width): coverage is 1 up
-    // to length-fHead, 0.5 at length, 0 by length+fHead. This is the balance
-    // between the two failure modes at a corner (where "past length" in
-    // perimeter space means "onto the perpendicular edge"): a purely outside
-    // feather hooks around the corner, a purely inside one leaves a gap before
-    // it. Centered + small keeps the endpoint bright (~half of a 12x-gain
-    // filament still reads solid) while the overshoot is only ~fHead. sPos is
-    // continuous, so the edge still glides as the head moves.
-    float tailIn   = smoothstep(0.0, fTail, rel);
-    float headEdge = 1.0 - smoothstep(length - fHead, length + fHead, rel);
-    return tailIn * headEdge;
+    // The feather fades INWARD, so coverage reaches 0 exactly AT each end and
+    // never past it - nothing spills onto the perpendicular edge at a corner
+    // (no bleed). The trade-off: the bright core is inset by the feather width
+    // (a shorter core filament). fHead/fTail set how far each end is pulled in.
+    //   tail: 0 at start, 1 by start+fTail.
+    //   head: 1 up to length-fHead, 0 at length.
+    float tailIn = smoothstep(0.0, fTail, rel);
+    float headIn = 1.0 - smoothstep(length - fHead, length, rel);
+    return tailIn * headIn;
 }
 
 // ---------------------------------------------------------------------------
@@ -446,11 +443,12 @@ void main() {
     for (int a = 0; a < uArcCount; a++) {
         vec4 arc = uArcs[a];
         if (arc.z <= 0.0) continue;                       // dark arc: no filament
-        // Head AA half-width ~0.2 sample (centered on the end), tail in-ramp
-        // ~0.25 sample. Keeps the head on its endpoint with minimal corner hook.
+        // Both ends feather INWARD, over a wide ~1.5 sample span so each end
+        // fades out gradually/softly (still no corner hook, since the ramp
+        // stays inside the arc). Raise/lower these for a longer/shorter fade.
         contCover = max(contCover,
                         arcCoverContinuous(sPos, arc.x, arc.y,
-                                           0.1 * invNumSamples, 0.25 * invNumSamples));
+                                           0.25 * invNumSamples, 0.25 * invNumSamples));
     }
     filamentGate = max(filamentGate, contCover);
 

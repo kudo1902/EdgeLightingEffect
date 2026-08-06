@@ -152,11 +152,12 @@ float arcCoverContinuous(float sPos, float start, float length, float fHead, flo
     if (length <= 1e-6)       return 0.0;
     float rel = sPos - start;
     rel -= floor(rel);
-    // Clean inside tail; head AA centered on `length` (fHead = half-width) so
-    // the head reaches its endpoint with minimal corner hook. See neon.frag.
-    float tailIn   = smoothstep(0.0, fTail, rel);
-    float headEdge = 1.0 - smoothstep(length - fHead, length + fHead, rel);
-    return tailIn * headEdge;
+    // Feather fades INWARD: coverage reaches 0 AT each end, never past it, so no
+    // spill onto the perpendicular edge at a corner. Trade-off: bright core is
+    // inset by the feather width (shorter core filament). See neon.frag.
+    float tailIn = smoothstep(0.0, fTail, rel);
+    float headIn = 1.0 - smoothstep(length - fHead, length, rel);
+    return tailIn * headIn;
 }
 
 // ---------------------------------------------------------------------------
@@ -365,7 +366,7 @@ void main() {
         if (arc.z <= 0.0) continue;
         contCover = max(contCover,
                         arcCoverContinuous(sPos, arc.x, arc.y,
-                                           0.1 * invNumSamples, 0.25 * invNumSamples));
+                                           0.25 * invNumSamples, 0.25 * invNumSamples));
     }
     filamentGate = max(filamentGate, contCover);
 
