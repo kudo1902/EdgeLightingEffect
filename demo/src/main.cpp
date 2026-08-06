@@ -116,6 +116,24 @@ int main()
     config.wireframe.enable = true;
     config.wireframe.color = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
 
+    // TEMP-VERIFY: user scenario for corner behavior
+    if (std::getenv("EL_VERIFY"))
+    {
+        config.geometry.width = 3776.0f;
+        config.geometry.height = 2102.0f;
+        config.geometry.position = glm::vec2(19.0f, 18.0f);
+        config.geometry.cornerRadius = 0.0f;
+        config.geometry.winding = std::getenv("EL_CCW")
+                                      ? EdgeLighting::Winding::COUNTER_CLOCKWISE
+                                      : EdgeLighting::Winding::CLOCKWISE;
+        config.neon.arcs.clear();
+        EdgeLighting::Arc arc;
+        arc.start = 0.0f;
+        arc.length = 0.12f;
+        arc.intensity = 1.0f;
+        config.neon.arcs.push_back(arc);
+    }
+
     gEffect->SetConfig(config);
 
     if (!gEffect->Initialize())
@@ -147,6 +165,8 @@ int main()
     EdgeLightingDemo::PrintCurrentConfig(gEffect->GetConfig(), gEffect->GetClock().IsPlaying());
 
     float lastFrameTime = 0.0f;
+    int gFrameCount = 0;
+    const char *gDumpPath = std::getenv("EL_DUMP");
     while (!glfwWindowShouldClose(window) && !glfwWindowShouldClose(debugUI.GetWindow()))
     {
         float currentFrameTime = static_cast<float>(glfwGetTime());
@@ -199,6 +219,14 @@ int main()
             gEffect->Render(fbW, fbH);
             double t1 = glfwGetTime();
             debugUI.SetLastRenderTimeMs(static_cast<float>((t1 - t0) * 1000.0));
+
+            gFrameCount++;
+            if (gDumpPath && gFrameCount == 90)
+            {
+                EdgeLighting::ScreenshotUtil::SaveScreenshot(gDumpPath, fbW, fbH);
+                LOG_I("TEMP-VERIFY dumped %s (%dx%d)", gDumpPath, fbW, fbH);
+                glfwSetWindowShouldClose(window, true);
+            }
 
             glfwSwapBuffers(window);
         }

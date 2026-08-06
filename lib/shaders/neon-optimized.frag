@@ -35,6 +35,7 @@ out vec4 fragColor;
 
 uniform vec2  uRectSize;
 uniform float uCornerRadius;
+uniform int   uWinding; ///< 0 = CW, 1 = CCW.
 uniform float uLineWidth;
 uniform float uFilamentFalloff; ///< Generalized-Gaussian exponent (N = value * 2); 1.0 = pure Gaussian, lower = smoother (Laplace-like), higher = flatter top.
 uniform float uIntensity;
@@ -117,6 +118,93 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
     return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
 }
 
+// Fragment's perimeter position via SDF projection. Deterministic - no
+// proximity-trap at corners. Mirrors GeometryUtils::GetPointOnRectangle's
+// parametrization. See neon.frag for the full write-up.
+float sdfPerimeterPos(vec2 p, vec2 halfSize, float r, int winding) {
+    vec2 ap = abs(p);
+    vec2 sgn = sign(p);
+    if (sgn.x == 0.0) sgn.x = 1.0;
+    if (sgn.y == 0.0) sgn.y = 1.0;
+
+    vec2 innerHalf = halfSize - vec2(r, r);
+    float ws = 2.0 * innerHalf.x;
+    float hs = 2.0 * innerHalf.y;
+    float arcLen = 1.5707963 * r;
+    float perim = 2.0 * ws + 2.0 * hs + 4.0 * arcLen;
+
+    bool inCornerSector = (ap.x > innerHalf.x) && (ap.y > innerHalf.y);
+    float cornerAngle = 0.0;
+    if (inCornerSector && r > 1e-3) {
+        vec2 dir = normalize(vec2(ap.x - innerHalf.x, ap.y - innerHalf.y));
+        cornerAngle = atan(dir.y, dir.x);
+    }
+
+    float dist;
+    if (winding == 0) { // CW
+        if (inCornerSector) {
+            if (sgn.y > 0.0 && sgn.x > 0.0) {
+                float frac = 1.0 - cornerAngle / 1.5707963;
+                dist = ws + arcLen * frac;
+            } else if (sgn.y < 0.0 && sgn.x > 0.0) {
+                float frac = cornerAngle / 1.5707963;
+                dist = ws + arcLen + hs + arcLen * frac;
+            } else if (sgn.y < 0.0 && sgn.x < 0.0) {
+                float frac = 1.0 - cornerAngle / 1.5707963;
+                dist = 2.0 * ws + 2.0 * arcLen + hs + arcLen * frac;
+            } else {
+                float frac = cornerAngle / 1.5707963;
+                dist = 2.0 * ws + 2.0 * hs + 3.0 * arcLen + arcLen * frac;
+            }
+        } else {
+            bool snapX;
+            if (ap.x >= halfSize.x) snapX = true;
+            else if (ap.y >= halfSize.y) snapX = false;
+            else snapX = (halfSize.x - ap.x) < (halfSize.y - ap.y);
+            if (snapX) {
+                float py = clamp(p.y, -innerHalf.y, innerHalf.y);
+                if (sgn.x > 0.0) dist = ws + arcLen + (innerHalf.y - py);
+                else             dist = 2.0 * ws + 2.0 * hs + 3.0 * arcLen + (py + innerHalf.y);
+            } else {
+                float px = clamp(p.x, -innerHalf.x, innerHalf.x);
+                if (sgn.y > 0.0) dist = px + innerHalf.x;
+                else             dist = ws + arcLen + hs + arcLen + (innerHalf.x - px);
+            }
+        }
+    } else { // CCW
+        if (inCornerSector) {
+            if (sgn.y > 0.0 && sgn.x < 0.0) {
+                float frac = 1.0 - cornerAngle / 1.5707963;
+                dist = 2.0 * hs + 2.0 * ws + 3.0 * arcLen + arcLen * frac;
+            } else if (sgn.y < 0.0 && sgn.x < 0.0) {
+                float frac = cornerAngle / 1.5707963;
+                dist = hs + arcLen * frac;
+            } else if (sgn.y < 0.0 && sgn.x > 0.0) {
+                float frac = 1.0 - cornerAngle / 1.5707963;
+                dist = hs + arcLen + ws + arcLen * frac;
+            } else {
+                float frac = cornerAngle / 1.5707963;
+                dist = 2.0 * hs + arcLen + ws + arcLen + arcLen * frac;
+            }
+        } else {
+            bool snapX;
+            if (ap.x >= halfSize.x) snapX = true;
+            else if (ap.y >= halfSize.y) snapX = false;
+            else snapX = (halfSize.x - ap.x) < (halfSize.y - ap.y);
+            if (snapX) {
+                float py = clamp(p.y, -innerHalf.y, innerHalf.y);
+                if (sgn.x < 0.0) dist = (innerHalf.y - py);
+                else             dist = 2.0 * hs + 2.0 * arcLen + ws + (py + innerHalf.y);
+            } else {
+                float px = clamp(p.x, -innerHalf.x, innerHalf.x);
+                if (sgn.y < 0.0) dist = hs + arcLen + (px + innerHalf.x);
+                else             dist = 2.0 * hs + 3.0 * arcLen + 2.0 * ws + (innerHalf.x - px);
+            }
+        }
+    }
+    return dist / perim;
+}
+
 // Returns 1.0 if sample at perimeter position @c si is inside an arc that
 // starts at @p start and extends forwards by @p length. Length 0 = empty,
 // length 1 = full (start becomes an irrelevant phase). Anything in between
@@ -152,12 +240,11 @@ float arcCoverContinuous(float sPos, float start, float length, float fHead, flo
     if (length <= 1e-6)       return 0.0;
     float rel = sPos - start;
     rel -= floor(rel);
-    // Feather fades INWARD: coverage reaches 0 AT each end, never past it, so no
-    // spill onto the perpendicular edge at a corner. Trade-off: bright core is
-    // inset by the feather width (shorter core filament). See neon.frag.
-    float tailIn = smoothstep(0.0, fTail, rel);
-    float headIn = 1.0 - smoothstep(length - fHead, length, rel);
-    return tailIn * headIn;
+    // sPos comes from sdfPerimeterPos (deterministic, no proximity trap), so
+    // a plain [0, length] window with sub-pixel AA suffices. See neon.frag.
+    float tailEdge = smoothstep(0.0, fTail, rel);
+    float headEdge = 1.0 - smoothstep(length - fHead, length, rel);
+    return tailEdge * headEdge;
 }
 
 // ---------------------------------------------------------------------------
@@ -366,7 +453,7 @@ void main() {
         if (arc.z <= 0.0) continue;
         contCover = max(contCover,
                         arcCoverContinuous(sPos, arc.x, arc.y,
-                                           0.25 * invNumSamples, 0.25 * invNumSamples));
+                                           0.05 * invNumSamples, 0.05 * invNumSamples));
     }
     filamentGate = max(filamentGate, contCover);
 

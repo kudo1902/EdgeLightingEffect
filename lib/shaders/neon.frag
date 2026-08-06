@@ -24,6 +24,7 @@ out vec4 fragColor;
 
 uniform vec2  uRectSize;
 uniform float uCornerRadius;
+uniform int   uWinding; ///< 0 = CW, 1 = CCW. Matches EdgeLighting::Winding.
 uniform float uLineWidth;
 uniform float uFilamentFalloff; ///< Generalized-Gaussian exponent (N = value * 2); 1.0 = pure Gaussian, lower = smoother (Laplace-like), higher = flatter top.
 uniform float uIntensity;
@@ -113,6 +114,161 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
     return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
 }
 
+// Fragment's perimeter position t in [0, 1) via SDF projection onto the rect
+// boundary. Deterministic per-fragment - not affected by the proximity trap
+// that the atan2 sample mean suffers near corner samples. Handles both r=0
+// (sharp corners) and r>0 (rounded corners with quarter-arc corners).
+//
+// Matches EdgeLighting::GeometryUtils::GetPointOnRectangle's parametrization:
+//   CW:  top edge first (starts at top-left of top straight), then top-right
+//        arc, right edge, ..., left edge, top-left arc (last).
+//   CCW: left edge first, ..., top edge, top-left arc (last).
+// t=0 lives at the start of the first straight edge; t=1 wraps back to it.
+// The top-left arc sits at the tail of the parametrization in both windings.
+float sdfPerimeterPos(vec2 p, vec2 halfSize, float r, int winding) {
+    // Winding is fixed inside this call, so the branch cost is one dynamic
+    // predicate the driver will hoist. The per-fragment cost is dominated by
+    // one atan (only when in a corner-arc sector) and a handful of compares.
+    vec2 ap = abs(p);
+    vec2 sgn = sign(p);
+    if (sgn.x == 0.0) sgn.x = 1.0;
+    if (sgn.y == 0.0) sgn.y = 1.0;
+
+    vec2 innerHalf = halfSize - vec2(r, r);
+    float ws = 2.0 * innerHalf.x;
+    float hs = 2.0 * innerHalf.y;
+    float arcLen = 1.5707963 * r; // pi/2 * r
+    float perim = 2.0 * ws + 2.0 * hs + 4.0 * arcLen;
+
+    // Corner-arc sector: fragment sits in one of the 4 corner quadrants where
+    // both absolute coords exceed the straight-edge extent. Project radially
+    // to the arc curve; the projection's cornerAngle is the arc parameter.
+    // This covers BOTH fragments inside the rect (past innerHalf) AND fragments
+    // outside (past halfSize) - a single condition captures both.
+    bool inCornerSector = (ap.x > innerHalf.x) && (ap.y > innerHalf.y);
+
+    // cornerAngle in [0, pi/2] measured from the +x axis of the abs-quadrant.
+    // 0 = along horizontal edge direction; pi/2 = along vertical edge direction.
+    float cornerAngle = 0.0;
+    if (inCornerSector && r > 1e-3) {
+        vec2 dir = normalize(vec2(ap.x - innerHalf.x, ap.y - innerHalf.y));
+        cornerAngle = atan(dir.y, dir.x);
+    }
+
+    float dist;
+    if (winding == 0) { // CW: top -> tr-arc -> right -> br-arc -> bottom -> bl-arc -> left -> tl-arc.
+        if (inCornerSector) {
+            if (sgn.y > 0.0 && sgn.x > 0.0) {
+                // Top-right corner. Arc from top (start, ca = pi/2) to right (end, ca = 0).
+                float frac = 1.0 - cornerAngle / 1.5707963;
+                dist = ws + arcLen * frac;
+            } else if (sgn.y < 0.0 && sgn.x > 0.0) {
+                // Bottom-right corner. Arc from right (start, ca = 0) to bottom (end, ca = pi/2).
+                float frac = cornerAngle / 1.5707963;
+                dist = ws + arcLen + hs + arcLen * frac;
+            } else if (sgn.y < 0.0 && sgn.x < 0.0) {
+                // Bottom-left corner. Arc from bottom (start, ca = pi/2) to left (end, ca = 0).
+                float frac = 1.0 - cornerAngle / 1.5707963;
+                dist = 2.0 * ws + 2.0 * arcLen + hs + arcLen * frac;
+            } else {
+                // Top-left corner. Arc from left (start, ca = 0) to top (end, ca = pi/2).
+                float frac = cornerAngle / 1.5707963;
+                dist = 2.0 * ws + 2.0 * hs + 3.0 * arcLen + arcLen * frac;
+            }
+        } else {
+            // Straight-edge sector. Snap to the nearest straight edge.
+            // For fragments outside (ap.x > halfSize.x or ap.y > halfSize.y),
+            // the "outside" axis determines the edge. For inside fragments,
+            // pick whichever edge is closer perpendicular.
+            bool snapX;
+            if (ap.x >= halfSize.x) {
+                snapX = true;
+            } else if (ap.y >= halfSize.y) {
+                snapX = false;
+            } else {
+                snapX = (halfSize.x - ap.x) < (halfSize.y - ap.y);
+            }
+            if (snapX) {
+                // On left or right straight edge, y in [-innerHalf.y, +innerHalf.y].
+                float py = clamp(p.y, -innerHalf.y, innerHalf.y);
+                if (sgn.x > 0.0) {
+                    // right edge: y goes from +innerHalf.y (start) down to -innerHalf.y (end).
+                    dist = ws + arcLen + (innerHalf.y - py);
+                } else {
+                    // left edge: y goes from -innerHalf.y (start) up to +innerHalf.y (end).
+                    dist = 2.0 * ws + 2.0 * hs + 3.0 * arcLen + (py + innerHalf.y);
+                }
+            } else {
+                float px = clamp(p.x, -innerHalf.x, innerHalf.x);
+                if (sgn.y > 0.0) {
+                    // top edge: x goes from -innerHalf.x (start) to +innerHalf.x (end).
+                    dist = px + innerHalf.x;
+                } else {
+                    // bottom edge: x goes from +innerHalf.x (start) down to -innerHalf.x (end).
+                    dist = ws + arcLen + hs + arcLen + (innerHalf.x - px);
+                }
+            }
+        }
+    } else { // CCW: left -> bl-arc -> bottom -> br-arc -> right -> tr-arc -> top -> tl-arc.
+        if (inCornerSector) {
+            if (sgn.y > 0.0 && sgn.x < 0.0) {
+                // Top-left. Arc from top (start, ca=pi/2) to left (end, ca=0)? No, CCW top-left arc goes from top (angle pi/2) to left (angle pi), so top -> left = ca goes 0 -> pi/2? Let me match GetPointOnRectCCW.
+                // From geometry-utils GetPointOnRectCCW top-left arc: angle pi/2 -> pi. At pi/2 (start): (arcCenter.x + r*cos(pi/2), arcCenter.y + r*sin(pi/2)) = (arcCenter.x, arcCenter.y + r) = top edge start point. At pi (end): (arcCenter.x - r, arcCenter.y) = left edge start point (going into left top).
+                // Wait, in GetPointOnRectCCW the top-left arc is at the END. Let me re-read.
+                // CCW order: left, bl-arc, bottom, br-arc, right, tr-arc, top, tl-arc.
+                // tl-arc at end. Its start = end of top edge going right-to-left = at (-halfWs, halfH) which is top-of-top-left-arc.
+                // tl-arc goes from angle pi/2 (top, ca=pi/2) to angle pi (left, ca=0)? Or something else.
+                // Actually the code says "angle pi/2 -> pi" and formula (-halfWs + r*cos(angle), halfHs + r*sin(angle)). At pi/2: (-halfWs, halfHs+r) = (-halfWs, halfH). At pi: (-halfWs-r, halfHs) = (-halfW, halfHs). So arc goes from top edge end to left edge start.
+                // For our abs-quadrant angle: at start (top, in abs coord dir = (0, 1) from arcCenter), ca = pi/2. At end (left, dir = (1, 0)), ca = 0.
+                // Frac = 1 - ca/(pi/2).
+                float frac = 1.0 - cornerAngle / 1.5707963;
+                dist = 2.0 * hs + 2.0 * ws + 3.0 * arcLen + arcLen * frac;
+            } else if (sgn.y < 0.0 && sgn.x < 0.0) {
+                // Bottom-left. Arc from left (start, ca=0) to bottom (end, ca=pi/2). Frac = ca/(pi/2).
+                float frac = cornerAngle / 1.5707963;
+                dist = hs + arcLen * frac;
+            } else if (sgn.y < 0.0 && sgn.x > 0.0) {
+                // Bottom-right. Arc from bottom (start, ca=pi/2) to right (end, ca=0). Frac = 1 - ca/(pi/2).
+                float frac = 1.0 - cornerAngle / 1.5707963;
+                dist = hs + arcLen + ws + arcLen * frac;
+            } else {
+                // Top-right. Arc from right (start, ca=0) to top (end, ca=pi/2). Frac = ca/(pi/2).
+                float frac = cornerAngle / 1.5707963;
+                dist = 2.0 * hs + arcLen + ws + arcLen + arcLen * frac;
+            }
+        } else {
+            bool snapX;
+            if (ap.x >= halfSize.x) {
+                snapX = true;
+            } else if (ap.y >= halfSize.y) {
+                snapX = false;
+            } else {
+                snapX = (halfSize.x - ap.x) < (halfSize.y - ap.y);
+            }
+            if (snapX) {
+                float py = clamp(p.y, -innerHalf.y, innerHalf.y);
+                if (sgn.x < 0.0) {
+                    // left edge: y from +innerHalf.y (start) down to -innerHalf.y (end).
+                    dist = (innerHalf.y - py);
+                } else {
+                    // right edge: y from -innerHalf.y (start) up to +innerHalf.y (end).
+                    dist = 2.0 * hs + 2.0 * arcLen + ws + (py + innerHalf.y);
+                }
+            } else {
+                float px = clamp(p.x, -innerHalf.x, innerHalf.x);
+                if (sgn.y < 0.0) {
+                    // bottom edge: x from -innerHalf.x (start) to +innerHalf.x (end).
+                    dist = hs + arcLen + (px + innerHalf.x);
+                } else {
+                    // top edge: x from +innerHalf.x (start) down to -innerHalf.x (end).
+                    dist = 2.0 * hs + 3.0 * arcLen + 2.0 * ws + (innerHalf.x - px);
+                }
+            }
+        }
+    }
+    return dist / perim;
+}
+
 // Returns 1.0 if sample at perimeter position @c si is inside an arc that
 // starts at @p start and extends forwards by @p length. Length 0 = empty,
 // length 1 = full (start becomes an irrelevant phase). Anything in between
@@ -171,15 +327,20 @@ float arcCoverContinuous(float sPos, float start, float length, float fHead, flo
     if (length <= 1e-6)       return 0.0;   // empty
     float rel = sPos - start;
     rel -= floor(rel);                       // fract -> [0,1): distance past start
-    // The feather fades INWARD, so coverage reaches 0 exactly AT each end and
-    // never past it - nothing spills onto the perpendicular edge at a corner
-    // (no bleed). The trade-off: the bright core is inset by the feather width
-    // (a shorter core filament). fHead/fTail set how far each end is pulled in.
-    //   tail: 0 at start, 1 by start+fTail.
-    //   head: 1 up to length-fHead, 0 at length.
-    float tailIn = smoothstep(0.0, fTail, rel);
-    float headIn = 1.0 - smoothstep(length - fHead, length, rel);
-    return tailIn * headIn;
+
+    // sPos here comes from sdfPerimeterPos (fragment's true perimeter position
+    // via SDF projection), so `rel` is the actual perimeter distance past the
+    // arc start - not the proximity-trapped estimate that the atan2 sample-
+    // mean produced. That makes both boundaries clean step edges; the only
+    // reason we still smoothstep is sub-pixel anti-aliasing at each end.
+    //   tailEdge = 0 for rel < 0 (fragment sits BEFORE start on previous edge),
+    //              1 for rel > fTail (fully inside arc).
+    //   headEdge = 1 for rel < length - fHead, 0 for rel > length.
+    // The feather widths are perimeter fractions - keep them tiny (<<1 sample)
+    // since AA is only needed for sub-pixel boundary crossings.
+    float tailEdge = smoothstep(0.0, fTail, rel);
+    float headEdge = 1.0 - smoothstep(length - fHead, length, rel);
+    return tailEdge * headEdge;
 }
 
 // ---------------------------------------------------------------------------
@@ -268,13 +429,6 @@ void main() {
                            // below instead, so the arc filament never inherits
                            // the sample stepping or the tail's corner spill)
 
-    // Proximity-weighted circular mean of the loop samples' perimeter angle,
-    // used to recover this fragment's OWN continuous perimeter position (see
-    // sPos below). uLoopSamples[i].zw hold (cos, sin) of 2*pi*(i/N), baked on
-    // the CPU, so this is two extra FMAs per sample and no per-fragment trig.
-    float sumCos    = 0.0;
-    float sumSin    = 0.0;
-
     // Compile-time constant loop bound: matches the LoopSamplesBlock UBO size
     // and the C++-side NEON_MAX_LOOP_SAMPLES so the compiler can unroll if it
     // wants to.
@@ -293,13 +447,6 @@ void main() {
         float dd  = dot(dv, dv);
 
         float g   = 1.0 / (dd + kg2);
-
-        // Accumulate the circular mean of perimeter angle (weighted by the
-        // same proximity g). Near the filament the 1-2 closest samples
-        // dominate, so this resolves the fragment's perimeter position to a
-        // small fraction of a sample - continuous, monotonic, wrap-safe.
-        sumCos += g * uLoopSamples[i].z;
-        sumSin += g * uLoopSamples[i].w;
 
         // Arc winner-take-all: find the arc with the largest effective mask
         // (arcInside * intensity) at this sample. That arc owns both the
@@ -433,22 +580,21 @@ void main() {
     float filamentGate = smoothstep(0.5, 1.0, segFraction);
 
     // --- Continuous arc coverage for the filament ------------------------
-    // Recover the fragment's OWN continuous perimeter position from the
-    // circular mean accumulated in the loop (atan2 -> [-pi,pi] -> [0,1)), then
-    // read each arc directly there. Far-from-line fragments give a meaningless
-    // mean, but their filament core ~= 0 so it never shows.
-    float sPos = atan(sumSin, sumCos) * 0.15915494;       // * 1/(2*pi)
-    sPos -= floor(sPos);                                  // -> [0, 1)
+    // Fragment's true perimeter position via SDF projection - deterministic
+    // per-fragment, no proximity trap at corners. Replaces the atan2 mean of
+    // sample angles (which got trapped at the corner sample's angle for many
+    // px around a corner, producing the CW gap / CCW bleed asymmetry).
+    float sPos = sdfPerimeterPos(vPos, halfSize, uCornerRadius, uWinding);
     float contCover = 0.0;
     for (int a = 0; a < uArcCount; a++) {
         vec4 arc = uArcs[a];
         if (arc.z <= 0.0) continue;                       // dark arc: no filament
-        // Both ends feather INWARD, over a wide ~1.5 sample span so each end
-        // fades out gradually/softly (still no corner hook, since the ramp
-        // stays inside the arc). Raise/lower these for a longer/shorter fade.
+        // Narrow feather at each end (perimeter/2560) for sub-pixel AA only.
+        // sPos is SDF-projected so the boundary transition already sits at the
+        // right fragment; the smoothstep just smooths the last pixel.
         contCover = max(contCover,
                         arcCoverContinuous(sPos, arc.x, arc.y,
-                                           0.25 * invNumSamples, 0.25 * invNumSamples));
+                                           0.05 * invNumSamples, 0.05 * invNumSamples));
     }
     filamentGate = max(filamentGate, contCover);
 
