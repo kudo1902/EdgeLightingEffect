@@ -130,12 +130,16 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
 float arcInside(float si, float start, float length, float invNumSamples) {
     if (length >= 1.0 - 1e-6) return 1.0;
     if (length <= 1e-6)       return 0.0;
-    float f   = invNumSamples;
+    // Asymmetric: full-sample head (contiguous fade-in -> smooth halo head),
+    // quarter-sample tail (near-hard, so the start does not spill halo/bloom
+    // into the corner before it). See neon.frag for the full rationale.
+    float fHead = invNumSamples;
+    float fTail = 0.25 * invNumSamples;
     float end = start + length;
-    float g1a = smoothstep(start - f, start, si);
-    float g2a = 1.0 - smoothstep(end, end + f, si);
-    float g1b = smoothstep(start - f, start, si + 1.0);
-    float g2b = 1.0 - smoothstep(end, end + f, si + 1.0);
+    float g1a = smoothstep(start - fTail, start, si);
+    float g2a = 1.0 - smoothstep(end, end + fHead, si);
+    float g1b = smoothstep(start - fTail, start, si + 1.0);
+    float g2b = 1.0 - smoothstep(end, end + fHead, si + 1.0);
     return max(g1a * g2a, g1b * g2b);
 }
 
@@ -143,14 +147,16 @@ float arcInside(float si, float start, float length, float invNumSamples) {
 // @p sPos - reads the arc directly instead of sampling the fixed gather
 // points, so a slow arc head moves smoothly at any duration. Gates only the
 // sharp filament (halo/bloom stay on the sample gather). See neon.frag.
-float arcCoverContinuous(float sPos, float start, float length, float f) {
+float arcCoverContinuous(float sPos, float start, float length, float fHead, float fTail) {
     if (length >= 1.0 - 1e-6) return 1.0;
     if (length <= 1e-6)       return 0.0;
     float rel = sPos - start;
     rel -= floor(rel);
-    float headEdge = 1.0 - smoothstep(length, length + f, rel);
-    float tailEdge = smoothstep(1.0 - f, 1.0, rel);
-    return max(headEdge, tailEdge);
+    // Clean inside tail; head AA centered on `length` (fHead = half-width) so
+    // the head reaches its endpoint with minimal corner hook. See neon.frag.
+    float tailIn   = smoothstep(0.0, fTail, rel);
+    float headEdge = 1.0 - smoothstep(length - fHead, length + fHead, rel);
+    return tailIn * headEdge;
 }
 
 // ---------------------------------------------------------------------------
@@ -226,7 +232,8 @@ void main() {
     vec3  acc       = vec3(0.0); // base colour × per-sample gather weight
     vec3  segAcc    = vec3(0.0); // segment additive colour × bell × gather weight
     float wsum      = 0.0;
-    float wsumCover = 0.0; // ∑ covered g (arc OR segment) - for the filament gate
+    float wsumSeg   = 0.0; // ∑ SEGMENT-only covered g - sample-based filament
+                           // gate; arcs use the continuous gate (see neon.frag)
 
     // Circular-mean accumulators for this fragment's continuous perimeter
     // position (uLoopSamples[i].zw hold cos/sin of 2*pi*t). See neon.frag.
@@ -326,10 +333,11 @@ void main() {
         // bloom and the filament gate so a segment-only stretch emits like an
         // arc-lit one. arcW = 1 -> cover = arcW, matching the old behaviour in
         // fully arc-covered stretches. See neon.frag.
-        float cover = max(arcW, min(segMask, 1.0));
+        float segCov = min(segMask, 1.0);
+        float cover = max(arcW, segCov);
         glow      += cover * g * sqrt(g);
         bloom     += cover / (dd + bw2);
-        wsumCover += cover * g;
+        wsumSeg   += segCov * g;
 
         ti  += dti;
         si  += dti;
@@ -340,8 +348,10 @@ void main() {
     vec3 col    = acc    / max(wsum, WSUM_EPSILON);
     vec3 segCol = segAcc / max(wsum, WSUM_EPSILON);
 
-    float litFraction = wsumCover / max(wsum, WSUM_EPSILON);
-    float filamentGate = smoothstep(0.5, 1.0, litFraction);
+    // Segments keep the sample-based gate; arcs use the continuous coverage
+    // below (no sample stepping, no tail corner spill). See neon.frag.
+    float segFraction = wsumSeg / max(wsum, WSUM_EPSILON);
+    float filamentGate = smoothstep(0.5, 1.0, segFraction);
 
     // Continuous arc head for the filament: gate by the arc read at this
     // fragment's own perimeter position (circular mean) so a slow tracer's
@@ -354,7 +364,8 @@ void main() {
         vec4 arc = uArcs[a];
         if (arc.z <= 0.0) continue;
         contCover = max(contCover,
-                        arcCoverContinuous(sPos, arc.x, arc.y, 1.5 * invNumSamples));
+                        arcCoverContinuous(sPos, arc.x, arc.y,
+                                           0.1 * invNumSamples, 0.25 * invNumSamples));
     }
     filamentGate = max(filamentGate, contCover);
 

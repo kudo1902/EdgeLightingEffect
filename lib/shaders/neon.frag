@@ -135,29 +135,26 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
 float arcInside(float si, float start, float length, float invNumSamples) {
     if (length >= 1.0 - 1e-6) return 1.0;   // full coverage
     if (length <= 1e-6)       return 0.0;   // empty
-    // Feather = ONE full sample width OUTSIDE the arc on each side. Placement
-    // OUTSIDE still ensures the sample sitting exactly at `start` or `end`
-    // gets weight 1.0 (the ramp only extends outward), so visible ends stay
-    // lined up with debug markers regardless of the feather width.
+    // Feather sits OUTSIDE the arc on each side (the ramp only extends
+    // outward), so the sample exactly at `start` / `end` keeps weight 1.0 and
+    // visible ends line up with debug markers.
     //
-    // The width MUST be >= one sample spacing (invNumSamples) so that a
-    // moving arc end reads as smooth motion. A sample turns fully on once the
-    // end reaches its position and starts turning on when the end is one
-    // feather away; with a full-sample feather the fade-in ranges of adjacent
-    // samples are contiguous, so a continuously growing arc (e.g. a slow
-    // OutlineTracer over ~10 s) always has a leading sample mid-fade and the
-    // head glides between gather points. A narrower ½-sample feather left a
-    // ½-sample dead zone between samples where the head froze, then jumped -
-    // visible as stepping/stutter on long, slow sweeps.
-    //
-    // invNumSamples comes from the loop-sample count so the feather always
-    // matches the gather-point spacing.
-    float f   = invNumSamples;
+    // The widths are ASYMMETRIC:
+    //   - HEAD (end side): one full sample. Adjacent samples' fade-in ranges
+    //     are then contiguous, so the halo head advances without a dead-zone
+    //     jump as the arc grows.
+    //   - TAIL (start side): a quarter sample - a near-hard, clean trailing
+    //     edge. A wider tail spills extra halo/bloom OUTSIDE the arc start,
+    //     very visible when the start sits just below a corner (the corner arc
+    //     is the perimeter segment right BEFORE position 0), and buys nothing
+    //     since the tail does not move for a growing tracer.
+    float fHead = invNumSamples;
+    float fTail = 0.25 * invNumSamples;
     float end = start + length;
-    float g1a = smoothstep(start - f, start, si);
-    float g2a = 1.0 - smoothstep(end, end + f, si);
-    float g1b = smoothstep(start - f, start, si + 1.0);
-    float g2b = 1.0 - smoothstep(end, end + f, si + 1.0);
+    float g1a = smoothstep(start - fTail, start, si);
+    float g2a = 1.0 - smoothstep(end, end + fHead, si);
+    float g1b = smoothstep(start - fTail, start, si + 1.0);
+    float g2b = 1.0 - smoothstep(end, end + fHead, si + 1.0);
     return max(g1a * g2a, g1b * g2b);
 }
 
@@ -168,18 +165,24 @@ float arcInside(float si, float start, float length, float invNumSamples) {
 // position, so a slowly growing arc head moves smoothly at ANY duration.
 // Used only to gate the sharp SDF filament; the halo/bloom stay on the
 // sample gather (they're wide and blurry, so their 1/N stepping is invisible).
-// @p f is the head/tail feather in perimeter-fraction units.
-float arcCoverContinuous(float sPos, float start, float length, float f) {
+// @p fHead / @p fTail are the head/tail feathers in perimeter-fraction units.
+float arcCoverContinuous(float sPos, float start, float length, float fHead, float fTail) {
     if (length >= 1.0 - 1e-6) return 1.0;   // full coverage
     if (length <= 1e-6)       return 0.0;   // empty
     float rel = sPos - start;
     rel -= floor(rel);                       // fract -> [0,1): distance past start
-    // Feathered core [0, length]; head feather extends past `length`, tail
-    // feather rises again as rel -> 1 (i.e. sPos just BEFORE start), matching
-    // arcInside's "feather OUTSIDE the arc on each side" convention.
-    float headEdge = 1.0 - smoothstep(length, length + f, rel);
-    float tailEdge = smoothstep(1.0 - f, 1.0, rel);
-    return max(headEdge, tailEdge);
+    // Tail ramps IN just inside the start (clean, no bleed before start). The
+    // head AA is CENTERED on `length` (fHead is a half-width): coverage is 1 up
+    // to length-fHead, 0.5 at length, 0 by length+fHead. This is the balance
+    // between the two failure modes at a corner (where "past length" in
+    // perimeter space means "onto the perpendicular edge"): a purely outside
+    // feather hooks around the corner, a purely inside one leaves a gap before
+    // it. Centered + small keeps the endpoint bright (~half of a 12x-gain
+    // filament still reads solid) while the overshoot is only ~fHead. sPos is
+    // continuous, so the edge still glides as the head moves.
+    float tailIn   = smoothstep(0.0, fTail, rel);
+    float headEdge = 1.0 - smoothstep(length - fHead, length + fHead, rel);
+    return tailIn * headEdge;
 }
 
 // ---------------------------------------------------------------------------
@@ -263,7 +266,10 @@ void main() {
     vec3  acc       = vec3(0.0); // base colour × per-sample gather weight
     vec3  segAcc    = vec3(0.0); // segment additive colour × bell × gather weight
     float wsum      = 0.0;
-    float wsumCover = 0.0; // ∑ covered g (arc OR segment) - for the filament gate
+    float wsumSeg   = 0.0; // ∑ SEGMENT-only covered g - the sample-based part of
+                           // the filament gate (arcs use the continuous gate
+                           // below instead, so the arc filament never inherits
+                           // the sample stepping or the tail's corner spill)
 
     // Proximity-weighted circular mean of the loop samples' perimeter angle,
     // used to recover this fragment's OWN continuous perimeter position (see
@@ -352,8 +358,8 @@ void main() {
         // divide by the full local sample density - fragments far from any lit
         // point get a denominator that grows even as the numerator stays near
         // zero, so the SDF-derived filament fades to black instead of showing
-        // the lit colour everywhere. wsumCover is the coverage-gated
-        // counterpart (arc OR segment), used for the filament gate below.
+        // the lit colour everywhere. wsumSeg is the segment-coverage-gated
+        // counterpart, used for the segment part of the filament gate below.
         wsum += g;
 
         // --- Travelling segments (independent additive lights) ---
@@ -398,10 +404,11 @@ void main() {
         // emits just like an arc-lit one. In a fully arc-covered stretch
         // (arcW = 1 -> lg = g, cover = arcW) this reduces to the previous
         // arc-gated behaviour exactly, so covered regions are unchanged.
-        float cover = max(arcW, min(segMask, 1.0));
+        float segCov = min(segMask, 1.0);
+        float cover = max(arcW, segCov);
         glow      += cover * g * sqrt(g);   // -> ~1/D^2 neon halo
         bloom     += cover / (dd + bw2);    // -> ~1/D   wide spill
-        wsumCover += cover * g;
+        wsumSeg   += segCov * g;            // segment-only, for the filament gate
 
         ti  += dti;
         si  += dti;
@@ -412,33 +419,38 @@ void main() {
     vec3 col    = acc    / max(wsum, WSUM_EPSILON); // base perimeter colour
     vec3 segCol = segAcc / max(wsum, WSUM_EPSILON); // segments' additive contribution
 
-    // Sharp gate for the SDF-derived filament. `col` already softly fades at
-    // the arc boundary (acc/wsum dilution), but with FILAMENT_GAIN at 12 even
-    // a 50%-lit boundary still produces a visible line. litFraction is the
-    // ratio of lit-to-total sample weight; smoothstepped above 0.5 it cleanly
-    // suppresses the filament past the arc end without affecting halo/bloom.
-    float litFraction = wsumCover / max(wsum, WSUM_EPSILON);
-    float filamentGate = smoothstep(0.5, 1.0, litFraction);
+    // Sharp gate for the SDF-derived filament. Two independent contributors:
+    //
+    //  1. SEGMENTS - gathered, not arc-parameterised, so they keep the
+    //     sample-based gate: the segment-only lit fraction, smoothstepped
+    //     above 0.5 to suppress the filament past a segment's soft edge.
+    //
+    //  2. ARCS - gated by the CONTINUOUS coverage below, read at this
+    //     fragment's own perimeter position, NOT by the sample gather. The
+    //     sample gather would (a) quantise the arc head to the 128 gather
+    //     points (visible stepping on a slow tracer) and (b) light the tail's
+    //     preceding corner, because the lit start sample sits right next to
+    //     it - that was the "hook"/bleed at position 0. The continuous gate
+    //     has neither problem: it is smooth and is exactly zero before start.
+    float segFraction = wsumSeg / max(wsum, WSUM_EPSILON);
+    float filamentGate = smoothstep(0.5, 1.0, segFraction);
 
-    // --- Continuous arc head for the filament ----------------------------
-    // The sample-based litFraction above quantises the arc's head/tail to the
-    // 128 gather points, so a slow tracer (e.g. a ~10 s OutlineTracer) steps
-    // sample-to-sample. Recover this fragment's OWN continuous perimeter
-    // position from the circular mean accumulated in the loop, then gate the
-    // filament by the arc read directly at that position. atan2 of the two
-    // sums gives the mean angle in [-pi, pi]; map to [0, 1). Far-from-line
-    // fragments give a meaningless mean, but their filament core ~= 0 so it
-    // never shows. max() with litFraction keeps segment-lit stretches (which
-    // are gathered, not arc-gated) lighting their filament as before.
+    // --- Continuous arc coverage for the filament ------------------------
+    // Recover the fragment's OWN continuous perimeter position from the
+    // circular mean accumulated in the loop (atan2 -> [-pi,pi] -> [0,1)), then
+    // read each arc directly there. Far-from-line fragments give a meaningless
+    // mean, but their filament core ~= 0 so it never shows.
     float sPos = atan(sumSin, sumCos) * 0.15915494;       // * 1/(2*pi)
     sPos -= floor(sPos);                                  // -> [0, 1)
     float contCover = 0.0;
     for (int a = 0; a < uArcCount; a++) {
         vec4 arc = uArcs[a];
         if (arc.z <= 0.0) continue;                       // dark arc: no filament
-        // ~1.5-sample feather so the moving tip is soft but still crisp.
+        // Head AA half-width ~0.2 sample (centered on the end), tail in-ramp
+        // ~0.25 sample. Keeps the head on its endpoint with minimal corner hook.
         contCover = max(contCover,
-                        arcCoverContinuous(sPos, arc.x, arc.y, 1.5 * invNumSamples));
+                        arcCoverContinuous(sPos, arc.x, arc.y,
+                                           0.1 * invNumSamples, 0.25 * invNumSamples));
     }
     filamentGate = max(filamentGate, contCover);
 
