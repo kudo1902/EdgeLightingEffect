@@ -55,7 +55,7 @@
 //     the current perimeter at the call site.
 //     A big value produces a long ogive/spire tip; small produces a stub.
 //     Bounded per-arc by length/2 so short arcs still peak in the middle. ---
-#define TIP_TAPER_PX              120.0
+#define TIP_TAPER_PX              40.0
 
 // --- Filament sigma floor at the tip. Sigma = max(halfWidth * tipTaper,
 //     TIP_SIGMA_FLOOR_PX). Kept small so the tip reaches an actual point
@@ -74,11 +74,11 @@
 //     filament already does), sized wider than the filament feathers so the
 //     halo still tapers naturally past the arc endpoint over a short distance,
 //     then goes dark. Divided by the current perimeter at the call site. ---
-// Widened so the gate transition into the arc gap reads as a smooth halo
+// Sized so the gate transition into the arc gap reads as a smooth halo
 // fall-off, not a hard step - closes the visible dark wedge that otherwise
 // forms right next to a corner when the arc ends near it.
-#define HALO_HEAD_FEATHER_PX      120.0
-#define HALO_TAIL_FEATHER_PX      60.0
+#define HALO_HEAD_FEATHER_PX      60.0
+#define HALO_TAIL_FEATHER_PX      30.0
 
 // --- Bloom (wide background spill) ---
 #define BLOOM_REACH_TO_GLOW       6.0
