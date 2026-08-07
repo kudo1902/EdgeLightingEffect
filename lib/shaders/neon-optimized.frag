@@ -294,27 +294,16 @@ float arcInside(float si, float start, float length, float invNumSamples) {
     return max(g1a * g2a, g1b * g2b);
 }
 
-// Continuous [0,1] arc coverage at a fragment's CONTINUOUS perimeter position
-// @p sPos - reads the arc directly instead of sampling the fixed gather
-// points, so a slow arc head moves smoothly at any duration. Gates only the
-// sharp filament (halo/bloom stay on the sample gather). See neon.frag.
+// Continuous [0,1] arc coverage - INWARD FEATHER. See neon.frag for the full
+// rationale; the shape here is identical.
 float arcCoverContinuous(float sPos, float start, float length, float fHead, float fTail) {
     if (length >= 1.0 - 1e-6) return 1.0;
     if (length <= 1e-6)       return 0.0;
     float rel = sPos - start;
     rel -= floor(rel);
-    // Feathers sit OUTSIDE the arc on each side, so coverage is exactly 1 at
-    // the start (rel = 0) and reaches the end point (rel = length) - no inset
-    // gap at either end. The tail wrap (rel -> 1) ramps coverage up as it
-    // approaches the start from the other side of the circle, antialiasing the
-    // start edge. With the exact geometric sPos and a small pixel-space
-    // TAIL_FEATHER_PX, that ramp only lights a few px past the start - the
-    // corner curve an arc beginning at position 0 sits right after stays dark.
-    //   tail: 0 at rel = 1 - fTail, 1 by rel = 1 (= start).
-    //   head: 1 up to length, 0 by length + fHead.
-    float tailWrap = smoothstep(1.0 - fTail, 1.0, rel);
-    float headFade = 1.0 - smoothstep(length, length + fHead, rel);
-    return max(tailWrap, headFade);
+    float tailIn = smoothstep(0.0, fTail, rel);
+    float headIn = 1.0 - smoothstep(length - fHead, length, rel);
+    return tailIn * headIn;
 }
 
 // ---------------------------------------------------------------------------
@@ -511,8 +500,7 @@ void main() {
     // starting at 0 sits right after dark - the old circular-mean smear lit
     // the whole corner. See neon.frag for full rationale.
     float sPos = perimeterPosition(vPos);
-    // Continuous-gate feathers are pixel-space spans expressed as perimeter
-    // fractions (see HEAD_FEATHER_PX / TAIL_FEATHER_PX in neon-tuning.h).
+    // Inward feathers: convert pixel widths to perimeter fractions.
     float r      = clamp(uCornerRadius, 0.0, min(uRectSize.x, uRectSize.y) * 0.5);
     float peri   = 2.0 * (uRectSize.x + uRectSize.y - 4.0 * r) + 2.0 * 3.141592653589793 * r;
     float headF  = HEAD_FEATHER_PX / peri;

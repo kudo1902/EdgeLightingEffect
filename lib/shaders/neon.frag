@@ -308,31 +308,31 @@ float arcInside(float si, float start, float length, float invNumSamples) {
     return max(g1a * g2a, g1b * g2b);
 }
 
-// Continuous [0,1] coverage of a fragment at CONTINUOUS perimeter position
-// @p sPos by the arc [start, start+length]. Unlike arcInside (which samples
-// at the 128 fixed gather points and so quantises the arc head to 1/N of the
-// perimeter), this reads the arc directly at the fragment's own sub-sample
-// position, so a slowly growing arc head moves smoothly at ANY duration.
-// Used only to gate the sharp SDF filament; the halo/bloom stay on the
-// sample gather (they're wide and blurry, so their 1/N stepping is invisible).
-// @p fHead / @p fTail are the head/tail feathers in perimeter-fraction units.
+// Continuous [0,1] coverage of a fragment for the arc [start, start+length],
+// used to gate the sharp SDF filament. INWARD FEATHER: the smooth ramps sit
+// INSIDE the arc's own perimeter span, so nothing outside the arc gets lit.
+// This trades a small visible inset (arc starts at start+fTail and ends at
+// start+length-fHead) for two hard-won properties:
+//   - No bleed onto adjacent edges past corners: coverage is exactly 0 for
+//     any fragment whose perimeter position falls outside [start, start+length].
+//   - Smooth, isotropic endpoints: the fade profile is a plain smoothstep in
+//     the perimeter parameter, so it reads the same shape whether the endpoint
+//     sits on a straight edge or right at a corner.
+//
+// Feather widths are perimeter fractions (pixel-space widths / current perimeter,
+// converted at the call site).
 float arcCoverContinuous(float sPos, float start, float length, float fHead, float fTail) {
     if (length >= 1.0 - 1e-6) return 1.0;   // full coverage
     if (length <= 1e-6)       return 0.0;   // empty
     float rel = sPos - start;
-    rel -= floor(rel);                       // fract -> [0,1): distance past start
-    // Feathers sit OUTSIDE the arc on each side, so coverage is exactly 1 at
-    // the start (rel = 0) and reaches the end point (rel = length) - no inset
-    // gap at either end. The tail wrap (rel -> 1) ramps coverage up as it
-    // approaches the start from the other side of the circle, antialiasing the
-    // start edge. With the exact geometric sPos and a small pixel-space
-    // TAIL_FEATHER_PX, that ramp only lights a few px past the start - the
-    // corner curve an arc beginning at position 0 sits right after stays dark.
-    //   tail: 0 at rel = 1 - fTail, 1 by rel = 1 (= start).
-    //   head: 1 up to length, 0 by length + fHead.
-    float tailWrap = smoothstep(1.0 - fTail, 1.0, rel);
-    float headFade = 1.0 - smoothstep(length, length + fHead, rel);
-    return max(tailWrap, headFade);
+    rel -= floor(rel);                       // wrap to [0, 1): distance past start
+    // Tail ramps IN from 0 at rel = 0 (start) to 1 at rel = fTail.
+    float tailIn = smoothstep(0.0, fTail, rel);
+    // Head ramps OUT from 1 at rel = length - fHead to 0 at rel = length.
+    float headIn = 1.0 - smoothstep(length - fHead, length, rel);
+    // Fragments past `length` in perim get headIn = 0 -> coverage = 0 (no bleed).
+    // Fragments behind start wrap to rel near 1 -> also headIn = 0 -> coverage = 0.
+    return tailIn * headIn;
 }
 
 // ---------------------------------------------------------------------------
@@ -580,8 +580,8 @@ void main() {
     // of the sample phases, which smeared the whole corner curve to ~0 and
     // lit it for any arc starting at position 0.
     float sPos = perimeterPosition(vPos);
-    // Continuous-gate feathers are pixel-space spans expressed as perimeter
-    // fractions (see HEAD_FEATHER_PX / TAIL_FEATHER_PX in neon-tuning.h).
+    // Inward feathers: convert pixel widths to perimeter fractions at the
+    // current geometry.
     float r      = clamp(uCornerRadius, 0.0, min(uRectSize.x, uRectSize.y) * 0.5);
     float peri   = 2.0 * (uRectSize.x + uRectSize.y - 4.0 * r) + 2.0 * 3.141592653589793 * r;
     float headF  = HEAD_FEATHER_PX / peri;
@@ -590,11 +590,6 @@ void main() {
     for (int a = 0; a < uArcCount; a++) {
         vec4 arc = uArcs[a];
         if (arc.z <= 0.0) continue;                       // dark arc: no filament
-        // Feathers sit OUTSIDE the arc on each side, so the filament is fully
-        // lit AT the arc's start and reaches its end (no inset gap). With the
-        // exact geometric sPos the tail feather only wraps a few px onto the
-        // corner curve an arc starting at 0 sits right after - no more smear
-        // lighting the whole corner.
         contCover = max(contCover,
                         arcCoverContinuous(sPos, arc.x, arc.y, headF, tailF));
     }
