@@ -294,6 +294,22 @@ float arcInside(float si, float start, float length, float invNumSamples) {
     return max(g1a * g2a, g1b * g2b);
 }
 
+// Continuous [0,1] TAPER for the filament's PERPENDICULAR sigma. Peaks at 1
+// in the arc INTERIOR and ramps down to 0 across each endpoint (taper
+// STRADDLES the endpoint - half inside, half outside). See neon.frag for the
+// full rationale.
+float arcTipTaper(float sPos, float start, float length, float fSpan) {
+    if (length >= 1.0 - 1e-6) return 1.0;
+    if (length <= 1e-6)       return 0.0;
+    float centre = start + length * 0.5;
+    float rel    = sPos - centre;
+    rel         -= floor(rel + 0.5);
+    float d       = abs(rel);
+    float halfLen = length * 0.5;
+    float fHalf   = min(fSpan * 0.5, halfLen);
+    return 1.0 - smoothstep(halfLen - fHalf, halfLen + fHalf, d);
+}
+
 // Continuous [0,1] arc coverage at a fragment's CONTINUOUS perimeter position
 // @p sPos - reads the arc directly instead of sampling the fixed gather
 // points, so a slow arc head moves smoothly at any duration. Gates only the
@@ -345,6 +361,25 @@ void main() {
     if (d >  uOutsideCutoff + outSoft) discard;
     if (d < -uInsideCutoff  - inSoft ) discard;
 
+    // --- Perimeter position + continuous arc coverage (hoisted) ------------
+    // See neon.frag: hoisted so contCover can also taper the filament width.
+    float sPos   = perimeterPosition(vPos);
+    float r      = clamp(uCornerRadius, 0.0, min(uRectSize.x, uRectSize.y) * 0.5);
+    float peri   = 2.0 * (uRectSize.x + uRectSize.y - 4.0 * r) + 2.0 * 3.141592653589793 * r;
+    float headF  = HEAD_FEATHER_PX / peri;
+    float tailF  = TAIL_FEATHER_PX / peri;
+    float tipTaperF = TIP_TAPER_PX / peri;
+    float contCover = 0.0;
+    float tipTaper  = 0.0;
+    for (int a = 0; a < uArcCount; a++) {
+        vec4 arc = uArcs[a];
+        if (arc.z <= 0.0) continue;
+        contCover = max(contCover,
+                        arcCoverContinuous(sPos, arc.x, arc.y, headF, tailF));
+        tipTaper  = max(tipTaper,
+                        arcTipTaper(sPos, arc.x, arc.y, tipTaperF));
+    }
+
     // --- Filament -----------------------------------------------------
     // Generalized-Gaussian profile with exponentially smooth falloff (matches
     // the base NeonRenderer so the two look identical):
@@ -367,7 +402,9 @@ void main() {
     // lineWidth = FILAMENT_MIN_HALF_WIDTH * 2, so lineWidth = 0 means "no
     // line" instead of a single-pixel bright dot.
     float halfWidth = uLineWidth * 0.5;
-    float sigma     = max(halfWidth, 0.5);
+    // Symmetric width taper at each endpoint via tipTaper (see neon.frag).
+    // tipTaper ramps 1 -> 0 across the last TIP_TAPER_PX inside each arc end.
+    float sigma     = max(halfWidth * tipTaper, TIP_SIGMA_FLOOR_PX);
     float N         = 2.0 * max(uFilamentFalloff, 1e-3);
     float core      = exp2(-pow(ad / sigma, N));
     float lineGate  = clamp(uLineWidth / (FILAMENT_MIN_HALF_WIDTH * 2.0), 0.0, 1.0);
@@ -501,30 +538,26 @@ void main() {
     // below (no sample stepping, no tail corner spill). See neon.frag.
     float segFraction = wsumSeg / max(wsum, WSUM_EPSILON);
     float filamentGate = smoothstep(0.5, 1.0, segFraction);
+    // sPos / peri / contCover hoisted above the filament formula so contCover
+    // can also taper sigma. See neon.frag.
+    filamentGate = max(filamentGate, contCover);
 
-    // Continuous arc coverage for the filament: gate by the arc read at this
-    // fragment's own perimeter position, recovered GEOMETRICALLY from vPos
-    // (inverse of the CPU's GetPointOnRectangle) so a slow tracer's head moves
-    // smoothly instead of stepping across the gather points. Feathers point
-    // OUTWARD so the filament is lit at the arc start (no dark lead-in) and
-    // reaches its end. The exact position also keeps the corner curve an arc
-    // starting at 0 sits right after dark - the old circular-mean smear lit
-    // the whole corner. See neon.frag for full rationale.
-    float sPos = perimeterPosition(vPos);
-    // Continuous-gate feathers are pixel-space spans expressed as perimeter
-    // fractions (see HEAD_FEATHER_PX / TAIL_FEATHER_PX in neon-tuning.h).
-    float r      = clamp(uCornerRadius, 0.0, min(uRectSize.x, uRectSize.y) * 0.5);
-    float peri   = 2.0 * (uRectSize.x + uRectSize.y - 4.0 * r) + 2.0 * 3.141592653589793 * r;
-    float headF  = HEAD_FEATHER_PX / peri;
-    float tailF  = TAIL_FEATHER_PX / peri;
-    float contCover = 0.0;
+    // Fragment-level halo/bloom arc gate: stops the still-lit samples' halo
+    // kernels from bleeding along a shared edge into the gap past the arc
+    // endpoints. Wider feathers than the filament so the halo tapers naturally
+    // over a short distance and then goes dark. Segments covered by
+    // segFraction so gap-only segments still light halo/bloom locally.
+    // See neon.frag for the full rationale.
+    float haloHeadF = HALO_HEAD_FEATHER_PX / peri;
+    float haloTailF = HALO_TAIL_FEATHER_PX / peri;
+    float haloArcCover = 0.0;
     for (int a = 0; a < uArcCount; a++) {
         vec4 arc = uArcs[a];
         if (arc.z <= 0.0) continue;
-        contCover = max(contCover,
-                        arcCoverContinuous(sPos, arc.x, arc.y, headF, tailF));
+        haloArcCover = max(haloArcCover,
+                           arcCoverContinuous(sPos, arc.x, arc.y, haloHeadF, haloTailF));
     }
-    filamentGate = max(filamentGate, contCover);
+    float haloGateFrag = max(haloArcCover, segFraction);
 
     // Halo visibility follows glowRadius (glowRadius == 0 -> filament only).
     float haloGate = clamp(uGlowRadius / max(haloFloor, 1e-4), 0.0, 1.0);
@@ -533,8 +566,8 @@ void main() {
     vec3 lightCol = col * uIntensity + segCol;
 
     vec3 result  = lightCol * core  * FILAMENT_GAIN  * filamentGate * lineGate;
-    result      += lightCol * glow  * HALO_GAIN      * haloGate;
-    result      += lightCol * bloom * uBloomStrength;
+    result      += lightCol * glow  * HALO_GAIN      * haloGate * haloGateFrag;
+    result      += lightCol * bloom * uBloomStrength * haloGateFrag;
 
     // --- One-sided cut ---
     if (uGlowSide == GLOW_SIDE_INSIDE)       result *= smoothstep( softEdge, -softEdge, d);

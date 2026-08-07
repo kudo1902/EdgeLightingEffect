@@ -308,6 +308,36 @@ float arcInside(float si, float start, float length, float invNumSamples) {
     return max(g1a * g2a, g1b * g2b);
 }
 
+// Continuous [0,1] TAPER for the filament's PERPENDICULAR sigma. Peaks at 1
+// in the arc INTERIOR and ramps down to 0 across each endpoint - the taper
+// zone STRADDLES the endpoint (half inside, half outside), so at the endpoint
+// itself sigma is halfWidth * 0.5 and continues to shrink past it as
+// contCover fades brightness. The visible tip becomes a soft point instead of
+// a sharp cut. Distinct from arcCoverContinuous (that one gates BRIGHTNESS
+// outside the endpoints with tight along-edge feathers to keep the tail wrap
+// from lighting the corner curve). @p fSpan is the FULL taper span in
+// perimeter fractions - half of it sits inside the arc, half outside. Capped
+// per-arc at length so very short arcs still light (peak in the middle).
+float arcTipTaper(float sPos, float start, float length, float fSpan) {
+    if (length >= 1.0 - 1e-6) return 1.0;
+    if (length <= 1e-6)       return 0.0;
+    // Signed wrap-distance to the arc's centre, in [-0.5, 0.5]. Using the
+    // centre keeps both endpoints symmetric and lets the taper extend equally
+    // inside and outside without a special case.
+    float centre = start + length * 0.5;
+    float rel    = sPos - centre;
+    rel         -= floor(rel + 0.5);          // wrap to [-0.5, 0.5]
+    float d       = abs(rel);                 // 0 at centre, length/2 at endpoint
+    float halfLen = length * 0.5;
+    // Taper half-span, capped so the two straddling zones never overlap the
+    // opposite endpoint (would darken the middle of a short arc).
+    float fHalf   = min(fSpan * 0.5, halfLen);
+    // Full at d = halfLen - fHalf (inside end of taper), 0.5 at d = halfLen
+    // (endpoint), 0 at d = halfLen + fHalf (outside). Smoothstep for a soft
+    // curve.
+    return 1.0 - smoothstep(halfLen - fHalf, halfLen + fHalf, d);
+}
+
 // Continuous [0,1] coverage of a fragment at CONTINUOUS perimeter position
 // @p sPos by the arc [start, start+length]. Unlike arcInside (which samples
 // at the 128 fixed gather points and so quantises the arc head to 1/N of the
@@ -364,6 +394,38 @@ void main() {
     if (d >  uOutsideCutoff + outSoft) discard;
     if (d < -uInsideCutoff  - inSoft ) discard;
 
+    // --- Perimeter position + continuous arc coverage (hoisted) ------------
+    // Recover the fragment's OWN continuous perimeter position GEOMETRICALLY
+    // from vPos (inverse of the CPU's GetPointOnRectangle) and read each arc
+    // at that position. Hoisted above the filament so contCover can taper the
+    // filament width (sigma) toward the arc endpoints - see the sigma line
+    // below. Same value later gates filamentGate and the halo/bloom.
+    float sPos   = perimeterPosition(vPos);
+    float r      = clamp(uCornerRadius, 0.0, min(uRectSize.x, uRectSize.y) * 0.5);
+    float peri   = 2.0 * (uRectSize.x + uRectSize.y - 4.0 * r) + 2.0 * 3.141592653589793 * r;
+    float headF  = HEAD_FEATHER_PX / peri;
+    float tailF  = TAIL_FEATHER_PX / peri;
+    float tipTaperF = TIP_TAPER_PX / peri;
+    float contCover = 0.0;
+    float tipTaper  = 0.0;
+    for (int a = 0; a < uArcCount; a++) {
+        vec4 arc = uArcs[a];
+        if (arc.z <= 0.0) continue;                       // dark arc: no filament
+        // contCover: brightness gate; feathers sit OUTSIDE the arc on each
+        // side so the filament is fully lit AT the arc's start and reaches
+        // its end (no inset gap). With the exact geometric sPos the tail
+        // feather only wraps a few px onto the corner curve an arc starting
+        // at 0 sits right after - no more smear lighting the whole corner.
+        contCover = max(contCover,
+                        arcCoverContinuous(sPos, arc.x, arc.y, headF, tailF));
+        // tipTaper: symmetric width taper from INSIDE the arc so both the
+        // leading and trailing heads narrow to a point at the endpoint. Kept
+        // independent of contCover's tiny tail feather so the tail wrap stays
+        // safe against corner lighting.
+        tipTaper  = max(tipTaper,
+                        arcTipTaper(sPos, arc.x, arc.y, tipTaperF));
+    }
+
     // --- Filament -----------------------------------------------------
     // Generalized-Gaussian profile with exponentially smooth falloff:
     //
@@ -386,7 +448,14 @@ void main() {
     // lineWidth = FILAMENT_MIN_HALF_WIDTH * 2, so lineWidth = 0 means "no
     // line" instead of a single-pixel bright dot.
     float halfWidth = uLineWidth * 0.5;
-    float sigma     = max(halfWidth, 0.5);
+    // Taper the filament WIDTH toward each arc endpoint so leading and
+    // trailing heads narrow to a point instead of being chopped off flat.
+    // tipTaper is 1 in the arc interior and ramps down to 0 AT each endpoint
+    // (from INSIDE the arc) over TIP_TAPER_PX along the perimeter, symmetric
+    // at both ends. Decoupled from contCover so the tight TAIL_FEATHER_PX
+    // brightness gate stays intact (needed to keep the corner curve dark
+    // before an arc starting at 0). The 0.5 px floor keeps sigma safe.
+    float sigma     = max(halfWidth * tipTaper, TIP_SIGMA_FLOOR_PX);
     float N         = 2.0 * max(uFilamentFalloff, 1e-3);
     float core      = exp2(-pow(ad / sigma, N));
     float lineGate  = clamp(uLineWidth / (FILAMENT_MIN_HALF_WIDTH * 2.0), 0.0, 1.0);
@@ -570,35 +639,35 @@ void main() {
     //     has neither problem: it is smooth and is exactly zero before start.
     float segFraction = wsumSeg / max(wsum, WSUM_EPSILON);
     float filamentGate = smoothstep(0.5, 1.0, segFraction);
+    // sPos / peri / contCover are hoisted above the filament formula so
+    // contCover can also taper sigma. contCover is a per-fragment continuous
+    // arc coverage: 1 inside the arc's along-perimeter range, ramping to 0
+    // over HEAD_FEATHER_PX / TAIL_FEATHER_PX past each endpoint.
+    filamentGate = max(filamentGate, contCover);
 
-    // --- Continuous arc coverage for the filament ------------------------
-    // Recover the fragment's OWN continuous perimeter position GEOMETRICALLY
-    // from vPos (inverse of the CPU's GetPointOnRectangle) and read each arc
-    // directly there. Far-from-line fragments get a valid position too, but
-    // their filament core ~= 0 so it never shows. The geometric inverse is
-    // exact even at corners, unlike the old proximity-weighted circular mean
-    // of the sample phases, which smeared the whole corner curve to ~0 and
-    // lit it for any arc starting at position 0.
-    float sPos = perimeterPosition(vPos);
-    // Continuous-gate feathers are pixel-space spans expressed as perimeter
-    // fractions (see HEAD_FEATHER_PX / TAIL_FEATHER_PX in neon-tuning.h).
-    float r      = clamp(uCornerRadius, 0.0, min(uRectSize.x, uRectSize.y) * 0.5);
-    float peri   = 2.0 * (uRectSize.x + uRectSize.y - 4.0 * r) + 2.0 * 3.141592653589793 * r;
-    float headF  = HEAD_FEATHER_PX / peri;
-    float tailF  = TAIL_FEATHER_PX / peri;
-    float contCover = 0.0;
+    // --- Fragment-level halo/bloom arc gate --------------------------------
+    // The per-sample arcInside gate above turns samples OFF past the arc
+    // endpoints but does nothing to stop still-lit samples from bleeding
+    // halo/bloom kernels along a shared edge into the gap: a fragment on the
+    // same edge as the last-lit samples receives their full colinear halo
+    // tail, showing as a thin horizontal streak past the arc end (the
+    // "faint line trailing into the top-left corner" bug on start=0/len<1).
+    // Mirror the filament's fragment-level continuous gate here with WIDER
+    // feathers (HALO_HEAD_FEATHER_PX / HALO_TAIL_FEATHER_PX) so the halo
+    // still tapers naturally past the endpoint over a short distance and
+    // then goes dark. Segments are covered by segFraction (a fragment-level
+    // lit fraction) so a segment inside the gap still lights halo/bloom
+    // locally.
+    float haloHeadF = HALO_HEAD_FEATHER_PX / peri;
+    float haloTailF = HALO_TAIL_FEATHER_PX / peri;
+    float haloArcCover = 0.0;
     for (int a = 0; a < uArcCount; a++) {
         vec4 arc = uArcs[a];
-        if (arc.z <= 0.0) continue;                       // dark arc: no filament
-        // Feathers sit OUTSIDE the arc on each side, so the filament is fully
-        // lit AT the arc's start and reaches its end (no inset gap). With the
-        // exact geometric sPos the tail feather only wraps a few px onto the
-        // corner curve an arc starting at 0 sits right after - no more smear
-        // lighting the whole corner.
-        contCover = max(contCover,
-                        arcCoverContinuous(sPos, arc.x, arc.y, headF, tailF));
+        if (arc.z <= 0.0) continue;
+        haloArcCover = max(haloArcCover,
+                           arcCoverContinuous(sPos, arc.x, arc.y, haloHeadF, haloTailF));
     }
-    filamentGate = max(filamentGate, contCover);
+    float haloGateFrag = max(haloArcCover, segFraction);
 
     // Halo visibility follows glowRadius so glowRadius == 0 means "filament
     // only". Below the anti-bead floor the kernel can't shrink further, so we
@@ -611,8 +680,8 @@ void main() {
     vec3 lightCol = col * uIntensity + segCol;
 
     vec3 result  = lightCol * core  * FILAMENT_GAIN  * filamentGate * lineGate;
-    result      += lightCol * glow  * HALO_GAIN      * haloGate;
-    result      += lightCol * bloom * uBloomStrength;
+    result      += lightCol * glow  * HALO_GAIN      * haloGate * haloGateFrag;
+    result      += lightCol * bloom * uBloomStrength * haloGateFrag;
 
     // --- One-sided cut: mask the WHOLE emission at the line ----------
     if (uGlowSide == GLOW_SIDE_INSIDE)       result *= smoothstep( softEdge, -softEdge, d);

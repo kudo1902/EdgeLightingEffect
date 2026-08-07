@@ -44,6 +44,42 @@
 #define HALO_NORM_FACTOR          0.43
 #define HALO_SPACING_FLOOR        1.2
 
+// --- Filament tip taper (perpendicular width). Independent of the along-edge
+//     brightness gate (HEAD_FEATHER_PX / TAIL_FEATHER_PX): those are tiny (2
+//     and 10 px) to keep the tail wrap from lighting the corner curve before
+//     the arc start and to keep the brightness fall-off sharp. This knob
+//     shrinks the filament's PERPENDICULAR sigma symmetrically at each
+//     endpoint, from INSIDE the arc, so the leading and trailing heads
+//     visibly narrow to a point instead of being chopped off flat. Applied
+//     over the last TIP_TAPER_PX along the perimeter at each end. Divided by
+//     the current perimeter at the call site.
+//     A big value produces a long ogive/spire tip; small produces a stub.
+//     Bounded per-arc by length/2 so short arcs still peak in the middle. ---
+#define TIP_TAPER_PX              120.0
+
+// --- Filament sigma floor at the tip. Sigma = max(halfWidth * tipTaper,
+//     TIP_SIGMA_FLOOR_PX). Kept small so the tip reaches an actual point
+//     rather than a constant-width 1 px nub. Not zero because pow(ad/0, N) is
+//     undefined at ad = 0 on some drivers; 0.05 keeps the on-axis pixel lit
+//     while making the off-axis Gaussian collapse to sub-pixel width. ---
+#define TIP_SIGMA_FLOOR_PX        0.05
+
+// --- Halo/bloom fragment-level arc-cover feathers. The per-sample arcInside
+//     gate turns samples off past the arc endpoints but does nothing to stop
+//     still-lit samples from bleeding their halo/bloom kernels along a shared
+//     edge into the gap - a fragment on the same top edge as the last-lit
+//     samples receives their full colinear halo tail, showing as a thin
+//     horizontal streak past the arc end. These feathers are consumed by the
+//     fragment-level arcCoverContinuous gate on glow/bloom (mirroring what the
+//     filament already does), sized wider than the filament feathers so the
+//     halo still tapers naturally past the arc endpoint over a short distance,
+//     then goes dark. Divided by the current perimeter at the call site. ---
+// Widened so the gate transition into the arc gap reads as a smooth halo
+// fall-off, not a hard step - closes the visible dark wedge that otherwise
+// forms right next to a corner when the arc ends near it.
+#define HALO_HEAD_FEATHER_PX      120.0
+#define HALO_TAIL_FEATHER_PX      60.0
+
 // --- Bloom (wide background spill) ---
 #define BLOOM_REACH_TO_GLOW       6.0
 #define BLOOM_SPACING_FLOOR       4.0
