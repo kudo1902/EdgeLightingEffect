@@ -130,6 +130,10 @@ sum in HDR.
 
 ### 4.1 NeonRenderer (`lib/src/renderer/neon-renderer.cpp` + `shaders/neon.frag`)
 
+> `shaders/neon.frag` is shared with @ref NeonOptimizedRenderer - one body
+> compiled into two programs that differ only in the injected
+> `NEON_LOOP_BOUND` macro. See [`emission-prepass.md`](emission-prepass.md) §10.
+
 Full-resolution neon stroke, drawn in two passes. Highlights:
 
 - **Emission pre-pass** (`shaders/neon-emission.frag` → `mEmissionBuffer`,

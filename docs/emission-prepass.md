@@ -107,7 +107,7 @@ transform, then one call per pass, with each pass in its own private method.
 | ---- | ------ | ------ | ---- |
 | - | `packLightBlocks` | - | UBO upload only |
 | 0 | `renderEmissionPass` | `mEmissionBuffer` | `mBlitVertexArray`, identity MVP |
-| 1 | `renderHalfResNeonPass` | `mHalfResBuffer` | scaled glow quad, `neon-optimized.frag` |
+| 1 | `renderHalfResNeonPass` | `mHalfResBuffer` | scaled glow quad, `neon.frag` (dynamic variant) |
 | 2a | `renderOpaqueFill` (opaque modes only) | backbuffer | black rounded-rect fill |
 | 2b | `renderBlitPass` | backbuffer | bilinear composite of the half-res FBO |
 
@@ -337,16 +337,77 @@ Practical consequences when extending the neon renderers:
 - **Do not gate the filament from the gather.** Both lights now read their
   coverage at `sPos`. Reintroducing a gather-derived gate brings back the head
   quantisation and the corner spill.
-- **Keep the two shaders in step.** `neon.frag` and `neon-optimized.frag` share
-  the pre-pass, so a change to the emission packing has to land in both
-  consumers. `neon-emission.frag` itself is shared verbatim.
+- **There is only one neon fragment shader.** `neon.frag` is compiled twice from
+  one body, differing solely in the `NEON_LOOP_BOUND` macro injected by
+  `shaders.h.in` (see §11). Do not fork it again to give one renderer a tweak -
+  add a macro variant or a uniform instead.
 - **Adding a shader means three edits** - `lib/CMakeLists.txt`
   (`CMAKE_CONFIGURE_DEPENDS` and `file(READ ...)`) plus `shaders/shaders.h.in`.
   `neon-emission.frag` needs `@NEON_TUNING@` injected because it uses
   `MAX_ARCS`, `MAX_SEGMENT_BOOSTS`, `NEON_MAX_LOOP_SAMPLES` and
   `HEAD_FEATHER_PX`.
 
-## 10. Not done
+## 10. One shader, two variants
+
+Both renderers compile `shaders/neon.frag`. The half-res renderer used to have
+its own near-identical copy (`neon-optimized.frag`); by the time the pre-pass had
+lifted the gather's inner loops out, the two files differed by **7 code lines**,
+of which only the loop bound was semantic. The copy is gone.
+
+What is left is a single macro, injected per variant in `shaders.h.in`:
+
+| variant | `NEON_LOOP_BOUND` | consumer |
+| ------- | ----------------- | -------- |
+| `NEON_FRAG_SRC` | `NEON_MAX_LOOP_SAMPLES` | `NeonRenderer` |
+| `NEON_FRAG_DYNAMIC_SRC` | `uNumSamples` | `NeonOptimizedRenderer` |
+
+**Why a macro and not just a uniform.** Feeding the bound in as `uNumSamples`
+everywhere is simpler and works correctly - it just costs about 12%. Measured on
+an M-series GPU at 3840x2160, mean of 210 frames:
+
+| scene | constant bound | uniform bound | cost |
+| ----- | -------------- | ------------- | ---- |
+| 1 full arc | 14.56 ms | 16.37 ms | +12.4% |
+| partial arc + segment | 14.65 ms | 16.51 ms | +12.7% |
+| 8 arcs + 8 segments | 15.56 ms | 17.46 ms | +12.3% |
+
+Consistent ~12% across every scene. The macro keeps the merge free.
+
+**What the 12% actually is.** Not the uniform read - both variants hoist it into
+a register before the loop (`int n = uNumSamples;`), so it is never re-read per
+iteration. Not constant-index addressing either: a hand-written 4x unroll with
+*dynamic* indices (`k`, `k+1`, `k+2`, `k+3`, base `k` a runtime value) recovers
+the whole gap and then some, at **13.76 ms** on the arc+segment scene versus
+14.53 ms for the constant bound. Literal indices were never available to that
+variant, so they cannot be the mechanism.
+
+What is left is loop structure: per-iteration branch overhead, and - most likely
+dominant, since the body is one `texelFetch` followed by a few multiply-adds -
+memory-level parallelism. One fetch per iteration behind a loop-carried branch
+means one request in flight per thread; four independent gathers in a straight
+run means four. Separating those two would need an unroll-depth sweep, which has
+not been run.
+
+The corollary is that the driver's own unrolling of the constant-bound loop is
+conservative - see §11.
+
+`uNumSamples` is still declared unconditionally in `neon.frag`; in the full-res
+variant the macro resolves to a literal, the uniform goes unreferenced, and the
+compiler drops it (so `NeonRenderer` never sets it).
+
+## 11. Not done
+
+- **Manual unrolling of the gather.** A 4x unroll measured **13.76 ms** against
+  14.53 ms for the shipped constant-bound loop on the arc+segment scene (three
+  runs each, spread under 0.1 ms), and was byte-identical in output - the four
+  gathers accumulate in the same order, so the float sums are unchanged. It also
+  makes the `NEON_LOOP_BOUND` macro redundant: with the unroll written out in the
+  source, the dynamic bound is no longer slower, so both renderers could share a
+  single `uNumSamples`-bounded variant and `NEON_FRAG_DYNAMIC_SRC` could go away.
+  Two things to settle first: an unroll depth chosen by sweeping 2 / 4 / 8 rather
+  than guessing, and the `uNumSamples % 4 == 0` requirement (128 and the default
+  64 both qualify, but `optimizedNeon.numSamples` is a free slider - either clamp
+  it to a multiple of the unroll depth or add a remainder loop).
 
 - `NEON_MAX_LOOP_SAMPLES` is still 128. It sets the minimum crisp halo radius via
   `haloFloor = uSampleSpacing * HALO_SPACING_FLOOR`, so raising it buys tighter
