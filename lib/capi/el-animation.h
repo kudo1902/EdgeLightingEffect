@@ -87,9 +87,12 @@ extern "C"
     EL_API el_animation_handle_t el_animation_create_segment_bounce(float duration,
                                                                     float length, float boost);
 
-    /** @brief One-shot outline tracer - arc[0] grows from 0 length to full. */
+    /** @brief One-shot outline tracer - arc[0] length grows from 0 to
+     *         @p maxLength (default 1 = full perimeter; may exceed 1 to keep
+     *         the head wrapping past the tail). */
     EL_API el_animation_handle_t el_animation_create_outline_tracer(float duration,
-                                                                    el_easing_e easing);
+                                                                    el_easing_e easing,
+                                                                    float maxLength);
 
     /** @brief One-shot arc wipe - arc[0] grows from @p startPosition to
      *         @p endPosition, capped at @p maxLength. */

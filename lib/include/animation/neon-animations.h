@@ -452,10 +452,16 @@ namespace EdgeLighting
     // -------------------------------------------------------------------------
 
     /// @brief One-shot animation that progressively lights up the outline.
-    /// @details Sweeps @c neon.arcs[0].length from 0 to 1 over @p duration
-    ///          seconds, ending fully lit and held. Does NOT touch
+    /// @details Sweeps @c neon.arcs[0].length from 0 to @p maxLength over
+    ///          @p duration seconds, ending fully lit and held. Does NOT touch
     ///          @c arcs[0].start - set that externally (slider, code, another
     ///          animation) to choose where the trace begins.
+    ///
+    ///          @p maxLength may exceed 1 (the full perimeter). The shader's
+    ///          coverage saturates at 1, so the extra sweep past the full ring
+    ///          simply keeps the whole outline lit while the trace's head wraps
+    ///          past its own tail - useful for pacing the draw against a
+    ///          fixed-duration schedule where the head position itself matters.
     ///
     /// Auto-grows @c cfg.neon.arcs to contain at least entry [0] on first
     /// write (default config already has one full-perimeter arc, so this is
@@ -470,13 +476,17 @@ namespace EdgeLighting
     class OutlineTracer : public Animation
     {
     public:
-        /// @param duration Total draw time in seconds.
-        /// @param curve    Easing curve for the sweep.
+        /// @param duration  Total draw time in seconds.
+        /// @param curve     Easing curve for the sweep.
+        /// @param maxLength Target arc length the sweep ends at; may exceed 1
+        ///                  to keep tracing past the full perimeter.
         OutlineTracer(float duration = 2.0f,
-                      EasingFunction::Curve curve = EasingFunction::OutCubic)
+                      EasingFunction::Curve curve = EasingFunction::OutCubic,
+                      float maxLength = 1.0f)
             : Animation(duration),
               mCurve(curve),
-              mEase(0.0f, 1.0f, duration, curve, /*loop=*/false) {}
+              mMaxLength(maxLength),
+              mEase(0.0f, maxLength, duration, curve, /*loop=*/false) {}
 
         void ApplyAt(Config &cfg, float elapsed) const override
         {
@@ -493,11 +503,12 @@ namespace EdgeLighting
         void RestoreBaseline(Config &cfg) const override { cfg.neon.arcs = mSavedArcs; }
         void OnDurationChanged(float d) override
         {
-            mEase = Ease(0.0f, 1.0f, d, mCurve, false);
+            mEase = Ease(0.0f, mMaxLength, d, mCurve, false);
         }
 
     private:
         EasingFunction::Curve mCurve;
+        float mMaxLength;
         Ease mEase;
         std::vector<Arc> mSavedArcs;
     };
