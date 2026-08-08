@@ -130,11 +130,23 @@ sum in HDR.
 
 ### 4.1 NeonRenderer (`lib/src/renderer/neon-renderer.cpp` + `shaders/neon.frag`)
 
-Single-pass full-resolution neon stroke. Highlights:
+Full-resolution neon stroke, drawn in two passes. Highlights:
 
+- **Emission pre-pass** (`shaders/neon-emission.frag` → `mEmissionBuffer`,
+  a `NEON_MAX_LOOP_SAMPLES × 1` RGBA16F FBO, RGBA8 fallback). Resolves, per
+  perimeter sample, which arc wins, what colour it contributes, what the
+  travelling segments add, and the resulting coverage - packing it into one
+  texel: `.rgb` = composed light colour (arc colour × mask × intensity +
+  segment contribution), `.a` = coverage. All of that is a pure function of
+  (sample position, time, config), so it costs 128 fragments per frame
+  instead of being recomputed by every screen fragment. The main pass reads
+  it with `texelFetch`. Shared verbatim with `NeonOptimizedRenderer`. Full
+  design notes, the algebra behind the one-texel packing, and the invariant
+  that keeps it correct: [`emission-prepass.md`](emission-prepass.md).
 - **Analytic rounded-box SDF** for the filament shape.
 - **Three baked LUTs** stored as GL textures, each with `REPEAT` wrap on U
-  so the gradient loops seamlessly at `s = 1 → 0`:
+  so the gradient loops seamlessly at `s = 1 → 0`. All three are consumed by
+  the emission pre-pass; the main shader never samples them:
   - `mGradientLUT` (1D, 256 texels) - the base perimeter gradient built
     from `NeonConfig::colorStops`.
   - `mSegmentLUT` (2D, W × `MAX_SEGMENT_BOOSTS`) - row `i` holds
@@ -143,15 +155,26 @@ Single-pass full-resolution neon stroke. Highlights:
   - `mArcLUT` (2D, W × `MAX_ARCS`) - row `a` holds arc `a`'s own
     gradient; same "empty row → fall back to base" convention.
 - **128 pre-computed perimeter loop samples** in a std140 UBO. Each fragment
-  gathers all 128 with distance-weighted contribution → halo, filament core,
-  bloom. Iteration count is compile-time constant (128) so the driver can
-  unroll.
-- **Winner-take-all arc gating** - for each perimeter sample the shader
+  gathers all 128 with distance-weighted contribution → halo, bloom, and the
+  filament's colour. Iteration count is compile-time constant (128) so the
+  driver can unroll. The loop body is one UBO read plus one `texelFetch` into
+  the emission texture; this gather is the one part the SDF cannot replace,
+  because `d` gives the distance to the *nearest* perimeter point (a `1/D³`
+  falloff) while the line integral yields the `1/D²` neon falloff, correct
+  soft caps at arc ends, and correct brightening where two perimeter
+  stretches are both near a fragment.
+- **Winner-take-all arc gating** - for each perimeter sample the pre-pass
   scans up to `MAX_ARCS` entries in `ArcBlock`, picks the arc with the
   largest `arcInside * intensity`, and uses *that* arc's colour + mask at
-  the sample. Because `arcInside` is smoothstepped one-sample-wide at each
-  end, adjacent arcs of different colours crossfade smoothly at the seam
-  without any special blend logic (§4.1a).
+  the sample. Because `arcInside` is smoothstepped at each end, adjacent
+  arcs of different colours crossfade smoothly at the seam without any
+  special blend logic (§4.1a).
+- **Continuous filament gate** - the sharp filament is never gated by the
+  gather. Both arcs and segments are read at the fragment's own perimeter
+  position, recovered geometrically from `vPos` by `perimeterPosition()`
+  (the inverse of `GeometryUtils::GetPointOnRectangle`). The gather would
+  quantise a light's head to the 128 sample points - visible stepping on a
+  slow tracer - and spill onto the corner preceding a light's tail.
 - **Hue-preserving Reinhard tonemap** - peak channel drives compression,
   R/G/B scale by the same ratio. Prevents "orange → peach" desaturation.
 - **Colour transition** - `mGradientLUT` cross-fades between the old and new
@@ -193,6 +216,10 @@ with a dynamic shader loop bound (`uNumSamples = optimizedNeon.numSamples`,
 1..128). Pass 2 bilinear-blits back to full res. Shares all visual params
 with `NeonConfig`. Meant for edge devices - the resolution-scale + sample-
 count sliders are the primary perf knobs.
+
+Its Pass 0 is the shared emission pre-pass (see
+[`emission-prepass.md`](emission-prepass.md)), with `uNumSamples` driven by
+the sample-count slider so a sample sits at `i / uNumSamples`.
 
 ### 4.3 WireframeRenderer
 
