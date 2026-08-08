@@ -1,6 +1,37 @@
 precision highp float;
 
 // ---------------------------------------------------------------------------
+// Shared by BOTH neon renderers.
+//
+// NeonRenderer and NeonOptimizedRenderer compile this same body into two
+// programs that differ in exactly one macro, injected by shaders.h.in:
+//
+//   NEON_LOOP_BOUND = NEON_MAX_LOOP_SAMPLES  -> NeonRenderer (full-res).
+//       A compile-time trip count, measured ~12% faster than feeding the same
+//       value in as a uniform (M-series GPU, 3840x2160) - which is why the bound
+//       is a macro and not simply a uniform. The gain is loop STRUCTURE, not
+//       addressing: a hand-written 4x unroll with dynamic indices beats this
+//       variant, so the driver's own unrolling here is evidently conservative.
+//       See emission-prepass.md section 10 before assuming otherwise.
+//   NEON_LOOP_BOUND = uNumSamples            -> NeonOptimizedRenderer.
+//       Driven by OptimizedNeonConfig::numSamples, so its perf slider really
+//       does iterate less.
+//
+// Everything else - including the half-res path - is identical: that renderer
+// pre-multiplies uRectSize, uLineWidth, the cutoffs and uSampleSpacing by its
+// resolution scale on the CPU, so this shader never learns what resolution it
+// is running at.
+//
+// Precision: highp (NOT mediump). On desktop GLES (ANGLE on Windows) mediump
+// maps to fp16, whose 65504 max and ~11-bit mantissa cannot hold the fragment
+// coordinates: the draw quad extends hundreds of px past the rect, so the
+// interpolated vPos and dot(dv, dv) overflow/quantise and the gather divides go
+// 0/0 = NaN, rasterising as scattered colour "noise dots". highp is mandatory
+// for fragment shaders in GLES 3.0, so this is safe on every 3.0 target; the
+// mediump ALU savings were not worth the precision breakage.
+// ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
 // Tuning constants
 // ---------------------------------------------------------------------------
 
@@ -47,6 +78,11 @@ layout(std140) uniform LoopSamplesBlock
 {
     vec4 uLoopSamples[NEON_MAX_LOOP_SAMPLES];
 };
+
+// Gather sample count, 1..NEON_MAX_LOOP_SAMPLES. Only read by the variant
+// compiled with NEON_LOOP_BOUND = uNumSamples; in the full-res variant the
+// macro resolves to a constant and this declaration is optimised away.
+uniform int uNumSamples;
 
 // Baked perimeter emission - one texel per loop sample, produced once per
 // frame by neon-emission.frag:
@@ -373,12 +409,11 @@ void main() {
     vec3  acc   = vec3(0.0); // composed light colour * per-sample gather weight
     float wsum  = 0.0;
 
-    // Compile-time constant loop bound: matches the LoopSamplesBlock UBO size,
-    // the emission texture width and the C++-side NEON_MAX_LOOP_SAMPLES so the
-    // compiler can unroll if it wants to.
-    const int numSamples = NEON_MAX_LOOP_SAMPLES;
-
-    for (int i = 0; i < numSamples; i++) {
+    // Loop bound comes in as a macro (see the header of this file): a literal
+    // constant for the full-res renderer so the driver can unroll, uNumSamples
+    // for the half-res one so its slider reduces work. Either way it is bounded
+    // by the LoopSamplesBlock array size and the emission texture width.
+    for (int i = 0; i < NEON_LOOP_BOUND; i++) {
         vec2  dv  = vPos - uLoopSamples[i].xy;
         float dd  = dot(dv, dv);
 

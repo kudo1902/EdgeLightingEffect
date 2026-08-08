@@ -5,8 +5,9 @@
 // Shared neon tuning constants - single source of truth.
 //
 // Consumed by BOTH:
-//   - the single-pass neon shaders (neon.frag, neon-optimized.frag), where
-//     CMake text-injects this file via @NEON_TUNING@ in shaders.h.in, and
+//   - the neon shaders (neon.frag - compiled in two variants - and
+//     neon-emission.frag), where CMake text-injects this file via
+//     @NEON_TUNING@ in shaders.h.in, and
 //   - the C++ renderers (neon-renderer.cpp, neon-optimized-renderer.cpp),
 //     which #include it for the early-out quad-sizing factors.
 //
@@ -26,7 +27,7 @@
 #define FILAMENT_MIN_HALF_WIDTH   0.5
 #define FILAMENT_GAIN             12.0
 
-// --- Continuous-arc filament gate feathers (neon.frag / neon-optimized.frag).
+// --- Continuous-arc filament gate feathers (neon.frag).
 //     INWARD FEATHER: the smooth ramp sits INSIDE the arc's own perimeter
 //     span, so nothing outside the arc gets lit -> no corner bleed regardless
 //     of width, no perpendicular spike, and the profile is a plain smoothstep

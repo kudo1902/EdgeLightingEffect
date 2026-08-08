@@ -109,13 +109,13 @@ namespace EdgeLighting
         VertexArray mNeonVertexArray{"NeonOpt.Pass1"};
         VertexArray mBlitVertexArray{"NeonOpt.Blit"};
 
-        /// Backs neon-optimized.frag's std140 `SegmentBlock` (DALi-compatible
+        /// Backs neon.frag's std140 `SegmentBlock` (DALi-compatible
         /// uniform block holding uSegmentCount + uSegments[]).
         UniformBuffer mSegmentBlock{"NeonOpt.SegmentBlock"};
-        /// Backs neon-optimized.frag's std140 `LoopSamplesBlock` - vec4 array
+        /// Backs neon.frag's std140 `LoopSamplesBlock` - vec4 array
         /// where .xy holds the perimeter point in FBO pixels.
         UniformBuffer mLoopSamplesBlock{"NeonOpt.LoopSamplesBlock"};
-        /// Backs neon-optimized.frag's std140 `ArcBlock` (uArcCount + uArcs[]).
+        /// Backs neon.frag's std140 `ArcBlock` (uArcCount + uArcs[]).
         UniformBuffer mArcBlock{"NeonOpt.ArcBlock"};
 
         float mSampleSpacing = 0.0f;

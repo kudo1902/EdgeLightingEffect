@@ -25,7 +25,7 @@ namespace EdgeLighting
             return c.enable ? c.size : CUTOFF_DISABLED_SIZE;
         }
 
-        /// CPU-side mirror of neon-optimized.frag's std140 `SegmentBlock`:
+        /// CPU-side mirror of neon.frag's std140 `SegmentBlock`:
         /// int padded to 16 bytes, each vec3 element padded to a vec4 stride.
         typedef struct SegmentBlockData
         {
@@ -37,7 +37,7 @@ namespace EdgeLighting
         static_assert(sizeof(SegmentBlockData) == 16 + 16 * MAX_SEGMENT_BOOSTS,
                       "SegmentBlockData must match the shader's std140 layout");
 
-        /// CPU-side mirror of neon-optimized.frag's std140 `LoopSamplesBlock`.
+        /// CPU-side mirror of neon.frag's std140 `LoopSamplesBlock`.
         /// Sized by NEON_MAX_LOOP_SAMPLES (neon-tuning.h) - the ceiling; the
         /// shader iterates only uNumSamples of them per frame.
         typedef struct LoopSamplesBlockData
@@ -48,7 +48,7 @@ namespace EdgeLighting
         static_assert(sizeof(LoopSamplesBlockData) == 16 * NEON_MAX_LOOP_SAMPLES,
                       "LoopSamplesBlockData must match the shader's std140 layout");
 
-        /// CPU-side mirror of neon-optimized.frag's std140 `ArcBlock`.
+        /// CPU-side mirror of neon.frag's std140 `ArcBlock`.
         typedef struct ArcBlockData
         {
             int32_t count;
@@ -202,8 +202,10 @@ namespace EdgeLighting
 
     bool NeonOptimizedRenderer::setupShaders()
     {
+        // Same fragment body as NeonRenderer, compiled with the dynamic
+        // NEON_LOOP_BOUND variant so numSamples stays a runtime knob.
         mNeonShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
-                                    ShaderSource::NEON_OPTIMIZED_FRAG_SRC,
+                                    ShaderSource::NEON_FRAG_DYNAMIC_SRC,
                                     "NeonOptimized");
 
         // Opaque-mode fullscreen black fill (shared with NeonRenderer): the
