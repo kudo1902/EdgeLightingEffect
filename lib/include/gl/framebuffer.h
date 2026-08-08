@@ -41,6 +41,8 @@ namespace EdgeLighting
               mTexture(other.mTexture),
               mWidth(other.mWidth),
               mHeight(other.mHeight),
+              mInternalFormat(other.mInternalFormat),
+              mFilter(other.mFilter),
               mName(std::move(other.mName))
         {
             other.mFbo = 0;
@@ -58,6 +60,8 @@ namespace EdgeLighting
                 mTexture = other.mTexture;
                 mWidth = other.mWidth;
                 mHeight = other.mHeight;
+                mInternalFormat = other.mInternalFormat;
+                mFilter = other.mFilter;
                 mName = std::move(other.mName);
                 other.mFbo = 0;
                 other.mTexture = 0;
@@ -67,12 +71,23 @@ namespace EdgeLighting
             return *this;
         }
 
-        /// Allocates or resizes the RGBA8 colour attachment to @p width × @p height.
-        /// No-op when the FBO already exists at the requested size - safe to call
-        /// every frame from the render loop. Logs a warning with the FBO's name
-        /// if the framebuffer ends up incomplete.
+        /// Allocates or resizes the colour attachment to @p width × @p height.
+        /// No-op when the FBO already exists at the requested size AND format -
+        /// safe to call every frame from the render loop. Logs a warning with
+        /// the FBO's name if the framebuffer ends up incomplete.
+        ///
+        /// @p internalFormat / @p format / @p type default to plain RGBA8. A
+        /// float format (e.g. GL_RGBA16F + GL_RGBA + GL_HALF_FLOAT) is required
+        /// when the attachment holds values outside [0, 1]; note that on GLES
+        /// 3.0 float colour-renderability is an extension, so callers that ask
+        /// for one should check the return value and fall back to RGBA8.
+        ///
+        /// @p filter picks the min/mag filter - pass GL_NEAREST for attachments
+        /// read back with texelFetch or point sampling.
         /// @return @c true on success (or no-op); @c false on failure.
-        bool Resize(int width, int height)
+        bool Resize(int width, int height,
+                    GLint internalFormat = GL_RGBA8, GLenum format = GL_RGBA,
+                    GLenum type = GL_UNSIGNED_BYTE, GLint filter = GL_LINEAR)
         {
             if (width <= 0 || height <= 0)
             {
@@ -80,7 +95,8 @@ namespace EdgeLighting
                 return false;
             }
 
-            if (mFbo != 0 && width == mWidth && height == mHeight)
+            if (mFbo != 0 && width == mWidth && height == mHeight &&
+                internalFormat == mInternalFormat && filter == mFilter)
             {
                 return true;
             }
@@ -89,9 +105,9 @@ namespace EdgeLighting
 
             glGenTextures(1, &mTexture);
             glBindTexture(GL_TEXTURE_2D, mTexture);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, nullptr);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
@@ -104,16 +120,18 @@ namespace EdgeLighting
 
             if (status != GL_FRAMEBUFFER_COMPLETE)
             {
-                LOG_E("Framebuffer[%s] incomplete after resize to %dx%d (status=0x%x).",
-                      mName.c_str(), width, height, status);
+                LOG_E("Framebuffer[%s] incomplete after resize to %dx%d (internalFormat=0x%x, status=0x%x).",
+                      mName.c_str(), width, height, internalFormat, status);
                 destroy();
                 return false;
             }
 
             mWidth = width;
             mHeight = height;
-            LOG_I("Framebuffer[%s] sized to %dx%d (id=%u, tex=%u).",
-                  mName.c_str(), mWidth, mHeight, mFbo, mTexture);
+            mInternalFormat = internalFormat;
+            mFilter = filter;
+            LOG_I("Framebuffer[%s] sized to %dx%d (id=%u, tex=%u, internalFormat=0x%x).",
+                  mName.c_str(), mWidth, mHeight, mFbo, mTexture, internalFormat);
             return true;
         }
 
@@ -170,6 +188,8 @@ namespace EdgeLighting
         GLuint mTexture = 0;
         int mWidth = 0;
         int mHeight = 0;
+        GLint mInternalFormat = GL_RGBA8; ///< Tracked so a format change forces a reallocation.
+        GLint mFilter = GL_LINEAR;        ///< Tracked for the same reason.
         std::string mName = "unnamed";
     };
 
