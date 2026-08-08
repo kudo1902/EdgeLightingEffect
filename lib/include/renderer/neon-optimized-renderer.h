@@ -14,16 +14,21 @@ namespace EdgeLighting
 {
     /// Half-resolution single-pass neon renderer for edge devices.
     ///
-    /// Two-pass approach:
+    /// Three-pass approach:
+    ///   Pass 0 - emission pre-pass (neon-emission.frag): one texel per
+    ///             perimeter sample holding that sample's composed colour and
+    ///             coverage. Shared with @ref NeonRenderer; see that class and
+    ///             neon-emission.frag for why this work does not belong in the
+    ///             per-fragment gather.
     ///   Pass 1 - render the neon shader (highp, up to @c NEON_MAX_LOOP_SAMPLES
     ///             gather samples per fragment) into a half-resolution RGBA8 FBO.
     ///   Pass 2 - bilinear blit the half-res FBO to the full-res backbuffer.
     ///
-    /// The perf wins are the half-res FBO, the runtime-tunable
-    /// @c OptimizedNeonConfig::numSamples slider (the shader iterates only
-    /// that many perimeter samples per fragment), and the baked colour LUTs
-    /// (base gradient + per-segment atlas + per-arc atlas) - not reduced
-    /// precision. The shader uses highp: on desktop GLES (ANGLE) mediump =
+    /// The perf wins are the emission pre-pass, the half-res FBO, the
+    /// runtime-tunable @c OptimizedNeonConfig::numSamples slider (the shader
+    /// iterates only that many perimeter samples per fragment), and the baked
+    /// colour LUTs (base gradient + per-segment atlas + per-arc atlas) - not
+    /// reduced precision. The shader uses highp: on desktop GLES (ANGLE) mediump =
     /// fp16, which overflows on the large fragment coordinates and produced
     /// NaN "noise dots".
     ///
@@ -58,12 +63,49 @@ namespace EdgeLighting
         /// arc) so the shader's sampling code stays identical.
         void rebuildArcLUT(const Config &config);
 
+        // --- Per-frame passes, in the order Render() runs them ---------------
+        // Shared contract: each one binds its own shader and its own render
+        // target, and returns with the DEFAULT framebuffer and the full
+        // viewport bound. Blend state is owned by Render() except where a pass
+        // documents otherwise.
+
+        /// Packs Config::neon's segments and arcs into the SegmentBlock /
+        /// ArcBlock UBOs and binds them. Runs before any pass because BOTH the
+        /// emission pre-pass and the half-res neon pass read them. Same packing
+        /// as NeonRenderer - arc/segment positions are normalised perimeter
+        /// coords, so resolutionScale does not apply.
+        void packLightBlocks(const Config &config);
+        /// Pass 0 - bakes the perimeter emission table into mEmissionBuffer.
+        /// Expects packLightBlocks() to have run. Toggles GL_BLEND off for the
+        /// duration and back on after.
+        void renderEmissionPass(float time, const Config &config, int numSamples,
+                                int viewportWidth, int viewportHeight);
+        /// Pass 1 - the neon gather into the half-resolution FBO. Sizes
+        /// mHalfResBuffer from @c OptimizedNeonConfig::resolutionScale and
+        /// clears it to transparent black first.
+        void renderHalfResNeonPass(const Config &config, int viewportWidth,
+                                   int viewportHeight, int numSamples);
+        /// Pass 2a (opaque modes only) - fullscreen black rounded-rect fill on
+        /// the backbuffer, drawn at FULL resolution so its rounded corners
+        /// anti-alias against the real pixel grid rather than the half-res one.
+        void renderOpaqueFill(const Config &config, int viewportHeight);
+        /// Pass 2b - bilinear composite of the half-res FBO onto the
+        /// backbuffer.
+        void renderBlitPass(const Config &config);
+
     private:
         Config mCurrentConfig;
+        ShaderProgram mEmissionShader;  // Pass 0 - perimeter emission table
         ShaderProgram mNeonShader;      // Pass 1 - half-res neon
         ShaderProgram mBlackRectShader; // Opaque-mode fullscreen black fill
         ShaderProgram mBlitShader;      // Pass 2 - upscale to full-res
         Framebuffer mHalfResBuffer{"NeonOptimized.HalfRes"};
+        /// Target of the emission pre-pass: NEON_MAX_LOOP_SAMPLES x 1, one
+        /// texel per perimeter sample, read with texelFetch (GL_NEAREST).
+        /// RGBA16F where the driver allows it - see NeonRenderer for why - with
+        /// an RGBA8 fallback recorded in mEmissionIsFloat.
+        Framebuffer mEmissionBuffer{"NeonOptimized.Emission"};
+        bool mEmissionIsFloat = false;
         VertexArray mNeonVertexArray{"NeonOpt.Pass1"};
         VertexArray mBlitVertexArray{"NeonOpt.Blit"};
 
@@ -77,6 +119,7 @@ namespace EdgeLighting
         UniformBuffer mArcBlock{"NeonOpt.ArcBlock"};
 
         float mSampleSpacing = 0.0f;
+        float mPerimeter = 0.0f;  ///< Scaled/FBO-space perimeter in px; sizes the pre-pass's arc feather.
         float mQuadMargin = 0.0f; ///< Scaled/FBO-space margin to the Pass-1 quad edge (shader soft-fade).
 
         Texture2D mGradientLUT;

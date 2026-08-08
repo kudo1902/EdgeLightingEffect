@@ -37,9 +37,6 @@ uniform vec2  uRectSize;
 uniform float uCornerRadius;
 uniform float uLineWidth;
 uniform float uFilamentFalloff; ///< Generalized-Gaussian exponent (N = value * 2); 1.0 = pure Gaussian, lower = smoother (Laplace-like), higher = flatter top.
-uniform float uIntensity;
-uniform float uTime;
-uniform float uHueRotationRate;
 uniform float uGlowRadius;
 uniform float uBloomStrength;
 uniform int   uGlowSide;
@@ -68,12 +65,20 @@ layout(std140) uniform LoopSamplesBlock
 };
 uniform int uNumSamples; ///< Actual sample count in use; 1..NEON_MAX_LOOP_SAMPLES.
 
+// Baked perimeter emission - one texel per loop sample, produced once per
+// frame by neon-emission.frag:
+//   .rgb = composed light colour at that sample (arc colour * mask * intensity
+//          + the segments' additive contribution).
+//   .a   = coverage in [0, 1], driving the halo and the bloom.
+// Read with texelFetch so sample i maps exactly to uLoopSamples[i]. See
+// neon-emission.frag for why the per-sample colour/mask work belongs there.
+uniform sampler2D uEmission;
+
 // Travelling segments - up to MAX_SEGMENT_BOOSTS independent coloured lights
 // on the perimeter. Each vec4 is packed as (position, invSigma, boost,
-// hasStops): when .w > 0.5 the segment's colour comes from row `s` of
-// uSegmentLUT (its own head-to-tail gradient); when .w == 0 it inherits the
-// current base gradient sample. When uSegmentCount == 0 the whole feature is
-// skipped in the gather loop.
+// hasStops). The emission pre-pass consumes the colour side of this; here the
+// block is read only to gate the sharp filament at the fragment's own
+// perimeter position.
 //
 // Declared in a std140 uniform block (the DALi PunctualLightBlock pattern):
 // DALi writes array elements one at a time into the block's UBO
@@ -85,29 +90,16 @@ layout(std140) uniform SegmentBlock
     vec4 uSegments[MAX_SEGMENT_BOOSTS];
 };
 
-// Per-segment gradient atlas (RGBA8, CLAMP both axes). One row per segment,
-// each row baked head-to-tail across its span. Sampled only when the
-// segment's hasStops flag is set.
-uniform sampler2D uSegmentLUT;
-
 // Arc gating - up to MAX_ARCS independent perimeter slices, each with its own
 // start, length, intensity, and optional colour stops. Each vec4 is
-// (start, length, intensity, hasStops). Overlap resolves winner-take-all;
-// see neon.frag for full rationale.
+// (start, length, intensity, hasStops). The pre-pass resolves overlap
+// winner-take-all for the gathered emission; here the block is read only for
+// the continuous filament gate. See neon.frag for full rationale.
 layout(std140) uniform ArcBlock
 {
     int  uArcCount;
     vec4 uArcs[MAX_ARCS];
 };
-
-// Per-arc gradient atlas (RGBA8, CLAMP both axes). One row per arc, same
-// convention as uSegmentLUT. Sampled only when the winning arc has stops.
-uniform sampler2D uArcLUT;
-
-// 1-row 2D LUT (REPEAT-wrapped) holding the precomputed colour ring.
-// Replaces the in-shader sampleStops loop + HSV blend on the hot path.
-// GLES 3.0 does not support sampler1D, so we use a 1-row 2D texture.
-uniform sampler2D uGradientLUT;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -268,31 +260,10 @@ float perimeterPosition(vec2 p) {
     return (base + len * (1.0 - u)) / peri;
 }
 
-// Returns 1.0 if sample at perimeter position @c si is inside an arc that
-// starts at @p start and extends forwards by @p length. Length 0 = empty,
-// length 1 = full (start becomes an irrelevant phase). Anything in between
-// is a wrap-aware [start, start+length] range over the unit circle.
-// See neon.frag for full rationale: feather sits OUTSIDE the arc's
-// mathematical bounds so a sample exactly at start / end gets weight 1.
-// The virtual si+1 check keeps the arc continuous across the wrap point.
-// Feather is ONE full sample width so adjacent samples' fade-in ranges are
-// contiguous - a slowly growing arc head glides between gather points
-// instead of freezing in the gap and jumping (see neon.frag for details).
-float arcInside(float si, float start, float length, float invNumSamples) {
-    if (length >= 1.0 - 1e-6) return 1.0;
-    if (length <= 1e-6)       return 0.0;
-    // Asymmetric: full-sample head (contiguous fade-in -> smooth halo head),
-    // quarter-sample tail (near-hard, so the start does not spill halo/bloom
-    // into the corner before it). See neon.frag for the full rationale.
-    float fHead = invNumSamples;
-    float fTail = 0.25 * invNumSamples;
-    float end = start + length;
-    float g1a = smoothstep(start - fTail, start, si);
-    float g2a = 1.0 - smoothstep(end, end + fHead, si);
-    float g1b = smoothstep(start - fTail, start, si + 1.0);
-    float g2b = 1.0 - smoothstep(end, end + fHead, si + 1.0);
-    return max(g1a * g2a, g1b * g2b);
-}
+// (The per-sample arc mask `arcInside` now lives in neon-emission.frag - it is
+// a pure function of the sample's perimeter position, so it is evaluated once
+// per sample per frame in the pre-pass instead of once per sample per
+// fragment. This shader only needs the continuous gate below.)
 
 // Continuous [0,1] arc coverage - INWARD FEATHER. See neon.frag for the full
 // rationale; the shape here is identical.
@@ -374,25 +345,22 @@ void main() {
     float bw2 = bw * bw;
 
     // --- Additive gather --------------------------------------------------
-    float glow      = 0.0;
-    float bloom     = 0.0;
-    vec3  acc       = vec3(0.0); // base colour × per-sample gather weight
-    vec3  segAcc    = vec3(0.0); // segment additive colour × bell × gather weight
-    float wsum      = 0.0;
-    float wsumSeg   = 0.0; // ∑ SEGMENT-only covered g - sample-based filament
-                           // gate; arcs use the continuous gate (see neon.frag)
+    // A numerical line integral of the perimeter emission against a
+    // 1/(D^2+k^2) family of kernels - the one part the SDF cannot replace (see
+    // neon.frag). Per iteration: 1 UBO read (sample position), 1 texelFetch
+    // (baked emission) and the distance maths. The arc winner-take-all search,
+    // the segment loop and the gradient lookups that used to run here are all
+    // fragment-invariant, so they live in neon-emission.frag now and are paid
+    // once per sample per FRAME instead of once per sample per fragment.
+    float glow  = 0.0;
+    float bloom = 0.0;
+    vec3  acc   = vec3(0.0); // composed light colour * per-sample gather weight
+    float wsum  = 0.0;
 
     // uNumSamples is dynamic so the perf slider actually reduces work; the
     // upper bound stays baked in the UBO array size so GL still knows the
-    // maximum register pressure.
+    // maximum register pressure. The emission texture is indexed by the same i.
     int n = uNumSamples;
-    float invNumSamples = 1.0 / float(max(n, 1));
-    // Negate the time term so a positive hueRotationRate scrolls the colours
-    // WITH the winding (i advances in the winding direction; REPEAT wrap handles
-    // the negative LUT coordinate).
-    float ti   = -uTime * uHueRotationRate;
-    float dti  = invNumSamples;
-    float si   = 0.0;
 
     for (int i = 0; i < n; i++) {
         vec2  dv  = vPos - uLoopSamples[i].xy;
@@ -400,105 +368,35 @@ void main() {
 
         float g   = 1.0 / (dd + kg2);
 
-        // Arc winner-take-all: see neon.frag for rationale.
-        float bestMask = 0.0;
-        int   bestIdx  = -1;
-        for (int a = 0; a < uArcCount; a++) {
-            vec4  arc  = uArcs[a];
-            float mask = arcInside(si, arc.x, arc.y, invNumSamples) * arc.z;
-            if (mask > bestMask) {
-                bestMask = mask;
-                bestIdx  = a;
-            }
-        }
-        float arcW = bestMask;
-        float lg   = g * arcW;
+        // Everything about WHAT is lit at this sample was resolved in the
+        // pre-pass: .rgb is the composed light colour, .a the shared
+        // arc-or-segment coverage that drives halo and bloom.
+        vec4 emission = texelFetch(uEmission, ivec2(i, 0), 0);
 
-        // Arc-local sampling for hasStops; perimeter-space fall-back for empty
-        // stops so the arc reads continuously with the rest of the base gradient.
-        // See neon.frag for the full write-up. segFallback is the colour a
-        // stop-less segment inherits: the arc's colour where an arc covers,
-        // the base gradient where none does (so the segment still lights).
-        vec3 baseColI;
-        vec3 segFallback;
-        if (bestIdx >= 0) {
-            vec4 winner = uArcs[bestIdx];
-            if (winner.w > 0.5) {
-                float rowY  = (float(bestIdx) + 0.5) / float(MAX_ARCS);
-                float uArc  = (si - winner.x) / max(winner.y, 1e-4);
-                uArc       -= uTime * uHueRotationRate;
-                baseColI    = texture(uArcLUT, vec2(uArc, rowY)).rgb;
-            } else {
-                baseColI = texture(uGradientLUT, vec2(ti, 0.5)).rgb;
-            }
-            segFallback = baseColI;
-        } else {
-            baseColI    = vec3(0.0);
-            segFallback = texture(uGradientLUT, vec2(ti, 0.5)).rgb;
-        }
-        acc  += baseColI * lg;
-
-        wsum += g;
-
-        // --- Travelling segments (independent additive lights) ---
-        // Gathered with the raw proximity weight `g`, NOT the arc-gated `lg`,
-        // so a segment lights even where no arc covers; segMask feeds the
-        // shared coverage below. See neon.frag for the full model. Composed
-        // outside uIntensity so segments stay lit even at intensity 0. Skipped
-        // whole-loop when uSegmentCount == 0.
-        float segMask = 0.0;
-        for (int s = 0; s < uSegmentCount; s++) {
-            vec4  seg  = uSegments[s];
-            float rel  = si - seg.x;
-            rel       -= floor(rel + 0.5);              // wrap to [-0.5, 0.5]
-            float e    = rel * seg.y;
-            float bell = seg.z * exp(-e * e);
-            if (bell < 0.005) continue;
-
-            vec3 segColor;
-            if (seg.w > 0.5) {
-                float tLocal = clamp(0.5 + e * 0.5, 0.0, 1.0);
-                float rowY   = (float(s) + 0.5) / float(MAX_SEGMENT_BOOSTS);
-                segColor     = texture(uSegmentLUT, vec2(tLocal, rowY)).rgb;
-            } else {
-                segColor = segFallback;
-            }
-            segAcc  += segColor * bell * g;
-            segMask += bell;
-        }
-
-        // Shared coverage (arc mask OR segment coverage, clamped) drives halo,
-        // bloom and the filament gate so a segment-only stretch emits like an
-        // arc-lit one. arcW = 1 -> cover = arcW, matching the old behaviour in
-        // fully arc-covered stretches. See neon.frag.
-        float segCov = min(segMask, 1.0);
-        float cover = max(arcW, segCov);
-        glow      += cover * g * sqrt(g);
-        bloom     += cover / (dd + bw2);
-        wsumSeg   += segCov * g;
-
-        ti  += dti;
-        si  += dti;
+        acc   += emission.rgb * g;
+        // wsum accumulates ALL samples (not gated) so a fragment far from any
+        // lit point gets a denominator that grows while the numerator stays
+        // near zero - the filament fades to black instead of showing the lit
+        // colour everywhere.
+        wsum  += g;
+        glow  += emission.a * g * sqrt(g);
+        bloom += emission.a / (dd + bw2);
     }
     glow  *= uSampleSpacing * kg2 * HALO_NORM_FACTOR;
     bloom *= uSampleSpacing * bw  * BLOOM_NORM_FACTOR;
 
-    vec3 col    = acc    / max(wsum, WSUM_EPSILON);
-    vec3 segCol = segAcc / max(wsum, WSUM_EPSILON);
+    // Base arc * intensity + segments, already composed per sample by the
+    // pre-pass (segments sit outside uIntensity there, so one stays lit even
+    // on a dark arc).
+    vec3 lightCol = acc / max(wsum, WSUM_EPSILON);
 
-    // Segments keep the sample-based gate; arcs use the continuous coverage
-    // below (no sample stepping, no tail corner spill). See neon.frag.
-    float segFraction = wsumSeg / max(wsum, WSUM_EPSILON);
-    float filamentGate = smoothstep(0.5, 1.0, segFraction);
-
-    // Continuous arc coverage for the filament: gate by the arc read at this
-    // fragment's own perimeter position, recovered GEOMETRICALLY from vPos
-    // (inverse of the CPU's GetPointOnRectangle) so a slow tracer's head moves
-    // smoothly instead of stepping across the gather points. Feathers point
-    // OUTWARD so the filament is lit at the arc start (no dark lead-in) and
-    // reaches its end. The exact position also keeps the corner curve an arc
-    // starting at 0 sits right after dark - the old circular-mean smear lit
-    // the whole corner. See neon.frag for full rationale.
+    // --- Filament gate ----------------------------------------------------
+    // Gated CONTINUOUSLY at this fragment's own perimeter position, never by
+    // the sample gather: the gather would quantise a light's head to the
+    // gather points (visible stepping on a slow tracer) and light the tail's
+    // preceding corner. The position is recovered GEOMETRICALLY from vPos
+    // (inverse of the CPU's GetPointOnRectangle) and is exact even at corners.
+    // See neon.frag for full rationale.
     float sPos = perimeterPosition(vPos);
     // Inward feathers: convert pixel widths to perimeter fractions.
     float r      = clamp(uCornerRadius, 0.0, min(uRectSize.x, uRectSize.y) * 0.5);
@@ -512,13 +410,23 @@ void main() {
         contCover = max(contCover,
                         arcCoverContinuous(sPos, arc.x, arc.y, headF, tailF));
     }
-    filamentGate = max(filamentGate, contCover);
+
+    // Segments get the same continuous treatment - their bell is a pure
+    // function of perimeter position, so one evaluation at sPos is both exact
+    // and cheaper than averaging the gather's stepped samples.
+    float segCover = 0.0;
+    for (int s = 0; s < uSegmentCount; s++) {
+        vec4  seg = uSegments[s];
+        float rel = sPos - seg.x;
+        rel      -= floor(rel + 0.5);                     // wrap to [-0.5, 0.5]
+        float e   = rel * seg.y;
+        segCover  = max(segCover, seg.z * exp(-e * e));
+    }
+
+    float filamentGate = max(contCover, smoothstep(0.5, 1.0, min(segCover, 1.0)));
 
     // Halo visibility follows glowRadius (glowRadius == 0 -> filament only).
     float haloGate = clamp(uGlowRadius / max(haloFloor, 1e-4), 0.0, 1.0);
-
-    // Base gates on uIntensity; segments are independent (stay lit at intensity 0).
-    vec3 lightCol = col * uIntensity + segCol;
 
     vec3 result  = lightCol * core  * FILAMENT_GAIN  * filamentGate * lineGate;
     result      += lightCol * glow  * HALO_GAIN      * haloGate;

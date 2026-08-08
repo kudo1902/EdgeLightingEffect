@@ -2,6 +2,7 @@
 #define _EDGE_LIGHTING_NEON_RENDERER_H_
 
 #include "renderer/base-renderer.h"
+#include "gl/framebuffer.h"
 #include "gl/shader-program.h"
 #include "gl/uniform-buffer.h"
 #include "gl/vertex-array.h"
@@ -11,22 +12,31 @@
 
 namespace EdgeLighting
 {
-    /// Full-resolution single-pass neon renderer.
+    /// Full-resolution neon renderer.
     ///
-    /// Draws a tight quad over the rect + earlyOut margin and runs one
-    /// fragment shader that composes filament + halo + bloom in one pass.
-    /// Per-fragment work: an analytic rounded-box SDF, a gather loop over
-    /// @c NEON_MAX_LOOP_SAMPLES perimeter samples (positions live in a UBO),
-    /// and per-sample lookups into three baked LUTs:
-    ///   - @c uGradientLUT      - the base colour ring.
-    ///   - @c uSegmentLUT       - per-segment gradient atlas (one row per segment).
-    ///   - @c uArcLUT           - per-arc gradient atlas (one row per arc).
+    /// Two passes per frame:
     ///
-    /// Arc gating uses winner-take-all: for each sample the arc with the
-    /// largest @c mask*intensity owns the colour and emission there. See
-    /// neon.frag for the full compose. Visual parameters come from
-    /// @c Config::neon; @c Config::arcs / @c Config::segmentBoosts drive
-    /// their respective UBOs and atlases.
+    ///  1. **Emission pre-pass** (neon-emission.frag) - resolves, for each of
+    ///     the @c NEON_MAX_LOOP_SAMPLES perimeter samples, which arc wins there
+    ///     (winner-take-all on @c mask*intensity), what colour it contributes,
+    ///     what the travelling segments add, and the resulting coverage. Writes
+    ///     one texel per sample into @c mEmissionBuffer. This is where the three
+    ///     baked LUTs are consumed:
+    ///       - @c uGradientLUT - the base colour ring.
+    ///       - @c uSegmentLUT  - per-segment gradient atlas (one row per segment).
+    ///       - @c uArcLUT      - per-arc gradient atlas (one row per arc).
+    ///     All of it is a pure function of (sample position, time, config), so
+    ///     it costs @c NEON_MAX_LOOP_SAMPLES fragments per frame rather than
+    ///     being recomputed by every screen fragment.
+    ///
+    ///  2. **Main pass** (neon.frag) - draws a tight quad over the rect +
+    ///     earlyOut margin and composes filament + halo + bloom. Per-fragment
+    ///     work is now an analytic rounded-box SDF plus a gather loop whose body
+    ///     is one UBO read (the sample position) and one @c texelFetch into the
+    ///     emission texture.
+    ///
+    /// Visual parameters come from @c Config::neon; @c Config::arcs /
+    /// @c Config::segmentBoosts drive their respective UBOs and atlases.
     class NeonRenderer : public BaseRenderer
     {
     public:
@@ -42,6 +52,7 @@ namespace EdgeLighting
         bool setupShaders();
         void setupGeometry(const Config &config);
         void rebuildLoopSamples(const Config &config);
+
         void rebuildGradientLUT(const Config &config);
         /// Quantise a float LUT (GRADIENT_LUT_SIZE * 4 RGBA) to RGBA8 and
         /// upload it to mGradientLUT.
@@ -57,9 +68,42 @@ namespace EdgeLighting
         /// those samples (see the vec4.w flag in ArcBlock).
         void rebuildArcLUT(const Config &config);
 
+        // --- Per-frame passes, in the order Render() runs them ---------------
+        // Shared contract: each one binds its own shader and its own render
+        // target, and returns with the DEFAULT framebuffer and the full
+        // viewport bound. Blend state is owned by Render() except where a pass
+        // documents otherwise.
+
+        /// Packs Config::neon's segments and arcs into the SegmentBlock /
+        /// ArcBlock UBOs and binds them. Runs before any pass because BOTH the
+        /// emission pre-pass (per-sample colour + coverage) and the main pass
+        /// (continuous filament gate) read them.
+        void packLightBlocks(const Config &config);
+        /// Pass 0 - bakes the perimeter emission table into mEmissionBuffer.
+        /// Expects packLightBlocks() to have run. Toggles GL_BLEND off for the
+        /// duration (it is a table write, not a composite) and back on after.
+        void renderEmissionPass(float time, const Config &config,
+                                int viewportWidth, int viewportHeight);
+        /// Pass 1 (opaque modes only) - fullscreen black rounded-rect fill so
+        /// the neon has something opaque to composite over.
+        void renderOpaqueFill(const Config &config, const glm::vec2 &center);
+        /// Pass 2 - the neon gather on the tight glow quad. The only pass that
+        /// draws the effect itself.
+        void renderNeonPass(const Config &config, const glm::mat4 &mvp);
+        /// Debug overlay - the baked colour ring as a strip at the geometry
+        /// centre. Draws unblended so it stays readable over the tone-mapped
+        /// glow; leaves GL_BLEND disabled for the caller to restore.
+        void renderGradientLUTStrip(const Config &config, float time, const glm::mat4 &mvp);
+        /// Debug overlay - a filled disc per colour stop at its perimeter
+        /// position. Switches to straight alpha blending for the anti-aliased
+        /// edges.
+        void renderColorStopMarkers(const Config &config, const glm::mat4 &proj,
+                                    const glm::vec2 &center);
+
     private:
         Config mCurrentConfig;
         ShaderProgram mShaderProgram;
+        ShaderProgram mEmissionShader;                                 ///< Perimeter emission pre-pass (neon-emission.frag).
         ShaderProgram mBlackRectShader;                                ///< Opaque-mode black background fill (black-rect.frag).
         ShaderProgram mLUTDebugShader;                                 ///< Debug LUT strip (neon-lut-debug.frag).
         ShaderProgram mStopMarkerShader;                               ///< Debug per-stop marker (neon-stop-marker.frag).
@@ -78,7 +122,17 @@ namespace EdgeLighting
         /// Backs neon.frag's std140 `ArcBlock` (uArcCount + uArcs[MAX_ARCS]).
         UniformBuffer mArcBlock{"NeonRenderer.ArcBlock"};
 
+        /// Target of the emission pre-pass: NEON_MAX_LOOP_SAMPLES x 1, one texel
+        /// per perimeter sample, sampled with texelFetch (GL_NEAREST). Ideally
+        /// RGBA16F - a segment's contribution is boost-scaled and several can
+        /// stack, so values above 1.0 are normal. Falls back to RGBA8 when the
+        /// driver won't render to a float format, which clamps those
+        /// highlights; mEmissionIsFloat records which one we got.
+        Framebuffer mEmissionBuffer{"NeonRenderer.Emission"};
+        bool mEmissionIsFloat = false;
+
         float mSampleSpacing = 0.0f;
+        float mPerimeter = 0.0f;  ///< Rounded-rect perimeter in px; sizes the pre-pass's pixel-space arc feather.
         float mQuadMargin = 0.0f; ///< Draw-quad margin (px from rect edge); shader fades the bloom out by here.
 
         /// Baked colour ring as a 1×N RGBA32F texture (sampled with v=0.5 in the shader).

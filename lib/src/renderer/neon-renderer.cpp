@@ -167,6 +167,8 @@ namespace EdgeLighting
             return;
         }
 
+        // Rect-local -> viewport transform, shared by every pass below. The
+        // y-flip lands the config's top-left origin in GL's bottom-left space.
         float halfRectW = config.geometry.width * 0.5f;
         float halfRectH = config.geometry.height * 0.5f;
         glm::mat4 proj = glm::ortho(0.0f, static_cast<float>(viewportWidth), 0.0f, static_cast<float>(viewportHeight), -1.0f, 1.0f);
@@ -177,167 +179,35 @@ namespace EdgeLighting
 
         // Premultiplied-alpha "over": final = src.rgb + dst * (1 - src.a). Used
         // for both the opaque black fill and the neon, so the neon composites
-        // cleanly over the black. (Blending stays ON the whole time - toggling
-        // GL_BLEND mid-draw is a common cross-driver footgun on mobile GLES.)
+        // cleanly over the black. (Blending stays ON the whole time apart from
+        // the emission pre-pass, which is a table write, and the LUT strip -
+        // toggling GL_BLEND mid-draw is a common cross-driver footgun on mobile
+        // GLES.)
         glEnable(GL_BLEND);
         glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
-        // --- Opaque-mode black background pass -----------------------------
-        // A fullscreen NDC quad (identity MVP); the fragment shader shapes the
-        // black coverage from an analytic rounded-box SDF read off gl_FragCoord
-        // (highp - exact on Mali/Tizen):
-        //   BOTH    -> black everywhere (whole viewport opaque).
-        //   INSIDE  -> black only where d <= softEdge (off-side stays clear).
-        //   OUTSIDE -> mirror of INSIDE.
+        packLightBlocks(config);
+        renderEmissionPass(time, config, viewportWidth, viewportHeight);
+
         if (config.neon.opaqueMode != OpaqueMode::NONE)
         {
-            mBlackRectShader.Use();
-            mBlackRectShader.SetUniform("uMVP", glm::mat4(1.0f));
-            mBlackRectShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
-            mBlackRectShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
-            mBlackRectShader.SetUniform("uRectCenter", center);
-            float opaqueSoft = std::max(config.neon.opaqueSoftness,
-                                        static_cast<float>(SIDE_SOFT_EPSILON));
-            mBlackRectShader.SetUniform("uOpaqueMode", static_cast<int>(config.neon.opaqueMode));
-            mBlackRectShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
-            mBlackRectShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
-            mBlackRectShader.SetUniform("uOpaqueSoftness", opaqueSoft);
-            mBlackRectShader.SetUniform("uOpaqueColor", config.neon.opaqueColor);
-            mFullVertexArray.DrawArrays(GL_TRIANGLES, 6);
-            mBlackRectShader.Unuse();
+            renderOpaqueFill(config, center);
         }
 
-        // Pass 2 (opaque) / only pass (transparent): the neon gather on the
-        // tight glow quad, in both modes.
-        mShaderProgram.Use();
-        mShaderProgram.SetUniform("uMVP", mvp);
-        mShaderProgram.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
-        mShaderProgram.SetUniform("uCornerRadius", config.geometry.cornerRadius);
-        mShaderProgram.SetUniform("uLineWidth", config.neon.lineWidth);
-        mShaderProgram.SetUniform("uFilamentFalloff", config.neon.filamentFalloff);
-        mShaderProgram.SetUniform("uIntensity", config.neon.intensity);
-        mShaderProgram.SetUniform("uTime", time);
-        mShaderProgram.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
-        mShaderProgram.SetUniform("uGlowRadius", config.neon.glowRadius);
-        mShaderProgram.SetUniform("uBloomStrength", config.neon.bloomStrength);
-        mShaderProgram.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
-        mShaderProgram.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness);
-        mShaderProgram.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
-        mShaderProgram.SetUniform("uInsideCutoffSoftness", config.neon.insideCutoff.softness);
-        mShaderProgram.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
-        mShaderProgram.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness);
-        // Pack the segment vector as vec3(position, invSigma, boost) into the
-        // std140 SegmentBlock UBO (DALi-compatible pattern - see neon.frag).
-        // Empty vector → uSegmentCount=0 and the shader skips the whole feature.
-        SegmentBlockData segBlock = {};
-        SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
-        const std::vector<SegmentBoost> &effSegments = mEffectiveSegments;
-        int segCount = std::min(static_cast<int>(effSegments.size()),
-                                int(MAX_SEGMENT_BOOSTS));
-        segBlock.count = segCount;
-        for (int i = 0; i < segCount; ++i)
-        {
-            const auto &s = effSegments[i];
-            float invSigma = 1.0f / std::max(s.length * 0.5f, 1e-3f);
-            // .w = hasOwnStops flag; the shader reads its colour from row `i`
-            // of the segment LUT atlas when set, else falls back to the base
-            // gradient at that sample.
-            float hasStops = s.colorStops.empty() ? 0.0f : 1.0f;
-            segBlock.segments[i] = glm::vec4(s.position, invSigma, s.boost, hasStops);
-        }
-        mSegmentBlock.SetData(&segBlock, sizeof(segBlock));
-        mSegmentBlock.BindBase(SEGMENT_BLOCK_BINDING);
+        renderNeonPass(config, mvp);
 
-        // Pack the arcs vector into ArcBlock: vec4(start, length, intensity,
-        // hasStops) per entry. .w picks between the winner arc's own atlas row
-        // and the base gradient in the shader's winner-take-all branch.
-        ArcBlockData arcBlock = {};
-        int arcCount = std::min(static_cast<int>(config.neon.arcs.size()),
-                                int(MAX_ARCS));
-        arcBlock.count = arcCount;
-        for (int i = 0; i < arcCount; ++i)
-        {
-            const auto &a = config.neon.arcs[i];
-            float hasStops = a.colorStops.empty() ? 0.0f : 1.0f;
-            arcBlock.arcs[i] = glm::vec4(a.start, a.length, a.intensity, hasStops);
-        }
-        mArcBlock.SetData(&arcBlock, sizeof(arcBlock));
-        mArcBlock.BindBase(ARC_BLOCK_BINDING);
-
-        mShaderProgram.SetUniform("uSampleSpacing", mSampleSpacing);
-        mShaderProgram.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
-
-        // Loop sample positions come from the LoopSamplesBlock UBO (see
-        // neon.frag) - raw float32 vec4[N], .xy holds the perimeter point.
-        mLoopSamplesBlock.BindBase(LOOP_SAMPLES_BLOCK_BINDING);
-
-        // Bind the precomputed gradient LUT to texture unit 0. The shader
-        // pulls per-sample colour from this in a single texture() call.
-        mGradientLUT.Bind(0);
-        mShaderProgram.SetUniform("uGradientLUT", 0);
-        // Per-segment gradient atlas on unit 1; sampled by the segment inner
-        // loop only when a segment's hasStops flag is set.
-        mSegmentLUT.Bind(1);
-        mShaderProgram.SetUniform("uSegmentLUT", 1);
-        // Per-arc gradient atlas on unit 2; sampled by the arc winner branch
-        // only when the winning arc has stops (see ArcBlock's vec4.w).
-        mArcLUT.Bind(2);
-        mShaderProgram.SetUniform("uArcLUT", 2);
-        mShaderProgram.SetUniform("uQuadMargin", mQuadMargin);
-
-        // Tight glow quad in both modes - opaque's far region is covered by the
-        // Pass 1 black fill above, so the gather never runs fullscreen.
-        mVertexArray.DrawArrays(GL_TRIANGLES, 6);
-
-        mShaderProgram.Unuse();
-
-        // --- Debug: gradient LUT strip at the geometry centre -----------------
-        // Overwrites the neon output within the strip rect so the baked ring is
-        // readable regardless of the glow's tone-mapped brightness.
         if (config.neon.showGradientLUT)
         {
-            glDisable(GL_BLEND);
-            mLUTDebugShader.Use();
-            mLUTDebugShader.SetUniform("uMVP", mvp);
-            mLUTDebugShader.SetUniform("uStripHalfSize", mLUTStripHalfSize);
-            mLUTDebugShader.SetUniform("uTime", time);
-            mLUTDebugShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
-            mGradientLUT.Bind(0);
-            mLUTDebugShader.SetUniform("uGradientLUT", 0);
-            mLUTStripVertexArray.DrawArrays(GL_TRIANGLES, 6);
-            mLUTDebugShader.Unuse();
+            renderGradientLUTStrip(config, time, mvp);
         }
 
-        // --- Debug: per-stop markers on the perimeter -------------------------
-        // Draws a filled disc in each stop's colour at its perimeter position,
-        // so the raw (position, colour) inputs can be checked against the LUT
-        // strip and the on-screen glow. Uses standard alpha blending for the
-        // ring / anti-aliased edge to composite cleanly.
         if (config.neon.showColorStops && !config.neon.colorStops.empty())
         {
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-            // Scale marker with the smaller half-extent so it stays inside the
-            // rect on very tall/thin geometries; cap at 12 px so it's not huge
-            // on large rects. min(halfRect) → smaller of width/2, height/2.
-            float markerRadius = std::min(std::min(halfRectW, halfRectH) * 0.06f, 12.0f);
-            mStopMarkerShader.Use();
-            for (const auto &stop : config.neon.colorStops)
-            {
-                glm::vec2 localPt = GeometryUtils::GetPointOnRectangle(stop.position, config.geometry);
-                glm::mat4 markerModel =
-                    glm::translate(glm::mat4(1.0f), glm::vec3(center + localPt, 0.0f)) *
-                    glm::scale(glm::mat4(1.0f), glm::vec3(markerRadius, markerRadius, 1.0f));
-                mStopMarkerShader.SetUniform("uMVP", proj * markerModel);
-                mStopMarkerShader.SetUniform("uMarkerColor", stop.color);
-                mStopMarkerVertexArray.DrawArrays(GL_TRIANGLES, 6);
-            }
-            mStopMarkerShader.Unuse();
+            renderColorStopMarkers(config, proj, center);
         }
 
-        // Restore a known blend state for following renderers (the opaque path
-        // disables blending).
+        // Restore a known blend state for following renderers (the LUT strip
+        // overlay disables blending).
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     }
@@ -405,6 +275,12 @@ namespace EdgeLighting
         mShaderProgram = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                        ShaderSource::NEON_FRAG_SRC,
                                        "NeonRenderer");
+        // Perimeter emission pre-pass. Reuses the standard neon vertex shader
+        // with an identity uMVP over the fullscreen NDC quad; the fragment
+        // shader keys off gl_FragCoord.x, not vPos.
+        mEmissionShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
+                                        ShaderSource::NEON_EMISSION_FRAG_SRC,
+                                        "NeonRenderer.Emission");
         // Cheap fullscreen black fill, used only by opaque mode. Reuses the
         // standard neon vertex shader (uMVP) so the fill quad respects the
         // viewport.
@@ -420,7 +296,8 @@ namespace EdgeLighting
         mStopMarkerShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                           ShaderSource::NEON_STOP_MARKER_FRAG_SRC,
                                           "NeonRenderer.StopMarker");
-        if (!mShaderProgram.IsValid() || !mBlackRectShader.IsValid() ||
+        if (!mShaderProgram.IsValid() || !mEmissionShader.IsValid() ||
+            !mBlackRectShader.IsValid() ||
             !mLUTDebugShader.IsValid() || !mStopMarkerShader.IsValid())
         {
             return false;
@@ -429,6 +306,29 @@ namespace EdgeLighting
         mShaderProgram.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
         mShaderProgram.SetUniformBlockBinding("LoopSamplesBlock", LOOP_SAMPLES_BLOCK_BINDING);
         mShaderProgram.SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
+        // The pre-pass reads the same arc/segment blocks off the same binding
+        // points; it has no use for the loop-sample positions.
+        mEmissionShader.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
+        mEmissionShader.SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
+
+        // Prefer a float target: a SegmentBoost's `boost` is an absolute peak
+        // brightness and several segments can stack, so the emission texel's
+        // rgb routinely exceeds 1.0. GLES 3.0 only exposes float
+        // colour-renderability through an extension, so fall back rather than
+        // fail - RGBA8 clamps those highlights but keeps everything else exact.
+        mEmissionIsFloat = mEmissionBuffer.Resize(NEON_MAX_LOOP_SAMPLES, 1,
+                                                  GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, GL_NEAREST);
+        if (!mEmissionIsFloat)
+        {
+            LOG_W("NeonRenderer: RGBA16F emission target unavailable, falling back to RGBA8 "
+                  "(segment boosts above 1.0 will clamp).");
+            if (!mEmissionBuffer.Resize(NEON_MAX_LOOP_SAMPLES, 1,
+                                        GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, GL_NEAREST))
+            {
+                LOG_E("NeonRenderer: could not create the emission target.");
+                return false;
+            }
+        }
         return true;
     }
 
@@ -518,6 +418,7 @@ namespace EdgeLighting
         float r = std::max(0.0f, std::min(config.geometry.cornerRadius, std::min(w, h) * 0.5f));
 
         float perimeter = 2.0f * (w - 2.0f * r) + 2.0f * (h - 2.0f * r) + 2.0f * PI * r;
+        mPerimeter = perimeter;
         mSampleSpacing = perimeter / static_cast<float>(NEON_MAX_LOOP_SAMPLES);
     }
 
@@ -680,4 +581,190 @@ namespace EdgeLighting
 
         mBakedArcs = config.neon.arcs;
     }
+
+    void NeonRenderer::packLightBlocks(const Config &config)
+    {
+        // Pack the segment vector as vec4(position, invSigma, boost, hasStops)
+        // into the std140 SegmentBlock UBO (DALi-compatible pattern - see
+        // neon.frag). Empty vector -> uSegmentCount=0 and the shaders skip the
+        // whole feature.
+        SegmentBlockData segBlock = {};
+        SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
+        const std::vector<SegmentBoost> &effSegments = mEffectiveSegments;
+        int segCount = std::min(static_cast<int>(effSegments.size()),
+                                int(MAX_SEGMENT_BOOSTS));
+        segBlock.count = segCount;
+        for (int i = 0; i < segCount; ++i)
+        {
+            const auto &s = effSegments[i];
+            float invSigma = 1.0f / std::max(s.length * 0.5f, 1e-3f);
+            // .w = hasOwnStops flag; the pre-pass reads its colour from row `i`
+            // of the segment LUT atlas when set, else falls back to the base
+            // gradient at that sample.
+            float hasStops = s.colorStops.empty() ? 0.0f : 1.0f;
+            segBlock.segments[i] = glm::vec4(s.position, invSigma, s.boost, hasStops);
+        }
+        mSegmentBlock.SetData(&segBlock, sizeof(segBlock));
+        mSegmentBlock.BindBase(SEGMENT_BLOCK_BINDING);
+
+        // Pack the arcs vector into ArcBlock: vec4(start, length, intensity,
+        // hasStops) per entry. .w picks between the winner arc's own atlas row
+        // and the base gradient in the pre-pass's winner-take-all branch.
+        ArcBlockData arcBlock = {};
+        int arcCount = std::min(static_cast<int>(config.neon.arcs.size()),
+                                int(MAX_ARCS));
+        arcBlock.count = arcCount;
+        for (int i = 0; i < arcCount; ++i)
+        {
+            const auto &a = config.neon.arcs[i];
+            float hasStops = a.colorStops.empty() ? 0.0f : 1.0f;
+            arcBlock.arcs[i] = glm::vec4(a.start, a.length, a.intensity, hasStops);
+        }
+        mArcBlock.SetData(&arcBlock, sizeof(arcBlock));
+        mArcBlock.BindBase(ARC_BLOCK_BINDING);
+    }
+
+    void NeonRenderer::renderEmissionPass(float time, const Config &config,
+                                          int viewportWidth, int viewportHeight)
+    {
+        // One fragment per perimeter sample. Everything here is a pure function
+        // of (sample position, time, config) - see neon-emission.frag for why
+        // that lets it come out of the main shader's gather loop.
+        //
+        // Blending must be off: this is a table write, not a composite.
+        glDisable(GL_BLEND);
+        mEmissionBuffer.Bind(); // also sets the viewport to NEON_MAX_LOOP_SAMPLES x 1
+
+        mEmissionShader.Use();
+        mEmissionShader.SetUniform("uMVP", glm::mat4(1.0f));
+        mEmissionShader.SetUniform("uTime", time);
+        mEmissionShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
+        mEmissionShader.SetUniform("uIntensity", config.neon.intensity);
+        mEmissionShader.SetUniform("uPerimeter", mPerimeter);
+        // This renderer always walks the full fixed-size sample set, so sample
+        // i sits at perimeter position i / NEON_MAX_LOOP_SAMPLES.
+        mEmissionShader.SetUniform("uNumSamples", int(NEON_MAX_LOOP_SAMPLES));
+
+        mGradientLUT.Bind(0);
+        mEmissionShader.SetUniform("uGradientLUT", 0);
+        mSegmentLUT.Bind(1);
+        mEmissionShader.SetUniform("uSegmentLUT", 1);
+        mArcLUT.Bind(2);
+        mEmissionShader.SetUniform("uArcLUT", 2);
+
+        mFullVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        mEmissionShader.Unuse();
+
+        // Hand the screen back to the caller in the state every other pass
+        // expects: default framebuffer, full viewport, blending on.
+        Framebuffer::BindDefault();
+        glViewport(0, 0, viewportWidth, viewportHeight);
+        glEnable(GL_BLEND);
+    }
+
+    void NeonRenderer::renderOpaqueFill(const Config &config, const glm::vec2 &center)
+    {
+        // A fullscreen NDC quad (identity MVP); the fragment shader shapes the
+        // black coverage from an analytic rounded-box SDF read off gl_FragCoord
+        // (highp - exact on Mali/Tizen):
+        //   BOTH    -> black everywhere (whole viewport opaque).
+        //   INSIDE  -> black only where d <= softEdge (off-side stays clear).
+        //   OUTSIDE -> mirror of INSIDE.
+        float opaqueSoft = std::max(config.neon.opaqueSoftness,
+                                    static_cast<float>(SIDE_SOFT_EPSILON));
+
+        mBlackRectShader.Use();
+        mBlackRectShader.SetUniform("uMVP", glm::mat4(1.0f));
+        mBlackRectShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
+        mBlackRectShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
+        mBlackRectShader.SetUniform("uRectCenter", center);
+        mBlackRectShader.SetUniform("uOpaqueMode", static_cast<int>(config.neon.opaqueMode));
+        mBlackRectShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
+        mBlackRectShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
+        mBlackRectShader.SetUniform("uOpaqueSoftness", opaqueSoft);
+        mBlackRectShader.SetUniform("uOpaqueColor", config.neon.opaqueColor);
+        mFullVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        mBlackRectShader.Unuse();
+    }
+
+    void NeonRenderer::renderNeonPass(const Config &config, const glm::mat4 &mvp)
+    {
+        mShaderProgram.Use();
+        mShaderProgram.SetUniform("uMVP", mvp);
+        mShaderProgram.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
+        mShaderProgram.SetUniform("uCornerRadius", config.geometry.cornerRadius);
+        mShaderProgram.SetUniform("uLineWidth", config.neon.lineWidth);
+        mShaderProgram.SetUniform("uFilamentFalloff", config.neon.filamentFalloff);
+        mShaderProgram.SetUniform("uGlowRadius", config.neon.glowRadius);
+        mShaderProgram.SetUniform("uBloomStrength", config.neon.bloomStrength);
+        mShaderProgram.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
+        mShaderProgram.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness);
+        mShaderProgram.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
+        mShaderProgram.SetUniform("uInsideCutoffSoftness", config.neon.insideCutoff.softness);
+        mShaderProgram.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
+        mShaderProgram.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness);
+        mShaderProgram.SetUniform("uSampleSpacing", mSampleSpacing);
+        mShaderProgram.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
+        mShaderProgram.SetUniform("uQuadMargin", mQuadMargin);
+
+        // Loop sample positions come from the LoopSamplesBlock UBO (see
+        // neon.frag) - raw float32 vec4[N], .xy holds the perimeter point.
+        mLoopSamplesBlock.BindBase(LOOP_SAMPLES_BLOCK_BINDING);
+
+        // The three gradient LUTs are consumed by the pre-pass, not here - this
+        // shader only needs its output: one texel per sample holding the
+        // composed colour and coverage.
+        mEmissionBuffer.BindTexture(0);
+        mShaderProgram.SetUniform("uEmission", 0);
+
+        // Tight glow quad in both modes - opaque's far region is covered by the
+        // black fill, so the gather never runs fullscreen.
+        mVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        mShaderProgram.Unuse();
+    }
+
+    void NeonRenderer::renderGradientLUTStrip(const Config &config, float time, const glm::mat4 &mvp)
+    {
+        // Overwrites the neon output within the strip rect so the baked ring is
+        // readable regardless of the glow's tone-mapped brightness.
+        glDisable(GL_BLEND);
+        mLUTDebugShader.Use();
+        mLUTDebugShader.SetUniform("uMVP", mvp);
+        mLUTDebugShader.SetUniform("uStripHalfSize", mLUTStripHalfSize);
+        mLUTDebugShader.SetUniform("uTime", time);
+        mLUTDebugShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
+        mGradientLUT.Bind(0);
+        mLUTDebugShader.SetUniform("uGradientLUT", 0);
+        mLUTStripVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        mLUTDebugShader.Unuse();
+    }
+
+    void NeonRenderer::renderColorStopMarkers(const Config &config, const glm::mat4 &proj,
+                                              const glm::vec2 &center)
+    {
+        // Draws a filled disc in each stop's colour at its perimeter position,
+        // so the raw (position, colour) inputs can be checked against the LUT
+        // strip and the on-screen glow. Uses standard alpha blending for the
+        // ring / anti-aliased edge to composite cleanly.
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+        // Scale marker with the smaller half-extent so it stays inside the
+        // rect on very tall/thin geometries; cap at 12 px so it's not huge
+        // on large rects.
+        float markerRadius = std::min(std::min(config.geometry.width, config.geometry.height) * 0.5f * 0.06f, 12.0f);
+        mStopMarkerShader.Use();
+        for (const auto &stop : config.neon.colorStops)
+        {
+            glm::vec2 localPt = GeometryUtils::GetPointOnRectangle(stop.position, config.geometry);
+            glm::mat4 markerModel =
+                glm::translate(glm::mat4(1.0f), glm::vec3(center + localPt, 0.0f)) *
+                glm::scale(glm::mat4(1.0f), glm::vec3(markerRadius, markerRadius, 1.0f));
+            mStopMarkerShader.SetUniform("uMVP", proj * markerModel);
+            mStopMarkerShader.SetUniform("uMarkerColor", stop.color);
+            mStopMarkerVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        }
+        mStopMarkerShader.Unuse();
+    }
+
 }
