@@ -1,12 +1,12 @@
 #include "gl/gl-header.h"
 #include <GLFW/glfw3.h>
 #include "core/edge-lighting.h"
-#include "renderer/wireframe-renderer.h"
 #include "renderer/neon-renderer.h"
 #include "renderer/neon-optimized-renderer.h"
 #include "renderer/droplets-renderer.h"
 #include "renderer/lens-flare-renderer.h"
 #include "renderer/lens-flare-optimized-renderer.h"
+#include "renderer/debug-renderer.h"
 #include "animation/neon-animations.h"
 #include "debug-ui.h"
 #include "background-quad.h"
@@ -95,17 +95,17 @@ int main()
 
     auto lensFlareRenderer = std::make_shared<EdgeLighting::LensFlareRenderer>();
     auto lensFlareOptimizedRenderer = std::make_shared<EdgeLighting::LensFlareOptimizedRenderer>();
-    auto wireframeRenderer = std::make_shared<EdgeLighting::WireframeRenderer>();
+    auto debugRenderer = std::make_shared<EdgeLighting::DebugRenderer>();
     auto neonRenderer = std::make_shared<EdgeLighting::NeonRenderer>();
     auto neonOptimizedRenderer = std::make_shared<EdgeLighting::NeonOptimizedRenderer>();
     auto dropletsRenderer = std::make_shared<EdgeLighting::DropletsRenderer>();
 
-    gEffect->AddRenderer(wireframeRenderer);
     gEffect->AddRenderer(neonRenderer);
     gEffect->AddRenderer(neonOptimizedRenderer);
     gEffect->AddRenderer(dropletsRenderer);
     gEffect->AddRenderer(lensFlareRenderer);
     gEffect->AddRenderer(lensFlareOptimizedRenderer);
+    gEffect->AddRenderer(debugRenderer);
 
     EdgeLighting::Config config;
     config.geometry.width = displayW / 2;
@@ -113,8 +113,9 @@ int main()
     config.geometry.position = glm::vec2(displayW / 4, displayH / 4);
     config.geometry.cornerRadius = 0.0f;
     config.neon.enable = true;
-    config.wireframe.enable = true;
-    config.wireframe.color = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
+    config.debug.enable = true;
+    config.debug.showWireframe = true;
+    config.debug.wireframeColor = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
 
     gEffect->SetConfig(config);
 
@@ -305,7 +306,7 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
     }
     case GLFW_KEY_G:
     {
-        config.wireframe.enable = !config.wireframe.enable;
+        config.debug.showWireframe = !config.debug.showWireframe;
         break;
     }
     case GLFW_KEY_D:

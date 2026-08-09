@@ -43,7 +43,7 @@ namespace EdgeLightingDemo
                   << " | " << windingStr
                   << " | " << blendStr
                   << " | Anim: " << (isPlaying ? "PLAY" : "PAUS")
-                  << " | Wire: " << (config.wireframe.enable ? "ON " : "OFF")
+                  << " | Wire: " << (config.debug.showWireframe ? "ON " : "OFF")
                   << "      " << std::flush;
     }
 

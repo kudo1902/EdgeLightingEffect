@@ -49,9 +49,11 @@ Per-frame contract: `Update(dt)` ticks the clock and forwards `(dt, clockTime, c
 
 Current renderers (all under `lib/include/renderer/`):
 
-- `WireframeRenderer` - 1px `GL_LINE_LOOP` debug box, blending temporarily disabled.
 - `NeonRenderer` - single-pass neon stroke. Uses an analytic rounded-box SDF + a precomputed 1D `GRADIENT_LUT` texture (RGBA32F, 256px, REPEAT wrap) so each shader sample is one texture lookup instead of an in-shader colour-stops loop. Also precomputes `NUM_LOOP_SAMPLES` (128) sample positions on the perimeter.
 - `NeonOptimizedRenderer` - half-resolution variant of the single-pass neon that renders into a scaled FBO and bilinear-blits back to full res; visual params are read from `Config::neon`.
+- `DebugRenderer` - the pipeline's only diagnostic layer, driven by `Config::debug`: the 1px `GL_LINE_LOOP` bounding box, the baked gradient LUT drawn as a strip, and marker glyphs (disc per colour stop on the perimeter, chevron per arc start/end just outside it, diamond per segment position just inside it - one shader, `debug-marker.frag`, switched by `uMarkerShape`). It bakes its own `GradientLUT` from `Config::neon` rather than borrowing one, so it stays a pure overlay. **Register it last** - it draws on top of the finished frame. No other renderer draws debug-only geometry; keep it that way.
+
+The base gradient ring lives in `GradientLUT` (`lib/include/util/gradient-lut.h`) - a header-only helper that bakes the colour stops into a 1xN RGBA8 texture and owns the cross-fade (`Rebuild` self-guards on unchanged inputs; `Update(dt)` drives the blend). Both neon renderers and the debug strip use it, so a colour change fades identically in all three.
 
 To add a renderer, subclass `BaseRenderer`, add a sub-config struct to `Config`, register it in `demo/src/main.cpp`, and add an ImGui section in `DebugUI`.
 

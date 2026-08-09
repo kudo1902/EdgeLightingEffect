@@ -30,15 +30,19 @@ binary at compile time, so the demo can be launched from anywhere.
 
 ## Renderers
 
-Three visual layers, independent and additive. Enable any subset via `Config`.
+Independent, additive layers. Enable any subset via `Config`.
 
-- **WireframeRenderer** - 1 px `GL_LINE_LOOP` debug outline of the rect.
 - **NeonRenderer** - single-pass neon stroke. Analytic rounded-box SDF + a
   precomputed 1D gradient LUT (RGBA32F, 256 px) so each shader sample is one
   texture lookup. Precomputes 128 sample positions on the perimeter.
 - **NeonOptimizedRenderer** - half-resolution variant that renders to a scaled
   FBO and bilinear-blits back to full res. Shares visual params with the
   single-pass renderer.
+- **DebugRenderer** - the one diagnostic layer: 1 px `GL_LINE_LOOP` outline of
+  the rect, the baked gradient LUT as a strip, and markers for colour stops,
+  arc start/end bounds, and segment positions.
+  Nothing it draws is part of the effect - leave it unregistered and it costs
+  nothing. Register it last so its overlays land on top.
 
 ## Debug UI (ImGui)
 
@@ -55,6 +59,9 @@ Three visual layers, independent and additive. Enable any subset via `Config`.
   `OutlineTracer`, `Breathing`, etc.
 - **Background (debug)** - optional checker pattern behind the effect to
   verify blend vs. occlude compositing.
+- **Debug Overlays** - master switch plus the individual `DebugRenderer`
+  toggles: wireframe box (and its colour), gradient LUT strip, and markers for
+  colour stops, arc start/end bounds, and segment positions.
 
 ## Border color picker
 
@@ -87,7 +94,7 @@ Same actions are also on the debug UI sliders.
 | `[` / `]` | dec / inc Neon glow radius |
 | `P` / `L` | inc / dec hue rotation rate |
 | `N` | toggle Neon |
-| `G` | toggle wireframe outline |
+| `G` | toggle wireframe outline (debug layer) |
 | `W` | toggle winding (CW / CCW) |
 | `SPACE` | pause / resume animation |
 | `ESC` | quit |

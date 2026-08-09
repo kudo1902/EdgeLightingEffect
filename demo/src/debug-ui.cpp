@@ -311,8 +311,7 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     buildColorPickerSection(cfg);
     buildAnimationSection(cfg, effect.GetAnimationManager());
     buildBackgroundSection();
-
-    ImGui::Checkbox("Wireframe", &cfg.wireframe.enable);
+    buildDebugSection(cfg);
 
     ImGui::Separator();
     ImGui::Text("Animation: %s", playing ? "PLAYING" : "PAUSED");
@@ -416,8 +415,6 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
                           ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
         ImGui::SliderFloat("Opaque Softness##Neon", &cfg.neon.opaqueSoftness, 0.0f, 20.0f, "%.1f");
     }
-    ImGui::Checkbox("Show Gradient LUT##Neon", &cfg.neon.showGradientLUT);
-    ImGui::Checkbox("Show Color Stops##Neon", &cfg.neon.showColorStops);
     AnimatedSlider("Line Width##Neon", cfg.neon.lineWidth, active.neon.lineWidth, 0.0f, 20.0f, "%.0f");
     AnimatedSlider("Filament Falloff##Neon", cfg.neon.filamentFalloff, active.neon.filamentFalloff, 0.0f, 5.0f);
     AnimatedSlider("Intensity##Neon", cfg.neon.intensity, active.neon.intensity, 0.0f, 3.0f);
@@ -546,9 +543,6 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg,
     {
         return;
     }
-
-    ImGui::SameLine();
-    ImGui::Checkbox("Show Half-Res##Optimized", &cfg.optimizedNeon.showHalfRes);
 
     ImGui::SliderFloat("Res Scale##Opt", &cfg.optimizedNeon.resolutionScale, 0.125f, 1.0f, "%.3f");
     ImGui::SliderInt("Samples##Opt", &cfg.optimizedNeon.numSamples, 8, NEON_MAX_LOOP_SAMPLES);
@@ -1094,6 +1088,36 @@ void DebugUI::buildBackgroundSection()
     ImGui::SliderFloat("Checker Size##Bg", &mBgCheckerSize, 4.0f, 128.0f, "%.0f");
     ImGui::ColorEdit3("Color A##Bg", &mBgColorA.x, ImGuiColorEditFlags_NoInputs);
     ImGui::ColorEdit3("Color B##Bg", &mBgColorB.x, ImGuiColorEditFlags_NoInputs);
+}
+
+void DebugUI::buildDebugSection(EdgeLighting::Config &cfg)
+{
+    if (!ImGui::CollapsingHeader("Debug Overlays", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+
+    // Everything here is drawn by the single DebugRenderer layer, on top of
+    // the finished frame. "Enable" is its master switch.
+    ImGui::Checkbox("Enable##Debug", &cfg.debug.enable);
+    if (!cfg.debug.enable)
+    {
+        return;
+    }
+
+    ImGui::Checkbox("Wireframe##Debug", &cfg.debug.showWireframe);
+    if (cfg.debug.showWireframe)
+    {
+        ImGui::SameLine();
+        ImGui::ColorEdit4("Color##DebugWire", &cfg.debug.wireframeColor.x,
+                          ImGuiColorEditFlags_NoInputs);
+    }
+    ImGui::Checkbox("Show Gradient LUT##Debug", &cfg.debug.showGradientLUT);
+    ImGui::Checkbox("Show Color Stops##Debug", &cfg.debug.showColorStops);
+    ImGui::Checkbox("Show Arc Markers##Debug", &cfg.debug.showArcMarkers);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(start / end)");
+    ImGui::Checkbox("Show Segment Markers##Debug", &cfg.debug.showSegmentMarkers);
 }
 
 void DebugUI::scanColorPickerFiles()

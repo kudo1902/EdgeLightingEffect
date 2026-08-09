@@ -79,6 +79,7 @@ private:
     void buildAnimationSection(EdgeLighting::Config &cfg,
                                EdgeLighting::AnimationManager &manager);
     void buildBackgroundSection();
+    void buildDebugSection(EdgeLighting::Config &cfg);
     void buildColorPickerSection(EdgeLighting::Config &cfg);
 
 private:
