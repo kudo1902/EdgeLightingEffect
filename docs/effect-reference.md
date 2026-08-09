@@ -46,7 +46,8 @@ what you see:
 
 The neon renderer is one of three renderers that can be enabled independently
 in the same effect: `NeonRenderer`, `NeonOptimizedRenderer` (half-res variant
-of the same shader), and `WireframeRenderer` (a 1px debug bounding box).
+of the same shader), and `DebugRenderer` (every diagnostic overlay - bounding
+box, gradient LUT strip, colour-stop markers - in one droppable layer).
 
 ---
 
@@ -77,8 +78,11 @@ comes out. Every value is the compiler-visible default from `config.h`.
 | Neon | segmentBoosts | empty - no travelling lights |
 | Neon | colorTransitionDuration | 0.3 s |
 | Optimized | enable | false |
-| Wireframe | enable | true |
-| Wireframe | color | opaque green |
+| Debug | enable | true |
+| Debug | showWireframe | true |
+| Debug | wireframeColor | opaque green |
+| Debug | showGradientLUT / showColorStops | false |
+| Debug | showArcMarkers / showSegmentMarkers | false |
 
 Turning `neon.enable = true` on top of these defaults gives you a full-loop
 rainbow (red -> green -> blue -> yellow, blending back to red) marching slowly
@@ -330,17 +334,54 @@ Typical animation patterns:
 
 ### 3.8 Debug visualisations
 
-**`neon.showGradientLUT`** (default false)
+All of these are drawn by `DebugRenderer`, the pipeline's single diagnostic
+layer, and live under `Config::debug`. None of them is part of the effect:
+leave the renderer unregistered in production and they cost nothing at all -
+no shader compiles, no geometry, no draws.
+
+**`debug.enable`** (default `true`)
+Master switch for the layer. Off hides every overlay below regardless of
+their own flags.
+
+**`debug.showWireframe`** (default `true`)
+Draws a 1px `GL_LINE_LOOP` around the rectangle.
+
+**`debug.wireframeColor`** (default opaque green `(0, 1, 0, 1)`)
+Colour of that line.
+
+**`debug.showGradientLUT`** (default false)
 Draws the baked 256-texel gradient LUT as a horizontal strip across the
 centre of the rectangle. Handy to eyeball what colours the shader is
-actually sampling from.
+actually sampling from. The strip bakes its own copy of the ring from
+`neon.colorStops`, cross-fade included, so it works even with both neon
+renderers disabled.
 
-**`neon.showColorStops`** (default false)
+**`debug.showColorStops`** (default false)
 Draws a coloured dot at each colour-stop position on the perimeter so you
 can verify the `position -> colour` mapping against the LUT strip and the
 rendered halo.
 
-Both are demo-time debug aids; leave off in production.
+**`debug.showArcMarkers`** (default false)
+Draws a chevron at each arc's start and end, just outside the perimeter.
+Both chevrons of a pair point *into* the lit span - the start one along the
+direction of travel, the end one against it - and are coloured green for
+start, red for end. So an arc's extent, and which way it runs under the
+current `geometry.winding`, are readable without converting perimeter
+fractions to pixels. An arc covering the whole perimeter has no boundary,
+so it gets a start marker only.
+
+**`debug.showSegmentMarkers`** (default false)
+Draws a diamond at each segment's centre position, just inside the
+perimeter, in that segment's own first stop colour (white when it has no
+stops and inherits the base gradient). Covers the merged pool
+(`neon.segmentBoosts` + `neon.preservedSegmentBoosts`) that the renderers
+actually draw, so a travelling segment can be tracked while it animates.
+
+The three marker families use different shapes and sit on / outside /
+inside the perimeter respectively, so they stay legible together.
+
+Register `DebugRenderer` last - its overlays are meant to sit on top of the
+finished frame.
 
 ### 3.9 Optimized neon (half-res variant)
 
@@ -370,19 +411,6 @@ faster, but the halo can develop visible "beading" at low counts.
 Width of the precomputed gradient LUT (32 - 256). At the default 256 the
 gradient is smooth enough that dithering hides all seams; below ~64 you can
 see quantisation on smooth pans.
-
-**`optimizedNeon.showHalfRes`** (default false)
-Debug: display the raw half-res FBO with a nearest-neighbour upscale
-instead of the bilinear-blitted final image. Useful for verifying pass-1
-rendering.
-
-### 3.10 Wireframe overlay
-
-**`wireframe.enable`** (default `true`)
-Toggles a 1px `GL_LINE_LOOP` around the rectangle. Debug aid only.
-
-**`wireframe.color`** (default opaque green `(0, 1, 0, 1)`)
-Colour of the line.
 
 ---
 

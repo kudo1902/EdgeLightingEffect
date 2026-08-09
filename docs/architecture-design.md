@@ -34,9 +34,9 @@ Config ────► │ EdgeLightingEffect   │◄──── Clock (Play/P
                        │  Render(w, h, t, config)
                        ▼
        ┌─────────────────────────────────────────┐
-       │  WireframeRenderer  (debug outline)     │
        │  NeonRenderer       (full-res neon)     │
        │  NeonOptimizedRenderer (half-res neon)  │
+       │  DebugRenderer      (overlays, last)    │
        └─────────────────────────────────────────┘
 ```
 
@@ -98,11 +98,13 @@ Config
  │                       - segments: vector<SegmentBoost> (position, length,
  │                         boost, own colorStops + blendSpace). Default empty.
  │                       - compositing: opaque + opaqueColor
- │                       - debug: showGradientLUT, showColorStops
  ├── OptimizedNeonConfig half-res knobs (enable, resolutionScale, numSamples,
- │                       gradientLutSize, showHalfRes). *Shares* NeonConfig
- │                       for every visual param above.
- └── WireframeConfig     enable + color
+ │                       gradientLutSize). *Shares* NeonConfig for every
+ │                       visual param above.
+ └── DebugConfig         every diagnostic switch, all drawn by DebugRenderer:
+                         enable (master), showWireframe + wireframeColor,
+                         showGradientLUT, showColorStops, showArcMarkers,
+                         showSegmentMarkers
 ```
 
 Host code produces a `Config` (usually a copy of `effect.GetConfig()`,
@@ -225,10 +227,51 @@ Its Pass 0 is the shared emission pre-pass (see
 [`emission-prepass.md`](emission-prepass.md)), with `uNumSamples` driven by
 the sample-count slider so a sample sits at `i / uNumSamples`.
 
-### 4.3 WireframeRenderer
+### 4.3 DebugRenderer
 
-A `GL_LINE_LOOP` debug outline. Blending briefly disabled for crisp 1 px
-lines.
+The pipeline's one diagnostic layer, and the only place debug-only geometry
+is drawn - the neon renderers contain none. Three overlays, each behind its
+own flag in `DebugConfig`, in draw order:
+
+1. **Wireframe box** - `GL_LINE_LOOP` outline of the rect. Blending briefly
+   disabled for crisp 1 px lines.
+2. **Gradient LUT strip** - the baked colour ring on a small quad at the
+   geometry centre, drawn unblended so it stays readable over the
+   tone-mapped glow.
+3. **Markers** - one glyph per marked thing, straight alpha blending for the
+   anti-aliased edges. All three families share `debug-marker.frag` (which
+   resolves each shape to a signed distance, then runs one fill / rim / AA
+   tail) and one unit-quad VAO scaled per marker, so the whole overlay is a
+   single shader bind:
+   - **disc** per colour stop, in the stop's colour, *on* the perimeter;
+   - **chevron** per arc bound, offset *outside* the perimeter and rotated
+     onto the perimeter tangent - the start one points along the direction of
+     travel and the end one against it, so both point into the lit span
+     (start green, end red). A full-perimeter arc has no boundary and gets a
+     start marker only;
+   - **diamond** per segment centre, offset *inside* the perimeter, in the
+     segment's own first stop colour (white when it inherits the base
+     gradient). Reads the merged pool via `SegmentUtils::FillEffectiveSegments`,
+     so it marks exactly what the neon renderers draw.
+
+   The in/on/out offsets are what keep the three families legible when
+   several are enabled at once.
+
+Register it **last**: it composites over the finished frame. It bakes its
+own `GradientLUT` (§4.4) from `NeonConfig`'s stops rather than borrowing a
+texture from a neon renderer, so the strip works even with both neon layers
+disabled and the debug layer can be dropped entirely without touching them.
+
+### 4.4 GradientLUT (shared)
+
+`lib/include/util/gradient-lut.h` - header-only. Bakes colour stops into a
+1xN RGBA8 texture (REPEAT on U so the hue sweep wraps) and owns the colour
+cross-fade: `Rebuild(stops, blendSpace, duration, size)` is safe to call
+every frame (it returns untouched when the inputs match the last bake, snaps
+on the first bake / a width change / `duration <= 0`, and otherwise starts a
+fade), and `Update(dt)` blends From→Target and re-uploads. Both neon
+renderers and the debug strip own one, so a colour change eases identically
+in all three.
 
 ## 5. Animation - Clock + Modulators + AnimationManager
 
