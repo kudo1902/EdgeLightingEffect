@@ -182,7 +182,7 @@ void DebugUI::Build(el_effect_handle_t effect)
     buildColorPickerSection(effect);
     buildAnimationSection(effect);
     buildBackgroundSection();
-    buildWireframeSection(effect);
+    buildDebugSection(effect);
 
     ImGui::Separator();
     ImGui::Text("Clock: %s", playing ? "PLAYING" : "PAUSED");
@@ -683,21 +683,6 @@ void DebugUI::buildNeonSection(el_effect_handle_t effect)
         }
     }
 
-    el_bool_t showLut = 0;
-    el_effect_get_show_gradient_lut(effect, &showLut);
-    bool sl = showLut;
-    if (ImGui::Checkbox("Show Gradient LUT##Neon", &sl))
-    {
-        el_effect_set_show_gradient_lut(effect, sl ? 1 : 0);
-    }
-    el_bool_t showStops = 0;
-    el_effect_get_show_color_stops(effect, &showStops);
-    bool ss = showStops;
-    if (ImGui::Checkbox("Show Color Stops##Neon", &ss))
-    {
-        el_effect_set_show_color_stops(effect, ss ? 1 : 0);
-    }
-
     DrawSharedNeonSliders(effect, "Neon");
     DrawSegmentAndArcRows(effect, "Neon");
 
@@ -734,15 +719,6 @@ void DebugUI::buildOptimizedNeonSection(el_effect_handle_t effect)
     }
     if (!en)
         return;
-
-    el_bool_t showHalf = 0;
-    el_effect_get_optimized_show_half_res(effect, &showHalf);
-    bool sh = showHalf;
-    ImGui::SameLine();
-    if (ImGui::Checkbox("Show Half-Res##Opt", &sh))
-    {
-        el_effect_set_optimized_show_half_res(effect, sh ? 1 : 0);
-    }
 
     float scale = 0.0f;
     el_effect_get_optimized_resolution_scale(effect, &scale);
@@ -1108,7 +1084,7 @@ void DebugUI::buildAnimationSection(el_effect_handle_t effect)
 }
 
 // ---------------------------------------------------------------------------
-// Background + Wireframe
+// Background + debug overlays
 // ---------------------------------------------------------------------------
 
 void DebugUI::buildBackgroundSection()
@@ -1128,27 +1104,78 @@ void DebugUI::buildBackgroundSection()
     ImGui::ColorEdit3("Color B##Bg", mBgColorB, ImGuiColorEditFlags_NoInputs);
 }
 
-void DebugUI::buildWireframeSection(el_effect_handle_t effect)
+void DebugUI::buildDebugSection(el_effect_handle_t effect)
 {
-    ImGui::Separator();
-    el_bool_t on = 0;
-    el_effect_get_wireframe_renderer_enabled(effect, &on);
-    bool en = on;
-    if (ImGui::Checkbox("Wireframe", &en))
+    if (!ImGui::CollapsingHeader("Debug Overlays", ImGuiTreeNodeFlags_DefaultOpen))
     {
-        el_effect_set_wireframe_renderer_enabled(effect, en ? 1 : 0);
+        return;
     }
-    if (en)
+
+    // All of this is drawn by the single debug layer (EL_RENDERER_DEBUG) on
+    // top of the finished frame. "Enable" is its master switch.
+    el_bool_t on = 0;
+    el_effect_get_debug_renderer_enabled(effect, &on);
+    bool en = on;
+    if (ImGui::Checkbox("Enable##Debug", &en))
+    {
+        el_effect_set_debug_renderer_enabled(effect, en ? 1 : 0);
+    }
+    if (!en)
+    {
+        return;
+    }
+
+    el_bool_t showWire = 0;
+    el_effect_get_show_wireframe(effect, &showWire);
+    bool sw = showWire;
+    if (ImGui::Checkbox("Wireframe##Debug", &sw))
+    {
+        el_effect_set_show_wireframe(effect, sw ? 1 : 0);
+    }
+    if (sw)
     {
         float r = 0, g = 0, b = 0, a = 0;
         el_effect_get_wireframe_color(effect, &r, &g, &b, &a);
         float col[4] = {r, g, b, a};
         ImGui::SameLine();
-        if (ImGui::ColorEdit4("Wireframe Color", col,
+        if (ImGui::ColorEdit4("Color##DebugWire", col,
                               ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview))
         {
             el_effect_set_wireframe_color(effect, col[0], col[1], col[2], col[3]);
         }
+    }
+
+    el_bool_t showLut = 0;
+    el_effect_get_show_gradient_lut(effect, &showLut);
+    bool sl = showLut;
+    if (ImGui::Checkbox("Show Gradient LUT##Debug", &sl))
+    {
+        el_effect_set_show_gradient_lut(effect, sl ? 1 : 0);
+    }
+    el_bool_t showStops = 0;
+    el_effect_get_show_color_stops(effect, &showStops);
+    bool ss = showStops;
+    if (ImGui::Checkbox("Show Color Stops##Debug", &ss))
+    {
+        el_effect_set_show_color_stops(effect, ss ? 1 : 0);
+    }
+
+    el_bool_t showArcs = 0;
+    el_effect_get_show_arc_markers(effect, &showArcs);
+    bool sa = showArcs;
+    if (ImGui::Checkbox("Show Arc Markers##Debug", &sa))
+    {
+        el_effect_set_show_arc_markers(effect, sa ? 1 : 0);
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(start / end)");
+
+    el_bool_t showSegs = 0;
+    el_effect_get_show_segment_markers(effect, &showSegs);
+    bool sg = showSegs;
+    if (ImGui::Checkbox("Show Segment Markers##Debug", &sg))
+    {
+        el_effect_set_show_segment_markers(effect, sg ? 1 : 0);
     }
 }
 

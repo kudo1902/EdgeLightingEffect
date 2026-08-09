@@ -51,7 +51,7 @@ private:
     void buildColorPickerSection(el_effect_handle_t effect);
     void buildAnimationSection(el_effect_handle_t effect);
     void buildBackgroundSection();
-    void buildWireframeSection(el_effect_handle_t effect);
+    void buildDebugSection(el_effect_handle_t effect);
 
     void scanColorPickerFiles();
     void uploadColorPickerTexture();

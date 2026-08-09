@@ -46,8 +46,10 @@ namespace
             return;
         }
         v += delta;
-        if (v < lo) v = lo;
-        if (v > hi) v = hi;
+        if (v < lo)
+            v = lo;
+        if (v > hi)
+            v = hi;
         set(gEffect, v);
     }
 
@@ -128,8 +130,8 @@ namespace
         case GLFW_KEY_G:
         {
             el_bool_t on = 0;
-            el_effect_get_wireframe_renderer_enabled(gEffect, &on);
-            el_effect_set_wireframe_renderer_enabled(gEffect, on ? 0 : 1);
+            el_effect_get_show_wireframe(gEffect, &on);
+            el_effect_set_show_wireframe(gEffect, on ? 0 : 1);
             break;
         }
         case GLFW_KEY_O:
@@ -254,7 +256,7 @@ int main()
                            static_cast<float>(displayH) / 4.0f,
                            0.0f);
     el_effect_set_neon_renderer_enabled(gEffect, 1);
-    el_effect_set_wireframe_renderer_enabled(gEffect, 1);
+    el_effect_set_show_wireframe(gEffect, 1);
     el_effect_set_wireframe_color(gEffect, 0.0f, 1.0f, 0.0f, 1.0f);
 
     EdgeLightingCapiDemo::BackgroundQuad background;
