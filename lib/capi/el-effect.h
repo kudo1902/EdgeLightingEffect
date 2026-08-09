@@ -50,20 +50,12 @@ extern "C"
     /** @} */
 
     /** @name Renderer toggles
-     *  Independent on/off switches for the neon, optimized, and wireframe
-     *  layers. Any subset can be enabled at once - they composite additively.
+     *  Independent on/off switches for the neon, optimized, and debug layers.
+     *  Any subset can be enabled at once - they composite additively.
      *  @{ */
 
     EL_API el_result_e el_effect_set_neon_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled);
     EL_API el_result_e el_effect_get_neon_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
-
-    /** @brief Draw the baked gradient LUT as a debug strip across the rectangle. */
-    EL_API el_result_e el_effect_set_show_gradient_lut(el_effect_handle_t effect, el_bool_t show);
-    EL_API el_result_e el_effect_get_show_gradient_lut(el_effect_handle_t effect, el_bool_t *outShow);
-
-    /** @brief Draw a coloured dot at each colour-stop position on the perimeter. */
-    EL_API el_result_e el_effect_set_show_color_stops(el_effect_handle_t effect, el_bool_t show);
-    EL_API el_result_e el_effect_get_show_color_stops(el_effect_handle_t effect, el_bool_t *outShow);
 
     /** @} */
 
@@ -409,11 +401,6 @@ extern "C"
     /** @brief Set the precomputed gradient LUT size (power-of-two, 32-256). */
     EL_API el_result_e el_effect_set_optimized_gradient_lut_size(el_effect_handle_t effect, int32_t size);
     EL_API el_result_e el_effect_get_optimized_gradient_lut_size(el_effect_handle_t effect, int32_t *outSize);
-
-    /** @brief Show the raw half-res FBO (nearest-upscale) instead of the
-     *         final bilinear-blitted result. Diagnostic only. */
-    EL_API el_result_e el_effect_set_optimized_show_half_res(el_effect_handle_t effect, el_bool_t show);
-    EL_API el_result_e el_effect_get_optimized_show_half_res(el_effect_handle_t effect, el_bool_t *outShow);
 
     /** @} */
 

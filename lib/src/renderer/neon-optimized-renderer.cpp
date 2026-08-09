@@ -80,38 +80,19 @@ namespace EdgeLighting
         rebuildArcLUT(mCurrentConfig);
         rebuildLoopSamples(mCurrentConfig);
         setupGeometry(mCurrentConfig);
-        rebuildGradientLUT(mCurrentConfig);
+        mGradientLUT.Rebuild(mCurrentConfig.neon.colorStops,
+                             mCurrentConfig.neon.blendSpace,
+                             mCurrentConfig.neon.colorTransitionDuration,
+                             mCurrentConfig.optimizedNeon.gradientLutSize);
         return true;
     }
 
     void NeonOptimizedRenderer::Update(float deltaTime, float, const Config &)
     {
-        // Drive the gradient cross-fade (see rebuildGradientLUT). Uses the raw
-        // frame delta, not clock time, so a colour change still fades smoothly
-        // even while the animation clock is paused.
-        if (!mFading)
-        {
-            return;
-        }
-
-        mFadeElapsed += deltaTime;
-        float u = (mFadeDuration > 0.0f) ? (mFadeElapsed / mFadeDuration) : 1.0f;
-        u = std::clamp(u, 0.0f, 1.0f);
-        float s = u * u * (3.0f - 2.0f * u); // smoothstep ease-in-out
-
-        const int n = mLUTBakedSize * 4;
-        mLUTDisplay.resize(n);
-        for (int i = 0; i < n; ++i)
-        {
-            mLUTDisplay[i] = mLUTFrom[i] + (mLUTTarget[i] - mLUTFrom[i]) * s;
-        }
-        uploadGradientLUT(mLUTDisplay, mLUTBakedSize);
-
-        if (u >= 1.0f)
-        {
-            mLUTDisplay = mLUTTarget; // land exactly on the target
-            mFading = false;
-        }
+        // Drive the gradient cross-fade. Uses the raw frame delta, not clock
+        // time, so a colour change still fades smoothly even while the
+        // animation clock is paused.
+        mGradientLUT.Update(deltaTime);
     }
 
     void NeonOptimizedRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
@@ -159,9 +140,6 @@ namespace EdgeLighting
                                    config.neon.bloomStrength != mCurrentConfig.neon.bloomStrength ||
                                    config.neon.intensity != mCurrentConfig.neon.intensity ||
                                    config.neon.outsideCutoff != mCurrentConfig.neon.outsideCutoff;
-        const bool lutDirty = config.neon.colorStops != mCurrentConfig.neon.colorStops ||
-                              config.neon.blendSpace != mCurrentConfig.neon.blendSpace ||
-                              config.optimizedNeon.gradientLutSize != mCurrentConfig.optimizedNeon.gradientLutSize;
         // See NeonRenderer for the same guard - only per-segment stops/blend
         // affect the atlas; live position/length/boost don't.
         SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
@@ -184,10 +162,11 @@ namespace EdgeLighting
             setupGeometry(config);
         }
 
-        if (lutDirty)
-        {
-            rebuildGradientLUT(config);
-        }
+        // Self-guarding: GradientLUT::Rebuild compares the stops and width it
+        // last baked and returns without touching GL when nothing changed.
+        mGradientLUT.Rebuild(config.neon.colorStops, config.neon.blendSpace,
+                             config.neon.colorTransitionDuration,
+                             config.optimizedNeon.gradientLutSize);
 
         if (segLutDirty)
         {
@@ -254,41 +233,6 @@ namespace EdgeLighting
             }
         }
         return true;
-    }
-
-    void NeonOptimizedRenderer::renderEmissionPass(float time, const Config &config, int numSamples,
-                                                   int viewportWidth, int viewportHeight)
-    {
-        // One fragment per perimeter sample; see neon-emission.frag. Blending
-        // must be off - this is a table write, not a composite.
-        glDisable(GL_BLEND);
-        mEmissionBuffer.Bind(); // also sets the viewport to NEON_MAX_LOOP_SAMPLES x 1
-
-        mEmissionShader.Use();
-        mEmissionShader.SetUniform("uMVP", glm::mat4(1.0f));
-        mEmissionShader.SetUniform("uTime", time);
-        mEmissionShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
-        mEmissionShader.SetUniform("uIntensity", config.neon.intensity);
-        // Scaled perimeter, matching the scaled uRectSize the Pass-1 shader
-        // uses for its own feather conversion.
-        mEmissionShader.SetUniform("uPerimeter", mPerimeter);
-        mEmissionShader.SetUniform("uNumSamples", numSamples);
-
-        mGradientLUT.Bind(0);
-        mEmissionShader.SetUniform("uGradientLUT", 0);
-        mSegmentLUT.Bind(1);
-        mEmissionShader.SetUniform("uSegmentLUT", 1);
-        mArcLUT.Bind(2);
-        mEmissionShader.SetUniform("uArcLUT", 2);
-
-        mBlitVertexArray.DrawArrays(GL_TRIANGLES, 6);
-        mEmissionShader.Unuse();
-
-        // Hand the screen back to the caller in the state every other pass
-        // expects: default framebuffer, full viewport, blending on.
-        Framebuffer::BindDefault();
-        glViewport(0, 0, viewportWidth, viewportHeight);
-        glEnable(GL_BLEND);
     }
 
     void NeonOptimizedRenderer::setupGeometry(const Config &config)
@@ -389,72 +333,6 @@ namespace EdgeLighting
         float perimeter = 2.0f * (w - 2.0f * r) + 2.0f * (h - 2.0f * r) + 2.0f * PI * r;
         mPerimeter = perimeter * scale;
         mSampleSpacing = mPerimeter / static_cast<float>(n);
-    }
-
-    void NeonOptimizedRenderer::rebuildGradientLUT(const Config &config)
-    {
-        // OnConfigChanged already gates this call behind a lutDirty check
-        // (colorStops / blendSpace / gradientLutSize), so a re-entry here
-        // always means the inputs actually changed.
-        int lutSize = std::max(config.optimizedNeon.gradientLutSize, 4);
-        mLUTTarget.resize(lutSize * 4);
-        for (int i = 0; i < lutSize; ++i)
-        {
-            float t = static_cast<float>(i) / static_cast<float>(lutSize);
-            glm::vec3 c = ColorUtils::SampleStops(t, config.neon.colorStops, config.neon.blendSpace);
-            mLUTTarget[i * 4 + 0] = c.r;
-            mLUTTarget[i * 4 + 1] = c.g;
-            mLUTTarget[i * 4 + 2] = c.b;
-            mLUTTarget[i * 4 + 3] = 1.0f;
-        }
-
-        // First bake (Initialize): seed every buffer and upload immediately -
-        // there's nothing to fade from at startup.
-        if (!mHasBakedLUT)
-        {
-            mLUTFrom = mLUTTarget;
-            mLUTDisplay = mLUTTarget;
-            mLUTBakedSize = lutSize;
-            uploadGradientLUT(mLUTDisplay, mLUTBakedSize);
-            mHasBakedLUT = true;
-            mFading = false;
-            return;
-        }
-
-        // Snap paths: no fade requested, or the LUT width changed (buffers
-        // have different sizes, can't lerp element-wise). Re-seed everything
-        // to the target so the next same-size change can fade from here.
-        bool sizeChanged = lutSize != mLUTBakedSize;
-        if (sizeChanged || config.neon.colorTransitionDuration <= 0.0f)
-        {
-            mLUTFrom = mLUTTarget;
-            mLUTDisplay = mLUTTarget;
-            mLUTBakedSize = lutSize;
-            uploadGradientLUT(mLUTDisplay, mLUTBakedSize);
-            mFading = false;
-            return;
-        }
-
-        // Fade from whatever is currently on screen (mid-fade or settled)
-        // toward the new target. Update() does the first blended upload this
-        // same frame (SetConfig -> OnConfigChanged runs before Update).
-        mLUTFrom = mLUTDisplay;
-        mFadeElapsed = 0.0f;
-        mFadeDuration = config.neon.colorTransitionDuration;
-        mFading = true;
-    }
-
-    void NeonOptimizedRenderer::uploadGradientLUT(const std::vector<float> &lut, int lutSize)
-    {
-        std::vector<unsigned char> lutBytes(static_cast<size_t>(lutSize) * 4);
-        for (int i = 0; i < lutSize * 4; ++i)
-        {
-            lutBytes[i] = static_cast<unsigned char>(
-                std::clamp(lut[i] * 255.0f, 0.0f, 255.0f));
-        }
-
-        mGradientLUT.SetData(lutBytes.data(), lutSize, /*height=*/1, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
-        mGradientLUT.SetParams(GL_LINEAR, GL_LINEAR, GL_REPEAT, GL_CLAMP_TO_EDGE);
     }
 
     void NeonOptimizedRenderer::rebuildSegmentLUT(const Config &config)
@@ -574,6 +452,41 @@ namespace EdgeLighting
         mArcBlock.BindBase(ARC_BLOCK_BINDING);
     }
 
+    void NeonOptimizedRenderer::renderEmissionPass(float time, const Config &config, int numSamples,
+                                                   int viewportWidth, int viewportHeight)
+    {
+        // One fragment per perimeter sample; see neon-emission.frag. Blending
+        // must be off - this is a table write, not a composite.
+        glDisable(GL_BLEND);
+        mEmissionBuffer.Bind(); // also sets the viewport to NEON_MAX_LOOP_SAMPLES x 1
+
+        mEmissionShader.Use();
+        mEmissionShader.SetUniform("uMVP", glm::mat4(1.0f));
+        mEmissionShader.SetUniform("uTime", time);
+        mEmissionShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
+        mEmissionShader.SetUniform("uIntensity", config.neon.intensity);
+        // Scaled perimeter, matching the scaled uRectSize the Pass-1 shader
+        // uses for its own feather conversion.
+        mEmissionShader.SetUniform("uPerimeter", mPerimeter);
+        mEmissionShader.SetUniform("uNumSamples", numSamples);
+
+        mGradientLUT.Bind(0);
+        mEmissionShader.SetUniform("uGradientLUT", 0);
+        mSegmentLUT.Bind(1);
+        mEmissionShader.SetUniform("uSegmentLUT", 1);
+        mArcLUT.Bind(2);
+        mEmissionShader.SetUniform("uArcLUT", 2);
+
+        mBlitVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        mEmissionShader.Unuse();
+
+        // Hand the screen back to the caller in the state every other pass
+        // expects: default framebuffer, full viewport, blending on.
+        Framebuffer::BindDefault();
+        glViewport(0, 0, viewportWidth, viewportHeight);
+        glEnable(GL_BLEND);
+    }
+
     void NeonOptimizedRenderer::renderHalfResNeonPass(const Config &config, int viewportWidth,
                                                       int viewportHeight, int numSamples)
     {
@@ -681,13 +594,6 @@ namespace EdgeLighting
         // the backbuffer (black fill if opaque, original bg otherwise).
         mBlitShader.Use();
         mBlitShader.SetUniform("uMVP", glm::mat4(1.0f));
-
-        // Debug toggle: nearest neighbour shows the raw half-res pixels.
-        glBindTexture(GL_TEXTURE_2D, mHalfResBuffer.GetTextureId());
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-                        config.optimizedNeon.showHalfRes ? GL_NEAREST : GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
-                        config.optimizedNeon.showHalfRes ? GL_NEAREST : GL_LINEAR);
 
         mHalfResBuffer.BindTexture(0);
         mBlitShader.SetUniform("uSource", 0);

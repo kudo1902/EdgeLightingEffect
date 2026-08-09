@@ -80,38 +80,6 @@ extern "C"
         return EL_SUCCESS;
     }
 
-    el_result_e el_effect_set_show_gradient_lut(el_effect_handle_t effect, el_bool_t show)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_show_gradient_lut");
-        SET_AND_LOG(effect->config.neon.showGradientLUT, show != 0,
-                    "effect=%p, show=%d", (void *)effect, show);
-    }
-
-    el_result_e el_effect_get_show_gradient_lut(el_effect_handle_t effect, el_bool_t *outShow)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_show_gradient_lut");
-        VALIDATE_OUT_PTR(outShow, "el_effect_get_show_gradient_lut");
-        *outShow = effect->config.neon.showGradientLUT ? 1 : 0;
-        LOG_D("effect=%p, show=%d", (void *)effect, *outShow);
-        return EL_SUCCESS;
-    }
-
-    el_result_e el_effect_set_show_color_stops(el_effect_handle_t effect, el_bool_t show)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_show_color_stops");
-        SET_AND_LOG(effect->config.neon.showColorStops, show != 0,
-                    "effect=%p, show=%d", (void *)effect, show);
-    }
-
-    el_result_e el_effect_get_show_color_stops(el_effect_handle_t effect, el_bool_t *outShow)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_show_color_stops");
-        VALIDATE_OUT_PTR(outShow, "el_effect_get_show_color_stops");
-        *outShow = effect->config.neon.showColorStops ? 1 : 0;
-        LOG_D("effect=%p, show=%d", (void *)effect, *outShow);
-        return EL_SUCCESS;
-    }
-
     el_result_e el_effect_set_opaque_mode(el_effect_handle_t effect, el_opaque_mode_e mode)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque_mode");
@@ -1298,19 +1266,6 @@ extern "C"
         VALIDATE_OUT_PTR(outSize, "el_effect_get_optimized_gradient_lut_size");
         *outSize = effect->config.optimizedNeon.gradientLutSize;
         LOG_D("effect=%p, size=%d", (void *)effect, *outSize);
-        return EL_SUCCESS;
-    }
-    el_result_e el_effect_set_optimized_show_half_res(el_effect_handle_t effect, el_bool_t show)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_show_half_res");
-        SET_AND_LOG(effect->config.optimizedNeon.showHalfRes, show != 0, "effect=%p, show=%d", (void *)effect, show);
-    }
-    el_result_e el_effect_get_optimized_show_half_res(el_effect_handle_t effect, el_bool_t *outShow)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_show_half_res");
-        VALIDATE_OUT_PTR(outShow, "el_effect_get_optimized_show_half_res");
-        *outShow = effect->config.optimizedNeon.showHalfRes ? 1 : 0;
-        LOG_D("effect=%p, show=%d", (void *)effect, *outShow);
         return EL_SUCCESS;
     }
 

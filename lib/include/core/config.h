@@ -219,18 +219,6 @@ namespace EdgeLighting
     {
         bool enable = false; ///< Enable or disable the neon renderer
 
-        // --- Debug visualisations ---
-
-        /// Debug: draw the baked gradient LUT texture as a horizontal strip at
-        /// the centre of the rectangle so you can eyeball the colour ring
-        /// that's actually going to the shader.
-        bool showGradientLUT = false;
-
-        /// Debug: draw a coloured dot at each colour-stop position on the
-        /// perimeter so the mapping (perimeter position → colour) can be
-        /// verified against the LUT and the on-screen glow.
-        bool showColorStops = false;
-
         // --- Compositing ---
 
         /// Where (if anywhere) an opaque background fill is drawn behind the
@@ -410,8 +398,6 @@ namespace EdgeLighting
         bool operator==(const NeonConfig &o) const
         {
             return enable == o.enable &&
-                   showGradientLUT == o.showGradientLUT &&
-                   showColorStops == o.showColorStops &&
                    opaqueMode == o.opaqueMode &&
                    opaqueColor == o.opaqueColor &&
                    lineWidth == o.lineWidth &&
@@ -455,19 +441,12 @@ namespace EdgeLighting
         /// Size of the precomputed gradient look-up texture (power-of-two, 32–256).
         int gradientLutSize = 256;
 
-        // --- Debug visualisations ---
-
-        /// Show the raw half-res FBO (nearest-neighbour upscale) instead of
-        /// the bilinear-blitted result. Useful to verify pass-1 rendering.
-        bool showHalfRes = false;
-
         bool operator==(const OptimizedNeonConfig &o) const
         {
             return enable == o.enable &&
                    resolutionScale == o.resolutionScale &&
                    numSamples == o.numSamples &&
-                   gradientLutSize == o.gradientLutSize &&
-                   showHalfRes == o.showHalfRes;
+                   gradientLutSize == o.gradientLutSize;
         }
         bool operator!=(const OptimizedNeonConfig &o) const { return !(*this == o); }
     } OptimizedNeonConfig;
