@@ -41,7 +41,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-blit.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/black-rect.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-lut-debug.frag"
-    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-stop-marker.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/debug-marker.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/droplets.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lens-flare.vert"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lens-flare.frag"
@@ -56,7 +56,7 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-emission.frag" NEON_EMISSION
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-blit.frag" NEON_BLIT_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/black-rect.frag" BLACK_RECT_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-lut-debug.frag" NEON_LUT_DEBUG_FRAG_CONTENT)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-stop-marker.frag" NEON_STOP_MARKER_FRAG_CONTENT)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/debug-marker.frag" DEBUG_MARKER_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/droplets.frag" DROPLETS_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lens-flare.vert" LENS_FLARE_VERT_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lens-flare.frag" LENS_FLARE_FRAG_CONTENT)
@@ -77,7 +77,7 @@ add_library(edge-lighting STATIC
     src/animation/easing-function.cpp
     src/animation/field-bound-animation.cpp
     src/core/edge-lighting.cpp
-    src/renderer/wireframe-renderer.cpp
+    src/renderer/debug-renderer.cpp
     src/renderer/neon-renderer.cpp
     src/renderer/neon-optimized-renderer.cpp
     src/renderer/droplets-renderer.cpp

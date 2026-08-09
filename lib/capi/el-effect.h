@@ -568,18 +568,50 @@ extern "C"
 
     /** @} */
 
-    /** @name Wireframe overlay
-     *  Debug: 1 px line loop around the target rectangle.
+    /** @name Debug overlays
+     *  Everything diagnostic the pipeline can draw, all of it owned by the
+     *  single @ref EL_RENDERER_DEBUG layer. None of it is part of the effect -
+     *  leave the layer out of @ref el_effect_init_with_renderers and it costs
+     *  nothing at all.
      *  @{ */
 
-    EL_API el_result_e el_effect_set_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled);
-    EL_API el_result_e el_effect_get_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
+    /** @brief Master switch for the debug layer.
+     *  @details Off hides every overlay below regardless of their own flags. */
+    EL_API el_result_e el_effect_set_debug_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled);
+    EL_API el_result_e el_effect_get_debug_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
+
+    /** @brief Draw the 1 px line loop around the target rectangle. */
+    EL_API el_result_e el_effect_set_show_wireframe(el_effect_handle_t effect, el_bool_t show);
+    EL_API el_result_e el_effect_get_show_wireframe(el_effect_handle_t effect, el_bool_t *outShow);
 
     /** @brief Set the wireframe line colour (linear RGBA in [0, 1]). */
     EL_API el_result_e el_effect_set_wireframe_color(el_effect_handle_t effect,
                                                      float r, float g, float b, float a);
     EL_API el_result_e el_effect_get_wireframe_color(el_effect_handle_t effect,
                                                      float *outR, float *outG, float *outB, float *outA);
+
+    /** @brief Draw the baked gradient LUT as a strip across the rectangle. */
+    EL_API el_result_e el_effect_set_show_gradient_lut(el_effect_handle_t effect, el_bool_t show);
+    EL_API el_result_e el_effect_get_show_gradient_lut(el_effect_handle_t effect, el_bool_t *outShow);
+
+    /** @brief Draw a coloured dot at each colour-stop position on the perimeter. */
+    EL_API el_result_e el_effect_set_show_color_stops(el_effect_handle_t effect, el_bool_t show);
+    EL_API el_result_e el_effect_get_show_color_stops(el_effect_handle_t effect, el_bool_t *outShow);
+
+    /** @brief Draw a chevron at each arc's start and end, just outside the
+     *         perimeter.
+     *  @details Both chevrons of a pair point into the lit span - start green,
+     *           end red - so an arc's extent and its direction under the
+     *           current winding are readable at a glance. An arc covering the
+     *           whole perimeter has no boundary and gets a start marker only. */
+    EL_API el_result_e el_effect_set_show_arc_markers(el_effect_handle_t effect, el_bool_t show);
+    EL_API el_result_e el_effect_get_show_arc_markers(el_effect_handle_t effect, el_bool_t *outShow);
+
+    /** @brief Draw a diamond at each segment's centre, just inside the perimeter.
+     *  @details Covers the merged segment pool the renderers actually draw, so
+     *           a travelling segment can be tracked while it animates. */
+    EL_API el_result_e el_effect_set_show_segment_markers(el_effect_handle_t effect, el_bool_t show);
+    EL_API el_result_e el_effect_get_show_segment_markers(el_effect_handle_t effect, el_bool_t *outShow);
 
     /** @} */
 
@@ -606,8 +638,8 @@ extern "C"
 
     /** @brief Initialise every renderer layer under the current GL context.
      *  @details Convenience wrapper for @ref el_effect_init_with_renderers with
-     *           @ref EL_RENDERER_ALL - registers the full stack (wireframe,
-     *           neon, optimized, droplets, lens flare).
+     *           @ref EL_RENDERER_ALL - registers the full stack (neon,
+     *           optimized, droplets, lens flare, debug).
      *  @returns @ref EL_ERROR_INIT_FAILED if a renderer fails to initialise
      *           (usually a shader compile / link error - see native log). */
     EL_API el_result_e el_effect_init(el_effect_handle_t effect);

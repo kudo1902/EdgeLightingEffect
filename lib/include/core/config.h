@@ -509,18 +509,63 @@ namespace EdgeLighting
         bool operator!=(const DropletsConfig &o) const { return !(*this == o); }
     } DropletsConfig;
 
-    /// Wireframe debug overlay configuration.
-    typedef struct WireframeConfig
+    /// Debug overlay configuration - every purely diagnostic thing the
+    /// pipeline can draw, owned by the single @c DebugRenderer layer. None of
+    /// it is part of the effect itself; drop the renderer (or clear
+    /// @c enable) and the visual output is unchanged.
+    typedef struct DebugConfig
     {
-        bool enable = true;                                  ///< Show or hide the wireframe bounding box
-        glm::vec4 color = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f); ///< Wireframe color
+        /// Master switch for the whole overlay layer. false hides every
+        /// visualisation below regardless of their individual flags.
+        bool enable = true;
 
-        bool operator==(const WireframeConfig &o) const
+        // --- Bounding box ---
+
+        /// Show the 1 px line loop around the target rectangle.
+        bool showWireframe = true;
+        /// Wireframe line colour (linear RGBA in [0, 1]).
+        glm::vec4 wireframeColor = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
+
+        // --- Neon colour visualisations ---
+        // These read @c NeonConfig::colorStops / @c blendSpace and bake their
+        // own copy of the colour ring, so they show what the neon shader is
+        // reading without the neon renderer having to hand anything over.
+
+        /// Draw the baked gradient LUT as a horizontal strip at the centre of
+        /// the rectangle so the colour ring can be eyeballed directly.
+        bool showGradientLUT = false;
+
+        /// Draw a coloured dot at each colour-stop position on the perimeter
+        /// so the mapping (perimeter position → colour) can be verified
+        /// against the LUT strip and the on-screen glow.
+        bool showColorStops = false;
+
+        /// Draw a chevron at each arc's start and end, just outside the
+        /// perimeter. Both chevrons of a pair point into the lit span (start
+        /// green, end red), so where an arc begins and ends - and which way it
+        /// runs under the current winding - is readable at a glance. An arc
+        /// covering the whole perimeter has no boundary, so it gets a start
+        /// marker only.
+        bool showArcMarkers = false;
+
+        /// Draw a diamond at each segment's centre position, just inside the
+        /// perimeter. Covers the merged pool the renderers actually draw
+        /// (@c segmentBoosts + @c preservedSegmentBoosts), so a travelling
+        /// segment's position can be read off directly while it animates.
+        bool showSegmentMarkers = false;
+
+        bool operator==(const DebugConfig &o) const
         {
-            return enable == o.enable && color == o.color;
+            return enable == o.enable &&
+                   showWireframe == o.showWireframe &&
+                   wireframeColor == o.wireframeColor &&
+                   showGradientLUT == o.showGradientLUT &&
+                   showColorStops == o.showColorStops &&
+                   showArcMarkers == o.showArcMarkers &&
+                   showSegmentMarkers == o.showSegmentMarkers;
         }
-        bool operator!=(const WireframeConfig &o) const { return !(*this == o); }
-    } WireframeConfig;
+        bool operator!=(const DebugConfig &o) const { return !(*this == o); }
+    } DebugConfig;
 
     /// Lens-flare renderer configuration. Draws a full lens flare (sun core
     /// with rays + hex-aperture chromatic ghosts) as a single fullscreen pass.
@@ -658,7 +703,7 @@ namespace EdgeLighting
         NeonConfig neon;                             ///< Single-pass neon settings
         OptimizedNeonConfig optimizedNeon;           ///< Half-res optimized neon settings
         DropletsConfig droplets;                     ///< Rain-on-glass droplets settings
-        WireframeConfig wireframe;                   ///< Wireframe overlay settings
+        DebugConfig debug;                           ///< Debug overlay settings (wireframe, LUT strip, stop markers)
         LensFlareConfig lensFlare;                   ///< Sun + lens flare (rays, chromatic ghosts)
         LensFlareOptimizedConfig optimizedLensFlare; ///< Half-res optimized lens flare settings
 
@@ -668,7 +713,7 @@ namespace EdgeLighting
                    neon == o.neon &&
                    optimizedNeon == o.optimizedNeon &&
                    droplets == o.droplets &&
-                   wireframe == o.wireframe &&
+                   debug == o.debug &&
                    lensFlare == o.lensFlare &&
                    optimizedLensFlare == o.optimizedLensFlare;
         }

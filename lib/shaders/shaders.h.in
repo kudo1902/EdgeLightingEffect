@@ -57,8 +57,8 @@ namespace EdgeLighting
 @NEON_LUT_DEBUG_FRAG_CONTENT@
 )shadersrc";
 
-                static const char *const NEON_STOP_MARKER_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
-@NEON_STOP_MARKER_FRAG_CONTENT@
+                static const char *const DEBUG_MARKER_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
+@DEBUG_MARKER_FRAG_CONTENT@
 )shadersrc";
 
                 static const char *const DROPLETS_FRAG_SRC = R"shadersrc(@GLSL_VERSION@

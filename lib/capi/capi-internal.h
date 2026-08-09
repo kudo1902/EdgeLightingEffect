@@ -5,7 +5,7 @@
 
 #include "core/edge-lighting.h"
 #include "animation/animation-manager.h"
-#include "renderer/wireframe-renderer.h"
+#include "renderer/debug-renderer.h"
 #include "renderer/neon-renderer.h"
 #include "renderer/neon-optimized-renderer.h"
 #include "renderer/droplets-renderer.h"

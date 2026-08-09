@@ -1609,26 +1609,44 @@ extern "C"
         return EL_SUCCESS;
     }
 
-    // --- Wireframe ---
+    // --- Debug overlays ---
 
-    el_result_e el_effect_set_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
+    el_result_e el_effect_set_debug_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_wireframe_renderer_enabled");
-        SET_AND_LOG(effect->config.wireframe.enable, enabled != 0, "effect=%p, enabled=%d", (void *)effect, enabled);
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_debug_renderer_enabled");
+        SET_AND_LOG(effect->config.debug.enable, enabled != 0, "effect=%p, enabled=%d", (void *)effect, enabled);
     }
-    el_result_e el_effect_get_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
+
+    el_result_e el_effect_get_debug_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_wireframe_renderer_enabled");
-        VALIDATE_OUT_PTR(outEnabled, "el_effect_get_wireframe_renderer_enabled");
-        *outEnabled = effect->config.wireframe.enable ? 1 : 0;
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_debug_renderer_enabled");
+        VALIDATE_OUT_PTR(outEnabled, "el_effect_get_debug_renderer_enabled");
+        *outEnabled = effect->config.debug.enable ? 1 : 0;
         LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled);
         return EL_SUCCESS;
     }
+
+    el_result_e el_effect_set_show_wireframe(el_effect_handle_t effect, el_bool_t show)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_show_wireframe");
+        SET_AND_LOG(effect->config.debug.showWireframe, show != 0, "effect=%p, show=%d", (void *)effect, show);
+    }
+
+    el_result_e el_effect_get_show_wireframe(el_effect_handle_t effect, el_bool_t *outShow)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_show_wireframe");
+        VALIDATE_OUT_PTR(outShow, "el_effect_get_show_wireframe");
+        *outShow = effect->config.debug.showWireframe ? 1 : 0;
+        LOG_D("effect=%p, show=%d", (void *)effect, *outShow);
+        return EL_SUCCESS;
+    }
+
     el_result_e el_effect_set_wireframe_color(el_effect_handle_t effect, float r, float g, float b, float a)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_wireframe_color");
-        SET_AND_LOG(effect->config.wireframe.color, glm::vec4(r, g, b, a), "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a);
+        SET_AND_LOG(effect->config.debug.wireframeColor, glm::vec4(r, g, b, a), "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a);
     }
+
     el_result_e el_effect_get_wireframe_color(el_effect_handle_t effect, float *outR, float *outG, float *outB, float *outA)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_wireframe_color");
@@ -1636,11 +1654,75 @@ extern "C"
         VALIDATE_OUT_PTR(outG, "el_effect_get_wireframe_color");
         VALIDATE_OUT_PTR(outB, "el_effect_get_wireframe_color");
         VALIDATE_OUT_PTR(outA, "el_effect_get_wireframe_color");
-        *outR = effect->config.wireframe.color.r;
-        *outG = effect->config.wireframe.color.g;
-        *outB = effect->config.wireframe.color.b;
-        *outA = effect->config.wireframe.color.a;
+        *outR = effect->config.debug.wireframeColor.r;
+        *outG = effect->config.debug.wireframeColor.g;
+        *outB = effect->config.debug.wireframeColor.b;
+        *outA = effect->config.debug.wireframeColor.a;
         LOG_D("effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, *outR, *outG, *outB, *outA);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_show_gradient_lut(el_effect_handle_t effect, el_bool_t show)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_show_gradient_lut");
+        SET_AND_LOG(effect->config.debug.showGradientLUT, show != 0,
+                    "effect=%p, show=%d", (void *)effect, show);
+    }
+
+    el_result_e el_effect_get_show_gradient_lut(el_effect_handle_t effect, el_bool_t *outShow)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_show_gradient_lut");
+        VALIDATE_OUT_PTR(outShow, "el_effect_get_show_gradient_lut");
+        *outShow = effect->config.debug.showGradientLUT ? 1 : 0;
+        LOG_D("effect=%p, show=%d", (void *)effect, *outShow);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_show_color_stops(el_effect_handle_t effect, el_bool_t show)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_show_color_stops");
+        SET_AND_LOG(effect->config.debug.showColorStops, show != 0,
+                    "effect=%p, show=%d", (void *)effect, show);
+    }
+
+    el_result_e el_effect_get_show_color_stops(el_effect_handle_t effect, el_bool_t *outShow)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_show_color_stops");
+        VALIDATE_OUT_PTR(outShow, "el_effect_get_show_color_stops");
+        *outShow = effect->config.debug.showColorStops ? 1 : 0;
+        LOG_D("effect=%p, show=%d", (void *)effect, *outShow);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_show_arc_markers(el_effect_handle_t effect, el_bool_t show)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_show_arc_markers");
+        SET_AND_LOG(effect->config.debug.showArcMarkers, show != 0,
+                    "effect=%p, show=%d", (void *)effect, show);
+    }
+
+    el_result_e el_effect_get_show_arc_markers(el_effect_handle_t effect, el_bool_t *outShow)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_show_arc_markers");
+        VALIDATE_OUT_PTR(outShow, "el_effect_get_show_arc_markers");
+        *outShow = effect->config.debug.showArcMarkers ? 1 : 0;
+        LOG_D("effect=%p, show=%d", (void *)effect, *outShow);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_show_segment_markers(el_effect_handle_t effect, el_bool_t show)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_show_segment_markers");
+        SET_AND_LOG(effect->config.debug.showSegmentMarkers, show != 0,
+                    "effect=%p, show=%d", (void *)effect, show);
+    }
+
+    el_result_e el_effect_get_show_segment_markers(el_effect_handle_t effect, el_bool_t *outShow)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_show_segment_markers");
+        VALIDATE_OUT_PTR(outShow, "el_effect_get_show_segment_markers");
+        *outShow = effect->config.debug.showSegmentMarkers ? 1 : 0;
+        LOG_D("effect=%p, show=%d", (void *)effect, *outShow);
         return EL_SUCCESS;
     }
 
@@ -1687,11 +1769,6 @@ extern "C"
         {
             effect->impl = std::make_unique<EdgeLighting::EdgeLightingEffect>();
 
-            if (rendererMask & EL_RENDERER_WIREFRAME)
-            {
-                LOG_I("registering WireframeRenderer");
-                effect->impl->AddRenderer(std::make_shared<EdgeLighting::WireframeRenderer>());
-            }
             if (rendererMask & EL_RENDERER_NEON)
             {
                 LOG_I("registering NeonRenderer");
@@ -1716,6 +1793,12 @@ extern "C"
             {
                 LOG_I("registering LensFlareOptimizedRenderer");
                 effect->impl->AddRenderer(std::make_shared<EdgeLighting::LensFlareOptimizedRenderer>());
+            }
+            // Last: its overlays are meant to sit on top of the finished frame.
+            if (rendererMask & EL_RENDERER_DEBUG)
+            {
+                LOG_I("registering DebugRenderer");
+                effect->impl->AddRenderer(std::make_shared<EdgeLighting::DebugRenderer>());
             }
             if (!effect->impl->Initialize())
             {

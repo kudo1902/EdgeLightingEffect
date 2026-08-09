@@ -254,8 +254,8 @@ extern "C"
     /** @brief Bitmask selecting which renderer layers @ref el_effect_init_with_renderers
      *         registers on the effect.
      *  @details OR the flags for the layers you want. Registration always
-     *           happens in the fixed compositing order (wireframe, neon,
-     *           optimized, droplets, lens flare, optimized lens flare)
+     *           happens in the fixed compositing order (neon, optimized,
+     *           droplets, lens flare, optimized lens flare, debug)
      *           regardless of how the bits are combined - the mask only decides
      *           inclusion, not order. A layer that is not included is never
      *           constructed, so it pays no GL cost (no shader compile, no FBO
@@ -264,7 +264,7 @@ extern "C"
     typedef enum el_renderer_flags_e
     {
         EL_RENDERER_NONE = 0,                      /**< Register no renderers. */
-        EL_RENDERER_WIREFRAME = 1 << 0,            /**< 1 px debug line loop. */
+        EL_RENDERER_DEBUG = 1 << 0,                /**< Debug overlays: bounding box, gradient LUT strip, colour-stop markers. */
         EL_RENDERER_NEON = 1 << 1,                 /**< Single-pass neon stroke. */
         EL_RENDERER_NEON_OPTIMIZED = 1 << 2,       /**< Half-res neon variant. */
         EL_RENDERER_DROPLETS = 1 << 3,             /**< Rain-on-glass droplets. */
