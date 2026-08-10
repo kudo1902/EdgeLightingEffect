@@ -375,11 +375,11 @@ void DebugUI::buildGeometrySection(EdgeLighting::Config &cfg)
         return;
     }
 
-    ImGui::SliderFloat("Width", &cfg.geometry.width, 100.0f, 1600.0f, "%.0f");
-    ImGui::SliderFloat("Height", &cfg.geometry.height, 100.0f, 1200.0f, "%.0f");
+    ImGui::SliderFloat("Width", &cfg.geometry.width, 100.0f, 1920.0f * 2, "%.0f");
+    ImGui::SliderFloat("Height", &cfg.geometry.height, 100.0f, 1080.0f * 2, "%.0f");
     ImGui::SliderFloat("Pos X", &cfg.geometry.position.x, 0.0f, 1600.0f, "%.0f");
     ImGui::SliderFloat("Pos Y", &cfg.geometry.position.y, 0.0f, 1200.0f, "%.0f");
-    ImGui::SliderFloat("Corner Radius", &cfg.geometry.cornerRadius, 0.0f, 200.0f, "%.0f");
+    ImGui::SliderFloat("Corner Radius", &cfg.geometry.cornerRadius, 0.0f, 1080.0f, "%.0f");
 
     const char *windingItems[] = {"CW", "CCW"};
     int windingIdx = static_cast<int>(cfg.geometry.winding);
@@ -572,7 +572,7 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg,
         ImGui::SliderFloat("Opaque Softness##Opt", &cfg.neon.opaqueSoftness, 0.0f, 20.0f, "%.1f");
     }
     AnimatedSlider("Line Width##Opt", cfg.neon.lineWidth, active.neon.lineWidth, 0.0f, 20.0f, "%.0f");
-    AnimatedSlider("Filament Falloff##Opt", cfg.neon.filamentFalloff, active.neon.filamentFalloff, 0.5f, 5.0f);
+    AnimatedSlider("Filament Falloff##Opt", cfg.neon.filamentFalloff, active.neon.filamentFalloff, 0.0f, 5.0f);
     AnimatedSlider("Intensity##Opt", cfg.neon.intensity, active.neon.intensity, 0.0f, 3.0f);
     AnimatedSlider("Glow Radius##Opt", cfg.neon.glowRadius, active.neon.glowRadius, 0.0f, 80.0f, "%.0f");
     AnimatedSlider("Bloom Strength##Opt", cfg.neon.bloomStrength, active.neon.bloomStrength, 0.0f, 2.0f);
@@ -584,10 +584,10 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg,
     {
         cfg.neon.glowSide = static_cast<EdgeLighting::GlowSide>(sideIdx);
     }
-    // Always show Side Softness so the control is discoverable regardless of
-    // the Glow Side mode (it only feathers the one-sided cut, but keeping it
-    // live avoids the slider vanishing when Glow Side is Both).
-    ImGui::SliderFloat("Side Softness##Opt", &cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
+    if (cfg.neon.glowSide != EdgeLighting::GlowSide::BOTH)
+    {
+        ImGui::SliderFloat("Side Softness##Opt", &cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
+    }
 
     CutoffRow("Inside Cutoff", "OptInside", cfg.neon.insideCutoff, active.neon.insideCutoff);
     CutoffRow("Outside Cutoff", "OptOutside", cfg.neon.outsideCutoff, active.neon.outsideCutoff);
@@ -616,7 +616,7 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg,
         }
     }
 
-    ImGui::TextDisabled("Arcs (%zu / %d) - winner-take-all",
+    ImGui::TextDisabled("Arcs (%zu / %d) - overlap resolves winner-take-all",
                         cfg.neon.arcs.size(),
                         EdgeLighting::NeonConfig::MAX_ARCS_CAP);
     for (size_t i = 0; i < cfg.neon.arcs.size(); ++i)
@@ -646,6 +646,10 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg,
     {
         cfg.neon.blendSpace = static_cast<EdgeLighting::BlendSpace>(blendIdx);
     }
+
+    // Cross-fade time when the stop set / blend space changes (0 = instant).
+    ImGui::SliderFloat("Color Transition (s)##Opt", &cfg.neon.colorTransitionDuration,
+                       0.0f, 2.0f, "%.2f");
 
     for (size_t i = 0; i < cfg.neon.colorStops.size(); ++i)
     {

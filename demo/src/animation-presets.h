@@ -14,25 +14,27 @@ namespace EdgeLightingDemo
     /// the debug UI flips between them to demonstrate what the system can do.
     typedef enum class AnimationPreset
     {
-        NONE,             ///< No animation - Config is used verbatim.
-        BREATHING,        ///< Slow sine pulse on intensity. Calm "alive" look.
-        STROBE,           ///< Hard 6 Hz on/off square wave on intensity.
-        HEARTBEAT,        ///< lub-DUB rhythm on intensity, rest, loop.
-        SHIMMER,          ///< Intensity + glow radius pulse in phase, fast.
-        AURORA,           ///< Very slow layered motion across multiple params.
-        REVERSE_SWEEP,    ///< Hue ring sweeps forwards then backwards, smoothly.
-        FADE_IN,          ///< One-shot ease-in of intensity from 0 to 1.
-        SEGMENT_TRAVEL,   ///< Bright Gaussian spot revolves around the perimeter.
-        SEGMENT_BOUNCE,   ///< Bright spot swings back and forth (triangle wave).
-        COMET,            ///< Tight fast spot - single-revolution comet feel.
-        OUTLINE_TRACER,   ///< One-shot: rect dark, then arc grows 0→1 to light it.
-        ARC_WIPE,         ///< One-shot: 3-phase grow/chase/shrink wipe around perimeter.
-        FADE_OUT,         ///< One-shot ease-out of intensity to 0.
-        HUE_REVERSE,      ///< Hue direction flips abruptly every few seconds.
-        LENS_SUN_ORBIT,   ///< Lens-flare sun rides all the way around the perimeter.
-        LENS_SUN_BOUNCE,  ///< Lens-flare sun swings back and forth along the perimeter.
-        LENS_FLARE_PULSE, ///< Lens-flare intensity breathes in and out.
-        LENS_SUN_SWEEP,   ///< Sun orbits while the flare pulses and its core breathes.
+        NONE,                ///< No animation - Config is used verbatim.
+        BREATHING,           ///< Slow sine pulse on intensity. Calm "alive" look.
+        STROBE,              ///< Hard 6 Hz on/off square wave on intensity.
+        HEARTBEAT,           ///< lub-DUB rhythm on intensity, rest, loop.
+        SHIMMER,             ///< Intensity + glow radius pulse in phase, fast.
+        AURORA,              ///< Very slow layered motion across multiple params.
+        REVERSE_SWEEP,       ///< Hue ring sweeps forwards then backwards, smoothly.
+        FADE_IN,             ///< One-shot ease-in of intensity from 0 to 1.
+        SEGMENT_TRAVEL,      ///< Bright Gaussian spot revolves around the perimeter.
+        SEGMENT_BOUNCE,      ///< Bright spot swings back and forth (triangle wave).
+        COMET,               ///< Tight fast spot - single-revolution comet feel.
+        OUTLINE_TRACER,      ///< One-shot: rect dark, then arc grows 0→1 to light it.
+        OUTLINE_TRACER_WRAP, ///< One-shot: arc grows 0→1.5, past full, head wraps.
+        OUTLINE_COLLAPSE,    ///< One-shot: arc shrinks 1→0 to erase it.
+        ARC_WIPE,            ///< One-shot: 3-phase grow/chase/shrink wipe around perimeter.
+        FADE_OUT,            ///< One-shot ease-out of intensity to 0.
+        HUE_REVERSE,         ///< Hue direction flips abruptly every few seconds.
+        LENS_SUN_ORBIT,      ///< Lens-flare sun rides all the way around the perimeter.
+        LENS_SUN_BOUNCE,     ///< Lens-flare sun swings back and forth along the perimeter.
+        LENS_FLARE_PULSE,    ///< Lens-flare intensity breathes in and out.
+        LENS_SUN_SWEEP,      ///< Sun orbits while the flare pulses and its core breathes.
         COUNT
     } AnimationPreset;
 
@@ -87,6 +89,14 @@ namespace EdgeLightingDemo
         case AnimationPreset::OUTLINE_TRACER:
         {
             return "Outline Tracer";
+        }
+        case AnimationPreset::OUTLINE_TRACER_WRAP:
+        {
+            return "Outline Tracer (Wrap)";
+        }
+        case AnimationPreset::OUTLINE_COLLAPSE:
+        {
+            return "Outline Collapse";
         }
         case AnimationPreset::ARC_WIPE:
         {
@@ -215,6 +225,19 @@ namespace EdgeLightingDemo
         {
             // One-shot 2 s draw - rect goes from dark to fully lit.
             return std::make_shared<OutlineTracer>(2.0f, EdgeLighting::EasingFunction::OutCubic);
+        }
+
+        case AnimationPreset::OUTLINE_TRACER_WRAP:
+        {
+            // One-shot 2 s draw past full - length sweeps 0 -> 1.5 so the head
+            // keeps wrapping past the tail once the whole outline is lit.
+            return std::make_shared<OutlineTracer>(2.0f, EdgeLighting::EasingFunction::OutCubic, 1.1f);
+        }
+
+        case AnimationPreset::OUTLINE_COLLAPSE:
+        {
+            // One-shot 2 s erase - rect goes from fully lit to dark.
+            return std::make_shared<OutlineCollapse>(2.0f, EdgeLighting::EasingFunction::InCubic);
         }
 
         case AnimationPreset::ARC_WIPE:

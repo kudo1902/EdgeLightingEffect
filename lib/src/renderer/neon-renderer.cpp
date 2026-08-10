@@ -265,6 +265,7 @@ namespace EdgeLighting
         mArcBlock.BindBase(ARC_BLOCK_BINDING);
 
         mShaderProgram.SetUniform("uSampleSpacing", mSampleSpacing);
+        mShaderProgram.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
 
         // Loop sample positions come from the LoopSamplesBlock UBO (see
         // neon.frag) - raw float32 vec4[N], .xy holds the perimeter point.
@@ -500,7 +501,9 @@ namespace EdgeLighting
         // Drives the additive halo/spill/colour gather in the fragment shader.
         // Uploaded directly to the std140 UBO: vec4[N] where .xy holds the
         // position - raw float32 through the constant cache, no decode step
-        // in the shader.
+        // in the shader. (.zw stays 0 - the shader recovers a fragment's
+        // continuous perimeter position geometrically from vPos, so the
+        // per-sample phase pairs are no longer needed.)
         LoopSamplesBlockData block = {};
         for (int i = 0; i < NEON_MAX_LOOP_SAMPLES; ++i)
         {

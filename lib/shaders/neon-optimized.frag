@@ -48,6 +48,7 @@ uniform float uInsideCutoff;          ///< Positive scaled-px distance INSIDE th
 uniform float uInsideCutoffSoftness;  ///< Feather width (scaled px) at the inside cutoff boundary.
 uniform float uOutsideCutoff;         ///< Positive scaled-px distance OUTSIDE the rect edge past which the emission is culled. Disabled sides collapse to a huge sentinel * scale CPU-side.
 uniform float uOutsideCutoffSoftness; ///< Feather width (scaled px) at the outside cutoff boundary.
+uniform int   uWinding;               ///< 0 = CLOCKWISE, 1 = COUNTER_CLOCKWISE (matches Winding enum).
 
 uniform float uSampleSpacing;
 
@@ -117,6 +118,156 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
     return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
 }
 
+// Exact per-fragment perimeter position: maps this fragment's local-space point
+// back to its arc-length parameter t in [0, 1), matching the CPU's
+// GeometryUtils::GetPointOnRectangle for BOTH windings (uWinding = 0/1 for
+// CLOCKWISE / COUNTER_CLOCKWISE). Replaces the proximity-weighted circular
+// mean of the sample angles - near a corner those phases wrap through 2*pi
+// right into the arc's start, smearing the whole corner curve to ~0 and
+// lighting it for any arc that begins at position 0. The geometric inverse
+// reads the nearest perimeter point directly, so corner and edge fragments get
+// their true positions. Works in scaled FBO space because it only uses the
+// (already scaled) uRectSize / uCornerRadius. See neon.frag for the details.
+float perimeterPosition(vec2 p) {
+    const float PI      = 3.141592653589793;
+    const float TWO_PI  = 6.283185307179586;
+    const float HALF_PI = 1.5707963267948966;
+
+    float halfW  = uRectSize.x * 0.5;
+    float halfH  = uRectSize.y * 0.5;
+    float r      = clamp(uCornerRadius, 0.0, min(halfW, halfH));
+    float halfWs = halfW - r;
+    float halfHs = halfH - r;
+    float ws     = uRectSize.x - 2.0 * r;
+    float hs     = uRectSize.y - 2.0 * r;
+    float arcLen = PI * r * 0.5;
+    float peri   = 2.0 * ws + 2.0 * hs + 4.0 * arcLen;
+
+    // Closest point on the rounded-rect perimeter (inverse rounded-box SDF).
+    vec2  b  = vec2(halfWs, halfHs);
+    vec2  c  = clamp(p, -b, b);
+    vec2  d  = p - c;
+    float dl = length(d);
+    vec2  cp;
+    if (dl > 1e-6)
+    {
+        cp = c + d * (r / dl);
+    }
+    else
+    {
+        // Inside the inner box: project straight along the dominant axis to
+        // the nearest edge.
+        vec2  e  = b - abs(p);
+        float sx = (p.x >= 0.0) ? 1.0 : -1.0;
+        float sy = (p.y >= 0.0) ? 1.0 : -1.0;
+        cp = (e.x < e.y) ? vec2(sx * halfW, p.y) : vec2(p.x, sy * halfH);
+    }
+
+    float ax = abs(cp.x);
+    float ay = abs(cp.y);
+
+    // Canonical segment id (0..7 in CW order: top, TR, right, BR, bottom, BL,
+    // left, TL) and the traversal progress u in [0, 1] measured in the CW
+    // direction. CCW runs the same geometric core with mirrored progress
+    // (1 - u) and a CCW segment layout, so both windings stay exact.
+    int   seg;
+    float u;
+    if (ax > halfWs && ay > halfHs)
+    {
+        // Corner arc. The angle of the offset from the corner centre (radius r)
+        // gives the fraction across the quarter-arc.
+        float sx = (cp.x >= 0.0) ? 1.0 : -1.0;
+        float sy = (cp.y >= 0.0) ? 1.0 : -1.0;
+        float th = atan(cp.y - sy * halfHs, cp.x - sx * halfWs);
+        if (sx > 0.0 && sy > 0.0)
+        {
+            seg = 1;                                     // top-right: theta 0..pi/2
+            u   = (HALF_PI - th) / HALF_PI;
+        }
+        else if (sx > 0.0)
+        {
+            seg = 3;                                     // bottom-right: theta -pi/2..0
+            u   = -th / HALF_PI;
+        }
+        else if (sy < 0.0)
+        {
+            seg = 5;                                     // bottom-left: theta -pi/2..-pi
+            if (th > 0.0) th -= TWO_PI;                  // atan2 hands the left tangency back as +pi
+            u = (-HALF_PI - th) / HALF_PI;
+        }
+        else
+        {
+            seg = 7;                                     // top-left: theta pi/2..pi
+            u   = (PI - th) / HALF_PI;
+        }
+    }
+    else if (ay >= halfHs)
+    {
+        if (cp.y > 0.0)
+        {
+            seg = 0;                                     // top edge: left to right
+            u   = (cp.x + halfWs) / ws;
+        }
+        else
+        {
+            seg = 4;                                     // bottom edge: right to left
+            u   = (halfWs - cp.x) / ws;
+        }
+    }
+    else if (ax >= halfWs)
+    {
+        if (cp.x > 0.0)
+        {
+            seg = 2;                                     // right edge: top to bottom
+            u   = (halfHs - cp.y) / hs;
+        }
+        else
+        {
+            seg = 6;                                     // left edge: bottom to top
+            u   = (cp.y + halfHs) / hs;
+        }
+    }
+    else
+    {
+        seg = 0;                                         // degenerate - never hit for r > 0
+        u   = 0.0;
+    }
+
+    float base;
+    float len;
+    if (uWinding == 0)
+    {
+        // Segment starts (cumulative) in CW order: top, TR, right, BR, bottom,
+        // BL, left, TL.
+        switch (seg)
+        {
+        case 0: base = 0.0;                                   len = ws;     break;
+        case 1: base = ws;                                    len = arcLen; break;
+        case 2: base = ws + arcLen;                           len = hs;     break;
+        case 3: base = ws + arcLen + hs;                      len = arcLen; break;
+        case 4: base = ws + 2.0 * arcLen + hs;                len = ws;     break;
+        case 5: base = ws + 2.0 * arcLen + hs + ws;           len = arcLen; break;
+        case 6: base = ws + 3.0 * arcLen + hs + ws;           len = hs;     break;
+        default: base = peri - arcLen;                        len = arcLen; break;
+        }
+        return (base + len * u) / peri;
+    }
+
+    // Segment starts in CCW order: left, BL, bottom, BR, right, TR, top, TL.
+    switch (seg)
+    {
+    case 0: base = 2.0 * hs + 3.0 * arcLen + ws;              len = ws;     break;
+    case 1: base = 2.0 * hs + 2.0 * arcLen + ws;              len = arcLen; break;
+    case 2: base = hs + 2.0 * arcLen + ws;                    len = hs;     break;
+    case 3: base = hs + arcLen + ws;                          len = arcLen; break;
+    case 4: base = hs + arcLen;                               len = ws;     break;
+    case 5: base = hs;                                        len = arcLen; break;
+    case 6: base = 0.0;                                       len = hs;     break;
+    default: base = 2.0 * hs + 3.0 * arcLen + 2.0 * ws;       len = arcLen; break;
+    }
+    return (base + len * (1.0 - u)) / peri;
+}
+
 // Returns 1.0 if sample at perimeter position @c si is inside an arc that
 // starts at @p start and extends forwards by @p length. Length 0 = empty,
 // length 1 = full (start becomes an irrelevant phase). Anything in between
@@ -124,16 +275,35 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
 // See neon.frag for full rationale: feather sits OUTSIDE the arc's
 // mathematical bounds so a sample exactly at start / end gets weight 1.
 // The virtual si+1 check keeps the arc continuous across the wrap point.
+// Feather is ONE full sample width so adjacent samples' fade-in ranges are
+// contiguous - a slowly growing arc head glides between gather points
+// instead of freezing in the gap and jumping (see neon.frag for details).
 float arcInside(float si, float start, float length, float invNumSamples) {
     if (length >= 1.0 - 1e-6) return 1.0;
     if (length <= 1e-6)       return 0.0;
-    float f   = 0.5 * invNumSamples;
+    // Asymmetric: full-sample head (contiguous fade-in -> smooth halo head),
+    // quarter-sample tail (near-hard, so the start does not spill halo/bloom
+    // into the corner before it). See neon.frag for the full rationale.
+    float fHead = invNumSamples;
+    float fTail = 0.25 * invNumSamples;
     float end = start + length;
-    float g1a = smoothstep(start - f, start, si);
-    float g2a = 1.0 - smoothstep(end, end + f, si);
-    float g1b = smoothstep(start - f, start, si + 1.0);
-    float g2b = 1.0 - smoothstep(end, end + f, si + 1.0);
+    float g1a = smoothstep(start - fTail, start, si);
+    float g2a = 1.0 - smoothstep(end, end + fHead, si);
+    float g1b = smoothstep(start - fTail, start, si + 1.0);
+    float g2b = 1.0 - smoothstep(end, end + fHead, si + 1.0);
     return max(g1a * g2a, g1b * g2b);
+}
+
+// Continuous [0,1] arc coverage - INWARD FEATHER. See neon.frag for the full
+// rationale; the shape here is identical.
+float arcCoverContinuous(float sPos, float start, float length, float fHead, float fTail) {
+    if (length >= 1.0 - 1e-6) return 1.0;
+    if (length <= 1e-6)       return 0.0;
+    float rel = sPos - start;
+    rel -= floor(rel);
+    float tailIn = smoothstep(0.0, fTail, rel);
+    float headIn = 1.0 - smoothstep(length - fHead, length, rel);
+    return tailIn * headIn;
 }
 
 // ---------------------------------------------------------------------------
@@ -209,7 +379,8 @@ void main() {
     vec3  acc       = vec3(0.0); // base colour × per-sample gather weight
     vec3  segAcc    = vec3(0.0); // segment additive colour × bell × gather weight
     float wsum      = 0.0;
-    float wsumCover = 0.0; // ∑ covered g (arc OR segment) - for the filament gate
+    float wsumSeg   = 0.0; // ∑ SEGMENT-only covered g - sample-based filament
+                           // gate; arcs use the continuous gate (see neon.frag)
 
     // uNumSamples is dynamic so the perf slider actually reduces work; the
     // upper bound stays baked in the UBO array size so GL still knows the
@@ -300,10 +471,11 @@ void main() {
         // bloom and the filament gate so a segment-only stretch emits like an
         // arc-lit one. arcW = 1 -> cover = arcW, matching the old behaviour in
         // fully arc-covered stretches. See neon.frag.
-        float cover = max(arcW, min(segMask, 1.0));
+        float segCov = min(segMask, 1.0);
+        float cover = max(arcW, segCov);
         glow      += cover * g * sqrt(g);
         bloom     += cover / (dd + bw2);
-        wsumCover += cover * g;
+        wsumSeg   += segCov * g;
 
         ti  += dti;
         si  += dti;
@@ -314,8 +486,33 @@ void main() {
     vec3 col    = acc    / max(wsum, WSUM_EPSILON);
     vec3 segCol = segAcc / max(wsum, WSUM_EPSILON);
 
-    float litFraction = wsumCover / max(wsum, WSUM_EPSILON);
-    float filamentGate = smoothstep(0.5, 1.0, litFraction);
+    // Segments keep the sample-based gate; arcs use the continuous coverage
+    // below (no sample stepping, no tail corner spill). See neon.frag.
+    float segFraction = wsumSeg / max(wsum, WSUM_EPSILON);
+    float filamentGate = smoothstep(0.5, 1.0, segFraction);
+
+    // Continuous arc coverage for the filament: gate by the arc read at this
+    // fragment's own perimeter position, recovered GEOMETRICALLY from vPos
+    // (inverse of the CPU's GetPointOnRectangle) so a slow tracer's head moves
+    // smoothly instead of stepping across the gather points. Feathers point
+    // OUTWARD so the filament is lit at the arc start (no dark lead-in) and
+    // reaches its end. The exact position also keeps the corner curve an arc
+    // starting at 0 sits right after dark - the old circular-mean smear lit
+    // the whole corner. See neon.frag for full rationale.
+    float sPos = perimeterPosition(vPos);
+    // Inward feathers: convert pixel widths to perimeter fractions.
+    float r      = clamp(uCornerRadius, 0.0, min(uRectSize.x, uRectSize.y) * 0.5);
+    float peri   = 2.0 * (uRectSize.x + uRectSize.y - 4.0 * r) + 2.0 * 3.141592653589793 * r;
+    float headF  = HEAD_FEATHER_PX / peri;
+    float tailF  = TAIL_FEATHER_PX / peri;
+    float contCover = 0.0;
+    for (int a = 0; a < uArcCount; a++) {
+        vec4 arc = uArcs[a];
+        if (arc.z <= 0.0) continue;
+        contCover = max(contCover,
+                        arcCoverContinuous(sPos, arc.x, arc.y, headF, tailF));
+    }
+    filamentGate = max(filamentGate, contCover);
 
     // Halo visibility follows glowRadius (glowRadius == 0 -> filament only).
     float haloGate = clamp(uGlowRadius / max(haloFloor, 1e-4), 0.0, 1.0);

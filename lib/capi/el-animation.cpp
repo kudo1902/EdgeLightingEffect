@@ -295,12 +295,13 @@ extern "C"
     }
 
     el_animation_handle_t el_animation_create_outline_tracer(float duration,
-                                                             el_easing_e easing)
+                                                             el_easing_e easing,
+                                                             float maxLength)
     {
         try
         {
-            auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::OutlineTracer>(duration, toEasing(easing))};
-            LOG_I("anim=%p, duration=%f, easing=%d", (void *)handle, duration, (int)easing);
+            auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::OutlineTracer>(duration, toEasing(easing), maxLength)};
+            LOG_I("anim=%p, duration=%f, easing=%d, maxLength=%f", (void *)handle, duration, (int)easing, maxLength);
             return handle;
         }
         catch (const std::exception &e)

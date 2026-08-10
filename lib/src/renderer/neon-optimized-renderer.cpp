@@ -209,6 +209,7 @@ namespace EdgeLighting
         mArcBlock.BindBase(ARC_BLOCK_BINDING);
 
         mNeonShader.SetUniform("uSampleSpacing", mSampleSpacing);
+        mNeonShader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
         mNeonShader.SetUniform("uQuadMargin", mQuadMargin);
 
         // Loop sample positions from the LoopSamplesBlock UBO (see the shader)
@@ -459,6 +460,9 @@ namespace EdgeLighting
         // Only n unique perimeter points are in use per frame (shader loop
         // bound is uNumSamples). The remaining UBO slots stay at (0,0,0,0)
         // - never read because the loop stops before them.
+        // .xy = perimeter point (scaled px). (.zw stays 0 - the shader
+        // recovers a fragment's continuous perimeter position geometrically
+        // from vPos, so the per-sample phase pairs are no longer needed.)
         LoopSamplesBlockData block = {};
         for (int i = 0; i < n; ++i)
         {
