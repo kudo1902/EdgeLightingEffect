@@ -558,9 +558,13 @@ namespace EdgeLighting
         /// winding follows @c RectGeometry::winding. The renderer converts
         /// this to a viewport pixel via @c GeometryUtils::GetPointOnRectangle.
         float perimeterPosition = 0.0f;
-        /// Signed offset in pixels along the edge normal at
-        /// @c perimeterPosition. Positive pushes the sun outward (away from
-        /// the rect centre), negative pulls it inward.
+        /// Signed distance in pixels from the rect edge. Positive pushes the
+        /// sun outward (away from the rect centre), negative pulls it inward.
+        /// The sun rides the constant-distance offset of the rect - itself a
+        /// rounded rect with radius @c cornerRadius + offset - and
+        /// @c perimeterPosition advances by arc length along *that* curve, so
+        /// the sun keeps a constant speed through the corners. An offset below
+        /// -cornerRadius clamps the corners square rather than inverting them.
         float perimeterOffset = 0.0f;
         /// Size scale for the sun core + rays. 1.0 = reference look; larger
         /// values grow the visible disc and rays proportionally. Ghosts sit
