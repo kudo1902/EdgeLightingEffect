@@ -287,9 +287,13 @@ Hard ceiling on the number of concurrent arcs, matching the shader UBO layout.
 
 **Overlap resolution** - winner-take-all: for each perimeter sample, the arc
 with the largest effective mask (`arcInside * intensity`) owns the emission
-there. Because `arcInside` is smoothstepped one-sample-wide at each end,
-adjacent arcs of different colours crossfade smoothly at the seam without
-any special blend logic.
+there. `arcInside` is a box resample: the weight is the fraction of the
+sample's own cell (at least two samples wide, centred) that the arc covers,
+so adjacent arcs of different colours crossfade smoothly at the seam without
+any special blend logic, the lit mass stays exactly linear in the arc's
+endpoint position (a slowly animating end moves at constant speed rather
+than stepping cell by cell), and an arc shorter than a cell dims out instead
+of snapping off.
 
 ### 3.7 Segments (travelling additive lights)
 

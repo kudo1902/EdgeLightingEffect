@@ -166,7 +166,7 @@ Full-resolution neon stroke, drawn in two passes. Highlights:
 - **Winner-take-all arc gating** - for each perimeter sample the pre-pass
   scans up to `MAX_ARCS` entries in `ArcBlock`, picks the arc with the
   largest `arcInside * intensity`, and uses *that* arc's colour + mask at
-  the sample. Because `arcInside` is smoothstepped at each end, adjacent
+  the sample. Because `arcInside` ramps over a cell at each end, adjacent
   arcs of different colours crossfade smoothly at the seam without any
   special blend logic (§4.1a).
 - **Continuous filament gate** - the sharp filament is never gated by the

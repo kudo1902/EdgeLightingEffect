@@ -270,6 +270,12 @@ float perimeterPosition(vec2 p) {
 float arcCoverContinuous(float sPos, float start, float length, float fHead, float fTail) {
     if (length >= 1.0 - 1e-6) return 1.0;
     if (length <= 1e-6)       return 0.0;
+    // Feathers taper to zero as the arc closes on a full ring, so the seam
+    // opens continuously instead of popping a fixed-width notch on the first
+    // frame below length == 1. See neon.frag for the full rationale.
+    float taper = clamp((1.0 - length) / max(fHead + fTail, 1e-6), 0.0, 1.0);
+    fHead = max(fHead * taper, 1e-6);
+    fTail = max(fTail * taper, 1e-6);
     float rel = sPos - start;
     rel -= floor(rel);
     float tailIn = smoothstep(0.0, fTail, rel);

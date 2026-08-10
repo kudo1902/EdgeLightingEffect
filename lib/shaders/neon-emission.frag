@@ -68,26 +68,47 @@ uniform sampler2D uSegmentLUT;
 uniform sampler2D uArcLUT;
 
 // Fractional [0, 1] contribution of the sample at @p si to the lit arc.
-// Feather sits OUTSIDE the arc on each side, so the sample exactly at
-// `start` / `end` keeps weight 1.0 and the visible ends line up with the debug
-// markers. Head (end side) is wide so adjacent samples' fade-in ranges stay
-// contiguous - without that, a growing arc's head stalls for ~1 sample every
-// step. Tail (start side) is a quarter of the head: a near-hard trailing edge
-// that does not spill halo outside the arc start.
 //
-// Wrap-aware via testing both @p si and @p si + 1 and taking the max: when the
-// arc extends past 1.0, a sample near position 0 is physically close to the
-// end via the perimeter loop. The same expression handles the non-wrap case
-// because @p si + 1 always falls outside a sub-unit arc there.
-float arcInside(float si, float start, float length, float fHead, float fTail) {
+// This is a BOX RESAMPLE, not a feather: the weight is the fraction of the
+// sample's own cell (width @p w, CENTRED on si) that the arc [start, end]
+// covers. That is the exact midpoint-rule weight for the line integral the
+// gather loop performs downstream, and it is what keeps a slowly animating
+// endpoint smooth. Three properties matter, and a smoothstep ramp has none of
+// them:
+//
+//   1. Uniform speed. The emitted mass is exactly linear in the endpoint
+//      position, so the halo's visible end tracks the arc end at constant
+//      speed. A smoothstep ramp one cell wide makes that end lurch between
+//      0.2x and 1.9x of the true speed, once per gather sample - invisible on
+//      a fast sweep, obvious stepping on a slow one (a 2 s collapse crosses
+//      NEON_MAX_LOOP_SAMPLES cells, a 20 s collapse crosses the same cells ten
+//      times slower). The cell must be at least 2 samples wide for this:
+//      at exactly 1 sample only one weight is ever in transition and the
+//      partition-of-unity that makes the sum linear is lost.
+//   2. Fade to nothing. An arc shorter than one cell weighs length / w, so a
+//      collapsing arc dims out. Outward feathers instead floor the lit span at
+//      (fHead + fTail) and hold it at full brightness until the length
+//      early-out below snaps it off - a pop at the end of every collapse.
+//   3. Unbiased ends. The cell is centred, so weight 0.5 lands exactly on the
+//      arc endpoint and the lit span still measures `length`. Outward feathers
+//      overstate it, inward feathers understate it.
+//
+// Wrap-aware via testing both @p si and @p si + 1: when the arc extends past
+// 1.0 a sample near position 0 is physically close to the end via the
+// perimeter loop. The two are SUMMED (then clamped) rather than max'd so that
+// an arc closing on a full ring closes its seam continuously - with max() the
+// seam sample would top out at 0.5 and a nearly-full ring would show a dark
+// notch that pops shut at length == 1. Only one term is ever nonzero unless
+// the arc is within one cell of a full ring, so the sum is the max elsewhere.
+float arcInside(float si, float start, float length, float w) {
     if (length >= 1.0 - 1e-6) return 1.0;   // full coverage
-    if (length <= 1e-6)       return 0.0;   // empty
-    float end = start + length;
-    float g1a = smoothstep(start - fTail, start, si);
-    float g2a = 1.0 - smoothstep(end, end + fHead, si);
-    float g1b = smoothstep(start - fTail, start, si + 1.0);
-    float g2b = 1.0 - smoothstep(end, end + fHead, si + 1.0);
-    return max(g1a * g2a, g1b * g2b);
+    if (length <= 0.0)        return 0.0;   // empty
+    float end   = start + length;
+    float halfW = 0.5 * w;
+    float invW  = 1.0 / max(w, 1e-6);
+    float ca = (min(si       + halfW, end) - max(si       - halfW, start)) * invW;
+    float cb = (min(si + 1.0 + halfW, end) - max(si + 1.0 - halfW, start)) * invW;
+    return clamp(max(ca, 0.0) + max(cb, 0.0), 0.0, 1.0);
 }
 
 void main() {
@@ -101,13 +122,11 @@ void main() {
     // winding direction); the REPEAT-wrapped LUT handles the negative value.
     float ti = si - uTime * uHueRotationRate;
 
-    // Arc end feather in perimeter fractions. Pixel-space so it matches the
-    // filament's HEAD_FEATHER_PX on any geometry, but floored at one sample -
-    // below that the contiguous-fade-in property above breaks and a growing
-    // arc's head starts stepping. On typical geometry the floor wins and this
-    // is exactly the old one-sample feather.
-    float fHead = max(HEAD_FEATHER_PX / max(uPerimeter, 1.0), invNumSamples);
-    float fTail = 0.25 * fHead;
+    // Resample cell width in perimeter fractions. Pixel-space so the arc ends
+    // soften like the filament's HEAD_FEATHER_PX on any geometry, but floored
+    // at TWO samples: below that the weights stop summing linearly in the
+    // endpoint position and a slowly moving arc end steps (see arcInside).
+    float cellW = max(HEAD_FEATHER_PX / max(uPerimeter, 1.0), 2.0 * invNumSamples);
 
     // --- Arc winner-take-all ---------------------------------------------
     // The arc with the largest effective mask (arcInside * intensity) at this
@@ -118,7 +137,7 @@ void main() {
     int   bestIdx  = -1;
     for (int a = 0; a < uArcCount; a++) {
         vec4  arc  = uArcs[a];
-        float mask = arcInside(si, arc.x, arc.y, fHead, fTail) * arc.z;
+        float mask = arcInside(si, arc.x, arc.y, cellW) * arc.z;
         if (mask > bestMask) {
             bestMask = mask;
             bestIdx  = a;

@@ -269,9 +269,20 @@ float perimeterPosition(vec2 p) {
 //
 // Feather widths are perimeter fractions (pixel-space widths / current perimeter,
 // converted at the call site).
+//
+// The feathers TAPER TO ZERO as the arc closes on a full ring. Without that,
+// the step from length == 1 (the full-coverage early-out) to length just under
+// 1 would instantly punch a (fHead + fTail)-wide dark notch into the seam - a
+// visible pop on the first frame of a collapse, which starts at exactly 1.0.
+// Scaling both feathers by the gap keeps the notch's width proportional to how
+// far the ends have actually parted, so the seam opens continuously and the
+// feathers reach full width only once the gap is wider than they are.
 float arcCoverContinuous(float sPos, float start, float length, float fHead, float fTail) {
     if (length >= 1.0 - 1e-6) return 1.0;   // full coverage
     if (length <= 1e-6)       return 0.0;   // empty
+    float taper = clamp((1.0 - length) / max(fHead + fTail, 1e-6), 0.0, 1.0);
+    fHead = max(fHead * taper, 1e-6);
+    fTail = max(fTail * taper, 1e-6);
     float rel = sPos - start;
     rel -= floor(rel);                       // wrap to [0, 1): distance past start
     // Tail ramps IN from 0 at rel = 0 (start) to 1 at rel = fTail.
