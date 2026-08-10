@@ -126,7 +126,10 @@ void main()
     }
 
     // --- Sun rays + core; tint governed by uSunColor. Size scale divides the
-    // distance so uSize > 1 grows the disc/rays and uSize < 1 shrinks them.
+    // distance so uSize > 1 grows the disc and uSize < 1 shrinks it. Ray extent
+    // is NOT scaled by uSize: the `ray / 8.0` term below has no distance
+    // falloff, so how far the rays reach is set by the global exp(1 - sunDist)
+    // envelope, which is in unscaled units.
     //
     // Ray recipe for a "sunburst" look:
     //   primary  = pow(|sin(a * N/2)|, 8)  -> N very thin countable spikes.
@@ -153,11 +156,25 @@ void main()
     float sub      = pow(abs(cos(a * N * 0.5)), 20.0) * lenMod * 0.15;
     float ray      = primary + sub;
 
-    color += max(0.1 / pow(sDist * 5.0,  5.0), 0.0) * ray / 20.0 * sunTint;
-    color += (max(0.1 / pow(sDist * 10.0, 1.0 / 20.0), 0.0)
-              + ray / 8.0) * sunTint;
-    color += max(0.1 / pow(sDist * 4.0, 0.5), 0.0) * 4.0
-             * vec3(0.2, 0.21, 0.3) * 4.0 * sunTint;
+    // Softening floors give each falloff an intrinsic scale, so its peak is
+    // finite and size-invariant. Without them the terms are pure power laws -
+    // scale free, so dividing the radius by uSize is algebraically identical to
+    // multiplying the term by uSize^k, and `size` acted as a second, non-linear
+    // brightness knob (uSize^5 on the core term). The floor only bites near
+    // sDist = 0, so far-field values - and the reference look - are unchanged.
+    // It also removes the divide-by-zero inf the reference had at the exact sun
+    // centre, which is why the max(..., 0.0) guards are gone.
+    const float CORE_SOFT = 0.35; // core term, k = 5
+    const float HAZE_SOFT = 0.02; // haze term, k = 1/20
+    const float GLOW_SOFT = 0.10; // glow term, k = 1/2
+
+    float core = 0.1 / (pow(sDist * 5.0,  5.0)        + CORE_SOFT);
+    float haze = 0.1 / (pow(sDist * 10.0, 1.0 / 20.0) + HAZE_SOFT);
+    float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);
+
+    color += core * ray / 20.0 * sunTint;
+    color += (haze + ray / 8.0) * sunTint;
+    color += glow * 4.0 * vec3(0.2, 0.21, 0.3) * 4.0 * sunTint;
 
     // --- Global falloff around the sun (kept from reference).
     color *= exp(1.0 - sunDist) / 5.0;

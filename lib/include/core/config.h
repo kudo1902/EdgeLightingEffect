@@ -566,10 +566,18 @@ namespace EdgeLighting
         /// the sun keeps a constant speed through the corners. An offset below
         /// -cornerRadius clamps the corners square rather than inverting them.
         float perimeterOffset = 0.0f;
-        /// Size scale for the sun core + rays. 1.0 = reference look; larger
-        /// values grow the visible disc and rays proportionally. Ghosts sit
-        /// along the axis in normalised viewport space, so they are not
-        /// affected by size.
+        /// Radius scale for the sun disc. 1.0 = reference look; larger values
+        /// grow the visible disc proportionally. Independent of @c intensity:
+        /// the shader's sun terms carry a softening floor that gives each
+        /// falloff a finite, size-invariant peak, so this sets the radius and
+        /// @c intensity sets the brightness. (A raw power-law falloff is scale
+        /// free, which made an uncompensated size scale behave as a second,
+        /// non-linear brightness knob - see lens-flare.frag.)
+        ///
+        /// Does not scale the ray extent: the ray term has no distance falloff,
+        /// so how far the rays reach is set by the shader's global envelope.
+        /// Ghosts sit along the axis in normalised viewport space and are not
+        /// affected by size either.
         float size = 1.0f;
         /// Warm tint applied to the sun core + rays. Ghosts stay procedural.
         glm::vec4 color = glm::vec4(1.0f, 0.92f, 0.75f, 1.0f);
