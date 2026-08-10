@@ -271,12 +271,24 @@ namespace EdgeLighting
 
         } // namespace Detail
 
-        /// Returns a point on the rectangle edge given a perimeter progress in [0, 1].
+        /// Returns a point on the rectangle edge given a perimeter progress.
         /// Progress 0 = top-left. Direction is controlled by geom.winding.
         /// Supports rounded corners via cornerRadius.
         /// The point is in the rectangle's local coordinate system (origin at center).
+        ///
+        /// Progress is cyclic and is wrapped into [0, 1), so a caller that runs
+        /// past the end of a lap - or hands over a raw accumulator - keeps
+        /// tracking the perimeter instead of flying off it. The traversal
+        /// helpers end on an unbounded fall-through span (the top-left corner
+        /// for both windings), so an unwrapped t > 1 used to run that last span
+        /// past its endpoint: with a rounded corner the point orbited the
+        /// corner centre indefinitely, and with square corners it shot off
+        /// along the extension of the final edge. Wrapping costs one floor()
+        /// and is exact at the seam - t = 1 and t = 0 are the same point.
         inline glm::vec2 GetPointOnRectangle(float t, const RectGeometry &geom)
         {
+            t -= std::floor(t);
+
             if (geom.winding == Winding::CLOCKWISE)
             {
                 return Detail::GetPointOnRectCW(t, geom);
