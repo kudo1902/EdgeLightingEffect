@@ -155,6 +155,10 @@ namespace EdgeLighting
         glm::vec2 rectSizeScaled(config.geometry.width * scale, config.geometry.height * scale);
 
         mNeonShader.SetUniform("uMVP", mvp);
+        // Lets the shader convert neon-tuning.h's full-res px constants
+        // (FILAMENT_MIN_HALF_WIDTH, HEAD/TAIL_FEATHER_PX) into the FBO space
+        // every other pixel uniform below is already scaled into.
+        mNeonShader.SetUniform("uResolutionScale", scale);
         mNeonShader.SetUniform("uRectSize", rectSizeScaled);
         mNeonShader.SetUniform("uCornerRadius", config.geometry.cornerRadius * scale);
         mNeonShader.SetUniform("uLineWidth", config.neon.lineWidth * scale);
