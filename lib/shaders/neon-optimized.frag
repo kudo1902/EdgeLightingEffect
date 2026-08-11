@@ -31,12 +31,27 @@ precision highp float;
 // ---------------------------------------------------------------------------
 
 in vec2 vPos;
-out vec4 fragColor;
+
+// Pass 1 no longer produces a picture - it produces the two low-frequency
+// inputs the full-res composite pass needs, so the filament can be rasterised
+// at full resolution where it is thin enough to matter. See
+// docs/full-res-filament-design.md.
+//
+//   location 0 (RGBA16F): .rgb = lightCol, the gathered emission colour
+//                         .a   = haloTerm, the scalar halo+bloom weight with
+//                                every side/cutoff/quad mask already applied.
+//   location 1 (R8):      .r   = segGate, the sample-based segment coverage
+//                                gate for the filament.
+//
+// Both are smooth, many-texel-wide fields, so bilinear upscaling them is
+// faithful - unlike the one-texel-wide filament that used to live here.
+// Nothing is tone-mapped here: the composite pass sums filament + halo and
+// tone-maps once, which is also more correct than mapping before the upscale.
+layout(location = 0) out vec4 fragLight;
+layout(location = 1) out vec4 fragGate;
 
 uniform vec2  uRectSize;
 uniform float uCornerRadius;
-uniform float uLineWidth;
-uniform float uFilamentFalloff; ///< Generalized-Gaussian exponent (N = value * 2); 1.0 = pure Gaussian, lower = smoother (Laplace-like), higher = flatter top.
 uniform float uIntensity;
 uniform float uTime;
 uniform float uHueRotationRate;
@@ -48,7 +63,6 @@ uniform float uInsideCutoff;          ///< Positive scaled-px distance INSIDE th
 uniform float uInsideCutoffSoftness;  ///< Feather width (scaled px) at the inside cutoff boundary.
 uniform float uOutsideCutoff;         ///< Positive scaled-px distance OUTSIDE the rect edge past which the emission is culled. Disabled sides collapse to a huge sentinel * scale CPU-side.
 uniform float uOutsideCutoffSoftness; ///< Feather width (scaled px) at the outside cutoff boundary.
-uniform int   uWinding;               ///< 0 = CLOCKWISE, 1 = COUNTER_CLOCKWISE (matches Winding enum).
 
 uniform float uSampleSpacing;
 
@@ -118,155 +132,9 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
     return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
 }
 
-// Exact per-fragment perimeter position: maps this fragment's local-space point
-// back to its arc-length parameter t in [0, 1), matching the CPU's
-// GeometryUtils::GetPointOnRectangle for BOTH windings (uWinding = 0/1 for
-// CLOCKWISE / COUNTER_CLOCKWISE). Replaces the proximity-weighted circular
-// mean of the sample angles - near a corner those phases wrap through 2*pi
-// right into the arc's start, smearing the whole corner curve to ~0 and
-// lighting it for any arc that begins at position 0. The geometric inverse
-// reads the nearest perimeter point directly, so corner and edge fragments get
-// their true positions. Works in scaled FBO space because it only uses the
-// (already scaled) uRectSize / uCornerRadius. See neon.frag for the details.
-float perimeterPosition(vec2 p) {
-    const float PI      = 3.141592653589793;
-    const float TWO_PI  = 6.283185307179586;
-    const float HALF_PI = 1.5707963267948966;
-
-    float halfW  = uRectSize.x * 0.5;
-    float halfH  = uRectSize.y * 0.5;
-    float r      = clamp(uCornerRadius, 0.0, min(halfW, halfH));
-    float halfWs = halfW - r;
-    float halfHs = halfH - r;
-    float ws     = uRectSize.x - 2.0 * r;
-    float hs     = uRectSize.y - 2.0 * r;
-    float arcLen = PI * r * 0.5;
-    float peri   = 2.0 * ws + 2.0 * hs + 4.0 * arcLen;
-
-    // Closest point on the rounded-rect perimeter (inverse rounded-box SDF).
-    vec2  b  = vec2(halfWs, halfHs);
-    vec2  c  = clamp(p, -b, b);
-    vec2  d  = p - c;
-    float dl = length(d);
-    vec2  cp;
-    if (dl > 1e-6)
-    {
-        cp = c + d * (r / dl);
-    }
-    else
-    {
-        // Inside the inner box: project straight along the dominant axis to
-        // the nearest edge.
-        vec2  e  = b - abs(p);
-        float sx = (p.x >= 0.0) ? 1.0 : -1.0;
-        float sy = (p.y >= 0.0) ? 1.0 : -1.0;
-        cp = (e.x < e.y) ? vec2(sx * halfW, p.y) : vec2(p.x, sy * halfH);
-    }
-
-    float ax = abs(cp.x);
-    float ay = abs(cp.y);
-
-    // Canonical segment id (0..7 in CW order: top, TR, right, BR, bottom, BL,
-    // left, TL) and the traversal progress u in [0, 1] measured in the CW
-    // direction. CCW runs the same geometric core with mirrored progress
-    // (1 - u) and a CCW segment layout, so both windings stay exact.
-    int   seg;
-    float u;
-    if (ax > halfWs && ay > halfHs)
-    {
-        // Corner arc. The angle of the offset from the corner centre (radius r)
-        // gives the fraction across the quarter-arc.
-        float sx = (cp.x >= 0.0) ? 1.0 : -1.0;
-        float sy = (cp.y >= 0.0) ? 1.0 : -1.0;
-        float th = atan(cp.y - sy * halfHs, cp.x - sx * halfWs);
-        if (sx > 0.0 && sy > 0.0)
-        {
-            seg = 1;                                     // top-right: theta 0..pi/2
-            u   = (HALF_PI - th) / HALF_PI;
-        }
-        else if (sx > 0.0)
-        {
-            seg = 3;                                     // bottom-right: theta -pi/2..0
-            u   = -th / HALF_PI;
-        }
-        else if (sy < 0.0)
-        {
-            seg = 5;                                     // bottom-left: theta -pi/2..-pi
-            if (th > 0.0) th -= TWO_PI;                  // atan2 hands the left tangency back as +pi
-            u = (-HALF_PI - th) / HALF_PI;
-        }
-        else
-        {
-            seg = 7;                                     // top-left: theta pi/2..pi
-            u   = (PI - th) / HALF_PI;
-        }
-    }
-    else if (ay >= halfHs)
-    {
-        if (cp.y > 0.0)
-        {
-            seg = 0;                                     // top edge: left to right
-            u   = (cp.x + halfWs) / ws;
-        }
-        else
-        {
-            seg = 4;                                     // bottom edge: right to left
-            u   = (halfWs - cp.x) / ws;
-        }
-    }
-    else if (ax >= halfWs)
-    {
-        if (cp.x > 0.0)
-        {
-            seg = 2;                                     // right edge: top to bottom
-            u   = (halfHs - cp.y) / hs;
-        }
-        else
-        {
-            seg = 6;                                     // left edge: bottom to top
-            u   = (cp.y + halfHs) / hs;
-        }
-    }
-    else
-    {
-        seg = 0;                                         // degenerate - never hit for r > 0
-        u   = 0.0;
-    }
-
-    float base;
-    float len;
-    if (uWinding == 0)
-    {
-        // Segment starts (cumulative) in CW order: top, TR, right, BR, bottom,
-        // BL, left, TL.
-        switch (seg)
-        {
-        case 0: base = 0.0;                                   len = ws;     break;
-        case 1: base = ws;                                    len = arcLen; break;
-        case 2: base = ws + arcLen;                           len = hs;     break;
-        case 3: base = ws + arcLen + hs;                      len = arcLen; break;
-        case 4: base = ws + 2.0 * arcLen + hs;                len = ws;     break;
-        case 5: base = ws + 2.0 * arcLen + hs + ws;           len = arcLen; break;
-        case 6: base = ws + 3.0 * arcLen + hs + ws;           len = hs;     break;
-        default: base = peri - arcLen;                        len = arcLen; break;
-        }
-        return (base + len * u) / peri;
-    }
-
-    // Segment starts in CCW order: left, BL, bottom, BR, right, TR, top, TL.
-    switch (seg)
-    {
-    case 0: base = 2.0 * hs + 3.0 * arcLen + ws;              len = ws;     break;
-    case 1: base = 2.0 * hs + 2.0 * arcLen + ws;              len = arcLen; break;
-    case 2: base = hs + 2.0 * arcLen + ws;                    len = hs;     break;
-    case 3: base = hs + arcLen + ws;                          len = arcLen; break;
-    case 4: base = hs + arcLen;                               len = ws;     break;
-    case 5: base = hs;                                        len = arcLen; break;
-    case 6: base = 0.0;                                       len = hs;     break;
-    default: base = 2.0 * hs + 3.0 * arcLen + 2.0 * ws;       len = arcLen; break;
-    }
-    return (base + len * (1.0 - u)) / peri;
-}
+// (perimeterPosition moved to neon-composite.frag - see the note above
+// arcInside. It existed only to gate the filament, which is now drawn at full
+// resolution in that pass.)
 
 // Returns 1.0 if sample at perimeter position @c si is inside an arc that
 // starts at @p start and extends forwards by @p length. Length 0 = empty,
@@ -294,17 +162,9 @@ float arcInside(float si, float start, float length, float invNumSamples) {
     return max(g1a * g2a, g1b * g2b);
 }
 
-// Continuous [0,1] arc coverage - INWARD FEATHER. See neon.frag for the full
-// rationale; the shape here is identical.
-float arcCoverContinuous(float sPos, float start, float length, float fHead, float fTail) {
-    if (length >= 1.0 - 1e-6) return 1.0;
-    if (length <= 1e-6)       return 0.0;
-    float rel = sPos - start;
-    rel -= floor(rel);
-    float tailIn = smoothstep(0.0, fTail, rel);
-    float headIn = 1.0 - smoothstep(length - fHead, length, rel);
-    return tailIn * headIn;
-}
+// (arcCoverContinuous and perimeterPosition's continuous arc gate now live in
+// neon-composite.frag - they only ever fed the filament, which this pass no
+// longer draws.)
 
 // ---------------------------------------------------------------------------
 
@@ -334,32 +194,9 @@ void main() {
     if (d >  uOutsideCutoff + outSoft) discard;
     if (d < -uInsideCutoff  - inSoft ) discard;
 
-    // --- Filament -----------------------------------------------------
-    // Generalized-Gaussian profile with exponentially smooth falloff (matches
-    // the base NeonRenderer so the two look identical):
-    //
-    //   core(ad) = exp(-ln(2) * (ad / sigma)^N)
-    //
-    // sigma = half-brightness radius (core = 0.5 at ad = sigma).
-    // N = 2 * uFilamentFalloff controls the shape:
-    //   uFilamentFalloff = 0.5 → N = 1   (Laplace - heavy tails, smooth peak)
-    //   uFilamentFalloff = 1.0 → N = 2   (Gaussian - pure smooth falloff; default)
-    //   uFilamentFalloff = 2.0 → N = 4   (platykurtic - flatter top, sharper shoulder)
-    //   uFilamentFalloff = 5.0 → N = 10  (near-rectangular)
-    //
-    // The Gaussian has no power-law tail, so the filament reads as a clean
-    // thin line with a naturally smooth roll-off.
-    //
-    // Peak at ad = 0 is always exactly 1.0.
-    //
-    // lineGate fades the filament from 0 at lineWidth = 0 up to full at
-    // lineWidth = FILAMENT_MIN_HALF_WIDTH * 2, so lineWidth = 0 means "no
-    // line" instead of a single-pixel bright dot.
-    float halfWidth = uLineWidth * 0.5;
-    float sigma     = max(halfWidth, 0.5);
-    float N         = 2.0 * max(uFilamentFalloff, 1e-3);
-    float core      = exp2(-pow(ad / sigma, N));
-    float lineGate  = clamp(uLineWidth / (FILAMENT_MIN_HALF_WIDTH * 2.0), 0.0, 1.0);
+    // (The filament profile is gone from this pass - it is rasterised at full
+    // resolution in neon-composite.frag, which owns core / lineGate and the
+    // continuous arc gate. This pass only feeds it lightCol + segGate.)
 
     // --- Kernel widths ------------------------------------------------
     // The halo kernel is floored to haloFloor so the gather never beads into
@@ -486,33 +323,12 @@ void main() {
     vec3 col    = acc    / max(wsum, WSUM_EPSILON);
     vec3 segCol = segAcc / max(wsum, WSUM_EPSILON);
 
-    // Segments keep the sample-based gate; arcs use the continuous coverage
-    // below (no sample stepping, no tail corner spill). See neon.frag.
+    // Sample-based segment gate for the filament. The arc half of the gate is
+    // continuous and geometric, so the composite pass computes it at full res
+    // from its own fragment position; only this sample-derived half has to
+    // travel through the FBO. See neon.frag.
     float segFraction = wsumSeg / max(wsum, WSUM_EPSILON);
-    float filamentGate = smoothstep(0.5, 1.0, segFraction);
-
-    // Continuous arc coverage for the filament: gate by the arc read at this
-    // fragment's own perimeter position, recovered GEOMETRICALLY from vPos
-    // (inverse of the CPU's GetPointOnRectangle) so a slow tracer's head moves
-    // smoothly instead of stepping across the gather points. Feathers point
-    // OUTWARD so the filament is lit at the arc start (no dark lead-in) and
-    // reaches its end. The exact position also keeps the corner curve an arc
-    // starting at 0 sits right after dark - the old circular-mean smear lit
-    // the whole corner. See neon.frag for full rationale.
-    float sPos = perimeterPosition(vPos);
-    // Inward feathers: convert pixel widths to perimeter fractions.
-    float r      = clamp(uCornerRadius, 0.0, min(uRectSize.x, uRectSize.y) * 0.5);
-    float peri   = 2.0 * (uRectSize.x + uRectSize.y - 4.0 * r) + 2.0 * 3.141592653589793 * r;
-    float headF  = HEAD_FEATHER_PX / peri;
-    float tailF  = TAIL_FEATHER_PX / peri;
-    float contCover = 0.0;
-    for (int a = 0; a < uArcCount; a++) {
-        vec4 arc = uArcs[a];
-        if (arc.z <= 0.0) continue;
-        contCover = max(contCover,
-                        arcCoverContinuous(sPos, arc.x, arc.y, headF, tailF));
-    }
-    filamentGate = max(filamentGate, contCover);
+    float segGate = smoothstep(0.5, 1.0, segFraction);
 
     // Halo visibility follows glowRadius (glowRadius == 0 -> filament only).
     float haloGate = clamp(uGlowRadius / max(haloFloor, 1e-4), 0.0, 1.0);
@@ -520,40 +336,33 @@ void main() {
     // Base gates on uIntensity; segments are independent (stay lit at intensity 0).
     vec3 lightCol = col * uIntensity + segCol;
 
-    vec3 result  = lightCol * core  * FILAMENT_GAIN  * filamentGate * lineGate;
-    result      += lightCol * glow  * HALO_GAIN      * haloGate;
-    result      += lightCol * bloom * uBloomStrength;
+    // Halo and bloom share lightCol, so their whole contribution is one scalar
+    // weight - which is what lets the pair fit in a single RGBA target
+    // alongside the colour.
+    float haloTerm = glow * HALO_GAIN * haloGate + bloom * uBloomStrength;
 
     // --- One-sided cut ---
-    if (uGlowSide == GLOW_SIDE_INSIDE)       result *= smoothstep( softEdge, -softEdge, d);
-    else if (uGlowSide == GLOW_SIDE_OUTSIDE) result *= smoothstep(-softEdge,  softEdge, d);
+    if (uGlowSide == GLOW_SIDE_INSIDE)       haloTerm *= smoothstep( softEdge, -softEdge, d);
+    else if (uGlowSide == GLOW_SIDE_OUTSIDE) haloTerm *= smoothstep(-softEdge,  softEdge, d);
 
     // --- Hard cutoff soft masks: fade the emission over the per-side
     // softness on each side of the [-uInsideCutoff, +uOutsideCutoff] band so
     // bloom/halo never punch past the stated reach. Mirrors neon.frag.
     // Disabled sides push their boundary to a huge value so the smoothstep
-    // naturally evaluates to a pass-through 1.0.
-    result *= smoothstep(-uInsideCutoff - inSoft,  -uInsideCutoff + inSoft,  d);
-    result *= 1.0 - smoothstep(uOutsideCutoff - outSoft, uOutsideCutoff + outSoft, d);
+    // naturally evaluates to a pass-through 1.0. (The composite pass applies
+    // the same masks to the filament, at full res, from its own `d`.)
+    haloTerm *= smoothstep(-uInsideCutoff - inSoft,  -uInsideCutoff + inSoft,  d);
+    haloTerm *= 1.0 - smoothstep(uOutsideCutoff - outSoft, uOutsideCutoff + outSoft, d);
 
     // --- Quad-edge fade: the draw quad ends at d == uQuadMargin (all in
     // scaled/FBO space). Fade the emission to zero over the last stretch so a
     // strong bloom never shows a hard rectangular cutoff where the quad clips
     // it - mirrors the base NeonRenderer so the two match. Interior pixels
     // have d < 0, well below the band.
-    result *= 1.0 - smoothstep(uQuadMargin * 0.8, uQuadMargin, d);
+    haloTerm *= 1.0 - smoothstep(uQuadMargin * 0.8, uQuadMargin, d);
 
-    // --- Grade --------------------------------------------------------
-    // Hue-preserving Reinhard (see neon.frag for the rationale).
-    float peak = max(max(result.r, result.g), result.b);
-    float mapped = peak / (peak + TONE_MAP_SHOULDER);
-    result = result * (mapped / max(peak, 1e-6));
-    result = pow(result, vec3(GAMMA_EXPONENT));
-
-    // Premultiplied-alpha output (coverage = brightest channel). Rendered into
-    // the cleared-transparent half-res FBO with GL_ONE,GL_ONE_MINUS_SRC_ALPHA so
-    // the FBO holds premultiplied colour + coverage, which the blit then
-    // composites over background objects (core occludes, halo/bloom add).
-    float alpha = clamp(max(result.r, max(result.g, result.b)), 0.0, 1.0);
-    fragColor = vec4(result, alpha);
+    // Linear, un-tone-mapped, not premultiplied: this is data for the
+    // composite pass, not a picture. Blending is off for this pass.
+    fragLight = vec4(lightCol, haloTerm);
+    fragGate  = vec4(segGate, 0.0, 0.0, 0.0);
 }

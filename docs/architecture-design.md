@@ -188,22 +188,28 @@ fallback for empty arcs preserves the pre-multi-arc single-slice behaviour.
 
 ### 4.2 NeonOptimizedRenderer
 
-Two-pass half-resolution variant. Pass 1 renders into a scaled RGBA8 FBO
-with a dynamic shader loop bound (`uNumSamples = optimizedNeon.numSamples`,
-1..128). Pass 2 bilinear-blits back to full res. Shares all visual params
-with `NeonConfig`. Meant for edge devices - the resolution-scale + sample-
-count sliders are the primary perf knobs.
+Two-pass variant, split **by frequency** rather than by resolution. Shares all
+visual params with `NeonConfig`. Meant for edge devices - the resolution-scale
++ sample-count sliders are the primary perf knobs.
 
-Pass 1 draws the rect **snapped to the FBO texel grid**: the size is rounded to
-whole texels and the rect grows from its top-left corner snapped to a texel
-centre, so every edge lands on one. The filament is only about one texel wide
-at half res, so without the snap its sharpness depended on where the rect edge
-fell between texel centres - the same line rendered thin and crisp at one
-geometry and wide and soft one pixel over. Anchoring the corner (not the
-centre) is what keeps the left/top edges still while the width/height sliders
-move. The snap shifts the rect by at most one full-res pixel and is skipped at
-`resolutionScale >= 1`, where the blit is 1:1. Measurements, trade-offs and
-the repro recipe are in [`half-res-texel-snap.md`](half-res-texel-snap.md).
+- **Pass 1 (half res)** runs the expensive part: the perimeter gather with a
+  dynamic loop bound (`uNumSamples = optimizedNeon.numSamples`, 1..128), arc /
+  segment resolution and the LUT reads. It emits data, not a picture, into two
+  attachments - RGBA16F holding the gathered colour `lightCol` plus a scalar
+  halo+bloom weight, and R8 holding the sample-based segment gate.
+- **Pass 2 (full res)** upscales those two smooth fields, rasterises the
+  **filament** from the analytic SDF at full resolution, sums the two and
+  tone-maps once.
+
+The filament is about one texel wide in a half-res buffer, so when it lived in
+pass 1 its sharpness depended on where the rect edge happened to fall between
+texel centres - the same line rendered crisp at one geometry and soft two
+pixels over. Drawing it in pass 2 makes geometry exact (edges match
+`NeonRenderer` to the pixel), makes sharpness independent of both geometry and
+`resolutionScale`, and costs little: it is an SDF with no gather loop, gated to
+a thin ring around the rect. The rationale, the rejected texel-snap
+alternative, the measurements and the repro recipe are in
+[`full-res-filament-design.md`](full-res-filament-design.md).
 
 ### 4.3 WireframeRenderer
 

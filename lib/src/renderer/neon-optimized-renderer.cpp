@@ -63,76 +63,17 @@ namespace EdgeLighting
         constexpr GLuint LOOP_SAMPLES_BLOCK_BINDING = 1;
         constexpr GLuint ARC_BLOCK_BINDING = 2;
 
-        // --- Half-res texel-grid snap ---------------------------------------
-        // The filament is only `lineWidth * resolutionScale` texels wide in the
-        // FBO - about ONE texel at the default 4px line and 0.5 scale - so how
-        // it survives the bilinear blit depends on where the rect edge falls
-        // between texel centres:
+        // --- Half-res pass targets ------------------------------------------
+        // The gather pass writes data, not a picture (see neon-optimized.frag):
         //
-        //   edge ON a texel centre   -> that texel samples the profile's peak;
-        //                               one bright texel, neighbours already
-        //                               well down the falloff = crisp line.
-        //   edge ON a texel boundary -> the peak falls between two texels which
-        //                               both sample the shoulder; a two-texel
-        //                               plateau that blits out visibly wider
-        //                               and softer.
-        //
-        // Consecutive full-res pixel coordinates alternate between those two
-        // phases (at scale 0.5 an odd coordinate is a texel centre, an even one
-        // a boundary), which is why moving the rect by 1px - or resizing it by
-        // 2px - used to change how thick and how sharp the filament looked.
-        //
-        // Both helpers together pin the crisp phase: round the size to whole
-        // texels, then place the rect from its top-left corner snapped to a
-        // texel centre - with an integral size the far edges land on texel
-        // centres too. The rect moves by at most half a texel (one full-res
-        // pixel at scale 0.5). Corner arcs can't be grid-aligned this way, but
-        // a curve has no constant cross-section to compare, so the phase
-        // doesn't read there.
-        //
-        // At scale >= 1 the blit is 1:1, there is no resampling to protect
-        // against, and snapping would only push this renderer half a pixel off
-        // the full-res NeonRenderer - so both helpers pass the value through.
-
-        /// Rect size in FBO texels, rounded to whole texels.
-        inline glm::vec2 GetSizeScaled(const RectGeometry &geom, float scale)
-        {
-            glm::vec2 sizeScaled = glm::vec2(geom.width, geom.height) * scale;
-            if (scale >= 1.0f)
-            {
-                return sizeScaled;
-            }
-            return glm::vec2(std::max(std::round(sizeScaled.x), 1.0f),
-                             std::max(std::round(sizeScaled.y), 1.0f));
-        }
-
-        /// Rect centre in FBO texels for @p sizeScaled (from GetSizeScaled),
-        /// placed from the rect's snapped top-left corner.
-        ///
-        /// Anchoring the CORNER - the point Config::geometry actually pins -
-        /// and not the centre is what keeps the left/top edges still while the
-        /// width/height sliders move: rounding the size to whole texels leaves
-        /// up to half a texel of error, and a centre-based placement splits
-        /// that error across both edges, so the left edge hopped a texel back
-        /// and forth on every other width. Growing from the corner puts all of
-        /// it on the far edges, where the rect is growing anyway.
-        inline glm::vec2 GetCenterScaled(const RectGeometry &geom,
-                                         const glm::vec2 &sizeScaled,
-                                         int viewportHeight,
-                                         float scale)
-        {
-            // Top-left corner in FBO pixels - x right, y up (gl_FragCoord
-            // space), so the app-space top edge is the rect's max-y edge.
-            glm::vec2 corner(geom.position.x * scale,
-                             (static_cast<float>(viewportHeight) - geom.position.y) * scale);
-            if (scale < 1.0f)
-            {
-                corner = glm::vec2(std::floor(corner.x) + 0.5f,
-                                   std::floor(corner.y) + 0.5f);
-            }
-            return glm::vec2(corner.x + sizeScaled.x * 0.5f,
-                             corner.y - sizeScaled.y * 0.5f);
-        }
+        //   0: RGBA16F - .rgb = lightCol (HDR emission colour), .a = haloTerm.
+        //      Float because neither is tone-mapped yet; the composite pass
+        //      maps the sum. GLES 3.0 needs EXT_color_buffer_half_float here,
+        //      which every ES3 device in practice has; Framebuffer::Resize
+        //      logs the incomplete-FBO status if one does not.
+        //   1: R8 - the sample-based segment gate, a [0,1] scalar.
+        constexpr Framebuffer::Attachment LIGHT_ATTACHMENT{GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT};
+        constexpr Framebuffer::Attachment GATE_ATTACHMENT{GL_R8, GL_RED, GL_UNSIGNED_BYTE};
     }
 
     // -------------------------------------------------------------------------
@@ -196,18 +137,19 @@ namespace EdgeLighting
         int bufW = std::max(static_cast<int>(static_cast<float>(viewportWidth) * scale), 1);
         int bufH = std::max(static_cast<int>(static_cast<float>(viewportHeight) * scale), 1);
 
-        // --- Pass 1: render neon to scaled FBO ---
-        mHalfResBuffer.Resize(bufW, bufH);
+        // --- Pass 1: gather into the scaled FBO ---
+        // Two attachments: lightCol + haloTerm, and the segment gate. Nothing
+        // here is a picture any more - the composite pass turns them into one.
+        mHalfResBuffer.Resize(bufW, bufH, LIGHT_ATTACHMENT, GATE_ATTACHMENT);
         mHalfResBuffer.Bind();
 
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClear(GL_COLOR_BUFFER_BIT);
 
-        // Premultiplied "over" into the transparent FBO: a single non-overlapping
-        // quad over (0,0,0,0) leaves the FBO holding the shader's premultiplied
-        // colour + coverage alpha, ready to be composited over the backbuffer.
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        // Blending OFF: a single non-overlapping quad writing raw data into a
+        // cleared buffer. The old premultiplied "over" setup only ever worked
+        // because dst was zero, and .a is no longer a coverage value.
+        glDisable(GL_BLEND);
 
         mNeonShader.Use();
 
@@ -215,12 +157,15 @@ namespace EdgeLighting
         float halfRectH = config.geometry.height * 0.5f;
         glm::mat4 proj = glm::ortho(0.0f, static_cast<float>(bufW), 0.0f, static_cast<float>(bufH), -1.0f, 1.0f);
 
-        // Geometry in FBO space, snapped to the texel grid so the filament
-        // reconstructs the same way at every rect size and position (see the
-        // GetSizeScaled / GetCenterScaled comment). setupGeometry() sizes the
-        // Pass-1 quad from the same GetSizeScaled, so quad and SDF agree.
-        glm::vec2 rectSizeScaled = GetSizeScaled(config.geometry, scale);
-        glm::vec2 center = GetCenterScaled(config.geometry, rectSizeScaled, viewportHeight, scale);
+        // Plain scaled geometry - exact, no texel-grid snapping. The snap
+        // existed to keep the one-texel-wide filament aligned to the half-res
+        // grid; the filament is drawn at full res in Pass 2 now, and what is
+        // left in this buffer (colour, halo weight) is smooth enough that its
+        // sub-texel phase does not read. See docs/full-res-filament-design.md.
+        glm::vec2 rectSizeScaled = glm::vec2(config.geometry.width, config.geometry.height) * scale;
+        glm::vec2 centerFull(config.geometry.position.x + halfRectW,
+                             static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
+        glm::vec2 center = centerFull * scale;
 
         glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(center, 0.0f));
         glm::mat4 mvp = proj * model;
@@ -228,8 +173,6 @@ namespace EdgeLighting
         mNeonShader.SetUniform("uMVP", mvp);
         mNeonShader.SetUniform("uRectSize", rectSizeScaled);
         mNeonShader.SetUniform("uCornerRadius", config.geometry.cornerRadius * scale);
-        mNeonShader.SetUniform("uLineWidth", config.neon.lineWidth * scale);
-        mNeonShader.SetUniform("uFilamentFalloff", config.neon.filamentFalloff);
         mNeonShader.SetUniform("uIntensity", config.neon.intensity);
         mNeonShader.SetUniform("uTime", time);
         mNeonShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
@@ -280,7 +223,6 @@ namespace EdgeLighting
         mArcBlock.BindBase(ARC_BLOCK_BINDING);
 
         mNeonShader.SetUniform("uSampleSpacing", mSampleSpacing);
-        mNeonShader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
         mNeonShader.SetUniform("uQuadMargin", mQuadMargin);
 
         // Loop sample positions from the LoopSamplesBlock UBO (see the shader)
@@ -302,7 +244,6 @@ namespace EdgeLighting
         mNeonVertexArray.DrawArrays(GL_TRIANGLES, 6);
 
         mNeonShader.Unuse();
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
         // --- Pass 2a (opaque only): fullscreen black fill on the backbuffer ---
         // A single NDC quad + identity MVP; the black-rect fragment shader
@@ -324,10 +265,6 @@ namespace EdgeLighting
         glm::mat4 identity(1.0f);
         if (config.neon.opaqueMode != OpaqueMode::NONE)
         {
-            // Rect centre in full-res gl_FragCoord space (y-up).
-            glm::vec2 centerFull(config.geometry.position.x + halfRectW,
-                                 static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
-
             mBlackRectShader.Use();
             mBlackRectShader.SetUniform("uMVP", identity);
             mBlackRectShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
@@ -344,27 +281,50 @@ namespace EdgeLighting
             mBlackRectShader.Unuse();
         }
 
-        // --- Pass 2b: bilinear composite of the half-res neon FBO ---
-        // Bilinear upscaling of premultiplied alpha is fringe-free; the blit
-        // shader is a plain texture read that composites over whatever's on
-        // the backbuffer (black fill if opaque, original bg otherwise).
-        mBlitShader.Use();
-        mBlitShader.SetUniform("uMVP", identity);
+        // --- Pass 2b: full-res composite ---
+        // Upscales the half-res colour + halo weight, rasterises the filament
+        // here at full res from the analytic SDF, sums the two and tone-maps
+        // once. Composites over whatever's on the backbuffer (black fill if
+        // opaque, original bg otherwise).
+        mCompositeShader.Use();
+        mCompositeShader.SetUniform("uMVP", identity);
 
-        // Debug toggle: nearest neighbour shows the raw half-res pixels.
-        GLuint texId = mHalfResBuffer.GetTextureId();
+        // Debug toggle: nearest neighbour shows the raw half-res texels of the
+        // gathered colour/halo field. The filament is drawn at full res either
+        // way, so it stays sharp while the field behind it goes blocky.
+        GLuint texId = mHalfResBuffer.GetTextureId(0);
         glBindTexture(GL_TEXTURE_2D, texId);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
                         config.optimizedNeon.showHalfRes ? GL_NEAREST : GL_LINEAR);
         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
                         config.optimizedNeon.showHalfRes ? GL_NEAREST : GL_LINEAR);
 
-        mHalfResBuffer.BindTexture(0);
-        mBlitShader.SetUniform("uSource", 0);
+        mHalfResBuffer.BindTexture(0, 0);
+        mCompositeShader.SetUniform("uSource", 0);
+        mHalfResBuffer.BindTexture(1, 1);
+        mCompositeShader.SetUniform("uSegGate", 1);
+
+        // Full-res geometry - the composite pass is where the effect's exact
+        // pixel placement is decided.
+        mCompositeShader.SetUniform("uRectCenter", centerFull);
+        mCompositeShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
+        mCompositeShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
+        mCompositeShader.SetUniform("uLineWidth", config.neon.lineWidth);
+        mCompositeShader.SetUniform("uFilamentFalloff", config.neon.filamentFalloff);
+        mCompositeShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
+        mCompositeShader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness);
+        mCompositeShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
+        mCompositeShader.SetUniform("uInsideCutoffSoftness", config.neon.insideCutoff.softness);
+        mCompositeShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
+        mCompositeShader.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness);
+        mCompositeShader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
+        // Same ArcBlock the gather pass filled - reused for the continuous
+        // filament gate.
+        mArcBlock.BindBase(ARC_BLOCK_BINDING);
 
         mBlitVertexArray.DrawArrays(GL_TRIANGLES, 6);
 
-        mBlitShader.Unuse();
+        mCompositeShader.Unuse();
         // Restore default blend state for following renderers.
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -438,10 +398,12 @@ namespace EdgeLighting
                                          ShaderSource::BLACK_RECT_FRAG_SRC,
                                          "NeonOptimized.BlackRect");
 
-        mBlitShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
-                                    ShaderSource::NEON_BLIT_FRAG_SRC,
-                                    "NeonBlit");
-        if (!mNeonShader.IsValid() || !mBlackRectShader.IsValid() || !mBlitShader.IsValid())
+        // Pass 2b: upscale + full-res filament + tone map (see
+        // neon-composite.frag). Replaces the old plain-texture-read blit.
+        mCompositeShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
+                                         ShaderSource::NEON_COMPOSITE_FRAG_SRC,
+                                         "NeonComposite");
+        if (!mNeonShader.IsValid() || !mBlackRectShader.IsValid() || !mCompositeShader.IsValid())
         {
             return false;
         }
@@ -449,6 +411,7 @@ namespace EdgeLighting
         mNeonShader.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
         mNeonShader.SetUniformBlockBinding("LoopSamplesBlock", LOOP_SAMPLES_BLOCK_BINDING);
         mNeonShader.SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
+        mCompositeShader.SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
         return true;
     }
 
@@ -492,11 +455,8 @@ namespace EdgeLighting
                 margin = std::min(margin, cutoffCap);
             }
             mQuadMargin = margin;
-            // Same snapped size the SDF gets in Render(), so the quad's soft
-            // fade still ends exactly uQuadMargin past the rect edge.
-            glm::vec2 sizeScaled = GetSizeScaled(config.geometry, scale);
-            float halfW = sizeScaled.x * 0.5f;
-            float halfH = sizeScaled.y * 0.5f;
+            float halfW = config.geometry.width * 0.5f * scale;
+            float halfH = config.geometry.height * 0.5f * scale;
             float l = -(halfW + margin);
             float r = halfW + margin;
             float b = -(halfH + margin);
@@ -531,17 +491,6 @@ namespace EdgeLighting
         float scale = config.optimizedNeon.resolutionScale;
         int n = std::max(1, std::min(config.optimizedNeon.numSamples, NEON_MAX_LOOP_SAMPLES));
 
-        // Walk the same texel-snapped rect the shader's SDF describes, so the
-        // halo/bloom sample ring stays centred on the filament rather than
-        // drifting up to a quarter texel off it.
-        RectGeometry snapped = config.geometry;
-        if (scale > 0.0f)
-        {
-            glm::vec2 sizeScaled = GetSizeScaled(config.geometry, scale);
-            snapped.width = sizeScaled.x / scale;
-            snapped.height = sizeScaled.y / scale;
-        }
-
         // Only n unique perimeter points are in use per frame (shader loop
         // bound is uNumSamples). The remaining UBO slots stay at (0,0,0,0)
         // - never read because the loop stops before them.
@@ -552,14 +501,14 @@ namespace EdgeLighting
         for (int i = 0; i < n; ++i)
         {
             float t = static_cast<float>(i) / static_cast<float>(n);
-            glm::vec2 p = GeometryUtils::GetPointOnRectangle(t, snapped) * scale;
+            glm::vec2 p = GeometryUtils::GetPointOnRectangle(t, config.geometry) * scale;
             block.samples[i] = glm::vec4(p, 0.0f, 0.0f);
         }
         mLoopSamplesBlock.SetData(&block, sizeof(block));
 
-        float w = snapped.width;
-        float h = snapped.height;
-        float r = std::max(0.0f, std::min(snapped.cornerRadius, std::min(w, h) * 0.5f));
+        float w = config.geometry.width;
+        float h = config.geometry.height;
+        float r = std::max(0.0f, std::min(config.geometry.cornerRadius, std::min(w, h) * 0.5f));
 
         float perimeter = 2.0f * (w - 2.0f * r) + 2.0f * (h - 2.0f * r) + 2.0f * PI * r;
         mSampleSpacing = (perimeter * scale) / static_cast<float>(n);

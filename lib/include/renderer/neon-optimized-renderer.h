@@ -12,14 +12,23 @@
 
 namespace EdgeLighting
 {
-    /// Half-resolution single-pass neon renderer for edge devices.
+    /// Half-resolution neon renderer for edge devices.
     ///
-    /// Two-pass approach:
-    ///   Pass 1 - render the neon shader (highp, up to @c NEON_MAX_LOOP_SAMPLES
-    ///             gather samples per fragment) into a half-resolution RGBA8 FBO.
-    ///   Pass 2 - bilinear blit the half-res FBO to the full-res backbuffer.
+    /// Two passes, split by frequency rather than by resolution - see
+    /// docs/full-res-filament-design.md:
+    ///   Pass 1 - the perimeter gather (highp, up to @c NEON_MAX_LOOP_SAMPLES
+    ///             samples per fragment) at half resolution, writing DATA into
+    ///             two attachments: the gathered colour + a scalar halo/bloom
+    ///             weight (RGBA16F), and the segment gate (R8).
+    ///   Pass 2 - full resolution: upscale those two smooth fields, rasterise
+    ///             the filament from the analytic SDF, sum and tone-map once.
     ///
-    /// The perf wins are the half-res FBO, the runtime-tunable
+    /// The filament lives in Pass 2 because it is roughly one texel wide in the
+    /// half-res buffer - too thin for the buffer to represent, which made its
+    /// sharpness depend on where the rect edge fell between texel centres. It
+    /// is also the cheap half (no gather loop), so full res costs little.
+    ///
+    /// The perf wins are the half-res gather, the runtime-tunable
     /// @c OptimizedNeonConfig::numSamples slider (the shader iterates only
     /// that many perimeter samples per fragment), and the baked colour LUTs
     /// (base gradient + per-segment atlas + per-arc atlas) - not reduced
@@ -60,9 +69,10 @@ namespace EdgeLighting
 
     private:
         Config mCurrentConfig;
-        ShaderProgram mNeonShader;      // Pass 1 - half-res neon
+        ShaderProgram mNeonShader;      // Pass 1 - half-res gather (colour + halo weight + segment gate)
         ShaderProgram mBlackRectShader; // Opaque-mode fullscreen black fill
-        ShaderProgram mBlitShader;      // Pass 2 - upscale to full-res
+        ShaderProgram mCompositeShader; // Pass 2 - upscale + full-res filament + tone map
+        /// Two attachments: RGBA16F (lightCol.rgb, haloTerm) and R8 (segment gate).
         Framebuffer mHalfResBuffer{"NeonOptimized.HalfRes"};
         VertexArray mNeonVertexArray{"NeonOpt.Pass1"};
         VertexArray mBlitVertexArray{"NeonOpt.Blit"};

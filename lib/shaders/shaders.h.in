@@ -37,6 +37,11 @@ namespace EdgeLighting
 @NEON_BLIT_FRAG_CONTENT@
 )shadersrc";
 
+                static const char *const NEON_COMPOSITE_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
+@NEON_TUNING@
+@NEON_COMPOSITE_FRAG_CONTENT@
+)shadersrc";
+
                 static const char *const BLACK_RECT_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
 @BLACK_RECT_FRAG_CONTENT@
 )shadersrc";

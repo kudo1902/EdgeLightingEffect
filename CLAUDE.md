@@ -51,7 +51,7 @@ Current renderers (all under `lib/include/renderer/`):
 
 - `WireframeRenderer` - 1px `GL_LINE_LOOP` debug box, blending temporarily disabled.
 - `NeonRenderer` - single-pass neon stroke. Uses an analytic rounded-box SDF + a precomputed 1D `GRADIENT_LUT` texture (RGBA32F, 256px, REPEAT wrap) so each shader sample is one texture lookup instead of an in-shader colour-stops loop. Also precomputes `NUM_LOOP_SAMPLES` (128) sample positions on the perimeter.
-- `NeonOptimizedRenderer` - half-resolution variant of the single-pass neon that renders into a scaled FBO and bilinear-blits back to full res; visual params are read from `Config::neon`.
+- `NeonOptimizedRenderer` - two-pass variant of the neon for edge devices, split by frequency: the perimeter gather runs at `resolutionScale` into an MRT pair (gathered colour + halo weight, and the segment gate), then a full-res pass upscales those, rasterises the filament from the analytic SDF, and tone-maps once. The filament is too thin to survive the half-res buffer, so it lives in the full-res pass - see [`docs/full-res-filament-design.md`](docs/full-res-filament-design.md). Visual params are read from `Config::neon`.
 
 To add a renderer, subclass `BaseRenderer`, add a sub-config struct to `Config`, register it in `demo/src/main.cpp`, and add an ImGui section in `DebugUI`.
 
