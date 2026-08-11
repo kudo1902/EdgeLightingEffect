@@ -52,6 +52,14 @@ uniform int   uWinding;               ///< 0 = CLOCKWISE, 1 = COUNTER_CLOCKWISE 
 
 uniform float uSampleSpacing;
 
+// FBO px per full-res px (Config::OptimizedNeonConfig::resolutionScale). Every
+// pixel-valued uniform above already arrives pre-multiplied by it, so the SDF
+// distance `d`, uRectSize and friends are all in FBO space. The tuning
+// constants injected from neon-tuning.h are NOT - they are authored in full-res
+// px - so anything comparing a raw constant against an FBO-space quantity must
+// convert it with this factor. The base NeonRenderer passes 1.0.
+uniform float uResolutionScale;
+
 // Distance (in scaled/FBO px, from the rect edge) to the draw quad's edge.
 // The emission is faded to zero just before this so a tight quad never shows
 // a hard rectangular cutoff where a strong bloom is clipped.
@@ -355,11 +363,18 @@ void main() {
     // lineGate fades the filament from 0 at lineWidth = 0 up to full at
     // lineWidth = FILAMENT_MIN_HALF_WIDTH * 2, so lineWidth = 0 means "no
     // line" instead of a single-pixel bright dot.
+    //
+    // Both the sigma floor and the gate threshold are full-res px constants
+    // compared against the FBO-space uLineWidth, so they carry
+    // uResolutionScale. Without it a half-res pass floors sigma at 1 full-res
+    // px (thickening thin lines) and reads lineWidth as half its real value
+    // (dimming them) - the optimized output no longer matched the base.
+    float minHalf   = FILAMENT_MIN_HALF_WIDTH * uResolutionScale;
     float halfWidth = uLineWidth * 0.5;
-    float sigma     = max(halfWidth, 0.5);
+    float sigma     = max(halfWidth, max(minHalf, 1e-3));
     float N         = 2.0 * max(uFilamentFalloff, 1e-3);
     float core      = exp2(-pow(ad / sigma, N));
-    float lineGate  = clamp(uLineWidth / (FILAMENT_MIN_HALF_WIDTH * 2.0), 0.0, 1.0);
+    float lineGate  = clamp(uLineWidth / max(minHalf * 2.0, 1e-3), 0.0, 1.0);
 
     // --- Kernel widths ------------------------------------------------
     // The halo kernel is floored to haloFloor so the gather never beads into
@@ -500,11 +515,16 @@ void main() {
     // starting at 0 sits right after dark - the old circular-mean smear lit
     // the whole corner. See neon.frag for full rationale.
     float sPos = perimeterPosition(vPos);
-    // Inward feathers: convert pixel widths to perimeter fractions.
+    // Inward feathers: convert pixel widths to perimeter fractions. `peri` is
+    // in FBO px (uRectSize is pre-scaled) while HEAD/TAIL_FEATHER_PX are
+    // full-res px, so the constants carry uResolutionScale - otherwise the
+    // filament's inset at each arc end grows as 1/resolutionScale and the arc
+    // ends up visibly shorter than the base renderer's, leaving a stretch of
+    // bare halo past the filament head/tail.
     float r      = clamp(uCornerRadius, 0.0, min(uRectSize.x, uRectSize.y) * 0.5);
     float peri   = 2.0 * (uRectSize.x + uRectSize.y - 4.0 * r) + 2.0 * 3.141592653589793 * r;
-    float headF  = HEAD_FEATHER_PX / peri;
-    float tailF  = TAIL_FEATHER_PX / peri;
+    float headF  = HEAD_FEATHER_PX * uResolutionScale / peri;
+    float tailF  = TAIL_FEATHER_PX * uResolutionScale / peri;
     float contCover = 0.0;
     for (int a = 0; a < uArcCount; a++) {
         vec4 arc = uArcs[a];

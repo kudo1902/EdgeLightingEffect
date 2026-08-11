@@ -385,8 +385,13 @@ void main() {
     // lineGate fades the filament from 0 at lineWidth = 0 up to full at
     // lineWidth = FILAMENT_MIN_HALF_WIDTH * 2, so lineWidth = 0 means "no
     // line" instead of a single-pixel bright dot.
+    //
+    // FILAMENT_MIN_HALF_WIDTH is used raw: uLineWidth is already in the same
+    // full-res px. neon-optimized.frag's copy of this block multiplies it by
+    // uResolutionScale because uLineWidth reaches it in FBO px - keep the two
+    // in step when tuning the constant.
     float halfWidth = uLineWidth * 0.5;
-    float sigma     = max(halfWidth, 0.5);
+    float sigma     = max(halfWidth, FILAMENT_MIN_HALF_WIDTH);
     float N         = 2.0 * max(uFilamentFalloff, 1e-3);
     float core      = exp2(-pow(ad / sigma, N));
     float lineGate  = clamp(uLineWidth / (FILAMENT_MIN_HALF_WIDTH * 2.0), 0.0, 1.0);
@@ -581,7 +586,9 @@ void main() {
     // lit it for any arc starting at position 0.
     float sPos = perimeterPosition(vPos);
     // Inward feathers: convert pixel widths to perimeter fractions at the
-    // current geometry.
+    // current geometry. Both sides are full-res px here, so the constants are
+    // used raw; neon-optimized.frag scales them by uResolutionScale because
+    // its `peri` is in FBO px - keep the two in step when tuning them.
     float r      = clamp(uCornerRadius, 0.0, min(uRectSize.x, uRectSize.y) * 0.5);
     float peri   = 2.0 * (uRectSize.x + uRectSize.y - 4.0 * r) + 2.0 * 3.141592653589793 * r;
     float headF  = HEAD_FEATHER_PX / peri;
