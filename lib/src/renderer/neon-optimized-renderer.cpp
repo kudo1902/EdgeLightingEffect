@@ -62,6 +62,77 @@ namespace EdgeLighting
         constexpr GLuint SEGMENT_BLOCK_BINDING = 0;
         constexpr GLuint LOOP_SAMPLES_BLOCK_BINDING = 1;
         constexpr GLuint ARC_BLOCK_BINDING = 2;
+
+        // --- Half-res texel-grid snap ---------------------------------------
+        // The filament is only `lineWidth * resolutionScale` texels wide in the
+        // FBO - about ONE texel at the default 4px line and 0.5 scale - so how
+        // it survives the bilinear blit depends on where the rect edge falls
+        // between texel centres:
+        //
+        //   edge ON a texel centre   -> that texel samples the profile's peak;
+        //                               one bright texel, neighbours already
+        //                               well down the falloff = crisp line.
+        //   edge ON a texel boundary -> the peak falls between two texels which
+        //                               both sample the shoulder; a two-texel
+        //                               plateau that blits out visibly wider
+        //                               and softer.
+        //
+        // Consecutive full-res pixel coordinates alternate between those two
+        // phases (at scale 0.5 an odd coordinate is a texel centre, an even one
+        // a boundary), which is why moving the rect by 1px - or resizing it by
+        // 2px - used to change how thick and how sharp the filament looked.
+        //
+        // Both helpers together pin the crisp phase: round the size to whole
+        // texels, then place the rect from its top-left corner snapped to a
+        // texel centre - with an integral size the far edges land on texel
+        // centres too. The rect moves by at most half a texel (one full-res
+        // pixel at scale 0.5). Corner arcs can't be grid-aligned this way, but
+        // a curve has no constant cross-section to compare, so the phase
+        // doesn't read there.
+        //
+        // At scale >= 1 the blit is 1:1, there is no resampling to protect
+        // against, and snapping would only push this renderer half a pixel off
+        // the full-res NeonRenderer - so both helpers pass the value through.
+
+        /// Rect size in FBO texels, rounded to whole texels.
+        inline glm::vec2 GetSizeScaled(const RectGeometry &geom, float scale)
+        {
+            glm::vec2 sizeScaled = glm::vec2(geom.width, geom.height) * scale;
+            if (scale >= 1.0f)
+            {
+                return sizeScaled;
+            }
+            return glm::vec2(std::max(std::round(sizeScaled.x), 1.0f),
+                             std::max(std::round(sizeScaled.y), 1.0f));
+        }
+
+        /// Rect centre in FBO texels for @p sizeScaled (from GetSizeScaled),
+        /// placed from the rect's snapped top-left corner.
+        ///
+        /// Anchoring the CORNER - the point Config::geometry actually pins -
+        /// and not the centre is what keeps the left/top edges still while the
+        /// width/height sliders move: rounding the size to whole texels leaves
+        /// up to half a texel of error, and a centre-based placement splits
+        /// that error across both edges, so the left edge hopped a texel back
+        /// and forth on every other width. Growing from the corner puts all of
+        /// it on the far edges, where the rect is growing anyway.
+        inline glm::vec2 GetCenterScaled(const RectGeometry &geom,
+                                         const glm::vec2 &sizeScaled,
+                                         int viewportHeight,
+                                         float scale)
+        {
+            // Top-left corner in FBO pixels - x right, y up (gl_FragCoord
+            // space), so the app-space top edge is the rect's max-y edge.
+            glm::vec2 corner(geom.position.x * scale,
+                             (static_cast<float>(viewportHeight) - geom.position.y) * scale);
+            if (scale < 1.0f)
+            {
+                corner = glm::vec2(std::floor(corner.x) + 0.5f,
+                                   std::floor(corner.y) + 0.5f);
+            }
+            return glm::vec2(corner.x + sizeScaled.x * 0.5f,
+                             corner.y - sizeScaled.y * 0.5f);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -143,16 +214,16 @@ namespace EdgeLighting
         float halfRectW = config.geometry.width * 0.5f;
         float halfRectH = config.geometry.height * 0.5f;
         glm::mat4 proj = glm::ortho(0.0f, static_cast<float>(bufW), 0.0f, static_cast<float>(bufH), -1.0f, 1.0f);
-        glm::vec2 center(config.geometry.position.x + halfRectW,
-                         static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
-        // Scale center to FBO coordinates
-        center.x *= scale;
-        center.y *= scale;
+
+        // Geometry in FBO space, snapped to the texel grid so the filament
+        // reconstructs the same way at every rect size and position (see the
+        // GetSizeScaled / GetCenterScaled comment). setupGeometry() sizes the
+        // Pass-1 quad from the same GetSizeScaled, so quad and SDF agree.
+        glm::vec2 rectSizeScaled = GetSizeScaled(config.geometry, scale);
+        glm::vec2 center = GetCenterScaled(config.geometry, rectSizeScaled, viewportHeight, scale);
+
         glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(center, 0.0f));
         glm::mat4 mvp = proj * model;
-
-        // Scale geometry to FBO space
-        glm::vec2 rectSizeScaled(config.geometry.width * scale, config.geometry.height * scale);
 
         mNeonShader.SetUniform("uMVP", mvp);
         mNeonShader.SetUniform("uRectSize", rectSizeScaled);
@@ -421,8 +492,11 @@ namespace EdgeLighting
                 margin = std::min(margin, cutoffCap);
             }
             mQuadMargin = margin;
-            float halfW = config.geometry.width * 0.5f * scale;
-            float halfH = config.geometry.height * 0.5f * scale;
+            // Same snapped size the SDF gets in Render(), so the quad's soft
+            // fade still ends exactly uQuadMargin past the rect edge.
+            glm::vec2 sizeScaled = GetSizeScaled(config.geometry, scale);
+            float halfW = sizeScaled.x * 0.5f;
+            float halfH = sizeScaled.y * 0.5f;
             float l = -(halfW + margin);
             float r = halfW + margin;
             float b = -(halfH + margin);
@@ -457,6 +531,17 @@ namespace EdgeLighting
         float scale = config.optimizedNeon.resolutionScale;
         int n = std::max(1, std::min(config.optimizedNeon.numSamples, NEON_MAX_LOOP_SAMPLES));
 
+        // Walk the same texel-snapped rect the shader's SDF describes, so the
+        // halo/bloom sample ring stays centred on the filament rather than
+        // drifting up to a quarter texel off it.
+        RectGeometry snapped = config.geometry;
+        if (scale > 0.0f)
+        {
+            glm::vec2 sizeScaled = GetSizeScaled(config.geometry, scale);
+            snapped.width = sizeScaled.x / scale;
+            snapped.height = sizeScaled.y / scale;
+        }
+
         // Only n unique perimeter points are in use per frame (shader loop
         // bound is uNumSamples). The remaining UBO slots stay at (0,0,0,0)
         // - never read because the loop stops before them.
@@ -467,14 +552,14 @@ namespace EdgeLighting
         for (int i = 0; i < n; ++i)
         {
             float t = static_cast<float>(i) / static_cast<float>(n);
-            glm::vec2 p = GeometryUtils::GetPointOnRectangle(t, config.geometry) * scale;
+            glm::vec2 p = GeometryUtils::GetPointOnRectangle(t, snapped) * scale;
             block.samples[i] = glm::vec4(p, 0.0f, 0.0f);
         }
         mLoopSamplesBlock.SetData(&block, sizeof(block));
 
-        float w = config.geometry.width;
-        float h = config.geometry.height;
-        float r = std::max(0.0f, std::min(config.geometry.cornerRadius, std::min(w, h) * 0.5f));
+        float w = snapped.width;
+        float h = snapped.height;
+        float r = std::max(0.0f, std::min(snapped.cornerRadius, std::min(w, h) * 0.5f));
 
         float perimeter = 2.0f * (w - 2.0f * r) + 2.0f * (h - 2.0f * r) + 2.0f * PI * r;
         mSampleSpacing = (perimeter * scale) / static_cast<float>(n);

@@ -194,6 +194,17 @@ with a dynamic shader loop bound (`uNumSamples = optimizedNeon.numSamples`,
 with `NeonConfig`. Meant for edge devices - the resolution-scale + sample-
 count sliders are the primary perf knobs.
 
+Pass 1 draws the rect **snapped to the FBO texel grid**: the size is rounded to
+whole texels and the rect grows from its top-left corner snapped to a texel
+centre, so every edge lands on one. The filament is only about one texel wide
+at half res, so without the snap its sharpness depended on where the rect edge
+fell between texel centres - the same line rendered thin and crisp at one
+geometry and wide and soft one pixel over. Anchoring the corner (not the
+centre) is what keeps the left/top edges still while the width/height sliders
+move. The snap shifts the rect by at most one full-res pixel and is skipped at
+`resolutionScale >= 1`, where the blit is 1:1. Measurements, trade-offs and
+the repro recipe are in [`half-res-texel-snap.md`](half-res-texel-snap.md).
+
 ### 4.3 WireframeRenderer
 
 A `GL_LINE_LOOP` debug outline. Blending briefly disabled for crisp 1 px
