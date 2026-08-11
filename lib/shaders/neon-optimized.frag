@@ -136,10 +136,12 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
 // reads the nearest perimeter point directly, so corner and edge fragments get
 // their true positions. Works in scaled FBO space because it only uses the
 // (already scaled) uRectSize / uCornerRadius. See neon.frag for the details.
+
+const float PI      = 3.141592653589793;
+const float TWO_PI  = 6.283185307179586;
+const float HALF_PI = 1.5707963267948966;
+
 float perimeterPosition(vec2 p) {
-    const float PI      = 3.141592653589793;
-    const float TWO_PI  = 6.283185307179586;
-    const float HALF_PI = 1.5707963267948966;
 
     float halfW  = uRectSize.x * 0.5;
     float halfH  = uRectSize.y * 0.5;
@@ -377,20 +379,19 @@ void main() {
     float lineGate  = clamp(uLineWidth / max(minHalf * 2.0, 1e-3), 0.0, 1.0);
 
     // --- Kernel widths ------------------------------------------------
-    // The halo kernel is floored to haloFloor so the gather never beads into
-    // dots, even at tiny glow radii. That floor must NOT manufacture a halo
-    // when the user asked for none (glowRadius == 0): haloGate (below) fades
-    // the halo's intensity from 0 at glowRadius = 0 up to full once
-    // glowRadius reaches the floor, so glowRadius = 0 reads as "filament only".
-    float haloFloor = uSampleSpacing * HALO_SPACING_FLOOR;
-    float kg  = max(uGlowRadius,                       haloFloor);
-    float kg2 = kg * kg;
-    float bw  = max(uGlowRadius * BLOOM_REACH_TO_GLOW, uSampleSpacing * BLOOM_SPACING_FLOOR);
-    float bw2 = bw * bw;
+    // kc is the COLOUR gather weight and keeps the anti-bead floor; kh / bw
+    // are the EMISSION widths and take raw glowRadius, because the halo and
+    // bloom are evaluated analytically from the SDF distance below and a
+    // closed form cannot bead. See neon.frag for the full rationale. Note this
+    // shader's uSampleSpacing is FBO px over uNumSamples, so the old floor
+    // moved with BOTH the rect size and the perf slider.
+    float kc  = max(uGlowRadius, uSampleSpacing * HALO_SPACING_FLOOR);
+    float kc2 = kc * kc;
+    float kh  = max(uGlowRadius,                       EMISSION_MIN_WIDTH);
+    float bw  = max(uGlowRadius * BLOOM_REACH_TO_GLOW, EMISSION_MIN_WIDTH);
 
-    // --- Additive gather --------------------------------------------------
-    float glow      = 0.0;
-    float bloom     = 0.0;
+    // --- Colour gather -----------------------------------------------------
+    // Gathers COLOUR ONLY; halo/bloom intensities are closed-form below.
     vec3  acc       = vec3(0.0); // base colour × per-sample gather weight
     vec3  segAcc    = vec3(0.0); // segment additive colour × bell × gather weight
     float wsum      = 0.0;
@@ -413,7 +414,7 @@ void main() {
         vec2  dv  = vPos - uLoopSamples[i].xy;
         float dd  = dot(dv, dv);
 
-        float g   = 1.0 / (dd + kg2);
+        float g   = 1.0 / (dd + kc2);
 
         // Arc winner-take-all: see neon.frag for rationale.
         float bestMask = 0.0;
@@ -482,21 +483,14 @@ void main() {
             segMask += bell;
         }
 
-        // Shared coverage (arc mask OR segment coverage, clamped) drives halo,
-        // bloom and the filament gate so a segment-only stretch emits like an
-        // arc-lit one. arcW = 1 -> cover = arcW, matching the old behaviour in
-        // fully arc-covered stretches. See neon.frag.
-        float segCov = min(segMask, 1.0);
-        float cover = max(arcW, segCov);
-        glow      += cover * g * sqrt(g);
-        bloom     += cover / (dd + bw2);
-        wsumSeg   += segCov * g;
+        // Segment-only coverage for the filament gate. Halo and bloom take a
+        // pointwise coverage at this fragment's perimeter position instead -
+        // see the analytic emission block below.
+        wsumSeg += min(segMask, 1.0) * g;
 
         ti  += dti;
         si  += dti;
     }
-    glow  *= uSampleSpacing * kg2 * HALO_NORM_FACTOR;
-    bloom *= uSampleSpacing * bw  * BLOOM_NORM_FACTOR;
 
     vec3 col    = acc    / max(wsum, WSUM_EPSILON);
     vec3 segCol = segAcc / max(wsum, WSUM_EPSILON);
@@ -522,27 +516,58 @@ void main() {
     // ends up visibly shorter than the base renderer's, leaving a stretch of
     // bare halo past the filament head/tail.
     float r      = clamp(uCornerRadius, 0.0, min(uRectSize.x, uRectSize.y) * 0.5);
-    float peri   = 2.0 * (uRectSize.x + uRectSize.y - 4.0 * r) + 2.0 * 3.141592653589793 * r;
+    float peri   = 2.0 * (uRectSize.x + uRectSize.y - 4.0 * r) + TWO_PI * r;
     float headF  = HEAD_FEATHER_PX * uResolutionScale / peri;
     float tailF  = TAIL_FEATHER_PX * uResolutionScale / peri;
+    // contCover gates the filament (per-arc intensity already reaches it via
+    // `col`); emitCover folds intensity in, reproducing the gather's
+    // arcW = arcInside * intensity for the halo and bloom. See neon.frag.
     float contCover = 0.0;
+    float emitCover = 0.0;
     for (int a = 0; a < uArcCount; a++) {
         vec4 arc = uArcs[a];
         if (arc.z <= 0.0) continue;
-        contCover = max(contCover,
-                        arcCoverContinuous(sPos, arc.x, arc.y, headF, tailF));
+        float c = arcCoverContinuous(sPos, arc.x, arc.y, headF, tailF);
+        contCover = max(contCover, c);
+        emitCover = max(emitCover, c * arc.z);
     }
     filamentGate = max(filamentGate, contCover);
 
-    // Halo visibility follows glowRadius (glowRadius == 0 -> filament only).
-    float haloGate = clamp(uGlowRadius / max(haloFloor, 1e-4), 0.0, 1.0);
+    // Pointwise segment coverage at this fragment's perimeter position, so a
+    // segment carries its own halo/bloom where no arc covers. Clamped to match
+    // the old min(segMask, 1.0).
+    float segCoverPt = 0.0;
+    for (int s = 0; s < uSegmentCount; s++) {
+        vec4  seg = uSegments[s];
+        float rel = sPos - seg.x;
+        rel      -= floor(rel + 0.5);
+        float e   = rel * seg.y;
+        segCoverPt += seg.z * exp(-e * e);
+    }
+    float emitCoverAll = max(emitCover, min(segCoverPt, 1.0));
+
+    // --- Analytic halo + bloom --------------------------------------------
+    // Closed form of the removed sums; peaks at ad = 0 match the gather's
+    // exactly, so HALO_NORM_FACTOR / BLOOM_NORM_FACTOR keep their calibration.
+    // Pure functions of the SDF distance: no beading, no uSampleSpacing, and
+    // therefore no dependence on rect size OR on the numSamples slider. See
+    // neon.frag for the derivation and the corner-brightness caveat.
+    float halo  = HALO_NORM_FACTOR  * 2.0 * kh * kh / (ad * ad + kh * kh);
+    float bloom = BLOOM_NORM_FACTOR * PI * bw / sqrt(ad * ad + bw * bw);
+
+    // glowRadius == 0 -> filament only. An analytic profile at radius 0 is a
+    // sub-pixel spike of full height, so both layers fade in over
+    // glowRadius = [0, GLOW_GATE_FADE_PX]. uGlowRadius reaches this shader in
+    // FBO px, so the full-res constant carries uResolutionScale - same
+    // convention as FILAMENT_MIN_HALF_WIDTH.
+    float glowGate = clamp(uGlowRadius / (GLOW_GATE_FADE_PX * uResolutionScale), 0.0, 1.0);
 
     // Base gates on uIntensity; segments are independent (stay lit at intensity 0).
     vec3 lightCol = col * uIntensity + segCol;
 
     vec3 result  = lightCol * core  * FILAMENT_GAIN  * filamentGate * lineGate;
-    result      += lightCol * glow  * HALO_GAIN      * haloGate;
-    result      += lightCol * bloom * uBloomStrength;
+    result      += lightCol * halo  * HALO_GAIN      * glowGate * emitCoverAll;
+    result      += lightCol * bloom * uBloomStrength * glowGate * emitCoverAll;
 
     // --- One-sided cut ---
     if (uGlowSide == GLOW_SIDE_INSIDE)       result *= smoothstep( softEdge, -softEdge, d);

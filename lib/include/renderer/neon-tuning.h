@@ -39,15 +39,55 @@
 #define HEAD_FEATHER_PX           14.0
 #define TAIL_FEATHER_PX           14.0
 
-// --- Halo (sharp coloured glow). Kernel uses g * sqrt(g) ~ p = 1.5. The sum
-//     is normalised by kg^2 to recover unit-density brightness. ---
+// --- Halo (sharp coloured glow).
+//
+//     The halo and bloom are evaluated ANALYTICALLY from the rounded-box SDF
+//     distance, not summed over the perimeter gather. For a locally straight
+//     emitter of unit density the old sums converge exactly to:
+//
+//       sum g*sqrt(g) * spacing*kh^2*HALO_NORM  -> HALO_NORM  * 2*kh^2/(ad^2 + kh^2)
+//       sum 1/(dd+bw^2) * spacing*bw*BLOOM_NORM -> BLOOM_NORM * PI*bw/sqrt(ad^2 + bw^2)
+//
+//     so the NORM factors keep their meaning and their calibration: peak
+//     values at ad = 0 are unchanged (0.86 and 1.005 respectively).
+//
+//     The closed form is what makes the effect geometry-independent. The
+//     gather had to floor its kernel at HALO_SPACING_FLOOR * sampleSpacing to
+//     stop 128 discrete samples beading into dots, and sampleSpacing is
+//     perimeter / NEON_MAX_LOOP_SAMPLES - so halo width, and via the gate its
+//     brightness, both tracked the rect size, and glowRadius did nothing at
+//     all until it exceeded the floor (~56 px on a 1920x1080 rect, i.e. most
+//     of its usable range). An analytic profile cannot bead at any radius, so
+//     no floor is needed and glowRadius sets the width directly. ---
 #define HALO_GAIN                 0.90
 #define HALO_NORM_FACTOR          0.43
+
+// --- Anti-bead floor for the COLOUR gather kernel only. The perimeter colour
+//     blend is still a 128-sample sum, so its weight keeps the floor. It
+//     appears in both the numerator and the denominator of acc/wsum, so it
+//     sets how far colours blend along the perimeter and can no longer affect
+//     brightness or reach. ---
 #define HALO_SPACING_FLOOR        1.2
 
-// --- Bloom (wide background spill) ---
+// --- Emission on/off ramp. glowRadius = 0 must read as "filament only", but
+//     an analytic profile at radius 0 is a sub-pixel spike of full height
+//     rather than nothing, so the halo and bloom fade in over
+//     glowRadius = [0, this]. A FIXED pixel width: gating against the
+//     sampleSpacing-derived floor instead would re-couple brightness to the
+//     rect size, which is the whole thing this design removes.
+//
+//     NOTE: full-res pixel span. neon-optimized.frag compares it against a
+//     glowRadius already scaled into FBO px, so its copy multiplies by
+//     uResolutionScale - keep the two in step when tuning. ---
+#define GLOW_GATE_FADE_PX         2.0
+
+// --- Lower bound on the analytic emission widths. Guards the divides only;
+//     anything this small is already multiplied out by GLOW_GATE_FADE_PX. ---
+#define EMISSION_MIN_WIDTH        1e-3
+
+// --- Bloom (wide background spill). See the halo note above for the closed
+//     form; BLOOM_SPACING_FLOOR is gone with the gather. ---
 #define BLOOM_REACH_TO_GLOW       6.0
-#define BLOOM_SPACING_FLOOR       4.0
 #define BLOOM_NORM_FACTOR         0.32
 
 // --- Travelling-segment array size (shared by C++ vector cap + GLSL uniform array) ---
