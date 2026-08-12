@@ -12,6 +12,7 @@
 #include "imgui_impl_opengl3.h"
 
 #include <algorithm>
+#include <cstring>
 #include <cmath>
 #include <cstdio>
 #include <filesystem>
@@ -25,6 +26,131 @@ namespace
     /// width baked by NeonRenderer (256), which is more than enough for any
     /// gradient the human eye can resolve.
     constexpr int MAX_GRADIENT_LUT_SIZE = 256;
+
+    /// Width of the typed-entry box that sits beside every slider.
+    constexpr float INPUT_FIELD_WIDTH = 62.0f;
+
+    /// Item width for the compact colour-stop rows, which keep slider, colour
+    /// swatch and remove button on one line. Wide enough that the slider part
+    /// stays usable once INPUT_FIELD_WIDTH is taken out of it.
+    constexpr float STOP_ROW_ITEM_WIDTH = 180.0f;
+
+    /// Draw the trailing label, stopping at ImGui's "##" id separator so
+    /// "Glow Radius##Neon" renders as "Glow Radius".
+    inline void DrawSliderLabel(const char *label)
+    {
+        const char *sep = std::strstr(label, "##");
+        ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+        if (sep != nullptr)
+        {
+            ImGui::TextUnformatted(label, sep);
+        }
+        else
+        {
+            ImGui::TextUnformatted(label);
+        }
+    }
+
+    /// Split the usual item width into "slider | entry box", leaving the label
+    /// to be drawn afterwards by DrawSliderLabel. Keeps the row's total
+    /// footprint identical to a plain ImGui slider.
+    inline float SliderPartWidth()
+    {
+        const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
+        return std::max(ImGui::CalcItemWidth() - INPUT_FIELD_WIDTH - spacing, 1.0f);
+    }
+
+    /// Typed-entry box paired with a slider. Commits on Enter or when focus
+    /// leaves, and clamps to the slider's range so the two controls can never
+    /// disagree. (ImGui's ctrl+click-to-type does much the same thing, but it
+    /// is undiscoverable and several of these ranges are wide enough that
+    /// dragging cannot land an exact value.)
+    inline bool EntryBox(float &value, float shown, float minVal, float maxVal,
+                         const char *fmt)
+    {
+        float typed = shown;
+        ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+        ImGui::SetNextItemWidth(INPUT_FIELD_WIDTH);
+        bool commit = ImGui::InputFloat("##entry", &typed, 0.0f, 0.0f, fmt,
+                                        ImGuiInputTextFlags_EnterReturnsTrue);
+        commit = commit || ImGui::IsItemDeactivatedAfterEdit();
+        if (commit)
+        {
+            value = std::clamp(typed, minVal, maxVal);
+            return true;
+        }
+        return false;
+    }
+
+    /// Plain slider + typed entry.
+    inline bool SliderWithInput(const char *label, float &value,
+                                float minVal, float maxVal, const char *fmt = "%.2f")
+    {
+        ImGui::PushID(label);
+        ImGui::SetNextItemWidth(SliderPartWidth());
+        bool changed = ImGui::SliderFloat("##slider", &value, minVal, maxVal, fmt);
+        changed = EntryBox(value, value, minVal, maxVal, fmt) || changed;
+        DrawSliderLabel(label);
+        ImGui::PopID();
+        return changed;
+    }
+
+    /// Integer flavour of SliderWithInput.
+    inline bool SliderIntWithInput(const char *label, int &value,
+                                   int minVal, int maxVal)
+    {
+        ImGui::PushID(label);
+        ImGui::SetNextItemWidth(SliderPartWidth());
+        bool changed = ImGui::SliderInt("##slider", &value, minVal, maxVal);
+        int typed = value;
+        ImGui::SameLine(0.0f, ImGui::GetStyle().ItemInnerSpacing.x);
+        ImGui::SetNextItemWidth(INPUT_FIELD_WIDTH);
+        bool commit = ImGui::InputInt("##entry", &typed, 0, 0,
+                                      ImGuiInputTextFlags_EnterReturnsTrue);
+        commit = commit || ImGui::IsItemDeactivatedAfterEdit();
+        if (commit)
+        {
+            value = std::clamp(typed, minVal, maxVal);
+            changed = true;
+        }
+        DrawSliderLabel(label);
+        ImGui::PopID();
+        return changed;
+    }
+
+    inline bool AnimatedSlider(const char *label, float &baseVal, float activeVal,
+                               float minVal, float maxVal, const char *fmt = "%.2f")
+    {
+        // "Was I actively dragged last frame?" - stored per-slider via ImGui's
+        // built-in state storage keyed by the slider's ID. We can't call
+        // IsItemActive() BEFORE drawing (there's no item yet), so we consult
+        // the previous frame's result to decide what to show, then record this
+        // frame's active state for the next call.
+        ImGuiStorage *storage = ImGui::GetStateStorage();
+        const ImGuiID id = ImGui::GetID(label);
+        const bool wasDragging = storage->GetBool(id, false);
+
+        float shown = wasDragging ? baseVal : activeVal;
+
+        ImGui::PushID(label);
+        ImGui::SetNextItemWidth(SliderPartWidth());
+        bool changed = ImGui::SliderFloat("##slider", &shown, minVal, maxVal, fmt);
+        const bool isDragging = ImGui::IsItemActive();
+        storage->SetBool(id, isDragging);
+
+        if (changed && isDragging)
+        {
+            baseVal = shown;
+        }
+
+        // The entry box shows whatever the slider shows (the animated value
+        // when one is driving this field), but writes the BASE value - typing
+        // is an explicit set, the same thing a drag does.
+        changed = EntryBox(baseVal, shown, minVal, maxVal, fmt) || changed;
+        DrawSliderLabel(label);
+        ImGui::PopID();
+        return changed;
+    }
 
     /// Slider whose knob follows the currently-animated (active) value each
     /// frame so the user sees what the shader is actually drawing. Dragging
@@ -41,18 +167,21 @@ namespace
     /// stops editor). Caller wraps in @c PushID so both the Neon and
     /// OptimizedNeon sections can share the same widget IDs without colliding.
     /// @return true if the row's remove button was clicked - caller erases.
-    inline bool DrawSegmentRow(EdgeLighting::SegmentBoost &seg)
+    inline bool DrawSegmentRow(EdgeLighting::SegmentBoost &seg, size_t index)
     {
-        ImGui::SetNextItemWidth(90.0f);
-        ImGui::SliderFloat("Pos##Seg", &seg.position, 0.0f, 1.0f, "%.2f");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(90.0f);
-        ImGui::SliderFloat("Len##Seg", &seg.length, 0.02f, 0.5f, "%.2f");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(90.0f);
-        ImGui::SliderFloat("Boost##Seg", &seg.boost, 0.0f, 10.0f, "%.1f");
+        // Header line carries the identity and the remove button; each
+        // parameter then gets its own full-width line. Packing all three onto
+        // one row left roughly 24 px of actual slider once each carries a
+        // typed entry box, and gave no room for the value to be read.
+        ImGui::Text("Segment %zu", index);
         ImGui::SameLine();
         bool remove = ImGui::SmallButton("X");
+
+        ImGui::Indent();
+        SliderWithInput("Pos##Seg", seg.position, 0.0f, 1.0f, "%.2f");
+        SliderWithInput("Len##Seg", seg.length, 0.02f, 0.5f, "%.2f");
+        SliderWithInput("Boost##Seg", seg.boost, 0.0f, 10.0f, "%.1f");
+        ImGui::Unindent();
 
         // Collapsible per-segment stops editor. Header shows the count and an
         // "inherits base" hint when empty (which is the default and means the
@@ -75,8 +204,8 @@ namespace
             for (size_t j = 0; j < seg.colorStops.size(); ++j)
             {
                 ImGui::PushID(static_cast<int>(j));
-                ImGui::SetNextItemWidth(90.0f);
-                ImGui::SliderFloat("Pos##SegStop", &seg.colorStops[j].position, 0.0f, 1.0f, "%.2f");
+                ImGui::SetNextItemWidth(STOP_ROW_ITEM_WIDTH);
+                SliderWithInput("Pos##SegStop", seg.colorStops[j].position, 0.0f, 1.0f, "%.2f");
                 ImGui::SameLine();
                 ImGui::ColorEdit4("Col##SegStop", &seg.colorStops[j].color.x,
                                   ImGuiColorEditFlags_NoInputs);
@@ -99,6 +228,7 @@ namespace
             }
         }
         ImGui::Unindent();
+        ImGui::Separator();
         return remove;
     }
 
@@ -106,18 +236,18 @@ namespace
     /// stops editor). Mirrors DrawSegmentRow. Caller wraps in @c PushID so
     /// the Neon and OptimizedNeon sections share widget IDs without collision.
     /// @return true if the row's remove button was clicked - caller erases.
-    inline bool DrawArcRow(EdgeLighting::Arc &arc)
+    inline bool DrawArcRow(EdgeLighting::Arc &arc, size_t index)
     {
-        ImGui::SetNextItemWidth(80.0f);
-        ImGui::SliderFloat("Start##Arc", &arc.start, 0.0f, 1.0f, "%.2f");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(80.0f);
-        ImGui::SliderFloat("Len##Arc", &arc.length, 0.0f, 1.0f, "%.2f");
-        ImGui::SameLine();
-        ImGui::SetNextItemWidth(80.0f);
-        ImGui::SliderFloat("Int##Arc", &arc.intensity, 0.0f, 4.0f, "%.2f");
+        // See DrawSegmentRow: header line + one parameter per line.
+        ImGui::Text("Arc %zu", index);
         ImGui::SameLine();
         bool remove = ImGui::SmallButton("X");
+
+        ImGui::Indent();
+        SliderWithInput("Start##Arc", arc.start, 0.0f, 1.0f, "%.2f");
+        SliderWithInput("Len##Arc", arc.length, 0.0f, 1.0f, "%.2f");
+        SliderWithInput("Int##Arc", arc.intensity, 0.0f, 4.0f, "%.2f");
+        ImGui::Unindent();
 
         // Collapsible per-arc stops editor. Header shows the count and an
         // "inherits base" hint when empty (default = read colour from the
@@ -140,8 +270,8 @@ namespace
             for (size_t j = 0; j < arc.colorStops.size(); ++j)
             {
                 ImGui::PushID(static_cast<int>(j));
-                ImGui::SetNextItemWidth(90.0f);
-                ImGui::SliderFloat("Pos##ArcStop", &arc.colorStops[j].position, 0.0f, 1.0f, "%.2f");
+                ImGui::SetNextItemWidth(STOP_ROW_ITEM_WIDTH);
+                SliderWithInput("Pos##ArcStop", arc.colorStops[j].position, 0.0f, 1.0f, "%.2f");
                 ImGui::SameLine();
                 ImGui::ColorEdit4("Col##ArcStop", &arc.colorStops[j].color.x,
                                   ImGuiColorEditFlags_NoInputs);
@@ -164,32 +294,10 @@ namespace
             }
         }
         ImGui::Unindent();
+        ImGui::Separator();
         return remove;
     }
 
-    inline bool AnimatedSlider(const char *label, float &baseVal, float activeVal,
-                               float minVal, float maxVal, const char *fmt = "%.2f")
-    {
-        // "Was I actively dragged last frame?" - stored per-slider via ImGui's
-        // built-in state storage keyed by the slider's ID. We can't call
-        // IsItemActive() BEFORE drawing (there's no item yet), so we consult
-        // the previous frame's result to decide what to show, then record this
-        // frame's active state for the next call.
-        ImGuiStorage *storage = ImGui::GetStateStorage();
-        const ImGuiID id = ImGui::GetID(label);
-        const bool wasDragging = storage->GetBool(id, false);
-
-        float shown = wasDragging ? baseVal : activeVal;
-        const bool changed = ImGui::SliderFloat(label, &shown, minVal, maxVal, fmt);
-        const bool isDragging = ImGui::IsItemActive();
-        storage->SetBool(id, isDragging);
-
-        if (changed && isDragging)
-        {
-            baseVal = shown;
-        }
-        return changed;
-    }
 
     /// One row per Cutoff struct: enable checkbox on the left, size + softness
     /// sliders indented on the right. Grays out the sliders when enable is off
@@ -374,11 +482,11 @@ void DebugUI::buildGeometrySection(EdgeLighting::Config &cfg)
         return;
     }
 
-    ImGui::SliderFloat("Width", &cfg.geometry.width, 100.0f, 1920.0f * 2, "%.0f");
-    ImGui::SliderFloat("Height", &cfg.geometry.height, 100.0f, 1080.0f * 2, "%.0f");
-    ImGui::SliderFloat("Pos X", &cfg.geometry.position.x, 0.0f, 1600.0f, "%.0f");
-    ImGui::SliderFloat("Pos Y", &cfg.geometry.position.y, 0.0f, 1200.0f, "%.0f");
-    ImGui::SliderFloat("Corner Radius", &cfg.geometry.cornerRadius, 0.0f, 1080.0f, "%.0f");
+    SliderWithInput("Width", cfg.geometry.width, 100.0f, 1920.0f * 2, "%.0f");
+    SliderWithInput("Height", cfg.geometry.height, 100.0f, 1080.0f * 2, "%.0f");
+    SliderWithInput("Pos X", cfg.geometry.position.x, 0.0f, 1600.0f, "%.0f");
+    SliderWithInput("Pos Y", cfg.geometry.position.y, 0.0f, 1200.0f, "%.0f");
+    SliderWithInput("Corner Radius", cfg.geometry.cornerRadius, 0.0f, 1080.0f, "%.0f");
 
     const char *windingItems[] = {"CW", "CCW"};
     int windingIdx = static_cast<int>(cfg.geometry.winding);
@@ -413,7 +521,7 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
         ImGui::SameLine();
         ImGui::ColorEdit4("Opaque Color##Neon", &cfg.neon.opaqueColor.x,
                           ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
-        ImGui::SliderFloat("Opaque Softness##Neon", &cfg.neon.opaqueSoftness, 0.0f, 20.0f, "%.1f");
+        SliderWithInput("Opaque Softness##Neon", cfg.neon.opaqueSoftness, 0.0f, 20.0f, "%.1f");
     }
     ImGui::Checkbox("Show Gradient LUT##Neon", &cfg.neon.showGradientLUT);
     ImGui::Checkbox("Show Color Stops##Neon", &cfg.neon.showColorStops);
@@ -432,7 +540,7 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
     }
     if (cfg.neon.glowSide != EdgeLighting::GlowSide::BOTH)
     {
-        ImGui::SliderFloat("Side Softness##Neon", &cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
+        SliderWithInput("Side Softness##Neon", cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
     }
 
     CutoffRow("Inside Cutoff", "NeonInside", cfg.neon.insideCutoff, active.neon.insideCutoff);
@@ -445,7 +553,7 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
     for (size_t i = 0; i < cfg.neon.segmentBoosts.size(); ++i)
     {
         ImGui::PushID(static_cast<int>(300 + i));
-        bool remove = DrawSegmentRow(cfg.neon.segmentBoosts[i]);
+        bool remove = DrawSegmentRow(cfg.neon.segmentBoosts[i], i);
         ImGui::PopID();
         if (remove)
         {
@@ -470,7 +578,7 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
     for (size_t i = 0; i < cfg.neon.arcs.size(); ++i)
     {
         ImGui::PushID(static_cast<int>(500 + i));
-        bool remove = DrawArcRow(cfg.neon.arcs[i]);
+        bool remove = DrawArcRow(cfg.neon.arcs[i], i);
         ImGui::PopID();
         if (remove)
         {
@@ -496,14 +604,14 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
     }
 
     // Cross-fade time when the stop set / blend space changes (0 = instant).
-    ImGui::SliderFloat("Color Transition (s)##Neon", &cfg.neon.colorTransitionDuration,
-                       0.0f, 2.0f, "%.2f");
+    SliderWithInput("Color Transition (s)##Neon", cfg.neon.colorTransitionDuration,
+                    0.0f, 2.0f, "%.2f");
 
     for (size_t i = 0; i < cfg.neon.colorStops.size(); ++i)
     {
         ImGui::PushID(static_cast<int>(i));
         float p = cfg.neon.colorStops[i].position;
-        if (ImGui::SliderFloat("Pos##Neon", &p, 0.0f, 1.0f, "%.2f"))
+        if (SliderWithInput("Pos##Neon", p, 0.0f, 1.0f, "%.2f"))
         {
             cfg.neon.colorStops[i].position = p;
         }
@@ -549,10 +657,10 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg,
     ImGui::SameLine();
     ImGui::Checkbox("Show Half-Res##Optimized", &cfg.optimizedNeon.showHalfRes);
 
-    ImGui::SliderFloat("Res Scale##Opt", &cfg.optimizedNeon.resolutionScale, 0.125f, 1.0f, "%.3f");
-    ImGui::SliderInt("Samples##Opt", &cfg.optimizedNeon.numSamples, 8, NEON_MAX_LOOP_SAMPLES);
-    ImGui::SliderInt("LUT Size##Opt", &cfg.optimizedNeon.gradientLutSize, 32,
-                     MAX_GRADIENT_LUT_SIZE);
+    SliderWithInput("Res Scale##Opt", cfg.optimizedNeon.resolutionScale, 0.125f, 1.0f, "%.3f");
+    SliderIntWithInput("Samples##Opt", cfg.optimizedNeon.numSamples, 8, NEON_MAX_LOOP_SAMPLES);
+    SliderIntWithInput("LUT Size##Opt", cfg.optimizedNeon.gradientLutSize, 32,
+                       MAX_GRADIENT_LUT_SIZE);
 
     ImGui::Separator();
     ImGui::TextDisabled("Visual params (shared with Neon)");
@@ -568,7 +676,7 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg,
         ImGui::SameLine();
         ImGui::ColorEdit4("Opaque Color##Opt", &cfg.neon.opaqueColor.x,
                           ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
-        ImGui::SliderFloat("Opaque Softness##Opt", &cfg.neon.opaqueSoftness, 0.0f, 20.0f, "%.1f");
+        SliderWithInput("Opaque Softness##Opt", cfg.neon.opaqueSoftness, 0.0f, 20.0f, "%.1f");
     }
     AnimatedSlider("Line Width##Opt", cfg.neon.lineWidth, active.neon.lineWidth, 0.0f, 20.0f, "%.0f");
     AnimatedSlider("Filament Falloff##Opt", cfg.neon.filamentFalloff, active.neon.filamentFalloff, 0.0f, 5.0f);
@@ -585,7 +693,7 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg,
     }
     if (cfg.neon.glowSide != EdgeLighting::GlowSide::BOTH)
     {
-        ImGui::SliderFloat("Side Softness##Opt", &cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
+        SliderWithInput("Side Softness##Opt", cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
     }
 
     CutoffRow("Inside Cutoff", "OptInside", cfg.neon.insideCutoff, active.neon.insideCutoff);
@@ -597,7 +705,7 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg,
     for (size_t i = 0; i < cfg.neon.segmentBoosts.size(); ++i)
     {
         ImGui::PushID(static_cast<int>(400 + i));
-        bool remove = DrawSegmentRow(cfg.neon.segmentBoosts[i]);
+        bool remove = DrawSegmentRow(cfg.neon.segmentBoosts[i], i);
         ImGui::PopID();
         if (remove)
         {
@@ -621,7 +729,7 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg,
     for (size_t i = 0; i < cfg.neon.arcs.size(); ++i)
     {
         ImGui::PushID(static_cast<int>(600 + i));
-        bool remove = DrawArcRow(cfg.neon.arcs[i]);
+        bool remove = DrawArcRow(cfg.neon.arcs[i], i);
         ImGui::PopID();
         if (remove)
         {
@@ -647,14 +755,14 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg,
     }
 
     // Cross-fade time when the stop set / blend space changes (0 = instant).
-    ImGui::SliderFloat("Color Transition (s)##Opt", &cfg.neon.colorTransitionDuration,
-                       0.0f, 2.0f, "%.2f");
+    SliderWithInput("Color Transition (s)##Opt", cfg.neon.colorTransitionDuration,
+                    0.0f, 2.0f, "%.2f");
 
     for (size_t i = 0; i < cfg.neon.colorStops.size(); ++i)
     {
         ImGui::PushID(static_cast<int>(i + 200));
         float p = cfg.neon.colorStops[i].position;
-        if (ImGui::SliderFloat("Pos##Opt", &p, 0.0f, 1.0f, "%.2f"))
+        if (SliderWithInput("Pos##Opt", p, 0.0f, 1.0f, "%.2f"))
         {
             cfg.neon.colorStops[i].position = p;
         }
@@ -769,7 +877,7 @@ namespace
         // Speed multiplier - 0 acts as "pause at the value level".
         float speed = anim.GetSpeed();
         ImGui::SetNextItemWidth(160.0f);
-        if (ImGui::SliderFloat("Speed", &speed, 0.0f, 4.0f, "%.2fx"))
+        if (SliderWithInput("Speed", speed, 0.0f, 4.0f, "%.2fx"))
         {
             anim.SetSpeed(speed);
         }
@@ -822,7 +930,7 @@ namespace
         if (dur > 0.0f)
         {
             float editable = dur;
-            if (ImGui::SliderFloat("Duration", &editable, 0.05f, 10.0f, "%.2fs"))
+            if (SliderWithInput("Duration", editable, 0.05f, 10.0f, "%.2fs"))
             {
                 anim.SetDuration(editable);
             }
@@ -911,11 +1019,11 @@ void DebugUI::buildDropletsSection(EdgeLighting::Config &cfg)
         return;
     }
 
-    ImGui::SliderFloat("Band Width##Droplets", &cfg.droplets.bandWidth, 4.0f, 200.0f);
-    ImGui::SliderFloat("Band Offset##Droplets", &cfg.droplets.bandOffset, -50.0f, 50.0f);
-    ImGui::SliderFloat("Rain Amount##Droplets", &cfg.droplets.amount, 0.0f, 1.0f);
-    ImGui::SliderFloat("Speed##Droplets", &cfg.droplets.speed, 0.0f, 4.0f);
-    ImGui::SliderInt("Lanes##Droplets", &cfg.droplets.lanes, 1, 6);
+    SliderWithInput("Band Width##Droplets", cfg.droplets.bandWidth, 4.0f, 200.0f);
+    SliderWithInput("Band Offset##Droplets", cfg.droplets.bandOffset, -50.0f, 50.0f);
+    SliderWithInput("Rain Amount##Droplets", cfg.droplets.amount, 0.0f, 1.0f);
+    SliderWithInput("Speed##Droplets", cfg.droplets.speed, 0.0f, 4.0f);
+    SliderIntWithInput("Lanes##Droplets", cfg.droplets.lanes, 1, 6);
     ImGui::ColorEdit4("Tint##Droplets", &cfg.droplets.tint.x,
                       ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreview);
 
@@ -946,8 +1054,8 @@ void DebugUI::buildLensFlareSection(EdgeLighting::Config &cfg)
 
     if (cfg.optimizedLensFlare.enable)
     {
-        ImGui::SliderFloat("Res Scale##LensOpt", &cfg.optimizedLensFlare.resolutionScale,
-                           0.125f, 1.0f, "%.3f");
+        SliderWithInput("Res Scale##LensOpt", cfg.optimizedLensFlare.resolutionScale,
+                        0.125f, 1.0f, "%.3f");
     }
 
     if (!cfg.lensFlare.enable && !cfg.optimizedLensFlare.enable)
@@ -956,22 +1064,22 @@ void DebugUI::buildLensFlareSection(EdgeLighting::Config &cfg)
     }
 
     // Shared visual params (both paths read Config::lensFlare).
-    ImGui::SliderFloat("Perimeter Pos##Lens", &cfg.lensFlare.perimeterPosition, 0.0f, 1.0f, "%.3f");
-    ImGui::SliderFloat("Perimeter Offset##Lens", &cfg.lensFlare.perimeterOffset, -500.0f, 500.0f, "%.1f px");
-    ImGui::SliderFloat("Size##Lens", &cfg.lensFlare.size, 0.1f, 5.0f, "%.2f");
+    SliderWithInput("Perimeter Pos##Lens", cfg.lensFlare.perimeterPosition, 0.0f, 1.0f, "%.3f");
+    SliderWithInput("Perimeter Offset##Lens", cfg.lensFlare.perimeterOffset, -500.0f, 500.0f, "%.1f px");
+    SliderWithInput("Size##Lens", cfg.lensFlare.size, 0.1f, 5.0f, "%.2f");
     ImGui::ColorEdit4("Color##Lens", &cfg.lensFlare.color.x,
                       ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_HDR |
                           ImGuiColorEditFlags_Float);
-    ImGui::SliderFloat("Intensity##Lens", &cfg.lensFlare.intensity, 0.0f, 4.0f, "%.2f");
-    ImGui::SliderFloat("Spread##Lens", &cfg.lensFlare.spread, 0.0f, 3.0f, "%.2f");
-    ImGui::SliderFloat("Ghost Spacing##Lens", &cfg.lensFlare.ghostSpacing, 0.1f, 4.0f, "%.2f");
-    ImGui::SliderFloat("Ghost Size##Lens", &cfg.lensFlare.ghostSize, 1.0f, 5.0f, "%.2f");
-    ImGui::SliderFloat("Ghost Offset##Lens", &cfg.lensFlare.ghostOffset, -4.0f, 3.0f, "%.2f");
+    SliderWithInput("Intensity##Lens", cfg.lensFlare.intensity, 0.0f, 4.0f, "%.2f");
+    SliderWithInput("Spread##Lens", cfg.lensFlare.spread, 0.0f, 3.0f, "%.2f");
+    SliderWithInput("Ghost Spacing##Lens", cfg.lensFlare.ghostSpacing, 0.1f, 4.0f, "%.2f");
+    SliderWithInput("Ghost Size##Lens", cfg.lensFlare.ghostSize, 1.0f, 5.0f, "%.2f");
+    SliderWithInput("Ghost Offset##Lens", cfg.lensFlare.ghostOffset, -4.0f, 3.0f, "%.2f");
     ImGui::ColorEdit3("Ghost Color##Lens", &cfg.lensFlare.ghostColor.x);
-    ImGui::SliderFloat("Ghost Tint##Lens", &cfg.lensFlare.ghostTint, 0.0f, 1.0f, "%.2f");
+    SliderWithInput("Ghost Tint##Lens", cfg.lensFlare.ghostTint, 0.0f, 1.0f, "%.2f");
     ImGui::SliderFloat2("Flare Center##Lens", &cfg.lensFlare.flareCenter.x, 0.0f, 1.0f, "%.2f");
-    ImGui::SliderFloat("Ray Density##Lens", &cfg.lensFlare.rayDensity, 0.0f, 1.0f, "%.2f");
-    ImGui::SliderFloat("Rotation Rate##Lens", &cfg.lensFlare.rotationRate, -2.0f, 2.0f, "%.3f rev/s");
+    SliderWithInput("Ray Density##Lens", cfg.lensFlare.rayDensity, 0.0f, 1.0f, "%.2f");
+    SliderWithInput("Rotation Rate##Lens", cfg.lensFlare.rotationRate, -2.0f, 2.0f, "%.3f rev/s");
 }
 
 void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg,
@@ -1090,7 +1198,7 @@ void DebugUI::buildBackgroundSection()
         return;
     }
 
-    ImGui::SliderFloat("Checker Size##Bg", &mBgCheckerSize, 4.0f, 128.0f, "%.0f");
+    SliderWithInput("Checker Size##Bg", mBgCheckerSize, 4.0f, 128.0f, "%.0f");
     ImGui::ColorEdit3("Color A##Bg", &mBgColorA.x, ImGuiColorEditFlags_NoInputs);
     ImGui::ColorEdit3("Color B##Bg", &mBgColorB.x, ImGuiColorEditFlags_NoInputs);
 }
@@ -1243,11 +1351,11 @@ void DebugUI::buildColorPickerSection(EdgeLighting::Config &cfg)
     // Cap matches the file-scope MAX_COLOR_STOPS (which mirrors the C ABI's
     // fixed-size array cap) so the picker can produce one stop per shader
     // loop sample for near-1:1 image-to-neon colour reproduction.
-    ImGui::SliderInt("Stop Count##CP", &mColorPickerStopCount, 2,
-                     MAX_COLOR_STOPS);
+    SliderIntWithInput("Stop Count##CP", mColorPickerStopCount, 2,
+                       MAX_COLOR_STOPS);
     ImGui::TextDisabled("(higher = closer image match)");
 
-    ImGui::SliderFloat("Contrast (gamma)##CP", &mColorPickerGamma, 0.5f, 4.0f, "%.2f");
+    SliderWithInput("Contrast (gamma)##CP", mColorPickerGamma, 0.5f, 4.0f, "%.2f");
     ImGui::SameLine();
     ImGui::TextDisabled("(1 = linear, >1 darkens shadows)");
 
