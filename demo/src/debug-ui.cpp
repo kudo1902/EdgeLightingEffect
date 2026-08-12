@@ -344,8 +344,7 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     ImGui::SameLine();
     if (ImGui::Button("Dump Config"))
     {
-        EdgeLightingDemo::PrintCurrentConfig(effect.GetConfig(), effect.GetClock().IsPlaying());
-        std::cout << "\n";
+        EdgeLightingDemo::PrintFullConfig(effect.GetConfig(), effect.GetClock().IsPlaying());
     }
     ImGui::End();
 }
