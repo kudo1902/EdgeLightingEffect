@@ -3,7 +3,6 @@
 #include "core/edge-lighting.h"
 #include "renderer/wireframe-renderer.h"
 #include "renderer/neon-renderer.h"
-#include "renderer/neon-optimized-renderer.h"
 #include "renderer/droplets-renderer.h"
 #include "renderer/lens-flare-renderer.h"
 #include "renderer/lens-flare-optimized-renderer.h"
@@ -97,12 +96,10 @@ int main()
     auto lensFlareOptimizedRenderer = std::make_shared<EdgeLighting::LensFlareOptimizedRenderer>();
     auto wireframeRenderer = std::make_shared<EdgeLighting::WireframeRenderer>();
     auto neonRenderer = std::make_shared<EdgeLighting::NeonRenderer>();
-    auto neonOptimizedRenderer = std::make_shared<EdgeLighting::NeonOptimizedRenderer>();
     auto dropletsRenderer = std::make_shared<EdgeLighting::DropletsRenderer>();
 
     gEffect->AddRenderer(wireframeRenderer);
     gEffect->AddRenderer(neonRenderer);
-    gEffect->AddRenderer(neonOptimizedRenderer);
     gEffect->AddRenderer(dropletsRenderer);
     gEffect->AddRenderer(lensFlareRenderer);
     gEffect->AddRenderer(lensFlareOptimizedRenderer);
@@ -317,7 +314,10 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
     {
         if (mods & GLFW_MOD_SHIFT)
         {
-            config.optimizedNeon.enable = !config.optimizedNeon.enable;
+            // Flip the neon between full-res and half-res. This used to
+            // toggle a second renderer; the two paths are now one renderer at
+            // two resolution scales, so the comparison is this one value.
+            config.neon.resolutionScale = (config.neon.resolutionScale < 1.0f) ? 1.0f : 0.5f;
         }
         else
         {

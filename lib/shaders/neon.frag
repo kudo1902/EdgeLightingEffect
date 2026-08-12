@@ -1,26 +1,21 @@
 precision highp float;
 
 // ---------------------------------------------------------------------------
-// Shared by BOTH neon renderers.
+// The neon body, compiled once. The gather's trip count is the uNumSamples
+// uniform, so NeonConfig::numSamples moves at runtime with no recompile.
 //
-// NeonRenderer and NeonOptimizedRenderer compile this same body into two
-// programs that differ in exactly one macro, injected by shaders.h.in:
+// This file used to be compiled TWICE, behind a NEON_LOOP_BOUND macro that was
+// NEON_MAX_LOOP_SAMPLES in one program and uNumSamples in the other, because a
+// uniform trip count measured ~12% slower than a compile-time constant one.
+// Hand-unrolling the gather (see GATHER_UNROLL in main()) made the uniform-bounded
+// loop faster than the old constant-bound one, so the second program was dropped.
+// Do not reintroduce it without re-reading emission-prepass.md section 10 - the
+// measurement that motivated it no longer holds.
 //
-//   NEON_LOOP_BOUND = NEON_MAX_LOOP_SAMPLES  -> NeonRenderer (full-res).
-//       A compile-time trip count, measured ~12% faster than feeding the same
-//       value in as a uniform (M-series GPU, 3840x2160) - which is why the bound
-//       is a macro and not simply a uniform. The gain is loop STRUCTURE, not
-//       addressing: a hand-written 4x unroll with dynamic indices beats this
-//       variant, so the driver's own unrolling here is evidently conservative.
-//       See emission-prepass.md section 10 before assuming otherwise.
-//   NEON_LOOP_BOUND = uNumSamples            -> NeonOptimizedRenderer.
-//       Driven by OptimizedNeonConfig::numSamples, so its perf slider really
-//       does iterate less.
-//
-// Everything else - including the half-res path - is identical: that renderer
-// pre-multiplies uRectSize, uLineWidth, the cutoffs and uSampleSpacing by its
-// resolution scale on the CPU, so this shader never learns what resolution it
-// is running at.
+// The scaled-resolution path shares this body unchanged: the renderer
+// pre-multiplies uRectSize, uLineWidth, the cutoffs and uSampleSpacing by
+// NeonConfig::resolutionScale on the CPU, so this shader never learns what
+// resolution it is running at.
 //
 // Precision: highp (NOT mediump). On desktop GLES (ANGLE on Windows) mediump
 // maps to fp16, whose 65504 max and ~11-bit mantissa cannot hold the fragment
@@ -409,32 +404,89 @@ void main() {
     vec3  acc   = vec3(0.0); // composed light colour * per-sample gather weight
     float wsum  = 0.0;
 
-    // Loop bound comes in as a macro (see the header of this file): a literal
-    // constant for the full-res renderer so the driver can unroll, uNumSamples
-    // for the half-res one so its slider reduces work. Either way it is bounded
-    // by the LoopSamplesBlock array size and the emission texture width.
-    for (int i = 0; i < NEON_LOOP_BOUND; i++) {
-        vec2  dv  = vPos - uLoopSamples[i].xy;
-        float dd  = dot(dv, dv);
+    // The gather is unrolled GATHER_UNROLL-wide by hand. The point is not
+    // instruction count - it is memory-level parallelism: one texelFetch per
+    // iteration behind a loop-carried branch means one memory request in flight
+    // per thread, whereas issuing a whole group's loads up front means
+    // GATHER_UNROLL of them. That is why every load in a group happens before
+    // any of the accumulate math - do not "tidy" the two phases back together.
+    //
+    // This unroll is also what lets the trip count be a plain uniform. A
+    // uniform-bounded loop used to cost ~12% against a compile-time constant
+    // bound, which is why there were once TWO compilations of this shader; the
+    // unrolled uniform-bounded loop beats the old constant-bound one outright,
+    // so there is now one program for every sample count.
+    //
+    // Width 4 was picked by sweeping 1 / 2 / 4 / 8 against that constant-bound
+    // loop over three scenes: 4 won all three, 2 was roughly a wash and 8
+    // regressed. Numbers and method: emission-prepass.md section 10.
+    //
+    // The accumulates run in ascending sample order into the same accumulators,
+    // so the floating-point sums are bit-identical to the plain loop - verified
+    // as a zero-differing-byte frame diff on all three scenes. The unroll is a
+    // scheduling change, not a numerical one.
+    //
+    // uNumSamples need not be a multiple of the width: the groups cover as much
+    // as they can and the tail loop below finishes the remainder.
+    const int GATHER_UNROLL = 4; // must match the slot count in the group below
 
-        float g   = 1.0 / (dd + kg2);
+    int nSamples = NEON_LOOP_BOUND;
+    int i = 0;
 
-        // Everything about WHAT is lit at this sample was resolved in the
-        // pre-pass: .rgb is the composed light colour (arc colour * mask *
-        // intensity + the segments' additive contribution), .a is the shared
-        // arc-or-segment coverage that drives halo and bloom.
-        vec4 emission = texelFetch(uEmission, ivec2(i, 0), 0);
+    // Per-slot load: distance-squared to the sample, plus its baked emission.
+    // Everything about WHAT is lit at a sample was resolved in the pre-pass:
+    // .rgb is the composed light colour (arc colour * mask * intensity + the
+    // segments' additive contribution), .a is the shared arc-or-segment
+    // coverage that drives halo and bloom.
+    #define NEON_GATHER_LOAD(ddOut, emOut, idx)                  \
+        {                                                        \
+            vec2 dv_ = vPos - uLoopSamples[idx].xy;              \
+            ddOut = dot(dv_, dv_);                               \
+        }                                                        \
+        emOut = texelFetch(uEmission, ivec2(idx, 0), 0)
 
-        acc   += emission.rgb * g;
-        // wsum accumulates ALL samples (not gated). This way `lightCol` divides
-        // by the full local sample density - fragments far from any lit point
-        // get a denominator that grows even as the numerator stays near zero,
-        // so the SDF-derived filament fades to black instead of showing the lit
-        // colour everywhere.
-        wsum  += g;
-        glow  += emission.a * g * sqrt(g);   // -> ~1/D^2 neon halo
-        bloom += emission.a / (dd + bw2);    // -> ~1/D   wide spill
+    // Per-slot accumulate. wsum takes ALL samples (not gated): this way
+    // `lightCol` divides by the full local sample density - fragments far from
+    // any lit point get a denominator that grows even as the numerator stays
+    // near zero, so the SDF-derived filament fades to black instead of showing
+    // the lit colour everywhere.
+    #define NEON_GATHER_ACCUM(ddIn, emIn)                        \
+        {                                                        \
+            float g_ = 1.0 / (ddIn + kg2);                       \
+            acc   += (emIn).rgb * g_;                            \
+            wsum  += g_;                                         \
+            glow  += (emIn).a * g_ * sqrt(g_);  /* ~1/D^2 halo */\
+            bloom += (emIn).a / (ddIn + bw2);   /* ~1/D  spill */\
+        }
+
+    {
+        float dd0, dd1, dd2, dd3;
+        vec4  em0, em1, em2, em3;
+        int nGrouped = nSamples - (nSamples % GATHER_UNROLL);
+        for (; i < nGrouped; i += GATHER_UNROLL) {
+            // Loads first, all four in flight, then the dependent math.
+            NEON_GATHER_LOAD(dd0, em0, i);
+            NEON_GATHER_LOAD(dd1, em1, i + 1);
+            NEON_GATHER_LOAD(dd2, em2, i + 2);
+            NEON_GATHER_LOAD(dd3, em3, i + 3);
+            NEON_GATHER_ACCUM(dd0, em0);
+            NEON_GATHER_ACCUM(dd1, em1);
+            NEON_GATHER_ACCUM(dd2, em2);
+            NEON_GATHER_ACCUM(dd3, em3);
+        }
     }
+
+    // Tail: the last nSamples % GATHER_UNROLL samples, if any.
+    for (; i < nSamples; i++) {
+        float ddT;
+        vec4  emT;
+        NEON_GATHER_LOAD(ddT, emT, i);
+        NEON_GATHER_ACCUM(ddT, emT);
+    }
+
+    #undef NEON_GATHER_LOAD
+    #undef NEON_GATHER_ACCUM
+
     glow  *= uSampleSpacing * kg2 * HALO_NORM_FACTOR;
     bloom *= uSampleSpacing * bw  * BLOOM_NORM_FACTOR;
 

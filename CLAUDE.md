@@ -50,8 +50,7 @@ Per-frame contract: `Update(dt)` ticks the clock and forwards `(dt, clockTime, c
 Current renderers (all under `lib/include/renderer/`):
 
 - `WireframeRenderer` - 1px `GL_LINE_LOOP` debug box, blending temporarily disabled.
-- `NeonRenderer` - single-pass neon stroke. Uses an analytic rounded-box SDF + a precomputed 1D `GRADIENT_LUT` texture (RGBA32F, 256px, REPEAT wrap) so each shader sample is one texture lookup instead of an in-shader colour-stops loop. Also precomputes `NUM_LOOP_SAMPLES` (128) sample positions on the perimeter.
-- `NeonOptimizedRenderer` - half-resolution variant of the single-pass neon that renders into a scaled FBO and bilinear-blits back to full res; visual params are read from `Config::neon`.
+- `NeonRenderer` - the neon stroke. An emission pre-pass bakes one texel per perimeter sample, then the main pass gathers it against an analytic rounded-box SDF. Colour comes from precomputed LUTs (base gradient ring + per-segment and per-arc atlases) so each shader sample is one texture lookup instead of an in-shader colour-stops loop. Resolution is a config knob: `neon.resolutionScale == 1` draws straight to the backbuffer, below 1 renders into a scaled FBO and bilinear-blits back (this replaced a separate `NeonOptimizedRenderer` that duplicated the whole class). `neon.numSamples` sets the gather's trip count as a uniform; the shader is compiled once, its gather hand-unrolled 4 wide (which is what makes the uniform bound free - see `docs/emission-prepass.md` §10 before touching it).
 
 To add a renderer, subclass `BaseRenderer`, add a sub-config struct to `Config`, register it in `demo/src/main.cpp`, and add an ImGui section in `DebugUI`.
 

@@ -136,9 +136,12 @@ namespace
         {
             if (mods & GLFW_MOD_SHIFT)
             {
-                el_bool_t on = 0;
-                el_effect_get_optimized_renderer_enabled(gEffect, &on);
-                el_effect_set_optimized_renderer_enabled(gEffect, on ? 0 : 1);
+                // Flip the neon between full-res and half-res. This used to
+                // toggle a second renderer; the two paths are now one renderer
+                // at two resolution scales.
+                float scale = 1.0f;
+                el_effect_get_neon_resolution_scale(gEffect, &scale);
+                el_effect_set_neon_resolution_scale(gEffect, scale < 1.0f ? 1.0f : 0.5f);
             }
             else
             {

@@ -35,8 +35,8 @@ Config ────► │ EdgeLightingEffect   │◄──── Clock (Play/P
                        ▼
        ┌─────────────────────────────────────────┐
        │  WireframeRenderer  (debug outline)     │
-       │  NeonRenderer       (full-res neon)     │
-       │  NeonOptimizedRenderer (half-res neon)  │
+       │  NeonRenderer       (full- or scaled-   │
+       │                      resolution neon)   │
        └─────────────────────────────────────────┘
 ```
 
@@ -98,10 +98,11 @@ Config
  │                       - segments: vector<SegmentBoost> (position, length,
  │                         boost, own colorStops + blendSpace). Default empty.
  │                       - compositing: opaque + opaqueColor
- │                       - debug: showGradientLUT, showColorStops
- ├── OptimizedNeonConfig half-res knobs (enable, resolutionScale, numSamples,
- │                       gradientLutSize, showHalfRes). *Shares* NeonConfig
- │                       for every visual param above.
+ │                       - perf: resolutionScale (1.0 = straight to the
+ │                         backbuffer, below 1.0 = scaled FBO + blit),
+ │                         numSamples, gradientLutSize
+ │                       - debug: showGradientLUT, showColorStops,
+ │                         showHalfRes
  └── WireframeConfig     enable + color
 ```
 
@@ -130,11 +131,12 @@ sum in HDR.
 
 ### 4.1 NeonRenderer (`lib/src/renderer/neon-renderer.cpp` + `shaders/neon.frag`)
 
-> `shaders/neon.frag` is shared with @ref NeonOptimizedRenderer - one body
-> compiled into two programs that differ only in the injected
-> `NEON_LOOP_BOUND` macro. See [`emission-prepass.md`](emission-prepass.md) §10.
+> `shaders/neon.frag` is compiled once, for every resolution scale and sample
+> count. Its gather is unrolled 4 wide by hand, which is what lets the trip
+> count be a plain uniform - see [`emission-prepass.md`](emission-prepass.md) §10.
 
-Full-resolution neon stroke, drawn in two passes. Highlights:
+The neon stroke, drawn in two passes (three on the scaled path, §4.2).
+Highlights:
 
 - **Emission pre-pass** (`shaders/neon-emission.frag` → `mEmissionBuffer`,
   a `NEON_MAX_LOOP_SAMPLES × 1` RGBA16F FBO, RGBA8 fallback). Resolves, per
@@ -144,8 +146,7 @@ Full-resolution neon stroke, drawn in two passes. Highlights:
   segment contribution), `.a` = coverage. All of that is a pure function of
   (sample position, time, config), so it costs 128 fragments per frame
   instead of being recomputed by every screen fragment. The main pass reads
-  it with `texelFetch`. Shared verbatim with `NeonOptimizedRenderer`. Full
-  design notes, the algebra behind the one-texel packing, and the invariant
+  it with `texelFetch`. Full design notes, the algebra behind the one-texel packing, and the invariant
   that keeps it correct: [`emission-prepass.md`](emission-prepass.md).
 - **Analytic rounded-box SDF** for the filament shape.
 - **Three baked LUTs** stored as GL textures, each with `REPEAT` wrap on U
@@ -160,9 +161,11 @@ Full-resolution neon stroke, drawn in two passes. Highlights:
     gradient; same "empty row → fall back to base" convention.
 - **128 pre-computed perimeter loop samples** in a std140 UBO. Each fragment
   gathers all 128 with distance-weighted contribution → halo, bloom, and the
-  filament's colour. Iteration count is compile-time constant (128) so the
-  driver can unroll. The loop body is one UBO read plus one `texelFetch` into
-  the emission texture; this gather is the one part the SDF cannot replace,
+  filament's colour. The trip count is the `uNumSamples` uniform and the loop
+  is unrolled 4 wide by hand (§10 of the pre-pass notes) - all four loads
+  issued before any dependent math, which is worth more than the compile-time
+  constant bound it replaced. Per sample the body is one UBO read plus one
+  `texelFetch` into the emission texture; this gather is the one part the SDF cannot replace,
   because `d` gives the distance to the *nearest* perimeter point (a `1/D³`
   falloff) while the line integral yields the `1/D²` neon falloff, correct
   soft caps at arc ends, and correct brightening where two perimeter
@@ -213,17 +216,25 @@ This split was the design outcome recorded in
 [`multiple-arcs-design.md`](multiple-arcs-design.md); the perimeter-space
 fallback for empty arcs preserves the pre-multi-arc single-slice behaviour.
 
-### 4.2 NeonOptimizedRenderer
+### 4.2 Scaled-resolution path
 
-Two-pass half-resolution variant. Pass 1 renders into a scaled RGBA8 FBO
-with a dynamic shader loop bound (`uNumSamples = optimizedNeon.numSamples`,
-1..128). Pass 2 bilinear-blits back to full res. Shares all visual params
-with `NeonConfig`. Meant for edge devices - the resolution-scale + sample-
-count sliders are the primary perf knobs.
+`NeonConfig::resolutionScale` below 1 turns the main pass into a render into
+a scaled RGBA8 FBO, followed by a bilinear blit back to full res. Meant for
+edge devices - the resolution-scale and sample-count knobs are the primary
+perf levers. At scale 1 (the default) neither the FBO nor the blit exists and
+the main pass draws straight onto the backbuffer.
 
-Its Pass 0 is the shared emission pre-pass (see
-[`emission-prepass.md`](emission-prepass.md)), with `uNumSamples` driven by
-the sample-count slider so a sample sits at `i / uNumSamples`.
+The renderer pre-multiplies the rect size, line width, corner radius,
+cutoffs and sample spacing by the scale on the CPU, so `neon.frag` never
+learns what resolution it is running at. Two things deliberately stay at full
+resolution: the opaque-mode fill (so its rounded corners anti-alias against
+the real pixel grid) and the debug overlays.
+
+This used to be a second renderer class, `NeonOptimizedRenderer`, holding a
+near-verbatim copy of every LUT bake, UBO pack, cross-fade and pass in
+`NeonRenderer`. It was merged away - the scale is one branch inside
+`renderNeonPass` plus the blit, and everything else is shared by
+construction rather than by keeping two files in step.
 
 ### 4.3 WireframeRenderer
 

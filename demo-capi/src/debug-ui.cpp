@@ -176,7 +176,6 @@ void DebugUI::Build(el_effect_handle_t effect)
 
     buildGeometrySection(effect);
     buildNeonSection(effect);
-    buildOptimizedNeonSection(effect);
     buildDropletsSection(effect);
     buildLensFlareSection(effect);
     buildColorPickerSection(effect);
@@ -656,6 +655,43 @@ void DebugUI::buildNeonSection(el_effect_handle_t effect)
     if (!en)
         return;
 
+    // --- Performance / quality ---
+    // Res Scale 1.0 draws straight to the backbuffer; anything lower is the
+    // scaled-FBO + blit path that used to be a separate "Optimized Neon"
+    // renderer with its own duplicate copy of every control below.
+    float scale = 0.0f;
+    el_effect_get_neon_resolution_scale(effect, &scale);
+    if (ImGui::SliderFloat("Res Scale##Neon", &scale, 0.125f, 1.0f, "%.3f"))
+    {
+        el_effect_set_neon_resolution_scale(effect, scale);
+    }
+
+    int32_t samples = 0;
+    el_effect_get_neon_num_samples(effect, &samples);
+    if (ImGui::SliderInt("Samples##Neon", &samples, 8, MAX_LOOP_SAMPLES))
+    {
+        el_effect_set_neon_num_samples(effect, samples);
+    }
+
+    int32_t lutSize = 0;
+    el_effect_get_neon_gradient_lut_size(effect, &lutSize);
+    if (ImGui::SliderInt("LUT Size##Neon", &lutSize, 32, MAX_GRADIENT_LUT_SIZE))
+    {
+        el_effect_set_neon_gradient_lut_size(effect, lutSize);
+    }
+
+    if (scale < 1.0f)
+    {
+        el_bool_t showHalf = 0;
+        el_effect_get_neon_show_half_res(effect, &showHalf);
+        bool sh = showHalf;
+        if (ImGui::Checkbox("Show Half-Res##Neon", &sh))
+        {
+            el_effect_set_neon_show_half_res(effect, sh ? 1 : 0);
+        }
+    }
+    ImGui::Separator();
+
     el_opaque_mode_e opaqueMode = EL_OPAQUE_MODE_NONE;
     el_effect_get_opaque_mode(effect, &opaqueMode);
     const char *opaqueItems[] = {"None", "Outside", "Inside", "Both", "All"};
@@ -716,69 +752,6 @@ void DebugUI::buildNeonSection(el_effect_handle_t effect)
     }
 
     DrawColorStopsList(effect, "Neon");
-}
-
-void DebugUI::buildOptimizedNeonSection(el_effect_handle_t effect)
-{
-    if (!ImGui::CollapsingHeader("Optimized Neon (1/2-res)", ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        return;
-    }
-
-    el_bool_t on = 0;
-    el_effect_get_optimized_renderer_enabled(effect, &on);
-    bool en = on;
-    if (ImGui::Checkbox("Enable##Opt", &en))
-    {
-        el_effect_set_optimized_renderer_enabled(effect, en ? 1 : 0);
-    }
-    if (!en)
-        return;
-
-    el_bool_t showHalf = 0;
-    el_effect_get_optimized_show_half_res(effect, &showHalf);
-    bool sh = showHalf;
-    ImGui::SameLine();
-    if (ImGui::Checkbox("Show Half-Res##Opt", &sh))
-    {
-        el_effect_set_optimized_show_half_res(effect, sh ? 1 : 0);
-    }
-
-    float scale = 0.0f;
-    el_effect_get_optimized_resolution_scale(effect, &scale);
-    if (ImGui::SliderFloat("Res Scale##Opt", &scale, 0.125f, 1.0f, "%.3f"))
-    {
-        el_effect_set_optimized_resolution_scale(effect, scale);
-    }
-
-    int32_t samples = 0;
-    el_effect_get_optimized_num_samples(effect, &samples);
-    if (ImGui::SliderInt("Samples##Opt", &samples, 8, MAX_LOOP_SAMPLES))
-    {
-        el_effect_set_optimized_num_samples(effect, samples);
-    }
-
-    int32_t lutSize = 0;
-    el_effect_get_optimized_gradient_lut_size(effect, &lutSize);
-    if (ImGui::SliderInt("LUT Size##Opt", &lutSize, 32, MAX_GRADIENT_LUT_SIZE))
-    {
-        el_effect_set_optimized_gradient_lut_size(effect, lutSize);
-    }
-
-    ImGui::Separator();
-    ImGui::TextDisabled("Visual params (shared with Neon)");
-
-    DrawSharedNeonSliders(effect, "Opt");
-    DrawSegmentAndArcRows(effect, "Opt");
-
-    el_blend_space_e blend = EL_BLEND_SPACE_RGB;
-    el_effect_get_blend_space(effect, &blend);
-    if (BlendCombo("Blend Space##Opt", blend))
-    {
-        el_effect_set_blend_space(effect, blend);
-    }
-
-    DrawColorStopsList(effect, "Opt");
 }
 
 // ---------------------------------------------------------------------------

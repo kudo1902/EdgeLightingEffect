@@ -1246,70 +1246,57 @@ extern "C"
         return EL_SUCCESS;
     }
 
-    // --- Optimized neon ---
+    // --- Neon performance / quality ---
 
-    el_result_e el_effect_set_optimized_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
+    el_result_e el_effect_set_neon_resolution_scale(el_effect_handle_t effect, float scale)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_renderer_enabled");
-        SET_AND_LOG(effect->config.optimizedNeon.enable, enabled != 0, "effect=%p, enabled=%d", (void *)effect, enabled);
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_neon_resolution_scale");
+        SET_AND_LOG(effect->config.neon.resolutionScale, scale, "effect=%p, scale=%f", (void *)effect, scale);
     }
-    el_result_e el_effect_get_optimized_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
+    el_result_e el_effect_get_neon_resolution_scale(el_effect_handle_t effect, float *outScale)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_renderer_enabled");
-        VALIDATE_OUT_PTR(outEnabled, "el_effect_get_optimized_renderer_enabled");
-        *outEnabled = effect->config.optimizedNeon.enable ? 1 : 0;
-        LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled);
-        return EL_SUCCESS;
-    }
-    el_result_e el_effect_set_optimized_resolution_scale(el_effect_handle_t effect, float scale)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_resolution_scale");
-        SET_AND_LOG(effect->config.optimizedNeon.resolutionScale, scale, "effect=%p, scale=%f", (void *)effect, scale);
-    }
-    el_result_e el_effect_get_optimized_resolution_scale(el_effect_handle_t effect, float *outScale)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_resolution_scale");
-        VALIDATE_OUT_PTR(outScale, "el_effect_get_optimized_resolution_scale");
-        *outScale = effect->config.optimizedNeon.resolutionScale;
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_neon_resolution_scale");
+        VALIDATE_OUT_PTR(outScale, "el_effect_get_neon_resolution_scale");
+        *outScale = effect->config.neon.resolutionScale;
         LOG_D("effect=%p, scale=%f", (void *)effect, *outScale);
         return EL_SUCCESS;
     }
-    el_result_e el_effect_set_optimized_num_samples(el_effect_handle_t effect, int32_t samples)
+    el_result_e el_effect_set_neon_num_samples(el_effect_handle_t effect, int32_t samples)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_num_samples");
-        SET_AND_LOG(effect->config.optimizedNeon.numSamples, samples, "effect=%p, samples=%d", (void *)effect, samples);
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_neon_num_samples");
+        SET_AND_LOG(effect->config.neon.numSamples, samples, "effect=%p, samples=%d", (void *)effect, samples);
     }
-    el_result_e el_effect_get_optimized_num_samples(el_effect_handle_t effect, int32_t *outSamples)
+    el_result_e el_effect_get_neon_num_samples(el_effect_handle_t effect, int32_t *outSamples)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_num_samples");
-        VALIDATE_OUT_PTR(outSamples, "el_effect_get_optimized_num_samples");
-        *outSamples = effect->config.optimizedNeon.numSamples;
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_neon_num_samples");
+        VALIDATE_OUT_PTR(outSamples, "el_effect_get_neon_num_samples");
+        *outSamples = effect->config.neon.numSamples;
         LOG_D("effect=%p, samples=%d", (void *)effect, *outSamples);
         return EL_SUCCESS;
     }
-    el_result_e el_effect_set_optimized_gradient_lut_size(el_effect_handle_t effect, int32_t size)
+    el_result_e el_effect_set_neon_gradient_lut_size(el_effect_handle_t effect, int32_t size)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_gradient_lut_size");
-        SET_AND_LOG(effect->config.optimizedNeon.gradientLutSize, size, "effect=%p, size=%d", (void *)effect, size);
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_neon_gradient_lut_size");
+        SET_AND_LOG(effect->config.neon.gradientLutSize, size, "effect=%p, size=%d", (void *)effect, size);
     }
-    el_result_e el_effect_get_optimized_gradient_lut_size(el_effect_handle_t effect, int32_t *outSize)
+    el_result_e el_effect_get_neon_gradient_lut_size(el_effect_handle_t effect, int32_t *outSize)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_gradient_lut_size");
-        VALIDATE_OUT_PTR(outSize, "el_effect_get_optimized_gradient_lut_size");
-        *outSize = effect->config.optimizedNeon.gradientLutSize;
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_neon_gradient_lut_size");
+        VALIDATE_OUT_PTR(outSize, "el_effect_get_neon_gradient_lut_size");
+        *outSize = effect->config.neon.gradientLutSize;
         LOG_D("effect=%p, size=%d", (void *)effect, *outSize);
         return EL_SUCCESS;
     }
-    el_result_e el_effect_set_optimized_show_half_res(el_effect_handle_t effect, el_bool_t show)
+    el_result_e el_effect_set_neon_show_half_res(el_effect_handle_t effect, el_bool_t show)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_show_half_res");
-        SET_AND_LOG(effect->config.optimizedNeon.showHalfRes, show != 0, "effect=%p, show=%d", (void *)effect, show);
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_neon_show_half_res");
+        SET_AND_LOG(effect->config.neon.showHalfRes, show != 0, "effect=%p, show=%d", (void *)effect, show);
     }
-    el_result_e el_effect_get_optimized_show_half_res(el_effect_handle_t effect, el_bool_t *outShow)
+    el_result_e el_effect_get_neon_show_half_res(el_effect_handle_t effect, el_bool_t *outShow)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_show_half_res");
-        VALIDATE_OUT_PTR(outShow, "el_effect_get_optimized_show_half_res");
-        *outShow = effect->config.optimizedNeon.showHalfRes ? 1 : 0;
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_neon_show_half_res");
+        VALIDATE_OUT_PTR(outShow, "el_effect_get_neon_show_half_res");
+        *outShow = effect->config.neon.showHalfRes ? 1 : 0;
         LOG_D("effect=%p, show=%d", (void *)effect, *outShow);
         return EL_SUCCESS;
     }
@@ -1741,11 +1728,6 @@ extern "C"
             {
                 LOG_I("registering NeonRenderer");
                 effect->impl->AddRenderer(std::make_shared<EdgeLighting::NeonRenderer>());
-            }
-            if (rendererMask & EL_RENDERER_NEON_OPTIMIZED)
-            {
-                LOG_I("registering NeonOptimizedRenderer");
-                effect->impl->AddRenderer(std::make_shared<EdgeLighting::NeonOptimizedRenderer>());
             }
             if (rendererMask & EL_RENDERER_DROPLETS)
             {

@@ -5,11 +5,11 @@
 // Shared neon tuning constants - single source of truth.
 //
 // Consumed by BOTH:
-//   - the neon shaders (neon.frag - compiled in two variants - and
-//     neon-emission.frag), where CMake text-injects this file via
+//   - the neon shaders (neon.frag and neon-emission.frag), where CMake
+//     text-injects this file via
 //     @NEON_TUNING@ in shaders.h.in, and
-//   - the C++ renderers (neon-renderer.cpp, neon-optimized-renderer.cpp),
-//     which #include it for the early-out quad-sizing factors.
+//   - the C++ renderer (neon-renderer.cpp), which #includes it for the
+//     early-out quad-sizing factors.
 //
 // Why macros and not const/constexpr: GLSL ES 3.00 has no constexpr and
 // rejects the 'f' float-literal suffix, so a `const float X = 0.9f;` cannot
@@ -59,10 +59,9 @@
 //     Overlap resolves winner-take-all (max mask*intensity wins). ---
 #define MAX_ARCS                  8
 
-// --- Perimeter gather-loop upper bound. Sizes the LoopSamplesBlock UBO in
-//     both shaders. NeonRenderer runs the full loop at compile-time-fixed
-//     count; NeonOptimizedRenderer's shader iterates only uNumSamples of them
-//     (its numSamples slider), so this is a ceiling, not a fixed cost. ---
+// --- Perimeter gather-loop upper bound. Sizes the LoopSamplesBlock UBO and
+//     the emission texture. The shader iterates NeonConfig::numSamples of
+//     them, so this is a ceiling, not a fixed cost. ---
 #define NEON_MAX_LOOP_SAMPLES     128
 
 // --- Grading ---

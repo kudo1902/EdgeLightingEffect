@@ -44,9 +44,9 @@ uniform float uIntensity;
 uniform float uPerimeter; ///< Current perimeter in px; converts the pixel-space arc feather to a perimeter fraction.
 /// Gather sample count actually in use, 1..NEON_MAX_LOOP_SAMPLES. Sample i
 /// sits at perimeter position i / uNumSamples, matching how the CPU walks
-/// GetPointOnRectangle when it fills LoopSamplesBlock. NeonRenderer always
-/// passes NEON_MAX_LOOP_SAMPLES; NeonOptimizedRenderer passes its slider
-/// value, and the texels past it are written but never read.
+/// GetPointOnRectangle when it fills LoopSamplesBlock. This is
+/// NeonConfig::numSamples clamped to the array bound; the texels past it are
+/// written but never read.
 uniform int uNumSamples;
 
 // Same std140 blocks the main shader binds - see neon.frag for the layout

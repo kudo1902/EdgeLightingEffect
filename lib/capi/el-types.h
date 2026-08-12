@@ -255,18 +255,23 @@ extern "C"
      *         registers on the effect.
      *  @details OR the flags for the layers you want. Registration always
      *           happens in the fixed compositing order (wireframe, neon,
-     *           optimized, droplets, lens flare, optimized lens flare)
-     *           regardless of how the bits are combined - the mask only decides
-     *           inclusion, not order. A layer that is not included is never
-     *           constructed, so it pays no GL cost (no shader compile, no FBO
-     *           allocation); its @c el_effect_set_*_renderer_enabled flag still
-     *           writes to the staging config but has no visual effect. */
+     *           droplets, lens flare, optimized lens flare) regardless of how
+     *           the bits are combined - the mask only decides inclusion, not
+     *           order. A layer that is not included is never constructed, so
+     *           it pays no GL cost (no shader compile, no FBO allocation); its
+     *           @c el_effect_set_*_renderer_enabled flag still writes to the
+     *           staging config but has no visual effect.
+     *
+     *           Bit 2 is retired: it used to select a separate half-res neon
+     *           renderer, which is now the same @ref EL_RENDERER_NEON layer at
+     *           a resolution scale below 1
+     *           (@ref el_effect_set_neon_resolution_scale). The remaining bit
+     *           values are unchanged. */
     typedef enum el_renderer_flags_e
     {
         EL_RENDERER_NONE = 0,                      /**< Register no renderers. */
         EL_RENDERER_WIREFRAME = 1 << 0,            /**< 1 px debug line loop. */
-        EL_RENDERER_NEON = 1 << 1,                 /**< Single-pass neon stroke. */
-        EL_RENDERER_NEON_OPTIMIZED = 1 << 2,       /**< Half-res neon variant. */
+        EL_RENDERER_NEON = 1 << 1,                 /**< Neon stroke (full- or scaled-resolution). */
         EL_RENDERER_DROPLETS = 1 << 3,             /**< Rain-on-glass droplets. */
         EL_RENDERER_LENS_FLARE = 1 << 4,           /**< Sun + hex-aperture lens flare. */
         EL_RENDERER_LENS_FLARE_OPTIMIZED = 1 << 5, /**< Half-res lens flare variant. */

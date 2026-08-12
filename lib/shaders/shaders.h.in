@@ -23,18 +23,14 @@ namespace EdgeLighting
 @NEON_VERT_CONTENT@
 )shadersrc";
 
-                // Two variants of ONE body (shaders/neon.frag), differing only
-                // in the injected NEON_LOOP_BOUND macro - see that file's header.
-                // Full-res: constant bound. Measured ~12% faster than passing the
-                // same count in as a uniform (emission-prepass.md section 10).
+                // The gather loop's trip count is the uNumSamples uniform. That
+                // used to cost ~12% against a compile-time constant bound,
+                // which is why this file once emitted TWO compilations of the
+                // same body; the hand-written unroll inside neon.frag's gather
+                // beats the old constant-bound loop outright, so one program
+                // now serves every sample count.
+                // See emission-prepass.md section 10 for the measurements.
                 static const char *const NEON_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
-@NEON_TUNING@
-#define NEON_LOOP_BOUND NEON_MAX_LOOP_SAMPLES
-@NEON_FRAG_CONTENT@
-)shadersrc";
-
-                // Half-res: bound driven by OptimizedNeonConfig::numSamples.
-                static const char *const NEON_FRAG_DYNAMIC_SRC = R"shadersrc(@GLSL_VERSION@
 @NEON_TUNING@
 #define NEON_LOOP_BOUND uNumSamples
 @NEON_FRAG_CONTENT@

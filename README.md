@@ -30,24 +30,24 @@ binary at compile time, so the demo can be launched from anywhere.
 
 ## Renderers
 
-Three visual layers, independent and additive. Enable any subset via `Config`.
+Independent, additive visual layers. Enable any subset via `Config`.
 
 - **WireframeRenderer** - 1 px `GL_LINE_LOOP` debug outline of the rect.
-- **NeonRenderer** - single-pass neon stroke. Analytic rounded-box SDF + a
-  precomputed 1D gradient LUT (RGBA32F, 256 px) so each shader sample is one
-  texture lookup. Precomputes 128 sample positions on the perimeter.
-- **NeonOptimizedRenderer** - half-resolution variant that renders to a scaled
-  FBO and bilinear-blits back to full res. Shares visual params with the
-  single-pass renderer.
+- **NeonRenderer** - the neon stroke. Analytic rounded-box SDF + a per-frame
+  emission pre-pass and precomputed gradient LUTs, so each gather step is one
+  UBO read and one `texelFetch`. Resolution is a config knob
+  (`neon.resolutionScale`): 1.0 draws straight to the backbuffer, below 1.0
+  renders to a scaled FBO and bilinear-blits back. `neon.numSamples` trades
+  gather samples per fragment for speed.
 
 ## Debug UI (ImGui)
 
 - **Geometry** - width/height/position/corner radius/winding
 - **Neon** - line width, filament falloff, intensity, glow radius, bloom,
   glow side + softness, blend space (RGB / HSV / HSL), color stops (up to 128),
-  hue rotation rate, segment boosts (travelling brightness peaks), arc gating
-- **Optimized Neon (½-res)** - internal resolution scale, sample count, LUT
-  size, plus reuses the Neon section's visual params
+  hue rotation rate, segment boosts (travelling brightness peaks), arc gating,
+  plus the perf knobs at the top of the section: resolution scale, sample
+  count, gradient LUT size
 - **Border Color Picker** - pick any image from `res/`, sample colors from its
   border, and apply them as neon color stops. See below.
 - **Animation** - add / remove presets from an animation group; play / pause /

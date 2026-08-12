@@ -21,8 +21,8 @@ namespace
 {
     /// Upper bound the debug UI enforces on colour-stop lists.
     constexpr int MAX_COLOR_STOPS = 128;
-    /// Max value for the OptimizedNeon "LUT Size" slider. Matches the LUT
-    /// width baked by NeonRenderer (256), which is more than enough for any
+    /// Max value for the Neon "LUT Size" slider. Matches NeonConfig's
+    /// default gradient LUT width (256), which is more than enough for any
     /// gradient the human eye can resolve.
     constexpr int MAX_GRADIENT_LUT_SIZE = 256;
 
@@ -38,8 +38,8 @@ namespace
     /// the widget reports a change; the animation on the next @c
     /// EdgeLightingEffect::Update then overlays on top of the new base.
     /// Draw one segment-lights row (Pos/Len/Boost + collapsible per-segment
-    /// stops editor). Caller wraps in @c PushID so both the Neon and
-    /// OptimizedNeon sections can share the same widget IDs without colliding.
+    /// stops editor). Caller wraps in @c PushID so repeated rows can share
+    /// the same widget IDs without colliding.
     /// @return true if the row's remove button was clicked - caller erases.
     inline bool DrawSegmentRow(EdgeLighting::SegmentBoost &seg)
     {
@@ -104,7 +104,7 @@ namespace
 
     /// Draw one arc row (Start / Length / Intensity + collapsible per-arc
     /// stops editor). Mirrors DrawSegmentRow. Caller wraps in @c PushID so
-    /// the Neon and OptimizedNeon sections share widget IDs without collision.
+    /// repeated rows share widget IDs without collision.
     /// @return true if the row's remove button was clicked - caller erases.
     inline bool DrawArcRow(EdgeLighting::Arc &arc)
     {
@@ -305,7 +305,6 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     const EdgeLighting::Config &active = effect.GetActiveConfig();
     buildGeometrySection(cfg);
     buildNeonSection(cfg, active);
-    buildOptimizedNeonSection(cfg, active);
     buildDropletsSection(cfg);
     buildLensFlareSection(cfg);
     buildColorPickerSection(cfg);
@@ -402,6 +401,19 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
     {
         return;
     }
+
+    // --- Performance / quality ---
+    // Res Scale 1.0 draws straight to the backbuffer; anything lower is the
+    // scaled-FBO + blit path that used to be a separate "Optimized Neon"
+    // renderer carrying its own duplicate copy of every control below.
+    ImGui::SliderFloat("Res Scale##Neon", &cfg.neon.resolutionScale, 0.125f, 1.0f, "%.3f");
+    ImGui::SliderInt("Samples##Neon", &cfg.neon.numSamples, 8, NEON_MAX_LOOP_SAMPLES);
+    ImGui::SliderInt("LUT Size##Neon", &cfg.neon.gradientLutSize, 32, MAX_GRADIENT_LUT_SIZE);
+    if (cfg.neon.resolutionScale < 1.0f)
+    {
+        ImGui::Checkbox("Show Half-Res##Neon", &cfg.neon.showHalfRes);
+    }
+    ImGui::Separator();
 
     const char *opaqueItems[] = {"None", "Outside", "Inside", "Both", "All"};
     int opaqueIdx = static_cast<int>(cfg.neon.opaqueMode);
@@ -527,160 +539,6 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
         if (ImGui::Button("+ Add Stop##Neon"))
         {
             float lastPos = cfg.neon.colorStops.empty() ? 0.0f : cfg.neon.colorStops.back().position;
-            cfg.neon.colorStops.push_back(
-                {std::min(1.0f, lastPos + 0.1f), glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)});
-        }
-    }
-}
-
-void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg,
-                                        const EdgeLighting::Config &active)
-{
-    if (!ImGui::CollapsingHeader("Optimized Neon (½-res)", ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        return;
-    }
-
-    ImGui::Checkbox("Enable##Optimized", &cfg.optimizedNeon.enable);
-    if (!cfg.optimizedNeon.enable)
-    {
-        return;
-    }
-
-    ImGui::SameLine();
-    ImGui::Checkbox("Show Half-Res##Optimized", &cfg.optimizedNeon.showHalfRes);
-
-    ImGui::SliderFloat("Res Scale##Opt", &cfg.optimizedNeon.resolutionScale, 0.125f, 1.0f, "%.3f");
-    ImGui::SliderInt("Samples##Opt", &cfg.optimizedNeon.numSamples, 8, NEON_MAX_LOOP_SAMPLES);
-    ImGui::SliderInt("LUT Size##Opt", &cfg.optimizedNeon.gradientLutSize, 32,
-                     MAX_GRADIENT_LUT_SIZE);
-
-    ImGui::Separator();
-    ImGui::TextDisabled("Visual params (shared with Neon)");
-
-    const char *opaqueItemsOpt[] = {"None", "Outside", "Inside", "Both", "All"};
-    int opaqueIdxOpt = static_cast<int>(cfg.neon.opaqueMode);
-    if (ImGui::Combo("Opaque##Opt", &opaqueIdxOpt, opaqueItemsOpt, IM_ARRAYSIZE(opaqueItemsOpt)))
-    {
-        cfg.neon.opaqueMode = static_cast<EdgeLighting::OpaqueMode>(opaqueIdxOpt);
-    }
-    if (cfg.neon.opaqueMode != EdgeLighting::OpaqueMode::NONE)
-    {
-        ImGui::SameLine();
-        ImGui::ColorEdit4("Opaque Color##Opt", &cfg.neon.opaqueColor.x,
-                          ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
-        ImGui::SliderFloat("Opaque Softness##Opt", &cfg.neon.opaqueSoftness, 0.0f, 20.0f, "%.1f");
-    }
-    AnimatedSlider("Line Width##Opt", cfg.neon.lineWidth, active.neon.lineWidth, 0.0f, 20.0f, "%.0f");
-    AnimatedSlider("Filament Falloff##Opt", cfg.neon.filamentFalloff, active.neon.filamentFalloff, 0.0f, 5.0f);
-    AnimatedSlider("Intensity##Opt", cfg.neon.intensity, active.neon.intensity, 0.0f, 3.0f);
-    AnimatedSlider("Glow Radius##Opt", cfg.neon.glowRadius, active.neon.glowRadius, 0.0f, 80.0f, "%.0f");
-    AnimatedSlider("Bloom Strength##Opt", cfg.neon.bloomStrength, active.neon.bloomStrength, 0.0f, 2.0f);
-    AnimatedSlider("Hue Rotation Rate##Opt", cfg.neon.hueRotationRate, active.neon.hueRotationRate, 0.0f, 2.0f);
-
-    const char *sideItems[] = {"Both", "Inside", "Outside"};
-    int sideIdx = static_cast<int>(cfg.neon.glowSide);
-    if (ImGui::Combo("Glow Side##Opt", &sideIdx, sideItems, IM_ARRAYSIZE(sideItems)))
-    {
-        cfg.neon.glowSide = static_cast<EdgeLighting::GlowSide>(sideIdx);
-    }
-    if (cfg.neon.glowSide != EdgeLighting::GlowSide::BOTH)
-    {
-        ImGui::SliderFloat("Side Softness##Opt", &cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
-    }
-
-    CutoffRow("Inside Cutoff", "OptInside", cfg.neon.insideCutoff, active.neon.insideCutoff);
-    CutoffRow("Outside Cutoff", "OptOutside", cfg.neon.outsideCutoff, active.neon.outsideCutoff);
-
-    ImGui::TextDisabled("Segment Lights (%zu / %d) - additive, independent of intensity",
-                        cfg.neon.segmentBoosts.size(),
-                        EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP);
-    for (size_t i = 0; i < cfg.neon.segmentBoosts.size(); ++i)
-    {
-        ImGui::PushID(static_cast<int>(400 + i));
-        bool remove = DrawSegmentRow(cfg.neon.segmentBoosts[i]);
-        ImGui::PopID();
-        if (remove)
-        {
-            cfg.neon.segmentBoosts.erase(cfg.neon.segmentBoosts.begin() +
-                                         static_cast<ptrdiff_t>(i));
-            break;
-        }
-    }
-    if (static_cast<int>(cfg.neon.segmentBoosts.size()) <
-        EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP)
-    {
-        if (ImGui::Button("+ Add Segment##Opt"))
-        {
-            cfg.neon.segmentBoosts.push_back({0.0f, 0.15f, 4.0f});
-        }
-    }
-
-    ImGui::TextDisabled("Arcs (%zu / %d) - overlap resolves winner-take-all",
-                        cfg.neon.arcs.size(),
-                        EdgeLighting::NeonConfig::MAX_ARCS_CAP);
-    for (size_t i = 0; i < cfg.neon.arcs.size(); ++i)
-    {
-        ImGui::PushID(static_cast<int>(600 + i));
-        bool remove = DrawArcRow(cfg.neon.arcs[i]);
-        ImGui::PopID();
-        if (remove)
-        {
-            cfg.neon.arcs.erase(cfg.neon.arcs.begin() +
-                                static_cast<ptrdiff_t>(i));
-            break;
-        }
-    }
-    if (static_cast<int>(cfg.neon.arcs.size()) <
-        EdgeLighting::NeonConfig::MAX_ARCS_CAP)
-    {
-        if (ImGui::Button("+ Add Arc##Opt"))
-        {
-            cfg.neon.arcs.push_back(EdgeLighting::Arc{});
-        }
-    }
-
-    const char *blendItems[] = {"RGB", "HSV", "HSL"};
-    int blendIdx = static_cast<int>(cfg.neon.blendSpace);
-    if (ImGui::Combo("Blend Space##Opt", &blendIdx, blendItems, IM_ARRAYSIZE(blendItems)))
-    {
-        cfg.neon.blendSpace = static_cast<EdgeLighting::BlendSpace>(blendIdx);
-    }
-
-    // Cross-fade time when the stop set / blend space changes (0 = instant).
-    ImGui::SliderFloat("Color Transition (s)##Opt", &cfg.neon.colorTransitionDuration,
-                       0.0f, 2.0f, "%.2f");
-
-    for (size_t i = 0; i < cfg.neon.colorStops.size(); ++i)
-    {
-        ImGui::PushID(static_cast<int>(i + 200));
-        float p = cfg.neon.colorStops[i].position;
-        if (ImGui::SliderFloat("Pos##Opt", &p, 0.0f, 1.0f, "%.2f"))
-        {
-            cfg.neon.colorStops[i].position = p;
-        }
-        ImGui::SameLine();
-        glm::vec4 c = cfg.neon.colorStops[i].color;
-        if (ImGui::ColorEdit4("Col##Opt", &c.x, ImGuiColorEditFlags_NoInputs))
-        {
-            cfg.neon.colorStops[i].color = c;
-        }
-        ImGui::SameLine();
-        if (cfg.neon.colorStops.size() > 1 && ImGui::SmallButton("X"))
-        {
-            cfg.neon.colorStops.erase(
-                cfg.neon.colorStops.begin() + static_cast<ptrdiff_t>(i));
-        }
-        ImGui::PopID();
-    }
-
-    if (cfg.neon.colorStops.size() < MAX_COLOR_STOPS)
-    {
-        if (ImGui::Button("+ Add Stop##Opt"))
-        {
-            float lastPos = cfg.neon.colorStops.empty()
-                                ? 0.0f
-                                : cfg.neon.colorStops.back().position;
             cfg.neon.colorStops.push_back(
                 {std::min(1.0f, lastPos + 0.1f), glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)});
         }

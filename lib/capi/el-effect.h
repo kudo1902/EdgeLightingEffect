@@ -388,32 +388,36 @@ extern "C"
 
     /** @} */
 
-    /** @name Optimized (half-res) renderer
-     *  A half-resolution neon variant that renders into a scaled FBO and
-     *  bilinear-blits back to full res. Visual parameters are shared with
-     *  the main neon layer; only the perf knobs live here.
+    /** @name Neon performance / quality
+     *  Knobs that trade neon fidelity for speed. These used to configure a
+     *  separate half-res "optimized" renderer; there is now one neon renderer
+     *  and the half-res path is just @ref el_effect_set_neon_resolution_scale
+     *  below 1, so nothing has to be enabled or switched to reach it.
      *  @{ */
 
-    EL_API el_result_e el_effect_set_optimized_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled);
-    EL_API el_result_e el_effect_get_optimized_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
-
-    /** @brief Set the internal FBO scale factor (0.5 = half, 0.25 = quarter). */
-    EL_API el_result_e el_effect_set_optimized_resolution_scale(el_effect_handle_t effect, float scale);
-    EL_API el_result_e el_effect_get_optimized_resolution_scale(el_effect_handle_t effect, float *outScale);
+    /** @brief Set the internal render scale. 1.0 (default) draws straight to
+     *         the backbuffer with no intermediate FBO; below 1.0 renders into
+     *         a scaled FBO and bilinear-blits back (0.5 = half, 0.25 =
+     *         quarter). Values above 1.0 are clamped to 1.0. */
+    EL_API el_result_e el_effect_set_neon_resolution_scale(el_effect_handle_t effect, float scale);
+    EL_API el_result_e el_effect_get_neon_resolution_scale(el_effect_handle_t effect, float *outScale);
 
     /** @brief Set the per-fragment gather sample count (clamped to the
-     *         shader's compile-time maximum). Lower = faster. */
-    EL_API el_result_e el_effect_set_optimized_num_samples(el_effect_handle_t effect, int32_t samples);
-    EL_API el_result_e el_effect_get_optimized_num_samples(el_effect_handle_t effect, int32_t *outSamples);
+     *         shader's compile-time maximum). Lower = faster. At the maximum
+     *         the renderer uses a shader variant with a compile-time loop
+     *         bound, which is measurably faster than the tunable one. */
+    EL_API el_result_e el_effect_set_neon_num_samples(el_effect_handle_t effect, int32_t samples);
+    EL_API el_result_e el_effect_get_neon_num_samples(el_effect_handle_t effect, int32_t *outSamples);
 
     /** @brief Set the precomputed gradient LUT size (power-of-two, 32-256). */
-    EL_API el_result_e el_effect_set_optimized_gradient_lut_size(el_effect_handle_t effect, int32_t size);
-    EL_API el_result_e el_effect_get_optimized_gradient_lut_size(el_effect_handle_t effect, int32_t *outSize);
+    EL_API el_result_e el_effect_set_neon_gradient_lut_size(el_effect_handle_t effect, int32_t size);
+    EL_API el_result_e el_effect_get_neon_gradient_lut_size(el_effect_handle_t effect, int32_t *outSize);
 
-    /** @brief Show the raw half-res FBO (nearest-upscale) instead of the
-     *         final bilinear-blitted result. Diagnostic only. */
-    EL_API el_result_e el_effect_set_optimized_show_half_res(el_effect_handle_t effect, el_bool_t show);
-    EL_API el_result_e el_effect_get_optimized_show_half_res(el_effect_handle_t effect, el_bool_t *outShow);
+    /** @brief Show the raw scaled FBO (nearest-upscale) instead of the final
+     *         bilinear-blitted result. Diagnostic only; no effect at
+     *         resolution scale 1.0, where there is no FBO. */
+    EL_API el_result_e el_effect_set_neon_show_half_res(el_effect_handle_t effect, el_bool_t show);
+    EL_API el_result_e el_effect_get_neon_show_half_res(el_effect_handle_t effect, el_bool_t *outShow);
 
     /** @} */
 

@@ -5,6 +5,13 @@ single perimeter-gate pair (`NeonConfig::arcStart`, `arcLength`) with an
 `arcs` vector, where each entry carries its own start, length, intensity,
 and optional colour stops.
 
+> Historical plan, kept for the design rationale. Two things it describes have
+> since changed: `neon-optimized.frag` was folded into `neon.frag` (one body,
+> two macro variants), and `NeonOptimizedRenderer` was merged into
+> `NeonRenderer` - so where this doc says "mirror the change in the optimized
+> renderer", there is now only one place to make it. See
+> [`architecture-design.md`](architecture-design.md) §4.
+
 ## 1. Motivation
 
 Today the renderer supports **one** arc: a single contiguous slice of the

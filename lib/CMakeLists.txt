@@ -79,7 +79,6 @@ add_library(edge-lighting STATIC
     src/core/edge-lighting.cpp
     src/renderer/wireframe-renderer.cpp
     src/renderer/neon-renderer.cpp
-    src/renderer/neon-optimized-renderer.cpp
     src/renderer/droplets-renderer.cpp
     src/renderer/lens-flare-renderer.cpp
     src/renderer/lens-flare-optimized-renderer.cpp

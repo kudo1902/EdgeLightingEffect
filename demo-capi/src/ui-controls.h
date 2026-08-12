@@ -19,7 +19,7 @@ namespace EdgeLightingCapiDemo
         std::printf("  [P / L]        - Inc / Dec Neon Hue Sweep Speed\n");
         std::printf("  [N]            - Toggle Neon\n");
         std::printf("  [G]            - Toggle Wireframe Bounding Box\n");
-        std::printf("  [Shift+O]      - Toggle Optimized Neon\n");
+        std::printf("  [Shift+O]      - Toggle Neon Resolution Scale (full / half)\n");
         std::printf("  [W]            - Toggle Winding (CW / CCW)\n");
         std::printf("  [SPACE]        - Pause / Resume Clock\n");
         std::printf("  [ESC]          - Exit\n");

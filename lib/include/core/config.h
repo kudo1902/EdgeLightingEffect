@@ -219,7 +219,42 @@ namespace EdgeLighting
     {
         bool enable = false; ///< Enable or disable the neon renderer
 
+        // --- Performance / quality ---
+        //
+        // These are the knobs that used to live in a separate
+        // OptimizedNeonConfig behind a second renderer. There is now one
+        // NeonRenderer and the "optimized" path is just this sub-config at
+        // non-default values, so the two can be compared by dragging a slider
+        // rather than by toggling renderers.
+
+        /// Resolution scale for the internal render target. 1.0 (default)
+        /// draws the neon straight onto the backbuffer with no intermediate
+        /// FBO and no blit; anything below 1.0 renders into a scaled RGBA8
+        /// FBO and bilinear-blits it back to full res (0.5 = half, 0.25 =
+        /// quarter), so the expensive per-fragment gather runs over
+        /// @c resolutionScale squared fewer fragments. Values above 1.0 are
+        /// clamped to 1.0 - there is no supersampling path.
+        float resolutionScale = 1.0f;
+
+        /// Perimeter gather samples per fragment, clamped to
+        /// [1, NEON_MAX_LOOP_SAMPLES] by the renderer. Lower = faster and
+        /// coarser. Any value is fine - the shader's gather runs in groups of
+        /// four with a scalar tail, so counts that don't divide evenly cost
+        /// nothing extra and render identically.
+        int numSamples = NEON_MAX_LOOP_SAMPLES;
+
+        /// Width in texels of the baked colour-ring LUT texture
+        /// (power-of-two, 32-256). 256 resolves any gradient the eye can see;
+        /// smaller values trade a little banding for texture memory.
+        int gradientLutSize = 256;
+
         // --- Debug visualisations ---
+
+        /// Debug: show the raw scaled FBO (nearest-neighbour upscale) instead
+        /// of the bilinear-blitted result, to inspect what the low-res pass
+        /// actually produced. Ignored when @c resolutionScale is 1.0 (there is
+        /// no FBO on that path).
+        bool showHalfRes = false;
 
         /// Debug: draw the baked gradient LUT texture as a horizontal strip at
         /// the centre of the rectangle so you can eyeball the colour ring
@@ -410,6 +445,10 @@ namespace EdgeLighting
         bool operator==(const NeonConfig &o) const
         {
             return enable == o.enable &&
+                   resolutionScale == o.resolutionScale &&
+                   numSamples == o.numSamples &&
+                   gradientLutSize == o.gradientLutSize &&
+                   showHalfRes == o.showHalfRes &&
                    showGradientLUT == o.showGradientLUT &&
                    showColorStops == o.showColorStops &&
                    opaqueMode == o.opaqueMode &&
@@ -434,43 +473,6 @@ namespace EdgeLighting
         }
         bool operator!=(const NeonConfig &o) const { return !(*this == o); }
     } NeonConfig;
-
-    /// Half-resolution optimized neon renderer configuration.
-    ///
-    /// Renders the neon shader at half resolution then bilinear-blits to full res.
-    /// The perf wins are the half-res FBO + reduced gather samples (not reduced
-    /// precision - the shader uses highp; mediump = fp16 on ANGLE overflowed the
-    /// large fragment coordinates and produced NaN "noise dots").
-    /// Visual parameters (line width, intensity, colour stops, etc.) are shared
-    /// with Config::neon - adjust them in the Neon section of the debug UI.
-    typedef struct OptimizedNeonConfig
-    {
-        bool enable = false; ///< Enable or disable the optimized neon renderer
-
-        /// Resolution scale factor for the internal FBO (0.5 = half, 0.25 = quarter).
-        float resolutionScale = 0.5f;
-        /// Number of gather samples per fragment (max = NEON_MAX_LOOP_SAMPLES,
-        /// lower = faster). Clamped by the renderer at upload time.
-        int numSamples = 64;
-        /// Size of the precomputed gradient look-up texture (power-of-two, 32–256).
-        int gradientLutSize = 256;
-
-        // --- Debug visualisations ---
-
-        /// Show the raw half-res FBO (nearest-neighbour upscale) instead of
-        /// the bilinear-blitted result. Useful to verify pass-1 rendering.
-        bool showHalfRes = false;
-
-        bool operator==(const OptimizedNeonConfig &o) const
-        {
-            return enable == o.enable &&
-                   resolutionScale == o.resolutionScale &&
-                   numSamples == o.numSamples &&
-                   gradientLutSize == o.gradientLutSize &&
-                   showHalfRes == o.showHalfRes;
-        }
-        bool operator!=(const OptimizedNeonConfig &o) const { return !(*this == o); }
-    } OptimizedNeonConfig;
 
     /// Rain-on-glass droplets configuration.
     ///
@@ -676,8 +678,7 @@ namespace EdgeLighting
     typedef struct Config
     {
         RectGeometry geometry;                       ///< Rectangle geometry
-        NeonConfig neon;                             ///< Single-pass neon settings
-        OptimizedNeonConfig optimizedNeon;           ///< Half-res optimized neon settings
+        NeonConfig neon;                             ///< Neon settings (visual params + resolution/sample knobs)
         DropletsConfig droplets;                     ///< Rain-on-glass droplets settings
         WireframeConfig wireframe;                   ///< Wireframe overlay settings
         LensFlareConfig lensFlare;                   ///< Sun + lens flare (rays, chromatic ghosts)
@@ -687,7 +688,6 @@ namespace EdgeLighting
         {
             return geometry == o.geometry &&
                    neon == o.neon &&
-                   optimizedNeon == o.optimizedNeon &&
                    droplets == o.droplets &&
                    wireframe == o.wireframe &&
                    lensFlare == o.lensFlare &&

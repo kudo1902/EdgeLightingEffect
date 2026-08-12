@@ -44,9 +44,11 @@ what you see:
   and are independent of the master intensity, so a segment can shine on an
   otherwise-dark arc.
 
-The neon renderer is one of three renderers that can be enabled independently
-in the same effect: `NeonRenderer`, `NeonOptimizedRenderer` (half-res variant
-of the same shader), and `WireframeRenderer` (a 1px debug bounding box).
+The neon renderer is one of several renderers that can be enabled
+independently in the same effect; the other debug-oriented one is
+`WireframeRenderer` (a 1px bounding box). There is a single `NeonRenderer`:
+the half-resolution path that used to be a separate `NeonOptimizedRenderer`
+is now `neon.resolutionScale` (§3.9).
 
 ---
 
@@ -76,7 +78,9 @@ comes out. Every value is the compiler-visible default from `config.h`.
 | Neon | arcs | one arc {start=0, length=1, intensity=1, no stops} - full perimeter lit |
 | Neon | segmentBoosts | empty - no travelling lights |
 | Neon | colorTransitionDuration | 0.3 s |
-| Optimized | enable | false |
+| Neon | resolutionScale | 1.0 (full res - no intermediate FBO) |
+| Neon | numSamples | 128 (`NEON_MAX_LOOP_SAMPLES`) |
+| Neon | gradientLutSize | 256 texels |
 | Wireframe | enable | true |
 | Wireframe | color | opaque green |
 
@@ -342,39 +346,39 @@ rendered halo.
 
 Both are demo-time debug aids; leave off in production.
 
-### 3.9 Optimized neon (half-res variant)
+### 3.9 Performance / quality knobs
 
-The optimized renderer runs the same shader into a **downscaled FBO** then
-bilinear-blits it back to full resolution. All visual params (line width,
-intensity, colour stops, arcs, segments, hue rotation, ...) are read from
-`Config::neon` - the optimized renderer only adds its own perf-shaping
-fields:
+These shape how much work the neon costs per frame; they change no visual
+parameter. They used to configure a separate half-res `NeonOptimizedRenderer`
+as `optimizedNeon.*`, which duplicated the whole class - there is now one
+renderer and these are the fields that move it between the two paths.
 
-**`optimizedNeon.enable`** (default false)
-Master switch for the half-res path. Can run concurrently with the full-res
-neon; the two composite additively, which is useful for A/B testing but
-typically only one of the two is on at a time.
+**`neon.resolutionScale`** (default 1.0)
+Fraction of the framebuffer resolution the main pass renders at. `1.0` draws
+straight onto the backbuffer with no intermediate FBO and no blit - the
+default and the highest-quality path. Below 1.0 the pass goes into a scaled
+RGBA8 FBO that is bilinear-blitted back: `0.5` halves each axis (quarter the
+fragment work); `0.25` quarters each axis (16x). Below ~0.35 the upscale
+starts showing. Values above 1.0 are clamped - there is no supersampling
+path.
 
-**`optimizedNeon.resolutionScale`** (default 0.5)
-Fraction of the framebuffer resolution used for the internal FBO. `0.5`
-halves each axis (quarter-pixel work); `0.25` quarters each axis (16x
-speed-up). Below ~0.35 the bilinear upscale starts showing.
+**`neon.numSamples`** (default 128 = `NEON_MAX_LOOP_SAMPLES`)
+Number of gather-loop samples per fragment. Fewer samples -> faster, but the
+halo can develop visible "beading" at low counts. Any value in range is fine:
+the shader gathers in groups of four with a scalar tail, so counts that are
+not multiples of four are neither slower nor different.
 
-**`optimizedNeon.numSamples`** (default 64)
-Number of gather-loop samples per fragment. The full-res `NeonRenderer`
-always runs 128 (compile-time fixed to `NEON_MAX_LOOP_SAMPLES`); this
-renderer uses the slider value up to that ceiling. Fewer samples ->
-faster, but the halo can develop visible "beading" at low counts.
-
-**`optimizedNeon.gradientLutSize`** (default 256)
+**`neon.gradientLutSize`** (default 256)
 Width of the precomputed gradient LUT (32 - 256). At the default 256 the
 gradient is smooth enough that dithering hides all seams; below ~64 you can
-see quantisation on smooth pans.
+see quantisation on smooth pans. Changing this snaps the gradient rather than
+cross-fading it (the two LUTs have different widths, so there is nothing to
+interpolate element-wise).
 
-**`optimizedNeon.showHalfRes`** (default false)
-Debug: display the raw half-res FBO with a nearest-neighbour upscale
-instead of the bilinear-blitted final image. Useful for verifying pass-1
-rendering.
+**`neon.showHalfRes`** (default false)
+Debug: display the raw scaled FBO with a nearest-neighbour upscale instead of
+the bilinear-blitted final image. No effect at `resolutionScale` 1.0, where
+there is no FBO.
 
 ### 3.10 Wireframe overlay
 
