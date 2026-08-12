@@ -79,31 +79,56 @@
 #define HALO_GAIN                 0.90
 #define HALO_NORM_FACTOR          0.43
 
-// --- Anti-bead floor for the COLOUR gather kernel only. The perimeter colour
-//     blend is still a discrete sum over the loop samples, so its weight keeps
-//     a floor; without one the kernel collapses between samples at small
-//     glowRadius and the blend beads.
+// --- Width of the COLOUR gather kernel, as a FRACTION OF THE PERIMETER.
 //
-//     A FIXED pixel span, deliberately NOT sampleSpacing-derived. It appears in
-//     both the numerator and the denominator of acc/wsum, so it cannot change
-//     the colour's magnitude inside a uniformly lit stretch - but it does set
-//     the distance over which `col` decays to black approaching an unlit one,
-//     and `col` multiplies the filament, halo and bloom alike. Tied to
-//     sampleSpacing that roll-off scaled with the rect (~25 px at 800x600,
-//     ~56 px at 1920x1080) and, in NeonOptimizedRenderer, with the numSamples
-//     slider too - so the two renderers disagreed by 2x at their defaults.
-//     The value matches the old 800x600 default floor to within a few percent,
-//     so stock geometry looks unchanged.
+//     The perimeter colour blend is the one part of the shader that is still a
+//     discrete sum over the loop samples, and it is the only place a length has
+//     to be expressed this way rather than in pixels. The reason is that the
+//     signal it filters - the gradient LUT - is itself parameterised by
+//     perimeter fraction: sample i contributes LUT(i / NEON_MAX_LOOP_SAMPLES).
+//     A kernel measured in pixels therefore covers a DIFFERENT span of the
+//     gradient on every geometry, and the same colour stops render washed out
+//     on a small rect and crisp on a large one. Measured on the stock 4-stop
+//     ring, the colour sampled exactly on the red stop ran (0.95, 0.33, 0.06)
+//     at 200x150 against (0.96, 0.04, 0.00) at 2800x2200 - roughly 8x the hue
+//     bleed from geometry alone. Scaling the kernel with the perimeter is what
+//     makes the gradient read identically at any size.
 //
-//     Must stay >= about one sample spacing at the smallest geometry in use,
-//     or the gather beads. At NEON_MAX_LOOP_SAMPLES = 128 that holds for any
-//     perimeter up to ~3000 px; past that the samples are sparser than this
-//     floor and the blend leans on glowRadius to stay smooth.
+//     Two further properties fall out of the same choice:
 //
-//     NOTE: full-res pixel span. neon-optimized.frag compares it against FBO-px
-//     quantities, so its copy multiplies by uResolutionScale - keep the two in
-//     step when tuning. ---
-#define COLOR_BLEND_MIN_PX        24.0
+//       - A constant anti-bead margin. The kernel has to stay >= about one
+//         sample spacing, or it collapses between samples and the blend beads
+//         into dots. Spacing is perimeter / NEON_MAX_LOOP_SAMPLES, so a
+//         perimeter fraction pins the ratio at
+//         COLOR_BLEND_PERIM_FRAC * NEON_MAX_LOOP_SAMPLES = 1.13 spacings on
+//         every geometry, where the previous fixed 24 px span met the bound
+//         only up to a ~3000 px perimeter and was down to 0.31 spacings by
+//         9900 px. (No beading was actually measurable there - a DFT of the
+//         hue around the perimeter put the 128-cycle component at the noise
+//         floor - because the gradient varies slowly over one spacing on a
+//         rect that large. The margin is a guarantee for dense colour stops,
+//         not a fix for an observed artifact.)
+//
+//       - Renderer agreement. Both shaders derive the kernel from the same
+//         NEON_MAX_LOOP_SAMPLES-based fraction rather than from their own
+//         runtime sample count, so NeonOptimizedRenderer's numSamples slider
+//         does not move the colour blend. (An earlier sampleSpacing-derived
+//         floor divided by the live count and landed 2x wider there.)
+//
+//     Deliberately NOT coupled to glowRadius. The gather produces colour only -
+//     the halo and bloom have been closed-form since they stopped riding on it -
+//     so a wide glow has no reason to desaturate the gradient, and the old
+//     max(glowRadius, floor) reintroduced exactly the pixel-space dependence
+//     this constant exists to remove.
+//
+//     0.0088 puts the kernel at 24.0 px on the stock 800x600 / radius 40
+//     geometry, matching the previous fixed span, so default-sized output is
+//     unchanged.
+//
+//     NOTE: unit-free, unlike the px constants around it. neon-optimized.frag
+//     multiplies it by a perimeter that is already in FBO px, so it needs no
+//     uResolutionScale correction. ---
+#define COLOR_BLEND_PERIM_FRAC    0.0088
 
 // --- Emission on/off ramp. glowRadius = 0 must read as "filament only", but
 //     an analytic profile at radius 0 is a sub-pixel spike of full height

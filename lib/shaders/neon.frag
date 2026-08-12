@@ -417,21 +417,31 @@ void main() {
     core            = max(core - corePed, 0.0) / max(1.0 - corePed, 1e-6);
     float lineGate  = clamp(uLineWidth / (FILAMENT_MIN_HALF_WIDTH * 2.0), 0.0, 1.0);
 
+    // Perimeter of the rounded rect, in px. Used twice below: to size the
+    // colour-gather kernel, and to convert the arc feathers from px to
+    // perimeter fractions.
+    float r    = clamp(uCornerRadius, 0.0, min(uRectSize.x, uRectSize.y) * 0.5);
+    float peri = 2.0 * (uRectSize.x + uRectSize.y - 4.0 * r) + TWO_PI * r;
+
     // --- Kernel widths ------------------------------------------------
     // Two separate kernels, and the split is the point:
     //
-    //  - kc is the COLOUR gather weight. The perimeter colour blend is still a
-    //    128-sample sum, so it keeps the anti-bead floor - but the floor is a
-    //    FIXED pixel span, not a multiple of the sample spacing. Spacing is
-    //    perimeter / 128, so the old floor made the colour roll-off at an arc
-    //    end track the rect size; COLOR_BLEND_MIN_PX holds it at one width for
-    //    every geometry. See neon-tuning.h for the full rationale.
+    //  - kc is the COLOUR gather weight, and it is the one length here that is
+    //    NOT in pixels. The blend is a 128-sample sum over the gradient LUT,
+    //    which is indexed by perimeter FRACTION, so a pixel-sized kernel spans
+    //    a different slice of the gradient on every geometry - the same stops
+    //    render washed out small and crisp large. Sizing it as a fraction of
+    //    the perimeter makes the gradient read identically at any size, and
+    //    pins the kernel at a constant 1.13 sample spacings so it cannot bead
+    //    at any size either. Not coupled to glowRadius: the gather is colour
+    //    only, so a wide glow has no business desaturating the ring. See
+    //    neon-tuning.h for the measurements behind this.
     //
     //  - kh / bw are the EMISSION widths: raw glowRadius, no floor. The halo
     //    and bloom are evaluated analytically from the SDF distance further
     //    down, and a closed form cannot bead however far apart the gather
     //    samples are, so glowRadius is proportional across its entire range.
-    float kc  = max(uGlowRadius, COLOR_BLEND_MIN_PX);
+    float kc  = max(peri * COLOR_BLEND_PERIM_FRAC, EMISSION_MIN_WIDTH);
     float kc2 = kc * kc;
     float kh  = max(uGlowRadius,                       EMISSION_MIN_WIDTH);
     float bw  = max(uGlowRadius * BLOOM_REACH_TO_GLOW, EMISSION_MIN_WIDTH);
@@ -591,11 +601,10 @@ void main() {
     // lit it for any arc starting at position 0.
     float sPos = perimeterPosition(vPos);
     // Inward feathers: convert pixel widths to perimeter fractions at the
-    // current geometry. Both sides are full-res px here, so the constants are
-    // used raw; neon-optimized.frag scales them by uResolutionScale because
-    // its `peri` is in FBO px - keep the two in step when tuning them.
-    float r      = clamp(uCornerRadius, 0.0, min(uRectSize.x, uRectSize.y) * 0.5);
-    float peri   = 2.0 * (uRectSize.x + uRectSize.y - 4.0 * r) + TWO_PI * r;
+    // current geometry (`peri` is computed above the gather). Both sides are
+    // full-res px here, so the constants are used raw; neon-optimized.frag
+    // scales them by uResolutionScale because its `peri` is in FBO px - keep
+    // the two in step when tuning them.
     float headF  = HEAD_FEATHER_PX / peri;
     float tailF  = TAIL_FEATHER_PX / peri;
     // ONE arc coverage, folding per-arc intensity in, and it drives the

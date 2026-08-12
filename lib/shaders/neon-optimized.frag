@@ -397,19 +397,26 @@ void main() {
     core            = max(core - corePed, 0.0) / max(1.0 - corePed, 1e-6);
     float lineGate  = clamp(uLineWidth / max(minHalf * 2.0, 1e-3), 0.0, 1.0);
 
+    // Perimeter of the rounded rect, in FBO px (uRectSize is pre-scaled).
+    // Used twice below: to size the colour-gather kernel, and to convert the
+    // arc feathers from px to perimeter fractions.
+    float r    = clamp(uCornerRadius, 0.0, min(uRectSize.x, uRectSize.y) * 0.5);
+    float peri = 2.0 * (uRectSize.x + uRectSize.y - 4.0 * r) + TWO_PI * r;
+
     // --- Kernel widths ------------------------------------------------
-    // kc is the COLOUR gather weight and keeps the anti-bead floor; kh / bw
-    // are the EMISSION widths and take raw glowRadius, because the halo and
-    // bloom are evaluated analytically from the SDF distance below and a
+    // kc is the COLOUR gather weight, sized as a fraction of the perimeter
+    // because the gradient LUT it filters is indexed by perimeter fraction;
+    // kh / bw are the EMISSION widths and take raw glowRadius, because the halo
+    // and bloom are evaluated analytically from the SDF distance below and a
     // closed form cannot bead. See neon.frag for the full rationale.
     //
-    // The floor is a fixed full-res px span compared against an FBO-px
-    // glowRadius, so it carries uResolutionScale - same convention as
-    // FILAMENT_MIN_HALF_WIDTH. This is also what puts the two renderers back in
-    // agreement: the old sampleSpacing floor was FBO px over uNumSamples, so it
-    // moved with the rect size AND the perf slider, landing 2x wider than the
-    // base renderer's at their respective defaults.
-    float kc  = max(uGlowRadius, COLOR_BLEND_MIN_PX * uResolutionScale);
+    // COLOR_BLEND_PERIM_FRAC is unit-free and `peri` is already FBO px, so
+    // unlike FILAMENT_MIN_HALF_WIDTH this needs no uResolutionScale correction.
+    // Deriving it from the shared NEON_MAX_LOOP_SAMPLES fraction rather than
+    // from uNumSamples is also what keeps the two renderers in agreement: an
+    // earlier sampleSpacing floor divided by the live sample count, so it moved
+    // with the perf slider and landed 2x wider than the base renderer's.
+    float kc  = max(peri * COLOR_BLEND_PERIM_FRAC, EMISSION_MIN_WIDTH);
     float kc2 = kc * kc;
     float kh  = max(uGlowRadius,                       EMISSION_MIN_WIDTH);
     float bw  = max(uGlowRadius * BLOOM_REACH_TO_GLOW, EMISSION_MIN_WIDTH);
@@ -529,13 +536,11 @@ void main() {
     // the whole corner. See neon.frag for full rationale.
     float sPos = perimeterPosition(vPos);
     // Inward feathers: convert pixel widths to perimeter fractions. `peri` is
-    // in FBO px (uRectSize is pre-scaled) while HEAD/TAIL_FEATHER_PX are
-    // full-res px, so the constants carry uResolutionScale - otherwise the
-    // filament's inset at each arc end grows as 1/resolutionScale and the arc
-    // ends up visibly shorter than the base renderer's, leaving a stretch of
-    // bare halo past the filament head/tail.
-    float r      = clamp(uCornerRadius, 0.0, min(uRectSize.x, uRectSize.y) * 0.5);
-    float peri   = 2.0 * (uRectSize.x + uRectSize.y - 4.0 * r) + TWO_PI * r;
+    // computed above the gather and is in FBO px (uRectSize is pre-scaled)
+    // while HEAD/TAIL_FEATHER_PX are full-res px, so the constants carry
+    // uResolutionScale - otherwise the filament's inset at each arc end grows
+    // as 1/resolutionScale and the arc ends up visibly shorter than the base
+    // renderer's, leaving a stretch of bare halo past the filament head/tail.
     float headF  = HEAD_FEATHER_PX * uResolutionScale / peri;
     float tailF  = TAIL_FEATHER_PX * uResolutionScale / peri;
     // One coverage, folding per-arc intensity in, driving the filament as well
