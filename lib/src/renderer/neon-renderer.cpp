@@ -351,6 +351,17 @@ namespace EdgeLighting
                                    config.neon.glowRadius != mCurrentConfig.neon.glowRadius ||
                                    config.neon.bloomStrength != mCurrentConfig.neon.bloomStrength ||
                                    config.neon.intensity != mCurrentConfig.neon.intensity ||
+                                   // lineWidth feeds setupGeometry's filament-reach floor, which is
+                                   // what sizes the quad whenever glowRadius is small. Miss it and a
+                                   // widened filament keeps the old, tighter margin and gets clipped
+                                   // on the OUTSIDE only (the quad bounds the exterior; the interior
+                                   // is always covered) - the "outer glow dropped at glowRadius 0"
+                                   // report. Only bites at small glowRadius, because above
+                                   // lineWidth / 10.4 the glow term wins the max() anyway.
+                                   config.neon.lineWidth != mCurrentConfig.neon.lineWidth ||
+                                   // filamentFalloff sets how many sigmas the filament
+                                   // reaches, so it sizes the quad too (see setupGeometry).
+                                   config.neon.filamentFalloff != mCurrentConfig.neon.filamentFalloff ||
                                    config.neon.outsideCutoff != mCurrentConfig.neon.outsideCutoff;
         const bool lutDirty = config.neon.colorStops != mCurrentConfig.neon.colorStops ||
                               config.neon.blendSpace != mCurrentConfig.neon.blendSpace;
@@ -459,9 +470,15 @@ namespace EdgeLighting
         // produced a zero margin: the quad landed exactly on the rect and clipped
         // every exterior fragment, so the outside half of the filament
         // disappeared while the inside half stayed. Mirrors the shader's `sigma`.
+        // Reach in sigmas depends on the falloff exponent, not a constant - a
+        // soft filament's tail runs for hundreds of sigmas. Same expression as
+        // the shaders' reachSigmas; see neon-tuning.h.
+        float filN = 2.0f * std::max(config.neon.filamentFalloff, 1e-3f);
+        float filSigmas = std::clamp(
+            std::pow(std::log2(float(FILAMENT_GAIN) / float(FILAMENT_CUTOFF)), 1.0f / filN),
+            float(FILAMENT_REACH_MIN_SIGMAS), float(FILAMENT_REACH_MAX_SIGMAS));
         float filamentReach = std::max(config.neon.lineWidth * 0.5f,
-                                       float(FILAMENT_MIN_HALF_WIDTH)) *
-                              float(FILAMENT_REACH_SIGMAS);
+                                       float(FILAMENT_MIN_HALF_WIDTH)) * filSigmas;
 
         float margin = std::max(glowReach, filamentReach);
 

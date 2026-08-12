@@ -32,12 +32,29 @@
 //     of width, no perpendicular spike, and the profile is a plain smoothstep
 //     that reads the same on straight edges and at corners. Trade-off: the
 //     visible arc appears inset by these widths (arc lights up at
-//     start + TAIL_FEATHER_PX and ends at start + length - HEAD_FEATHER_PX);
-//     the inset is imperceptible on typical arcs and only matters if the arc
-//     is shorter than about (HEAD + TAIL) pixels. Values are pixel-space
-//     spans, divided by the current perimeter at the call site. ---
+//     start + TAIL_FEATHER_PX and ends at start + length - HEAD_FEATHER_PX).
+//     Values are pixel-space spans, divided by the current perimeter at the
+//     call site, and capped per-arc by ARC_FEATHER_MAX_SHARE below. ---
 #define HEAD_FEATHER_PX           14.0
 #define TAIL_FEATHER_PX           14.0
+
+// --- Cap on each feather, as a share of the arc's own length.
+//
+//     The feathers above are a fixed pixel span while an arc's length is a
+//     FRACTION of the perimeter, so the same arc config is a different pixel
+//     length on every rect. Below ~(HEAD + TAIL) px the two ramps overlapped
+//     and ate into the arc's peak: an L = 0.02 arc peaked at 1.00 on an
+//     800x600 rect but only 0.21 on a 200x150 one - the last place rect size
+//     still reached brightness. Capping each feather at a share of the arc
+//     length holds the peak at exactly 1.0 for any length at any size; a short
+//     arc gets a proportionally shorter ramp instead of a truncated top.
+//
+//     0.4 leaves a 0.2 * length plateau at full brightness between the two
+//     ramps. Up to 0.5 also holds the peak, but with no plateau the arc reads
+//     as a spike rather than a flat-topped segment. Arcs longer than
+//     (HEAD + TAIL) / 0.4 px never reach the cap, so the normal case is
+//     bit-identical to before. ---
+#define ARC_FEATHER_MAX_SHARE     0.4
 
 // --- Halo (sharp coloured glow).
 //
@@ -146,24 +163,33 @@
 //     stay tight without the truncation showing. Keep the two in step. ---
 #define EARLY_OUT_RADIUS_FACTOR   48.0
 
-// --- Filament reach floor for the same quad sizing, in sigmas.
+// --- Filament reach for the same quad sizing, expressed in sigmas.
 //
 //     glowRadius = 0 means "filament only" - the halo and bloom are gated off
-//     by GLOW_GATE_FADE_PX - but the filament itself is still there, and it is
-//     sized by lineWidth, not by glowRadius. Without this floor the margin
-//     above went to 0 at glowRadius = 0, the quad collapsed onto the rect
-//     exactly, and every fragment outside the edge was clipped: the outer half
-//     of the filament vanished while the inner half stayed. So the quad also
-//     has to cover sigma * this.
+//     by GLOW_GATE_FADE_PX - but the filament itself is still there, sized by
+//     lineWidth, so the quad has to cover it or the exterior gets clipped.
 //
-//     12 sigmas because the profile is exp2(-(ad/sigma)^N) with N =
-//     2 * filamentFalloff, and the softest setting (falloff 0.5 -> N = 1) has a
-//     genuinely heavy tail: 2^-12 * FILAMENT_GAIN is ~0.003, invisible, but at
-//     3 sigmas the same setting would still be at ~1.5. The default (N = 2) is
-//     long past zero well before this.
+//     The reach is NOT a constant, because the profile is
+//     exp2(-(ad/sigma)^N) with N = 2 * filamentFalloff and the slider runs
+//     down to falloff 0. Solving core * FILAMENT_GAIN < FILAMENT_CUTOFF gives
 //
-//     NOTE: multiplies a sigma, so it needs no unit conversion - the shaders
-//     apply it to their own already-scaled `sigma`. ---
-#define FILAMENT_REACH_SIGMAS     12.0
+//         reach = sigma * log2(FILAMENT_GAIN / FILAMENT_CUTOFF) ^ (1/N)
+//
+//     which is 1.9 sigmas at falloff 2.0, 3.5 at 1.0, 12.6 at 0.5, 67.8 at 0.3
+//     and 558 at 0.2 - it diverges as falloff -> 0. A fixed 12 (calibrated for
+//     falloff 0.5) left the low end badly under-sized: the interior is
+//     unbounded because the quad always covers it, so a soft filament flooded
+//     inward while the exterior was chopped at 12 sigmas. That asymmetry is
+//     the "no outer glow at glowRadius 0" report.
+//
+//     MAX_SIGMAS bounds the fill cost where the formula diverges; the shaders
+//     pedestal-subtract the core at exactly this reach, so hitting the cap
+//     shortens the glow symmetrically on BOTH sides instead of showing a cliff
+//     on the outside. MIN_SIGMAS keeps a little room at very high falloff.
+//     Keep the expression in step across neon-tuning.h, both setupGeometry
+//     implementations, and both fragment shaders. ---
+#define FILAMENT_CUTOFF           0.002
+#define FILAMENT_REACH_MIN_SIGMAS 2.0
+#define FILAMENT_REACH_MAX_SIGMAS 64.0
 
 #endif // _EDGE_LIGHTING_NEON_TUNING_H_

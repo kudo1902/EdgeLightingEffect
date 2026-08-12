@@ -324,10 +324,19 @@ float arcCoverContinuous(float sPos, float start, float length, float fHead, flo
     if (length <= 1e-6)       return 0.0;   // empty
     float rel = sPos - start;
     rel -= floor(rel);                       // wrap to [0, 1): distance past start
-    // Tail ramps IN from 0 at rel = 0 (start) to 1 at rel = fTail.
-    float tailIn = smoothstep(0.0, fTail, rel);
-    // Head ramps OUT from 1 at rel = length - fHead to 0 at rel = length.
-    float headIn = 1.0 - smoothstep(length - fHead, length, rel);
+    // Cap each feather at a share of the arc's own length. The widths arrive
+    // as a fixed pixel span but `length` is a perimeter FRACTION, so on a small
+    // rect a short arc can be narrower than the two ramps combined - they then
+    // overlap and clip the peak, making the same arc config dimmer on a smaller
+    // rect (0.21 vs 1.00 for L = 0.02 at 200x150 vs 800x600). Capping keeps the
+    // peak at 1.0 for any length at any size, and leaves long arcs untouched.
+    float cap    = length * ARC_FEATHER_MAX_SHARE;
+    float fH     = min(fHead, cap);
+    float fT     = min(fTail, cap);
+    // Tail ramps IN from 0 at rel = 0 (start) to 1 at rel = fT.
+    float tailIn = smoothstep(0.0, fT, rel);
+    // Head ramps OUT from 1 at rel = length - fH to 0 at rel = length.
+    float headIn = 1.0 - smoothstep(length - fH, length, rel);
     // Fragments past `length` in perim get headIn = 0 -> coverage = 0 (no bleed).
     // Fragments behind start wrap to rel near 1 -> also headIn = 0 -> coverage = 0.
     return tailIn * headIn;
@@ -392,6 +401,20 @@ void main() {
     float sigma     = max(halfWidth, FILAMENT_MIN_HALF_WIDTH);
     float N         = 2.0 * max(uFilamentFalloff, 1e-3);
     float core      = exp2(-pow(ad / sigma, N));
+
+    // Filament reach, in sigmas, for THIS falloff - see neon-tuning.h. Also
+    // sizes the draw quad CPU-side; the two must stay in step.
+    float reachSigmas = clamp(pow(log2(FILAMENT_GAIN / FILAMENT_CUTOFF), 1.0 / N),
+                              FILAMENT_REACH_MIN_SIGMAS, FILAMENT_REACH_MAX_SIGMAS);
+    // Pedestal-subtract the core so it reaches exactly zero at that reach,
+    // renormalised to keep the ad = 0 peak at 1.0. Where the reach formula is
+    // honoured the pedestal is ~1.7e-4 and invisible; where MAX_SIGMAS clamps
+    // it (soft falloff, whose tail would otherwise run for hundreds of sigmas)
+    // this is what makes the glow end smoothly and, crucially, SYMMETRICALLY.
+    // Without it the interior kept the full tail while the exterior was cut at
+    // the quad edge.
+    float corePed   = exp2(-pow(reachSigmas, N));
+    core            = max(core - corePed, 0.0) / max(1.0 - corePed, 1e-6);
     float lineGate  = clamp(uLineWidth / (FILAMENT_MIN_HALF_WIDTH * 2.0), 0.0, 1.0);
 
     // --- Kernel widths ------------------------------------------------
@@ -661,7 +684,7 @@ void main() {
     // making the pedestal subtract the entire bloom).
     float reach     = max(uGlowRadius * EARLY_OUT_RADIUS_FACTOR *
                           (1.0 + uBloomStrength * uIntensity),
-                          sigma * FILAMENT_REACH_SIGMAS);
+                          sigma * reachSigmas);
     float bloomPeak = BLOOM_NORM_FACTOR * PI;
     float bloomPed  = BLOOM_NORM_FACTOR * PI * bw / sqrt(reach * reach + bw * bw);
     bloom = max(bloom - bloomPed, 0.0) * (bloomPeak / max(bloomPeak - bloomPed, 1e-6));
