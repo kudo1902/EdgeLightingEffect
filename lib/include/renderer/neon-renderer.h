@@ -78,7 +78,6 @@ namespace EdgeLighting
         /// Backs neon.frag's std140 `ArcBlock` (uArcCount + uArcs[MAX_ARCS]).
         UniformBuffer mArcBlock{"NeonRenderer.ArcBlock"};
 
-        float mSampleSpacing = 0.0f;
         float mQuadMargin = 0.0f; ///< Draw-quad margin (px from rect edge); shader fades the bloom out by here.
 
         /// Baked colour ring as a 1×N RGBA32F texture (sampled with v=0.5 in the shader).

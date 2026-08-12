@@ -131,12 +131,39 @@
 #define SIDE_SOFT_EPSILON         1e-5
 #define WSUM_EPSILON              1e-6
 
-// --- Far early-out (CPU-side quad sizing). The draw quad is sized to
-//     rect + max(glowRadius * RADIUS_FACTOR, sampleSpacing * SPACING_FACTOR),
-//     which must stay >= a few * the bloom reach so the quad never clips
-//     visible glow. Used only by the renderers' setupGeometry now (the
-//     shaders no longer discard). ---
+// --- Far early-out (quad sizing). The draw quad is sized to
+//     rect + glowRadius * RADIUS_FACTOR * (1 + bloomStrength * intensity).
+//
+//     glowRadius only: the companion sampleSpacing * SPACING_FACTOR term is
+//     gone. sampleSpacing is perimeter / NEON_MAX_LOOP_SAMPLES, so it won on
+//     any reasonably large rect at default glowRadius and made both the
+//     distance the bloom got truncated at and the brightness it still had
+//     there track the rect size. The bloom's reach is a function of glowRadius
+//     alone, so that is all that sizes the quad.
+//
+//     Used by the renderers' setupGeometry AND by the shaders, which recompute
+//     the same expression to place the bloom pedestal that lets this margin
+//     stay tight without the truncation showing. Keep the two in step. ---
 #define EARLY_OUT_RADIUS_FACTOR   48.0
-#define EARLY_OUT_SPACING_FACTOR  32.0
+
+// --- Filament reach floor for the same quad sizing, in sigmas.
+//
+//     glowRadius = 0 means "filament only" - the halo and bloom are gated off
+//     by GLOW_GATE_FADE_PX - but the filament itself is still there, and it is
+//     sized by lineWidth, not by glowRadius. Without this floor the margin
+//     above went to 0 at glowRadius = 0, the quad collapsed onto the rect
+//     exactly, and every fragment outside the edge was clipped: the outer half
+//     of the filament vanished while the inner half stayed. So the quad also
+//     has to cover sigma * this.
+//
+//     12 sigmas because the profile is exp2(-(ad/sigma)^N) with N =
+//     2 * filamentFalloff, and the softest setting (falloff 0.5 -> N = 1) has a
+//     genuinely heavy tail: 2^-12 * FILAMENT_GAIN is ~0.003, invisible, but at
+//     3 sigmas the same setting would still be at ~1.5. The default (N = 2) is
+//     long past zero well before this.
+//
+//     NOTE: multiplies a sigma, so it needs no unit conversion - the shaders
+//     apply it to their own already-scaled `sigma`. ---
+#define FILAMENT_REACH_SIGMAS     12.0
 
 #endif // _EDGE_LIGHTING_NEON_TUNING_H_

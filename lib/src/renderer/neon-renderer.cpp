@@ -92,8 +92,6 @@ namespace EdgeLighting
             LOG_E("Failed to compile/link NeonRenderer shaders.");
             return false;
         }
-        // rebuildLoopSamples must run before setupGeometry: the quad size
-        // depends on mSampleSpacing (computed in rebuildLoopSamples).
         rebuildLoopSamples(mCurrentConfig);
         setupGeometry(mCurrentConfig);
         rebuildGradientLUT(mCurrentConfig);
@@ -375,7 +373,7 @@ namespace EdgeLighting
 
         if (samplesDirty)
         {
-            rebuildLoopSamples(config); // updates mSampleSpacing, read by setupGeometry
+            rebuildLoopSamples(config);
         }
 
         if (geometryDirty)
@@ -433,19 +431,39 @@ namespace EdgeLighting
 
     void NeonRenderer::setupGeometry(const Config &config)
     {
-        // Size the quad to cover the lit region: rect + earlyOut. Beyond this the
-        // halo/bloom are < ~1% at default strength, so geometry bounds the far
-        // region instead of a per-fragment discard (tiler-friendly).
-        // Factors come from the shared neon-tuning.h (also fed to the shaders).
-        float margin = std::max(config.neon.glowRadius * float(EARLY_OUT_RADIUS_FACTOR),
-                                mSampleSpacing * float(EARLY_OUT_SPACING_FACTOR));
-
+        // Size the quad to cover the lit region: rect + earlyOut, so geometry
+        // bounds the far region instead of a per-fragment discard
+        // (tiler-friendly). Factors come from the shared neon-tuning.h.
+        //
+        // glowRadius ONLY - deliberately not the old
+        // max(glowRadius * RADIUS, sampleSpacing * SPACING). sampleSpacing is
+        // perimeter / NEON_MAX_LOOP_SAMPLES, so the spacing term won on any
+        // reasonably large rect at default glowRadius and made the quad - and
+        // with it the distance the bloom got truncated at, and the brightness
+        // it still had there - track the rect size: the fade began at 250 px on
+        // a 200x150 rect and 1542 px on a 1920x1080 one. The bloom's reach is a
+        // function of glowRadius and nothing else, so that is all that sizes the
+        // quad now. It also caps the worst case: the old spacing term asked for
+        // a ~5800x4900 px quad on a 1920x1080 rect.
+        //
         // The wide bloom (1/D tail) stays visible further out as bloomStrength /
-        // intensity rise, so grow the quad with them - otherwise a strong bloom
-        // gets chopped at a hard rectangular edge, worst on small geometry. The
-        // shader still soft-fades the emission to zero at mQuadMargin, so even
-        // if this under-estimates there's no hard cutoff.
-        margin *= 1.0f + config.neon.bloomStrength * config.neon.intensity;
+        // intensity rise, so grow the quad with them. The shader reproduces this
+        // exact expression to place its bloom pedestal, which is what lets the
+        // margin stay this tight without the truncation showing - keep the two
+        // in step.
+        float glowReach = config.neon.glowRadius * float(EARLY_OUT_RADIUS_FACTOR) *
+                          (1.0f + config.neon.bloomStrength * config.neon.intensity);
+
+        // ...but the filament is sized by lineWidth, not glowRadius, so the quad
+        // must clear it too. Without this floor, glowRadius = 0 ("filament only")
+        // produced a zero margin: the quad landed exactly on the rect and clipped
+        // every exterior fragment, so the outside half of the filament
+        // disappeared while the inside half stayed. Mirrors the shader's `sigma`.
+        float filamentReach = std::max(config.neon.lineWidth * 0.5f,
+                                       float(FILAMENT_MIN_HALF_WIDTH)) *
+                              float(FILAMENT_REACH_SIGMAS);
+
+        float margin = std::max(glowReach, filamentReach);
 
         // Hard cap: when the outside cutoff is enabled the shader discards
         // emission past size + softness, so there's no point rasterising
@@ -511,13 +529,6 @@ namespace EdgeLighting
             block.samples[i] = glm::vec4(p, 0.0f, 0.0f);
         }
         mLoopSamplesBlock.SetData(&block, sizeof(block));
-
-        float w = config.geometry.width;
-        float h = config.geometry.height;
-        float r = std::max(0.0f, std::min(config.geometry.cornerRadius, std::min(w, h) * 0.5f));
-
-        float perimeter = 2.0f * (w - 2.0f * r) + 2.0f * (h - 2.0f * r) + 2.0f * PI * r;
-        mSampleSpacing = perimeter / static_cast<float>(NEON_MAX_LOOP_SAMPLES);
     }
 
     void NeonRenderer::rebuildGradientLUT(const Config &config)

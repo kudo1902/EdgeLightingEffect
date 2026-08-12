@@ -76,7 +76,6 @@ namespace EdgeLighting
         /// Backs neon-optimized.frag's std140 `ArcBlock` (uArcCount + uArcs[]).
         UniformBuffer mArcBlock{"NeonOpt.ArcBlock"};
 
-        float mSampleSpacing = 0.0f;
         float mQuadMargin = 0.0f; ///< Scaled/FBO-space margin to the Pass-1 quad edge (shader soft-fade).
 
         Texture2D mGradientLUT;
