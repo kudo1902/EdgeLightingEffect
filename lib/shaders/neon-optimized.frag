@@ -50,8 +50,6 @@ uniform float uOutsideCutoff;         ///< Positive scaled-px distance OUTSIDE t
 uniform float uOutsideCutoffSoftness; ///< Feather width (scaled px) at the outside cutoff boundary.
 uniform int   uWinding;               ///< 0 = CLOCKWISE, 1 = COUNTER_CLOCKWISE (matches Winding enum).
 
-uniform float uSampleSpacing;
-
 // FBO px per full-res px (Config::OptimizedNeonConfig::resolutionScale). Every
 // pixel-valued uniform above already arrives pre-multiplied by it, so the SDF
 // distance `d`, uRectSize and friends are all in FBO space. The tuning
@@ -382,10 +380,15 @@ void main() {
     // kc is the COLOUR gather weight and keeps the anti-bead floor; kh / bw
     // are the EMISSION widths and take raw glowRadius, because the halo and
     // bloom are evaluated analytically from the SDF distance below and a
-    // closed form cannot bead. See neon.frag for the full rationale. Note this
-    // shader's uSampleSpacing is FBO px over uNumSamples, so the old floor
-    // moved with BOTH the rect size and the perf slider.
-    float kc  = max(uGlowRadius, uSampleSpacing * HALO_SPACING_FLOOR);
+    // closed form cannot bead. See neon.frag for the full rationale.
+    //
+    // The floor is a fixed full-res px span compared against an FBO-px
+    // glowRadius, so it carries uResolutionScale - same convention as
+    // FILAMENT_MIN_HALF_WIDTH. This is also what puts the two renderers back in
+    // agreement: the old sampleSpacing floor was FBO px over uNumSamples, so it
+    // moved with the rect size AND the perf slider, landing 2x wider than the
+    // base renderer's at their respective defaults.
+    float kc  = max(uGlowRadius, COLOR_BLEND_MIN_PX * uResolutionScale);
     float kc2 = kc * kc;
     float kh  = max(uGlowRadius,                       EMISSION_MIN_WIDTH);
     float bw  = max(uGlowRadius * BLOOM_REACH_TO_GLOW, EMISSION_MIN_WIDTH);
@@ -549,7 +552,7 @@ void main() {
     // --- Analytic halo + bloom --------------------------------------------
     // Closed form of the removed sums; peaks at ad = 0 match the gather's
     // exactly, so HALO_NORM_FACTOR / BLOOM_NORM_FACTOR keep their calibration.
-    // Pure functions of the SDF distance: no beading, no uSampleSpacing, and
+    // Pure functions of the SDF distance: no beading, no sample spacing, and
     // therefore no dependence on rect size OR on the numSamples slider. See
     // neon.frag for the derivation and the corner-brightness caveat.
     float halo  = HALO_NORM_FACTOR  * 2.0 * kh * kh / (ad * ad + kh * kh);

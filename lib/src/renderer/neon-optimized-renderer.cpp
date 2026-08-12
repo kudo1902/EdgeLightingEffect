@@ -212,7 +212,6 @@ namespace EdgeLighting
         mArcBlock.SetData(&arcBlock, sizeof(arcBlock));
         mArcBlock.BindBase(ARC_BLOCK_BINDING);
 
-        mNeonShader.SetUniform("uSampleSpacing", mSampleSpacing);
         mNeonShader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
         mNeonShader.SetUniform("uQuadMargin", mQuadMargin);
 

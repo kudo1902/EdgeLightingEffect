@@ -264,7 +264,6 @@ namespace EdgeLighting
         mArcBlock.SetData(&arcBlock, sizeof(arcBlock));
         mArcBlock.BindBase(ARC_BLOCK_BINDING);
 
-        mShaderProgram.SetUniform("uSampleSpacing", mSampleSpacing);
         mShaderProgram.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
 
         // Loop sample positions come from the LoopSamplesBlock UBO (see

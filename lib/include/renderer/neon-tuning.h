@@ -52,8 +52,8 @@
 //     values at ad = 0 are unchanged (0.86 and 1.005 respectively).
 //
 //     The closed form is what makes the effect geometry-independent. The
-//     gather had to floor its kernel at HALO_SPACING_FLOOR * sampleSpacing to
-//     stop 128 discrete samples beading into dots, and sampleSpacing is
+//     gather had to floor its kernel at a multiple of sampleSpacing to stop
+//     128 discrete samples beading into dots, and sampleSpacing is
 //     perimeter / NEON_MAX_LOOP_SAMPLES - so halo width, and via the gate its
 //     brightness, both tracked the rect size, and glowRadius did nothing at
 //     all until it exceeded the floor (~56 px on a 1920x1080 rect, i.e. most
@@ -63,11 +63,30 @@
 #define HALO_NORM_FACTOR          0.43
 
 // --- Anti-bead floor for the COLOUR gather kernel only. The perimeter colour
-//     blend is still a 128-sample sum, so its weight keeps the floor. It
-//     appears in both the numerator and the denominator of acc/wsum, so it
-//     sets how far colours blend along the perimeter and can no longer affect
-//     brightness or reach. ---
-#define HALO_SPACING_FLOOR        1.2
+//     blend is still a discrete sum over the loop samples, so its weight keeps
+//     a floor; without one the kernel collapses between samples at small
+//     glowRadius and the blend beads.
+//
+//     A FIXED pixel span, deliberately NOT sampleSpacing-derived. It appears in
+//     both the numerator and the denominator of acc/wsum, so it cannot change
+//     the colour's magnitude inside a uniformly lit stretch - but it does set
+//     the distance over which `col` decays to black approaching an unlit one,
+//     and `col` multiplies the filament, halo and bloom alike. Tied to
+//     sampleSpacing that roll-off scaled with the rect (~25 px at 800x600,
+//     ~56 px at 1920x1080) and, in NeonOptimizedRenderer, with the numSamples
+//     slider too - so the two renderers disagreed by 2x at their defaults.
+//     The value matches the old 800x600 default floor to within a few percent,
+//     so stock geometry looks unchanged.
+//
+//     Must stay >= about one sample spacing at the smallest geometry in use,
+//     or the gather beads. At NEON_MAX_LOOP_SAMPLES = 128 that holds for any
+//     perimeter up to ~3000 px; past that the samples are sparser than this
+//     floor and the blend leans on glowRadius to stay smooth.
+//
+//     NOTE: full-res pixel span. neon-optimized.frag compares it against FBO-px
+//     quantities, so its copy multiplies by uResolutionScale - keep the two in
+//     step when tuning. ---
+#define COLOR_BLEND_MIN_PX        24.0
 
 // --- Emission on/off ramp. glowRadius = 0 must read as "filament only", but
 //     an analytic profile at radius 0 is a sub-pixel spike of full height

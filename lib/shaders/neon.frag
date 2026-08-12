@@ -39,8 +39,6 @@ uniform float uOutsideCutoff;         ///< Positive px distance OUTSIDE the rect
 uniform float uOutsideCutoffSoftness; ///< Feather width in px at the outside cutoff boundary.
 uniform int   uWinding;               ///< 0 = CLOCKWISE, 1 = COUNTER_CLOCKWISE (matches Winding enum).
 
-uniform float uSampleSpacing;
-
 // Loop sample positions (perimeter points) as a std140 uniform block. Each
 // entry is packed as a vec4 (only .xy is meaningful; std140 pads vec2 to a
 // 16-byte stride anyway) so the shader reads raw float32 out of the constant
@@ -400,18 +398,17 @@ void main() {
     // Two separate kernels, and the split is the point:
     //
     //  - kc is the COLOUR gather weight. The perimeter colour blend is still a
-    //    128-sample sum, so it keeps the anti-bead floor. Because kc appears
-    //    in both the numerator and the denominator of acc/wsum, the floor only
-    //    sets how far colours blend along the perimeter - it cannot reach
-    //    brightness or reach.
+    //    128-sample sum, so it keeps the anti-bead floor - but the floor is a
+    //    FIXED pixel span, not a multiple of the sample spacing. Spacing is
+    //    perimeter / 128, so the old floor made the colour roll-off at an arc
+    //    end track the rect size; COLOR_BLEND_MIN_PX holds it at one width for
+    //    every geometry. See neon-tuning.h for the full rationale.
     //
     //  - kh / bw are the EMISSION widths: raw glowRadius, no floor. The halo
     //    and bloom are evaluated analytically from the SDF distance further
     //    down, and a closed form cannot bead however far apart the gather
-    //    samples are. That removes the whole dependence on uSampleSpacing
-    //    (i.e. on the rect size) and makes glowRadius proportional across its
-    //    entire range instead of pinned at 1.2 * sampleSpacing.
-    float kc  = max(uGlowRadius, uSampleSpacing * HALO_SPACING_FLOOR);
+    //    samples are, so glowRadius is proportional across its entire range.
+    float kc  = max(uGlowRadius, COLOR_BLEND_MIN_PX);
     float kc2 = kc * kc;
     float kh  = max(uGlowRadius,                       EMISSION_MIN_WIDTH);
     float bw  = max(uGlowRadius * BLOOM_REACH_TO_GLOW, EMISSION_MIN_WIDTH);
@@ -631,7 +628,7 @@ void main() {
     // Peak values at ad = 0 are identical to the gather's (0.86 and 1.005), so
     // the NORM factors keep their calibration. Both are pure functions of the
     // SDF distance, so neither can bead and neither carries any dependence on
-    // uSampleSpacing - which is what frees glowRadius to set the width
+    // the sample spacing - which is what frees glowRadius to set the width
     // directly at any rect size.
     //
     // Known difference from the gather: on the concave side of a corner the
