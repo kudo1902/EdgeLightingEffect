@@ -168,9 +168,35 @@ namespace EdgeLighting
         mNeonShader.SetUniform("uBloomStrength", config.neon.bloomStrength);
         mNeonShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
         mNeonShader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness * scale);
-        mNeonShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff) * scale);
+        // Cutoffs are pulled IN by half an FBO texel before being handed to the
+        // shader. Pass 1 renders at `scale` and Pass 2 blits back with a
+        // bilinear filter, which reconstructs this hard edge as a ramp
+        // 1 texel wide centred on the cut - half of it inside the cutoff, half
+        // outside. The cut's midpoint is already exact (measured to <= 0.1 px
+        // at every scale), but that outer half-ramp is light drawn beyond the
+        // requested cutoff, and it crosses the opaque fill's hard edge as a
+        // visible fringe. Shifting the cut in by half a texel puts the ramp's
+        // END on the cutoff instead of its middle, so the light stays inside
+        // the band. Costs half a texel of glow (1 full-res px at scale 0.5).
+        //
+        // Half a texel in FBO px is a flat 0.5 - no division by scale, because
+        // the value is already in FBO space. At scale >= 1 the blit is 1:1 and
+        // adds no spread, so there is nothing to correct.
+        // Pass 1 cuts one FBO texel WIDER than asked. The exact cut is
+        // re-applied at full resolution in the blit (see neon-blit.frag); this
+        // headroom makes sure real emission still exists right up to that
+        // boundary, instead of the blit trying to sharpen an edge the upscale
+        // has already faded to nothing. At scale >= 1 there is no upscale, so
+        // no headroom is needed.
+        const float blitHeadroom = (scale < 1.0f) ? 1.0f : 0.0f;
+        auto passOneCutoff = [blitHeadroom](float sizeFbo) {
+            return sizeFbo + blitHeadroom;
+        };
+        mNeonShader.SetUniform("uInsideCutoff",
+                               passOneCutoff(GetCutoffSize(config.neon.insideCutoff) * scale));
         mNeonShader.SetUniform("uInsideCutoffSoftness", config.neon.insideCutoff.softness * scale);
-        mNeonShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff) * scale);
+        mNeonShader.SetUniform("uOutsideCutoff",
+                               passOneCutoff(GetCutoffSize(config.neon.outsideCutoff) * scale));
         mNeonShader.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness * scale);
         // Pack the segment vector as vec3(position, invSigma, boost) into the
         // std140 SegmentBlock UBO (DALi-compatible pattern - see the shader).
@@ -252,12 +278,13 @@ namespace EdgeLighting
         glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
         glm::mat4 identity(1.0f);
+        // Rect centre in full-res gl_FragCoord space (y-up). Used by the
+        // opaque fill and by the blit, which re-imposes the band's cutoffs at
+        // full resolution.
+        glm::vec2 centerFull(config.geometry.position.x + halfRectW,
+                             static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
         if (config.neon.opaqueMode != OpaqueMode::NONE)
         {
-            // Rect centre in full-res gl_FragCoord space (y-up).
-            glm::vec2 centerFull(config.geometry.position.x + halfRectW,
-                                 static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
-
             mBlackRectShader.Use();
             mBlackRectShader.SetUniform("uMVP", identity);
             mBlackRectShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
@@ -291,6 +318,16 @@ namespace EdgeLighting
 
         mHalfResBuffer.BindTexture(0);
         mBlitShader.SetUniform("uSource", 0);
+        // Full-res band geometry so the blit can re-impose the cutoffs sharply.
+        mBlitShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
+        mBlitShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
+        mBlitShader.SetUniform("uRectCenter", centerFull);
+        mBlitShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
+        mBlitShader.SetUniform("uInsideCutoffSoftness", config.neon.insideCutoff.softness);
+        mBlitShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
+        mBlitShader.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness);
+        mBlitShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
+        mBlitShader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness);
 
         mBlitVertexArray.DrawArrays(GL_TRIANGLES, 6);
 
