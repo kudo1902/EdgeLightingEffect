@@ -768,11 +768,30 @@ void main() {
     // --- Quad-edge fade: the draw quad ends at d == uQuadMargin (exterior).
     // Fade the emission to zero over the last stretch so a strong bloom never
     // shows a hard rectangular cutoff where the quad clips it. Interior pixels
-    // have d < 0, well below the fade band, so they're unaffected. With the
-    // outsideCutoff clamp above this is usually already zero, but the fade is
-    // kept as a safety net for the case where uQuadMargin is smaller than
-    // outsideCutoff (e.g. the CPU-side clamp is loosened later).
-    result *= 1.0 - smoothstep(uQuadMargin * 0.8, uQuadMargin, d);
+    // have d < 0, well below the fade band, so they're unaffected.
+    //
+    // The ramp must not begin INSIDE the outside cutoff, or it dims the band's
+    // outer edge before the cutoff mask above ever gets there - and only on the
+    // exterior, because this term keys on positive d while the interior half of
+    // a symmetric band never sees it. An opaque-INSIDE vs opaque-OUTSIDE pair
+    // sharing an outer rect is what exposes it: at cutoff 12, setupGeometry
+    // clamps uQuadMargin to size + softness + 1 = 13, so a bare fraction of the
+    // margin started the ramp at d = 10.4 and left the outermost band pixel at
+    // ~0.66 of its mirrored counterpart (15.3 vs 23.3 on the right edge, same
+    // ratio on the other three). Flooring the start at the cutoff boundary
+    // hands everything up to that point back to the cutoff smoothstep.
+    //
+    // Only when that boundary actually falls inside the quad, though. A
+    // disabled cutoff arrives as a huge sentinel, and the whole point of this
+    // fade is the case where uQuadMargin is SMALLER than outsideCutoff - in
+    // both, flooring would push the ramp's start to or past uQuadMargin, which
+    // is a hard step (and an inverted smoothstep, undefined in GLSL). Those
+    // keep the unfloored start, so the guarded expression is unchanged wherever
+    // the old one was already correct.
+    float fadeFloor = uQuadMargin * QUAD_FADE_START_FRAC;
+    float cutEdge   = uOutsideCutoff + outSoft;
+    float fadeStart = (cutEdge < uQuadMargin) ? max(fadeFloor, cutEdge) : fadeFloor;
+    result *= 1.0 - smoothstep(fadeStart, uQuadMargin, d);
 
     // --- Grade --------------------------------------------------------
     // Hue-preserving Reinhard: tonemap the peak channel and scale the

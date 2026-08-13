@@ -440,14 +440,22 @@ namespace EdgeLighting
 
             // Hard cap: when the outside cutoff is enabled the shader discards
             // emission past size + softness, so there's no point rasterising
-            // further. Everything is in scaled/FBO space here; cutoff sizes
-            // are unscaled pixels so multiply by `scale`. +1 (scaled) safety
-            // so the shader's own softmask fades to zero before the quad edge.
+            // further. The +1 px safety leaves the shader's own softmask at
+            // zero BEFORE the quad edge, so no rectangular seam leaks through.
+            //
+            // The WHOLE expression is built in full-res px and scaled once, so
+            // that safety margin is 1 FULL-RES px here, exactly as it is in the
+            // base renderer. Adding the +1 after the scale made it 1 FBO px
+            // instead - 2 full-res px at resolutionScale 0.5 - so the quad edge
+            // sat further out than the base renderer's, and with it the ramp
+            // the shader fits between the cutoff boundary and uQuadMargin. Same
+            // units on both sides is also what makes the shader's fadeStart
+            // floor engage at the same cutoff size in the two renderers.
             if (config.neon.outsideCutoff.enable)
             {
                 float outSoft = std::max(config.neon.outsideCutoff.softness,
                                          static_cast<float>(SIDE_SOFT_EPSILON));
-                float cutoffCap = (config.neon.outsideCutoff.size + outSoft) * scale + 1.0f;
+                float cutoffCap = (config.neon.outsideCutoff.size + outSoft + 1.0f) * scale;
                 margin = std::min(margin, cutoffCap);
             }
             mQuadMargin = margin;

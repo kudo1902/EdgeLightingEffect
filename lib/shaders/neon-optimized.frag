@@ -669,7 +669,20 @@ void main() {
     // strong bloom never shows a hard rectangular cutoff where the quad clips
     // it - mirrors the base NeonRenderer so the two match. Interior pixels
     // have d < 0, well below the band.
-    result *= 1.0 - smoothstep(uQuadMargin * 0.8, uQuadMargin, d);
+    //
+    // The ramp starts at the outside-cutoff boundary when that boundary falls
+    // inside the quad, so it cannot dim the band's outer edge ahead of the
+    // cutoff mask - an asymmetry that hits only the exterior, since this term
+    // keys on positive d. Otherwise (cutoff disabled, or beyond the quad - the
+    // case this fade exists for) the unfloored start stands; flooring there
+    // would collapse the ramp to a hard step and invert the smoothstep.
+    // QUAD_FADE_START_FRAC is a FRACTION of the margin, so unlike the px
+    // constants it needs no uResolutionScale - and uQuadMargin, uOutsideCutoff
+    // and outSoft are all already in FBO px. See neon.frag and neon-tuning.h.
+    float fadeFloor = uQuadMargin * QUAD_FADE_START_FRAC;
+    float cutEdge   = uOutsideCutoff + outSoft;
+    float fadeStart = (cutEdge < uQuadMargin) ? max(fadeFloor, cutEdge) : fadeFloor;
+    result *= 1.0 - smoothstep(fadeStart, uQuadMargin, d);
 
     // --- Grade --------------------------------------------------------
     // Hue-preserving Reinhard (see neon.frag for the rationale).

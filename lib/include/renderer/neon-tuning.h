@@ -188,6 +188,30 @@
 //     stay tight without the truncation showing. Keep the two in step. ---
 #define EARLY_OUT_RADIUS_FACTOR   48.0
 
+// --- Where the shaders' quad-edge fade begins, as a FRACTION of the quad
+//     margin. The emission ramps to zero over [FRAC * margin, margin], so the
+//     bloom's 1/D tail - still ~10% of peak out at the quad edge - never clips
+//     as a hard rectangle.
+//
+//     A fraction, not a pixel span, because the margin is proportional to
+//     glowRadius (see EARLY_OUT_RADIUS_FACTOR) and so is the bloom profile it
+//     hides. A fraction keeps the ramp at a constant proportion of the bloom's
+//     reach, so the fade reads the same at every glow radius; a fixed px ramp
+//     would vanish on a wide glow and dominate a narrow one. At the stock
+//     glowRadius 5 / bloom 0.3 / intensity 1 the margin is 312 px, giving a
+//     62 px ramp.
+//
+//     Nothing derives 0.8 - anything leaving a ramp wide enough to hide the
+//     clip behaves the same. What it DOES assume is that the margin was set by
+//     the glow, where 20% of it is a long distance. When outsideCutoff clamps
+//     the margin instead (to size + softness + 1), 20% of ~13 px is 2.6 px and
+//     the ramp lands INSIDE the cutoff band, dimming the band's outer edge
+//     ahead of the cutoff mask - and only on the exterior, since the fade keys
+//     on positive d. Both shaders therefore floor the ramp's start at the
+//     cutoff boundary whenever that boundary falls inside the quad; see the
+//     fadeStart block in neon.frag. ---
+#define QUAD_FADE_START_FRAC      0.8
+
 // --- Filament reach for the same quad sizing, expressed in sigmas.
 //
 //     glowRadius = 0 means "filament only" - the halo and bloom are gated off
