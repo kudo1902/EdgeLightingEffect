@@ -368,8 +368,14 @@ void main() {
     // The one-sided cuts below stay as discards: they cull a useful half of
     // the band (real work saved) and the quad can't express that shape.
     float softEdge = max(uGlowSideSoftness, SIDE_SOFT_EPSILON);
-    if (uGlowSide == GLOW_SIDE_INSIDE  && d >  softEdge) discard;
-    if (uGlowSide == GLOW_SIDE_OUTSIDE && d < -softEdge) discard;
+    // The one-sided cut is NOT applied in this pass. It is a hard 0/1 edge at
+    // d == 0, and cutting it here means the FBO already contains that edge -
+    // which the upscale then smears across a texel, leaving a ~1 px seam of
+    // wrong brightness right where the filament is at its peak (measured
+    // 213/255 on roughly one pixel around the whole perimeter). Leaving the
+    // emission continuous across d == 0 here and cutting at full resolution in
+    // neon-blit.frag gives a crisp, correctly-placed edge. Being 0-or-1 the
+    // mask commutes with the tone map, so moving it costs no accuracy.
 
     // Hard geometric cutoffs (see neon.frag for the full rationale). Sizes
     // and softness arrive pre-scaled into FBO space to match `d`. Disabled
@@ -651,8 +657,11 @@ void main() {
     result      += lightCol * bloom * uBloomStrength * glowGate * emitCoverAll;
 
     // --- One-sided cut ---
-    if (uGlowSide == GLOW_SIDE_INSIDE)       result *= smoothstep( softEdge, -softEdge, d);
-    else if (uGlowSide == GLOW_SIDE_OUTSIDE) result *= smoothstep(-softEdge,  softEdge, d);
+    // The soft CUTOFF masks stay here, before the tone map, exactly as
+    // neon.frag does them - tonemap(x * m) != tonemap(x) * m, so moving a
+    // feathered mask into the blit (which runs after the tone map) would
+    // change every partially-masked pixel. The one-sided cut is the exception:
+    // it is 0-or-1, so it commutes, and it lives in the blit (see above).
 
     // --- Hard cutoff soft masks: fade the emission over the per-side
     // softness on each side of the [-uInsideCutoff, +uOutsideCutoff] band so
@@ -661,14 +670,16 @@ void main() {
     // naturally evaluates to a pass-through 1.0.
     // In the band means: outside the shrunk rect (dIn >= 0) and inside the
     // grown rect (dOut <= 0). See bandOuterDistance / bandInnerDistance.
-    result *= smoothstep(-inSoft, inSoft, dIn);
-    result *= 1.0 - smoothstep(-outSoft, outSoft, dOut);
+
 
     // --- Quad-edge fade: the draw quad ends at d == uQuadMargin (all in
     // scaled/FBO space). Fade the emission to zero over the last stretch so a
     // strong bloom never shows a hard rectangular cutoff where the quad clips
     // it - mirrors the base NeonRenderer so the two match. Interior pixels
     // have d < 0, well below the band.
+    result *= smoothstep(-inSoft, inSoft, dIn);
+    result *= 1.0 - smoothstep(-outSoft, outSoft, dOut);
+
     result *= 1.0 - smoothstep(uQuadMargin * 0.8, uQuadMargin, d);
 
     // --- Grade --------------------------------------------------------

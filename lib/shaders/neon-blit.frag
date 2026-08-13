@@ -62,21 +62,37 @@ void main() {
     vec2  halfSize = uRectSize * 0.5;
     float d        = sdRoundBox(local, halfSize, uCornerRadius);
 
-    // Feather floor of HALF a pixel each way, i.e. a one-pixel-wide ramp. That
-    // is what the full-res path's hard cut plus pixel sampling produces, so the
-    // re-imposed edge is anti-aliased without being any softer than the base
-    // renderer's. A full fwidth() here would span two pixels and leave the
-    // light reaching one pixel further out than the base does.
-    float aa      = 0.5 * fwidth(d);
-    float inSoft  = max(uInsideCutoffSoftness,  aa);
-    float outSoft = max(uOutsideCutoffSoftness, aa);
-    float sideSoft = max(uGlowSideSoftness, aa);
+    // HARD clamp at the band's mathematical end, nothing more.
+    //
+    // Pass 1 already applied the soft cutoff ramps before its tone map, which
+    // is where they have to be to match the full-res renderer. What Pass 1
+    // cannot do is end them crisply: at resolutionScale < 1 the upscale smears
+    // its final edge across a texel, so light lands beyond the band and
+    // fringes past the opaque fill.
+    //
+    // So this only zeroes what lies outside cutoff + softness - the point
+    // where the emission is mathematically already nil. Being a 0-or-1 factor
+    // it commutes with the tone map, so it cannot alter any pixel the base
+    // renderer would have drawn; it only removes upscale spill.
+    //
+    // Half-pixel feather so the clamp is anti-aliased rather than stair-stepped.
+    float aa = 0.5 * fwidth(d);
 
-    float dOut = bandOuterDistance(local, d, halfSize, uCornerRadius, uOutsideCutoff);
-    float dIn  = d + uInsideCutoff;
+    float dOut = bandOuterDistance(local, d, halfSize, uCornerRadius,
+                                   uOutsideCutoff + max(uOutsideCutoffSoftness, 0.0));
+    float dIn  = d + uInsideCutoff + max(uInsideCutoffSoftness, 0.0);
 
-    float mask = smoothstep(-inSoft, inSoft, dIn);
-    mask      *= 1.0 - smoothstep(-outSoft, outSoft, dOut);
+    float mask = smoothstep(-aa, aa, dIn);
+    mask      *= 1.0 - smoothstep(-aa, aa, dOut);
+    // One-sided cut, owned entirely by this pass (Pass 1 leaves the emission
+    // continuous across d == 0).
+    //
+    // Floored to the SAME epsilon neon.frag uses (SIDE_SOFT_EPSILON), NOT to a
+    // pixel. The full-res renderer makes this a hard step and lets the smooth
+    // emission either side supply the apparent anti-aliasing; flooring to half
+    // a pixel here instead widens the edge relative to the base and leaves a
+    // 1 px line of difference all the way round the perimeter.
+    float sideSoft = max(uGlowSideSoftness, 1e-5);
     if (uGlowSide == GLOW_SIDE_INSIDE)       { mask *= smoothstep( sideSoft, -sideSoft, d); }
     else if (uGlowSide == GLOW_SIDE_OUTSIDE) { mask *= smoothstep(-sideSoft,  sideSoft, d); }
 

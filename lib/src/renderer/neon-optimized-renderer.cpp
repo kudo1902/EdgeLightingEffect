@@ -167,6 +167,13 @@ namespace EdgeLighting
         mNeonShader.SetUniform("uGlowRadius", config.neon.glowRadius * scale);
         mNeonShader.SetUniform("uBloomStrength", config.neon.bloomStrength);
         mNeonShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
+        // No headroom: Pass 1 owns the soft cutoff ramp and must place it at the
+        // TRUE cutoff, exactly where neon.frag places it. An earlier version
+        // widened this by a texel to give the blit something to cut into, but
+        // that displaced the whole ramp outward by 2 full-res px at scale 0.5
+        // and was the bulk of the remaining divergence from the base renderer.
+        // The blit's clamp sits at cutoff + softness - past the ramp's own end -
+        // so it removes upscale spill without needing any headroom here.
         mNeonShader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness * scale);
         // Cutoffs are pulled IN by half an FBO texel before being handed to the
         // shader. Pass 1 renders at `scale` and Pass 2 blits back with a
@@ -182,21 +189,11 @@ namespace EdgeLighting
         // Half a texel in FBO px is a flat 0.5 - no division by scale, because
         // the value is already in FBO space. At scale >= 1 the blit is 1:1 and
         // adds no spread, so there is nothing to correct.
-        // Pass 1 cuts one FBO texel WIDER than asked. The exact cut is
-        // re-applied at full resolution in the blit (see neon-blit.frag); this
-        // headroom makes sure real emission still exists right up to that
-        // boundary, instead of the blit trying to sharpen an edge the upscale
-        // has already faded to nothing. At scale >= 1 there is no upscale, so
-        // no headroom is needed.
-        const float blitHeadroom = (scale < 1.0f) ? 1.0f : 0.0f;
-        auto passOneCutoff = [blitHeadroom](float sizeFbo) {
-            return sizeFbo + blitHeadroom;
-        };
         mNeonShader.SetUniform("uInsideCutoff",
-                               passOneCutoff(GetCutoffSize(config.neon.insideCutoff) * scale));
+                               GetCutoffSize(config.neon.insideCutoff) * scale);
         mNeonShader.SetUniform("uInsideCutoffSoftness", config.neon.insideCutoff.softness * scale);
         mNeonShader.SetUniform("uOutsideCutoff",
-                               passOneCutoff(GetCutoffSize(config.neon.outsideCutoff) * scale));
+                               GetCutoffSize(config.neon.outsideCutoff) * scale);
         mNeonShader.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness * scale);
         // Pack the segment vector as vec3(position, invSigma, boost) into the
         // std140 SegmentBlock UBO (DALi-compatible pattern - see the shader).
@@ -322,10 +319,24 @@ namespace EdgeLighting
         mBlitShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
         mBlitShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
         mBlitShader.SetUniform("uRectCenter", centerFull);
-        mBlitShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
-        mBlitShader.SetUniform("uInsideCutoffSoftness", config.neon.insideCutoff.softness);
-        mBlitShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
-        mBlitShader.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness);
+        // The blit's hard clamp only exists to remove upscale spill. At
+        // scale >= 1 nothing is resampled, so there is no spill and the clamp
+        // can only do harm: its own half-pixel AA would land a fraction off
+        // Pass 1's razor-sharp one-sided cut and leave a 1 px seam (measured
+        // as 114/255 on 0.014% of pixels). Feed it disabled sentinels there so
+        // every term evaluates to a pass-through 1.
+        const bool clampBlur = (scale < 1.0f);
+        const float noClamp = CUTOFF_DISABLED_SIZE;
+        mBlitShader.SetUniform("uInsideCutoff",
+                               clampBlur ? GetCutoffSize(config.neon.insideCutoff) : noClamp);
+        mBlitShader.SetUniform("uInsideCutoffSoftness",
+                               clampBlur ? config.neon.insideCutoff.softness : 0.0f);
+        mBlitShader.SetUniform("uOutsideCutoff",
+                               clampBlur ? GetCutoffSize(config.neon.outsideCutoff) : noClamp);
+        mBlitShader.SetUniform("uOutsideCutoffSoftness",
+                               clampBlur ? config.neon.outsideCutoff.softness : 0.0f);
+        // glowSide is always applied here - Pass 1 no longer cuts at d == 0 at
+        // any scale, so this pass is the only thing that does.
         mBlitShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
         mBlitShader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness);
 
