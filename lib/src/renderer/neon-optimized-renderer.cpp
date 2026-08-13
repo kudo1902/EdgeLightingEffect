@@ -269,6 +269,25 @@ namespace EdgeLighting
             mBlackRectShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
             mBlackRectShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
             mBlackRectShader.SetUniform("uOpaqueSoftness", opaqueSoft);
+            // Pass 1 renders the emission at `scale`, so the Pass-2 bilinear
+            // blit smears each hard edge and the light fringes past the
+            // full-res opaque band. Grow the fill to cover it.
+            //
+            // Geometrically the blit spreads a step edge by half an FBO texel
+            // (0.5 / scale full-res px), but the VISIBLE spread saturates near
+            // 1 px: by the time the emission reaches its cutoff it is already
+            // dim, so the outer part of the smeared ramp falls below anything
+            // displayable. Measured end-of-light past the ideal edge is 0.95 px
+            // at scale 0.5 and the same 0.95 px at 0.25. Capping at 1 px tracks
+            // that, where the raw 0.5 / scale would over-grow the fill by
+            // another pixel at 0.25 and stamp a black fringe outside the glow -
+            // the same artefact mirrored.
+            //
+            // At scale >= 1 the blit is 1:1 and adds no blur, so no growth.
+            float fillExpand = (scale >= 1.0f)
+                                   ? 0.0f
+                                   : std::min(0.5f / std::max(scale, 1e-3f), 1.0f);
+            mBlackRectShader.SetUniform("uFillExpand", fillExpand);
             mBlackRectShader.SetUniform("uOpaqueColor", config.neon.opaqueColor);
             mBlitVertexArray.DrawArrays(GL_TRIANGLES, 6);
             mBlackRectShader.Unuse();
