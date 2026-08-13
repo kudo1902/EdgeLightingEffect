@@ -744,11 +744,33 @@ void main() {
     // Compose: base arc × intensity + segments (independent of intensity, so
     // a segment stays lit even on a dark arc - the whole point of the
     // additive segment model).
-    vec3 lightCol = col * uIntensity + segCol;
+    //
+    // EACH SOURCE CARRIES ITS OWN COVERAGE. `col` is gated-normalised up in the
+    // gather, which makes it a pure hue of unit magnitude EVERYWHERE on the
+    // quad - it no longer decays with distance from the lit arc, because the
+    // coverage that used to ride in it moved to emitCover. So it must be
+    // multiplied by emitCover here. Summing the two sources first and applying
+    // one shared gate (the old `lightCol * filamentGate`) let the segment's
+    // gate lift the arc term on a stretch NO arc covers: a blue arc over half
+    // the ring plus a red segment on the other half rendered the segment
+    // magenta at ~2x brightness, and violet - arc-dominant - on its shoulders.
+    //
+    // The segment keeps the gates it already had, so nothing about the common
+    // "tracer running along a lit arc" case moves: with an arc covering, both
+    // emitFil and emitGlow reduce to exactly the old expression. Only the paths
+    // where the two coverages DISAGREE change, which is the bug.
+    vec3 arcCol = col * uIntensity;
 
-    vec3 result  = lightCol * core  * FILAMENT_GAIN  * filamentGate * lineGate;
-    result      += lightCol * halo  * HALO_GAIN      * glowGate * emitCoverAll;
-    result      += lightCol * bloom * uBloomStrength * glowGate * emitCoverAll;
+    // filamentGate is the segment's SHARP gate (smoothstep 0.5..1) maxed with
+    // emitCover; emitCoverAll is the soft one. Applied to segCol only - the arc
+    // takes emitCover directly in both, since for an arc the two gates were
+    // just emitCover anyway.
+    vec3 emitFil  = arcCol * emitCover + segCol * filamentGate;
+    vec3 emitGlow = arcCol * emitCover + segCol * emitCoverAll;
+
+    vec3 result  = emitFil  * core  * FILAMENT_GAIN  * lineGate;
+    result      += emitGlow * halo  * HALO_GAIN      * glowGate;
+    result      += emitGlow * bloom * uBloomStrength * glowGate;
 
     // --- One-sided cut: mask the WHOLE emission at the line ----------
     if (uGlowSide == GLOW_SIDE_INSIDE)       result *= smoothstep( softEdge, -softEdge, d);

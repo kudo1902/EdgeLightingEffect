@@ -644,11 +644,22 @@ void main() {
     float glowGate = clamp(uGlowRadius / (GLOW_GATE_FADE_PX * uResolutionScale), 0.0, 1.0);
 
     // Base gates on uIntensity; segments are independent (stay lit at intensity 0).
-    vec3 lightCol = col * uIntensity + segCol;
+    //
+    // EACH SOURCE CARRIES ITS OWN COVERAGE - the arc takes emitCover, the
+    // segment keeps the gates it already had. `col` is gated-normalised in the
+    // gather, so it is a unit-magnitude hue everywhere and cannot be summed
+    // into a shared gate: the segment's gate would then light the arc's hue on
+    // a stretch no arc covers. See neon.frag for the full write-up and the
+    // measured case. With an arc covering, both terms reduce to the previous
+    // expression exactly.
+    vec3 arcCol = col * uIntensity;
 
-    vec3 result  = lightCol * core  * FILAMENT_GAIN  * filamentGate * lineGate;
-    result      += lightCol * halo  * HALO_GAIN      * glowGate * emitCoverAll;
-    result      += lightCol * bloom * uBloomStrength * glowGate * emitCoverAll;
+    vec3 emitFil  = arcCol * emitCover + segCol * filamentGate;
+    vec3 emitGlow = arcCol * emitCover + segCol * emitCoverAll;
+
+    vec3 result  = emitFil  * core  * FILAMENT_GAIN  * lineGate;
+    result      += emitGlow * halo  * HALO_GAIN      * glowGate;
+    result      += emitGlow * bloom * uBloomStrength * glowGate;
 
     // --- One-sided cut ---
     if (uGlowSide == GLOW_SIDE_INSIDE)       result *= smoothstep( softEdge, -softEdge, d);
