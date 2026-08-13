@@ -1,26 +1,35 @@
 precision highp float;
 
-// ---------------------------------------------------------------------------
-// Tuning constants
-// ---------------------------------------------------------------------------
-
-#define GLOW_SIDE_BOTH    0
-#define GLOW_SIDE_INSIDE  1
-#define GLOW_SIDE_OUTSIDE 2
-
-// All other tuning constants (FILAMENT_*, HALO_*, BLOOM_*, grading, epsilons)
-// are injected from lib/include/renderer/neon-tuning.h via @NEON_TUNING@ in
-// shaders.h.in - single source of truth shared with the C++ renderer.
+// EMISSION PRE-PASS (experimental; OptimizedNeonConfig::emissionPrePass).
 //
-// (Far early-out lives on the CPU: the draw quad is sized to rect + earlyOut,
-//  so there's no per-fragment discard here. See neon-renderer.cpp.)
-
-// ---------------------------------------------------------------------------
-// Uniforms
-// ---------------------------------------------------------------------------
+// The 128-sample gather from neon.frag and nothing else, run at `prePassScale`
+// and writing the four quantities that gather produces:
+//
+//   RT0 = vec4(col.rgb,       haloCover)
+//   RT1 = vec4(segColHue.rgb, bloomCover)
+//
+// These four can be computed at reduced resolution because every one of them
+// is a convolution and is therefore band-limited by construction - `col` by
+// kc, haloCover by kh, bloomCover by bw. Nothing sharp is produced here. The
+// filament core, the analytic halo/bloom radial profiles, the cutoffs,
+// glowSide and the grading all stay at FULL resolution in
+// neon-composite.frag. That split is the whole point, and it is what
+// separates this from resolutionScale, which scales the sharp parts down too
+// and then spends a blit pass compensating for having done so.
+//
+// The safe prePassScale is set by the NARROWEST kernel above - kc (which is
+// perimeter * COLOR_BLEND_PERIM_FRAC, so it shrinks with the rect) and kh
+// (= glowRadius). Below roughly two pre-pass texels per kernel width the
+// coverage starts to step at arc ends.
+//
+// UNITS: everything here is FULL-RES px. The quad is drawn with a full-res
+// ortho projection into a smaller viewport, so vPos interpolates to the same
+// rect-local pixel coordinates at any prePassScale - there is no
+// uResolutionScale anywhere in this shader.
 
 in vec2 vPos;
-out vec4 fragColor;
+layout(location = 0) out vec4 outHueHalo;   // rgb = base hue,    a = haloCover
+layout(location = 1) out vec4 outSegBloom;  // rgb = segment hue, a = bloomCover
 
 uniform vec2  uRectSize;
 uniform float uCornerRadius;
@@ -101,7 +110,7 @@ uniform sampler2D uGradientLUT;
 // Distance (in pixels, from the rect edge) to the draw quad's edge. The whole
 // emission is faded to zero just before this, so the bloom never shows a hard
 // rectangular cutoff where the quad clips it - independent of bloom strength.
-uniform float uQuadMargin;
+uniform int uNumSamples; ///< Live gather sample count (optimizedNeon.numSamples).
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -375,84 +384,7 @@ float arcCoverContinuous(float sPos, float start, float length, float fHead, flo
 
 // ---------------------------------------------------------------------------
 
-void main() {
-    vec2  halfSize = uRectSize * 0.5;
-    float d  = sdRoundBox(vPos, halfSize, uCornerRadius);
-    float ad = abs(d);
-
-    // Note: the far-exterior early-out is handled on the CPU - the draw quad is
-    // sized to rect + earlyOut in NeonRenderer::setupGeometry, so geometry culls
-    // the far region instead of a per-fragment discard (tiler-friendly).
-    // The one-sided cuts below stay as discards: they cull a useful half-band
-    // the quad can't express.
-    float softEdge = max(uGlowSideSoftness, SIDE_SOFT_EPSILON);
-    if (uGlowSide == GLOW_SIDE_INSIDE  && d >  softEdge) discard;
-    if (uGlowSide == GLOW_SIDE_OUTSIDE && d < -softEdge) discard;
-
-    // Hard geometric cutoffs. The band is [-uInsideCutoff, +uOutsideCutoff]
-    // with a per-side softness feather straddling each boundary; anything
-    // past the feather is culled here so bloom/halo can't leak beyond the
-    // artist's stated reach even if uGlowRadius says otherwise. Softness is
-    // decoupled from uGlowSideSoftness so the one-sided cut at d=0 can stay
-    // razor-sharp while the cutoff joins fade smoothly, and per-side so the
-    // interior and exterior can taper at different rates. Disabled sides
-    // arrive with size = a huge sentinel, so these branches no-op.
-    float inSoft  = max(uInsideCutoffSoftness,  SIDE_SOFT_EPSILON);
-    float outSoft = max(uOutsideCutoffSoftness, SIDE_SOFT_EPSILON);
-    // Band boundaries measured against the offset rect, so a cornerRadius-0
-    // band keeps square corners instead of being rounded by the cut distance.
-    float dOut = bandOuterDistance(vPos, d, halfSize, uCornerRadius, uOutsideCutoff);
-    float dIn  = bandInnerDistance(d, uInsideCutoff);
-    if (dOut >  outSoft) discard;
-    if (dIn  < -inSoft ) discard;
-
-    // --- Filament -----------------------------------------------------
-    // Generalized-Gaussian profile with exponentially smooth falloff:
-    //
-    //   core(ad) = exp(-ln(2) * (ad / sigma)^N)
-    //
-    // sigma = half-brightness radius (core = 0.5 at ad = sigma).
-    // N = 2 * uFilamentFalloff controls the shape:
-    //   uFilamentFalloff = 0.5 -> N = 1   (Laplace - heavy tails, smooth peak)
-    //   uFilamentFalloff = 1.0 -> N = 2   (Gaussian - pure smooth falloff; default)
-    //   uFilamentFalloff = 2.0 -> N = 4   (platykurtic - flatter top, sharper shoulder)
-    //   uFilamentFalloff = 5.0 -> N = 10  (near-rectangular)
-    //
-    // The Gaussian has no power-law tail (unlike the old super-Lorentzian),
-    // so the filament reads as a clean thin line with a naturally smooth
-    // roll-off - no heavy glow bleed far from the line axis.
-    //
-    // Peak at ad = 0 is always exactly 1.0.
-    //
-    // lineGate fades the filament from 0 at lineWidth = 0 up to full at
-    // lineWidth = FILAMENT_MIN_HALF_WIDTH * 2, so lineWidth = 0 means "no
-    // line" instead of a single-pixel bright dot.
-    //
-    // FILAMENT_MIN_HALF_WIDTH is used raw: uLineWidth is already in the same
-    // full-res px. neon-optimized.frag's copy of this block multiplies it by
-    // uResolutionScale because uLineWidth reaches it in FBO px - keep the two
-    // in step when tuning the constant.
-    float halfWidth = uLineWidth * 0.5;
-    float sigma     = max(halfWidth, FILAMENT_MIN_HALF_WIDTH);
-    float N         = 2.0 * max(uFilamentFalloff, 1e-3);
-    float core      = exp2(-pow(ad / sigma, N));
-
-    // Filament reach, in sigmas, for THIS falloff - see neon-tuning.h. Also
-    // sizes the draw quad CPU-side; the two must stay in step.
-    float reachSigmas = clamp(pow(log2(FILAMENT_GAIN / FILAMENT_CUTOFF), 1.0 / N),
-                              FILAMENT_REACH_MIN_SIGMAS, FILAMENT_REACH_MAX_SIGMAS);
-    // Pedestal-subtract the core so it reaches exactly zero at that reach,
-    // renormalised to keep the ad = 0 peak at 1.0. Where the reach formula is
-    // honoured the pedestal is ~1.7e-4 and invisible; where MAX_SIGMAS clamps
-    // it (soft falloff, whose tail would otherwise run for hundreds of sigmas)
-    // this is what makes the glow end smoothly and, crucially, SYMMETRICALLY.
-    // Without it the interior kept the full tail while the exterior was cut at
-    // the quad edge.
-    float corePed   = exp2(-pow(reachSigmas, N));
-    core            = max(core - corePed, 0.0) / max(1.0 - corePed, 1e-6);
-    float lineGate  = clamp(uLineWidth / (FILAMENT_MIN_HALF_WIDTH * 2.0), 0.0, 1.0);
-
-    // Perimeter of the rounded rect, in px. Used twice below: to size the
+void main() {    // Perimeter of the rounded rect, in px. Used twice below: to size the
     // colour-gather kernel, and to convert the arc feathers from px to
     // perimeter fractions.
     float r    = clamp(uCornerRadius, 0.0, min(uRectSize.x, uRectSize.y) * 0.5);
@@ -523,11 +455,10 @@ void main() {
     float bloomCovAcc = 0.0;
     float bloomCovW   = 0.0;
 
-    // Compile-time constant loop bound: matches the LoopSamplesBlock UBO size
-    // and the C++-side NEON_MAX_LOOP_SAMPLES so the compiler can unroll if it
-    // wants to.
-    const int numSamples = NEON_MAX_LOOP_SAMPLES;
-    const float invNumSamples = 1.0 / float(numSamples);
+    // Dynamic bound so the perf slider reduces real work; the UBO array stays
+    // sized to NEON_MAX_LOOP_SAMPLES. Not const - it comes from a uniform.
+    int numSamples = clamp(uNumSamples, 1, NEON_MAX_LOOP_SAMPLES);
+    float invNumSamples = 1.0 / float(numSamples);
 
     // Negate the time term so a positive hueRotationRate scrolls the colours
     // WITH the winding (sample index i advances in the winding direction; the
@@ -687,176 +618,6 @@ void main() {
     vec3 col       = acc    / max(wsumLit,  WSUM_EPSILON); // base perimeter hue
     vec3 segColHue = segAcc / max(wsumSegW, WSUM_EPSILON); // segment hue
 
-    // --- Continuous coverage, read at this fragment's own position -------
-    // Recover the fragment's OWN continuous perimeter position GEOMETRICALLY
-    // from vPos (inverse of the CPU's GetPointOnRectangle) and read each arc
-    // directly there. Far-from-line fragments get a valid position too, but
-    // their filament core ~= 0 so it never shows. The geometric inverse is
-    // exact even at corners, unlike the old proximity-weighted circular mean
-    // of the sample phases, which smeared the whole corner curve to ~0 and
-    // lit it for any arc starting at position 0.
-    float sPos = perimeterPosition(vPos);
-    // headF / tailF are computed above the gather (the coverage gather needs
-    // them per sample); this pointwise read uses the same two values.
-    //
-    // ONE arc coverage, folding per-arc intensity in, and it drives the
-    // filament as well as the halo and bloom. `col` is gated-normalised above,
-    // so intensity cancels out of it and can no longer reach the filament that
-    // way - emitCover is what carries it. The scaling stays linear in
-    // intensity, exactly as it was when it rode on `col`, and both layers are
-    // now shaped by the same px-based (size-invariant) feathers.
-    float emitCover = 0.0;
-    for (int a = 0; a < uArcCount; a++) {
-        vec4 arc = uArcs[a];
-        if (arc.z <= 0.0) continue;                       // dark arc: no filament
-        float c = arcCoverContinuous(sPos, arc.x, arc.y, headF, tailF);
-        emitCover = max(emitCover, c * arc.z);
-    }
-
-    // Segment coverage at this fragment's own perimeter position. This is the
-    // segments' whole magnitude now: boost * bell, straight off the analytic
-    // gaussian, so it cannot inherit either the gather's sample stepping or
-    // the far-side dilution that used to make a segment dimmer on a small
-    // rect. Segments emit where no arc covers, so they carry their own
-    // filament/halo/bloom.
-    float segCoverPt = 0.0;
-    for (int s = 0; s < uSegmentCount; s++) {
-        vec4  seg = uSegments[s];
-        float rel = sPos - seg.x;
-        rel      -= floor(rel + 0.5);                     // wrap to [-0.5, 0.5]
-        float e   = rel * seg.y;
-        segCoverPt += seg.z * exp(-e * e);
-    }
-    // NOTE: these two pointwise coverages drive the FILAMENT only. The filament
-    // is a sub-pixel-wide line, so it wants the exact coverage at its own
-    // position and nothing smoothed. The halo and bloom take the gathered
-    // haloCover / bloomCover instead - see the coverage gather above.
-
-    // Attach the segments' magnitude to their hue. Unclamped on purpose: boost
-    // above 1 must still brighten, as it did when the gather's `bell` carried
-    // the magnitude. (The coverage gather's min(.., 1.0) only bounds the shared
-    // halo/bloom reach - it is not the segment's brightness.)
-    vec3 segCol = segColHue * segCoverPt;
-
-    // Sharp gate for the SDF-derived filament, from the same two pointwise
-    // coverages. Both are exact at this fragment's perimeter position, so
-    // neither can quantise a slow tracer's head to the gather points nor light
-    // the corner preceding an arc's tail - the two bugs the old
-    // circular-mean/sample-based gates had.
-    float filamentGate = max(smoothstep(0.5, 1.0, min(segCoverPt, 1.0)), emitCover);
-
-    // --- Analytic halo + bloom --------------------------------------------
-    // Closed form of the sums this shader used to run over the perimeter
-    // samples. For a locally straight emitter of unit density:
-    //
-    //   sum g*sqrt(g) * spacing*kh^2*HALO_NORM  -> HALO_NORM  * 2*kh^2/(ad^2 + kh^2)
-    //   sum 1/(dd+bw^2) * spacing*bw*BLOOM_NORM -> BLOOM_NORM * PI*bw/sqrt(ad^2 + bw^2)
-    //
-    // Peak values at ad = 0 are identical to the gather's (0.86 and 1.005), so
-    // the NORM factors keep their calibration. Both are pure functions of the
-    // SDF distance, so neither can bead and neither carries any dependence on
-    // the sample spacing - which is what frees glowRadius to set the width
-    // directly at any rect size.
-    //
-    // These are RADIAL PROFILES ONLY. They say how brightness falls off with
-    // distance from the line, not how far along the line the light extends -
-    // that is haloCover / bloomCover, gathered above. Multiplying a radial
-    // profile by a coverage read at a single point is what turned a partial
-    // arc's bloom into a hard-edged slab; the two have to be convolved, and the
-    // gather is the convolution.
-    //
-    // Known difference from the gather: on the concave side of a corner the
-    // sum picked up both incident edges, so corners ran hotter (measured ~40%
-    // at 25 px inside a 40 px corner with glowRadius 25). A nearest-distance
-    // profile cannot reproduce that; the gap closes as glowRadius shrinks
-    // relative to cornerRadius and is nil at cornerRadius 0.
-    float halo  = HALO_NORM_FACTOR  * 2.0 * kh * kh / (ad * ad + kh * kh);
-    float bloom = BLOOM_NORM_FACTOR * PI * bw / sqrt(ad * ad + bw * bw);
-
-    // Pedestal-subtract the bloom so it reaches exactly zero at the draw
-    // quad's edge. The 1/ad tail is heavy - at the quad edge it is still ~10%
-    // of peak - so without this the quad has to be enormous, or the emission
-    // gets visibly chopped. `reach` recomputes the CPU's uncapped quad-sizing
-    // formula (see setupGeometry): a pure function of glowRadius, bloomStrength
-    // and intensity, so the pedestal is size-invariant even where the outside
-    // cutoff clamps the actual quad smaller - that path is masked by the cutoff
-    // smoothstep anyway, and feeding it the clamped margin here would subtract
-    // a huge pedestal and dim the whole band.
-    //
-    // Renormalised by peak/(peak - pedestal) so the value at ad = 0 is
-    // unchanged and BLOOM_NORM_FACTOR keeps its calibration; the tail is
-    // slightly compressed in exchange for going cleanly to zero.
-    //
-    // The halo needs no pedestal: it falls as 1/ad^2, so at the same distance
-    // it is ~2e-4 of peak - already invisible.
-    // `sigma` is the filament half-width from the block above, so the second
-    // term is the same filament-reach floor setupGeometry applies - without it
-    // the two disagree at small glowRadius (and `reach` hits 0 at glowRadius 0,
-    // making the pedestal subtract the entire bloom).
-    float reach     = max(uGlowRadius * EARLY_OUT_RADIUS_FACTOR *
-                          (1.0 + uBloomStrength * uIntensity),
-                          sigma * reachSigmas);
-    float bloomPeak = BLOOM_NORM_FACTOR * PI;
-    float bloomPed  = BLOOM_NORM_FACTOR * PI * bw / sqrt(reach * reach + bw * bw);
-    bloom = max(bloom - bloomPed, 0.0) * (bloomPeak / max(bloomPeak - bloomPed, 1e-6));
-
-    // glowRadius == 0 must read as "filament only", but an analytic profile at
-    // radius 0 is a sub-pixel spike of FULL height rather than nothing, so
-    // both layers fade in over glowRadius = [0, GLOW_GATE_FADE_PX]. Measured
-    // against a fixed pixel width: gating against the sampleSpacing-derived
-    // floor instead would re-couple brightness to the rect size. (The bloom is
-    // gated too now - the gather's spacing floor used to keep it finite here.)
-    float glowGate = clamp(uGlowRadius / GLOW_GATE_FADE_PX, 0.0, 1.0);
-
-    // Compose: base arc * intensity + segments (independent of intensity, so
-    // a segment stays lit even on a dark arc - the whole point of the
-    // additive segment model).
-    vec3 lightCol = col * uIntensity + segCol;
-
-    vec3 result  = lightCol * core  * FILAMENT_GAIN  * filamentGate * lineGate;
-    result      += lightCol * halo  * HALO_GAIN      * glowGate * haloCover;
-    result      += lightCol * bloom * uBloomStrength * glowGate * bloomCover;
-
-    // --- One-sided cut: mask the WHOLE emission at the line ----------
-    if (uGlowSide == GLOW_SIDE_INSIDE)       result *= smoothstep( softEdge, -softEdge, d);
-    else if (uGlowSide == GLOW_SIDE_OUTSIDE) result *= smoothstep(-softEdge,  softEdge, d);
-
-    // --- Hard cutoff soft masks: fade the emission over the per-side
-    // softness on each side of the [-uInsideCutoff, +uOutsideCutoff] band so
-    // bloom/halo never punch past the stated reach. Feather is symmetric
-    // around the boundary so the mid-boundary sample sees ~50% weight.
-    // Disabled sides push their boundary to a huge sentinel, so the
-    // smoothstep naturally evaluates to a pass-through 1.0.
-    // In the band means: outside the shrunk rect (dIn >= 0) and inside the
-    // grown rect (dOut <= 0). See bandOuterDistance / bandInnerDistance.
-    result *= smoothstep(-inSoft, inSoft, dIn);
-    result *= 1.0 - smoothstep(-outSoft, outSoft, dOut);
-
-    // --- Quad-edge fade: the draw quad ends at d == uQuadMargin (exterior).
-    // Fade the emission to zero over the last stretch so a strong bloom never
-    // shows a hard rectangular cutoff where the quad clips it. Interior pixels
-    // have d < 0, well below the fade band, so they're unaffected. With the
-    // outsideCutoff clamp above this is usually already zero, but the fade is
-    // kept as a safety net for the case where uQuadMargin is smaller than
-    // outsideCutoff (e.g. the CPU-side clamp is loosened later).
-    result *= 1.0 - smoothstep(uQuadMargin * 0.8, uQuadMargin, d);
-
-    // --- Grade --------------------------------------------------------
-    // Hue-preserving Reinhard: tonemap the peak channel and scale the
-    // others by the same ratio. Per-channel tonemap desaturates warm mixes
-    // (orange -> peach) because R saturates while G/B are still linear;
-    // scaling by the peak's compression preserves the original R:G:B ratio.
-    float peak = max(max(result.r, result.g), result.b);
-    float mapped = peak / (peak + TONE_MAP_SHOULDER);
-    result = result * (mapped / max(peak, 1e-6));
-    result = pow(result, vec3(GAMMA_EXPONENT));
-
-    // Premultiplied-alpha output so the effect composites over arbitrary
-    // background objects instead of only adding light. Coverage = brightest
-    // channel: the hot filament core (alpha ~ 1) occludes the background and
-    // reads as a solid tube; the dim halo/bloom (alpha ~ 0) stay additive; the
-    // dark surround (alpha = 0) leaves the background untouched. Pairs with
-    // glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA) in the renderer.
-    float alpha = clamp(max(result.r, max(result.g, result.b)), 0.0, 1.0);
-    fragColor = vec4(result, alpha);
+    outHueHalo  = vec4(col,       haloCover);
+    outSegBloom = vec4(segColHue, bloomCover);
 }

@@ -173,6 +173,15 @@
 #define SIDE_SOFT_EPSILON         1e-5
 #define WSUM_EPSILON              1e-6
 
+// --- Corner radius below which bandOuterDistance treats the corner as SHARP
+//     and offsets the box per-axis instead of taking the Euclidean parallel
+//     curve (see the identical note in neon.frag / neon-optimized.frag /
+//     neon-blit.frag / black-rect.frag). Shared so all four copies of that
+//     helper switch over at the same radius - they used to hardcode it, and a
+//     drift between them shows up as the band's outer corner changing shape
+//     between the base and optimized renderers. ---
+#define BAND_SHARP_CORNER_EPSILON 1e-4
+
 // --- Far early-out (quad sizing). The draw quad is sized to
 //     rect + glowRadius * RADIUS_FACTOR * (1 + bloomStrength * intensity).
 //

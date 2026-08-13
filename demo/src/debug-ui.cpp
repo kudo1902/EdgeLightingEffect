@@ -657,7 +657,24 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg,
     ImGui::SameLine();
     ImGui::Checkbox("Show Half-Res##Optimized", &cfg.optimizedNeon.showHalfRes);
 
+    // Emission pre-pass: takes over from Res Scale entirely, so grey that out
+    // while it is on rather than leaving two resolution knobs live at once.
+    ImGui::Checkbox("Emission Pre-Pass##Opt", &cfg.optimizedNeon.emissionPrePass);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Run the 128-sample gather at Pre-Pass Scale and evaluate\n"
+                          "the filament, halo/bloom profiles, cutoffs and grading at\n"
+                          "FULL resolution. Replaces Res Scale.");
+    }
+
+    ImGui::BeginDisabled(!cfg.optimizedNeon.emissionPrePass);
+    SliderWithInput("Pre-Pass Scale##Opt", cfg.optimizedNeon.prePassScale, 0.0625f, 1.0f, "%.4f");
+    ImGui::EndDisabled();
+
+    ImGui::BeginDisabled(cfg.optimizedNeon.emissionPrePass);
     SliderWithInput("Res Scale##Opt", cfg.optimizedNeon.resolutionScale, 0.125f, 1.0f, "%.3f");
+    ImGui::EndDisabled();
+
     SliderIntWithInput("Samples##Opt", cfg.optimizedNeon.numSamples, 8, NEON_MAX_LOOP_SAMPLES);
     SliderIntWithInput("LUT Size##Opt", cfg.optimizedNeon.gradientLutSize, 32,
                        MAX_GRADIENT_LUT_SIZE);

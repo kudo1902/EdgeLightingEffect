@@ -461,13 +461,37 @@ namespace EdgeLighting
         /// the bilinear-blitted result. Useful to verify pass-1 rendering.
         bool showHalfRes = false;
 
+        // --- Emission pre-pass (experimental) ------------------------------
+
+        /// Split the pass by spatial frequency instead of scaling the whole
+        /// thing down. The 128-sample gather - which is ~96% of the cost and
+        /// produces only band-limited output (hue and the two coverage
+        /// fractions, each smoothed by its own kernel) - runs at
+        /// @c prePassScale into an RGBA16F MRT pair; everything sharp
+        /// (filament, analytic halo/bloom profiles, cutoffs, glowSide,
+        /// grading) is then evaluated at FULL resolution from those samples.
+        ///
+        /// Contrast with @c resolutionScale, which drops resolution on the
+        /// filament too and needs the blit-time corrections to compensate.
+        /// When this is on, @c resolutionScale is unused.
+        bool emissionPrePass = false;
+
+        /// Resolution of the gather pre-pass, as a fraction of the viewport.
+        /// The safe value is set by the NARROWEST gathered kernel - the colour
+        /// blend (perimeter * COLOR_BLEND_PERIM_FRAC) and the halo coverage
+        /// (glowRadius) - so a small rect with a tight glow wants a higher
+        /// number here. Below that the coverage steps at arc ends.
+        float prePassScale = 0.25f;
+
         bool operator==(const OptimizedNeonConfig &o) const
         {
             return enable == o.enable &&
                    resolutionScale == o.resolutionScale &&
                    numSamples == o.numSamples &&
                    gradientLutSize == o.gradientLutSize &&
-                   showHalfRes == o.showHalfRes;
+                   showHalfRes == o.showHalfRes &&
+                   emissionPrePass == o.emissionPrePass &&
+                   prePassScale == o.prePassScale;
         }
         bool operator!=(const OptimizedNeonConfig &o) const { return !(*this == o); }
     } OptimizedNeonConfig;

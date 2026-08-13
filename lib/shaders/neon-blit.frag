@@ -49,7 +49,7 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
 // for a rounded rect, per-axis offset for a sharp one so cornerRadius 0 keeps
 // square outer corners.
 float bandOuterDistance(vec2 p, float d, vec2 halfSize, float r, float cut) {
-    if (r > 1e-4) { return d - cut; }
+    if (r > BAND_SHARP_CORNER_EPSILON) { return d - cut; }
     vec2 b = halfSize + vec2(cut);
     return sdRoundBox(p, b, 0.0);
 }
@@ -87,12 +87,13 @@ void main() {
     // One-sided cut, owned entirely by this pass (Pass 1 leaves the emission
     // continuous across d == 0).
     //
-    // Floored to the SAME epsilon neon.frag uses (SIDE_SOFT_EPSILON), NOT to a
-    // pixel. The full-res renderer makes this a hard step and lets the smooth
-    // emission either side supply the apparent anti-aliasing; flooring to half
-    // a pixel here instead widens the edge relative to the base and leaves a
-    // 1 px line of difference all the way round the perimeter.
-    float sideSoft = max(uGlowSideSoftness, 1e-5);
+    // Floored to the SAME epsilon neon.frag uses - literally the shared
+    // SIDE_SOFT_EPSILON from neon-tuning.h, not a copy of its value - and NOT
+    // to a pixel. The full-res renderer makes this a hard step and lets the
+    // smooth emission either side supply the apparent anti-aliasing; flooring
+    // to half a pixel here instead widens the edge relative to the base and
+    // leaves a 1 px line of difference all the way round the perimeter.
+    float sideSoft = max(uGlowSideSoftness, SIDE_SOFT_EPSILON);
     if (uGlowSide == GLOW_SIDE_INSIDE)       { mask *= smoothstep( sideSoft, -sideSoft, d); }
     else if (uGlowSide == GLOW_SIDE_OUTSIDE) { mask *= smoothstep(-sideSoft,  sideSoft, d); }
 

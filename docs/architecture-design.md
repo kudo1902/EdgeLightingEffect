@@ -143,9 +143,10 @@ Single-pass full-resolution neon stroke. Highlights:
   - `mArcLUT` (2D, W × `MAX_ARCS`) - row `a` holds arc `a`'s own
     gradient; same "empty row → fall back to base" convention.
 - **128 pre-computed perimeter loop samples** in a std140 UBO. Each fragment
-  gathers all 128 with distance-weighted contribution → halo, filament core,
-  bloom. Iteration count is compile-time constant (128) so the driver can
-  unroll.
+  gathers all 128 with a distance-weighted contribution, but the gather
+  produces **colour only** - the halo and bloom intensities are closed forms
+  of the SDF distance (§4.1b). Iteration count is compile-time constant (128)
+  so the driver can unroll.
 - **Winner-take-all arc gating** - for each perimeter sample the shader
   scans up to `MAX_ARCS` entries in `ArcBlock`, picks the arc with the
   largest `arcInside * intensity`, and uses *that* arc's colour + mask at
@@ -186,13 +187,120 @@ This split was the design outcome recorded in
 [`multiple-arcs-design.md`](multiple-arcs-design.md); the perimeter-space
 fallback for empty arcs preserves the pre-multi-arc single-slice behaviour.
 
+### 4.1b Emission model - what the gather does and does not produce
+
+The shader deliberately separates **hue** (gathered) from **magnitude**
+(pointwise), because the two need different units. Getting this wrong is what
+made the same config look different on different rect sizes.
+
+- **Colour** comes from the 128-sample gather, weighted by
+  `g = 1 / (dd + kc²)`. `kc` is the one length in the shader measured as a
+  **fraction of the perimeter** (`COLOR_BLEND_PERIM_FRAC`), not in pixels -
+  the gradient LUT it filters is itself indexed by perimeter fraction, so a
+  pixel-sized kernel would span a different slice of the gradient on every
+  geometry. The accumulator is divided by the **same gated weight** it was
+  gathered with, which makes `col` a pure hue of unit magnitude: coverage and
+  per-arc intensity both cancel out of it.
+- **Halo and bloom** are analytic, evaluated from the SDF distance `ad`:
+
+  ```
+  halo  = HALO_NORM_FACTOR  * 2·kh² / (ad² + kh²)
+  bloom = BLOOM_NORM_FACTOR * π·bw / sqrt(ad² + bw²)
+  ```
+
+  These are the closed forms the old per-sample sums converged to, so the
+  `*_NORM_FACTOR` calibrations carry over unchanged. A closed form cannot
+  bead between samples, so `glowRadius` sets the width directly with no
+  sample-spacing floor - the reason the effect is now size-invariant. Note
+  these are **radial profiles only**: brightness vs. distance from the line,
+  saying nothing about extent along it (see coverage, below).
+- **Coverage** - how far *along* the perimeter the light extends - is where the
+  filament and the glow layers part company:
+  - The **filament** takes two *pointwise* coverages read at the fragment's own
+    perimeter position (`perimeterPosition(vPos)`, the geometric inverse of
+    `GetPointOnRectangle`): `emitCover` for arcs (feathered inward in
+    **pixels**, capped at `ARC_FEATHER_MAX_SHARE` of the arc's own length so a
+    short arc's two ramps can't overlap and clip its peak) and `segCoverPt` for
+    segments. A sub-pixel-wide line wants exact coverage, unsmoothed.
+  - The **halo and bloom** take `haloCover` / `bloomCover`, gathered over the
+    loop samples and **normalised by their own weight**
+    (`Σ coverᵢ·wᵢ / Σ wᵢ`, with `w` from the layer's own kernel). This is the
+    one part that must not be pointwise: a radial profile multiplied by a
+    coverage read at a single point puts a hard cut along the normal at each
+    arc end and extrudes it into a slab with straight sides. Coverage has to be
+    *convolved* with the radial kernel, which is what the gather does.
+
+  Because numerator and denominator run over the same samples with the same
+  weights, sample density cancels - the ratio carries no `sampleSpacing` and so
+  no rect-size dependence, unlike the intensity sums it replaced. Where
+  coverage is uniform (a full-perimeter arc, the default) both ratios are
+  exactly 1 and the output is bit-identical to a pointwise gate.
+- **Reach and pedestals.** The draw quad is sized CPU-side from `glowRadius`
+  and a falloff-aware filament reach (`reachSigmas`); both fragment shaders
+  recompute the same expression to pedestal-subtract the filament core and the
+  bloom so the emission reaches exactly zero at the quad edge instead of being
+  chopped. **This formula is duplicated in four places** - both
+  `setupGeometry` implementations and both fragment shaders - and they must be
+  kept in step.
+
+Known trade-off: a nearest-distance analytic profile cannot reproduce the
+gather's accumulation from *both* incident edges on the concave side of a
+corner, so corners run cooler than they used to (measured ~40% at 25 px inside
+a 40 px corner at `glowRadius` 25). The gap closes as `glowRadius` shrinks
+relative to `cornerRadius`, and is nil at `cornerRadius` 0.
+
+### 4.1c Band boundaries
+
+`bandInnerDistance` / `bandOuterDistance` express the inside/outside cutoffs
+as signed distances. The outer boundary is the Euclidean parallel curve
+(`d - cut`) whenever `cornerRadius > BAND_SHARP_CORNER_EPSILON`, so the band
+keeps a uniform width and the opaque fill never bulges past the glow at the
+corners. At `cornerRadius == 0` only, the box is offset **per-axis** instead,
+because the parallel curve of a sharp corner is an arc - a rect the caller
+asked to be square would otherwise come back with rounded outer corners. The
+band is then ~1.41× wider measured diagonally across that corner; a uniform
+width and a square outer corner cannot both hold there.
+
+The identical helper appears in `neon.frag`, `neon-optimized.frag`,
+`neon-blit.frag` and `black-rect.frag`, which is why all four receive the
+injected tuning header (§7.1).
+
 ### 4.2 NeonOptimizedRenderer
 
-Two-pass half-resolution variant. Pass 1 renders into a scaled RGBA8 FBO
+Two-pass reduced-resolution variant. Pass 1 renders into a scaled RGBA8 FBO
 with a dynamic shader loop bound (`uNumSamples = optimizedNeon.numSamples`,
 1..128). Pass 2 bilinear-blits back to full res. Shares all visual params
 with `NeonConfig`. Meant for edge devices - the resolution-scale + sample-
 count sliders are the primary perf knobs.
+
+**Which pass owns which mask** is the subtle part, and the rule is whether the
+mask commutes with the tone map:
+
+- **Soft cutoff ramps stay in Pass 1**, before the tone map, exactly where
+  `neon.frag` puts them - `tonemap(x·m) ≠ tonemap(x)·m`, so moving a feathered
+  mask after the tone map would change every partially-masked pixel. No
+  headroom is added to them: Pass 1 places the ramp at the true cutoff.
+- **The one-sided `glowSide` cut moved to Pass 2** (`neon-blit.frag`). It is a
+  hard 0/1 edge at `d == 0`, so it *does* commute with the tone map. Cutting
+  it in Pass 1 baked the edge into the FBO, and the upscale then smeared it
+  across a texel - a ~1 px seam of wrong brightness right where the filament
+  peaks. Pass 1 now leaves the emission continuous across `d == 0`, and
+  `neon-optimized.frag` has no `uGlowSide` uniform at all.
+- **The blit also re-clamps the band** at full resolution, hard, at
+  `cutoff + softness` - the point where Pass 1's ramp has already reached
+  zero. That removes upscale spill without touching any pixel the base
+  renderer would have drawn. It is fed disabled sentinels at
+  `resolutionScale >= 1`, where nothing is resampled and the clamp's own
+  half-pixel AA could only introduce a seam.
+
+### 4.2a Quad-sizing dirty flags
+
+`setupGeometry`'s margin depends on `lineWidth` and `filamentFalloff` (via the
+filament reach floor), not only on `glowRadius`, so both are part of
+`geometryDirty` in each renderer's `OnConfigChanged`. Omitting them leaves a
+widened filament with the old, tighter quad, which clips the glow on the
+**outside** only - the interior is always covered by the quad, so the symptom
+reads as "the outer glow disappeared" rather than as a uniform crop.
 
 ### 4.3 WireframeRenderer
 
@@ -256,9 +364,13 @@ void NeonRenderer::OnConfigChanged(const Config &config)
 {
     const bool samplesDirty  = config.geometry != mCurrentConfig.geometry;
     const bool geometryDirty = samplesDirty
-                            || config.neon.glowRadius    != mCurrentConfig.neon.glowRadius
-                            || config.neon.bloomStrength != mCurrentConfig.neon.bloomStrength
-                            || config.neon.intensity     != mCurrentConfig.neon.intensity;
+                            || config.neon.glowRadius      != mCurrentConfig.neon.glowRadius
+                            || config.neon.bloomStrength   != mCurrentConfig.neon.bloomStrength
+                            || config.neon.intensity       != mCurrentConfig.neon.intensity
+                            // both feed the filament-reach floor (§4.2a)
+                            || config.neon.lineWidth       != mCurrentConfig.neon.lineWidth
+                            || config.neon.filamentFalloff != mCurrentConfig.neon.filamentFalloff
+                            || config.neon.outsideCutoff   != mCurrentConfig.neon.outsideCutoff;
     const bool lutDirty      = config.neon.colorStops != mCurrentConfig.neon.colorStops
                             || config.neon.blendSpace != mCurrentConfig.neon.blendSpace;
 
@@ -285,11 +397,27 @@ values between GLSL ES 3.0 (no `constexpr`, no `f` suffix) and C++ from one
 source of truth. Currently holds:
 
 - Filament / halo / bloom gains (`FILAMENT_GAIN`, `HALO_GAIN`, `BLOOM_*`)
+- Filament reach (`FILAMENT_CUTOFF`, `FILAMENT_REACH_{MIN,MAX}_SIGMAS`)
+- Colour-blend kernel width (`COLOR_BLEND_PERIM_FRAC`) and the glow on/off
+  ramp (`GLOW_GATE_FADE_PX`)
 - Tone map shoulder + gamma
-- Early-out quad-sizing factors
+- Early-out quad-sizing factor
+- Epsilons (`SIDE_SOFT_EPSILON`, `WSUM_EPSILON`, `BAND_SHARP_CORNER_EPSILON`)
 - `MAX_SEGMENT_BOOSTS` (segment array size)
 - `MAX_ARCS` (arc array size)
 - `NEON_MAX_LOOP_SAMPLES` (perimeter-gather loop / UBO array size)
+
+Four shaders take the injection: `neon.frag`, `neon-optimized.frag`,
+`neon-blit.frag` and `black-rect.frag`. The last two were added because they
+carry copies of `bandOuterDistance` (§4.1c) and the blit's `glowSide` floor -
+those used to hardcode `1e-4` / `1e-5` literals, which silently drift from the
+shared defines the moment anyone retunes them.
+
+Units are the recurring hazard here: the constants are authored in **full-res
+pixels**, so `neon-optimized.frag` must multiply them by `uResolutionScale`
+before comparing against its FBO-space distances. `COLOR_BLEND_PERIM_FRAC` is
+the exception - being unit-free and multiplied by an already-scaled perimeter,
+it needs no correction. Each constant's block comment states which it is.
 
 ### 7.2 UBOs
 

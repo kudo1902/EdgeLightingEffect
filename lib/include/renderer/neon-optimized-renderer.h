@@ -47,6 +47,11 @@ namespace EdgeLighting
         bool setupShaders();
         void setupGeometry(const Config &config);
         void rebuildLoopSamples(const Config &config);
+        /// Packs + binds SegmentBlock and ArcBlock (shared by both paths).
+        void uploadSegmentAndArcBlocks(const Config &config);
+        /// Emission pre-pass path: low-res gather + full-res composite.
+        void renderEmissionPrePass(int viewportWidth, int viewportHeight, float time,
+                                   const Config &config);
         void rebuildGradientLUT(const Config &config);
         /// Quantise a float LUT (@p lutSize * 4 RGBA) to RGBA8 and upload it
         /// to mGradientLUT.
@@ -66,6 +71,21 @@ namespace EdgeLighting
         Framebuffer mHalfResBuffer{"NeonOptimized.HalfRes"};
         VertexArray mNeonVertexArray{"NeonOpt.Pass1"};
         VertexArray mBlitVertexArray{"NeonOpt.Blit"};
+
+        // --- Emission pre-pass path (OptimizedNeonConfig::emissionPrePass) ---
+        // Alternative to the mNeonShader/mBlitShader pair above: the gather
+        // runs at prePassScale into an RGBA16F MRT pair, then the composite
+        // evaluates everything sharp at full resolution straight to the
+        // backbuffer. There is no blit - the composite IS the full-res pass.
+        ShaderProgram mGatherShader;
+        ShaderProgram mCompositeShader;
+        Framebuffer mGatherBuffer{"NeonOptimized.Gather"};
+        /// Quad in FULL-RES rect-local px (unlike mNeonVertexArray, which is
+        /// in FBO px). Both pre-pass and composite draw it.
+        VertexArray mFullResVertexArray{"NeonOpt.FullRes"};
+        /// Full-res margin to mFullResVertexArray's edge, for the shaders'
+        /// quad-edge fade. The FBO-space twin is mQuadMargin.
+        float mFullResQuadMargin = 0.0f;
 
         /// Backs neon-optimized.frag's std140 `SegmentBlock` (DALi-compatible
         /// uniform block holding uSegmentCount + uSegments[]).

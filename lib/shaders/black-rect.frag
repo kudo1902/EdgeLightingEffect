@@ -66,7 +66,7 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
 // Disabled cutoffs arrive as a huge sentinel and still no-op: dIn goes hugely
 // positive, dOut hugely negative, so both masks evaluate to 1.
 float bandOuterDistance(vec2 p, float d, vec2 halfSize, float r, float cut) {
-    if (r > 1e-4) { return d - cut; }
+    if (r > BAND_SHARP_CORNER_EPSILON) { return d - cut; }
     vec2 b = halfSize + vec2(cut);
     return sdRoundBox(p, b, 0.0);
 }
@@ -95,7 +95,7 @@ void main() {
     //          +outsideCutoff boundary so the fill fades off gently instead
     //          of stamping a hard rectangle. Floored to fwidth so the fade
     //          is never sharper than 1 px on curves.
-    float aa      = fwidth(d);
+    float aa   = fwidth(d);
     float soft = max(uOpaqueSoftness, aa);
 
     // Band boundaries against the offset rect (square corners at

@@ -8,7 +8,13 @@
 
 namespace EdgeLighting
 {
-    /// RAII wrapper around a GL framebuffer + single RGBA8 colour attachment.
+    /// Maximum colour attachments a @ref Framebuffer can carry. 2 covers the
+    /// emission pre-pass (hue + coverage split across two RGBA16F targets);
+    /// raise it if a pass ever needs more.
+    constexpr int FRAMEBUFFER_MAX_ATTACHMENTS = 2;
+
+    /// RAII wrapper around a GL framebuffer + 1..FRAMEBUFFER_MAX_ATTACHMENTS
+    /// colour attachments.
     ///
     /// Typical use is "render to texture, then sample it in a later pass":
     /// @code
@@ -38,13 +44,18 @@ namespace EdgeLighting
 
         Framebuffer(Framebuffer &&other) noexcept
             : mFbo(other.mFbo),
-              mTexture(other.mTexture),
               mWidth(other.mWidth),
               mHeight(other.mHeight),
+              mAttachments(other.mAttachments),
+              mInternalFormat(other.mInternalFormat),
               mName(std::move(other.mName))
         {
+            for (int i = 0; i < FRAMEBUFFER_MAX_ATTACHMENTS; ++i)
+            {
+                mTextures[i] = other.mTextures[i];
+                other.mTextures[i] = 0;
+            }
             other.mFbo = 0;
-            other.mTexture = 0;
             other.mWidth = 0;
             other.mHeight = 0;
         }
@@ -55,24 +66,36 @@ namespace EdgeLighting
             {
                 destroy();
                 mFbo = other.mFbo;
-                mTexture = other.mTexture;
                 mWidth = other.mWidth;
                 mHeight = other.mHeight;
+                mAttachments = other.mAttachments;
+                mInternalFormat = other.mInternalFormat;
                 mName = std::move(other.mName);
+                for (int i = 0; i < FRAMEBUFFER_MAX_ATTACHMENTS; ++i)
+                {
+                    mTextures[i] = other.mTextures[i];
+                    other.mTextures[i] = 0;
+                }
                 other.mFbo = 0;
-                other.mTexture = 0;
                 other.mWidth = 0;
                 other.mHeight = 0;
             }
             return *this;
         }
 
-        /// Allocates or resizes the RGBA8 colour attachment to @p width × @p height.
-        /// No-op when the FBO already exists at the requested size - safe to call
-        /// every frame from the render loop. Logs a warning with the FBO's name
-        /// if the framebuffer ends up incomplete.
+        /// Allocates or resizes the colour attachments to @p width × @p height.
+        /// No-op when the FBO already exists at the requested size, format and
+        /// attachment count - safe to call every frame from the render loop.
+        /// Logs a warning with the FBO's name if the framebuffer ends up
+        /// incomplete.
+        ///
+        /// @p internalFormat selects the attachment format. GL_RGBA8 is the
+        /// default; GL_RGBA16F is needed by the emission pre-pass, whose
+        /// coverage channels carry per-arc intensity and so exceed 1.0.
+        /// @p attachments > 1 sets up MRT and calls glDrawBuffers, which is
+        /// framebuffer state, so it survives for the FBO's lifetime.
         /// @return @c true on success (or no-op); @c false on failure.
-        bool Resize(int width, int height)
+        bool Resize(int width, int height, GLenum internalFormat = GL_RGBA8, int attachments = 1)
         {
             if (width <= 0 || height <= 0)
             {
@@ -80,24 +103,44 @@ namespace EdgeLighting
                 return false;
             }
 
-            if (mFbo != 0 && width == mWidth && height == mHeight)
+            if (attachments < 1 || attachments > FRAMEBUFFER_MAX_ATTACHMENTS)
+            {
+                LOG_E("Framebuffer[%s]: %d attachments requested, max is %d.",
+                      mName.c_str(), attachments, FRAMEBUFFER_MAX_ATTACHMENTS);
+                return false;
+            }
+
+            if (mFbo != 0 && width == mWidth && height == mHeight &&
+                internalFormat == mInternalFormat && attachments == mAttachments)
             {
                 return true;
             }
 
             destroy();
 
-            glGenTextures(1, &mTexture);
-            glBindTexture(GL_TEXTURE_2D, mTexture);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            // Pixel format/type that pairs with the requested internal format.
+            // Only the two the renderers actually use are supported.
+            const GLenum type = (internalFormat == GL_RGBA16F) ? GL_HALF_FLOAT : GL_UNSIGNED_BYTE;
 
             glGenFramebuffers(1, &mFbo);
             glBindFramebuffer(GL_FRAMEBUFFER, mFbo);
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, mTexture, 0);
+
+            GLenum drawBuffers[FRAMEBUFFER_MAX_ATTACHMENTS];
+            for (int i = 0; i < attachments; ++i)
+            {
+                glGenTextures(1, &mTextures[i]);
+                glBindTexture(GL_TEXTURE_2D, mTextures[i]);
+                glTexImage2D(GL_TEXTURE_2D, 0, static_cast<GLint>(internalFormat), width, height, 0,
+                             GL_RGBA, type, nullptr);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+                drawBuffers[i] = GL_COLOR_ATTACHMENT0 + i;
+                glFramebufferTexture2D(GL_FRAMEBUFFER, drawBuffers[i], GL_TEXTURE_2D, mTextures[i], 0);
+            }
+            glDrawBuffers(attachments, drawBuffers);
 
             GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -112,8 +155,10 @@ namespace EdgeLighting
 
             mWidth = width;
             mHeight = height;
-            LOG_I("Framebuffer[%s] sized to %dx%d (id=%u, tex=%u).",
-                  mName.c_str(), mWidth, mHeight, mFbo, mTexture);
+            mAttachments = attachments;
+            mInternalFormat = internalFormat;
+            LOG_I("Framebuffer[%s] sized to %dx%d (id=%u, tex=%u, attachments=%d).",
+                  mName.c_str(), mWidth, mHeight, mFbo, mTextures[0], mAttachments);
             return true;
         }
 
@@ -132,19 +177,20 @@ namespace EdgeLighting
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
         }
 
-        /// Binds the colour attachment texture to texture unit @p unit
-        /// (defaults to GL_TEXTURE0) for sampling in a subsequent pass.
-        void BindTexture(GLuint unit = 0) const
+        /// Binds colour attachment @p attachment to texture unit @p unit
+        /// (both default to 0) for sampling in a subsequent pass.
+        void BindTexture(GLuint unit = 0, int attachment = 0) const
         {
             glActiveTexture(GL_TEXTURE0 + unit);
-            glBindTexture(GL_TEXTURE_2D, mTexture);
+            glBindTexture(GL_TEXTURE_2D, mTextures[attachment]);
         }
 
         bool IsValid() const { return mFbo != 0; }
         int GetWidth() const { return mWidth; }
         int GetHeight() const { return mHeight; }
+        int GetAttachmentCount() const { return mAttachments; }
         GLuint GetId() const { return mFbo; }
-        GLuint GetTextureId() const { return mTexture; }
+        GLuint GetTextureId(int attachment = 0) const { return mTextures[attachment]; }
         const char *GetName() const { return mName.c_str(); }
         void SetName(const char *name) { mName = name ? name : "unnamed"; }
 
@@ -156,20 +202,26 @@ namespace EdgeLighting
                 glDeleteFramebuffers(1, &mFbo);
                 mFbo = 0;
             }
-            if (mTexture != 0)
+            for (int i = 0; i < FRAMEBUFFER_MAX_ATTACHMENTS; ++i)
             {
-                glDeleteTextures(1, &mTexture);
-                mTexture = 0;
+                if (mTextures[i] != 0)
+                {
+                    glDeleteTextures(1, &mTextures[i]);
+                    mTextures[i] = 0;
+                }
             }
             mWidth = 0;
             mHeight = 0;
+            mAttachments = 1;
         }
 
     private:
         GLuint mFbo = 0;
-        GLuint mTexture = 0;
+        GLuint mTextures[FRAMEBUFFER_MAX_ATTACHMENTS] = {0, 0};
         int mWidth = 0;
         int mHeight = 0;
+        int mAttachments = 1;
+        GLenum mInternalFormat = GL_RGBA8;
         std::string mName = "unnamed";
     };
 
