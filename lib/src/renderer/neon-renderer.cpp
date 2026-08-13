@@ -200,8 +200,6 @@ namespace EdgeLighting
             mBlackRectShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
             mBlackRectShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
             mBlackRectShader.SetUniform("uOpaqueSoftness", opaqueSoft);
-            // Nothing is resampled in this path, so the fill needs no growth.
-            mBlackRectShader.SetUniform("uFillExpand", 0.0f);
             mBlackRectShader.SetUniform("uOpaqueColor", config.neon.opaqueColor);
             mFullVertexArray.DrawArrays(GL_TRIANGLES, 6);
             mBlackRectShader.Unuse();

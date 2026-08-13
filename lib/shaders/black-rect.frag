@@ -37,14 +37,6 @@ uniform float uInsideCutoff;   // positive distance INSIDE the edge (d = -uInsid
 uniform float uOutsideCutoff;  // positive distance OUTSIDE the edge (d = +uOutsideCutoff at boundary). Disabled sides collapse to a huge sentinel CPU-side.
 uniform float uOpaqueSoftness; // feather width in px at the fill's cutoff boundaries (NeonConfig::opaqueSoftness).
 uniform vec4  uOpaqueColor;    // fill colour; only .rgb used today, .a reserved for a later partial-fill pass
-// Pixels to grow the fill band by on EVERY boundary. 0 for the full-res
-// NeonRenderer. NeonOptimizedRenderer passes half a FBO texel (0.5 /
-// resolutionScale px): it renders the emission into a scaled FBO, so the
-// bilinear blit that brings it back to full res spreads every hard edge by
-// that much. Without the matching growth the smeared light spills past the
-// fill and reads as a bright fringe outside the opaque band - the base
-// renderer has no such fringe because nothing is resampled there.
-uniform float uFillExpand;
 
 float sdRoundBox(vec2 p, vec2 b, float r) {
     vec2 q = abs(p) - b + r;
@@ -111,24 +103,18 @@ void main() {
     float dOut = bandOuterDistance(localPos, d, halfSize, uCornerRadius, uOutsideCutoff);
     float dIn  = bandInnerDistance(d, uInsideCutoff);
 
-    // Grow every boundary outward by uFillExpand so the fill still covers the
-    // emission after the optimized renderer's upscale has blurred its edges.
-    float ex   = uFillExpand;
-    dOut      -= ex;      // outer cutoff moves further out
-    dIn       += ex;      // inner cutoff moves further in
-
     float coverage = 0.0;
     if (uOpaqueMode == OPAQUE_MODE_ALL) {
         coverage = 1.0;
     } else if (uOpaqueMode == OPAQUE_MODE_OUTSIDE) {
         // 0 <= d <= outsideCutoff
-        float rise = smoothstep(-aa, aa, d + ex);
+        float rise = smoothstep(-aa, aa, d);
         float fall = 1.0 - smoothstep(-soft, soft, dOut);
         coverage   = rise * fall;
     } else if (uOpaqueMode == OPAQUE_MODE_INSIDE) {
         // -insideCutoff <= d <= 0
         float rise = smoothstep(-soft, soft, dIn);
-        float fall = 1.0 - smoothstep(-aa, aa, d - ex);
+        float fall = 1.0 - smoothstep(-aa, aa, d);
         coverage   = rise * fall;
     } else if (uOpaqueMode == OPAQUE_MODE_BOTH) {
         // -insideCutoff <= d <= +outsideCutoff (the full glow band)
