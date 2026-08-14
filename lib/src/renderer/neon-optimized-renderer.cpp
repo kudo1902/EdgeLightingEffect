@@ -454,8 +454,7 @@ namespace EdgeLighting
             float filSigmas = std::clamp(
                 std::pow(std::log2(float(FILAMENT_GAIN) / float(FILAMENT_CUTOFF)), 1.0f / filN),
                 float(FILAMENT_REACH_MIN_SIGMAS), float(FILAMENT_REACH_MAX_SIGMAS));
-            float filamentReach = std::max(config.neon.lineWidth * 0.5f,
-                                           float(FILAMENT_MIN_HALF_WIDTH)) * scale * filSigmas;
+            float filamentReach = std::max(config.neon.lineWidth * 0.5f, float(FILAMENT_MIN_HALF_WIDTH)) * scale * filSigmas;
 
             float margin = std::max(glowReach, filamentReach);
 
@@ -542,11 +541,11 @@ namespace EdgeLighting
         for (int i = 0; i < lutSize; ++i)
         {
             float t = static_cast<float>(i) / static_cast<float>(lutSize);
-            glm::vec3 c = ColorUtils::SampleStops(t, config.neon.colorStops, config.neon.blendSpace);
+            glm::vec4 c = ColorUtils::SampleStops(t, config.neon.colorStops, config.neon.blendSpace);
             mLUTTarget[i * 4 + 0] = c.r;
             mLUTTarget[i * 4 + 1] = c.g;
             mLUTTarget[i * 4 + 2] = c.b;
-            mLUTTarget[i * 4 + 3] = 1.0f;
+            mLUTTarget[i * 4 + 3] = c.a;
         }
 
         // First bake (Initialize): seed every buffer and upload immediately -
@@ -624,11 +623,11 @@ namespace EdgeLighting
             for (int x = 0; x < W; ++x)
             {
                 float t = static_cast<float>(x) / static_cast<float>(W - 1);
-                glm::vec3 c = ColorUtils::SampleStops(t, seg.colorStops, seg.blendSpace);
+                glm::vec4 c = ColorUtils::SampleStops(t, seg.colorStops, seg.blendSpace);
                 row[x * 4 + 0] = static_cast<unsigned char>(std::clamp(c.r * 255.0f, 0.0f, 255.0f));
                 row[x * 4 + 1] = static_cast<unsigned char>(std::clamp(c.g * 255.0f, 0.0f, 255.0f));
                 row[x * 4 + 2] = static_cast<unsigned char>(std::clamp(c.b * 255.0f, 0.0f, 255.0f));
-                row[x * 4 + 3] = 255;
+                row[x * 4 + 3] = static_cast<unsigned char>(std::clamp(c.a * 255.0f, 0.0f, 255.0f));
             }
         }
 
@@ -661,11 +660,11 @@ namespace EdgeLighting
             for (int x = 0; x < W; ++x)
             {
                 float t = static_cast<float>(x) / static_cast<float>(W - 1);
-                glm::vec3 c = ColorUtils::SampleStops(t, arc.colorStops, arc.blendSpace);
+                glm::vec4 c = ColorUtils::SampleStops(t, arc.colorStops, arc.blendSpace);
                 row[x * 4 + 0] = static_cast<unsigned char>(std::clamp(c.r * 255.0f, 0.0f, 255.0f));
                 row[x * 4 + 1] = static_cast<unsigned char>(std::clamp(c.g * 255.0f, 0.0f, 255.0f));
                 row[x * 4 + 2] = static_cast<unsigned char>(std::clamp(c.b * 255.0f, 0.0f, 255.0f));
-                row[x * 4 + 3] = 255;
+                row[x * 4 + 3] = static_cast<unsigned char>(std::clamp(c.a * 255.0f, 0.0f, 255.0f));
             }
         }
 

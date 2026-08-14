@@ -75,10 +75,19 @@ namespace EdgeLighting
     } BlendSpace;
 
     /// A colour stop along the perimeter.
+    ///
+    /// @c color.a is an EMISSION SCALE at this stop, not a blend opacity: the
+    /// renderers bake it into their LUTs' alpha channel and the neon shaders
+    /// multiply it into the emission magnitude, so it attenuates the filament,
+    /// halo and bloom together. 1 = full brightness (default), 0 = dark at
+    /// that perimeter position with the background showing through - which is
+    /// how you fade the neon out along part of the ring without touching the
+    /// arc or segment gating. It interpolates linearly between stops in every
+    /// @ref BlendSpace (the hue-space conversions apply to @c .rgb only).
     typedef struct ColorStop
     {
         float position;  ///< Normalised position along the perimeter [0-1].
-        glm::vec4 color; ///< RGBA colour at this stop.
+        glm::vec4 color; ///< RGB colour + alpha emission scale at this stop.
 
         bool operator==(const ColorStop &o) const
         {
