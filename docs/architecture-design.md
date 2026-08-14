@@ -34,9 +34,12 @@ Config ────► │ EdgeLightingEffect   │◄──── Clock (Play/P
                        │  Render(w, h, t, config)
                        ▼
        ┌─────────────────────────────────────────┐
-       │  WireframeRenderer  (debug outline)     │
-       │  NeonRenderer       (full-res neon)     │
-       │  NeonOptimizedRenderer (half-res neon)  │
+       │  WireframeRenderer      (debug outline) │
+       │  NeonRenderer           (full-res neon) │
+       │  NeonOptimizedRenderer  (half-res neon) │
+       │  DropletsRenderer       (rain on glass) │
+       │  LensFlareRenderer      (sun + ghosts)  │
+       │  LensFlareOptimizedRenderer (half-res)  │
        └─────────────────────────────────────────┘
 ```
 
@@ -55,12 +58,15 @@ lib/
   include/animation/  Modulator family + Animation presets + AnimationManager
                       + FieldBoundAnimation
   include/gl/         Move-only RAII wrappers: ShaderProgram, VertexArray,
-                      Texture(1D/2D), Framebuffer, UniformBuffer
+                      Texture + Texture2D, Framebuffer, UniformBuffer
   include/util/       geometry-utils, color-utils, contour-tracer, stb-image,
                       screenshot-util, log-util
   shaders/            .vert/.frag sources + shaders.h.in template
   src/                Renderer + effect + animation implementations
-  capi/               Flat extern "C" ABI (edge-lighting-capi.{h,cpp})
+  capi/               Flat extern "C" ABI: edge-lighting-capi.h aggregates
+                      el-types.h + el-effect / el-animation / el-modulator
+                      (.h/.cpp), with capi-internal.h holding the handle
+                      definitions and the enum-parity static_asserts
 
 demo/                 C++ demo - links libedge-lighting directly
   src/                Entry point + ImGui debug window + border-color-picker
@@ -97,11 +103,22 @@ Config
  │                         Default = one arc covering the whole perimeter.
  │                       - segments: vector<SegmentBoost> (position, length,
  │                         boost, own colorStops + blendSpace). Default empty.
- │                       - compositing: opaque + opaqueColor
- │                       - debug: showGradientLUT, showColorStops
+ │                       - compositing: opaqueMode + opaqueColor +
+ │                         opaqueSoftness, insideCutoff / outsideCutoff
+ │                       - debug: showGradientLUT, showColorStops, opaqueOnly
  ├── OptimizedNeonConfig half-res knobs (enable, resolutionScale, numSamples,
  │                       gradientLutSize, showHalfRes). *Shares* NeonConfig
  │                       for every visual param above.
+ ├── DropletsConfig      rain on glass: amount, speed, lanes, bandWidth,
+ │                       bandOffset, tint. Band side comes from
+ │                       NeonConfig::glowSide.
+ ├── LensFlareConfig     sun + ghosts: perimeterPosition / perimeterOffset,
+ │                       size, color, intensity, spread, rayDensity,
+ │                       rotationRate + the ghost group (spacing, size,
+ │                       offset, color, tint, flareCenter)
+ ├── LensFlareOptimizedConfig
+ │                       enable + resolutionScale only. *Shares*
+ │                       LensFlareConfig for every visual param.
  └── WireframeConfig     enable + color
 ```
 
@@ -198,6 +215,40 @@ count sliders are the primary perf knobs.
 
 A `GL_LINE_LOOP` debug outline. Blending briefly disabled for crisp 1 px
 lines.
+
+### 4.4 DropletsRenderer
+
+Rain-on-glass droplets in a band that follows the rounded-rect perimeter.
+The band's thickness is `droplets.bandWidth` and its side comes from
+`neon.glowSide`, so the rain shares the neon's geometry. The droplet field
+is hashed in screen space under a single global gravity - rain falls straight
+down rather than circulating around the perimeter - and droplet size scales
+with the band width so the effect holds up however thin the band is. Drops
+are self-lit (transparent body + crescent rim + specular dot); there is no
+framebuffer capture or refraction pass.
+
+### 4.5 LensFlareRenderer / LensFlareOptimizedRenderer
+
+A sun with rays plus hex-aperture chromatic ghosts, drawn as one fullscreen
+premultiplied-alpha pass. The sun rides the perimeter via
+`lensFlare.perimeterPosition` - the same parameter space as `Arc::start` and
+`SegmentBoost::position` - so the same modulators that drive neon segments
+drive the flare, and it stays tied to the frame wherever the geometry moves.
+
+`LensFlareOptimizedRenderer` renders the identical shader into a scaled FBO
+and bilinear-blits back, which is nearly lossless because the flare is smooth
+and low-frequency. The two share `LensFlareConfig`, so **enabling both draws
+the flare twice** - pick one.
+
+### 4.6 The full-res / optimized pairs
+
+`NeonOptimizedRenderer` and `LensFlareOptimizedRenderer` are near-forks of
+their full-res counterparts rather than thin wrappers: each duplicates its
+sibling's fragment shader and most of its C++ setup, and the pair shares one
+visual sub-config. That is a deliberate trade (the optimized path can diverge
+on precision and sample counts without destabilising the reference path), but
+it means **a change to how neon or the flare looks generally has to land in
+both copies** or the two drift apart visually.
 
 ## 5. Animation - Clock + Modulators + AnimationManager
 
@@ -335,8 +386,10 @@ must not touch `glGen*` / `glDelete*` directly.
   skips redundant GL calls.
 - `VertexArray` - VAO + VBO with `SetVertexData` / `SetAttribPointer` /
   `DrawArrays`.
-- `Texture` (base) + `Texture1D` / `Texture2D` - `Bind(unit)`, `SetData`,
-  `SetParams`, plus `Texture2D::SetDataFromFile` (stb_image).
+- `Texture` (base) + `Texture2D` - `Bind(unit)`, `SetData`, `SetParams`, plus
+  `Texture2D::SetDataFromFile` (stb_image). There is no `Texture1D`: GLES 3.0
+  has no `sampler1D`, so the gradient LUT is a 1-row 2D texture sampled at
+  `v = 0.5`.
 - `Framebuffer` - with a colour texture, resize-idempotent.
 - `UniformBuffer` - std140-shaped buffer with a byte-level upload cache
   (skips `glBufferData` when the block bytes are unchanged).
