@@ -266,12 +266,20 @@ namespace EdgeLighting
         /// shader yet. Default is black.
         glm::vec4 opaqueColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
 
-        /// Feather width in pixels applied at the opaque-mode fill's cutoff
-        /// boundaries. Used only when @c opaqueMode != NONE. 0 = hard fill
-        /// edge; larger values soften where the fill fades into the
-        /// background. Kept independent of the per-side @c Cutoff::softness
-        /// so the emission and the fill can taper at different rates - e.g.
-        /// a wide fill fade under a tight emission fall-off.
+        /// TOTAL feather width in pixels at the opaque-mode fill's cutoff
+        /// boundaries: the fade runs from fully covered to fully clear over
+        /// this many pixels, centred on the boundary. Used only when
+        /// @c opaqueMode != NONE. 0 = hard fill edge (floored to a 1 px
+        /// anti-aliasing ramp so it cannot stair-step); larger values soften
+        /// where the fill fades into the background. Kept independent of the
+        /// per-side @c Cutoff::softness so the emission and the fill can taper
+        /// at different rates - e.g. a wide fill fade under a tight emission
+        /// fall-off.
+        ///
+        /// NOTE the shader used to spread this over 2x the stated width, so
+        /// values tuned before that fix render half as wide now (and finally
+        /// match this doc). @c Cutoff::softness still carries the old 2x
+        /// convention in the neon shaders - the two are not comparable.
         float opaqueSoftness = 0.0f;
 
         // --- Filament (the bright line itself) ---
