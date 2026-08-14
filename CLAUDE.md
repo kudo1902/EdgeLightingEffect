@@ -4,9 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-OpenGL 3.3 Core renderer that draws an animated neon-style glow along the perimeter of a rounded rectangle. macOS arm64, CMake + GLFW + GLAD + GLM, ImGui for the debug UI.
+OpenGL 3.3 Core renderer that draws an animated neon-style glow along the perimeter of a rounded rectangle, plus companion layers (rain droplets, lens flare). macOS arm64, CMake + GLFW + GLAD + GLM, ImGui for the debug UI.
 
-The legacy stroke/particle/path/animation system was removed in favour of a smaller neon-focused pipeline. Architecture is documented in [`docs/architecture-design.md`](docs/architecture-design.md); when it goes out of date, treat the headers under `lib/include/` as the source of truth.
+The legacy stroke/particle/path system was removed in favour of a smaller neon-focused pipeline. Architecture is documented in [`docs/architecture-design.md`](docs/architecture-design.md); see also [`docs/effect-reference.md`](docs/effect-reference.md) (per-parameter reference), [`docs/coordinate-system.md`](docs/coordinate-system.md), and [`docs/multiple-arcs-design.md`](docs/multiple-arcs-design.md). When the docs go out of date, treat the headers under `lib/include/` as the source of truth.
 
 ## Build & run
 
@@ -18,22 +18,26 @@ cmake --build build
 ./build/demo/edge-lighting-demo
 ```
 
-There is no test target. The build produces:
+There is no test target. The build produces four artifacts:
 
-- `build/lib/libedge-lighting.a` - the library
-- `build/demo/edge-lighting-demo` - the demo executable
+- `build/lib/libedge-lighting.a` - the C++ static library
+- `build/lib/libedge-lighting-c.dylib` - flat `extern "C"` shared library for FFI / P-Invoke
+- `build/demo/edge-lighting-demo` - demo driving the C++ library directly
+- `build/demo-capi/edge-lighting-capi-demo` - the same UI driving only the C ABI
 
-`RES_DIR` is baked into the demo binary as a compile definition pointing at the in-tree `res/` directory, so the demo can be launched from anywhere.
+`RES_DIR` is baked into both demo binaries as a compile definition pointing at the in-tree `res/` directory, so they can be launched from anywhere.
 
 Third-party image assets under `res/` (the `.jpg` files from Unsplash) are covered by the [Unsplash License](https://unsplash.com/license); see `res/CREDITS.md` for the per-file attribution table.
 
-GLFW is an imported shared library at `external/lib/arm64/libglfw.3.dylib`; GLAD is built from `external/src/glad.c`. ImGui sources are compiled directly into the demo target (see `demo/CMakeLists.txt`).
+GLFW is an imported shared library at `external/lib/<arch>/libglfw.3.dylib` (arch picked from `CMAKE_OSX_ARCHITECTURES` or the host); GLAD is built from `external/src/glad.c`. ImGui sources are compiled directly into both demo targets.
+
+The root `CMakeLists.txt` has `PLATFORM_WINDOWS` / `PLATFORM_LINUX` branches that select `#version 300 es`, but only macOS is actually buildable today - `external/lib/` ships macOS binaries only and the imported GLFW location is hardcoded to `libglfw.3.dylib`. Treat the non-Apple branches as unfinished scaffolding.
 
 ## Shaders are embedded at configure time
 
-Shader sources under `lib/shaders/*.{vert,frag}` are read by `lib/CMakeLists.txt` and substituted into `shaders.h.in` via `configure_file()`, producing `build/lib/generated/shaders.h` with each shader as a `const char* const` raw string literal in `EdgeLighting::ShaderSource::*`. There is no runtime file I/O for shaders.
+Shader sources under `lib/shaders/*.{vert,frag}` are read by `lib/CMakeLists.txt` and substituted into `shaders.h.in` via `configure_file()`, producing `build/lib/generated/shaders.h` with each shader as a `const char* const` raw string literal in `EdgeLighting::ShaderSource::*`. There is no runtime file I/O for shaders. `@GLSL_VERSION@` supplies the version line and `@NEON_TUNING@` injects `lib/include/renderer/neon-tuning.h`, so the tuning constants are shared verbatim between the shaders and the C++ renderers.
 
-`CMAKE_CONFIGURE_DEPENDS` lists every shader file, so editing a `.vert`/`.frag` triggers a re-configure on the next build. **If you add a new shader you must update three places**: `lib/CMakeLists.txt` (both the `CMAKE_CONFIGURE_DEPENDS` and `file(READ ...)` lists) and `lib/shaders/shaders.h.in`.
+`CMAKE_CONFIGURE_DEPENDS` lists every shader file *and* `neon-tuning.h`, so editing any of them triggers a re-configure on the next build. **If you add a new shader you must update three places**: `lib/CMakeLists.txt` (both the `CMAKE_CONFIGURE_DEPENDS` and `file(READ ...)` lists) and `lib/shaders/shaders.h.in`.
 
 ## Architecture
 
@@ -41,31 +45,56 @@ Shader sources under `lib/shaders/*.{vert,frag}` are read by `lib/CMakeLists.txt
 
 `EdgeLighting::EdgeLightingEffect` (`lib/include/core/edge-lighting.h`) owns:
 
-- a `Config` (geometry + per-renderer sub-configs)
+- a **base** `Config` (geometry + per-renderer sub-configs) - what `SetConfig` writes
+- an **active** `Config` - base + animation overlays, what renderers actually see
 - a `Clock` (play/pause time accumulator)
+- an `AnimationManager` (held by `unique_ptr`)
 - a `vector<shared_ptr<BaseRenderer>>` registered by the host
 
-Per-frame contract: `Update(dt)` ticks the clock and forwards `(dt, clockTime, config)` to every renderer; `Render(w, h)` does the same for drawing. `SetConfig` replaces the config and notifies all renderers via `OnConfigChanged`. Renderers are independent visual layers and composite by additive blending - enable any subset.
+Per-frame contract: `Update(dt)` ticks the clock, advances every attached animation by the clock delta, rebuilds the active config, then forwards `(dt, clockTime, activeConfig)` to every renderer; `Render(w, h)` does the same for drawing. Both `SetConfig` and the per-frame refresh notify renderers via `OnConfigChanged` - but only when the composited config actually changed, so renderers can rely on that call being meaningful. Renderers are independent visual layers and composite by blending - enable any subset.
 
-Current renderers (all under `lib/include/renderer/`):
+Six renderers, all under `lib/include/renderer/`, all registered by the demo in this order:
 
 - `WireframeRenderer` - 1px `GL_LINE_LOOP` debug box, blending temporarily disabled.
-- `NeonRenderer` - single-pass neon stroke. Uses an analytic rounded-box SDF + a precomputed 1D `GRADIENT_LUT` texture (RGBA32F, 256px, REPEAT wrap) so each shader sample is one texture lookup instead of an in-shader colour-stops loop. Also precomputes `NUM_LOOP_SAMPLES` (128) sample positions on the perimeter.
-- `NeonOptimizedRenderer` - half-resolution variant of the single-pass neon that renders into a scaled FBO and bilinear-blits back to full res; visual params are read from `Config::neon`.
+- `NeonRenderer` - full-res single-pass neon stroke. Analytic rounded-box SDF plus a gather loop over `NEON_MAX_LOOP_SAMPLES` perimeter samples (positions in a UBO), reading three baked LUT textures: `uGradientLUT` (base colour ring), `uSegmentLUT` (per-segment gradient atlas, one row per segment), `uArcLUT` (per-arc atlas). All LUTs are baked on the CPU as **RGBA8** - float textures are deliberately avoided for edge-device compatibility. Also owns the opaque-fill pass (`black-rect.frag`) and two debug overlays (LUT strip, colour-stop markers).
+- `NeonOptimizedRenderer` - half-res variant: renders into a scaled FBO and bilinear-blits back. Adds a runtime `numSamples` knob and a configurable LUT width. **Visual params are read from `Config::neon`**, not from its own sub-config, which only carries perf knobs.
+- `DropletsRenderer` - rain-on-glass droplets in a band hugging the perimeter; screen-space gravity, self-lit drops, no framebuffer capture.
+- `LensFlareRenderer` - sun + hex-aperture flare (rays, chromatic ghosts) as one fullscreen premultiplied-alpha pass. The sun rides the perimeter in the same parameter space as neon segments/arcs.
+- `LensFlareOptimizedRenderer` - half-res variant of the above, same shader into a scaled FBO. Don't enable it alongside `LensFlareRenderer`; they draw the same flare and would double it.
 
-To add a renderer, subclass `BaseRenderer`, add a sub-config struct to `Config`, register it in `demo/src/main.cpp`, and add an ImGui section in `DebugUI`.
+Note the `*Optimized` renderers are near-forks of their full-res counterparts (both the `.cpp` and the `.frag`), and share visual config. A change to neon or lens-flare appearance generally has to land in **both** copies to stay consistent.
 
-### Animation: Clock + Modulators (pure functions of time)
+To add a renderer, subclass `BaseRenderer` (`Initialize` / `Update` / `Render` / `OnConfigChanged`), add a sub-config struct to `Config` with `operator==`, register it in `demo/src/main.cpp`, and add an ImGui section in `DebugUI`.
 
-`EdgeLightingEffect` only advances the clock; it does **not** mutate config values. Parameter animation lives entirely outside in the `Modulator` family (`lib/include/animation/modulator.h`) - header-only, pure functions `time -> float`. Concrete shapes: `Constant`, `Oscillator` (SINE/TRIANGLE/SQUARE/SAWTOOTH), `Ease` (with an `Easing::Curve` function pointer), `Sequence`, `Multiplier`, `Adder`, `Remap`. The intended pattern is: the host computes each frame's animated value with `modulator.Evaluate(clock.GetTime())`, writes it into a `Config` copy, and calls `SetConfig`. No coupling between modulators and `Config`.
+### Animation: Clock + Modulators + Animations
+
+Three layers, low to high:
+
+- **`Modulator`** (`animation/modulator.h`) - header-only pure functions `time -> float`. `Constant`, `Oscillator` (SINE/TRIANGLE/SQUARE/SAWTOOTH), `Ease` (with an `EasingFunction::Curve` pointer), `Sequence`, `Multiplier`, `Adder`, `Remap`. No coupling to `Config`.
+- **`Animation`** (`animation/animation.h`) - owns modulator(s) *plus* its own play state (`AnimationState`), elapsed accumulator, `PlaybackMode` (LOOP / ONE_SHOT) and `EndAction` (HOLD_CURRENT / HOLD_END / HOLD_START / RESTORE). Two-phase: `Update(dt)` advances time, `Apply(cfg)` writes into a config. `AnimationGroup` is itself an `Animation`. Concrete subclasses live in `animation/neon-animations.h` (`IntensityPulse`, `ArcWipe`, `SegmentTravel`, `OutlineTracer`, ...); `FieldBoundAnimation` (`animation/field-bound-animation.h`) instead binds modulators to `AnimatableField` / `SegmentField` / `ArcField` / `ColorStopField` targets at runtime, phase-locked on one shared clock.
+- **`AnimationManager`** (`animation/animation-manager.h`) - the attach list. `Attach` / `Detach` / `DetachAll`, then `Update(dt)` and `Apply(target)` fan out to every attached animation in attach order.
+
+The effect embeds the manager, so the host does **not** hand-composite animations: attach via `effect.Attach(anim)`, call `anim->Play()`, and each `Update` rebuilds the active config as base + overlays. Read the composited result with `GetActiveConfig()` (useful for UI sliders that should follow animated values); `GetConfig()` returns the untouched base. There is no "revert to base" end action - `Detach` gives that behaviour.
+
+### C ABI (`lib/capi/`)
+
+`libedge-lighting-c` wraps the static library in a flat `extern "C"` surface for P-Invoke / ctypes / cgo. `edge-lighting-capi.h` is the single public include, aggregating `el-types.h` (enums, result codes, `EL_API`), `el-effect.h`, `el-animation.h`, `el-modulator.h`. Key points:
+
+- Three opaque handle families - effect, animation, modulator - defined in `capi-internal.h`. Attaching an animation does not transfer ownership.
+- Each effect handle carries a **staging `Config`**: every `el_effect_set_*` mutates staging and calls `SetConfig` immediately; every `el_effect_get_*` reads staging back, *not* the animation-overlaid active config. `el_effect_capture` re-syncs staging from the effect's base.
+- No C++ exception escapes the boundary; everything maps to an `el_result_e`.
+- Enum ABI parity between the C++ enums and their `el_*` mirrors is enforced by a wall of `static_assert`s at the top of `capi-internal.h`. **If you reorder or renumber a C++ enum that has an `el_*` mirror, add/adjust the assert there** - append new values at the end to stay forward-compatible.
+- Symbols are hidden by default (`CXX_VISIBILITY_PRESET hidden`); only `EL_API`-marked `el_*` functions are exported.
 
 ### RAII GL wrappers
 
-`lib/include/gl/` provides move-only RAII wrappers: `ShaderProgram`, `VertexArray`, `Framebuffer`, `Texture` (base) + `Texture1D` / `Texture2D`. `gl-header.h` is the single include for `<glad/glad.h>`. Use these wrappers - do not call `glGen*` / `glDelete*` directly in renderer code.
+`lib/include/gl/` provides move-only RAII wrappers: `ShaderProgram` (with uniform-location and last-value caching), `VertexArray`, `Framebuffer`, `UniformBuffer`, and `Texture` (base) + `Texture2D`. `gl-header.h` is the single include for `<glad/glad.h>`. Use these wrappers - do not call `glGen*` / `glDelete*` directly in renderer code. (`demo-capi/src/` is the exception: it deliberately cannot see `lib/include/`, so it has its own minimal GL helpers in `gl-mini.h`.)
 
-### Demo
+### Demos
 
-`demo/src/main.cpp` opens two GLFW windows that share a GL context: the main render window and a separate ImGui debug window (`DebugUI` in `demo/src/debug-ui.{h,cpp}`). The render loop calls `debugUI.Build(cfg, *gEffect)` to lay out widgets, then `debugUI.Render()` draws into the debug window, then makes the main window's context current to draw the effect. Hotkeys (defined in `OnKey` in `main.cpp`) mutate `Config` directly and round-trip through `SetConfig`.
+`demo/src/main.cpp` opens two GLFW windows that share a GL context: the main render window and a separate ImGui debug window (`DebugUI` in `demo/src/debug-ui.{h,cpp}`). The render loop calls `debugUI.Build(cfg, *gEffect)` to lay out widgets, then `debugUI.Render()` draws into the debug window, then makes the main window's context current to draw the effect. Hotkeys (`OnKey` in `main.cpp`) mutate `Config` directly and round-trip through `SetConfig`.
+
+`demo-capi/` mirrors that UI but its include path deliberately excludes `lib/include/`, so it can only compile against the flat C ABI - that is the guard proving the ABI is self-sufficient for a real UI-shaped host. It is a hand-maintained fork of `demo/`: a change to one usually needs the same change in the other.
 
 ## Conventions
 
@@ -74,5 +103,6 @@ Naming and formatting are defined in `AGENTS.md` and enforced by hand - there is
 - Files: `kebab-case.{h,cpp}`. Namespaces, classes, structs, enums, public methods, event callbacks: `PascalCase` (callbacks prefixed with `On`). Private methods, locals, parameters: `camelCase`. Enum values and constants: `ALL_CAPS_WITH_UNDERSCORES`.
 - Variables: members `mFoo`, globals `gFoo`. Header guards `_NAME_OF_FILE_H_`.
 - Structs/enums always get a `typedef` self-alias: `typedef struct Config { ... } Config;`, `typedef enum class Winding { ... } Winding;`.
+- Every `Config` sub-struct needs `operator==` / `operator!=` covering all its fields - the effect's change detection and the renderers' dirty-flag gating both depend on it. Adding a field without adding it to `operator==` silently breaks rebuilds.
 - Always brace single-statement bodies, including every `case` body inside a `switch`. See `AGENTS.md` for the canonical examples.
 - Never use the em-dash character (Unicode U+2014); use a plain hyphen `-` instead (comments, doc comments, log strings, Markdown). Keep shader sources ASCII-only.
