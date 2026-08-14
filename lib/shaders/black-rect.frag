@@ -19,7 +19,8 @@ precision highp float;
 //   BOTH    - fill -insideCutoff <= d <= outsideCutoff (the whole glow band).
 //   ALL     - fill the whole viewport (coverage = 1 everywhere).
 //
-// Boundaries are SDF-anti-aliased over ~1-2 px via fwidth(d).
+// The d == 0 rect edge gets exact 1 px box-filter coverage from fwidth(d);
+// the cutoff boundaries get a uOpaqueSoftness feather. See main().
 
 #define OPAQUE_MODE_NONE    0
 #define OPAQUE_MODE_OUTSIDE 1
@@ -95,8 +96,34 @@ void main() {
     //          +outsideCutoff boundary so the fill fades off gently instead
     //          of stamping a hard rectangle. Floored to fwidth so the fade
     //          is never sharper than 1 px on curves.
-    float aa      = fwidth(d);
+    float aa      = max(fwidth(d), 1e-6);
     float soft = max(uOpaqueSoftness, aa);
+
+    // The d == 0 edge is covered by an EXACT box filter, not a smoothstep.
+    //
+    // For a straight edge with |grad d| = 1, a pixel whose centre sits at
+    // signed distance d is covered by exactly clamp(0.5 - d/aa, 0, 1) - a ramp
+    // ONE pixel wide, spanning d in [-aa/2, +aa/2]. smoothstep(-aa, aa, d)
+    // spans TWO, so it shaded pixels that are wholly inside the shape.
+    //
+    // That showed up as "the outermost 1 px is not black" whenever the
+    // geometry ends on a pixel boundary - a 1920x1080 rect filling a 1920x1080
+    // surface, i.e. the on-device fullscreen case. The outer pixel's centre is
+    // at gl_FragCoord 0.5, so d = -0.5: half a pixel inside, hence fully
+    // covered, but the doubled ramp returned 1 - smoothstep(-1, 1, -0.5)
+    // = 0.844 and let 15.6% of the background through all the way round.
+    // OUTSIDE had the mirror bug, tinting that same ring at 0.156 when it
+    // should not touch the interior at all.
+    //
+    // Normally invisible because the neon filament peaks at d = 0 and covers
+    // that pixel - NeonConfig::opaqueOnly is what exposes it.
+    //
+    // Linear, not smoothstep, on purpose: this IS the analytic coverage, and
+    // it matches the "pixel-crisp" intent stated above. The cutoff boundaries
+    // keep their smoothstep - there the ramp is an artistic feather
+    // (uOpaqueSoftness), not an estimate of pixel coverage.
+    float edgeIn  = clamp(0.5 - d / aa, 0.0, 1.0); // 1 inside the rect, 0 outside
+    float edgeOut = 1.0 - edgeIn;                  // mirror, for OUTSIDE
 
     // Band boundaries against the offset rect (square corners at
     // cornerRadius 0); the d == 0 rect edge itself still uses the plain SDF.
@@ -108,13 +135,13 @@ void main() {
         coverage = 1.0;
     } else if (uOpaqueMode == OPAQUE_MODE_OUTSIDE) {
         // 0 <= d <= outsideCutoff
-        float rise = smoothstep(-aa, aa, d);
+        float rise = edgeOut;
         float fall = 1.0 - smoothstep(-soft, soft, dOut);
         coverage   = rise * fall;
     } else if (uOpaqueMode == OPAQUE_MODE_INSIDE) {
         // -insideCutoff <= d <= 0
         float rise = smoothstep(-soft, soft, dIn);
-        float fall = 1.0 - smoothstep(-aa, aa, d);
+        float fall = edgeIn;
         coverage   = rise * fall;
     } else if (uOpaqueMode == OPAQUE_MODE_BOTH) {
         // -insideCutoff <= d <= +outsideCutoff (the full glow band)
