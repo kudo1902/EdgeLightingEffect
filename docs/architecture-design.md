@@ -265,7 +265,7 @@ void NeonRenderer::OnConfigChanged(const Config &config)
     mCurrentConfig = config;
     if (!mShaderProgram.IsValid()) { return; }
 
-    if (samplesDirty)  { rebuildLoopSamples(config); }  // updates mSampleSpacing
+    if (samplesDirty)  { rebuildLoopSamples(config); }
     if (geometryDirty) { setupGeometry(config); }
     if (lutDirty)      { rebuildGradientLUT(config); }
 }

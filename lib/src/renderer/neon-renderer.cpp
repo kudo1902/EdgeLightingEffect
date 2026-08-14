@@ -92,8 +92,6 @@ namespace EdgeLighting
             LOG_E("Failed to compile/link NeonRenderer shaders.");
             return false;
         }
-        // rebuildLoopSamples must run before setupGeometry: the quad size
-        // depends on mSampleSpacing (computed in rebuildLoopSamples).
         rebuildLoopSamples(mCurrentConfig);
         setupGeometry(mCurrentConfig);
         rebuildGradientLUT(mCurrentConfig);
@@ -207,6 +205,18 @@ namespace EdgeLighting
             mBlackRectShader.Unuse();
         }
 
+        // Debug: stop after the fill. Skips the gather AND the LUT-strip /
+        // stop-marker overlays below, so what lands on screen is the opaque
+        // silhouette by itself - which is how the fill's square corner at
+        // cornerRadius 0 gets compared against the emission's round one.
+        // Restores the blend state the tail of this function would have set.
+        if (config.neon.opaqueOnly)
+        {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            return;
+        }
+
         // Pass 2 (opaque) / only pass (transparent): the neon gather on the
         // tight glow quad, in both modes.
         mShaderProgram.Use();
@@ -264,7 +274,6 @@ namespace EdgeLighting
         mArcBlock.SetData(&arcBlock, sizeof(arcBlock));
         mArcBlock.BindBase(ARC_BLOCK_BINDING);
 
-        mShaderProgram.SetUniform("uSampleSpacing", mSampleSpacing);
         mShaderProgram.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
 
         // Loop sample positions come from the LoopSamplesBlock UBO (see
@@ -354,6 +363,17 @@ namespace EdgeLighting
                                    config.neon.glowRadius != mCurrentConfig.neon.glowRadius ||
                                    config.neon.bloomStrength != mCurrentConfig.neon.bloomStrength ||
                                    config.neon.intensity != mCurrentConfig.neon.intensity ||
+                                   // lineWidth feeds setupGeometry's filament-reach floor, which is
+                                   // what sizes the quad whenever glowRadius is small. Miss it and a
+                                   // widened filament keeps the old, tighter margin and gets clipped
+                                   // on the OUTSIDE only (the quad bounds the exterior; the interior
+                                   // is always covered) - the "outer glow dropped at glowRadius 0"
+                                   // report. Only bites at small glowRadius, because above
+                                   // lineWidth / 10.4 the glow term wins the max() anyway.
+                                   config.neon.lineWidth != mCurrentConfig.neon.lineWidth ||
+                                   // filamentFalloff sets how many sigmas the filament
+                                   // reaches, so it sizes the quad too (see setupGeometry).
+                                   config.neon.filamentFalloff != mCurrentConfig.neon.filamentFalloff ||
                                    config.neon.outsideCutoff != mCurrentConfig.neon.outsideCutoff;
         const bool lutDirty = config.neon.colorStops != mCurrentConfig.neon.colorStops ||
                               config.neon.blendSpace != mCurrentConfig.neon.blendSpace;
@@ -376,7 +396,7 @@ namespace EdgeLighting
 
         if (samplesDirty)
         {
-            rebuildLoopSamples(config); // updates mSampleSpacing, read by setupGeometry
+            rebuildLoopSamples(config);
         }
 
         if (geometryDirty)
@@ -434,19 +454,45 @@ namespace EdgeLighting
 
     void NeonRenderer::setupGeometry(const Config &config)
     {
-        // Size the quad to cover the lit region: rect + earlyOut. Beyond this the
-        // halo/bloom are < ~1% at default strength, so geometry bounds the far
-        // region instead of a per-fragment discard (tiler-friendly).
-        // Factors come from the shared neon-tuning.h (also fed to the shaders).
-        float margin = std::max(config.neon.glowRadius * float(EARLY_OUT_RADIUS_FACTOR),
-                                mSampleSpacing * float(EARLY_OUT_SPACING_FACTOR));
-
+        // Size the quad to cover the lit region: rect + earlyOut, so geometry
+        // bounds the far region instead of a per-fragment discard
+        // (tiler-friendly). Factors come from the shared neon-tuning.h.
+        //
+        // glowRadius ONLY - deliberately not the old
+        // max(glowRadius * RADIUS, sampleSpacing * SPACING). sampleSpacing is
+        // perimeter / NEON_MAX_LOOP_SAMPLES, so the spacing term won on any
+        // reasonably large rect at default glowRadius and made the quad - and
+        // with it the distance the bloom got truncated at, and the brightness
+        // it still had there - track the rect size: the fade began at 250 px on
+        // a 200x150 rect and 1542 px on a 1920x1080 one. The bloom's reach is a
+        // function of glowRadius and nothing else, so that is all that sizes the
+        // quad now. It also caps the worst case: the old spacing term asked for
+        // a ~5800x4900 px quad on a 1920x1080 rect.
+        //
         // The wide bloom (1/D tail) stays visible further out as bloomStrength /
-        // intensity rise, so grow the quad with them - otherwise a strong bloom
-        // gets chopped at a hard rectangular edge, worst on small geometry. The
-        // shader still soft-fades the emission to zero at mQuadMargin, so even
-        // if this under-estimates there's no hard cutoff.
-        margin *= 1.0f + config.neon.bloomStrength * config.neon.intensity;
+        // intensity rise, so grow the quad with them. The shader reproduces this
+        // exact expression to place its bloom pedestal, which is what lets the
+        // margin stay this tight without the truncation showing - keep the two
+        // in step.
+        float glowReach = config.neon.glowRadius * float(EARLY_OUT_RADIUS_FACTOR) *
+                          (1.0f + config.neon.bloomStrength * config.neon.intensity);
+
+        // ...but the filament is sized by lineWidth, not glowRadius, so the quad
+        // must clear it too. Without this floor, glowRadius = 0 ("filament only")
+        // produced a zero margin: the quad landed exactly on the rect and clipped
+        // every exterior fragment, so the outside half of the filament
+        // disappeared while the inside half stayed. Mirrors the shader's `sigma`.
+        // Reach in sigmas depends on the falloff exponent, not a constant - a
+        // soft filament's tail runs for hundreds of sigmas. Same expression as
+        // the shaders' reachSigmas; see neon-tuning.h.
+        float filN = 2.0f * std::max(config.neon.filamentFalloff, 1e-3f);
+        float filSigmas = std::clamp(
+            std::pow(std::log2(float(FILAMENT_GAIN) / float(FILAMENT_CUTOFF)), 1.0f / filN),
+            float(FILAMENT_REACH_MIN_SIGMAS), float(FILAMENT_REACH_MAX_SIGMAS));
+        float filamentReach = std::max(config.neon.lineWidth * 0.5f,
+                                       float(FILAMENT_MIN_HALF_WIDTH)) * filSigmas;
+
+        float margin = std::max(glowReach, filamentReach);
 
         // Hard cap: when the outside cutoff is enabled the shader discards
         // emission past size + softness, so there's no point rasterising
@@ -512,13 +558,6 @@ namespace EdgeLighting
             block.samples[i] = glm::vec4(p, 0.0f, 0.0f);
         }
         mLoopSamplesBlock.SetData(&block, sizeof(block));
-
-        float w = config.geometry.width;
-        float h = config.geometry.height;
-        float r = std::max(0.0f, std::min(config.geometry.cornerRadius, std::min(w, h) * 0.5f));
-
-        float perimeter = 2.0f * (w - 2.0f * r) + 2.0f * (h - 2.0f * r) + 2.0f * PI * r;
-        mSampleSpacing = perimeter / static_cast<float>(NEON_MAX_LOOP_SAMPLES);
     }
 
     void NeonRenderer::rebuildGradientLUT(const Config &config)

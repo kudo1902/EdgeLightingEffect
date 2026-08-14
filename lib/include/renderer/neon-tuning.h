@@ -32,22 +32,123 @@
 //     of width, no perpendicular spike, and the profile is a plain smoothstep
 //     that reads the same on straight edges and at corners. Trade-off: the
 //     visible arc appears inset by these widths (arc lights up at
-//     start + TAIL_FEATHER_PX and ends at start + length - HEAD_FEATHER_PX);
-//     the inset is imperceptible on typical arcs and only matters if the arc
-//     is shorter than about (HEAD + TAIL) pixels. Values are pixel-space
-//     spans, divided by the current perimeter at the call site. ---
+//     start + TAIL_FEATHER_PX and ends at start + length - HEAD_FEATHER_PX).
+//     Values are pixel-space spans, divided by the current perimeter at the
+//     call site, and capped per-arc by ARC_FEATHER_MAX_SHARE below. ---
 #define HEAD_FEATHER_PX           14.0
 #define TAIL_FEATHER_PX           14.0
 
-// --- Halo (sharp coloured glow). Kernel uses g * sqrt(g) ~ p = 1.5. The sum
-//     is normalised by kg^2 to recover unit-density brightness. ---
+// --- Cap on each feather, as a share of the arc's own length.
+//
+//     The feathers above are a fixed pixel span while an arc's length is a
+//     FRACTION of the perimeter, so the same arc config is a different pixel
+//     length on every rect. Below ~(HEAD + TAIL) px the two ramps overlapped
+//     and ate into the arc's peak: an L = 0.02 arc peaked at 1.00 on an
+//     800x600 rect but only 0.21 on a 200x150 one - the last place rect size
+//     still reached brightness. Capping each feather at a share of the arc
+//     length holds the peak at exactly 1.0 for any length at any size; a short
+//     arc gets a proportionally shorter ramp instead of a truncated top.
+//
+//     0.4 leaves a 0.2 * length plateau at full brightness between the two
+//     ramps. Up to 0.5 also holds the peak, but with no plateau the arc reads
+//     as a spike rather than a flat-topped segment. Arcs longer than
+//     (HEAD + TAIL) / 0.4 px never reach the cap, so the normal case is
+//     bit-identical to before. ---
+#define ARC_FEATHER_MAX_SHARE     0.4
+
+// --- Halo (sharp coloured glow).
+//
+//     The halo and bloom are evaluated ANALYTICALLY from the rounded-box SDF
+//     distance, not summed over the perimeter gather. For a locally straight
+//     emitter of unit density the old sums converge exactly to:
+//
+//       sum g*sqrt(g) * spacing*kh^2*HALO_NORM  -> HALO_NORM  * 2*kh^2/(ad^2 + kh^2)
+//       sum 1/(dd+bw^2) * spacing*bw*BLOOM_NORM -> BLOOM_NORM * PI*bw/sqrt(ad^2 + bw^2)
+//
+//     so the NORM factors keep their meaning and their calibration: peak
+//     values at ad = 0 are unchanged (0.86 and 1.005 respectively).
+//
+//     The closed form is what makes the effect geometry-independent. The
+//     gather had to floor its kernel at a multiple of sampleSpacing to stop
+//     128 discrete samples beading into dots, and sampleSpacing is
+//     perimeter / NEON_MAX_LOOP_SAMPLES - so halo width, and via the gate its
+//     brightness, both tracked the rect size, and glowRadius did nothing at
+//     all until it exceeded the floor (~56 px on a 1920x1080 rect, i.e. most
+//     of its usable range). An analytic profile cannot bead at any radius, so
+//     no floor is needed and glowRadius sets the width directly. ---
 #define HALO_GAIN                 0.90
 #define HALO_NORM_FACTOR          0.43
-#define HALO_SPACING_FLOOR        1.2
 
-// --- Bloom (wide background spill) ---
+// --- Width of the COLOUR gather kernel, as a FRACTION OF THE PERIMETER.
+//
+//     The perimeter colour blend is the one part of the shader that is still a
+//     discrete sum over the loop samples, and it is the only place a length has
+//     to be expressed this way rather than in pixels. The reason is that the
+//     signal it filters - the gradient LUT - is itself parameterised by
+//     perimeter fraction: sample i contributes LUT(i / NEON_MAX_LOOP_SAMPLES).
+//     A kernel measured in pixels therefore covers a DIFFERENT span of the
+//     gradient on every geometry, and the same colour stops render washed out
+//     on a small rect and crisp on a large one. Measured on the stock 4-stop
+//     ring, the colour sampled exactly on the red stop ran (0.95, 0.33, 0.06)
+//     at 200x150 against (0.96, 0.04, 0.00) at 2800x2200 - roughly 8x the hue
+//     bleed from geometry alone. Scaling the kernel with the perimeter is what
+//     makes the gradient read identically at any size.
+//
+//     Two further properties fall out of the same choice:
+//
+//       - A constant anti-bead margin. The kernel has to stay >= about one
+//         sample spacing, or it collapses between samples and the blend beads
+//         into dots. Spacing is perimeter / NEON_MAX_LOOP_SAMPLES, so a
+//         perimeter fraction pins the ratio at
+//         COLOR_BLEND_PERIM_FRAC * NEON_MAX_LOOP_SAMPLES = 1.13 spacings on
+//         every geometry, where the previous fixed 24 px span met the bound
+//         only up to a ~3000 px perimeter and was down to 0.31 spacings by
+//         9900 px. (No beading was actually measurable there - a DFT of the
+//         hue around the perimeter put the 128-cycle component at the noise
+//         floor - because the gradient varies slowly over one spacing on a
+//         rect that large. The margin is a guarantee for dense colour stops,
+//         not a fix for an observed artifact.)
+//
+//       - Renderer agreement. Both shaders derive the kernel from the same
+//         NEON_MAX_LOOP_SAMPLES-based fraction rather than from their own
+//         runtime sample count, so NeonOptimizedRenderer's numSamples slider
+//         does not move the colour blend. (An earlier sampleSpacing-derived
+//         floor divided by the live count and landed 2x wider there.)
+//
+//     Deliberately NOT coupled to glowRadius. The gather produces colour only -
+//     the halo and bloom have been closed-form since they stopped riding on it -
+//     so a wide glow has no reason to desaturate the gradient, and the old
+//     max(glowRadius, floor) reintroduced exactly the pixel-space dependence
+//     this constant exists to remove.
+//
+//     0.0088 puts the kernel at 24.0 px on the stock 800x600 / radius 40
+//     geometry, matching the previous fixed span, so default-sized output is
+//     unchanged.
+//
+//     NOTE: unit-free, unlike the px constants around it. neon-optimized.frag
+//     multiplies it by a perimeter that is already in FBO px, so it needs no
+//     uResolutionScale correction. ---
+#define COLOR_BLEND_PERIM_FRAC    0.0088
+
+// --- Emission on/off ramp. glowRadius = 0 must read as "filament only", but
+//     an analytic profile at radius 0 is a sub-pixel spike of full height
+//     rather than nothing, so the halo and bloom fade in over
+//     glowRadius = [0, this]. A FIXED pixel width: gating against the
+//     sampleSpacing-derived floor instead would re-couple brightness to the
+//     rect size, which is the whole thing this design removes.
+//
+//     NOTE: full-res pixel span. neon-optimized.frag compares it against a
+//     glowRadius already scaled into FBO px, so its copy multiplies by
+//     uResolutionScale - keep the two in step when tuning. ---
+#define GLOW_GATE_FADE_PX         2.0
+
+// --- Lower bound on the analytic emission widths. Guards the divides only;
+//     anything this small is already multiplied out by GLOW_GATE_FADE_PX. ---
+#define EMISSION_MIN_WIDTH        1e-3
+
+// --- Bloom (wide background spill). See the halo note above for the closed
+//     form; BLOOM_SPACING_FLOOR is gone with the gather. ---
 #define BLOOM_REACH_TO_GLOW       6.0
-#define BLOOM_SPACING_FLOOR       4.0
 #define BLOOM_NORM_FACTOR         0.32
 
 // --- Travelling-segment array size (shared by C++ vector cap + GLSL uniform array) ---
@@ -72,12 +173,72 @@
 #define SIDE_SOFT_EPSILON         1e-5
 #define WSUM_EPSILON              1e-6
 
-// --- Far early-out (CPU-side quad sizing). The draw quad is sized to
-//     rect + max(glowRadius * RADIUS_FACTOR, sampleSpacing * SPACING_FACTOR),
-//     which must stay >= a few * the bloom reach so the quad never clips
-//     visible glow. Used only by the renderers' setupGeometry now (the
-//     shaders no longer discard). ---
+// --- Far early-out (quad sizing). The draw quad is sized to
+//     rect + glowRadius * RADIUS_FACTOR * (1 + bloomStrength * intensity).
+//
+//     glowRadius only: the companion sampleSpacing * SPACING_FACTOR term is
+//     gone. sampleSpacing is perimeter / NEON_MAX_LOOP_SAMPLES, so it won on
+//     any reasonably large rect at default glowRadius and made both the
+//     distance the bloom got truncated at and the brightness it still had
+//     there track the rect size. The bloom's reach is a function of glowRadius
+//     alone, so that is all that sizes the quad.
+//
+//     Used by the renderers' setupGeometry AND by the shaders, which recompute
+//     the same expression to place the bloom pedestal that lets this margin
+//     stay tight without the truncation showing. Keep the two in step. ---
 #define EARLY_OUT_RADIUS_FACTOR   48.0
-#define EARLY_OUT_SPACING_FACTOR  32.0
+
+// --- Where the shaders' quad-edge fade begins, as a FRACTION of the quad
+//     margin. The emission ramps to zero over [FRAC * margin, margin], so the
+//     bloom's 1/D tail - still ~10% of peak out at the quad edge - never clips
+//     as a hard rectangle.
+//
+//     A fraction, not a pixel span, because the margin is proportional to
+//     glowRadius (see EARLY_OUT_RADIUS_FACTOR) and so is the bloom profile it
+//     hides. A fraction keeps the ramp at a constant proportion of the bloom's
+//     reach, so the fade reads the same at every glow radius; a fixed px ramp
+//     would vanish on a wide glow and dominate a narrow one. At the stock
+//     glowRadius 5 / bloom 0.3 / intensity 1 the margin is 312 px, giving a
+//     62 px ramp.
+//
+//     Nothing derives 0.8 - anything leaving a ramp wide enough to hide the
+//     clip behaves the same. What it DOES assume is that the margin was set by
+//     the glow, where 20% of it is a long distance. When outsideCutoff clamps
+//     the margin instead (to size + softness + 1), 20% of ~13 px is 2.6 px and
+//     the ramp lands INSIDE the cutoff band, dimming the band's outer edge
+//     ahead of the cutoff mask - and only on the exterior, since the fade keys
+//     on positive d. Both shaders therefore floor the ramp's start at the
+//     cutoff boundary whenever that boundary falls inside the quad; see the
+//     fadeStart block in neon.frag. ---
+#define QUAD_FADE_START_FRAC      0.8
+
+// --- Filament reach for the same quad sizing, expressed in sigmas.
+//
+//     glowRadius = 0 means "filament only" - the halo and bloom are gated off
+//     by GLOW_GATE_FADE_PX - but the filament itself is still there, sized by
+//     lineWidth, so the quad has to cover it or the exterior gets clipped.
+//
+//     The reach is NOT a constant, because the profile is
+//     exp2(-(ad/sigma)^N) with N = 2 * filamentFalloff and the slider runs
+//     down to falloff 0. Solving core * FILAMENT_GAIN < FILAMENT_CUTOFF gives
+//
+//         reach = sigma * log2(FILAMENT_GAIN / FILAMENT_CUTOFF) ^ (1/N)
+//
+//     which is 1.9 sigmas at falloff 2.0, 3.5 at 1.0, 12.6 at 0.5, 67.8 at 0.3
+//     and 558 at 0.2 - it diverges as falloff -> 0. A fixed 12 (calibrated for
+//     falloff 0.5) left the low end badly under-sized: the interior is
+//     unbounded because the quad always covers it, so a soft filament flooded
+//     inward while the exterior was chopped at 12 sigmas. That asymmetry is
+//     the "no outer glow at glowRadius 0" report.
+//
+//     MAX_SIGMAS bounds the fill cost where the formula diverges; the shaders
+//     pedestal-subtract the core at exactly this reach, so hitting the cap
+//     shortens the glow symmetrically on BOTH sides instead of showing a cliff
+//     on the outside. MIN_SIGMAS keeps a little room at very high falloff.
+//     Keep the expression in step across neon-tuning.h, both setupGeometry
+//     implementations, and both fragment shaders. ---
+#define FILAMENT_CUTOFF           0.002
+#define FILAMENT_REACH_MIN_SIGMAS 2.0
+#define FILAMENT_REACH_MAX_SIGMAS 64.0
 
 #endif // _EDGE_LIGHTING_NEON_TUNING_H_

@@ -74,8 +74,6 @@ namespace EdgeLighting
             LOG_E("Failed to compile/link NeonOptimizedRenderer shaders.");
             return false;
         }
-        // rebuildLoopSamples must run before setupGeometry: the Pass-1 quad
-        // size depends on mSampleSpacing (computed in rebuildLoopSamples).
         rebuildSegmentLUT(mCurrentConfig);
         rebuildArcLUT(mCurrentConfig);
         rebuildLoopSamples(mCurrentConfig);
@@ -125,117 +123,127 @@ namespace EdgeLighting
         int bufW = std::max(static_cast<int>(static_cast<float>(viewportWidth) * scale), 1);
         int bufH = std::max(static_cast<int>(static_cast<float>(viewportHeight) * scale), 1);
 
-        // --- Pass 1: render neon to scaled FBO ---
-        mHalfResBuffer.Resize(bufW, bufH);
-        mHalfResBuffer.Bind();
+        // Debug: render the opaque fill and nothing else. Skips the whole
+        // half-res gather (Pass 1) and the composite that would bring it back
+        // (Pass 2b), so the backbuffer ends up holding the fill silhouette
+        // alone - the same view NeonRenderer gives, for A/B against it.
+        const bool opaqueOnly = config.neon.opaqueOnly;
 
-        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-        glClear(GL_COLOR_BUFFER_BIT);
-
-        // Premultiplied "over" into the transparent FBO: a single non-overlapping
-        // quad over (0,0,0,0) leaves the FBO holding the shader's premultiplied
-        // colour + coverage alpha, ready to be composited over the backbuffer.
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-
-        mNeonShader.Use();
-
+        // Needed by the fill pass below too, so they outlive the Pass 1 guard.
         float halfRectW = config.geometry.width * 0.5f;
         float halfRectH = config.geometry.height * 0.5f;
-        glm::mat4 proj = glm::ortho(0.0f, static_cast<float>(bufW), 0.0f, static_cast<float>(bufH), -1.0f, 1.0f);
-        glm::vec2 center(config.geometry.position.x + halfRectW,
-                         static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
-        // Scale center to FBO coordinates
-        center.x *= scale;
-        center.y *= scale;
-        glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(center, 0.0f));
-        glm::mat4 mvp = proj * model;
 
-        // Scale geometry to FBO space
-        glm::vec2 rectSizeScaled(config.geometry.width * scale, config.geometry.height * scale);
-
-        mNeonShader.SetUniform("uMVP", mvp);
-        // Lets the shader convert neon-tuning.h's full-res px constants
-        // (FILAMENT_MIN_HALF_WIDTH, HEAD/TAIL_FEATHER_PX) into the FBO space
-        // every other pixel uniform below is already scaled into.
-        mNeonShader.SetUniform("uResolutionScale", scale);
-        mNeonShader.SetUniform("uRectSize", rectSizeScaled);
-        mNeonShader.SetUniform("uCornerRadius", config.geometry.cornerRadius * scale);
-        mNeonShader.SetUniform("uLineWidth", config.neon.lineWidth * scale);
-        mNeonShader.SetUniform("uFilamentFalloff", config.neon.filamentFalloff);
-        mNeonShader.SetUniform("uIntensity", config.neon.intensity);
-        mNeonShader.SetUniform("uTime", time);
-        mNeonShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
-        mNeonShader.SetUniform("uGlowRadius", config.neon.glowRadius * scale);
-        mNeonShader.SetUniform("uBloomStrength", config.neon.bloomStrength);
-        mNeonShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
-        mNeonShader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness * scale);
-        mNeonShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff) * scale);
-        mNeonShader.SetUniform("uInsideCutoffSoftness", config.neon.insideCutoff.softness * scale);
-        mNeonShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff) * scale);
-        mNeonShader.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness * scale);
-        // Pack the segment vector as vec3(position, invSigma, boost) into the
-        // std140 SegmentBlock UBO (DALi-compatible pattern - see the shader).
-        // Same packing as NeonRenderer; segment `position` is a normalised
-        // perimeter coord in [0, 1), so the resolutionScale does not apply.
-        SegmentBlockData segBlock = {};
-        SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
-        const std::vector<SegmentBoost> &effSegments = mEffectiveSegments;
-        int segCount = std::min(static_cast<int>(effSegments.size()),
-                                int(MAX_SEGMENT_BOOSTS));
-        segBlock.count = segCount;
-        for (int i = 0; i < segCount; ++i)
+        if (!opaqueOnly)
         {
-            const auto &s = effSegments[i];
-            float invSigma = 1.0f / std::max(s.length * 0.5f, 1e-3f);
-            // .w = hasOwnStops flag (see NeonRenderer for details).
-            float hasStops = s.colorStops.empty() ? 0.0f : 1.0f;
-            segBlock.segments[i] = glm::vec4(s.position, invSigma, s.boost, hasStops);
+            // --- Pass 1: render neon to scaled FBO ---
+            mHalfResBuffer.Resize(bufW, bufH);
+            mHalfResBuffer.Bind();
+
+            glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+
+            // Premultiplied "over" into the transparent FBO: a single non-overlapping
+            // quad over (0,0,0,0) leaves the FBO holding the shader's premultiplied
+            // colour + coverage alpha, ready to be composited over the backbuffer.
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+
+            mNeonShader.Use();
+
+            glm::mat4 proj = glm::ortho(0.0f, static_cast<float>(bufW), 0.0f, static_cast<float>(bufH), -1.0f, 1.0f);
+            glm::vec2 center(config.geometry.position.x + halfRectW,
+                             static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
+            // Scale center to FBO coordinates
+            center.x *= scale;
+            center.y *= scale;
+            glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(center, 0.0f));
+            glm::mat4 mvp = proj * model;
+
+            // Scale geometry to FBO space
+            glm::vec2 rectSizeScaled(config.geometry.width * scale, config.geometry.height * scale);
+
+            mNeonShader.SetUniform("uMVP", mvp);
+            // Lets the shader convert neon-tuning.h's full-res px constants
+            // (FILAMENT_MIN_HALF_WIDTH, HEAD/TAIL_FEATHER_PX) into the FBO space
+            // every other pixel uniform below is already scaled into.
+            mNeonShader.SetUniform("uResolutionScale", scale);
+            mNeonShader.SetUniform("uRectSize", rectSizeScaled);
+            mNeonShader.SetUniform("uCornerRadius", config.geometry.cornerRadius * scale);
+            mNeonShader.SetUniform("uLineWidth", config.neon.lineWidth * scale);
+            mNeonShader.SetUniform("uFilamentFalloff", config.neon.filamentFalloff);
+            mNeonShader.SetUniform("uIntensity", config.neon.intensity);
+            mNeonShader.SetUniform("uTime", time);
+            mNeonShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
+            mNeonShader.SetUniform("uGlowRadius", config.neon.glowRadius * scale);
+            mNeonShader.SetUniform("uBloomStrength", config.neon.bloomStrength);
+            mNeonShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
+            mNeonShader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness * scale);
+            mNeonShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff) * scale);
+            mNeonShader.SetUniform("uInsideCutoffSoftness", config.neon.insideCutoff.softness * scale);
+            mNeonShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff) * scale);
+            mNeonShader.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness * scale);
+            // Pack the segment vector as vec3(position, invSigma, boost) into the
+            // std140 SegmentBlock UBO (DALi-compatible pattern - see the shader).
+            // Same packing as NeonRenderer; segment `position` is a normalised
+            // perimeter coord in [0, 1), so the resolutionScale does not apply.
+            SegmentBlockData segBlock = {};
+            SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
+            const std::vector<SegmentBoost> &effSegments = mEffectiveSegments;
+            int segCount = std::min(static_cast<int>(effSegments.size()),
+                                    int(MAX_SEGMENT_BOOSTS));
+            segBlock.count = segCount;
+            for (int i = 0; i < segCount; ++i)
+            {
+                const auto &s = effSegments[i];
+                float invSigma = 1.0f / std::max(s.length * 0.5f, 1e-3f);
+                // .w = hasOwnStops flag (see NeonRenderer for details).
+                float hasStops = s.colorStops.empty() ? 0.0f : 1.0f;
+                segBlock.segments[i] = glm::vec4(s.position, invSigma, s.boost, hasStops);
+            }
+            mSegmentBlock.SetData(&segBlock, sizeof(segBlock));
+            mSegmentBlock.BindBase(SEGMENT_BLOCK_BINDING);
+
+            // Pack the arcs vector into ArcBlock: vec4(start, length, intensity,
+            // hasStops) per entry. Same packing as NeonRenderer; arc start/length
+            // are normalised perimeter coords in [0, 1) so resolutionScale doesn't
+            // apply.
+            ArcBlockData arcBlock = {};
+            int arcCount = std::min(static_cast<int>(config.neon.arcs.size()),
+                                    int(MAX_ARCS));
+            arcBlock.count = arcCount;
+            for (int i = 0; i < arcCount; ++i)
+            {
+                const auto &a = config.neon.arcs[i];
+                float hasStops = a.colorStops.empty() ? 0.0f : 1.0f;
+                arcBlock.arcs[i] = glm::vec4(a.start, a.length, a.intensity, hasStops);
+            }
+            mArcBlock.SetData(&arcBlock, sizeof(arcBlock));
+            mArcBlock.BindBase(ARC_BLOCK_BINDING);
+
+            mNeonShader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
+            mNeonShader.SetUniform("uQuadMargin", mQuadMargin);
+
+            // Loop sample positions from the LoopSamplesBlock UBO (see the shader)
+            // - raw float32 vec4[N], .xy holds the perimeter point in FBO pixels.
+            mLoopSamplesBlock.BindBase(LOOP_SAMPLES_BLOCK_BINDING);
+            mNeonShader.SetUniform("uNumSamples", std::min(config.optimizedNeon.numSamples,
+                                                           NEON_MAX_LOOP_SAMPLES));
+
+            mGradientLUT.Bind(0);
+            mNeonShader.SetUniform("uGradientLUT", 0);
+            // Per-segment gradient atlas on unit 1 (see NeonRenderer for the shape).
+            mSegmentLUT.Bind(1);
+            mNeonShader.SetUniform("uSegmentLUT", 1);
+            // Per-arc gradient atlas on unit 2 - sampled only when the winning
+            // arc has stops (ArcBlock's vec4.w).
+            mArcLUT.Bind(2);
+            mNeonShader.SetUniform("uArcLUT", 2);
+
+            mNeonVertexArray.DrawArrays(GL_TRIANGLES, 6);
+
+            mNeonShader.Unuse();
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
         }
-        mSegmentBlock.SetData(&segBlock, sizeof(segBlock));
-        mSegmentBlock.BindBase(SEGMENT_BLOCK_BINDING);
-
-        // Pack the arcs vector into ArcBlock: vec4(start, length, intensity,
-        // hasStops) per entry. Same packing as NeonRenderer; arc start/length
-        // are normalised perimeter coords in [0, 1) so resolutionScale doesn't
-        // apply.
-        ArcBlockData arcBlock = {};
-        int arcCount = std::min(static_cast<int>(config.neon.arcs.size()),
-                                int(MAX_ARCS));
-        arcBlock.count = arcCount;
-        for (int i = 0; i < arcCount; ++i)
-        {
-            const auto &a = config.neon.arcs[i];
-            float hasStops = a.colorStops.empty() ? 0.0f : 1.0f;
-            arcBlock.arcs[i] = glm::vec4(a.start, a.length, a.intensity, hasStops);
-        }
-        mArcBlock.SetData(&arcBlock, sizeof(arcBlock));
-        mArcBlock.BindBase(ARC_BLOCK_BINDING);
-
-        mNeonShader.SetUniform("uSampleSpacing", mSampleSpacing);
-        mNeonShader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
-        mNeonShader.SetUniform("uQuadMargin", mQuadMargin);
-
-        // Loop sample positions from the LoopSamplesBlock UBO (see the shader)
-        // - raw float32 vec4[N], .xy holds the perimeter point in FBO pixels.
-        mLoopSamplesBlock.BindBase(LOOP_SAMPLES_BLOCK_BINDING);
-        mNeonShader.SetUniform("uNumSamples", std::min(config.optimizedNeon.numSamples,
-                                                       NEON_MAX_LOOP_SAMPLES));
-
-        mGradientLUT.Bind(0);
-        mNeonShader.SetUniform("uGradientLUT", 0);
-        // Per-segment gradient atlas on unit 1 (see NeonRenderer for the shape).
-        mSegmentLUT.Bind(1);
-        mNeonShader.SetUniform("uSegmentLUT", 1);
-        // Per-arc gradient atlas on unit 2 - sampled only when the winning
-        // arc has stops (ArcBlock's vec4.w).
-        mArcLUT.Bind(2);
-        mNeonShader.SetUniform("uArcLUT", 2);
-
-        mNeonVertexArray.DrawArrays(GL_TRIANGLES, 6);
-
-        mNeonShader.Unuse();
-        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
         // --- Pass 2a (opaque only): fullscreen black fill on the backbuffer ---
         // A single NDC quad + identity MVP; the black-rect fragment shader
@@ -277,27 +285,31 @@ namespace EdgeLighting
             mBlackRectShader.Unuse();
         }
 
-        // --- Pass 2b: bilinear composite of the half-res neon FBO ---
-        // Bilinear upscaling of premultiplied alpha is fringe-free; the blit
-        // shader is a plain texture read that composites over whatever's on
-        // the backbuffer (black fill if opaque, original bg otherwise).
-        mBlitShader.Use();
-        mBlitShader.SetUniform("uMVP", identity);
+        if (!opaqueOnly)
+        {
+            // --- Pass 2b: bilinear composite of the half-res neon FBO ---
+            // Bilinear upscaling of premultiplied alpha is fringe-free; the blit
+            // shader is a plain texture read that composites over whatever's on
+            // the backbuffer (black fill if opaque, original bg otherwise).
+            mBlitShader.Use();
+            mBlitShader.SetUniform("uMVP", identity);
 
-        // Debug toggle: nearest neighbour shows the raw half-res pixels.
-        GLuint texId = mHalfResBuffer.GetTextureId();
-        glBindTexture(GL_TEXTURE_2D, texId);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-                        config.optimizedNeon.showHalfRes ? GL_NEAREST : GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
-                        config.optimizedNeon.showHalfRes ? GL_NEAREST : GL_LINEAR);
+            // Debug toggle: nearest neighbour shows the raw half-res pixels.
+            GLuint texId = mHalfResBuffer.GetTextureId();
+            glBindTexture(GL_TEXTURE_2D, texId);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                            config.optimizedNeon.showHalfRes ? GL_NEAREST : GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
+                            config.optimizedNeon.showHalfRes ? GL_NEAREST : GL_LINEAR);
 
-        mHalfResBuffer.BindTexture(0);
-        mBlitShader.SetUniform("uSource", 0);
+            mHalfResBuffer.BindTexture(0);
+            mBlitShader.SetUniform("uSource", 0);
 
-        mBlitVertexArray.DrawArrays(GL_TRIANGLES, 6);
+            mBlitVertexArray.DrawArrays(GL_TRIANGLES, 6);
 
-        mBlitShader.Unuse();
+            mBlitShader.Unuse();
+        }
+
         // Restore default blend state for following renderers.
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -315,6 +327,17 @@ namespace EdgeLighting
                                    config.neon.glowRadius != mCurrentConfig.neon.glowRadius ||
                                    config.neon.bloomStrength != mCurrentConfig.neon.bloomStrength ||
                                    config.neon.intensity != mCurrentConfig.neon.intensity ||
+                                   // lineWidth feeds setupGeometry's filament-reach floor, which is
+                                   // what sizes the quad whenever glowRadius is small. Miss it and a
+                                   // widened filament keeps the old, tighter margin and gets clipped
+                                   // on the OUTSIDE only (the quad bounds the exterior; the interior
+                                   // is always covered) - the "outer glow dropped at glowRadius 0"
+                                   // report. Only bites at small glowRadius, because above
+                                   // lineWidth / 10.4 the glow term wins the max() anyway.
+                                   config.neon.lineWidth != mCurrentConfig.neon.lineWidth ||
+                                   // filamentFalloff sets how many sigmas the filament
+                                   // reaches, so it sizes the quad too (see setupGeometry).
+                                   config.neon.filamentFalloff != mCurrentConfig.neon.filamentFalloff ||
                                    config.neon.outsideCutoff != mCurrentConfig.neon.outsideCutoff;
         const bool lutDirty = config.neon.colorStops != mCurrentConfig.neon.colorStops ||
                               config.neon.blendSpace != mCurrentConfig.neon.blendSpace ||
@@ -333,7 +356,7 @@ namespace EdgeLighting
 
         if (samplesDirty)
         {
-            rebuildLoopSamples(config); // updates mSampleSpacing, read by setupGeometry
+            rebuildLoopSamples(config);
         }
 
         if (geometryDirty)
@@ -390,38 +413,64 @@ namespace EdgeLighting
         float scale = config.optimizedNeon.resolutionScale;
 
         // --- Scaled glow quad (pass 1) ---
-        // Size the quad to exactly cover the lit region: rect + earlyOut, where
-        // earlyOut matches the shader's old discard threshold. Beyond this the
-        // halo/bloom are < ~1% and were previously discarded; now geometry
-        // bounds them instead (no per-fragment discard → tiler-friendly).
-        // Everything here is in scaled (FBO) space: glowRadius*scale and
-        // mSampleSpacing are already scaled, matching the uniforms uploaded
+        // Size the quad to exactly cover the lit region: rect + earlyOut, so
+        // geometry bounds the far region instead of a per-fragment discard
+        // (tiler-friendly). Everything here is in scaled (FBO) space -
+        // glowRadius*scale is already scaled, matching the uniforms uploaded
         // in Render().
         {
-            // Use the SAME early-out factors as the base NeonRenderer so the
+            // Use the SAME early-out factor as the base NeonRenderer so the
             // bloom's wide 1/D tail reaches exactly as far here as it does
             // there - a smaller margin faded the bloom out sooner and made the
             // optimized output look visibly shorter than the base (mismatch).
-            // The factors come from the shared neon-tuning.h (also fed to the
-            // base renderer's setupGeometry).
-            float earlyOut = std::max(config.neon.glowRadius * scale * float(EARLY_OUT_RADIUS_FACTOR),
-                                      mSampleSpacing * float(EARLY_OUT_SPACING_FACTOR));
-
+            // The factor comes from the shared neon-tuning.h.
+            //
+            // glowRadius ONLY: the old max(..., sampleSpacing * SPACING) term
+            // tied the truncation distance to the rect size (and here, to the
+            // numSamples slider as well). See the base renderer's setupGeometry
+            // for the full rationale.
+            //
             // Grow with bloom × intensity, matching the base renderer: the
-            // 1/D bloom tail reaches further as those rise. The uQuadMargin
-            // soft-fade (below, also mirrored from the base) guards the edge.
-            float margin = earlyOut * (1.0f + config.neon.bloomStrength * config.neon.intensity);
+            // 1/D bloom tail reaches further as those rise. The shader
+            // reproduces this exact expression to place its bloom pedestal -
+            // keep the two in step.
+            float glowReach = config.neon.glowRadius * scale * float(EARLY_OUT_RADIUS_FACTOR) *
+                              (1.0f + config.neon.bloomStrength * config.neon.intensity);
+
+            // Filament reach floor - the filament is sized by lineWidth, not
+            // glowRadius, so glowRadius = 0 would otherwise give a zero margin
+            // and clip the whole exterior. See the base renderer for the full
+            // note. FILAMENT_MIN_HALF_WIDTH is a full-res constant, so the
+            // whole half-width is taken in full-res px and scaled once.
+            // Falloff-aware reach, matching the shaders' reachSigmas. See the
+            // base renderer and neon-tuning.h.
+            float filN = 2.0f * std::max(config.neon.filamentFalloff, 1e-3f);
+            float filSigmas = std::clamp(
+                std::pow(std::log2(float(FILAMENT_GAIN) / float(FILAMENT_CUTOFF)), 1.0f / filN),
+                float(FILAMENT_REACH_MIN_SIGMAS), float(FILAMENT_REACH_MAX_SIGMAS));
+            float filamentReach = std::max(config.neon.lineWidth * 0.5f,
+                                           float(FILAMENT_MIN_HALF_WIDTH)) * scale * filSigmas;
+
+            float margin = std::max(glowReach, filamentReach);
 
             // Hard cap: when the outside cutoff is enabled the shader discards
             // emission past size + softness, so there's no point rasterising
-            // further. Everything is in scaled/FBO space here; cutoff sizes
-            // are unscaled pixels so multiply by `scale`. +1 (scaled) safety
-            // so the shader's own softmask fades to zero before the quad edge.
+            // further. The +1 px safety leaves the shader's own softmask at
+            // zero BEFORE the quad edge, so no rectangular seam leaks through.
+            //
+            // The WHOLE expression is built in full-res px and scaled once, so
+            // that safety margin is 1 FULL-RES px here, exactly as it is in the
+            // base renderer. Adding the +1 after the scale made it 1 FBO px
+            // instead - 2 full-res px at resolutionScale 0.5 - so the quad edge
+            // sat further out than the base renderer's, and with it the ramp
+            // the shader fits between the cutoff boundary and uQuadMargin. Same
+            // units on both sides is also what makes the shader's fadeStart
+            // floor engage at the same cutoff size in the two renderers.
             if (config.neon.outsideCutoff.enable)
             {
                 float outSoft = std::max(config.neon.outsideCutoff.softness,
                                          static_cast<float>(SIDE_SOFT_EPSILON));
-                float cutoffCap = (config.neon.outsideCutoff.size + outSoft) * scale + 1.0f;
+                float cutoffCap = (config.neon.outsideCutoff.size + outSoft + 1.0f) * scale;
                 margin = std::min(margin, cutoffCap);
             }
             mQuadMargin = margin;
@@ -475,13 +524,6 @@ namespace EdgeLighting
             block.samples[i] = glm::vec4(p, 0.0f, 0.0f);
         }
         mLoopSamplesBlock.SetData(&block, sizeof(block));
-
-        float w = config.geometry.width;
-        float h = config.geometry.height;
-        float r = std::max(0.0f, std::min(config.geometry.cornerRadius, std::min(w, h) * 0.5f));
-
-        float perimeter = 2.0f * (w - 2.0f * r) + 2.0f * (h - 2.0f * r) + 2.0f * PI * r;
-        mSampleSpacing = (perimeter * scale) / static_cast<float>(n);
     }
 
     void NeonOptimizedRenderer::rebuildGradientLUT(const Config &config)

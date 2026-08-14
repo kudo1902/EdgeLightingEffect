@@ -231,6 +231,24 @@ namespace EdgeLighting
         /// verified against the LUT and the on-screen glow.
         bool showColorStops = false;
 
+        /// Debug: render ONLY the @c opaqueMode fill and skip the neon
+        /// emission entirely - no filament, no halo, no bloom, and none of the
+        /// debug overlays above. Isolates the fill's silhouette so it can be
+        /// compared against where the light actually reaches.
+        ///
+        /// The two disagree at a sharp corner: @c cornerRadius 0 makes the
+        /// fill's outer boundary square (the band is offset per-axis, see
+        /// bandOuterDistance in the shaders) while the emission is shaped by
+        /// the plain Euclidean SDF distance and stays radial. The wedge
+        /// between the square mask and the round glow renders as fill with no
+        /// light on it, and this flag is how you see its extent directly.
+        ///
+        /// No-ops when @c opaqueMode is NONE - there is no fill pass to keep,
+        /// so nothing is drawn at all. Debug only: the renderers read it at
+        /// draw time and it triggers no rebuilds, so it is safe to toggle
+        /// per-frame. Not exposed through the C API.
+        bool opaqueOnly = false;
+
         // --- Compositing ---
 
         /// Where (if anywhere) an opaque background fill is drawn behind the
@@ -248,12 +266,20 @@ namespace EdgeLighting
         /// shader yet. Default is black.
         glm::vec4 opaqueColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
 
-        /// Feather width in pixels applied at the opaque-mode fill's cutoff
-        /// boundaries. Used only when @c opaqueMode != NONE. 0 = hard fill
-        /// edge; larger values soften where the fill fades into the
-        /// background. Kept independent of the per-side @c Cutoff::softness
-        /// so the emission and the fill can taper at different rates - e.g.
-        /// a wide fill fade under a tight emission fall-off.
+        /// TOTAL feather width in pixels at the opaque-mode fill's cutoff
+        /// boundaries: the fade runs from fully covered to fully clear over
+        /// this many pixels, centred on the boundary. Used only when
+        /// @c opaqueMode != NONE. 0 = hard fill edge (floored to a 1 px
+        /// anti-aliasing ramp so it cannot stair-step); larger values soften
+        /// where the fill fades into the background. Kept independent of the
+        /// per-side @c Cutoff::softness so the emission and the fill can taper
+        /// at different rates - e.g. a wide fill fade under a tight emission
+        /// fall-off.
+        ///
+        /// NOTE the shader used to spread this over 2x the stated width, so
+        /// values tuned before that fix render half as wide now (and finally
+        /// match this doc). @c Cutoff::softness still carries the old 2x
+        /// convention in the neon shaders - the two are not comparable.
         float opaqueSoftness = 0.0f;
 
         // --- Filament (the bright line itself) ---
@@ -412,6 +438,7 @@ namespace EdgeLighting
             return enable == o.enable &&
                    showGradientLUT == o.showGradientLUT &&
                    showColorStops == o.showColorStops &&
+                   opaqueOnly == o.opaqueOnly &&
                    opaqueMode == o.opaqueMode &&
                    opaqueColor == o.opaqueColor &&
                    lineWidth == o.lineWidth &&
