@@ -18,6 +18,11 @@ void main() {
     // the perimeter is actually reading each frame (REPEAT-wrapped LUT).
     float u = vPos.x / (2.0 * uStripHalfSize.x) + 0.5;
     u -= uTime * uHueRotationRate;
-    vec3 col = texture(uGradientLUT, vec2(u, 0.5)).rgb;
-    fragColor = vec4(col, 1.0);
+    vec4 lut = texture(uGradientLUT, vec2(u, 0.5));
+    // Scale by the baked alpha so the strip previews the EMISSION, matching
+    // how neon.frag applies stop alpha to the magnitude. A stop faded to
+    // alpha 0 reads black here, exactly as it renders on the perimeter.
+    // The strip itself stays fully opaque - it is drawn with blending off to
+    // overwrite the glow underneath.
+    fragColor = vec4(lut.rgb * lut.a, 1.0);
 }

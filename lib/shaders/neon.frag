@@ -648,12 +648,43 @@ void main() {
     // way - emitCover is what carries it. The scaling stays linear in
     // intensity, exactly as it was when it rode on `col`, and both layers are
     // now shaped by the same px-based (size-invariant) feathers.
+    // Colour-stop ALPHA rides here, on the magnitude, for two reasons.
+    //
+    // It cannot ride on `col`: that sum is divided by the same weight it was
+    // gathered with, so any scale folded into it cancels exactly.
+    //
+    // And it is read POINTWISE, at this fragment's own perimeter position,
+    // rather than gathered like the hue - for the same reason emitCover is.
+    // The gather weight 1/(dd + kc2) is a Lorentzian with 1/d^2 tails, so a
+    // gathered alpha is a ring-wide weighted mean: a half-perimeter faded to
+    // 0 still measured 0.44 of full brightness at its own midpoint, dragged
+    // up by the opaque far side, while the opaque half was dragged down. The
+    // pointwise read is exact at every position and needs no normalisation.
+    //
+    // Alpha 0 therefore kills the filament, halo and bloom together at that
+    // position, and the premultiplied output alpha (peak channel, bottom of
+    // main) follows for free, so the background shows through rather than
+    // being occluded by a black tube.
+    float baseAlphaPt = texture(uGradientLUT,
+                                vec2(sPos - uTime * uHueRotationRate, 0.5)).a;
     float emitCover = 0.0;
     for (int a = 0; a < uArcCount; a++) {
         vec4 arc = uArcs[a];
         if (arc.z <= 0.0) continue;                       // dark arc: no filament
         float c = arcCoverContinuous(sPos, arc.x, arc.y, headF, tailF);
-        emitCover = max(emitCover, c * arc.z);
+        // Each arc's own alpha, from the same LUT its colour came from and in
+        // the same coordinate space the gather used - arc-local for hasStops,
+        // perimeter space otherwise.
+        float aA;
+        if (arc.w > 0.5) {
+            float rowY = (float(a) + 0.5) / float(MAX_ARCS);
+            float uArc = (sPos - arc.x) / max(arc.y, 1e-4);
+            uArc      -= uTime * uHueRotationRate;
+            aA         = texture(uArcLUT, vec2(uArc, rowY)).a;
+        } else {
+            aA = baseAlphaPt;
+        }
+        emitCover = max(emitCover, c * arc.z * aA);
     }
 
     // Segment coverage at this fragment's own perimeter position. This is the
@@ -668,7 +699,18 @@ void main() {
         float rel = sPos - seg.x;
         rel      -= floor(rel + 0.5);                     // wrap to [-0.5, 0.5]
         float e   = rel * seg.y;
-        segCoverPt += seg.z * exp(-e * e);
+        // Per-segment alpha, pointwise - see emitCover above. Stop-less
+        // segments inherit the base gradient's alpha, mirroring how their
+        // colour falls back to segFallback in the gather.
+        float sA;
+        if (seg.w > 0.5) {
+            float tLocal = clamp(0.5 + e * 0.5, 0.0, 1.0);
+            float rowY   = (float(s) + 0.5) / float(MAX_SEGMENT_BOOSTS);
+            sA           = texture(uSegmentLUT, vec2(tLocal, rowY)).a;
+        } else {
+            sA = baseAlphaPt;
+        }
+        segCoverPt += seg.z * exp(-e * e) * sA;
     }
     float emitCoverAll = max(emitCover, min(segCoverPt, 1.0));
 
