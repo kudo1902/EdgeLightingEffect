@@ -675,25 +675,37 @@ void main() {
     result *= smoothstep(-inSoft, inSoft, dIn);
     result *= 1.0 - smoothstep(-outSoft, outSoft, dOut);
 
-    // --- Quad-edge fade: the draw quad ends at d == uQuadMargin (all in
-    // scaled/FBO space). Fade the emission to zero over the last stretch so a
-    // strong bloom never shows a hard rectangular cutoff where the quad clips
-    // it - mirrors the base NeonRenderer so the two match. Interior pixels
-    // have d < 0, well below the band.
+    // --- Quad-edge fade: the Pass-1 quad ends uQuadMargin past the rect ON
+    // EACH AXIS (all in scaled/FBO space). Fade the emission to zero over the
+    // last stretch so a strong bloom never shows a hard rectangular cutoff
+    // where the quad clips it - mirrors the base NeonRenderer so the two match.
+    // Interior pixels sit far inside the quad.
     //
-    // The ramp starts at the outside-cutoff boundary when that boundary falls
-    // inside the quad, so it cannot dim the band's outer edge ahead of the
-    // cutoff mask - an asymmetry that hits only the exterior, since this term
-    // keys on positive d. Otherwise (cutoff disabled, or beyond the quad - the
-    // case this fade exists for) the unfloored start stands; flooring there
-    // would collapse the ramp to a hard step and invert the smoothstep.
+    // Measured PER-AXIS via dQuad, not from the Euclidean d: the fade hides the
+    // quad and the quad is a rectangle, so a d-keyed ramp rounds off the
+    // corners. At cornerRadius 0 that erased the outer part of the band's own
+    // square corner (bandOuterDistance is per-axis there, and reaches
+    // sqrt(2) * outsideCutoff while uQuadMargin is clamped to cutoff +
+    // softness + 1), leaving black-rect.frag's fullscreen, unfaded fill bulging
+    // past the glow. dQuad is 0 on the quad edge and negative inside; on a
+    // straight edge dQuad == d - uQuadMargin, so that stretch is unchanged.
+    // See neon.frag for the measurements.
+    //
+    // The ramp start is unchanged: it moves out to the outside-cutoff boundary
+    // when that boundary falls inside the quad, so it cannot dim the band's
+    // outer edge ahead of the cutoff mask - an asymmetry that hits only the
+    // exterior, since the interior half of a symmetric band never reaches the
+    // quad. Otherwise (cutoff disabled, or beyond the quad - the case this fade
+    // exists for) the unfloored start stands; flooring there would collapse the
+    // ramp to a hard step and invert the smoothstep.
     // QUAD_FADE_START_FRAC is a FRACTION of the margin, so unlike the px
-    // constants it needs no uResolutionScale - and uQuadMargin, uOutsideCutoff
-    // and outSoft are all already in FBO px. See neon.frag and neon-tuning.h.
+    // constants it needs no uResolutionScale - and uQuadMargin, uOutsideCutoff,
+    // outSoft and halfSize are all already in FBO px. See neon-tuning.h.
     float fadeFloor = uQuadMargin * QUAD_FADE_START_FRAC;
     float cutEdge   = uOutsideCutoff + outSoft;
     float fadeStart = (cutEdge < uQuadMargin) ? max(fadeFloor, cutEdge) : fadeFloor;
-    result *= 1.0 - smoothstep(fadeStart, uQuadMargin, d);
+    float dQuad     = sdRoundBox(vPos, halfSize + vec2(uQuadMargin), 0.0);
+    result *= 1.0 - smoothstep(-(uQuadMargin - fadeStart), 0.0, dQuad);
 
     // --- Grade --------------------------------------------------------
     // Hue-preserving Reinhard (see neon.frag for the rationale).

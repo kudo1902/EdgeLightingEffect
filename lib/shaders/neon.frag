@@ -787,33 +787,54 @@ void main() {
     result *= smoothstep(-inSoft, inSoft, dIn);
     result *= 1.0 - smoothstep(-outSoft, outSoft, dOut);
 
-    // --- Quad-edge fade: the draw quad ends at d == uQuadMargin (exterior).
-    // Fade the emission to zero over the last stretch so a strong bloom never
-    // shows a hard rectangular cutoff where the quad clips it. Interior pixels
-    // have d < 0, well below the fade band, so they're unaffected.
+    // --- Quad-edge fade: the draw quad ends uQuadMargin past the rect ON EACH
+    // AXIS. Fade the emission to zero over the last stretch so a strong bloom
+    // never shows a hard rectangular cutoff where the quad clips it. Interior
+    // pixels sit far inside the quad, so they're unaffected.
     //
-    // The ramp must not begin INSIDE the outside cutoff, or it dims the band's
-    // outer edge before the cutoff mask above ever gets there - and only on the
-    // exterior, because this term keys on positive d while the interior half of
-    // a symmetric band never sees it. An opaque-INSIDE vs opaque-OUTSIDE pair
-    // sharing an outer rect is what exposes it: at cutoff 12, setupGeometry
-    // clamps uQuadMargin to size + softness + 1 = 13, so a bare fraction of the
-    // margin started the ramp at d = 10.4 and left the outermost band pixel at
-    // ~0.66 of its mirrored counterpart (15.3 vs 23.3 on the right edge, same
-    // ratio on the other three). Flooring the start at the cutoff boundary
-    // hands everything up to that point back to the cutoff smoothstep.
+    // Measured PER-AXIS via dQuad, NOT from the Euclidean d. What this fade
+    // hides is the quad, and the quad is a rectangle; keying on d put the ramp
+    // on a rounded contour that ate the corners early:
+    //
+    //   - At cornerRadius 0 the band is per-axis too (see bandOuterDistance),
+    //     so it reaches d = sqrt(2) * outsideCutoff at a corner while
+    //     setupGeometry clamps uQuadMargin to cutoff + softness + 1. On the
+    //     stock 800x600 rect at cutoff 12 the band ran out to d = 16.97 but the
+    //     d-keyed ramp was already zero by d = 14, erasing the outer ~30% of
+    //     every corner - while black-rect.frag, drawn on a fullscreen quad with
+    //     no fade at all, kept its square corner. That is exactly the black
+    //     bulge past the glow the r == 0 branch exists to prevent.
+    //   - With the cutoff disabled the same rounding chopped the bloom at
+    //     d = uQuadMargin though the quad ran on to its own corner, so corners
+    //     faded sooner than edges for no reason.
+    //
+    // dQuad is 0 on the quad edge and negative inside, so the ramp runs over
+    // [-(uQuadMargin - fadeStart), 0]. On a straight edge dQuad == d -
+    // uQuadMargin, so that stretch is bit-identical to the old expression.
+    //
+    // fadeStart is unchanged. The ramp must not begin INSIDE the outside
+    // cutoff, or it dims the band's outer edge before the cutoff mask above
+    // ever gets there - and only on the exterior, because the interior half of
+    // a symmetric band never reaches the quad. An opaque-INSIDE vs
+    // opaque-OUTSIDE pair sharing an outer rect is what exposes it: at cutoff
+    // 12, uQuadMargin is 13, so a bare fraction of the margin started the ramp
+    // at 10.4 and left the outermost band pixel at ~0.66 of its mirrored
+    // counterpart (15.3 vs 23.3 on the right edge, same ratio on the other
+    // three). Flooring the start at the cutoff boundary hands everything up to
+    // that point back to the cutoff smoothstep.
     //
     // Only when that boundary actually falls inside the quad, though. A
     // disabled cutoff arrives as a huge sentinel, and the whole point of this
     // fade is the case where uQuadMargin is SMALLER than outsideCutoff - in
-    // both, flooring would push the ramp's start to or past uQuadMargin, which
-    // is a hard step (and an inverted smoothstep, undefined in GLSL). Those
-    // keep the unfloored start, so the guarded expression is unchanged wherever
-    // the old one was already correct.
+    // both, flooring would push the start to or past uQuadMargin. Those keep
+    // the unfloored start, so fadeStart < uQuadMargin always holds and the ramp
+    // width below is strictly positive (an inverted smoothstep is undefined in
+    // GLSL).
     float fadeFloor = uQuadMargin * QUAD_FADE_START_FRAC;
     float cutEdge   = uOutsideCutoff + outSoft;
     float fadeStart = (cutEdge < uQuadMargin) ? max(fadeFloor, cutEdge) : fadeFloor;
-    result *= 1.0 - smoothstep(fadeStart, uQuadMargin, d);
+    float dQuad     = sdRoundBox(vPos, halfSize + vec2(uQuadMargin), 0.0);
+    result *= 1.0 - smoothstep(-(uQuadMargin - fadeStart), 0.0, dQuad);
 
     // --- Grade --------------------------------------------------------
     // Hue-preserving Reinhard: tonemap the peak channel and scale the
