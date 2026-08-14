@@ -203,6 +203,46 @@ namespace EdgeLighting
             return glm::vec4(glm::mix(glm::vec3(a), glm::vec3(b), t), alpha);
         }
 
+        /// True if @p stops are already ascending by position - i.e. they
+        /// satisfy @ref SampleStops's precondition.
+        inline bool AreStopsSorted(const std::vector<ColorStop> &stops)
+        {
+            for (size_t i = 1; i < stops.size(); ++i)
+            {
+                if (stops[i].position < stops[i - 1].position)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /// @p stops ordered ascending by position, as @ref SampleStops requires.
+        ///
+        /// Call this once when baking a LUT, not per sample - it copies. The
+        /// sort is stable, so stops sharing a position keep their authored
+        /// order (which decides which one wins the hard edge between them),
+        /// and an already-sorted list comes back byte-identical.
+        ///
+        /// Ordering is not something a caller can be relied on to maintain:
+        /// nothing in @ref NeonConfig enforces it, the debug UI lets a stop be
+        /// dragged past its neighbour, and a @c ColorStopField::POSITION
+        /// animation can drive two stops through each other mid-playback. An
+        /// unsorted ring does not fail loudly - it renders a silently wrong
+        /// gradient (a 4-stop ring authored out of order disagreed with the
+        /// sorted one at 7 of 8 sample positions and never reached two of its
+        /// four colours), so the renderers sort at the bake instead of trusting
+        /// the input.
+        inline std::vector<ColorStop> SortStops(std::vector<ColorStop> stops)
+        {
+            std::stable_sort(stops.begin(), stops.end(),
+                             [](const ColorStop &a, const ColorStop &b)
+                             {
+                                 return a.position < b.position;
+                             });
+            return stops;
+        }
+
         /// Sample the circular stop ring at normalised perimeter position @p pos.
         ///
         /// Returns straight (non-premultiplied) RGBA. The @c .a channel is the
@@ -213,9 +253,11 @@ namespace EdgeLighting
         /// gathered colour to unit magnitude (@c acc/wsumLit), which would
         /// divide any alpha folded into RGB straight back out.
         ///
-        /// @note @p stops must be sorted ascending by @c position. The ring
+        /// @note @p stops must be sorted ascending by @c position - the ring
         ///       walk below assumes it, and an unsorted list yields a silently
-        ///       distorted gradient rather than an error.
+        ///       distorted gradient rather than an error. Run them through
+        ///       @ref SortStops first; the renderers do this once per LUT bake,
+        ///       so anything reaching the shaders is already ordered.
         inline glm::vec4 SampleStops(float pos,
                                      const std::vector<ColorStop> &stops,
                                      BlendSpace blendSpace)
