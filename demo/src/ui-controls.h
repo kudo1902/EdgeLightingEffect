@@ -135,6 +135,10 @@ namespace EdgeLightingDemo
             std::cout << ", colour (" << n.opaqueColor.r << ", " << n.opaqueColor.g
                       << ", " << n.opaqueColor.b << ", " << n.opaqueColor.a << ")"
                       << ", softness " << n.opaqueSoftness << " px";
+            if (n.opaqueOnly)
+            {
+                std::cout << ", OPAQUE ONLY (neon emission suppressed)";
+            }
         }
         std::cout << "\n";
 

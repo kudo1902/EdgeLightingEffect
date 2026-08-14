@@ -299,6 +299,23 @@ namespace
     }
 
 
+    /// "Opaque Only" debug toggle, shown under the opaque-mode controls in both
+    /// the Neon and OptimizedNeon sections. Both write the same
+    /// @c NeonConfig::opaqueOnly field, so the caller passes a distinct @p id
+    /// to keep ImGui from collapsing the two widgets onto one state.
+    inline void OpaqueOnlyCheckbox(const char *id, bool &opaqueOnly)
+    {
+        char label[64];
+        std::snprintf(label, sizeof(label), "Opaque Only%s", id);
+        ImGui::Checkbox(label, &opaqueOnly);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Draw only the opaque fill - no filament, halo or bloom.\n"
+                              "Isolates the fill silhouette so it can be compared\n"
+                              "against how far the light actually reaches.");
+        }
+    }
+
     /// One row per Cutoff struct: enable checkbox on the left, size + softness
     /// sliders indented on the right. Grays out the sliders when enable is off
     /// so the "unbounded on this side" state reads at a glance.
@@ -522,6 +539,7 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
         ImGui::ColorEdit4("Opaque Color##Neon", &cfg.neon.opaqueColor.x,
                           ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
         SliderWithInput("Opaque Softness##Neon", cfg.neon.opaqueSoftness, 0.0f, 20.0f, "%.1f");
+        OpaqueOnlyCheckbox("##NeonOpaqueOnly", cfg.neon.opaqueOnly);
     }
     ImGui::Checkbox("Show Gradient LUT##Neon", &cfg.neon.showGradientLUT);
     ImGui::Checkbox("Show Color Stops##Neon", &cfg.neon.showColorStops);
@@ -677,6 +695,7 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg,
         ImGui::ColorEdit4("Opaque Color##Opt", &cfg.neon.opaqueColor.x,
                           ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
         SliderWithInput("Opaque Softness##Opt", cfg.neon.opaqueSoftness, 0.0f, 20.0f, "%.1f");
+        OpaqueOnlyCheckbox("##OptOpaqueOnly", cfg.neon.opaqueOnly);
     }
     AnimatedSlider("Line Width##Opt", cfg.neon.lineWidth, active.neon.lineWidth, 0.0f, 20.0f, "%.0f");
     AnimatedSlider("Filament Falloff##Opt", cfg.neon.filamentFalloff, active.neon.filamentFalloff, 0.0f, 5.0f);

@@ -205,6 +205,18 @@ namespace EdgeLighting
             mBlackRectShader.Unuse();
         }
 
+        // Debug: stop after the fill. Skips the gather AND the LUT-strip /
+        // stop-marker overlays below, so what lands on screen is the opaque
+        // silhouette by itself - which is how the fill's square corner at
+        // cornerRadius 0 gets compared against the emission's round one.
+        // Restores the blend state the tail of this function would have set.
+        if (config.neon.opaqueOnly)
+        {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            return;
+        }
+
         // Pass 2 (opaque) / only pass (transparent): the neon gather on the
         // tight glow quad, in both modes.
         mShaderProgram.Use();

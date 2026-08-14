@@ -231,6 +231,24 @@ namespace EdgeLighting
         /// verified against the LUT and the on-screen glow.
         bool showColorStops = false;
 
+        /// Debug: render ONLY the @c opaqueMode fill and skip the neon
+        /// emission entirely - no filament, no halo, no bloom, and none of the
+        /// debug overlays above. Isolates the fill's silhouette so it can be
+        /// compared against where the light actually reaches.
+        ///
+        /// The two disagree at a sharp corner: @c cornerRadius 0 makes the
+        /// fill's outer boundary square (the band is offset per-axis, see
+        /// bandOuterDistance in the shaders) while the emission is shaped by
+        /// the plain Euclidean SDF distance and stays radial. The wedge
+        /// between the square mask and the round glow renders as fill with no
+        /// light on it, and this flag is how you see its extent directly.
+        ///
+        /// No-ops when @c opaqueMode is NONE - there is no fill pass to keep,
+        /// so nothing is drawn at all. Debug only: the renderers read it at
+        /// draw time and it triggers no rebuilds, so it is safe to toggle
+        /// per-frame. Not exposed through the C API.
+        bool opaqueOnly = false;
+
         // --- Compositing ---
 
         /// Where (if anywhere) an opaque background fill is drawn behind the
@@ -412,6 +430,7 @@ namespace EdgeLighting
             return enable == o.enable &&
                    showGradientLUT == o.showGradientLUT &&
                    showColorStops == o.showColorStops &&
+                   opaqueOnly == o.opaqueOnly &&
                    opaqueMode == o.opaqueMode &&
                    opaqueColor == o.opaqueColor &&
                    lineWidth == o.lineWidth &&
