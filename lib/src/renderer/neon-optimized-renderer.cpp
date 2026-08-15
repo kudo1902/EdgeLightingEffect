@@ -112,6 +112,93 @@ namespace EdgeLighting
         }
     }
 
+    void NeonOptimizedRenderer::packLightBlocks(const Config &config)
+    {
+        // Read by both the emission pre-pass and the half-res neon pass, so
+        // packed once before either draws. See NeonRenderer::packLightBlocks.
+        SegmentBlockData segBlock = {};
+        SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
+        const std::vector<SegmentBoost> &effSegments = mEffectiveSegments;
+        int segCount = std::min(static_cast<int>(effSegments.size()),
+                                int(MAX_SEGMENT_BOOSTS));
+        segBlock.count = segCount;
+        for (int i = 0; i < segCount; ++i)
+        {
+            const auto &s = effSegments[i];
+            float invSigma = 1.0f / std::max(s.length * 0.5f, 1e-3f);
+            // .w = hasOwnStops flag (see NeonRenderer for details).
+            float hasStops = s.colorStops.empty() ? 0.0f : 1.0f;
+            segBlock.segments[i] = glm::vec4(s.position, invSigma, s.boost, hasStops);
+        }
+        mSegmentBlock.SetData(&segBlock, sizeof(segBlock));
+        mSegmentBlock.BindBase(SEGMENT_BLOCK_BINDING);
+
+        // Pack the arcs vector into ArcBlock: vec4(start, length, intensity,
+        // hasStops) per entry. Same packing as NeonRenderer; arc start/length
+        // are normalised perimeter coords in [0, 1) so resolutionScale doesn't
+        // apply.
+        ArcBlockData arcBlock = {};
+        int arcCount = std::min(static_cast<int>(config.neon.arcs.size()),
+                                int(MAX_ARCS));
+        arcBlock.count = arcCount;
+        for (int i = 0; i < arcCount; ++i)
+        {
+            const auto &a = config.neon.arcs[i];
+            float hasStops = a.colorStops.empty() ? 0.0f : 1.0f;
+            arcBlock.arcs[i] = glm::vec4(a.start, a.length, a.intensity, hasStops);
+        }
+        mArcBlock.SetData(&arcBlock, sizeof(arcBlock));
+        mArcBlock.BindBase(ARC_BLOCK_BINDING);
+    }
+
+    void NeonOptimizedRenderer::renderEmissionPass(int viewportWidth, int viewportHeight,
+                                                   float time, const Config &config)
+    {
+        // Identical contract to NeonRenderer::renderEmissionPass - see there
+        // for why RGBA16F / GL_NEAREST. The table is in perimeter-parameter
+        // space, so resolutionScale does NOT apply to it; only the sample
+        // count matters, and it must match the main pass's loop bound.
+        bool gotFloat = mEmissionBuffer.Resize(NEON_MAX_LOOP_SAMPLES, 2,
+                                               GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, GL_NEAREST);
+        if (!gotFloat)
+        {
+            if (!mEmissionBuffer.Resize(NEON_MAX_LOOP_SAMPLES, 2,
+                                        GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, GL_NEAREST))
+            {
+                return;
+            }
+            if (!mEmissionFormatLogged)
+            {
+                LOG_W("NeonOptimizedRenderer: RGBA16F emission target unavailable, using RGBA8. "
+                      "Segment boosts above 1.0 will clamp.");
+                mEmissionFormatLogged = true;
+            }
+        }
+        mEmissionIsFloat = gotFloat;
+
+        glDisable(GL_BLEND);
+        mEmissionBuffer.Bind();
+
+        mEmissionShader.Use();
+        mEmissionShader.SetUniform("uMVP", glm::mat4(1.0f));
+        mEmissionShader.SetUniform("uTime", time);
+        mEmissionShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
+        mEmissionShader.SetUniform("uNumSamples", std::min(config.optimizedNeon.numSamples,
+                                                           NEON_MAX_LOOP_SAMPLES));
+        mGradientLUT.Bind(0);
+        mEmissionShader.SetUniform("uGradientLUT", 0);
+        mSegmentLUT.Bind(1);
+        mEmissionShader.SetUniform("uSegmentLUT", 1);
+        mArcLUT.Bind(2);
+        mEmissionShader.SetUniform("uArcLUT", 2);
+        mBlitVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        mEmissionShader.Unuse();
+
+        Framebuffer::BindDefault();
+        glViewport(0, 0, viewportWidth, viewportHeight);
+        glEnable(GL_BLEND);
+    }
+
     void NeonOptimizedRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
     {
         if (!config.optimizedNeon.enable)
@@ -132,8 +219,14 @@ namespace EdgeLighting
         // The target this renderer was handed. Usually the window's default
         // framebuffer, but an offscreen frame capture (@ref OffscreenCapture)
         // binds a real FBO, so Pass 2 has to come back to whatever was bound
-        // rather than assuming 0.
+        // rather than assuming 0. Read BEFORE Pass 0 below, which binds an FBO
+        // of its own - querying after it would capture the emission target.
         const GLuint targetFbo = Framebuffer::GetBoundId();
+
+        // Pass 0: bake the per-sample emission table before anything
+        // retargets the framebuffer for the half-res pass.
+        packLightBlocks(config);
+        renderEmissionPass(viewportWidth, viewportHeight, time, config);
 
         // Needed by the fill pass below too, so they outlive the Pass 1 guard.
         float halfRectW = config.geometry.width * 0.5f;
@@ -192,39 +285,6 @@ namespace EdgeLighting
             // std140 SegmentBlock UBO (DALi-compatible pattern - see the shader).
             // Same packing as NeonRenderer; segment `position` is a normalised
             // perimeter coord in [0, 1), so the resolutionScale does not apply.
-            SegmentBlockData segBlock = {};
-            SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
-            const std::vector<SegmentBoost> &effSegments = mEffectiveSegments;
-            int segCount = std::min(static_cast<int>(effSegments.size()),
-                                    int(MAX_SEGMENT_BOOSTS));
-            segBlock.count = segCount;
-            for (int i = 0; i < segCount; ++i)
-            {
-                const auto &s = effSegments[i];
-                float invSigma = 1.0f / std::max(s.length * 0.5f, 1e-3f);
-                // .w = hasOwnStops flag (see NeonRenderer for details).
-                float hasStops = s.colorStops.empty() ? 0.0f : 1.0f;
-                segBlock.segments[i] = glm::vec4(s.position, invSigma, s.boost, hasStops);
-            }
-            mSegmentBlock.SetData(&segBlock, sizeof(segBlock));
-            mSegmentBlock.BindBase(SEGMENT_BLOCK_BINDING);
-
-            // Pack the arcs vector into ArcBlock: vec4(start, length, intensity,
-            // hasStops) per entry. Same packing as NeonRenderer; arc start/length
-            // are normalised perimeter coords in [0, 1) so resolutionScale doesn't
-            // apply.
-            ArcBlockData arcBlock = {};
-            int arcCount = std::min(static_cast<int>(config.neon.arcs.size()),
-                                    int(MAX_ARCS));
-            arcBlock.count = arcCount;
-            for (int i = 0; i < arcCount; ++i)
-            {
-                const auto &a = config.neon.arcs[i];
-                float hasStops = a.colorStops.empty() ? 0.0f : 1.0f;
-                arcBlock.arcs[i] = glm::vec4(a.start, a.length, a.intensity, hasStops);
-            }
-            mArcBlock.SetData(&arcBlock, sizeof(arcBlock));
-            mArcBlock.BindBase(ARC_BLOCK_BINDING);
 
             mNeonShader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
             mNeonShader.SetUniform("uQuadMargin", mQuadMargin);
@@ -234,6 +294,9 @@ namespace EdgeLighting
             mLoopSamplesBlock.BindBase(LOOP_SAMPLES_BLOCK_BINDING);
             mNeonShader.SetUniform("uNumSamples", std::min(config.optimizedNeon.numSamples,
                                                            NEON_MAX_LOOP_SAMPLES));
+            // Emission table from pass 0 on unit 3.
+            mEmissionBuffer.BindTexture(3);
+            mNeonShader.SetUniform("uEmission", 3);
 
             mGradientLUT.Bind(0);
             mNeonShader.SetUniform("uGradientLUT", 0);
@@ -400,10 +463,14 @@ namespace EdgeLighting
                                          ShaderSource::BLACK_RECT_FRAG_SRC,
                                          "NeonOptimized.BlackRect");
 
+        mEmissionShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
+                                        ShaderSource::NEON_EMISSION_FRAG_SRC,
+                                        "NeonOptimized.Emission");
         mBlitShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                     ShaderSource::NEON_BLIT_FRAG_SRC,
                                     "NeonBlit");
-        if (!mNeonShader.IsValid() || !mBlackRectShader.IsValid() || !mBlitShader.IsValid())
+        if (!mNeonShader.IsValid() || !mBlackRectShader.IsValid() || !mBlitShader.IsValid() ||
+            !mEmissionShader.IsValid())
         {
             return false;
         }
@@ -411,6 +478,10 @@ namespace EdgeLighting
         mNeonShader.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
         mNeonShader.SetUniformBlockBinding("LoopSamplesBlock", LOOP_SAMPLES_BLOCK_BINDING);
         mNeonShader.SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
+        // The pre-pass reads the same two blocks (not LoopSamplesBlock - it
+        // works in perimeter-parameter space and needs no pixel positions).
+        mEmissionShader.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
+        mEmissionShader.SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
         return true;
     }
 

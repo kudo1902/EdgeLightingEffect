@@ -203,6 +203,22 @@ This split was the design outcome recorded in
 [`multiple-arcs-design.md`](multiple-arcs-design.md); the perimeter-space
 fallback for empty arcs preserves the pre-multi-arc single-slice behaviour.
 
+### 4.1b Emission pre-pass
+
+Both neon renderers run a small pre-pass first. The gather's per-sample work -
+the arc winner-take-all scan, the segment bells, the LUT fetches - is a pure
+function of `(si, uTime, config)`, so it does not belong in a loop that runs
+once per fragment. It is baked once per frame into an `N x 2` RGBA16F table
+(`neon-emission.frag`) and the gather reads it with `texelFetch`.
+
+Per-fragment cost becomes `O(samples)` instead of
+`O(samples * (arcs + segments))`: measured full-res, an 8-arc + 8-segment scene
+went 158.2 ms -> 10.6 ms, and the whole "after" column is flat across scene
+complexity. Output is identical to within one LSB.
+
+Full write-up, including why the table needs two rows here where the original
+design used one: [`emission-prepass.md`](emission-prepass.md).
+
 ### 4.2 NeonOptimizedRenderer
 
 Two-pass half-resolution variant. Pass 1 renders into a scaled RGBA8 FBO

@@ -158,6 +158,113 @@ namespace EdgeLighting
         }
     }
 
+    void NeonRenderer::packLightBlocks(const Config &config)
+    {
+        // Both the emission pre-pass and the main pass read these, so they are
+        // packed once per frame before either draws.
+        //
+        // Pack the segment vector as vec4(position, invSigma, boost, hasStops)
+        // into the std140 SegmentBlock UBO (DALi-compatible pattern - see
+        // neon.frag). Empty vector -> uSegmentCount=0 and both shaders skip the
+        // whole feature.
+        SegmentBlockData segBlock = {};
+        SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
+        const std::vector<SegmentBoost> &effSegments = mEffectiveSegments;
+        int segCount = std::min(static_cast<int>(effSegments.size()),
+                                int(MAX_SEGMENT_BOOSTS));
+        segBlock.count = segCount;
+        for (int i = 0; i < segCount; ++i)
+        {
+            const auto &s = effSegments[i];
+            float invSigma = 1.0f / std::max(s.length * 0.5f, 1e-3f);
+            // .w = hasOwnStops flag; the shader reads its colour from row `i`
+            // of the segment LUT atlas when set, else falls back to the base
+            // gradient at that sample.
+            float hasStops = s.colorStops.empty() ? 0.0f : 1.0f;
+            segBlock.segments[i] = glm::vec4(s.position, invSigma, s.boost, hasStops);
+        }
+        mSegmentBlock.SetData(&segBlock, sizeof(segBlock));
+        mSegmentBlock.BindBase(SEGMENT_BLOCK_BINDING);
+
+        // Pack the arcs vector into ArcBlock: vec4(start, length, intensity,
+        // hasStops) per entry. .w picks between the winner arc's own atlas row
+        // and the base gradient in the shader's winner-take-all branch.
+        ArcBlockData arcBlock = {};
+        int arcCount = std::min(static_cast<int>(config.neon.arcs.size()),
+                                int(MAX_ARCS));
+        arcBlock.count = arcCount;
+        for (int i = 0; i < arcCount; ++i)
+        {
+            const auto &a = config.neon.arcs[i];
+            float hasStops = a.colorStops.empty() ? 0.0f : 1.0f;
+            arcBlock.arcs[i] = glm::vec4(a.start, a.length, a.intensity, hasStops);
+        }
+        mArcBlock.SetData(&arcBlock, sizeof(arcBlock));
+        mArcBlock.BindBase(ARC_BLOCK_BINDING);
+    }
+
+    void NeonRenderer::renderEmissionPass(int viewportWidth, int viewportHeight,
+                                          float time, const Config &config)
+    {
+        // RGBA16F, not RGBA8: row 0 carries Arc::intensity and row 1 sums
+        // stacked SegmentBoost::boost values, both of which exceed 1.0 in
+        // ordinary use. GLES 3.0 exposes float colour-renderability only
+        // through an extension, so fall back to RGBA8 where the driver refuses
+        // it - the picture is otherwise identical, but highlights above 1.0
+        // clamp. Warn once so the difference is not silent.
+        //
+        // GL_NEAREST because the consumer reads with texelFetch: adjacent
+        // texels are unrelated perimeter samples (and the two rows are
+        // different quantities entirely), so filtering across them is
+        // meaningless.
+        bool gotFloat = mEmissionBuffer.Resize(NEON_MAX_LOOP_SAMPLES, 2,
+                                               GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, GL_NEAREST);
+        if (!gotFloat)
+        {
+            if (!mEmissionBuffer.Resize(NEON_MAX_LOOP_SAMPLES, 2,
+                                        GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, GL_NEAREST))
+            {
+                return; // nothing sane to draw into; the gather reads a stale table
+            }
+            if (!mEmissionFormatLogged)
+            {
+                LOG_W("NeonRenderer: RGBA16F emission target unavailable, using RGBA8. "
+                      "Segment boosts above 1.0 will clamp.");
+                mEmissionFormatLogged = true;
+            }
+        }
+        mEmissionIsFloat = gotFloat;
+
+        // A table write is not a composite - blending would mix this frame's
+        // emission into last frame's. Restored by this method before it returns.
+        glDisable(GL_BLEND);
+
+        // Binds the FBO and sets the viewport to NEON_MAX_LOOP_SAMPLES x 2. No
+        // clear: the NDC quad covers every texel, so each one is written.
+        mEmissionBuffer.Bind();
+
+        mEmissionShader.Use();
+        mEmissionShader.SetUniform("uMVP", glm::mat4(1.0f));
+        mEmissionShader.SetUniform("uTime", time);
+        mEmissionShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
+        // The full-res renderer always walks every sample; the optimized one
+        // passes its runtime slider value instead.
+        mEmissionShader.SetUniform("uNumSamples", int(NEON_MAX_LOOP_SAMPLES));
+        mGradientLUT.Bind(0);
+        mEmissionShader.SetUniform("uGradientLUT", 0);
+        mSegmentLUT.Bind(1);
+        mEmissionShader.SetUniform("uSegmentLUT", 1);
+        mArcLUT.Bind(2);
+        mEmissionShader.SetUniform("uArcLUT", 2);
+        mFullVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        mEmissionShader.Unuse();
+
+        // Hand the framebuffer, viewport and blend state back exactly as found.
+        Framebuffer::BindDefault();
+        glViewport(0, 0, viewportWidth, viewportHeight);
+        glEnable(GL_BLEND);
+    }
+
     void NeonRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
     {
         if (!config.neon.enable)
@@ -172,6 +279,12 @@ namespace EdgeLighting
                          static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
         glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(center, 0.0f));
         glm::mat4 mvp = proj * model;
+
+        // Pass 0: bake the per-sample emission table. Must run before anything
+        // that draws to the backbuffer, because it retargets the framebuffer.
+        // The UBOs it reads are packed first.
+        packLightBlocks(config);
+        renderEmissionPass(viewportWidth, viewportHeight, time, config);
 
         // Premultiplied-alpha "over": final = src.rgb + dst * (1 - src.a). Used
         // for both the opaque black fill and the neon, so the neon composites
@@ -236,43 +349,6 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uInsideCutoffSoftness", config.neon.insideCutoff.softness);
         mShaderProgram.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
         mShaderProgram.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness);
-        // Pack the segment vector as vec3(position, invSigma, boost) into the
-        // std140 SegmentBlock UBO (DALi-compatible pattern - see neon.frag).
-        // Empty vector → uSegmentCount=0 and the shader skips the whole feature.
-        SegmentBlockData segBlock = {};
-        SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
-        const std::vector<SegmentBoost> &effSegments = mEffectiveSegments;
-        int segCount = std::min(static_cast<int>(effSegments.size()),
-                                int(MAX_SEGMENT_BOOSTS));
-        segBlock.count = segCount;
-        for (int i = 0; i < segCount; ++i)
-        {
-            const auto &s = effSegments[i];
-            float invSigma = 1.0f / std::max(s.length * 0.5f, 1e-3f);
-            // .w = hasOwnStops flag; the shader reads its colour from row `i`
-            // of the segment LUT atlas when set, else falls back to the base
-            // gradient at that sample.
-            float hasStops = s.colorStops.empty() ? 0.0f : 1.0f;
-            segBlock.segments[i] = glm::vec4(s.position, invSigma, s.boost, hasStops);
-        }
-        mSegmentBlock.SetData(&segBlock, sizeof(segBlock));
-        mSegmentBlock.BindBase(SEGMENT_BLOCK_BINDING);
-
-        // Pack the arcs vector into ArcBlock: vec4(start, length, intensity,
-        // hasStops) per entry. .w picks between the winner arc's own atlas row
-        // and the base gradient in the shader's winner-take-all branch.
-        ArcBlockData arcBlock = {};
-        int arcCount = std::min(static_cast<int>(config.neon.arcs.size()),
-                                int(MAX_ARCS));
-        arcBlock.count = arcCount;
-        for (int i = 0; i < arcCount; ++i)
-        {
-            const auto &a = config.neon.arcs[i];
-            float hasStops = a.colorStops.empty() ? 0.0f : 1.0f;
-            arcBlock.arcs[i] = glm::vec4(a.start, a.length, a.intensity, hasStops);
-        }
-        mArcBlock.SetData(&arcBlock, sizeof(arcBlock));
-        mArcBlock.BindBase(ARC_BLOCK_BINDING);
 
         mShaderProgram.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
 
@@ -292,6 +368,10 @@ namespace EdgeLighting
         // only when the winning arc has stops (see ArcBlock's vec4.w).
         mArcLUT.Bind(2);
         mShaderProgram.SetUniform("uArcLUT", 2);
+        // Emission table from pass 0 on unit 3; the gather texelFetches both
+        // of its rows per sample.
+        mEmissionBuffer.BindTexture(3);
+        mShaderProgram.SetUniform("uEmission", 3);
         mShaderProgram.SetUniform("uQuadMargin", mQuadMargin);
 
         // Tight glow quad in both modes - opaque's far region is covered by the
@@ -428,6 +508,11 @@ namespace EdgeLighting
         // Cheap fullscreen black fill, used only by opaque mode. Reuses the
         // standard neon vertex shader (uMVP) so the fill quad respects the
         // viewport.
+        // Emission pre-pass. Reuses the neon vertex shader (uMVP -> vPos); the
+        // fragment shader ignores vPos and keys off gl_FragCoord instead.
+        mEmissionShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
+                                        ShaderSource::NEON_EMISSION_FRAG_SRC,
+                                        "NeonRenderer.Emission");
         mBlackRectShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                          ShaderSource::BLACK_RECT_FRAG_SRC,
                                          "NeonRenderer.BlackRect");
@@ -441,7 +526,8 @@ namespace EdgeLighting
                                           ShaderSource::NEON_STOP_MARKER_FRAG_SRC,
                                           "NeonRenderer.StopMarker");
         if (!mShaderProgram.IsValid() || !mBlackRectShader.IsValid() ||
-            !mLUTDebugShader.IsValid() || !mStopMarkerShader.IsValid())
+            !mLUTDebugShader.IsValid() || !mStopMarkerShader.IsValid() ||
+            !mEmissionShader.IsValid())
         {
             return false;
         }
@@ -449,6 +535,10 @@ namespace EdgeLighting
         mShaderProgram.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
         mShaderProgram.SetUniformBlockBinding("LoopSamplesBlock", LOOP_SAMPLES_BLOCK_BINDING);
         mShaderProgram.SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
+        // The pre-pass reads the same two blocks the main pass does, so they
+        // share bindings and are packed once per frame before either runs.
+        mEmissionShader.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
+        mEmissionShader.SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
         return true;
     }
 

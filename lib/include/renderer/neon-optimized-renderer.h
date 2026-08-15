@@ -58,12 +58,27 @@ namespace EdgeLighting
         /// arc) so the shader's sampling code stays identical.
         void rebuildArcLUT(const Config &config);
 
+        /// See NeonRenderer::packLightBlocks - both passes read these blocks,
+        /// so they are packed before the emission pre-pass runs.
+        void packLightBlocks(const Config &config);
+
+        /// Pass 0: bake the fragment-invariant half of the gather into
+        /// @c mEmissionBuffer, at @c optimizedNeon.numSamples so texel i here
+        /// is sample i in the main pass. Restores framebuffer + viewport.
+        void renderEmissionPass(int viewportWidth, int viewportHeight, float time, const Config &config);
+
     private:
         Config mCurrentConfig;
         ShaderProgram mNeonShader;      // Pass 1 - half-res neon
         ShaderProgram mBlackRectShader; // Opaque-mode fullscreen black fill
         ShaderProgram mBlitShader;      // Pass 2 - upscale to full-res
+        ShaderProgram mEmissionShader;  // Pass 0 - perimeter emission table
         Framebuffer mHalfResBuffer{"NeonOptimized.HalfRes"};
+        /// Perimeter emission table, NEON_MAX_LOOP_SAMPLES x 2. Shares
+        /// neon-emission.frag with NeonRenderer; see docs/emission-prepass.md.
+        Framebuffer mEmissionBuffer{"NeonOptimized.Emission"};
+        bool mEmissionIsFloat = false;      ///< False when the RGBA8 fallback was taken.
+        bool mEmissionFormatLogged = false; ///< Keeps the fallback warning to one line.
         VertexArray mNeonVertexArray{"NeonOpt.Pass1"};
         VertexArray mBlitVertexArray{"NeonOpt.Blit"};
 

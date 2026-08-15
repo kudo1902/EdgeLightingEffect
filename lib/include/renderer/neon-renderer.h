@@ -6,6 +6,7 @@
 #include "gl/uniform-buffer.h"
 #include "gl/vertex-array.h"
 #include "gl/texture-2d.h"
+#include "gl/framebuffer.h"
 #include <glm/glm.hpp>
 #include <vector>
 
@@ -57,9 +58,20 @@ namespace EdgeLighting
         /// those samples (see the vec4.w flag in ArcBlock).
         void rebuildArcLUT(const Config &config);
 
+        /// Pack the segment + arc UBOs. Called before the emission pre-pass
+        /// because BOTH passes read them: the pre-pass to bake the per-sample
+        /// emission, the main pass for the continuous filament gate.
+        void packLightBlocks(const Config &config);
+
+        /// Pass 0: bake the fragment-invariant half of the gather into
+        /// @c mEmissionBuffer. Retargets the framebuffer and viewport, so it
+        /// restores both before returning - see docs/emission-prepass.md.
+        void renderEmissionPass(int viewportWidth, int viewportHeight, float time, const Config &config);
+
     private:
         Config mCurrentConfig;
         ShaderProgram mShaderProgram;
+        ShaderProgram mEmissionShader;                                 ///< Perimeter emission pre-pass (neon-emission.frag).
         ShaderProgram mBlackRectShader;                                ///< Opaque-mode black background fill (black-rect.frag).
         ShaderProgram mLUTDebugShader;                                 ///< Debug LUT strip (neon-lut-debug.frag).
         ShaderProgram mStopMarkerShader;                               ///< Debug per-stop marker (neon-stop-marker.frag).
@@ -104,6 +116,15 @@ namespace EdgeLighting
         /// shader uses ArcBlock's vec4.w to skip the fetch when an arc has
         /// no stops (inherit-base case).
         Texture2D mArcLUT;
+
+        /// Perimeter emission table, NEON_MAX_LOOP_SAMPLES x 2 (see
+        /// neon-emission.frag for the row packing). Rebuilt every frame by
+        /// @ref renderEmissionPass and read by the gather with texelFetch.
+        Framebuffer mEmissionBuffer{"NeonRenderer.Emission"};
+        /// True when the emission buffer got the RGBA16F it asked for. RGBA8
+        /// is a working fallback but clamps stacked segment boosts above 1.0.
+        bool mEmissionIsFloat = false;
+        bool mEmissionFormatLogged = false; ///< Keeps the RGBA8-fallback warning to one line.
         std::vector<Arc> mBakedArcs;
 
         // --- Gradient cross-fade -------------------------------------------

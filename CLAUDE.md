@@ -56,7 +56,16 @@ Per-frame contract: `Update(dt)` ticks the clock, advances every attached animat
 Six renderers, all under `lib/include/renderer/`, all registered by the demo in this order:
 
 - `WireframeRenderer` - 1px `GL_LINE_LOOP` debug box, blending temporarily disabled.
-- `NeonRenderer` - full-res single-pass neon stroke. Analytic rounded-box SDF plus a gather loop over `NEON_MAX_LOOP_SAMPLES` perimeter samples (positions in a UBO), reading three baked LUT textures: `uGradientLUT` (base colour ring), `uSegmentLUT` (per-segment gradient atlas, one row per segment), `uArcLUT` (per-arc atlas). All LUTs are baked on the CPU as **RGBA8** - float textures are deliberately avoided for edge-device compatibility. Also owns the opaque-fill pass (`black-rect.frag`) and two debug overlays (LUT strip, colour-stop markers).
+- `NeonRenderer` - full-res neon stroke. Analytic rounded-box SDF plus a gather loop over `NEON_MAX_LOOP_SAMPLES` perimeter samples (positions in a UBO), reading three baked LUT textures: `uGradientLUT` (base colour ring), `uSegmentLUT` (per-segment gradient atlas, one row per segment), `uArcLUT` (per-arc atlas). All LUTs are baked on the CPU as **RGBA8** - float textures are deliberately avoided for edge-device compatibility. Also owns the opaque-fill pass (`black-rect.frag`) and two debug overlays (LUT strip, colour-stop markers).
+
+  Runs an **emission pre-pass** first (`neon-emission.frag`): the gather's
+  per-sample work (arc winner-take-all, segment bells, LUT fetches) is a pure
+  function of `(si, uTime, config)`, so it is baked once per frame into an
+  `N x 2` RGBA16F table and the gather reads it with `texelFetch`. Per-fragment
+  cost is `O(samples)` instead of `O(samples * (arcs + segments))`. The
+  invariant to preserve: **pure function of `(si, uTime, config)` goes in the
+  pre-pass; anything reading `vPos` stays in the main shader.** See
+  [`docs/emission-prepass.md`](docs/emission-prepass.md).
 - `NeonOptimizedRenderer` - half-res variant: renders into a scaled FBO and bilinear-blits back. Adds a runtime `numSamples` knob and a configurable LUT width. **Visual params are read from `Config::neon`**, not from its own sub-config, which only carries perf knobs.
 - `DropletsRenderer` - rain-on-glass droplets in a band hugging the perimeter; screen-space gravity, self-lit drops, no framebuffer capture.
 - `LensFlareRenderer` - sun + hex-aperture flare (rays, chromatic ghosts) as one fullscreen premultiplied-alpha pass. The sun rides the perimeter in the same parameter space as neon segments/arcs.
