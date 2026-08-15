@@ -12,9 +12,10 @@
 #include "background-quad.h"
 #include "image-quad.h"
 #include "ui-controls.h"
+#include "util/capture-util.h"
 #include "util/log-util.h"
-#include "util/screenshot-util.h"
 #include <memory>
+#include <string>
 
 std::unique_ptr<EdgeLighting::EdgeLightingEffect> gEffect;
 
@@ -76,6 +77,16 @@ int main()
     int displayW, displayH;
     glfwGetFramebufferSize(window, &displayW, &displayH);
     glViewport(0, 0, displayW, displayH);
+
+    // Requested size vs what the window manager granted vs the backing-store
+    // framebuffer. Geometry below is derived from the framebuffer size, so
+    // this is the number that decides where the rect lands - and the one an
+    // offscreen capture at a fixed size will NOT match on a HiDPI display.
+    int winW = 0, winH = 0;
+    glfwGetWindowSize(window, &winW, &winH);
+    LOG_I("Main window: requested %dx%d, window %dx%d, framebuffer %dx%d (scale %.2fx)",
+          mainW, mainH, winW, winH, displayW, displayH,
+          winW > 0 ? static_cast<double>(displayW) / winW : 0.0);
     glfwSetFramebufferSizeCallback(window, OnResize);
     glfwSetKeyCallback(window, OnKey);
 
@@ -143,6 +154,8 @@ int main()
         LOG_W("Image backdrop quad failed to initialise; continuing without it.");
     }
 
+    EdgeLighting::OffscreenCapture capture;
+
     EdgeLightingDemo::PrintControls();
     EdgeLightingDemo::PrintCurrentConfig(gEffect->GetConfig(), gEffect->GetClock().IsPlaying());
 
@@ -167,33 +180,69 @@ int main()
         // --- Render main window (no ImGui overlay) ---
         glfwMakeContextCurrent(window);
         {
-            glClearColor(0.03f, 0.03f, 0.05f, 1.0f);
-            glClear(GL_COLOR_BUFFER_BIT);
-
             int fbW, fbH;
             glfwGetFramebufferSize(window, &fbW, &fbH);
 
-            // Debug checker background, drawn first so the effect composites
-            // over it. Toggling Neon > Opaque shows blend vs occlude.
-            if (debugUI.IsBackgroundEnabled())
+            // Everything behind the effect, at an explicit size so it can be
+            // drawn either into the window or into the capture framebuffer.
+            auto drawBackdrop = [&](int w, int h)
             {
-                background.Draw(debugUI.GetBackgroundCheckerSize(),
-                                debugUI.GetBackgroundColorA(),
-                                debugUI.GetBackgroundColorB());
-            }
+                glViewport(0, 0, w, h);
+                glClearColor(0.03f, 0.03f, 0.05f, 1.0f);
+                glClear(GL_COLOR_BUFFER_BIT);
 
-            // Border color picker backdrop: draw the source image inside the
-            // rect so the sampled colours can be verified against it. Neon
-            // composites on top so the glow appears to trace the image edge.
-            if (debugUI.IsImageBackdropEnabled())
-            {
-                const auto &g = gEffect->GetConfig().geometry;
-                imageQuad.Draw(fbW, fbH, g.position.x, g.position.y,
-                               g.width, g.height,
-                               debugUI.GetImageBackdropTextureId());
-            }
+                // Debug checker background, drawn first so the effect composites
+                // over it. Toggling Neon > Opaque shows blend vs occlude.
+                if (debugUI.IsBackgroundEnabled())
+                {
+                    background.Draw(debugUI.GetBackgroundCheckerSize(),
+                                    debugUI.GetBackgroundColorA(),
+                                    debugUI.GetBackgroundColorB());
+                }
+
+                // Border color picker backdrop: draw the source image inside the
+                // rect so the sampled colours can be verified against it. Neon
+                // composites on top so the glow appears to trace the image edge.
+                if (debugUI.IsImageBackdropEnabled())
+                {
+                    const auto &g = gEffect->GetConfig().geometry;
+                    imageQuad.Draw(w, h, g.position.x, g.position.y,
+                                   g.width, g.height,
+                                   debugUI.GetImageBackdropTextureId());
+                }
+            };
 
             gEffect->Update(deltaTime);
+
+            // Offscreen capture, before the window draw so the timing below
+            // still measures a plain window frame. Rendering the scene twice
+            // at two sizes makes the *Optimized renderers reallocate their
+            // half-res FBOs, which is why this only runs on an explicit click.
+            int capW = 0;
+            int capH = 0;
+            if (debugUI.ConsumeCaptureRequest(capW, capH))
+            {
+                if (capture.Begin(capW, capH))
+                {
+                    drawBackdrop(capW, capH);
+                    gEffect->Render(capW, capH);
+
+                    std::string path = EdgeLighting::CaptureUtil::TimestampedPath(RES_DIR, "capture_", "png");
+                    bool saved = capture.Save(path);
+                    capture.End();
+
+                    if (saved)
+                    {
+                        LOG_I("Capture saved: %s (%dx%d)", path.c_str(), capW, capH);
+                    }
+                    else
+                    {
+                        LOG_E("Capture failed: %s", path.c_str());
+                    }
+                }
+            }
+
+            drawBackdrop(fbW, fbH);
 
             double t0 = glfwGetTime();
             gEffect->Render(fbW, fbH);

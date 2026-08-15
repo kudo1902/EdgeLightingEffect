@@ -127,9 +127,33 @@ namespace EdgeLighting
 
         /// Restores the default framebuffer. Does NOT touch the viewport - the
         /// caller is responsible for setting it back to the window size.
+        ///
+        /// Prefer @ref GetBoundId + @ref BindId in a multi-pass renderer:
+        /// "the target I started on" is not always the default framebuffer
+        /// (an offscreen frame capture makes it a real FBO).
         static void BindDefault()
         {
             glBindFramebuffer(GL_FRAMEBUFFER, 0);
+        }
+
+        /// The id currently bound for drawing; 0 means the window's default
+        /// framebuffer. Note this is the DRAW binding
+        /// (GL_FRAMEBUFFER_BINDING is GL_DRAW_FRAMEBUFFER_BINDING) - code that
+        /// splits read from draw, as the capture readback does, must save the
+        /// read binding separately.
+        static GLuint GetBoundId()
+        {
+            GLint id = 0;
+            glGetIntegerv(GL_FRAMEBUFFER_BINDING, &id);
+            return static_cast<GLuint>(id);
+        }
+
+        /// Binds a raw framebuffer id for both reading and drawing. Inverse of
+        /// @ref GetBoundId: pair them to save and restore the caller's target
+        /// around an offscreen pass. Does NOT touch the viewport.
+        static void BindId(GLuint id)
+        {
+            glBindFramebuffer(GL_FRAMEBUFFER, id);
         }
 
         /// Binds the colour attachment texture to texture unit @p unit

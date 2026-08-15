@@ -33,6 +33,12 @@ namespace EdgeLighting
         int bufW = std::max(static_cast<int>(static_cast<float>(viewportWidth) * scale), 1);
         int bufH = std::max(static_cast<int>(static_cast<float>(viewportHeight) * scale), 1);
 
+        // The target this renderer was handed. Usually the window's default
+        // framebuffer, but an offscreen frame capture (@ref OffscreenCapture)
+        // binds a real FBO, so Pass 2 has to come back to whatever was bound
+        // rather than assuming 0.
+        const GLuint targetFbo = Framebuffer::GetBoundId();
+
         // --- Pass 1: render the flare into the scaled FBO ---
         mScaledBuffer.Resize(bufW, bufH);
         mScaledBuffer.Bind();
@@ -88,7 +94,7 @@ namespace EdgeLighting
         // Bilinear upscaling of premultiplied alpha is fringe-free; the blit
         // shader is a plain texture read composited over whatever's already on
         // the backbuffer. (Reuses the neon blit shader - identical job.)
-        Framebuffer::BindDefault();
+        Framebuffer::BindId(targetFbo);
         glViewport(0, 0, viewportWidth, viewportHeight);
 
         glEnable(GL_BLEND);

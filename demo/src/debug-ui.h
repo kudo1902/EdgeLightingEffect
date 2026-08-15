@@ -43,6 +43,18 @@ public:
 
     GLFWwindow *GetWindow() const { return mWindow; }
 
+    /// @name Offscreen frame capture
+    /// The Capture button cannot read pixels itself: Build() runs while the
+    /// debug window's context is current and before this frame has been drawn,
+    /// so anything it read back would be the wrong buffer. It only raises a
+    /// request; the demo's render loop draws the scene into an offscreen
+    /// framebuffer at the requested size and saves that.
+    ///@{
+    /// Consumes a pending capture request, if any, and reports the size the
+    /// frame should be rendered at. @return @c true exactly once per click.
+    bool ConsumeCaptureRequest(int &outWidth, int &outHeight);
+    ///@}
+
     /// @name Debug background quad (demo verification aid)
     /// Drawn by the demo behind the effect to visualise neon compositing.
     ///@{
@@ -87,6 +99,14 @@ private:
     ImGuiContext *mContext = nullptr;
 
     float mLastRenderTimeMs = 0.0f;
+
+    // --- Offscreen frame capture ---
+    /// Set by the Capture button, cleared by ConsumeCaptureRequest.
+    bool mCaptureRequested = false;
+    /// Capture resolution. Fixed rather than window-derived on purpose: the
+    /// window framebuffer is 2x on Retina and 1x elsewhere, so a
+    /// window-sized capture is not comparable across machines.
+    int mCaptureSize[2] = {1280, 720};
 
     // --- Animation state ---
     // Animations are owned by the effect's AnimationManager (via

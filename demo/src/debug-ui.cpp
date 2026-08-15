@@ -5,7 +5,6 @@
 #include "renderer/neon-tuning.h"
 #include "ui-controls.h"
 #include "util/log-util.h"
-#include "util/screenshot-util.h"
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -372,6 +371,17 @@ bool DebugUI::Init(GLFWwindow *mainWindow, int mainW, int mainH)
 
     mMainWindow = mainWindow;
 
+    // Seed the capture size from the main window's FRAMEBUFFER size, not its
+    // logical size: Config::geometry is in framebuffer pixels, so a capture
+    // that is half the framebuffer (as it would be on a 2x display) shows only
+    // the top-left quadrant of the scene. This is a starting value the user can
+    // edit, not a live binding - the capture itself never reads the drawable,
+    // which is what keeps it reproducible on a machine with a different scale.
+    int mainFbW = mainW, mainFbH = mainH;
+    glfwGetFramebufferSize(mainWindow, &mainFbW, &mainFbH);
+    mCaptureSize[0] = mainFbW;
+    mCaptureSize[1] = mainFbH;
+
     // Keep main context current after window creation (shared context)
     glfwMakeContextCurrent(mainWindow);
 
@@ -458,20 +468,47 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
         effect.GetClock().Stop();
     }
     ImGui::SameLine();
-    if (ImGui::Button("Screenshot"))
+    if (ImGui::Button("Capture"))
     {
-        int fbW, fbH;
-        glfwGetFramebufferSize(mMainWindow, &fbW, &fbH);
-        std::string path = EdgeLighting::ScreenshotUtil::TimestampedPath(RES_DIR, "screenshot_", "png");
-        EdgeLighting::ScreenshotUtil::SaveScreenshot(path, fbW, fbH);
-        LOG_I("Screenshot saved: %s", path.c_str());
+        // Deferred to the render loop - see ConsumeCaptureRequest.
+        mCaptureRequested = true;
     }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Renders one frame into an offscreen RGBA8 framebuffer at the size below\n"
+                          "and writes it to RES_DIR as a PNG. Independent of the window and of the\n"
+                          "display's DPI scale, so the same config gives the same pixels anywhere.\n"
+                          "Geometry is in framebuffer pixels, so the capture size also decides\n"
+                          "the framing - shrink it and you crop rather than zoom out.");
+    }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(120.0f);
+    ImGui::InputInt2("Capture size", mCaptureSize);
     ImGui::SameLine();
     if (ImGui::Button("Dump Config"))
     {
         EdgeLightingDemo::PrintFullConfig(effect.GetConfig(), effect.GetClock().IsPlaying());
     }
     ImGui::End();
+}
+
+bool DebugUI::ConsumeCaptureRequest(int &outWidth, int &outHeight)
+{
+    if (!mCaptureRequested)
+    {
+        return false;
+    }
+    mCaptureRequested = false;
+
+    if (mCaptureSize[0] <= 0 || mCaptureSize[1] <= 0)
+    {
+        LOG_W("Capture size %dx%d is invalid; ignoring the request.", mCaptureSize[0], mCaptureSize[1]);
+        return false;
+    }
+
+    outWidth = mCaptureSize[0];
+    outHeight = mCaptureSize[1];
+    return true;
 }
 
 void DebugUI::Render()
