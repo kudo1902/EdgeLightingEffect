@@ -145,7 +145,8 @@ namespace EdgeLighting
             LOG_I("Max texture size       : %d", GetCap(GL_MAX_TEXTURE_SIZE));
             LOG_I("Max vertex attribs     : %d", GetCap(GL_MAX_VERTEX_ATTRIBS));
             LOG_I("Max uniform components : %d", GetCap(GL_MAX_VERTEX_UNIFORM_COMPONENTS));
-            LOG_I("Max varyings           : %d", GetCap(GL_MAX_VARYING_COMPONENTS));
+            LOG_I("Max vertex out comps   : %d", GetCap(GL_MAX_VERTEX_OUTPUT_COMPONENTS));
+            LOG_I("Max fragment in comps  : %d", GetCap(GL_MAX_FRAGMENT_INPUT_COMPONENTS));
             LOG_I("Max combined tex units : %d", GetCap(GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS));
             LOG_I("Max draw buffers       : %d", GetCap(GL_MAX_DRAW_BUFFERS));
             LOG_I("Max renderbuffer size  : %d", GetCap(GL_MAX_RENDERBUFFER_SIZE));
