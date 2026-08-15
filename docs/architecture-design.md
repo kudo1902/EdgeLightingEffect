@@ -60,7 +60,7 @@ lib/
   include/gl/         Move-only RAII wrappers: ShaderProgram, VertexArray,
                       Texture + Texture2D, Framebuffer, UniformBuffer
   include/util/       geometry-utils, color-utils, contour-tracer, stb-image,
-                      screenshot-util, log-util
+                      capture-util, log-util
   shaders/            .vert/.frag sources + shaders.h.in template
   src/                Renderer + effect + animation implementations
   capi/               Flat extern "C" ABI: edge-lighting-capi.h aggregates

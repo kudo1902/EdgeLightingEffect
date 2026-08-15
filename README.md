@@ -117,7 +117,7 @@ lib/                        core library
   include/renderer/         BaseRenderer + concrete renderers
   include/animation/        Modulator family + Animation presets
   include/gl/               RAII wrappers (ShaderProgram, VAO, FBO, Texture)
-  include/util/             log, color, screenshot, contour tracer, stb-image
+  include/util/             log, color, frame capture, contour tracer, stb-image
   shaders/*.{vert,frag}     GLSL sources, embedded at configure time
   capi/                     extern "C" ABI for FFI
 
