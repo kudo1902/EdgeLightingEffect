@@ -129,6 +129,12 @@ namespace EdgeLighting
         // alone - the same view NeonRenderer gives, for A/B against it.
         const bool opaqueOnly = config.neon.opaqueOnly;
 
+        // The target this renderer was handed. Usually the window's default
+        // framebuffer, but an offscreen frame capture (@ref OffscreenCapture)
+        // binds a real FBO, so Pass 2 has to come back to whatever was bound
+        // rather than assuming 0.
+        const GLuint targetFbo = Framebuffer::GetBoundId();
+
         // Needed by the fill pass below too, so they outlive the Pass 1 guard.
         float halfRectW = config.geometry.width * 0.5f;
         float halfRectH = config.geometry.height * 0.5f;
@@ -253,7 +259,7 @@ namespace EdgeLighting
         //   INSIDE  -> black only where d <= softEdge; off-side stays clear.
         //   OUTSIDE -> mirror of INSIDE.
         // Rounded corners AA cleanly via fwidth(d) - no discard, no stair-step.
-        Framebuffer::BindDefault();
+        Framebuffer::BindId(targetFbo);
         glViewport(0, 0, viewportWidth, viewportHeight);
 
         // Premultiplied "over" for both the black fill and the blit, so
