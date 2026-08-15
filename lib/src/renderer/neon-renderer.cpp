@@ -239,6 +239,13 @@ namespace EdgeLighting
         // emission into last frame's. Restored by this method before it returns.
         glDisable(GL_BLEND);
 
+        // The target the gather below draws into. NOT necessarily the default
+        // framebuffer: an offscreen frame capture (@ref OffscreenCapture) hands
+        // this renderer a real FBO, and the gather has no bind of its own, so
+        // restoring 0 here would silently redirect the whole neon pass to the
+        // window and leave the capture empty.
+        const GLuint targetFbo = Framebuffer::GetBoundId();
+
         // Binds the FBO and sets the viewport to NEON_MAX_LOOP_SAMPLES x 2. No
         // clear: the NDC quad covers every texel, so each one is written.
         mEmissionBuffer.Bind();
@@ -260,7 +267,7 @@ namespace EdgeLighting
         mEmissionShader.Unuse();
 
         // Hand the framebuffer, viewport and blend state back exactly as found.
-        Framebuffer::BindDefault();
+        Framebuffer::BindId(targetFbo);
         glViewport(0, 0, viewportWidth, viewportHeight);
         glEnable(GL_BLEND);
     }

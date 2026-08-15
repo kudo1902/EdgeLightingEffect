@@ -176,6 +176,12 @@ namespace EdgeLighting
         }
         mEmissionIsFloat = gotFloat;
 
+        // Same restore rule as NeonRenderer::renderEmissionPass: put back the
+        // target that was handed in, not framebuffer 0. Both of this renderer's
+        // later passes rebind explicitly, so 0 happened to be harmless here -
+        // but leaving it would make the two copies disagree on the invariant.
+        const GLuint targetFbo = Framebuffer::GetBoundId();
+
         glDisable(GL_BLEND);
         mEmissionBuffer.Bind();
 
@@ -194,7 +200,7 @@ namespace EdgeLighting
         mBlitVertexArray.DrawArrays(GL_TRIANGLES, 6);
         mEmissionShader.Unuse();
 
-        Framebuffer::BindDefault();
+        Framebuffer::BindId(targetFbo);
         glViewport(0, 0, viewportWidth, viewportHeight);
         glEnable(GL_BLEND);
     }
