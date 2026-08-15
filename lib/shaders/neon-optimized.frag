@@ -581,12 +581,27 @@ void main() {
     // One coverage, folding per-arc intensity in, driving the filament as well
     // as the halo and bloom: `col` is gated-normalised above, so intensity
     // cancels out of it and emitCover is what carries it now. See neon.frag.
+    // Colour-stop alpha scales the emission magnitude, not the hue (the gated
+    // normalisation would divide it back out of `col`), and is read POINTWISE
+    // rather than gathered - a gathered alpha smears across the whole ring
+    // through the weight's 1/d^2 tails. See neon.frag for the measurements.
+    float baseAlphaPt = texture(uGradientLUT,
+                                vec2(sPos - uTime * uHueRotationRate, 0.5)).a;
     float emitCover = 0.0;
     for (int a = 0; a < uArcCount; a++) {
         vec4 arc = uArcs[a];
         if (arc.z <= 0.0) continue;
         float c = arcCoverContinuous(sPos, arc.x, arc.y, headF, tailF);
-        emitCover = max(emitCover, c * arc.z);
+        float aA;
+        if (arc.w > 0.5) {
+            float rowY = (float(a) + 0.5) / float(MAX_ARCS);
+            float uArc = (sPos - arc.x) / max(arc.y, 1e-4);
+            uArc      -= uTime * uHueRotationRate;
+            aA         = texture(uArcLUT, vec2(uArc, rowY)).a;
+        } else {
+            aA = baseAlphaPt;
+        }
+        emitCover = max(emitCover, c * arc.z * aA);
     }
 
     // Pointwise segment coverage at this fragment's perimeter position - the
@@ -600,7 +615,17 @@ void main() {
         float rel = sPos - seg.x;
         rel      -= floor(rel + 0.5);
         float e   = rel * seg.y;
-        segCoverPt += seg.z * exp(-e * e);
+        // Per-segment alpha, pointwise; stop-less segments inherit the base
+        // gradient's alpha. See neon.frag.
+        float sA;
+        if (seg.w > 0.5) {
+            float tLocal = clamp(0.5 + e * 0.5, 0.0, 1.0);
+            float rowY   = (float(s) + 0.5) / float(MAX_SEGMENT_BOOSTS);
+            sA           = texture(uSegmentLUT, vec2(tLocal, rowY)).a;
+        } else {
+            sA = baseAlphaPt;
+        }
+        segCoverPt += seg.z * exp(-e * e) * sA;
     }
     float emitCoverAll = max(emitCover, min(segCoverPt, 1.0));
 
