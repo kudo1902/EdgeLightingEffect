@@ -216,8 +216,15 @@ Per-fragment cost becomes `O(samples)` instead of
 went 158.2 ms -> 10.6 ms, and the whole "after" column is flat across scene
 complexity. Output is identical to within one LSB.
 
+`Render` in both neon renderers is a pass schedule as a result - a derived
+transform then one call per `render*Pass` method, with `Render` owning blend
+state and each retargeting pass restoring the framebuffer, viewport and blend
+it was handed.
+
 Full write-up, including why the table needs two rows here where the original
-design used one: [`emission-prepass.md`](emission-prepass.md).
+design used one: [`emission-prepass.md`](emission-prepass.md). Measured
+before/after on visuals, performance and memory:
+[`emission-prepass-comparison.md`](emission-prepass-comparison.md).
 
 ### 4.2 NeonOptimizedRenderer
 
@@ -429,6 +436,40 @@ center_ogl.y = viewportH - position.y - halfH;
 
 All renderers use the same MVP formula so local-space vertices (origin at
 rect center, +Y up) render correctly on screen (origin at top-left, +Y down).
+
+### The viewport origin is assumed to be (0, 0)
+
+`BaseRenderer::Render(viewportWidth, viewportHeight, ...)` takes the viewport
+*size*, never its origin, and every renderer assumes the viewport is
+`(0, 0, viewportWidth, viewportHeight)`. **A sub-viewport is not supported.**
+
+The assumption is not a tidiness convention; it is baked into the shaders.
+Several read `gl_FragCoord`, which is in **window** coordinates, and compare it
+against uniforms the CPU derives as though the viewport origin were the window
+origin - `black-rect.frag` is the clearest case:
+
+```glsl
+vec2 localPos = gl_FragCoord.xy - uRectCenter;   // uRectCenter from geometry.position
+```
+
+Render into a viewport at origin `(x, y)` and every such comparison is off by
+exactly that origin, so the silhouette draws displaced from the glow. The neon
+gather picks up the same coupling through `vPos`. Supporting sub-viewports
+therefore means threading an origin through to those uniforms - not simply
+restoring the viewport more carefully.
+
+Two practical consequences:
+
+- A renderer that retargets may restore the viewport by **reconstruction**
+  (`glViewport(0, 0, viewportWidth, viewportHeight)`) rather than by querying
+  `GL_VIEWPORT`. Doing it exactly would imply a generality the shaders do not
+  have.
+- The **framebuffer** gets the opposite treatment, because it genuinely varies:
+  it may be the default framebuffer or a real FBO (`OffscreenCapture`), so a
+  multi-pass renderer captures it with `Framebuffer::GetBoundId` and restores
+  precisely that. `OffscreenCapture` itself does save and restore the full
+  four-component viewport - it wraps arbitrary host rendering and must not
+  disturb it, which is a different role from a renderer that owns its target.
 
 ## 10. Demo - the ImGui side
 

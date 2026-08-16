@@ -40,6 +40,7 @@ namespace EdgeLighting
         virtual void OnConfigChanged(const Config &config) override;
 
     private:
+        // --- Setup and config-driven rebuilds (not per-frame) --------------
         bool setupShaders();
         void setupGeometry(const Config &config);
         void rebuildLoopSamples(const Config &config);
@@ -58,6 +59,33 @@ namespace EdgeLighting
         /// those samples (see the vec4.w flag in ArcBlock).
         void rebuildArcLUT(const Config &config);
 
+        // --- Per-frame pass list, declared in PASS-NUMBER order -------------
+        // The numbering is the pipeline order from docs/emission-prepass.md,
+        // and the .cpp defines them in this same order - keep all three in
+        // step. The data dependency is the real contract: pass 0 bakes the
+        // table pass 2 reads, and pass 1's fill must land before pass 2
+        // composites the glow over it.
+        //
+        // NOTE @ref Render executes pass 0 AFTER pass 1 here, which is the one
+        // place declaration order and call order differ. The emission table
+        // feeds only pass 2, so deferring it past the opaqueOnly early-out
+        // lets fill-only debug mode skip a UBO upload and a draw it would
+        // never sample. NeonOptimizedRenderer has no such inversion - there
+        // both are inside the same guard, so it runs 0, 1, 2a, 2b in order.
+
+        // STATE OWNERSHIP. `Render` owns blend state - enable and func - and
+        // sets it immediately before each pass that depends on it, so no pass
+        // touches GL_BLEND and the whole blend timeline reads in one place.
+        // A pass owns its shader, and a pass that RETARGETS the framebuffer
+        // restores it (an excursion, unlike a mode). Preconditions each pass
+        // relies on are stated in its @pre below.
+        //
+        // The passes take the pieces of the frame transform they actually use.
+        // @ref Render derives them once: `center` reaches the screen by two
+        // routes - folded into @p mvp for the glow, and added to each stop's
+        // perimeter point for the debug markers - so deriving it in one place
+        // is what keeps the markers aligned with the glow they annotate.
+
         /// Pack the segment + arc UBOs. Called before the emission pre-pass
         /// because BOTH passes read them: the pre-pass to bake the per-sample
         /// emission, the main pass for the continuous filament gate.
@@ -66,7 +94,30 @@ namespace EdgeLighting
         /// Pass 0: bake the fragment-invariant half of the gather into
         /// @c mEmissionBuffer. Retargets the framebuffer and viewport, so it
         /// restores both before returning - see docs/emission-prepass.md.
+        /// @pre Blending disabled - a table write is not a composite.
         void renderEmissionPass(int viewportWidth, int viewportHeight, float time, const Config &config);
+
+        /// Pass 1: opaque-mode background fill on a fullscreen NDC quad. The
+        /// fragment shader shapes coverage from an analytic rounded-box SDF
+        /// read off gl_FragCoord. Caller guards on @c opaqueMode != NONE.
+        void renderOpaqueFill(const glm::vec2 &center, const Config &config);
+
+        /// Pass 2: the neon gather on the tight glow quad. Reads the emission
+        /// table produced by @ref renderEmissionPass, so it must run after it.
+        void renderNeonPass(const glm::mat4 &mvp, float time, const Config &config);
+
+        /// Debug pass: the baked gradient LUT as a strip at the geometry
+        /// centre. Caller guards on @c showGradientLUT.
+        /// @pre Blending disabled - the strip overwrites the glow beneath it.
+        void renderGradientLUTStrip(const glm::mat4 &mvp, float time, const Config &config);
+
+        /// Debug pass: one filled disc per colour stop at its perimeter
+        /// position. Caller guards on @c showColorStops + a non-empty list.
+        /// @pre Straight-alpha blending, for the discs' anti-aliased edges.
+        /// @note Takes @p proj, not the composed mvp: every marker gets its own
+        ///       model matrix, so it needs the projection un-premultiplied.
+        void renderColorStopMarkers(const glm::mat4 &proj, const glm::vec2 &center,
+                                    float halfWidth, float halfHeight, const Config &config);
 
     private:
         Config mCurrentConfig;

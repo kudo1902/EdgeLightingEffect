@@ -10,13 +10,16 @@ namespace EdgeLighting
 {
     /// RAII wrapper around a GL framebuffer + single RGBA8 colour attachment.
     ///
-    /// Typical use is "render to texture, then sample it in a later pass":
+    /// Typical use is "render to texture, then sample it in a later pass".
+    /// Save the caller's target rather than assuming the default framebuffer -
+    /// under an @c OffscreenCapture it is a real FBO:
     /// @code
+    ///     const GLuint prev = Framebuffer::GetBoundId();
     ///     mBuffer.Resize(w, h);   // no-op when size unchanged
     ///     mBuffer.Bind();         // sets framebuffer AND viewport
     ///     // ... draw ...
-    ///     Framebuffer::BindDefault();
-    ///     glViewport(0, 0, w, h);
+    ///     Framebuffer::BindId(prev);
+    ///     glViewport(0, 0, w, h); // Bind() changed it; put it back
     ///     mBuffer.BindTexture(0); // sample the result in the next pass
     /// @endcode
     ///
@@ -140,6 +143,14 @@ namespace EdgeLighting
 
         /// Activates this framebuffer for rendering and sets the GL viewport
         /// to match its dimensions. Caller is expected to clear if desired.
+        ///
+        /// @note Viewport travels with the target on purpose - a bound target
+        ///       without a matching viewport is a half-configured state. A pass
+        ///       that calls this must therefore restore BOTH (see
+        ///       @ref GetBoundId / @ref BindId for the framebuffer half).
+        ///       Renderers restore the viewport by reconstruction rather than
+        ///       by querying GL_VIEWPORT; @ref BaseRenderer::Render documents
+        ///       why that is sufficient.
         void Bind() const
         {
             glBindFramebuffer(GL_FRAMEBUFFER, mFbo);

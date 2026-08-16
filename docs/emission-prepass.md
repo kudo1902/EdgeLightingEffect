@@ -87,33 +87,96 @@ through `emitCover` / `filamentGate`, which are pointwise and size-invariant.
 
 ## 3. Pass structure
 
-Both renderers run the pre-pass first, because it retargets the framebuffer and
-the viewport.
+`Render` in both renderers is a pass schedule and nothing else: derive the
+transform, then one call per pass, each in its own private method. Blend state
+is owned by `Render`; each pass owns its shader, and the two that retarget the
+framebuffer restore it themselves.
 
 **`NeonRenderer::Render`**
 
 | pass | method | target | draw |
 | ---- | ------ | ------ | ---- |
+| - | (inline) | - | derives proj / center / mvp for the passes |
 | - | `packLightBlocks` | - | UBO upload only |
 | 0 | `renderEmissionPass` | `mEmissionBuffer` (N x 2) | `mFullVertexArray`, identity MVP |
-| 1 | opaque fill (opaque modes only) | backbuffer | black rounded-rect fill |
-| 2 | neon gather | backbuffer | tight glow quad, `neon.frag` |
-| dbg | LUT strip / stop markers | backbuffer | unchanged |
+| 1 | `renderOpaqueFill` | backbuffer | black rounded-rect fill (opaque modes only) |
+| 2 | `renderNeonPass` | backbuffer | tight glow quad, `neon.frag` |
+| dbg | `renderGradientLUTStrip` | backbuffer | colour-ring strip, unblended |
+| dbg | `renderColorStopMarkers` | backbuffer | one disc per colour stop |
 
-`NeonOptimizedRenderer` is the same with pass 1 rendering into the half-res FBO
-and a blit afterwards.
+**`NeonOptimizedRenderer::Render`**
+
+| pass | method | target | draw |
+| ---- | ------ | ------ | ---- |
+| - | `packLightBlocks` | - | UBO upload only |
+| 0 | `renderEmissionPass` | `mEmissionBuffer` | `mBlitVertexArray`, identity MVP |
+| 1 | `renderHalfResNeonPass` | `mHalfResBuffer` | scaled glow quad, `neon-optimized.frag` |
+| 2a | `renderOpaqueFill` | backbuffer | black rounded-rect fill (opaque modes only) |
+| 2b | `renderBlitPass` | backbuffer | bilinear composite of the half-res FBO |
 
 The arc and segment UBOs are packed **before** pass 0, because both the
 pre-pass and the main pass read them - the pre-pass for the gathered emission,
 the main pass for the continuous filament gate.
 
+### One inversion, in NeonRenderer only
+
+`NeonRenderer` executes **pass 1 before pass 0**. The emission table feeds only
+pass 2, so deferring it past the `opaqueOnly` early-out lets the fill-only debug
+mode skip a UBO upload and a draw it would never sample. This is safe only
+because `renderEmissionPass` restores the framebuffer it was handed (see below);
+against a version that restored framebuffer 0 it would have been a bug.
+
+`NeonOptimizedRenderer` has no such inversion - both passes sit inside the same
+`!opaqueOnly` guard, so it runs 0, 1, 2a, 2b in order.
+
+Declaration order in the headers follows the **pass numbering**, not the call
+order, and matches the definition order in the .cpp. The inversion above is
+noted at the declaration site so the two do not silently drift.
+
 ### Pass contract
 
-`renderEmissionPass` binds its own render target and returns with the default
-framebuffer and the full viewport bound - which is why it takes the viewport
-dimensions. It also turns `GL_BLEND` off for its duration (a table write is not
-a composite; blending would mix this frame's emission into last frame's) and
-back on afterwards.
+State splits into two kinds, and they have opposite owners.
+
+**Modes belong to `Render`.** Blend enable and blend function are properties of
+the *phase*, not of a pass: the fill and glow composite premultiplied, the stop
+markers composite straight alpha, the LUT strip draws unblended, and the
+renderer hands the world back on straight alpha. `Render` sets the mode
+immediately before each pass that depends on one, and **no pass touches
+`GL_BLEND` at all**. Two consequences worth having:
+
+- The whole blend timeline reads top-to-bottom in one function.
+- Setting the mode per phase, rather than relying on carry-over from an earlier
+  pass, means the pass order can change without silently breaking compositing.
+
+Each pass states the mode it needs as an `@pre` on its declaration.
+
+**Excursions belong to the pass.** `renderEmissionPass` binds its own render
+target, so it captures `Framebuffer::GetBoundId()` and restores exactly that -
+**not** framebuffer 0. The target is not always the default framebuffer: an
+offscreen frame capture (`OffscreenCapture`) binds a real FBO, and the gather
+has no bind of its own, so restoring 0 would redirect the whole neon pass to
+the window and leave the capture empty.
+
+The viewport travels with the target - `Framebuffer::Bind()` sets both, since a
+target without its viewport is a half-configured state - so the pass restores
+it too, which is why it takes the viewport dimensions. Note the deliberate
+asymmetry: the framebuffer is restored by **capture**, the viewport by
+**reconstruction** (`glViewport(0, 0, viewportWidth, viewportHeight)`). That is
+not sloppiness. `BaseRenderer::Render` documents the viewport origin as a
+precondition every renderer relies on, and the shaders bake it in - they read
+`gl_FragCoord` in window coordinates against uniforms computed as if the origin
+were (0, 0). Capturing `GL_VIEWPORT` here would restore more precisely while
+the rendering itself stayed wrong under a sub-viewport, advertising a
+generality that does not exist. See architecture-design.md §9.
+
+The distinction is whether the pass *goes somewhere and comes back* (an
+excursion, which only it can undo correctly) or merely *needs the world in a
+certain state* (a mode, which the schedule owns).
+
+`renderHalfResNeonPass` is the deliberate non-excursion: it renders into
+`mHalfResBuffer` for the next phase to consume rather than returning, so
+`Render` performs that framebuffer transition, using the `targetFbo` it
+captured before pass 0.
 
 ## 4. The main shader
 
@@ -201,48 +264,34 @@ gather but not quite for the whole shader. Folding alpha into a third emission
 row sampled with filtering at `sPos` would close that gap - it is the obvious
 next step and is not done here.
 
-## 7. Measured results
+## 7. Results in brief
 
-3840x2160 framebuffer, 1920x1080 rect, mean of 210 frames with `glFinish`
-inside the timed region (GPU time, not command submission).
+Full before/after tables - performance, visuals and memory, with the
+methodology and its caveats - live in
+[`emission-prepass-comparison.md`](emission-prepass-comparison.md). That
+document is the single source for the numbers; this section only states the
+shape of the result so the design rationale above stands on its own.
 
-| scene | renderer | before | after | |
-| ----- | -------- | ------ | ----- | - |
-| 1 full arc, no segments | full-res | 27.62 ms | 10.47 ms | 2.6x |
-| 1 partial arc + 1 segment | full-res | 40.80 ms | 10.27 ms | 4.0x |
-| 8 arcs + 8 segments | full-res | 158.21 ms | 10.63 ms | 14.9x |
-| 1 full arc, no segments | half-res | 6.48 ms | 4.87 ms | 1.3x |
-| 1 partial arc + 1 segment | half-res | 10.82 ms | 4.12 ms | 2.6x |
-| 8 arcs + 8 segments | half-res | 23.02 ms | 4.81 ms | 4.8x |
+**Performance.** Per-fragment cost went from `O(samples * (arcs + segments))`
+to `O(samples)`. The visible consequence is flatness: the "after" timings
+barely move as the scene grows from one arc to eight arcs plus eight segments,
+where before they rose by more than 5x. The half-res renderer gains least,
+because its fixed costs - FBO clear, black fill, full-res blit - do not shrink.
 
-The headline is not any single row: it is that the "after" column barely moves
-across scene complexity (10.27 - 10.63 ms full-res, 4.12 - 4.87 ms half-res)
-where before it went 27.6 -> 158.2 and 6.5 -> 23.0. Per-fragment cost is now
-`O(samples)` instead of `O(samples * (arcs + segments))`.
+**Correctness.** Max delta **1 LSB** on under 0.1% of pixels, across three
+scenes on both renderers. Two causes, both benign: `RGBA16F` storage of the
+per-sample intermediates, and `si` now being computed directly
+(`floor(gl_FragCoord.x) * invN`) instead of accumulated through a
+128-iteration `si += dti` chain - the direct form being the more accurate of
+the two.
 
-The half-res renderer gains least because its fixed costs - FBO clear, black
-fill, full-res blit - do not shrink.
-
-### Correctness
-
-Frame dumps before vs. after, deterministic scene and fixed clock step, at
-3840x2160 (33.2M bytes per frame):
-
-| scene | renderer | differing bytes | max delta |
-| ----- | -------- | --------------- | --------- |
-| 1 | full-res | 27,927 (0.08%) | 1 |
-| 2 | full-res | 14,089 (0.04%) | 1 |
-| 3 | full-res | 14,798 (0.04%) | 1 |
-| 1 | half-res | 30,730 (0.09%) | 1 |
-| 2 | half-res | 15,740 (0.05%) | 1 |
-| 3 | half-res | 14,725 (0.04%) | 1 |
-
-Max delta 1 everywhere - one LSB, from `RGBA16F` storage and from `si` being
-computed directly (`floor(gl_FragCoord.x) * invN`) instead of accumulated
-through a 128-iteration `si += dti` chain. The direct form is the more accurate
-of the two. There are no behaviour changes: unlike the reference
+There are no intentional behaviour changes. Unlike the reference
 implementation, the segment filament gate was already continuous on this
 branch, so nothing needed moving.
+
+The one case not covered by those measurements is the `RGBA8` fallback (§5):
+where the driver refuses float colour rendering, values above 1.0 clamp, and
+both rows carry such values in ordinary use.
 
 ## 8. Maintenance rules
 
@@ -268,6 +317,20 @@ Practical consequences:
   (`CMAKE_CONFIGURE_DEPENDS` and `file(READ ...)`) plus `shaders/shaders.h.in`.
   `neon-emission.frag` needs `@NEON_TUNING@` because it uses `MAX_ARCS`,
   `MAX_SEGMENT_BOOSTS` and `NEON_MAX_LOOP_SAMPLES`.
+
+Rules for the pass structure itself (§3):
+
+- **A pass that retargets restores what it was handed**, framebuffer *and*
+  viewport *and* blend - never framebuffer 0, never a forced `glEnable`. The
+  target is a real FBO under `OffscreenCapture`, and a caller may legitimately
+  be rendering unblended.
+- **`Render` owns blend state; a pass owns its shader.** The two passes that
+  deviate (the emission pre-pass, the LUT-strip overlay) say so in their own
+  comments.
+- **Adding a pass means three places stay in step**: the header declaration
+  (pass-number order), the .cpp definition order, and `Render`'s call order.
+  Where call order deviates - `NeonRenderer` runs pass 1 before pass 0 - the
+  reason is recorded at the declaration, not left to be rediscovered.
 
 ## 9. Not done
 

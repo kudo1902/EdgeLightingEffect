@@ -235,10 +235,6 @@ namespace EdgeLighting
         }
         mEmissionIsFloat = gotFloat;
 
-        // A table write is not a composite - blending would mix this frame's
-        // emission into last frame's. Restored by this method before it returns.
-        glDisable(GL_BLEND);
-
         // The target the gather below draws into. NOT necessarily the default
         // framebuffer: an offscreen frame capture (@ref OffscreenCapture) hands
         // this renderer a real FBO, and the gather has no bind of its own, so
@@ -267,78 +263,38 @@ namespace EdgeLighting
         mEmissionShader.Unuse();
 
         // Hand the framebuffer, viewport and blend state back exactly as found.
+        // Hand the framebuffer and viewport back exactly as found. Blend mode
+        // is untouched here - it is a phase property owned by Render.
         Framebuffer::BindId(targetFbo);
         glViewport(0, 0, viewportWidth, viewportHeight);
-        glEnable(GL_BLEND);
     }
 
-    void NeonRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
+    void NeonRenderer::renderOpaqueFill(const glm::vec2 &center, const Config &config)
     {
-        if (!config.neon.enable)
-        {
-            return;
-        }
-
-        float halfRectW = config.geometry.width * 0.5f;
-        float halfRectH = config.geometry.height * 0.5f;
-        glm::mat4 proj = glm::ortho(0.0f, static_cast<float>(viewportWidth), 0.0f, static_cast<float>(viewportHeight), -1.0f, 1.0f);
-        glm::vec2 center(config.geometry.position.x + halfRectW,
-                         static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
-        glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(center, 0.0f));
-        glm::mat4 mvp = proj * model;
-
-        // Pass 0: bake the per-sample emission table. Must run before anything
-        // that draws to the backbuffer, because it retargets the framebuffer.
-        // The UBOs it reads are packed first.
-        packLightBlocks(config);
-        renderEmissionPass(viewportWidth, viewportHeight, time, config);
-
-        // Premultiplied-alpha "over": final = src.rgb + dst * (1 - src.a). Used
-        // for both the opaque black fill and the neon, so the neon composites
-        // cleanly over the black. (Blending stays ON the whole time - toggling
-        // GL_BLEND mid-draw is a common cross-driver footgun on mobile GLES.)
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-
-        // --- Opaque-mode black background pass -----------------------------
         // A fullscreen NDC quad (identity MVP); the fragment shader shapes the
         // black coverage from an analytic rounded-box SDF read off gl_FragCoord
         // (highp - exact on Mali/Tizen):
         //   BOTH    -> black everywhere (whole viewport opaque).
         //   INSIDE  -> black only where d <= softEdge (off-side stays clear).
         //   OUTSIDE -> mirror of INSIDE.
-        if (config.neon.opaqueMode != OpaqueMode::NONE)
-        {
-            mBlackRectShader.Use();
-            mBlackRectShader.SetUniform("uMVP", glm::mat4(1.0f));
-            mBlackRectShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
-            mBlackRectShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
-            mBlackRectShader.SetUniform("uRectCenter", center);
-            float opaqueSoft = std::max(config.neon.opaqueSoftness,
-                                        static_cast<float>(SIDE_SOFT_EPSILON));
-            mBlackRectShader.SetUniform("uOpaqueMode", static_cast<int>(config.neon.opaqueMode));
-            mBlackRectShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
-            mBlackRectShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
-            mBlackRectShader.SetUniform("uOpaqueSoftness", opaqueSoft);
-            mBlackRectShader.SetUniform("uOpaqueColor", config.neon.opaqueColor);
-            mFullVertexArray.DrawArrays(GL_TRIANGLES, 6);
-            mBlackRectShader.Unuse();
-        }
+        mBlackRectShader.Use();
+        mBlackRectShader.SetUniform("uMVP", glm::mat4(1.0f));
+        mBlackRectShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
+        mBlackRectShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
+        mBlackRectShader.SetUniform("uRectCenter", center);
+        float opaqueSoft = std::max(config.neon.opaqueSoftness,
+                                    static_cast<float>(SIDE_SOFT_EPSILON));
+        mBlackRectShader.SetUniform("uOpaqueMode", static_cast<int>(config.neon.opaqueMode));
+        mBlackRectShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
+        mBlackRectShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
+        mBlackRectShader.SetUniform("uOpaqueSoftness", opaqueSoft);
+        mBlackRectShader.SetUniform("uOpaqueColor", config.neon.opaqueColor);
+        mFullVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        mBlackRectShader.Unuse();
+    }
 
-        // Debug: stop after the fill. Skips the gather AND the LUT-strip /
-        // stop-marker overlays below, so what lands on screen is the opaque
-        // silhouette by itself - which is how the fill's square corner at
-        // cornerRadius 0 gets compared against the emission's round one.
-        // Restores the blend state the tail of this function would have set.
-        if (config.neon.opaqueOnly)
-        {
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-            return;
-        }
-
-        // Pass 2 (opaque) / only pass (transparent): the neon gather on the
-        // tight glow quad, in both modes.
+    void NeonRenderer::renderNeonPass(const glm::mat4 &mvp, float time, const Config &config)
+    {
         mShaderProgram.Use();
         mShaderProgram.SetUniform("uMVP", mvp);
         mShaderProgram.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
@@ -363,16 +319,13 @@ namespace EdgeLighting
         // neon.frag) - raw float32 vec4[N], .xy holds the perimeter point.
         mLoopSamplesBlock.BindBase(LOOP_SAMPLES_BLOCK_BINDING);
 
-        // Bind the precomputed gradient LUT to texture unit 0. The shader
-        // pulls per-sample colour from this in a single texture() call.
+        // The three LUT atlases are no longer read by the gather (the emission
+        // pre-pass consumes them instead), but the pointwise path still samples
+        // them for the colour-stop alpha - see the alpha reads in neon.frag.
         mGradientLUT.Bind(0);
         mShaderProgram.SetUniform("uGradientLUT", 0);
-        // Per-segment gradient atlas on unit 1; sampled by the segment inner
-        // loop only when a segment's hasStops flag is set.
         mSegmentLUT.Bind(1);
         mShaderProgram.SetUniform("uSegmentLUT", 1);
-        // Per-arc gradient atlas on unit 2; sampled by the arc winner branch
-        // only when the winning arc has stops (see ArcBlock's vec4.w).
         mArcLUT.Bind(2);
         mShaderProgram.SetUniform("uArcLUT", 2);
         // Emission table from pass 0 on unit 3; the gather texelFetches both
@@ -382,58 +335,143 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uQuadMargin", mQuadMargin);
 
         // Tight glow quad in both modes - opaque's far region is covered by the
-        // Pass 1 black fill above, so the gather never runs fullscreen.
+        // fill pass, so the gather never runs fullscreen.
         mVertexArray.DrawArrays(GL_TRIANGLES, 6);
-
         mShaderProgram.Unuse();
+    }
 
-        // --- Debug: gradient LUT strip at the geometry centre -----------------
+    void NeonRenderer::renderGradientLUTStrip(const glm::mat4 &mvp, float time, const Config &config)
+    {
         // Overwrites the neon output within the strip rect so the baked ring is
-        // readable regardless of the glow's tone-mapped brightness.
-        if (config.neon.showGradientLUT)
-        {
-            glDisable(GL_BLEND);
-            mLUTDebugShader.Use();
-            mLUTDebugShader.SetUniform("uMVP", mvp);
-            mLUTDebugShader.SetUniform("uStripHalfSize", mLUTStripHalfSize);
-            mLUTDebugShader.SetUniform("uTime", time);
-            mLUTDebugShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
-            mGradientLUT.Bind(0);
-            mLUTDebugShader.SetUniform("uGradientLUT", 0);
-            mLUTStripVertexArray.DrawArrays(GL_TRIANGLES, 6);
-            mLUTDebugShader.Unuse();
-        }
+        // readable regardless of the glow's tone-mapped brightness, which is
+        // why the caller draws it unblended.
+        mLUTDebugShader.Use();
+        mLUTDebugShader.SetUniform("uMVP", mvp);
+        mLUTDebugShader.SetUniform("uStripHalfSize", mLUTStripHalfSize);
+        mLUTDebugShader.SetUniform("uTime", time);
+        mLUTDebugShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
+        mGradientLUT.Bind(0);
+        mLUTDebugShader.SetUniform("uGradientLUT", 0);
+        mLUTStripVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        mLUTDebugShader.Unuse();
+    }
 
-        // --- Debug: per-stop markers on the perimeter -------------------------
+    void NeonRenderer::renderColorStopMarkers(const glm::mat4 &proj, const glm::vec2 &center,
+                                              float halfWidth, float halfHeight, const Config &config)
+    {
         // Draws a filled disc in each stop's colour at its perimeter position,
         // so the raw (position, colour) inputs can be checked against the LUT
         // strip and the on-screen glow. Uses standard alpha blending for the
-        // ring / anti-aliased edge to composite cleanly.
-        if (config.neon.showColorStops && !config.neon.colorStops.empty())
+        // ring / anti-aliased edge to composite cleanly - the caller sets that
+        // blend mode before calling.
+
+        // Scale marker with the smaller half-extent so it stays inside the
+        // rect on very tall/thin geometries; cap at 12 px so it's not huge
+        // on large rects.
+        float markerRadius = std::min(std::min(halfWidth, halfHeight) * 0.06f, 12.0f);
+        mStopMarkerShader.Use();
+        for (const auto &stop : config.neon.colorStops)
+        {
+            glm::vec2 localPt = GeometryUtils::GetPointOnRectangle(stop.position, config.geometry);
+            glm::mat4 markerModel =
+                glm::translate(glm::mat4(1.0f), glm::vec3(center + localPt, 0.0f)) *
+                glm::scale(glm::mat4(1.0f), glm::vec3(markerRadius, markerRadius, 1.0f));
+            mStopMarkerShader.SetUniform("uMVP", proj * markerModel);
+            mStopMarkerShader.SetUniform("uMarkerColor", stop.color);
+            mStopMarkerVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        }
+        mStopMarkerShader.Unuse();
+    }
+
+    void NeonRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
+    {
+        if (!config.neon.enable)
+        {
+            return;
+        }
+
+        // Render is a pass schedule and nothing else: derive the transform,
+        // then one call per pass. Each pass owns its own shader and, where it
+        // retargets, its own framebuffer restore. Blend state is owned HERE -
+        // the two passes that deviate say so in their comments.
+        //
+        // Derived once and handed down in pieces. `center` reaches the screen
+        // by two routes - folded into `mvp` for the glow, and added to each
+        // stop's perimeter point by the marker pass - so deriving it here
+        // rather than per pass is what keeps the markers aligned with the glow.
+        const float halfRectW = config.geometry.width * 0.5f;
+        const float halfRectH = config.geometry.height * 0.5f;
+        const glm::mat4 proj = glm::ortho(0.0f, static_cast<float>(viewportWidth),
+                                          0.0f, static_cast<float>(viewportHeight), -1.0f, 1.0f);
+        // Viewport y runs down in Config but up in the projection, so the
+        // centre is mirrored about the viewport height.
+        const glm::vec2 center(config.geometry.position.x + halfRectW,
+                               static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
+        const glm::mat4 mvp = proj * glm::translate(glm::mat4(1.0f), glm::vec3(center, 0.0f));
+
+        // Premultiplied-alpha "over": final = src.rgb + dst * (1 - src.a). Used
+        // for both the opaque black fill and the neon, so the neon composites
+        // cleanly over the black. (Blending stays ON the whole time - toggling
+        // GL_BLEND mid-draw is a common cross-driver footgun on mobile GLES.)
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+
+        // --- Pass 1: opaque-mode background fill ---------------------------
+        if (config.neon.opaqueMode != OpaqueMode::NONE)
+        {
+            renderOpaqueFill(center, config);
+        }
+
+        // Debug: stop after the fill. Skips the gather AND the LUT-strip /
+        // stop-marker overlays below, so what lands on screen is the opaque
+        // silhouette by itself - which is how the fill's square corner at
+        // cornerRadius 0 gets compared against the emission's round one.
+        // Restores the blend state the tail of this function would have set.
+        if (config.neon.opaqueOnly)
         {
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-
-            // Scale marker with the smaller half-extent so it stays inside the
-            // rect on very tall/thin geometries; cap at 12 px so it's not huge
-            // on large rects. min(halfRect) → smaller of width/2, height/2.
-            float markerRadius = std::min(std::min(halfRectW, halfRectH) * 0.06f, 12.0f);
-            mStopMarkerShader.Use();
-            for (const auto &stop : config.neon.colorStops)
-            {
-                glm::vec2 localPt = GeometryUtils::GetPointOnRectangle(stop.position, config.geometry);
-                glm::mat4 markerModel =
-                    glm::translate(glm::mat4(1.0f), glm::vec3(center + localPt, 0.0f)) *
-                    glm::scale(glm::mat4(1.0f), glm::vec3(markerRadius, markerRadius, 1.0f));
-                mStopMarkerShader.SetUniform("uMVP", proj * markerModel);
-                mStopMarkerShader.SetUniform("uMarkerColor", stop.color);
-                mStopMarkerVertexArray.DrawArrays(GL_TRIANGLES, 6);
-            }
-            mStopMarkerShader.Unuse();
+            return;
         }
 
-        // Restore a known blend state for following renderers (the opaque path
-        // disables blending).
+        // --- Pass 0: per-sample emission table ------------------------------
+        // Deliberately AFTER the opaqueOnly return: the table feeds only the
+        // gather below, so the debug fill-only mode must not pay for a UBO
+        // upload plus a draw it never samples. Safe to retarget the framebuffer
+        // here - the fill has already landed, and this pass restores the target
+        // it was handed.
+        packLightBlocks(config);
+        // A table write is not a composite: blending would mix this frame's
+        // emission into last frame's.
+        glDisable(GL_BLEND);
+        renderEmissionPass(viewportWidth, viewportHeight, time, config);
+
+        // --- Pass 2: the neon gather ----------------------------------------
+        // Re-assert the phase mode: pass 0 leaves blending disabled. Setting it
+        // immediately before the phase that needs it (rather than relying on
+        // the carry-over from above) is what makes the pass order safe to
+        // change without silently breaking compositing.
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        renderNeonPass(mvp, time, config);
+
+        // --- Debug overlays --------------------------------------------------
+        if (config.neon.showGradientLUT)
+        {
+            // Unblended: the strip overwrites the glow so it stays readable.
+            glDisable(GL_BLEND);
+            renderGradientLUTStrip(mvp, time, config);
+        }
+        if (config.neon.showColorStops && !config.neon.colorStops.empty())
+        {
+            // Straight alpha for the discs' anti-aliased edges.
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            renderColorStopMarkers(proj, center, halfRectW, halfRectH, config);
+        }
+
+        // Restore a known blend state for following renderers (the LUT strip
+        // pass disables blending).
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     }
