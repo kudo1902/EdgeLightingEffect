@@ -10,13 +10,16 @@ namespace EdgeLighting
 {
     /// RAII wrapper around a GL framebuffer + single RGBA8 colour attachment.
     ///
-    /// Typical use is "render to texture, then sample it in a later pass":
+    /// Typical use is "render to texture, then sample it in a later pass".
+    /// Save the caller's target rather than assuming the default framebuffer -
+    /// under an @c OffscreenCapture it is a real FBO:
     /// @code
+    ///     const GLuint prev = Framebuffer::GetBoundId();
     ///     mBuffer.Resize(w, h);   // no-op when size unchanged
     ///     mBuffer.Bind();         // sets framebuffer AND viewport
     ///     // ... draw ...
-    ///     Framebuffer::BindDefault();
-    ///     glViewport(0, 0, w, h);
+    ///     Framebuffer::BindId(prev);
+    ///     glViewport(0, 0, w, h); // Bind() changed it; put it back
     ///     mBuffer.BindTexture(0); // sample the result in the next pass
     /// @endcode
     ///
@@ -41,6 +44,8 @@ namespace EdgeLighting
               mTexture(other.mTexture),
               mWidth(other.mWidth),
               mHeight(other.mHeight),
+              mInternalFormat(other.mInternalFormat),
+              mFilter(other.mFilter),
               mName(std::move(other.mName))
         {
             other.mFbo = 0;
@@ -58,6 +63,8 @@ namespace EdgeLighting
                 mTexture = other.mTexture;
                 mWidth = other.mWidth;
                 mHeight = other.mHeight;
+                mInternalFormat = other.mInternalFormat;
+                mFilter = other.mFilter;
                 mName = std::move(other.mName);
                 other.mFbo = 0;
                 other.mTexture = 0;
@@ -67,12 +74,26 @@ namespace EdgeLighting
             return *this;
         }
 
-        /// Allocates or resizes the RGBA8 colour attachment to @p width × @p height.
-        /// No-op when the FBO already exists at the requested size - safe to call
-        /// every frame from the render loop. Logs a warning with the FBO's name
-        /// if the framebuffer ends up incomplete.
+        /// Allocates or resizes the colour attachment to @p width × @p height.
+        /// No-op when the FBO already exists at the requested size **and** the
+        /// same format / filter - safe to call every frame from the render loop.
+        /// Logs a warning with the FBO's name if the framebuffer ends up
+        /// incomplete.
+        ///
+        /// The format parameters default to the historical RGBA8 / LINEAR
+        /// behaviour, so existing callers are unaffected. They exist for the
+        /// emission pre-pass, which needs @c GL_RGBA16F (segment boosts stack
+        /// above 1.0) and @c GL_NEAREST (its consumer uses @c texelFetch, and a
+        /// filtered read across sample boundaries would blend neighbouring
+        /// perimeter samples together).
+        ///
+        /// @note Format and filter are tracked alongside the size, so a caller
+        ///       that changes format on an existing FBO forces a reallocation
+        ///       instead of silently keeping the old one.
         /// @return @c true on success (or no-op); @c false on failure.
-        bool Resize(int width, int height)
+        bool Resize(int width, int height,
+                    GLint internalFormat = GL_RGBA8, GLenum format = GL_RGBA,
+                    GLenum type = GL_UNSIGNED_BYTE, GLint filter = GL_LINEAR)
         {
             if (width <= 0 || height <= 0)
             {
@@ -80,7 +101,8 @@ namespace EdgeLighting
                 return false;
             }
 
-            if (mFbo != 0 && width == mWidth && height == mHeight)
+            if (mFbo != 0 && width == mWidth && height == mHeight &&
+                internalFormat == mInternalFormat && filter == mFilter)
             {
                 return true;
             }
@@ -89,9 +111,9 @@ namespace EdgeLighting
 
             glGenTextures(1, &mTexture);
             glBindTexture(GL_TEXTURE_2D, mTexture);
-            glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+            glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, nullptr);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
             glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 
@@ -112,6 +134,8 @@ namespace EdgeLighting
 
             mWidth = width;
             mHeight = height;
+            mInternalFormat = internalFormat;
+            mFilter = filter;
             LOG_I("Framebuffer[%s] sized to %dx%d (id=%u, tex=%u).",
                   mName.c_str(), mWidth, mHeight, mFbo, mTexture);
             return true;
@@ -119,6 +143,14 @@ namespace EdgeLighting
 
         /// Activates this framebuffer for rendering and sets the GL viewport
         /// to match its dimensions. Caller is expected to clear if desired.
+        ///
+        /// @note Viewport travels with the target on purpose - a bound target
+        ///       without a matching viewport is a half-configured state. A pass
+        ///       that calls this must therefore restore BOTH (see
+        ///       @ref GetBoundId / @ref BindId for the framebuffer half).
+        ///       Renderers restore the viewport by reconstruction rather than
+        ///       by querying GL_VIEWPORT; @ref BaseRenderer::Render documents
+        ///       why that is sufficient.
         void Bind() const
         {
             glBindFramebuffer(GL_FRAMEBUFFER, mFbo);
@@ -187,6 +219,8 @@ namespace EdgeLighting
             }
             mWidth = 0;
             mHeight = 0;
+            mInternalFormat = GL_RGBA8;
+            mFilter = GL_LINEAR;
         }
 
     private:
@@ -194,6 +228,8 @@ namespace EdgeLighting
         GLuint mTexture = 0;
         int mWidth = 0;
         int mHeight = 0;
+        GLint mInternalFormat = GL_RGBA8; ///< Tracked so a format change forces a realloc.
+        GLint mFilter = GL_LINEAR;        ///< Tracked for the same reason.
         std::string mName = "unnamed";
     };
 

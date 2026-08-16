@@ -112,6 +112,243 @@ namespace EdgeLighting
         }
     }
 
+    void NeonOptimizedRenderer::packLightBlocks(const Config &config)
+    {
+        // Read by both the emission pre-pass and the half-res neon pass, so
+        // packed once before either draws. See NeonRenderer::packLightBlocks.
+        SegmentBlockData segBlock = {};
+        SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
+        const std::vector<SegmentBoost> &effSegments = mEffectiveSegments;
+        int segCount = std::min(static_cast<int>(effSegments.size()),
+                                int(MAX_SEGMENT_BOOSTS));
+        segBlock.count = segCount;
+        for (int i = 0; i < segCount; ++i)
+        {
+            const auto &s = effSegments[i];
+            float invSigma = 1.0f / std::max(s.length * 0.5f, 1e-3f);
+            // .w = hasOwnStops flag (see NeonRenderer for details).
+            float hasStops = s.colorStops.empty() ? 0.0f : 1.0f;
+            segBlock.segments[i] = glm::vec4(s.position, invSigma, s.boost, hasStops);
+        }
+        mSegmentBlock.SetData(&segBlock, sizeof(segBlock));
+        mSegmentBlock.BindBase(SEGMENT_BLOCK_BINDING);
+
+        // Pack the arcs vector into ArcBlock: vec4(start, length, intensity,
+        // hasStops) per entry. Same packing as NeonRenderer; arc start/length
+        // are normalised perimeter coords in [0, 1) so resolutionScale doesn't
+        // apply.
+        ArcBlockData arcBlock = {};
+        int arcCount = std::min(static_cast<int>(config.neon.arcs.size()),
+                                int(MAX_ARCS));
+        arcBlock.count = arcCount;
+        for (int i = 0; i < arcCount; ++i)
+        {
+            const auto &a = config.neon.arcs[i];
+            float hasStops = a.colorStops.empty() ? 0.0f : 1.0f;
+            arcBlock.arcs[i] = glm::vec4(a.start, a.length, a.intensity, hasStops);
+        }
+        mArcBlock.SetData(&arcBlock, sizeof(arcBlock));
+        mArcBlock.BindBase(ARC_BLOCK_BINDING);
+    }
+
+    void NeonOptimizedRenderer::renderEmissionPass(int viewportWidth, int viewportHeight,
+                                                   float time, const Config &config)
+    {
+        // Identical contract to NeonRenderer::renderEmissionPass - see there
+        // for why RGBA16F / GL_NEAREST. The table is in perimeter-parameter
+        // space, so resolutionScale does NOT apply to it; only the sample
+        // count matters, and it must match the main pass's loop bound.
+        bool gotFloat = mEmissionBuffer.Resize(NEON_MAX_LOOP_SAMPLES, 2,
+                                               GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, GL_NEAREST);
+        if (!gotFloat)
+        {
+            if (!mEmissionBuffer.Resize(NEON_MAX_LOOP_SAMPLES, 2,
+                                        GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, GL_NEAREST))
+            {
+                return;
+            }
+            if (!mEmissionFormatLogged)
+            {
+                LOG_W("NeonOptimizedRenderer: RGBA16F emission target unavailable, using RGBA8. "
+                      "Segment boosts above 1.0 will clamp.");
+                mEmissionFormatLogged = true;
+            }
+        }
+        mEmissionIsFloat = gotFloat;
+
+        // Same restore rule as NeonRenderer::renderEmissionPass: put back the
+        // target that was handed in, not framebuffer 0. Both of this renderer's
+        // later passes rebind explicitly, so 0 happened to be harmless here -
+        // but leaving it would make the two copies disagree on the invariant.
+        const GLuint targetFbo = Framebuffer::GetBoundId();
+
+        mEmissionBuffer.Bind();
+
+        mEmissionShader.Use();
+        mEmissionShader.SetUniform("uMVP", glm::mat4(1.0f));
+        mEmissionShader.SetUniform("uTime", time);
+        mEmissionShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
+        mEmissionShader.SetUniform("uNumSamples", std::min(config.optimizedNeon.numSamples,
+                                                           NEON_MAX_LOOP_SAMPLES));
+        mGradientLUT.Bind(0);
+        mEmissionShader.SetUniform("uGradientLUT", 0);
+        mSegmentLUT.Bind(1);
+        mEmissionShader.SetUniform("uSegmentLUT", 1);
+        mArcLUT.Bind(2);
+        mEmissionShader.SetUniform("uArcLUT", 2);
+        mBlitVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        mEmissionShader.Unuse();
+
+        // Hand the framebuffer and viewport back exactly as found. Blend mode
+        // is untouched here - it is a phase property owned by Render.
+        Framebuffer::BindId(targetFbo);
+        glViewport(0, 0, viewportWidth, viewportHeight);
+    }
+
+    void NeonOptimizedRenderer::renderHalfResNeonPass(int viewportHeight, int bufW, int bufH,
+                                                      float time, const Config &config)
+    {
+        // Everything below is in FBO space: the transform, the rect size and
+        // every pixel-valued uniform are pre-multiplied by `scale`, and the
+        // shader converts neon-tuning.h's full-res constants with the same
+        // factor via uResolutionScale.
+        const float scale = config.optimizedNeon.resolutionScale;
+        const float halfRectW = config.geometry.width * 0.5f;
+        const float halfRectH = config.geometry.height * 0.5f;
+
+        // --- Pass 1: render neon to scaled FBO ---
+        mHalfResBuffer.Resize(bufW, bufH);
+        mHalfResBuffer.Bind();
+
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+
+        mNeonShader.Use();
+
+        glm::mat4 proj = glm::ortho(0.0f, static_cast<float>(bufW), 0.0f, static_cast<float>(bufH), -1.0f, 1.0f);
+        glm::vec2 center(config.geometry.position.x + halfRectW,
+                         static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
+        // Scale center to FBO coordinates
+        center.x *= scale;
+        center.y *= scale;
+        glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(center, 0.0f));
+        glm::mat4 mvp = proj * model;
+
+        // Scale geometry to FBO space
+        glm::vec2 rectSizeScaled(config.geometry.width * scale, config.geometry.height * scale);
+
+        mNeonShader.SetUniform("uMVP", mvp);
+        // Lets the shader convert neon-tuning.h's full-res px constants
+        // (FILAMENT_MIN_HALF_WIDTH, HEAD/TAIL_FEATHER_PX) into the FBO space
+        // every other pixel uniform below is already scaled into.
+        mNeonShader.SetUniform("uResolutionScale", scale);
+        mNeonShader.SetUniform("uRectSize", rectSizeScaled);
+        mNeonShader.SetUniform("uCornerRadius", config.geometry.cornerRadius * scale);
+        mNeonShader.SetUniform("uLineWidth", config.neon.lineWidth * scale);
+        mNeonShader.SetUniform("uFilamentFalloff", config.neon.filamentFalloff);
+        mNeonShader.SetUniform("uIntensity", config.neon.intensity);
+        mNeonShader.SetUniform("uTime", time);
+        mNeonShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
+        mNeonShader.SetUniform("uGlowRadius", config.neon.glowRadius * scale);
+        mNeonShader.SetUniform("uBloomStrength", config.neon.bloomStrength);
+        mNeonShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
+        mNeonShader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness * scale);
+        mNeonShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff) * scale);
+        mNeonShader.SetUniform("uInsideCutoffSoftness", config.neon.insideCutoff.softness * scale);
+        mNeonShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff) * scale);
+        mNeonShader.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness * scale);
+        // Pack the segment vector as vec3(position, invSigma, boost) into the
+        // std140 SegmentBlock UBO (DALi-compatible pattern - see the shader).
+        // Same packing as NeonRenderer; segment `position` is a normalised
+        // perimeter coord in [0, 1), so the resolutionScale does not apply.
+
+        mNeonShader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
+        mNeonShader.SetUniform("uQuadMargin", mQuadMargin);
+
+        // Loop sample positions from the LoopSamplesBlock UBO (see the shader)
+        // - raw float32 vec4[N], .xy holds the perimeter point in FBO pixels.
+        mLoopSamplesBlock.BindBase(LOOP_SAMPLES_BLOCK_BINDING);
+        mNeonShader.SetUniform("uNumSamples", std::min(config.optimizedNeon.numSamples,
+                                                       NEON_MAX_LOOP_SAMPLES));
+        // Emission table from pass 0 on unit 3.
+        mEmissionBuffer.BindTexture(3);
+        mNeonShader.SetUniform("uEmission", 3);
+
+        mGradientLUT.Bind(0);
+        mNeonShader.SetUniform("uGradientLUT", 0);
+        // Per-segment gradient atlas on unit 1 (see NeonRenderer for the shape).
+        mSegmentLUT.Bind(1);
+        mNeonShader.SetUniform("uSegmentLUT", 1);
+        // Per-arc gradient atlas on unit 2 - sampled only when the winning
+        // arc has stops (ArcBlock's vec4.w).
+        mArcLUT.Bind(2);
+        mNeonShader.SetUniform("uArcLUT", 2);
+
+        mNeonVertexArray.DrawArrays(GL_TRIANGLES, 6);
+
+        mNeonShader.Unuse();
+    }
+
+    void NeonOptimizedRenderer::renderOpaqueFill(int viewportHeight, const Config &config)
+    {
+        // A single NDC quad + identity MVP; the black-rect fragment shader
+        // shapes the silhouette from the analytic rounded-box SDF read off
+        // gl_FragCoord, with softness-aware feathering:
+        //   BOTH    -> whole viewport opaque black.
+        //   INSIDE  -> black only where d <= softEdge; off-side stays clear.
+        //   OUTSIDE -> mirror of INSIDE.
+        // Rounded corners AA cleanly via fwidth(d) - no discard, no stair-step.
+        const float halfRectW = config.geometry.width * 0.5f;
+        const float halfRectH = config.geometry.height * 0.5f;
+        const glm::mat4 identity(1.0f);
+
+        // Rect centre in full-res gl_FragCoord space (y-up).
+        glm::vec2 centerFull(config.geometry.position.x + halfRectW,
+                             static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
+
+        mBlackRectShader.Use();
+        mBlackRectShader.SetUniform("uMVP", identity);
+        mBlackRectShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
+        mBlackRectShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
+        mBlackRectShader.SetUniform("uRectCenter", centerFull);
+        float opaqueSoft = std::max(config.neon.opaqueSoftness,
+                                    static_cast<float>(SIDE_SOFT_EPSILON));
+        mBlackRectShader.SetUniform("uOpaqueMode", static_cast<int>(config.neon.opaqueMode));
+        mBlackRectShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
+        mBlackRectShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
+        mBlackRectShader.SetUniform("uOpaqueSoftness", opaqueSoft);
+        mBlackRectShader.SetUniform("uOpaqueColor", config.neon.opaqueColor);
+        mBlitVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        mBlackRectShader.Unuse();
+    }
+
+    void NeonOptimizedRenderer::renderBlitPass(const Config &config)
+    {
+        const glm::mat4 identity(1.0f);
+
+        // --- Pass 2b: bilinear composite of the half-res neon FBO ---
+        // Bilinear upscaling of premultiplied alpha is fringe-free; the blit
+        // shader is a plain texture read that composites over whatever's on
+        // the backbuffer (black fill if opaque, original bg otherwise).
+        mBlitShader.Use();
+        mBlitShader.SetUniform("uMVP", identity);
+
+        // Debug toggle: nearest neighbour shows the raw half-res pixels.
+        GLuint texId = mHalfResBuffer.GetTextureId();
+        glBindTexture(GL_TEXTURE_2D, texId);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
+                        config.optimizedNeon.showHalfRes ? GL_NEAREST : GL_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
+                        config.optimizedNeon.showHalfRes ? GL_NEAREST : GL_LINEAR);
+
+        mHalfResBuffer.BindTexture(0);
+        mBlitShader.SetUniform("uSource", 0);
+
+        mBlitVertexArray.DrawArrays(GL_TRIANGLES, 6);
+
+        mBlitShader.Unuse();
+    }
+
     void NeonOptimizedRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
     {
         if (!config.optimizedNeon.enable)
@@ -119,9 +356,12 @@ namespace EdgeLighting
             return;
         }
 
-        float scale = config.optimizedNeon.resolutionScale;
-        int bufW = std::max(static_cast<int>(static_cast<float>(viewportWidth) * scale), 1);
-        int bufH = std::max(static_cast<int>(static_cast<float>(viewportHeight) * scale), 1);
+        // Render is a pass schedule and nothing else - see NeonRenderer::Render
+        // for the same shape. Each render*Pass owns its shader; this function
+        // owns the blend state and the framebuffer hand-back.
+        const float scale = config.optimizedNeon.resolutionScale;
+        const int bufW = std::max(static_cast<int>(static_cast<float>(viewportWidth) * scale), 1);
+        const int bufH = std::max(static_cast<int>(static_cast<float>(viewportHeight) * scale), 1);
 
         // Debug: render the opaque fill and nothing else. Skips the whole
         // half-res gather (Pass 1) and the composite that would bring it back
@@ -131,134 +371,35 @@ namespace EdgeLighting
 
         // The target this renderer was handed. Usually the window's default
         // framebuffer, but an offscreen frame capture (@ref OffscreenCapture)
-        // binds a real FBO, so Pass 2 has to come back to whatever was bound
-        // rather than assuming 0.
+        // binds a real FBO, so the backbuffer passes have to come back to
+        // whatever was bound rather than assuming 0. Read BEFORE Pass 0, which
+        // binds an FBO of its own - querying after would capture that instead.
         const GLuint targetFbo = Framebuffer::GetBoundId();
-
-        // Needed by the fill pass below too, so they outlive the Pass 1 guard.
-        float halfRectW = config.geometry.width * 0.5f;
-        float halfRectH = config.geometry.height * 0.5f;
 
         if (!opaqueOnly)
         {
-            // --- Pass 1: render neon to scaled FBO ---
-            mHalfResBuffer.Resize(bufW, bufH);
-            mHalfResBuffer.Bind();
+            // --- Pass 0: per-sample emission table ---------------------------
+            // Inside the guard because the table feeds only Pass 1 - the debug
+            // fill-only mode must not pay for a UBO upload plus a draw it never
+            // samples. Must precede Pass 1, which binds the half-res FBO.
+            packLightBlocks(config);
+            // A table write is not a composite: blending would mix this frame's
+            // emission into last frame's.
+            glDisable(GL_BLEND);
+            renderEmissionPass(viewportWidth, viewportHeight, time, config);
 
-            glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-            glClear(GL_COLOR_BUFFER_BIT);
-
-            // Premultiplied "over" into the transparent FBO: a single non-overlapping
-            // quad over (0,0,0,0) leaves the FBO holding the shader's premultiplied
-            // colour + coverage alpha, ready to be composited over the backbuffer.
+            // --- Pass 1: neon at resolutionScale into the half-res FBO -------
+            // Premultiplied "over" into the transparent FBO: a single
+            // non-overlapping quad over (0,0,0,0) leaves the FBO holding the
+            // shader's premultiplied colour + coverage alpha, ready to be
+            // composited over the backbuffer. Set here, not in the pass: blend
+            // mode is a phase property, and pass 0 above left blending off.
             glEnable(GL_BLEND);
             glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-
-            mNeonShader.Use();
-
-            glm::mat4 proj = glm::ortho(0.0f, static_cast<float>(bufW), 0.0f, static_cast<float>(bufH), -1.0f, 1.0f);
-            glm::vec2 center(config.geometry.position.x + halfRectW,
-                             static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
-            // Scale center to FBO coordinates
-            center.x *= scale;
-            center.y *= scale;
-            glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(center, 0.0f));
-            glm::mat4 mvp = proj * model;
-
-            // Scale geometry to FBO space
-            glm::vec2 rectSizeScaled(config.geometry.width * scale, config.geometry.height * scale);
-
-            mNeonShader.SetUniform("uMVP", mvp);
-            // Lets the shader convert neon-tuning.h's full-res px constants
-            // (FILAMENT_MIN_HALF_WIDTH, HEAD/TAIL_FEATHER_PX) into the FBO space
-            // every other pixel uniform below is already scaled into.
-            mNeonShader.SetUniform("uResolutionScale", scale);
-            mNeonShader.SetUniform("uRectSize", rectSizeScaled);
-            mNeonShader.SetUniform("uCornerRadius", config.geometry.cornerRadius * scale);
-            mNeonShader.SetUniform("uLineWidth", config.neon.lineWidth * scale);
-            mNeonShader.SetUniform("uFilamentFalloff", config.neon.filamentFalloff);
-            mNeonShader.SetUniform("uIntensity", config.neon.intensity);
-            mNeonShader.SetUniform("uTime", time);
-            mNeonShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
-            mNeonShader.SetUniform("uGlowRadius", config.neon.glowRadius * scale);
-            mNeonShader.SetUniform("uBloomStrength", config.neon.bloomStrength);
-            mNeonShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
-            mNeonShader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness * scale);
-            mNeonShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff) * scale);
-            mNeonShader.SetUniform("uInsideCutoffSoftness", config.neon.insideCutoff.softness * scale);
-            mNeonShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff) * scale);
-            mNeonShader.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness * scale);
-            // Pack the segment vector as vec3(position, invSigma, boost) into the
-            // std140 SegmentBlock UBO (DALi-compatible pattern - see the shader).
-            // Same packing as NeonRenderer; segment `position` is a normalised
-            // perimeter coord in [0, 1), so the resolutionScale does not apply.
-            SegmentBlockData segBlock = {};
-            SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
-            const std::vector<SegmentBoost> &effSegments = mEffectiveSegments;
-            int segCount = std::min(static_cast<int>(effSegments.size()),
-                                    int(MAX_SEGMENT_BOOSTS));
-            segBlock.count = segCount;
-            for (int i = 0; i < segCount; ++i)
-            {
-                const auto &s = effSegments[i];
-                float invSigma = 1.0f / std::max(s.length * 0.5f, 1e-3f);
-                // .w = hasOwnStops flag (see NeonRenderer for details).
-                float hasStops = s.colorStops.empty() ? 0.0f : 1.0f;
-                segBlock.segments[i] = glm::vec4(s.position, invSigma, s.boost, hasStops);
-            }
-            mSegmentBlock.SetData(&segBlock, sizeof(segBlock));
-            mSegmentBlock.BindBase(SEGMENT_BLOCK_BINDING);
-
-            // Pack the arcs vector into ArcBlock: vec4(start, length, intensity,
-            // hasStops) per entry. Same packing as NeonRenderer; arc start/length
-            // are normalised perimeter coords in [0, 1) so resolutionScale doesn't
-            // apply.
-            ArcBlockData arcBlock = {};
-            int arcCount = std::min(static_cast<int>(config.neon.arcs.size()),
-                                    int(MAX_ARCS));
-            arcBlock.count = arcCount;
-            for (int i = 0; i < arcCount; ++i)
-            {
-                const auto &a = config.neon.arcs[i];
-                float hasStops = a.colorStops.empty() ? 0.0f : 1.0f;
-                arcBlock.arcs[i] = glm::vec4(a.start, a.length, a.intensity, hasStops);
-            }
-            mArcBlock.SetData(&arcBlock, sizeof(arcBlock));
-            mArcBlock.BindBase(ARC_BLOCK_BINDING);
-
-            mNeonShader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
-            mNeonShader.SetUniform("uQuadMargin", mQuadMargin);
-
-            // Loop sample positions from the LoopSamplesBlock UBO (see the shader)
-            // - raw float32 vec4[N], .xy holds the perimeter point in FBO pixels.
-            mLoopSamplesBlock.BindBase(LOOP_SAMPLES_BLOCK_BINDING);
-            mNeonShader.SetUniform("uNumSamples", std::min(config.optimizedNeon.numSamples,
-                                                           NEON_MAX_LOOP_SAMPLES));
-
-            mGradientLUT.Bind(0);
-            mNeonShader.SetUniform("uGradientLUT", 0);
-            // Per-segment gradient atlas on unit 1 (see NeonRenderer for the shape).
-            mSegmentLUT.Bind(1);
-            mNeonShader.SetUniform("uSegmentLUT", 1);
-            // Per-arc gradient atlas on unit 2 - sampled only when the winning
-            // arc has stops (ArcBlock's vec4.w).
-            mArcLUT.Bind(2);
-            mNeonShader.SetUniform("uArcLUT", 2);
-
-            mNeonVertexArray.DrawArrays(GL_TRIANGLES, 6);
-
-            mNeonShader.Unuse();
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+            renderHalfResNeonPass(viewportHeight, bufW, bufH, time, config);
         }
 
-        // --- Pass 2a (opaque only): fullscreen black fill on the backbuffer ---
-        // A single NDC quad + identity MVP; the black-rect fragment shader
-        // shapes the silhouette from the analytic rounded-box SDF read off
-        // gl_FragCoord, with softness-aware feathering:
-        //   BOTH    -> whole viewport opaque black.
-        //   INSIDE  -> black only where d <= softEdge; off-side stays clear.
-        //   OUTSIDE -> mirror of INSIDE.
-        // Rounded corners AA cleanly via fwidth(d) - no discard, no stair-step.
+        // Back to the caller's target for the full-res passes.
         Framebuffer::BindId(targetFbo);
         glViewport(0, 0, viewportWidth, viewportHeight);
 
@@ -268,52 +409,16 @@ namespace EdgeLighting
         glEnable(GL_BLEND);
         glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
-        glm::mat4 identity(1.0f);
+        // --- Pass 2a: opaque-mode fill on the backbuffer ---------------------
         if (config.neon.opaqueMode != OpaqueMode::NONE)
         {
-            // Rect centre in full-res gl_FragCoord space (y-up).
-            glm::vec2 centerFull(config.geometry.position.x + halfRectW,
-                                 static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
-
-            mBlackRectShader.Use();
-            mBlackRectShader.SetUniform("uMVP", identity);
-            mBlackRectShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
-            mBlackRectShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
-            mBlackRectShader.SetUniform("uRectCenter", centerFull);
-            float opaqueSoft = std::max(config.neon.opaqueSoftness,
-                                        static_cast<float>(SIDE_SOFT_EPSILON));
-            mBlackRectShader.SetUniform("uOpaqueMode", static_cast<int>(config.neon.opaqueMode));
-            mBlackRectShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
-            mBlackRectShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
-            mBlackRectShader.SetUniform("uOpaqueSoftness", opaqueSoft);
-            mBlackRectShader.SetUniform("uOpaqueColor", config.neon.opaqueColor);
-            mBlitVertexArray.DrawArrays(GL_TRIANGLES, 6);
-            mBlackRectShader.Unuse();
+            renderOpaqueFill(viewportHeight, config);
         }
 
+        // --- Pass 2b: composite the half-res neon over it --------------------
         if (!opaqueOnly)
         {
-            // --- Pass 2b: bilinear composite of the half-res neon FBO ---
-            // Bilinear upscaling of premultiplied alpha is fringe-free; the blit
-            // shader is a plain texture read that composites over whatever's on
-            // the backbuffer (black fill if opaque, original bg otherwise).
-            mBlitShader.Use();
-            mBlitShader.SetUniform("uMVP", identity);
-
-            // Debug toggle: nearest neighbour shows the raw half-res pixels.
-            GLuint texId = mHalfResBuffer.GetTextureId();
-            glBindTexture(GL_TEXTURE_2D, texId);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-                            config.optimizedNeon.showHalfRes ? GL_NEAREST : GL_LINEAR);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
-                            config.optimizedNeon.showHalfRes ? GL_NEAREST : GL_LINEAR);
-
-            mHalfResBuffer.BindTexture(0);
-            mBlitShader.SetUniform("uSource", 0);
-
-            mBlitVertexArray.DrawArrays(GL_TRIANGLES, 6);
-
-            mBlitShader.Unuse();
+            renderBlitPass(config);
         }
 
         // Restore default blend state for following renderers.
@@ -400,10 +505,14 @@ namespace EdgeLighting
                                          ShaderSource::BLACK_RECT_FRAG_SRC,
                                          "NeonOptimized.BlackRect");
 
+        mEmissionShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
+                                        ShaderSource::NEON_EMISSION_FRAG_SRC,
+                                        "NeonOptimized.Emission");
         mBlitShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                     ShaderSource::NEON_BLIT_FRAG_SRC,
                                     "NeonBlit");
-        if (!mNeonShader.IsValid() || !mBlackRectShader.IsValid() || !mBlitShader.IsValid())
+        if (!mNeonShader.IsValid() || !mBlackRectShader.IsValid() || !mBlitShader.IsValid() ||
+            !mEmissionShader.IsValid())
         {
             return false;
         }
@@ -411,6 +520,10 @@ namespace EdgeLighting
         mNeonShader.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
         mNeonShader.SetUniformBlockBinding("LoopSamplesBlock", LOOP_SAMPLES_BLOCK_BINDING);
         mNeonShader.SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
+        // The pre-pass reads the same two blocks (not LoopSamplesBlock - it
+        // works in perimeter-parameter space and needs no pixel positions).
+        mEmissionShader.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
+        mEmissionShader.SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
         return true;
     }
 
@@ -454,8 +567,7 @@ namespace EdgeLighting
             float filSigmas = std::clamp(
                 std::pow(std::log2(float(FILAMENT_GAIN) / float(FILAMENT_CUTOFF)), 1.0f / filN),
                 float(FILAMENT_REACH_MIN_SIGMAS), float(FILAMENT_REACH_MAX_SIGMAS));
-            float filamentReach = std::max(config.neon.lineWidth * 0.5f,
-                                           float(FILAMENT_MIN_HALF_WIDTH)) * scale * filSigmas;
+            float filamentReach = std::max(config.neon.lineWidth * 0.5f, float(FILAMENT_MIN_HALF_WIDTH)) * scale * filSigmas;
 
             float margin = std::max(glowReach, filamentReach);
 
@@ -538,15 +650,18 @@ namespace EdgeLighting
         // (colorStops / blendSpace / gradientLutSize), so a re-entry here
         // always means the inputs actually changed.
         int lutSize = std::max(config.optimizedNeon.gradientLutSize, 4);
+        // Sorted once here, not per texel - SampleStops walks the ring in
+        // order and an unsorted list bakes a silently wrong gradient.
+        const std::vector<ColorStop> baseStops = ColorUtils::SortStops(config.neon.colorStops);
         mLUTTarget.resize(lutSize * 4);
         for (int i = 0; i < lutSize; ++i)
         {
             float t = static_cast<float>(i) / static_cast<float>(lutSize);
-            glm::vec3 c = ColorUtils::SampleStops(t, config.neon.colorStops, config.neon.blendSpace);
+            glm::vec4 c = ColorUtils::SampleStops(t, baseStops, config.neon.blendSpace);
             mLUTTarget[i * 4 + 0] = c.r;
             mLUTTarget[i * 4 + 1] = c.g;
             mLUTTarget[i * 4 + 2] = c.b;
-            mLUTTarget[i * 4 + 3] = 1.0f;
+            mLUTTarget[i * 4 + 3] = c.a;
         }
 
         // First bake (Initialize): seed every buffer and upload immediately -
@@ -620,15 +735,16 @@ namespace EdgeLighting
             {
                 continue;
             }
+            const std::vector<ColorStop> segStops = ColorUtils::SortStops(seg.colorStops);
             unsigned char *row = atlas.data() + (s * W * 4);
             for (int x = 0; x < W; ++x)
             {
                 float t = static_cast<float>(x) / static_cast<float>(W - 1);
-                glm::vec3 c = ColorUtils::SampleStops(t, seg.colorStops, seg.blendSpace);
+                glm::vec4 c = ColorUtils::SampleStops(t, segStops, seg.blendSpace);
                 row[x * 4 + 0] = static_cast<unsigned char>(std::clamp(c.r * 255.0f, 0.0f, 255.0f));
                 row[x * 4 + 1] = static_cast<unsigned char>(std::clamp(c.g * 255.0f, 0.0f, 255.0f));
                 row[x * 4 + 2] = static_cast<unsigned char>(std::clamp(c.b * 255.0f, 0.0f, 255.0f));
-                row[x * 4 + 3] = 255;
+                row[x * 4 + 3] = static_cast<unsigned char>(std::clamp(c.a * 255.0f, 0.0f, 255.0f));
             }
         }
 
@@ -657,15 +773,16 @@ namespace EdgeLighting
             {
                 continue;
             }
+            const std::vector<ColorStop> arcStops = ColorUtils::SortStops(arc.colorStops);
             unsigned char *row = atlas.data() + (a * W * 4);
             for (int x = 0; x < W; ++x)
             {
                 float t = static_cast<float>(x) / static_cast<float>(W - 1);
-                glm::vec3 c = ColorUtils::SampleStops(t, arc.colorStops, arc.blendSpace);
+                glm::vec4 c = ColorUtils::SampleStops(t, arcStops, arc.blendSpace);
                 row[x * 4 + 0] = static_cast<unsigned char>(std::clamp(c.r * 255.0f, 0.0f, 255.0f));
                 row[x * 4 + 1] = static_cast<unsigned char>(std::clamp(c.g * 255.0f, 0.0f, 255.0f));
                 row[x * 4 + 2] = static_cast<unsigned char>(std::clamp(c.b * 255.0f, 0.0f, 255.0f));
-                row[x * 4 + 3] = 255;
+                row[x * 4 + 3] = static_cast<unsigned char>(std::clamp(c.a * 255.0f, 0.0f, 255.0f));
             }
         }
 

@@ -110,6 +110,12 @@ layout(std140) uniform ArcBlock
 // convention as uSegmentLUT. Sampled only when the winning arc has stops.
 uniform sampler2D uArcLUT;
 
+// Perimeter emission table from neon-emission.frag: uNumSamples wide (of
+// NEON_MAX_LOOP_SAMPLES allocated), 2 tall. Row 0 = (arcColour*arcW, arcW),
+// row 1 = (SUM(segColour*bell), SUM(bell)). texelFetch only - adjacent texels
+// are unrelated samples. Shared verbatim with neon.frag's consumer.
+uniform sampler2D uEmission;
+
 // 1-row 2D LUT (REPEAT-wrapped) holding the precomputed colour ring.
 // Replaces the in-shader sampleStops loop + HSV blend on the hot path.
 // GLES 3.0 does not support sampler1D, so we use a 1-row 2D texture.
@@ -307,31 +313,8 @@ float perimeterPosition(vec2 p) {
     return (base + len * (1.0 - u)) / peri;
 }
 
-// Fractional [0, 1] membership of the gather sample at @c si in the arc
-// [start, start+length]; wrap-aware over the unit circle.
-//
-// SCOPE: colour gather only. It picks the winner-take-all arc per sample and
-// weights that sample in the hue average, so adjacent arcs crossfade at a seam.
-// It does NOT set brightness or reach - `col` divides by the same arc-gated
-// weight it accumulates, so this cancels out of the ratio. An arc's visible
-// extent comes solely from arcCoverContinuous, whose feather is INWARD and in
-// pixels. The si+1 test keeps the hue continuous across the wrap point.
-// See neon.frag for the full rationale.
-float arcInside(float si, float start, float length, float invNumSamples) {
-    if (length >= 1.0 - 1e-6) return 1.0;
-    if (length <= 1e-6)       return 0.0;
-    // Asymmetric, and both widths buy hue-blend behaviour only now: full-sample
-    // head (contiguous hand-over between gather points), quarter-sample tail
-    // (the arc's own hue takes over immediately at its start). See neon.frag.
-    float fHead = invNumSamples;
-    float fTail = 0.25 * invNumSamples;
-    float end = start + length;
-    float g1a = smoothstep(start - fTail, start, si);
-    float g2a = 1.0 - smoothstep(end, end + fHead, si);
-    float g1b = smoothstep(start - fTail, start, si + 1.0);
-    float g2b = 1.0 - smoothstep(end, end + fHead, si + 1.0);
-    return max(g1a * g2a, g1b * g2b);
-}
+// NOTE: arcInside() moved to neon-emission.frag with the rest of the
+// per-sample work - it was a pure function of (si, config). See neon.frag.
 
 // Continuous [0,1] arc coverage - INWARD FEATHER. See neon.frag for the full
 // rationale; the shape here is identical.
@@ -465,15 +448,10 @@ void main() {
 
     // uNumSamples is dynamic so the perf slider actually reduces work; the
     // upper bound stays baked in the UBO array size so GL still knows the
-    // maximum register pressure.
+    // maximum register pressure. The emission table is baked at the SAME
+    // count (the renderer passes optimizedNeon.numSamples to the pre-pass), so
+    // texel i here is sample i there.
     int n = uNumSamples;
-    float invNumSamples = 1.0 / float(max(n, 1));
-    // Negate the time term so a positive hueRotationRate scrolls the colours
-    // WITH the winding (i advances in the winding direction; REPEAT wrap handles
-    // the negative LUT coordinate).
-    float ti   = -uTime * uHueRotationRate;
-    float dti  = invNumSamples;
-    float si   = 0.0;
 
     for (int i = 0; i < n; i++) {
         vec2  dv  = vPos - uLoopSamples[i].xy;
@@ -481,79 +459,18 @@ void main() {
 
         float g   = 1.0 / (dd + kc2);
 
-        // Arc winner-take-all: see neon.frag for rationale.
-        float bestMask = 0.0;
-        int   bestIdx  = -1;
-        for (int a = 0; a < uArcCount; a++) {
-            vec4  arc  = uArcs[a];
-            float mask = arcInside(si, arc.x, arc.y, invNumSamples) * arc.z;
-            if (mask > bestMask) {
-                bestMask = mask;
-                bestIdx  = a;
-            }
-        }
-        float arcW = bestMask;
-        float lg   = g * arcW;
+        // Per-sample emission from neon-emission.frag. Row 0 = the arc term
+        // premultiplied by its own weight arcW, plus arcW for the denominator;
+        // row 1 = the summed segment term. The arc scan and the segment loop
+        // that used to run here are fragment-invariant and moved there. See
+        // neon.frag and docs/emission-prepass.md.
+        vec4 e0 = texelFetch(uEmission, ivec2(i, 0), 0);
+        vec4 e1 = texelFetch(uEmission, ivec2(i, 1), 0);
 
-        // Arc-local sampling for hasStops; perimeter-space fall-back for empty
-        // stops so the arc reads continuously with the rest of the base gradient.
-        // See neon.frag for the full write-up. segFallback is the colour a
-        // stop-less segment inherits: the arc's colour where an arc covers,
-        // the base gradient where none does (so the segment still lights).
-        vec3 baseColI;
-        vec3 segFallback;
-        if (bestIdx >= 0) {
-            vec4 winner = uArcs[bestIdx];
-            if (winner.w > 0.5) {
-                float rowY  = (float(bestIdx) + 0.5) / float(MAX_ARCS);
-                float uArc  = (si - winner.x) / max(winner.y, 1e-4);
-                uArc       -= uTime * uHueRotationRate;
-                baseColI    = texture(uArcLUT, vec2(uArc, rowY)).rgb;
-            } else {
-                baseColI = texture(uGradientLUT, vec2(ti, 0.5)).rgb;
-            }
-            segFallback = baseColI;
-        } else {
-            baseColI    = vec3(0.0);
-            segFallback = texture(uGradientLUT, vec2(ti, 0.5)).rgb;
-        }
-        acc     += baseColI * lg;
-
-        // Gated normalisation: dividing by the weight the numerator was
-        // gathered with leaves `col` a pure hue carrying neither coverage nor
-        // per-arc intensity. segAcc / wsumSegW does the same for the segment
-        // hue. See neon.frag for why the old shared ungated denominator made a
-        // partial arc - and a segment - dim on small rects.
-        wsumLit += lg;
-
-        // --- Travelling segments (independent additive lights) ---
-        // Gathered with the raw proximity weight `g`, NOT the arc-gated `lg`,
-        // so a segment lights even where no arc covers. Composed outside
-        // uIntensity so segments stay lit even at intensity 0. Skipped
-        // whole-loop when uSegmentCount == 0. The gather yields the segment HUE
-        // only; its magnitude comes from segCoverPt below. See neon.frag.
-        for (int s = 0; s < uSegmentCount; s++) {
-            vec4  seg  = uSegments[s];
-            float rel  = si - seg.x;
-            rel       -= floor(rel + 0.5);              // wrap to [-0.5, 0.5]
-            float e    = rel * seg.y;
-            float bell = seg.z * exp(-e * e);
-            if (bell < 0.005) continue;
-
-            vec3 segColor;
-            if (seg.w > 0.5) {
-                float tLocal = clamp(0.5 + e * 0.5, 0.0, 1.0);
-                float rowY   = (float(s) + 0.5) / float(MAX_SEGMENT_BOOSTS);
-                segColor     = texture(uSegmentLUT, vec2(tLocal, rowY)).rgb;
-            } else {
-                segColor = segFallback;
-            }
-            segAcc   += segColor * bell * g;
-            wsumSegW += bell * g;                       // cancels bell out of the hue
-        }
-
-        ti  += dti;
-        si  += dti;
+        acc      += e0.rgb * g;
+        wsumLit  += e0.a   * g;
+        segAcc   += e1.rgb * g;
+        wsumSegW += e1.a   * g;
     }
 
     // Both pure hues of unit magnitude; magnitudes attach below from the
@@ -581,12 +498,27 @@ void main() {
     // One coverage, folding per-arc intensity in, driving the filament as well
     // as the halo and bloom: `col` is gated-normalised above, so intensity
     // cancels out of it and emitCover is what carries it now. See neon.frag.
+    // Colour-stop alpha scales the emission magnitude, not the hue (the gated
+    // normalisation would divide it back out of `col`), and is read POINTWISE
+    // rather than gathered - a gathered alpha smears across the whole ring
+    // through the weight's 1/d^2 tails. See neon.frag for the measurements.
+    float baseAlphaPt = texture(uGradientLUT,
+                                vec2(sPos - uTime * uHueRotationRate, 0.5)).a;
     float emitCover = 0.0;
     for (int a = 0; a < uArcCount; a++) {
         vec4 arc = uArcs[a];
         if (arc.z <= 0.0) continue;
         float c = arcCoverContinuous(sPos, arc.x, arc.y, headF, tailF);
-        emitCover = max(emitCover, c * arc.z);
+        float aA;
+        if (arc.w > 0.5) {
+            float rowY = (float(a) + 0.5) / float(MAX_ARCS);
+            float uArc = (sPos - arc.x) / max(arc.y, 1e-4);
+            uArc      -= uTime * uHueRotationRate;
+            aA         = texture(uArcLUT, vec2(uArc, rowY)).a;
+        } else {
+            aA = baseAlphaPt;
+        }
+        emitCover = max(emitCover, c * arc.z * aA);
     }
 
     // Pointwise segment coverage at this fragment's perimeter position - the
@@ -600,7 +532,17 @@ void main() {
         float rel = sPos - seg.x;
         rel      -= floor(rel + 0.5);
         float e   = rel * seg.y;
-        segCoverPt += seg.z * exp(-e * e);
+        // Per-segment alpha, pointwise; stop-less segments inherit the base
+        // gradient's alpha. See neon.frag.
+        float sA;
+        if (seg.w > 0.5) {
+            float tLocal = clamp(0.5 + e * 0.5, 0.0, 1.0);
+            float rowY   = (float(s) + 0.5) / float(MAX_SEGMENT_BOOSTS);
+            sA           = texture(uSegmentLUT, vec2(tLocal, rowY)).a;
+        } else {
+            sA = baseAlphaPt;
+        }
+        segCoverPt += seg.z * exp(-e * e) * sA;
     }
     float emitCoverAll = max(emitCover, min(segCoverPt, 1.0));
 
