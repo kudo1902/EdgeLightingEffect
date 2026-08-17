@@ -465,7 +465,7 @@
   <header class="masthead">
     <div class="eyebrow">EdgeLightingEffect / lib/renderer</div>
     <h1>Anatomy of a Neon Edge</h1>
-    <p class="standfirst">How one shader turns a rectangle into a glowing tube of light, without ever drawing a tube. A walk through the neon renderer for people who do not write graphics code.</p>
+    <p class="standfirst">How one shader turns a rectangle into a glowing tube of light, without ever drawing a tube - and how the rain and lens flare stacked around it reuse the same two ideas. Written for people who do not write graphics code.</p>
   </header>
 
   <div class="tldr">
@@ -1276,7 +1276,284 @@ Framebuffer::BindId(targetFbo);                       // before pass 2</code></p
 
     <!-- ============================================================ -->
     <section id="s11">
-      <h2 class="sec"><span class="num">11</span> Where the code lives</h2>
+      <h2 class="sec"><span class="num">11</span> Six layers over one rectangle</h2>
+
+      <p class="lede">Everything so far has been a single renderer. The effect is actually a list of them, and the neon is only the one that gets the most attention.</p>
+
+      <p>The orchestrator holds a list of renderers and, every frame, calls each one in turn. There is no scene graph and no depth sorting: each renderer draws over whatever the previous one left behind, and the order in the list <em>is</em> the stacking order. Any subset can be switched on.</p>
+
+      <figure>
+        <svg viewBox="0 0 760 320" role="img" aria-label="The six renderers in draw order: wireframe, neon, neon optimized, droplets, lens flare, lens flare optimized. The two neon variants are alternatives to each other, as are the two lens flare variants.">
+          <text x="60" y="28" class="dg-h">draw order</text>
+
+          <g class="dg-t2" text-anchor="end" fill="var(--ink-3)">
+            <text x="52" y="62">1</text>
+            <text x="52" y="102">2</text>
+            <text x="52" y="142">3</text>
+            <text x="52" y="182">4</text>
+            <text x="52" y="222">5</text>
+            <text x="52" y="262">6</text>
+          </g>
+
+          <rect x="60" y="40" width="440" height="34" class="dg-box"/>
+          <text x="74" y="62" class="dg-t">Wireframe</text>
+          <text x="240" y="62" class="dg-t2">the sharp debug outline</text>
+
+          <rect x="60" y="80" width="440" height="34" class="dg-box-a"/>
+          <text x="74" y="102" class="dg-t">Neon</text>
+          <text x="240" y="102" class="dg-t2">the glowing edge - sections 1 to 9</text>
+
+          <rect x="60" y="120" width="440" height="34" class="dg-box-a"/>
+          <text x="74" y="142" class="dg-t">Neon (optimized)</text>
+          <text x="240" y="142" class="dg-t2">the half-resolution copy - section 10</text>
+
+          <rect x="60" y="160" width="440" height="34" class="dg-box"/>
+          <text x="74" y="182" class="dg-t">Droplets</text>
+          <text x="240" y="182" class="dg-t2">rain in a band on the perimeter</text>
+
+          <rect x="60" y="200" width="440" height="34" class="dg-box"/>
+          <text x="74" y="222" class="dg-t">Lens flare</text>
+          <text x="240" y="222" class="dg-t2">a sun and the artifacts a lens adds</text>
+
+          <rect x="60" y="240" width="440" height="34" class="dg-box"/>
+          <text x="74" y="262" class="dg-t">Lens flare (optimized)</text>
+          <text x="240" y="262" class="dg-t2">the half-resolution copy</text>
+
+          <path d="M520,84 H532 V150 H520" class="dg-acc" stroke-width="1.5"/>
+          <text x="542" y="121" class="dg-t2 c-a">enable one, never both</text>
+          <path d="M520,204 H532 V270 H520" class="dg-acc" stroke-width="1.5"/>
+          <text x="542" y="241" class="dg-t2 c-a">enable one, never both</text>
+
+          <text x="60" y="302" class="dg-t2">all six read the same geometry: position, size, corner radius, winding direction</text>
+        </svg>
+        <figcaption><b>Fig 11</b> The registered layers, in the order the demo adds them. Each pair of full-resolution and half-resolution variants draws the same thing, so switching both on renders it twice, stacked on itself.</figcaption>
+      </figure>
+
+      <p>There is a thread running through them. Three of the six - neon, droplets and lens flare - build their geometry out of the two measurements from Sections 2 and 3: the <strong>signed distance to the outline</strong> and the <strong>position around the perimeter</strong>. Learning those two ideas once buys you most of the way into all three.</p>
+
+      <h3>The wireframe, in one paragraph</h3>
+
+      <p>The simplest renderer in the library, and worth mentioning only because of one detail. It uploads four corner points, draws them as a closed loop of 1-pixel lines in a flat colour, and turns blending off while it does so. It is on by default, in green.</p>
+
+      <p>The detail: it draws the <strong>sharp</strong> rectangle. It has no corner radius, because it is the reference you check the other layers against - where the geometry says the box is, before any rounding, glow or feathering. If the neon looks offset from the wireframe, that is a genuine bug; if the neon's corners curve inside it, that is just the corner radius doing its job.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s12">
+      <h2 class="sec"><span class="num">12</span> Rain on glass</h2>
+
+      <p class="lede">The droplets layer puts running water in a band that hugs the outline. It looks like a fluid simulation. It is not - it is a hashed grid, masked by the same distance formula the neon uses.</p>
+
+      <p>The band is defined entirely by distance. Take <code>d</code> from Section 2, measure how deep into the band the pixel is, and divide by the band width to get a number that is 0 at the band's inner boundary and 1 at its outer. Everything the droplet field does is parameterised on that. Which side of the outline the band sits on is a setting.</p>
+
+      <figure>
+        <svg viewBox="0 0 760 230" role="img" aria-label="Three rounded rectangles showing the droplet band placed inside the outline, outside it, and straddling it.">
+          <!-- inside -->
+          <rect x="91" y="71" width="98" height="58" rx="9" fill="none" stroke="var(--teal)" stroke-width="22" opacity="0.28"/>
+          <rect x="80" y="60" width="120" height="80" rx="20" class="dg-shape"/>
+          <text x="140" y="178" class="dg-t" text-anchor="middle">INSIDE</text>
+          <text x="140" y="196" class="dg-t2" text-anchor="middle">band grows inward</text>
+
+          <!-- outside -->
+          <rect x="309" y="49" width="142" height="102" rx="31" fill="none" stroke="var(--teal)" stroke-width="22" opacity="0.28"/>
+          <rect x="320" y="60" width="120" height="80" rx="20" class="dg-shape"/>
+          <text x="380" y="178" class="dg-t" text-anchor="middle">OUTSIDE</text>
+          <text x="380" y="196" class="dg-t2" text-anchor="middle">band grows outward</text>
+
+          <!-- both -->
+          <rect x="560" y="60" width="120" height="80" rx="20" fill="none" stroke="var(--teal)" stroke-width="22" opacity="0.28"/>
+          <rect x="560" y="60" width="120" height="80" rx="20" class="dg-shape"/>
+          <text x="620" y="178" class="dg-t" text-anchor="middle">BOTH</text>
+          <text x="620" y="196" class="dg-t2" text-anchor="middle">band straddles the edge</text>
+        </svg>
+        <figcaption><b>Fig 12</b> The droplet band, in the three placements. The shaded ring is where drops are allowed to appear; everything outside it is rejected before any droplet work happens, which is where most of this layer's cost disappears on a thin band.</figcaption>
+      </figure>
+
+      <h3>Rain falls down, not around</h3>
+
+      <p>The tempting move is to make the droplets flow <em>along</em> the perimeter, since that is the shape the effect is built around. It was tried and it looks wrong - water circulating around a loop reads as a lava lamp, not as rain.</p>
+
+      <p>So gravity is global and points straight down the screen, and the droplet grid is hashed in screen space. The perimeter controls only two things: <strong>where drops are allowed to show</strong>, and <strong>how big they are</strong>.</p>
+
+      <p>That creates a problem the shader has to solve. A band is not uniformly oriented: its left and right stretches run parallel to gravity, and its top and bottom run across it. Real rain does not streak sideways.</p>
+
+      <figure>
+        <svg viewBox="0 0 760 330" role="img" aria-label="A band around a rounded rectangle with gravity pointing down. On the vertical stretches drops streak into trails; on the horizontal stretches they bead and sit.">
+          <defs>
+            <marker id="ga" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--teal)"/>
+            </marker>
+            <marker id="gb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--ink-3)"/>
+            </marker>
+          </defs>
+
+          <text x="110" y="66" class="dg-t c-t" text-anchor="middle">gravity</text>
+          <line x1="110" y1="80" x2="110" y2="226" class="dg-teal" stroke-width="1.5" marker-end="url(#ga)"/>
+          <text x="110" y="248" class="dg-t2" text-anchor="middle">always straight</text>
+          <text x="110" y="262" class="dg-t2" text-anchor="middle">down the screen</text>
+
+          <rect x="230" y="70" width="300" height="180" rx="40" fill="none" stroke="var(--teal)" stroke-width="20" opacity="0.22"/>
+          <rect x="230" y="70" width="300" height="180" rx="40" class="dg-ghost" stroke-width="1.5"/>
+
+          <!-- streaks on the vertical run -->
+          <g stroke="var(--ink)" stroke-width="1.5" fill="var(--ink)">
+            <line x1="530" y1="102" x2="530" y2="128"/><circle cx="530" cy="131" r="3"/>
+            <line x1="524" y1="150" x2="524" y2="170"/><circle cx="524" cy="173" r="2.5"/>
+            <line x1="534" y1="186" x2="534" y2="210"/><circle cx="534" cy="213" r="3"/>
+          </g>
+          <line x1="556" y1="158" x2="544" y2="158" class="dg-line" marker-end="url(#gb)"/>
+          <text x="564" y="152" class="dg-t">vertical stretch</text>
+          <text x="564" y="168" class="dg-t2">drops streak, long trails</text>
+
+          <!-- beads on the horizontal run -->
+          <g fill="var(--ink)">
+            <circle cx="298" cy="70" r="3"/><circle cx="330" cy="66" r="2.4"/>
+            <circle cx="366" cy="72" r="3.2"/><circle cx="404" cy="67" r="2.6"/>
+            <circle cx="438" cy="71" r="3"/>
+          </g>
+          <line x1="366" y1="42" x2="366" y2="58" class="dg-line" marker-end="url(#gb)"/>
+          <text x="366" y="20" class="dg-t" text-anchor="middle">horizontal stretch</text>
+          <text x="366" y="34" class="dg-t2" text-anchor="middle">drops bead and sit</text>
+
+          <text x="380" y="300" class="dg-t2" text-anchor="middle">the grid never bends - only how strongly each layer shows</text>
+        </svg>
+        <figcaption><b>Fig 13</b> How the band's orientation changes what the rain does. The shader reads the outward direction of the edge straight off the distance field and uses it to fade the trickling layers up on vertical stretches and the static condensation up on horizontal ones. It changes <em>amplitude</em> only, never position - which is exactly why the grid never shears or tears at the corners.</figcaption>
+      </figure>
+
+      <h3>Two details that took a while to get right</h3>
+
+      <ul class="body">
+        <li><strong>Drop size comes from the band, not the screen.</strong> Originally the droplet cells were sized from the viewport, so a 20-pixel band showed slivers of drops that were tens of pixels across - you saw fragments of enormous droplets, not small ones. Deriving the cell size from the band width instead means drops fit the band however thin you make it.</li>
+        <li><strong>Water has no colour of its own.</strong> A drop is visible only through what it does to the light around it. So the body of each drop stays about 90% transparent, and the two things that actually read as water are drawn on top: a crescent along the drop's edge, weighted toward the light so it does not look like a soap bubble, and one tight specular dot. An earlier version derived the crescent from the height-field slope, which saturates across the whole drop at any usable brightness and filled every drop solid white; taking it from the drop's own coverage instead keeps it a thin outline at any size.</li>
+      </ul>
+
+      <div class="note">
+        <span class="tag">Not in there</span>
+        There is no refraction and no framebuffer capture. Both existed once. The only backdrop this band ever sits on is the neon's own smooth gradient, and refraction had nothing to displace against it - the effect was invisible, so the whole capture path was removed. What is left is self-lit highlights, which cost nothing and read the same.
+      </div>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr><th>Setting</th><th>Default</th><th>What it changes</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="mono">amount</td><td class="mono">0.7</td><td>How much rain. Low values leave only static condensation; higher values fade in two trickling layers with trails.</td></tr>
+            <tr><td class="mono">speed</td><td class="mono">1.0</td><td>Trickle pace. 0 freezes the rain in place.</td></tr>
+            <tr><td class="mono">bandWidth</td><td class="mono">24.0</td><td>Band thickness in pixels. This is the droplets' whole world: it sets both the region and the drop size.</td></tr>
+            <tr><td class="mono">bandOffset</td><td class="mono">0.0</td><td>Gap between the outline and the band's inner boundary. 0 puts the band flush against the edge.</td></tr>
+            <tr><td class="mono">lanes</td><td class="mono">1</td><td>How many drops sit side by side across the band. 1 gives drops as wide as the band, 2 gives two lanes of half-width drops.</td></tr>
+            <tr><td class="mono">tint</td><td class="mono">cool blue</td><td>Colour of the faint drop body. The rim and specular stay white so drops read against any glow colour.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>The band's side is not its own setting - it is taken from the neon's <code>glowSide</code>, so the rain and the glow always occupy the same side of the edge without having to be kept in sync by hand.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s13">
+      <h2 class="sec"><span class="num">13</span> The lens flare</h2>
+
+      <p class="lede">The last layer simulates a camera looking at a bright light: not the light itself so much as everything the lens adds on the way to the sensor.</p>
+
+      <p>It is one full-screen pass with no geometry at all. Every pixel works out its distance and angle from the sun and evaluates a stack of terms. And the sun is not placed in screen coordinates - <strong>it rides the perimeter</strong>, in the same 0-to-1 parameter space the neon arcs use, with a signed offset that pushes it outside the rectangle or pulls it inside.</p>
+
+      <figure>
+        <svg viewBox="0 0 760 340" role="img" aria-label="Anatomy of the lens flare: a sun on the rectangle perimeter with radiating rays, a dashed axis running through the flare centre, and hexagonal and circular ghosts spaced along that axis.">
+          <rect x="120" y="70" width="340" height="200" rx="40" class="dg-ghost" stroke-width="1.5"/>
+          <text x="120" y="58" class="dg-t2">the sun's track: the rect perimeter</text>
+
+          <!-- ghost axis: runs from the sun through the flare centre -->
+          <line x1="473" y1="51" x2="282" y2="290" class="dg-ghost dg-dash"/>
+
+          <!-- ghosts, spaced along that axis -->
+          <polygon points="411,115 398.9,122 398.9,136 411,143 423.1,136 423.1,122" fill="var(--pink)" opacity="0.3" stroke="var(--pink)" stroke-width="1.2"/>
+          <circle cx="389" cy="156" r="16" fill="var(--teal)" opacity="0.22" stroke="var(--teal)" stroke-width="1.2"/>
+          <circle cx="370" cy="180" r="26" fill="none" stroke="var(--pink)" stroke-width="1.2" opacity="0.55"/>
+          <polygon points="345,191 327.7,201 327.7,221 345,231 362.3,221 362.3,201" fill="var(--teal)" opacity="0.26" stroke="var(--teal)" stroke-width="1.2"/>
+          <polygon points="320,231 310.5,236.5 310.5,247.5 320,253 329.5,247.5 329.5,236.5" fill="var(--pink)" opacity="0.3" stroke="var(--pink)" stroke-width="1.2"/>
+
+          <!-- flare centre -->
+          <g stroke="var(--ink-3)" stroke-width="1.2">
+            <line x1="362" y1="180" x2="378" y2="180"/>
+            <line x1="370" y1="172" x2="370" y2="188"/>
+          </g>
+          <text x="402" y="184" class="dg-t2">flare centre</text>
+
+          <!-- the sun, sitting on the corner arc -->
+          <g stroke="var(--accent)" stroke-width="1.6" opacity="0.85">
+            <line x1="448" y1="82" x2="490" y2="82"/>
+            <line x1="448" y1="82" x2="467.4" y2="67.9"/>
+            <line x1="448" y1="82" x2="459.7" y2="45.9"/>
+            <line x1="448" y1="82" x2="441.8" y2="63.0"/>
+            <line x1="448" y1="82" x2="411.6" y2="55.5"/>
+            <line x1="448" y1="82" x2="422" y2="82"/>
+            <line x1="448" y1="82" x2="415.6" y2="105.5"/>
+            <line x1="448" y1="82" x2="441.2" y2="102.9"/>
+            <line x1="448" y1="82" x2="459.1" y2="116.2"/>
+            <line x1="448" y1="82" x2="470.7" y2="98.5"/>
+          </g>
+          <circle cx="448" cy="82" r="15" fill="var(--accent)" opacity="0.18"/>
+          <circle cx="448" cy="82" r="6" fill="var(--accent)"/>
+
+          <line x1="548" y1="74" x2="496" y2="79" class="dg-line"/>
+          <text x="556" y="70" class="dg-t c-a">sun core + rays</text>
+          <text x="556" y="86" class="dg-t2">thin spikes, finer needles</text>
+          <text x="556" y="100" class="dg-t2">between them, random lengths</text>
+
+          <text x="150" y="316" class="dg-t">ghosts: images of the lens aperture</text>
+          <text x="150" y="332" class="dg-t2">ten groups spaced along the sun-to-centre axis</text>
+        </svg>
+        <figcaption><b>Fig 14</b> The parts of the flare. The hexagons are not decorative: a real camera's aperture is a ring of straight blades, and a ghost is an out-of-focus image of that opening, so it comes out as a hexagon. The whole cluster is arranged along the line from the sun through the flare centre, which is what makes the ghosts swing across the frame as the sun moves.</figcaption>
+      </figure>
+
+      <p>Riding the perimeter has one subtlety worth knowing. The sun does not follow the rectangle and then get nudged outward - it follows the <em>offset</em> curve directly, which is itself a rounded rectangle with a larger radius. Because the position advances by arc length along that curve, the sun travels at a constant speed through the corners instead of visibly slowing down at them.</p>
+
+      <h3>The three groups of terms</h3>
+
+      <ul class="body">
+        <li><strong>Ghosts.</strong> Ten groups spaced along the axis, each made of a soft blob, a thin ring and a hexagonal sprite. Their colours come from a procedural palette that shifts with distance, so no two read the same - and can be blended toward a single colour if the rainbow is too much.</li>
+        <li><strong>Rays.</strong> A set of thin spikes, plus fainter needles at the half-angles between them, plus a per-ray random length. The random length is what stops it looking like a flower: without it every spike is the same length and the sunburst reads as a decoration rather than a light.</li>
+        <li><strong>Core, haze and glow.</strong> Three falloffs stacked at the sun's centre, all faded out by a soft envelope with distance, which is what keeps the flare from covering the whole screen.</li>
+      </ul>
+
+      <div class="note">
+        <span class="tag">A familiar trap</span>
+        The falloff terms started as pure power laws, which are <em>scale free</em>: dividing the radius by a size factor is algebraically the same as multiplying the whole term by that factor raised to a power. The size slider was therefore also a brightness slider, and a badly non-linear one - the core term scaled with size to the fifth power. Adding a small floor to each falloff gives it a finite peak, so size sets the radius and intensity sets the brightness, independently. It is the same class of problem as the neon's beading floor in Section 4: a value that looked like one control was quietly acting as two.
+      </div>
+
+      <p>Like the neon, the flare has a half-resolution twin that renders into a scaled buffer and composites back, using exactly the mechanism from Section 10. And with the same caveat: the two draw the same flare, so switching both on gives you two of them.</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr><th>Setting</th><th>Default</th><th>What it changes</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="mono">perimeterPosition</td><td class="mono">0.0</td><td>Where the sun sits around the outline, 0 to 1. The same parameter space as the neon's arcs, so a sun and an arc can be driven from one animated value.</td></tr>
+            <tr><td class="mono">perimeterOffset</td><td class="mono">0.0</td><td>Signed distance from the edge. Positive pushes the sun outward, negative pulls it in.</td></tr>
+            <tr><td class="mono">size</td><td class="mono">1.0</td><td>Radius of the sun disc. Independent of brightness, thanks to the softening floors above.</td></tr>
+            <tr><td class="mono">intensity</td><td class="mono">1.0</td><td>Master brightness.</td></tr>
+            <tr><td class="mono">spread</td><td class="mono">1.0</td><td>Ghost strength. 0 suppresses the ghosts entirely and leaves a plain sun.</td></tr>
+            <tr><td class="mono">ghostSpacing<br>ghostSize<br>ghostOffset</td><td class="mono">1.0 / 2.2 / -1.5</td><td>Where the ghost cluster sits along the axis, how big each one is, and how far the whole group slides toward the sun. The negative offset default biases them toward the border rather than the screen centre.</td></tr>
+            <tr><td class="mono">flareCenter</td><td class="mono">0.5, 0.5</td><td>The point the ghosts pivot about, in normalised screen coordinates. The sun's own rays are unaffected.</td></tr>
+            <tr><td class="mono">rayDensity</td><td class="mono">-</td><td>How tightly packed the rays are, 0 to 1. Quantised internally to a whole number of slots so the pattern closes cleanly all the way round.</td></tr>
+            <tr><td class="mono">rotationRate</td><td class="mono">-</td><td>Revolutions per second the ray pattern spins.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <span class="tag">Licence, before you ship this</span>
+        The lens flare is a port of a Shadertoy shader that carries no explicit licence, and Shadertoy's default is CC BY-NC-SA 3.0 - non-commercial, share-alike. The port inherits that. If this library needs to go into a commercial product, treat the flare as a reference implementation and rewrite what you keep, or get a permissive re-license from the original author. The version further back in git history was based on a shader released under the Unlicense and is safe to ship. This is written at the top of <code>lens-flare.frag</code> as well; it is the one thing in this document that is a legal constraint rather than a technical one.
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s14">
+      <h2 class="sec"><span class="num">14</span> Where the code lives</h2>
 
       <div class="tbl-wrap">
         <table>
@@ -1290,6 +1567,9 @@ Framebuffer::BindId(targetFbo);                       // before pass 2</code></p
             <tr><td class="mono">lib/shaders/neon-optimized.frag</td><td>The half-resolution fork of the shader. Same maths, plus <code>uResolutionScale</code> and a runtime sample count.</td></tr>
             <tr><td class="mono">lib/src/renderer/neon-optimized-renderer.cpp</td><td>The two-pass version of Figure 6: the offscreen buffer, the scaled uniforms, the composite back to the screen.</td></tr>
             <tr><td class="mono">lib/shaders/neon-blit.frag</td><td>Two lines. Reads the offscreen buffer and composites it onto the screen.</td></tr>
+            <tr><td class="mono">lib/shaders/droplets.frag</td><td>The rain layer: band masking, the hashed droplet grid, the orientation blend, the water shading.</td></tr>
+            <tr><td class="mono">lib/shaders/lens-flare.frag</td><td>The flare: ghosts, rays, core. Carries the licence note in its header.</td></tr>
+            <tr><td class="mono">lib/src/renderer/</td><td>One <code>.cpp</code> per renderer, all following the same Initialize / Update / Render / OnConfigChanged shape.</td></tr>
             <tr><td class="mono">lib/include/renderer/neon-tuning.h</td><td>Every constant, with the reasoning written out. Shared verbatim by the shaders and the C++ - the file is text-injected into the shaders at build time so the two can never drift.</td></tr>
             <tr><td class="mono">lib/include/core/config.h</td><td>The settings struct and its defaults.</td></tr>
           </tbody>
@@ -1307,7 +1587,7 @@ Framebuffer::BindId(targetFbo);                       // before pass 2</code></p
   </main>
 
   <footer>
-    Written against the neon renderer as it stands on <code>main</code>. Figures 4 and 5 are drawn from the shipped default configuration; the profile curves in Figure 4 are plotted from the shader's actual formulas.
+    Written against the renderers as they stand on <code>main</code>. Figures 4 and 5 are drawn from the shipped default configuration; the profile curves in Figure 4 are plotted from the shader's actual formulas.
   </footer>
 
 </div>
