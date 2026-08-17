@@ -1,0 +1,660 @@
+<title>Neon Edge in Brief</title>
+
+<style>
+  /* ------------------------------------------------------------------
+     Minimal reset. These pages are read as local files under docs/ as
+     well as published, so they cannot rely on a host supplying one.
+     Without border-box, every width:100% element (figure, .tbl-wrap,
+     pre) overflows its container by exactly its own padding and drags
+     the body into horizontal scroll; without the margin zeroing, the
+     UA's default block margins compound with the flex `gap` spacing
+     used throughout.
+     ------------------------------------------------------------------ */
+  *, *::before, *::after { box-sizing: border-box; }
+  body, h1, h2, h3, p, ol, ul, dl, dt, dd,
+  figure, figcaption, pre, table, caption { margin: 0; }
+  ol, ul { padding: 0; }
+  /* Same token system as neon-renderer-explained.html and
+     neon-renderer-reference.html, so the three read as one set. :root carries
+     the COMPLETE light palette; the two blocks below redefine tokens only. */
+  :root {
+    --paper:      #eef0f5;
+    --surface:    #fbfcfd;
+    --surface-2:  #e4e8ef;
+    --ink:        #131722;
+    --ink-2:      #545c6e;
+    --ink-3:      #7c8496;
+    --rule:       #d2d8e2;
+    --rule-soft:  #e2e6ee;
+    --accent:     #5a3ce8;
+    --accent-dim: #5a3ce826;
+    --teal:       #0091ae;
+    --teal-dim:   #0091ae1f;
+    --pink:       #d4457e;
+    --pink-dim:   #d4457e1f;
+
+    --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+    --col: 68ch;
+    --wide: 1040px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #0b0e15;
+      --surface:    #131826;
+      --surface-2:  #1b2233;
+      --ink:        #e7eaf2;
+      --ink-2:      #9aa3b7;
+      --ink-3:      #6d7689;
+      --rule:       #262e40;
+      --rule-soft:  #1d2434;
+      --accent:     #9584ff;
+      --accent-dim: #9584ff26;
+      --teal:       #3fc6e5;
+      --teal-dim:   #3fc6e522;
+      --pink:       #ff7cad;
+      --pink-dim:   #ff7cad22;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:      #0b0e15;
+    --surface:    #131826;
+    --surface-2:  #1b2233;
+    --ink:        #e7eaf2;
+    --ink-2:      #9aa3b7;
+    --ink-3:      #6d7689;
+    --rule:       #262e40;
+    --rule-soft:  #1d2434;
+    --accent:     #9584ff;
+    --accent-dim: #9584ff26;
+    --teal:       #3fc6e5;
+    --teal-dim:   #3fc6e522;
+    --pink:       #ff7cad;
+    --pink-dim:   #ff7cad22;
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 17px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+    padding: 0 24px 96px;
+  }
+
+  .wrap { max-width: var(--wide); margin: 0 auto; }
+  .col { display: flex; flex-direction: column; }
+
+  .masthead {
+    padding: 64px 0 36px;
+    border-bottom: 1px solid var(--rule);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  h1 {
+    font-family: var(--font-display);
+    font-size: clamp(36px, 5.6vw, 56px);
+    line-height: 1.05;
+    font-weight: 400;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+    max-width: 18ch;
+  }
+  .standfirst {
+    font-family: var(--font-display);
+    font-size: 20px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    max-width: 58ch;
+  }
+
+  .tldr {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    padding: 24px 28px;
+    margin: 40px 0 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .tldr h2 {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+  }
+  .tldr ol {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    counter-reset: tl;
+    list-style: none;
+  }
+  .tldr li { position: relative; padding-left: 30px; max-width: 74ch; }
+  .tldr li::before {
+    counter-increment: tl;
+    content: counter(tl);
+    position: absolute;
+    left: 0;
+    top: 0;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--accent);
+  }
+
+  section {
+    padding-top: 56px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  h2.sec {
+    font-family: var(--font-display);
+    font-size: clamp(26px, 3.2vw, 34px);
+    font-weight: 400;
+    line-height: 1.16;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+    max-width: 22ch;
+    display: flex;
+    gap: 16px;
+    align-items: baseline;
+  }
+  h2.sec .num {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+    flex: 0 0 auto;
+    transform: translateY(-0.35em);
+  }
+
+  p { max-width: var(--col); }
+  .lede {
+    font-family: var(--font-display);
+    font-size: 19px;
+    line-height: 1.55;
+    color: var(--ink-2);
+    max-width: 58ch;
+  }
+  ul.body {
+    max-width: var(--col);
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    padding-left: 22px;
+    list-style: square;
+  }
+  ul.body::marker, li::marker { color: var(--ink-3); }
+  strong { font-weight: 650; }
+  em { font-style: italic; color: var(--ink); }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.855em;
+    background: var(--surface-2);
+    padding: 0.1em 0.36em;
+    border-radius: 3px;
+    word-break: break-word;
+  }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+
+  figure {
+    max-width: var(--wide);
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    padding: 22px 24px 18px;
+    margin: 14px 0 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    overflow-x: auto;
+  }
+  figure svg {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-width: 560px;
+    color: var(--ink);
+  }
+  figcaption {
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    border-top: 1px solid var(--rule-soft);
+    padding-top: 12px;
+    max-width: 80ch;
+  }
+  figcaption b {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+    margin-right: 8px;
+  }
+
+  .dg-box   { fill: var(--surface-2); stroke: var(--rule); stroke-width: 1; }
+  .dg-box-a { fill: var(--accent-dim); stroke: var(--accent); stroke-width: 1; }
+  .dg-t     { font-family: var(--font-mono); font-size: 11px; fill: var(--ink); }
+  .dg-t2    { font-family: var(--font-mono); font-size: 10px; fill: var(--ink-2); }
+  .dg-h     { font-family: var(--font-body); font-size: 12px; font-weight: 650; fill: var(--ink); }
+  .dg-line  { stroke: var(--ink-3); stroke-width: 1.25; fill: none; }
+  .dg-ghost { stroke: var(--ink-3); stroke-width: 1; fill: none; opacity: 0.42; }
+  .dg-acc   { stroke: var(--accent); fill: none; stroke-width: 2; }
+  .dg-teal  { stroke: var(--teal); fill: none; stroke-width: 2; }
+  .dg-pink  { stroke: var(--pink); fill: none; stroke-width: 2; }
+  .dg-dash  { stroke-dasharray: 4 3; }
+  /* Declared AFTER .dg-* so they win at equal specificity. An SVG fill=""
+     presentation attribute would not. */
+  .c-a { fill: var(--accent); }
+  .c-t { fill: var(--teal); }
+  .c-p { fill: var(--pink); }
+  .c-3 { fill: var(--ink-3); }
+
+  .tbl-wrap {
+    max-width: var(--wide);
+    width: 100%;
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    margin: 8px 0;
+  }
+  table { border-collapse: collapse; width: 100%; font-size: 14.5px; min-width: 520px; }
+  th, td { text-align: left; padding: 10px 16px; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
+  th {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.mono { font-family: var(--font-mono); font-size: 13px; white-space: nowrap; color: var(--ink); }
+
+  .note {
+    max-width: var(--wide);
+    background: var(--teal-dim);
+    border-left: 3px solid var(--teal);
+    padding: 14px 20px;
+    font-size: 15.5px;
+    line-height: 1.55;
+  }
+  .note .tag {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--teal);
+    display: block;
+    margin-bottom: 4px;
+  }
+
+  .next {
+    margin-top: 56px;
+    padding: 26px 30px;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+  }
+  .next h2 {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+    margin-bottom: 14px;
+  }
+  .next dl { display: flex; flex-direction: column; gap: 12px; }
+  .next dt { font-weight: 650; font-size: 15.5px; }
+  .next dd { color: var(--ink-2); font-size: 15px; max-width: 76ch; }
+
+  footer {
+    margin-top: 72px;
+    padding-top: 24px;
+    border-top: 1px solid var(--rule);
+    font-size: 14px;
+    color: var(--ink-3);
+    max-width: var(--wide);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+  @media (max-width: 640px) {
+    body { font-size: 16px; padding: 0 16px 64px; }
+    figure { padding: 16px 14px 14px; }
+    .tldr, .next { padding: 20px; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">EdgeLightingEffect / overview</div>
+    <h1>Neon Edge in Brief</h1>
+    <p class="standfirst">The whole renderer in five minutes: what it draws, the two numbers everything is built from, and where the other layers fit. No graphics background assumed.</p>
+  </header>
+
+  <div class="tldr">
+    <h2>The whole thing, in five steps</h2>
+    <ol>
+      <li>The renderer never builds a glowing shape. It covers the area with a plain rectangle of pixels and asks each pixel two questions.</li>
+      <li><strong>Question one: how far am I from the outline?</strong> One number, in pixels, computed with a short formula. Negative inside, zero on the line, positive outside.</li>
+      <li><strong>Question two: where along the outline am I?</strong> A number from 0 to 1 that walks once around the perimeter. This is what makes moving lights and multi-colour gradients possible.</li>
+      <li>Distance picks the <strong>brightness</strong> (three stacked layers: a hard filament, a tight halo, a wide bloom). Position picks the <strong>colour</strong> and decides whether this stretch of the ring is lit at all.</li>
+      <li>Multiply them, compress the highlights, and blend the result over whatever was already on screen.</li>
+    </ol>
+  </div>
+
+  <main class="col">
+
+    <!-- ============================================================ -->
+    <section id="s1">
+      <h2 class="sec"><span class="num">01</span> One quad, two questions</h2>
+
+      <p class="lede">The instinct is to build geometry: a ribbon of triangles bent around the rectangle, textured to look like glass. This renderer does the opposite, and that choice explains almost everything else about it.</p>
+
+      <p>It draws one flat rectangle covering the area where light might land, and hands the GPU a small program - a <em>fragment shader</em> - that runs once for every pixel inside it, all in parallel. That program answers a single question: <strong>how bright and what colour is this one pixel?</strong></p>
+
+      <p>To answer it, each pixel computes two independent numbers from its own position.</p>
+
+      <figure>
+        <svg viewBox="0 0 720 380" role="img" aria-label="A rounded rectangle with one pixel outside the right edge. One arrow measures its perpendicular distance of 50 pixels; a highlighted path traces along the perimeter from the start point to the nearest point, giving a position of 0.38.">
+          <defs>
+            <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--accent)"/>
+            </marker>
+            <marker id="art" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--teal)"/>
+            </marker>
+          </defs>
+
+          <rect x="170" y="100" width="380" height="200" rx="44" class="dg-ghost" stroke-width="1.5"/>
+
+          <!-- the walked path -->
+          <path d="M214,100 H506 A44,44 0 0 1 550,144 V200" class="dg-acc" stroke-width="3.5" marker-end="url(#ar)"/>
+          <circle cx="214" cy="100" r="4.5" fill="var(--accent)"/>
+          <text x="214" y="86" class="dg-t c-a" text-anchor="middle">t = 0</text>
+
+          <!-- the probe pixel and its perpendicular -->
+          <rect x="595" y="195" width="10" height="10" fill="var(--teal)"/>
+          <line x1="595" y1="200" x2="554" y2="200" class="dg-teal" stroke-width="1.5" marker-end="url(#art)"/>
+          <text x="618" y="196" class="dg-t c-t">d = +50</text>
+          <text x="618" y="210" class="dg-t2">how far across</text>
+          <circle cx="550" cy="200" r="4" fill="var(--accent)"/>
+          <text x="536" y="228" class="dg-t c-a" text-anchor="end">t = 0.38</text>
+          <text x="536" y="242" class="dg-t2" text-anchor="end">how far along</text>
+
+          <!-- t number line -->
+          <line x1="170" y1="330" x2="550" y2="330" class="dg-line"/>
+          <line x1="170" y1="324" x2="170" y2="336" class="dg-line"/>
+          <line x1="550" y1="324" x2="550" y2="336" class="dg-line"/>
+          <line x1="314" y1="322" x2="314" y2="338" stroke="var(--accent)" stroke-width="2"/>
+          <text x="170" y="354" class="dg-t2" text-anchor="middle">0.0</text>
+          <text x="550" y="354" class="dg-t2" text-anchor="middle">1.0 (wraps to 0)</text>
+          <text x="314" y="354" class="dg-t2 c-a" text-anchor="middle">0.38</text>
+        </svg>
+        <figcaption><b>Fig 1</b> The two measurements the whole effect is built on. <code>d</code> is a <em>signed</em> distance in pixels running <em>across</em> the outline: the sign says which side the pixel is on, and it controls brightness. <code>t</code> runs <em>along</em> the outline from 0 to 1, and it controls colour and which stretches are lit. Everything the renderer does is one of these two multiplied by the other.</figcaption>
+      </figure>
+
+      <p><code>d</code> comes out of a six-line formula (a <strong>signed distance field</strong>) rather than a texture lookup or a search through line segments. That has one consequence worth knowing up front: every distance contour around a rounded rectangle is <em>itself</em> a rounded rectangle, so <strong>corners need no special handling anywhere in the shader</strong>. A glow that spreads 40 px follows the corner curve automatically, at the correct width. A triangle-based approach has to stitch corner geometry and re-tune whenever the corner radius changes.</p>
+
+      <p><code>t</code> is the fiddlier of the two. The shader finds the nearest point on the outline, works out which of the eight pieces it landed on (four straight edges, four corner arcs), and converts that to a fraction of the total perimeter. It matches the CPU's <code>GeometryUtils::GetPointOnRectangle</code> exactly, which is what lets a setting authored on the CPU - an arc from 0.25 to 0.5, say - line up with what the shader draws.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s2">
+      <h2 class="sec"><span class="num">02</span> Three layers of light</h2>
+
+      <p>A real neon tube is not one glow. It is a searing filament you cannot look at, a tight coloured halo hugging the glass, and a wide soft wash spilling onto whatever is behind it. The shader builds all three from <code>d</code> separately and adds them up. They differ almost entirely in <strong>how quickly they fall off</strong>.</p>
+
+      <figure>
+        <svg viewBox="0 0 760 360" role="img" aria-label="A cross-section plot of brightness against distance from the outline, showing three curves: a narrow filament spike, a medium halo, and a very wide bloom.">
+          <line x1="70" y1="270" x2="730" y2="270" class="dg-line"/>
+          <line x1="400" y1="30"  x2="400" y2="278" class="dg-ghost dg-dash"/>
+          <line x1="70" y1="155" x2="730" y2="155" class="dg-ghost dg-dash"/>
+          <text x="508" y="150" class="dg-t2">half brightness</text>
+
+          <g class="dg-t2 c-3" text-anchor="middle">
+            <text x="70"  y="290">-60</text>
+            <text x="180" y="290">-40</text>
+            <text x="290" y="290">-20</text>
+            <text x="400" y="290">0</text>
+            <text x="510" y="290">+20</text>
+            <text x="620" y="290">+40</text>
+            <text x="730" y="290">+60</text>
+          </g>
+          <text x="235" y="312" class="dg-t2" text-anchor="middle">inside the shape</text>
+          <text x="400" y="312" class="dg-t c-a" text-anchor="middle">the outline</text>
+          <text x="565" y="312" class="dg-t2" text-anchor="middle">outside the shape</text>
+          <text x="400" y="336" class="dg-t2" text-anchor="middle">distance d, in pixels</text>
+
+          <polyline class="dg-pink" points="70.0,167.1 103.0,158.3 133.2,149.0 162.1,138.9 191.0,127.5 211.6,118.5 232.2,108.7 257.0,96.2 316.1,65.0 332.6,57.1 347.8,50.7 361.5,46.0 375.2,42.5 387.6,40.6 400.0,40.0 412.4,40.6 424.8,42.5 438.5,46.0 452.3,50.7 467.4,57.1 483.9,65.0 543.0,96.2 567.8,108.7 588.4,118.5 609.0,127.5 637.9,138.9 666.8,149.0 697.0,158.3 730.0,167.1"/>
+          <polyline class="dg-teal" points="70.0,268.4 136.0,267.5 185.5,266.3 224.0,264.5 254.2,262.1 279.0,258.7 288.6,256.8 298.2,254.3 306.5,251.7 313.4,248.9 320.2,245.6 327.1,241.3 332.6,237.2 338.1,232.1 343.6,225.8 347.8,220.1 351.9,213.4 356.0,205.4 362.9,188.5 368.4,171.0 373.9,149.1 378.0,129.8 387.6,78.7 391.8,59.0 395.9,45.1 397.2,42.3 398.6,40.6 400.0,40.0 401.4,40.6 402.8,42.3 404.1,45.1 408.2,59.0 412.4,78.7 422.0,129.8 426.1,149.1 431.6,171.0 437.1,188.5 444.0,205.4 448.1,213.4 452.3,220.1 456.4,225.8 461.9,232.1 467.4,237.2 472.9,241.3 479.8,245.6 486.6,248.9 493.5,251.7 501.8,254.3 511.4,256.8 521.0,258.7 545.8,262.1 576.0,264.5 614.5,266.3 664.0,267.5 730.0,268.4"/>
+          <polyline class="dg-acc" points="70.0,270.0 358.8,270.0 367.0,269.6 371.1,268.1 373.9,265.4 375.2,263.1 378.0,255.6 380.8,242.5 382.1,233.1 386.2,192.1 393.1,94.6 395.9,61.4 397.2,49.8 398.6,42.5 400.0,40.0 401.4,42.5 402.8,49.8 404.1,61.4 406.9,94.6 413.8,192.1 417.9,233.1 419.2,242.5 422.0,255.6 424.8,263.1 426.1,265.4 428.9,268.1 433.0,269.6 441.2,270.0 730.0,270.0"/>
+
+          <text x="400" y="24" class="dg-h c-a" text-anchor="middle">filament</text>
+          <text x="497" y="240" class="dg-h c-t">halo</text>
+          <text x="655" y="132" class="dg-h c-p" text-anchor="middle">bloom</text>
+        </svg>
+        <figcaption><b>Fig 2</b> Cross-section through the glow, at the shipped defaults (<code>lineWidth 4</code>, <code>glowRadius 5</code>). Each curve is scaled to its own peak so the widths can be compared. The filament is at half brightness 2 px from the line, the halo at 5 px, the bloom not until 52 px.</figcaption>
+      </figure>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr><th>Layer</th><th>Falls off as</th><th>Width comes from</th><th>Multiplied by</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Filament</td><td>Bell curve, very steep</td><td class="mono">lineWidth</td><td class="mono">12.0</td></tr>
+            <tr><td>Halo</td><td>1 / distance&sup2;</td><td class="mono">glowRadius</td><td class="mono">0.9</td></tr>
+            <tr><td>Bloom</td><td>1 / distance</td><td class="mono">glowRadius &times; 6</td><td class="mono">bloomStrength</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>The last column is why the filament reads as white-hot even though all three curves peak at 1.0: it is multiplied by twelve, so its centre blows far past what the screen can show and gets compressed back down at the end. That compression turns a coloured curve into a white core with coloured edges, the same thing a camera does when it photographs a real neon sign.</p>
+
+      <p>All three are <strong>formulas, not sums</strong>. An earlier version added up the contribution of 128 sample points around the perimeter, which meant a narrow glow broke into a dotted line and had to be floored at the sample spacing - and that spacing depends on the rectangle's size, so <code>glowRadius</code> silently did nothing until it exceeded the floor. Replacing the sums with their exact mathematical limit removed the problem at the root.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s3">
+      <h2 class="sec"><span class="num">03</span> Colour is a strip, baked in advance</h2>
+
+      <p>Colours are authored as <strong>stops</strong>: a position around the ring and a colour. Blending between them inside the shader would mean every pixel walks the stop list every frame, so the renderer does it once on the CPU instead and writes the finished gradient into a 256-pixel-wide texture. The shader then does a single read: <em>"what colour is at position t?"</em></p>
+
+      <figure>
+        <svg viewBox="0 0 720 290" role="img" aria-label="Four colour stops on a line are baked into a 256 texel gradient strip, from which a pixel reads a single colour at its position t.">
+          <defs>
+            <linearGradient id="ring" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%"   stop-color="#ff0000"/>
+              <stop offset="25%"  stop-color="#00ff00"/>
+              <stop offset="50%"  stop-color="#0000ff"/>
+              <stop offset="75%"  stop-color="#ffff00"/>
+              <stop offset="100%" stop-color="#ff0000"/>
+            </linearGradient>
+            <marker id="ard" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--ink-3)"/>
+            </marker>
+          </defs>
+
+          <text x="60" y="26" class="dg-h">1. what you author</text>
+          <line x1="60" y1="56" x2="660" y2="56" class="dg-line"/>
+          <g stroke="var(--ink)" stroke-width="1.5">
+            <circle cx="60"  cy="56" r="7" fill="#ff0000"/>
+            <circle cx="210" cy="56" r="7" fill="#00ff00"/>
+            <circle cx="360" cy="56" r="7" fill="#0000ff"/>
+            <circle cx="510" cy="56" r="7" fill="#ffff00"/>
+            <circle cx="660" cy="56" r="7" fill="#ff0000" opacity="0.4"/>
+          </g>
+          <g class="dg-t2" text-anchor="middle">
+            <text x="60"  y="80">0.00</text>
+            <text x="210" y="80">0.25</text>
+            <text x="360" y="80">0.50</text>
+            <text x="510" y="80">0.75</text>
+            <text x="660" y="80">wraps</text>
+          </g>
+
+          <line x1="360" y1="94" x2="360" y2="116" class="dg-line" marker-end="url(#ard)"/>
+          <text x="374" y="110" class="dg-t2">baked once, on the CPU</text>
+
+          <text x="60" y="146" class="dg-h">2. what the GPU gets</text>
+          <rect x="60" y="160" width="600" height="34" fill="url(#ring)" stroke="var(--rule)"/>
+          <text x="660" y="212" class="dg-t2" text-anchor="end">256 texels, 8-bit RGBA, wrapping</text>
+
+          <line x1="210" y1="194" x2="210" y2="228" class="dg-line" marker-end="url(#ard)"/>
+          <text x="224" y="222" class="dg-t2">3. a pixel at t = 0.25 reads one texel</text>
+          <rect x="182" y="230" width="56" height="26" fill="#00ff00" stroke="var(--rule)"/>
+        </svg>
+        <figcaption><b>Fig 3</b> The colour path. The shader has no knowledge of how many stops there were or how they were blended. Changing a colour rebuilds the strip and does not change the shader's work at all.</figcaption>
+      </figure>
+
+      <p>Two properties of the strip are deliberate:</p>
+
+      <ul class="body">
+        <li><strong>It repeats.</strong> Reading past the right edge comes back at the left, which makes the rotating-hue animation a single addition: add time to the read position and the whole ring sweeps, with no wrap-around logic anywhere.</li>
+        <li><strong>It is 8-bit, not floating point.</strong> Float textures are not universally supported on lower-end and embedded GPUs, which this library targets. Every lookup table here is plain 8-bit RGBA for that reason.</li>
+      </ul>
+
+      <p>The same trick is used twice more, for arcs and travelling segments that carry their own gradients: one atlas texture each, one row per arc or per segment.</p>
+
+      <div class="note">
+        <span class="tag">A nice consequence</span>
+        Because the strip is a texture, a colour change can be <em>animated</em> for free. The renderer keeps the old strip and the new one and cross-fades between them over <code>colorTransitionDuration</code> seconds, re-uploading a blended strip each frame. The shader is not involved and does not know it is happening.
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s4">
+      <h2 class="sec"><span class="num">04</span> Six layers over one rectangle</h2>
+
+      <p>The neon is one renderer among six. The orchestrator holds a list and calls each in turn every frame. There is no scene graph and no depth sorting: each renderer draws over whatever the previous one left behind, the order in the list <em>is</em> the stacking order, and any subset can be switched on.</p>
+
+      <figure>
+        <svg viewBox="0 0 760 320" role="img" aria-label="The six renderers in draw order: wireframe, neon, neon optimized, droplets, lens flare, lens flare optimized. The two neon variants are alternatives to each other, as are the two lens flare variants.">
+          <text x="60" y="28" class="dg-h">draw order</text>
+
+          <g class="dg-t2 c-3" text-anchor="end">
+            <text x="52" y="62">1</text>
+            <text x="52" y="102">2</text>
+            <text x="52" y="142">3</text>
+            <text x="52" y="182">4</text>
+            <text x="52" y="222">5</text>
+            <text x="52" y="262">6</text>
+          </g>
+
+          <rect x="60" y="40" width="440" height="34" class="dg-box"/>
+          <text x="74" y="62" class="dg-t">Wireframe</text>
+          <text x="240" y="62" class="dg-t2">the sharp debug outline</text>
+
+          <rect x="60" y="80" width="440" height="34" class="dg-box-a"/>
+          <text x="74" y="102" class="dg-t">Neon</text>
+          <text x="240" y="102" class="dg-t2">the glowing edge</text>
+
+          <rect x="60" y="120" width="440" height="34" class="dg-box-a"/>
+          <text x="74" y="142" class="dg-t">Neon (optimized)</text>
+          <text x="240" y="142" class="dg-t2">the half-resolution copy</text>
+
+          <rect x="60" y="160" width="440" height="34" class="dg-box"/>
+          <text x="74" y="182" class="dg-t">Droplets</text>
+          <text x="240" y="182" class="dg-t2">rain in a band on the perimeter</text>
+
+          <rect x="60" y="200" width="440" height="34" class="dg-box"/>
+          <text x="74" y="222" class="dg-t">Lens flare</text>
+          <text x="240" y="222" class="dg-t2">a sun and the artifacts a lens adds</text>
+
+          <rect x="60" y="240" width="440" height="34" class="dg-box"/>
+          <text x="74" y="262" class="dg-t">Lens flare (optimized)</text>
+          <text x="240" y="262" class="dg-t2">the half-resolution copy</text>
+
+          <path d="M520,84 H532 V150 H520" class="dg-acc" stroke-width="1.5"/>
+          <text x="542" y="121" class="dg-t2 c-a">enable one, never both</text>
+          <path d="M520,204 H532 V270 H520" class="dg-acc" stroke-width="1.5"/>
+          <text x="542" y="241" class="dg-t2 c-a">enable one, never both</text>
+
+          <text x="60" y="302" class="dg-t2">all six read the same geometry: position, size, corner radius, winding direction</text>
+        </svg>
+        <figcaption><b>Fig 4</b> The registered layers, in the order the demo adds them. Each full-resolution renderer has a half-resolution twin that draws the same thing, so switching both on renders it twice, stacked on itself.</figcaption>
+      </figure>
+
+      <p>There is a thread running through them. Three of the six - neon, droplets and lens flare - build their geometry out of the same two measurements from Section 1:</p>
+
+      <ul class="body">
+        <li><strong>Droplets</strong> use <code>d</code> to carve a band hugging the outline, then fill it with a hashed grid of drops. Gravity is global and points straight down the screen, so drops streak on the band's vertical stretches and bead on its horizontal ones. It looks like a fluid simulation; it is a masked noise field.</li>
+        <li><strong>Lens flare</strong> puts a sun at a position <code>t</code> around the perimeter and evaluates a stack of camera artifacts (hex ghosts, rays, core) from each pixel's distance and angle to it. One fullscreen pass, no geometry at all.</li>
+      </ul>
+
+      <p>Learning <code>d</code> and <code>t</code> once buys you most of the way into all three.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s5">
+      <h2 class="sec"><span class="num">05</span> The half-resolution twins</h2>
+
+      <p>The bloom covers a large area and every pixel in it runs the whole shader, but most of that area is a smooth gradient with no fine detail. So <code>NeonOptimizedRenderer</code> draws the neon into an offscreen buffer at half width and half height, then scales the result up. Half in each direction is a <strong>quarter of the pixels</strong>, so the per-pixel work drops roughly fourfold at the price of one cheap fullscreen copy.</p>
+
+      <p>Two facts make this nearly free:</p>
+
+      <ul class="body">
+        <li><strong>Premultiplied alpha survives averaging.</strong> The shader outputs colour and coverage already scaled together, so plain bilinear filtering gives the correct answer and the copy shader is two lines long. Scaling a glow up would otherwise leave dark fringes.</li>
+        <li><strong>The maths is scale-free.</strong> Every comparison in the shader is a ratio of two lengths. Halve every input and both halve together, so the CPU can simply multiply each measurement by the scale before uploading and the shader never learns the difference.</li>
+      </ul>
+
+      <p>What it costs is the filament. The wide soft layers survive the round trip essentially untouched, but a 4 px razor-sharp line drawn 2 px wide and blurred back up does not. Wide, soft configurations are nearly free to optimize; thin, bright, hard-edged ones are not.</p>
+
+      <div class="note">
+        <span class="tag">Watch out</span>
+        Each <code>*Optimized</code> renderer is a near-fork of its full-res counterpart, in both the <code>.cpp</code> and the <code>.frag</code>, sharing visual config. A change to how the neon looks has to land in both copies or the two quietly drift apart, and the build system cannot tell you when they have.
+      </div>
+    </section>
+
+    <div class="next">
+      <h2>Where to go next</h2>
+      <dl>
+        <dt><a href="neon-renderer-explained.html">neon-renderer-explained.html</a></dt>
+        <dd>The 30-minute read. Same ground in fourteen sections, with the reasoning behind each design decision and the bugs that shaped it. Still written for people who do not write graphics code.</dd>
+
+        <dt><a href="neon-renderer-reference.html">neon-renderer-reference.html</a></dt>
+        <dd>The full mechanism reference. Every uniform, every tuning constant, the derivations, the gating rules, the LUT bakes, and the droplet and flare term stacks. For working on the shaders.</dd>
+
+        <dt><a href="implementation.md">implementation.md</a></dt>
+        <dd>How the library is put together on the C++ side: the orchestrator, the per-frame contract, change detection, the C ABI.</dd>
+
+        <dt><a href="effect-reference.md">effect-reference.md</a></dt>
+        <dd>Per-parameter behaviour and recipes, if you want to configure the effect rather than understand it.</dd>
+      </dl>
+    </div>
+
+  </main>
+
+  <footer>
+    Written against the renderers as they stand on <code>main</code>. Figures 2 and 3 are drawn from the shipped default configuration; the profile curves in Figure 2 are plotted from the shader's actual formulas.
+  </footer>
+
+</div>

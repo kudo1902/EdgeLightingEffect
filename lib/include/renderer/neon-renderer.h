@@ -122,8 +122,10 @@ namespace EdgeLighting
         float mFadeElapsed = 0.0f;      ///< Seconds into the current fade.
         float mFadeDuration = 0.0f;     ///< Snapshot of the duration for this fade.
         /// (stops, blendSpace) behind mLUTTarget - a new bake only restarts the
-        /// fade when these actually change (SetConfig fires OnConfigChanged
-        /// every frame with an unchanged config).
+        /// fade when these actually change. OnConfigChanged fires whenever ANY
+        /// field of the composited config moves (a slider, or an animation
+        /// re-compositing the active config every frame), so the gradient
+        /// inputs are usually unchanged when it arrives.
         std::vector<ColorStop> mTargetStops;
         BlendSpace mTargetBlendSpace = BlendSpace::RGB;
     };

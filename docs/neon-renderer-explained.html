@@ -2,6 +2,19 @@
 
 <style>
   /* ------------------------------------------------------------------
+     Minimal reset. These pages are read as local files under docs/ as
+     well as published, so they cannot rely on a host supplying one.
+     Without border-box, every width:100% element (figure, .tbl-wrap,
+     pre) overflows its container by exactly its own padding and drags
+     the body into horizontal scroll; without the margin zeroing, the
+     UA's default block margins compound with the flex `gap` spacing
+     used throughout.
+     ------------------------------------------------------------------ */
+  *, *::before, *::after { box-sizing: border-box; }
+  body, h1, h2, h3, p, ol, ul, dl, dt, dd,
+  figure, figcaption, pre, table, caption { margin: 0; }
+  ol, ul { padding: 0; }
+  /* ------------------------------------------------------------------
      Tokens. :root carries the COMPLETE light palette. The two blocks
      below redefine tokens only, never component styles, so the page
      resolves in all three viewer states (light / dark / unstamped).
@@ -313,6 +326,7 @@
   .c-a { fill: var(--accent); }
   .c-t { fill: var(--teal); }
   .c-p { fill: var(--pink); }
+  .c-3 { fill: var(--ink-3); }
 
   /* ---------- details / code asides ---------- */
 
@@ -664,7 +678,7 @@ cp = c + d * (r / length(d));      // push out by r -> on the outline</code></pr
           <text x="508" y="150" class="dg-t2">half brightness</text>
 
           <!-- x ticks -->
-          <g class="dg-t2" text-anchor="middle" fill="var(--ink-3)">
+          <g class="dg-t2 c-3" text-anchor="middle">
             <text x="70"  y="290">-60</text>
             <text x="180" y="290">-40</text>
             <text x="290" y="290">-20</text>
@@ -721,7 +735,7 @@ cp = c + d * (r / length(d));      // push out by r -> on the outline</code></pr
         </table>
       </div>
 
-      <p>The gain column is why the filament reads as white-hot even though all three curves peak at 1.0: it is multiplied by twelve, so its centre blows far past what the screen can show and gets compressed back down at the end. That compression is what turns a coloured curve into a white core with coloured edges - the same thing a camera does when it photographs a real neon sign.</p>
+      <p>The last column is why the filament reads as white-hot even though all three curves peak at 1.0: it is multiplied by twelve, so its centre blows far past what the screen can show and gets compressed back down at the end. That compression is what turns a coloured curve into a white core with coloured edges - the same thing a camera does when it photographs a real neon sign.</p>
 
       <h3>Why these are formulas and not sums</h3>
 
@@ -819,7 +833,7 @@ float bloom = BLOOM_NORM_FACTOR * PI * bw / sqrt(ad * ad + bw * bw);</code></pre
     <section id="s6">
       <h2 class="sec"><span class="num">06</span> What happens each frame</h2>
 
-      <p>With the ideas in place, here is the actual machinery. The renderer is called three times per frame by the effect orchestrator, and each call has a distinct job.</p>
+      <p>With the ideas in place, here is the actual machinery. The effect orchestrator calls the renderer through three entry points, each with a distinct job. Two of them run every frame; the third runs only when the settings move.</p>
 
       <figure>
         <svg viewBox="0 0 760 660" role="img" aria-label="Flow chart of one frame: SetConfig feeds the effect, which calls OnConfigChanged, Update and Render on the neon renderer. OnConfigChanged fans out to four rebuild routines gated by dirty checks. Render does an optional fill pass then the neon pass, fed by uniforms, uniform buffers and textures.">
@@ -843,32 +857,32 @@ float bloom = BLOOM_NORM_FACTOR * PI * bw / sqrt(ad * ad + bw * bw);</code></pre
           <text x="250" y="112" class="dg-t2" text-anchor="middle">base config + animation overlays</text>
 
           <line x1="250" y1="124" x2="250" y2="148" class="dg-line" marker-end="url(#fa)"/>
-          <text x="262" y="141" class="dg-t2">active config, every frame</text>
+          <text x="262" y="141" class="dg-t2">active config, on change</text>
 
           <rect x="110" y="150" width="280" height="40" class="dg-box-a"/>
           <text x="250" y="175" class="dg-t" text-anchor="middle">OnConfigChanged(cfg)</text>
 
           <!-- fan-out bus, leaving the right edge of the OnConfigChanged box -->
-          <path d="M390,170 H408 V392" class="dg-line"/>
+          <path d="M390,170 H418 V392" class="dg-line"/>
           <text x="442" y="210" class="dg-t2 c-a">each runs only when its own inputs changed</text>
 
           <g>
-            <line x1="408" y1="242" x2="440" y2="242" class="dg-line" marker-end="url(#fa)"/>
+            <line x1="418" y1="242" x2="440" y2="242" class="dg-line" marker-end="url(#fa)"/>
             <rect x="442" y="222" width="306" height="40" class="dg-box"/>
             <text x="454" y="238" class="dg-t">rebuildLoopSamples()</text>
             <text x="454" y="254" class="dg-t2">128 points around the perimeter -&gt; buffer</text>
 
-            <line x1="408" y1="292" x2="440" y2="292" class="dg-line" marker-end="url(#fa)"/>
+            <line x1="418" y1="292" x2="440" y2="292" class="dg-line" marker-end="url(#fa)"/>
             <rect x="442" y="272" width="306" height="40" class="dg-box"/>
             <text x="454" y="288" class="dg-t">setupGeometry()</text>
             <text x="454" y="304" class="dg-t2">the draw quad + its margin (Figure 8)</text>
 
-            <line x1="408" y1="342" x2="440" y2="342" class="dg-line" marker-end="url(#fa)"/>
+            <line x1="418" y1="342" x2="440" y2="342" class="dg-line" marker-end="url(#fa)"/>
             <rect x="442" y="322" width="306" height="40" class="dg-box"/>
             <text x="454" y="338" class="dg-t">rebuildGradientLUT()</text>
             <text x="454" y="354" class="dg-t2">the 256-texel colour strip (Figure 5)</text>
 
-            <line x1="408" y1="392" x2="440" y2="392" class="dg-line" marker-end="url(#fa)"/>
+            <line x1="418" y1="392" x2="440" y2="392" class="dg-line" marker-end="url(#fa)"/>
             <rect x="442" y="372" width="306" height="40" class="dg-box"/>
             <text x="454" y="388" class="dg-t">rebuildSegmentLUT() / rebuildArcLUT()</text>
             <text x="454" y="404" class="dg-t2">one atlas row per segment / per arc</text>
@@ -911,7 +925,7 @@ float bloom = BLOOM_NORM_FACTOR * PI * bw / sqrt(ad * ad + bw * bw);</code></pre
           <text x="250" y="616" class="dg-t" text-anchor="middle">blend into the framebuffer</text>
           <text x="250" y="631" class="dg-t2" text-anchor="middle">premultiplied alpha, over the background</text>
         </svg>
-        <figcaption><b>Fig 6</b> One frame through <code>NeonRenderer</code>. Note that <code>OnConfigChanged</code> fires <em>every</em> frame, not only when something changed - the dirty checks inside it are what keep dragging a brightness slider from re-uploading textures and re-generating 128 perimeter points sixty times a second.</figcaption>
+        <figcaption><b>Fig 6</b> One frame through <code>NeonRenderer</code>. Note that <code>OnConfigChanged</code> fires on <em>any</em> change to the composited config, not only to the fields a given rebuild reads - so with an animation attached it arrives on nearly every frame. The dirty checks inside it are what keep a running brightness pulse, or a dragged slider, from re-uploading textures and re-generating 128 perimeter points sixty times a second.</figcaption>
       </figure>
 
       <h3>The three entry points</h3>
@@ -924,8 +938,8 @@ float bloom = BLOOM_NORM_FACTOR * PI * bw / sqrt(ad * ad + bw * bw);</code></pre
           <tbody>
             <tr>
               <td class="mono">OnConfigChanged</td>
-              <td>Every frame</td>
-              <td>Compares the incoming settings against last frame's and rebuilds only what genuinely changed: perimeter points, the draw quad, the colour strip, the arc and segment atlases.</td>
+              <td>Only when the settings change</td>
+              <td>Compares the incoming settings against the last set it saw and rebuilds only what genuinely changed: perimeter points, the draw quad, the colour strip, the arc and segment atlases. The orchestrator skips the call entirely when the composited config is identical to last frame's, so an idle effect does nothing here at all.</td>
             </tr>
             <tr>
               <td class="mono">Update</td>
@@ -1178,7 +1192,7 @@ const bool lutDirty      = colorStops changed || blendSpace changed;</code></pre
       <p>That works because of a property of the distance formula worth stating on its own: <strong>halve every input and the distance halves too</strong>. Every comparison in the shader is a ratio of two lengths, and both halve together, so every ratio is unchanged.</p>
 
       <figure>
-        <svg viewBox="0 0 760 300" role="img" aria-label="The same measurement at full resolution and at half resolution. Distance 20 and line width 4 become distance 10 and line width 2, and the ratio of 5 is identical in both.">
+        <svg viewBox="30 0 610 300" role="img" aria-label="The same measurement at full resolution and at half resolution. Distance 20 and line width 4 become distance 10 and line width 2, and the ratio of 5 is identical in both.">
           <defs>
             <marker id="ma" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
               <path d="M0,1 L9,5 L0,9 z" fill="var(--teal)"/>
@@ -1248,7 +1262,7 @@ const bool lutDirty      = colorStops changed || blendSpace changed;</code></pre
           <tbody>
             <tr><td class="mono">resolutionScale</td><td class="mono">0.5</td><td>Size of the offscreen buffer relative to the screen. 0.5 is a quarter of the pixels, 0.25 a sixteenth. Lower values blur the filament first.</td></tr>
             <tr><td class="mono">numSamples</td><td class="mono">64</td><td>Perimeter points visited by the colour gather, out of 128. Affects colour blending only.</td></tr>
-            <tr><td class="mono">gradientLutSize</td><td class="mono">256</td><td>Width of the baked colour strip. Smaller costs a little memory less and slightly coarser gradients.</td></tr>
+            <tr><td class="mono">gradientLutSize</td><td class="mono">256</td><td>Width of the baked colour strip. Smaller saves a little memory at the cost of slightly coarser gradients.</td></tr>
             <tr><td class="mono">showHalfRes</td><td class="mono">false</td><td>Debug view: skips the smooth upscale so the raw half-size pixels are visible. Useful for seeing exactly what the scale is costing.</td></tr>
           </tbody>
         </table>
@@ -1286,7 +1300,7 @@ Framebuffer::BindId(targetFbo);                       // before pass 2</code></p
         <svg viewBox="0 0 760 320" role="img" aria-label="The six renderers in draw order: wireframe, neon, neon optimized, droplets, lens flare, lens flare optimized. The two neon variants are alternatives to each other, as are the two lens flare variants.">
           <text x="60" y="28" class="dg-h">draw order</text>
 
-          <g class="dg-t2" text-anchor="end" fill="var(--ink-3)">
+          <g class="dg-t2 c-3" text-anchor="end">
             <text x="52" y="62">1</text>
             <text x="52" y="102">2</text>
             <text x="52" y="142">3</text>
@@ -1539,8 +1553,8 @@ Framebuffer::BindId(targetFbo);                       // before pass 2</code></p
             <tr><td class="mono">spread</td><td class="mono">1.0</td><td>Ghost strength. 0 suppresses the ghosts entirely and leaves a plain sun.</td></tr>
             <tr><td class="mono">ghostSpacing<br>ghostSize<br>ghostOffset</td><td class="mono">1.0 / 2.2 / -1.5</td><td>Where the ghost cluster sits along the axis, how big each one is, and how far the whole group slides toward the sun. The negative offset default biases them toward the border rather than the screen centre.</td></tr>
             <tr><td class="mono">flareCenter</td><td class="mono">0.5, 0.5</td><td>The point the ghosts pivot about, in normalised screen coordinates. The sun's own rays are unaffected.</td></tr>
-            <tr><td class="mono">rayDensity</td><td class="mono">-</td><td>How tightly packed the rays are, 0 to 1. Quantised internally to a whole number of slots so the pattern closes cleanly all the way round.</td></tr>
-            <tr><td class="mono">rotationRate</td><td class="mono">-</td><td>Revolutions per second the ray pattern spins.</td></tr>
+            <tr><td class="mono">rayDensity</td><td class="mono">0.25</td><td>How tightly packed the rays are, 0 to 1. Quantised internally to a whole number of slots so the pattern closes cleanly all the way round.</td></tr>
+            <tr><td class="mono">rotationRate</td><td class="mono">0.0</td><td>Revolutions per second the ray pattern spins. 0 holds it still.</td></tr>
           </tbody>
         </table>
       </div>

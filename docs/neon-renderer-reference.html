@@ -1,0 +1,1415 @@
+<title>Neon Edge Mechanism Reference</title>
+
+<style>
+  /* ------------------------------------------------------------------
+     Minimal reset. These pages are read as local files under docs/ as
+     well as published, so they cannot rely on a host supplying one.
+     Without border-box, every width:100% element (figure, .tbl-wrap,
+     pre) overflows its container by exactly its own padding and drags
+     the body into horizontal scroll; without the margin zeroing, the
+     UA's default block margins compound with the flex `gap` spacing
+     used throughout.
+     ------------------------------------------------------------------ */
+  *, *::before, *::after { box-sizing: border-box; }
+  body, h1, h2, h3, p, ol, ul, dl, dt, dd,
+  figure, figcaption, pre, table, caption { margin: 0; }
+  ol, ul { padding: 0; }
+  /* Same token system as neon-renderer-overview.html and
+     neon-renderer-explained.html. :root carries the COMPLETE light palette;
+     the two blocks below redefine tokens only, never component styles. */
+  :root {
+    --paper:      #eef0f5;
+    --surface:    #fbfcfd;
+    --surface-2:  #e4e8ef;
+    --ink:        #131722;
+    --ink-2:      #545c6e;
+    --ink-3:      #7c8496;
+    --rule:       #d2d8e2;
+    --rule-soft:  #e2e6ee;
+    --accent:     #5a3ce8;
+    --accent-dim: #5a3ce826;
+    --teal:       #0091ae;
+    --teal-dim:   #0091ae1f;
+    --pink:       #d4457e;
+    --pink-dim:   #d4457e1f;
+    --warn-dim:   #d4457e14;
+
+    --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+    --col: 74ch;
+    --wide: 1100px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #0b0e15;
+      --surface:    #131826;
+      --surface-2:  #1b2233;
+      --ink:        #e7eaf2;
+      --ink-2:      #9aa3b7;
+      --ink-3:      #6d7689;
+      --rule:       #262e40;
+      --rule-soft:  #1d2434;
+      --accent:     #9584ff;
+      --accent-dim: #9584ff26;
+      --teal:       #3fc6e5;
+      --teal-dim:   #3fc6e522;
+      --pink:       #ff7cad;
+      --pink-dim:   #ff7cad22;
+      --warn-dim:   #ff7cad14;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:      #0b0e15;
+    --surface:    #131826;
+    --surface-2:  #1b2233;
+    --ink:        #e7eaf2;
+    --ink-2:      #9aa3b7;
+    --ink-3:      #6d7689;
+    --rule:       #262e40;
+    --rule-soft:  #1d2434;
+    --accent:     #9584ff;
+    --accent-dim: #9584ff26;
+    --teal:       #3fc6e5;
+    --teal-dim:   #3fc6e522;
+    --pink:       #ff7cad;
+    --pink-dim:   #ff7cad22;
+    --warn-dim:   #ff7cad14;
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 16.5px;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    padding: 0 24px 96px;
+  }
+
+  .wrap { max-width: var(--wide); margin: 0 auto; }
+  .col { display: flex; flex-direction: column; }
+
+  .masthead {
+    padding: 60px 0 32px;
+    border-bottom: 1px solid var(--rule);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  h1 {
+    font-family: var(--font-display);
+    font-size: clamp(34px, 5vw, 52px);
+    line-height: 1.06;
+    font-weight: 400;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+    max-width: 20ch;
+  }
+  .standfirst {
+    font-family: var(--font-display);
+    font-size: 19px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    max-width: 62ch;
+  }
+
+  /* ---------- table of contents ---------- */
+  nav.toc {
+    margin: 36px 0 8px;
+    padding: 24px 28px;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+  }
+  nav.toc h2 {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+    margin-bottom: 14px;
+  }
+  nav.toc ol {
+    list-style: none;
+    columns: 2;
+    column-gap: 40px;
+  }
+  @media (max-width: 700px) { nav.toc ol { columns: 1; } }
+  nav.toc li {
+    display: flex;
+    gap: 10px;
+    font-size: 15px;
+    padding: 3px 0;
+    break-inside: avoid;
+  }
+  nav.toc .n {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--accent);
+    flex: 0 0 1.6em;
+    padding-top: 0.25em;
+  }
+  nav.toc a { color: var(--ink); text-decoration: none; border-bottom: 1px solid transparent; }
+  nav.toc a:hover { border-bottom-color: var(--accent); }
+
+  section {
+    padding-top: 52px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  h2.sec {
+    font-family: var(--font-display);
+    font-size: clamp(24px, 3vw, 31px);
+    font-weight: 400;
+    line-height: 1.18;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+    max-width: 26ch;
+    display: flex;
+    gap: 16px;
+    align-items: baseline;
+    scroll-margin-top: 16px;
+  }
+  h2.sec .num {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+    flex: 0 0 auto;
+    transform: translateY(-0.35em);
+  }
+  h3 {
+    font-family: var(--font-body);
+    font-size: 14.5px;
+    font-weight: 650;
+    letter-spacing: 0.005em;
+    margin-top: 14px;
+    text-transform: none;
+    max-width: var(--col);
+  }
+  h3 .src {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 400;
+    color: var(--ink-3);
+    letter-spacing: 0.03em;
+    margin-left: 8px;
+  }
+
+  p { max-width: var(--col); }
+  .lede {
+    font-family: var(--font-display);
+    font-size: 18px;
+    line-height: 1.55;
+    color: var(--ink-2);
+    max-width: 62ch;
+  }
+  ul.body, ol.body {
+    max-width: var(--col);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-left: 22px;
+  }
+  ul.body { list-style: square; }
+  ol.body { list-style: decimal; }
+  ul.body::marker, li::marker { color: var(--ink-3); }
+  strong { font-weight: 650; }
+  em { font-style: italic; color: var(--ink); }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.855em;
+    background: var(--surface-2);
+    padding: 0.1em 0.36em;
+    border-radius: 3px;
+    word-break: break-word;
+  }
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+
+  pre {
+    background: var(--surface-2);
+    border: 1px solid var(--rule-soft);
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.6;
+    color: var(--ink);
+    tab-size: 4;
+    max-width: var(--wide);
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+
+  /* ---------- tables ---------- */
+  .tbl-wrap {
+    max-width: var(--wide);
+    width: 100%;
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    background: var(--surface);
+    margin: 6px 0;
+  }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; min-width: 560px; }
+  th, td { text-align: left; padding: 9px 14px; border-bottom: 1px solid var(--rule-soft); vertical-align: top; }
+  th {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.mono, th.mono { font-family: var(--font-mono); font-size: 12.5px; color: var(--ink); }
+  td.nw { white-space: nowrap; }
+  td.num { font-family: var(--font-mono); font-size: 12.5px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  caption {
+    caption-side: top;
+    text-align: left;
+    padding: 10px 14px 6px;
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  /* ---------- callouts ---------- */
+  .note, .warn {
+    max-width: var(--wide);
+    padding: 13px 18px;
+    font-size: 15px;
+    line-height: 1.55;
+  }
+  .note { background: var(--teal-dim); border-left: 3px solid var(--teal); }
+  .warn { background: var(--warn-dim); border-left: 3px solid var(--pink); }
+  .note .tag, .warn .tag {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    display: block;
+    margin-bottom: 4px;
+  }
+  .note .tag { color: var(--teal); }
+  .warn .tag { color: var(--pink); }
+
+  /* ---------- figures ---------- */
+  figure {
+    max-width: var(--wide);
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    padding: 20px 22px 16px;
+    margin: 10px 0 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    overflow-x: auto;
+  }
+  figure svg {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-width: 560px;
+    color: var(--ink);
+  }
+  figcaption {
+    font-size: 13.5px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    border-top: 1px solid var(--rule-soft);
+    padding-top: 11px;
+    max-width: 84ch;
+  }
+  figcaption b {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+    margin-right: 8px;
+  }
+
+  .dg-box   { fill: var(--surface-2); stroke: var(--rule); stroke-width: 1; }
+  .dg-box-a { fill: var(--accent-dim); stroke: var(--accent); stroke-width: 1; }
+  .dg-t     { font-family: var(--font-mono); font-size: 11px; fill: var(--ink); }
+  .dg-t2    { font-family: var(--font-mono); font-size: 10px; fill: var(--ink-2); }
+  .dg-h     { font-family: var(--font-body); font-size: 12px; font-weight: 650; fill: var(--ink); }
+  .dg-line  { stroke: var(--ink-3); stroke-width: 1.25; fill: none; }
+  .dg-shape { stroke: var(--ink); stroke-width: 2; fill: none; }
+  .dg-ghost { stroke: var(--ink-3); stroke-width: 1; fill: none; opacity: 0.42; }
+  .dg-acc   { stroke: var(--accent); fill: none; stroke-width: 2; }
+  .dg-teal  { stroke: var(--teal); fill: none; stroke-width: 2; }
+  .dg-pink  { stroke: var(--pink); fill: none; stroke-width: 2; }
+  .dg-dash  { stroke-dasharray: 4 3; }
+  /* After .dg-* so they win at equal specificity. */
+  .c-a { fill: var(--accent); }
+  .c-t { fill: var(--teal); }
+  .c-p { fill: var(--pink); }
+  .c-3 { fill: var(--ink-3); }
+
+  footer {
+    margin-top: 72px;
+    padding-top: 22px;
+    border-top: 1px solid var(--rule);
+    font-size: 13.5px;
+    color: var(--ink-3);
+    max-width: var(--wide);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+  @media (max-width: 640px) {
+    body { font-size: 16px; padding: 0 16px 64px; }
+    figure { padding: 16px 14px 14px; }
+    nav.toc { padding: 20px; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">EdgeLightingEffect / mechanism reference</div>
+    <h1>Neon Edge Mechanism Reference</h1>
+    <p class="standfirst">Every input, constant and formula in the neon, droplet and lens-flare shaders, and the CPU-side code that feeds them. Assumes you have read one of the other two documents and are about to change something.</p>
+  </header>
+
+  <nav class="toc">
+    <h2>Contents</h2>
+    <ol>
+      <li><span class="n">01</span><a href="#s1">Scope and conventions</a></li>
+      <li><span class="n">02</span><a href="#s2">Shader inputs</a></li>
+      <li><span class="n">03</span><a href="#s3">Geometry and the SDF</a></li>
+      <li><span class="n">04</span><a href="#s4">Perimeter inversion</a></li>
+      <li><span class="n">05</span><a href="#s5">The filament</a></li>
+      <li><span class="n">06</span><a href="#s6">Halo and bloom</a></li>
+      <li><span class="n">07</span><a href="#s7">Arc gating</a></li>
+      <li><span class="n">08</span><a href="#s8">Travelling segments</a></li>
+      <li><span class="n">09</span><a href="#s9">The colour gather</a></li>
+      <li><span class="n">10</span><a href="#s10">The three LUT bakes</a></li>
+      <li><span class="n">11</span><a href="#s11">Quad sizing and fades</a></li>
+      <li><span class="n">12</span><a href="#s12">Sides, cutoffs, opaque fill</a></li>
+      <li><span class="n">13</span><a href="#s13">Grading and output</a></li>
+      <li><span class="n">14</span><a href="#s14">Half-resolution rules</a></li>
+      <li><span class="n">15</span><a href="#s15">Droplets</a></li>
+      <li><span class="n">16</span><a href="#s16">Lens flare</a></li>
+      <li><span class="n">17</span><a href="#s17">Constant reference</a></li>
+      <li><span class="n">18</span><a href="#s18">Fragment program order</a></li>
+    </ol>
+  </nav>
+
+  <main class="col">
+
+    <!-- ============================================================ -->
+    <section id="s1">
+      <h2 class="sec"><span class="num">01</span> Scope and conventions</h2>
+
+      <p>Files this document describes:</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>File</th><th>Role</th></tr></thead>
+          <tbody>
+            <tr><td class="mono nw">lib/shaders/neon.frag</td><td>The full-resolution neon fragment program. Everything in sections 3 to 13.</td></tr>
+            <tr><td class="mono nw">lib/shaders/neon.vert</td><td>Twelve lines. Passes the quad corner through as <code>vPos</code> and applies <code>uMVP</code>.</td></tr>
+            <tr><td class="mono nw">lib/shaders/neon-optimized.frag</td><td>Half-resolution fork. Identical except for the corrections in section 14.</td></tr>
+            <tr><td class="mono nw">lib/shaders/neon-blit.frag</td><td>Two statements. Bilinear composite of the half-res FBO.</td></tr>
+            <tr><td class="mono nw">lib/shaders/black-rect.frag</td><td>The opaque fill pass (section 12).</td></tr>
+            <tr><td class="mono nw">lib/shaders/droplets.frag</td><td>Section 15.</td></tr>
+            <tr><td class="mono nw">lib/shaders/lens-flare.frag</td><td>Section 16.</td></tr>
+            <tr><td class="mono nw">lib/src/renderer/neon-renderer.cpp</td><td>The CPU side: dirty checks, quad sizing, perimeter samples, all three LUT bakes.</td></tr>
+            <tr><td class="mono nw">lib/include/renderer/neon-tuning.h</td><td>Every constant, text-injected into the shaders at configure time.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Spaces and sign conventions</h3>
+
+      <ul class="body">
+        <li><strong>Local space</strong> is what <code>vPos</code> carries: pixels, origin at the rectangle's centre, <code>+Y</code> up. All SDF work happens here.</li>
+        <li><code>d</code> is the <strong>signed</strong> rounded-box distance: negative inside, 0 on the outline, positive outside. <code>ad = abs(d)</code>.</li>
+        <li><code>t</code> / <code>sPos</code> / <code>si</code> are perimeter positions in <code>[0, 1)</code>, measured by <strong>arc length</strong> from the start of the top edge, in the configured winding direction.</li>
+        <li>Every length uniform reaching the shader is in <strong>pixels</strong> - full-resolution pixels in <code>neon.frag</code>, FBO pixels in <code>neon-optimized.frag</code>. That distinction is the whole of section 14.</li>
+        <li>Output is <strong>premultiplied alpha</strong>, paired with <code>glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)</code>.</li>
+      </ul>
+
+      <div class="note">
+        <span class="tag">Single source of truth</span>
+        <code>neon-tuning.h</code> is <code>#define</code>-based rather than <code>constexpr</code> because it is compiled as <em>both</em> GLSL and C++. GLSL ES 3.00 has no <code>constexpr</code> and rejects the <code>f</code> float suffix, so plain macros are the only form valid in both languages. The file is injected verbatim via <code>@NEON_TUNING@</code>, so a shader constant and its C++ counterpart cannot drift.
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s2">
+      <h2 class="sec"><span class="num">02</span> Shader inputs</h2>
+
+      <h3>Scalar and vector uniforms <span class="src">neon.frag</span></h3>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Uniform</th><th>Type</th><th>Meaning</th></tr></thead>
+          <tbody>
+            <tr><td class="mono nw">uRectSize</td><td class="mono">vec2</td><td>Rectangle size in px. Halved locally into <code>halfSize</code>.</td></tr>
+            <tr><td class="mono nw">uCornerRadius</td><td class="mono">float</td><td>Corner radius in px. Clamped to <code>min(halfW, halfH)</code> where used.</td></tr>
+            <tr><td class="mono nw">uLineWidth</td><td class="mono">float</td><td>Filament full width. <code>sigma = max(uLineWidth * 0.5, FILAMENT_MIN_HALF_WIDTH)</code>.</td></tr>
+            <tr><td class="mono nw">uFilamentFalloff</td><td class="mono">float</td><td>Generalized-Gaussian exponent driver: <code>N = 2 * max(value, 1e-3)</code>.</td></tr>
+            <tr><td class="mono nw">uIntensity</td><td class="mono">float</td><td>Master multiplier on the <em>arc</em> emission only. Segments bypass it.</td></tr>
+            <tr><td class="mono nw">uTime</td><td class="mono">float</td><td>Clock seconds. Only consumer is the hue sweep.</td></tr>
+            <tr><td class="mono nw">uHueRotationRate</td><td class="mono">float</td><td>Revolutions per second. Enters as <code>ti = -uTime * rate</code> (negated so positive scrolls with the winding).</td></tr>
+            <tr><td class="mono nw">uGlowRadius</td><td class="mono">float</td><td>Halo width <code>kh</code>; bloom width is <code>kh * BLOOM_REACH_TO_GLOW</code>.</td></tr>
+            <tr><td class="mono nw">uBloomStrength</td><td class="mono">float</td><td>Bloom mix weight. Also grows the draw quad.</td></tr>
+            <tr><td class="mono nw">uGlowSide</td><td class="mono">int</td><td>0 BOTH / 1 INSIDE / 2 OUTSIDE.</td></tr>
+            <tr><td class="mono nw">uGlowSideSoftness</td><td class="mono">float</td><td>Feather at the one-sided cut. Ignored when BOTH.</td></tr>
+            <tr><td class="mono nw">uInsideCutoff<br>uOutsideCutoff</td><td class="mono">float</td><td>Positive px limits past which emission is culled. <strong>Disabled sides arrive as a huge sentinel</strong>, so the masks no-op without a branch.</td></tr>
+            <tr><td class="mono nw">uInsideCutoffSoftness<br>uOutsideCutoffSoftness</td><td class="mono">float</td><td>Feather widths at those boundaries. Floored at <code>SIDE_SOFT_EPSILON</code>.</td></tr>
+            <tr><td class="mono nw">uWinding</td><td class="mono">int</td><td>0 CLOCKWISE / 1 COUNTER_CLOCKWISE. Selects the segment-base table in section 4.</td></tr>
+            <tr><td class="mono nw">uQuadMargin</td><td class="mono">float</td><td>Distance from the rect edge to the draw quad edge, per axis. Drives the edge fade.</td></tr>
+            <tr><td class="mono nw">uResolutionScale</td><td class="mono">float</td><td><strong><code>neon-optimized.frag</code> only.</strong> Converts baked px constants into FBO px. See section 14.</td></tr>
+            <tr><td class="mono nw">uNumSamples</td><td class="mono">int</td><td><strong><code>neon-optimized.frag</code> only.</strong> Live gather-loop bound, 1..128.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Uniform blocks (std140)</h3>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Block</th><th>Contents</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="mono nw">LoopSamplesBlock</td>
+              <td class="mono">vec4[128]</td>
+              <td>Perimeter sample positions; only <code>.xy</code> is meaningful (std140 pads <code>vec2</code> to a 16-byte stride anyway, so packing as <code>vec4</code> costs nothing). <code>.zw</code> is zero: per-sample phase pairs became unnecessary once the fragment recovered its own position geometrically.</td>
+            </tr>
+            <tr>
+              <td class="mono nw">SegmentBlock</td>
+              <td class="mono">int uSegmentCount<br>vec4[8]</td>
+              <td>Each entry is <code>(position, invSigma, boost, hasStops)</code>. Follows the DALi <code>PunctualLightBlock</code> pattern so a DALi host can feed it property-by-property.</td>
+            </tr>
+            <tr>
+              <td class="mono nw">ArcBlock</td>
+              <td class="mono">int uArcCount<br>vec4[8]</td>
+              <td>Each entry is <code>(start, length, intensity, hasStops)</code>. <code>uArcCount == 0</code> makes the whole perimeter dark; the default config seeds one full-perimeter arc.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Textures</h3>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Sampler</th><th>Size</th><th>Format / wrap</th><th>Indexed by</th></tr></thead>
+          <tbody>
+            <tr><td class="mono nw">uGradientLUT</td><td class="num">256 x 1</td><td>RGBA8, REPEAT on U, CLAMP on V, LINEAR</td><td>Perimeter fraction plus the time sweep. REPEAT is what makes hue rotation one addition.</td></tr>
+            <tr><td class="mono nw">uSegmentLUT</td><td class="num">128 x 8</td><td>RGBA8, CLAMP on U, CLAMP on V, LINEAR</td><td>U = head-to-tail position within the segment; V = <code>(s + 0.5) / MAX_SEGMENT_BOOSTS</code>.</td></tr>
+            <tr><td class="mono nw">uArcLUT</td><td class="num">128 x 8</td><td>RGBA8, REPEAT on U, CLAMP on V, LINEAR</td><td>U = arc-local position; V = <code>(a + 0.5) / MAX_ARCS</code>.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p><strong>All three LUTs are 8-bit RGBA, deliberately.</strong> Float textures are not universally supported on the lower-end and embedded GPUs this library targets, so no pass anywhere uses one. Rows of the segment and arc atlases belonging to entries without their own stops are left zeroed and never sampled - the <code>hasStops</code> flag in the corresponding UBO entry gates the fetch, so stale rows are harmless.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s3">
+      <h2 class="sec"><span class="num">03</span> Geometry and the SDF</h2>
+
+      <h3>The rounded-box distance</h3>
+
+<pre><code>float sdRoundBox(vec2 p, vec2 b, float r) {
+    vec2 q = abs(p) - b + r;
+    return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
+}</code></pre>
+
+      <p><code>p</code> is the fragment in local space, <code>b</code> the half-extents, <code>r</code> the corner radius. Term by term:</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Term</th><th>Does</th></tr></thead>
+          <tbody>
+            <tr><td class="mono nw">abs(p)</td><td>Folds the plane into one quadrant. The shape is symmetric, so one quadrant of arithmetic covers all four.</td></tr>
+            <tr><td class="mono nw">- b + r</td><td>Shifts into the frame of the <em>smaller, sharp-cornered</em> box of half-extent <code>b - r</code>. A rounded rectangle is exactly that box with a disc of radius <code>r</code> rolled around it.</td></tr>
+            <tr><td class="mono nw">length(max(q, 0.0))</td><td>Exterior case: clamping negatives to zero projects onto the smaller box, giving the straight-line distance to it.</td></tr>
+            <tr><td class="mono nw">min(max(q.x, q.y), 0.0)</td><td>Interior case: distance to the nearest wall is the larger (least negative) of the two axis distances.</td></tr>
+            <tr><td class="mono nw">- r</td><td>Recovers the rounded shape by subtracting the rolled disc's radius.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>The result is an <strong>exact</strong> Euclidean distance, not a bound or an approximation. Two consequences the rest of the shader relies on:</p>
+
+      <ul class="body">
+        <li><code>d</code> is directly comparable against pixel-valued settings (<code>lineWidth</code>, <code>glowRadius</code>, the cutoffs) with no conversion.</li>
+        <li>Every level set of <code>d</code> is itself a rounded rectangle with radius <code>r + d</code>, so corners are never a special case. This is why <code>glowSide</code> is a single comparison against <code>sign(d)</code> and why a 40 px glow follows a corner at the correct width.</li>
+      </ul>
+
+      <figure>
+        <svg viewBox="0 0 720 400" role="img" aria-label="Nested rounded rectangles showing contours of the distance field at minus 40, minus 20, 0, plus 20, plus 40 and plus 60 pixels.">
+          <rect x="110" y="40"  width="500" height="320" rx="104" class="dg-ghost"/>
+          <rect x="130" y="60"  width="460" height="280" rx="84"  class="dg-ghost"/>
+          <rect x="150" y="80"  width="420" height="240" rx="64"  class="dg-ghost"/>
+          <rect x="210" y="140" width="300" height="120" rx="4"   class="dg-ghost"/>
+          <rect x="190" y="120" width="340" height="160" rx="24"  class="dg-ghost"/>
+          <rect x="170" y="100" width="380" height="200" rx="44"  class="dg-acc"/>
+
+          <line x1="500" y1="200" x2="620" y2="200" class="dg-line"/>
+          <g fill="var(--ink-2)">
+            <circle cx="510" cy="200" r="2.5"/><circle cx="530" cy="200" r="2.5"/>
+            <circle cx="570" cy="200" r="2.5"/><circle cx="590" cy="200" r="2.5"/>
+            <circle cx="610" cy="200" r="2.5"/>
+          </g>
+          <circle cx="550" cy="200" r="3.5" fill="var(--accent)"/>
+          <text x="510" y="188" class="dg-t2" text-anchor="middle">-40</text>
+          <text x="530" y="220" class="dg-t2" text-anchor="middle">-20</text>
+          <text x="550" y="186" class="dg-t c-a" text-anchor="middle">0</text>
+          <text x="570" y="220" class="dg-t2" text-anchor="middle">+20</text>
+          <text x="590" y="188" class="dg-t2" text-anchor="middle">+40</text>
+          <text x="610" y="220" class="dg-t2" text-anchor="middle">+60</text>
+
+          <text x="360" y="386" class="dg-t2" text-anchor="middle">contours of d, in pixels</text>
+        </svg>
+        <figcaption><b>Fig 1</b> Level sets of <code>d</code>. The corner radius of the contour at distance <code>k</code> is exactly <code>r + k</code>, which is why the <code>-40</code> contour on a radius-44 rect is nearly sharp and the <code>+60</code> contour is strongly rounded.</figcaption>
+      </figure>
+
+      <h3>Band boundary distances</h3>
+
+      <p>The cutoff band needs two more signed distances. <code>dIn &gt;= 0</code> means "past the inside cutoff"; <code>dOut &lt;= 0</code> means "within the outside cutoff".</p>
+
+<pre><code>float bandOuterDistance(vec2 p, float d, vec2 halfSize, float r, float cut) {
+    if (r &gt; 1e-4) { return d - cut; }          // parallel curve: uniform width
+    vec2 b = halfSize + vec2(cut);
+    return sdRoundBox(p, b, 0.0);              // per-axis: keeps the corner square
+}
+float bandInnerDistance(float d, float cut) { return d + cut; }</code></pre>
+
+      <p>The <code>r == 0</code> branch exists because the parallel curve of a <em>sharp</em> corner is an arc of radius <code>cut</code>. Taking <code>d - cut</code> there would round the outer corners of a rectangle the designer explicitly asked to be square, and the opaque fill (drawn on a fullscreen quad with no such rounding) would then bulge black past the glow at each corner. Offsetting per-axis instead keeps the corner square at the cost of the band being about 1.41x wider measured diagonally across it. A uniform width and a square outer corner cannot both hold at a sharp corner.</p>
+
+      <p>Both functions no-op for disabled cutoffs: the sentinel drives <code>dIn</code> hugely positive and <code>dOut</code> hugely negative, so both masks evaluate to 1.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s4">
+      <h2 class="sec"><span class="num">04</span> Perimeter inversion</h2>
+
+      <p class="lede">Turning a fragment position back into an arc-length parameter. This is the fiddliest function in the shader and the one most likely to be got wrong by a well-meaning edit.</p>
+
+      <h3>Step 1: nearest point on the outline</h3>
+
+<pre><code>vec2  b  = vec2(halfWs, halfHs);   // the smaller, sharp-cornered box
+vec2  c  = clamp(p, -b, b);        // nearest point on that box
+vec2  d  = p - c;
+float dl = length(d);
+if (dl &gt; 1e-6) { cp = c + d * (r / dl); }   // push out by r -&gt; on the outline
+else           { /* project along the dominant axis, see below */ }</code></pre>
+
+      <p>This is the distance formula run backwards: instead of returning how far the nearest point is, it returns where it is. The <code>dl &lt;= 1e-6</code> branch handles fragments strictly inside the inner box, where the direction is degenerate; it projects along whichever axis is closer to its wall:</p>
+
+<pre><code>vec2  e  = b - abs(p);
+float sx = (p.x &gt;= 0.0) ? 1.0 : -1.0;
+float sy = (p.y &gt;= 0.0) ? 1.0 : -1.0;
+cp = (e.x &lt; e.y) ? vec2(sx * halfW, p.y) : vec2(p.x, sy * halfH);</code></pre>
+
+      <h3>Step 2: which of the eight pieces</h3>
+
+      <p>With <code>ax = abs(cp.x)</code> and <code>ay = abs(cp.y)</code>, a chain of comparisons classifies <code>cp</code> into a canonical id numbered in clockwise order, and computes <code>u</code>, the traversal progress across that piece measured clockwise.</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <caption>Canonical piece ids and their local progress</caption>
+          <thead><tr><th>Test</th><th>id</th><th>Piece</th><th>u</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">ax &gt; halfWs &amp;&amp; ay &gt; halfHs</td><td class="num">1</td><td>top-right arc</td><td class="mono">(HALF_PI - th) / HALF_PI</td></tr>
+            <tr><td class="mono">"</td><td class="num">3</td><td>bottom-right arc</td><td class="mono">-th / HALF_PI</td></tr>
+            <tr><td class="mono">"</td><td class="num">5</td><td>bottom-left arc</td><td class="mono">(-HALF_PI - th) / HALF_PI</td></tr>
+            <tr><td class="mono">"</td><td class="num">7</td><td>top-left arc</td><td class="mono">(PI - th) / HALF_PI</td></tr>
+            <tr><td class="mono">ay &gt;= halfHs, cp.y &gt; 0</td><td class="num">0</td><td>top edge, left to right</td><td class="mono">(cp.x + halfWs) / ws</td></tr>
+            <tr><td class="mono">ax &gt;= halfWs, cp.x &gt; 0</td><td class="num">2</td><td>right edge, top to bottom</td><td class="mono">(halfHs - cp.y) / hs</td></tr>
+            <tr><td class="mono">ay &gt;= halfHs, cp.y &lt;= 0</td><td class="num">4</td><td>bottom edge, right to left</td><td class="mono">(halfWs - cp.x) / ws</td></tr>
+            <tr><td class="mono">ax &gt;= halfWs, cp.x &lt;= 0</td><td class="num">6</td><td>left edge, bottom to top</td><td class="mono">(cp.y + halfHs) / hs</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>where <code>th = atan(cp.y - sy*halfHs, cp.x - sx*halfWs)</code> is the angle around that corner's centre. Piece 5 needs one fixup: <code>atan</code> hands the left tangency back as <code>+pi</code> rather than <code>-pi</code>, so <code>th</code> is decremented by <code>TWO_PI</code> when positive.</p>
+
+      <h3>Step 3: cumulative base, then divide</h3>
+
+      <p>With <code>ws = width - 2r</code>, <code>hs = height - 2r</code>, <code>arcLen = PI * r / 2</code> and <code>peri = 2ws + 2hs + 4arcLen</code>, the piece id selects a cumulative base. The two windings use different tables and the counter-clockwise one mirrors the progress to <code>1 - u</code>.</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <caption>Cumulative arc length at each piece's start</caption>
+          <thead><tr><th>id</th><th>Piece</th><th class="mono">uWinding == 0</th><th class="mono">uWinding == 1</th><th>len</th></tr></thead>
+          <tbody>
+            <tr><td class="num">0</td><td>top edge</td><td class="mono">0</td><td class="mono">2hs + 3a + ws</td><td class="mono">ws</td></tr>
+            <tr><td class="num">1</td><td>top-right arc</td><td class="mono">ws</td><td class="mono">2hs + 2a + ws</td><td class="mono">a</td></tr>
+            <tr><td class="num">2</td><td>right edge</td><td class="mono">ws + a</td><td class="mono">hs + 2a + ws</td><td class="mono">hs</td></tr>
+            <tr><td class="num">3</td><td>bottom-right arc</td><td class="mono">ws + a + hs</td><td class="mono">hs + a + ws</td><td class="mono">a</td></tr>
+            <tr><td class="num">4</td><td>bottom edge</td><td class="mono">ws + 2a + hs</td><td class="mono">hs + a</td><td class="mono">ws</td></tr>
+            <tr><td class="num">5</td><td>bottom-left arc</td><td class="mono">2ws + 2a + hs</td><td class="mono">hs</td><td class="mono">a</td></tr>
+            <tr><td class="num">6</td><td>left edge</td><td class="mono">2ws + 3a + hs</td><td class="mono">0</td><td class="mono">hs</td></tr>
+            <tr><td class="num">7</td><td>top-left arc</td><td class="mono">peri - a</td><td class="mono">2hs + 3a + 2ws</td><td class="mono">a</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p><code>a</code> abbreviates <code>arcLen</code>. The return is <code>(base + len * u) / peri</code> clockwise, and <code>(base + len * (1 - u)) / peri</code> counter-clockwise. Note that <strong><code>t = 0</code> sits at the left end of the top edge</strong> for clockwise winding, which is where the top-left corner arc finishes, and at the bottom end of the left edge for counter-clockwise.</p>
+
+      <div class="note">
+        <span class="tag">Why geometric and not sampled</span>
+        An earlier version estimated a fragment's position as a proximity-weighted circular mean of the nearby loop samples' phases. Near a corner those phases wrap through <code>2pi</code> straight into the start of the ring, so the mean collapsed the whole corner curve to roughly 0 and lit corners that an arc starting at 0 should have left dark. The geometric inverse is exact everywhere. It is also what makes CPU-authored positions agree with the shader: <code>GeometryUtils::GetPointOnRectangle</code> is the forward map of exactly these tables.
+      </div>
+
+      <div class="warn">
+        <span class="tag">If you change this</span>
+        Four places must move together: <code>perimeterPosition</code> in <code>neon.frag</code>, its copy in <code>neon-optimized.frag</code>, <code>GeometryUtils::GetPointOnRectangle</code> (and its <code>Detail::GetPointOnRectCW</code> / <code>CCW</code> helpers), and <code>GetSunFragPosition</code>, which places the lens-flare sun in the same parameter space. A mismatch shows up as arcs that do not line up with where the UI says they are.
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s5">
+      <h2 class="sec"><span class="num">05</span> The filament</h2>
+
+      <p>A generalized-Gaussian profile in <code>ad</code>:</p>
+
+<pre><code>float halfWidth = uLineWidth * 0.5;
+float sigma     = max(halfWidth, FILAMENT_MIN_HALF_WIDTH);
+float N         = 2.0 * max(uFilamentFalloff, 1e-3);
+float core      = exp2(-pow(ad / sigma, N));</code></pre>
+
+      <p>Written with <code>exp2</code> rather than <code>exp</code> so that <code>sigma</code> <em>is</em> the half-brightness radius by construction: <code>core = 0.5</code> exactly at <code>ad = sigma</code>, for any <code>N</code>. Peak is always exactly 1.0 at <code>ad = 0</code>. The exponent maps as:</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th class="mono">filamentFalloff</th><th class="mono">N</th><th>Shape</th></tr></thead>
+          <tbody>
+            <tr><td class="num">0.5</td><td class="num">1</td><td>Laplace. Heavy tails, smooth peak.</td></tr>
+            <tr><td class="num">1.0</td><td class="num">2</td><td>Gaussian. The default; no power-law tail, so the line reads clean with no far bleed.</td></tr>
+            <tr><td class="num">2.0</td><td class="num">4</td><td>Platykurtic. Flatter top, sharper shoulder.</td></tr>
+            <tr><td class="num">5.0</td><td class="num">10</td><td>Near-rectangular.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Reach, and the pedestal</h3>
+
+      <p>The profile has no finite support, so both the shader and the CPU need an agreed cutoff distance. Solving <code>core * FILAMENT_GAIN &lt; FILAMENT_CUTOFF</code> gives</p>
+
+<pre><code>reachSigmas = clamp(pow(log2(FILAMENT_GAIN / FILAMENT_CUTOFF), 1.0 / N),
+                    FILAMENT_REACH_MIN_SIGMAS, FILAMENT_REACH_MAX_SIGMAS);</code></pre>
+
+      <p>This is emphatically <strong>not a constant</strong>, because the tail length depends on <code>N</code>:</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th class="mono">filamentFalloff</th><th class="num">2.0</th><th class="num">1.0</th><th class="num">0.5</th><th class="num">0.3</th><th class="num">0.2</th></tr></thead>
+          <tbody>
+            <tr><td>reach, in sigmas</td><td class="num">1.9</td><td class="num">3.5</td><td class="num">12.6</td><td class="num">67.8</td><td class="num">558</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>It diverges as <code>filamentFalloff -&gt; 0</code>. A fixed 12 (calibrated at falloff 0.5) badly under-sized the low end: the interior is unbounded because the quad always covers it, so a soft filament flooded inward while the exterior was chopped at 12 sigmas. That asymmetry was the "no outer glow at <code>glowRadius</code> 0" report. <code>FILAMENT_REACH_MAX_SIGMAS</code> bounds the fill cost where the formula diverges.</p>
+
+      <p>The core is then pedestal-subtracted so it reaches exactly zero at that reach, and renormalised so the peak stays 1.0:</p>
+
+<pre><code>float corePed = exp2(-pow(reachSigmas, N));
+core = max(core - corePed, 0.0) / max(1.0 - corePed, 1e-6);</code></pre>
+
+      <p>Where the reach formula is honoured the pedestal is about <code>1.7e-4</code> and invisible. Where <code>MAX_SIGMAS</code> clamps it, this is what makes the glow end smoothly and, crucially, <strong>symmetrically</strong> - without it the interior keeps its full tail while the exterior is cut at the quad edge.</p>
+
+      <h3>The zero-width gate</h3>
+
+<pre><code>float lineGate = clamp(uLineWidth / (FILAMENT_MIN_HALF_WIDTH * 2.0), 0.0, 1.0);</code></pre>
+
+      <p><code>sigma</code> is floored at <code>FILAMENT_MIN_HALF_WIDTH</code>, so <code>lineWidth = 0</code> would otherwise render a half-pixel bright dot rather than nothing. The gate fades the whole filament out over <code>lineWidth</code> in <code>[0, 1]</code>, making 0 mean "no line".</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s6">
+      <h2 class="sec"><span class="num">06</span> Halo and bloom</h2>
+
+      <p class="lede">Both were once sums over the 128 perimeter samples. Both are now closed forms in <code>ad</code> alone, and that single change is what made the effect geometry-independent.</p>
+
+      <h3>The derivation</h3>
+
+      <p>Take a straight emitting line of unit density, a fragment at perpendicular distance <code>ad</code>, and let <code>x</code> run along the line. The old loop summed a kernel over <code>x</code> at spacing <code>perimeter / 128</code>. Letting the spacing go to zero turns each sum into an integral with an exact answer:</p>
+
+<pre><code>halo:   &#8747; (x&sup2; + A&sup2;)^-3/2 dx = 2 / A&sup2;     with A&sup2; = ad&sup2; + kh&sup2;
+bloom:  &#8747; 1 / (x&sup2; + A&sup2;)  dx = &#960; / A       with A  = sqrt(ad&sup2; + bw&sup2;)</code></pre>
+
+      <p>Substituted back with the emitter widths, those are exactly the two lines in the shader:</p>
+
+<pre><code>float kh    = max(uGlowRadius,                       EMISSION_MIN_WIDTH);
+float bw    = max(uGlowRadius * BLOOM_REACH_TO_GLOW, EMISSION_MIN_WIDTH);
+float halo  = HALO_NORM_FACTOR  * 2.0 * kh * kh / (ad * ad + kh * kh);
+float bloom = BLOOM_NORM_FACTOR * PI * bw / sqrt(ad * ad + bw * bw);</code></pre>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Layer</th><th>Width</th><th>Falls off as</th><th>Peak at ad = 0</th><th>Half brightness at</th></tr></thead>
+          <tbody>
+            <tr><td>Halo</td><td class="mono">kh = glowRadius</td><td class="mono">1 / ad&sup2;</td><td class="num">0.86</td><td class="mono">ad = kh</td></tr>
+            <tr><td>Bloom</td><td class="mono">bw = glowRadius * 6</td><td class="mono">1 / ad</td><td class="num">1.005</td><td class="mono">ad = bw * sqrt(3)</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>The peaks are <code>HALO_NORM_FACTOR * 2 = 0.86</code> and <code>BLOOM_NORM_FACTOR * PI = 1.005</code>, <strong>identical to what the sums produced</strong>. That is the point of expressing the norms this way: the calibration constants kept their meaning and nothing had to be re-tuned by eye when the sums were replaced.</p>
+
+      <h3>What the rewrite fixed</h3>
+
+      <p>The gather had to floor its kernel at a multiple of <code>sampleSpacing</code> to stop 128 discrete samples beading into dots, and <code>sampleSpacing</code> is <code>perimeter / 128</code>. So halo width, and through the gate its brightness, both tracked the rectangle size, and <code>glowRadius</code> did nothing at all until it exceeded that floor - roughly 56 px on a 1920x1080 rect, which is most of its usable range. An analytic profile cannot bead at any radius, so no floor is needed.</p>
+
+      <div class="warn">
+        <span class="tag">One honest regression</span>
+        On the concave side of a corner the old sum picked up light from <em>both</em> incident edges, so corners ran hotter - measured at about 40% at 25 px inside a 40 px corner with <code>glowRadius</code> 25. A profile built from the distance to the single nearest point cannot reproduce that. The gap closes as <code>glowRadius</code> shrinks relative to <code>cornerRadius</code>, and is nil at <code>cornerRadius</code> 0.
+      </div>
+
+      <h3>The bloom pedestal</h3>
+
+      <p>The <code>1/ad</code> tail is heavy: at the draw quad's edge it is still around 10% of peak, so without correction the quad has to be enormous or the emission gets visibly chopped. The shader recomputes the CPU's <em>uncapped</em> quad-sizing formula and subtracts a pedestal sized to land the bloom at exactly zero there:</p>
+
+<pre><code>float reach     = max(uGlowRadius * EARLY_OUT_RADIUS_FACTOR *
+                      (1.0 + uBloomStrength * uIntensity),
+                      sigma * reachSigmas);
+float bloomPeak = BLOOM_NORM_FACTOR * PI;
+float bloomPed  = BLOOM_NORM_FACTOR * PI * bw / sqrt(reach * reach + bw * bw);
+bloom = max(bloom - bloomPed, 0.0) * (bloomPeak / max(bloomPeak - bloomPed, 1e-6));</code></pre>
+
+      <p>Two subtleties. It uses the <em>uncapped</em> reach, a pure function of <code>glowRadius</code>, <code>bloomStrength</code> and <code>intensity</code>, so the pedestal stays size-invariant even where the outside cutoff clamps the actual quad smaller; feeding it the clamped margin would subtract a huge pedestal and dim the whole band. And the second term of the <code>max</code> is the same filament-reach floor <code>setupGeometry</code> applies, without which the two disagree at small <code>glowRadius</code> and <code>reach</code> hits 0 at <code>glowRadius</code> 0, making the pedestal subtract the entire bloom.</p>
+
+      <p>The halo needs no pedestal: falling as <code>1/ad&sup2;</code>, at the same distance it is about <code>2e-4</code> of peak, already invisible.</p>
+
+      <h3>The emission gate</h3>
+
+<pre><code>float glowGate = clamp(uGlowRadius / GLOW_GATE_FADE_PX, 0.0, 1.0);</code></pre>
+
+      <p><code>glowRadius = 0</code> must read as "filament only", but an analytic profile at radius 0 is a sub-pixel spike of <em>full height</em> rather than nothing. Both layers therefore fade in over <code>glowRadius</code> in <code>[0, GLOW_GATE_FADE_PX]</code>. Measured against a fixed pixel width on purpose: gating against a <code>sampleSpacing</code>-derived floor would re-couple brightness to the rect size, which is the whole thing this design removes.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s7">
+      <h2 class="sec"><span class="num">07</span> Arc gating</h2>
+
+      <p>An arc is <code>(start, length, intensity, hasStops)</code>, positions in perimeter fractions. Up to <code>MAX_ARCS</code> of them. Overlap resolves <strong>winner-take-all</strong>: the arc with the largest effective mask <code>(coverage * intensity)</code> owns both the colour and the emission at that point.</p>
+
+      <p>There are <strong>two different coverage functions</strong>, and conflating them is the classic bug in this file.</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th></th><th class="mono">arcInside</th><th class="mono">arcCoverContinuous</th></tr></thead>
+          <tbody>
+            <tr><td>Evaluated at</td><td>each gather sample's <code>si</code></td><td>the fragment's own <code>sPos</code></td></tr>
+            <tr><td>Feeds</td><td>the hue average only</td><td>filament, halo and bloom</td></tr>
+            <tr><td>Feather direction</td><td><strong>outward</strong> from the arc ends</td><td><strong>inward</strong>, inside the arc's span</td></tr>
+            <tr><td>Feather width</td><td>1 sample (head), 0.25 sample (tail)</td><td><code>HEAD/TAIL_FEATHER_PX / peri</code></td></tr>
+            <tr><td>Wrap handling</td><td>tests <code>si</code> and <code>si + 1</code>, takes the max</td><td><code>rel -= floor(rel)</code></td></tr>
+            <tr><td>Effect on brightness</td><td><strong>none</strong> - cancels in the gated normalisation</td><td>it <em>is</em> the brightness envelope</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>arcInside: hue crossfade only</h3>
+
+      <p>Its feather sits <em>outside</em> the arc on each side, so a sample exactly at <code>start</code> or <code>end</code> still carries full weight in the hue average. The widths are asymmetric on purpose: one full sample on the head side, so adjacent samples' fade-in ranges are contiguous and a growing arc's leading hue hands over smoothly from one gather point to the next; a quarter sample on the tail side, near-hard, so the arc's own hue takes over immediately at its start rather than being averaged with whatever precedes it.</p>
+
+      <p>Wrap-awareness comes from testing both <code>si</code> and the virtual <code>si + 1</code> and taking the max. When an arc extends past 1.0, a sample near position 0 is physically close to <code>end</code> through the perimeter loop, and the <code>si + 1</code> test picks that up. The same expression handles the non-wrapping case, because <code>si + 1</code> always falls outside a sub-unit arc there. Without it the hue breaks discontinuously at position 0 for any arc straddling the wrap point.</p>
+
+      <h3>arcCoverContinuous: the visible extent</h3>
+
+<pre><code>float cap    = length * ARC_FEATHER_MAX_SHARE;
+float fH     = min(fHead, cap);
+float fT     = min(fTail, cap);
+float tailIn = smoothstep(0.0, fT, rel);
+float headIn = 1.0 - smoothstep(length - fH, length, rel);
+return tailIn * headIn;</code></pre>
+
+      <p>The <strong>inward</strong> feather is the load-bearing choice. It means coverage is exactly 0 for any fragment whose perimeter position falls outside <code>[start, start + length]</code>, which buys two properties: no bleed onto adjacent edges past a corner, regardless of width, and endpoints whose fade profile is a plain smoothstep in the perimeter parameter, so it reads the same shape whether the endpoint sits mid-edge or right at a corner. The trade-off is a visible inset: the arc lights at <code>start + fT</code> and ends at <code>start + length - fH</code>.</p>
+
+      <p>The cap exists because the feathers arrive as a fixed pixel span while <code>length</code> is a perimeter <em>fraction</em>. On a small rect a short arc can be narrower than the two ramps combined; they then overlap and clip the peak, so the same arc config renders dimmer on a smaller rect - measured at 0.21 versus 1.00 for <code>length = 0.02</code> at 200x150 against 800x600. Capping each feather at a share of the arc's own length holds the peak at exactly 1.0 for any length at any size, giving a short arc a proportionally shorter ramp instead of a truncated top.</p>
+
+      <p><code>ARC_FEATHER_MAX_SHARE = 0.4</code> leaves a <code>0.2 * length</code> plateau at full brightness between the two ramps. Up to 0.5 also holds the peak, but with no plateau the arc reads as a spike rather than a flat-topped segment. Arcs longer than <code>(HEAD + TAIL) / 0.4</code> px never reach the cap, so the normal case is bit-identical to the uncapped version.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s8">
+      <h2 class="sec"><span class="num">08</span> Travelling segments</h2>
+
+      <p>A segment is <code>(position, invSigma, boost, hasStops)</code>. Up to <code>MAX_SEGMENT_BOOSTS</code>. They are <strong>additive lights independent of arcs</strong>: they emit where no arc covers, and they deliberately bypass <code>uIntensity</code> so a segment stays lit on a darkened or fully dark arc.</p>
+
+      <p>Like arcs, the magnitude and the hue come from different places. The hue is gathered in the loop with the raw proximity weight <code>g</code> (not the arc-gated <code>lg</code>). The magnitude is evaluated pointwise:</p>
+
+<pre><code>float segCoverPt = 0.0;
+for (int s = 0; s &lt; uSegmentCount; s++) {
+    vec4  seg = uSegments[s];
+    float rel = sPos - seg.x;
+    rel      -= floor(rel + 0.5);          // wrap to [-0.5, 0.5]
+    float e   = rel * seg.y;
+    segCoverPt += seg.z * exp(-e * e);     // boost * gaussian, summed
+}</code></pre>
+
+      <p>Summed rather than maxed, so overlapping segments reinforce. Left <strong>unclamped</strong> on purpose: a <code>boost</code> above 1 must still brighten. The separate <code>emitCoverAll</code> applies <code>min(segCoverPt, 1.0)</code>, but that only bounds the shared halo and bloom reach and is not the segment's brightness.</p>
+
+      <p>Three gates come out of this, and they are not interchangeable:</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Name</th><th>Expression</th><th>Applied to</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">emitCover</td><td class="mono">max over arcs of (cover * intensity)</td><td>the arc term in both filament and glow</td></tr>
+            <tr><td class="mono">emitCoverAll</td><td class="mono">max(emitCover, min(segCoverPt, 1))</td><td>the segment term in the glow</td></tr>
+            <tr><td class="mono">filamentGate</td><td class="mono">max(smoothstep(0.5, 1, min(segCoverPt,1)), emitCover)</td><td>the segment term in the filament</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Composition then keeps the two sources' coverages separate:</p>
+
+<pre><code>vec3 arcCol   = col * uIntensity;
+vec3 emitFil  = arcCol * emitCover + segCol * filamentGate;
+vec3 emitGlow = arcCol * emitCover + segCol * emitCoverAll;</code></pre>
+
+      <div class="note">
+        <span class="tag">Why not one shared gate</span>
+        Summing the two sources first and applying a single gate let the segment's gate lift the <em>arc</em> term on a stretch no arc covers. A blue arc over half the ring plus a red segment on the other half rendered the segment magenta at roughly 2x brightness, and violet - arc-dominant - on its shoulders. With an arc covering, both <code>emitFil</code> and <code>emitGlow</code> reduce to exactly the old expression, so the common "tracer running along a lit arc" case is unchanged; only the paths where the two coverages disagree move.
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s9">
+      <h2 class="sec"><span class="num">09</span> The colour gather</h2>
+
+      <p class="lede">The one remaining loop, and the only place a length is expressed as a perimeter fraction rather than in pixels. It produces <strong>colour only</strong> - never brightness, coverage or reach.</p>
+
+      <h3>Per iteration</h3>
+
+      <p>One UBO read, one subtract, one dot, one reciprocal, one gradient-LUT lookup, plus one <code>exp()</code> per active segment. No <code>pow()</code>, no in-shader stops walk, no HSV maths, and no <code>fract()</code> - the sweep advance is folded into the REPEAT-wrapped LUT coordinate.</p>
+
+<pre><code>vec2  dv = vPos - uLoopSamples[i].xy;
+float dd = dot(dv, dv);
+float g  = 1.0 / (dd + kc2);            // proximity weight
+float lg = g * arcW;                    // arc-gated weight
+acc     += baseColI * lg;
+wsumLit += lg;</code></pre>
+
+      <h3>The kernel width, and why it is a fraction</h3>
+
+<pre><code>float kc = max(peri * COLOR_BLEND_PERIM_FRAC, EMISSION_MIN_WIDTH);</code></pre>
+
+      <p>The signal being filtered is the gradient LUT, which is itself parameterised by perimeter fraction: sample <code>i</code> contributes <code>LUT(i / 128)</code>. A kernel measured in pixels therefore covers a <em>different span of the gradient</em> on every geometry, and the same colour stops render washed out on a small rect and crisp on a large one. Measured on the stock 4-stop ring, the colour sampled exactly on the red stop ran <code>(0.95, 0.33, 0.06)</code> at 200x150 against <code>(0.96, 0.04, 0.00)</code> at 2800x2200 - roughly 8x the hue bleed from geometry alone.</p>
+
+      <p>Two further properties fall out of the same choice:</p>
+
+      <ul class="body">
+        <li><strong>A constant anti-bead margin.</strong> The kernel must stay at or above about one sample spacing or the blend collapses between samples. Spacing is <code>perimeter / 128</code>, so a perimeter fraction pins the ratio at <code>COLOR_BLEND_PERIM_FRAC * 128 = 1.13</code> spacings on every geometry. The previous fixed 24 px span met that bound only up to a ~3000 px perimeter and was down to 0.31 spacings by 9900 px. (No beading was actually measurable there - a DFT of the hue around the perimeter put the 128-cycle component at the noise floor - because the gradient varies slowly over one spacing on a rect that large. The margin is a guarantee for dense colour stops, not a fix for an observed artifact.)</li>
+        <li><strong>Renderer agreement.</strong> Both shaders derive the kernel from the same <code>NEON_MAX_LOOP_SAMPLES</code>-based fraction rather than from their own runtime sample count, so <code>NeonOptimizedRenderer</code>'s <code>numSamples</code> slider does not move the colour blend. An earlier <code>sampleSpacing</code>-derived floor divided by the live count and landed 2x wider there.</li>
+      </ul>
+
+      <p><code>0.0088</code> puts the kernel at 24.0 px on the stock 800x600 / radius 40 geometry, matching the previous fixed span, so default-sized output is unchanged. It is deliberately <strong>not coupled to <code>glowRadius</code></strong>: the gather produces colour only, so a wide glow has no reason to desaturate the gradient, and the old <code>max(glowRadius, floor)</code> reintroduced exactly the pixel-space dependence this constant exists to remove.</p>
+
+      <h3>Gated normalisation</h3>
+
+<pre><code>vec3 col       = acc    / max(wsumLit,  WSUM_EPSILON);
+vec3 segColHue = segAcc / max(wsumSegW, WSUM_EPSILON);</code></pre>
+
+      <p>Dividing by the <em>same weight the numerator was gathered with</em> makes both a pure hue of unit magnitude everywhere on the quad: coverage and per-arc intensity cancel out of the ratio, and reach the emission solely through the pointwise coverages of sections 7 and 8.</p>
+
+      <p>Both used to divide by an <strong>ungated</strong> sum over every sample, so an unlit far side of the ring dragged the lit colour toward black by roughly <code>kc / rectHeight</code>. With <code>kc</code> pinned to a fixed pixel span that ratio grew as the rect shrank: a quarter-perimeter arc measured 0.79 of full brightness at 200x150 against 0.97 at 1920x1080. Gated normalisation is exactly 1.0 at every size.</p>
+
+      <h3>Which colour a sample contributes</h3>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Case</th><th>Base colour</th><th>Stop-less segment falls back to</th></tr></thead>
+          <tbody>
+            <tr><td>Winning arc has stops</td><td><code>uArcLUT</code> row <code>bestIdx</code>, sampled in <strong>arc-local</strong> space: <code>(si - start) / length</code>, minus the time sweep</td><td>the same arc colour</td></tr>
+            <tr><td>Winning arc has no stops</td><td><code>uGradientLUT</code> in <strong>perimeter</strong> space at <code>ti</code></td><td>the same arc colour</td></tr>
+            <tr><td>No arc covers this sample</td><td>black - the arc emission contributes nothing here</td><td><code>uGradientLUT</code> at <code>ti</code>, so a segment over bare perimeter stays hue-continuous with the ring</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Arc-local sampling is what makes hue rotation on an arc read as the gradient marching <em>through</em> the arc window rather than the arc's position sliding. A segment with its own stops samples row <code>s</code> of <code>uSegmentLUT</code> at <code>clamp(0.5 + e * 0.5, 0, 1)</code>, which runs 0 at its head and 1 at its tail.</p>
+
+      <p>The inner segment loop early-outs on <code>bell &lt; 0.005</code>, which is what keeps distant fragments and distant segments cheap.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s10">
+      <h2 class="sec"><span class="num">10</span> The three LUT bakes</h2>
+
+      <p>All CPU-side, in <code>neon-renderer.cpp</code>, all gated on their own dirty flags.</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Bake</th><th>Rebuilds when</th><th>Produces</th></tr></thead>
+          <tbody>
+            <tr><td class="mono nw">rebuildLoopSamples</td><td><code>config.geometry</code> changed</td><td>128 <code>vec4</code>s from <code>GetPointOnRectangle(i / 128)</code>, evenly spaced by arc length, straight into the UBO.</td></tr>
+            <tr><td class="mono nw">rebuildGradientLUT</td><td><code>colorStops</code> or <code>blendSpace</code> changed</td><td>256 RGBA float texels via <code>ColorUtils::SampleStops</code>, held as <code>mLUTTarget</code>. Sampled at <code>t = i / 256</code> so the wrap is seamless.</td></tr>
+            <tr><td class="mono nw">rebuildSegmentLUT</td><td>the merged effective segment set differs from <code>mBakedSegments</code></td><td>128 x 8 RGBA8 atlas, one row per segment.</td></tr>
+            <tr><td class="mono nw">rebuildArcLUT</td><td><code>config.neon.arcs</code> differs from <code>mBakedArcs</code></td><td>128 x 8 RGBA8 atlas, one row per arc.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Note the sampling difference: the gradient ring uses <code>t = i / W</code> because it wraps, while the arc and segment rows use <code>t = x / (W - 1)</code> because they are clamped spans with a defined head and tail.</p>
+
+      <p>Only the <em>colour</em> fields drive an atlas re-bake. Segment position, length and boost, and arc start, length and intensity, all ride the UBO and are read live, so animating them costs nothing. The dirty check is a deep compare against the last baked vector, cheap because each entry's <code>operator==</code> includes its stops.</p>
+
+      <h3>Blend spaces</h3>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th class="mono">BlendSpace</th><th>Behaviour</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">RGB</td><td>Interpolate directly in linear RGB. Default.</td></tr>
+            <tr><td class="mono">HSV</td><td>Convert, interpolate, convert back. Avoids muddy mid-tones between saturated stops.</td></tr>
+            <tr><td class="mono">HSL</td><td>As HSV but smoother mid-tones through neutral gray.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>The colour cross-fade</h3>
+
+      <p>Held entirely in the gradient bake and <code>Update</code>. On a stop change the renderer snapshots what is currently displayed as <code>mLUTFrom</code>, keeps the new bake as <code>mLUTTarget</code>, and blends toward it over <code>colorTransitionDuration</code> seconds, re-uploading <code>mLUTDisplay</code> each frame. Three paths:</p>
+
+      <ul class="body">
+        <li><strong>First bake</strong> (<code>!mHasBakedLUT</code>): seed all three buffers and upload; there is nothing to fade from.</li>
+        <li><strong>Duration &lt;= 0</strong>: snap display to target, no fade.</li>
+        <li><strong>Otherwise</strong>: fade from whatever is on screen, mid-fade or settled, so repeated changes chain smoothly rather than jumping back to the last settled ring.</li>
+      </ul>
+
+      <p><code>Update</code> drives it with <strong>raw frame time, not the animation clock</strong>, so a colour change still fades while animations are paused. The shader is not involved and cannot tell a fade is happening.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s11">
+      <h2 class="sec"><span class="num">11</span> Quad sizing and fades</h2>
+
+      <h3>The margin <span class="src">setupGeometry</span></h3>
+
+<pre><code>glowReach     = glowRadius * EARLY_OUT_RADIUS_FACTOR * (1 + bloomStrength * intensity)
+filamentReach = max(lineWidth * 0.5, FILAMENT_MIN_HALF_WIDTH) * filSigmas
+margin        = max(glowReach, filamentReach)
+if (outsideCutoff.enable)
+    margin    = min(margin, outsideCutoff.size + outSoft + 1)</code></pre>
+
+      <p>The quad spans <code>rect + margin</code> on each axis, with <strong>sharp corners always</strong>. Geometry bounds the far region so there is no per-fragment discard, which is tiler-friendly.</p>
+
+      <p><code>glowRadius</code> alone sizes the glow term. The old expression also carried a <code>sampleSpacing * SPACING_FACTOR</code> term, and since <code>sampleSpacing</code> is <code>perimeter / 128</code> it won on any reasonably large rect at default <code>glowRadius</code>, making both the distance the bloom got truncated at and the brightness it still had there track the rect size: the fade began at 250 px on a 200x150 rect and 1542 px on a 1920x1080 one. It also asked for a roughly 5800x4900 px quad on a 1920x1080 rect. The bloom's reach is a function of <code>glowRadius</code> and nothing else.</p>
+
+      <p>The <code>filamentReach</code> floor is why <code>lineWidth</code> and <code>filamentFalloff</code> both appear in <code>geometryDirty</code>. Without it, <code>glowRadius = 0</code> produced a zero margin: the quad landed exactly on the rect and clipped every exterior fragment, so the outside half of the filament vanished while the inside half stayed. The <code>+ 1</code> in the cutoff cap is a safety pixel so the shader's own soft mask fades to zero <em>before</em> the quad edge.</p>
+
+      <div class="warn">
+        <span class="tag">Keep in step</span>
+        Three places compute this expression: <code>setupGeometry</code> in <code>neon-renderer.cpp</code>, its copy in <code>neon-optimized-renderer.cpp</code>, and the <code>reach</code> line in both fragment shaders (for the bloom pedestal). They must agree or the pedestal lands at the wrong distance.
+      </div>
+
+      <h3>The quad-edge fade</h3>
+
+<pre><code>float fadeFloor = uQuadMargin * QUAD_FADE_START_FRAC;
+float cutEdge   = uOutsideCutoff + outSoft;
+float fadeStart = (cutEdge &lt; uQuadMargin) ? max(fadeFloor, cutEdge) : fadeFloor;
+float dQuad     = sdRoundBox(vPos, halfSize + vec2(uQuadMargin), 0.0);
+result *= 1.0 - smoothstep(-(uQuadMargin - fadeStart), 0.0, dQuad);</code></pre>
+
+      <p>Measured <strong>per-axis via <code>dQuad</code>, not from the Euclidean <code>d</code></strong>. What the fade hides is the <em>quad</em>, and the quad is a plain rectangle; keying on <code>d</code> put the ramp on a rounded contour that ate the corners early. At <code>cornerRadius</code> 0 on the stock 800x600 rect at cutoff 12, the band ran out to <code>d = 16.97</code> at a corner while the <code>d</code>-keyed ramp was already zero by <code>d = 14</code>, erasing the outer ~30% of every corner - while <code>black-rect.frag</code>, drawn on a fullscreen quad with no fade, kept its square corner. With the cutoff disabled the same rounding chopped the bloom at <code>d = uQuadMargin</code> though the quad ran on to its own corner, so corners faded sooner than edges for no reason.</p>
+
+      <p><code>QUAD_FADE_START_FRAC</code> is a fraction rather than a pixel span because the margin is proportional to <code>glowRadius</code> and so is the bloom profile it hides; a fixed ramp would vanish on a wide glow and dominate a narrow one. At stock <code>glowRadius</code> 5 / bloom 0.3 / intensity 1 the margin is 312 px, giving a 62 px ramp. Nothing derives 0.8 specifically.</p>
+
+      <p>The <code>fadeStart</code> floor handles the case where the margin was set by the <em>cutoff</em> instead of the glow. At cutoff 12 the margin is 13, so a bare 80% started the ramp at 10.4, inside the cutoff band, dimming its outer edge ahead of the cutoff mask - and only on the exterior, since the fade keys on positive <code>d</code>. Measured, the outermost band pixel sat at ~0.66 of its mirrored counterpart. Flooring the start at the cutoff boundary hands everything up to that point back to the cutoff smoothstep. The floor applies only when that boundary actually falls inside the quad, which keeps <code>fadeStart &lt; uQuadMargin</code> always true - an inverted smoothstep is undefined in GLSL.</p>
+
+      <figure>
+        <svg viewBox="0 0 720 350" role="img" aria-label="A large sharp-cornered draw quad surrounds a small rounded rectangle. A shaded band just inside the quad edge marks where the emission is faded out.">
+          <defs>
+            <marker id="qa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--ink-3)"/>
+            </marker>
+          </defs>
+
+          <path d="M160,30 H560 V310 H160 Z M176,46 H544 V294 H176 Z" fill="var(--pink-dim)" fill-rule="evenodd"/>
+
+          <rect x="160" y="30" width="400" height="280" class="dg-pink dg-dash"/>
+          <rect x="176" y="46" width="368" height="248" class="dg-ghost dg-dash"/>
+          <rect x="240" y="110" width="240" height="120" rx="28" class="dg-acc"/>
+
+          <line x1="240" y1="86" x2="160" y2="86" class="dg-line" marker-end="url(#qa)"/>
+          <line x1="240" y1="80" x2="240" y2="92" class="dg-ghost"/>
+          <line x1="160" y1="80" x2="160" y2="92" class="dg-ghost"/>
+          <text x="200" y="76" class="dg-t2" text-anchor="middle">uQuadMargin</text>
+
+          <text x="360" y="176" class="dg-t c-a" text-anchor="middle">the configured rect</text>
+          <text x="574" y="34" class="dg-t c-p">the draw quad</text>
+          <text x="574" y="48" class="dg-t2">sharp corners, always</text>
+          <text x="574" y="290" class="dg-t2 c-p">emission ramps to zero</text>
+          <text x="574" y="304" class="dg-t2">over [fadeStart, margin]</text>
+
+          <text x="360" y="336" class="dg-t2" text-anchor="middle">margin = glowRadius * 48 * (1 + bloomStrength * intensity), floored by the filament reach</text>
+        </svg>
+        <figcaption><b>Fig 2</b> The quad, its margin and the fade band. Pixels outside the quad never run the shader. The fade and the quad are both keyed per-axis, which is why the shaded band has square corners while everything else in the shader works on rounded contours.</figcaption>
+      </figure>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s12">
+      <h2 class="sec"><span class="num">12</span> Sides, cutoffs, opaque fill</h2>
+
+      <h3>Early discard</h3>
+
+<pre><code>if (dOut &gt;  outSoft) discard;
+if (dIn  &lt; -inSoft ) discard;</code></pre>
+
+      <p>Run immediately after <code>d</code>, before any filament or gather work, so a tightly cut band costs almost nothing outside itself.</p>
+
+      <h3>The one-sided cut</h3>
+
+<pre><code>if      (uGlowSide == GLOW_SIDE_INSIDE)  result *= smoothstep( softEdge, -softEdge, d);
+else if (uGlowSide == GLOW_SIDE_OUTSIDE) result *= smoothstep(-softEdge,  softEdge, d);</code></pre>
+
+      <p>Applied to the <strong>whole</strong> composed emission, after all three layers are summed, so it cuts filament and glow alike at the line. This is the single comparison against the sign of <code>d</code> that the SDF makes possible.</p>
+
+      <h3>The cutoff masks</h3>
+
+<pre><code>result *= smoothstep(-inSoft, inSoft, dIn);
+result *= 1.0 - smoothstep(-outSoft, outSoft, dOut);</code></pre>
+
+      <p>Symmetric around each boundary, so a sample exactly on the boundary sees about 50% weight. These are what let a wide glow be clipped to a stated band regardless of <code>glowRadius</code>.</p>
+
+      <h3>The opaque fill <span class="src">black-rect.frag</span></h3>
+
+      <p>An optional pass drawn <em>before</em> the neon, on a fullscreen quad with an identity MVP, so the effect can sit on its own background instead of only adding light. <code>opaqueMode</code> selects the region: <code>NONE</code>, <code>INSIDE</code>, <code>OUTSIDE</code>, <code>BOTH</code> (the band between the two cutoffs), or <code>ALL</code> (the whole viewport). It has its own analytic SDF anti-aliasing, which is why the fill lands cleanly on rounded corners at any softness.</p>
+
+      <p>In the optimized renderer this pass is drawn at <strong>full resolution</strong>, straight to the target framebuffer, and the half-res neon is composited over it. A hard-edged silhouette is the one part of the effect where a soft upscale would be visible.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s13">
+      <h2 class="sec"><span class="num">13</span> Grading and output</h2>
+
+      <h3>Composition</h3>
+
+<pre><code>vec3 result  = emitFil  * core  * FILAMENT_GAIN  * lineGate;
+result      += emitGlow * halo  * HALO_GAIN      * glowGate;
+result      += emitGlow * bloom * uBloomStrength * glowGate;</code></pre>
+
+      <h3>Hue-preserving Reinhard</h3>
+
+<pre><code>float peak   = max(max(result.r, result.g), result.b);
+float mapped = peak / (peak + TONE_MAP_SHOULDER);
+result = result * (mapped / max(peak, 1e-6));</code></pre>
+
+      <p>Tone-maps the <em>peak channel</em> and scales the others by the same ratio. A per-channel tone map desaturates warm mixes - orange drifts to peach - because red saturates while green and blue are still linear; scaling by the peak's compression preserves the original R:G:B ratio. With <code>FILAMENT_GAIN</code> at 12 the filament core is well past 1.0, so this is what turns a coloured curve into a white core with coloured edges.</p>
+
+      <h3>Gamma and alpha</h3>
+
+<pre><code>result = pow(result, vec3(GAMMA_EXPONENT));
+float alpha = clamp(max(result.r, max(result.g, result.b)), 0.0, 1.0);
+fragColor = vec4(result, alpha);</code></pre>
+
+      <p><code>GAMMA_EXPONENT</code> at 0.85 lifts the mid-tones so the falloff reads the way the eye expects. Coverage is the brightest channel: the hot filament core reaches alpha near 1 and occludes the background like a real glass tube, the dim halo and bloom stay near 0 and remain additive, and the dark surround at alpha 0 leaves the background untouched. Pairs with <code>glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)</code>.</p>
+
+      <p>Premultiplication is also what makes the half-resolution path work at all: averaging two premultiplied pixels is correct, so plain bilinear filtering suffices and the blit is two statements with no dark fringing.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s14">
+      <h2 class="sec"><span class="num">14</span> Half-resolution rules</h2>
+
+      <p class="lede">The optimized shader is the same text plus a handful of unit corrections. Getting the rule wrong produces a geometric artifact rather than a crash, which makes it hard to trace.</p>
+
+      <h3>What the CPU scales</h3>
+
+      <p>Every geometric uniform is pre-multiplied by <code>scale</code> before upload, so the shader works entirely in FBO pixels and never learns the difference:</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Scaled by <code>scale</code></th><th>Not scaled</th></tr></thead>
+          <tbody>
+            <tr>
+              <td class="mono">uRectSize, uCornerRadius, uLineWidth, uGlowRadius, uGlowSideSoftness, uInsideCutoff, uInsideCutoffSoftness, uOutsideCutoff, uOutsideCutoffSoftness, uQuadMargin, the loop sample positions</td>
+              <td class="mono">uIntensity, uBloomStrength, uFilamentFalloff, arc and segment positions / lengths</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>The unscaled group divides cleanly: the first three are unitless multipliers, and the last are perimeter fractions in <code>[0, 1]</code>, so they mean the same thing at any size.</p>
+
+      <p>This works because of a property of the SDF worth stating on its own: <strong>halve every input and the distance halves too</strong>. Every comparison in the shader is a ratio of two lengths, and both halve together, so every ratio is unchanged. The distance formula, the perimeter walk and all three brightness curves are therefore identical text in the two shaders.</p>
+
+      <h3>What the shader must correct</h3>
+
+      <p>A constant written into the shader cannot scale itself. <code>uResolutionScale</code> is uploaded purely so the shader can convert the baked pixel constants, and it is the only uniform in the pair that exists because of the optimization.</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Constant</th><th class="mono">neon.frag</th><th class="mono">neon-optimized.frag</th></tr></thead>
+          <tbody>
+            <tr><td>Filament min half-width</td><td class="mono">FILAMENT_MIN_HALF_WIDTH</td><td class="mono">* uResolutionScale</td></tr>
+            <tr><td>Arc head / tail feathers</td><td class="mono">HEAD/TAIL_FEATHER_PX</td><td class="mono">* uResolutionScale</td></tr>
+            <tr><td>Glow gate fade width</td><td class="mono">GLOW_GATE_FADE_PX</td><td class="mono">* uResolutionScale</td></tr>
+            <tr><td>Colour blend kernel</td><td class="mono">COLOR_BLEND_PERIM_FRAC</td><td class="mono">unchanged</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p><strong>The rule: a constant measured in pixels needs the correction; a constant that is a plain fraction does not</strong>, because the value it multiplies is already in FBO pixels. <code>COLOR_BLEND_PERIM_FRAC</code> multiplies a <code>peri</code> that is already scaled, so correcting it would double-apply.</p>
+
+      <p>Miss one and the symptom is geometric. The arc feathers without their correction inset each arc's filament twice as deep as the full-res renderer does, leaving a visible stretch of bare halo past the ends.</p>
+
+      <h3>The sample count</h3>
+
+      <p><code>uNumSamples</code> makes the gather loop bound dynamic, defaulting to 64 of the available 128. It changes <strong>one thing only</strong>: how many perimeter points the colour gather visits. It is safe to turn down precisely because of the section 6 rewrite - brightness, coverage and reach are all closed forms now and none of them touch the sample list. Halving the samples costs a little precision where two stops meet and nothing else: no dimming, no change in glow width, no beading.</p>
+
+      <h3>Framebuffer discipline</h3>
+
+<pre><code>const GLuint targetFbo = Framebuffer::GetBoundId();   // before pass 1
+...
+Framebuffer::BindId(targetFbo);                       // before pass 2</code></pre>
+
+      <p>Restore the framebuffer the renderer was <em>handed</em>, never <code>BindDefault()</code>. During a frame capture the "backbuffer" is a real FBO, so binding the default one sends the composite to the window and the captured image comes back empty.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s15">
+      <h2 class="sec"><span class="num">15</span> Droplets</h2>
+
+      <p class="lede">Rain on glass in a band hugging the perimeter. It looks like a fluid simulation. It is a hashed grid masked by the same SDF, with an orientation-aware amplitude blend.</p>
+
+      <h3>The band</h3>
+
+<pre><code>depth = (INSIDE)  ? -sd - uBandOffset
+      : (OUTSIDE) ?  sd - uBandOffset
+      :              sd + bandWidth * 0.5 - uBandOffset;   // BOTH: straddle
+across = depth / bandWidth;                                // 0 inner, 1 outer</code></pre>
+
+      <p>Everything the droplet field does is parameterised on <code>across</code>. Which side the band occupies is taken from <code>NeonConfig::glowSide</code>, not its own setting, so rain and glow always share a side without being kept in sync by hand.</p>
+
+      <p>Two early exits carry most of this pass's savings: <code>across &lt; -0.25 || across &gt; 1.25</code> discards before any droplet work, and a zero <code>bandMask</code> discards after the boundary feather. A thin band is a small slice of the viewport.</p>
+
+      <h3>Cell size comes from the band</h3>
+
+<pre><code>float lanes  = float(max(uLanes, 1));
+float cellPx = bandWidth / lanes;
+vec2  uv     = gl_FragCoord.xy / (CELL_UV * cellPx);</code></pre>
+
+      <p>Originally the cells were sized from the viewport, so a 20 px band showed slivers of drops tens of pixels across - you saw fragments of enormous droplets, not small ones. Deriving <code>cellPx</code> from the band width instead means drops fit the band however thin it is, and <code>lanes</code> chooses how many sit side by side across it.</p>
+
+      <h3>Gravity is global</h3>
+
+      <p>Making droplets flow <em>along</em> the perimeter was tried and reads as a lava lamp rather than rain, so gravity points straight down the screen and the grid is hashed in screen space. Cells are 6:1 tall to leave room for each drop's trail; <code>uv.y</code> increases upward, so advancing the pattern along <code>+uv.y</code> makes drops travel down.</p>
+
+      <p>The band's orientation therefore has to be handled by amplitude, not by bending the grid. The outward normal comes from finite differences of the SDF:</p>
+
+<pre><code>vec2 grad = vec2(sdRoundBox(p + vec2(1,0), ...) - sd,
+                 sdRoundBox(p + vec2(0,1), ...) - sd);
+float horizontality = abs(grad.x) / max(length(grad), 1e-6);
+float runs = S(0.25, 0.8, horizontality);   // 1 where the band is vertical</code></pre>
+
+      <p><code>runs</code> then weights three layers. This changes <strong>amplitude only, never position</strong>, which is exactly why the grid never shears or tears at the corners.</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Layer</th><th>Weight</th><th>Role</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">StaticDrops</td><td class="mono">S(-0.5, 1, rain) * mix(1.6, 0.5, runs)</td><td>Condensation beads that fade in place. Weighted higher on horizontal runs, where drops pass through quickly and beads sit longer. The only thing that shows there.</td></tr>
+            <tr><td class="mono">DropLayer(uv)</td><td class="mono">S(0.25, 0.75, rain)</td><td>Trickling drops with trails.</td></tr>
+            <tr><td class="mono">DropLayer(uv * 1.85)</td><td class="mono">S(0.0, 0.5, rain)</td><td>A second, finer trickling layer.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Both trickling layers stay active everywhere, not only on vertical runs: on a horizontal run the drops simply cross the band vertically instead of streaking along its length, which is what falling rain looks like passing through a narrow slit.</p>
+
+      <h3>Water shading</h3>
+
+      <p>Water has no pigment. A drop is legible only through what it does to the light around it, so the body stays about 90% transparent (<code>bodyAlpha = c.x * 0.10</code>) and two self-lit terms are drawn on top:</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Term</th><th>Expression</th><th>Why</th></tr></thead>
+          <tbody>
+            <tr><td>Rim</td><td class="mono">pow(clamp(c.x * (1 - c.x) * 4, 0, 1), 1.5)</td><td>Derived from the drop <strong>mask</strong>, not the height-field slope. The gradient saturates to 1 across the whole drop at any usable gain, which is what filled every drop solid white in earlier passes. The mask form stays a thin outline at any size.</td></tr>
+            <tr><td>Rim weighting</td><td class="mono">0.35 + 0.65 * facing</td><td>Leans the rim toward the lit side. An evenly bright ring reads as a soap bubble; a real drop catches light as a crescent.</td></tr>
+            <tr><td>Specular</td><td class="mono">pow(max(0, dot(nrm, lightDir)), 16) * c.x</td><td>Exponent 16 keeps it a tight dot rather than a broad sheen.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Output is premultiplied, and <code>uTint.a</code> scales RGB and alpha together - scaling alpha alone would darken drops without fading them.</p>
+
+      <div class="note">
+        <span class="tag">Deliberately absent</span>
+        No refraction and no framebuffer capture. Both existed once. The only backdrop this band ever sits on is the neon's own smooth gradient, and refraction had nothing to displace against it, so the effect was invisible and the whole capture path was removed. What is left is self-lit highlights, which cost nothing and read the same.
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s16">
+      <h2 class="sec"><span class="num">16</span> Lens flare</h2>
+
+      <p>One fullscreen pass, no geometry. Every fragment works out its distance and angle from the sun and evaluates a stack of terms. Ported from a Shadertoy shader; see the licence note at the end of this section.</p>
+
+      <h3>Where the sun is</h3>
+
+      <p>Not in screen coordinates. The sun rides the perimeter at <code>perimeterPosition</code>, in the same 0-to-1 space the neon arcs use, with a signed <code>perimeterOffset</code> pushing it out or pulling it in. Crucially it follows the <em>offset curve</em> directly - itself a rounded rect of radius <code>cornerRadius + offset</code> - and the position advances by arc length along that curve, so the sun keeps a constant speed through the corners instead of visibly slowing. An offset below <code>-cornerRadius</code> clamps the corners square rather than inverting them. <code>GetSunFragPosition</code> is shared by both flare renderers so the sun lands identically; the half-res variant just multiplies the result by its scale.</p>
+
+      <h3>Working space</h3>
+
+<pre><code>vec2 uv    = gl_FragCoord.xy / uResolution - 0.5;   uv.x    *= aspect;
+vec2 sunUV = uSunPos         / uResolution - 0.5;   sunUV.x *= aspect;</code></pre>
+
+      <p>Aspect-corrected, y-up, origin at the screen centre. <code>uFlareCenter</code> arrives as normalised screen coords with y <em>down</em>, so it is converted: <code>vec2((x - 0.5) * aspect, 0.5 - y)</code>.</p>
+
+      <h3>Ghosts</h3>
+
+      <p>Ten groups along the axis from the flare centre through the sun. Working relative to <code>flareCentre</code> re-anchors the whole cluster: <code>dist 0</code> is the flare centre and <code>dist ~ -1</code> is the sun, so <code>uGhostOffset</code> slides the group along that line - the <code>-1.5</code> default biases them toward the border rather than the screen centre. <code>uGhostSpacing</code> stretches the placement axis without touching per-ghost colour or size.</p>
+
+      <p>Each group is three terms from <code>circle()</code>: a soft <code>pow</code>-based blob, a thin ring, and a flat-filled hexagonal sprite. The hexagon is not decorative - a real camera aperture is a ring of straight blades, and a ghost is an out-of-focus image of that opening.</p>
+
+      <p><code>hexCoverage</code> builds the sprite's edge from the polygon distance with an <code>fwidth</code>-sized feather. The reference sliced it out with <code>max(0.01 - regShape, 0)</code> where <code>regShape</code> was a 0.5..0.51 smoothstep; that threshold lands at the flat bottom of the smoothstep, so the visible boundary was sub-pixel thin however wide the band was, and it aliased into stair-steps - worse in the half-res pass where a pixel spans twice the width. Coverage from the distance keeps the boundary about 1 px at whatever resolution the pass runs at.</p>
+
+      <p>Ghost colour is a procedural palette modulated by distance, so no two read the same, blended toward <code>uGhostColor</code> by <code>uGhostTint</code> when the rainbow is too much. Brightness still comes from the shape terms, so ghosts keep their falloff either way.</p>
+
+      <h3>Rays</h3>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Term</th><th>Expression</th><th>Role</th></tr></thead>
+          <tbody>
+            <tr><td>primary</td><td class="mono">pow(abs(sin(a * N * 0.5)), 8) * lenMod</td><td><code>N</code> thin countable spikes.</td></tr>
+            <tr><td>sub</td><td class="mono">pow(abs(cos(a * N * 0.5)), 20) * lenMod * 0.15</td><td>Finer sparkle needles at the half-angles between primaries.</td></tr>
+            <tr><td>lenMod</td><td class="mono">0.15 + 0.85 * hash(slot)</td><td>Per-ray length scale. Applied to <em>both</em> layers so a short ray is short in all of them.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>The random length is what stops it looking like a flower: without it every spike is the same length and the sunburst reads as a decoration rather than a light. Slots are indexed off <code>mod(a, TWO_PI)</code> so the hash is stable across rotation, and slot boundaries land at primary valleys where <code>primary = 0</code>, making the hash discontinuities invisible.</p>
+
+      <h3>Core, haze, glow</h3>
+
+<pre><code>float core = 0.1 / (pow(sDist * 5.0,  5.0)        + CORE_SOFT);   // 0.35
+float haze = 0.1 / (pow(sDist * 10.0, 1.0 / 20.0) + HAZE_SOFT);   // 0.02
+float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code></pre>
+
+      <p>The softening floors are the interesting part. Without them these are pure power laws, which are <strong>scale free</strong>: dividing the radius by <code>uSize</code> is algebraically identical to multiplying the whole term by <code>uSize</code> raised to a power, so <code>size</code> acted as a second, badly non-linear brightness knob - the core term scaled as <code>uSize^5</code>. A floor gives each falloff a finite peak, so <code>size</code> sets the radius and <code>intensity</code> sets the brightness, independently. The floor only bites near <code>sDist = 0</code>, so the far field and the reference look are unchanged, and it removes the divide-by-zero the reference had at the exact sun centre.</p>
+
+      <p>Note <code>sDist = sunDist / uSize</code> scales the core and haze, but the <code>ray / 8.0</code> term has no distance falloff, so how far the rays reach is set by the global <code>exp(1 - sunDist) / 5.0</code> envelope in unscaled units. That envelope is what keeps the flare from covering the whole screen.</p>
+
+      <div class="note">
+        <span class="tag">The same class of bug, twice</span>
+        The flare's size-was-also-brightness problem and the neon's beading floor (section 6) are the same failure: a value that looked like one control was quietly acting as two, because a length had no intrinsic scale to be measured against.
+      </div>
+
+      <div class="warn">
+        <span class="tag">Licence, before you ship this</span>
+        The lens flare is a port of Shadertoy <code>Xlc3D2</code>, which carries no explicit licence. Shadertoy's default is CC BY-NC-SA 3.0 - non-commercial, share-alike - and the port inherits that. If this library needs to go into a commercial product, treat the flare as a reference implementation and rewrite what you keep, or obtain a permissive re-license from the original author. The version further back in git history was based on Shadertoy <code>4sX3Rs</code> under the Unlicense and is safe to ship. This note is also at the top of <code>lens-flare.frag</code>. It is the one constraint in this document that is legal rather than technical.
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s17">
+      <h2 class="sec"><span class="num">17</span> Constant reference</h2>
+
+      <p>Every macro in <code>neon-tuning.h</code>, with what consumes it. Values marked <strong>shared</strong> are read by both the shaders and the C++ renderers, so a change moves both.</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>Constant</th><th class="mono">Value</th><th>Consumed by</th><th>Notes</th></tr></thead>
+          <tbody>
+            <tr><td class="mono nw">FILAMENT_MIN_HALF_WIDTH</td><td class="num">0.5</td><td>both shaders, both <code>setupGeometry</code> <strong>(shared)</strong></td><td>Floors <code>sigma</code>. Needs <code>uResolutionScale</code> in the half-res shader.</td></tr>
+            <tr><td class="mono nw">FILAMENT_GAIN</td><td class="num">12.0</td><td>shaders, reach formula</td><td>Why the core reads white-hot after tone mapping.</td></tr>
+            <tr><td class="mono nw">FILAMENT_CUTOFF</td><td class="num">0.002</td><td>reach formula <strong>(shared)</strong></td><td>Brightness below which the filament is considered gone.</td></tr>
+            <tr><td class="mono nw">FILAMENT_REACH_MIN_SIGMAS</td><td class="num">2.0</td><td>reach formula <strong>(shared)</strong></td><td>Keeps room at very high falloff.</td></tr>
+            <tr><td class="mono nw">FILAMENT_REACH_MAX_SIGMAS</td><td class="num">64.0</td><td>reach formula <strong>(shared)</strong></td><td>Bounds fill cost where the reach formula diverges.</td></tr>
+            <tr><td class="mono nw">HEAD_FEATHER_PX</td><td class="num">14.0</td><td class="mono">arcCoverContinuous</td><td>px span, divided by <code>peri</code> at the call site. Scaled in the half-res copy.</td></tr>
+            <tr><td class="mono nw">TAIL_FEATHER_PX</td><td class="num">14.0</td><td class="mono">arcCoverContinuous</td><td>As above.</td></tr>
+            <tr><td class="mono nw">ARC_FEATHER_MAX_SHARE</td><td class="num">0.4</td><td class="mono">arcCoverContinuous</td><td>Caps each feather at a share of arc length. 0.4 leaves a 0.2 plateau.</td></tr>
+            <tr><td class="mono nw">HALO_GAIN</td><td class="num">0.90</td><td>shaders</td><td>Halo weight in the sum.</td></tr>
+            <tr><td class="mono nw">HALO_NORM_FACTOR</td><td class="num">0.43</td><td>shaders</td><td>Peak is <code>2 x</code> this = 0.86, matching the old gather.</td></tr>
+            <tr><td class="mono nw">COLOR_BLEND_PERIM_FRAC</td><td class="num">0.0088</td><td>shaders</td><td><strong>Unit-free.</strong> 24 px on stock geometry; 1.13 sample spacings everywhere. No scale correction.</td></tr>
+            <tr><td class="mono nw">GLOW_GATE_FADE_PX</td><td class="num">2.0</td><td>shaders</td><td>Full-res px span. Scaled in the half-res copy.</td></tr>
+            <tr><td class="mono nw">EMISSION_MIN_WIDTH</td><td class="num">1e-3</td><td>shaders</td><td>Guards the emission divides only.</td></tr>
+            <tr><td class="mono nw">BLOOM_REACH_TO_GLOW</td><td class="num">6.0</td><td>shaders</td><td><code>bw = glowRadius * this</code>.</td></tr>
+            <tr><td class="mono nw">BLOOM_NORM_FACTOR</td><td class="num">0.32</td><td>shaders</td><td>Peak is <code>PI x</code> this = 1.005.</td></tr>
+            <tr><td class="mono nw">MAX_SEGMENT_BOOSTS</td><td class="num">8</td><td>UBO array size + C++ vector cap <strong>(shared)</strong></td><td>Also the atlas height.</td></tr>
+            <tr><td class="mono nw">MAX_ARCS</td><td class="num">8</td><td>UBO array size + C++ vector cap <strong>(shared)</strong></td><td>Also the atlas height.</td></tr>
+            <tr><td class="mono nw">NEON_MAX_LOOP_SAMPLES</td><td class="num">128</td><td>UBO size, both shaders, sample bake <strong>(shared)</strong></td><td>A ceiling, not a fixed cost: the optimized shader iterates <code>uNumSamples</code>.</td></tr>
+            <tr><td class="mono nw">TONE_MAP_SHOULDER</td><td class="num">0.6</td><td>shaders</td><td>Reinhard shoulder.</td></tr>
+            <tr><td class="mono nw">GAMMA_EXPONENT</td><td class="num">0.85</td><td>shaders</td><td>Lifts mid-tones.</td></tr>
+            <tr><td class="mono nw">SIDE_SOFT_EPSILON</td><td class="num">1e-5</td><td>shaders + <code>setupGeometry</code> <strong>(shared)</strong></td><td>Floors the side and cutoff feathers.</td></tr>
+            <tr><td class="mono nw">WSUM_EPSILON</td><td class="num">1e-6</td><td>shaders</td><td>Guards the gather normalisation divides.</td></tr>
+            <tr><td class="mono nw">EARLY_OUT_RADIUS_FACTOR</td><td class="num">48.0</td><td>both <code>setupGeometry</code> + both shaders <strong>(shared)</strong></td><td>Quad margin and the bloom pedestal. The two must agree.</td></tr>
+            <tr><td class="mono nw">QUAD_FADE_START_FRAC</td><td class="num">0.8</td><td>shaders</td><td>Fraction of the margin, not a px span. 62 px ramp at stock settings.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Non-shared constants local to other shaders: <code>CELL_UV = 12.0</code> in <code>droplets.frag</code> (cell size in uv units), and <code>CORE_SOFT = 0.35</code> / <code>HAZE_SOFT = 0.02</code> / <code>GLOW_SOFT = 0.10</code> in <code>lens-flare.frag</code>. The neon LUT widths are C++-only: <code>GRADIENT_LUT_SIZE = 256</code>, <code>SEGMENT_LUT_WIDTH = 128</code>, <code>ARC_LUT_WIDTH = 128</code>.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s18">
+      <h2 class="sec"><span class="num">18</span> Fragment program order</h2>
+
+      <p>The exact sequence in <code>neon.frag</code>'s <code>main()</code>, for tracing a value or deciding where an insertion belongs.</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead><tr><th>#</th><th>Step</th><th>Produces</th><th>Section</th></tr></thead>
+          <tbody>
+            <tr><td class="num">1</td><td class="mono">sdRoundBox(vPos, halfSize, uCornerRadius)</td><td class="mono">d, ad</td><td>3</td></tr>
+            <tr><td class="num">2</td><td>Band distances, then two <code>discard</code> tests</td><td class="mono">dIn, dOut</td><td>3, 12</td></tr>
+            <tr><td class="num">3</td><td>Filament profile, reach, pedestal, gate</td><td class="mono">core, sigma, reachSigmas, lineGate</td><td>5</td></tr>
+            <tr><td class="num">4</td><td>Perimeter length and kernel widths</td><td class="mono">peri, kc, kh, bw</td><td>6, 9</td></tr>
+            <tr><td class="num">5</td><td>Gather loop over 128 samples: arc winner, LUT reads, segment hues</td><td class="mono">acc, segAcc, wsumLit, wsumSegW</td><td>7, 9</td></tr>
+            <tr><td class="num">6</td><td>Gated normalisation</td><td class="mono">col, segColHue</td><td>9</td></tr>
+            <tr><td class="num">7</td><td class="mono">perimeterPosition(vPos)</td><td class="mono">sPos</td><td>4</td></tr>
+            <tr><td class="num">8</td><td>Pointwise arc and segment coverage</td><td class="mono">emitCover, segCoverPt, emitCoverAll, filamentGate</td><td>7, 8</td></tr>
+            <tr><td class="num">9</td><td>Analytic halo and bloom, bloom pedestal, glow gate</td><td class="mono">halo, bloom, glowGate</td><td>6</td></tr>
+            <tr><td class="num">10</td><td>Compose the three layers</td><td class="mono">result</td><td>13</td></tr>
+            <tr><td class="num">11</td><td>One-sided cut, then both cutoff masks</td><td class="mono">result</td><td>12</td></tr>
+            <tr><td class="num">12</td><td>Quad-edge fade</td><td class="mono">result</td><td>11</td></tr>
+            <tr><td class="num">13</td><td>Tone map, gamma, alpha from peak channel</td><td class="mono">fragColor</td><td>13</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>Note step 7: the fragment's own perimeter position is computed <em>after</em> the gather, not before. The gather needs only the per-sample positions from the UBO, while <code>sPos</code> is needed only by the pointwise coverages that follow.</p>
+
+      <div class="warn">
+        <span class="tag">The pairs to keep in step</span>
+        <code>neon.frag</code> and <code>neon-optimized.frag</code>; <code>neon-renderer.cpp</code> and <code>neon-optimized-renderer.cpp</code>; <code>lens-flare.frag</code> and its optimized fork; <code>demo/src/debug-ui.cpp</code> and its <code>demo-capi/</code> counterpart. Also the four places that must agree on the perimeter parameterisation (section 4) and the three that must agree on the quad margin (section 11). None of these are checked by the build. Only the eye catches a drift.
+      </div>
+    </section>
+
+  </main>
+
+  <footer>
+    Written against the shaders and renderers as they stand on <code>main</code>, with every constant and formula read from source. Companion documents: <a href="neon-renderer-overview.html">overview</a> (5 minutes), <a href="neon-renderer-explained.html">explained</a> (the reasoning, at length), <a href="implementation.md">implementation.md</a> (the C++ side).
+  </footer>
+
+</div>
