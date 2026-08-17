@@ -1,0 +1,1313 @@
+<title>Anatomy of a Neon Edge</title>
+
+<style>
+  /* ------------------------------------------------------------------
+     Tokens. :root carries the COMPLETE light palette. The two blocks
+     below redefine tokens only, never component styles, so the page
+     resolves in all three viewer states (light / dark / unstamped).
+     ------------------------------------------------------------------ */
+  :root {
+    --paper:      #eef0f5;
+    --surface:    #fbfcfd;
+    --surface-2:  #e4e8ef;
+    --ink:        #131722;
+    --ink-2:      #545c6e;
+    --ink-3:      #7c8496;
+    --rule:       #d2d8e2;
+    --rule-soft:  #e2e6ee;
+    --accent:     #5a3ce8;
+    --accent-dim: #5a3ce826;
+    --teal:       #0091ae;
+    --teal-dim:   #0091ae1f;
+    --pink:       #d4457e;
+    --pink-dim:   #d4457e1f;
+
+    --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+    --col: 68ch;
+    --wide: 1040px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #0b0e15;
+      --surface:    #131826;
+      --surface-2:  #1b2233;
+      --ink:        #e7eaf2;
+      --ink-2:      #9aa3b7;
+      --ink-3:      #6d7689;
+      --rule:       #262e40;
+      --rule-soft:  #1d2434;
+      --accent:     #9584ff;
+      --accent-dim: #9584ff26;
+      --teal:       #3fc6e5;
+      --teal-dim:   #3fc6e522;
+      --pink:       #ff7cad;
+      --pink-dim:   #ff7cad22;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:      #0b0e15;
+    --surface:    #131826;
+    --surface-2:  #1b2233;
+    --ink:        #e7eaf2;
+    --ink-2:      #9aa3b7;
+    --ink-3:      #6d7689;
+    --rule:       #262e40;
+    --rule-soft:  #1d2434;
+    --accent:     #9584ff;
+    --accent-dim: #9584ff26;
+    --teal:       #3fc6e5;
+    --teal-dim:   #3fc6e522;
+    --pink:       #ff7cad;
+    --pink-dim:   #ff7cad22;
+  }
+
+  /* ------------------------------------------------------------------ */
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 17px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+    padding: 0 24px 96px;
+  }
+
+  .wrap {
+    max-width: var(--wide);
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  /* Reading column. Sections are full width; the narrow measure is set on
+     the text elements themselves (p, lists, headings) so that figures,
+     tables and asides can use the full width without fighting a parent cap. */
+  .col {
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  /* ---------- masthead ---------- */
+
+  .masthead {
+    padding: 72px 0 40px;
+    border-bottom: 1px solid var(--rule);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  h1 {
+    font-family: var(--font-display);
+    font-size: clamp(38px, 6.2vw, 62px);
+    line-height: 1.04;
+    font-weight: 400;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+    max-width: 16ch;
+  }
+  .standfirst {
+    font-family: var(--font-display);
+    font-size: 21px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    max-width: 56ch;
+  }
+
+  /* ---------- summary card ---------- */
+
+  .tldr {
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--accent);
+    padding: 26px 30px;
+    margin: 44px 0 8px;
+    max-width: var(--wide);
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+  .tldr h2 {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+  }
+  .tldr ol {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    counter-reset: tl;
+    list-style: none;
+  }
+  .tldr li {
+    position: relative;
+    padding-left: 30px;
+    max-width: 74ch;
+  }
+  .tldr li::before {
+    counter-increment: tl;
+    content: counter(tl);
+    position: absolute;
+    left: 0;
+    top: 0;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--accent);
+  }
+
+  /* ---------- sections ---------- */
+
+  section {
+    padding-top: 60px;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+
+  h2.sec {
+    font-family: var(--font-display);
+    font-size: clamp(27px, 3.4vw, 36px);
+    font-weight: 400;
+    line-height: 1.16;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+    max-width: 22ch;
+    display: flex;
+    gap: 16px;
+    align-items: baseline;
+  }
+  h2.sec .num {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+    flex: 0 0 auto;
+    transform: translateY(-0.35em);
+  }
+
+  h3 {
+    font-family: var(--font-body);
+    font-size: 15px;
+    font-weight: 650;
+    letter-spacing: 0.005em;
+    margin-top: 12px;
+    max-width: var(--col);
+  }
+
+  p { max-width: var(--col); }
+
+  .lede {
+    font-family: var(--font-display);
+    font-size: 19px;
+    line-height: 1.55;
+    color: var(--ink-2);
+    max-width: 58ch;
+  }
+
+  ul.body, ol.body {
+    max-width: var(--col);
+    display: flex;
+    flex-direction: column;
+    gap: 9px;
+    padding-left: 22px;
+  }
+  ul.body { list-style: square; }
+  ol.body { list-style: decimal; }
+  ul.body::marker, li::marker { color: var(--ink-3); }
+
+  strong { font-weight: 650; }
+  em { font-style: italic; color: var(--ink); }
+
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.855em;
+    background: var(--surface-2);
+    padding: 0.1em 0.36em;
+    border-radius: 3px;
+    word-break: break-word;
+  }
+
+  a {
+    color: var(--accent);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
+  }
+  a:focus-visible, summary:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 3px;
+    border-radius: 2px;
+  }
+
+  /* ---------- figures ---------- */
+
+  figure {
+    max-width: var(--wide);
+    width: 100%;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    padding: 22px 24px 18px;
+    margin: 14px 0 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    overflow-x: auto;
+  }
+  figure svg {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    min-width: 560px;
+    color: var(--ink);
+  }
+  figcaption {
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    border-top: 1px solid var(--rule-soft);
+    padding-top: 12px;
+    max-width: 80ch;
+  }
+  figcaption b {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+    margin-right: 8px;
+  }
+
+  /* SVG primitives, themed through tokens */
+  .dg-box   { fill: var(--surface-2); stroke: var(--rule); stroke-width: 1; }
+  .dg-box-a { fill: var(--accent-dim); stroke: var(--accent); stroke-width: 1; }
+  .dg-t     { font-family: var(--font-mono); font-size: 11px; fill: var(--ink); }
+  .dg-t2    { font-family: var(--font-mono); font-size: 10px; fill: var(--ink-2); }
+  .dg-h     { font-family: var(--font-body); font-size: 12px; font-weight: 650; fill: var(--ink); }
+  .dg-line  { stroke: var(--ink-3); stroke-width: 1.25; fill: none; }
+  .dg-shape { stroke: var(--ink); stroke-width: 2; fill: none; }
+  .dg-ghost { stroke: var(--ink-3); stroke-width: 1; fill: none; opacity: 0.42; }
+  .dg-acc   { stroke: var(--accent); fill: none; stroke-width: 2; }
+  .dg-teal  { stroke: var(--teal); fill: none; stroke-width: 2; }
+  .dg-pink  { stroke: var(--pink); fill: none; stroke-width: 2; }
+  .dg-dash  { stroke-dasharray: 4 3; }
+  /* Text colour utilities. Declared AFTER .dg-* so they win at equal
+     specificity; an SVG fill="" presentation attribute would not. */
+  .c-a { fill: var(--accent); }
+  .c-t { fill: var(--teal); }
+  .c-p { fill: var(--pink); }
+
+  /* ---------- details / code asides ---------- */
+
+  details {
+    max-width: var(--wide);
+    width: 100%;
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--teal);
+    background: var(--surface);
+    margin: 6px 0;
+  }
+  summary {
+    cursor: pointer;
+    padding: 12px 18px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    color: var(--teal);
+    list-style: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::before {
+    content: "+";
+    font-size: 14px;
+    line-height: 1;
+    color: var(--teal);
+  }
+  details[open] summary::before { content: "\2212"; }
+  details[open] summary { border-bottom: 1px solid var(--rule-soft); }
+  .aside-body {
+    padding: 16px 18px 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .aside-body p, .aside-body ul { max-width: 78ch; font-size: 15.5px; }
+
+  pre {
+    background: var(--surface-2);
+    border: 1px solid var(--rule-soft);
+    padding: 14px 16px;
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+    line-height: 1.62;
+    color: var(--ink);
+    tab-size: 4;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  .src {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--ink-3);
+    letter-spacing: 0.03em;
+  }
+
+  /* ---------- tables ---------- */
+
+  .tbl-wrap {
+    max-width: var(--wide);
+    width: 100%;
+    overflow-x: auto;
+    border: 1px solid var(--rule);
+    background: var(--surface);
+  }
+  table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 14.5px;
+    min-width: 520px;
+  }
+  th, td {
+    text-align: left;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--rule-soft);
+    vertical-align: top;
+  }
+  th {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+    font-weight: 500;
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.mono, td .num { font-family: var(--font-mono); font-size: 13px; font-variant-numeric: tabular-nums; }
+  td.mono { white-space: nowrap; color: var(--ink); }
+
+  /* ---------- callouts ---------- */
+
+  .note {
+    max-width: var(--wide);
+    background: var(--teal-dim);
+    border-left: 3px solid var(--teal);
+    padding: 14px 20px;
+    font-size: 15.5px;
+    line-height: 1.55;
+  }
+  .note .tag {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--teal);
+    display: block;
+    margin-bottom: 4px;
+  }
+
+  .key {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
+  }
+  .swatch {
+    width: 22px;
+    height: 3px;
+    display: inline-block;
+    border-radius: 2px;
+    transform: translateY(-3px);
+  }
+
+  footer {
+    margin-top: 84px;
+    padding-top: 24px;
+    border-top: 1px solid var(--rule);
+    font-size: 14px;
+    color: var(--ink-3);
+    max-width: var(--wide);
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { animation: none !important; transition: none !important; }
+  }
+
+  @media (max-width: 640px) {
+    body { font-size: 16px; padding: 0 16px 64px; }
+    figure { padding: 16px 14px 14px; }
+    .tldr { padding: 20px 20px; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <div class="eyebrow">EdgeLightingEffect / lib/renderer</div>
+    <h1>Anatomy of a Neon Edge</h1>
+    <p class="standfirst">How one shader turns a rectangle into a glowing tube of light, without ever drawing a tube. A walk through the neon renderer for people who do not write graphics code.</p>
+  </header>
+
+  <div class="tldr">
+    <h2>The whole thing, in five steps</h2>
+    <ol>
+      <li>The renderer never builds a glowing shape. It covers the area with a plain rectangle of pixels and asks each pixel two questions.</li>
+      <li><strong>Question one: how far am I from the outline?</strong> One number, in pixels, computed with a short formula. Negative inside, zero on the line, positive outside.</li>
+      <li><strong>Question two: where along the outline am I?</strong> A number from 0 to 1 that walks once around the perimeter. This is what makes moving lights and multi-colour gradients possible.</li>
+      <li>Distance picks the <strong>brightness</strong> (three stacked layers: a hard filament, a tight halo, a wide bloom). Position picks the <strong>colour</strong> and decides whether this stretch of the ring is lit at all.</li>
+      <li>Multiply them, compress the highlights, and blend the result over whatever was already on screen.</li>
+    </ol>
+  </div>
+
+  <main class="col">
+
+    <!-- ============================================================ -->
+    <section id="s1">
+      <h2 class="sec"><span class="num">01</span> Nobody draws the tube</h2>
+
+      <p class="lede">The instinct is to build geometry: a ribbon of triangles bent around the rectangle, textured to look like glass. This renderer does the opposite, and that choice explains almost everything else about it.</p>
+
+      <p>Instead of building a shape, it draws one flat rectangle covering the area where light might land, and hands the GPU a small program - a <em>fragment shader</em> - that runs once for every pixel inside it, all in parallel. That program's job is to answer a single question: <strong>how bright and what colour is this one pixel?</strong></p>
+
+      <p>To answer it, the pixel needs to know how far it is from the outline it is supposed to be glowing around. That distance is not looked up in a texture or measured against a list of line segments. It comes out of a formula about six lines long, evaluated fresh for every pixel.</p>
+
+      <figure>
+        <svg viewBox="0 0 720 340" role="img" aria-label="A rounded rectangle with three probe pixels, each labelled with its signed distance to the outline: minus 60 inside, 0 on the line, plus 70 outside.">
+          <rect x="170" y="80" width="380" height="200" rx="44" class="dg-shape"/>
+
+          <!-- inside probe -->
+          <line x1="360" y1="220" x2="360" y2="280" class="dg-teal dg-dash" stroke-width="1.5"/>
+          <rect x="355" y="215" width="10" height="10" fill="var(--teal)"/>
+          <text x="348" y="208" class="dg-t c-t" text-anchor="end">d = -60</text>
+          <text x="348" y="222" class="dg-t2" text-anchor="end">inside</text>
+
+          <!-- on-line probe -->
+          <rect x="545" y="175" width="10" height="10" fill="var(--accent)"/>
+          <text x="566" y="182" class="dg-t c-a">d = 0</text>
+          <text x="566" y="196" class="dg-t2">exactly on the line</text>
+
+          <!-- outside probe -->
+          <line x1="586" y1="43" x2="537" y2="93" class="dg-pink dg-dash" stroke-width="1.5"/>
+          <rect x="581" y="38" width="10" height="10" fill="var(--pink)"/>
+          <text x="600" y="36" class="dg-t c-p">d = +70</text>
+          <text x="600" y="50" class="dg-t2">outside</text>
+
+          <text x="360" y="320" class="dg-t2" text-anchor="middle">every pixel gets exactly one number</text>
+        </svg>
+        <figcaption><b>Fig 1</b> The one measurement the whole effect is built on. <code>d</code> is a <em>signed</em> distance in pixels: the sign says which side of the outline the pixel is on, the magnitude says how far. The outline itself is wherever <code>d = 0</code>.</figcaption>
+      </figure>
+
+      <p>This is called a <strong>signed distance field</strong>, and it is worth understanding one property of it before going further, because several design decisions fall directly out of it.</p>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s2">
+      <h2 class="sec"><span class="num">02</span> The field, and why corners are free</h2>
+
+      <p>If you colour every pixel by its distance, you get a set of nested rings. For a rounded rectangle those rings have a convenient shape: <strong>each one is itself a rounded rectangle</strong>, grown outward with a proportionally larger corner radius.</p>
+
+      <figure>
+        <svg viewBox="0 0 720 400" role="img" aria-label="Nested rounded rectangles showing contours of the distance field at minus 40, minus 20, 0, plus 20, plus 40 and plus 60 pixels.">
+          <rect x="110" y="40"  width="500" height="320" rx="104" class="dg-ghost"/>
+          <rect x="130" y="60"  width="460" height="280" rx="84"  class="dg-ghost"/>
+          <rect x="150" y="80"  width="420" height="240" rx="64"  class="dg-ghost"/>
+          <rect x="210" y="140" width="300" height="120" rx="4"   class="dg-ghost"/>
+          <rect x="190" y="120" width="340" height="160" rx="24"  class="dg-ghost"/>
+          <rect x="170" y="100" width="380" height="200" rx="44"  class="dg-acc"/>
+
+          <!-- measurement ruler across the right edge -->
+          <line x1="500" y1="200" x2="620" y2="200" class="dg-line"/>
+          <g fill="var(--ink-2)">
+            <circle cx="510" cy="200" r="2.5"/><circle cx="530" cy="200" r="2.5"/>
+            <circle cx="570" cy="200" r="2.5"/><circle cx="590" cy="200" r="2.5"/>
+            <circle cx="610" cy="200" r="2.5"/>
+          </g>
+          <circle cx="550" cy="200" r="3.5" fill="var(--accent)"/>
+          <text x="510" y="188" class="dg-t2" text-anchor="middle">-40</text>
+          <text x="530" y="220" class="dg-t2" text-anchor="middle">-20</text>
+          <text x="550" y="186" class="dg-t c-a" text-anchor="middle">0</text>
+          <text x="570" y="220" class="dg-t2" text-anchor="middle">+20</text>
+          <text x="590" y="188" class="dg-t2" text-anchor="middle">+40</text>
+          <text x="610" y="220" class="dg-t2" text-anchor="middle">+60</text>
+
+          <text x="360" y="386" class="dg-t2" text-anchor="middle">contours of d, in pixels</text>
+        </svg>
+        <figcaption><b>Fig 2</b> The distance field around the shape. The accent ring is the outline itself. Because every contour is exactly a rounded rectangle, the corners need no special handling anywhere in the shader: a glow that spreads 40 px follows the corner curve automatically, at the correct width.</figcaption>
+      </figure>
+
+      <p>That is the payoff. A triangle-based approach has to stitch corner geometry, worry about the seams where straight edges meet arcs, and re-tune every time the corner radius changes. Here, the corner is not a case in the code at all. It falls out of the arithmetic.</p>
+
+      <p>The formula also gives you the sign for free, which is how the "glow inside only" and "glow outside only" modes work: they are a single comparison against zero.</p>
+
+      <details>
+        <summary>Under the hood: the distance formula</summary>
+        <div class="aside-body">
+          <p>Six lines, in <span class="src">lib/shaders/neon.frag</span>:</p>
+<pre><code>float sdRoundBox(vec2 p, vec2 b, float r) {
+    vec2 q = abs(p) - b + r;
+    return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
+}</code></pre>
+          <p><code>p</code> is the pixel's position relative to the rectangle's centre, <code>b</code> is the rectangle's half-width and half-height, <code>r</code> is the corner radius.</p>
+          <ul class="body">
+            <li><code>abs(p)</code> folds the plane into one quadrant. The shape is symmetric, so one quadrant of maths covers all four.</li>
+            <li><code>- b + r</code> shifts into the frame of a <em>smaller, sharp-cornered</em> box. A rounded rectangle is exactly that smaller box with a disc of radius <code>r</code> rolled around it - which is why subtracting <code>r</code> at the end recovers the rounded shape.</li>
+            <li><code>length(max(q, 0.0))</code> handles pixels outside: clamping the negatives to zero projects onto the smaller box, so this is the straight-line distance to it.</li>
+            <li><code>min(max(q.x, q.y), 0.0)</code> handles pixels inside, where distance to the nearest wall is the larger (least negative) of the two axis distances.</li>
+          </ul>
+          <p>The result is an <em>exact</em> distance, not an approximation. That matters later: it means <code>d</code> can be compared directly against pixel-valued settings like <code>lineWidth</code> and <code>glowRadius</code> with no conversion.</p>
+        </div>
+      </details>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s3">
+      <h2 class="sec"><span class="num">03</span> The second question: where along the ring?</h2>
+
+      <p>Distance alone gets you a uniform glow. It cannot give you a gradient that sweeps around the perimeter, an arc that lights only the top edge, or a bright spot travelling around the border - because all of those depend on <em>where</em> along the outline a pixel sits, not just how far from it.</p>
+
+      <p>So the shader computes a second number, <code>t</code>: walk once around the perimeter starting from the top-left corner, and <code>t</code> is how far along you are, from <code>0.0</code> back round to <code>1.0</code>.</p>
+
+      <figure>
+        <svg viewBox="0 0 720 380" role="img" aria-label="A rounded rectangle with one pixel outside the right edge. One arrow measures its perpendicular distance of 50 pixels; a highlighted path traces along the perimeter from the start point to the nearest point, giving a position of 0.38.">
+          <defs>
+            <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--accent)"/>
+            </marker>
+            <marker id="art" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--teal)"/>
+            </marker>
+          </defs>
+
+          <rect x="170" y="100" width="380" height="200" rx="44" class="dg-ghost" stroke-width="1.5"/>
+
+          <!-- the walked path -->
+          <path d="M214,100 H506 A44,44 0 0 1 550,144 V200" class="dg-acc" stroke-width="3.5" marker-end="url(#ar)"/>
+          <circle cx="214" cy="100" r="4.5" fill="var(--accent)"/>
+          <text x="214" y="86" class="dg-t c-a" text-anchor="middle">t = 0</text>
+
+          <!-- the probe pixel and its perpendicular -->
+          <rect x="595" y="195" width="10" height="10" fill="var(--teal)"/>
+          <line x1="595" y1="200" x2="554" y2="200" class="dg-teal" stroke-width="1.5" marker-end="url(#art)"/>
+          <text x="618" y="196" class="dg-t c-t">d = +50</text>
+          <text x="618" y="210" class="dg-t2">how far across</text>
+          <circle cx="550" cy="200" r="4" fill="var(--accent)"/>
+          <text x="536" y="228" class="dg-t c-a" text-anchor="end">t = 0.38</text>
+          <text x="536" y="242" class="dg-t2" text-anchor="end">how far along</text>
+
+          <!-- t number line -->
+          <line x1="170" y1="330" x2="550" y2="330" class="dg-line"/>
+          <line x1="170" y1="324" x2="170" y2="336" class="dg-line"/>
+          <line x1="550" y1="324" x2="550" y2="336" class="dg-line"/>
+          <line x1="314" y1="322" x2="314" y2="338" stroke="var(--accent)" stroke-width="2"/>
+          <text x="170" y="354" class="dg-t2" text-anchor="middle">0.0</text>
+          <text x="550" y="354" class="dg-t2" text-anchor="middle">1.0 (wraps to 0)</text>
+          <text x="314" y="354" class="dg-t2 c-a" text-anchor="middle">0.38</text>
+        </svg>
+        <figcaption><b>Fig 3</b> Two independent measurements per pixel. <code>d</code> runs <em>across</em> the outline and controls brightness; <code>t</code> runs <em>along</em> it and controls colour and which stretches are lit. Everything the renderer does is one of these two multiplied by the other.</figcaption>
+      </figure>
+
+      <p>Getting <code>t</code> right is fiddlier than getting <code>d</code> right. The shader finds the nearest point on the outline geometrically, works out which of the eight pieces it landed on (four straight edges, four corner arcs), and converts that to a fraction of the total perimeter.</p>
+
+      <div class="note">
+        <span class="tag">Why the effort</span>
+        An earlier version estimated <code>t</code> by averaging the positions of nearby sample points. It broke at corners: the samples there wrap through the start of the ring, so the average collapsed toward zero and lit corners that should have stayed dark. Measuring the position geometrically is exact everywhere, corners included.
+      </div>
+
+      <details>
+        <summary>Under the hood: finding the nearest point</summary>
+        <div class="aside-body">
+          <p>The first three lines are the distance formula run backwards - instead of returning how far the nearest point is, they return where it is:</p>
+<pre><code>vec2  b  = vec2(halfWs, halfHs);   // the smaller, sharp-cornered box
+vec2  c  = clamp(p, -b, b);        // nearest point on that box
+vec2  d  = p - c;
+cp = c + d * (r / length(d));      // push out by r -> on the outline</code></pre>
+          <p>From <code>cp</code>, a chain of comparisons decides which of the eight perimeter pieces it belongs to. Straight edges give the fraction directly from the coordinate; corner arcs use the angle around the corner's centre. A pair of lookup tables then converts (piece, fraction) into a distance along the perimeter, one table per winding direction, and dividing by the perimeter length gives <code>t</code>.</p>
+          <p>This matches the CPU-side <code>GeometryUtils::GetPointOnRectangle</code> exactly, which is what lets settings authored on the CPU (an arc from 0.25 to 0.5, say) line up with what the shader draws.</p>
+        </div>
+      </details>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s4">
+      <h2 class="sec"><span class="num">04</span> Three layers of light</h2>
+
+      <p class="lede">A real neon tube is not one glow. It is a searing filament you cannot look at, a tight coloured halo hugging the glass, and a wide soft wash spilling onto whatever is behind it. The shader builds all three separately and adds them up.</p>
+
+      <p>Each layer is a curve: feed in the distance <code>d</code>, get out a brightness. They differ almost entirely in <strong>how quickly they fall off</strong>.</p>
+
+      <figure>
+        <svg viewBox="0 0 760 360" role="img" aria-label="A cross-section plot of brightness against distance from the outline, showing three curves: a narrow filament spike, a medium halo, and a very wide bloom.">
+          <!-- plot frame -->
+          <line x1="70" y1="270" x2="730" y2="270" class="dg-line"/>
+          <line x1="400" y1="30"  x2="400" y2="278" class="dg-ghost dg-dash"/>
+          <line x1="70" y1="155" x2="730" y2="155" class="dg-ghost dg-dash"/>
+          <text x="508" y="150" class="dg-t2">half brightness</text>
+
+          <!-- x ticks -->
+          <g class="dg-t2" text-anchor="middle" fill="var(--ink-3)">
+            <text x="70"  y="290">-60</text>
+            <text x="180" y="290">-40</text>
+            <text x="290" y="290">-20</text>
+            <text x="400" y="290">0</text>
+            <text x="510" y="290">+20</text>
+            <text x="620" y="290">+40</text>
+            <text x="730" y="290">+60</text>
+          </g>
+          <text x="235" y="312" class="dg-t2" text-anchor="middle">inside the shape</text>
+          <text x="400" y="312" class="dg-t c-a" text-anchor="middle">the outline</text>
+          <text x="565" y="312" class="dg-t2" text-anchor="middle">outside the shape</text>
+          <text x="400" y="336" class="dg-t2" text-anchor="middle">distance d, in pixels</text>
+
+          <!-- bloom -->
+          <polyline class="dg-pink" points="70.0,167.1 103.0,158.3 133.2,149.0 162.1,138.9 191.0,127.5 211.6,118.5 232.2,108.7 257.0,96.2 316.1,65.0 332.6,57.1 347.8,50.7 361.5,46.0 375.2,42.5 387.6,40.6 400.0,40.0 412.4,40.6 424.8,42.5 438.5,46.0 452.3,50.7 467.4,57.1 483.9,65.0 543.0,96.2 567.8,108.7 588.4,118.5 609.0,127.5 637.9,138.9 666.8,149.0 697.0,158.3 730.0,167.1"/>
+          <!-- halo -->
+          <polyline class="dg-teal" points="70.0,268.4 136.0,267.5 185.5,266.3 224.0,264.5 254.2,262.1 279.0,258.7 288.6,256.8 298.2,254.3 306.5,251.7 313.4,248.9 320.2,245.6 327.1,241.3 332.6,237.2 338.1,232.1 343.6,225.8 347.8,220.1 351.9,213.4 356.0,205.4 362.9,188.5 368.4,171.0 373.9,149.1 378.0,129.8 387.6,78.7 391.8,59.0 395.9,45.1 397.2,42.3 398.6,40.6 400.0,40.0 401.4,40.6 402.8,42.3 404.1,45.1 408.2,59.0 412.4,78.7 422.0,129.8 426.1,149.1 431.6,171.0 437.1,188.5 444.0,205.4 448.1,213.4 452.3,220.1 456.4,225.8 461.9,232.1 467.4,237.2 472.9,241.3 479.8,245.6 486.6,248.9 493.5,251.7 501.8,254.3 511.4,256.8 521.0,258.7 545.8,262.1 576.0,264.5 614.5,266.3 664.0,267.5 730.0,268.4"/>
+          <!-- filament -->
+          <polyline class="dg-acc" points="70.0,270.0 358.8,270.0 367.0,269.6 371.1,268.1 373.9,265.4 375.2,263.1 378.0,255.6 380.8,242.5 382.1,233.1 386.2,192.1 393.1,94.6 395.9,61.4 397.2,49.8 398.6,42.5 400.0,40.0 401.4,42.5 402.8,49.8 404.1,61.4 406.9,94.6 413.8,192.1 417.9,233.1 419.2,242.5 422.0,255.6 424.8,263.1 426.1,265.4 428.9,268.1 433.0,269.6 441.2,270.0 730.0,270.0"/>
+
+          <!-- curve labels -->
+          <text x="400" y="24" class="dg-h c-a" text-anchor="middle">filament</text>
+          <text x="497" y="240" class="dg-h c-t">halo</text>
+          <text x="655" y="132" class="dg-h c-p" text-anchor="middle">bloom</text>
+        </svg>
+        <figcaption><b>Fig 4</b> Cross-section through the glow, drawn at the shipped defaults (<code>lineWidth 4</code>, <code>glowRadius 5</code>). Each curve is scaled to its own peak so the widths can be compared. The filament is at half brightness 2 px from the line, the halo at 5 px, the bloom not until 52 px.</figcaption>
+      </figure>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr><th>Layer</th><th>Shape</th><th>Width comes from</th><th>Multiplied by</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td><span class="key"><span class="swatch" style="background:var(--accent)"></span> Filament</span></td>
+              <td>Bell curve, very steep</td>
+              <td class="mono">lineWidth</td>
+              <td class="mono">12.0</td>
+            </tr>
+            <tr>
+              <td><span class="key"><span class="swatch" style="background:var(--teal)"></span> Halo</span></td>
+              <td>Falls off as 1 / distance&sup2;</td>
+              <td class="mono">glowRadius</td>
+              <td class="mono">0.9</td>
+            </tr>
+            <tr>
+              <td><span class="key"><span class="swatch" style="background:var(--pink)"></span> Bloom</span></td>
+              <td>Falls off as 1 / distance</td>
+              <td class="mono">glowRadius &times; 6</td>
+              <td class="mono">bloomStrength</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>The gain column is why the filament reads as white-hot even though all three curves peak at 1.0: it is multiplied by twelve, so its centre blows far past what the screen can show and gets compressed back down at the end. That compression is what turns a coloured curve into a white core with coloured edges - the same thing a camera does when it photographs a real neon sign.</p>
+
+      <h3>Why these are formulas and not sums</h3>
+
+      <p>An earlier version computed the halo and bloom by adding up the contribution of 128 sample points spread around the perimeter. It worked, but it had a flaw that took a while to pin down: with only 128 points, a narrow glow <em>beads</em> - it breaks into a dotted line instead of a smooth ribbon. The fix at the time was to force the glow to be at least as wide as the gap between samples.</p>
+
+      <p>That gap depends on the size of the rectangle. So the glow's width, and therefore its brightness, silently tracked how big the rectangle was, and the <code>glowRadius</code> setting did nothing at all until it exceeded that floor - on a 1920x1080 rectangle, that was most of its usable range.</p>
+
+      <p>Replacing the sums with their exact mathematical limit removed the problem at the root. A formula has no samples, so it cannot bead at any width, so no floor is needed, so <code>glowRadius</code> now means the same thing on every rectangle.</p>
+
+      <details>
+        <summary>Under the hood: the closed forms</summary>
+        <div class="aside-body">
+          <p>Take a straight emitting line, a pixel at perpendicular distance <code>ad</code>, and let <code>x</code> run along the line. The old loop summed a kernel over <code>x</code>; letting the sample spacing go to zero turns each sum into an integral with an exact answer.</p>
+<pre><code>halo:   &#8747; (x&sup2; + A&sup2;)^-3/2 dx = 2 / A&sup2;     with A&sup2; = ad&sup2; + kh&sup2;
+bloom:  &#8747; 1 / (x&sup2; + A&sup2;)  dx = &#960; / A       with A  = sqrt(ad&sup2; + bw&sup2;)</code></pre>
+          <p>which are exactly the two lines in the shader:</p>
+<pre><code>float halo  = HALO_NORM_FACTOR  * 2.0 * kh * kh / (ad * ad + kh * kh);
+float bloom = BLOOM_NORM_FACTOR * PI * bw / sqrt(ad * ad + bw * bw);</code></pre>
+          <p>The peak values at <code>ad = 0</code> come out to 0.86 and 1.005 - identical to what the sums produced - so the calibration constants kept their meaning and nothing had to be re-tuned by eye.</p>
+          <p><strong>One honest regression.</strong> On the inside of a corner the old sum picked up light from <em>both</em> incident edges, so corners ran about 40% hotter. A formula based on distance to the nearest point cannot reproduce that. The gap shrinks as the glow gets small relative to the corner radius, and vanishes entirely at corner radius 0.</p>
+        </div>
+      </details>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s5">
+      <h2 class="sec"><span class="num">05</span> Colour is a strip, baked in advance</h2>
+
+      <p>Colours are authored as <strong>stops</strong>: a position around the ring and a colour. The default configuration has four - red at 0, green at a quarter, blue at halfway, yellow at three-quarters - and the ring blends between them, wrapping from the last back to the first.</p>
+
+      <p>Blending between stops is not free. Doing it inside the shader means every pixel walks the stop list and interpolates, every frame. So the renderer does it once on the CPU instead, writing the finished gradient into a 256-pixel-wide texture. The shader then does a single texture read: <em>"what colour is at position t?"</em></p>
+
+      <figure>
+        <svg viewBox="0 0 720 290" role="img" aria-label="Four colour stops on a line are baked into a 256 texel gradient strip, from which a pixel reads a single colour at its position t.">
+          <defs>
+            <linearGradient id="ring" x1="0" y1="0" x2="1" y2="0">
+              <stop offset="0%"   stop-color="#ff0000"/>
+              <stop offset="25%"  stop-color="#00ff00"/>
+              <stop offset="50%"  stop-color="#0000ff"/>
+              <stop offset="75%"  stop-color="#ffff00"/>
+              <stop offset="100%" stop-color="#ff0000"/>
+            </linearGradient>
+            <marker id="ard" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--ink-3)"/>
+            </marker>
+          </defs>
+
+          <text x="60" y="26" class="dg-h">1. what you author</text>
+          <line x1="60" y1="56" x2="660" y2="56" class="dg-line"/>
+          <g stroke="var(--ink)" stroke-width="1.5">
+            <circle cx="60"  cy="56" r="7" fill="#ff0000"/>
+            <circle cx="210" cy="56" r="7" fill="#00ff00"/>
+            <circle cx="360" cy="56" r="7" fill="#0000ff"/>
+            <circle cx="510" cy="56" r="7" fill="#ffff00"/>
+            <circle cx="660" cy="56" r="7" fill="#ff0000" opacity="0.4"/>
+          </g>
+          <g class="dg-t2" text-anchor="middle">
+            <text x="60"  y="80">0.00</text>
+            <text x="210" y="80">0.25</text>
+            <text x="360" y="80">0.50</text>
+            <text x="510" y="80">0.75</text>
+            <text x="660" y="80">wraps</text>
+          </g>
+
+          <line x1="360" y1="94" x2="360" y2="116" class="dg-line" marker-end="url(#ard)"/>
+          <text x="374" y="110" class="dg-t2">baked once, on the CPU</text>
+
+          <text x="60" y="146" class="dg-h">2. what the GPU gets</text>
+          <rect x="60" y="160" width="600" height="34" fill="url(#ring)" stroke="var(--rule)"/>
+          <text x="660" y="212" class="dg-t2" text-anchor="end">256 texels, 8-bit RGBA, wrapping</text>
+
+          <line x1="210" y1="194" x2="210" y2="228" class="dg-line" marker-end="url(#ard)"/>
+          <text x="224" y="222" class="dg-t2">3. a pixel at t = 0.25 reads one texel</text>
+          <rect x="182" y="230" width="56" height="26" fill="#00ff00" stroke="var(--rule)"/>
+        </svg>
+        <figcaption><b>Fig 5</b> The colour path. Stops are interpolated on the CPU into a strip texture; the shader looks up a position and gets a colour, with no knowledge of how many stops there were or how they were blended. Changing a colour rebuilds the strip - it does not change the shader's work at all.</figcaption>
+      </figure>
+
+      <p>Two details of the strip are deliberate:</p>
+
+      <ul class="body">
+        <li><strong>It repeats.</strong> The texture wraps, so reading past the right edge comes back at the left. That is what makes the rotating-hue animation a single addition: add time to the read position and the whole ring sweeps, with no wrap-around logic anywhere.</li>
+        <li><strong>It is 8-bit, not floating point.</strong> Float textures are not universally supported on lower-end and embedded GPUs, which this library targets. Every lookup table here is plain 8-bit RGBA for that reason.</li>
+      </ul>
+
+      <p>The same trick is used twice more. Individual arcs and travelling segments can carry their own gradients, so there are two further textures - one row per arc, one row per segment - baked the same way.</p>
+
+      <div class="note">
+        <span class="tag">A nice consequence</span>
+        Because the strip is a texture, changing colours can be <em>animated</em> for free: the renderer keeps the old strip and the new one and cross-fades between them over <code>colorTransitionDuration</code> seconds, re-uploading a blended strip each frame. The shader is not involved and does not know it is happening.
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s6">
+      <h2 class="sec"><span class="num">06</span> What happens each frame</h2>
+
+      <p>With the ideas in place, here is the actual machinery. The renderer is called three times per frame by the effect orchestrator, and each call has a distinct job.</p>
+
+      <figure>
+        <svg viewBox="0 0 760 660" role="img" aria-label="Flow chart of one frame: SetConfig feeds the effect, which calls OnConfigChanged, Update and Render on the neon renderer. OnConfigChanged fans out to four rebuild routines gated by dirty checks. Render does an optional fill pass then the neon pass, fed by uniforms, uniform buffers and textures.">
+          <defs>
+            <marker id="fa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--ink-3)"/>
+            </marker>
+            <marker id="fb" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--accent)"/>
+            </marker>
+          </defs>
+
+          <!-- spine -->
+          <rect x="110" y="14"  width="280" height="36" class="dg-box"/>
+          <text x="250" y="37" class="dg-t" text-anchor="middle">host: effect.SetConfig(cfg)</text>
+
+          <line x1="250" y1="50" x2="250" y2="74" class="dg-line" marker-end="url(#fa)"/>
+
+          <rect x="110" y="76" width="280" height="48" class="dg-box"/>
+          <text x="250" y="96" class="dg-t" text-anchor="middle">EdgeLightingEffect</text>
+          <text x="250" y="112" class="dg-t2" text-anchor="middle">base config + animation overlays</text>
+
+          <line x1="250" y1="124" x2="250" y2="148" class="dg-line" marker-end="url(#fa)"/>
+          <text x="262" y="141" class="dg-t2">active config, every frame</text>
+
+          <rect x="110" y="150" width="280" height="40" class="dg-box-a"/>
+          <text x="250" y="175" class="dg-t" text-anchor="middle">OnConfigChanged(cfg)</text>
+
+          <!-- fan-out bus, leaving the right edge of the OnConfigChanged box -->
+          <path d="M390,170 H408 V392" class="dg-line"/>
+          <text x="442" y="210" class="dg-t2 c-a">each runs only when its own inputs changed</text>
+
+          <g>
+            <line x1="408" y1="242" x2="440" y2="242" class="dg-line" marker-end="url(#fa)"/>
+            <rect x="442" y="222" width="306" height="40" class="dg-box"/>
+            <text x="454" y="238" class="dg-t">rebuildLoopSamples()</text>
+            <text x="454" y="254" class="dg-t2">128 points around the perimeter -&gt; buffer</text>
+
+            <line x1="408" y1="292" x2="440" y2="292" class="dg-line" marker-end="url(#fa)"/>
+            <rect x="442" y="272" width="306" height="40" class="dg-box"/>
+            <text x="454" y="288" class="dg-t">setupGeometry()</text>
+            <text x="454" y="304" class="dg-t2">the draw quad + its margin (Figure 8)</text>
+
+            <line x1="408" y1="342" x2="440" y2="342" class="dg-line" marker-end="url(#fa)"/>
+            <rect x="442" y="322" width="306" height="40" class="dg-box"/>
+            <text x="454" y="338" class="dg-t">rebuildGradientLUT()</text>
+            <text x="454" y="354" class="dg-t2">the 256-texel colour strip (Figure 5)</text>
+
+            <line x1="408" y1="392" x2="440" y2="392" class="dg-line" marker-end="url(#fa)"/>
+            <rect x="442" y="372" width="306" height="40" class="dg-box"/>
+            <text x="454" y="388" class="dg-t">rebuildSegmentLUT() / rebuildArcLUT()</text>
+            <text x="454" y="404" class="dg-t2">one atlas row per segment / per arc</text>
+          </g>
+
+          <line x1="250" y1="190" x2="250" y2="276" class="dg-line" marker-end="url(#fa)"/>
+
+          <rect x="110" y="278" width="280" height="48" class="dg-box"/>
+          <text x="250" y="298" class="dg-t" text-anchor="middle">Update(dt)</text>
+          <text x="250" y="314" class="dg-t2" text-anchor="middle">advances the colour cross-fade</text>
+
+          <line x1="250" y1="326" x2="250" y2="350" class="dg-line" marker-end="url(#fa)"/>
+
+          <rect x="110" y="352" width="280" height="40" class="dg-box-a"/>
+          <text x="250" y="377" class="dg-t" text-anchor="middle">Render(w, h, time, cfg)</text>
+
+          <line x1="250" y1="392" x2="250" y2="440" class="dg-line" marker-end="url(#fa)"/>
+
+          <rect x="110" y="442" width="280" height="48" class="dg-box"/>
+          <text x="250" y="462" class="dg-t" text-anchor="middle">pass 1 - optional opaque fill</text>
+          <text x="250" y="478" class="dg-t2" text-anchor="middle">fullscreen quad, skipped by default</text>
+
+          <line x1="250" y1="490" x2="250" y2="514" class="dg-line" marker-end="url(#fa)"/>
+
+          <rect x="110" y="516" width="280" height="48" class="dg-box-a"/>
+          <text x="250" y="536" class="dg-t" text-anchor="middle">pass 2 - the neon</text>
+          <text x="250" y="552" class="dg-t2" text-anchor="middle">one tight quad, shader per pixel</text>
+
+          <!-- GPU inputs -->
+          <rect x="442" y="446" width="306" height="118" class="dg-box"/>
+          <text x="454" y="468" class="dg-h">bound before pass 2</text>
+          <text x="454" y="490" class="dg-t2">~20 uniforms (sizes, widths, radii, time)</text>
+          <text x="454" y="508" class="dg-t2">3 uniform buffers: perimeter points,</text>
+          <text x="454" y="524" class="dg-t2">segments, arcs</text>
+          <text x="454" y="546" class="dg-t2">3 textures: gradient, segment + arc atlas</text>
+          <line x1="440" y1="540" x2="396" y2="540" class="dg-line" marker-end="url(#fa)"/>
+
+          <line x1="250" y1="564" x2="250" y2="596" class="dg-line" marker-end="url(#fb)"/>
+          <rect x="110" y="598" width="280" height="42" class="dg-box-a"/>
+          <text x="250" y="616" class="dg-t" text-anchor="middle">blend into the framebuffer</text>
+          <text x="250" y="631" class="dg-t2" text-anchor="middle">premultiplied alpha, over the background</text>
+        </svg>
+        <figcaption><b>Fig 6</b> One frame through <code>NeonRenderer</code>. Note that <code>OnConfigChanged</code> fires <em>every</em> frame, not only when something changed - the dirty checks inside it are what keep dragging a brightness slider from re-uploading textures and re-generating 128 perimeter points sixty times a second.</figcaption>
+      </figure>
+
+      <h3>The three entry points</h3>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr><th>Call</th><th>Runs</th><th>Does</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td class="mono">OnConfigChanged</td>
+              <td>Every frame</td>
+              <td>Compares the incoming settings against last frame's and rebuilds only what genuinely changed: perimeter points, the draw quad, the colour strip, the arc and segment atlases.</td>
+            </tr>
+            <tr>
+              <td class="mono">Update</td>
+              <td>Every frame</td>
+              <td>Advances the colour cross-fade and re-uploads the blended strip. Uses raw frame time, not the animation clock, so a colour change still fades smoothly while animations are paused.</td>
+            </tr>
+            <tr>
+              <td class="mono">Render</td>
+              <td>Every frame</td>
+              <td>Binds uniforms, buffers and textures, then draws: an optional opaque fill pass, then the neon quad, then two optional debug overlays.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <details>
+        <summary>Under the hood: the dirty checks</summary>
+        <div class="aside-body">
+          <p>Each rebuild is gated on the exact fields it reads, in <span class="src">lib/src/renderer/neon-renderer.cpp</span>:</p>
+<pre><code>const bool samplesDirty  = config.geometry != mCurrentConfig.geometry;
+const bool geometryDirty = samplesDirty ||
+                           glowRadius changed || bloomStrength changed ||
+                           intensity changed  || lineWidth changed ||
+                           filamentFalloff changed || outsideCutoff changed;
+const bool lutDirty      = colorStops changed || blendSpace changed;</code></pre>
+          <p>The list for <code>geometryDirty</code> looks arbitrary until you know that all of those feed the draw-quad size (Section 8). Missing one produces a specific, hard-to-trace bug: widening the line while the quad keeps its old, tighter margin clips the glow <em>on the outside only</em>, because the quad always covers the interior.</p>
+        </div>
+      </details>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s7">
+      <h2 class="sec"><span class="num">07</span> Inside the shader, for one pixel</h2>
+
+      <p>Everything above converges here. This runs, independently, for every pixel the quad covers - hundreds of thousands of times per frame, all at once.</p>
+
+      <figure>
+        <svg viewBox="0 0 760 570" role="img" aria-label="Flow chart of the fragment shader: the pixel position splits into a distance branch producing filament, halo and bloom, and a position branch producing coverage and colour, which are multiplied together and then graded.">
+          <defs>
+            <marker id="sa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--ink-3)"/>
+            </marker>
+          </defs>
+
+          <rect x="230" y="12" width="300" height="40" class="dg-box-a"/>
+          <text x="380" y="30" class="dg-t" text-anchor="middle">vPos</text>
+          <text x="380" y="45" class="dg-t2" text-anchor="middle">this pixel, in px from the rect centre</text>
+
+          <path d="M380,52 V70 H190 V92" class="dg-line" marker-end="url(#sa)"/>
+          <path d="M380,52 V70 H570 V92" class="dg-line" marker-end="url(#sa)"/>
+
+          <text x="190" y="110" class="dg-h" text-anchor="middle">how far ACROSS</text>
+          <text x="570" y="110" class="dg-h" text-anchor="middle">how far ALONG</text>
+
+          <!-- left column -->
+          <rect x="40" y="124" width="300" height="40" class="dg-box"/>
+          <text x="52" y="141" class="dg-t">sdRoundBox(vPos, ...) -&gt; d</text>
+          <text x="52" y="156" class="dg-t2">signed distance, Section 2</text>
+          <line x1="190" y1="164" x2="190" y2="184" class="dg-line" marker-end="url(#sa)"/>
+
+          <rect x="40" y="186" width="300" height="30" class="dg-box"/>
+          <text x="52" y="206" class="dg-t2">ad = |d| - drop the sign</text>
+          <line x1="190" y1="216" x2="190" y2="234" class="dg-line" marker-end="url(#sa)"/>
+
+          <rect x="40" y="236" width="300" height="28" class="dg-box"/>
+          <text x="52" y="255" class="dg-t2 c-a">filament curve</text>
+          <rect x="40" y="270" width="300" height="28" class="dg-box"/>
+          <text x="52" y="289" class="dg-t2 c-t">halo curve</text>
+          <rect x="40" y="304" width="300" height="28" class="dg-box"/>
+          <text x="52" y="323" class="dg-t2 c-p">bloom curve</text>
+          <rect x="40" y="344" width="300" height="30" class="dg-box"/>
+          <text x="52" y="364" class="dg-t2">side + cutoff masks (from sign of d)</text>
+
+          <!-- right column -->
+          <rect x="420" y="124" width="300" height="40" class="dg-box"/>
+          <text x="432" y="141" class="dg-t">perimeterPosition(vPos) -&gt; t</text>
+          <text x="432" y="156" class="dg-t2">0 to 1 around the ring, Section 3</text>
+          <line x1="570" y1="164" x2="570" y2="186" class="dg-line" marker-end="url(#sa)"/>
+
+          <rect x="420" y="188" width="300" height="30" class="dg-box"/>
+          <text x="432" y="208" class="dg-t2">is any arc lit here? how strongly?</text>
+          <rect x="420" y="224" width="300" height="30" class="dg-box"/>
+          <text x="432" y="244" class="dg-t2">is a travelling segment passing?</text>
+
+          <rect x="420" y="270" width="300" height="62" class="dg-box"/>
+          <text x="432" y="290" class="dg-t">colour gather</text>
+          <text x="432" y="306" class="dg-t2">128 perimeter points, weighted by</text>
+          <text x="432" y="321" class="dg-t2">nearness -&gt; one blended colour</text>
+          <line x1="570" y1="332" x2="570" y2="352" class="dg-line" marker-end="url(#sa)"/>
+          <rect x="420" y="354" width="300" height="20" class="dg-box"/>
+          <text x="432" y="369" class="dg-t2">reads the gradient strip (Figure 5)</text>
+
+          <path d="M190,374 V402 H380 V424" class="dg-line" marker-end="url(#sa)"/>
+          <path d="M570,374 V402 H380" class="dg-line"/>
+
+          <rect x="180" y="426" width="400" height="44" class="dg-box-a"/>
+          <text x="380" y="445" class="dg-t" text-anchor="middle">colour &times; coverage &times; (filament + halo + bloom)</text>
+          <text x="380" y="461" class="dg-t2" text-anchor="middle">the three layers are summed here</text>
+
+          <path d="M380,470 V482 H135 V490" class="dg-line" marker-end="url(#sa)"/>
+
+          <g>
+            <rect x="60" y="494" width="150" height="34" class="dg-box"/>
+            <text x="135" y="516" class="dg-t2" text-anchor="middle">tone map</text>
+            <line x1="210" y1="511" x2="234" y2="511" class="dg-line" marker-end="url(#sa)"/>
+            <rect x="236" y="494" width="150" height="34" class="dg-box"/>
+            <text x="311" y="516" class="dg-t2" text-anchor="middle">gamma 0.85</text>
+            <line x1="386" y1="511" x2="410" y2="511" class="dg-line" marker-end="url(#sa)"/>
+            <rect x="412" y="494" width="160" height="34" class="dg-box"/>
+            <text x="492" y="516" class="dg-t2" text-anchor="middle">premultiply alpha</text>
+            <line x1="572" y1="511" x2="596" y2="511" class="dg-line" marker-end="url(#sa)"/>
+            <rect x="598" y="494" width="112" height="34" class="dg-box-a"/>
+            <text x="654" y="516" class="dg-t" text-anchor="middle">fragColor</text>
+          </g>
+        </svg>
+        <figcaption><b>Fig 7</b> The per-pixel program. The two branches are independent right up to the multiply: distance decides <em>how bright</em>, position decides <em>what colour and whether lit at all</em>. Only the colour gather still loops over sample points, and it produces colour only - never brightness.</figcaption>
+      </figure>
+
+      <h3>The three finishing steps</h3>
+
+      <ul class="body">
+        <li><strong>Tone map.</strong> The filament's brightness runs far past 1.0, which a screen cannot show. Rather than clipping each of red, green and blue separately - which desaturates warm colours, turning orange into peach as red saturates first - the shader compresses the brightest channel and scales the other two by the same ratio, preserving the hue.</li>
+        <li><strong>Gamma.</strong> A small exponent that lifts the mid-tones, so the glow's falloff reads the way the eye expects rather than the way the arithmetic produces.</li>
+        <li><strong>Premultiplied alpha.</strong> The pixel's opacity is set to its brightest channel. This is what lets the effect sit over arbitrary content: the white-hot core is nearly opaque and covers what is behind it like a real glass tube, while the faint outer bloom is nearly transparent and simply adds light.</li>
+      </ul>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s8">
+      <h2 class="sec"><span class="num">08</span> The quad is bigger than the rectangle</h2>
+
+      <p>One practical detail that trips people up when they first read the code: the rectangle drawn on screen is noticeably larger than the rectangle in the settings. It has to be. The bloom spreads a long way, and any pixel outside the drawn quad simply never runs the shader - it would be cut off with a visible straight edge.</p>
+
+      <figure>
+        <svg viewBox="0 0 720 350" role="img" aria-label="A large sharp-cornered draw quad surrounds a small rounded rectangle. A shaded band just inside the quad edge marks where the emission is faded out.">
+          <defs>
+            <marker id="qa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--ink-3)"/>
+            </marker>
+          </defs>
+
+          <!-- fade band: between quad edge and 80% inset -->
+          <path d="M160,30 H560 V310 H160 Z M176,46 H544 V294 H176 Z" fill="var(--pink-dim)" fill-rule="evenodd"/>
+
+          <rect x="160" y="30" width="400" height="280" class="dg-pink dg-dash"/>
+          <rect x="176" y="46" width="368" height="248" class="dg-ghost dg-dash"/>
+          <rect x="240" y="110" width="240" height="120" rx="28" class="dg-acc"/>
+
+          <!-- margin measure -->
+          <line x1="240" y1="86" x2="160" y2="86" class="dg-line" marker-end="url(#qa)"/>
+          <line x1="240" y1="80" x2="240" y2="92" class="dg-ghost"/>
+          <line x1="160" y1="80" x2="160" y2="92" class="dg-ghost"/>
+          <text x="200" y="76" class="dg-t2" text-anchor="middle">margin</text>
+
+          <text x="360" y="176" class="dg-t c-a" text-anchor="middle">the rect you asked for</text>
+          <text x="574" y="34" class="dg-t c-p">the draw quad</text>
+          <text x="574" y="48" class="dg-t2">sharp corners, always</text>
+          <text x="574" y="290" class="dg-t2 c-p">emission fades to zero</text>
+          <text x="574" y="304" class="dg-t2">across this band</text>
+
+          <text x="360" y="336" class="dg-t2" text-anchor="middle">margin = glowRadius &times; 48 &times; (1 + bloomStrength &times; intensity), floored by the filament's reach</text>
+        </svg>
+        <figcaption><b>Fig 8</b> Why the drawn area is oversized. Pixels outside the quad never run the shader, so the quad must cover everywhere light lands. The shaded band is a fade that hides the boundary - without it, a strong bloom shows a hard rectangular edge where the quad ends.</figcaption>
+      </figure>
+
+      <p>Two details worth noting, because both look like mistakes at first glance:</p>
+
+      <ul class="body">
+        <li><strong>The quad has sharp corners, and so does the fade.</strong> Everything else in the shader works on rounded contours, but what the fade is hiding is the <em>quad</em>, and the quad is a plain rectangle. Keying the fade off the rounded distance instead ate the corners early - it erased the outer 30% of every corner on a square-cornered configuration.</li>
+        <li><strong>The bloom is deliberately pulled down to zero at the quad edge.</strong> The bloom's tail is heavy: at the quad's boundary it is still around 10% of peak. So the shader subtracts a small constant sized to make it land exactly at zero there, and rescales so the centre brightness is unchanged. The tail is very slightly shortened; nothing visible is lost, and the quad can stay small.</li>
+      </ul>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s9">
+      <h2 class="sec"><span class="num">09</span> The knobs, and what they actually move</h2>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr><th>Setting</th><th>Default</th><th>What it changes</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="mono">lineWidth</td><td class="mono">4.0</td><td>Width of the bright filament, in pixels. Peak brightness stays the same at any width; only the thickness moves. At 0 the filament fades out entirely rather than becoming a single bright dot.</td></tr>
+            <tr><td class="mono">filamentFalloff</td><td class="mono">1.0</td><td>Shape of the filament's edges. 0.5 is soft and heavy-tailed, 1.0 is a clean bell, 2.0 has a flat top and a crisp shoulder, above 3 it is effectively a hard-edged bar.</td></tr>
+            <tr><td class="mono">glowRadius</td><td class="mono">5.0</td><td>How far the coloured halo reaches, in pixels. Also seeds the bloom's width at six times this value. Proportional across its whole range at any rectangle size.</td></tr>
+            <tr><td class="mono">bloomStrength</td><td class="mono">0.30</td><td>How much of the wide background wash is mixed in. 0 is halo only, 0.3 is a subtle ambient bleed, above 1 is a strong wash.</td></tr>
+            <tr><td class="mono">intensity</td><td class="mono">1.0</td><td>Master brightness on the arc emission. Travelling segments deliberately bypass it, so a segment can still shine on a darkened arc.</td></tr>
+            <tr><td class="mono">glowSide</td><td class="mono">BOTH</td><td>Restrict the glow to the inside or outside of the line. Implemented as one comparison against the sign of <code>d</code>.</td></tr>
+            <tr><td class="mono">insideCutoff<br>outsideCutoff</td><td class="mono">off</td><td>Hard limits on how far light may travel in each direction, with their own feather width. Anything past the feather is discarded, so a wide glow can be clipped to a stated band regardless of <code>glowRadius</code>.</td></tr>
+            <tr><td class="mono">colorStops</td><td class="mono">4 stops</td><td>Position and colour around the ring. Rebuilds the strip texture; costs the shader nothing.</td></tr>
+            <tr><td class="mono">hueRotationRate</td><td class="mono">0.5</td><td>Revolutions per second the gradient sweeps around the ring. One addition in the shader, thanks to the repeating texture.</td></tr>
+            <tr><td class="mono">opaqueMode</td><td class="mono">NONE</td><td>Draws a solid fill behind the glow before the neon pass, so the effect can sit on its own background instead of only adding light to what is there.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s10">
+      <h2 class="sec"><span class="num">10</span> The same effect, at a quarter of the cost</h2>
+
+      <p class="lede">The bloom covers a large area, and every pixel in it runs the whole shader. But most of that area is a smooth gradient with no fine detail in it - exactly the kind of thing you can compute small and stretch back up without anyone noticing.</p>
+
+      <p>That is what <code>NeonOptimizedRenderer</code> is. It draws the neon into an offscreen buffer at half the width and half the height, then scales the result onto the screen. Half in each direction is a <strong>quarter of the pixels</strong>, so the expensive per-pixel work drops by roughly four times, at the price of one cheap full-screen copy.</p>
+
+      <figure>
+        <svg viewBox="0 0 760 330" role="img" aria-label="The optimized renderer's two passes: the glow is drawn into a half-size offscreen buffer and stretched back onto the screen, while the optional opaque fill goes straight to the screen at full size.">
+          <defs>
+            <marker id="oa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--ink-3)"/>
+            </marker>
+          </defs>
+
+          <!-- pass 1: half-res buffer, drawn at genuinely half the linear size -->
+          <text x="40" y="67" class="dg-h c-a">pass 1 - the glow</text>
+          <rect x="40" y="79" width="132" height="74" class="dg-box-a"/>
+          <rect x="64" y="99" width="84" height="34" rx="8" class="dg-acc" stroke-width="1.5"/>
+          <text x="106" y="175" class="dg-t" text-anchor="middle">960 &times; 540</text>
+          <text x="106" y="191" class="dg-t2" text-anchor="middle">a quarter of the pixels</text>
+
+          <!-- pass 2a: opaque fill -->
+          <text x="40" y="236" class="dg-h">pass 2a - the opaque fill</text>
+          <rect x="40" y="248" width="260" height="52" class="dg-box"/>
+          <text x="170" y="271" class="dg-t2" text-anchor="middle">optional, always full size</text>
+          <text x="170" y="287" class="dg-t2" text-anchor="middle">a hard edge cannot be stretched</text>
+
+          <!-- arrows -->
+          <line x1="172" y1="116" x2="452" y2="116" class="dg-line" marker-end="url(#oa)"/>
+          <text x="312" y="104" class="dg-t2" text-anchor="middle">stretched back up, bilinear</text>
+          <path d="M300,274 H470 V194" class="dg-line" marker-end="url(#oa)"/>
+          <text x="486" y="254" class="dg-t2">composited underneath</text>
+
+          <!-- the screen -->
+          <text x="456" y="30" class="dg-h">the screen</text>
+          <rect x="456" y="42" width="264" height="148" class="dg-box"/>
+          <rect x="504" y="82" width="168" height="68" rx="16" class="dg-acc" stroke-width="2"/>
+          <text x="588" y="212" class="dg-t" text-anchor="middle">1920 &times; 1080</text>
+          <text x="588" y="228" class="dg-t2" text-anchor="middle">four times the work, avoided</text>
+        </svg>
+        <figcaption><b>Fig 9</b> The two passes, with an example 1080p screen. Only the glow is computed small. The optional opaque fill is drawn straight to the screen at full size, because it is a hard-edged silhouette and is the one part where a soft upscale would be visible.</figcaption>
+      </figure>
+
+      <p>Scaling a glow back up would normally leave dark fringes around it. It does not here, and the reason is a decision made back in Section 7: the shader outputs <strong>premultiplied alpha</strong>, where colour and coverage are already scaled together. Averaging two premultiplied pixels gives the correct answer, so plain bilinear filtering is enough and the copy shader is two lines long.</p>
+
+      <h3>Why the shader is almost unchanged</h3>
+
+      <p>Inside the offscreen buffer, everything is half size. Rather than teach the shader about that, the CPU multiplies every measurement by the scale before uploading it: rectangle size, corner radius, line width, glow radius, the cutoffs. The shader then works entirely in buffer pixels and never knows the difference.</p>
+
+      <p>That works because of a property of the distance formula worth stating on its own: <strong>halve every input and the distance halves too</strong>. Every comparison in the shader is a ratio of two lengths, and both halve together, so every ratio is unchanged.</p>
+
+      <figure>
+        <svg viewBox="0 0 760 300" role="img" aria-label="The same measurement at full resolution and at half resolution. Distance 20 and line width 4 become distance 10 and line width 2, and the ratio of 5 is identical in both.">
+          <defs>
+            <marker id="ma" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--teal)"/>
+            </marker>
+          </defs>
+
+          <!-- full res -->
+          <text x="50" y="36" class="dg-h">full resolution</text>
+          <line x1="150" y1="60" x2="150" y2="220" class="dg-acc" stroke-width="8"/>
+          <text x="150" y="242" class="dg-t2" text-anchor="middle">lineWidth 4</text>
+          <rect x="285" y="135" width="10" height="10" fill="var(--teal)"/>
+          <line x1="285" y1="140" x2="158" y2="140" class="dg-teal" stroke-width="1.5" marker-end="url(#ma)"/>
+          <text x="222" y="130" class="dg-t c-t" text-anchor="middle">d = 20</text>
+          <text x="150" y="270" class="dg-t" text-anchor="middle">d / lineWidth = 5</text>
+
+          <line x1="380" y1="40" x2="380" y2="280" class="dg-ghost dg-dash"/>
+
+          <!-- half res -->
+          <text x="440" y="36" class="dg-h">the same thing at 0.5x</text>
+          <line x1="540" y1="100" x2="540" y2="180" class="dg-acc" stroke-width="4"/>
+          <text x="540" y="242" class="dg-t2" text-anchor="middle">lineWidth 2</text>
+          <rect x="603" y="135" width="10" height="10" fill="var(--teal)"/>
+          <line x1="603" y1="140" x2="546" y2="140" class="dg-teal" stroke-width="1.5" marker-end="url(#ma)"/>
+          <text x="575" y="130" class="dg-t c-t" text-anchor="middle">d = 10</text>
+          <text x="540" y="270" class="dg-t" text-anchor="middle">d / lineWidth = 5</text>
+        </svg>
+        <figcaption><b>Fig 10</b> Why the maths survives the change of scale. Both drawings produce the same ratio, and ratios are all the shader ever compares. The distance formula, the perimeter walk and all three brightness curves are therefore <em>identical text</em> in the two shaders.</figcaption>
+      </figure>
+
+      <p>There is one category of exception, and it is easy to state: a constant written into the shader cannot scale itself. Anywhere a fixed pixel measurement from the tuning file meets a value the CPU has already scaled, the optimized copy has to bring it into the same units.</p>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr><th>Constant</th><th>Full resolution</th><th>Half resolution</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Minimum filament half-width</td><td class="mono">FILAMENT_MIN_HALF_WIDTH</td><td class="mono">&times; uResolutionScale</td></tr>
+            <tr><td>Arc end feathers</td><td class="mono">HEAD/TAIL_FEATHER_PX</td><td class="mono">&times; uResolutionScale</td></tr>
+            <tr><td>Glow fade-in width</td><td class="mono">GLOW_GATE_FADE_PX</td><td class="mono">&times; uResolutionScale</td></tr>
+            <tr><td>Colour blend kernel</td><td class="mono">COLOR_BLEND_PERIM_FRAC</td><td class="mono">unchanged</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <p>The rule falls out of the table: <strong>a constant measured in pixels needs the correction; a constant that is a plain fraction does not</strong>, because the value it multiplies is already in buffer pixels. Miss one and the symptom is geometric rather than a crash - the arc feathers without their correction inset each arc's filament twice as deep as the full-resolution renderer does, leaving a visible stretch of bare halo past the ends.</p>
+
+      <h3>A second knob: fewer samples</h3>
+
+      <p>The optimized renderer also exposes <code>numSamples</code>, defaulting to 64 of the available 128. This changes one thing only: how many perimeter points the <em>colour</em> gather visits.</p>
+
+      <p>It is safe to turn down precisely because of the rewrite described in Section 4. Brightness, coverage and the glow's reach are all computed from formulas now, and none of them touch the sample list. Halving the samples costs a little precision in how colours blend where two stops meet, and nothing else - no dimming, no change in glow width, no beading.</p>
+
+      <h3>What it actually costs</h3>
+
+      <ul class="body">
+        <li><strong>The filament is what suffers.</strong> The wide, soft layers survive the round trip essentially untouched - that is the whole premise. But the filament is a 4 px razor-sharp line; at half resolution it is drawn 2 px wide and then blurred back up. Wide, soft configurations are nearly free to optimize. Thin, bright, hard-edged ones are not.</li>
+        <li><strong>It is a near-fork, not a wrapper.</strong> Two C++ files and two shader files hold near-identical code. A change to how the neon looks has to land in both copies or the two renderers quietly drift apart.</li>
+        <li><strong>Do not enable both at once.</strong> They read the same <code>config.neon</code> for appearance but have separate switches (<code>neon.enable</code> and <code>optimizedNeon.enable</code>). Turning both on draws the effect twice, on top of itself.</li>
+      </ul>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr><th>Setting</th><th>Default</th><th>What it changes</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="mono">resolutionScale</td><td class="mono">0.5</td><td>Size of the offscreen buffer relative to the screen. 0.5 is a quarter of the pixels, 0.25 a sixteenth. Lower values blur the filament first.</td></tr>
+            <tr><td class="mono">numSamples</td><td class="mono">64</td><td>Perimeter points visited by the colour gather, out of 128. Affects colour blending only.</td></tr>
+            <tr><td class="mono">gradientLutSize</td><td class="mono">256</td><td>Width of the baked colour strip. Smaller costs a little memory less and slightly coarser gradients.</td></tr>
+            <tr><td class="mono">showHalfRes</td><td class="mono">false</td><td>Debug view: skips the smooth upscale so the raw half-size pixels are visible. Useful for seeing exactly what the scale is costing.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <details>
+        <summary>Under the hood: scaling the uniforms</summary>
+        <div class="aside-body">
+          <p>Every geometric uniform is pre-multiplied on the CPU, in <span class="src">lib/src/renderer/neon-optimized-renderer.cpp</span>:</p>
+<pre><code>mNeonShader.SetUniform("uResolutionScale", scale);
+mNeonShader.SetUniform("uRectSize",     rectSizeScaled);
+mNeonShader.SetUniform("uCornerRadius", config.geometry.cornerRadius * scale);
+mNeonShader.SetUniform("uLineWidth",    config.neon.lineWidth * scale);
+mNeonShader.SetUniform("uGlowRadius",   config.neon.glowRadius * scale);</code></pre>
+          <p>Note what is <em>not</em> scaled: <code>intensity</code>, <code>bloomStrength</code>, <code>filamentFalloff</code> and the arc and segment positions. The first three are unitless multipliers; the last are positions around the perimeter expressed from 0 to 1, so they mean the same thing at any size.</p>
+          <p><code>uResolutionScale</code> is uploaded purely so the shader can convert the handful of baked-in pixel constants from the table above. It is the only uniform in the pair of shaders that exists because of the optimization.</p>
+          <p>The two-pass structure also has to be careful about where it returns to. A frame capture binds a real offscreen target rather than the window, so pass 2 restores whatever framebuffer the renderer was handed:</p>
+<pre><code>const GLuint targetFbo = Framebuffer::GetBoundId();   // before pass 1
+...
+Framebuffer::BindId(targetFbo);                       // before pass 2</code></pre>
+          <p>Binding the default framebuffer instead would send the composite to the window during a capture, and the captured image would come back empty.</p>
+        </div>
+      </details>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s11">
+      <h2 class="sec"><span class="num">11</span> Where the code lives</h2>
+
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr><th>File</th><th>Holds</th></tr>
+          </thead>
+          <tbody>
+            <tr><td class="mono">lib/shaders/neon.frag</td><td>The per-pixel program. The distance formula, the perimeter position, the three brightness curves, the colour gather, the grading.</td></tr>
+            <tr><td class="mono">lib/shaders/neon.vert</td><td>Twelve lines. Passes the quad corner through untouched and positions it on screen.</td></tr>
+            <tr><td class="mono">lib/src/renderer/neon-renderer.cpp</td><td>The CPU side of Figure 6: dirty checks, quad sizing, the perimeter point list, all three lookup-table bakes, the draw calls.</td></tr>
+            <tr><td class="mono">lib/shaders/neon-optimized.frag</td><td>The half-resolution fork of the shader. Same maths, plus <code>uResolutionScale</code> and a runtime sample count.</td></tr>
+            <tr><td class="mono">lib/src/renderer/neon-optimized-renderer.cpp</td><td>The two-pass version of Figure 6: the offscreen buffer, the scaled uniforms, the composite back to the screen.</td></tr>
+            <tr><td class="mono">lib/shaders/neon-blit.frag</td><td>Two lines. Reads the offscreen buffer and composites it onto the screen.</td></tr>
+            <tr><td class="mono">lib/include/renderer/neon-tuning.h</td><td>Every constant, with the reasoning written out. Shared verbatim by the shaders and the C++ - the file is text-injected into the shaders at build time so the two can never drift.</td></tr>
+            <tr><td class="mono">lib/include/core/config.h</td><td>The settings struct and its defaults.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="note">
+        <span class="tag">Worth knowing</span>
+        Shaders are not loaded from disk at runtime. At build time CMake reads the <code>.frag</code> and <code>.vert</code> files and pastes them into a generated header as string constants, alongside the tuning header. Editing a shader therefore requires a rebuild - but it also means there is no file I/O, no shader directory to ship, and no way for the constants in the shader to disagree with the constants in the C++.
+      </div>
+
+      <p>The two shader files are the pair to watch. They are close to identical by design, and the build system cannot tell you when they have drifted - only the eye can. When changing how the neon looks, change both.</p>
+    </section>
+
+  </main>
+
+  <footer>
+    Written against the neon renderer as it stands on <code>main</code>. Figures 4 and 5 are drawn from the shipped default configuration; the profile curves in Figure 4 are plotted from the shader's actual formulas.
+  </footer>
+
+</div>
