@@ -415,7 +415,8 @@
       <li><span class="n">15</span><a href="#s15">Droplets</a></li>
       <li><span class="n">16</span><a href="#s16">Lens flare</a></li>
       <li><span class="n">17</span><a href="#s17">Constant reference</a></li>
-      <li><span class="n">18</span><a href="#s18">Fragment program order</a></li>
+      <li><span class="n">18</span><a href="#s18">CPU pipeline</a></li>
+      <li><span class="n">19</span><a href="#s19">GPU dataflow</a></li>
     </ol>
   </nav>
 
@@ -1373,7 +1374,383 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
 
     <!-- ============================================================ -->
     <section id="s18">
-      <h2 class="sec"><span class="num">18</span> Fragment program order</h2>
+      <h2 class="sec"><span class="num">18</span> CPU pipeline</h2>
+
+      <p class="lede">Two charts. The first is what the CPU rebuilds and which GL object each rebuild writes; the second is the draw sequence one frame actually issues, for both the full-res and half-res renderers.</p>
+
+      <h3>What rebuilds what</h3>
+
+      <p><code>OnConfigChanged</code> is where every CPU-side bake lives. It fires only when the composited config differs from last frame's, and each rebuild inside it is gated again on the exact fields it reads, so an animation moving one float does not re-upload four textures.</p>
+
+      <figure>
+        <svg viewBox="0 0 1060 480" role="img" aria-label="Chart mapping config fields through five dirty flags to five rebuild functions and the GL objects each writes: loop samples to a uniform block, geometry to the vertex array, and three colour bakes to three textures.">
+          <defs>
+            <marker id="ra" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--ink-3)"/>
+            </marker>
+          </defs>
+
+          <text x="20" y="22" class="dg-h">OnConfigChanged(cfg) - fires only when the composited config changed</text>
+
+          <text x="20"  y="52" class="dg-t2 c-3">CONFIG FIELDS READ</text>
+          <text x="310" y="52" class="dg-t2 c-3">GATE</text>
+          <text x="520" y="52" class="dg-t2 c-3">REBUILD</text>
+          <text x="810" y="52" class="dg-t2 c-3">GL OBJECT WRITTEN</text>
+
+          <!-- row 1 -->
+          <rect x="20"  y="66" width="260" height="64" class="dg-box"/>
+          <text x="32" y="86"  class="dg-t">geometry</text>
+          <text x="32" y="102" class="dg-t2">position, width, height,</text>
+          <text x="32" y="117" class="dg-t2">cornerRadius, winding</text>
+          <line x1="284" y1="98" x2="306" y2="98" class="dg-line" marker-end="url(#ra)"/>
+          <rect x="310" y="66" width="170" height="64" class="dg-box-a"/>
+          <text x="322" y="103" class="dg-t">samplesDirty</text>
+          <line x1="484" y1="98" x2="516" y2="98" class="dg-line" marker-end="url(#ra)"/>
+          <rect x="520" y="66" width="260" height="64" class="dg-box"/>
+          <text x="532" y="93"  class="dg-t">rebuildLoopSamples()</text>
+          <text x="532" y="110" class="dg-t2">128 x GetPointOnRectangle(i/128)</text>
+          <line x1="784" y1="98" x2="806" y2="98" class="dg-line" marker-end="url(#ra)"/>
+          <rect x="810" y="66" width="230" height="64" class="dg-box"/>
+          <text x="822" y="93"  class="dg-t">LoopSamplesBlock</text>
+          <text x="822" y="110" class="dg-t2">UBO, vec4[128]</text>
+
+          <!-- row 2 -->
+          <rect x="20"  y="138" width="260" height="64" class="dg-box"/>
+          <text x="32" y="158" class="dg-t2">samplesDirty, plus:</text>
+          <text x="32" y="174" class="dg-t2">glowRadius, bloomStrength,</text>
+          <text x="32" y="189" class="dg-t2">intensity, lineWidth, falloff</text>
+          <line x1="284" y1="170" x2="306" y2="170" class="dg-line" marker-end="url(#ra)"/>
+          <rect x="310" y="138" width="170" height="64" class="dg-box-a"/>
+          <text x="322" y="167" class="dg-t">geometryDirty</text>
+          <text x="322" y="183" class="dg-t2">+ outsideCutoff</text>
+          <line x1="484" y1="170" x2="516" y2="170" class="dg-line" marker-end="url(#ra)"/>
+          <rect x="520" y="138" width="260" height="64" class="dg-box"/>
+          <text x="532" y="165" class="dg-t">setupGeometry()</text>
+          <text x="532" y="182" class="dg-t2">quad = rect + margin, sharp</text>
+          <line x1="784" y1="170" x2="806" y2="170" class="dg-line" marker-end="url(#ra)"/>
+          <rect x="810" y="138" width="230" height="64" class="dg-box"/>
+          <text x="822" y="165" class="dg-t">mVertexArray</text>
+          <text x="822" y="182" class="dg-t2">6 verts + mQuadMargin</text>
+
+          <!-- row 3 -->
+          <rect x="20"  y="210" width="260" height="64" class="dg-box"/>
+          <text x="32" y="237" class="dg-t2">neon.colorStops</text>
+          <text x="32" y="253" class="dg-t2">neon.blendSpace</text>
+          <line x1="284" y1="242" x2="306" y2="242" class="dg-line" marker-end="url(#ra)"/>
+          <rect x="310" y="210" width="170" height="64" class="dg-box-a"/>
+          <text x="322" y="247" class="dg-t">lutDirty</text>
+          <line x1="484" y1="242" x2="516" y2="242" class="dg-line" marker-end="url(#ra)"/>
+          <rect x="520" y="210" width="260" height="64" class="dg-box"/>
+          <text x="532" y="237" class="dg-t">rebuildGradientLUT()</text>
+          <text x="532" y="254" class="dg-t2">256 x ColorUtils::SampleStops</text>
+          <line x1="784" y1="242" x2="806" y2="242" class="dg-line" marker-end="url(#ra)"/>
+          <rect x="810" y="210" width="230" height="64" class="dg-box"/>
+          <text x="822" y="237" class="dg-t">mGradientLUT</text>
+          <text x="822" y="254" class="dg-t2">256 x 1 RGBA8, REPEAT</text>
+
+          <!-- row 4 -->
+          <rect x="20"  y="282" width="260" height="64" class="dg-box"/>
+          <text x="32" y="309" class="dg-t2">per-segment colorStops</text>
+          <text x="32" y="325" class="dg-t2">+ blendSpace</text>
+          <line x1="284" y1="314" x2="306" y2="314" class="dg-line" marker-end="url(#ra)"/>
+          <rect x="310" y="282" width="170" height="64" class="dg-box-a"/>
+          <text x="322" y="319" class="dg-t">segLutDirty</text>
+          <line x1="484" y1="314" x2="516" y2="314" class="dg-line" marker-end="url(#ra)"/>
+          <rect x="520" y="282" width="260" height="64" class="dg-box"/>
+          <text x="532" y="309" class="dg-t">rebuildSegmentLUT()</text>
+          <text x="532" y="326" class="dg-t2">one 128-px row per segment</text>
+          <line x1="784" y1="314" x2="806" y2="314" class="dg-line" marker-end="url(#ra)"/>
+          <rect x="810" y="282" width="230" height="64" class="dg-box"/>
+          <text x="822" y="309" class="dg-t">mSegmentLUT</text>
+          <text x="822" y="326" class="dg-t2">128 x 8 RGBA8, CLAMP</text>
+
+          <!-- row 5 -->
+          <rect x="20"  y="354" width="260" height="64" class="dg-box"/>
+          <text x="32" y="381" class="dg-t2">per-arc colorStops</text>
+          <text x="32" y="397" class="dg-t2">+ blendSpace</text>
+          <line x1="284" y1="386" x2="306" y2="386" class="dg-line" marker-end="url(#ra)"/>
+          <rect x="310" y="354" width="170" height="64" class="dg-box-a"/>
+          <text x="322" y="391" class="dg-t">arcLutDirty</text>
+          <line x1="484" y1="386" x2="516" y2="386" class="dg-line" marker-end="url(#ra)"/>
+          <rect x="520" y="354" width="260" height="64" class="dg-box"/>
+          <text x="532" y="381" class="dg-t">rebuildArcLUT()</text>
+          <text x="532" y="398" class="dg-t2">one 128-px row per arc</text>
+          <line x1="784" y1="386" x2="806" y2="386" class="dg-line" marker-end="url(#ra)"/>
+          <rect x="810" y="354" width="230" height="64" class="dg-box"/>
+          <text x="822" y="381" class="dg-t">mArcLUT</text>
+          <text x="822" y="398" class="dg-t2">128 x 8 RGBA8, REPEAT</text>
+
+          <text x="20" y="450" class="dg-t2">NOT here: arc / segment positions, lengths, intensities and boosts. Those ride the UBOs and are re-uploaded every frame.</text>
+          <text x="20" y="466" class="dg-t2">Animating them is therefore free - no bake, no texture upload.</text>
+        </svg>
+        <figcaption><b>Fig 3</b> The five dirty-gated rebuilds. Note that <code>samplesDirty</code> feeds <code>geometryDirty</code>: a geometry change re-sizes the draw quad as well as the sample ring. The five colour-bearing fields on the left are the only ones that touch a texture, which is why dragging a brightness slider costs nothing here.</figcaption>
+      </figure>
+
+      <h3>One frame's draw sequence</h3>
+
+      <p>Both renderers are handed the same active config and the same bound framebuffer. What differs is where the neon lands and when the opaque fill is drawn relative to it.</p>
+
+      <figure>
+        <svg viewBox="0 0 1060 700" role="img" aria-label="Two-lane chart of one frame. Shared Update and Render calls at the top split into the full-resolution path, which draws the fill then the neon into the bound framebuffer, and the half-resolution path, which draws the neon into a scaled FBO, restores the target, draws the fill at full resolution, then blits.">
+          <defs>
+            <marker id="fa2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--ink-3)"/>
+            </marker>
+            <marker id="fb2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--accent)"/>
+            </marker>
+          </defs>
+
+          <rect x="200" y="16" width="660" height="46" class="dg-box"/>
+          <text x="530" y="36" class="dg-t" text-anchor="middle">effect.Update(dt)</text>
+          <text x="530" y="52" class="dg-t2" text-anchor="middle">tick clock, advance animations, rebuild active config</text>
+          <line x1="530" y1="62" x2="530" y2="80" class="dg-line" marker-end="url(#fa2)"/>
+
+          <rect x="200" y="82" width="660" height="46" class="dg-box"/>
+          <text x="530" y="102" class="dg-t" text-anchor="middle">renderer-&gt;Update(dt, t, cfg)</text>
+          <text x="530" y="118" class="dg-t2" text-anchor="middle">colour cross-fade only: mLUTDisplay = mix(mLUTFrom, mLUTTarget) -&gt; re-upload</text>
+          <line x1="530" y1="128" x2="530" y2="146" class="dg-line" marker-end="url(#fa2)"/>
+
+          <rect x="200" y="148" width="660" height="46" class="dg-box-a"/>
+          <text x="530" y="168" class="dg-t" text-anchor="middle">renderer-&gt;Render(w, h, t, cfg)</text>
+          <text x="530" y="184" class="dg-t2" text-anchor="middle">returns immediately when this renderer's enable flag is false</text>
+
+          <path d="M530,194 V214 H270 V238" class="dg-line" marker-end="url(#fa2)"/>
+          <path d="M530,194 V214 H790 V238" class="dg-line" marker-end="url(#fa2)"/>
+
+          <text x="40"  y="230" class="dg-h">NeonRenderer - full resolution</text>
+          <text x="560" y="230" class="dg-h">NeonOptimizedRenderer - half resolution</text>
+
+          <!-- left lane -->
+          <rect x="40" y="240" width="460" height="46" class="dg-box"/>
+          <text x="52" y="260" class="dg-t">pass 1: black-rect fill</text>
+          <text x="52" y="276" class="dg-t2">skipped when opaqueMode == NONE; fullscreen quad</text>
+          <line x1="270" y1="286" x2="270" y2="300" class="dg-line" marker-end="url(#fa2)"/>
+
+          <rect x="40" y="302" width="460" height="46" class="dg-box"/>
+          <text x="52" y="322" class="dg-t">bind ~20 uniforms + uMVP</text>
+          <text x="52" y="338" class="dg-t2">mvp = ortho(0,w,0,h) * translate(center_ogl)</text>
+          <line x1="270" y1="348" x2="270" y2="362" class="dg-line" marker-end="url(#fa2)"/>
+
+          <rect x="40" y="364" width="460" height="46" class="dg-box"/>
+          <text x="52" y="384" class="dg-t">upload SegmentBlock + ArcBlock</text>
+          <text x="52" y="400" class="dg-t2">BindBase(); LoopSamplesBlock is already resident</text>
+          <line x1="270" y1="410" x2="270" y2="424" class="dg-line" marker-end="url(#fa2)"/>
+
+          <rect x="40" y="426" width="460" height="46" class="dg-box"/>
+          <text x="52" y="446" class="dg-t">bind 3 LUTs -&gt; texture units 0, 1, 2</text>
+          <text x="52" y="462" class="dg-t2">gradient, segment atlas, arc atlas</text>
+          <line x1="270" y1="472" x2="270" y2="486" class="dg-line" marker-end="url(#fa2)"/>
+
+          <rect x="40" y="488" width="460" height="46" class="dg-box-a"/>
+          <text x="52" y="508" class="dg-t">pass 2: glDrawArrays(GL_TRIANGLES, 0, 6)</text>
+          <text x="52" y="524" class="dg-t2">the neon quad, straight into the bound FBO</text>
+          <line x1="270" y1="534" x2="270" y2="548" class="dg-line" marker-end="url(#fa2)"/>
+
+          <rect x="40" y="550" width="460" height="46" class="dg-box"/>
+          <text x="52" y="570" class="dg-t">optional debug overlays</text>
+          <text x="52" y="586" class="dg-t2">LUT strip, colour-stop markers</text>
+
+          <!-- right lane -->
+          <rect x="560" y="240" width="460" height="46" class="dg-box"/>
+          <text x="572" y="260" class="dg-t">targetFbo = Framebuffer::GetBoundId()</text>
+          <text x="572" y="276" class="dg-t2">never assume the window - a capture binds a real FBO</text>
+          <line x1="790" y1="286" x2="790" y2="300" class="dg-line" marker-end="url(#fa2)"/>
+
+          <rect x="560" y="302" width="460" height="46" class="dg-box"/>
+          <text x="572" y="322" class="dg-t">mHalfResBuffer.Resize(w*s, h*s); Bind()</text>
+          <text x="572" y="338" class="dg-t2">glViewport(0, 0, w*s, h*s)</text>
+          <line x1="790" y1="348" x2="790" y2="362" class="dg-line" marker-end="url(#fa2)"/>
+
+          <rect x="560" y="364" width="460" height="46" class="dg-box"/>
+          <text x="572" y="384" class="dg-t">same uniforms, lengths pre-multiplied by s</text>
+          <text x="572" y="400" class="dg-t2">plus uResolutionScale and uNumSamples</text>
+          <line x1="790" y1="410" x2="790" y2="424" class="dg-line" marker-end="url(#fa2)"/>
+
+          <rect x="560" y="426" width="460" height="46" class="dg-box-a"/>
+          <text x="572" y="446" class="dg-t">pass 1: the neon quad -&gt; mHalfResBuffer</text>
+          <text x="572" y="462" class="dg-t2">a quarter of the fragments at s = 0.5</text>
+          <line x1="790" y1="472" x2="790" y2="486" class="dg-line" marker-end="url(#fa2)"/>
+
+          <rect x="560" y="488" width="460" height="46" class="dg-box"/>
+          <text x="572" y="508" class="dg-t">BindId(targetFbo); pass 2a: black-rect</text>
+          <text x="572" y="524" class="dg-t2">at FULL resolution - a hard edge cannot be stretched</text>
+          <line x1="790" y1="534" x2="790" y2="548" class="dg-line" marker-end="url(#fa2)"/>
+
+          <rect x="560" y="550" width="460" height="46" class="dg-box-a"/>
+          <text x="572" y="570" class="dg-t">pass 2b: blit mHalfResBuffer -&gt; target</text>
+          <text x="572" y="586" class="dg-t2">bilinear; correct because output is premultiplied</text>
+
+          <path d="M270,596 V620 H530 V644" class="dg-line" marker-end="url(#fb2)"/>
+          <path d="M790,596 V620 H530" class="dg-line"/>
+
+          <rect x="200" y="646" width="660" height="46" class="dg-box-a"/>
+          <text x="530" y="666" class="dg-t" text-anchor="middle">glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)</text>
+          <text x="530" y="682" class="dg-t2" text-anchor="middle">premultiplied over, into whatever framebuffer the host bound</text>
+        </svg>
+        <figcaption><b>Fig 4</b> One frame, both paths. The ordering difference is the substantive one: the full-res renderer draws the fill and then the neon into a single target, while the half-res renderer must draw the neon <em>first</em> (into its own FBO), then restore the caller's framebuffer, then draw the fill at full resolution, then composite the glow over it. Getting that restore wrong is the bug described in section 14.</figcaption>
+      </figure>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="s19">
+      <h2 class="sec"><span class="num">19</span> GPU dataflow</h2>
+
+      <h3>The vertex shader, in full <span class="src">lib/shaders/neon.vert</span></h3>
+
+<pre><code>precision highp float;
+
+layout(location = 0) in vec2 aPos;
+
+out vec2 vPos;
+
+uniform mat4 uMVP;
+
+void main() {
+    vPos = aPos;
+    gl_Position = uMVP * vec4(aPos, 0.0, 1.0);
+}</code></pre>
+
+      <p>That is the whole thing, and its brevity is the point. <code>aPos</code> arrives already in <strong>rect-local pixels</strong> - <code>setupGeometry</code> wrote the quad corners as <code>+/-(halfSize + margin)</code> - so passing it through untouched gives every fragment its own position in exactly the space the SDF wants. No inverse transform, no screen-space reconstruction, no resolution uniform in the distance path. <code>uMVP</code> is used only to put the quad on screen.</p>
+
+      <p>The same vertex shader backs <code>black-rect.frag</code>, <code>neon-blit.frag</code> and both debug overlays; the fill and blit passes simply bind an identity <code>uMVP</code> so <code>vPos</code> comes through as NDC.</p>
+
+      <h3>The fragment program, as dataflow</h3>
+
+      <figure>
+        <svg viewBox="0 0 1060 980" role="img" aria-label="Dataflow chart of the neon fragment shader. The fragment position splits into a distance branch producing filament, halo and bloom, and a position branch producing the colour gather and the arc and segment coverages. The two converge into a composition step, then pass through side and cutoff masks, the quad-edge fade, and the grading chain to fragColor.">
+          <defs>
+            <marker id="ga2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--ink-3)"/>
+            </marker>
+            <marker id="gb2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+              <path d="M0,1 L9,5 L0,9 z" fill="var(--accent)"/>
+            </marker>
+          </defs>
+
+          <rect x="360" y="16" width="340" height="40" class="dg-box-a"/>
+          <text x="530" y="41" class="dg-t" text-anchor="middle">in vec2 vPos</text>
+
+          <rect x="750" y="16" width="290" height="40" class="dg-box"/>
+          <text x="762" y="33" class="dg-t2">3 uniform blocks + 3 LUT textures</text>
+          <text x="762" y="48" class="dg-t2">bound before the draw (Figure 4)</text>
+
+          <path d="M530,56 V76 H270 V104" class="dg-line" marker-end="url(#ga2)"/>
+          <path d="M530,56 V76 H790 V104" class="dg-line" marker-end="url(#ga2)"/>
+          <path d="M895,56 V90 H960 V176" class="dg-line dg-dash" marker-end="url(#ga2)"/>
+
+          <text x="270" y="96" class="dg-h c-a" text-anchor="middle">how far ACROSS -&gt; brightness</text>
+          <text x="790" y="96" class="dg-h c-t" text-anchor="middle">how far ALONG -&gt; colour and coverage</text>
+
+          <!-- LEFT: distance branch -->
+          <rect x="30" y="106" width="480" height="40" class="dg-box"/>
+          <text x="42" y="131" class="dg-t2">float d = sdRoundBox(vPos, halfSize, uCornerRadius);</text>
+          <line x1="270" y1="146" x2="270" y2="160" class="dg-line" marker-end="url(#ga2)"/>
+
+          <rect x="30" y="162" width="480" height="54" class="dg-box"/>
+          <text x="42" y="181" class="dg-t2">dOut = bandOuterDistance(..); dIn = bandInnerDistance(..);</text>
+          <text x="42" y="197" class="dg-t2">if (dOut &gt; outSoft) discard;</text>
+          <text x="42" y="211" class="dg-t2">if (dIn  &lt; -inSoft) discard;</text>
+          <line x1="270" y1="216" x2="270" y2="230" class="dg-line" marker-end="url(#ga2)"/>
+
+          <rect x="30" y="232" width="480" height="54" class="dg-box"/>
+          <text x="42" y="251" class="dg-t2">float ad    = abs(d);</text>
+          <text x="42" y="267" class="dg-t2">float sigma = max(uLineWidth * 0.5, MIN_HALF_WIDTH);</text>
+          <text x="42" y="281" class="dg-t2">float N     = 2.0 * uFilamentFalloff;</text>
+          <line x1="270" y1="286" x2="270" y2="300" class="dg-line" marker-end="url(#ga2)"/>
+
+          <rect x="30" y="302" width="480" height="70" class="dg-box-a"/>
+          <text x="42" y="321" class="dg-t c-a">filament</text>
+          <text x="42" y="339" class="dg-t2">core = exp2(-pow(ad / sigma, N));</text>
+          <text x="42" y="354" class="dg-t2">core = (core - corePed) / (1.0 - corePed);</text>
+          <text x="42" y="368" class="dg-t2">lineGate = clamp(uLineWidth / (MIN_HALF_WIDTH*2.), 0., 1.);</text>
+          <line x1="270" y1="372" x2="270" y2="386" class="dg-line" marker-end="url(#ga2)"/>
+
+          <rect x="30" y="388" width="480" height="54" class="dg-box-a"/>
+          <text x="42" y="407" class="dg-t c-t">halo</text>
+          <text x="42" y="425" class="dg-t2">kh   = max(uGlowRadius, EMISSION_MIN_WIDTH);</text>
+          <text x="42" y="439" class="dg-t2">halo = HALO_NORM * 2.0*kh*kh / (ad*ad + kh*kh);</text>
+          <line x1="270" y1="442" x2="270" y2="456" class="dg-line" marker-end="url(#ga2)"/>
+
+          <rect x="30" y="458" width="480" height="70" class="dg-box-a"/>
+          <text x="42" y="477" class="dg-t c-p">bloom</text>
+          <text x="42" y="495" class="dg-t2">bw    = uGlowRadius * BLOOM_REACH_TO_GLOW;</text>
+          <text x="42" y="510" class="dg-t2">bloom = BLOOM_NORM * PI*bw / sqrt(ad*ad + bw*bw);</text>
+          <text x="42" y="524" class="dg-t2">bloom = (bloom - bloomPed) * peak/(peak - bloomPed);</text>
+          <line x1="270" y1="528" x2="270" y2="542" class="dg-line" marker-end="url(#ga2)"/>
+
+          <rect x="30" y="544" width="480" height="40" class="dg-box"/>
+          <text x="42" y="569" class="dg-t2">glowGate = clamp(uGlowRadius / GATE_FADE_PX, 0., 1.);</text>
+
+          <!-- RIGHT: position branch -->
+          <rect x="550" y="106" width="480" height="54" class="dg-box"/>
+          <text x="562" y="125" class="dg-t2">peri = 2.0*(w + h - 4.0*r) + TWO_PI*r;</text>
+          <text x="562" y="141" class="dg-t2">kc   = peri * COLOR_BLEND_PERIM_FRAC;</text>
+          <text x="562" y="155" class="dg-t2">// the one length that is a perimeter fraction</text>
+          <line x1="790" y1="160" x2="790" y2="174" class="dg-line" marker-end="url(#ga2)"/>
+
+          <rect x="550" y="176" width="480" height="106" class="dg-box-a"/>
+          <text x="562" y="195" class="dg-t c-t">colour gather - 128 samples, colour ONLY</text>
+          <text x="562" y="213" class="dg-t2">for (i = 0; i &lt; NEON_MAX_LOOP_SAMPLES; i++) {</text>
+          <text x="562" y="228" class="dg-t2">  dv = vPos - uLoopSamples[i].xy;</text>
+          <text x="562" y="243" class="dg-t2">  g  = 1.0 / (dot(dv,dv) + kc*kc);</text>
+          <text x="562" y="258" class="dg-t2">  winner = arc with max(arcInside(si) * intensity);</text>
+          <text x="562" y="273" class="dg-t2">  acc += texture(LUT, ..).rgb * g * arcW; ... }</text>
+          <line x1="790" y1="282" x2="790" y2="296" class="dg-line" marker-end="url(#ga2)"/>
+
+          <rect x="550" y="298" width="480" height="54" class="dg-box"/>
+          <text x="562" y="317" class="dg-t2">col       = acc    / max(wsumLit,  WSUM_EPSILON);</text>
+          <text x="562" y="333" class="dg-t2">segColHue = segAcc / max(wsumSegW, WSUM_EPSILON);</text>
+          <text x="562" y="347" class="dg-t2">// gated: pure hue, unit magnitude, no coverage</text>
+          <line x1="790" y1="352" x2="790" y2="366" class="dg-line" marker-end="url(#ga2)"/>
+
+          <rect x="550" y="368" width="480" height="40" class="dg-box"/>
+          <text x="562" y="393" class="dg-t2">float sPos = perimeterPosition(vPos);  // exact</text>
+          <line x1="790" y1="408" x2="790" y2="422" class="dg-line" marker-end="url(#ga2)"/>
+
+          <rect x="550" y="424" width="480" height="86" class="dg-box-a"/>
+          <text x="562" y="443" class="dg-t c-t">pointwise coverage at this fragment</text>
+          <text x="562" y="461" class="dg-t2">emitCover    = max(arcCoverContinuous(sPos,..) * z);</text>
+          <text x="562" y="476" class="dg-t2">segCoverPt   = sum(boost * exp(-e*e));</text>
+          <text x="562" y="491" class="dg-t2">emitCoverAll = max(emitCover, min(segCoverPt, 1.0));</text>
+          <text x="562" y="506" class="dg-t2">filamentGate = max(smoothstep(.5,1.,segCoverPt), emitCover);</text>
+
+          <!-- converge -->
+          <path d="M270,584 V608 H530 V632" class="dg-line" marker-end="url(#gb2)"/>
+          <path d="M790,510 V545 H540 V608" class="dg-line"/>
+
+          <rect x="180" y="634" width="700" height="54" class="dg-box"/>
+          <text x="192" y="653" class="dg-t2">arcCol   = col * uIntensity;</text>
+          <text x="192" y="669" class="dg-t2">emitFil  = arcCol * emitCover + segCol * filamentGate;</text>
+          <text x="192" y="683" class="dg-t2">emitGlow = arcCol * emitCover + segCol * emitCoverAll;</text>
+          <line x1="530" y1="688" x2="530" y2="702" class="dg-line" marker-end="url(#gb2)"/>
+
+          <rect x="130" y="704" width="800" height="70" class="dg-box-a"/>
+          <text x="142" y="723" class="dg-t">compose the three layers</text>
+          <text x="142" y="741" class="dg-t2">result  = emitFil  * core  * FILAMENT_GAIN  * lineGate;</text>
+          <text x="142" y="756" class="dg-t2">result += emitGlow * halo  * HALO_GAIN      * glowGate;</text>
+          <text x="142" y="770" class="dg-t2">result += emitGlow * bloom * uBloomStrength * glowGate;</text>
+          <line x1="530" y1="774" x2="530" y2="788" class="dg-line" marker-end="url(#ga2)"/>
+
+          <rect x="130" y="790" width="800" height="54" class="dg-box"/>
+          <text x="142" y="809" class="dg-t2">if (uGlowSide != BOTH) result *= smoothstep(.., d);</text>
+          <text x="142" y="825" class="dg-t2">result *= smoothstep(-inSoft, inSoft, dIn);</text>
+          <text x="142" y="839" class="dg-t2">result *= 1.0 - smoothstep(-outSoft, outSoft, dOut);</text>
+          <line x1="530" y1="844" x2="530" y2="858" class="dg-line" marker-end="url(#ga2)"/>
+
+          <rect x="130" y="860" width="800" height="40" class="dg-box"/>
+          <text x="142" y="885" class="dg-t2">result *= 1.0 - smoothstep(-(margin - fadeStart), 0.0, dQuad);</text>
+          <line x1="530" y1="900" x2="530" y2="914" class="dg-line" marker-end="url(#gb2)"/>
+
+          <rect x="130" y="916" width="800" height="56" class="dg-box-a"/>
+          <text x="142" y="935" class="dg-t2">peak = max3(result); result *= (peak/(peak+SHOULDER)) / peak;</text>
+          <text x="142" y="950" class="dg-t2">result = pow(result, vec3(GAMMA_EXPONENT));</text>
+          <text x="142" y="965" class="dg-t2">fragColor = vec4(result, clamp(max3(result), 0.0, 1.0));</text>
+        </svg>
+        <figcaption><b>Fig 5</b> The fragment program as a <em>dataflow</em> graph, not a program order - the two branches are independent right up to the converge, but the compiler and the source both interleave them (see the table below for the actual sequence). The single most important structural fact is on the right: the gather loop produces <strong>colour only</strong>. Brightness, coverage and reach all come from closed forms on the left plus the pointwise coverages, none of which touch the sample list. That is what makes <code>numSamples</code> safe to turn down and what makes the effect independent of rectangle size.</figcaption>
+      </figure>
+
+      <h3>Actual program order</h3>
 
       <p>The exact sequence in <code>neon.frag</code>'s <code>main()</code>, for tracing a value or deciding where an insertion belongs.</p>
 
