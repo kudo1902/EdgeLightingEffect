@@ -1225,10 +1225,16 @@ vec2  uv     = gl_FragCoord.xy / (CELL_UV * cellPx);</code></pre>
 
       <p>The band's orientation therefore has to be handled by amplitude, not by bending the grid. The outward normal comes from finite differences of the SDF:</p>
 
-<pre><code>vec2 grad = vec2(sdRoundBox(p + vec2(1,0), ...) - sd,
-                 sdRoundBox(p + vec2(0,1), ...) - sd);
-float horizontality = abs(grad.x) / max(length(grad), 1e-6);
-float runs = S(0.25, 0.8, horizontality);   // 1 where the band is vertical</code></pre>
+<pre><code>float EdgeHorizontality(vec2 q) {
+    vec2 d = abs(q) - uRectSize * 0.5 + uCornerRadius;
+    if (d.x &gt; 0.0 &amp;&amp; d.y &gt; 0.0) {
+        return d.x / max(length(d), 1e-6);   // corner: normal is radial
+    }
+    return d.x &gt; d.y ? 1.0 : 0.0;            // edge: whichever axis is further out
+}
+float runs = S(0.25, 0.8, EdgeHorizontality(q));   // 1 where the band is vertical</code></pre>
+
+      <p>This was a finite difference of the SDF originally. At <code>cornerRadius = 0</code> that difference straddles the corner's discontinuity and reports a direction wrong by up to 45 degrees - precisely where drops sit at a sharp corner. The analytic form is also two SDF evaluations cheaper per fragment.</p>
 
       <p><code>runs</code> then weights three layers. This changes <strong>amplitude only, never position</strong>, which is exactly why the grid never shears or tears at the corners.</p>
 
@@ -1236,14 +1242,104 @@ float runs = S(0.25, 0.8, horizontality);   // 1 where the band is vertical</cod
         <table>
           <thead><tr><th>Layer</th><th>Weight</th><th>Role</th></tr></thead>
           <tbody>
-            <tr><td class="mono">StaticDrops</td><td class="mono">S(-0.5, 1, rain) * mix(1.6, 0.5, runs)</td><td>Condensation beads that fade in place. Weighted higher on horizontal runs, where drops pass through quickly and beads sit longer. The only thing that shows there.</td></tr>
-            <tr><td class="mono">DropLayer(uv)</td><td class="mono">S(0.25, 0.75, rain)</td><td>Trickling drops with trails.</td></tr>
-            <tr><td class="mono">DropLayer(uv * 1.85)</td><td class="mono">S(0.0, 0.5, rain)</td><td>A second, finer trickling layer.</td></tr>
+            <tr><td class="mono">StaticDrops</td><td class="mono">wet * mix(7.0, 0.5, runs)</td><td>Condensation beads that fade in place. Weighted hard toward the horizontal runs, where it is the only layer that shows - the boost pays back both the gated trickles and the wide-feather dimming below.</td></tr>
+            <tr><td class="mono">DropLayer(uv)</td><td class="mono">S(0.25, 0.75, rain) * trickle</td><td>Trickling drops with trails.</td></tr>
+            <tr><td class="mono">DropLayer(uv * 1.85)</td><td class="mono">S(0.0, 0.5, rain) * trickle</td><td>A second, finer trickling layer.</td></tr>
+            <tr><td class="mono">trail channel</td><td class="mono">wet * mix(0.0, 0.5, runs)</td><td>The streak sheen (<code>c.y</code>). Carried on its own weight rather than sharing <code>StaticDrops</code>', so boosting condensation on the horizontal runs cannot amplify the trails being suppressed there.</td></tr>
           </tbody>
         </table>
       </div>
 
-      <p>Both trickling layers stay active everywhere, not only on vertical runs: on a horizontal run the drops simply cross the band vertically instead of streaking along its length, which is what falling rain looks like passing through a narrow slit.</p>
+      <p>with <code>wet = S(-0.5, 1, rain)</code> and <code>trickle = mix(0, 1, runs)</code>.</p>
+
+      <h3>Why the trickles are gated</h3>
+
+      <p>A trickling drop occupies a cell 6 * <code>cellPx</code> tall. On a vertical run the band has hundreds of pixels to contain it. On a horizontal run the band is only <code>bandWidth</code> deep - at the defaults that is a 144 px cell seen through a 24 px slit - so all the band can show is a moving slice of a drop and a stripe of trail, with the drop's y sweeping ~130 px per cycle. That reads as rectangles with flat cut tops and bottoms, not as rain. Running the trickling layers at full strength there was the cause; <code>trickle</code> gates them down to a tenth on the horizontal runs and condensation carries the top and bottom instead.</p>
+
+      <p>Two things clean up what is left over:</p>
+
+      <ul>
+        <li><strong>The band feather widens with orientation.</strong> <code>soft = clamp(mix(0.12, softPx, runs), 0.001, 0.5)</code>, where <code>softPx = uGlowSideSoftness / bandWidth</code>. A vertical run keeps the configured softness, since drops are sized to fit across the band and a crisp boundary is correct. A horizontal run softens it, so what overhangs fades instead of ending on a hard line. This also needs <code>runs</code> computed <em>before</em> the band mask. See <a href="#drop-round">why it stays small</a>.</li>
+        <li><strong>Trails taper toward both boundaries.</strong> <code>c.y *= S(1.0, 0.55, abs(across * 2 - 1))</code>. Trails run along the grid's tall axis and are the first thing a boundary chops, so they thin out before reaching it. Only the streak sheen is affected; drop bodies are untouched.</li>
+      </ul>
+
+      <h3>Per-drop fit, not per-pixel clipping</h3>
+
+      <p>The two above soften the cut; they do not remove its cause. The band mask is applied <em>per pixel</em> at the end of the shader, so a drop whose centre sits near a boundary still has its far side multiplied away and reaches the screen as a half-moon or a cup - subtler than a rectangle, but still not a drop. Feathering harder only trades the artefact for a dimmer band.</p>
+
+      <p>The fix is to test the <em>drop</em> rather than the fragment. Every drop's centre is recoverable from the data the field already has, so <code>DropLayer</code> undoes the two shifts applied to <code>uv.y</code> and puts the centre back into pixels:</p>
+
+<pre><code>float dropBaseY = (id.y + dropY) / grid.y - (colShift + t * 0.75);
+// wiggle re-evaluated at the DROP's y, not the fragment's, so the
+// result is one value for the whole drop
+float dwy = dropBaseY * 20.0;
+float dropWiggle = sin(dwy + sin(dwy));
+float dropX = (x0 + dropWiggle * (0.5 - abs(x0)) * (n.z - 0.5)) * 0.7;
+vec2 dropUV = vec2((id.x + dropX + 0.5) / grid.x, dropBaseY);
+float fit = DropFit(dropUV * uvToPx, 0.4 * uvToPx / grid.x, bandWidth);</code></pre>
+
+      <p>Re-evaluating the wiggle at the drop's own y matters: <code>x</code> in the main body is a function of the <em>fragment's</em> <code>baseUV.y</code> (that is what makes the trail snake), so reusing it would make the fit vary across the drop - per-pixel clipping again, in a new disguise. <code>uvToPx</code> is threaded through <code>Drops</code> because it differs per layer: the finer layer is handed <code>uv * 1.85</code> and so gets <code>uvToPx / 1.85</code>.</p>
+
+      <p><code>DropFit</code> then measures the centre against the band and fades the drop <strong>whole</strong>:</p>
+
+<pre><code>float m = clamp(radiusPx / bandWidth, 0.0, 0.49);
+return S(m * 0.6, m, across) * S(1.0 - m * 0.6, 1.0 - m, across);</code></pre>
+
+      <p>A drop is at full strength once its centre clears its own radius from either boundary, and gone well before the centre reaches it. The gap between those two edges is where partly-overhanging drops live; the <code>0.6</code> keeps it narrow, because a wider window leaves them faintly visible as cups. <code>m</code> is clamped below 0.5 so the pair stays a well-formed window when the drop is wider than the band - which is the default, since <code>lanes = 1</code> means "drops as wide as the band".</p>
+
+      <p><code>StaticDrops</code> gets the same treatment, and needs it most: beads sit still, so a bead that overhangs is a permanent half-moon pinned to the boundary rather than one that drifts past.</p>
+
+      <p>The cost is one <code>sdRoundBox</code> per drop layer plus one for the beads, times the three <code>Drops</code> evaluations the height-field gradient needs - about nine extra SDF evaluations per fragment, all behind the early bail.</p>
+
+      <h3 id="drop-round">Keeping the drop round</h3>
+
+      <p>Culling per drop only guarantees a <em>whole</em> drop reaches the band. It does not guarantee a round one, and the first tuning that used it produced circles with flat tops and bottoms - squircles sitting on the neon line.</p>
+
+      <p>The cause is the band feather eating inward from both boundaries while the drop occupies most of the band's depth. Work it through at the defaults. With <code>lanes = 1</code> the bead radius was 0.353 in <code>across</code> units, so even a <em>perfectly centred</em> bead spans 0.147 to 0.853 - and a feather of 0.30 puts the mask at 0.36 where that bead's top and bottom sit. The drop is cut on both sides, symmetrically, which is exactly a flat-topped squircle. No amount of per-drop culling helps, because the drop being clipped is the one that fit best.</p>
+
+      <p>So the feather has an upper bound, and it is set by drop size relative to the band: it must stay inside the gap between a centred drop's edge and the boundary. Two changes bring the whole thing into range:</p>
+
+      <ul>
+        <li><strong>The horizontal feather drops to 0.12</strong>, well under that gap. It could be wide before only because it was the sole defence against slicing; with <code>DropFit</code> carrying that job, the feather goes back to doing what a feather is for.</li>
+        <li><strong>The bead cell shrinks</strong>, from <code>CELL_UV * 0.85</code> to <code>CELL_UV * 1.3</code>, taking the bead to about a quarter of the band's depth. A smaller bead relative to the band is rounder <em>and</em> denser: more of them clear <code>DropFit</code>'s window instead of being culled, which is what pays back the density that culling costs.</li>
+      </ul>
+
+      <p>The general rule, worth keeping in mind before changing any of these three numbers: <strong>drop radius, band feather and the fit window are one budget measured in <code>across</code> units.</strong> A drop must fit inside the band with room left over for the feather, or it gets clipped no matter how well it is culled.</p>
+
+      <p>That budget is also why <code>trickle</code> gates to <strong>zero</strong> on the horizontal runs rather than merely down. A trickling drop is <code>0.8 * cellPx</code> across, which at <code>lanes = 1</code> is 0.8 of the band's entire depth. It has no room for a feather and no room for a fit window, so on a horizontal run there is no amplitude at which it stops being a clipped squircle - only a faint one. Condensation carries those runs on its own.</p>
+
+      <h3>The other box: a drop's own cell</h3>
+
+      <p>Band geometry is not the only thing that can cut a drop square, and the second one is easy to misread as the first. <code>StaticDrops</code> wraps its coordinate with <code>fract</code>, so a bead is only ever evaluated <em>inside its own cell</em> - the neighbouring cells hash to different beads. Anything reaching past the cell boundary is simply not drawn, and the bead comes out flat-sided.</p>
+
+      <p>The offsets have to stay inside the cell for that not to happen. The bead's centre offset was <code>(n.xy - 0.5) * 0.7</code>, so up to 0.35 from the cell centre, against a radius of 0.3: 0.65 against the half-cell's 0.5. Off-centre beads were clipped, and raising the condensation weight made it obvious, because <code>c = S(0.3, 1.0, c)</code> in <code>Drops</code> fattens a bead well past its nominal radius at high weights. The offset is now <code>* 0.38</code>.</p>
+
+      <p>The tell that distinguishes the two: the band mask cuts along <code>across</code> only, so it can flatten a drop on <strong>one axis</strong> - a flat top and bottom, a cup, a half-moon. A drop flat on <strong>all four sides</strong> is its cell, not the band.</p>
+
+      <p>The trickling drops in <code>DropLayer</code> have the same problem and cannot be solved the same way. Their offset reaches 0.35 with a visible radius near 0.25 - the sum overruns the half-cell - but shrinking either one is not an option: the offset <em>is</em> the wiggle that makes trails snake, and the radius is the drop. So the column next door gets evaluated instead:</p>
+
+<pre><code>float side = stx &lt; 0.0 ? -1.0 : 1.0;
+vec2 own  = DropColumn(col,        stx,        ...);
+vec2 next = DropColumn(col + side, stx - side, ...);
+return max(own, next);</code></pre>
+
+      <p>Two columns is exact, not an approximation: a drop spans less than a full cell, so a fragment can only be reached by its own column or by the one it is nearest to. <code>max</code> rather than a sum, because these are coverage masks and adding them would put a bright seam along the column boundary - trading one artefact for another. The per-column vertical phase (<code>colShift = N(col)</code>) means the neighbour has its own <code>idy</code> and <code>sty</code>, which is why the column body had to be split into <code>DropColumn</code> rather than sampled twice from the same locals.</p>
+
+      <p>The same cell holds a drop in <em>y</em> too, where the fix is free: the travel amplitude is 0.866 rather than 0.9, so the drop's y half-extent (0.4/6 of a cell) still clears the cell at both ends of its sweep. At 0.9 a drop was born and died against a flat edge as the cell above or below took over.</p>
+
+      <p>Cost is one extra <code>DropColumn</code> per layer. To see any of this, give the band a width far larger than the cell (<code>bandWidth</code> 4000 with <code>lanes</code> 125) so the whole field is unmasked on screen, and turn the neon off so it does not wash the drops out - cell seams are obvious there and nearly invisible inside a 24 px band, which is how they survived this long.</p>
+
+      <h3>The third box: the orientation fade at a corner</h3>
+
+      <p>The band mask and the cell are two per-fragment quantities that can cut a drop. <code>runs</code> is the third, and it bites hardest exactly where the other two are already hardest - at a sharp corner.</p>
+
+      <p>Around a corner the outward normal sweeps through a full 90 degrees, and <code>S(0.25, 0.8, horizontality)</code> completes its fade across about 38 of them. Twelve pixels out from the corner that is roughly 8 px of arc - narrower than a drop. Read per fragment, a drop straddling it gets a steep amplitude gradient across its own body, and since <code>c = S(0.3, 1.0, c)</code> is a threshold, that gradient becomes a hard radial edge: a crescent pinned to the corner. The condensation weight makes it worse, because <code>mix(7.0, 0.5, runs)</code> is a 14:1 ratio across those 8 px.</p>
+
+      <p>So the orientation weighting moved to the drop's centre, alongside the band fit - <code>DropColumn</code> multiplies by <code>EdgeRuns(dropQ)</code> and <code>StaticDrops</code> by <code>mix(7.0, 0.5, EdgeRuns(beadQ))</code>, and <code>main</code> keeps only the response to <code>uAmount</code>. One weight for the whole drop means the drop fades rather than being cut.</p>
+
+      <p>The single per-fragment use of the orientation that remains is the band feather, which is correct: the feather is a property of the boundary, not of any drop.</p>
+
+      <p>All three cuts share one shape of bug, worth stating once: <strong>any per-fragment quantity that varies faster than a drop is wide will cut that drop, because the mask is thresholded.</strong> Band depth, cell index and edge orientation were each read at the fragment; each is now read at the drop's own centre.</p>
 
       <h3>Water shading</h3>
 
