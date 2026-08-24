@@ -31,9 +31,11 @@ precision highp float;
 //     stretch the whole cell, because it runs along the band. Across a
 //     horizontal run the only room available is the band's thickness, so the
 //     tail is cut to a fraction of that: a short teardrop that fits, rather
-//     than a full-length streak sheared flat into a rectangle. Trails also
-//     inherit their own head's band fade, so a tail never outlives the drop
-//     that drew it.
+//     than a full-length streak sheared flat into a rectangle. A trail also
+//     inherits its own head's band fade, so a tail never outlives the drop
+//     that drew it - but the discrete beads shed ALONG a trail are separate
+//     bodies of water and are faded by their own centres, since a bead can be
+//     the better part of a cell away from the head that shed it.
 //
 // Layer *amplitudes* are likewise modulated by how vertical the local edge is:
 // trickles on the sides, condensation beads along the top and bottom. All of
@@ -174,15 +176,21 @@ float BandAcross(vec2 localPx) {
 /// a hard straight cut through every drop straddling that diagonal.
 ///
 /// A drop is at full brightness once it clears both boundaries by its own
-/// radius and gone once its centre is a radius outside, so the window scales
+/// radius and gone by the time its centre reaches one, so the window scales
 /// with drop size - correct for both trickle layers, the static beads, and any
 /// @c uLanes setting. The radius ratio is clamped below 0.5 so the two ramps
 /// cannot overlap; without it a drop wider than the band could never reach
 /// full brightness.
+///
+/// Closing the window ON the boundary rather than a radius past it is what
+/// lets @c bandMask go back to being a thin guard. A drop still overhangs by
+/// up to its radius while fading, but only its outermost rim - where the drop
+/// mask is already near zero, and below the @c S(0.3, 1.0, c) threshold in
+/// @ref Drops - so the mask has nothing left to cut off.
 float BandFade(vec2 offsetPx, float radiusPx) {
     float aC = BandAcross(gRectLocal - offsetPx);
     float r = clamp(radiusPx / gBandWidth, 0.02, 0.45);
-    return S(-r, r, aC) * S(1.0 + r, 1.0 - r, aC);
+    return S(0.0, r, aC) * S(1.0, 1.0 - r, aC);
 }
 
 // ---------------------------------------------------------------------------
@@ -257,7 +265,21 @@ vec2 DropLayer(vec2 uv, float t, float uvToPx) {
     float dd = length(st - vec2(x, y));
     float droplets = S(0.3, 0.0, dd) * trail2;
 
-    float m = mainDrop + droplets * r * trailFront * headFade;
+    // A bead gets its OWN band fade, not the head's. It can sit most of a cell
+    // away from the head, so borrowing the head's fade left it at full
+    // amplitude out at a boundary, where the band mask cut it - the exact
+    // slicing @ref BandFade exists to remove.
+    //
+    // The bead series repeats every 0.1 uv down the trail rather than once per
+    // cell, so one unit of (st.y - y) is uvToPx / 10 pixels of screen, not the
+    // 6 * cellWidthPx the head uses - and it runs the other way, since y here
+    // rises as the fragment descends. Across x the bead sits on the trail, so
+    // that offset is the head's.
+    float beadPitchPx = uvToPx / 10.0;
+    float beadFade = BandFade(vec2((st.x - x) * cellWidthPx, -(st.y - y) * beadPitchPx),
+                              0.3 * cellWidthPx);
+
+    float m = mainDrop + droplets * r * trailFront * beadFade;
     return vec2(m, trail);
 }
 
@@ -318,10 +340,17 @@ void main() {
         discard;
     }
 
-    // Band boundary feather, expressed in the same normalised units. Floored at
-    // a quarter of the band rather than half a pixel: whatever still overhangs
-    // after the per-drop fade has to vignette out, not be cut off.
-    float soft = clamp(max(uGlowSideSoftness, bandWidth * 0.25) / bandWidth, 0.02, 0.5);
+    // Band boundary feather, expressed in the same normalised units. This is a
+    // guard, not the fade: every layer already fades its own drops out by the
+    // time their centres reach a boundary, so the mask only has to keep the
+    // band's own edge from being a hard line.
+    //
+    // It is therefore floored at a twentieth of the band, not a quarter. A
+    // quarter pinned the value above anything uGlowSideSoftness could ask for
+    // at usual settings - the uniform did nothing below bandWidth / 4, and the
+    // mask only reached 1.0 across the middle half of the band, dimming every
+    // drop a second time on top of its own fade.
+    float soft = clamp(uGlowSideSoftness / bandWidth, 0.05, 0.5);
     float bandMask = S(0.0, soft, across) * S(1.0, 1.0 - soft, across);
     if (bandMask <= 0.0)
     {
