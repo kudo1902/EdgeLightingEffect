@@ -727,8 +727,10 @@ namespace EdgeLighting
             return;
         }
 
-        // OnConfigChanged fires every frame with an unchanged config, so only
-        // (re)start a fade when the gradient inputs actually changed.
+        // OnConfigChanged fires on ANY change to the composited config - and
+        // with an animation attached that is nearly every frame - so it usually
+        // arrives with the gradient inputs untouched. Only (re)start a fade when
+        // they actually changed.
         bool inputsChanged = config.neon.blendSpace != mTargetBlendSpace ||
                              config.neon.colorStops != mTargetStops;
         if (!inputsChanged)

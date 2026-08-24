@@ -17,13 +17,35 @@ precision highp float;
 //     tens of pixels across.)
 //
 // Because gravity is global and the grid is screen-space, the field never
-// shears or tears - but that means the band's orientation matters. A vertical
-// stretch of band runs parallel to gravity, so drops trickle down it with long
-// trails. A horizontal stretch runs perpendicular, where real rain does not
-// streak - it beads and sits. So the layer *amplitudes* are modulated by how
-// vertical the local edge is: trickles on the sides, condensation beads along
-// the top and bottom, smoothly blended round the corners. This is amplitude
-// only - never position - precisely so the grid stays unsheared.
+// shears or tears - but that means the band's orientation matters, and the
+// band is only @c uBandWidth pixels wide across. Two mechanisms keep the field
+// from being guillotined by that, neither of which moves a drop:
+//
+//   * Whole-drop fade (@ref BandFade). A drop is faded by where its CENTRE
+//     sits across the band, not by where the current fragment sits. Drops
+//     therefore fade in and out as a whole while crossing, instead of being
+//     sliced along a straight line with a flat, rim-less cut face. The fade
+//     window scales with each drop's own radius, so it holds at any band width
+//     or lane count.
+//   * Trail LENGTH is orientation-gated. Down a vertical run a trail can
+//     stretch the whole cell, because it runs along the band. Across a
+//     horizontal run the only room available is the band's thickness, so the
+//     tail is cut to a fraction of that: a short teardrop that fits, rather
+//     than a full-length streak sheared flat into a rectangle. Trails also
+//     inherit their own head's band fade, so a tail never outlives the drop
+//     that drew it.
+//
+// Layer *amplitudes* are likewise modulated by how vertical the local edge is:
+// trickles on the sides, condensation beads along the top and bottom. All of
+// this is amplitude only - never position - precisely so the grid stays
+// unsheared.
+//
+// Both mechanisms have to stay continuous through the corners, which rules out
+// reading the SDF's GRADIENT. A box SDF creases along the medial diagonal
+// inside every corner: the gradient flips 90 degrees over about a pixel there,
+// so anything derived from it inherits a hard diagonal seam. @ref BandAcross
+// samples the field itself at the point of interest and the orientation mix
+// below reads per-axis face distances; both are continuous everywhere.
 //
 // @c uGlowSide selects which side of the edge the band occupies:
 //   OUTSIDE -> band grows outward from the edge.
@@ -51,6 +73,18 @@ precision highp float;
 /// and 6 * cellPx tall, which is the room the trail needs.
 #define CELL_UV 12.0
 
+/// Trail length on a horizontal run, as a fraction of the band's thickness.
+/// The band is all the room a tail has there, so this has to stay well under
+/// 1.0.
+#define TRAIL_FLAT_SPAN 0.7
+
+/// ...and no longer than this many drop diameters. The band bound alone is
+/// the real constraint, but on its own it makes the tail's character depend on
+/// @c uLanes: at one lane a tail is shorter than a drop is wide, at four it
+/// would be three times longer, which reads as a streak rather than a bead
+/// being dragged. Taking the smaller of the two keeps it a bead at any count.
+#define TRAIL_FLAT_DROPS 2.0
+
 in vec2 vPos; ///< Fullscreen NDC ([-1,+1]); we drive UVs off gl_FragCoord.
 out vec4 fragColor;
 
@@ -66,6 +100,14 @@ uniform int   uGlowSide;          ///< GLOW_SIDE_BOTH / INSIDE / OUTSIDE.
 uniform float uGlowSideSoftness;  ///< Band-boundary feather width in pixels.
 uniform float uBandWidth;         ///< Band thickness in pixels; also sets droplet size.
 uniform float uBandOffset;        ///< Gap in pixels between the rect edge and the band's inner boundary.
+
+// Rect frame for the current fragment. Set once at the top of main() and read
+// by the droplet field, which would otherwise need these threaded through
+// three functions that are each evaluated three times.
+float gBandWidth;   ///< Band thickness in px (>= 1).
+vec2  gHalfSize;    ///< Rect half-extents in px.
+vec2  gRectLocal;   ///< This fragment's position in rect-local px.
+float gRuns;        ///< 1 where the band runs vertically, 0 where horizontal.
 
 #define S(a, b, t) smoothstep(a, b, t)
 
@@ -93,14 +135,69 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
 }
 
 // ---------------------------------------------------------------------------
+// Band
+// ---------------------------------------------------------------------------
+
+/// Band coordinate of an arbitrary rect-local point: 0 at the band's inner
+/// boundary, 1 at its outer. The band mask and the per-drop fade both go
+/// through here, so the two can never disagree about where the band is.
+float BandAcross(vec2 localPx) {
+    float sdl = sdRoundBox(localPx, gHalfSize, uCornerRadius);
+    float depth; ///< Into the band, measured from its inner boundary outward.
+    if (uGlowSide == GLOW_SIDE_INSIDE)
+    {
+        depth = -sdl - uBandOffset;
+    }
+    else if (uGlowSide == GLOW_SIDE_OUTSIDE)
+    {
+        depth = sdl - uBandOffset;
+    }
+    else
+    {
+        // Straddle the edge: the band is centred on sd = 0.
+        depth = sdl + gBandWidth * 0.5 - uBandOffset;
+    }
+    return depth / gBandWidth;
+}
+
+/// Fade a whole drop by where its CENTRE sits across the band, rather than
+/// letting the band mask slice its body.
+///
+/// @param offsetPx fragment-minus-centre, in pixels.
+/// @param radiusPx the drop's radius, in pixels.
+///
+/// The centre's band coordinate is sampled from the field at the centre
+/// itself, not linearised from this fragment along the SDF normal. Linearising
+/// is cheaper but wrong at the corners: the box SDF creases along the medial
+/// diagonal there, so the normal flips 90 degrees over about a pixel and the
+/// two halves of one drop resolve to completely different centres - which put
+/// a hard straight cut through every drop straddling that diagonal.
+///
+/// A drop is at full brightness once it clears both boundaries by its own
+/// radius and gone once its centre is a radius outside, so the window scales
+/// with drop size - correct for both trickle layers, the static beads, and any
+/// @c uLanes setting. The radius ratio is clamped below 0.5 so the two ramps
+/// cannot overlap; without it a drop wider than the band could never reach
+/// full brightness.
+float BandFade(vec2 offsetPx, float radiusPx) {
+    float aC = BandAcross(gRectLocal - offsetPx);
+    float r = clamp(radiusPx / gBandWidth, 0.02, 0.45);
+    return S(-r, r, aC) * S(1.0 + r, 1.0 - r, aC);
+}
+
+// ---------------------------------------------------------------------------
 // Droplet field (screen space, gravity-aligned)
 // ---------------------------------------------------------------------------
 //
 // Cells are 6:1 tall so each drop has room for the trail it leaves behind.
 // uv.y increases upward (gl_FragCoord convention), so advancing the pattern
 // along +uv.y makes drops travel downward.
+//
+// @c uvToPx is how many pixels one uv unit spans for this call. It is what
+// ties the field back to the band, and it differs per layer - the fine layer
+// is sampled at uv * 1.85, so its cells are 1.85x smaller on screen.
 
-vec2 DropLayer(vec2 uv, float t) {
+vec2 DropLayer(vec2 uv, float t, float uvToPx) {
     vec2 baseUV = uv;
     uv.y += t * 0.75;
     vec2 a = vec2(6.0, 1.0);
@@ -124,13 +221,34 @@ vec2 DropLayer(vec2 uv, float t) {
     y = (Saw(0.85, ti) - 0.5) * 0.9 + 0.5;
     vec2 p = vec2(x, y);
     float d = length((st - p) * a.yx);
-    float mainDrop = S(0.4, 0.0, d);
+    // A cell is cellWidthPx wide and 6x that tall, so (st - p) * a.yx is the
+    // offset from the centre in units of cell WIDTHS - isotropic, which is what
+    // makes `d` a true radius and what lets one scalar convert it to pixels.
+    // The uv.y translations above are pure translations, so they leave this
+    // centre-to-fragment offset untouched.
+    float cellWidthPx = uvToPx / grid.x;
+    // BandFade resolves the drop's centre from this offset, so evaluating it
+    // anywhere in the cell - including far up the trail - yields the HEAD's
+    // fade. The trail reuses it, which is what stops a tail outliving its drop
+    // when the head fades out at a boundary.
+    float headFade = BandFade((st - p) * a.yx * cellWidthPx, 0.4 * cellWidthPx);
+    float mainDrop = S(0.4, 0.0, d) * headFade;
 
-    float r = sqrt(S(1.0, y, st.y));
+    // Trail length. Along a vertical run the tail can run to the top of the
+    // cell. Across a horizontal run it only has the band's thickness to live
+    // in, so it is cut to TRAIL_FLAT_SPAN of that - in pixels, which makes it
+    // identical for both trickle layers despite their different cell sizes.
+    // Shortening rather than deleting is the point: `r` also drives the tail's
+    // width, so a short tail is a narrow one and tapers to a teardrop instead
+    // of ending in the flat-topped rectangle a sheared full-length trail left.
+    float flatPx = min(TRAIL_FLAT_SPAN * gBandWidth, TRAIL_FLAT_DROPS * 0.8 * cellWidthPx);
+    float flatLen = min(flatPx / (6.0 * cellWidthPx), 1.0 - y);
+    float trailLen = max(mix(flatLen, 1.0 - y, gRuns), 0.02);
+    float r = sqrt(S(y + trailLen, y, st.y));
     float cd = abs(st.x - x);
     float trail = S(0.23 * r, 0.15 * r * r, cd);
     float trailFront = S(-0.02, 0.02, st.y - y);
-    trail *= trailFront * r * r;
+    trail *= trailFront * r * r * headFade;
 
     // Beads shed along the trail.
     y = baseUV.y;
@@ -139,7 +257,7 @@ vec2 DropLayer(vec2 uv, float t) {
     float dd = length(st - vec2(x, y));
     float droplets = S(0.3, 0.0, dd) * trail2;
 
-    float m = mainDrop + droplets * r * trailFront;
+    float m = mainDrop + droplets * r * trailFront * headFade;
     return vec2(m, trail);
 }
 
@@ -150,7 +268,9 @@ vec2 DropLayer(vec2 uv, float t) {
 /// (rain cannot streak down a horizontal edge), so the cell size is tuned to
 /// give a comfortable per-band count rather than the sparse "condensation on
 /// a windowpane" look the original tuning aimed for.
-float StaticDrops(vec2 uv, float t) {
+float StaticDrops(vec2 uv, float t, float uvToPx) {
+    // Cells are square here, so one scalar converts cell units to pixels.
+    float cellSizePx = uvToPx / (CELL_UV * 0.85);
     uv *= CELL_UV * 0.85;
     vec2 id = floor(uv);
     uv = fract(uv) - 0.5;
@@ -158,17 +278,22 @@ float StaticDrops(vec2 uv, float t) {
     vec2 p = (n.xy - 0.5) * 0.7;
     float d = length(uv - p);
     float fade = Saw(0.025, fract(t + n.z));
-    return S(0.3, 0.0, d) * fract(n.z * 10.0) * fade;
+    return S(0.3, 0.0, d) * fract(n.z * 10.0) * fade *
+           BandFade((uv - p) * cellSizePx, 0.3 * cellSizePx);
 }
 
-vec2 Drops(vec2 uv, float t, float l0, float l1, float l2) {
-    float s = StaticDrops(uv, t) * l0;
-    vec2 m1 = DropLayer(uv, t) * l1;
-    vec2 m2 = DropLayer(uv * 1.85, t) * l2;
+vec2 Drops(vec2 uv, float t, float l0, float l1, float l2, float uvToPx) {
+    float s = StaticDrops(uv, t, uvToPx) * l0;
+    vec2 m1 = DropLayer(uv, t, uvToPx) * l1;
+    vec2 m2 = DropLayer(uv * 1.85, t, uvToPx / 1.85) * l2;
 
     float c = s + m1.x + m2.x;
     c = S(0.3, 1.0, c);
-    return vec2(c, max(m1.y * l0, m2.y * l1));
+    // m1/m2 are already scaled by l1/l2. The trail channel used to be weighted
+    // a second time by l0/l1, which meant trails picked up the static-bead
+    // amplitude - and that is boosted 1.6x on horizontal runs, exactly where
+    // the band shears trails into flat rectangles.
+    return vec2(c, max(m1.y, m2.y));
 }
 
 // ---------------------------------------------------------------------------
@@ -176,27 +301,15 @@ vec2 Drops(vec2 uv, float t, float l0, float l1, float l2) {
 void main() {
     vec2 p = gl_FragCoord.xy - uRectCenter; ///< Rect-local pixels.
     vec2 halfSize = uRectSize * 0.5;
-
-    float sd = sdRoundBox(p, halfSize, uCornerRadius);
     float bandWidth = max(uBandWidth, 1.0);
 
-    // Depth into the band, measured from its inner boundary outward.
-    float depth;
-    if (uGlowSide == GLOW_SIDE_INSIDE)
-    {
-        depth = -sd - uBandOffset;
-    }
-    else if (uGlowSide == GLOW_SIDE_OUTSIDE)
-    {
-        depth = sd - uBandOffset;
-    }
-    else
-    {
-        // Straddle the edge: the band is centred on sd = 0.
-        depth = sd + bandWidth * 0.5 - uBandOffset;
-    }
+    // Rect frame for the droplet field, which has to evaluate the band at
+    // arbitrary points (drop centres), not just at this fragment.
+    gBandWidth = bandWidth;
+    gHalfSize = halfSize;
+    gRectLocal = p;
 
-    float across = depth / bandWidth; ///< 0 at the inner boundary, 1 at the outer.
+    float across = BandAcross(p); ///< 0 at the inner boundary, 1 at the outer.
 
     // Early bail. A thin band is a small slice of the viewport, so rejecting
     // before any droplet work is where most of this pass's cost goes away.
@@ -205,8 +318,10 @@ void main() {
         discard;
     }
 
-    // Band boundary feather, expressed in the same normalised units.
-    float soft = clamp(max(uGlowSideSoftness, 0.5) / bandWidth, 0.001, 0.5);
+    // Band boundary feather, expressed in the same normalised units. Floored at
+    // a quarter of the band rather than half a pixel: whatever still overhangs
+    // after the per-drop fade has to vignette out, not be cut off.
+    float soft = clamp(max(uGlowSideSoftness, bandWidth * 0.25) / bandWidth, 0.02, 0.5);
     float bandMask = S(0.0, soft, across) * S(1.0, 1.0 - soft, across);
     if (bandMask <= 0.0)
     {
@@ -218,36 +333,48 @@ void main() {
     // at any thickness. `lanes` is how many drops sit side by side across it.
     float lanes = float(max(uLanes, 1));
     float cellPx = bandWidth / lanes;
-    vec2 uv = gl_FragCoord.xy / (CELL_UV * cellPx);
+    float uvToPx = CELL_UV * cellPx;
+    vec2 uv = gl_FragCoord.xy / uvToPx;
 
     float t = uTime * 0.2 * uSpeed;
 
     // --- Orientation-aware layer mix -------------------------------------
-    // Outward edge normal, from the SDF gradient. A vertical band has the
-    // normal running horizontally (|grad.x| dominates), so rain can streak
-    // down it. A horizontal band has |grad.y| dominant and can only bead.
-    vec2 grad = vec2(sdRoundBox(p + vec2(1.0, 0.0), halfSize, uCornerRadius) - sd,
-                     sdRoundBox(p + vec2(0.0, 1.0), halfSize, uCornerRadius) - sd);
-    float horizontality = abs(grad.x) / max(length(grad), 1e-6);
-    float runs = S(0.25, 0.8, horizontality); ///< 1 where the band is vertical.
+    // How vertical the local run of band is. `q` is the per-axis distance to
+    // the rounded rect's faces, so q.x - q.y says which face is nearer:
+    // strongly positive down the left/right runs, where rain can streak;
+    // strongly negative along the top/bottom, where it can only bead; crossing
+    // zero at the corners.
+    //
+    // This deliberately does not use the SDF gradient. The gradient is exactly
+    // what creases along a corner's medial diagonal, and a trail term built on
+    // it snapped between 0 and 1 across that line. Face distances are
+    // continuous everywhere, and the transition scales with the band, so trail
+    // length eases down over roughly one band width approaching a corner
+    // instead of ending at a seam.
+    vec2 q = abs(p) - halfSize + uCornerRadius;
+    float runs = S(-bandWidth, bandWidth, q.x - q.y); ///< 1 where the band is vertical.
+    gRuns = runs;
 
     float rain = clamp(uAmount, 0.0, 1.0);
     // Gravity is global: the trickling layers are active everywhere, not just
     // on vertical runs. On horizontal runs the drops just cross the band
     // vertically instead of streaking along its length, which is what falling
-    // rain looks like passing through a narrow slit. Static condensation stays
-    // as a mild base density and is still weighted a little higher on the
-    // horizontal runs, where drops pass through quickly and beads sit longer.
+    // rain looks like passing through a narrow slit - BandFade is what makes
+    // that crossing read as a drop fading through rather than a sliced one,
+    // and the shortened tail keeps it a drop rather than a streak.
+    // Static condensation stays as a mild base density and is still weighted a
+    // little higher on the horizontal runs, where drops pass through quickly
+    // and beads sit longer.
     float staticDrops = S(-0.5, 1.0, rain) * mix(1.6, 0.5, runs);
     float layer1 = S(0.25, 0.75, rain);
     float layer2 = S(0.0, 0.5, rain);
 
-    vec2 c = Drops(uv, t, staticDrops, layer1, layer2);
+    vec2 c = Drops(uv, t, staticDrops, layer1, layer2, uvToPx);
 
     // Height-field gradient in cell space - independent of viewport size.
     vec2 e = vec2(0.001, 0.0);
-    float cx = Drops(uv + e.xy, t, staticDrops, layer1, layer2).x;
-    float cy = Drops(uv + e.yx, t, staticDrops, layer1, layer2).x;
+    float cx = Drops(uv + e.xy, t, staticDrops, layer1, layer2, uvToPx).x;
+    float cy = Drops(uv + e.yx, t, staticDrops, layer1, layer2, uvToPx).x;
     vec2 normal = vec2(cx - c.x, cy - c.x);
     vec2 nrm = normal / max(length(normal), 1e-5);
 
@@ -261,6 +388,9 @@ void main() {
     //          gradient saturates to 1 across the whole drop at any usable
     //          gain, which is what made older passes fill drops solid white.
     //          The mask-based form stays a thin outline at any drop size.
+    //          Because BandFade attenuates the MASK rather than the finished
+    //          shading, the rim re-forms around a fading drop's shrinking
+    //          silhouette instead of leaving a flat, rim-less cut face.
     //   spec - one tight hotspot per drop, exponent 16 so it's a dot, not a
     //          broad sheen.
     float rim = pow(clamp(c.x * (1.0 - c.x) * 4.0, 0.0, 1.0), 1.5);
@@ -284,6 +414,8 @@ void main() {
     // uTint.a scales the whole drop's visibility. Because we output
     // premultiplied, both the RGB and the alpha have to be scaled by it
     // uniformly - scaling alpha alone would darken drops without fading them.
+    // bandMask stays as a guaranteed-zero guard at the boundary; the drops
+    // themselves have already faded by the time it bites.
     float alpha = bandMask * dropAlpha * uTint.a;
     if (alpha <= 0.0)
     {

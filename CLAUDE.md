@@ -6,7 +6,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 OpenGL 3.3 Core renderer that draws an animated neon-style glow along the perimeter of a rounded rectangle, plus companion layers (rain droplets, lens flare). macOS arm64, CMake + GLFW + GLAD + GLM, ImGui for the debug UI.
 
-The legacy stroke/particle/path system was removed in favour of a smaller neon-focused pipeline. Architecture is documented in [`docs/architecture-design.md`](docs/architecture-design.md); see also [`docs/effect-reference.md`](docs/effect-reference.md) (per-parameter reference), [`docs/coordinate-system.md`](docs/coordinate-system.md), and [`docs/multiple-arcs-design.md`](docs/multiple-arcs-design.md). When the docs go out of date, treat the headers under `lib/include/` as the source of truth.
+The legacy stroke/particle/path system was removed in favour of a smaller neon-focused pipeline.
+
+Docs, in reading order. The three neon documents are tiers of the same material - pick one by how much depth you need, not all three:
+
+- [`docs/implementation.md`](docs/implementation.md) - brief: how the library is put together on the C++ side and how a frame runs. Start here.
+- [`docs/neon-renderer-overview.html`](docs/neon-renderer-overview.html) - the renderer in ~7 minutes: one quad, two measurements, three layers of light.
+- [`docs/neon-renderer-explained.html`](docs/neon-renderer-explained.html) - the same ground at length, with the reasoning and the bugs behind each decision.
+- [`docs/neon-renderer-reference.html`](docs/neon-renderer-reference.html) - full mechanism reference: every uniform, constant, derivation and gating rule, plus the droplet and flare term stacks. Sections 18 and 19 are flow charts - what the CPU rebuilds and which GL object each bake writes, one frame's draw sequence for both renderers, and the fragment program as annotated GLSL dataflow. Read this before changing a shader.
+- [`docs/effect-reference.md`](docs/effect-reference.md) - per-parameter reference and recipes.
+- [`docs/architecture-design.md`](docs/architecture-design.md) - full architecture. Note it predates the droplets and lens-flare renderers.
+- [`docs/coordinate-system.md`](docs/coordinate-system.md), [`docs/multiple-arcs-design.md`](docs/multiple-arcs-design.md).
+
+When the docs go out of date, treat the headers under `lib/include/` as the source of truth.
 
 ## Build & run
 
