@@ -203,20 +203,6 @@ namespace EdgeLighting
             return glm::vec4(glm::mix(glm::vec3(a), glm::vec3(b), t), alpha);
         }
 
-        /// True if @p stops are already ascending by position - i.e. they
-        /// satisfy @ref SampleStops's precondition.
-        inline bool AreStopsSorted(const std::vector<ColorStop> &stops)
-        {
-            for (size_t i = 1; i < stops.size(); ++i)
-            {
-                if (stops[i].position < stops[i - 1].position)
-                {
-                    return false;
-                }
-            }
-            return true;
-        }
-
         /// @p stops ordered ascending by position, as @ref SampleStops requires.
         ///
         /// Call this once when baking a LUT, not per sample - it copies. The

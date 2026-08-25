@@ -158,29 +158,29 @@ namespace EdgeLighting
         // for why RGBA16F / GL_NEAREST. The table is in perimeter-parameter
         // space, so resolutionScale does NOT apply to it; only the sample
         // count matters, and it must match the main pass's loop bound.
-        bool gotFloat = mEmissionBuffer.Resize(NEON_MAX_LOOP_SAMPLES, 2,
-                                               GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, GL_NEAREST);
-        if (!gotFloat)
-        {
-            if (!mEmissionBuffer.Resize(NEON_MAX_LOOP_SAMPLES, 2,
-                                        GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, GL_NEAREST))
-            {
-                return;
-            }
-            if (!mEmissionFormatLogged)
-            {
-                LOG_W("NeonOptimizedRenderer: RGBA16F emission target unavailable, using RGBA8. "
-                      "Segment boosts above 1.0 will clamp.");
-                mEmissionFormatLogged = true;
-            }
-        }
-        mEmissionIsFloat = gotFloat;
-
+        //
         // Same restore rule as NeonRenderer::renderEmissionPass: put back the
-        // target that was handed in, not framebuffer 0. Both of this renderer's
-        // later passes rebind explicitly, so 0 happened to be harmless here -
-        // but leaving it would make the two copies disagree on the invariant.
+        // target that was handed in, not framebuffer 0, and read it BEFORE the
+        // resize below. Both of this renderer's later passes rebind explicitly,
+        // so 0 happens to be harmless here - but leaving it would make the two
+        // copies disagree on the invariant.
         const GLuint targetFbo = Framebuffer::GetBoundId();
+
+        // The fallback LATCHES - see NeonRenderer::renderEmissionPass for why.
+        if (!mEmissionFloatUnavailable &&
+            !mEmissionBuffer.Resize(NEON_MAX_LOOP_SAMPLES, 2,
+                                    GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, GL_NEAREST))
+        {
+            mEmissionFloatUnavailable = true;
+            LOG_W("NeonOptimizedRenderer: RGBA16F emission target unavailable, using RGBA8. "
+                  "Arc intensities and stacked segment boosts above 1.0 will clamp.");
+        }
+        if (mEmissionFloatUnavailable &&
+            !mEmissionBuffer.Resize(NEON_MAX_LOOP_SAMPLES, 2,
+                                    GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, GL_NEAREST))
+        {
+            return; // nothing sane to draw into; the gather reads a stale table
+        }
 
         mEmissionBuffer.Bind();
 
@@ -188,8 +188,8 @@ namespace EdgeLighting
         mEmissionShader.SetUniform("uMVP", glm::mat4(1.0f));
         mEmissionShader.SetUniform("uTime", time);
         mEmissionShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
-        mEmissionShader.SetUniform("uNumSamples", std::min(config.optimizedNeon.numSamples,
-                                                           NEON_MAX_LOOP_SAMPLES));
+        mEmissionShader.SetUniform("uNumSamples", std::max(1, std::min(config.optimizedNeon.numSamples,
+                                                                    NEON_MAX_LOOP_SAMPLES)));
         mGradientLUT.Bind(0);
         mEmissionShader.SetUniform("uGradientLUT", 0);
         mSegmentLUT.Bind(1);
@@ -268,8 +268,8 @@ namespace EdgeLighting
         // Loop sample positions from the LoopSamplesBlock UBO (see the shader)
         // - raw float32 vec4[N], .xy holds the perimeter point in FBO pixels.
         mLoopSamplesBlock.BindBase(LOOP_SAMPLES_BLOCK_BINDING);
-        mNeonShader.SetUniform("uNumSamples", std::min(config.optimizedNeon.numSamples,
-                                                       NEON_MAX_LOOP_SAMPLES));
+        mNeonShader.SetUniform("uNumSamples", std::max(1, std::min(config.optimizedNeon.numSamples,
+                                                                NEON_MAX_LOOP_SAMPLES)));
         // Emission table from pass 0 on unit 3.
         mEmissionBuffer.BindTexture(3);
         mNeonShader.SetUniform("uEmission", 3);

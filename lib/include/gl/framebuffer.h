@@ -8,7 +8,11 @@
 
 namespace EdgeLighting
 {
-    /// RAII wrapper around a GL framebuffer + single RGBA8 colour attachment.
+    /// RAII wrapper around a GL framebuffer + a single colour attachment.
+    ///
+    /// The attachment defaults to RGBA8 / LINEAR; @ref Resize takes explicit
+    /// format and filter parameters for callers that need otherwise (the
+    /// emission pre-pass asks for RGBA16F / NEAREST).
     ///
     /// Typical use is "render to texture, then sample it in a later pass".
     /// Save the caller's target rather than assuming the default framebuffer -
@@ -90,6 +94,13 @@ namespace EdgeLighting
         /// @note Format and filter are tracked alongside the size, so a caller
         ///       that changes format on an existing FBO forces a reallocation
         ///       instead of silently keeping the old one.
+        /// @note Leaves the draw framebuffer binding exactly as it found it,
+        ///       including on the failure path. It binds this FBO internally to
+        ///       attach and validate, then puts the caller's target back - it
+        ///       must NOT settle on 0, because "the target I was handed" is a
+        ///       real FBO under an @c OffscreenCapture, and a caller that reads
+        ///       @ref GetBoundId after calling this would otherwise capture 0
+        ///       and redirect its later passes to the window.
         /// @return @c true on success (or no-op); @c false on failure.
         bool Resize(int width, int height,
                     GLint internalFormat = GL_RGBA8, GLenum format = GL_RGBA,
@@ -107,6 +118,20 @@ namespace EdgeLighting
                 return true;
             }
 
+            // Saved before the first bind below and restored on every exit -
+            // see the @note above. Read as the DRAW binding, which is what
+            // glBindFramebuffer(GL_FRAMEBUFFER, ...) writes.
+            GLint prevFbo = 0;
+            glGetIntegerv(GL_FRAMEBUFFER_BINDING, &prevFbo);
+            // A caller resizing the FBO it currently has bound leaves us
+            // holding a name destroy() is about to delete; restoring that would
+            // bind a deleted object. GL drops the binding to 0 in that case, so
+            // follow it there.
+            if (static_cast<GLuint>(prevFbo) == mFbo)
+            {
+                prevFbo = 0;
+            }
+
             destroy();
 
             glGenTextures(1, &mTexture);
@@ -122,7 +147,7 @@ namespace EdgeLighting
             glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, mTexture, 0);
 
             GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-            glBindFramebuffer(GL_FRAMEBUFFER, 0);
+            glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));
 
             if (status != GL_FRAMEBUFFER_COMPLETE)
             {

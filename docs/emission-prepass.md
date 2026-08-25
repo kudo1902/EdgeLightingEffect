@@ -229,9 +229,15 @@ perimeter stretches are both near a fragment.
   entirely, so filtering across them is meaningless.
 
 GLES 3.0 exposes float colour-renderability only through an extension, so both
-renderers fall back to `GL_RGBA8` and log a warning once; `mEmissionIsFloat`
-records which was obtained. The fallback clamps highlights above 1.0 but is
-otherwise exact.
+renderers fall back to `GL_RGBA8` and log a warning once. The fallback clamps
+highlights above 1.0 but is otherwise exact - `docs/branch-vs-main-comparison.md`
+section 3.5 measures how far it drifts.
+
+The fallback **latches** in `mEmissionFloatUnavailable`, and that is load-bearing
+rather than a log guard. `Framebuffer::Resize` treats a format change as a
+reallocation, so re-requesting `GL_RGBA16F` every frame on a driver that refuses
+it destroys and recreates the texture and FBO twice per frame - measured at 1218
+allocations over a run that should need one.
 
 This motivated the format parameters on `Framebuffer::Resize`:
 

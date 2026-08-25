@@ -172,10 +172,13 @@ namespace EdgeLighting
         /// neon-emission.frag for the row packing). Rebuilt every frame by
         /// @ref renderEmissionPass and read by the gather with texelFetch.
         Framebuffer mEmissionBuffer{"NeonRenderer.Emission"};
-        /// True when the emission buffer got the RGBA16F it asked for. RGBA8
-        /// is a working fallback but clamps stacked segment boosts above 1.0.
-        bool mEmissionIsFloat = false;
-        bool mEmissionFormatLogged = false; ///< Keeps the RGBA8-fallback warning to one line.
+        /// Latched the first time the driver refuses an RGBA16F emission
+        /// target, after which the renderer asks only for RGBA8. Not just a
+        /// log guard: @c Framebuffer::Resize treats a format change as a
+        /// reallocation, so re-requesting 16F every frame would churn the
+        /// texture + FBO twice per frame. RGBA8 is a working fallback, but it
+        /// clamps arc intensities and stacked segment boosts above 1.0.
+        bool mEmissionFloatUnavailable = false;
         std::vector<Arc> mBakedArcs;
 
         // --- Gradient cross-fade -------------------------------------------

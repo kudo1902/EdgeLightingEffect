@@ -217,30 +217,33 @@ namespace EdgeLighting
         // texels are unrelated perimeter samples (and the two rows are
         // different quantities entirely), so filtering across them is
         // meaningless.
-        bool gotFloat = mEmissionBuffer.Resize(NEON_MAX_LOOP_SAMPLES, 2,
-                                               GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, GL_NEAREST);
-        if (!gotFloat)
-        {
-            if (!mEmissionBuffer.Resize(NEON_MAX_LOOP_SAMPLES, 2,
-                                        GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, GL_NEAREST))
-            {
-                return; // nothing sane to draw into; the gather reads a stale table
-            }
-            if (!mEmissionFormatLogged)
-            {
-                LOG_W("NeonRenderer: RGBA16F emission target unavailable, using RGBA8. "
-                      "Segment boosts above 1.0 will clamp.");
-                mEmissionFormatLogged = true;
-            }
-        }
-        mEmissionIsFloat = gotFloat;
-
+        //
         // The target the gather below draws into. NOT necessarily the default
         // framebuffer: an offscreen frame capture (@ref OffscreenCapture) hands
         // this renderer a real FBO, and the gather has no bind of its own, so
         // restoring 0 here would silently redirect the whole neon pass to the
-        // window and leave the capture empty.
+        // window and leave the capture empty. Read BEFORE the resize below, so
+        // it stays correct even if a reallocation ever rebinds.
         const GLuint targetFbo = Framebuffer::GetBoundId();
+
+        // The fallback LATCHES. Framebuffer::Resize treats a format change as a
+        // reallocation, so re-asking for 16F every frame on a driver that
+        // refuses it would destroy and recreate the texture + FBO twice per
+        // frame, forever, with the warning suppressed after the first line.
+        if (!mEmissionFloatUnavailable &&
+            !mEmissionBuffer.Resize(NEON_MAX_LOOP_SAMPLES, 2,
+                                    GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, GL_NEAREST))
+        {
+            mEmissionFloatUnavailable = true;
+            LOG_W("NeonRenderer: RGBA16F emission target unavailable, using RGBA8. "
+                  "Arc intensities and stacked segment boosts above 1.0 will clamp.");
+        }
+        if (mEmissionFloatUnavailable &&
+            !mEmissionBuffer.Resize(NEON_MAX_LOOP_SAMPLES, 2,
+                                    GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, GL_NEAREST))
+        {
+            return; // nothing sane to draw into; the gather reads a stale table
+        }
 
         // Binds the FBO and sets the viewport to NEON_MAX_LOOP_SAMPLES x 2. No
         // clear: the NDC quad covers every texel, so each one is written.
@@ -262,7 +265,6 @@ namespace EdgeLighting
         mFullVertexArray.DrawArrays(GL_TRIANGLES, 6);
         mEmissionShader.Unuse();
 
-        // Hand the framebuffer, viewport and blend state back exactly as found.
         // Hand the framebuffer and viewport back exactly as found. Blend mode
         // is untouched here - it is a phase property owned by Render.
         Framebuffer::BindId(targetFbo);
@@ -550,14 +552,14 @@ namespace EdgeLighting
         mShaderProgram = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                        ShaderSource::NEON_FRAG_SRC,
                                        "NeonRenderer");
-        // Cheap fullscreen black fill, used only by opaque mode. Reuses the
-        // standard neon vertex shader (uMVP) so the fill quad respects the
-        // viewport.
         // Emission pre-pass. Reuses the neon vertex shader (uMVP -> vPos); the
         // fragment shader ignores vPos and keys off gl_FragCoord instead.
         mEmissionShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                         ShaderSource::NEON_EMISSION_FRAG_SRC,
                                         "NeonRenderer.Emission");
+        // Cheap fullscreen black fill, used only by opaque mode. Reuses the
+        // standard neon vertex shader (uMVP) so the fill quad respects the
+        // viewport.
         mBlackRectShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                          ShaderSource::BLACK_RECT_FRAG_SRC,
                                          "NeonRenderer.BlackRect");

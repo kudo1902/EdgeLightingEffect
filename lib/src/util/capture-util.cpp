@@ -206,13 +206,16 @@ namespace EdgeLighting
             End();
         }
 
+        // Saved BEFORE the resize. Resize preserves the binding across a
+        // reallocation, but reading it first keeps this correct independently
+        // of that guarantee - and the pair is what End() restores.
+        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &mPrevFramebuffer);
+        glGetIntegerv(GL_VIEWPORT, mPrevViewport);
+
         if (!mCaptureBuffer.Resize(width, height))
         {
             return false;
         }
-
-        glGetIntegerv(GL_FRAMEBUFFER_BINDING, &mPrevFramebuffer);
-        glGetIntegerv(GL_VIEWPORT, mPrevViewport);
 
         mCaptureBuffer.Bind();
         mActive = true;

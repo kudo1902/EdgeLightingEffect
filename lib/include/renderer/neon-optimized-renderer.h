@@ -105,8 +105,8 @@ namespace EdgeLighting
         /// Perimeter emission table, NEON_MAX_LOOP_SAMPLES x 2. Shares
         /// neon-emission.frag with NeonRenderer; see docs/emission-prepass.md.
         Framebuffer mEmissionBuffer{"NeonOptimized.Emission"};
-        bool mEmissionIsFloat = false;      ///< False when the RGBA8 fallback was taken.
-        bool mEmissionFormatLogged = false; ///< Keeps the fallback warning to one line.
+        /// Latched RGBA8 fallback - see NeonRenderer for why it must latch.
+        bool mEmissionFloatUnavailable = false;
         VertexArray mNeonVertexArray{"NeonOpt.Pass1"};
         VertexArray mBlitVertexArray{"NeonOpt.Blit"};
 
