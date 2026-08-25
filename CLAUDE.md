@@ -87,7 +87,10 @@ Six renderers, all under `lib/include/renderer/`, all registered by the demo in 
   exception is documented at the declaration. See
   [`docs/emission-prepass.md`](docs/emission-prepass.md) for the pass tables and
   [`docs/emission-prepass-comparison.md`](docs/emission-prepass-comparison.md)
-  for the measured before/after.
+  for the measured before/after of the pre-pass commit alone.
+  [`docs/branch-vs-main-comparison.md`](docs/branch-vs-main-comparison.md) is
+  the wider view: the whole branch against `main`, so it also covers the
+  colour-stop alpha and stop-sorting behaviour changes that ship with it.
 - `NeonOptimizedRenderer` - half-res variant: renders into a scaled FBO and bilinear-blits back. Adds a runtime `numSamples` knob and a configurable LUT width. **Visual params are read from `Config::neon`**, not from its own sub-config, which only carries perf knobs.
 - `DropletsRenderer` - rain-on-glass droplets in a band hugging the perimeter; screen-space gravity, self-lit drops, no framebuffer capture.
 - `LensFlareRenderer` - sun + hex-aperture flare (rays, chromatic ghosts) as one fullscreen premultiplied-alpha pass. The sun rides the perimeter in the same parameter space as neon segments/arcs.
