@@ -17,6 +17,7 @@ Docs, in reading order. The three neon documents are tiers of the same material 
 - [`docs/effect-reference.md`](docs/effect-reference.md) - per-parameter reference and recipes.
 - [`docs/architecture-design.md`](docs/architecture-design.md) - full architecture. Note it predates the droplets and lens-flare renderers.
 - [`docs/coordinate-system.md`](docs/coordinate-system.md), [`docs/multiple-arcs-design.md`](docs/multiple-arcs-design.md).
+- [`docs/review-findings.md`](docs/review-findings.md) - open defects and rough edges, visual ones with offscreen repros. Check here before assuming a behaviour is intended.
 
 When the docs go out of date, treat the headers under `lib/include/` as the source of truth.
 
