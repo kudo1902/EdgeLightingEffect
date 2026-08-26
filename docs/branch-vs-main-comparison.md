@@ -107,7 +107,7 @@ column:
 
 *Scene 04 - stops at 0.00/0.25/0.50/0.75 with alpha 1/0/1/0.*
 
-On `main` the LUT bake drops the alpha channel: `SampleStops` returns a
+On `main` the LUT bake drops the alpha channel: `SampleRing` returns a
 `glm::vec3` and the whole ring renders at full brightness. On the branch alpha
 is baked into the LUT and multiplied into the emission **magnitude**, so it
 attenuates filament, halo and bloom together - the ring goes dark at the
@@ -131,7 +131,7 @@ alpha is unaffected.
 
 *Scene 05 - four stops authored in the order 0.75, 0.00, 0.50, 0.25.*
 
-`SampleStops` walks the ring assuming ascending positions. `main` trusts the
+`SampleRing` walks the ring assuming ascending positions. `main` trusts the
 caller and renders a silently wrong gradient - here it never reaches two of the
 four colours and reads as a yellow-green ring. The branch runs the stops
 through `SortStops` once per LUT bake, and the same four stops render as the

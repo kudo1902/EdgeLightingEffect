@@ -175,7 +175,7 @@ Both `NeonRenderer` and `NeonOptimizedRenderer` grow:
 - `UniformBuffer mArcBlock` (std140 mirror of `ArcBlock`).
 - `std::vector<Arc> mBakedArcs` for dirty-check.
 - `void rebuildArcLUT(const Config &cfg)`: for each arc with non-empty
-  `colorStops`, bake into row `i` of `mArcLUT` via `ColorUtils::SampleStops`;
+  `colorStops`, bake into row `i` of `mArcLUT` via `ColorUtils::SampleSpan`;
   arcs with empty stops leave their row untouched (`hasStops = 0` in the UBO
   makes the shader skip the atlas sample).
 
