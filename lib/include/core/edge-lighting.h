@@ -46,8 +46,14 @@ namespace EdgeLighting
         /// @brief Initialise all registered renderers.
         ///
         /// A renderer that fails is logged and dropped from the list, so the
-        /// rest of the effect still runs. Safe to call again after registering
-        /// more renderers: renderers already initialised are skipped.
+        /// rest of the effect still runs.
+        ///
+        /// Call this ONCE. There is no per-renderer guard, so a second call
+        /// re-initialises every renderer already in the list: recompiling its
+        /// shaders and reallocating every GL object it owns. Nothing leaks
+        /// (the wrappers are RAII), but nothing is saved either. Renderers
+        /// registered after this point do not need a second call - @ref
+        /// AddRenderer initialises them on the spot.
         ///
         /// @returns false if any renderer failed to initialise.
         bool Initialize();
