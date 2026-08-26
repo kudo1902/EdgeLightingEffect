@@ -1,7 +1,5 @@
 #include "renderer/neon-renderer.h"
 #include "renderer/neon-tuning.h"
-#include "util/color-utils.h"
-#include "util/constants.h"
 #include "util/geometry-utils.h"
 #include "util/segment-utils.h"
 #include "shaders.h"
@@ -153,75 +151,6 @@ namespace EdgeLighting
             return flags;
         }
 
-        /// Quantise a [0, 1] colour channel to 8 bits, rounding to nearest.
-        ///
-        /// The `+ 0.5f` is the whole point. Without it the cast truncates, so
-        /// every baked texel lands up to 1 LSB low and about 0.5 LSB low on
-        /// average, across all three LUTs - a systematic darkening of the
-        /// authored colours. GL's own float-to-unorm conversion rounds, so
-        /// truncating here was the CPU bake disagreeing with the hardware it
-        /// feeds. The clamp comes after the bias so 1.0 still maps to 255.
-        inline unsigned char ToByte(float v)
-        {
-            return static_cast<unsigned char>(std::clamp(v * 255.0f + 0.5f, 0.0f, 255.0f));
-        }
-
-        /// Whether the atlas baked from @p baked would differ from one baked
-        /// from @p current - i.e. whether the atlas is dirty and must be
-        /// re-baked. Named for the `*Dirty` flags at the call site, which is
-        /// the pattern every renderer here gates its rebuilds on.
-        ///
-        /// Row `i` of the atlas is a pure function of `[i].colorStops` and
-        /// `[i].blendSpace` (see rebuildArcLUT / rebuildSegmentLUT) - those are
-        /// the only fields a re-bake depends on. An arc's `start`, `length` and
-        /// `intensity`, and a segment's `position`, `length` and `boost`, ride
-        /// the UBOs and are re-uploaded every frame regardless.
-        ///
-        /// That distinction is the whole point. Comparing whole structs - which
-        /// is what `arcs != mBakedArcs` did - re-baked and re-uploaded the atlas
-        /// on every ArcWipe / OutlineTracer / SegmentTravel frame, because those
-        /// animations write exactly the live fields and the structs'
-        /// `operator==` includes them.
-        ///
-        /// The comparison is POSITIONAL, not set-wise: the atlas is indexed by
-        /// arc / segment index, so swapping two entries swaps their rows even
-        /// though the collection of stops is unchanged.
-        inline bool IsAtlasDirty(const std::vector<Arc> &baked, const std::vector<Arc> &current)
-        {
-            if (baked.size() != current.size())
-            {
-                return true;
-            }
-            for (size_t i = 0; i < baked.size(); ++i)
-            {
-                if (baked[i].blendSpace != current[i].blendSpace ||
-                    baked[i].colorStops != current[i].colorStops)
-                {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        /// Segment overload of @ref IsAtlasDirty - same rule, same reasoning.
-        inline bool IsAtlasDirty(const std::vector<SegmentBoost> &baked,
-                                 const std::vector<SegmentBoost> &current)
-        {
-            if (baked.size() != current.size())
-            {
-                return true;
-            }
-            for (size_t i = 0; i < baked.size(); ++i)
-            {
-                if (baked[i].blendSpace != current[i].blendSpace ||
-                    baked[i].colorStops != current[i].colorStops)
-                {
-                    return true;
-                }
-            }
-            return false;
-        }
-
         /// Warn once when a host hands over more arcs / segments than the
         /// shader arrays can hold. The excess is dropped silently otherwise:
         /// the UBOs are fixed-size (@c MAX_ARCS / @c MAX_SEGMENT_BOOSTS, shared
@@ -262,9 +191,10 @@ namespace EdgeLighting
         }
         rebuildLoopSamples(mCurrentConfig);
         setupGeometry(mCurrentConfig);
-        rebuildGradientLUT(mCurrentConfig);
-        rebuildSegmentLUT(mCurrentConfig);
-        rebuildArcLUT(mCurrentConfig);
+        // The atlas bakes read the merged transient+preserved view, which
+        // OnConfigChanged normally keeps current; seed it here for the first.
+        SegmentUtils::FillEffectiveSegments(mCurrentConfig.neon, mEffectiveSegments);
+        bakeLUTs(mCurrentConfig);
 
         // Static NDC-order attribs for the LUT debug strip; the actual verts
         // are (re)uploaded from setupGeometry() so the strip tracks rect size.
@@ -298,32 +228,7 @@ namespace EdgeLighting
 
     void NeonRenderer::Update(float deltaTime, float, const Config &)
     {
-        // Drive the gradient cross-fade (see rebuildGradientLUT). Uses the raw
-        // frame delta, not clock time, so a colour change still fades smoothly
-        // even while the animation clock is paused.
-        if (!mFading)
-        {
-            return;
-        }
-
-        mFadeElapsed += deltaTime;
-        float u = (mFadeDuration > 0.0f) ? (mFadeElapsed / mFadeDuration) : 1.0f;
-        u = std::clamp(u, 0.0f, 1.0f);
-        float s = u * u * (3.0f - 2.0f * u); // smoothstep ease-in-out
-
-        const int n = GRADIENT_LUT_SIZE * 4;
-        mLUTDisplay.resize(n);
-        for (int i = 0; i < n; ++i)
-        {
-            mLUTDisplay[i] = mLUTFrom[i] + (mLUTTarget[i] - mLUTFrom[i]) * s;
-        }
-        uploadGradientLUT(mLUTDisplay);
-
-        if (u >= 1.0f)
-        {
-            mLUTDisplay = mLUTTarget; // land exactly on the target
-            mFading = false;
-        }
+        mGradientLUT.Tick(deltaTime);
     }
 
     void NeonRenderer::packLightBlocks(const Config &config)
@@ -341,7 +246,8 @@ namespace EdgeLighting
         // from Render - so on a frame where nothing changed the merged view is
         // already current, and on a frame where something did, OnConfigChanged
         // has already run (Update -> refreshActiveConfig precedes Render).
-        // Refilling was the third FillEffectiveSegments of the same frame.
+        // Refilling here would be a second FillEffectiveSegments of the
+        // same frame.
         const std::vector<SegmentBoost> &effSegments = mEffectiveSegments;
         WarnOnOverflow("segments", "NeonRenderer", effSegments.size(),
                        int(MAX_SEGMENT_BOOSTS), mSegmentOverflowLogged);
@@ -694,19 +600,10 @@ namespace EdgeLighting
                                    // reaches, so it sizes the quad too (see setupGeometry).
                                    config.neon.filamentFalloff != mCurrentConfig.neon.filamentFalloff ||
                                    config.neon.outsideCutoff != mCurrentConfig.neon.outsideCutoff;
-        const bool lutDirty = config.neon.colorStops != mCurrentConfig.neon.colorStops ||
-                              config.neon.blendSpace != mCurrentConfig.neon.blendSpace;
-        // Only the segments' colour stops + blend space affect the atlas
-        // texture; position/length/boost don't (they're read live from the
-        // UBO), so the compare comes from IsAtlasDirty rather than
-        // SegmentBoost::operator==, which would also see the live fields an
-        // animation rewrites every frame. Compares the merged view so a change
-        // in either the transient or preserved pool triggers a re-bake.
+        // The merged transient+preserved view feeds both the segment atlas
+        // below and the per-frame UBO pack, so it is refilled here on every
+        // config change and nowhere else in this call.
         SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
-        const bool segLutDirty = IsAtlasDirty(mBakedSegments, mEffectiveSegments);
-        // Same idea for arcs - start/length/intensity ride the UBO, only
-        // colorStops + blendSpace changes require a re-bake of the atlas.
-        const bool arcLutDirty = IsAtlasDirty(mBakedArcs, config.neon.arcs);
 
         mCurrentConfig = config;
         if (!mShaderProgram.IsValid())
@@ -724,20 +621,7 @@ namespace EdgeLighting
             setupGeometry(config);
         }
 
-        if (lutDirty)
-        {
-            rebuildGradientLUT(config);
-        }
-
-        if (segLutDirty)
-        {
-            rebuildSegmentLUT(config);
-        }
-
-        if (arcLutDirty)
-        {
-            rebuildArcLUT(config);
-        }
+        bakeLUTs(config);
     }
 
     bool NeonRenderer::setupShaders()
@@ -889,178 +773,19 @@ namespace EdgeLighting
         mLoopSamplesBlock.SetData(&block, sizeof(block));
     }
 
-    void NeonRenderer::rebuildGradientLUT(const Config &config)
+    void NeonRenderer::bakeLUTs(const Config &config)
     {
-        // Bake the entire colour ring on CPU into mLUTTarget; the shader then
-        // becomes colour-stop-agnostic. Keeps HSV-vs-RGB blend cost off the GPU
-        // hot path.
-        // Sorted once here, not per texel - SampleRing walks the ring in
-        // order and an unsorted list bakes a silently wrong gradient.
-        const std::vector<ColorStop> baseStops = ColorUtils::SortStops(config.neon.colorStops);
-        mLUTTarget.resize(GRADIENT_LUT_SIZE * 4);
-        for (int i = 0; i < GRADIENT_LUT_SIZE; ++i)
-        {
-            float t = static_cast<float>(i) / static_cast<float>(GRADIENT_LUT_SIZE);
-            glm::vec4 c = ColorUtils::SampleRing(t, baseStops, config.neon.blendSpace);
-            mLUTTarget[i * 4 + 0] = c.r;
-            mLUTTarget[i * 4 + 1] = c.g;
-            mLUTTarget[i * 4 + 2] = c.b;
-            mLUTTarget[i * 4 + 3] = c.a;
-        }
-
-        // First bake (Initialize): seed every buffer and upload immediately -
-        // there's nothing to fade from at startup.
-        if (!mHasBakedLUT)
-        {
-            mLUTFrom = mLUTTarget;
-            mLUTDisplay = mLUTTarget;
-            uploadGradientLUT(mLUTDisplay);
-            mTargetStops = config.neon.colorStops;
-            mTargetBlendSpace = config.neon.blendSpace;
-            mHasBakedLUT = true;
-            mFading = false;
-            return;
-        }
-
-        // OnConfigChanged fires on ANY change to the composited config - and
-        // with an animation attached that is nearly every frame - so it usually
-        // arrives with the gradient inputs untouched. Only (re)start a fade when
-        // they actually changed.
-        bool inputsChanged = config.neon.blendSpace != mTargetBlendSpace ||
-                             config.neon.colorStops != mTargetStops;
-        if (!inputsChanged)
-        {
-            return;
-        }
-        mTargetStops = config.neon.colorStops;
-        mTargetBlendSpace = config.neon.blendSpace;
-
-        // Instant path: no cross-fade requested - snap the display to target.
-        if (config.neon.colorTransitionDuration <= 0.0f)
-        {
-            mLUTDisplay = mLUTTarget;
-            uploadGradientLUT(mLUTDisplay);
-            mFading = false;
-            return;
-        }
-
-        // Fade from whatever is currently on screen (mid-fade or settled)
-        // toward the new target. Update() does the first blended upload this
-        // same frame (SetConfig -> OnConfigChanged runs before Update).
-        mLUTFrom = mLUTDisplay;
-        mFadeElapsed = 0.0f;
-        mFadeDuration = config.neon.colorTransitionDuration;
-        mFading = true;
-    }
-
-    void NeonRenderer::uploadGradientLUT(const std::vector<float> &lut)
-    {
-        // Edge devices often lack float-texture support; pack into ubyte RGBA8.
-        std::vector<unsigned char> lutBytes(GRADIENT_LUT_SIZE * 4);
-        for (int i = 0; i < GRADIENT_LUT_SIZE * 4; ++i)
-        {
-            lutBytes[i] = ToByte(lut[i]);
-        }
-
-        // 1-row 2D texture (sampled with v = 0.5 in the shader). REPEAT on
-        // the U axis lets the gradient sweep wrap naturally; the V axis is a
-        // single row, so CLAMP is fine.
-        mGradientLUT.SetData(lutBytes.data(), GRADIENT_LUT_SIZE, /*height=*/1, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
-        mGradientLUT.SetParams(GL_LINEAR, GL_LINEAR, GL_REPEAT, GL_CLAMP_TO_EDGE);
-    }
-
-    void NeonRenderer::rebuildSegmentLUT(const Config &config)
-    {
-        // Atlas of size SEGMENT_LUT_WIDTH x MAX_SEGMENT_BOOSTS; row `i` holds
-        // segment i's baked stops (or zeros if it has none / doesn't exist).
-        // The shader treats zeros as "no own colour" via the vec4.w hasStops
-        // flag in SegmentBlock, so leaving unused rows zero is safe.
-        constexpr int W = SEGMENT_LUT_WIDTH;
-        constexpr int H = MAX_SEGMENT_BOOSTS;
-        std::vector<unsigned char> atlas(W * H * 4, 0);
-
-        SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
-        const std::vector<SegmentBoost> &effSegments = mEffectiveSegments;
-        const int segCount = std::min(static_cast<int>(effSegments.size()),
-                                      int(MAX_SEGMENT_BOOSTS));
-        for (int s = 0; s < segCount; ++s)
-        {
-            const auto &seg = effSegments[s];
-            if (seg.colorStops.empty())
-            {
-                continue; // row stays zero; shader falls back to base gradient
-            }
-            const std::vector<ColorStop> segStops = ColorUtils::SortStops(seg.colorStops);
-            unsigned char *row = atlas.data() + (s * W * 4);
-            for (int x = 0; x < W; ++x)
-            {
-                float t = static_cast<float>(x) / static_cast<float>(W - 1);
-                // Clamped, not cyclic: this row is a head-to-tail span sampled
-                // CLAMP_TO_EDGE, so stops that do not reach 0 and 1 must hold
-                // their end colours rather than wrapping. See SampleSpan.
-                glm::vec4 c = ColorUtils::SampleSpan(t, segStops, seg.blendSpace);
-                row[x * 4 + 0] = ToByte(c.r);
-                row[x * 4 + 1] = ToByte(c.g);
-                row[x * 4 + 2] = ToByte(c.b);
-                row[x * 4 + 3] = ToByte(c.a);
-            }
-        }
-
-        // CLAMP on both axes: a segment's gradient runs head-to-tail (no wrap
-        // at its own ends), and rows outside [0, segCount) are unused.
-        mSegmentLUT.SetData(atlas.data(), W, H, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
-        mSegmentLUT.SetParams(GL_LINEAR, GL_LINEAR, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
-
-        mBakedSegments = mEffectiveSegments;
-    }
-
-    void NeonRenderer::rebuildArcLUT(const Config &config)
-    {
-        // Atlas of size ARC_LUT_WIDTH x MAX_ARCS; row `i` holds arc i's baked
-        // stops (or zeros if it has none / doesn't exist). Same convention as
-        // rebuildSegmentLUT - the shader treats zeros as "no own colour" via
-        // the vec4.w hasStops flag in ArcBlock, so leaving unused rows zero
-        // is safe.
+        // All three LUT wrappers self-guard: each re-bakes only when the inputs
+        // it actually reads have moved, so this is called unconditionally and
+        // no dirty flag lives at the call site. The live fields an animation
+        // rewrites every frame (a segment's position / length / boost, an arc's
+        // start / length / intensity) ride the UBOs and never dirty a LUT.
         //
-        // CLAMP on both axes, like the segment atlas. U was REPEAT on the
-        // theory that an arc's colours "cycle around the perimeter" - but this
-        // atlas is only ever sampled when the arc has its OWN stops, and those
-        // are laid head-to-tail across the arc's span, not around the ring. An
-        // arc that inherits instead reads the base gradient, which keeps its
-        // own REPEAT wrap. With the hue-rotation term gone from the arc-local
-        // coordinate (see neon.frag) the only reads outside [0, 1] are the few
-        // px the straddling arc feather extends past each end, and CLAMP holds
-        // the end colour there instead of fetching the opposite end's.
-        constexpr int W = ARC_LUT_WIDTH;
-        constexpr int H = MAX_ARCS;
-        std::vector<unsigned char> atlas(W * H * 4, 0);
-
-        const int arcCount = std::min(static_cast<int>(config.neon.arcs.size()),
-                                      int(MAX_ARCS));
-        for (int a = 0; a < arcCount; ++a)
-        {
-            const auto &arc = config.neon.arcs[a];
-            if (arc.colorStops.empty())
-            {
-                continue; // row stays zero; shader falls back to base gradient
-            }
-            const std::vector<ColorStop> arcStops = ColorUtils::SortStops(arc.colorStops);
-            unsigned char *row = atlas.data() + (a * W * 4);
-            for (int x = 0; x < W; ++x)
-            {
-                float t = static_cast<float>(x) / static_cast<float>(W - 1);
-                // Clamped, not cyclic - same reason as the segment atlas above.
-                glm::vec4 c = ColorUtils::SampleSpan(t, arcStops, arc.blendSpace);
-                row[x * 4 + 0] = ToByte(c.r);
-                row[x * 4 + 1] = ToByte(c.g);
-                row[x * 4 + 2] = ToByte(c.b);
-                row[x * 4 + 3] = ToByte(c.a);
-            }
-        }
-
-        mArcLUT.SetData(atlas.data(), W, H, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
-        mArcLUT.SetParams(GL_LINEAR, GL_LINEAR, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
-
-        mBakedArcs = config.neon.arcs;
+        // @note mEffectiveSegments must already hold the merged
+        //       transient+preserved view - both callers fill it first.
+        mGradientLUT.Bake(config.neon.colorStops, config.neon.blendSpace,
+                          GRADIENT_LUT_SIZE, config.neon.colorTransitionDuration);
+        mSegmentLUT.Bake(mEffectiveSegments, SEGMENT_LUT_WIDTH, MAX_SEGMENT_BOOSTS);
+        mArcLUT.Bake(config.neon.arcs, ARC_LUT_WIDTH, MAX_ARCS);
     }
 }
