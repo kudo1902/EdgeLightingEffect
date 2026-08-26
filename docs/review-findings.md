@@ -12,6 +12,10 @@ description, so the reasoning that led to the change stays readable next to it.
 | - | ----- | ---- |
 | visual | V1, V2, V3, V6, V7 | V4, V5 (both closed as documented limitations) |
 | implementation | I1, I4, I6, I7 | I2 (declined), I3 (partly), I5 (documented), I8 (audited) |
+| second pass | - | R1, R2, R3, R4, R5, R6 |
+
+The R items come from a re-read after the V and I fixes landed - see
+[Second pass](#second-pass-after-bbdba62). They are open.
 
 ## How the visual items were reproduced
 
@@ -622,10 +626,122 @@ then the four stragglers, which are two sliders and a renderer toggle.
 
 ---
 
+## Second pass (after `bbdba62`)
+
+A re-read of the tree at `17745a9`, after the V and I fixes above landed.
+
+Re-checked and confirmed correct, so they need no further attention: the
+abutment bitmask (V2) - `PackArcFlags` against the shader's decode, for the
+tiling, gap, overlap and shared-endpoint cases, including the `rel -= 1.0`
+wrap threshold at `0.5 * (1 + length)`; the ring/span sampler split (V6) at
+all six bake sites; the removal of the hue-rotation term from the arc-local
+coordinate (V3), which agrees between the pre-pass and the main shader's alpha
+read; the `cornerRadius` clamp (V1) at all five upload sites; and fork parity
+between `neon.frag` and `neon-optimized.frag`, whose normalised diff shows only
+the intended `uResolutionScale` corrections. `PackArcFlags` and
+`WarnOnOverflow` are byte-identical between the two renderer translation units.
+
+What follows is what the pass turned up. All six are open.
+
+### R1. `Initialize()` promises a re-entry guarantee it does not implement
+
+[`edge-lighting.h`](../lib/include/core/edge-lighting.h) now says:
+
+> Safe to call again after registering more renderers: renderers already
+> initialised are skipped.
+
+Nothing skips them. `mInitialized` is a single bool on the *effect*, and
+[`Initialize`](../lib/src/core/edge-lighting.cpp) calls `(*it)->Initialize()`
+unconditionally on every renderer in the list. A second call recompiles every
+shader and reallocates every VAO, VBO, texture, UBO and FBO across all six
+renderers. The RAII wrappers make that leak-free, not free, and `BaseRenderer`
+has no per-renderer flag to gate on.
+
+The sentence is also redundant: `AddRenderer` self-initialises late
+registrations, which is the whole point of the I6 fix. Deleting the claim is
+cheaper and more honest than adding the flag. It matters because it is in a
+header, which `CLAUDE.md` designates the source of truth.
+
+### R2. Two `Framebuffer::Resize` calls are still unchecked
+
+I7 fixed exactly this hazard for `mEmissionBuffer` in both neon renderers and
+left the two siblings alone:
+
+| site | buffer |
+| ---- | ------ |
+| [`neon-optimized-renderer.cpp:326`](../lib/src/renderer/neon-optimized-renderer.cpp) | `mHalfResBuffer` |
+| [`lens-flare-optimized-renderer.cpp:43`](../lib/src/renderer/lens-flare-optimized-renderer.cpp) | `mScaledBuffer` |
+
+`Resize` calls `destroy()` on its failure path, so `mFbo` is 0; `Bind()` then
+binds the *caller's* framebuffer, and the `glClear` that follows is not clipped
+by the viewport, so it erases everything already drawn that frame. Under an
+`OffscreenCapture` that is the capture target. Same one-line fix I7 used.
+
+### R3. The arc and segment atlases re-bake every frame under animation
+
+Not the same thing as I2, which is about the emission pre-pass, and the
+"structurally negligible" argument there does not carry over.
+
+The gate is a whole-struct compare in both renderers
+([`neon-renderer.cpp:636`](../lib/src/renderer/neon-renderer.cpp),
+[`neon-optimized-renderer.cpp:573`](../lib/src/renderer/neon-optimized-renderer.cpp)):
+
+```cpp
+const bool segLutDirty = mEffectiveSegments != mBakedSegments;
+const bool arcLutDirty = config.neon.arcs != mBakedArcs;
+```
+
+`Arc::operator==` includes `start`, `length` and `intensity`;
+`SegmentBoost::operator==` includes `position`. `ArcWipe`, `OutlineTracer` and
+`SegmentTravel` all write those every frame. So every frame runs 1024
+`SampleSpan` calls with HSV conversion plus a full `glTexImage2D`, per atlas,
+per renderer - while the comment directly above says position, length and
+intensity "don't" affect the atlas, which is true and is the point. The gate
+should compare a projection of `colorStops` + `blendSpace`, not the whole
+struct.
+
+### R4. LUT quantisation truncates instead of rounding
+
+Eighteen sites across the two renderers, all of the form:
+
+```cpp
+static_cast<unsigned char>(std::clamp(c.r * 255.0f, 0.0f, 255.0f))
+```
+
+No `+ 0.5f`, so every baked texel is biased down by up to 1 LSB and by ~0.5 LSB
+on average, in all three LUTs, in both renderers.
+
+### R5. GL state left modified after a pass
+
+- `glClearColor(0, 0, 0, 0)` is set and never restored, in
+  [`neon-optimized-renderer.cpp:329`](../lib/src/renderer/neon-optimized-renderer.cpp)
+  and [`lens-flare-optimized-renderer.cpp:46`](../lib/src/renderer/lens-flare-optimized-renderer.cpp).
+- `renderBlitPass` calls raw `glBindTexture` on whatever texture unit happens
+  to be active
+  ([`neon-optimized-renderer.cpp:444`](../lib/src/renderer/neon-optimized-renderer.cpp)),
+  leaving the half-res texture bound there, and sets the texture's filter
+  directly - so `Framebuffer::mFilter`, the field that exists so a filter change
+  forces a reallocation, no longer describes the texture. `CLAUDE.md` also asks
+  renderer code to go through the RAII wrappers rather than raw GL.
+
+### R6. Nothing stops both neon renderers being enabled at once
+
+The lens-flare pair warns at
+[`debug-ui.cpp:1105`](../demo/src/debug-ui.cpp). The neon pair has no
+equivalent guard at [`debug-ui.cpp:706`](../demo/src/debug-ui.cpp), and
+`Shift+O` in [`main.cpp`](../demo/src/main.cpp) toggles `optimizedNeon.enable`
+without touching `neon.enable`, so the glow draws twice - brighter, with
+half-res edges over full-res ones. This is the visible half of I3, whose fix
+addressed the CPU-work half.
+
+---
+
 ## What is left
 
-Everything user-visible is closed. Three items remain deliberately open, each
-with the reasoning recorded next to the code rather than only here:
+Everything the first pass found that is user-visible is closed. Six items from
+that pass remain deliberately open, each with the reasoning recorded next to
+the code rather than only here, and the second pass added six more that are
+open pending a fix:
 
 | item | state | why |
 | ---- | ----- | --- |
@@ -635,6 +751,8 @@ with the reasoning recorded next to the code rather than only here:
 | I3 | structural half open | follows from the two neon renderers being near-forks; same root as I8 |
 | I5 | documented | the alternative is a breaking renderer-API change for an unmeasured cost |
 | I8 | audited, no UI written | the C ABI itself is complete; what is missing is `demo-capi` coverage, ranked in the section above |
+
+| R1 - R6 | open, not yet actioned | found on the second pass; R1 is a one-line doc correction, R2 is the highest-severity of the group |
 
 If any of these comes back, the fastest way to reproduce is the harness
 described at the top of this document - the configs for every case are given

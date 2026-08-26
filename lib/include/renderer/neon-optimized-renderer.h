@@ -12,12 +12,20 @@
 
 namespace EdgeLighting
 {
-    /// Half-resolution single-pass neon renderer for edge devices.
+    /// Half-resolution neon renderer for edge devices.
     ///
-    /// Two-pass approach:
-    ///   Pass 1 - render the neon shader (highp, up to @c NEON_MAX_LOOP_SAMPLES
-    ///             gather samples per fragment) into a half-resolution RGBA8 FBO.
-    ///   Pass 2 - bilinear blit the half-res FBO to the full-res backbuffer.
+    /// Four passes. The numbering matches docs/emission-prepass.md and the
+    /// declaration order further down, and here it is also the call order:
+    ///   Pass 0  - bake the perimeter emission table into @c mEmissionBuffer.
+    ///             Shares @c neon-emission.frag verbatim with @ref NeonRenderer.
+    ///   Pass 1  - render the neon shader (highp, iterating
+    ///             @c OptimizedNeonConfig::numSamples gather samples per
+    ///             fragment) into a half-resolution RGBA8 FBO.
+    ///   Pass 2a - opaque-mode black fill, drawn full-res on the backbuffer.
+    ///   Pass 2b - bilinear blit the half-res FBO over it.
+    ///
+    /// Passes 0 and 1 sit inside the fill-only debug guard; 2a and 2b are the
+    /// full-res backbuffer passes.
     ///
     /// The perf wins are the half-res FBO, the runtime-tunable
     /// @c OptimizedNeonConfig::numSamples slider (the shader iterates only
@@ -28,7 +36,7 @@ namespace EdgeLighting
     /// NaN "noise dots".
     ///
     /// Visual parameters are read from @c Config::neon (shared with the
-    /// standard single-pass @ref NeonRenderer), so switching between them
+    /// full-resolution @ref NeonRenderer), so switching between them
     /// for comparison is a one-click toggle. @c Config::optimizedNeon carries
     /// the tuning knobs specific to this renderer (resolution scale, sample
     /// count, LUT size, half-res debug toggle).

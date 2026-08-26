@@ -12,22 +12,35 @@
 
 namespace EdgeLighting
 {
-    /// Full-resolution single-pass neon renderer.
+    /// Full-resolution neon renderer.
     ///
     /// Draws a tight quad over the rect + glow-reach margin and runs one
-    /// fragment shader that composes filament + halo + bloom in one pass.
-    /// Per-fragment work: an analytic rounded-box SDF, a gather loop over
-    /// @c NEON_MAX_LOOP_SAMPLES perimeter samples (positions live in a UBO),
-    /// and per-sample lookups into three baked LUTs:
-    ///   - @c uGradientLUT      - the base colour ring.
-    ///   - @c uSegmentLUT       - per-segment gradient atlas (one row per segment).
-    ///   - @c uArcLUT           - per-arc gradient atlas (one row per arc).
+    /// fragment shader that composes filament + halo + bloom.
     ///
-    /// Arc gating uses winner-take-all: for each sample the arc with the
-    /// largest @c mask*intensity owns the colour and emission there. See
-    /// neon.frag for the full compose. Visual parameters come from
-    /// @c Config::neon; @c Config::arcs / @c Config::segmentBoosts drive
-    /// their respective UBOs and atlases.
+    /// Per-fragment work: an analytic rounded-box SDF, plus a gather loop over
+    /// @c NEON_MAX_LOOP_SAMPLES perimeter samples (positions live in a UBO)
+    /// that costs two @c texelFetch calls per sample into @c uEmission - the
+    /// table baked by the emission pre-pass. The per-sample arc scan, segment
+    /// loop and filtered LUT reads that used to run here are all
+    /// fragment-invariant and moved to @c neon-emission.frag, which is why the
+    /// per-fragment cost no longer scales with the arc or segment count. See
+    /// docs/emission-prepass.md.
+    ///
+    /// The three baked LUTs stay bound, but for the POINTWISE reads only - the
+    /// colour-stop alpha, taken at the fragment's own perimeter position:
+    ///   - @c uGradientLUT      - base colour RING (REPEAT, cyclic).
+    ///   - @c uSegmentLUT       - per-segment atlas, one row per segment
+    ///                            (CLAMP, head-to-tail SPAN).
+    ///   - @c uArcLUT           - per-arc atlas, one row per arc (CLAMP, SPAN).
+    ///
+    /// Arc gating splits in two, and the halves use different rules on purpose.
+    /// The gather's HUE resolves overlap winner-take-all per sample (largest
+    /// @c mask*intensity), decided in the pre-pass. The EMISSION comes from
+    /// @c arcCoverContinuous evaluated at the fragment's own perimeter
+    /// position and combined across arcs with @c max. See neon.frag for the
+    /// full compose. Visual parameters come from @c Config::neon;
+    /// @c NeonConfig::arcs and @c NeonConfig::segmentBoosts drive their
+    /// respective UBOs and atlases.
     class NeonRenderer : public BaseRenderer
     {
     public:

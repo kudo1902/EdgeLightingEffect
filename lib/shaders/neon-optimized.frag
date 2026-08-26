@@ -107,7 +107,9 @@ layout(std140) uniform ArcBlock
 };
 
 // Per-arc gradient atlas (RGBA8, CLAMP both axes). One row per arc, same
-// convention as uSegmentLUT. Sampled only when the winning arc has stops.
+// convention as uSegmentLUT: a head-to-tail span, end colours held. The
+// pre-pass reads the winning arc's row for the hue; main()'s emitCover loop
+// reads EVERY covering arc's row for its colour-stop alpha. See neon.frag.
 uniform sampler2D uArcLUT;
 
 // Perimeter emission table from neon-emission.frag: uNumSamples wide (of
@@ -498,11 +500,12 @@ void main() {
     // Continuous arc coverage for the filament: gate by the arc read at this
     // fragment's own perimeter position, recovered GEOMETRICALLY from vPos
     // (inverse of the CPU's GetPointOnRectangle) so a slow tracer's head moves
-    // smoothly instead of stepping across the gather points. Feathers point
-    // OUTWARD so the filament is lit at the arc start (no dark lead-in) and
-    // reaches its end. The exact position also keeps the corner curve an arc
-    // starting at 0 sits right after dark - the old circular-mean smear lit
-    // the whole corner. See neon.frag for full rationale.
+    // smoothly instead of stepping across the gather points. Feather direction
+    // is decided per ENDPOINT - inward at a free end, outward only where
+    // another arc abuts - see arcCoverContinuous above. The exact position
+    // also keeps the corner curve an arc starting at 0 sits right after dark -
+    // the old circular-mean smear lit the whole corner. See neon.frag for full
+    // rationale.
     float sPos = perimeterPosition(vPos);
     // Inward feathers: convert pixel widths to perimeter fractions. `peri` is
     // computed above the gather and is in FBO px (uRectSize is pre-scaled)

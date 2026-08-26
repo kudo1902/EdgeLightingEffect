@@ -88,8 +88,8 @@ Six renderers ship, registered by the demo in this order:
 | # | Renderer | Layer |
 |---|---|---|
 | 1 | `WireframeRenderer` | 1px `GL_LINE_LOOP` debug box, sharp corners, blending off. On by default, green. |
-| 2 | `NeonRenderer` | Full-res single-pass neon stroke, plus the opaque fill pass and two debug overlays. |
-| 3 | `NeonOptimizedRenderer` | Half-res variant. Reads appearance from `Config::neon`; its own sub-config carries perf knobs only. |
+| 2 | `NeonRenderer` | Full-res neon stroke: an emission pre-pass, the opaque fill, the gather, and two debug overlays. |
+| 3 | `NeonOptimizedRenderer` | Half-res variant, same pre-pass. Reads appearance from `Config::neon`; its own sub-config carries perf knobs only. |
 | 4 | `DropletsRenderer` | Rain-on-glass in a band hugging the perimeter. Screen-space gravity, self-lit, no framebuffer capture. |
 | 5 | `LensFlareRenderer` | Sun plus hex-aperture flare as one fullscreen premultiplied pass. The sun rides the perimeter. |
 | 6 | `LensFlareOptimizedRenderer` | Half-res variant of 5. |
@@ -141,8 +141,20 @@ Multiply the two, tone map hue-preservingly, apply gamma, emit premultiplied
 alpha (coverage = brightest channel) so the effect composites over arbitrary
 content rather than only adding light.
 
+Before that quad runs, both neon renderers execute an **emission pre-pass**.
+The gather's per-sample work - the arc winner-take-all, the segment bells, the
+LUT fetches - is a pure function of `(si, uTime, config)` and does not vary per
+fragment, so it is baked once per frame into an `N x 2` RGBA16F table
+(`neon-emission.frag`) that the gather then reads with `texelFetch`.
+Per-fragment cost is `O(samples)` rather than `O(samples * (arcs + segments))`.
+The invariant that keeps the split honest: **a pure function of
+`(si, uTime, config)` belongs in the pre-pass; anything that reads `vPos`
+belongs in the main shader.**
+
 The full derivation, including the closed forms and the sampling bugs they
-replaced, is in [`neon-renderer-explained.html`](neon-renderer-explained.html).
+replaced, is in [`neon-renderer-explained.html`](neon-renderer-explained.html);
+the pre-pass has its own design note in
+[`emission-prepass.md`](emission-prepass.md).
 
 ## 7. Shader and C++ interop
 
@@ -167,15 +179,25 @@ directory to ship.
 list and the `file(READ ...)` list in `lib/CMakeLists.txt`, and
 `lib/shaders/shaders.h.in`.
 
-Bulk data reaches the shader two ways:
+Bulk data reaches the shader three ways:
 
 - **UBOs** (std140): `LoopSamplesBlock` (128 perimeter points),
   `SegmentBlock`, `ArcBlock`. Per-frame values that the shader indexes.
+  `ArcBlock`'s `.w` is a bitmask, not a bool: bit 0 is "has own colour
+  stops", bits 1 and 2 record whether another arc abuts this one's tail /
+  head, which is what picks each endpoint's feather direction. Packed by
+  `PackArcFlags` in both renderers.
 - **LUT textures**, all baked on the CPU as **RGBA8** - float textures are
-  deliberately avoided for edge-device compatibility. `uGradientLUT` is a
-  256x1 colour ring with `GL_REPEAT` on U (which makes hue rotation a single
-  addition); `uSegmentLUT` and `uArcLUT` are 128-wide atlases, one row per
-  segment / per arc.
+  deliberately avoided for edge-device compatibility. Two shapes, and
+  confusing them is silent:
+  `uGradientLUT` is a 256x1 colour **ring** - `GL_REPEAT` on U (which makes
+  hue rotation a single addition), baked with `ColorUtils::SampleRing`.
+  `uSegmentLUT` and `uArcLUT` are 128-wide **span** atlases, one row per
+  segment / per arc - `GL_CLAMP_TO_EDGE` on both axes, baked with
+  `ColorUtils::SampleSpan`, which holds the end colours instead of wrapping.
+- **The emission table** (`uEmission`) - the pre-pass's output (§6): `N x 2`,
+  `GL_RGBA16F`, `GL_NEAREST`, read only with `texelFetch`. Falls back to
+  `GL_RGBA8` where the driver refuses float colour rendering.
 
 ## 8. Animation
 
@@ -205,9 +227,12 @@ surface. `edge-lighting-capi.h` is the single public include, aggregating
 - Three opaque handle families - effect, animation, modulator - defined in
   `capi-internal.h`. Attaching an animation does not transfer ownership.
 - Each effect handle carries a **staging `Config`**. Every `el_effect_set_*`
-  mutates staging and calls `SetConfig` immediately; every `el_effect_get_*`
-  reads staging back, *not* the animation-overlaid active config.
-  `el_effect_capture` re-syncs staging from the effect's base.
+  mutates staging and *nothing else*; every `el_effect_get_*` reads staging
+  back, *not* the animation-overlaid active config. Staging reaches the
+  effect in `el_effect_update`, which is the only place that calls
+  `SetConfig` - so a host that sets config and then calls only
+  `el_effect_render` renders the previous frame's config. `el_effect_capture`
+  re-syncs staging from the effect's base.
 - No C++ exception crosses the boundary; everything maps to `el_result_e`.
 - Enum ABI parity is enforced by a wall of `static_assert`s at the top of
   `capi-internal.h`. **Reordering or renumbering a mirrored C++ enum means
@@ -245,6 +270,7 @@ Two rules that are easy to get wrong:
 | Goal | Touch |
 |---|---|
 | Tune neon appearance | `neon-tuning.h`, and **both** `neon.frag` and `neon-optimized.frag` |
+| Change what the gather bakes | `neon-emission.frag` **and** both consumers - keep the pre-pass invariant (§6) |
 | Add a config field | `config.h` (field **and** `operator==`), the renderer that reads it, `DebugUI`, and the C ABI mirror if exposed |
 | Add a shader | `lib/CMakeLists.txt` (two lists) and `shaders.h.in` |
 | Add a renderer | `BaseRenderer` subclass, `Config` sub-struct, `main.cpp` registration, `DebugUI` section |

@@ -25,11 +25,15 @@ namespace EdgeLighting
         /// gather samples sat on the correctly clamped stadium, smearing the
         /// colour ring across fragments nowhere near them.
         ///
-        /// Every consumer of the radius goes through here so they cannot
-        /// disagree again: the perimeter walk, the renderers' `uCornerRadius`
-        /// uploads (which is what reaches `sdRoundBox` in all three shaders),
-        /// and the lens-flare sun's offset rect. Negative values clamp to 0,
-        /// which is the documented "sharp corners" behaviour.
+        /// Every consumer applies this same clamp so they cannot disagree
+        /// again, but by two routes. The renderers' `uCornerRadius` uploads
+        /// (which is what reaches `sdRoundBox` in all three shaders) and the
+        /// lens-flare sun's offset rect call this function. The perimeter walk
+        /// below re-derives it inline as `r = min(r, min(halfW, halfH))`,
+        /// because it has already split `halfW` / `halfH` out for its own use.
+        /// Same value, two spellings - change one and change the other.
+        /// Negative values clamp to 0, which is the documented "sharp corners"
+        /// behaviour.
         inline float GetEffectiveCornerRadius(const RectGeometry &geom)
         {
             float halfMin = std::min(geom.width, geom.height) * 0.5f;

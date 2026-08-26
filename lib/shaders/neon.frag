@@ -88,9 +88,15 @@ layout(std140) uniform ArcBlock
 };
 
 // Per-arc gradient atlas (RGBA8, CLAMP-wrapped both axes). One row per arc,
-// same layout convention as uSegmentLUT. Sampled only when the winning arc's
-// hasStops flag is set; the loser rows are never read, so leaving them stale
-// is fine.
+// same layout convention as uSegmentLUT: a head-to-tail SPAN, baked with
+// ColorUtils::SampleSpan, so the end colours hold rather than wrapping round.
+//
+// Read in TWO places, and the second is easy to miss. The pre-pass samples
+// only the WINNING arc's row, for the gather hue. But the pointwise emitCover
+// loop in main() samples the row of EVERY arc that covers this fragment, for
+// its colour-stop alpha - so a row is live whenever its arc has stops, and the
+// non-winning rows cannot be left stale. rebuildArcLUT zero-fills the whole
+// atlas on every bake, which is what currently keeps that true.
 uniform sampler2D uArcLUT;
 
 // 1-row 2D LUT (REPEAT-wrapped) holding the precomputed colour ring.
