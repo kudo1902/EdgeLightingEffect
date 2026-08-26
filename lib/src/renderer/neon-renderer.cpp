@@ -153,6 +153,75 @@ namespace EdgeLighting
             return flags;
         }
 
+        /// Quantise a [0, 1] colour channel to 8 bits, rounding to nearest.
+        ///
+        /// The `+ 0.5f` is the whole point. Without it the cast truncates, so
+        /// every baked texel lands up to 1 LSB low and about 0.5 LSB low on
+        /// average, across all three LUTs - a systematic darkening of the
+        /// authored colours. GL's own float-to-unorm conversion rounds, so
+        /// truncating here was the CPU bake disagreeing with the hardware it
+        /// feeds. The clamp comes after the bias so 1.0 still maps to 255.
+        inline unsigned char ToByte(float v)
+        {
+            return static_cast<unsigned char>(std::clamp(v * 255.0f + 0.5f, 0.0f, 255.0f));
+        }
+
+        /// Whether the atlas baked from @p baked would differ from one baked
+        /// from @p current - i.e. whether the atlas is dirty and must be
+        /// re-baked. Named for the `*Dirty` flags at the call site, which is
+        /// the pattern every renderer here gates its rebuilds on.
+        ///
+        /// Row `i` of the atlas is a pure function of `[i].colorStops` and
+        /// `[i].blendSpace` (see rebuildArcLUT / rebuildSegmentLUT) - those are
+        /// the only fields a re-bake depends on. An arc's `start`, `length` and
+        /// `intensity`, and a segment's `position`, `length` and `boost`, ride
+        /// the UBOs and are re-uploaded every frame regardless.
+        ///
+        /// That distinction is the whole point. Comparing whole structs - which
+        /// is what `arcs != mBakedArcs` did - re-baked and re-uploaded the atlas
+        /// on every ArcWipe / OutlineTracer / SegmentTravel frame, because those
+        /// animations write exactly the live fields and the structs'
+        /// `operator==` includes them.
+        ///
+        /// The comparison is POSITIONAL, not set-wise: the atlas is indexed by
+        /// arc / segment index, so swapping two entries swaps their rows even
+        /// though the collection of stops is unchanged.
+        inline bool IsAtlasDirty(const std::vector<Arc> &baked, const std::vector<Arc> &current)
+        {
+            if (baked.size() != current.size())
+            {
+                return true;
+            }
+            for (size_t i = 0; i < baked.size(); ++i)
+            {
+                if (baked[i].blendSpace != current[i].blendSpace ||
+                    baked[i].colorStops != current[i].colorStops)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// Segment overload of @ref IsAtlasDirty - same rule, same reasoning.
+        inline bool IsAtlasDirty(const std::vector<SegmentBoost> &baked,
+                                 const std::vector<SegmentBoost> &current)
+        {
+            if (baked.size() != current.size())
+            {
+                return true;
+            }
+            for (size_t i = 0; i < baked.size(); ++i)
+            {
+                if (baked[i].blendSpace != current[i].blendSpace ||
+                    baked[i].colorStops != current[i].colorStops)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         /// Warn once when a host hands over more arcs / segments than the
         /// shader arrays can hold. The excess is dropped silently otherwise:
         /// the UBOs are fixed-size (@c MAX_ARCS / @c MAX_SEGMENT_BOOSTS, shared
@@ -629,14 +698,15 @@ namespace EdgeLighting
                               config.neon.blendSpace != mCurrentConfig.neon.blendSpace;
         // Only the segments' colour stops + blend space affect the atlas
         // texture; position/length/boost don't (they're read live from the
-        // UBO). Cheap deep-compare via mBakedSegments (each SegmentBoost's
-        // operator== includes its stops). Compares the merged view so a change
+        // UBO), so the compare comes from IsAtlasDirty rather than
+        // SegmentBoost::operator==, which would also see the live fields an
+        // animation rewrites every frame. Compares the merged view so a change
         // in either the transient or preserved pool triggers a re-bake.
         SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
-        const bool segLutDirty = mEffectiveSegments != mBakedSegments;
+        const bool segLutDirty = IsAtlasDirty(mBakedSegments, mEffectiveSegments);
         // Same idea for arcs - start/length/intensity ride the UBO, only
         // colorStops + blendSpace changes require a re-bake of the atlas.
-        const bool arcLutDirty = config.neon.arcs != mBakedArcs;
+        const bool arcLutDirty = IsAtlasDirty(mBakedArcs, config.neon.arcs);
 
         mCurrentConfig = config;
         if (!mShaderProgram.IsValid())
@@ -889,8 +959,7 @@ namespace EdgeLighting
         std::vector<unsigned char> lutBytes(GRADIENT_LUT_SIZE * 4);
         for (int i = 0; i < GRADIENT_LUT_SIZE * 4; ++i)
         {
-            lutBytes[i] = static_cast<unsigned char>(
-                std::clamp(lut[i] * 255.0f, 0.0f, 255.0f));
+            lutBytes[i] = ToByte(lut[i]);
         }
 
         // 1-row 2D texture (sampled with v = 0.5 in the shader). REPEAT on
@@ -930,10 +999,10 @@ namespace EdgeLighting
                 // CLAMP_TO_EDGE, so stops that do not reach 0 and 1 must hold
                 // their end colours rather than wrapping. See SampleSpan.
                 glm::vec4 c = ColorUtils::SampleSpan(t, segStops, seg.blendSpace);
-                row[x * 4 + 0] = static_cast<unsigned char>(std::clamp(c.r * 255.0f, 0.0f, 255.0f));
-                row[x * 4 + 1] = static_cast<unsigned char>(std::clamp(c.g * 255.0f, 0.0f, 255.0f));
-                row[x * 4 + 2] = static_cast<unsigned char>(std::clamp(c.b * 255.0f, 0.0f, 255.0f));
-                row[x * 4 + 3] = static_cast<unsigned char>(std::clamp(c.a * 255.0f, 0.0f, 255.0f));
+                row[x * 4 + 0] = ToByte(c.r);
+                row[x * 4 + 1] = ToByte(c.g);
+                row[x * 4 + 2] = ToByte(c.b);
+                row[x * 4 + 3] = ToByte(c.a);
             }
         }
 
@@ -982,10 +1051,10 @@ namespace EdgeLighting
                 float t = static_cast<float>(x) / static_cast<float>(W - 1);
                 // Clamped, not cyclic - same reason as the segment atlas above.
                 glm::vec4 c = ColorUtils::SampleSpan(t, arcStops, arc.blendSpace);
-                row[x * 4 + 0] = static_cast<unsigned char>(std::clamp(c.r * 255.0f, 0.0f, 255.0f));
-                row[x * 4 + 1] = static_cast<unsigned char>(std::clamp(c.g * 255.0f, 0.0f, 255.0f));
-                row[x * 4 + 2] = static_cast<unsigned char>(std::clamp(c.b * 255.0f, 0.0f, 255.0f));
-                row[x * 4 + 3] = static_cast<unsigned char>(std::clamp(c.a * 255.0f, 0.0f, 255.0f));
+                row[x * 4 + 0] = ToByte(c.r);
+                row[x * 4 + 1] = ToByte(c.g);
+                row[x * 4 + 2] = ToByte(c.b);
+                row[x * 4 + 3] = ToByte(c.a);
             }
         }
 

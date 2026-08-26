@@ -135,6 +135,75 @@ namespace EdgeLighting
             return flags;
         }
 
+        /// Quantise a [0, 1] colour channel to 8 bits, rounding to nearest.
+        ///
+        /// The `+ 0.5f` is the whole point. Without it the cast truncates, so
+        /// every baked texel lands up to 1 LSB low and about 0.5 LSB low on
+        /// average, across all three LUTs - a systematic darkening of the
+        /// authored colours. GL's own float-to-unorm conversion rounds, so
+        /// truncating here was the CPU bake disagreeing with the hardware it
+        /// feeds. The clamp comes after the bias so 1.0 still maps to 255.
+        inline unsigned char ToByte(float v)
+        {
+            return static_cast<unsigned char>(std::clamp(v * 255.0f + 0.5f, 0.0f, 255.0f));
+        }
+
+        /// Whether the atlas baked from @p baked would differ from one baked
+        /// from @p current - i.e. whether the atlas is dirty and must be
+        /// re-baked. Named for the `*Dirty` flags at the call site, which is
+        /// the pattern every renderer here gates its rebuilds on.
+        ///
+        /// Row `i` of the atlas is a pure function of `[i].colorStops` and
+        /// `[i].blendSpace` (see rebuildArcLUT / rebuildSegmentLUT) - those are
+        /// the only fields a re-bake depends on. An arc's `start`, `length` and
+        /// `intensity`, and a segment's `position`, `length` and `boost`, ride
+        /// the UBOs and are re-uploaded every frame regardless.
+        ///
+        /// That distinction is the whole point. Comparing whole structs - which
+        /// is what `arcs != mBakedArcs` did - re-baked and re-uploaded the atlas
+        /// on every ArcWipe / OutlineTracer / SegmentTravel frame, because those
+        /// animations write exactly the live fields and the structs'
+        /// `operator==` includes them.
+        ///
+        /// The comparison is POSITIONAL, not set-wise: the atlas is indexed by
+        /// arc / segment index, so swapping two entries swaps their rows even
+        /// though the collection of stops is unchanged.
+        inline bool IsAtlasDirty(const std::vector<Arc> &baked, const std::vector<Arc> &current)
+        {
+            if (baked.size() != current.size())
+            {
+                return true;
+            }
+            for (size_t i = 0; i < baked.size(); ++i)
+            {
+                if (baked[i].blendSpace != current[i].blendSpace ||
+                    baked[i].colorStops != current[i].colorStops)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// Segment overload of @ref IsAtlasDirty - same rule, same reasoning.
+        inline bool IsAtlasDirty(const std::vector<SegmentBoost> &baked,
+                                 const std::vector<SegmentBoost> &current)
+        {
+            if (baked.size() != current.size())
+            {
+                return true;
+            }
+            for (size_t i = 0; i < baked.size(); ++i)
+            {
+                if (baked[i].blendSpace != current[i].blendSpace ||
+                    baked[i].colorStops != current[i].colorStops)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         /// Warn once when a host hands over more arcs / segments than the
         /// shader arrays can hold - see NeonRenderer's copy for the rationale.
         /// @p latched is the caller's per-renderer flag, cleared once the count
@@ -294,7 +363,7 @@ namespace EdgeLighting
         mEmissionShader.SetUniform("uTime", time);
         mEmissionShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
         mEmissionShader.SetUniform("uNumSamples", std::max(1, std::min(config.optimizedNeon.numSamples,
-                                                                    NEON_MAX_LOOP_SAMPLES)));
+                                                                       NEON_MAX_LOOP_SAMPLES)));
         mGradientLUT.Bind(0);
         mEmissionShader.SetUniform("uGradientLUT", 0);
         mSegmentLUT.Bind(1);
@@ -311,7 +380,7 @@ namespace EdgeLighting
         return true;
     }
 
-    void NeonOptimizedRenderer::renderHalfResNeonPass(int viewportHeight, int bufW, int bufH,
+    bool NeonOptimizedRenderer::renderHalfResNeonPass(int viewportHeight, int bufW, int bufH,
                                                       float time, const Config &config)
     {
         // Everything below is in FBO space: the transform, the rect size and
@@ -323,11 +392,38 @@ namespace EdgeLighting
         const float halfRectH = config.geometry.height * 0.5f;
 
         // --- Pass 1: render neon to scaled FBO ---
-        mHalfResBuffer.Resize(bufW, bufH);
+        // Resize destroys the attachment on its failure path, so a failure
+        // leaves mHalfResBuffer holding id 0 - and Bind() would then bind the
+        // CALLER'S framebuffer, whereupon the glClear below erases everything
+        // already drawn this frame (glClear is not clipped by the viewport).
+        // Under an OffscreenCapture that target is the capture. Bail instead;
+        // Render skips Pass 2b with us. Same contract as renderEmissionPass.
+        // The filter is requested through Resize, which is the ONLY writer of
+        // the tracked value, so it cannot drift. Setting it on the texture
+        // afterwards instead - which is what the debug toggle used to do - left
+        // mFilter saying LINEAR while the texture was NEAREST, so the next
+        // frame's Resize saw a mismatch and destroyed and recreated the FBO.
+        // Measured at one reallocation per frame for as long as showHalfRes was
+        // on, against one for the whole run. A filter change still costs one
+        // reallocation here, but only on the frame the toggle actually moves.
+        const GLint filter = config.optimizedNeon.showHalfRes ? GL_NEAREST : GL_LINEAR;
+        if (!mHalfResBuffer.Resize(bufW, bufH, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, filter))
+        {
+            return false;
+        }
         mHalfResBuffer.Bind();
 
+        // The clear colour is global GL state, so put it back: a host that
+        // sets its own once at startup would otherwise find it silently
+        // replaced with transparent black by whichever frame ran this pass.
+        // The query costs the same as the GetBoundId one above - once per
+        // frame, and for the same reason: this renderer does not own the
+        // context it is drawing into.
+        GLfloat prevClear[4];
+        glGetFloatv(GL_COLOR_CLEAR_VALUE, prevClear);
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClear(GL_COLOR_BUFFER_BIT);
+        glClearColor(prevClear[0], prevClear[1], prevClear[2], prevClear[3]);
 
         mNeonShader.Use();
 
@@ -375,7 +471,7 @@ namespace EdgeLighting
         // - raw float32 vec4[N], .xy holds the perimeter point in FBO pixels.
         mLoopSamplesBlock.BindBase(LOOP_SAMPLES_BLOCK_BINDING);
         mNeonShader.SetUniform("uNumSamples", std::max(1, std::min(config.optimizedNeon.numSamples,
-                                                                NEON_MAX_LOOP_SAMPLES)));
+                                                                   NEON_MAX_LOOP_SAMPLES)));
         // Emission table from pass 0 on unit 3.
         mEmissionBuffer.BindTexture(3);
         mNeonShader.SetUniform("uEmission", 3);
@@ -393,6 +489,7 @@ namespace EdgeLighting
         mNeonVertexArray.DrawArrays(GL_TRIANGLES, 6);
 
         mNeonShader.Unuse();
+        return true;
     }
 
     void NeonOptimizedRenderer::renderOpaqueFill(int viewportHeight, const Config &config)
@@ -439,14 +536,10 @@ namespace EdgeLighting
         mBlitShader.Use();
         mBlitShader.SetUniform("uMVP", identity);
 
-        // Debug toggle: nearest neighbour shows the raw half-res pixels.
-        GLuint texId = mHalfResBuffer.GetTextureId();
-        glBindTexture(GL_TEXTURE_2D, texId);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER,
-                        config.optimizedNeon.showHalfRes ? GL_NEAREST : GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER,
-                        config.optimizedNeon.showHalfRes ? GL_NEAREST : GL_LINEAR);
-
+        // Just bind it. The showHalfRes filter is requested through Resize in
+        // pass 1, so this pass sets no texture parameters at all - and the bare
+        // glBindTexture that used to sit here, on whatever unit the previous
+        // pass left active, is gone with it.
         mHalfResBuffer.BindTexture(0);
         mBlitShader.SetUniform("uSource", 0);
 
@@ -510,7 +603,7 @@ namespace EdgeLighting
             // mode is a phase property, and pass 0 above left blending off.
             glEnable(GL_BLEND);
             glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-            renderHalfResNeonPass(viewportHeight, bufW, bufH, time, config);
+            drawNeon = renderHalfResNeonPass(viewportHeight, bufW, bufH, time, config);
         }
 
         // Back to the caller's target for the full-res passes.
@@ -567,11 +660,13 @@ namespace EdgeLighting
         const bool lutDirty = config.neon.colorStops != mCurrentConfig.neon.colorStops ||
                               config.neon.blendSpace != mCurrentConfig.neon.blendSpace ||
                               config.optimizedNeon.gradientLutSize != mCurrentConfig.optimizedNeon.gradientLutSize;
-        // See NeonRenderer for the same guard - only per-segment stops/blend
-        // affect the atlas; live position/length/boost don't.
+        // See NeonRenderer for the same guard - only per-segment and per-arc
+        // stops/blend space affect the atlases; the live position/length/boost
+        // and start/length/intensity fields ride the UBOs, which is why these
+        // compare through IsAtlasDirty rather than the structs' operator==.
         SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
-        const bool segLutDirty = mEffectiveSegments != mBakedSegments;
-        const bool arcLutDirty = config.neon.arcs != mBakedArcs;
+        const bool segLutDirty = IsAtlasDirty(mBakedSegments, mEffectiveSegments);
+        const bool arcLutDirty = IsAtlasDirty(mBakedArcs, config.neon.arcs);
 
         mCurrentConfig = config;
         if (!mNeonShader.IsValid())
@@ -819,8 +914,7 @@ namespace EdgeLighting
         std::vector<unsigned char> lutBytes(static_cast<size_t>(lutSize) * 4);
         for (int i = 0; i < lutSize * 4; ++i)
         {
-            lutBytes[i] = static_cast<unsigned char>(
-                std::clamp(lut[i] * 255.0f, 0.0f, 255.0f));
+            lutBytes[i] = ToByte(lut[i]);
         }
 
         mGradientLUT.SetData(lutBytes.data(), lutSize, /*height=*/1, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
@@ -858,10 +952,10 @@ namespace EdgeLighting
                 // CLAMP_TO_EDGE, so stops that do not reach 0 and 1 must hold
                 // their end colours rather than wrapping. See SampleSpan.
                 glm::vec4 c = ColorUtils::SampleSpan(t, segStops, seg.blendSpace);
-                row[x * 4 + 0] = static_cast<unsigned char>(std::clamp(c.r * 255.0f, 0.0f, 255.0f));
-                row[x * 4 + 1] = static_cast<unsigned char>(std::clamp(c.g * 255.0f, 0.0f, 255.0f));
-                row[x * 4 + 2] = static_cast<unsigned char>(std::clamp(c.b * 255.0f, 0.0f, 255.0f));
-                row[x * 4 + 3] = static_cast<unsigned char>(std::clamp(c.a * 255.0f, 0.0f, 255.0f));
+                row[x * 4 + 0] = ToByte(c.r);
+                row[x * 4 + 1] = ToByte(c.g);
+                row[x * 4 + 2] = ToByte(c.b);
+                row[x * 4 + 3] = ToByte(c.a);
             }
         }
 
@@ -897,10 +991,10 @@ namespace EdgeLighting
                 float t = static_cast<float>(x) / static_cast<float>(W - 1);
                 // Clamped, not cyclic - same reason as the segment atlas above.
                 glm::vec4 c = ColorUtils::SampleSpan(t, arcStops, arc.blendSpace);
-                row[x * 4 + 0] = static_cast<unsigned char>(std::clamp(c.r * 255.0f, 0.0f, 255.0f));
-                row[x * 4 + 1] = static_cast<unsigned char>(std::clamp(c.g * 255.0f, 0.0f, 255.0f));
-                row[x * 4 + 2] = static_cast<unsigned char>(std::clamp(c.b * 255.0f, 0.0f, 255.0f));
-                row[x * 4 + 3] = static_cast<unsigned char>(std::clamp(c.a * 255.0f, 0.0f, 255.0f));
+                row[x * 4 + 0] = ToByte(c.r);
+                row[x * 4 + 1] = ToByte(c.g);
+                row[x * 4 + 2] = ToByte(c.b);
+                row[x * 4 + 3] = ToByte(c.a);
             }
         }
 

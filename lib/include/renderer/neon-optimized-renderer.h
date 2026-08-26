@@ -99,7 +99,10 @@ namespace EdgeLighting
         /// caller restores them before the backbuffer passes.
         /// @pre Premultiplied-over blending, so the quad lands in the cleared
         ///      transparent FBO as premultiplied colour + coverage alpha.
-        void renderHalfResNeonPass(int viewportHeight, int bufWidth, int bufHeight,
+        /// @returns false if the half-res target could not be allocated, in
+        ///          which case nothing was drawn and Pass 2b must be skipped
+        ///          too - it would otherwise composite a stale frame.
+        bool renderHalfResNeonPass(int viewportHeight, int bufWidth, int bufHeight,
                                    float time, const Config &config);
 
         /// Pass 2a: opaque-mode background fill, drawn full-res on the
