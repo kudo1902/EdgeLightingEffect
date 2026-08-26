@@ -300,7 +300,7 @@ Worth recording so it does not get "tidied" later:
 - **The `On` prefix** is used consistently and only for callbacks
   (`OnConfigChanged`, `OnDurationChanged`, `OnResize`, `OnKey`).
 - **Boolean members** carry `Is` / `Has` where the accessor does
-  (`mIsPlaying`, `mHasBakedLUT`, `mHasRun`), and `mLoop` mirrors its own
+  (`mIsPlaying`, `mHasBaked`, `mHasRun`), and `mLoop` mirrors its own
   `SetLoop` rather than being an inconsistency.
 - **The C ABI**, as above.
 

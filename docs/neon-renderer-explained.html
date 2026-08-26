@@ -879,12 +879,12 @@ float bloom = BLOOM_NORM_FACTOR * PI * bw / sqrt(ad * ad + bw * bw);</code></pre
 
             <line x1="418" y1="342" x2="440" y2="342" class="dg-line" marker-end="url(#fa)"/>
             <rect x="442" y="322" width="306" height="40" class="dg-box"/>
-            <text x="454" y="338" class="dg-t">rebuildGradientLUT()</text>
+            <text x="454" y="338" class="dg-t">mGradientLUT.Bake()</text>
             <text x="454" y="354" class="dg-t2">the 256-texel colour strip (Figure 5)</text>
 
             <line x1="418" y1="392" x2="440" y2="392" class="dg-line" marker-end="url(#fa)"/>
             <rect x="442" y="372" width="306" height="40" class="dg-box"/>
-            <text x="454" y="388" class="dg-t">rebuildSegmentLUT() / rebuildArcLUT()</text>
+            <text x="454" y="388" class="dg-t">mSegmentLUT.Bake() / mArcLUT.Bake()</text>
             <text x="454" y="404" class="dg-t2">one atlas row per segment / per arc</text>
           </g>
 
