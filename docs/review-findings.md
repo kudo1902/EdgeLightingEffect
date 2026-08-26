@@ -5,17 +5,22 @@ Open defects and rough edges found in a full read of the tree at
 reproduced offscreen rather than argued from the source.
 
 Items marked FIXED have landed and carry a note on what was changed and how it
-was verified; the rest are still open. Each fixed item keeps its original
+was verified; the rest are still open.
+
+Code references here name a **file and symbol**, never a line number. Line
+anchors in this document had already drifted twice - once when the fixes below
+landed and again when the helpers they added shifted everything under them -
+and a wrong line number is worse than none, because it reads as precise. Each fixed item keeps its original
 description, so the reasoning that led to the change stays readable next to it.
 
 | | fixed | open |
 | - | ----- | ---- |
 | visual | V1, V2, V3, V6, V7 | V4, V5 (both closed as documented limitations) |
 | implementation | I1, I4, I6, I7 | I2 (declined), I3 (partly), I5 (documented), I8 (audited) |
-| second pass | - | R1, R2, R3, R4, R5, R6 |
+| second pass | R1, R2, R3, R4, R5, R6 | R7 |
 
 The R items come from a re-read after the V and I fixes landed - see
-[Second pass](#second-pass-after-bbdba62). They are open.
+[Second pass](#second-pass-after-bbdba62).
 
 ## How the visual items were reproduced
 
@@ -63,10 +68,10 @@ Three of the four places that consume the radius clamp it and one does not:
 
 | consumer | clamps? |
 | -------- | ------- |
-| `perimeterPosition` ([`neon.frag:171`](../lib/shaders/neon.frag)) | yes, to `min(halfW, halfH)` |
+| `perimeterPosition` ([`neon.frag` perimeterPosition](../lib/shaders/neon.frag)) | yes, to `min(halfW, halfH)` |
 | `peri` (perimeter length, same shader) | yes |
 | `GeometryUtils::GetPointOnRectangle` | yes |
-| `sdRoundBox(vPos, halfSize, uCornerRadius)` ([`neon.frag:351`](../lib/shaders/neon.frag), [`neon-optimized.frag:342`](../lib/shaders/neon-optimized.frag), [`black-rect.frag:85`](../lib/shaders/black-rect.frag)) | **no** |
+| `sdRoundBox(vPos, halfSize, uCornerRadius)` ([`neon.frag` main](../lib/shaders/neon.frag), [`neon-optimized.frag` main](../lib/shaders/neon-optimized.frag), [`black-rect.frag` main](../lib/shaders/black-rect.frag)) | **no** |
 
 Past the half-extent the unclamped SDF stops describing a rounded box - it
 becomes a lens with cusps - while the gather samples still sit on the correctly
@@ -75,7 +80,7 @@ smears, because the samples it gathers from are nowhere near the fragments
 being lit.
 
 Reachable from the demo in one drag: the Corner Radius slider runs to 1080
-([`demo/src/debug-ui.cpp:543`](../demo/src/debug-ui.cpp)) against a default
+([`debug-ui.cpp` buildGeometrySection](../demo/src/debug-ui.cpp)) against a default
 800x600 rect.
 
 **Fixed** by `GeometryUtils::EffectiveCornerRadius`
@@ -105,9 +110,9 @@ and an unsmeared colour ring.
 | ![](images/review-findings/arc-seam-notch.png) | ![](images/review-findings/arc-seam-notch-fixed.png) |
 
 `arcCoverContinuous`
-([`neon.frag:325-345`](../lib/shaders/neon.frag)) feathers **inward**:
+([`neon.frag` arcCoverContinuous](../lib/shaders/neon.frag)) feathers **inward**:
 `tailIn` is 0 at `rel = 0` and `headIn` is 0 at `rel = length`. `emitCover`
-combines arcs with `max` ([`neon.frag:587`](../lib/shaders/neon.frag)). At a
+combines arcs with `max` ([`neon.frag` emitCover loop](../lib/shaders/neon.frag)). At a
 shared endpoint that is `max(0, 0) = 0` - not a dip, a hole - and it stays
 below full brightness for `TAIL_FEATHER_PX + HEAD_FEATHER_PX` = 28 px. Because
 `emitCover` also scales the halo and the bloom, the hole is punched radially
@@ -119,7 +124,7 @@ feather, so colour crosses the seam smoothly. The two halves of the same arc
 disagree by construction.
 
 This is the documented multi-arc recipe, not an exotic case - see the `arcs`
-examples in [`config.h:426-432`](../lib/include/core/config.h).
+examples in [`config.h` NeonConfig::arcs](../lib/include/core/config.h).
 
 **Fixed**, but not on the first attempt - and the failed attempt is the useful
 part of this entry.
@@ -204,13 +209,13 @@ black quadrant there instead, which is worse.
 | ![](images/review-findings/arc-lut-wrap-seam-t0.png) | ![](images/review-findings/arc-lut-wrap-seam.png) | ![](images/review-findings/arc-lut-wrap-seam-fixed.png) |
 
 All three shaders subtract `uTime * uHueRotationRate` from `uArc`
-([`neon.frag:582`](../lib/shaders/neon.frag),
-[`neon-optimized.frag:516`](../lib/shaders/neon-optimized.frag),
-[`neon-emission.frag:137`](../lib/shaders/neon-emission.frag)), but `uArc` is an
+([`neon.frag`](../lib/shaders/neon.frag),
+[`neon-optimized.frag`](../lib/shaders/neon-optimized.frag),
+[`neon-emission.frag`](../lib/shaders/neon-emission.frag)), but `uArc` is an
 **arc-local** coordinate on a head-to-tail gradient, not a cyclic perimeter
 coordinate. The arc atlas is `GL_REPEAT` on U
-([`neon-renderer.cpp:861`](../lib/src/renderer/neon-renderer.cpp),
-[`neon-optimized-renderer.cpp:790`](../lib/src/renderer/neon-optimized-renderer.cpp)),
+([`neon-renderer.cpp` rebuildArcLUT](../lib/src/renderer/neon-renderer.cpp),
+[`neon-optimized-renderer.cpp` rebuildArcLUT](../lib/src/renderer/neon-optimized-renderer.cpp)),
 so the scroll eventually wraps and the tail colour butts straight into the head
 colour, mid-edge, with no geometric feature to hide it.
 
@@ -245,7 +250,7 @@ unchanged (mean |diff| 0.161, max 7).
 ![](images/review-findings/medial-axis-creases.png)
 
 `halo` and `bloom` are closed forms of `ad = abs(d)`
-([`neon.frag:648-649`](../lib/shaders/neon.frag)). Inside the rect the
+([`neon.frag` halo + bloom](../lib/shaders/neon.frag)). Inside the rect the
 rounded-box SDF's *gradient* is discontinuous along the medial axis (the
 diagonals from each corner plus the central spine), so both terms inherit a C1
 crease there. The gather this replaced summed over perimeter samples and was
@@ -304,7 +309,7 @@ here so the next person tuning `HEAD_FEATHER_PX` knows the two are not coupled.
 
 `ColorUtils::SampleStops` (as it was then named) wraps from the last stop
 back to the first
-([`color-utils.h:273-285`](../lib/include/util/color-utils.h)). That is right
+([`color-utils.h` SampleRing](../lib/include/util/color-utils.h)). That is right
 for the base ring, which is genuinely circular and sampled `REPEAT`.
 
 `rebuildSegmentLUT` and `rebuildArcLUT` bake the same function over
@@ -314,7 +319,7 @@ span (`t = 0`) lands inside the wrap interval and shows a blend of the *last*
 and *first* colours rather than the first stop, and the tail ramps back toward
 the head colour instead of holding.
 
-[`config.h:106`](../lib/include/core/config.h) calls this layout
+[`config.h` SegmentBoost](../lib/include/core/config.h) calls this layout
 "head-to-tail", so the bake has to clamp at the ends.
 
 **Fixed** in [`color-utils.h`](../lib/include/util/color-utils.h) by splitting
@@ -505,9 +510,9 @@ box tracks 200x140 (678 px lit) then 400x300 (1399), and a pure
 ### I5. `Framebuffer::GetBoundId()` is a `glGetIntegerv` on the hot path - DOCUMENTED, NOT CHANGED
 
 Called once per frame per multi-pass renderer
-([`neon-renderer.cpp:220`](../lib/src/renderer/neon-renderer.cpp),
-[`neon-optimized-renderer.cpp:167,377`](../lib/src/renderer/neon-optimized-renderer.cpp),
-[`lens-flare-optimized-renderer.cpp:40`](../lib/src/renderer/lens-flare-optimized-renderer.cpp)).
+([`NeonRenderer::renderEmissionPass`](../lib/src/renderer/neon-renderer.cpp),
+[`NeonOptimizedRenderer::Render` + `renderEmissionPass`](../lib/src/renderer/neon-optimized-renderer.cpp),
+[`LensFlareOptimizedRenderer::Render`](../lib/src/renderer/lens-flare-optimized-renderer.cpp)).
 It is the *correct* fix for the `OffscreenCapture` case and should not be
 reverted to `BindDefault`, but a GL state query can sync the driver on a tiler.
 Threading the target through `BaseRenderer::Render` would give the same
@@ -547,7 +552,7 @@ shader program, so neither the shaders nor the quad geometry ever existed).
 
 If both the `GL_RGBA16F` and the `GL_RGBA8` `Resize` fail,
 `renderEmissionPass` returns early
-([`neon-renderer.cpp:239`](../lib/src/renderer/neon-renderer.cpp)) - but
+([`NeonRenderer::renderEmissionPass`](../lib/src/renderer/neon-renderer.cpp)) - but
 `Framebuffer::Resize` has already called `destroy()` on the failure path, so
 `mEmissionBuffer.BindTexture(3)` in `renderNeonPass` binds 0 and the gather
 samples undefined data in core profile.
@@ -641,9 +646,11 @@ between `neon.frag` and `neon-optimized.frag`, whose normalised diff shows only
 the intended `uResolutionScale` corrections. `PackArcFlags` and
 `WarnOnOverflow` are byte-identical between the two renderer translation units.
 
-What follows is what the pass turned up. All six are open.
+What follows is what the pass turned up. R1 to R6 have since been fixed, each
+keeping its original description so the reasoning stays readable next to the
+change. R7 is open.
 
-### R1. `Initialize()` promises a re-entry guarantee it does not implement
+### R1. `Initialize()` promises a re-entry guarantee it does not implement - FIXED
 
 [`edge-lighting.h`](../lib/include/core/edge-lighting.h) now says:
 
@@ -662,29 +669,45 @@ registrations, which is the whole point of the I6 fix. Deleting the claim is
 cheaper and more honest than adding the flag. It matters because it is in a
 header, which `CLAUDE.md` designates the source of truth.
 
-### R2. Two `Framebuffer::Resize` calls are still unchecked
+**Fixed** by correcting the claim rather than adding the flag: the doc now says
+to call it once, states what a second call actually costs (every renderer
+re-initialised, shaders recompiled, GL objects reallocated - leak-free but not
+free), and points at `AddRenderer` for the late-registration case it was
+reaching for.
+
+### R2. Two `Framebuffer::Resize` calls are still unchecked - FIXED
 
 I7 fixed exactly this hazard for `mEmissionBuffer` in both neon renderers and
 left the two siblings alone:
 
 | site | buffer |
 | ---- | ------ |
-| [`neon-optimized-renderer.cpp:326`](../lib/src/renderer/neon-optimized-renderer.cpp) | `mHalfResBuffer` |
-| [`lens-flare-optimized-renderer.cpp:43`](../lib/src/renderer/lens-flare-optimized-renderer.cpp) | `mScaledBuffer` |
+| [`NeonOptimizedRenderer::renderHalfResNeonPass`](../lib/src/renderer/neon-optimized-renderer.cpp) | `mHalfResBuffer` |
+| [`LensFlareOptimizedRenderer::Render`](../lib/src/renderer/lens-flare-optimized-renderer.cpp) | `mScaledBuffer` |
 
 `Resize` calls `destroy()` on its failure path, so `mFbo` is 0; `Bind()` then
 binds the *caller's* framebuffer, and the `glClear` that follows is not clipped
 by the viewport, so it erases everything already drawn that frame. Under an
 `OffscreenCapture` that is the capture target. Same one-line fix I7 used.
 
-### R3. The arc and segment atlases re-bake every frame under animation
+**Fixed**, following I7's shape exactly. `renderHalfResNeonPass` now returns
+`bool` and bails before `Bind()`; `Render` folds that into the same `drawNeon`
+flag pass 0 already feeds, so Pass 2b is skipped with it rather than
+compositing a stale half-res frame. `LensFlareOptimizedRenderer::Render`
+returns early - at that point it has drawn nothing and changed no state, so the
+frame is left exactly as it was handed over.
+
+Like I7 this needs a driver that refuses the allocation, so it stays a latent
+hazard closed by inspection rather than one reproduced here.
+
+### R3. The arc and segment atlases re-bake every frame under animation - FIXED
 
 Not the same thing as I2, which is about the emission pre-pass, and the
 "structurally negligible" argument there does not carry over.
 
 The gate is a whole-struct compare in both renderers
-([`neon-renderer.cpp:636`](../lib/src/renderer/neon-renderer.cpp),
-[`neon-optimized-renderer.cpp:573`](../lib/src/renderer/neon-optimized-renderer.cpp)):
+([`NeonRenderer::OnConfigChanged`](../lib/src/renderer/neon-renderer.cpp),
+[`NeonOptimizedRenderer::OnConfigChanged`](../lib/src/renderer/neon-optimized-renderer.cpp)):
 
 ```cpp
 const bool segLutDirty = mEffectiveSegments != mBakedSegments;
@@ -700,7 +723,36 @@ intensity "don't" affect the atlas, which is true and is the point. The gate
 should compare a projection of `colorStops` + `blendSpace`, not the whole
 struct.
 
-### R4. LUT quantisation truncates instead of rounding
+**Fixed** with `IsAtlasDirty` overloads in both renderers: a
+positional compare of `colorStops` + `blendSpace` only, which is exactly what
+`rebuildArcLUT` / `rebuildSegmentLUT` read. Positional matters - the atlas is
+indexed by arc index, so swapping two arcs swaps their rows even though the
+collection of stops is unchanged.
+
+Verified with a throwaway harness (same shape as the one at the top of this
+document) counting bakes, driving 120 frames of the position/length sweep
+`ArcWipe` and `OutlineTracer` perform:
+
+| | before | after |
+| - | ------ | ----- |
+| arc-atlas bakes over 120 animated frames | 120 | **0** |
+| segment-atlas bakes over 120 animated frames | 120 | **0** |
+| bakes on a `colorStops` change | 1 | 1 |
+| bakes on a `blendSpace` change | 1 | 1 |
+| bakes on swapping two arcs | 1 | 1 |
+
+So every genuine invalidation still fires and the per-frame churn is gone. The
+five rendered configurations come out **byte-identical** between the old gate
+and the new one, which is the check that matters: no stale atlas.
+
+One note for anyone re-running it. An early version of the blend-space case
+appeared to show the change having no visual effect. It was the test, not the
+gate: it set `blendSpace` after the 120-frame sweep had left both arcs starting
+within 0.005 of each other, so the edited arc lost winner-take-all almost
+everywhere. Re-run on a single full-perimeter arc, RGB against HSV differs by
+mean 6.1 / max 126 per byte.
+
+### R4. LUT quantisation truncates instead of rounding - FIXED
 
 Eighteen sites across the two renderers, all of the form:
 
@@ -711,37 +763,161 @@ static_cast<unsigned char>(std::clamp(c.r * 255.0f, 0.0f, 255.0f))
 No `+ 0.5f`, so every baked texel is biased down by up to 1 LSB and by ~0.5 LSB
 on average, in all three LUTs, in both renderers.
 
-### R5. GL state left modified after a pass
+**Fixed** with a `ToByte` helper in both renderers, replacing all 18 sites. The
+clamp comes after the bias so 1.0 still maps to 255. GL's own float-to-unorm
+conversion rounds, so the bake now agrees with the hardware it feeds.
+
+Measured against the truncating build on the stock rect at `glowRadius` 20:
+10.01% of output bytes change, every one of them within `-1..+2`. Mostly `+1`,
+recovering the truncated LSB; the occasional `+2` and `-1` are that shift
+carried through the gather's normalisation and the tone map / gamma grade.
+
+### R5. GL state left modified after a pass - FIXED
 
 - `glClearColor(0, 0, 0, 0)` is set and never restored, in
-  [`neon-optimized-renderer.cpp:329`](../lib/src/renderer/neon-optimized-renderer.cpp)
-  and [`lens-flare-optimized-renderer.cpp:46`](../lib/src/renderer/lens-flare-optimized-renderer.cpp).
+  [`NeonOptimizedRenderer::renderHalfResNeonPass`](../lib/src/renderer/neon-optimized-renderer.cpp)
+  and [`LensFlareOptimizedRenderer::Render`](../lib/src/renderer/lens-flare-optimized-renderer.cpp).
 - `renderBlitPass` calls raw `glBindTexture` on whatever texture unit happens
   to be active
-  ([`neon-optimized-renderer.cpp:444`](../lib/src/renderer/neon-optimized-renderer.cpp)),
+  ([`NeonOptimizedRenderer::renderBlitPass`](../lib/src/renderer/neon-optimized-renderer.cpp)),
   leaving the half-res texture bound there, and sets the texture's filter
   directly - so `Framebuffer::mFilter`, the field that exists so a filter change
   forces a reallocation, no longer describes the texture. `CLAUDE.md` also asks
   renderer code to go through the RAII wrappers rather than raw GL.
 
-### R6. Nothing stops both neon renderers being enabled at once
+**Fixed**, both halves:
+
+- Each pass now saves `GL_COLOR_CLEAR_VALUE` and puts it back immediately after
+  its `glClear`. That is one more state query per frame per renderer, the same
+  cost and the same justification as the `GetBoundId` call discussed in I5:
+  this renderer does not own the context it draws into.
+- `renderBlitPass` now only calls `BindTexture(0)`. It sets no texture
+  parameters at all: the `showHalfRes` filter is requested through
+  `Resize` in pass 1, which is the **only** writer of the tracked `mFilter`, so
+  the two cannot drift. The stray bind on whatever unit the previous pass left
+  active is gone with it.
+
+  **The first attempt at this was wrong and is worth recording.** It added a
+  `Framebuffer::SetFilter` that applied the filter and updated `mFilter`,
+  reasoning that the tracked value should describe the texture. But `Resize`
+  treats a filter mismatch as grounds for reallocation, and
+  `renderHalfResNeonPass` calls `Resize(bufW, bufH)` with the default
+  `GL_LINEAR` every frame. So `SetFilter(GL_NEAREST)` made the next frame's
+  `Resize` see `GL_NEAREST != GL_LINEAR` and destroy and recreate the texture
+  and FBO - every frame, for as long as the toggle was on:
+
+  | | before the fix | with `SetFilter` | with `Resize` owning it |
+  | - | -------------- | ---------------- | ----------------------- |
+  | `showHalfRes` off, 30 frames | 1 allocation | 1 | 1 |
+  | `showHalfRes` on, 30 frames | 1 allocation | **30** | 1 |
+
+  That is the same failure `emission-prepass.md` section 5 records for the
+  RGBA16F fallback, reintroduced somewhere else. The original stale `mFilter`
+  was a latent invariant violation with no observable consequence - the blit
+  re-set the filter every frame regardless - and "fixing" it created a real
+  per-frame cost. Letting `Resize` own the filter closes both: the invariant
+  holds, and a change costs one reallocation on the frame the toggle moves.
+  The debug toggle still works (nearest vs bilinear blit differs on 171462
+  bytes, max 25).
+
+### R6. Nothing stops both neon renderers being enabled at once - FIXED
 
 The lens-flare pair warns at
-[`debug-ui.cpp:1105`](../demo/src/debug-ui.cpp). The neon pair has no
-equivalent guard at [`debug-ui.cpp:706`](../demo/src/debug-ui.cpp), and
+[`DebugUI::buildLensFlareSection`](../demo/src/debug-ui.cpp). The neon pair has no
+equivalent guard at [`DebugUI::buildOptimizedNeonSection`](../demo/src/debug-ui.cpp), and
 `Shift+O` in [`main.cpp`](../demo/src/main.cpp) toggles `optimizedNeon.enable`
 without touching `neon.enable`, so the glow draws twice - brighter, with
 half-res edges over full-res ones. This is the visible half of I3, whose fix
 addressed the CPU-work half.
 
+**Fixed** by mirroring the lens-flare precedent rather than inventing a new
+one: a `BothNeonPathsWarning` helper, shown in **both** the Neon and Optimized
+Neon sections, since the two checkboxes sit in separate collapsing headers and
+either is where the user might be looking. Added to `demo/` and to its
+`demo-capi/` counterpart, as `CLAUDE.md` requires for a UI change.
+
+Deliberately a warning, not enforced exclusivity: that is what the lens-flare
+pair does, and forcing the flag would take a documented-but-legal
+configuration away from a host. `Shift+O` still toggles `optimizedNeon.enable`
+on its own for the same reason - the warning is visible in the debug window the
+moment it does. Making the hotkey swap the two instead is a one-line change if
+that is preferred.
+
+### R7. The halo and bloom band into 8-bit contours - OPEN
+
+Both wide layers are smooth, very low-slope gradients - the bloom falls as
+`1/D` - so over most of their reach they cross an 8-bit quantisation step only
+every several pixels. The output is therefore a series of constant-value
+plateaus separated by 1 LSB, which is the classic recipe for concentric contour
+rings around the rect.
+
+Measured with a scanline harness: 200x150 rect centred in a 1000x800 capture,
+sampling the peak channel along the rect's centre row from just outside the
+right edge outward (398 px). "Far half" is the outer 199 px, where the falloff
+is flattest and plateaus are widest.
+
+| config | levels / 398 px | mean plateau | widest plateau | far-half levels |
+| ------ | --------------- | ------------ | -------------- | --------------- |
+| `glowRadius` 5 (default) | 140 | 2.8 px | 14 px | 21 |
+| `glowRadius` 30 | 115 | 3.5 px | 9 px | 29 |
+| `glowRadius` 60, `bloomStrength` 2 | 64 | 6.2 px | **24 px** | 16 |
+
+A 24 px band of one constant value, bounded by a 1 LSB step, is a contour ring
+by any definition. Re-running with a temporary 1 LSB interleaved-gradient-noise
+dither added just before the write confirms both the diagnosis and the cure:
+
+| config | levels / 398 px | mean plateau | widest plateau | far-half levels |
+| ------ | --------------- | ------------ | -------------- | --------------- |
+| `glowRadius` 5 + dither | 140 -> **244** | 2.8 -> **1.6 px** | 14 -> 10 px | 21 -> **111** |
+| `glowRadius` 30 + dither | 115 -> **226** | 3.5 -> **1.8 px** | 9 -> 8 px | 29 -> **108** |
+| `glowRadius` 60 b2 + dither | 64 -> **202** | 6.2 -> **2.0 px** | 24 -> **10 px** | 16 -> **92** |
+
+**Honest limit on this finding.** The plateaus are measured, not disputed - but
+I did not confirm the rings are *objectionable* by eye at the default settings,
+and there is a reason to think they are mild there. The configuration with the
+widest plateaus (`glowRadius` 60, `bloomStrength` 2) is also the one whose
+bloom fills the frame at values 164-229, where a 1 LSB step is under 1% of the
+local level and least visible. The perceptually dangerous case is the opposite
+one - the dark tail, where 1 LSB against a value of 7 is a 14% step - and there
+the plateaus are 14 px at default `glowRadius`. No image is attached because a
+1 LSB step does not survive being looked at in a scaled document view; the
+plateau statistics are the evidence.
+
+So: a real quantisation defect with a known, cheap cure, of unproven visual
+severity. Worth doing when someone is in the shader anyway; not worth a
+dedicated pass on this evidence alone.
+
+**If it is taken on, one design note that the measurement already settled.**
+The full-res path is three lines before the premultiplied write in `neon.frag`.
+The half-res path is not the same change: in the table above the half-res
+renderer's row does not move at all when the dither is added to `neon.frag`
+only, and adding it to `neon-optimized.frag` instead would put the noise in the
+half-res FBO, where the blit's bilinear upscale averages it back down and the
+final full-res write re-quantises with no dither at all. For
+`NeonOptimizedRenderer` the dither belongs in `neon-blit.frag`, at the actual
+final write.
+
+Note also that a 1 LSB dither everywhere would put every future frame-diff
+comparison at a 1 LSB noise floor - including the methodology
+`emission-prepass-comparison.md` uses, whose headline correctness result is
+"max delta 1 LSB". Interleaved gradient noise is a pure function of
+`gl_FragCoord` with no time term, so captures stay reproducible frame to frame,
+but a dithered build and an undithered one are no longer comparable at that
+precision.
+
+**History**, since it explains why this is not already recorded: a working
+implementation of exactly this existed in the working tree before the pull that
+brought `17745a9` in, as an `OUTPUT_DITHER_LSB` constant in `neon-tuning.h`
+plus the shader blocks. It is not in the tree now. Whether that was deliberate
+or lost is not something I can tell from here, so nothing has been re-applied.
+
 ---
 
 ## What is left
 
-Everything the first pass found that is user-visible is closed. Six items from
-that pass remain deliberately open, each with the reasoning recorded next to
-the code rather than only here, and the second pass added six more that are
-open pending a fix:
+The second pass's R1 to R6 have all landed. Six items from the first pass
+remain deliberately open, each with the reasoning recorded next to the code
+rather than only here, plus R7 from the second pass:
 
 | item | state | why |
 | ---- | ----- | --- |
@@ -752,7 +928,7 @@ open pending a fix:
 | I5 | documented | the alternative is a breaking renderer-API change for an unmeasured cost |
 | I8 | audited, no UI written | the C ABI itself is complete; what is missing is `demo-capi` coverage, ranked in the section above |
 
-| R1 - R6 | open, not yet actioned | found on the second pass; R1 is a one-line doc correction, R2 is the highest-severity of the group |
+| R7 | open | a measured quantisation defect with a cheap cure, but unproven visual severity; see the note there before starting |
 
 If any of these comes back, the fastest way to reproduce is the harness
 described at the top of this document - the configs for every case are given
