@@ -23,7 +23,7 @@ precision highp float;
 // are injected from lib/include/renderer/neon-tuning.h via @NEON_TUNING@ in
 // shaders.h.in - single source of truth shared with the C++ renderer.
 //
-// (Far early-out lives on the CPU: the Pass-1 quad is sized to rect + earlyOut,
+// (Far culling lives on the CPU: the Pass-1 quad is sized to rect + glowReach,
 //  so there's no per-fragment discard here. See neon-optimized-renderer.cpp.)
 
 // ---------------------------------------------------------------------------
@@ -83,7 +83,7 @@ uniform int uNumSamples; ///< Actual sample count in use; 1..NEON_MAX_LOOP_SAMPL
 //
 // Declared in a std140 uniform block (the DALi PunctualLightBlock pattern):
 // DALi writes array elements one at a time into the block's UBO
-// ("uSegments[0]", …) at the std140 stride. On desktop GL the block is fed
+// ("uSegments[0]", ...) at the std140 stride. On desktop GL the block is fed
 // from a UBO in neon-optimized-renderer.cpp.
 layout(std140) uniform SegmentBlock
 {
@@ -318,11 +318,26 @@ float perimeterPosition(vec2 p) {
 
 // Continuous [0,1] arc coverage - INWARD FEATHER. See neon.frag for the full
 // rationale; the shape here is identical.
-float arcCoverContinuous(float sPos, float start, float length, float fHead, float fTail) {
+// uArcs[].w is a BITMASK: bit 0 = hasStops, bit 1 = tail abuts another arc,
+// bit 2 = head abuts. Packed CPU-side in packLightBlocks; picks each endpoint's
+// feather direction below. See neon.frag for the full note.
+bool arcHasStops(float flags)  { return mod(flags, 2.0) >= 0.5; }
+bool arcTailAbuts(float flags) { return mod(floor(flags * 0.5), 2.0) >= 0.5; }
+bool arcHeadAbuts(float flags) { return mod(floor(flags * 0.25), 2.0) >= 0.5; }
+
+float arcCoverContinuous(float sPos, float start, float length, float fHead, float fTail,
+                         bool tailAbuts, bool headAbuts) {
     if (length >= 1.0 - 1e-6) return 1.0;
     if (length <= 1e-6)       return 0.0;
     float rel = sPos - start;
     rel -= floor(rel);
+    // Feather direction is per ENDPOINT. A free endpoint ramps INWARD, so
+    // nothing outside the arc is lit - critical at cornerRadius 0, where a
+    // sharp corner's whole exterior quadrant shares one sPos and any non-zero
+    // coverage there floods the quadrant. An abutting endpoint ramps OUTWARD
+    // and reaches 1.0 at the endpoint, so two arcs tile with no seam notch;
+    // that bleed lands inside an already-lit neighbour. See neon.frag.
+    if (tailAbuts && rel > 0.5 * (1.0 + length)) { rel -= 1.0; }
     // Feathers capped at a share of the arc length so the two ramps cannot
     // overlap and clip the peak on a short arc - the pixel-span feather vs
     // fraction-based length mismatch that made the same arc dimmer on a
@@ -330,8 +345,10 @@ float arcCoverContinuous(float sPos, float start, float length, float fHead, flo
     float cap    = length * ARC_FEATHER_MAX_SHARE;
     float fH     = min(fHead, cap);
     float fT     = min(fTail, cap);
-    float tailIn = smoothstep(0.0, fT, rel);
-    float headIn = 1.0 - smoothstep(length - fH, length, rel);
+    float tailIn = tailAbuts ? smoothstep(-fT, 0.0, rel)
+                             : smoothstep(0.0, fT, rel);
+    float headIn = headAbuts ? 1.0 - smoothstep(length, length + fH, rel)
+                             : 1.0 - smoothstep(length - fH, length, rel);
     return tailIn * headIn;
 }
 
@@ -342,9 +359,9 @@ void main() {
     float d  = sdRoundBox(vPos, halfSize, uCornerRadius);
     float ad = abs(d);
 
-    // Note: the far-exterior early-out (ad > earlyOut → discard) that the
+    // Note: the far-exterior discard (ad > glowReach) that the
     // standard NeonRenderer uses is intentionally absent here. The Pass-1
-    // quad is sized on the CPU to exactly rect + earlyOut, so geometry culls
+    // quad is sized on the CPU to exactly rect + glowReach, so geometry culls
     // the far region instead - friendlier to tile-based mobile GPUs, which
     // pay a hidden-surface-removal penalty for any discard in the shader.
     //
@@ -375,10 +392,10 @@ void main() {
     //
     // sigma = half-brightness radius (core = 0.5 at ad = sigma).
     // N = 2 * uFilamentFalloff controls the shape:
-    //   uFilamentFalloff = 0.5 → N = 1   (Laplace - heavy tails, smooth peak)
-    //   uFilamentFalloff = 1.0 → N = 2   (Gaussian - pure smooth falloff; default)
-    //   uFilamentFalloff = 2.0 → N = 4   (platykurtic - flatter top, sharper shoulder)
-    //   uFilamentFalloff = 5.0 → N = 10  (near-rectangular)
+    //   uFilamentFalloff = 0.5 -> N = 1   (Laplace - heavy tails, smooth peak)
+    //   uFilamentFalloff = 1.0 -> N = 2   (Gaussian - pure smooth falloff; default)
+    //   uFilamentFalloff = 2.0 -> N = 4   (platykurtic - flatter top, sharper shoulder)
+    //   uFilamentFalloff = 5.0 -> N = 10  (near-rectangular)
     //
     // The Gaussian has no power-law tail, so the filament reads as a clean
     // thin line with a naturally smooth roll-off.
@@ -441,10 +458,10 @@ void main() {
 
     // --- Colour gather -----------------------------------------------------
     // Gathers COLOUR ONLY; halo/bloom intensities are closed-form below.
-    vec3  acc       = vec3(0.0); // base colour × arc-gated gather weight
-    vec3  segAcc    = vec3(0.0); // segment colour × bell × gather weight
-    float wsumLit   = 0.0; // ∑ ARC-GATED g     - normalises `col` (see neon.frag)
-    float wsumSegW  = 0.0; // ∑ SEGMENT bell*g  - normalises the segment hue
+    vec3  acc       = vec3(0.0); // base colour x arc-gated gather weight
+    vec3  segAcc    = vec3(0.0); // segment colour x bell x gather weight
+    float wsumLit   = 0.0; // SUM ARC-GATED g     - normalises `col` (see neon.frag)
+    float wsumSegW  = 0.0; // SUM SEGMENT bell*g  - normalises the segment hue
 
     // uNumSamples is dynamic so the perf slider actually reduces work; the
     // upper bound stays baked in the UBO array size so GL still knows the
@@ -504,16 +521,21 @@ void main() {
     // through the weight's 1/d^2 tails. See neon.frag for the measurements.
     float baseAlphaPt = texture(uGradientLUT,
                                 vec2(sPos - uTime * uHueRotationRate, 0.5)).a;
+    // Winner-take-all - plain max() works again now that an abutting
+    // endpoint reaches a full 1.0. See neon.frag.
     float emitCover = 0.0;
     for (int a = 0; a < uArcCount; a++) {
         vec4 arc = uArcs[a];
         if (arc.z <= 0.0) continue;
-        float c = arcCoverContinuous(sPos, arc.x, arc.y, headF, tailF);
+        float c = arcCoverContinuous(sPos, arc.x, arc.y, headF, tailF,
+                                     arcTailAbuts(arc.w), arcHeadAbuts(arc.w));
+        if (c <= 0.0) continue;
         float aA;
-        if (arc.w > 0.5) {
+        if (arcHasStops(arc.w)) {
+            // No hue-rotation term: uArc is arc-local, not perimeter space.
+            // See neon.frag.
             float rowY = (float(a) + 0.5) / float(MAX_ARCS);
             float uArc = (sPos - arc.x) / max(arc.y, 1e-4);
-            uArc      -= uTime * uHueRotationRate;
             aA         = texture(uArcLUT, vec2(uArc, rowY)).a;
         } else {
             aA = baseAlphaPt;
@@ -571,7 +593,7 @@ void main() {
     // Second term = the filament-reach floor setupGeometry applies. `sigma` is
     // already in FBO px (it carries uResolutionScale via minHalf), so the
     // product needs no further conversion. See neon.frag.
-    float reach     = max(uGlowRadius * EARLY_OUT_RADIUS_FACTOR *
+    float reach     = max(uGlowRadius * GLOW_REACH_RADIUS_FACTOR *
                           (1.0 + uBloomStrength * uIntensity),
                           sigma * reachSigmas);
     float bloomPeak = BLOOM_NORM_FACTOR * PI;

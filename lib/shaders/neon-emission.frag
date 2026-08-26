@@ -131,10 +131,16 @@ void main() {
     vec3 segFallback;
     if (bestIdx >= 0) {
         vec4 winner = uArcs[bestIdx];
-        if (winner.w > 0.5) {
+        // .w is a bitmask (bit 0 = hasStops, bits 1-2 = abutment, used only by
+        // the consumer's coverage feather) - test bit 0, not the whole value.
+        if (mod(winner.w, 2.0) >= 0.5) {
+            // No hue-rotation term: uArc is the arc's own head-to-tail
+            // coordinate, not a perimeter position. The consumer's alpha read
+            // in neon.frag must agree exactly or colour and alpha come from
+            // different texels of the same row. See neon.frag for why the term
+            // was wrong here in the first place.
             float rowY = (float(bestIdx) + 0.5) / float(MAX_ARCS);
             float uArc = (si - winner.x) / max(winner.y, 1e-4);
-            uArc      -= uTime * uHueRotationRate; // match base sign convention
             baseColI   = texture(uArcLUT, vec2(uArc, rowY)).rgb;
         } else {
             baseColI = texture(uGradientLUT, vec2(ti, 0.5)).rgb;

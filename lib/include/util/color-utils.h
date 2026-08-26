@@ -174,7 +174,7 @@ namespace EdgeLighting
         }
 
         /// Blend two stops. The colour blends in @p space; alpha always blends
-        /// linearly, because it is an emission scale (see @ref SampleStops)
+        /// linearly, because it is an emission scale (see @ref SampleRing)
         /// rather than a colour channel - there is no hue-space analogue for
         /// it, and routing it through HSV/HSL would make a fade depend on the
         /// blend space.
@@ -203,7 +203,8 @@ namespace EdgeLighting
             return glm::vec4(glm::mix(glm::vec3(a), glm::vec3(b), t), alpha);
         }
 
-        /// @p stops ordered ascending by position, as @ref SampleStops requires.
+        /// @p stops ordered ascending by position, as @ref SampleRing and
+        /// @ref SampleSpan both require.
         ///
         /// Call this once when baking a LUT, not per sample - it copies. The
         /// sort is stable, so stops sharing a position keep their authored
@@ -229,7 +230,21 @@ namespace EdgeLighting
             return stops;
         }
 
-        /// Sample the circular stop ring at normalised perimeter position @p pos.
+        /// Sample a CYCLIC stop ring at normalised perimeter position @p pos:
+        /// past the last stop the walk wraps back round to the first.
+        ///
+        /// The counterpart is @ref SampleSpan, which holds its end colours
+        /// instead. Neither is the "default" - they describe two different data
+        /// shapes, and picking the wrong one is silent:
+        ///
+        ///   ring - @c NeonConfig::colorStops. Genuinely circular (position 1.0
+        ///          IS position 0.0), baked into a @c GL_REPEAT texture.
+        ///   span - a per-arc or per-segment row, laid head-to-tail across a
+        ///          finite stretch and baked @c CLAMP_TO_EDGE.
+        ///
+        /// Both are named for their domain so the mismatch is visible at the
+        /// call site; baking a span with this function is what produced the
+        /// reversed gradients described in @ref SampleSpan.
         ///
         /// Returns straight (non-premultiplied) RGBA. The @c .a channel is the
         /// stop's emission scale at this position: the renderers bake it into
@@ -244,9 +259,9 @@ namespace EdgeLighting
         ///       distorted gradient rather than an error. Run them through
         ///       @ref SortStops first; the renderers do this once per LUT bake,
         ///       so anything reaching the shaders is already ordered.
-        inline glm::vec4 SampleStops(float pos,
-                                     const std::vector<ColorStop> &stops,
-                                     BlendSpace blendSpace)
+        inline glm::vec4 SampleRing(float pos,
+                                    const std::vector<ColorStop> &stops,
+                                    BlendSpace blendSpace)
         {
             int count = static_cast<int>(stops.size());
             if (count <= 0)
@@ -286,6 +301,56 @@ namespace EdgeLighting
                 }
             }
             return stops[0].color;
+        }
+
+        /// Sample a NON-cyclic head-to-tail span at @p pos, holding the first
+        /// and last stop colours outside the stops' own range.
+        ///
+        /// The counterpart of @ref SampleRing - see there for which data shape
+        /// takes which. This one is for the per-segment and per-arc atlas rows,
+        /// which are laid out head-to-tail across a finite stretch (see
+        /// @ref SegmentBoost) and sampled @c CLAMP_TO_EDGE.
+        ///
+        /// Baking those rows with the cyclic sampler put the wrap interval
+        /// inside the visible span: stops at 0.2 and 0.8 rendered the head of
+        /// the row (t = 0) as a blend of the LAST and FIRST colours rather than
+        /// the first, and ramped the tail back toward the head colour instead
+        /// of holding it. A two-stop white-to-red span came out white, red,
+        /// then white again. The two samplers agree exactly at the midpoint,
+        /// which is why it was easy to miss - the error lives at the ends,
+        /// where the emission is dimmest.
+        ///
+        /// @note @p stops must be sorted ascending by @c position - run them
+        ///       through @ref SortStops first, exactly as @ref SampleRing
+        ///       requires.
+        inline glm::vec4 SampleSpan(float pos,
+                                    const std::vector<ColorStop> &stops,
+                                    BlendSpace blendSpace)
+        {
+            int count = static_cast<int>(stops.size());
+            if (count <= 0)
+            {
+                return glm::vec4(1.0f);
+            }
+            if (count == 1 || pos <= stops[0].position)
+            {
+                return stops[0].color;
+            }
+            if (pos >= stops[count - 1].position)
+            {
+                return stops[count - 1].color;
+            }
+            for (int i = 0; i + 1 < count; i++)
+            {
+                float a = stops[i].position;
+                float b = stops[i + 1].position;
+                if (pos >= a && pos < b)
+                {
+                    float t = (pos - a) / std::max(b - a, 0.0001f);
+                    return BlendStops(stops[i].color, stops[i + 1].color, t, blendSpace);
+                }
+            }
+            return stops[count - 1].color;
         }
 
     } // namespace ColorUtils

@@ -730,6 +730,7 @@ namespace EdgeLighting
             }
         }
 
+    private:
         float mStartPos;
         float mEndPos;
         float mMaxLength;

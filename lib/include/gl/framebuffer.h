@@ -198,6 +198,24 @@ namespace EdgeLighting
         /// (GL_FRAMEBUFFER_BINDING is GL_DRAW_FRAMEBUFFER_BINDING) - code that
         /// splits read from draw, as the capture readback does, must save the
         /// read binding separately.
+        ///
+        /// @note This is a GL state query, and a state query can force a driver
+        ///       sync - on a tile-based GPU (the Mali / Tizen targets) that is
+        ///       the kind of call that stalls a pipeline. It is called once per
+        ///       frame per multi-pass renderer, which is cheap enough that no
+        ///       measurement has justified removing it.
+        ///
+        ///       Do NOT "optimise" it back to @ref BindDefault. The reason this
+        ///       exists is that "the target I was handed" is a real FBO under an
+        ///       @c OffscreenCapture, and assuming 0 sends the renderer's output
+        ///       to the window while the capture comes back empty.
+        ///
+        ///       The query-free alternative is to thread the caller's target
+        ///       through @c BaseRenderer::Render instead of asking GL for it.
+        ///       That is a breaking change to the renderer plugin API - six
+        ///       renderers and both demos - and is deliberately not taken
+        ///       without a profile showing this query on the critical path.
+        ///       See docs/review-findings.md I5.
         static GLuint GetBoundId()
         {
             GLint id = 0;

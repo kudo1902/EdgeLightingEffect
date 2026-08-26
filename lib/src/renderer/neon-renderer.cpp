@@ -80,6 +80,105 @@ namespace EdgeLighting
         /// hue coordinate (uTime * rate) which cycles slowly, so 128 texels
         /// look identical to 256.
         constexpr int ARC_LUT_WIDTH = 128;
+
+        /// Packs @c uArcs[].w for arc @p i: bit 0 = the arc has its own colour
+        /// stops, bit 1 = another arc covers the perimeter immediately BEFORE
+        /// its start, bit 2 = another arc covers it immediately AFTER its end.
+        ///
+        /// The abutment bits choose each endpoint's feather direction in the
+        /// shaders' @c arcCoverContinuous, and getting that per-endpoint is what
+        /// lets two arcs tile the ring without a seam notch while a lone arc
+        /// still lights nothing outside its own span. Both properties matter:
+        /// see the long note in neon.frag, and in particular why a symmetric
+        /// feather cannot satisfy both at @c cornerRadius 0.
+        ///
+        /// It is a pure function of the arc set, so it is resolved here, once
+        /// per frame, rather than by an O(arcs^2) scan in every fragment.
+        ///
+        /// @p arcs is the list as packed - only the first @p count entries are
+        /// visible to the shader, so only they can abut.
+        inline float PackArcFlags(const std::vector<Arc> &arcs, int i, int count)
+        {
+            // Perimeter-fraction slop. Endpoints that are meant to coincide are
+            // usually authored as exact values or driven by an animation, so
+            // this only has to absorb float round-trip error.
+            constexpr float EPS = 1e-5f;
+            const Arc &a = arcs[i];
+            float flags = a.colorStops.empty() ? 0.0f : 1.0f;
+
+            float end = a.start + a.length;
+            bool tailAbuts = false;
+            bool headAbuts = false;
+            for (int b = 0; b < count; ++b)
+            {
+                if (b == i)
+                {
+                    continue;
+                }
+                const Arc &o = arcs[b];
+                // A dark arc is skipped by the shader's coverage loop, so it
+                // cannot take over a neighbour's endpoint either.
+                if (o.length <= 0.0f || o.intensity <= 0.0f)
+                {
+                    continue;
+                }
+                // Where a.start falls within o, measured forward from o.start.
+                float rTail = a.start - o.start;
+                rTail -= std::floor(rTail);
+                // Covers strictly BEFORE a.start: rTail must be past o's start
+                // (rTail > 0 excludes two arcs that merely share a start point)
+                // and no further than its end.
+                if (rTail > EPS && rTail <= o.length + EPS)
+                {
+                    tailAbuts = true;
+                }
+                // Where a's end falls within o. Covers strictly AFTER it when
+                // the end lands inside o but not exactly on o's own end - an
+                // arc finishing where this one finishes extends nothing.
+                float rHead = end - o.start;
+                rHead -= std::floor(rHead);
+                if (rHead < o.length - EPS)
+                {
+                    headAbuts = true;
+                }
+            }
+            if (tailAbuts)
+            {
+                flags += 2.0f;
+            }
+            if (headAbuts)
+            {
+                flags += 4.0f;
+            }
+            return flags;
+        }
+
+        /// Warn once when a host hands over more arcs / segments than the
+        /// shader arrays can hold. The excess is dropped silently otherwise:
+        /// the UBOs are fixed-size (@c MAX_ARCS / @c MAX_SEGMENT_BOOSTS, shared
+        /// with the GLSL array declarations), and everything past the cap never
+        /// reaches the GPU. The demo's UI enforces the caps so it never sees
+        /// this, but a library or C-ABI host gets no other signal.
+        ///
+        /// @p latched is the caller's per-renderer flag: set while the overflow
+        /// is being reported, cleared once the count falls back under the cap
+        /// so a later overflow is reported again rather than swallowed.
+        inline void WarnOnOverflow(const char *what, const char *renderer,
+                                   size_t requested, int cap, bool &latched)
+        {
+            if (static_cast<int>(requested) <= cap)
+            {
+                latched = false;
+                return;
+            }
+            if (latched)
+            {
+                return;
+            }
+            latched = true;
+            LOG_W("%s: %zu %s configured but only %d fit - the rest are ignored.",
+                  renderer, requested, what, cap);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -168,8 +267,15 @@ namespace EdgeLighting
         // neon.frag). Empty vector -> uSegmentCount=0 and both shaders skip the
         // whole feature.
         SegmentBlockData segBlock = {};
-        SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
+        // mEffectiveSegments is NOT refilled here. OnConfigChanged fills it
+        // whenever the composited config changes, and this runs once per frame
+        // from Render - so on a frame where nothing changed the merged view is
+        // already current, and on a frame where something did, OnConfigChanged
+        // has already run (Update -> refreshActiveConfig precedes Render).
+        // Refilling was the third FillEffectiveSegments of the same frame.
         const std::vector<SegmentBoost> &effSegments = mEffectiveSegments;
+        WarnOnOverflow("segments", "NeonRenderer", effSegments.size(),
+                       int(MAX_SEGMENT_BOOSTS), mSegmentOverflowLogged);
         int segCount = std::min(static_cast<int>(effSegments.size()),
                                 int(MAX_SEGMENT_BOOSTS));
         segBlock.count = segCount;
@@ -190,20 +296,23 @@ namespace EdgeLighting
         // hasStops) per entry. .w picks between the winner arc's own atlas row
         // and the base gradient in the shader's winner-take-all branch.
         ArcBlockData arcBlock = {};
+        WarnOnOverflow("arcs", "NeonRenderer", config.neon.arcs.size(),
+                       int(MAX_ARCS), mArcOverflowLogged);
         int arcCount = std::min(static_cast<int>(config.neon.arcs.size()),
                                 int(MAX_ARCS));
         arcBlock.count = arcCount;
         for (int i = 0; i < arcCount; ++i)
         {
             const auto &a = config.neon.arcs[i];
-            float hasStops = a.colorStops.empty() ? 0.0f : 1.0f;
-            arcBlock.arcs[i] = glm::vec4(a.start, a.length, a.intensity, hasStops);
+            // .w is a bitmask, not just hasStops - see PackArcFlags.
+            float flags = PackArcFlags(config.neon.arcs, i, arcCount);
+            arcBlock.arcs[i] = glm::vec4(a.start, a.length, a.intensity, flags);
         }
         mArcBlock.SetData(&arcBlock, sizeof(arcBlock));
         mArcBlock.BindBase(ARC_BLOCK_BINDING);
     }
 
-    void NeonRenderer::renderEmissionPass(int viewportWidth, int viewportHeight,
+    bool NeonRenderer::renderEmissionPass(int viewportWidth, int viewportHeight,
                                           float time, const Config &config)
     {
         // RGBA16F, not RGBA8: row 0 carries Arc::intensity and row 1 sums
@@ -242,7 +351,12 @@ namespace EdgeLighting
             !mEmissionBuffer.Resize(NEON_MAX_LOOP_SAMPLES, 2,
                                     GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, GL_NEAREST))
         {
-            return; // nothing sane to draw into; the gather reads a stale table
+            // Nothing to draw into, and nothing to fall back on either:
+            // Framebuffer::Resize calls destroy() on its failure path, so the
+            // previous frame's attachment is already gone. Binding it anyway
+            // would hand the gather texture 0 and sample undefined data in core
+            // profile. Tell the caller to skip the gather instead.
+            return false;
         }
 
         // Binds the FBO and sets the viewport to NEON_MAX_LOOP_SAMPLES x 2. No
@@ -269,6 +383,7 @@ namespace EdgeLighting
         // is untouched here - it is a phase property owned by Render.
         Framebuffer::BindId(targetFbo);
         glViewport(0, 0, viewportWidth, viewportHeight);
+        return true;
     }
 
     void NeonRenderer::renderOpaqueFill(const glm::vec2 &center, const Config &config)
@@ -282,7 +397,7 @@ namespace EdgeLighting
         mBlackRectShader.Use();
         mBlackRectShader.SetUniform("uMVP", glm::mat4(1.0f));
         mBlackRectShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
-        mBlackRectShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
+        mBlackRectShader.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry));
         mBlackRectShader.SetUniform("uRectCenter", center);
         float opaqueSoft = std::max(config.neon.opaqueSoftness,
                                     static_cast<float>(SIDE_SOFT_EPSILON));
@@ -300,7 +415,7 @@ namespace EdgeLighting
         mShaderProgram.Use();
         mShaderProgram.SetUniform("uMVP", mvp);
         mShaderProgram.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
-        mShaderProgram.SetUniform("uCornerRadius", config.geometry.cornerRadius);
+        mShaderProgram.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry));
         mShaderProgram.SetUniform("uLineWidth", config.neon.lineWidth);
         mShaderProgram.SetUniform("uFilamentFalloff", config.neon.filamentFalloff);
         mShaderProgram.SetUniform("uIntensity", config.neon.intensity);
@@ -446,7 +561,7 @@ namespace EdgeLighting
         // A table write is not a composite: blending would mix this frame's
         // emission into last frame's.
         glDisable(GL_BLEND);
-        renderEmissionPass(viewportWidth, viewportHeight, time, config);
+        const bool emissionReady = renderEmissionPass(viewportWidth, viewportHeight, time, config);
 
         // --- Pass 2: the neon gather ----------------------------------------
         // Re-assert the phase mode: pass 0 leaves blending disabled. Setting it
@@ -455,7 +570,15 @@ namespace EdgeLighting
         // change without silently breaking compositing.
         glEnable(GL_BLEND);
         glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-        renderNeonPass(mvp, time, config);
+        // Skipped only when pass 0 could allocate no target at all. The gather
+        // reads the table for every sample, so without one it has nothing to
+        // shade with - drawing anyway would sample texture 0. The opaque fill
+        // above has already landed, so the frame degrades to the silhouette
+        // rather than to garbage.
+        if (emissionReady)
+        {
+            renderNeonPass(mvp, time, config);
+        }
 
         // --- Debug overlays --------------------------------------------------
         if (config.neon.showGradientLUT)
@@ -591,7 +714,7 @@ namespace EdgeLighting
 
     void NeonRenderer::setupGeometry(const Config &config)
     {
-        // Size the quad to cover the lit region: rect + earlyOut, so geometry
+        // Size the quad to cover the lit region: rect + glowReach, so geometry
         // bounds the far region instead of a per-fragment discard
         // (tiler-friendly). Factors come from the shared neon-tuning.h.
         //
@@ -611,7 +734,7 @@ namespace EdgeLighting
         // exact expression to place its bloom pedestal, which is what lets the
         // margin stay this tight without the truncation showing - keep the two
         // in step.
-        float glowReach = config.neon.glowRadius * float(EARLY_OUT_RADIUS_FACTOR) *
+        float glowReach = config.neon.glowRadius * float(GLOW_REACH_RADIUS_FACTOR) *
                           (1.0f + config.neon.bloomStrength * config.neon.intensity);
 
         // ...but the filament is sized by lineWidth, not glowRadius, so the quad
@@ -701,14 +824,14 @@ namespace EdgeLighting
         // Bake the entire colour ring on CPU into mLUTTarget; the shader then
         // becomes colour-stop-agnostic. Keeps HSV-vs-RGB blend cost off the GPU
         // hot path.
-        // Sorted once here, not per texel - SampleStops walks the ring in
+        // Sorted once here, not per texel - SampleRing walks the ring in
         // order and an unsorted list bakes a silently wrong gradient.
         const std::vector<ColorStop> baseStops = ColorUtils::SortStops(config.neon.colorStops);
         mLUTTarget.resize(GRADIENT_LUT_SIZE * 4);
         for (int i = 0; i < GRADIENT_LUT_SIZE; ++i)
         {
             float t = static_cast<float>(i) / static_cast<float>(GRADIENT_LUT_SIZE);
-            glm::vec4 c = ColorUtils::SampleStops(t, baseStops, config.neon.blendSpace);
+            glm::vec4 c = ColorUtils::SampleRing(t, baseStops, config.neon.blendSpace);
             mLUTTarget[i * 4 + 0] = c.r;
             mLUTTarget[i * 4 + 1] = c.g;
             mLUTTarget[i * 4 + 2] = c.b;
@@ -803,7 +926,10 @@ namespace EdgeLighting
             for (int x = 0; x < W; ++x)
             {
                 float t = static_cast<float>(x) / static_cast<float>(W - 1);
-                glm::vec4 c = ColorUtils::SampleStops(t, segStops, seg.blendSpace);
+                // Clamped, not cyclic: this row is a head-to-tail span sampled
+                // CLAMP_TO_EDGE, so stops that do not reach 0 and 1 must hold
+                // their end colours rather than wrapping. See SampleSpan.
+                glm::vec4 c = ColorUtils::SampleSpan(t, segStops, seg.blendSpace);
                 row[x * 4 + 0] = static_cast<unsigned char>(std::clamp(c.r * 255.0f, 0.0f, 255.0f));
                 row[x * 4 + 1] = static_cast<unsigned char>(std::clamp(c.g * 255.0f, 0.0f, 255.0f));
                 row[x * 4 + 2] = static_cast<unsigned char>(std::clamp(c.b * 255.0f, 0.0f, 255.0f));
@@ -827,10 +953,15 @@ namespace EdgeLighting
         // the vec4.w hasStops flag in ArcBlock, so leaving unused rows zero
         // is safe.
         //
-        // REPEAT on U (colours cycle around the perimeter, matching the base
-        // gradient's REPEAT wrap so an arc that inherits stops from the same
-        // source looks continuous); CLAMP on V (rows outside [0, arcCount)
-        // are unused).
+        // CLAMP on both axes, like the segment atlas. U was REPEAT on the
+        // theory that an arc's colours "cycle around the perimeter" - but this
+        // atlas is only ever sampled when the arc has its OWN stops, and those
+        // are laid head-to-tail across the arc's span, not around the ring. An
+        // arc that inherits instead reads the base gradient, which keeps its
+        // own REPEAT wrap. With the hue-rotation term gone from the arc-local
+        // coordinate (see neon.frag) the only reads outside [0, 1] are the few
+        // px the straddling arc feather extends past each end, and CLAMP holds
+        // the end colour there instead of fetching the opposite end's.
         constexpr int W = ARC_LUT_WIDTH;
         constexpr int H = MAX_ARCS;
         std::vector<unsigned char> atlas(W * H * 4, 0);
@@ -849,7 +980,8 @@ namespace EdgeLighting
             for (int x = 0; x < W; ++x)
             {
                 float t = static_cast<float>(x) / static_cast<float>(W - 1);
-                glm::vec4 c = ColorUtils::SampleStops(t, arcStops, arc.blendSpace);
+                // Clamped, not cyclic - same reason as the segment atlas above.
+                glm::vec4 c = ColorUtils::SampleSpan(t, arcStops, arc.blendSpace);
                 row[x * 4 + 0] = static_cast<unsigned char>(std::clamp(c.r * 255.0f, 0.0f, 255.0f));
                 row[x * 4 + 1] = static_cast<unsigned char>(std::clamp(c.g * 255.0f, 0.0f, 255.0f));
                 row[x * 4 + 2] = static_cast<unsigned char>(std::clamp(c.b * 255.0f, 0.0f, 255.0f));
@@ -858,7 +990,7 @@ namespace EdgeLighting
         }
 
         mArcLUT.SetData(atlas.data(), W, H, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
-        mArcLUT.SetParams(GL_LINEAR, GL_LINEAR, GL_REPEAT, GL_CLAMP_TO_EDGE);
+        mArcLUT.SetParams(GL_LINEAR, GL_LINEAR, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
 
         mBakedArcs = config.neon.arcs;
     }

@@ -14,7 +14,7 @@ namespace EdgeLighting
 {
     /// Full-resolution single-pass neon renderer.
     ///
-    /// Draws a tight quad over the rect + earlyOut margin and runs one
+    /// Draws a tight quad over the rect + glow-reach margin and runs one
     /// fragment shader that composes filament + halo + bloom in one pass.
     /// Per-fragment work: an analytic rounded-box SDF, a gather loop over
     /// @c NEON_MAX_LOOP_SAMPLES perimeter samples (positions live in a UBO),
@@ -89,13 +89,22 @@ namespace EdgeLighting
         /// Pack the segment + arc UBOs. Called before the emission pre-pass
         /// because BOTH passes read them: the pre-pass to bake the per-sample
         /// emission, the main pass for the continuous filament gate.
+        /// @pre @c mEffectiveSegments is current for @p config - i.e.
+        ///      @ref OnConfigChanged has run for any change since the last
+        ///      frame, which the effect guarantees by calling Update before
+        ///      Render. This method deliberately does not refill it.
         void packLightBlocks(const Config &config);
 
         /// Pass 0: bake the fragment-invariant half of the gather into
         /// @c mEmissionBuffer. Retargets the framebuffer and viewport, so it
         /// restores both before returning - see docs/emission-prepass.md.
         /// @pre Blending disabled - a table write is not a composite.
-        void renderEmissionPass(int viewportWidth, int viewportHeight, float time, const Config &config);
+        /// @return false if no emission target could be allocated at all (both
+        ///         the RGBA16F and the RGBA8 attempt failed). @c Framebuffer::Resize
+        ///         destroys the attachment on its failure path, so there is no
+        ///         stale table left to fall back on - the caller must SKIP the
+        ///         gather rather than let it texelFetch texture 0.
+        bool renderEmissionPass(int viewportWidth, int viewportHeight, float time, const Config &config);
 
         /// Pass 1: opaque-mode background fill on a fullscreen NDC quad. The
         /// fragment shader shapes coverage from an analytic rounded-box SDF
@@ -126,7 +135,7 @@ namespace EdgeLighting
         ShaderProgram mBlackRectShader;                                ///< Opaque-mode black background fill (black-rect.frag).
         ShaderProgram mLUTDebugShader;                                 ///< Debug LUT strip (neon-lut-debug.frag).
         ShaderProgram mStopMarkerShader;                               ///< Debug per-stop marker (neon-stop-marker.frag).
-        VertexArray mVertexArray{"NeonRenderer"};                      ///< Tight glow quad (rect + earlyOut).
+        VertexArray mVertexArray{"NeonRenderer"};                      ///< Tight glow quad (rect + glow reach).
         VertexArray mFullVertexArray{"NeonRenderer.Full"};             ///< Viewport-covering quad for the opaque fill.
         VertexArray mLUTStripVertexArray{"NeonRenderer.LUTStrip"};     ///< Small centred quad for the LUT debug strip.
         VertexArray mStopMarkerVertexArray{"NeonRenderer.StopMarker"}; ///< Unit quad ([-1,+1]) used to draw each stop marker.
@@ -179,6 +188,13 @@ namespace EdgeLighting
         /// texture + FBO twice per frame. RGBA8 is a working fallback, but it
         /// clamps arc intensities and stacked segment boosts above 1.0.
         bool mEmissionFloatUnavailable = false;
+
+        /// Latches for the "more arcs / segments than the shader can hold"
+        /// warnings, so the message lands once per overflow rather than once
+        /// per frame. Cleared when the count drops back under the cap, so a
+        /// host that overflows again is told again.
+        bool mArcOverflowLogged = false;
+        bool mSegmentOverflowLogged = false;
         std::vector<Arc> mBakedArcs;
 
         // --- Gradient cross-fade -------------------------------------------

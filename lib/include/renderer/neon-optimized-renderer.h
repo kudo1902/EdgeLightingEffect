@@ -71,13 +71,20 @@ namespace EdgeLighting
 
         /// See NeonRenderer::packLightBlocks - both passes read these blocks,
         /// so they are packed before the emission pre-pass runs.
+        /// @pre @c mEffectiveSegments is current for @p config - see
+        ///      NeonRenderer::packLightBlocks. Not refilled here.
         void packLightBlocks(const Config &config);
 
         /// Pass 0: bake the fragment-invariant half of the gather into
         /// @c mEmissionBuffer, at @c optimizedNeon.numSamples so texel i here
         /// is sample i in the main pass. Restores framebuffer + viewport.
         /// @pre Blending disabled - a table write is not a composite.
-        void renderEmissionPass(int viewportWidth, int viewportHeight, float time, const Config &config);
+        /// @return false if no emission target could be allocated at all (both
+        ///         the RGBA16F and the RGBA8 attempt failed). @c Framebuffer::Resize
+        ///         destroys the attachment on its failure path, so there is no
+        ///         stale table left to fall back on - the caller must SKIP the
+        ///         gather rather than let it texelFetch texture 0.
+        bool renderEmissionPass(int viewportWidth, int viewportHeight, float time, const Config &config);
 
         /// Pass 1: the neon gather at @c resolutionScale into
         /// @c mHalfResBuffer. Retargets the framebuffer and viewport; the
@@ -107,6 +114,13 @@ namespace EdgeLighting
         Framebuffer mEmissionBuffer{"NeonOptimized.Emission"};
         /// Latched RGBA8 fallback - see NeonRenderer for why it must latch.
         bool mEmissionFloatUnavailable = false;
+
+        /// Latches for the "more arcs / segments than the shader can hold"
+        /// warnings, so the message lands once per overflow rather than once
+        /// per frame. Cleared when the count drops back under the cap, so a
+        /// host that overflows again is told again.
+        bool mArcOverflowLogged = false;
+        bool mSegmentOverflowLogged = false;
         VertexArray mNeonVertexArray{"NeonOpt.Pass1"};
         VertexArray mBlitVertexArray{"NeonOpt.Blit"};
 

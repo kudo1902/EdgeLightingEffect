@@ -62,6 +62,99 @@ namespace EdgeLighting
         constexpr GLuint SEGMENT_BLOCK_BINDING = 0;
         constexpr GLuint LOOP_SAMPLES_BLOCK_BINDING = 1;
         constexpr GLuint ARC_BLOCK_BINDING = 2;
+
+        /// Packs @c uArcs[].w for arc @p i: bit 0 = the arc has its own colour
+        /// stops, bit 1 = another arc covers the perimeter immediately BEFORE
+        /// its start, bit 2 = another arc covers it immediately AFTER its end.
+        ///
+        /// The abutment bits choose each endpoint's feather direction in the
+        /// shaders' @c arcCoverContinuous, and getting that per-endpoint is what
+        /// lets two arcs tile the ring without a seam notch while a lone arc
+        /// still lights nothing outside its own span. Both properties matter:
+        /// see the long note in neon.frag, and in particular why a symmetric
+        /// feather cannot satisfy both at @c cornerRadius 0.
+        ///
+        /// It is a pure function of the arc set, so it is resolved here, once
+        /// per frame, rather than by an O(arcs^2) scan in every fragment.
+        ///
+        /// @p arcs is the list as packed - only the first @p count entries are
+        /// visible to the shader, so only they can abut.
+        inline float PackArcFlags(const std::vector<Arc> &arcs, int i, int count)
+        {
+            // Perimeter-fraction slop. Endpoints that are meant to coincide are
+            // usually authored as exact values or driven by an animation, so
+            // this only has to absorb float round-trip error.
+            constexpr float EPS = 1e-5f;
+            const Arc &a = arcs[i];
+            float flags = a.colorStops.empty() ? 0.0f : 1.0f;
+
+            float end = a.start + a.length;
+            bool tailAbuts = false;
+            bool headAbuts = false;
+            for (int b = 0; b < count; ++b)
+            {
+                if (b == i)
+                {
+                    continue;
+                }
+                const Arc &o = arcs[b];
+                // A dark arc is skipped by the shader's coverage loop, so it
+                // cannot take over a neighbour's endpoint either.
+                if (o.length <= 0.0f || o.intensity <= 0.0f)
+                {
+                    continue;
+                }
+                // Where a.start falls within o, measured forward from o.start.
+                float rTail = a.start - o.start;
+                rTail -= std::floor(rTail);
+                // Covers strictly BEFORE a.start: rTail must be past o's start
+                // (rTail > 0 excludes two arcs that merely share a start point)
+                // and no further than its end.
+                if (rTail > EPS && rTail <= o.length + EPS)
+                {
+                    tailAbuts = true;
+                }
+                // Where a's end falls within o. Covers strictly AFTER it when
+                // the end lands inside o but not exactly on o's own end - an
+                // arc finishing where this one finishes extends nothing.
+                float rHead = end - o.start;
+                rHead -= std::floor(rHead);
+                if (rHead < o.length - EPS)
+                {
+                    headAbuts = true;
+                }
+            }
+            if (tailAbuts)
+            {
+                flags += 2.0f;
+            }
+            if (headAbuts)
+            {
+                flags += 4.0f;
+            }
+            return flags;
+        }
+
+        /// Warn once when a host hands over more arcs / segments than the
+        /// shader arrays can hold - see NeonRenderer's copy for the rationale.
+        /// @p latched is the caller's per-renderer flag, cleared once the count
+        /// falls back under the cap.
+        inline void WarnOnOverflow(const char *what, const char *renderer,
+                                   size_t requested, int cap, bool &latched)
+        {
+            if (static_cast<int>(requested) <= cap)
+            {
+                latched = false;
+                return;
+            }
+            if (latched)
+            {
+                return;
+            }
+            latched = true;
+            LOG_W("%s: %zu %s configured but only %d fit - the rest are ignored.",
+                  renderer, requested, what, cap);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -117,8 +210,15 @@ namespace EdgeLighting
         // Read by both the emission pre-pass and the half-res neon pass, so
         // packed once before either draws. See NeonRenderer::packLightBlocks.
         SegmentBlockData segBlock = {};
-        SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
+        // mEffectiveSegments is NOT refilled here. OnConfigChanged fills it
+        // whenever the composited config changes, and this runs once per frame
+        // from Render - so on a frame where nothing changed the merged view is
+        // already current, and on a frame where something did, OnConfigChanged
+        // has already run (Update -> refreshActiveConfig precedes Render).
+        // Refilling was the third FillEffectiveSegments of the same frame.
         const std::vector<SegmentBoost> &effSegments = mEffectiveSegments;
+        WarnOnOverflow("segments", "NeonOptimizedRenderer", effSegments.size(),
+                       int(MAX_SEGMENT_BOOSTS), mSegmentOverflowLogged);
         int segCount = std::min(static_cast<int>(effSegments.size()),
                                 int(MAX_SEGMENT_BOOSTS));
         segBlock.count = segCount;
@@ -138,20 +238,23 @@ namespace EdgeLighting
         // are normalised perimeter coords in [0, 1) so resolutionScale doesn't
         // apply.
         ArcBlockData arcBlock = {};
+        WarnOnOverflow("arcs", "NeonOptimizedRenderer", config.neon.arcs.size(),
+                       int(MAX_ARCS), mArcOverflowLogged);
         int arcCount = std::min(static_cast<int>(config.neon.arcs.size()),
                                 int(MAX_ARCS));
         arcBlock.count = arcCount;
         for (int i = 0; i < arcCount; ++i)
         {
             const auto &a = config.neon.arcs[i];
-            float hasStops = a.colorStops.empty() ? 0.0f : 1.0f;
-            arcBlock.arcs[i] = glm::vec4(a.start, a.length, a.intensity, hasStops);
+            // .w is a bitmask, not just hasStops - see PackArcFlags.
+            float flags = PackArcFlags(config.neon.arcs, i, arcCount);
+            arcBlock.arcs[i] = glm::vec4(a.start, a.length, a.intensity, flags);
         }
         mArcBlock.SetData(&arcBlock, sizeof(arcBlock));
         mArcBlock.BindBase(ARC_BLOCK_BINDING);
     }
 
-    void NeonOptimizedRenderer::renderEmissionPass(int viewportWidth, int viewportHeight,
+    bool NeonOptimizedRenderer::renderEmissionPass(int viewportWidth, int viewportHeight,
                                                    float time, const Config &config)
     {
         // Identical contract to NeonRenderer::renderEmissionPass - see there
@@ -179,7 +282,9 @@ namespace EdgeLighting
             !mEmissionBuffer.Resize(NEON_MAX_LOOP_SAMPLES, 2,
                                     GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, GL_NEAREST))
         {
-            return; // nothing sane to draw into; the gather reads a stale table
+            // No target, and no stale one either - Framebuffer::Resize destroys
+            // the attachment when it fails. See NeonRenderer::renderEmissionPass.
+            return false;
         }
 
         mEmissionBuffer.Bind();
@@ -203,6 +308,7 @@ namespace EdgeLighting
         // is untouched here - it is a phase property owned by Render.
         Framebuffer::BindId(targetFbo);
         glViewport(0, 0, viewportWidth, viewportHeight);
+        return true;
     }
 
     void NeonOptimizedRenderer::renderHalfResNeonPass(int viewportHeight, int bufW, int bufH,
@@ -243,7 +349,7 @@ namespace EdgeLighting
         // every other pixel uniform below is already scaled into.
         mNeonShader.SetUniform("uResolutionScale", scale);
         mNeonShader.SetUniform("uRectSize", rectSizeScaled);
-        mNeonShader.SetUniform("uCornerRadius", config.geometry.cornerRadius * scale);
+        mNeonShader.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry) * scale);
         mNeonShader.SetUniform("uLineWidth", config.neon.lineWidth * scale);
         mNeonShader.SetUniform("uFilamentFalloff", config.neon.filamentFalloff);
         mNeonShader.SetUniform("uIntensity", config.neon.intensity);
@@ -309,7 +415,7 @@ namespace EdgeLighting
         mBlackRectShader.Use();
         mBlackRectShader.SetUniform("uMVP", identity);
         mBlackRectShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
-        mBlackRectShader.SetUniform("uCornerRadius", config.geometry.cornerRadius);
+        mBlackRectShader.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry));
         mBlackRectShader.SetUniform("uRectCenter", centerFull);
         float opaqueSoft = std::max(config.neon.opaqueSoftness,
                                     static_cast<float>(SIDE_SOFT_EPSILON));
@@ -376,7 +482,13 @@ namespace EdgeLighting
         // binds an FBO of its own - querying after would capture that instead.
         const GLuint targetFbo = Framebuffer::GetBoundId();
 
-        if (!opaqueOnly)
+        // Cleared if pass 0 cannot allocate an emission target: pass 1 would
+        // then have no table to gather from, and pass 2b would composite
+        // whatever the half-res FBO happened to hold from an earlier frame.
+        // Both are skipped together, so the frame degrades to the opaque fill
+        // (or to nothing) rather than to a stale or undefined image.
+        bool drawNeon = !opaqueOnly;
+        if (drawNeon)
         {
             // --- Pass 0: per-sample emission table ---------------------------
             // Inside the guard because the table feeds only Pass 1 - the debug
@@ -386,8 +498,10 @@ namespace EdgeLighting
             // A table write is not a composite: blending would mix this frame's
             // emission into last frame's.
             glDisable(GL_BLEND);
-            renderEmissionPass(viewportWidth, viewportHeight, time, config);
-
+            drawNeon = renderEmissionPass(viewportWidth, viewportHeight, time, config);
+        }
+        if (drawNeon)
+        {
             // --- Pass 1: neon at resolutionScale into the half-res FBO -------
             // Premultiplied "over" into the transparent FBO: a single
             // non-overlapping quad over (0,0,0,0) leaves the FBO holding the
@@ -416,7 +530,7 @@ namespace EdgeLighting
         }
 
         // --- Pass 2b: composite the half-res neon over it --------------------
-        if (!opaqueOnly)
+        if (drawNeon)
         {
             renderBlitPass(config);
         }
@@ -532,13 +646,13 @@ namespace EdgeLighting
         float scale = config.optimizedNeon.resolutionScale;
 
         // --- Scaled glow quad (pass 1) ---
-        // Size the quad to exactly cover the lit region: rect + earlyOut, so
+        // Size the quad to exactly cover the lit region: rect + glowReach, so
         // geometry bounds the far region instead of a per-fragment discard
         // (tiler-friendly). Everything here is in scaled (FBO) space -
         // glowRadius*scale is already scaled, matching the uniforms uploaded
         // in Render().
         {
-            // Use the SAME early-out factor as the base NeonRenderer so the
+            // Use the SAME glow-reach factor as the base NeonRenderer so the
             // bloom's wide 1/D tail reaches exactly as far here as it does
             // there - a smaller margin faded the bloom out sooner and made the
             // optimized output look visibly shorter than the base (mismatch).
@@ -553,7 +667,7 @@ namespace EdgeLighting
             // 1/D bloom tail reaches further as those rise. The shader
             // reproduces this exact expression to place its bloom pedestal -
             // keep the two in step.
-            float glowReach = config.neon.glowRadius * scale * float(EARLY_OUT_RADIUS_FACTOR) *
+            float glowReach = config.neon.glowRadius * scale * float(GLOW_REACH_RADIUS_FACTOR) *
                               (1.0f + config.neon.bloomStrength * config.neon.intensity);
 
             // Filament reach floor - the filament is sized by lineWidth, not
@@ -650,14 +764,14 @@ namespace EdgeLighting
         // (colorStops / blendSpace / gradientLutSize), so a re-entry here
         // always means the inputs actually changed.
         int lutSize = std::max(config.optimizedNeon.gradientLutSize, 4);
-        // Sorted once here, not per texel - SampleStops walks the ring in
+        // Sorted once here, not per texel - SampleRing walks the ring in
         // order and an unsorted list bakes a silently wrong gradient.
         const std::vector<ColorStop> baseStops = ColorUtils::SortStops(config.neon.colorStops);
         mLUTTarget.resize(lutSize * 4);
         for (int i = 0; i < lutSize; ++i)
         {
             float t = static_cast<float>(i) / static_cast<float>(lutSize);
-            glm::vec4 c = ColorUtils::SampleStops(t, baseStops, config.neon.blendSpace);
+            glm::vec4 c = ColorUtils::SampleRing(t, baseStops, config.neon.blendSpace);
             mLUTTarget[i * 4 + 0] = c.r;
             mLUTTarget[i * 4 + 1] = c.g;
             mLUTTarget[i * 4 + 2] = c.b;
@@ -740,7 +854,10 @@ namespace EdgeLighting
             for (int x = 0; x < W; ++x)
             {
                 float t = static_cast<float>(x) / static_cast<float>(W - 1);
-                glm::vec4 c = ColorUtils::SampleStops(t, segStops, seg.blendSpace);
+                // Clamped, not cyclic: this row is a head-to-tail span sampled
+                // CLAMP_TO_EDGE, so stops that do not reach 0 and 1 must hold
+                // their end colours rather than wrapping. See SampleSpan.
+                glm::vec4 c = ColorUtils::SampleSpan(t, segStops, seg.blendSpace);
                 row[x * 4 + 0] = static_cast<unsigned char>(std::clamp(c.r * 255.0f, 0.0f, 255.0f));
                 row[x * 4 + 1] = static_cast<unsigned char>(std::clamp(c.g * 255.0f, 0.0f, 255.0f));
                 row[x * 4 + 2] = static_cast<unsigned char>(std::clamp(c.b * 255.0f, 0.0f, 255.0f));
@@ -778,7 +895,8 @@ namespace EdgeLighting
             for (int x = 0; x < W; ++x)
             {
                 float t = static_cast<float>(x) / static_cast<float>(W - 1);
-                glm::vec4 c = ColorUtils::SampleStops(t, arcStops, arc.blendSpace);
+                // Clamped, not cyclic - same reason as the segment atlas above.
+                glm::vec4 c = ColorUtils::SampleSpan(t, arcStops, arc.blendSpace);
                 row[x * 4 + 0] = static_cast<unsigned char>(std::clamp(c.r * 255.0f, 0.0f, 255.0f));
                 row[x * 4 + 1] = static_cast<unsigned char>(std::clamp(c.g * 255.0f, 0.0f, 255.0f));
                 row[x * 4 + 2] = static_cast<unsigned char>(std::clamp(c.b * 255.0f, 0.0f, 255.0f));
@@ -787,7 +905,9 @@ namespace EdgeLighting
         }
 
         mArcLUT.SetData(atlas.data(), W, H, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
-        mArcLUT.SetParams(GL_LINEAR, GL_LINEAR, GL_REPEAT, GL_CLAMP_TO_EDGE);
+        // CLAMP on both axes - the row is a head-to-tail span, not a ring.
+        // See NeonRenderer::rebuildArcLUT.
+        mArcLUT.SetParams(GL_LINEAR, GL_LINEAR, GL_CLAMP_TO_EDGE, GL_CLAMP_TO_EDGE);
 
         mBakedArcs = config.neon.arcs;
     }
