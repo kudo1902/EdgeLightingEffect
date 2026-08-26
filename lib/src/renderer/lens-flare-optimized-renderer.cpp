@@ -40,11 +40,26 @@ namespace EdgeLighting
         const GLuint targetFbo = Framebuffer::GetBoundId();
 
         // --- Pass 1: render the flare into the scaled FBO ---
-        mScaledBuffer.Resize(bufW, bufH);
+        // Resize destroys the attachment on its failure path, so a failure
+        // leaves mScaledBuffer holding id 0 - and Bind() would then bind the
+        // CALLER'S framebuffer, whereupon the glClear below erases everything
+        // already drawn this frame (glClear is not clipped by the viewport).
+        // Under an OffscreenCapture that target is the capture. Nothing has
+        // been drawn or any state changed at this point, so returning here
+        // leaves the frame exactly as this renderer found it.
+        if (!mScaledBuffer.Resize(bufW, bufH))
+        {
+            return;
+        }
         mScaledBuffer.Bind();
 
+        // Clear colour is global GL state - restore it. See the same
+        // save/restore in NeonOptimizedRenderer::renderHalfResNeonPass.
+        GLfloat prevClear[4];
+        glGetFloatv(GL_COLOR_CLEAR_VALUE, prevClear);
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
         glClear(GL_COLOR_BUFFER_BIT);
+        glClearColor(prevClear[0], prevClear[1], prevClear[2], prevClear[3]);
 
         // Premultiplied "over" into the transparent FBO: the shader writes
         // premultiplied colour + coverage alpha, ready to composite over the
