@@ -1,5 +1,15 @@
 #include "capi-internal.h"
 
+namespace
+{
+    /// Seed for colour stops created by the set_*_count growers. Matches what
+    /// el-effect.h documents (position 0, opaque white); a plain resize()
+    /// value-initialises to transparent black instead, and because
+    /// ColorStop::color.a is an emission scale rather than a blend opacity,
+    /// that renders as "dark here" instead of as a merely unset colour.
+    const EdgeLighting::ColorStop DEFAULT_COLOR_STOP{0.0f, glm::vec4(1.0f)};
+}
+
 extern "C"
 {
 
@@ -409,7 +419,7 @@ extern "C"
             return EL_SUCCESS;
         }
         LOG_I("effect=%p, count=%d", (void *)effect, count);
-        effect->config.neon.colorStops.resize(newSize);
+        effect->config.neon.colorStops.resize(newSize, DEFAULT_COLOR_STOP);
         return EL_SUCCESS;
     }
 
@@ -910,7 +920,7 @@ extern "C"
             LOG_E("el_effect_set_segment_color_stop_count: segmentIndex %d out of range (size=%zu)", segmentIndex, boosts.size());
             return EL_ERROR_INVALID_PARAMETER;
         }
-        boosts[segIdx].colorStops.resize(newSize);
+        boosts[segIdx].colorStops.resize(newSize, DEFAULT_COLOR_STOP);
         return EL_SUCCESS;
     }
 
@@ -1142,7 +1152,7 @@ extern "C"
             LOG_E("el_effect_set_arc_color_stop_count: arcIndex %d out of range (size=%zu)", arcIndex, arcs.size());
             return EL_ERROR_INVALID_PARAMETER;
         }
-        arcs[arcIdx].colorStops.resize(newSize);
+        arcs[arcIdx].colorStops.resize(newSize, DEFAULT_COLOR_STOP);
         return EL_SUCCESS;
     }
 

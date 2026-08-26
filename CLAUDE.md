@@ -17,6 +17,8 @@ Docs, in reading order. The three neon documents are tiers of the same material 
 - [`docs/effect-reference.md`](docs/effect-reference.md) - per-parameter reference and recipes.
 - [`docs/architecture-design.md`](docs/architecture-design.md) - full architecture. Note it predates the droplets and lens-flare renderers.
 - [`docs/coordinate-system.md`](docs/coordinate-system.md), [`docs/multiple-arcs-design.md`](docs/multiple-arcs-design.md).
+- [`docs/review-findings.md`](docs/review-findings.md) - open defects and rough edges, visual ones with offscreen repros. Check here before assuming a behaviour is intended.
+- [`docs/naming-review.md`](docs/naming-review.md) - identifier audit against `AGENTS.md`, plus the names that describe mechanisms the code no longer has. Read before renaming anything.
 
 When the docs go out of date, treat the headers under `lib/include/` as the source of truth.
 
@@ -68,7 +70,29 @@ Per-frame contract: `Update(dt)` ticks the clock, advances every attached animat
 Six renderers, all under `lib/include/renderer/`, all registered by the demo in this order:
 
 - `WireframeRenderer` - 1px `GL_LINE_LOOP` debug box, blending temporarily disabled.
-- `NeonRenderer` - full-res single-pass neon stroke. Analytic rounded-box SDF plus a gather loop over `NEON_MAX_LOOP_SAMPLES` perimeter samples (positions in a UBO), reading three baked LUT textures: `uGradientLUT` (base colour ring), `uSegmentLUT` (per-segment gradient atlas, one row per segment), `uArcLUT` (per-arc atlas). All LUTs are baked on the CPU as **RGBA8** - float textures are deliberately avoided for edge-device compatibility. Also owns the opaque-fill pass (`black-rect.frag`) and two debug overlays (LUT strip, colour-stop markers).
+- `NeonRenderer` - full-res neon stroke. Analytic rounded-box SDF plus a gather loop over `NEON_MAX_LOOP_SAMPLES` perimeter samples (positions in a UBO), reading three baked LUT textures: `uGradientLUT` (base colour ring), `uSegmentLUT` (per-segment gradient atlas, one row per segment), `uArcLUT` (per-arc atlas). All LUTs are baked on the CPU as **RGBA8** - float textures are deliberately avoided for edge-device compatibility. Also owns the opaque-fill pass (`black-rect.frag`) and two debug overlays (LUT strip, colour-stop markers).
+
+  Runs an **emission pre-pass** (`neon-emission.frag`): the gather's per-sample
+  work (arc winner-take-all, segment bells, LUT fetches) is a pure function of
+  `(si, uTime, config)`, so it is baked once per frame into an `N x 2` RGBA16F
+  table and the gather reads it with `texelFetch`. Per-fragment cost is
+  `O(samples)` instead of `O(samples * (arcs + segments))`. The invariant to
+  preserve: **pure function of `(si, uTime, config)` goes in the pre-pass;
+  anything reading `vPos` stays in the main shader.**
+
+  `Render` in both neon renderers is a **pass schedule**: derive the transform,
+  then one call per `render*Pass` method. `Render` owns blend state; a pass owns
+  its shader and, if it retargets, restores the framebuffer / viewport / blend
+  it was handed - never framebuffer 0, never a forced `glEnable` (an
+  `OffscreenCapture` hands the renderer a real FBO). Header declaration order,
+  .cpp definition order and the pass numbering all agree; the one deliberate
+  exception is documented at the declaration. See
+  [`docs/emission-prepass.md`](docs/emission-prepass.md) for the pass tables and
+  [`docs/emission-prepass-comparison.md`](docs/emission-prepass-comparison.md)
+  for the measured before/after of the pre-pass commit alone.
+  [`docs/branch-vs-main-comparison.md`](docs/branch-vs-main-comparison.md) is
+  the wider view: the whole branch against `main`, so it also covers the
+  colour-stop alpha and stop-sorting behaviour changes that ship with it.
 - `NeonOptimizedRenderer` - half-res variant: renders into a scaled FBO and bilinear-blits back. Adds a runtime `numSamples` knob and a configurable LUT width. **Visual params are read from `Config::neon`**, not from its own sub-config, which only carries perf knobs.
 - `DropletsRenderer` - rain-on-glass droplets in a band hugging the perimeter; screen-space gravity, self-lit drops, no framebuffer capture.
 - `LensFlareRenderer` - sun + hex-aperture flare (rays, chromatic ghosts) as one fullscreen premultiplied-alpha pass. The sun rides the perimeter in the same parameter space as neon segments/arcs.
@@ -93,7 +117,7 @@ The effect embeds the manager, so the host does **not** hand-composite animation
 `libedge-lighting-c` wraps the static library in a flat `extern "C"` surface for P-Invoke / ctypes / cgo. `edge-lighting-capi.h` is the single public include, aggregating `el-types.h` (enums, result codes, `EL_API`), `el-effect.h`, `el-animation.h`, `el-modulator.h`. Key points:
 
 - Three opaque handle families - effect, animation, modulator - defined in `capi-internal.h`. Attaching an animation does not transfer ownership.
-- Each effect handle carries a **staging `Config`**: every `el_effect_set_*` mutates staging and calls `SetConfig` immediately; every `el_effect_get_*` reads staging back, *not* the animation-overlaid active config. `el_effect_capture` re-syncs staging from the effect's base.
+- Each effect handle carries a **staging `Config`**: every `el_effect_set_*` mutates staging and nothing else; every `el_effect_get_*` reads staging back, *not* the animation-overlaid active config. Staging reaches the effect in `el_effect_update`, which is the only place that calls `SetConfig` - so a host that sets config and then calls only `el_effect_render` renders the previous frame's config. `el_effect_capture` re-syncs staging from the effect's base.
 - No C++ exception escapes the boundary; everything maps to an `el_result_e`.
 - Enum ABI parity between the C++ enums and their `el_*` mirrors is enforced by a wall of `static_assert`s at the top of `capi-internal.h`. **If you reorder or renumber a C++ enum that has an `el_*` mirror, add/adjust the assert there** - append new values at the end to stay forward-compatible.
 - Symbols are hidden by default (`CXX_VISIBILITY_PRESET hidden`); only `EL_API`-marked `el_*` functions are exported.

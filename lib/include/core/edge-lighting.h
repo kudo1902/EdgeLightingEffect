@@ -44,7 +44,12 @@ namespace EdgeLighting
         ~EdgeLightingEffect();
 
         /// @brief Initialise all registered renderers.
-        /// @returns false if any renderer fails to initialise.
+        ///
+        /// A renderer that fails is logged and dropped from the list, so the
+        /// rest of the effect still runs. Safe to call again after registering
+        /// more renderers: renderers already initialised are skipped.
+        ///
+        /// @returns false if any renderer failed to initialise.
         bool Initialize();
 
         /// @brief Advance animation time and propagate updates to renderers.
@@ -79,6 +84,16 @@ namespace EdgeLighting
         const AnimationManager &GetAnimationManager() const;
 
         /// @brief Register a renderer to be updated and rendered each frame.
+        ///
+        /// Renderers registered AFTER @ref Initialize are initialised on the
+        /// spot, so a late registration is not left with no shaders and a
+        /// @c Render that draws with program 0. One that fails to initialise is
+        /// not added. Before @ref Initialize this just records the renderer, as
+        /// it always did.
+        ///
+        /// Either way the renderer is handed the current active config
+        /// immediately, so its first frame is not a blank one.
+        ///
         /// @param renderer Shared pointer to a @ref BaseRenderer subclass.
         void AddRenderer(std::shared_ptr<BaseRenderer> renderer);
 
@@ -89,11 +104,16 @@ namespace EdgeLighting
     private:
         void refreshActiveConfig();
 
+    private:
         Config mBaseConfig;   ///< Authored config - what SetConfig sets.
         Config mActiveConfig; ///< Base + animation overlays - forwarded to renderers.
         Clock mClock;
         std::unique_ptr<AnimationManager> mAnimationManager;
         std::vector<std::shared_ptr<BaseRenderer>> mRenderers;
+        /// Set once @ref Initialize has run, so @ref AddRenderer knows whether
+        /// a newly registered renderer still has an Initialize coming or has
+        /// missed it and must be initialised immediately.
+        bool mInitialized = false;
     };
 
 } // namespace EdgeLighting

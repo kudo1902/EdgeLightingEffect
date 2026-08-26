@@ -95,9 +95,9 @@ namespace EdgeLighting
         /// Allocates (or reuses) the capture target at @p width × @p height,
         /// binds it, and sets the viewport to match. Does NOT clear - the
         /// caller's scene draw is expected to.
-        /// @return @c false if the size is invalid or the FBO is incomplete,
-        ///         in which case no state was changed and @ref End must not be
-        ///         called.
+        /// @return @c false if the size is invalid or the FBO is incomplete, in
+        ///         which case the framebuffer binding and viewport are left as
+        ///         they were and @ref End must not be called.
         bool Begin(int width, int height);
 
         /// Restores the framebuffer binding and viewport saved by @ref Begin.

@@ -44,9 +44,13 @@ what you see:
   and are independent of the master intensity, so a segment can shine on an
   otherwise-dark arc.
 
-The neon renderer is one of three renderers that can be enabled independently
-in the same effect: `NeonRenderer`, `NeonOptimizedRenderer` (half-res variant
-of the same shader), and `WireframeRenderer` (a 1px debug bounding box).
+The neon renderer is one of six renderers that can be enabled independently in
+the same effect: `NeonRenderer`, `NeonOptimizedRenderer` (half-res variant of
+the same shader), `WireframeRenderer` (a 1px debug bounding box),
+`DropletsRenderer` (rain on glass in a band along the perimeter),
+`LensFlareRenderer` (sun + ghosts riding the perimeter), and
+`LensFlareOptimizedRenderer` (its half-res variant). This document covers the
+neon parameters; the others are documented on their `Config` sub-structs.
 
 ---
 
@@ -224,6 +228,23 @@ at `s=1 -> 0`) and the shader reads the LUT once per gather-loop sample.
 
 Cap: `MAX_COLOR_STOPS = 128` (see `neon-renderer.h`). The debug UI caps its
 adder at the same value.
+
+**Alpha is an emission scale, not a blend opacity.** A stop's `color.a`
+attenuates the filament, halo and bloom together at that perimeter position:
+`1` is full brightness (the default), `0` goes fully dark there and lets the
+background show through rather than punching a black tube over it. It is how
+you fade the neon out along part of the ring without touching arc or segment
+gating, and it interpolates linearly between stops in every `blendSpace` (the
+hue-space conversions apply to `.rgb` only). Because the shader normalises the
+gathered colour to a unit-magnitude hue, alpha is applied to the emission
+magnitude and read pointwise at each fragment's own perimeter position - so the
+fade lands exactly where the stops put it.
+
+**Ordering is not your problem.** The ring walk needs stops ascending by
+`position`, but the renderers sort at the bake, so an out-of-order list (a
+slider dragged past its neighbour, or a `ColorStopField::POSITION` animation
+driving two stops through each other) renders correctly rather than silently
+distorting. Stops sharing a position keep their authored order.
 
 **`neon.hueRotationRate`** (default 0.5 rev / s)
 How fast the whole gradient scrolls around the perimeter, in revolutions per

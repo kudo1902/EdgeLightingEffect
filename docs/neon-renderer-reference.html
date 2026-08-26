@@ -969,7 +969,7 @@ vec3 segColHue = segAcc / max(wsumSegW, WSUM_EPSILON);</code></pre>
           <thead><tr><th>Bake</th><th>Rebuilds when</th><th>Produces</th></tr></thead>
           <tbody>
             <tr><td class="mono nw">rebuildLoopSamples</td><td><code>config.geometry</code> changed</td><td>128 <code>vec4</code>s from <code>GetPointOnRectangle(i / 128)</code>, evenly spaced by arc length, straight into the UBO.</td></tr>
-            <tr><td class="mono nw">rebuildGradientLUT</td><td><code>colorStops</code> or <code>blendSpace</code> changed</td><td>256 RGBA float texels via <code>ColorUtils::SampleStops</code>, held as <code>mLUTTarget</code>. Sampled at <code>t = i / 256</code> so the wrap is seamless.</td></tr>
+            <tr><td class="mono nw">rebuildGradientLUT</td><td><code>colorStops</code> or <code>blendSpace</code> changed</td><td>256 RGBA float texels via <code>ColorUtils::SampleRing</code>, held as <code>mLUTTarget</code>. Sampled at <code>t = i / 256</code> so the wrap is seamless.</td></tr>
             <tr><td class="mono nw">rebuildSegmentLUT</td><td>the merged effective segment set differs from <code>mBakedSegments</code></td><td>128 x 8 RGBA8 atlas, one row per segment.</td></tr>
             <tr><td class="mono nw">rebuildArcLUT</td><td><code>config.neon.arcs</code> differs from <code>mBakedArcs</code></td><td>128 x 8 RGBA8 atlas, one row per arc.</td></tr>
           </tbody>
@@ -1442,7 +1442,7 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
           <line x1="484" y1="242" x2="516" y2="242" class="dg-line" marker-end="url(#ra)"/>
           <rect x="520" y="210" width="260" height="64" class="dg-box"/>
           <text x="532" y="237" class="dg-t">rebuildGradientLUT()</text>
-          <text x="532" y="254" class="dg-t2">256 x ColorUtils::SampleStops</text>
+          <text x="532" y="254" class="dg-t2">256 x ColorUtils::SampleRing</text>
           <line x1="784" y1="242" x2="806" y2="242" class="dg-line" marker-end="url(#ra)"/>
           <rect x="810" y="210" width="230" height="64" class="dg-box"/>
           <text x="822" y="237" class="dg-t">mGradientLUT</text>

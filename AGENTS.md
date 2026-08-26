@@ -28,6 +28,10 @@
   - e.g. `Initialize()`, `Update()`, `Render()`, `SetConfig()`, `GetConfig()`, `AddRenderer()`, `Play()`, `Pause()`, `Stop()`, `Emit()`
 - Private methods: `camelCase`
   - e.g. `setupShaders()`, `setupQuadGeometry()`, `setupBuffers()`, `updateBuffers()`, `emitParticlesAtHead()`
+- Protected methods: `PascalCase` - they follow the **public** rule, not the
+  private one. A protected virtual is API for subclasses to override or call,
+  not an implementation detail of this class.
+  - e.g. `RestoreBaseline()`, `ApplyAt()`, `CaptureBaseline()`, `OnDurationChanged()`
 
 ## Event Callbacks
 - `PascalCase` with `On` prefix

@@ -8,7 +8,7 @@
 //   - the single-pass neon shaders (neon.frag, neon-optimized.frag), where
 //     CMake text-injects this file via @NEON_TUNING@ in shaders.h.in, and
 //   - the C++ renderers (neon-renderer.cpp, neon-optimized-renderer.cpp),
-//     which #include it for the early-out quad-sizing factors.
+//     which #include it for the glow-reach quad-sizing factors.
 //
 // Why macros and not const/constexpr: GLSL ES 3.00 has no constexpr and
 // rejects the 'f' float-literal suffix, so a `const float X = 0.9f;` cannot
@@ -76,6 +76,20 @@
 //     all until it exceeded the floor (~56 px on a 1920x1080 rect, i.e. most
 //     of its usable range). An analytic profile cannot bead at any radius, so
 //     no floor is needed and glowRadius sets the width directly. ---
+//     KNOWN LIMITATION - interior medial-axis creases. Both terms are closed
+//     forms of ad = abs(SDF distance). Inside the shape the rounded-box SDF's
+//     GRADIENT is discontinuous along the medial axis (the diagonals running in
+//     from each corner, plus the central spine), so halo and bloom inherit a C1
+//     crease there and the interior glow reads as a mitred picture frame. The
+//     gather this replaced summed over perimeter samples and was smooth; a
+//     nearest-distance profile cannot be. Subtle at the default glowRadius 5,
+//     unmistakable at 30 and above.
+//
+//     Accepted, not overlooked: the trade bought geometry-independent glow
+//     width, no beading at any radius, and no sample-spacing floor, which is
+//     the whole reason the analytic form exists. Softening ad near the axis
+//     would need a second distance field, and blending the two would put the
+//     rect-size dependence straight back. See docs/review-findings.md V4. ---
 #define HALO_GAIN                 0.90
 #define HALO_NORM_FACTOR          0.43
 
@@ -173,8 +187,16 @@
 #define SIDE_SOFT_EPSILON         1e-5
 #define WSUM_EPSILON              1e-6
 
-// --- Far early-out (quad sizing). The draw quad is sized to
+// --- Glow reach (quad sizing). The draw quad is sized to
 //     rect + glowRadius * RADIUS_FACTOR * (1 + bloomStrength * intensity).
+//
+//     Named for the reach, not for an early-out: the per-fragment
+//     `ad > earlyOut -> discard` this constant was originally calibrated for
+//     no longer exists. Geometry culls the far region instead, which is
+//     tiler-friendly, so what the factor sets is how far the glow is allowed to
+//     reach before the quad stops covering it. The locals it feeds already say
+//     so - `glowReach` in both setupGeometry implementations, `reach` in both
+//     shaders.
 //
 //     glowRadius only: the companion sampleSpacing * SPACING_FACTOR term is
 //     gone. sampleSpacing is perimeter / NEON_MAX_LOOP_SAMPLES, so it won on
@@ -186,7 +208,7 @@
 //     Used by the renderers' setupGeometry AND by the shaders, which recompute
 //     the same expression to place the bloom pedestal that lets this margin
 //     stay tight without the truncation showing. Keep the two in step. ---
-#define EARLY_OUT_RADIUS_FACTOR   48.0
+#define GLOW_REACH_RADIUS_FACTOR  48.0
 
 // --- Where the shaders' quad-edge fade begins, as a FRACTION of the quad
 //     margin. The emission ramps to zero over [FRAC * margin, margin], so the
@@ -194,7 +216,7 @@
 //     as a hard rectangle.
 //
 //     A fraction, not a pixel span, because the margin is proportional to
-//     glowRadius (see EARLY_OUT_RADIUS_FACTOR) and so is the bloom profile it
+//     glowRadius (see GLOW_REACH_RADIUS_FACTOR) and so is the bloom profile it
 //     hides. A fraction keeps the ramp at a constant proportion of the bloom's
 //     reach, so the fade reads the same at every glow radius; a fixed px ramp
 //     would vanish on a wide glow and dominate a narrow one. At the stock
