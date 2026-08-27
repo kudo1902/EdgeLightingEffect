@@ -1310,20 +1310,6 @@ extern "C"
         LOG_D("effect=%p, size=%d", (void *)effect, *outSize);
         return EL_SUCCESS;
     }
-    el_result_e el_effect_set_optimized_show_half_res(el_effect_handle_t effect, el_bool_t show)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_show_half_res");
-        SET_AND_LOG(effect->config.optimizedNeon.showHalfRes, show != 0, "effect=%p, show=%d", (void *)effect, show);
-    }
-    el_result_e el_effect_get_optimized_show_half_res(el_effect_handle_t effect, el_bool_t *outShow)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_show_half_res");
-        VALIDATE_OUT_PTR(outShow, "el_effect_get_optimized_show_half_res");
-        *outShow = effect->config.optimizedNeon.showHalfRes ? 1 : 0;
-        LOG_D("effect=%p, show=%d", (void *)effect, *outShow);
-        return EL_SUCCESS;
-    }
-
     // --- Droplets ---
 
     el_result_e el_effect_set_droplets_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)

@@ -139,8 +139,17 @@ void main() {
             // in neon.frag must agree exactly or colour and alpha come from
             // different texels of the same row. See neon.frag for why the term
             // was wrong here in the first place.
+            //
+            // WRAPPED, and by the same expression the consumer uses for its
+            // alpha read. arcInside above already covers a seam-straddling arc
+            // (it tests si and si + 1.0), so an unwrapped si - start went
+            // negative past the seam and CLAMP_TO_EDGE pinned the wrapped
+            // remainder to the head colour while the arc stayed lit.
             float rowY = (float(bestIdx) + 0.5) / float(MAX_ARCS);
-            float uArc = (si - winner.x) / max(winner.y, 1e-4);
+            float rel  = si - winner.x;
+            rel       -= floor(rel);                          // wrap to [0, 1)
+            if (rel > 0.5 * (1.0 + winner.y)) { rel -= 1.0; } // behind the start, not past the head
+            float uArc = rel / max(winner.y, 1e-4);
             baseColI   = texture(uArcLUT, vec2(uArc, rowY)).rgb;
         } else {
             baseColI = texture(uGradientLUT, vec2(ti, 0.5)).rgb;

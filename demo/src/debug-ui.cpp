@@ -728,9 +728,6 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg,
         return;
     }
 
-    ImGui::SameLine();
-    ImGui::Checkbox("Show Half-Res##Optimized", &cfg.optimizedNeon.showHalfRes);
-
     SliderWithInput("Res Scale##Opt", cfg.optimizedNeon.resolutionScale, 0.125f, 1.0f, "%.3f");
     SliderIntWithInput("Samples##Opt", cfg.optimizedNeon.numSamples, 8, NEON_MAX_LOOP_SAMPLES);
     SliderIntWithInput("LUT Size##Opt", cfg.optimizedNeon.gradientLutSize, 32,

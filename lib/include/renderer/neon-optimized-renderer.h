@@ -5,9 +5,9 @@
 #include "gl/shader-program.h"
 #include "gl/uniform-buffer.h"
 #include "gl/vertex-array.h"
-#include "gl/texture-2d.h"
 #include "gl/framebuffer.h"
-#include <glm/glm.hpp>
+#include "renderer/span-atlas-lut.h"
+#include "renderer/gradient-ring-lut.h"
 #include <vector>
 
 namespace EdgeLighting
@@ -56,16 +56,10 @@ namespace EdgeLighting
         bool setupShaders();
         void setupGeometry(const Config &config);
         void rebuildLoopSamples(const Config &config);
-        void rebuildGradientLUT(const Config &config);
-        /// Quantise a float LUT (@p lutSize * 4 RGBA) to RGBA8 and upload it
-        /// to mGradientLUT.
-        void uploadGradientLUT(const std::vector<float> &lut, int lutSize);
-        /// See NeonRenderer::rebuildSegmentLUT - same atlas shape (one row
-        /// per segment) so the shader's sampling code stays identical.
-        void rebuildSegmentLUT(const Config &config);
-        /// See NeonRenderer::rebuildArcLUT - same atlas shape (one row per
-        /// arc) so the shader's sampling code stays identical.
-        void rebuildArcLUT(const Config &config);
+        /// Re-bake the three colour LUTs. Each wrapper self-guards, so this is
+        /// called unconditionally on every config change. See
+        /// NeonRenderer::bakeLUTs.
+        void bakeLUTs(const Config &config);
 
         // STATE OWNERSHIP: same rule as NeonRenderer - `Render` owns blend
         // state and sets it before each pass; a pass that retargets the
@@ -146,36 +140,20 @@ namespace EdgeLighting
 
         float mQuadMargin = 0.0f; ///< Scaled/FBO-space margin to the Pass-1 quad edge (shader soft-fade).
 
-        Texture2D mGradientLUT;
-        /// Per-segment gradient atlas (see NeonRenderer::mSegmentLUT).
-        Texture2D mSegmentLUT;
-        /// Snapshot of the last-baked segments so OnConfigChanged only
-        /// re-uploads when they actually differ.
-        std::vector<SegmentBoost> mBakedSegments;
+        /// Baked colour ring, width from @c OptimizedNeonConfig::gradientLutSize
+        /// (see @ref GradientRingLUT, which also owns the cross-fade).
+        GradientRingLUT mGradientLUT;
+        /// Per-segment gradient atlas (see NeonRenderer::mSegmentLUT). Same
+        /// atlas shape as the full-res renderer - fixed width rather than the
+        /// tunable gradientLutSize, since a segment's span is short enough that
+        /// extra resolution would not be visible.
+        SpanAtlasLUT<SegmentBoost> mSegmentLUT;
         /// Reusable scratch for the merged transient+preserved segment list
         /// (Config::FillEffectiveSegments); avoids per-frame heap allocation.
         std::vector<SegmentBoost> mEffectiveSegments;
 
         /// Per-arc gradient atlas (see NeonRenderer::mArcLUT).
-        Texture2D mArcLUT;
-        std::vector<Arc> mBakedArcs;
-
-        // --- Gradient cross-fade -------------------------------------------
-        // Same shape as NeonRenderer: bake into mLUTTarget, snapshot the
-        // currently-shown ring into mLUTFrom, and let Update() blend
-        // From->Target into mLUTDisplay over colorTransitionDuration seconds.
-        // Extra wrinkle vs. the single-pass renderer: gradientLutSize is
-        // runtime-tunable, so when it changes the buffer size changes too and
-        // we can't lerp element-wise - we snap in that case (mLUTBakedSize
-        // tracks the current width so we can detect the mismatch).
-        std::vector<float> mLUTTarget;
-        std::vector<float> mLUTFrom;
-        std::vector<float> mLUTDisplay;
-        int mLUTBakedSize = 0;      ///< Width (texels) of the buffers above; 0 until first bake.
-        bool mHasBakedLUT = false;  ///< False until the first bake seeds the buffers.
-        bool mFading = false;       ///< True while a cross-fade is in flight.
-        float mFadeElapsed = 0.0f;  ///< Seconds into the current fade.
-        float mFadeDuration = 0.0f; ///< Snapshot of the duration for this fade.
+        SpanAtlasLUT<Arc> mArcLUT;
     };
 
 } // namespace EdgeLighting

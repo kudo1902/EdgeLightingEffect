@@ -1,7 +1,7 @@
 precision highp float;
 
 // Debug: sample the baked gradient LUT along the strip's x axis so the
-// colour ring baked in rebuildGradientLUT() can be verified visually.
+// colour ring baked by GradientRingLUT can be verified visually.
 // Drawn on a small quad centred on the rect origin.
 
 in vec2 vPos;

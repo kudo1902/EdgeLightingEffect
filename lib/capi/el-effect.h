@@ -410,11 +410,6 @@ extern "C"
     EL_API el_result_e el_effect_set_optimized_gradient_lut_size(el_effect_handle_t effect, int32_t size);
     EL_API el_result_e el_effect_get_optimized_gradient_lut_size(el_effect_handle_t effect, int32_t *outSize);
 
-    /** @brief Show the raw half-res FBO (nearest-upscale) instead of the
-     *         final bilinear-blitted result. Diagnostic only. */
-    EL_API el_result_e el_effect_set_optimized_show_half_res(el_effect_handle_t effect, el_bool_t show);
-    EL_API el_result_e el_effect_get_optimized_show_half_res(el_effect_handle_t effect, el_bool_t *outShow);
-
     /** @} */
 
     /** @name Rain-on-glass droplets

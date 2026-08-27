@@ -392,11 +392,6 @@ Width of the precomputed gradient LUT (32 - 256). At the default 256 the
 gradient is smooth enough that dithering hides all seams; below ~64 you can
 see quantisation on smooth pans.
 
-**`optimizedNeon.showHalfRes`** (default false)
-Debug: display the raw half-res FBO with a nearest-neighbour upscale
-instead of the bilinear-blitted final image. Useful for verifying pass-1
-rendering.
-
 ### 3.10 Wireframe overlay
 
 **`wireframe.enable`** (default `true`)

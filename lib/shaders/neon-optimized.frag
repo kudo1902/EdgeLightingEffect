@@ -537,8 +537,13 @@ void main() {
         if (arcHasStops(arc.w)) {
             // No hue-rotation term: uArc is arc-local, not perimeter space.
             // See neon.frag.
+            // Wrapped + midpoint split, matching arcCoverContinuous's rel so a
+            // seam-straddling arc keeps its gradient. See neon.frag.
             float rowY = (float(a) + 0.5) / float(MAX_ARCS);
-            float uArc = (sPos - arc.x) / max(arc.y, 1e-4);
+            float rel  = sPos - arc.x;
+            rel       -= floor(rel);                       // wrap to [0, 1)
+            if (rel > 0.5 * (1.0 + arc.y)) { rel -= 1.0; } // behind the start, not past the head
+            float uArc = rel / max(arc.y, 1e-4);
             aA         = texture(uArcLUT, vec2(uArc, rowY)).a;
         } else {
             aA = baseAlphaPt;

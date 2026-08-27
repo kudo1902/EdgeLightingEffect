@@ -5,8 +5,9 @@
 #include "gl/shader-program.h"
 #include "gl/uniform-buffer.h"
 #include "gl/vertex-array.h"
-#include "gl/texture-2d.h"
 #include "gl/framebuffer.h"
+#include "renderer/span-atlas-lut.h"
+#include "renderer/gradient-ring-lut.h"
 #include <glm/glm.hpp>
 #include <vector>
 
@@ -57,20 +58,10 @@ namespace EdgeLighting
         bool setupShaders();
         void setupGeometry(const Config &config);
         void rebuildLoopSamples(const Config &config);
-        void rebuildGradientLUT(const Config &config);
-        /// Quantise a float LUT (GRADIENT_LUT_SIZE * 4 RGBA) to RGBA8 and
-        /// upload it to mGradientLUT.
-        void uploadGradientLUT(const std::vector<float> &lut);
-        /// Bake each segment's colorStops into one row of mSegmentLUT
-        /// (SEGMENT_LUT_WIDTH x MAX_SEGMENT_BOOSTS). Rows for segments with
-        /// empty stops are left zero-filled - the shader falls back to the
-        /// base gradient in that case (see the vec4.w flag in SegmentBlock).
-        void rebuildSegmentLUT(const Config &config);
-        /// Bake each arc's colorStops into one row of mArcLUT
-        /// (ARC_LUT_WIDTH x MAX_ARCS). Rows for arcs with empty stops are
-        /// left zero-filled - the shader falls back to the base gradient at
-        /// those samples (see the vec4.w flag in ArcBlock).
-        void rebuildArcLUT(const Config &config);
+        /// Re-bake the three colour LUTs. Each wrapper self-guards, so this is
+        /// called unconditionally on every config change; see the note at the
+        /// definition for what does and does not dirty a LUT.
+        void bakeLUTs(const Config &config);
 
         // --- Per-frame pass list, declared in PASS-NUMBER order -------------
         // The numbering is the pipeline order from docs/emission-prepass.md,
@@ -165,30 +156,23 @@ namespace EdgeLighting
 
         float mQuadMargin = 0.0f; ///< Draw-quad margin (px from rect edge); shader fades the bloom out by here.
 
-        /// Baked colour ring as a 1×N RGBA32F texture (sampled with v=0.5 in the shader).
-        /// Each shader sample becomes a single texture lookup instead of an in-shader stops loop + HSV blend
-        Texture2D mGradientLUT;
+        /// Baked colour ring (GRADIENT_LUT_SIZE x 1 RGBA8, sampled at v = 0.5).
+        /// The wrapper owns the bake, the cross-fade and the guard behind them -
+        /// see @ref GradientRingLUT.
+        GradientRingLUT mGradientLUT;
 
-        /// Per-segment gradient atlas - one row per segment, each row is that
-        /// segment's stops baked head-to-tail across its span. Empty-stops
-        /// segments leave their row zero; the shader detects that via the
-        /// per-segment hasStops flag (SegmentBlock's vec4.w) and falls back to
-        /// the base gradient at those samples.
-        Texture2D mSegmentLUT;
-        /// Cached snapshot of the last-baked segments so per-frame
-        /// OnConfigChanged only re-uploads mSegmentLUT when they actually
-        /// changed (matches how mTargetStops guards mGradientLUT rebuilds).
-        std::vector<SegmentBoost> mBakedSegments;
+        /// Per-segment gradient atlas (SEGMENT_LUT_WIDTH x MAX_SEGMENT_BOOSTS),
+        /// one row per segment. The wrapper owns the bake, the dirty check and
+        /// the snapshot behind it - see @ref SpanAtlasLUT.
+        SpanAtlasLUT<SegmentBoost> mSegmentLUT;
         /// Reusable scratch for the merged transient+preserved segment list
         /// (Config::FillEffectiveSegments). Held as a member so the per-frame
         /// UBO pack / dirty check do no heap allocation after warmup.
         std::vector<SegmentBoost> mEffectiveSegments;
 
-        /// Per-arc gradient atlas - one row per arc, each row is that arc's
-        /// stops baked head-to-tail. Same shape/purpose as mSegmentLUT; the
-        /// shader uses ArcBlock's vec4.w to skip the fetch when an arc has
-        /// no stops (inherit-base case).
-        Texture2D mArcLUT;
+        /// Per-arc gradient atlas (ARC_LUT_WIDTH x MAX_ARCS), one row per arc.
+        /// Same shape and purpose as mSegmentLUT.
+        SpanAtlasLUT<Arc> mArcLUT;
 
         /// Perimeter emission table, NEON_MAX_LOOP_SAMPLES x 2 (see
         /// neon-emission.frag for the row packing). Rebuilt every frame by
@@ -208,30 +192,6 @@ namespace EdgeLighting
         /// host that overflows again is told again.
         bool mArcOverflowLogged = false;
         bool mSegmentOverflowLogged = false;
-        std::vector<Arc> mBakedArcs;
-
-        // --- Gradient cross-fade -------------------------------------------
-        // When the colour stops change we don't snap the LUT: we bake the new
-        // ring into mLUTTarget, snapshot the currently-shown ring into mLUTFrom,
-        // and let Update() blend From->Target into mLUTDisplay over
-        // colorTransitionDuration seconds. All three are float RGBA
-        // (GRADIENT_LUT_SIZE * 4); mLUTDisplay is what gets quantised+uploaded.
-        // Cross-fading in LUT space handles stop sets that differ in count or
-        // position (there's no per-stop pairing to worry about).
-        std::vector<float> mLUTTarget;  ///< Freshly baked destination ring.
-        std::vector<float> mLUTFrom;    ///< Ring shown when the current fade began.
-        std::vector<float> mLUTDisplay; ///< Currently-uploaded (blended) ring.
-        bool mHasBakedLUT = false;      ///< False until the first bake seeds the buffers.
-        bool mFading = false;           ///< True while a cross-fade is in flight.
-        float mFadeElapsed = 0.0f;      ///< Seconds into the current fade.
-        float mFadeDuration = 0.0f;     ///< Snapshot of the duration for this fade.
-        /// (stops, blendSpace) behind mLUTTarget - a new bake only restarts the
-        /// fade when these actually change. OnConfigChanged fires whenever ANY
-        /// field of the composited config moves (a slider, or an animation
-        /// re-compositing the active config every frame), so the gradient
-        /// inputs are usually unchanged when it arrives.
-        std::vector<ColorStop> mTargetStops;
-        BlendSpace mTargetBlendSpace = BlendSpace::RGB;
     };
 }
 

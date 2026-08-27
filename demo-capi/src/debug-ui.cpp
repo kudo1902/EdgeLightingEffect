@@ -757,15 +757,6 @@ void DebugUI::buildOptimizedNeonSection(el_effect_handle_t effect)
         return;
     }
 
-    el_bool_t showHalf = 0;
-    el_effect_get_optimized_show_half_res(effect, &showHalf);
-    bool sh = showHalf;
-    ImGui::SameLine();
-    if (ImGui::Checkbox("Show Half-Res##Opt", &sh))
-    {
-        el_effect_set_optimized_show_half_res(effect, sh ? 1 : 0);
-    }
-
     float scale = 0.0f;
     el_effect_get_optimized_resolution_scale(effect, &scale);
     if (ImGui::SliderFloat("Res Scale##Opt", &scale, 0.125f, 1.0f, "%.3f"))

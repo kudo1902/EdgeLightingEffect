@@ -203,6 +203,19 @@ namespace EdgeLighting
             return glm::vec4(glm::mix(glm::vec3(a), glm::vec3(b), t), alpha);
         }
 
+        /// Quantise a [0, 1] colour channel to 8 bits, rounding to nearest.
+        ///
+        /// The `+ 0.5f` is the whole point. Without it the cast truncates, so
+        /// every baked texel lands up to 1 LSB low and about 0.5 LSB low on
+        /// average, across all three LUTs - a systematic darkening of the
+        /// authored colours. GL's own float-to-unorm conversion rounds, so
+        /// truncating here was the CPU bake disagreeing with the hardware it
+        /// feeds. The clamp comes after the bias so 1.0 still maps to 255.
+        inline unsigned char ToByte(float v)
+        {
+            return static_cast<unsigned char>(std::clamp(v * 255.0f + 0.5f, 0.0f, 255.0f));
+        }
+
         /// @p stops ordered ascending by position, as @ref SampleRing and
         /// @ref SampleSpan both require.
         ///
