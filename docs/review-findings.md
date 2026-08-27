@@ -18,9 +18,14 @@ description, so the reasoning that led to the change stays readable next to it.
 | visual | V1, V2, V3, V6, V7 | V4, V5 (both closed as documented limitations) |
 | implementation | I1, I4, I6, I7 | I2 (declined), I3 (partly), I5 (documented), I8 (audited) |
 | second pass | R1, R2, R3, R4, R5, R6 | R7 |
+| third pass | V8, I9, I10, I11, I12 (partly) | V9, I12's two stale design docs |
 
 The R items come from a re-read after the V and I fixes landed - see
-[Second pass](#second-pass-after-bbdba62).
+[Second pass](#second-pass-after-bbdba62). V8 and V9 come from a later read of
+`improve_renderer_by_LUT`, the branch that moved the LUTs behind
+`BaseLUT` / `GradientRingLUT` / `SpanAtlasLUT` - see
+[Third pass](#third-pass-after-7380710). They continue the visual numbering
+because both are visual; neither is caused by that refactor.
 
 ## How the visual items were reproduced
 
@@ -304,6 +309,14 @@ Not fixed, because closing it means giving the pre-pass the pixel-space feather
 (it currently has no `uRectSize`, only perimeter-fraction inputs) and that is a
 uniform-plumbing change on the hot path for an effect nobody has reported. Left
 here so the next person tuning `HEAD_FEATHER_PX` knows the two are not coupled.
+
+**Amended by [V9](#v9-an-arcs-own-gradient-quantises-to-the-gather-grid-and-the-half-res-default-makes-it-visible---open).**
+The sentence above about "an effect nobody has reported" is weaker than it
+looked. The same sample-grid quantisation also makes the two neon renderers
+disagree by up to 100/255 at arc endpoints whenever an arc carries its own
+stops, because `OptimizedNeonConfig::numSamples` defaults to 64 against the base
+renderer's 128. That is measured in V9, along with why the obvious fixes are
+each worse than they sound.
 
 ### V6. The stop sampler was cyclic, but the segment and arc atlases are head-to-tail - FIXED
 
@@ -913,23 +926,424 @@ or lost is not something I can tell from here, so nothing has been re-applied.
 
 ---
 
+## Third pass (after `7380710`)
+
+A read of the tree at `7380710`, on `improve_renderer_by_LUT` - the branch that
+moved all three LUTs behind `BaseLUT` / `GradientRingLUT` / `SpanAtlasLUT<T>`.
+
+**The LUT refactor is behaviourally clean**, which is worth recording because it
+is the bulk of the branch. Checked against the pre-refactor semantics and found
+equivalent: the renderer is bit-stationary frame to frame with
+`hueRotationRate` 0 and no config change; the cross-fade lands exactly on its
+duration boundary (frame 60 of a 1.0 s fade at 60 fps) and settles
+bit-identical to a `colorTransitionDuration = 0` reference; the atlas dirty
+check still fires on every genuine invalidation; and base vs optimized
+agreement is unchanged at mean 0.110 / max 7. `SpanAtlasLUT::isDirty` is a
+strict improvement on the `IsAtlasDirty` free functions it replaced, because it
+caps both sides at `maxRows` - editing a 9th arc when 8 fit is correctly no
+longer a re-bake.
+
+What the pass turned up splits in two.
+
+The **visual** items, V8 and V9, are about the per-arc gradient atlas rather
+than the refactor: V8 predates it and V9 is a consequence of a default. V8 is
+fixed; V9 is open.
+
+The **implementation** items, I9 to I12, are all in the new wrapper layer. None
+of them changes a pixel in any configuration the renderers actually produce -
+every capture in this document is byte-identical across them - which is exactly
+why they are worth recording: each is a gap between what the new classes claim
+and what they do, and the claims are in headers, which `CLAUDE.md` designates
+the source of truth. They were found by reading the abstraction against its own
+doc comments, not by looking at output.
+
+One methodology note before re-running anything here. `OffscreenCapture::Begin`
+deliberately does **not** clear, so a harness that omits its own `glClear`
+accumulates every frame it draws and shows a smooth decaying frame-to-frame
+delta that looks exactly like a settling animation. It is not one. The first
+version of this pass's harness had that bug and briefly "found" a 200-frame
+settling transient in a renderer that is in fact bit-stationary.
+
+### V8. An arc's own gradient does not wrap at the perimeter seam - FIXED
+
+**Was confirmed.** One arc, `{start 0.8, length 0.4}`, white head to red tail.
+The reference is the same arc at `{start 0.1, length 0.4}`, which does not
+cross the seam.
+
+| reference (no wrap) | before | after |
+| ------------------- | ------ | ----- |
+| ![](images/review-findings/arc-wrap-gradient-reference.png) | ![](images/review-findings/arc-wrap-gradient.png) | ![](images/review-findings/arc-wrap-gradient-fixed.png) |
+
+`Arc::start` is documented as `[0, 1)` and `Arc::length` as a fraction of the
+perimeter ([`config.h` Arc](../lib/include/core/config.h)), so an arc whose span
+runs past 1.0 and back through 0.0 is an ordinary configuration, not an abuse.
+Coverage already knew that: `arcCoverContinuous`
+([`neon.frag` arcCoverContinuous](../lib/shaders/neon.frag)) wraps its own
+`rel` with `rel -= floor(rel)`, and the pre-pass's `arcInside`
+([`neon-emission.frag` arcInside](../lib/shaders/neon-emission.frag)) covers the
+same case by testing `si` and `si + 1.0` against the unwrapped span. So a
+straddling arc lit up correctly over its whole length.
+
+The arc-LUT coordinate did not wrap. All three reads recomputed a raw
+difference and threw the wrap away:
+
+```glsl
+float uArc = (sPos - arc.x) / max(arc.y, 1e-4);
+```
+
+| site | what it feeds |
+| ---- | ------------- |
+| [`neon.frag` emitCover loop](../lib/shaders/neon.frag) | the arc's colour-stop ALPHA |
+| [`neon-optimized.frag` emitCover loop](../lib/shaders/neon-optimized.frag) | the same, half-res fork |
+| [`neon-emission.frag` main](../lib/shaders/neon-emission.frag) | the winning arc's COLOUR |
+
+Past the seam `uArc` goes negative, and the atlas is `CLAMP_TO_EDGE` on U (as
+V6 and V3 between them established it must be), so the entire wrapped remainder
+pinned to texel 0 - the arc's **head** colour and head alpha. The arc stayed
+lit over its full span and simply stopped advancing through its own gradient
+partway along, with no geometric feature at the transition.
+
+Segments never had this: the pre-pass's segment loop wraps with
+`rel -= floor(rel + 0.5)` two dozen lines below the arc read that does not.
+
+**This is on the default animation path, not a corner case.**
+`ArcWipe::ApplyAt` ([`neon-animations.h` ArcWipe](../lib/include/animation/neon-animations.h))
+ends by folding `arcStart` back into `[0, 1)`, with the comment:
+
+> the shader's `arcInside` handles the wrap-around at start+length, but the raw
+> arcStart itself must live in `[0, 1)`
+
+which is true of coverage and false of the LUT coordinate. Any `ArcWipe` or
+`OutlineTracer` driving an arc that carries its own stops therefore spends part
+of every cycle mis-coloured. It is also reachable in one drag of the demo's own
+controls, where Start and Len are independent 0-1 sliders
+([`debug-ui.cpp` DrawArcRow](../demo/src/debug-ui.cpp)).
+
+**Fixed** by wrapping the LUT coordinate with the same expression
+`arcCoverContinuous` already uses for its own `rel`, at all three sites:
+
+```glsl
+float rel = sPos - arc.x;
+rel       -= floor(rel);                       // wrap to [0, 1)
+if (rel > 0.5 * (1.0 + arc.y)) { rel -= 1.0; } // behind the start, not past the head
+float uArc = rel / max(arc.y, 1e-4);
+```
+
+The midpoint split is the half that is easy to drop, and dropping it trades one
+bug for another. An outward tail feather reaches BEHIND the arc's start (that is
+V2's fix), and those fragments want a small NEGATIVE `rel`, clamping to the head
+colour. A plain `floor` wrap sends them to `rel` near 1.0 instead, which clamps
+to the **tail** colour - so the ~14 px band behind every abutting seam would
+have flipped from the head colour to the tail colour. Splitting the gap at
+`0.5 * (1 + length)`, exactly as the coverage feather does, keeps that band
+negative while still wrapping the far side. Using the same threshold as
+coverage is also what stops the two drifting apart later.
+
+The split is applied unconditionally rather than gated on `tailAbuts` as it is
+inside `arcCoverContinuous`. It has to be, because the pre-pass does not decode
+the abutment bits at all, and the standing invariant on this read is that the
+consumer's alpha and the pre-pass's colour must come from the SAME texel of the
+same row. Gating on one side only would break that. The unconditional form is
+harmless where the gate would have been off: `emitCover` skips an arc at
+`c <= 0.0` before reaching the LUT read, and the pre-pass leaves `bestIdx` at
+-1, so a fragment behind an inward tail never performs this fetch.
+
+**Verified** on a SQUARE rect, where `start` values 0.25 apart are the same
+picture rotated by 90 degrees and total luminance must therefore match across
+them. Only `start 0.80` straddles the seam at `length 0.40`:
+
+| start | colour ramp, before | colour ramp, after | alpha ramp, before | alpha ramp, after |
+| ----- | ------------------- | ------------------ | ------------------ | ----------------- |
+| 0.05 | 0.00% | 0.00% | 0.00% | 0.00% |
+| 0.30 | +0.03% | +0.03% | +0.02% | +0.02% |
+| 0.55 | +0.03% | +0.03% | +0.03% | +0.03% |
+| **0.80 (wraps)** | **+35.51%** | **+0.00%** | **+47.67%** | **+0.01%** |
+
+So the straddling arc now agrees with its own rotations to within the 0.03%
+spread the non-straddling ones show among themselves. The half-res renderer
+moves with it: +47.60% before, +0.03% after.
+
+Also verified: every non-wrapping capture in this document's harness comes back
+**byte-identical** to the pre-fix build, so the change is a strict no-op unless
+an arc actually crosses the seam; V2's abutting seams still tile flat (peak
+filament along 200 perimeter samples dips at most 2.3%, and at t = 0.170 rather
+than at either seam, matching the 2.5% the no-stops control shows); and base vs
+optimized agreement is unchanged.
+
+### V9. An arc's own gradient quantises to the gather grid, and the half-res default makes it visible - OPEN
+
+**Confirmed.** The two neon renderers agree everywhere at max 7 - except when
+arcs carry their own colour stops, where they diverge by up to 100/255 in tight
+clusters at each arc's gradient endpoints. Sweeping
+`OptimizedNeonConfig::numSamples` isolates the cause exactly:
+
+| config | mean | max | px with diff >= 30 |
+| ------ | ---- | --- | ------------------ |
+| 2 arcs, own stops, `numSamples` 64 (**the default**) | 0.677 | **100** | 389 |
+| 2 arcs, own stops, `numSamples` 96 | 0.441 | 38 | 32 |
+| 2 arcs, own stops, `numSamples` 128 | 0.359 | 10 | 0 |
+| 2 arcs, no own stops, `numSamples` 64 | 0.337 | 7 | 0 |
+| 2 arcs, no own stops, `numSamples` 128 | 0.331 | 7 | 0 |
+
+The pre-pass evaluates the arc-local coordinate at the gather samples -
+`si = floor(gl_FragCoord.x) * invNumSamples`, then `uArc = rel / length` - so an
+arc's own gradient is resolved to `numSamples * length` distinct levels rather
+than the atlas row's full width. `NeonRenderer` always walks
+`NEON_MAX_LOOP_SAMPLES` = 128; `OptimizedNeonConfig::numSamples`
+([`config.h` OptimizedNeonConfig](../lib/include/core/config.h)) defaults to 64.
+At `length 0.5` that is 32 levels across a 128-texel row.
+
+It shows at the endpoints rather than mid-span because that is where the gather
+has fewest contributing samples to average across, so the quantisation is not
+smoothed by neighbours. The clusters sit exactly on the arc endpoints: a single
+full-perimeter arc with its own stops produces one cluster at its head/tail
+junction, and two abutting arcs produce one at each seam.
+
+This is the same mechanism V5 records, seen from the other side. V5 framed it as
+the arc's colour feather and its magnitude feather scaling differently, and
+closed it as a residual on the grounds that nobody had reported an effect. The
+sweep above shows it also produces a hard disagreement between the two
+renderers, which the parity check in the second pass did not catch because its
+cases used arcs WITHOUT their own stops - exactly the row of the table that
+reads max 7 at every sample count. **V5's entry should be read with this
+alongside it**: the two feathers are not merely uncoupled, the colour one also
+loses resolution against the half-res renderer's default.
+
+**Not fixed**, and the options are not equally good:
+
+- Raising the `numSamples` default to 128 closes the divergence but discards the
+  knob's whole purpose - it is the optimized renderer's main performance dial,
+  and 64 was presumably chosen deliberately.
+- Evaluating the arc-local coordinate pointwise instead of at the samples is
+  the correct fix, but that is what the emission pre-pass exists to avoid: the
+  invariant stated at the top of `neon-emission.frag` is that a pure function of
+  `(si, uTime, config)` belongs in the pre-pass. Moving the arc colour out of it
+  would put a per-fragment LUT fetch and winner search back on the hot path, at
+  which point the pre-pass has given up most of what it bought.
+- Interpolating between adjacent samples' arc colours in the consumer would
+  recover most of the resolution for one extra texelFetch, without moving
+  anything back. This looks like the right trade, but it changes the gather's
+  arithmetic and would want measuring against `emission-prepass-comparison.md`'s
+  numbers before it lands.
+
+Left open with the mechanism recorded, because the third option is a real design
+decision rather than a patch, and because the visible symptom is confined to a
+few hundred pixels at arc endpoints in a configuration (per-arc stops on the
+half-res path) that may well have no user today.
+
+### I9. `BaseLUT`'s public surface does not describe what it owns - FIXED
+
+Four things, all in [`base-lut.h`](../lib/include/renderer/base-lut.h), and they
+share a root: the class documents invariants it does not actually hold.
+
+**`IsValid()` was true before anything was baked.** It forwarded straight to
+`Texture2D::IsValid`, which is `mId != 0` - and `Texture`'s constructor calls
+`glGenTextures`, so the name exists from the moment a LUT is *constructed*. A
+caller asking "is there anything here worth sampling" got yes while the texture
+had no image at all, which in core profile samples as undefined data rather
+than failing loudly. The class even documented the real signal two screens
+below, as a subclass member.
+
+**Both subclasses tracked that signal privately, in duplicate.**
+`GradientRingLUT::mHasBaked` gated snap-versus-fade; `SpanAtlasLUT::mHasBaked`
+made a never-baked atlas dirty by definition. Those are the same event - "has
+`Upload` run" - held in two places, in the two classes whose common ground
+`BaseLUT` exists to be.
+
+**`GetId()` had no stated purpose**, which in a class whose whole design is
+"the texture is a derived value, callers may only `Bind`" reads like an
+accidental leak of the handle. It is not: it is the way a baked LUT is read
+back through `CaptureUtil::ReadTexture2D`, which
+[`capture-util.h`](../lib/include/util/capture-util.h) names LUT dumps as its
+reason for existing. Nothing in the tree calls it, so the intent was recoverable
+only by reading the other header.
+
+**Two claims in the class comment were false.**
+
+| claim | reality |
+| ----- | ------- |
+| RGBA8 is "asserted once, in `Upload`" | there is no assert, and nothing to assert - `Upload` is the single call site and passes the format literally, so a LUT cannot ask for anything else |
+| "no virtuals to pay for" | `Texture` has a virtual destructor, so the `Texture2D` member drags in a vptr: `sizeof(Texture2D)` is 16 for a 4-byte handle, and `std::is_polymorphic<Texture2D>` is true |
+
+**Fixed** by hoisting the flag and correcting the claims. `mUploaded` now lives
+in `BaseLUT`, set by `Upload`; `IsValid()` is `mTexture.IsValid() && mUploaded`;
+subclasses read `HasUploaded()` and both `mHasBaked` members are gone. `GetId()`
+carries its readback purpose. The RGBA8 note says the format is fixed at the
+single call site rather than asserted.
+
+The polymorphism note is the one that stayed a note rather than a change. The
+"deliberately NOT polymorphic" half is true of `BaseLUT` itself
+(`std::is_polymorphic<BaseLUT>` is false, and the protected non-virtual
+destructor does turn polymorphic deletion into a compile error). What is false
+is that it costs nothing, and the cost comes from a member whose base is a
+shared GL wrapper used well outside the LUTs. Nothing in the tree deletes
+through a `Texture *`, so that virtual is currently unearned - but removing it
+is a change to `gl/texture.h` with a blast radius across the droplets and
+lens-flare image textures, and it is not this class's call to make. The comment
+now says so, including the measurement, so the next person who reads "no
+virtuals" does not have to re-derive that it is wrong.
+
+### I10. A LUT bake silently steals texture unit 0 - FIXED
+
+`BaseLUT::Upload` calls `Texture2D::SetData` and `SetParams`, and both begin
+with `Bind()`, which is `glActiveTexture(GL_TEXTURE0)` followed by
+`glBindTexture`. So every bake overwrote whatever was bound to unit 0 and left
+unit 0 active, with nothing in the signature or the doc comment saying so.
+
+Nothing observes it today. Bakes run from `OnConfigChanged` and from
+`GradientRingLUT::Tick` in `Update`, never between a pass's texture binds and
+its draw, and the neon passes rebind units 0 to 2 immediately before drawing
+anyway. That is a property of the current call sites, not of the class - and
+the entire point of moving the upload behind a wrapper is that a caller should
+not have to know it.
+
+This is the same defect R5 removed from `renderBlitPass`, where a raw
+`glBindTexture` on "whatever unit the previous pass left active" was deleted
+rather than documented. It came back in a new place because the upload genuinely
+has to bind something.
+
+**Fixed** by making `Upload` leave texture-unit state as it found it: save
+`GL_ACTIVE_TEXTURE`, activate unit 0 and save its `GL_TEXTURE_BINDING_2D`, do
+the upload, then restore both. Two state queries, on a path that only runs when
+a bake is actually dirty - a strictly cheaper version of the trade R5 already
+accepted for the clear colour, which pays a query every frame.
+
+### I11. `SpanAtlasLUT::Bake` does not guard its dimensions - FIXED
+
+`GradientRingLUT::Bake` opens with `size = std::max(size, 4)` and says why:
+a guard against a nonsense value reaching `glTexImage2D`. `SpanAtlasLUT::Bake`
+clamped nothing, though its row walk divides by `width - 1`:
+
+```cpp
+float t = static_cast<float>(x) / static_cast<float>(width - 1);
+```
+
+At `width == 1` that is `0 / 0`. It does not crash and it does not produce a
+visibly broken texture - the NaN propagates into `ColorUtils::SampleSpan`, where
+every ordered comparison against it is false, so the walk falls out of its loop
+and returns the **last** stop. A one-texel row therefore bakes the arc's tail
+colour where its head belongs, silently. Measured on a red-to-blue span: the
+row came back `(0, 0, 255)` where `(255, 0, 0)` was authored. At `width <= 0`
+the atlas buffer is empty and `glTexImage2D` gets a zero-sized image.
+
+Latent today, because both call sites pass a compile-time constant of 128. It
+is recorded as a real defect rather than a hypothetical one because
+`OptimizedNeonConfig::gradientLutSize` is proof that these widths do become
+host-settable, and because the sibling class already guards - an asymmetry
+between two classes in the same layer is exactly the kind of thing that gets
+copied in the wrong direction later.
+
+**Fixed** with `width = std::max(width, 2)` and `maxRows = std::max(maxRows, 1)`,
+mirroring the ring's guard and its rationale. The clamp runs BEFORE the dirty
+check, so the snapshot `isDirty` compares against always describes the texture
+that was actually uploaded rather than the arguments that were asked for -
+otherwise a caller repeatedly passing `width = 1` would re-bake every frame,
+because the stored `mBakedWidth` (2) would never match the request.
+
+### I12. Comments still name the functions the LUT refactor removed - PARTLY FIXED
+
+The refactor deleted `rebuildGradientLUT`, `rebuildSegmentLUT`, `rebuildArcLUT`,
+`uploadGradientLUT`, `IsAtlasDirty`, `mBakedArcs` and `mBakedSegments`. Several
+comments and documents still referred to them by name.
+
+The one that mattered is in [`neon.frag`](../lib/shaders/neon.frag), on the
+`uArcLUT` declaration, because it is the comment that explains why non-winning
+atlas rows cannot be left stale:
+
+> `rebuildArcLUT` zero-fills the whole atlas on every bake, which is what
+> currently keeps that true.
+
+A reader who goes looking for `rebuildArcLUT` to check that guarantee finds
+nothing. **Fixed**: it now names `SpanAtlasLUT::Bake` and points at the specific
+line that carries the guarantee (`mAtlas.assign`, deliberately not `resize`,
+which would leave a shrunken atlas's tail in place).
+
+Deliberately left: the `arcs != mBakedArcs` mention in
+[`span-atlas-lut.h`](../lib/include/renderer/span-atlas-lut.h), which is
+explicitly past tense - it records what the old gate did and why the new one is
+narrower, the same way the fixed items in this document keep their original
+descriptions.
+
+**Still open**, and not touched here because they are prose rather than code
+comments:
+
+| file | stale reference |
+| ---- | --------------- |
+| [`architecture-design.md`](architecture-design.md) | `if (lutDirty) { rebuildGradientLUT(config); }` in the `OnConfigChanged` pseudo-code |
+| [`multiple-arcs-design.md`](multiple-arcs-design.md) | `mBakedArcs` and `rebuildArcLUT` in the design sketch and the file-by-file change list |
+
+`architecture-design.md` is already flagged in `CLAUDE.md` as predating the
+droplets and lens-flare renderers, and `multiple-arcs-design.md` is a design
+document describing an implementation as it was proposed, so neither is quite
+the same class of problem as a wrong comment sitting next to live code.
+`neon-renderer-reference.html` was updated with the refactor and correctly
+describes `GradientRingLUT`.
+
+### How the implementation items were verified
+
+Unlike the visual items, these do not show up in a capture. A separate check
+harness exercises the wrapper classes directly - construct, bake, inspect GL
+state - and each check was run against both the pre-fix and post-fix headers to
+confirm it actually discriminates:
+
+| check | pre-fix | post-fix |
+| ----- | ------- | -------- |
+| fresh `GradientRingLUT`: `GetId() != 0` | pass | pass |
+| fresh `GradientRingLUT`: `IsValid() == false` | **fail** | pass |
+| after `Bake`: `IsValid() == true` | pass | pass |
+| fresh `SpanAtlasLUT`: `IsValid() == false` | **fail** | pass |
+| after `Bake`: `IsValid() == true` | pass | pass |
+| active unit unchanged across a bake | **fail** | pass |
+| unit 0's binding unchanged across a bake | **fail** | pass |
+| `width = 1` still yields a valid texture | pass | pass |
+| readback at the clamped 2 x 8 succeeds | pass | pass |
+| `width = 1` row 0 holds the HEAD colour | **fail** `(0,0,255)` | pass `(255,0,0)` |
+| `width = 0`, `maxRows = 0` survives | pass | pass |
+| guarded re-`Bake` with identical inputs is a no-op | pass | pass |
+| moving `Arc::start` does not dirty the atlas | pass | pass |
+
+Five of thirteen fail before the fixes and all pass after. The `width = 1` row is
+read back through `GetId()` and `CaptureUtil::ReadTexture2D`, which exercises
+I9's documented readback path at the same time.
+
+Alongside that, every pixel measurement in this document was re-run and is
+unchanged to the byte: stationarity 0.0000, fade settling bit-identical to the
+no-fade reference, base vs optimized 0.1101 / max 7, V8's wrapping arc within
+0.03%, and the abutting seams still flat at a 2.3% worst dip away from either
+seam. That is the result these items want: a wrapper layer that now says true
+things about itself, and an output nobody can tell apart.
+
+---
+
 ## What is left
 
-The second pass's R1 to R6 have all landed. Six items from the first pass
-remain deliberately open, each with the reasoning recorded next to the code
-rather than only here, plus R7 from the second pass:
+The second pass's R1 to R6 have all landed, and so have the third pass's V8,
+I9, I10 and I11. Six items from the first pass remain deliberately open, each
+with the reasoning recorded next to the code rather than only here, plus R7 from
+the second pass and V9 and I12's remainder from the third:
 
 | item | state | why |
 | ---- | ----- | --- |
 | V4 | documented limitation | closing it needs a second distance field, which reintroduces the rect-size dependence the analytic profile removed |
-| V5 | residual, documented | closing it means plumbing pixel-space feathers into the pre-pass for an effect nobody has reported |
+| V5 | residual, documented | closing it means plumbing pixel-space feathers into the pre-pass for an effect nobody has reported; read V9 alongside it, which measures the other half of the same mechanism |
 | I2 | declined | negligible measured-by-structure win against a real staleness-bug risk |
 | I3 | structural half open | follows from the two neon renderers being near-forks; same root as I8 |
 | I5 | documented | the alternative is a breaking renderer-API change for an unmeasured cost |
 | I8 | audited, no UI written | the C ABI itself is complete; what is missing is `demo-capi` coverage, ranked in the section above |
-
 | R7 | open | a measured quantisation defect with a cheap cure, but unproven visual severity; see the note there before starting |
+| V9 | open | the honest fix is a design decision (interpolate the arc colour between adjacent samples in the consumer), not a patch; the three options are ranked in the section |
+| I12 | partly fixed | the live shader comment is corrected; `architecture-design.md` and `multiple-arcs-design.md` still name the removed LUT functions, and both are design prose rather than comments beside live code |
 
-If any of these comes back, the fastest way to reproduce is the harness
-described at the top of this document - the configs for every case are given
-inline with each finding.
+One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
+virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch
+nothing uses, but it lives in a shared GL wrapper with a blast radius well
+outside the LUTs. It is recorded at the point where someone would trip over it
+rather than tracked as a defect here.
+
+If any of these comes back, the fastest way to reproduce a VISUAL item is the
+harness described at the top of this document - the configs for every case are
+given inline with each finding. The implementation items in the third pass need
+a different harness, described in
+[How the implementation items were verified](#how-the-implementation-items-were-verified):
+it drives the wrapper classes directly and reads GL state back, because none of
+those items changes a pixel.
