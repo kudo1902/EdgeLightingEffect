@@ -95,8 +95,9 @@ layout(std140) uniform ArcBlock
 // only the WINNING arc's row, for the gather hue. But the pointwise emitCover
 // loop in main() samples the row of EVERY arc that covers this fragment, for
 // its colour-stop alpha - so a row is live whenever its arc has stops, and the
-// non-winning rows cannot be left stale. rebuildArcLUT zero-fills the whole
-// atlas on every bake, which is what currently keeps that true.
+// non-winning rows cannot be left stale. SpanAtlasLUT::Bake zero-fills the
+// whole atlas on every bake (mAtlas.assign, not resize, for exactly this
+// reason), which is what currently keeps that true.
 uniform sampler2D uArcLUT;
 
 // 1-row 2D LUT (REPEAT-wrapped) holding the precomputed colour ring.
@@ -648,8 +649,24 @@ void main() {
             // Segments never had the term, and this is what makes arcs match
             // them. An arc's gradient moves by moving the arc (Arc::start) or
             // by animating its stops.
+            //
+            // WRAPPED, exactly as arcCoverContinuous wraps its own rel. An arc
+            // may straddle the seam (start 0.8 + length 0.4 is legal - see
+            // Arc::start), and coverage already handles that, so a plain
+            // sPos - start would go NEGATIVE past the seam and CLAMP_TO_EDGE
+            // would pin the whole wrapped remainder to the head colour. The
+            // arc stayed lit and lost its gradient.
+            //
+            // The midpoint split is the other half: an outward tail feather
+            // reaches BEHIND the start, and those fragments want a small
+            // negative rel (clamping to the head) rather than one wrapped up
+            // to near 1 (clamping to the tail). Same threshold as the coverage
+            // feather so the two cannot disagree.
             float rowY = (float(a) + 0.5) / float(MAX_ARCS);
-            float uArc = (sPos - arc.x) / max(arc.y, 1e-4);
+            float rel  = sPos - arc.x;
+            rel       -= floor(rel);                       // wrap to [0, 1)
+            if (rel > 0.5 * (1.0 + arc.y)) { rel -= 1.0; } // behind the start, not past the head
+            float uArc = rel / max(arc.y, 1e-4);
             aA         = texture(uArcLUT, vec2(uArc, rowY)).a;
         } else {
             aA = baseAlphaPt;
