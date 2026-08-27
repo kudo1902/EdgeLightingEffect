@@ -59,7 +59,7 @@ namespace EdgeLighting
                   int size, float fadeDuration)
         {
             size = std::max(size, 4);
-            if (mHasBaked && size == mSize && space == mBakedSpace && stops == mBakedStops)
+            if (HasUploaded() && size == mSize && space == mBakedSpace && stops == mBakedStops)
             {
                 return;
             }
@@ -92,12 +92,11 @@ namespace EdgeLighting
             //   - no fade requested;
             //   - the width changed, so source and target have different
             //     lengths and cannot be blended element-wise.
-            if (!mHasBaked || sizeChanged || fadeDuration <= 0.0f)
+            if (!HasUploaded() || sizeChanged || fadeDuration <= 0.0f)
             {
                 mFrom = mTarget;
                 mDisplay = mTarget;
-                upload();
-                mHasBaked = true;
+                upload(); // sets HasUploaded(), which is what the guards above read
                 mFading = false;
                 return;
             }
@@ -169,7 +168,6 @@ namespace EdgeLighting
         std::vector<float> mDisplay;       ///< Currently-uploaded (blended) ring.
         std::vector<unsigned char> mBytes; ///< Reused upload scratch.
         int mSize = 0;                     ///< Ring width in texels; 0 until the first bake.
-        bool mHasBaked = false;            ///< False until the first bake allocates the texture.
         bool mFading = false;              ///< True while a cross-fade is in flight.
         float mElapsed = 0.0f;             ///< Seconds into the current fade.
         float mDuration = 0.0f;            ///< Snapshot of the duration for this fade.
