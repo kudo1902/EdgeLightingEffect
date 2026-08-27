@@ -45,9 +45,23 @@ namespace EdgeLighting
         /// @param items   source list; only the first @p maxRows are baked,
         ///                the rest cannot reach the shader anyway.
         /// @param width   texels per row - the resolution of one item's span.
+        ///                Clamped to >= 2: the row walk below divides by
+        ///                @c width - 1, so 1 would be a division by zero and a
+        ///                row of NaN, and 0 or less would hand
+        ///                @c glTexImage2D an empty image. Today's callers pass
+        ///                a constant, but @c OptimizedNeonConfig::gradientLutSize
+        ///                shows these widths do become host-settable, and
+        ///                @ref GradientRingLUT::Bake already guards its own.
         /// @param maxRows atlas height, matching the shader's array cap.
+        ///                Clamped to >= 1 for the same reason.
         void Bake(const std::vector<T> &items, int width, int maxRows)
         {
+            width = std::max(width, 2);
+            maxRows = std::max(maxRows, 1);
+
+            // Clamped BEFORE the dirty check, so the snapshot the check
+            // compares against always describes the texture that was actually
+            // uploaded rather than the arguments that were asked for.
             if (!isDirty(items, width, maxRows))
             {
                 return;
@@ -99,7 +113,6 @@ namespace EdgeLighting
             }
             mBakedWidth = width;
             mBakedRows = maxRows;
-            mHasBaked = true;
         }
 
     private:
@@ -130,7 +143,7 @@ namespace EdgeLighting
         /// not a change to the texture.
         bool isDirty(const std::vector<T> &items, int width, int maxRows) const
         {
-            if (!mHasBaked || width != mBakedWidth || maxRows != mBakedRows)
+            if (!HasUploaded() || width != mBakedWidth || maxRows != mBakedRows)
             {
                 return true;
             }
@@ -155,7 +168,6 @@ namespace EdgeLighting
         std::vector<unsigned char> mAtlas; ///< Reused bake scratch (RGBA8, width * maxRows * 4).
         int mBakedWidth = 0;               ///< Dimensions behind the current texture; 0 until
         int mBakedRows = 0;                ///< the first bake.
-        bool mHasBaked = false;            ///< False until the first bake allocates the texture.
     };
 
 } // namespace EdgeLighting
