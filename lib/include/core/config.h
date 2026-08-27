@@ -491,19 +491,12 @@ namespace EdgeLighting
         /// Size of the precomputed gradient look-up texture (power-of-two, 32–256).
         int gradientLutSize = 256;
 
-        // --- Debug visualisations ---
-
-        /// Show the raw half-res FBO (nearest-neighbour upscale) instead of
-        /// the bilinear-blitted result. Useful to verify pass-1 rendering.
-        bool showHalfRes = false;
-
         bool operator==(const OptimizedNeonConfig &o) const
         {
             return enable == o.enable &&
                    resolutionScale == o.resolutionScale &&
                    numSamples == o.numSamples &&
-                   gradientLutSize == o.gradientLutSize &&
-                   showHalfRes == o.showHalfRes;
+                   gradientLutSize == o.gradientLutSize;
         }
         bool operator!=(const OptimizedNeonConfig &o) const { return !(*this == o); }
     } OptimizedNeonConfig;

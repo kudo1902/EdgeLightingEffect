@@ -183,8 +183,7 @@ namespace EdgeLightingDemo
         std::cout << "\nOptimized  " << (o.enable ? "ON" : "OFF")
                   << "   resolutionScale " << std::setprecision(2) << o.resolutionScale
                   << ", numSamples " << o.numSamples
-                  << ", gradientLutSize " << o.gradientLutSize
-                  << (o.showHalfRes ? ", showHalfRes" : "") << "\n";
+                  << ", gradientLutSize " << o.gradientLutSize << "\n";
 
         std::cout << "Wireframe  " << (config.wireframe.enable ? "ON" : "OFF") << "\n";
         std::cout << "=======================================================\n";

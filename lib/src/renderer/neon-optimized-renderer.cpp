@@ -314,14 +314,10 @@ namespace EdgeLighting
         // Render skips Pass 2b with us. Same contract as renderEmissionPass.
         // The filter is requested through Resize, which is the ONLY writer of
         // the tracked value, so it cannot drift. Setting it on the texture
-        // afterwards instead - which is what the debug toggle used to do - left
-        // mFilter saying LINEAR while the texture was NEAREST, so the next
-        // frame's Resize saw a mismatch and destroyed and recreated the FBO.
-        // Measured at one reallocation per frame for as long as showHalfRes was
-        // on, against one for the whole run. A filter change still costs one
-        // reallocation here, but only on the frame the toggle actually moves.
-        const GLint filter = config.optimizedNeon.showHalfRes ? GL_NEAREST : GL_LINEAR;
-        if (!mHalfResBuffer.Resize(bufW, bufH, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, filter))
+        // afterwards instead leaves mFilter disagreeing with the texture, and
+        // the next frame's Resize then sees a mismatch and destroys and
+        // recreates the FBO - one reallocation per frame, measured.
+        if (!mHalfResBuffer.Resize(bufW, bufH, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, GL_LINEAR))
         {
             return false;
         }
@@ -450,8 +446,8 @@ namespace EdgeLighting
         mBlitShader.Use();
         mBlitShader.SetUniform("uMVP", identity);
 
-        // Just bind it. The showHalfRes filter is requested through Resize in
-        // pass 1, so this pass sets no texture parameters at all - and the bare
+        // Just bind it. The filter is requested through Resize in pass 1, so
+        // this pass sets no texture parameters at all - and the bare
         // glBindTexture that used to sit here, on whatever unit the previous
         // pass left active, is gone with it.
         mHalfResBuffer.BindTexture(0);

@@ -107,7 +107,7 @@ Config
  │                         opaqueSoftness, insideCutoff / outsideCutoff
  │                       - debug: showGradientLUT, showColorStops, opaqueOnly
  ├── OptimizedNeonConfig half-res knobs (enable, resolutionScale, numSamples,
- │                       gradientLutSize, showHalfRes). *Shares* NeonConfig
+ │                       gradientLutSize). *Shares* NeonConfig
  │                       for every visual param above.
  ├── DropletsConfig      rain on glass: amount, speed, lanes, bandWidth,
  │                       bandOffset, tint. Band side comes from
