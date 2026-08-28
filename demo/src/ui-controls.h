@@ -22,6 +22,7 @@ namespace EdgeLightingDemo
         std::cout << "  [[ / ]]        - Dec / Inc Neon Glow Radius\n";
         std::cout << "  [P / L]        - Inc / Dec Neon Sweep Speed\n";
         std::cout << "  [N]            - Toggle Neon\n";
+        std::cout << "  [SHIFT+O]      - Toggle Neon Resolution (full / half)\n";
         std::cout << "  [G]            - Toggle Wireframe Bounding Box\n";
         std::cout << "  [D]            - Toggle Water Droplets Pane\n";
         std::cout << "  [W]            - Toggle Winding (CW / CCW)\n";
@@ -48,7 +49,7 @@ namespace EdgeLightingDemo
                   << " | " << windingStr
                   << " | " << blendStr
                   << " | Anim: " << (isPlaying ? "PLAY" : "PAUS")
-                  << " | Wire: " << (config.wireframe.enable ? "ON " : "OFF")
+                  << " | Wire: " << (config.debug.showWireframe ? "ON " : "OFF")
                   << "      " << std::flush;
     }
 
@@ -135,7 +136,7 @@ namespace EdgeLightingDemo
             std::cout << ", colour (" << n.opaqueColor.r << ", " << n.opaqueColor.g
                       << ", " << n.opaqueColor.b << ", " << n.opaqueColor.a << ")"
                       << ", softness " << n.opaqueSoftness << " px";
-            if (n.opaqueOnly)
+            if (config.debug.opaqueOnly)
             {
                 std::cout << ", OPAQUE ONLY (neon emission suppressed)";
             }
@@ -179,13 +180,17 @@ namespace EdgeLightingDemo
             std::cout << "    + " << n.preservedSegmentBoosts.size() << " preserved\n";
         }
 
-        const auto &o = config.optimizedNeon;
-        std::cout << "\nOptimized  " << (o.enable ? "ON" : "OFF")
-                  << "   resolutionScale " << std::setprecision(2) << o.resolutionScale
-                  << ", numSamples " << o.numSamples
-                  << ", gradientLutSize " << o.gradientLutSize << "\n";
+        std::cout << "\nResolution " << std::setprecision(2) << n.resolutionScale
+                  << (n.resolutionScale < 1.0f ? " (scaled buffer + blit)" : " (full res, direct)")
+                  << "   numSamples " << n.numSamples
+                  << ", gradientLutSize " << n.gradientLutSize << "\n";
 
-        std::cout << "Wireframe  " << (config.wireframe.enable ? "ON" : "OFF") << "\n";
+        const auto &d = config.debug;
+        std::cout << "Debug      " << (d.enable ? "ON " : "OFF")
+                  << "  gradientLUT " << (d.showGradientLUT ? "ON" : "OFF")
+                  << ", colorStops " << (d.showColorStops ? "ON" : "OFF")
+                  << ", opaqueOnly " << (d.opaqueOnly ? "ON" : "OFF")
+                  << ", wireframe " << (d.showWireframe ? "ON" : "OFF") << "\n";
         std::cout << "=======================================================\n";
         std::cout << std::defaultfloat << std::flush;
     }

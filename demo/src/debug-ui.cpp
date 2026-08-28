@@ -21,7 +21,7 @@ namespace
 {
     /// Upper bound the debug UI enforces on colour-stop lists.
     constexpr int MAX_COLOR_STOPS = 128;
-    /// Max value for the OptimizedNeon "LUT Size" slider. Matches the LUT
+    /// Max value for the neon "LUT Size" slider. Matches the LUT
     /// width baked by NeonRenderer (256), which is more than enough for any
     /// gradient the human eye can resolve.
     constexpr int MAX_GRADIENT_LUT_SIZE = 256;
@@ -163,8 +163,8 @@ namespace
     /// the widget reports a change; the animation on the next @c
     /// EdgeLightingEffect::Update then overlays on top of the new base.
     /// Draw one segment-lights row (Pos/Len/Boost + collapsible per-segment
-    /// stops editor). Caller wraps in @c PushID so both the Neon and
-    /// OptimizedNeon sections can share the same widget IDs without colliding.
+    /// stops editor). Caller wraps in @c PushID so repeated rows can share the
+    /// same widget IDs without colliding.
     /// @return true if the row's remove button was clicked - caller erases.
     inline bool DrawSegmentRow(EdgeLighting::SegmentBoost &seg, size_t index)
     {
@@ -233,7 +233,7 @@ namespace
 
     /// Draw one arc row (Start / Length / Intensity + collapsible per-arc
     /// stops editor). Mirrors DrawSegmentRow. Caller wraps in @c PushID so
-    /// the Neon and OptimizedNeon sections share widget IDs without collision.
+    /// repeated rows can share widget IDs without collision.
     /// @return true if the row's remove button was clicked - caller erases.
     inline bool DrawArcRow(EdgeLighting::Arc &arc, size_t index)
     {
@@ -298,37 +298,26 @@ namespace
     }
 
 
-    /// Warn when both neon paths are enabled at once. They draw the SAME glow
-    /// from the same @c Config::neon, so the effect composites it twice -
-    /// brighter, with the half-res renderer's softer edges laid over the
-    /// full-res ones. Mirrors the warning the lens-flare pair already carries.
-    ///
-    /// Shown in both sections, not just the optimized one: the two checkboxes
-    /// live in separate collapsing headers, so either is where the user might
-    /// be looking when the second path goes on.
-    inline void BothNeonPathsWarning(const EdgeLighting::Config &cfg)
-    {
-        if (cfg.neon.enable && cfg.optimizedNeon.enable)
-        {
-            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
-                               "Both neon paths on - glow drawn twice; disable one.");
-        }
-    }
-
-    /// "Opaque Only" debug toggle, shown under the opaque-mode controls in both
-    /// the Neon and OptimizedNeon sections. Both write the same
-    /// @c NeonConfig::opaqueOnly field, so the caller passes a distinct @p id
-    /// to keep ImGui from collapsing the two widgets onto one state.
-    inline void OpaqueOnlyCheckbox(const char *id, bool &opaqueOnly)
+    /// "Opaque Only" debug toggle, drawn in the Debug section alongside the
+    /// other @c DebugConfig fields. It only does anything while
+    /// @c NeonConfig::opaqueMode is set - there is no fill to keep otherwise -
+    /// so the caller passes @p opaqueModeSet to grey it out and say why rather
+    /// than hiding it, which would leave the Debug section's contents shifting
+    /// as an unrelated combo changes. The @p id keeps the ImGui widget state
+    /// distinct from any other checkbox sharing the label.
+    inline void OpaqueOnlyCheckbox(const char *id, bool &opaqueOnly, bool opaqueModeSet)
     {
         char label[64];
         std::snprintf(label, sizeof(label), "Opaque Only%s", id);
+        ImGui::BeginDisabled(!opaqueModeSet);
         ImGui::Checkbox(label, &opaqueOnly);
-        if (ImGui::IsItemHovered())
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
         {
             ImGui::SetTooltip("Draw only the opaque fill - no filament, halo or bloom.\n"
                               "Isolates the fill silhouette so it can be compared\n"
-                              "against how far the light actually reaches.");
+                              "against how far the light actually reaches.\n\n"
+                              "Needs Neon > Opaque set to something other than None.");
         }
     }
 
@@ -457,14 +446,12 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     const EdgeLighting::Config &active = effect.GetActiveConfig();
     buildGeometrySection(cfg);
     buildNeonSection(cfg, active);
-    buildOptimizedNeonSection(cfg, active);
+    buildDebugSection(cfg);
     buildDropletsSection(cfg);
     buildLensFlareSection(cfg);
     buildColorPickerSection(cfg);
     buildAnimationSection(cfg, effect.GetAnimationManager());
     buildBackgroundSection();
-
-    ImGui::Checkbox("Wireframe", &cfg.wireframe.enable);
 
     ImGui::Separator();
     ImGui::Text("Animation: %s", playing ? "PLAYING" : "PAUSED");
@@ -576,10 +563,28 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
     }
 
     ImGui::Checkbox("Enable##Neon", &cfg.neon.enable);
-    BothNeonPathsWarning(cfg);
     if (!cfg.neon.enable)
     {
         return;
+    }
+
+    // --- Performance ------------------------------------------------------
+    // Was its own "Optimized Neon" section back when the half-res path was a
+    // second renderer. It is one renderer now, so these are just knobs on it:
+    // Res Scale 1.0 is the full-resolution path (no offscreen buffer, no
+    // blit), anything lower renders scaled and composites back.
+    if (ImGui::TreeNodeEx("Performance##Neon", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        SliderWithInput("Res Scale##Neon", cfg.neon.resolutionScale, 0.125f, 1.0f, "%.3f");
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("1.0 draws straight onto the target at full resolution.\n"
+                              "Below that the glow renders into a scaled buffer and is\n"
+                              "bilinear-blitted back - fewer fragments, softer edges.");
+        }
+        SliderIntWithInput("Samples##Neon", cfg.neon.numSamples, 8, NEON_MAX_LOOP_SAMPLES);
+        SliderIntWithInput("LUT Size##Neon", cfg.neon.gradientLutSize, 32, MAX_GRADIENT_LUT_SIZE);
+        ImGui::TreePop();
     }
 
     const char *opaqueItems[] = {"None", "Outside", "Inside", "Both", "All"};
@@ -594,10 +599,7 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
         ImGui::ColorEdit4("Opaque Color##Neon", &cfg.neon.opaqueColor.x,
                           ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
         SliderWithInput("Opaque Softness##Neon", cfg.neon.opaqueSoftness, 0.0f, 20.0f, "%.1f");
-        OpaqueOnlyCheckbox("##NeonOpaqueOnly", cfg.neon.opaqueOnly);
     }
-    ImGui::Checkbox("Show Gradient LUT##Neon", &cfg.neon.showGradientLUT);
-    ImGui::Checkbox("Show Color Stops##Neon", &cfg.neon.showColorStops);
     AnimatedSlider("Line Width##Neon", cfg.neon.lineWidth, active.neon.lineWidth, 0.0f, 20.0f, "%.0f");
     AnimatedSlider("Filament Falloff##Neon", cfg.neon.filamentFalloff, active.neon.filamentFalloff, 0.0f, 5.0f);
     AnimatedSlider("Intensity##Neon", cfg.neon.intensity, active.neon.intensity, 0.0f, 3.0f);
@@ -707,159 +709,6 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
         if (ImGui::Button("+ Add Stop##Neon"))
         {
             float lastPos = cfg.neon.colorStops.empty() ? 0.0f : cfg.neon.colorStops.back().position;
-            cfg.neon.colorStops.push_back(
-                {std::min(1.0f, lastPos + 0.1f), glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)});
-        }
-    }
-}
-
-void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg,
-                                        const EdgeLighting::Config &active)
-{
-    if (!ImGui::CollapsingHeader("Optimized Neon (½-res)", ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        return;
-    }
-
-    ImGui::Checkbox("Enable##Optimized", &cfg.optimizedNeon.enable);
-    BothNeonPathsWarning(cfg);
-    if (!cfg.optimizedNeon.enable)
-    {
-        return;
-    }
-
-    SliderWithInput("Res Scale##Opt", cfg.optimizedNeon.resolutionScale, 0.125f, 1.0f, "%.3f");
-    SliderIntWithInput("Samples##Opt", cfg.optimizedNeon.numSamples, 8, NEON_MAX_LOOP_SAMPLES);
-    SliderIntWithInput("LUT Size##Opt", cfg.optimizedNeon.gradientLutSize, 32,
-                       MAX_GRADIENT_LUT_SIZE);
-
-    ImGui::Separator();
-    ImGui::TextDisabled("Visual params (shared with Neon)");
-
-    const char *opaqueItemsOpt[] = {"None", "Outside", "Inside", "Both", "All"};
-    int opaqueIdxOpt = static_cast<int>(cfg.neon.opaqueMode);
-    if (ImGui::Combo("Opaque##Opt", &opaqueIdxOpt, opaqueItemsOpt, IM_ARRAYSIZE(opaqueItemsOpt)))
-    {
-        cfg.neon.opaqueMode = static_cast<EdgeLighting::OpaqueMode>(opaqueIdxOpt);
-    }
-    if (cfg.neon.opaqueMode != EdgeLighting::OpaqueMode::NONE)
-    {
-        ImGui::SameLine();
-        ImGui::ColorEdit4("Opaque Color##Opt", &cfg.neon.opaqueColor.x,
-                          ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
-        SliderWithInput("Opaque Softness##Opt", cfg.neon.opaqueSoftness, 0.0f, 20.0f, "%.1f");
-        OpaqueOnlyCheckbox("##OptOpaqueOnly", cfg.neon.opaqueOnly);
-    }
-    AnimatedSlider("Line Width##Opt", cfg.neon.lineWidth, active.neon.lineWidth, 0.0f, 20.0f, "%.0f");
-    AnimatedSlider("Filament Falloff##Opt", cfg.neon.filamentFalloff, active.neon.filamentFalloff, 0.0f, 5.0f);
-    AnimatedSlider("Intensity##Opt", cfg.neon.intensity, active.neon.intensity, 0.0f, 3.0f);
-    AnimatedSlider("Glow Radius##Opt", cfg.neon.glowRadius, active.neon.glowRadius, 0.0f, 80.0f, "%.0f");
-    AnimatedSlider("Bloom Strength##Opt", cfg.neon.bloomStrength, active.neon.bloomStrength, 0.0f, 2.0f);
-    AnimatedSlider("Hue Rotation Rate##Opt", cfg.neon.hueRotationRate, active.neon.hueRotationRate, 0.0f, 2.0f);
-
-    const char *sideItems[] = {"Both", "Inside", "Outside"};
-    int sideIdx = static_cast<int>(cfg.neon.glowSide);
-    if (ImGui::Combo("Glow Side##Opt", &sideIdx, sideItems, IM_ARRAYSIZE(sideItems)))
-    {
-        cfg.neon.glowSide = static_cast<EdgeLighting::GlowSide>(sideIdx);
-    }
-    if (cfg.neon.glowSide != EdgeLighting::GlowSide::BOTH)
-    {
-        SliderWithInput("Side Softness##Opt", cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
-    }
-
-    CutoffRow("Inside Cutoff", "OptInside", cfg.neon.insideCutoff, active.neon.insideCutoff);
-    CutoffRow("Outside Cutoff", "OptOutside", cfg.neon.outsideCutoff, active.neon.outsideCutoff);
-
-    ImGui::TextDisabled("Segment Lights (%zu / %d) - additive, independent of intensity",
-                        cfg.neon.segmentBoosts.size(),
-                        EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP);
-    for (size_t i = 0; i < cfg.neon.segmentBoosts.size(); ++i)
-    {
-        ImGui::PushID(static_cast<int>(400 + i));
-        bool remove = DrawSegmentRow(cfg.neon.segmentBoosts[i], i);
-        ImGui::PopID();
-        if (remove)
-        {
-            cfg.neon.segmentBoosts.erase(cfg.neon.segmentBoosts.begin() +
-                                         static_cast<ptrdiff_t>(i));
-            break;
-        }
-    }
-    if (static_cast<int>(cfg.neon.segmentBoosts.size()) <
-        EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP)
-    {
-        if (ImGui::Button("+ Add Segment##Opt"))
-        {
-            cfg.neon.segmentBoosts.push_back({0.0f, 0.15f, 4.0f});
-        }
-    }
-
-    ImGui::TextDisabled("Arcs (%zu / %d) - overlap resolves winner-take-all",
-                        cfg.neon.arcs.size(),
-                        EdgeLighting::NeonConfig::MAX_ARCS_CAP);
-    for (size_t i = 0; i < cfg.neon.arcs.size(); ++i)
-    {
-        ImGui::PushID(static_cast<int>(600 + i));
-        bool remove = DrawArcRow(cfg.neon.arcs[i], i);
-        ImGui::PopID();
-        if (remove)
-        {
-            cfg.neon.arcs.erase(cfg.neon.arcs.begin() +
-                                static_cast<ptrdiff_t>(i));
-            break;
-        }
-    }
-    if (static_cast<int>(cfg.neon.arcs.size()) <
-        EdgeLighting::NeonConfig::MAX_ARCS_CAP)
-    {
-        if (ImGui::Button("+ Add Arc##Opt"))
-        {
-            cfg.neon.arcs.push_back(EdgeLighting::Arc{});
-        }
-    }
-
-    const char *blendItems[] = {"RGB", "HSV", "HSL"};
-    int blendIdx = static_cast<int>(cfg.neon.blendSpace);
-    if (ImGui::Combo("Blend Space##Opt", &blendIdx, blendItems, IM_ARRAYSIZE(blendItems)))
-    {
-        cfg.neon.blendSpace = static_cast<EdgeLighting::BlendSpace>(blendIdx);
-    }
-
-    // Cross-fade time when the stop set / blend space changes (0 = instant).
-    SliderWithInput("Color Transition (s)##Opt", cfg.neon.colorTransitionDuration,
-                    0.0f, 2.0f, "%.2f");
-
-    for (size_t i = 0; i < cfg.neon.colorStops.size(); ++i)
-    {
-        ImGui::PushID(static_cast<int>(i + 200));
-        float p = cfg.neon.colorStops[i].position;
-        if (SliderWithInput("Pos##Opt", p, 0.0f, 1.0f, "%.2f"))
-        {
-            cfg.neon.colorStops[i].position = p;
-        }
-        ImGui::SameLine();
-        glm::vec4 c = cfg.neon.colorStops[i].color;
-        if (ImGui::ColorEdit4("Col##Opt", &c.x, ImGuiColorEditFlags_NoInputs))
-        {
-            cfg.neon.colorStops[i].color = c;
-        }
-        ImGui::SameLine();
-        if (cfg.neon.colorStops.size() > 1 && ImGui::SmallButton("X"))
-        {
-            cfg.neon.colorStops.erase(
-                cfg.neon.colorStops.begin() + static_cast<ptrdiff_t>(i));
-        }
-        ImGui::PopID();
-    }
-
-    if (cfg.neon.colorStops.size() < MAX_COLOR_STOPS)
-    {
-        if (ImGui::Button("+ Add Stop##Opt"))
-        {
-            float lastPos = cfg.neon.colorStops.empty()
-                                ? 0.0f
-                                : cfg.neon.colorStops.back().position;
             cfg.neon.colorStops.push_back(
                 {std::min(1.0f, lastPos + 0.1f), glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)});
         }
@@ -1076,6 +925,79 @@ namespace
         }
         ImGui::Unindent(18.0f);
     }
+}
+
+void DebugUI::buildDebugSection(EdgeLighting::Config &cfg)
+{
+    if (!ImGui::CollapsingHeader("Debug"))
+    {
+        return;
+    }
+
+    // Two kinds of thing live in DebugConfig and they are drawn as two groups,
+    // because `enable` governs only the first: the overlay layer is a renderer
+    // that can be muted, while Opaque Only is a mode of the NEON renderer that
+    // happens to be a debug control. Muting the overlays must not quietly
+    // change what the effect itself draws.
+
+    // --- The overlay layer (DebugRenderer) ---
+    ImGui::Checkbox("Enable Overlays##Debug", &cfg.debug.enable);
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Master switch for the overlay layer (DebugRenderer).\n"
+                          "Nothing is drawn unless one of the toggles below is on.");
+    }
+    if (cfg.debug.enable)
+    {
+        ImGui::Indent();
+        ImGui::Checkbox("Show Gradient LUT##Debug", &cfg.debug.showGradientLUT);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Draw the baked colour ring as a strip across the rect,\n"
+                              "so what the shader samples can be checked by eye.");
+        }
+        ImGui::Checkbox("Show Color Stops##Debug", &cfg.debug.showColorStops);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Draw a disc in each stop's colour at its perimeter position.");
+        }
+        ImGui::Checkbox("Show Wireframe##Debug", &cfg.debug.showWireframe);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("1 px bounding box at the configured extent - sharp even\n"
+                              "when cornerRadius is set, so the two can be compared.\n"
+                              "Drawn OVER the glow (it used to be under it).");
+        }
+        if (cfg.debug.showWireframe)
+        {
+            ImGui::SameLine();
+            ImGui::ColorEdit4("##WireColor", &cfg.debug.wireframeColor.x,
+                              ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
+        }
+
+        // The strip and the markers annotate the GLOW, so they follow its
+        // state - see DebugRenderer::Render, which skips both in either case.
+        // The box annotates the geometry and survives both, so the wording
+        // says which overlays are affected rather than implying all three.
+        if (!cfg.neon.enable)
+        {
+            ImGui::TextDisabled("Neon is off - LUT / stops have nothing to annotate.");
+        }
+        else if (cfg.debug.opaqueOnly)
+        {
+            ImGui::TextDisabled("Opaque Only is on - LUT / stops suppressed.");
+        }
+        ImGui::Unindent();
+    }
+
+    ImGui::Separator();
+
+    // --- Neon debug mode ---
+    // Deliberately OUTSIDE the `enable` block above: this one is read by
+    // NeonRenderer, not by the overlay layer, so the overlay mute has no
+    // business hiding it or turning it off.
+    OpaqueOnlyCheckbox("##DebugOpaqueOnly", cfg.debug.opaqueOnly,
+                       cfg.neon.opaqueMode != EdgeLighting::OpaqueMode::NONE);
 }
 
 void DebugUI::buildDropletsSection(EdgeLighting::Config &cfg)

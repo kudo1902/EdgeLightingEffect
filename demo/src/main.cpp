@@ -1,9 +1,8 @@
 #include "gl/gl-header.h"
 #include <GLFW/glfw3.h>
 #include "core/edge-lighting.h"
-#include "renderer/wireframe-renderer.h"
 #include "renderer/neon-renderer.h"
-#include "renderer/neon-optimized-renderer.h"
+#include "renderer/debug-renderer.h"
 #include "renderer/droplets-renderer.h"
 #include "renderer/lens-flare-renderer.h"
 #include "renderer/lens-flare-optimized-renderer.h"
@@ -106,14 +105,13 @@ int main()
 
     auto lensFlareRenderer = std::make_shared<EdgeLighting::LensFlareRenderer>();
     auto lensFlareOptimizedRenderer = std::make_shared<EdgeLighting::LensFlareOptimizedRenderer>();
-    auto wireframeRenderer = std::make_shared<EdgeLighting::WireframeRenderer>();
     auto neonRenderer = std::make_shared<EdgeLighting::NeonRenderer>();
-    auto neonOptimizedRenderer = std::make_shared<EdgeLighting::NeonOptimizedRenderer>();
+    auto debugRenderer = std::make_shared<EdgeLighting::DebugRenderer>();
     auto dropletsRenderer = std::make_shared<EdgeLighting::DropletsRenderer>();
 
-    gEffect->AddRenderer(wireframeRenderer);
     gEffect->AddRenderer(neonRenderer);
-    gEffect->AddRenderer(neonOptimizedRenderer);
+    // After the neon layer - it annotates what that layer drew.
+    gEffect->AddRenderer(debugRenderer);
     gEffect->AddRenderer(dropletsRenderer);
     gEffect->AddRenderer(lensFlareRenderer);
     gEffect->AddRenderer(lensFlareOptimizedRenderer);
@@ -124,8 +122,8 @@ int main()
     config.geometry.position = glm::vec2(displayW / 4, displayH / 4);
     config.geometry.cornerRadius = 0.0f;
     config.neon.enable = true;
-    config.wireframe.enable = true;
-    config.wireframe.color = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
+    config.debug.showWireframe = true;
+    config.debug.wireframeColor = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
 
     gEffect->SetConfig(config);
 
@@ -354,7 +352,7 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
     }
     case GLFW_KEY_G:
     {
-        config.wireframe.enable = !config.wireframe.enable;
+        config.debug.showWireframe = !config.debug.showWireframe;
         break;
     }
     case GLFW_KEY_D:
@@ -366,7 +364,10 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
     {
         if (mods & GLFW_MOD_SHIFT)
         {
-            config.optimizedNeon.enable = !config.optimizedNeon.enable;
+            // Toggle the neon layer between full resolution and half. There is
+            // no second renderer to switch to any more - this IS the old
+            // "optimized on/off", expressed as the scale it always was.
+            config.neon.resolutionScale = (config.neon.resolutionScale < 1.0f) ? 1.0f : 0.5f;
         }
         else
         {
