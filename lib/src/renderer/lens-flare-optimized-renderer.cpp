@@ -54,7 +54,7 @@ namespace EdgeLighting
         mScaledBuffer.Bind();
 
         // Clear colour is global GL state - restore it. See the same
-        // save/restore in NeonOptimizedRenderer::renderHalfResNeonPass.
+        // save/restore in NeonRenderer::renderNeonPass.
         GLfloat prevClear[4];
         glGetFloatv(GL_COLOR_CLEAR_VALUE, prevClear);
         glClearColor(0.0f, 0.0f, 0.0f, 0.0f);

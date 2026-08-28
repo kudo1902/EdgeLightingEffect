@@ -5,10 +5,15 @@
 // Shared neon tuning constants - single source of truth.
 //
 // Consumed by BOTH:
-//   - the single-pass neon shaders (neon.frag, neon-optimized.frag), where
-//     CMake text-injects this file via @NEON_TUNING@ in shaders.h.in, and
-//   - the C++ renderers (neon-renderer.cpp, neon-optimized-renderer.cpp),
-//     which #include it for the glow-reach quad-sizing factors.
+//   - the neon shaders (neon.frag, neon-emission.frag), where CMake
+//     text-injects this file via @NEON_TUNING@ in shaders.h.in, and
+//   - the C++ renderer (neon-renderer.cpp), which #includes it for the
+//     glow-reach quad-sizing factors.
+//
+// The px constants below are written in FULL-RESOLUTION pixels. Where the
+// renderer draws at a reduced NeonConfig::resolutionScale, the shader converts
+// each one with uResolutionScale at the point of use; the notes on the
+// individual constants say which need it and which do not.
 //
 // Why macros and not const/constexpr: GLSL ES 3.00 has no constexpr and
 // rejects the 'f' float-literal suffix, so a `const float X = 0.9f;` cannot
@@ -26,7 +31,7 @@
 #define FILAMENT_MIN_HALF_WIDTH   0.5
 #define FILAMENT_GAIN             12.0
 
-// --- Continuous-arc filament gate feathers (neon.frag / neon-optimized.frag).
+// --- Continuous-arc filament gate feathers (neon.frag).
 //     INWARD FEATHER: the smooth ramp sits INSIDE the arc's own perimeter
 //     span, so nothing outside the arc gets lit -> no corner bleed regardless
 //     of width, no perpendicular spike, and the profile is a plain smoothstep
@@ -123,11 +128,11 @@
 //         rect that large. The margin is a guarantee for dense colour stops,
 //         not a fix for an observed artifact.)
 //
-//       - Renderer agreement. Both shaders derive the kernel from the same
-//         NEON_MAX_LOOP_SAMPLES-based fraction rather than from their own
-//         runtime sample count, so NeonOptimizedRenderer's numSamples slider
-//         does not move the colour blend. (An earlier sampleSpacing-derived
-//         floor divided by the live count and landed 2x wider there.)
+//       - Sample-count independence. The kernel comes from the
+//         NEON_MAX_LOOP_SAMPLES-based fraction rather than from the runtime
+//         sample count, so the numSamples knob does not move the colour
+//         blend. (An earlier sampleSpacing-derived floor divided by the live
+//         count and landed 2x wider at reduced counts.)
 //
 //     Deliberately NOT coupled to glowRadius. The gather produces colour only -
 //     the halo and bloom have been closed-form since they stopped riding on it -
@@ -139,9 +144,9 @@
 //     geometry, matching the previous fixed span, so default-sized output is
 //     unchanged.
 //
-//     NOTE: unit-free, unlike the px constants around it. neon-optimized.frag
-//     multiplies it by a perimeter that is already in FBO px, so it needs no
-//     uResolutionScale correction. ---
+//     NOTE: unit-free, unlike the px constants around it. The shader
+//     multiplies it by a perimeter that is already in scaled px, so it needs
+//     no uResolutionScale correction - applying one would double-apply. ---
 #define COLOR_BLEND_PERIM_FRAC    0.0088
 
 // --- Emission on/off ramp. glowRadius = 0 must read as "filament only", but
@@ -151,9 +156,9 @@
 //     sampleSpacing-derived floor instead would re-couple brightness to the
 //     rect size, which is the whole thing this design removes.
 //
-//     NOTE: full-res pixel span. neon-optimized.frag compares it against a
-//     glowRadius already scaled into FBO px, so its copy multiplies by
-//     uResolutionScale - keep the two in step when tuning. ---
+//     NOTE: full-res pixel span, compared against a uGlowRadius that arrives
+//     already scaled, so the shader multiplies this by uResolutionScale at
+//     the point of use. Identity at scale 1.0. ---
 #define GLOW_GATE_FADE_PX         2.0
 
 // --- Lower bound on the analytic emission widths. Guards the divides only;
@@ -173,10 +178,10 @@
 //     Overlap resolves winner-take-all (max mask*intensity wins). ---
 #define MAX_ARCS                  8
 
-// --- Perimeter gather-loop upper bound. Sizes the LoopSamplesBlock UBO in
-//     both shaders. NeonRenderer runs the full loop at compile-time-fixed
-//     count; NeonOptimizedRenderer's shader iterates only uNumSamples of them
-//     (its numSamples slider), so this is a ceiling, not a fixed cost. ---
+// --- Perimeter gather-loop upper bound. Sizes the LoopSamplesBlock UBO and
+//     the shader's array. The gather iterates only uNumSamples of them
+//     (NeonConfig::numSamples, which defaults to this), so it is a ceiling,
+//     not a fixed cost. ---
 #define NEON_MAX_LOOP_SAMPLES     128
 
 // --- Grading ---
