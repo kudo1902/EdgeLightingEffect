@@ -534,9 +534,13 @@ namespace EdgeLighting
         /// fill's silhouette so it can be compared against where the light
         /// actually reaches.
         ///
-        /// @ref DebugRenderer draws nothing while this is set, so fill-only
-        /// stays fill-only: the overlays annotate the glow, and there is no
-        /// glow to annotate here.
+        /// @ref DebugRenderer suppresses its two glow overlays while this is
+        /// set - the LUT strip and the stop markers annotate the glow, and
+        /// there is no glow to annotate here. The bounding box is NOT
+        /// suppressed: it annotates the geometry, which is there whether or
+        /// not anything is lit, so a fill-only frame still carries it unless
+        /// @c showWireframe or @c enable is cleared. See the gating in
+        /// @c DebugRenderer::Render.
         ///
         /// The two disagree at a sharp corner: @c cornerRadius 0 makes the
         /// fill's outer boundary square (the band is offset per-axis, see
