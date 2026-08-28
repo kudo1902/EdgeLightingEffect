@@ -21,6 +21,23 @@ extern "C"
 #define EL_API __attribute__((visibility("default")))
 #endif
 
+/* --------------------------------------------------------------------------
+ * Deprecation
+ *
+ * Marks a symbol that still works but is scheduled for removal. Every function
+ * carrying this lives in el-deprecated.h; @p msg names what to call instead.
+ * Define EL_NO_DEPRECATION_WARNINGS to silence the whole set while migrating.
+ * ------------------------------------------------------------------------ */
+#if defined(EL_NO_DEPRECATION_WARNINGS)
+#define EL_DEPRECATED(msg)
+#elif defined(_MSC_VER)
+#define EL_DEPRECATED(msg) __declspec(deprecated(msg))
+#elif defined(__GNUC__) || defined(__clang__)
+#define EL_DEPRECATED(msg) __attribute__((deprecated(msg)))
+#else
+#define EL_DEPRECATED(msg)
+#endif
+
     /* ======================================================================
      * Result codes and shared scalar types
      * ==================================================================== */
