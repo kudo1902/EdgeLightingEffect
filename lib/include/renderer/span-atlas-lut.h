@@ -49,7 +49,7 @@ namespace EdgeLighting
         ///                @c width - 1, so 1 would be a division by zero and a
         ///                row of NaN, and 0 or less would hand
         ///                @c glTexImage2D an empty image. Today's callers pass
-        ///                a constant, but @c OptimizedNeonConfig::gradientLutSize
+        ///                a constant, but @c NeonConfig::gradientLutSize
         ///                shows these widths do become host-settable, and
         ///                @ref GradientRingLUT::Bake already guards its own.
         /// @param maxRows atlas height, matching the shader's array cap.
