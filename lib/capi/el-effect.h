@@ -50,18 +50,23 @@ extern "C"
     /** @} */
 
     /** @name Renderer toggles
-     *  Independent on/off switches for the neon, optimized, and wireframe
+     *  Independent on/off switches for the neon, optimized, and debug
      *  layers. Any subset can be enabled at once - they composite additively.
      *  @{ */
 
     EL_API el_result_e el_effect_set_neon_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled);
     EL_API el_result_e el_effect_get_neon_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
 
-    /** @brief Draw the baked gradient LUT as a debug strip across the rectangle. */
+    /** @brief Draw the baked gradient LUT as a debug strip across the rectangle.
+     *  @note Drawn by the debug layer, so it needs @ref EL_RENDERER_DEBUG in
+     *        the registration mask (@ref EL_RENDERER_ALL includes it). Without
+     *        that layer the flag is still stored and read back, but nothing is
+     *        drawn. Declared here, alongside the neon layer it annotates. */
     EL_API el_result_e el_effect_set_show_gradient_lut(el_effect_handle_t effect, el_bool_t show);
     EL_API el_result_e el_effect_get_show_gradient_lut(el_effect_handle_t effect, el_bool_t *outShow);
 
-    /** @brief Draw a coloured dot at each colour-stop position on the perimeter. */
+    /** @brief Draw a coloured dot at each colour-stop position on the perimeter.
+     *  @note Same debug layer as @ref el_effect_set_show_gradient_lut. */
     EL_API el_result_e el_effect_set_show_color_stops(el_effect_handle_t effect, el_bool_t show);
     EL_API el_result_e el_effect_get_show_color_stops(el_effect_handle_t effect, el_bool_t *outShow);
 
@@ -388,16 +393,41 @@ extern "C"
 
     /** @} */
 
-    /** @name Optimized (half-res) renderer
-     *  A half-resolution neon variant that renders into a scaled FBO and
-     *  bilinear-blits back to full res. Visual parameters are shared with
-     *  the main neon layer; only the perf knobs live here.
+    /** @name Neon resolution scale (formerly the "optimized" renderer)
+     *
+     *  DEPRECATED NAMES, LIVE FUNCTIONS. There is no separate half-res
+     *  renderer any longer: the neon layer draws at a resolution scale, where
+     *  1.0 is the full-resolution path (straight onto the target, no offscreen
+     *  buffer, no blit) and anything below it renders into a scaled buffer and
+     *  bilinear-blits back. These calls are kept, signatures unchanged, and
+     *  now read and write that one layer's settings. Prefer them for the perf
+     *  knobs; the "optimized" in each name is history.
+     *
+     *  The three knob pairs map straight onto the merged fields. The
+     *  enable pair is the one asymmetry, because the flag it used to own no
+     *  longer exists:
+     *
+     *  - @c set(..., true)  enables the neon layer AND, if it is currently at
+     *                       full resolution, moves it to 0.5 (the scale the
+     *                       old half-res renderer defaulted to). A scale
+     *                       already below 1.0 is left as it is.
+     *  - @c set(..., false) returns the layer to full resolution. It does NOT
+     *                       disable the neon: under the old ABI this call
+     *                       silenced one of two renderers, so clearing the
+     *                       enable here would blank the effect for a host that
+     *                       is merely switching paths. Use
+     *                       @ref el_effect_set_neon_renderer_enabled to turn
+     *                       the layer off.
+     *  - @c get(...)        reports true when the neon layer is enabled and
+     *                       below full resolution.
      *  @{ */
 
     EL_API el_result_e el_effect_set_optimized_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled);
     EL_API el_result_e el_effect_get_optimized_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
 
-    /** @brief Set the internal FBO scale factor (0.5 = half, 0.25 = quarter). */
+    /** @brief Set the neon layer's resolution scale (1.0 = full res and no
+     *         offscreen buffer; 0.5 = half, 0.25 = quarter). Clamped to
+     *         (0, 1] at draw time - values above 1.0 do not supersample. */
     EL_API el_result_e el_effect_set_optimized_resolution_scale(el_effect_handle_t effect, float scale);
     EL_API el_result_e el_effect_get_optimized_resolution_scale(el_effect_handle_t effect, float *outScale);
 
@@ -583,7 +613,13 @@ extern "C"
     EL_API el_result_e el_effect_set_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled);
     EL_API el_result_e el_effect_get_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
 
-    /** @brief Set the wireframe line colour (linear RGBA in [0, 1]). */
+    /** @brief Set the wireframe line colour (linear RGBA in [0, 1]).
+     *  @note The box is an overlay of the debug layer now, not a renderer of
+     *        its own, so it needs @ref EL_RENDERER_DEBUG (or the deprecated
+     *        @ref EL_RENDERER_WIREFRAME alias) in the registration mask, and
+     *        it is additionally gated by @ref el_effect_set_debug_enabled if
+     *        that is turned off. It now draws OVER the neon rather than under
+     *        it. These functions write @c DebugConfig. */
     EL_API el_result_e el_effect_set_wireframe_color(el_effect_handle_t effect,
                                                      float r, float g, float b, float a);
     EL_API el_result_e el_effect_get_wireframe_color(el_effect_handle_t effect,
@@ -614,7 +650,7 @@ extern "C"
 
     /** @brief Initialise every renderer layer under the current GL context.
      *  @details Convenience wrapper for @ref el_effect_init_with_renderers with
-     *           @ref EL_RENDERER_ALL - registers the full stack (wireframe,
+     *           @ref EL_RENDERER_ALL - registers the full stack (neon, debug,
      *           neon, optimized, droplets, lens flare).
      *  @returns @ref EL_ERROR_INIT_FAILED if a renderer fails to initialise
      *           (usually a shader compile / link error - see native log). */
