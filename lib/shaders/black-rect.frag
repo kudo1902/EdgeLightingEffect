@@ -134,7 +134,7 @@ void main() {
     // should not touch the interior at all.
     //
     // Normally invisible because the neon filament peaks at d = 0 and covers
-    // that pixel - NeonConfig::opaqueOnly is what exposes it.
+    // that pixel - DebugConfig::opaqueOnly is what exposes it.
     //
     // Linear, not smoothstep, on purpose: this IS the analytic coverage, and
     // it matches the "pixel-crisp" intent stated above. The cutoff boundaries
