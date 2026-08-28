@@ -1,5 +1,15 @@
 #include "capi-internal.h"
 
+namespace
+{
+    /// Seed for colour stops created by the set_*_count growers. Matches what
+    /// el-effect.h documents (position 0, opaque white); a plain resize()
+    /// value-initialises to transparent black instead, and because
+    /// ColorStop::color.a is an emission scale rather than a blend opacity,
+    /// that renders as "dark here" instead of as a merely unset colour.
+    const EdgeLighting::ColorStop DEFAULT_COLOR_STOP{0.0f, glm::vec4(1.0f)};
+}
+
 extern "C"
 {
 
@@ -409,7 +419,7 @@ extern "C"
             return EL_SUCCESS;
         }
         LOG_I("effect=%p, count=%d", (void *)effect, count);
-        effect->config.neon.colorStops.resize(newSize);
+        effect->config.neon.colorStops.resize(newSize, DEFAULT_COLOR_STOP);
         return EL_SUCCESS;
     }
 
@@ -910,7 +920,7 @@ extern "C"
             LOG_E("el_effect_set_segment_color_stop_count: segmentIndex %d out of range (size=%zu)", segmentIndex, boosts.size());
             return EL_ERROR_INVALID_PARAMETER;
         }
-        boosts[segIdx].colorStops.resize(newSize);
+        boosts[segIdx].colorStops.resize(newSize, DEFAULT_COLOR_STOP);
         return EL_SUCCESS;
     }
 
@@ -1142,7 +1152,7 @@ extern "C"
             LOG_E("el_effect_set_arc_color_stop_count: arcIndex %d out of range (size=%zu)", arcIndex, arcs.size());
             return EL_ERROR_INVALID_PARAMETER;
         }
-        arcs[arcIdx].colorStops.resize(newSize);
+        arcs[arcIdx].colorStops.resize(newSize, DEFAULT_COLOR_STOP);
         return EL_SUCCESS;
     }
 
@@ -1300,20 +1310,6 @@ extern "C"
         LOG_D("effect=%p, size=%d", (void *)effect, *outSize);
         return EL_SUCCESS;
     }
-    el_result_e el_effect_set_optimized_show_half_res(el_effect_handle_t effect, el_bool_t show)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_show_half_res");
-        SET_AND_LOG(effect->config.optimizedNeon.showHalfRes, show != 0, "effect=%p, show=%d", (void *)effect, show);
-    }
-    el_result_e el_effect_get_optimized_show_half_res(el_effect_handle_t effect, el_bool_t *outShow)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_show_half_res");
-        VALIDATE_OUT_PTR(outShow, "el_effect_get_optimized_show_half_res");
-        *outShow = effect->config.optimizedNeon.showHalfRes ? 1 : 0;
-        LOG_D("effect=%p, show=%d", (void *)effect, *outShow);
-        return EL_SUCCESS;
-    }
-
     // --- Droplets ---
 
     el_result_e el_effect_set_droplets_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)

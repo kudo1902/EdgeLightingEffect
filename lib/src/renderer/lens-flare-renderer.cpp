@@ -71,6 +71,14 @@ namespace EdgeLighting
         mVertexArray.DrawArrays(GL_TRIANGLES, 6);
 
         mShaderProgram.Unuse();
+
+        // Restore the default alpha blend state for any following renderers -
+        // the same hand-back every other renderer does. This one is registered
+        // last in the demo, so the premultiplied mode it sets above used to
+        // leak out of the effect entirely and land on whatever the host drew
+        // next.
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     }
 
     void LensFlareRenderer::OnConfigChanged(const Config &config)

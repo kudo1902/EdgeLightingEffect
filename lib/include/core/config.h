@@ -75,10 +75,19 @@ namespace EdgeLighting
     } BlendSpace;
 
     /// A colour stop along the perimeter.
+    ///
+    /// @c color.a is an EMISSION SCALE at this stop, not a blend opacity: the
+    /// renderers bake it into their LUTs' alpha channel and the neon shaders
+    /// multiply it into the emission magnitude, so it attenuates the filament,
+    /// halo and bloom together. 1 = full brightness (default), 0 = dark at
+    /// that perimeter position with the background showing through - which is
+    /// how you fade the neon out along part of the ring without touching the
+    /// arc or segment gating. It interpolates linearly between stops in every
+    /// @ref BlendSpace (the hue-space conversions apply to @c .rgb only).
     typedef struct ColorStop
     {
         float position;  ///< Normalised position along the perimeter [0-1].
-        glm::vec4 color; ///< RGBA colour at this stop.
+        glm::vec4 color; ///< RGB colour + alpha emission scale at this stop.
 
         bool operator==(const ColorStop &o) const
         {
@@ -482,19 +491,12 @@ namespace EdgeLighting
         /// Size of the precomputed gradient look-up texture (power-of-two, 32–256).
         int gradientLutSize = 256;
 
-        // --- Debug visualisations ---
-
-        /// Show the raw half-res FBO (nearest-neighbour upscale) instead of
-        /// the bilinear-blitted result. Useful to verify pass-1 rendering.
-        bool showHalfRes = false;
-
         bool operator==(const OptimizedNeonConfig &o) const
         {
             return enable == o.enable &&
                    resolutionScale == o.resolutionScale &&
                    numSamples == o.numSamples &&
-                   gradientLutSize == o.gradientLutSize &&
-                   showHalfRes == o.showHalfRes;
+                   gradientLutSize == o.gradientLutSize;
         }
         bool operator!=(const OptimizedNeonConfig &o) const { return !(*this == o); }
     } OptimizedNeonConfig;

@@ -32,6 +32,9 @@ namespace EdgeLighting
                 ++it;
             }
         }
+        // From here on AddRenderer has to initialise what it is handed - this
+        // loop is not coming round again for it.
+        mInitialized = true;
         return allOk;
     }
 
@@ -76,11 +79,29 @@ namespace EdgeLighting
 
     void EdgeLightingEffect::AddRenderer(std::shared_ptr<BaseRenderer> renderer)
     {
-        if (renderer)
+        if (!renderer)
         {
-            mRenderers.push_back(renderer);
-            renderer->OnConfigChanged(mActiveConfig);
+            return;
         }
+
+        // Registering after Initialize used to leave the renderer with no
+        // shaders: Initialize walks the list exactly once, so nothing would
+        // ever compile them, and the renderer's Render then drew with program
+        // 0 every frame. Initialise it here instead, and drop it if that fails
+        // - the same contract Initialize applies to the batch.
+        if (mInitialized && !renderer->Initialize())
+        {
+            LOG_E("EdgeLightingEffect: renderer registered after Initialize failed "
+                  "to initialize - not added.");
+            return;
+        }
+
+        mRenderers.push_back(renderer);
+        // Hand over the current composited config, not the base: a renderer
+        // joining mid-animation should see what every other renderer sees.
+        // Renderers gate their own rebuilds on shader validity, so this is also
+        // safe on the pre-Initialize path where nothing is compiled yet.
+        renderer->OnConfigChanged(mActiveConfig);
     }
 
     Clock &EdgeLightingEffect::GetClock() { return mClock; }

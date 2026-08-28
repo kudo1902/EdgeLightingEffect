@@ -1,4 +1,5 @@
 #include "renderer/droplets-renderer.h"
+#include "util/geometry-utils.h"
 #include "shaders.h"
 #include "util/log-util.h"
 #include <glm/gtc/matrix_transform.hpp>
@@ -46,7 +47,7 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uMVP", glm::mat4(1.0f));
         mShaderProgram.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
         mShaderProgram.SetUniform("uRectCenter", rectCenter);
-        mShaderProgram.SetUniform("uCornerRadius", config.geometry.cornerRadius);
+        mShaderProgram.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry));
         mShaderProgram.SetUniform("uTime", time);
         mShaderProgram.SetUniform("uAmount", config.droplets.amount);
         mShaderProgram.SetUniform("uSpeed", config.droplets.speed);

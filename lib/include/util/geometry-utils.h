@@ -12,6 +12,34 @@ namespace EdgeLighting
 {
     namespace GeometryUtils
     {
+        /// The corner radius the geometry can actually carry: @c geom.cornerRadius
+        /// clamped to [0, min(halfWidth, halfHeight)].
+        ///
+        /// A radius larger than the shorter half-extent is not a rounded box at
+        /// all - `sdRoundBox` degenerates into a lens with cusps, because
+        /// `abs(p) - b + r` goes positive on both axes at the centre. Nothing in
+        /// @ref RectGeometry rejects such a value (the demo's slider runs to
+        /// 1080 against a default 800x600 rect), and the perimeter walk below
+        /// has always clamped it silently - so the SDF and the perimeter used to
+        /// describe two different shapes: the filament drew the lens while the
+        /// gather samples sat on the correctly clamped stadium, smearing the
+        /// colour ring across fragments nowhere near them.
+        ///
+        /// Every consumer applies this same clamp so they cannot disagree
+        /// again, but by two routes. The renderers' `uCornerRadius` uploads
+        /// (which is what reaches `sdRoundBox` in all three shaders) and the
+        /// lens-flare sun's offset rect call this function. The perimeter walk
+        /// below re-derives it inline as `r = min(r, min(halfW, halfH))`,
+        /// because it has already split `halfW` / `halfH` out for its own use.
+        /// Same value, two spellings - change one and change the other.
+        /// Negative values clamp to 0, which is the documented "sharp corners"
+        /// behaviour.
+        inline float GetEffectiveCornerRadius(const RectGeometry &geom)
+        {
+            float halfMin = std::min(geom.width, geom.height) * 0.5f;
+            return std::min(std::max(geom.cornerRadius, 0.0f), std::max(halfMin, 0.0f));
+        }
+
         namespace Detail
         {
             /// Fraction of the way along a perimeter span, guarding the spans
@@ -28,7 +56,7 @@ namespace EdgeLighting
             }
 
             /// Clockwise traversal: top → right → bottom → left
-            inline glm::vec2 GetPointOnRectCW(float t, const RectGeometry &geom)
+            inline glm::vec2 GetPointOnRectangleCW(float t, const RectGeometry &geom)
             {
                 float halfW = geom.width * 0.5f;
                 float halfH = geom.height * 0.5f;
@@ -149,7 +177,7 @@ namespace EdgeLighting
             }
 
             /// Counter-clockwise traversal: left → bottom → right → top
-            inline glm::vec2 GetPointOnRectCCW(float t, const RectGeometry &geom)
+            inline glm::vec2 GetPointOnRectangleCCW(float t, const RectGeometry &geom)
             {
                 float halfW = geom.width * 0.5f;
                 float halfH = geom.height * 0.5f;
@@ -291,10 +319,10 @@ namespace EdgeLighting
 
             if (geom.winding == Winding::CLOCKWISE)
             {
-                return Detail::GetPointOnRectCW(t, geom);
+                return Detail::GetPointOnRectangleCW(t, geom);
             }
 
-            return Detail::GetPointOnRectCCW(t, geom);
+            return Detail::GetPointOnRectangleCCW(t, geom);
         }
 
         /// Converts an app-space point (rect top-left = (0,0), +Y down) to local space
@@ -367,7 +395,7 @@ namespace EdgeLighting
             // Clamping the offset radius at 0 turns that last case into plain
             // sharp corners on an inset rect.
             RectGeometry offsetGeom = geom;
-            float radius = std::min(std::max(geom.cornerRadius, 0.0f), std::min(halfW, halfH));
+            float radius = GetEffectiveCornerRadius(geom);
             offsetGeom.width = std::max(geom.width + 2.0f * lensFlare.perimeterOffset, 0.0f);
             offsetGeom.height = std::max(geom.height + 2.0f * lensFlare.perimeterOffset, 0.0f);
             offsetGeom.cornerRadius = std::max(radius + lensFlare.perimeterOffset, 0.0f);

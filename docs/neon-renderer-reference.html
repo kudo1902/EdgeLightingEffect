@@ -969,9 +969,9 @@ vec3 segColHue = segAcc / max(wsumSegW, WSUM_EPSILON);</code></pre>
           <thead><tr><th>Bake</th><th>Rebuilds when</th><th>Produces</th></tr></thead>
           <tbody>
             <tr><td class="mono nw">rebuildLoopSamples</td><td><code>config.geometry</code> changed</td><td>128 <code>vec4</code>s from <code>GetPointOnRectangle(i / 128)</code>, evenly spaced by arc length, straight into the UBO.</td></tr>
-            <tr><td class="mono nw">rebuildGradientLUT</td><td><code>colorStops</code> or <code>blendSpace</code> changed</td><td>256 RGBA float texels via <code>ColorUtils::SampleStops</code>, held as <code>mLUTTarget</code>. Sampled at <code>t = i / 256</code> so the wrap is seamless.</td></tr>
-            <tr><td class="mono nw">rebuildSegmentLUT</td><td>the merged effective segment set differs from <code>mBakedSegments</code></td><td>128 x 8 RGBA8 atlas, one row per segment.</td></tr>
-            <tr><td class="mono nw">rebuildArcLUT</td><td><code>config.neon.arcs</code> differs from <code>mBakedArcs</code></td><td>128 x 8 RGBA8 atlas, one row per arc.</td></tr>
+            <tr><td class="mono nw">mGradientLUT.Bake</td><td><code>colorStops</code>, <code>blendSpace</code> or the ring width differs from the snapshot inside the wrapper</td><td>256 RGBA float texels via <code>ColorUtils::SampleRing</code>, held as the wrapper's target ring. Sampled at <code>t = i / 256</code> so the wrap is seamless.</td></tr>
+            <tr><td class="mono nw">mSegmentLUT.Bake</td><td>a merged effective segment's <code>colorStops</code> or <code>blendSpace</code> differs from the snapshot inside the wrapper</td><td>128 x 8 RGBA8 atlas, one row per segment.</td></tr>
+            <tr><td class="mono nw">mArcLUT.Bake</td><td>an arc's <code>colorStops</code> or <code>blendSpace</code> differs from the snapshot inside the wrapper</td><td>128 x 8 RGBA8 atlas, one row per arc.</td></tr>
           </tbody>
         </table>
       </div>
@@ -995,15 +995,16 @@ vec3 segColHue = segAcc / max(wsumSegW, WSUM_EPSILON);</code></pre>
 
       <h3>The colour cross-fade</h3>
 
-      <p>Held entirely in the gradient bake and <code>Update</code>. On a stop change the renderer snapshots what is currently displayed as <code>mLUTFrom</code>, keeps the new bake as <code>mLUTTarget</code>, and blends toward it over <code>colorTransitionDuration</code> seconds, re-uploading <code>mLUTDisplay</code> each frame. Three paths:</p>
+      <p>Held entirely inside <code>GradientRingLUT</code>, driven by <code>Bake</code> and <code>Tick</code>. On a stop change the wrapper snapshots what is currently displayed as its source ring, keeps the new bake as its target, and blends toward it over <code>colorTransitionDuration</code> seconds, re-uploading the blended ring each frame. Four paths:</p>
 
       <ul class="body">
-        <li><strong>First bake</strong> (<code>!mHasBakedLUT</code>): seed all three buffers and upload; there is nothing to fade from.</li>
+        <li><strong>First bake</strong>: seed all three buffers and upload; there is nothing to fade from.</li>
+        <li><strong>Ring width changed</strong>: snap. Source and target have different lengths and cannot be blended element-wise. Only reachable from the half-res renderer, whose width is a runtime knob.</li>
         <li><strong>Duration &lt;= 0</strong>: snap display to target, no fade.</li>
         <li><strong>Otherwise</strong>: fade from whatever is on screen, mid-fade or settled, so repeated changes chain smoothly rather than jumping back to the last settled ring.</li>
       </ul>
 
-      <p><code>Update</code> drives it with <strong>raw frame time, not the animation clock</strong>, so a colour change still fades while animations are paused. The shader is not involved and cannot tell a fade is happening.</p>
+      <p><code>Tick</code> is driven from <code>Update</code> with <strong>raw frame time, not the animation clock</strong>, so a colour change still fades while animations are paused. The shader is not involved and cannot tell a fade is happening.</p>
     </section>
 
     <!-- ============================================================ -->
@@ -1441,8 +1442,8 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
           <text x="322" y="247" class="dg-t">lutDirty</text>
           <line x1="484" y1="242" x2="516" y2="242" class="dg-line" marker-end="url(#ra)"/>
           <rect x="520" y="210" width="260" height="64" class="dg-box"/>
-          <text x="532" y="237" class="dg-t">rebuildGradientLUT()</text>
-          <text x="532" y="254" class="dg-t2">256 x ColorUtils::SampleStops</text>
+          <text x="532" y="237" class="dg-t">mGradientLUT.Bake()</text>
+          <text x="532" y="254" class="dg-t2">256 x ColorUtils::SampleRing</text>
           <line x1="784" y1="242" x2="806" y2="242" class="dg-line" marker-end="url(#ra)"/>
           <rect x="810" y="210" width="230" height="64" class="dg-box"/>
           <text x="822" y="237" class="dg-t">mGradientLUT</text>
@@ -1457,7 +1458,7 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
           <text x="322" y="319" class="dg-t">segLutDirty</text>
           <line x1="484" y1="314" x2="516" y2="314" class="dg-line" marker-end="url(#ra)"/>
           <rect x="520" y="282" width="260" height="64" class="dg-box"/>
-          <text x="532" y="309" class="dg-t">rebuildSegmentLUT()</text>
+          <text x="532" y="309" class="dg-t">mSegmentLUT.Bake()</text>
           <text x="532" y="326" class="dg-t2">one 128-px row per segment</text>
           <line x1="784" y1="314" x2="806" y2="314" class="dg-line" marker-end="url(#ra)"/>
           <rect x="810" y="282" width="230" height="64" class="dg-box"/>
@@ -1473,7 +1474,7 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
           <text x="322" y="391" class="dg-t">arcLutDirty</text>
           <line x1="484" y1="386" x2="516" y2="386" class="dg-line" marker-end="url(#ra)"/>
           <rect x="520" y="354" width="260" height="64" class="dg-box"/>
-          <text x="532" y="381" class="dg-t">rebuildArcLUT()</text>
+          <text x="532" y="381" class="dg-t">mArcLUT.Bake()</text>
           <text x="532" y="398" class="dg-t2">one 128-px row per arc</text>
           <line x1="784" y1="386" x2="806" y2="386" class="dg-line" marker-end="url(#ra)"/>
           <rect x="810" y="354" width="230" height="64" class="dg-box"/>
@@ -1508,7 +1509,7 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
 
           <rect x="200" y="82" width="660" height="46" class="dg-box"/>
           <text x="530" y="102" class="dg-t" text-anchor="middle">renderer-&gt;Update(dt, t, cfg)</text>
-          <text x="530" y="118" class="dg-t2" text-anchor="middle">colour cross-fade only: mLUTDisplay = mix(mLUTFrom, mLUTTarget) -&gt; re-upload</text>
+          <text x="530" y="118" class="dg-t2" text-anchor="middle">colour cross-fade only: mGradientLUT.Tick() blends source -&gt; target, re-uploads</text>
           <line x1="530" y1="128" x2="530" y2="146" class="dg-line" marker-end="url(#fa2)"/>
 
           <rect x="200" y="148" width="660" height="46" class="dg-box-a"/>

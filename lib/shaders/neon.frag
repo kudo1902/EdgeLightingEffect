@@ -12,7 +12,7 @@ precision highp float;
 // are injected from lib/include/renderer/neon-tuning.h via @NEON_TUNING@ in
 // shaders.h.in - single source of truth shared with the C++ renderer.
 //
-// (Far early-out lives on the CPU: the draw quad is sized to rect + earlyOut,
+// (Far culling lives on the CPU: the draw quad is sized to rect + glowReach,
 //  so there's no per-fragment discard here. See neon-renderer.cpp.)
 
 // ---------------------------------------------------------------------------
@@ -57,7 +57,7 @@ layout(std140) uniform LoopSamplesBlock
 // skipped in the gather loop.
 //
 // Declared in a std140 uniform block (the DALi PunctualLightBlock pattern):
-// DALi writes one element per registered property ("uSegments[0]", …) into
+// DALi writes one element per registered property ("uSegments[0]", ...) into
 // the block's UBO at the reflected std140 array stride. On desktop GL the
 // block is fed from a UBO in neon-renderer.cpp.
 layout(std140) uniform SegmentBlock
@@ -88,15 +88,31 @@ layout(std140) uniform ArcBlock
 };
 
 // Per-arc gradient atlas (RGBA8, CLAMP-wrapped both axes). One row per arc,
-// same layout convention as uSegmentLUT. Sampled only when the winning arc's
-// hasStops flag is set; the loser rows are never read, so leaving them stale
-// is fine.
+// same layout convention as uSegmentLUT: a head-to-tail SPAN, baked with
+// ColorUtils::SampleSpan, so the end colours hold rather than wrapping round.
+//
+// Read in TWO places, and the second is easy to miss. The pre-pass samples
+// only the WINNING arc's row, for the gather hue. But the pointwise emitCover
+// loop in main() samples the row of EVERY arc that covers this fragment, for
+// its colour-stop alpha - so a row is live whenever its arc has stops, and the
+// non-winning rows cannot be left stale. SpanAtlasLUT::Bake zero-fills the
+// whole atlas on every bake (mAtlas.assign, not resize, for exactly this
+// reason), which is what currently keeps that true.
 uniform sampler2D uArcLUT;
 
 // 1-row 2D LUT (REPEAT-wrapped) holding the precomputed colour ring.
 // Replaces the in-shader sampleStops loop + HSV blend on the hot path.
 // GLES 3.0 does not support sampler1D, so we use a 1-row 2D texture.
 uniform sampler2D uGradientLUT;
+
+// Perimeter emission table from neon-emission.frag: NEON_MAX_LOOP_SAMPLES
+// wide, 2 tall, RGBA16F (RGBA8 where the driver refuses float rendering).
+//   row 0: .rgb = arcColour * arcW, .a = arcW
+//   row 1: .rgb = SUM(segColour * bell), .a = SUM(bell)
+// Read with texelFetch at integer sample index - never filtered, since
+// neighbouring texels are unrelated perimeter samples. See the gather loop
+// and docs/emission-prepass.md.
+uniform sampler2D uEmission;
 
 // Distance (in pixels, from the rect edge) to the draw quad's edge. The whole
 // emission is faded to zero just before this, so the bloom never shows a hard
@@ -292,69 +308,78 @@ float perimeterPosition(vec2 p) {
     return (base + len * (1.0 - u)) / peri;
 }
 
-// Fractional [0, 1] membership of the gather sample at perimeter position
-// @c si in the arc [start, start+length]. Length 0 = empty, length 1 = full
-// (start becomes an irrelevant phase); in between it is a wrap-aware range
-// over the unit circle.
-//
-// SCOPE: this shapes the COLOUR GATHER ONLY. It picks the winner-take-all arc
-// at each sample and weights that sample's contribution to the hue average, so
-// adjacent arcs of different colours crossfade at a seam instead of snapping.
-// It does NOT reach brightness or reach any more: `col` divides by the same
-// arc-gated weight it accumulates, so this value cancels out of the ratio. The
-// visible extent of an arc - filament, halo and bloom alike - comes solely from
-// arcCoverContinuous below, whose feather is INWARD and measured in pixels.
-//
-// Wrap-aware via testing both @p si and @p si + 1 and taking the max. When the
-// arc extends past 1.0, a sample near position 0 is physically close to `end`
-// through the perimeter loop, and the virtual @p si + 1 test picks that up;
-// the same expression handles the non-wrap case because @p si + 1 always falls
-// outside a sub-unit arc there. Without it the hue would break discontinuously
-// at position 0 for any arc straddling the wrap point.
-float arcInside(float si, float start, float length, float invNumSamples) {
-    if (length >= 1.0 - 1e-6) return 1.0;   // full coverage
-    if (length <= 1e-6)       return 0.0;   // empty
-    // Feather sits OUTSIDE the arc on each side (the ramp only extends
-    // outward), so the sample exactly at `start` / `end` still carries full
-    // weight in the hue average.
-    //
-    // The widths are ASYMMETRIC, and both now buy hue-blend behaviour only:
-    //   - HEAD (end side): one full sample, so adjacent samples' fade-in
-    //     ranges are contiguous and a growing arc's leading hue hands over
-    //     smoothly from one gather point to the next.
-    //   - TAIL (start side): a quarter sample - near-hard, so the arc's own
-    //     hue takes over immediately at the start rather than being averaged
-    //     with whatever precedes it.
-    // (Both used to be about how far halo/bloom spilled past the arc ends;
-    //  that job moved to arcCoverContinuous when `col` became a pure hue.)
-    float fHead = invNumSamples;
-    float fTail = 0.25 * invNumSamples;
-    float end = start + length;
-    float g1a = smoothstep(start - fTail, start, si);
-    float g2a = 1.0 - smoothstep(end, end + fHead, si);
-    float g1b = smoothstep(start - fTail, start, si + 1.0);
-    float g2b = 1.0 - smoothstep(end, end + fHead, si + 1.0);
-    return max(g1a * g2a, g1b * g2b);
-}
+// NOTE: arcInside() used to live here. It shaped the colour gather only -
+// picking the winner-take-all arc per sample and weighting that sample in
+// the hue average - so it was a pure function of (si, config) and moved to
+// neon-emission.frag with the rest of the per-sample work. The visible
+// extent of an arc (filament, halo, bloom) never came from it; that is
+// arcCoverContinuous below, whose feather is INWARD and in pixels.
+
+// uArcs[].w is a BITMASK, not a bool - packed CPU-side in packLightBlocks:
+//   bit 0 (1) - the arc has its own colour stops (read row `a` of uArcLUT)
+//   bit 1 (2) - another arc covers the perimeter immediately BEFORE its start
+//   bit 2 (4) - another arc covers the perimeter immediately AFTER its end
+// The abutment bits pick each endpoint's feather direction in
+// arcCoverContinuous. They are a pure function of the arc set, so they are
+// resolved once per frame on the CPU rather than rediscovered per fragment by
+// an O(arcs^2) scan. Values are 0..7, all exact in a float.
+bool arcHasStops(float flags)  { return mod(flags, 2.0) >= 0.5; }
+bool arcTailAbuts(float flags) { return mod(floor(flags * 0.5), 2.0) >= 0.5; }
+bool arcHeadAbuts(float flags) { return mod(floor(flags * 0.25), 2.0) >= 0.5; }
 
 // Continuous [0,1] coverage of a fragment for the arc [start, start+length],
-// used to gate the sharp SDF filament. INWARD FEATHER: the smooth ramps sit
-// INSIDE the arc's own perimeter span, so nothing outside the arc gets lit.
-// This trades a small visible inset (arc starts at start+fTail and ends at
-// start+length-fHead) for two hard-won properties:
-//   - No bleed onto adjacent edges past corners: coverage is exactly 0 for
-//     any fragment whose perimeter position falls outside [start, start+length].
-//   - Smooth, isotropic endpoints: the fade profile is a plain smoothstep in
-//     the perimeter parameter, so it reads the same shape whether the endpoint
-//     sits on a straight edge or right at a corner.
+// used to gate the sharp SDF filament.
+//
+// The feather direction is decided PER ENDPOINT, from whether another arc
+// takes over there (the @c tailAbuts / @c headAbuts flags, computed on the CPU
+// and packed into uArcs[].w - see packLightBlocks):
+//
+//   FREE endpoint     -> ramp INWARD. Coverage is exactly 0 at the endpoint, so
+//                        nothing outside the arc's own span is ever lit.
+//   ABUTTING endpoint -> ramp OUTWARD, past the endpoint into the neighbour's
+//                        span. Coverage is 1 at the endpoint, so max() over the
+//                        two arcs hands over at full brightness with no notch,
+//                        and the overlap makes the handover smooth rather than
+//                        a hard step when the two carry different intensities.
+//
+// Both halves are needed, and a straddling feather (0.5 at every endpoint) is
+// NOT an acceptable shortcut for either:
+//
+//   - Feathering inward everywhere is what produced the dark seam notch: two
+//     arcs tiling the ring ({0, 0.5} and {0.5, 0.5}) both evaluated to exactly
+//     0 at their shared seam, and no combining operator recovers a signal from
+//     (0, 0). The notch spanned fTail + fHead = 28 px and was punched radially
+//     outward through the halo and bloom, which emitCover also scales.
+//
+//   - Feathering outward everywhere - including at free endpoints - breaks
+//     worse, and specifically at cornerRadius 0. The inverse-SDF map is
+//     DEGENERATE at a sharp corner: the entire 90-degree exterior wedge has the
+//     corner as its nearest perimeter point, so every fragment in that quadrant
+//     shares ONE sPos. Coverage is a function of sPos alone, so any non-zero
+//     value at a corner is painted across the whole quadrant. An arc starting
+//     at a corner (start = 0 on a square rect, the default corner) lit its
+//     entire top-left exterior quadrant at half brightness, bounded by two hard
+//     edges where the neighbouring fragments mapped to uncovered perimeter.
+//     A 7 px bleed in perimeter space is not a 7 px bleed on screen.
+//
+// Deciding per endpoint keeps the outward ramp exactly where it is safe: an
+// abutting endpoint's "bleed" lands inside a neighbour that is already lit, so
+// it cannot reach unlit geometry however degenerate the map is there.
 //
 // Feather widths are perimeter fractions (pixel-space widths / current perimeter,
 // converted at the call site).
-float arcCoverContinuous(float sPos, float start, float length, float fHead, float fTail) {
+float arcCoverContinuous(float sPos, float start, float length, float fHead, float fTail,
+                         bool tailAbuts, bool headAbuts) {
     if (length >= 1.0 - 1e-6) return 1.0;   // full coverage
     if (length <= 1e-6)       return 0.0;   // empty
     float rel = sPos - start;
     rel -= floor(rel);                       // wrap to [0, 1): distance past start
+    // An outward tail ramp reaches BEHIND the start, so those fragments need a
+    // small NEGATIVE rel rather than one wrapped up to near 1. Split the gap
+    // between the arc's head and its own start down the middle: past that
+    // midpoint a fragment is approaching the start, not trailing the head.
+    // Only for an outward tail - an inward one never reads rel < 0.
+    if (tailAbuts && rel > 0.5 * (1.0 + length)) { rel -= 1.0; }
     // Cap each feather at a share of the arc's own length. The widths arrive
     // as a fixed pixel span but `length` is a perimeter FRACTION, so on a small
     // rect a short arc can be narrower than the two ramps combined - they then
@@ -364,12 +389,14 @@ float arcCoverContinuous(float sPos, float start, float length, float fHead, flo
     float cap    = length * ARC_FEATHER_MAX_SHARE;
     float fH     = min(fHead, cap);
     float fT     = min(fTail, cap);
-    // Tail ramps IN from 0 at rel = 0 (start) to 1 at rel = fT.
-    float tailIn = smoothstep(0.0, fT, rel);
-    // Head ramps OUT from 1 at rel = length - fH to 0 at rel = length.
-    float headIn = 1.0 - smoothstep(length - fH, length, rel);
-    // Fragments past `length` in perim get headIn = 0 -> coverage = 0 (no bleed).
-    // Fragments behind start wrap to rel near 1 -> also headIn = 0 -> coverage = 0.
+    // Tail: inward ramps 0 -> 1 over [start, start + fT]; outward ramps over
+    // [start - fT, start], reaching 1 AT the start.
+    float tailIn = tailAbuts ? smoothstep(-fT, 0.0, rel)
+                             : smoothstep(0.0, fT, rel);
+    // Head: inward falls 1 -> 0 over [end - fH, end]; outward holds 1 to the
+    // end and falls over [end, end + fH].
+    float headIn = headAbuts ? 1.0 - smoothstep(length, length + fH, rel)
+                             : 1.0 - smoothstep(length - fH, length, rel);
     return tailIn * headIn;
 }
 
@@ -380,8 +407,8 @@ void main() {
     float d  = sdRoundBox(vPos, halfSize, uCornerRadius);
     float ad = abs(d);
 
-    // Note: the far-exterior early-out is handled on the CPU - the draw quad is
-    // sized to rect + earlyOut in NeonRenderer::setupGeometry, so geometry culls
+    // Note: the far exterior is culled on the CPU - the draw quad is
+    // sized to rect + glowReach in NeonRenderer::setupGeometry, so geometry culls
     // the far region instead of a per-fragment discard (tiler-friendly).
     // The one-sided cuts below stay as discards: they cull a useful half-band
     // the quad can't express.
@@ -413,10 +440,10 @@ void main() {
     //
     // sigma = half-brightness radius (core = 0.5 at ad = sigma).
     // N = 2 * uFilamentFalloff controls the shape:
-    //   uFilamentFalloff = 0.5 → N = 1   (Laplace - heavy tails, smooth peak)
-    //   uFilamentFalloff = 1.0 → N = 2   (Gaussian - pure smooth falloff; default)
-    //   uFilamentFalloff = 2.0 → N = 4   (platykurtic - flatter top, sharper shoulder)
-    //   uFilamentFalloff = 5.0 → N = 10  (near-rectangular)
+    //   uFilamentFalloff = 0.5 -> N = 1   (Laplace - heavy tails, smooth peak)
+    //   uFilamentFalloff = 1.0 -> N = 2   (Gaussian - pure smooth falloff; default)
+    //   uFilamentFalloff = 2.0 -> N = 4   (platykurtic - flatter top, sharper shoulder)
+    //   uFilamentFalloff = 5.0 -> N = 10  (near-rectangular)
     //
     // The Gaussian has no power-law tail (unlike the old super-Lorentzian),
     // so the filament reads as a clean thin line with a naturally smooth
@@ -482,29 +509,30 @@ void main() {
     float bw  = max(uGlowRadius * BLOOM_REACH_TO_GLOW, EMISSION_MIN_WIDTH);
 
     // --- Colour gather -----------------------------------------------------
-    // This loop now gathers COLOUR ONLY - the halo and bloom intensities are
-    // computed in closed form after it. Per iteration: 1 UBO read for the
-    // sample position, 1 sub, 1 dot, 1 reciprocal, 1 gradient-LUT lookup, plus
-    // one exp() per active segment boost (skipped entirely when
-    // uSegmentCount == 0). No pow(), no in-shader stops walk, no HSV math.
-    // Sweep advance is folded into the GL_REPEAT-wrapped LUT - no fract().
-    vec3  acc       = vec3(0.0); // base colour × arc-gated gather weight
-    vec3  segAcc    = vec3(0.0); // segment colour × bell × gather weight
-    float wsumLit   = 0.0; // ∑ ARC-GATED g     - normalises `col` (see below)
-    float wsumSegW  = 0.0; // ∑ SEGMENT bell*g  - normalises the segment hue
+    // This loop gathers COLOUR ONLY - the halo and bloom intensities are
+    // computed in closed form after it, and every per-sample colour / mask
+    // term is precomputed by neon-emission.frag into uEmission.
+    //
+    // Per iteration: 1 UBO read for the sample position, 1 sub, 1 dot, 1
+    // reciprocal, and 2 texelFetches. What used to live here - the arc
+    // winner-take-all scan over uArcCount, the segment loop over
+    // uSegmentCount, and one to two FILTERED LUT fetches - was a pure function
+    // of (si, uTime, config), so it did not belong in a loop that runs once
+    // per fragment. Hoisting it also removed two dynamic inner loops (which
+    // blocked unrolling), a serial reduction (`if (mask > bestMask)`), and the
+    // loop-carried `si += dti` chain.
+    //
+    // See docs/emission-prepass.md for the packing and the invariant that
+    // keeps the split honest.
+    vec3  acc       = vec3(0.0); // base colour x arc-gated gather weight
+    vec3  segAcc    = vec3(0.0); // segment colour x bell x gather weight
+    float wsumLit   = 0.0; // SUM ARC-GATED g     - normalises `col` (see below)
+    float wsumSegW  = 0.0; // SUM SEGMENT bell*g  - normalises the segment hue
 
     // Compile-time constant loop bound: matches the LoopSamplesBlock UBO size
     // and the C++-side NEON_MAX_LOOP_SAMPLES so the compiler can unroll if it
     // wants to.
     const int numSamples = NEON_MAX_LOOP_SAMPLES;
-    const float invNumSamples = 1.0 / float(numSamples);
-
-    // Negate the time term so a positive hueRotationRate scrolls the colours
-    // WITH the winding (sample index i advances in the winding direction; the
-    // REPEAT-wrapped LUT handles the resulting negative coordinate).
-    float ti   = -uTime * uHueRotationRate;
-    float dti  = invNumSamples;
-    float si   = 0.0; // sample's normalised perimeter position
 
     for (int i = 0; i < numSamples; i++) {
         vec2  dv  = vPos - uLoopSamples[i].xy;
@@ -512,113 +540,41 @@ void main() {
 
         float g   = 1.0 / (dd + kc2);
 
-        // Arc winner-take-all: find the arc with the largest effective mask
-        // (arcInside * intensity) at this sample. That arc owns both the
-        // emission mask (arcW) and the colour at this sample. Because
-        // arcInside is smoothstepped one-sample-wide at each end, adjacent
-        // arcs of different colours crossfade smoothly at the seam.
-        float bestMask = 0.0;
-        int   bestIdx  = -1;
-        for (int a = 0; a < uArcCount; a++) {
-            vec4  arc  = uArcs[a];
-            float mask = arcInside(si, arc.x, arc.y, invNumSamples) * arc.z;
-            if (mask > bestMask) {
-                bestMask = mask;
-                bestIdx  = a;
-            }
-        }
-        float arcW = bestMask;
-        float lg   = g * arcW;
+        // Both rows of the emission table for this sample. Row 0 carries the
+        // arc term already premultiplied by its own gather weight arcW, plus
+        // arcW itself for the denominator; row 1 does the same for the summed
+        // segment term. texelFetch (not texture): integer sample index, no
+        // filtering, no wrap math, no LOD derivatives.
+        vec4 e0 = texelFetch(uEmission, ivec2(i, 0), 0);
+        vec4 e1 = texelFetch(uEmission, ivec2(i, 1), 0);
 
-        // Winner's colour at this sample. Two cases:
-        //  - hasStops: the arc has its own gradient. Sample it in ARC-LOCAL
-        //    space so position 0 is the arc's start and position 1 is its end.
-        //    The uTime term still scrolls the LUT (REPEAT wrap) at the global
-        //    hueRotationRate so hue rotation reads as the gradient marching
-        //    through the arc window, not as position offsetting.
-        //  - empty stops: fall back to the base gradient IN PERIMETER SPACE
-        //    (ti = perimeter position + time offset) so the arc stays visually
-        //    continuous with the rest of the perimeter.
-        // bestIdx < 0 means every arc had 0 mask here - contributes nothing.
-        vec3 baseColI;
-        vec3 segFallback;
-        if (bestIdx >= 0) {
-            vec4 winner = uArcs[bestIdx];
-            if (winner.w > 0.5) {
-                float rowY  = (float(bestIdx) + 0.5) / float(MAX_ARCS);
-                float uArc  = (si - winner.x) / max(winner.y, 1e-4);
-                uArc       -= uTime * uHueRotationRate; // match base sign convention
-                baseColI    = texture(uArcLUT, vec2(uArc, rowY)).rgb;
-            } else {
-                baseColI = texture(uGradientLUT, vec2(ti, 0.5)).rgb;
-            }
-            // Stop-less segments over an arc inherit that arc's colour.
-            segFallback = baseColI;
-        } else {
-            // No arc covers this sample: the arc emission is black, but a
-            // stop-less segment still lights here, inheriting the base
-            // perimeter gradient so the whole ring stays hue-continuous.
-            baseColI    = vec3(0.0);
-            segFallback = texture(uGradientLUT, vec2(ti, 0.5)).rgb;
-        }
-        acc     += baseColI * lg;
-        // GATED normalisation, and it is the point. Dividing by the same weight
-        // the numerator was gathered with makes `col` a pure hue of unit
-        // magnitude: it carries no coverage and no per-arc intensity, both of
-        // which cancel. Those reach the emission solely through emitCover /
-        // filamentGate below, which are px-based and size-invariant. segAcc /
-        // wsumSegW does the identical thing for the segment hue.
+        // GATED normalisation, and it is the point. Dividing by the same
+        // weight the numerator was gathered with makes `col` a pure hue of
+        // unit magnitude: it carries no coverage and no per-arc intensity,
+        // both of which cancel. Those reach the emission solely through
+        // emitCover / filamentGate below, which are px-based and
+        // size-invariant. segAcc / wsumSegW does the identical thing for the
+        // segment hue.
         //
         // Both used to divide by an UNGATED sum over every sample, so an unlit
         // far side of the ring dragged the lit colour toward black by roughly
         // kc / rectHeight. With kc pinned to a fixed px span that ratio grew as
         // the rect shrank: a quarter-perimeter arc measured 0.79 of full
         // brightness at 200x150 against 0.97 at 1920x1080. Gated normalisation
-        // is exactly 1.0 at every size. Nothing is lost because these no longer
-        // need to encode coverage - they did back when the gather also produced
-        // the emission, but the analytic halo/bloom and the pointwise coverages
-        // replaced that.
-        wsumLit += lg;
-
-        // --- Travelling segments (independent additive lights) ---
-        // Gathered with the raw proximity weight `g`, NOT the arc-gated `lg`,
-        // so a segment lights even on perimeter stretches no arc covers.
-        // Composed outside uIntensity so segments stay lit even at intensity 0.
-        // Skipped whole-loop when uSegmentCount == 0.
+        // is exactly 1.0 at every size.
         //
-        // The gather produces the segment HUE only - same split as the arcs.
-        // Its magnitude (boost * bell) comes from segCoverPt, evaluated
-        // pointwise at this fragment's own perimeter position further down.
-        for (int s = 0; s < uSegmentCount; s++) {
-            vec4  seg     = uSegments[s];
-            // Signed wrap-distance along the perimeter in [-0.5, 0.5]. The
-            // shader uses it for both the bell weight (magnitude) and the
-            // head-to-tail sampling within the segment's own gradient (sign).
-            float rel     = si - seg.x;
-            rel          -= floor(rel + 0.5);            // wrap to [-0.5, 0.5]
-            float e       = rel * seg.y;                 // normalise by invSigma
-            float bell    = seg.z * exp(-e * e);         // boost * gaussian
-            if (bell < 0.005) continue;                  // cheap early-out for distant fragments/segments
+        // e0.rgb is baseColI * arcW and e0.a is arcW, so these two lines are
+        // exactly the old `acc += baseColI * lg` / `wsumLit += lg` with
+        // lg = g * arcW.
+        acc      += e0.rgb * g;
+        wsumLit  += e0.a   * g;
 
-            // Colour: own stops from row `s` of uSegmentLUT if hasStops set,
-            // else inherit segFallback (the arc's colour where an arc covers,
-            // the base gradient where none does).
-            vec3 segColor;
-            if (seg.w > 0.5) {
-                // tLocal: 0 at seg head (rel = -1/invSigma), 1 at seg tail. e
-                // already normalises rel by invSigma, so clamp/rescale.
-                float tLocal = clamp(0.5 + e * 0.5, 0.0, 1.0);
-                float rowY   = (float(s) + 0.5) / float(MAX_SEGMENT_BOOSTS);
-                segColor     = texture(uSegmentLUT, vec2(tLocal, rowY)).rgb;
-            } else {
-                segColor = segFallback;
-            }
-            segAcc   += segColor * bell * g;
-            wsumSegW += bell * g;                        // gated denominator - cancels bell out of the hue
-        }
-
-        ti  += dti;
-        si  += dti;
+        // Segments are gathered with the raw proximity weight g, NOT the
+        // arc-gated one, so a segment lights even on perimeter stretches no
+        // arc covers. e1 holds SUM(segColour * bell) and SUM(bell) over every
+        // segment, so the old inner loop collapses to one add each.
+        segAcc   += e1.rgb * g;
+        wsumSegW += e1.a   * g;
     }
 
     // Both are pure hues of unit magnitude now; the magnitudes are attached
@@ -648,12 +604,74 @@ void main() {
     // way - emitCover is what carries it. The scaling stays linear in
     // intensity, exactly as it was when it rode on `col`, and both layers are
     // now shaped by the same px-based (size-invariant) feathers.
+    // Colour-stop ALPHA rides here, on the magnitude, for two reasons.
+    //
+    // It cannot ride on `col`: that sum is divided by the same weight it was
+    // gathered with, so any scale folded into it cancels exactly.
+    //
+    // And it is read POINTWISE, at this fragment's own perimeter position,
+    // rather than gathered like the hue - for the same reason emitCover is.
+    // The gather weight 1/(dd + kc2) is a Lorentzian with 1/d^2 tails, so a
+    // gathered alpha is a ring-wide weighted mean: a half-perimeter faded to
+    // 0 still measured 0.44 of full brightness at its own midpoint, dragged
+    // up by the opaque far side, while the opaque half was dragged down. The
+    // pointwise read is exact at every position and needs no normalisation.
+    //
+    // Alpha 0 therefore kills the filament, halo and bloom together at that
+    // position, and the premultiplied output alpha (peak channel, bottom of
+    // main) follows for free, so the background shows through rather than
+    // being occluded by a black tube.
+    float baseAlphaPt = texture(uGradientLUT,
+                                vec2(sPos - uTime * uHueRotationRate, 0.5)).a;
+    // Winner-take-all across arcs, as documented for overlap. This can be a
+    // plain max() again because arcCoverContinuous now reaches a FULL 1.0 at an
+    // abutting endpoint rather than 0 (inward) or 0.5 (straddling), so two arcs
+    // tiling the ring hand over at max(w1, w2) with no notch - and because
+    // their ramps overlap, the handover stays smooth even when w1 != w2.
     float emitCover = 0.0;
     for (int a = 0; a < uArcCount; a++) {
         vec4 arc = uArcs[a];
         if (arc.z <= 0.0) continue;                       // dark arc: no filament
-        float c = arcCoverContinuous(sPos, arc.x, arc.y, headF, tailF);
-        emitCover = max(emitCover, c * arc.z);
+        float c = arcCoverContinuous(sPos, arc.x, arc.y, headF, tailF,
+                                     arcTailAbuts(arc.w), arcHeadAbuts(arc.w));
+        if (c <= 0.0) continue;                           // does not reach here
+        // Each arc's own alpha, from the same LUT its colour came from and in
+        // the same coordinate space the gather used - arc-local for hasStops,
+        // perimeter space otherwise.
+        float aA;
+        if (arcHasStops(arc.w)) {
+            // NO hue-rotation term here, unlike the base-gradient path above.
+            // uArc is the arc's OWN head-to-tail coordinate, not a position on
+            // the perimeter ring, so there is nothing for a rotation to rotate:
+            // subtracting uTime * rate just slid the gradient off one end, and
+            // the atlas wrap brought the tail colour back round to butt against
+            // the head mid-edge with no geometric feature to hide the seam.
+            // Segments never had the term, and this is what makes arcs match
+            // them. An arc's gradient moves by moving the arc (Arc::start) or
+            // by animating its stops.
+            //
+            // WRAPPED, exactly as arcCoverContinuous wraps its own rel. An arc
+            // may straddle the seam (start 0.8 + length 0.4 is legal - see
+            // Arc::start), and coverage already handles that, so a plain
+            // sPos - start would go NEGATIVE past the seam and CLAMP_TO_EDGE
+            // would pin the whole wrapped remainder to the head colour. The
+            // arc stayed lit and lost its gradient.
+            //
+            // The midpoint split is the other half: an outward tail feather
+            // reaches BEHIND the start, and those fragments want a small
+            // negative rel (clamping to the head) rather than one wrapped up
+            // to near 1 (clamping to the tail). Same threshold as the coverage
+            // feather so the two cannot disagree.
+            float rowY = (float(a) + 0.5) / float(MAX_ARCS);
+            float rel  = sPos - arc.x;
+            rel       -= floor(rel);                       // wrap to [0, 1)
+            if (rel > 0.5 * (1.0 + arc.y)) { rel -= 1.0; } // behind the start, not past the head
+            float uArc = rel / max(arc.y, 1e-4);
+            aA         = texture(uArcLUT, vec2(uArc, rowY)).a;
+        } else {
+            aA = baseAlphaPt;
+        }
+        emitCover = max(emitCover, c * arc.z * aA);
     }
 
     // Segment coverage at this fragment's own perimeter position. This is the
@@ -668,7 +686,18 @@ void main() {
         float rel = sPos - seg.x;
         rel      -= floor(rel + 0.5);                     // wrap to [-0.5, 0.5]
         float e   = rel * seg.y;
-        segCoverPt += seg.z * exp(-e * e);
+        // Per-segment alpha, pointwise - see emitCover above. Stop-less
+        // segments inherit the base gradient's alpha, mirroring how their
+        // colour falls back to segFallback in the gather.
+        float sA;
+        if (seg.w > 0.5) {
+            float tLocal = clamp(0.5 + e * 0.5, 0.0, 1.0);
+            float rowY   = (float(s) + 0.5) / float(MAX_SEGMENT_BOOSTS);
+            sA           = texture(uSegmentLUT, vec2(tLocal, rowY)).a;
+        } else {
+            sA = baseAlphaPt;
+        }
+        segCoverPt += seg.z * exp(-e * e) * sA;
     }
     float emitCoverAll = max(emitCover, min(segCoverPt, 1.0));
 
@@ -726,7 +755,7 @@ void main() {
     // term is the same filament-reach floor setupGeometry applies - without it
     // the two disagree at small glowRadius (and `reach` hits 0 at glowRadius 0,
     // making the pedestal subtract the entire bloom).
-    float reach     = max(uGlowRadius * EARLY_OUT_RADIUS_FACTOR *
+    float reach     = max(uGlowRadius * GLOW_REACH_RADIUS_FACTOR *
                           (1.0 + uBloomStrength * uIntensity),
                           sigma * reachSigmas);
     float bloomPeak = BLOOM_NORM_FACTOR * PI;
@@ -741,7 +770,7 @@ void main() {
     // gated too now - the gather's spacing floor used to keep it finite here.)
     float glowGate = clamp(uGlowRadius / GLOW_GATE_FADE_PX, 0.0, 1.0);
 
-    // Compose: base arc × intensity + segments (independent of intensity, so
+    // Compose: base arc x intensity + segments (independent of intensity, so
     // a segment stays lit even on a dark arc - the whole point of the
     // additive segment model).
     //
@@ -839,7 +868,7 @@ void main() {
     // --- Grade --------------------------------------------------------
     // Hue-preserving Reinhard: tonemap the peak channel and scale the
     // others by the same ratio. Per-channel tonemap desaturates warm mixes
-    // (orange → peach) because R saturates while G/B are still linear;
+    // (orange -> peach) because R saturates while G/B are still linear;
     // scaling by the peak's compression preserves the original R:G:B ratio.
     float peak = max(max(result.r, result.g), result.b);
     float mapped = peak / (peak + TONE_MAP_SHOULDER);

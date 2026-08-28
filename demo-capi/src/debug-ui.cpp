@@ -24,6 +24,22 @@ namespace
     constexpr const char *GLSL_VERSION = "#version 300 es";
 #endif
 
+    // Warn when both neon paths are enabled at once: they draw the SAME glow
+    // from the same neon config, so it composites twice. Mirrors
+    // BothNeonPathsWarning in demo/src/debug-ui.cpp - keep the two in step.
+    void BothNeonPathsWarning(el_effect_handle_t effect)
+    {
+        el_bool_t neonOn = 0;
+        el_bool_t optOn = 0;
+        el_effect_get_neon_renderer_enabled(effect, &neonOn);
+        el_effect_get_optimized_renderer_enabled(effect, &optOn);
+        if (neonOn && optOn)
+        {
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
+                               "Both neon paths on - glow drawn twice; disable one.");
+        }
+    }
+
     // --- Blend-space combo used by Neon / Optimized / segment / arc rows.
     bool BlendCombo(const char *label, el_blend_space_e &space)
     {
@@ -653,8 +669,11 @@ void DebugUI::buildNeonSection(el_effect_handle_t effect)
     {
         el_effect_set_neon_renderer_enabled(effect, en ? 1 : 0);
     }
+    BothNeonPathsWarning(effect);
     if (!en)
+    {
         return;
+    }
 
     el_opaque_mode_e opaqueMode = EL_OPAQUE_MODE_NONE;
     el_effect_get_opaque_mode(effect, &opaqueMode);
@@ -732,16 +751,10 @@ void DebugUI::buildOptimizedNeonSection(el_effect_handle_t effect)
     {
         el_effect_set_optimized_renderer_enabled(effect, en ? 1 : 0);
     }
+    BothNeonPathsWarning(effect);
     if (!en)
-        return;
-
-    el_bool_t showHalf = 0;
-    el_effect_get_optimized_show_half_res(effect, &showHalf);
-    bool sh = showHalf;
-    ImGui::SameLine();
-    if (ImGui::Checkbox("Show Half-Res##Opt", &sh))
     {
-        el_effect_set_optimized_show_half_res(effect, sh ? 1 : 0);
+        return;
     }
 
     float scale = 0.0f;

@@ -345,7 +345,7 @@ namespace EdgeLighting
         {
             if (cfg.neon.segmentBoosts.size() <= index)
             {
-                cfg.neon.segmentBoosts.resize(index + 1, SegmentBoost{0.0f, defaultLength, defaultBoost});
+                cfg.neon.segmentBoosts.resize(index + 1, SegmentBoost{0.0f, defaultLength, defaultBoost, {}, BlendSpace::RGB});
             }
             return cfg.neon.segmentBoosts[index];
         }
@@ -730,6 +730,7 @@ namespace EdgeLighting
             }
         }
 
+    private:
         float mStartPos;
         float mEndPos;
         float mMaxLength;

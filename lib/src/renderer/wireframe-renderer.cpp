@@ -44,13 +44,24 @@ namespace EdgeLighting
         mVertexArray.DrawArrays(GL_LINE_LOOP, 4);
 
         mShaderProgram.Unuse();
+
+        // Hand back the same blend state every other renderer leaves behind,
+        // not just "blending on". This one happens to be registered first in
+        // the demo, so whatever func was live before it was the caller's - but
+        // relying on that makes the registration order load-bearing.
         glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     }
 
     void WireframeRenderer::OnConfigChanged(const Config &config)
     {
+        // Gate the VBO upload on the geometry alone, like the neon renderers
+        // do. OnConfigChanged fires on ANY change to the composited config, so
+        // with an animation attached it runs every frame - and the box only
+        // depends on width and height.
+        const bool geometryDirty = config.geometry != mCurrentConfig.geometry;
         mCurrentConfig = config;
-        if (mShaderProgram.IsValid())
+        if (geometryDirty && mShaderProgram.IsValid())
         {
             buildGeometry(config);
         }
@@ -66,6 +77,9 @@ namespace EdgeLighting
 
     void WireframeRenderer::buildGeometry(const Config &config)
     {
+        // Sharp box on purpose, even when geometry.cornerRadius is set: this is
+        // a debug bounding box, so it shows the extent the config asked for
+        // rather than tracing the rounded outline the neon actually draws.
         float halfW = config.geometry.width * 0.5f;
         float halfH = config.geometry.height * 0.5f;
 

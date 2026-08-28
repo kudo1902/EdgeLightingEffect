@@ -298,6 +298,23 @@ namespace
     }
 
 
+    /// Warn when both neon paths are enabled at once. They draw the SAME glow
+    /// from the same @c Config::neon, so the effect composites it twice -
+    /// brighter, with the half-res renderer's softer edges laid over the
+    /// full-res ones. Mirrors the warning the lens-flare pair already carries.
+    ///
+    /// Shown in both sections, not just the optimized one: the two checkboxes
+    /// live in separate collapsing headers, so either is where the user might
+    /// be looking when the second path goes on.
+    inline void BothNeonPathsWarning(const EdgeLighting::Config &cfg)
+    {
+        if (cfg.neon.enable && cfg.optimizedNeon.enable)
+        {
+            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
+                               "Both neon paths on - glow drawn twice; disable one.");
+        }
+    }
+
     /// "Opaque Only" debug toggle, shown under the opaque-mode controls in both
     /// the Neon and OptimizedNeon sections. Both write the same
     /// @c NeonConfig::opaqueOnly field, so the caller passes a distinct @p id
@@ -559,6 +576,7 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
     }
 
     ImGui::Checkbox("Enable##Neon", &cfg.neon.enable);
+    BothNeonPathsWarning(cfg);
     if (!cfg.neon.enable)
     {
         return;
@@ -704,13 +722,11 @@ void DebugUI::buildOptimizedNeonSection(EdgeLighting::Config &cfg,
     }
 
     ImGui::Checkbox("Enable##Optimized", &cfg.optimizedNeon.enable);
+    BothNeonPathsWarning(cfg);
     if (!cfg.optimizedNeon.enable)
     {
         return;
     }
-
-    ImGui::SameLine();
-    ImGui::Checkbox("Show Half-Res##Optimized", &cfg.optimizedNeon.showHalfRes);
 
     SliderWithInput("Res Scale##Opt", cfg.optimizedNeon.resolutionScale, 0.125f, 1.0f, "%.3f");
     SliderIntWithInput("Samples##Opt", cfg.optimizedNeon.numSamples, 8, NEON_MAX_LOOP_SAMPLES);

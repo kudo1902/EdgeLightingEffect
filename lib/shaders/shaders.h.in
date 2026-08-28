@@ -3,8 +3,8 @@
 
 // Auto-generated from lib/shaders/*.{vert,frag}.
 // The GLSL version line is injected by CMake based on platform:
-//   macOS  → #version 330 core
-//   Win/Linux → #version 300 es
+//   macOS  -> #version 330 core
+//   Win/Linux -> #version 300 es
 // The .frag/.vert files themselves contain no #version directive.
 
 namespace EdgeLighting
@@ -31,6 +31,11 @@ namespace EdgeLighting
                 static const char *const NEON_OPTIMIZED_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
 @NEON_TUNING@
 @NEON_OPTIMIZED_FRAG_CONTENT@
+)shadersrc";
+
+                static const char *const NEON_EMISSION_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
+@NEON_TUNING@
+@NEON_EMISSION_FRAG_CONTENT@
 )shadersrc";
 
                 static const char *const NEON_BLIT_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
