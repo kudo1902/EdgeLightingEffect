@@ -13,13 +13,13 @@
 
 namespace EdgeLighting
 {
-    /// Full-resolution neon renderer.
+    /// The neon renderer.
     ///
     /// Draws a tight quad over the rect + glow-reach margin and runs one
     /// fragment shader that composes filament + halo + bloom.
     ///
     /// Per-fragment work: an analytic rounded-box SDF, plus a gather loop over
-    /// @c NEON_MAX_LOOP_SAMPLES perimeter samples (positions live in a UBO)
+    /// @c NeonConfig::numSamples perimeter samples (positions live in a UBO)
     /// that costs two @c texelFetch calls per sample into @c uEmission - the
     /// table baked by the emission pre-pass. The per-sample arc scan, segment
     /// loop and filtered LUT reads that used to run here are all
@@ -42,6 +42,31 @@ namespace EdgeLighting
     /// full compose. Visual parameters come from @c Config::neon;
     /// @c NeonConfig::arcs and @c NeonConfig::segmentBoosts drive their
     /// respective UBOs and atlases.
+    ///
+    /// --- Resolution scale -----------------------------------------------
+    ///
+    /// One renderer, two paths, chosen by @c NeonConfig::resolutionScale:
+    ///
+    ///   1.0  - the gather draws straight onto the framebuffer it was handed.
+    ///          No offscreen buffer, no blit, nothing allocated.
+    ///   <1.0 - the gather draws into @c mScaledBuffer at that fraction of the
+    ///          viewport and is bilinear-blitted back over the target. Costs
+    ///          one buffer and one fullscreen draw, saves the gather on
+    ///          (1 - scale^2) of the fragments.
+    ///
+    /// The paths are the same code: every pixel-valued uniform is multiplied
+    /// by the scale unconditionally (a no-op at 1.0) and the shader converts
+    /// its own full-res px constants with @c uResolutionScale. Only the render
+    /// target, the blit and the buffer allocation are actually conditional -
+    /// which is what makes a scale of exactly 1.0 bit-identical to the
+    /// dedicated full-res path this class used to have as a separate fork
+    /// (@c NeonOptimizedRenderer, removed).
+    ///
+    /// Debug overlays (LUT strip, colour-stop markers) are NOT here - they are
+    /// a separate layer, @ref DebugRenderer, driven by @ref DebugConfig. The
+    /// one debug field this renderer does read is
+    /// @c DebugConfig::opaqueOnly, which selects which of its passes run and
+    /// so cannot live anywhere but in the schedule below.
     class NeonRenderer : public BaseRenderer
     {
     public:
@@ -54,8 +79,12 @@ namespace EdgeLighting
         virtual void OnConfigChanged(const Config &config) override;
 
     private:
-        // --- Setup and config-driven rebuilds (not per-frame) --------------
         bool setupShaders();
+        /// Upload the static NDC quad the fullscreen passes draw. Called once
+        /// from @ref Initialize: the quad is in clip space, so unlike
+        /// @ref setupGeometry's it is independent of the geometry, the
+        /// viewport and the resolution scale, and never needs rebuilding.
+        void setupFullscreenQuad();
         void setupGeometry(const Config &config);
         void rebuildLoopSamples(const Config &config);
         /// Re-bake the three colour LUTs. Each wrapper self-guards, so this is
@@ -63,19 +92,44 @@ namespace EdgeLighting
         /// definition for what does and does not dirty a LUT.
         void bakeLUTs(const Config &config);
 
+        /// Size @c mEmissionBuffer to the emission table's fixed dimensions, in
+        /// the best format the driver will give - walking the candidate list in
+        /// preference order.
+        ///
+        /// Named for the BUFFER, not the table it carries: this allocates the
+        /// resource, it does not fill it. The contents are written by
+        /// @ref renderEmissionPass, which is where "table" belongs.
+        ///
+        /// Called ONCE, from @ref Initialize. The table's dimensions are
+        /// compile-time constants and its format cannot change once settled,
+        /// so there is nothing for a later call to discover - it is not on the
+        /// per-frame path at all.
+        ///
+        /// Named for the @c Framebuffer::Resize it delegates to, and shares its
+        /// semantics: creates the attachment on the first call, then no-ops on
+        /// every later one where nothing has changed. What it adds is the
+        /// format walk, and the buffer's own format is what records how far
+        /// down the list an earlier call had to go - so a settled buffer
+        /// re-requests what it already holds and Resize early-outs.
+        /// @return false only if NO candidate could be allocated, in which case
+        ///         there is no attachment at all - see the caller.
+        bool resizeEmissionBuffer();
+
         // --- Per-frame pass list, declared in PASS-NUMBER order -------------
         // The numbering is the pipeline order from docs/emission-prepass.md,
         // and the .cpp defines them in this same order - keep all three in
         // step. The data dependency is the real contract: pass 0 bakes the
-        // table pass 2 reads, and pass 1's fill must land before pass 2
-        // composites the glow over it.
+        // table pass 1 reads, pass 2a's fill must land before pass 2b
+        // composites the glow over it, and at scale 1.0 pass 1 IS the
+        // composite (it draws onto the target directly and 2b does not run).
         //
-        // NOTE @ref Render executes pass 0 AFTER pass 1 here, which is the one
-        // place declaration order and call order differ. The emission table
-        // feeds only pass 2, so deferring it past the opaqueOnly early-out
-        // lets fill-only debug mode skip a UBO upload and a draw it would
-        // never sample. NeonOptimizedRenderer has no such inversion - there
-        // both are inside the same guard, so it runs 0, 1, 2a, 2b in order.
+        // NOTE @ref Render calls pass 2a FIRST - the one place declaration
+        // order and call order differ. The fill depends on nothing above it
+        // and must be UNDER the glow either way, so running it first is what
+        // lets one schedule serve both resolution paths: the direct path needs
+        // it down before the gather composites over it, and hoisting it also
+        // keeps it ahead of the @c DebugConfig::opaqueOnly early-out, so
+        // fill-only mode skips a UBO upload and two draws it never samples.
 
         // STATE OWNERSHIP. `Render` owns blend state - enable and func - and
         // sets it immediately before each pass that depends on it, so no pass
@@ -85,10 +139,10 @@ namespace EdgeLighting
         // relies on are stated in its @pre below.
         //
         // The passes take the pieces of the frame transform they actually use.
-        // @ref Render derives them once: `center` reaches the screen by two
-        // routes - folded into @p mvp for the glow, and added to each stop's
-        // perimeter point for the debug markers - so deriving it in one place
-        // is what keeps the markers aligned with the glow they annotate.
+        // @ref Render derives them once, in SCALED space, so the gather quad
+        // and the sample positions agree; the opaque fill is the exception and
+        // takes the viewport height, since it always draws at full resolution
+        // on the caller's framebuffer.
 
         /// Pack the segment + arc UBOs. Called before the emission pre-pass
         /// because BOTH passes read them: the pre-pass to bake the per-sample
@@ -100,65 +154,71 @@ namespace EdgeLighting
         void packLightBlocks(const Config &config);
 
         /// Pass 0: bake the fragment-invariant half of the gather into
-        /// @c mEmissionBuffer. Retargets the framebuffer and viewport, so it
-        /// restores both before returning - see docs/emission-prepass.md.
+        /// @c mEmissionBuffer, at the clamped sample count so texel i here is
+        /// sample i in the gather. Retargets the framebuffer and viewport, so
+        /// it restores both before returning - see docs/emission-prepass.md.
         /// @pre Blending disabled - a table write is not a composite.
-        /// @return false if no emission target could be allocated at all (both
-        ///         the RGBA16F and the RGBA8 attempt failed). @c Framebuffer::Resize
-        ///         destroys the attachment on its failure path, so there is no
-        ///         stale table left to fall back on - the caller must SKIP the
-        ///         gather rather than let it texelFetch texture 0.
-        bool renderEmissionPass(int viewportWidth, int viewportHeight, float time, const Config &config);
+        /// @pre @c mEmissionBuffer is allocated, which @ref Initialize
+        ///      guarantees for the renderer's lifetime - hence no failure to
+        ///      report and nothing to allocate here.
+        void renderEmissionPass(int viewportWidth, int viewportHeight, float time, const Config &config);
 
-        /// Pass 1: opaque-mode background fill on a fullscreen NDC quad. The
-        /// fragment shader shapes coverage from an analytic rounded-box SDF
-        /// read off gl_FragCoord. Caller guards on @c opaqueMode != NONE.
-        void renderOpaqueFill(const glm::vec2 &center, const Config &config);
-
-        /// Pass 2: the neon gather on the tight glow quad. Reads the emission
+        /// Pass 1: the neon gather on the tight glow quad. Reads the emission
         /// table produced by @ref renderEmissionPass, so it must run after it.
-        void renderNeonPass(const glm::mat4 &mvp, float time, const Config &config);
+        ///
+        /// Draws either straight onto the bound framebuffer (@p scaled false)
+        /// or into @c mScaledBuffer (@p scaled true), in which case it also
+        /// clears that buffer and leaves it bound - @ref Render restores the
+        /// target before pass 2b.
+        /// @pre Premultiplied-over blending. Onto the target that composites
+        ///      the glow over what is already there; into the cleared
+        ///      transparent buffer it leaves premultiplied colour + coverage
+        ///      alpha for the blit to composite instead.
+        /// @return false if the scaled target could not be allocated, in which
+        ///         case nothing was drawn and pass 2b must be skipped too - it
+        ///         would otherwise composite a stale or undefined buffer.
+        bool renderNeonPass(const glm::mat4 &mvp, int bufWidth, int bufHeight,
+                            bool scaled, float time, const Config &config);
 
-        /// Debug pass: the baked gradient LUT as a strip at the geometry
-        /// centre. Caller guards on @c showGradientLUT.
-        /// @pre Blending disabled - the strip overwrites the glow beneath it.
-        void renderGradientLUTStrip(const glm::mat4 &mvp, float time, const Config &config);
+        /// Pass 2a: opaque-mode background fill on a fullscreen NDC quad, at
+        /// FULL resolution on the caller's framebuffer regardless of the
+        /// resolution scale - it is a flat shape from an analytic SDF, so
+        /// scaling it would only cost it its clean edges. The fragment shader
+        /// reads @c gl_FragCoord, hence the viewport height rather than a
+        /// transform. Caller guards on @c opaqueMode != NONE.
+        void renderOpaqueFill(int viewportHeight, const Config &config);
 
-        /// Debug pass: one filled disc per colour stop at its perimeter
-        /// position. Caller guards on @c showColorStops + a non-empty list.
-        /// @pre Straight-alpha blending, for the discs' anti-aliased edges.
-        /// @note Takes @p proj, not the composed mvp: every marker gets its own
-        ///       model matrix, so it needs the projection un-premultiplied.
-        void renderColorStopMarkers(const glm::mat4 &proj, const glm::vec2 &center,
-                                    float halfWidth, float halfHeight, const Config &config);
+        /// Pass 2b: bilinear composite of the scaled buffer onto the caller's
+        /// framebuffer. Only runs when the scaled path did.
+        /// @pre Premultiplied-over blending, and the caller's framebuffer and
+        ///      full-resolution viewport are restored.
+        void renderBlitPass();
 
     private:
         Config mCurrentConfig;
-        ShaderProgram mShaderProgram;
-        ShaderProgram mEmissionShader;                                 ///< Perimeter emission pre-pass (neon-emission.frag).
-        ShaderProgram mBlackRectShader;                                ///< Opaque-mode black background fill (black-rect.frag).
-        ShaderProgram mLUTDebugShader;                                 ///< Debug LUT strip (neon-lut-debug.frag).
-        ShaderProgram mStopMarkerShader;                               ///< Debug per-stop marker (neon-stop-marker.frag).
-        VertexArray mVertexArray{"NeonRenderer"};                      ///< Tight glow quad (rect + glow reach).
-        VertexArray mFullVertexArray{"NeonRenderer.Full"};             ///< Viewport-covering quad for the opaque fill.
-        VertexArray mLUTStripVertexArray{"NeonRenderer.LUTStrip"};     ///< Small centred quad for the LUT debug strip.
-        VertexArray mStopMarkerVertexArray{"NeonRenderer.StopMarker"}; ///< Unit quad ([-1,+1]) used to draw each stop marker.
-        glm::vec2 mLUTStripHalfSize{0.0f};                             ///< Half extents of the LUT strip in local px (matches mLUTStripVertexArray).
+        ShaderProgram mNeonShader;                         ///< The neon gather (neon.frag).
+        ShaderProgram mEmissionShader;                     ///< Perimeter emission pre-pass (neon-emission.frag).
+        ShaderProgram mBlackRectShader;                    ///< Opaque-mode black background fill (black-rect.frag).
+        ShaderProgram mBlitShader;                         ///< Scaled-path upscale composite (neon-blit.frag).
+        VertexArray mGlowVertexArray{"NeonRenderer.Glow"};             ///< Tight glow quad (rect + glow reach), in scaled space.
+        VertexArray mFullscreenVertexArray{"NeonRenderer.Fullscreen"}; ///< NDC quad: emission bake, opaque fill, blit.
 
         /// Backs neon.frag's std140 `SegmentBlock` (DALi-compatible uniform
         /// block holding uSegmentCount + uSegments[]).
         UniformBuffer mSegmentBlock{"NeonRenderer.SegmentBlock"};
         /// Backs neon.frag's std140 `LoopSamplesBlock` - vec4[NUM_LOOP_SAMPLES]
-        /// where .xy holds the perimeter point in rect-local pixels.
+        /// where .xy holds the perimeter point in scaled rect-local pixels.
+        /// Always allocated at full size; only the first @c uNumSamples entries
+        /// are filled, and the shader stops there.
         UniformBuffer mLoopSamplesBlock{"NeonRenderer.LoopSamplesBlock"};
         /// Backs neon.frag's std140 `ArcBlock` (uArcCount + uArcs[MAX_ARCS]).
         UniformBuffer mArcBlock{"NeonRenderer.ArcBlock"};
 
-        float mQuadMargin = 0.0f; ///< Draw-quad margin (px from rect edge); shader fades the bloom out by here.
+        float mQuadMargin = 0.0f; ///< Draw-quad margin (scaled px from rect edge); shader fades the bloom out by here.
 
-        /// Baked colour ring (GRADIENT_LUT_SIZE x 1 RGBA8, sampled at v = 0.5).
-        /// The wrapper owns the bake, the cross-fade and the guard behind them -
-        /// see @ref GradientRingLUT.
+        /// Baked colour ring (@c NeonConfig::gradientLutSize x 1 RGBA8, sampled
+        /// at v = 0.5). The wrapper owns the bake, the cross-fade and the guard
+        /// behind them - see @ref GradientRingLUT.
         GradientRingLUT mGradientLUT;
 
         /// Per-segment gradient atlas (SEGMENT_LUT_WIDTH x MAX_SEGMENT_BOOSTS),
@@ -177,21 +237,17 @@ namespace EdgeLighting
         /// Perimeter emission table, NEON_MAX_LOOP_SAMPLES x 2 (see
         /// neon-emission.frag for the row packing). Rebuilt every frame by
         /// @ref renderEmissionPass and read by the gather with texelFetch.
+        ///
+        /// Also remembers, on the renderer's behalf, whether the driver would
+        /// give it RGBA16F: @ref renderEmissionPass asks a live buffer for the
+        /// format it already holds, so the RGBA8 fallback sticks without a flag
+        /// here to say so.
         Framebuffer mEmissionBuffer{"NeonRenderer.Emission"};
-        /// Latched the first time the driver refuses an RGBA16F emission
-        /// target, after which the renderer asks only for RGBA8. Not just a
-        /// log guard: @c Framebuffer::Resize treats a format change as a
-        /// reallocation, so re-requesting 16F every frame would churn the
-        /// texture + FBO twice per frame. RGBA8 is a working fallback, but it
-        /// clamps arc intensities and stacked segment boosts above 1.0.
-        bool mEmissionFloatUnavailable = false;
 
-        /// Latches for the "more arcs / segments than the shader can hold"
-        /// warnings, so the message lands once per overflow rather than once
-        /// per frame. Cleared when the count drops back under the cap, so a
-        /// host that overflows again is told again.
-        bool mArcOverflowLogged = false;
-        bool mSegmentOverflowLogged = false;
+        /// The gather's target on the scaled path. Never touched at
+        /// @c resolutionScale 1.0 - not allocated, not bound, not blitted - so
+        /// the full-res path pays nothing for its existence.
+        Framebuffer mScaledBuffer{"NeonRenderer.Scaled"};
     };
 }
 
