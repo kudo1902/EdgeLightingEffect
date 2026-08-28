@@ -3,6 +3,14 @@
 What the `improve_perf_by_emission_prepass` branch changes relative to the
 neon renderers without it, measured on visuals, performance and memory.
 
+> **Superseded in part.** Measured while the neon effect had two renderers,
+> `NeonRenderer` and the half-res `NeonOptimizedRenderer`. Those were later
+> folded into one renderer drawing at `NeonConfig::resolutionScale`, and the
+> merged renderer's output was verified byte-identical to each fork at the
+> matching scale - so every number below still stands, but read "the optimized
+> renderer" as "the scaled path" and "the full-res renderer" as
+> "`resolutionScale` 1.0". See `neon-unification-plan.md`.
+
 Design rationale lives in [`emission-prepass.md`](emission-prepass.md); this
 document is the evidence.
 

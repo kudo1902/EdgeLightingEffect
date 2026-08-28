@@ -1144,7 +1144,7 @@ const bool lutDirty      = colorStops changed || blendSpace changed;</code></pre
 
       <p class="lede">The bloom covers a large area, and every pixel in it runs the whole shader. But most of that area is a smooth gradient with no fine detail in it - exactly the kind of thing you can compute small and stretch back up without anyone noticing.</p>
 
-      <p>That is what <code>NeonOptimizedRenderer</code> is. It draws the neon into an offscreen buffer at half the width and half the height, then scales the result onto the screen. Half in each direction is a <strong>quarter of the pixels</strong>, so the expensive per-pixel work drops by roughly four times, at the price of one cheap full-screen copy.</p>
+      <p>That is what <code>NeonConfig::resolutionScale</code> buys. Below 1.0 the renderer draws the neon into an offscreen buffer at that fraction of the width and height, then scales the result onto the screen; at 0.5, half in each direction is a <strong>quarter of the pixels</strong>, so the expensive per-pixel work drops by roughly four times, at the price of one cheap full-screen copy. At 1.0 there is no buffer and no copy - the gather draws straight onto the target.</p>
 
       <figure>
         <svg viewBox="0 0 760 330" role="img" aria-label="The optimized renderer's two passes: the glow is drawn into a half-size offscreen buffer and stretched back onto the screen, while the optional opaque fill goes straight to the screen at full size.">
@@ -1250,8 +1250,8 @@ const bool lutDirty      = colorStops changed || blendSpace changed;</code></pre
 
       <ul class="body">
         <li><strong>The filament is what suffers.</strong> The wide, soft layers survive the round trip essentially untouched - that is the whole premise. But the filament is a 4 px razor-sharp line; at half resolution it is drawn 2 px wide and then blurred back up. Wide, soft configurations are nearly free to optimize. Thin, bright, hard-edged ones are not.</li>
-        <li><strong>It is a near-fork, not a wrapper.</strong> Two C++ files and two shader files hold near-identical code. A change to how the neon looks has to land in both copies or the two renderers quietly drift apart.</li>
-        <li><strong>Do not enable both at once.</strong> They read the same <code>config.neon</code> for appearance but have separate switches (<code>neon.enable</code> and <code>optimizedNeon.enable</code>). Turning both on draws the effect twice, on top of itself.</li>
+        <li><strong>It used to be a near-fork.</strong> Two C++ files and two shader files held near-identical code, and a change to how the neon looked had to land in both copies or they quietly drifted apart. They are one renderer and one shader now: the scale multiplies the pixel uniforms on the CPU and the shader converts its own baked-in constants with <code>uResolutionScale</code>, so only the render target and the composite are actually conditional.</li>
+        <li><strong>There is nothing to double-enable.</strong> The old pair had separate switches over one shared appearance config, and turning both on drew the effect twice on top of itself. One renderer with a scale cannot do that.</li>
       </ul>
 
       <div class="tbl-wrap">
@@ -1270,14 +1270,14 @@ const bool lutDirty      = colorStops changed || blendSpace changed;</code></pre
       <details>
         <summary>Under the hood: scaling the uniforms</summary>
         <div class="aside-body">
-          <p>Every geometric uniform is pre-multiplied on the CPU, in <span class="src">lib/src/renderer/neon-optimized-renderer.cpp</span>:</p>
+          <p>Every geometric uniform is pre-multiplied on the CPU, in <span class="src">lib/src/renderer/neon-renderer.cpp</span> - unconditionally, since the factor is 1.0 on the full-resolution path:</p>
 <pre><code>mNeonShader.SetUniform("uResolutionScale", scale);
 mNeonShader.SetUniform("uRectSize",     rectSizeScaled);
 mNeonShader.SetUniform("uCornerRadius", config.geometry.cornerRadius * scale);
 mNeonShader.SetUniform("uLineWidth",    config.neon.lineWidth * scale);
 mNeonShader.SetUniform("uGlowRadius",   config.neon.glowRadius * scale);</code></pre>
           <p>Note what is <em>not</em> scaled: <code>intensity</code>, <code>bloomStrength</code>, <code>filamentFalloff</code> and the arc and segment positions. The first three are unitless multipliers; the last are positions around the perimeter expressed from 0 to 1, so they mean the same thing at any size.</p>
-          <p><code>uResolutionScale</code> is uploaded purely so the shader can convert the handful of baked-in pixel constants from the table above. It is the only uniform in the pair of shaders that exists because of the optimization.</p>
+          <p><code>uResolutionScale</code> is uploaded purely so the shader can convert the handful of baked-in pixel constants from the table above. It and <code>uNumSamples</code> are the only uniforms that exist because of the optimization - and at scale 1.0 with a full sample count, every expression they appear in reduces to what the shader computed before either was added.</p>
           <p>The two-pass structure also has to be careful about where it returns to. A frame capture binds a real offscreen target rather than the window, so pass 2 restores whatever framebuffer the renderer was handed:</p>
 <pre><code>const GLuint targetFbo = Framebuffer::GetBoundId();   // before pass 1
 ...
@@ -1318,7 +1318,7 @@ Framebuffer::BindId(targetFbo);                       // before pass 2</code></p
 
           <rect x="60" y="120" width="440" height="34" class="dg-box-a"/>
           <text x="74" y="142" class="dg-t">Neon (optimized)</text>
-          <text x="240" y="142" class="dg-t2">the half-resolution copy - section 10</text>
+          <text x="240" y="142" class="dg-t2">LUT strip and colour-stop markers</text>
 
           <rect x="60" y="160" width="440" height="34" class="dg-box"/>
           <text x="74" y="182" class="dg-t">Droplets</text>
@@ -1339,7 +1339,7 @@ Framebuffer::BindId(targetFbo);                       // before pass 2</code></p
 
           <text x="60" y="302" class="dg-t2">all six read the same geometry: position, size, corner radius, winding direction</text>
         </svg>
-        <figcaption><b>Fig 11</b> The registered layers, in the order the demo adds them. Each pair of full-resolution and half-resolution variants draws the same thing, so switching both on renders it twice, stacked on itself.</figcaption>
+        <figcaption><b>Fig 11</b> The registered layers, in the order the demo adds them. The lens flare keeps a half-resolution variant that draws the same thing, so switching both on renders it twice, stacked on itself; the neon layer takes a resolution scale instead - section 10.</figcaption>
       </figure>
 
       <p>There is a thread running through them. Three of the six - neon, droplets and lens flare - build their geometry out of the two measurements from Sections 2 and 3: the <strong>signed distance to the outline</strong> and the <strong>position around the perimeter</strong>. Learning those two ideas once buys you most of the way into all three.</p>
@@ -1537,7 +1537,7 @@ Framebuffer::BindId(targetFbo);                       // before pass 2</code></p
         The falloff terms started as pure power laws, which are <em>scale free</em>: dividing the radius by a size factor is algebraically the same as multiplying the whole term by that factor raised to a power. The size slider was therefore also a brightness slider, and a badly non-linear one - the core term scaled with size to the fifth power. Adding a small floor to each falloff gives it a finite peak, so size sets the radius and intensity sets the brightness, independently. It is the same class of problem as the neon's beading floor in Section 4: a value that looked like one control was quietly acting as two.
       </div>
 
-      <p>Like the neon, the flare has a half-resolution twin that renders into a scaled buffer and composites back, using exactly the mechanism from Section 10. And with the same caveat: the two draw the same flare, so switching both on gives you two of them.</p>
+      <p>The flare has a half-resolution twin that renders into a scaled buffer and composites back, using exactly the mechanism from Section 10 - except that here it really is a second renderer. And with the caveat the neon pair used to carry: the two draw the same flare, so switching both on gives you two of them.</p>
 
       <div class="tbl-wrap">
         <table>
@@ -1577,8 +1577,7 @@ Framebuffer::BindId(targetFbo);                       // before pass 2</code></p
             <tr><td class="mono">lib/shaders/neon.frag</td><td>The per-pixel program. The distance formula, the perimeter position, the three brightness curves, the colour gather, the grading.</td></tr>
             <tr><td class="mono">lib/shaders/neon.vert</td><td>Twelve lines. Passes the quad corner through untouched and positions it on screen.</td></tr>
             <tr><td class="mono">lib/src/renderer/neon-renderer.cpp</td><td>The CPU side of Figure 6: dirty checks, quad sizing, the perimeter point list, all three lookup-table bakes, the draw calls.</td></tr>
-            <tr><td class="mono">lib/shaders/neon-optimized.frag</td><td>The half-resolution fork of the shader. Same maths, plus <code>uResolutionScale</code> and a runtime sample count.</td></tr>
-            <tr><td class="mono">lib/src/renderer/neon-optimized-renderer.cpp</td><td>The two-pass version of Figure 6: the offscreen buffer, the scaled uniforms, the composite back to the screen.</td></tr>
+                        <tr><td class="mono">lib/src/renderer/debug-renderer.cpp</td><td>The LUT strip and colour-stop markers, drawn as their own layer over the neon.</td></tr>
             <tr><td class="mono">lib/shaders/neon-blit.frag</td><td>Two lines. Reads the offscreen buffer and composites it onto the screen.</td></tr>
             <tr><td class="mono">lib/shaders/droplets.frag</td><td>The rain layer: band masking, the hashed droplet grid, the orientation blend, the water shading.</td></tr>
             <tr><td class="mono">lib/shaders/lens-flare.frag</td><td>The flare: ghosts, rays, core. Carries the licence note in its header.</td></tr>

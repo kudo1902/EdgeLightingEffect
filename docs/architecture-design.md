@@ -34,9 +34,8 @@ Config ────► │ EdgeLightingEffect   │◄──── Clock (Play/P
                        │  Render(w, h, t, config)
                        ▼
        ┌─────────────────────────────────────────┐
-       │  WireframeRenderer      (debug outline) │
-       │  NeonRenderer           (full-res neon) │
-       │  NeonOptimizedRenderer  (half-res neon) │
+       │  NeonRenderer      (neon, any res scale) │
+       │  DebugRenderer   (strip, markers, box)   │
        │  DropletsRenderer       (rain on glass) │
        │  LensFlareRenderer      (sun + ghosts)  │
        │  LensFlareOptimizedRenderer (half-res)  │
@@ -105,10 +104,12 @@ Config
  │                         boost, own colorStops + blendSpace). Default empty.
  │                       - compositing: opaqueMode + opaqueColor +
  │                         opaqueSoftness, insideCutoff / outsideCutoff
- │                       - debug: showGradientLUT, showColorStops, opaqueOnly
- ├── OptimizedNeonConfig half-res knobs (enable, resolutionScale, numSamples,
- │                       gradientLutSize). *Shares* NeonConfig
- │                       for every visual param above.
+ │                       - cost: resolutionScale (1.0 = full res, direct),
+ │                         numSamples, gradientLutSize
+ ├── DebugConfig         everything for inspecting rather than drawing:
+ │                       enable, showGradientLUT, showColorStops (the
+ │                       overlay layer) plus opaqueOnly, a debug MODE of
+ │                       NeonRenderer that it reads back out of here.
  ├── DropletsConfig      rain on glass: amount, speed, lanes, bandWidth,
  │                       bandOffset, tint. Band side comes from
  │                       NeonConfig::glowSide.
@@ -119,7 +120,6 @@ Config
  ├── LensFlareOptimizedConfig
  │                       enable + resolutionScale only. *Shares*
  │                       LensFlareConfig for every visual param.
- └── WireframeConfig     enable + color
 ```
 
 Host code produces a `Config` (usually a copy of `effect.GetConfig()`,
@@ -226,20 +226,20 @@ design used one: [`emission-prepass.md`](emission-prepass.md). Measured
 before/after on visuals, performance and memory:
 [`emission-prepass-comparison.md`](emission-prepass-comparison.md).
 
-### 4.2 NeonOptimizedRenderer
+### 4.2 DebugRenderer
 
-Two-pass half-resolution variant. Pass 1 renders into a scaled RGBA8 FBO
-with a dynamic shader loop bound (`uNumSamples = optimizedNeon.numSamples`,
-1..128). Pass 2 bilinear-blits back to full res. Shares all visual params
-with `NeonConfig`. Meant for edge devices - the resolution-scale + sample-
-count sliders are the primary perf knobs.
+Every debug annotation as a layer of its own: the baked ring
+as a LUT strip, one disc per colour stop at its perimeter position, and the
+1 px `GL_LINE_LOOP` bounding box absorbed from the former `WireframeRenderer`
+(which drew UNDER the glow; here it draws over). Reads
+`DebugConfig` for what to draw and `NeonConfig` for what it is describing,
+and draws the strip and the markers only while there is a glow to annotate -
+neon on, `debug.opaqueOnly` off - while the box, which annotates the geometry,
+survives both. Bakes
+its own `GradientRingLUT` from the same inputs, which is what keeps every
+debug member out of `NeonRenderer`. Register it after the neon layer.
 
-### 4.3 WireframeRenderer
-
-A `GL_LINE_LOOP` debug outline. Blending briefly disabled for crisp 1 px
-lines.
-
-### 4.4 DropletsRenderer
+### 4.3 DropletsRenderer
 
 Rain-on-glass droplets in a band that follows the rounded-rect perimeter.
 The band's thickness is `droplets.bandWidth` and its side comes from
@@ -250,7 +250,7 @@ with the band width so the effect holds up however thin the band is. Drops
 are self-lit (transparent body + crescent rim + specular dot); there is no
 framebuffer capture or refraction pass.
 
-### 4.5 LensFlareRenderer / LensFlareOptimizedRenderer
+### 4.4 LensFlareRenderer / LensFlareOptimizedRenderer
 
 A sun with rays plus hex-aperture chromatic ghosts, drawn as one fullscreen
 premultiplied-alpha pass. The sun rides the perimeter via
@@ -263,15 +263,23 @@ and bilinear-blits back, which is nearly lossless because the flare is smooth
 and low-frequency. The two share `LensFlareConfig`, so **enabling both draws
 the flare twice** - pick one.
 
-### 4.6 The full-res / optimized pairs
+### 4.5 The lens-flare pair, and the neon pair that was
 
-`NeonOptimizedRenderer` and `LensFlareOptimizedRenderer` are near-forks of
-their full-res counterparts rather than thin wrappers: each duplicates its
-sibling's fragment shader and most of its C++ setup, and the pair shares one
-visual sub-config. That is a deliberate trade (the optimized path can diverge
-on precision and sample counts without destabilising the reference path), but
-it means **a change to how neon or the flare looks generally has to land in
-both copies** or the two drift apart visually.
+`LensFlareOptimizedRenderer` is a near-fork of `LensFlareRenderer` rather than
+a thin wrapper: it duplicates its sibling's fragment shader and most of its
+C++ setup, and the pair shares one visual sub-config. That was a deliberate
+trade (the optimized path can diverge without destabilising the reference
+path), but it means **a change to how the flare looks has to land in both
+copies** or the two drift apart visually.
+
+The neon pair was the same shape and no longer exists. `NeonOptimizedRenderer`
+and `neon-optimized.frag` were folded into `NeonRenderer` / `neon.frag`, where
+the half-res path is `NeonConfig::resolutionScale`: pixel uniforms are scaled
+on the CPU, the shader converts its own px constants with `uResolutionScale`,
+and only the render target, the blit and the buffer allocation are
+conditional. The forks' outputs were byte-identical to the merged renderer at
+the matching scales, so nothing was traded away for the dedup. See
+[`neon-unification-plan.md`](neon-unification-plan.md).
 
 ## 5. Animation - Clock + Modulators + AnimationManager
 
@@ -337,7 +345,7 @@ void NeonRenderer::OnConfigChanged(const Config &config)
                             || config.neon.blendSpace != mCurrentConfig.neon.blendSpace;
 
     mCurrentConfig = config;
-    if (!mShaderProgram.IsValid()) { return; }
+    if (!mNeonShader.IsValid()) { return; }
 
     if (samplesDirty)  { rebuildLoopSamples(config); }
     if (geometryDirty) { setupGeometry(config); }

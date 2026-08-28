@@ -1,7 +1,14 @@
 # Perimeter emission pre-pass
 
 Design notes for `lib/shaders/neon-emission.frag` and the pass structure it
-introduces in `NeonRenderer` and `NeonOptimizedRenderer`.
+introduces in `NeonRenderer`.
+
+> Written when the half-res path was a second renderer,
+> `NeonOptimizedRenderer`, with its own copy of the shader. It is one
+> renderer now, drawing at `NeonConfig::resolutionScale`; the pass tables
+> below have been updated, and the two-consumer warnings that used to run
+> through this document now have a single consumer to keep honest. See
+> `neon-unification-plan.md`.
 
 The short version: the neon gather loop was recomputing an identical per-sample
 table in every screen fragment. That table is now baked once per frame into a
@@ -87,47 +94,51 @@ through `emitCover` / `filamentGate`, which are pointwise and size-invariant.
 
 ## 3. Pass structure
 
-`Render` in both renderers is a pass schedule and nothing else: derive the
+`Render` is a pass schedule and nothing else: derive the
 transform, then one call per pass, each in its own private method. Blend state
-is owned by `Render`; each pass owns its shader, and the two that retarget the
+is owned by `Render`; each pass owns its shader, and those that retarget the
 framebuffer restore it themselves.
 
-**`NeonRenderer::Render`**
+**`NeonRenderer::Render`** - one schedule, both resolution paths. `scaled` is
+`resolutionScale < 1.0`; it changes only where pass 1 lands and whether pass 2b
+runs, never the order or the guards.
 
 | pass | method | target | draw |
 | ---- | ------ | ------ | ---- |
-| - | (inline) | - | derives proj / center / mvp for the passes |
+| - | (inline) | - | derives proj / center / mvp, in SCALED space |
+| 2a | `renderOpaqueFill` | caller's framebuffer | black rounded-rect fill (opaque modes only), always full-res |
 | - | `packLightBlocks` | - | UBO upload only |
-| 0 | `renderEmissionPass` | `mEmissionBuffer` (N x 2) | `mFullVertexArray`, identity MVP |
-| 1 | `renderOpaqueFill` | backbuffer | black rounded-rect fill (opaque modes only) |
-| 2 | `renderNeonPass` | backbuffer | tight glow quad, `neon.frag` |
-| dbg | `renderGradientLUTStrip` | backbuffer | colour-ring strip, unblended |
-| dbg | `renderColorStopMarkers` | backbuffer | one disc per colour stop |
+| 0 | `renderEmissionPass` | `mEmissionBuffer` (N x 2, allocated at `Initialize`) | `mFullVertexArray`, identity MVP |
+| 1 | `renderNeonPass` | caller's framebuffer, or `mScaledBuffer` when scaled | tight glow quad, `neon.frag` |
+| 2b | `renderBlitPass` | caller's framebuffer | bilinear composite of `mScaledBuffer`; scaled path only |
 
-**`NeonOptimizedRenderer::Render`**
-
-| pass | method | target | draw |
-| ---- | ------ | ------ | ---- |
-| - | `packLightBlocks` | - | UBO upload only |
-| 0 | `renderEmissionPass` | `mEmissionBuffer` | `mBlitVertexArray`, identity MVP |
-| 1 | `renderHalfResNeonPass` | `mHalfResBuffer` | scaled glow quad, `neon-optimized.frag` |
-| 2a | `renderOpaqueFill` | backbuffer | black rounded-rect fill (opaque modes only) |
-| 2b | `renderBlitPass` | backbuffer | bilinear composite of the half-res FBO |
+At `resolutionScale` 1.0 the last row does not run and pass 1 IS the composite.
+The debug overlays that used to close this table are a separate layer now -
+`DebugRenderer`, drawn after this renderer, always at full resolution.
 
 The arc and segment UBOs are packed **before** pass 0, because both the
 pre-pass and the main pass read them - the pre-pass for the gathered emission,
 the main pass for the continuous filament gate.
 
-### One inversion, in NeonRenderer only
+### One inversion: pass 2a runs first
 
-`NeonRenderer` executes **pass 1 before pass 0**. The emission table feeds only
-pass 2, so deferring it past the `opaqueOnly` early-out lets the fill-only debug
-mode skip a UBO upload and a draw it would never sample. This is safe only
-because `renderEmissionPass` restores the framebuffer it was handed (see below);
-against a version that restored framebuffer 0 it would have been a bug.
+`Render` calls **pass 2a before pass 0**, the one place call order and pass
+numbering differ. Two reasons, and they compound:
 
-`NeonOptimizedRenderer` has no such inversion - both passes sit inside the same
-`!opaqueOnly` guard, so it runs 0, 1, 2a, 2b in order.
+- The fill depends on nothing above it and must end up UNDER the glow either
+  way. Hoisting it is what lets a single schedule serve both resolution paths:
+  the direct path needs it down before the gather composites over it, and the
+  scaled path does not care, because its gather goes to an independent buffer.
+- It puts the fill ahead of the `debug.opaqueOnly` early-out, so the fill-only
+  mode skips a UBO upload and two draws it would never sample.
+
+Pass 0 cannot fail: its target is secured at `Initialize` (section 5), so it
+returns `void` and only pass 1's scaled-buffer allocation can still skip the
+composite.
+
+This is safe only because `renderEmissionPass` restores the framebuffer it was
+handed (see below); against a version that restored framebuffer 0 it would have
+been a bug.
 
 Declaration order in the headers follows the **pass numbering**, not the call
 order, and matches the definition order in the .cpp. The inversion above is
@@ -180,7 +191,7 @@ captured before pass 0.
 
 ## 4. The main shader
 
-`neon.frag` and `neon-optimized.frag` gained `uEmission` and lost `arcInside`
+`neon.frag` gained `uEmission` and lost `arcInside`
 entirely. The loop body is now:
 
 ```glsl
@@ -219,7 +230,8 @@ perimeter stretches are both near a fragment.
 
 ## 5. Texture format
 
-`mEmissionBuffer` asks for `GL_RGBA16F` / `GL_HALF_FLOAT` / `GL_NEAREST`.
+`mEmissionBuffer` asks for `GL_RGBA16F` / `GL_HALF_FLOAT` / `GL_NEAREST`, from
+a candidate list in preference order (`EMISSION_FORMATS`).
 
 - **Float** because both rows exceed 1.0 in ordinary use: row 1 sums stacked
   `SegmentBoost::boost` values (absolute peak brightness), and row 0 carries
@@ -228,16 +240,29 @@ perimeter stretches are both near a fragment.
   unrelated perimeter samples - and the two rows are different quantities
   entirely, so filtering across them is meaningless.
 
-GLES 3.0 exposes float colour-renderability only through an extension, so both
-renderers fall back to `GL_RGBA8` and log a warning once. The fallback clamps
-highlights above 1.0 but is otherwise exact - `docs/branch-vs-main-comparison.md`
-section 3.5 measures how far it drifts.
+GLES 3.0 exposes float colour-renderability only through an extension, so the
+walk falls through to `GL_RGBA8` and logs one line naming both formats. The
+fallback clamps highlights above 1.0 but is otherwise exact -
+`docs/branch-vs-main-comparison.md` section 3.5 measures how far it drifts.
 
-The fallback **latches** in `mEmissionFloatUnavailable`, and that is load-bearing
-rather than a log guard. `Framebuffer::Resize` treats a format change as a
-reallocation, so re-requesting `GL_RGBA16F` every frame on a driver that refuses
-it destroys and recreates the texture and FBO twice per frame - measured at 1218
-allocations over a run that should need one.
+Re-requesting a refused format would be expensive, not merely noisy:
+`Framebuffer::Resize` treats a format change as a reallocation, so asking for
+`GL_RGBA16F` every frame on a driver that refuses it destroys and recreates the
+texture and FBO twice per frame - measured at 1218 allocations over a run that
+should need one. Two things prevent it:
+
+- **The walk starts where the buffer already is.** A live buffer is asked for
+  the format it is holding, which `Resize` early-outs on; only a buffer with no
+  attachment starts at the top of the list. The buffer's own state is the record
+  of how far down the list a previous call got - there is no flag tracking it.
+  (There was: `mEmissionFloatUnavailable`, since removed.)
+- **The walk runs once.** `resizeEmissionBuffer` is called from
+  `NeonRenderer::Initialize`, not per frame. The table's dimensions are
+  compile-time constants (`NEON_MAX_LOOP_SAMPLES x 2` - it is allocated at the
+  sample-count CEILING, and `numSamples` only bounds how much of it is read), so
+  nothing a later call could discover has changed. If no candidate allocates,
+  `Initialize` fails and the effect reports it, rather than the renderer
+  degrading silently to fill-only for the rest of the run.
 
 This motivated the format parameters on `Framebuffer::Resize`:
 
@@ -281,11 +306,11 @@ shape of the result so the design rationale above stands on its own.
 **Performance.** Per-fragment cost went from `O(samples * (arcs + segments))`
 to `O(samples)`. The visible consequence is flatness: the "after" timings
 barely move as the scene grows from one arc to eight arcs plus eight segments,
-where before they rose by more than 5x. The half-res renderer gains least,
+where before they rose by more than 5x. The scaled path gains least,
 because its fixed costs - FBO clear, black fill, full-res blit - do not shrink.
 
 **Correctness.** Max delta **1 LSB** on under 0.1% of pixels, across three
-scenes on both renderers. Two causes, both benign: `RGBA16F` storage of the
+scenes on both resolution paths. Two causes, both benign: `RGBA16F` storage of the
 per-sample intermediates, and `si` now being computed directly
 (`floor(gl_FragCoord.x) * invN`) instead of accumulated through a
 128-iteration `si += dti` chain - the direct form being the more accurate of
@@ -316,9 +341,13 @@ Practical consequences:
 - **Do not gate the filament from the gather.** Both lights read their coverage
   at `sPos`; a gather-derived gate brings back head quantisation and corner
   spill.
-- **Keep the two consumers in step.** `neon.frag` and `neon-optimized.frag`
-  share the pre-pass, so a change to the packing has to land in both.
-  `neon-emission.frag` itself is shared verbatim.
+- **The packing has one consumer.** `neon.frag` is the only reader of the
+  table, at either resolution scale, so a change to the row layout lands in one
+  place. (This used to say "keep the two consumers in step" - the second
+  consumer was `neon-optimized.frag`, now merged away.)
+- **Hand the pre-pass and the gather the same `uNumSamples`.** Texel `i` in the
+  table has to be sample `i` in the gather; both go through
+  `GetClampedNumSamples` for exactly that reason.
 - **Adding a shader means three edits** - `lib/CMakeLists.txt`
   (`CMAKE_CONFIGURE_DEPENDS` and `file(READ ...)`) plus `shaders/shaders.h.in`.
   `neon-emission.frag` needs `@NEON_TUNING@` because it uses `MAX_ARCS`,

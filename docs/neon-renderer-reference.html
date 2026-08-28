@@ -432,10 +432,9 @@
         <table>
           <thead><tr><th>File</th><th>Role</th></tr></thead>
           <tbody>
-            <tr><td class="mono nw">lib/shaders/neon.frag</td><td>The full-resolution neon fragment program. Everything in sections 3 to 13.</td></tr>
+            <tr><td class="mono nw">lib/shaders/neon.frag</td><td>The neon fragment program, at any resolution scale. Everything in sections 3 to 13.</td></tr>
             <tr><td class="mono nw">lib/shaders/neon.vert</td><td>Twelve lines. Passes the quad corner through as <code>vPos</code> and applies <code>uMVP</code>.</td></tr>
-            <tr><td class="mono nw">lib/shaders/neon-optimized.frag</td><td>Half-resolution fork. Identical except for the corrections in section 14.</td></tr>
-            <tr><td class="mono nw">lib/shaders/neon-blit.frag</td><td>Two statements. Bilinear composite of the half-res FBO.</td></tr>
+                        <tr><td class="mono nw">lib/shaders/neon-blit.frag</td><td>Two statements. Bilinear composite of the scaled FBO, on the scaled path only.</td></tr>
             <tr><td class="mono nw">lib/shaders/black-rect.frag</td><td>The opaque fill pass (section 12).</td></tr>
             <tr><td class="mono nw">lib/shaders/droplets.frag</td><td>Section 15.</td></tr>
             <tr><td class="mono nw">lib/shaders/lens-flare.frag</td><td>Section 16.</td></tr>
@@ -451,7 +450,7 @@
         <li><strong>Local space</strong> is what <code>vPos</code> carries: pixels, origin at the rectangle's centre, <code>+Y</code> up. All SDF work happens here.</li>
         <li><code>d</code> is the <strong>signed</strong> rounded-box distance: negative inside, 0 on the outline, positive outside. <code>ad = abs(d)</code>.</li>
         <li><code>t</code> / <code>sPos</code> / <code>si</code> are perimeter positions in <code>[0, 1)</code>, measured by <strong>arc length</strong> from the start of the top edge, in the configured winding direction.</li>
-        <li>Every length uniform reaching the shader is in <strong>pixels</strong> - full-resolution pixels in <code>neon.frag</code>, FBO pixels in <code>neon-optimized.frag</code>. That distinction is the whole of section 14.</li>
+        <li>Every length uniform reaching the shader is in <strong>pixels</strong> - scaled by <code>uResolutionScale</code> on the CPU, so full-resolution pixels when that is 1.0 and FBO pixels below it. That distinction is the whole of section 14.</li>
         <li>Output is <strong>premultiplied alpha</strong>, paired with <code>glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)</code>.</li>
       </ul>
 
@@ -486,8 +485,8 @@
             <tr><td class="mono nw">uInsideCutoffSoftness<br>uOutsideCutoffSoftness</td><td class="mono">float</td><td>Feather widths at those boundaries. Floored at <code>SIDE_SOFT_EPSILON</code>.</td></tr>
             <tr><td class="mono nw">uWinding</td><td class="mono">int</td><td>0 CLOCKWISE / 1 COUNTER_CLOCKWISE. Selects the segment-base table in section 4.</td></tr>
             <tr><td class="mono nw">uQuadMargin</td><td class="mono">float</td><td>Distance from the rect edge to the draw quad edge, per axis. Drives the edge fade.</td></tr>
-            <tr><td class="mono nw">uResolutionScale</td><td class="mono">float</td><td><strong><code>neon-optimized.frag</code> only.</strong> Converts baked px constants into FBO px. See section 14.</td></tr>
-            <tr><td class="mono nw">uNumSamples</td><td class="mono">int</td><td><strong><code>neon-optimized.frag</code> only.</strong> Live gather-loop bound, 1..128.</td></tr>
+            <tr><td class="mono nw">uResolutionScale</td><td class="mono">float</td><td>Converts baked px constants into the space every other px uniform is already in. 1.0 on the direct path, where every conversion is identity. See section 14.</td></tr>
+            <tr><td class="mono nw">uNumSamples</td><td class="mono">int</td><td>Live gather-loop bound, 1..128. The emission pre-pass is handed the same value, so texel <code>i</code> there is sample <code>i</code> here.</td></tr>
           </tbody>
         </table>
       </div>
@@ -685,7 +684,7 @@ cp = (e.x &lt; e.y) ? vec2(sx * halfW, p.y) : vec2(p.x, sy * halfH);</code></pre
 
       <div class="warn">
         <span class="tag">If you change this</span>
-        Four places must move together: <code>perimeterPosition</code> in <code>neon.frag</code>, its copy in <code>neon-optimized.frag</code>, <code>GeometryUtils::GetPointOnRectangle</code> (and its <code>Detail::GetPointOnRectCW</code> / <code>CCW</code> helpers), and <code>GetSunFragPosition</code>, which places the lens-flare sun in the same parameter space. A mismatch shows up as arcs that do not line up with where the UI says they are.
+        Three places must move together: <code>perimeterPosition</code> in <code>neon.frag</code>, <code>GeometryUtils::GetPointOnRectangle</code> (and its <code>Detail::GetPointOnRectCW</code> / <code>CCW</code> helpers), and <code>GetSunFragPosition</code>, which places the lens-flare sun in the same parameter space. A mismatch shows up as arcs that do not line up with where the UI says they are.
       </div>
     </section>
 
@@ -926,7 +925,7 @@ wsumLit += lg;</code></pre>
 
       <ul class="body">
         <li><strong>A constant anti-bead margin.</strong> The kernel must stay at or above about one sample spacing or the blend collapses between samples. Spacing is <code>perimeter / 128</code>, so a perimeter fraction pins the ratio at <code>COLOR_BLEND_PERIM_FRAC * 128 = 1.13</code> spacings on every geometry. The previous fixed 24 px span met that bound only up to a ~3000 px perimeter and was down to 0.31 spacings by 9900 px. (No beading was actually measurable there - a DFT of the hue around the perimeter put the 128-cycle component at the noise floor - because the gradient varies slowly over one spacing on a rect that large. The margin is a guarantee for dense colour stops, not a fix for an observed artifact.)</li>
-        <li><strong>Renderer agreement.</strong> Both shaders derive the kernel from the same <code>NEON_MAX_LOOP_SAMPLES</code>-based fraction rather than from their own runtime sample count, so <code>NeonOptimizedRenderer</code>'s <code>numSamples</code> slider does not move the colour blend. An earlier <code>sampleSpacing</code>-derived floor divided by the live count and landed 2x wider there.</li>
+        <li><strong>Scale agreement.</strong> The kernel comes from the <code>NEON_MAX_LOOP_SAMPLES</code>-based fraction rather than from the runtime sample count, so the <code>numSamples</code> knob does not move the colour blend. An earlier <code>sampleSpacing</code>-derived floor divided by the live count and landed 2x wider there.</li>
       </ul>
 
       <p><code>0.0088</code> puts the kernel at 24.0 px on the stock 800x600 / radius 40 geometry, matching the previous fixed span, so default-sized output is unchanged. It is deliberately <strong>not coupled to <code>glowRadius</code></strong>: the gather produces colour only, so a wide glow has no reason to desaturate the gradient, and the old <code>max(glowRadius, floor)</code> reintroduced exactly the pixel-space dependence this constant exists to remove.</p>
@@ -1027,7 +1026,7 @@ if (outsideCutoff.enable)
 
       <div class="warn">
         <span class="tag">Keep in step</span>
-        Three places compute this expression: <code>setupGeometry</code> in <code>neon-renderer.cpp</code>, its copy in <code>neon-optimized-renderer.cpp</code>, and the <code>reach</code> line in both fragment shaders (for the bloom pedestal). They must agree or the pedestal lands at the wrong distance.
+        Two places compute this expression: <code>setupGeometry</code> in <code>neon-renderer.cpp</code> and the <code>reach</code> line in both fragment shaders (for the bloom pedestal). They must agree or the pedestal lands at the wrong distance.
       </div>
 
       <h3>The quad-edge fade</h3>
@@ -1164,11 +1163,11 @@ fragColor = vec4(result, alpha);</code></pre>
 
       <h3>What the shader must correct</h3>
 
-      <p>A constant written into the shader cannot scale itself. <code>uResolutionScale</code> is uploaded purely so the shader can convert the baked pixel constants, and it is the only uniform in the pair that exists because of the optimization.</p>
+      <p>A constant written into the shader cannot scale itself. <code>uResolutionScale</code> is uploaded purely so the shader can convert the baked pixel constants. There are exactly three such sites, all marked in the source; at scale 1.0 every one of them is an identity, which is what makes the direct path bit-for-bit what the shader computed before the scale existed.</p>
 
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th>Constant</th><th class="mono">neon.frag</th><th class="mono">neon-optimized.frag</th></tr></thead>
+          <thead><tr><th>Constant</th><th class="mono">as written</th><th>correction in <code class="mono">neon.frag</code></th></tr></thead>
           <tbody>
             <tr><td>Filament min half-width</td><td class="mono">FILAMENT_MIN_HALF_WIDTH</td><td class="mono">* uResolutionScale</td></tr>
             <tr><td>Arc head / tail feathers</td><td class="mono">HEAD/TAIL_FEATHER_PX</td><td class="mono">* uResolutionScale</td></tr>
@@ -1178,9 +1177,9 @@ fragColor = vec4(result, alpha);</code></pre>
         </table>
       </div>
 
-      <p><strong>The rule: a constant measured in pixels needs the correction; a constant that is a plain fraction does not</strong>, because the value it multiplies is already in FBO pixels. <code>COLOR_BLEND_PERIM_FRAC</code> multiplies a <code>peri</code> that is already scaled, so correcting it would double-apply.</p>
+      <p><strong>The rule: a constant measured in pixels needs the correction; a constant that is a plain fraction does not</strong>, because the value it multiplies is already in scaled pixels. <code>COLOR_BLEND_PERIM_FRAC</code> multiplies a <code>peri</code> that is already scaled, so correcting it would double-apply.</p>
 
-      <p>Miss one and the symptom is geometric. The arc feathers without their correction inset each arc's filament twice as deep as the full-res renderer does, leaving a visible stretch of bare halo past the ends.</p>
+      <p>Miss one and the symptom is geometric, and only at scales below 1.0 - which is the awkward part, since the default path looks perfect. The arc feathers without their correction inset each arc's filament twice as deep at scale 0.5, leaving a visible stretch of bare halo past the ends.</p>
 
       <h3>The sample count</h3>
 
@@ -1520,7 +1519,7 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
           <path d="M530,194 V214 H790 V238" class="dg-line" marker-end="url(#fa2)"/>
 
           <text x="40"  y="230" class="dg-h">NeonRenderer - full resolution</text>
-          <text x="560" y="230" class="dg-h">NeonOptimizedRenderer - half resolution</text>
+          <text x="560" y="230" class="dg-h">NeonRenderer - resolutionScale below 1.0</text>
 
           <!-- left lane -->
           <rect x="40" y="240" width="460" height="46" class="dg-box"/>
@@ -1780,7 +1779,7 @@ void main() {
 
       <div class="warn">
         <span class="tag">The pairs to keep in step</span>
-        <code>neon.frag</code> and <code>neon-optimized.frag</code>; <code>neon-renderer.cpp</code> and <code>neon-optimized-renderer.cpp</code>; <code>lens-flare.frag</code> and its optimized fork; <code>demo/src/debug-ui.cpp</code> and its <code>demo-capi/</code> counterpart. Also the four places that must agree on the perimeter parameterisation (section 4) and the three that must agree on the quad margin (section 11). None of these are checked by the build. Only the eye catches a drift.
+        <code>lens-flare.frag</code> and its optimized fork; <code>demo/src/debug-ui.cpp</code> and its <code>demo-capi/</code> counterpart. Also the four places that must agree on the perimeter parameterisation (section 4) and the three that must agree on the quad margin (section 11). None of these are checked by the build. Only the eye catches a drift.
       </div>
     </section>
 

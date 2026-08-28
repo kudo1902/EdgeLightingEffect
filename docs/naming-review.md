@@ -120,34 +120,37 @@ Five of the seven headers end with a bare `#endif`; `gl-mini.h` and
 Ordered by how misleading the name is, not by churn. Churn is noted per item
 because several of these reach the frozen C ABI.
 
-### S1. Three different word orders for "the half-res variant" - DECLINED
+### S1. Three different word orders for "the half-res variant" - RESOLVED
 
 | | neon | lens flare |
 | - | ---- | ---------- |
-| renderer class | `NeonOptimizedRenderer` | `LensFlareOptimizedRenderer` |
-| config struct | `Optimized`**`Neon`**`Config` | `LensFlare`**`Optimized`**`Config` |
-| config field | `optimizedNeon` | `optimizedLensFlare` |
+| renderer class | ~~`NeonOptimizedRenderer`~~ | `LensFlareOptimizedRenderer` |
+| config struct | ~~`Optimized`**`Neon`**`Config`~~ | `LensFlare`**`Optimized`**`Config` |
+| config field | ~~`optimizedNeon`~~ | `optimizedLensFlare` |
 
-The renderers agree with each other. The config fields agree with each other.
-The config *structs* do not - `OptimizedNeonConfig` is the only one that leads
-with the qualifier, and it disagrees with both its own renderer and its
-counterpart struct.
+The renderers agreed with each other. The config fields agreed with each other.
+The config *structs* did not - `OptimizedNeonConfig` was the only one that led
+with the qualifier, disagreeing with both its own renderer and its counterpart
+struct.
 
-**Declined.** The rename to `NeonOptimizedConfig` was applied and then reverted
-on the maintainer's call; `OptimizedNeonConfig` stands.
+**Resolved by deletion, not by renaming.** The neon column no longer exists:
+`NeonOptimizedRenderer` and `OptimizedNeonConfig` were folded into
+`NeonRenderer` / `NeonConfig`, where the half-res path is the
+`resolutionScale` field rather than a separate type. The three word orders were
+a symptom of naming a fork three times; there is no fork to name.
 
-The reasoning for leaving it: the rename could only ever fix half the
-inconsistency. The C ABI mirrors the config *field* as
-`el_effect_set_optimized_neon_*`, so `optimizedNeon` is frozen. Renaming the
-struct therefore aligns it with `LensFlareOptimizedConfig` and the two renderer
-classes, but at the cost of making the struct disagree with its own field - one
-inconsistency traded for another, in a type name that appears in three places
-and that no caller outside `lib/` ever writes.
+The lens-flare column is untouched and still internally consistent, so nothing
+is left to trade off. The C ABI constraint that made the original rename
+unattractive also went away in a direction nobody had considered: the
+`el_effect_*_optimized_*` functions still exist, frozen as required, but they
+are now shims onto `NeonConfig`, so the frozen ABI name no longer pins any C++
+identifier.
 
-If the ABI is revised (see S2), the whole family - `NeonOptimizedRenderer`,
-`NeonOptimizedConfig`, `neonOptimized`, `el_effect_set_neon_optimized_*` -
-should be aligned in one pass. Piecemeal is what produced the three word orders
-in the first place.
+If the ABI is ever revised (see S2), the `el_effect_*_optimized_*` group is
+the remaining piece: the names now describe a renderer that does not exist, and
+`el_effect_set_neon_resolution_scale` and friends would say what they actually
+do. Not urgent - they work, and they are documented as deprecated in
+`el-effect.h`.
 
 ### S2. "Optimized" does not say what the optimisation is
 
