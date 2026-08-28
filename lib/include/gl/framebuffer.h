@@ -243,6 +243,15 @@ namespace EdgeLighting
         int GetWidth() const { return mWidth; }
         int GetHeight() const { return mHeight; }
         GLuint GetId() const { return mFbo; }
+
+        /// The internal format currently backing the attachment, valid only
+        /// while @ref IsValid. Exposed so a caller that wants a preferred
+        /// format with a fallback can ask what it actually GOT rather than
+        /// tracking that itself: re-requesting the preferred format after the
+        /// driver refused it would churn the texture + FBO once per frame,
+        /// because @ref Resize treats a format change as a reallocation and
+        /// @c destroy resets this to the default on the failure path.
+        GLint GetInternalFormat() const { return mInternalFormat; }
         GLuint GetTextureId() const { return mTexture; }
         const char *GetName() const { return mName.c_str(); }
         void SetName(const char *name) { mName = name ? name : "unnamed"; }
