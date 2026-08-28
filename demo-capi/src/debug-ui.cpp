@@ -665,24 +665,24 @@ void DebugUI::buildNeonSection(el_effect_handle_t effect)
     if (ImGui::TreeNodeEx("Performance##Neon", ImGuiTreeNodeFlags_DefaultOpen))
     {
         float scale = 0.0f;
-        el_effect_get_optimized_resolution_scale(effect, &scale);
+        el_effect_get_neon_resolution_scale(effect, &scale);
         if (ImGui::SliderFloat("Res Scale##Neon", &scale, 0.125f, 1.0f, "%.3f"))
         {
-            el_effect_set_optimized_resolution_scale(effect, scale);
+            el_effect_set_neon_resolution_scale(effect, scale);
         }
 
         int32_t samples = 0;
-        el_effect_get_optimized_num_samples(effect, &samples);
+        el_effect_get_neon_num_samples(effect, &samples);
         if (ImGui::SliderInt("Samples##Neon", &samples, 8, MAX_LOOP_SAMPLES))
         {
-            el_effect_set_optimized_num_samples(effect, samples);
+            el_effect_set_neon_num_samples(effect, samples);
         }
 
         int32_t lutSize = 0;
-        el_effect_get_optimized_gradient_lut_size(effect, &lutSize);
+        el_effect_get_neon_gradient_lut_size(effect, &lutSize);
         if (ImGui::SliderInt("LUT Size##Neon", &lutSize, 32, MAX_GRADIENT_LUT_SIZE))
         {
-            el_effect_set_optimized_gradient_lut_size(effect, lutSize);
+            el_effect_set_neon_gradient_lut_size(effect, lutSize);
         }
         ImGui::TreePop();
     }
@@ -745,39 +745,39 @@ void DebugUI::buildDebugSection(el_effect_handle_t effect)
     // EL_RENDERER_DEBUG (included in EL_RENDERER_ALL). There is no master
     // enable through the ABI - the two flags are the whole surface.
     el_bool_t showLut = 0;
-    el_effect_get_show_gradient_lut(effect, &showLut);
+    el_effect_get_debug_show_gradient_lut(effect, &showLut);
     bool sl = showLut;
     if (ImGui::Checkbox("Show Gradient LUT##Debug", &sl))
     {
-        el_effect_set_show_gradient_lut(effect, sl ? 1 : 0);
+        el_effect_set_debug_show_gradient_lut(effect, sl ? 1 : 0);
     }
     el_bool_t showStops = 0;
-    el_effect_get_show_color_stops(effect, &showStops);
+    el_effect_get_debug_show_color_stops(effect, &showStops);
     bool ss = showStops;
     if (ImGui::Checkbox("Show Color Stops##Debug", &ss))
     {
-        el_effect_set_show_color_stops(effect, ss ? 1 : 0);
+        el_effect_set_debug_show_color_stops(effect, ss ? 1 : 0);
     }
 
     // The bounding box - one of this layer's overlays now, not its own
     // renderer. Reached through the unchanged el_effect_*_wireframe_* calls.
     el_bool_t wire = 0;
-    el_effect_get_wireframe_renderer_enabled(effect, &wire);
+    el_effect_get_debug_show_wireframe(effect, &wire);
     bool w = wire;
     if (ImGui::Checkbox("Show Wireframe##Debug", &w))
     {
-        el_effect_set_wireframe_renderer_enabled(effect, w ? 1 : 0);
+        el_effect_set_debug_show_wireframe(effect, w ? 1 : 0);
     }
     if (w)
     {
         float r = 0, g = 0, b = 0, a = 0;
-        el_effect_get_wireframe_color(effect, &r, &g, &b, &a);
+        el_effect_get_debug_wireframe_color(effect, &r, &g, &b, &a);
         float col[4] = {r, g, b, a};
         ImGui::SameLine();
         if (ImGui::ColorEdit4("##WireColor", col,
                               ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview))
         {
-            el_effect_set_wireframe_color(effect, col[0], col[1], col[2], col[3]);
+            el_effect_set_debug_wireframe_color(effect, col[0], col[1], col[2], col[3]);
         }
     }
 
