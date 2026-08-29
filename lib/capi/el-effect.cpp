@@ -1587,32 +1587,20 @@ extern "C"
         LOG_D("effect=%p, rate=%f", (void *)effect, *outRate);
         return EL_SUCCESS;
     }
+    // --- Lens flare performance knob ---
 
-    // --- Optimized (half-res) lens flare ---
+    el_result_e el_effect_set_lens_flare_resolution_scale(el_effect_handle_t effect, float scale)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_resolution_scale");
+        SET_AND_LOG(effect->config.lensFlare.resolutionScale, scale,
+                    "effect=%p, scale=%f", (void *)effect, scale);
+    }
 
-    el_result_e el_effect_set_optimized_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
+    el_result_e el_effect_get_lens_flare_resolution_scale(el_effect_handle_t effect, float *outScale)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_lens_flare_renderer_enabled");
-        SET_AND_LOG(effect->config.optimizedLensFlare.enable, enabled != 0, "effect=%p, enabled=%d", (void *)effect, enabled);
-    }
-    el_result_e el_effect_get_optimized_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_lens_flare_renderer_enabled");
-        VALIDATE_OUT_PTR(outEnabled, "el_effect_get_optimized_lens_flare_renderer_enabled");
-        *outEnabled = effect->config.optimizedLensFlare.enable ? 1 : 0;
-        LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled);
-        return EL_SUCCESS;
-    }
-    el_result_e el_effect_set_optimized_lens_flare_resolution_scale(el_effect_handle_t effect, float scale)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_lens_flare_resolution_scale");
-        SET_AND_LOG(effect->config.optimizedLensFlare.resolutionScale, scale, "effect=%p, scale=%f", (void *)effect, scale);
-    }
-    el_result_e el_effect_get_optimized_lens_flare_resolution_scale(el_effect_handle_t effect, float *outScale)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_lens_flare_resolution_scale");
-        VALIDATE_OUT_PTR(outScale, "el_effect_get_optimized_lens_flare_resolution_scale");
-        *outScale = effect->config.optimizedLensFlare.resolutionScale;
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_resolution_scale");
+        VALIDATE_OUT_PTR(outScale, "el_effect_get_lens_flare_resolution_scale");
+        *outScale = effect->config.lensFlare.resolutionScale;
         LOG_D("effect=%p, scale=%f", (void *)effect, *outScale);
         return EL_SUCCESS;
     }
@@ -1795,15 +1783,18 @@ extern "C"
                 LOG_I("registering DropletsRenderer");
                 effect->impl->AddRenderer(std::make_shared<EdgeLighting::DropletsRenderer>());
             }
-            if (rendererMask & EL_RENDERER_LENS_FLARE)
+            // ONE flare layer for both bits. EL_RENDERER_LENS_FLARE_OPTIMIZED
+            // is a deprecated alias now that the half-res path is a scale on
+            // this renderer rather than a second one - so the two bits are
+            // tested together and register a single instance, exactly as the
+            // two neon bits are above. Testing them separately would give a
+            // host passing EL_RENDERER_ALL two flare layers drawing the same
+            // flare over each other, which is the double-draw the old ABI
+            // could only warn about in prose.
+            if (rendererMask & (EL_RENDERER_LENS_FLARE | EL_RENDERER_LENS_FLARE_OPTIMIZED))
             {
                 LOG_I("registering LensFlareRenderer");
                 effect->impl->AddRenderer(std::make_shared<EdgeLighting::LensFlareRenderer>());
-            }
-            if (rendererMask & EL_RENDERER_LENS_FLARE_OPTIMIZED)
-            {
-                LOG_I("registering LensFlareOptimizedRenderer");
-                effect->impl->AddRenderer(std::make_shared<EdgeLighting::LensFlareOptimizedRenderer>());
             }
             if (!effect->impl->Initialize())
             {

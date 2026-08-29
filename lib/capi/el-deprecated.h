@@ -17,7 +17,9 @@
  * 4. delete the two deprecated members of @ref el_renderer_flags_e in
  *    @c el-types.h - @c EL_RENDERER_WIREFRAME and
  *    @c EL_RENDERER_NEON_OPTIMIZED - and the branches in
- *    @c el_effect_init_with_renderers that OR them in.
+ *    @c el_effect_init_with_renderers that OR them in. There are three:
+ *    @c EL_RENDERER_WIREFRAME, @c EL_RENDERER_NEON_OPTIMIZED and
+ *    @c EL_RENDERER_LENS_FLARE_OPTIMIZED.
  *
  * Step 4 is the only part that does not live here. Enum members cannot be
  * moved to another header without changing their type, and their numeric
@@ -27,9 +29,10 @@
  * @section why Why these are deprecated
  *
  * The neon effect used to be two renderers - a full-resolution one and a
- * half-resolution @c NeonOptimizedRenderer - and the bounding box used to be a
- * renderer of its own. Both forks are gone: the neon layer draws at a
- * resolution scale, and the box is one overlay of a debug layer. The names
+ * half-resolution @c NeonOptimizedRenderer - the lens flare likewise, and the
+ * bounding box used to be a renderer of its own. All three forks are gone:
+ * the neon and flare layers each draw at a resolution scale, and the box is
+ * one overlay of a debug layer. The names
  * below describe that old shape and would mislead anyone reading them today.
  *
  * The overlay flags are renamed for a second reason: everything backed by the
@@ -48,6 +51,8 @@
  * | @c el_effect_set_show_color_stops             | @ref el_effect_set_debug_show_color_stops |
  * | @c el_effect_set_wireframe_color              | @ref el_effect_set_debug_wireframe_color |
  * | @c el_effect_set_optimized_renderer_enabled   | @ref el_effect_set_neon_renderer_enabled + @ref el_effect_set_neon_resolution_scale |
+ * | @c el_effect_set_optimized_lens_flare_resolution_scale | @ref el_effect_set_lens_flare_resolution_scale |
+ * | @c el_effect_set_optimized_lens_flare_renderer_enabled | @ref el_effect_set_lens_flare_renderer_enabled + @ref el_effect_set_lens_flare_resolution_scale |
  *
  * Getters map the same way. Define @c EL_NO_DEPRECATION_WARNINGS to silence
  * the attribute while migrating.
@@ -127,6 +132,36 @@ extern "C"
     /** @deprecated Use @ref el_effect_get_debug_show_wireframe. */
     EL_DEPRECATED("use el_effect_get_debug_show_wireframe")
     EL_API el_result_e el_effect_get_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
+
+    /** @} */
+
+    /** @name Deprecated: the "optimized" lens flare renderer
+     *  There is no separate half-res flare renderer any more. These read and
+     *  write the one lens-flare layer's settings.
+     *  @{ */
+
+    /** @brief Enable the flare layer at the old half-res renderer's defaults.
+     *  @deprecated Use @ref el_effect_set_lens_flare_renderer_enabled together
+     *              with @ref el_effect_set_lens_flare_resolution_scale.
+     *  @details Mirrors the neon shim above: @c set(..., 1) enables the flare
+     *           layer and, if it is at full resolution, moves it to 0.5 - the
+     *           scale the old half-res renderer defaulted to; a scale already
+     *           below 1.0 is left alone. @c set(..., 0) returns the layer to
+     *           full resolution WITHOUT disabling it, since under the old ABI
+     *           this call only ever silenced one of two renderers.
+     *           @c get(...) reports true when the flare is enabled and below
+     *           full resolution. */
+    EL_DEPRECATED("use el_effect_set_lens_flare_renderer_enabled + el_effect_set_lens_flare_resolution_scale")
+    EL_API el_result_e el_effect_set_optimized_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled);
+    EL_DEPRECATED("use el_effect_get_lens_flare_renderer_enabled + el_effect_get_lens_flare_resolution_scale")
+    EL_API el_result_e el_effect_get_optimized_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
+
+    /** @deprecated Use @ref el_effect_set_lens_flare_resolution_scale. */
+    EL_DEPRECATED("use el_effect_set_lens_flare_resolution_scale")
+    EL_API el_result_e el_effect_set_optimized_lens_flare_resolution_scale(el_effect_handle_t effect, float scale);
+    /** @deprecated Use @ref el_effect_get_lens_flare_resolution_scale. */
+    EL_DEPRECATED("use el_effect_get_lens_flare_resolution_scale")
+    EL_API el_result_e el_effect_get_optimized_lens_flare_resolution_scale(el_effect_handle_t effect, float *outScale);
 
     /** @} */
 

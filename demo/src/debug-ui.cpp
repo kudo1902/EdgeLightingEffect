@@ -1031,33 +1031,22 @@ void DebugUI::buildLensFlareSection(EdgeLighting::Config &cfg)
         return;
     }
 
-    // Two independent draw paths that share the visual sliders below: the
-    // full-res flare and the half-res optimized variant. Both toggles stay
-    // visible so either can be enabled on its own; enabling both draws the
-    // flare twice (a warning flags that). The shared sliders show whenever
-    // EITHER path is on.
+    // One flare layer at a resolution scale. There is no second renderer to
+    // enable any more, so the "both paths on, flare drawn twice" warning that
+    // used to live here has nothing left to warn about.
     ImGui::Checkbox("Enable##Lens", &cfg.lensFlare.enable);
-    ImGui::SameLine();
-    ImGui::Checkbox("Optimized (½-res)##LensOpt", &cfg.optimizedLensFlare.enable);
 
-    if (cfg.lensFlare.enable && cfg.optimizedLensFlare.enable)
-    {
-        ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
-                           "Both paths on - flare drawn twice; disable one.");
-    }
-
-    if (cfg.optimizedLensFlare.enable)
-    {
-        SliderWithInput("Res Scale##LensOpt", cfg.optimizedLensFlare.resolutionScale,
-                        0.125f, 1.0f, "%.3f");
-    }
-
-    if (!cfg.lensFlare.enable && !cfg.optimizedLensFlare.enable)
+    if (!cfg.lensFlare.enable)
     {
         return;
     }
 
-    // Shared visual params (both paths read Config::lensFlare).
+    // 1.0 is the direct path (no offscreen buffer, no blit); below it the
+    // flare renders scaled and is blitted back.
+    SliderWithInput("Res Scale##Lens", cfg.lensFlare.resolutionScale,
+                    0.125f, 1.0f, "%.3f");
+
+    // Visual params.
     SliderWithInput("Perimeter Pos##Lens", cfg.lensFlare.perimeterPosition, 0.0f, 1.0f, "%.3f");
     SliderWithInput("Perimeter Offset##Lens", cfg.lensFlare.perimeterOffset, -500.0f, 500.0f, "%.1f px");
     SliderWithInput("Size##Lens", cfg.lensFlare.size, 0.1f, 5.0f, "%.2f");
