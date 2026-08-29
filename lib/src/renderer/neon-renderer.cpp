@@ -87,7 +87,7 @@ namespace EdgeLighting
         ///
         /// WHY ONLY THIS BUFFER HAS A LIST. It is the only one that asks for a
         /// format a conforming driver may refuse. RGBA8 - what mScaledBuffer,
-        /// LensFlareOptimizedRenderer's scaled buffer and OffscreenCapture all
+        /// LensFlareRenderer's scaled buffer and OffscreenCapture all
         /// take - is mandatory colour-renderable in both GL 3.3 core and GLES
         /// 3.0, so there is nothing for those to fall back FROM, and nothing to
         /// fall back TO either: an RGBA8 failure is out-of-memory or a broken
