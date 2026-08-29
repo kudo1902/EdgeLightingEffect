@@ -83,21 +83,25 @@ four virtuals:
 | `Update(dt, t, cfg)` | every frame | Time-based state that is not drawing (e.g. the neon's colour cross-fade). |
 | `Render(w, h, t, cfg)` | every frame | Bind and draw. |
 
-Six renderers ship, registered by the demo in this order:
+Five renderers ship, registered by the demo in this order:
 
 | # | Renderer | Layer |
 |---|---|---|
-| 1 | `WireframeRenderer` | 1px `GL_LINE_LOOP` debug box, sharp corners, blending off. On by default, green. |
-| 2 | `NeonRenderer` | Full-res neon stroke: an emission pre-pass, the opaque fill, the gather, and two debug overlays. |
-| 3 | `NeonOptimizedRenderer` | Half-res variant, same pre-pass. Reads appearance from `Config::neon`; its own sub-config carries perf knobs only. |
-| 4 | `DropletsRenderer` | Rain-on-glass in a band hugging the perimeter. Screen-space gravity, self-lit, no framebuffer capture. |
-| 5 | `LensFlareRenderer` | Sun plus hex-aperture flare as one fullscreen premultiplied pass. The sun rides the perimeter. |
-| 6 | `LensFlareOptimizedRenderer` | Half-res variant of 5. |
+| 1 | `NeonRenderer` | The neon stroke: an emission pre-pass, the opaque fill, the gather, and - below `resolutionScale` 1.0 - a scaled buffer plus its blit. |
+| 2 | `DebugRenderer` | The LUT strip, colour-stop markers and the 1px bounding box, drawn over the neon layer. Always full-res. |
+| 3 | `DropletsRenderer` | Rain-on-glass in a band hugging the perimeter. Screen-space gravity, self-lit, no framebuffer capture. |
+| 4 | `LensFlareRenderer` | Sun plus hex-aperture flare as one fullscreen premultiplied pass. The sun rides the perimeter. |
+| 5 | `LensFlareOptimizedRenderer` | Half-res variant of 4. |
 
-Each `*Optimized` renderer is a **near-fork** of its full-res counterpart, both
-`.cpp` and `.frag`, sharing visual config. An appearance change generally has to
-land in both copies. Never enable a pair at once - they draw the same thing and
-you get it twice.
+`LensFlareOptimizedRenderer` is a **near-fork** of `LensFlareRenderer`, both
+`.cpp` and `.frag`, sharing visual config. An appearance change has to land in
+both copies, and enabling the pair at once draws the flare twice.
+
+The neon layer used to have a fork of its own. It does not any more: the
+half-res path is `NeonConfig::resolutionScale` on the one renderer, where 1.0
+draws straight onto the target and anything lower renders into a scaled buffer
+and blits back. One `.cpp`, one `.frag`, no pair to keep in step and no way to
+double-draw. See `docs/neon-unification-plan.md`.
 
 To add a renderer: subclass `BaseRenderer`, add a sub-config struct to `Config`
 with `operator==`, register it in [`demo/src/main.cpp`](../demo/src/main.cpp),
@@ -197,7 +201,10 @@ Bulk data reaches the shader three ways:
   `ColorUtils::SampleSpan`, which holds the end colours instead of wrapping.
 - **The emission table** (`uEmission`) - the pre-pass's output (§6): `N x 2`,
   `GL_RGBA16F`, `GL_NEAREST`, read only with `texelFetch`. Falls back to
-  `GL_RGBA8` where the driver refuses float colour rendering.
+  `GL_RGBA8` where the driver refuses float colour rendering. Allocated once in
+  `Initialize` rather than per frame - `N` is `NEON_MAX_LOOP_SAMPLES`, the
+  sample-count CEILING, so the size never changes and `numSamples` only bounds
+  how much of it the gather reads.
 
 ## 8. Animation
 
@@ -269,11 +276,11 @@ Two rules that are easy to get wrong:
 
 | Goal | Touch |
 |---|---|
-| Tune neon appearance | `neon-tuning.h`, and **both** `neon.frag` and `neon-optimized.frag` |
-| Change what the gather bakes | `neon-emission.frag` **and** both consumers - keep the pre-pass invariant (§6) |
+| Tune neon appearance | `neon-tuning.h` and `neon.frag` - one copy, both resolution paths |
+| Change what the gather bakes | `neon-emission.frag` **and** `neon.frag` - keep the pre-pass invariant (§6) |
 | Add a config field | `config.h` (field **and** `operator==`), the renderer that reads it, `DebugUI`, and the C ABI mirror if exposed |
 | Add a shader | `lib/CMakeLists.txt` (two lists) and `shaders.h.in` |
-| Add a renderer | `BaseRenderer` subclass, `Config` sub-struct, `main.cpp` registration, `DebugUI` section |
+| Add a renderer | `BaseRenderer` subclass, `Config` sub-struct, `main.cpp` registration, `DebugUI` section, `el_renderer_flags_e` bit |
 | Reorder a mirrored enum | the `static_assert` wall in `capi-internal.h` |
 | Change the demo UI | `demo/src/debug-ui.cpp` **and** its `demo-capi/` counterpart |
 

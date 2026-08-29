@@ -50,20 +50,13 @@ extern "C"
     /** @} */
 
     /** @name Renderer toggles
-     *  Independent on/off switches for the neon, optimized, and wireframe
-     *  layers. Any subset can be enabled at once - they composite additively.
+     *  On/off switches for the visual layers. Any subset can be enabled at
+     *  once - they composite additively. The debug overlay layer has its own
+     *  switch with the rest of the diagnostics; see @ref el_effect_set_debug_enabled.
      *  @{ */
 
     EL_API el_result_e el_effect_set_neon_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled);
     EL_API el_result_e el_effect_get_neon_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
-
-    /** @brief Draw the baked gradient LUT as a debug strip across the rectangle. */
-    EL_API el_result_e el_effect_set_show_gradient_lut(el_effect_handle_t effect, el_bool_t show);
-    EL_API el_result_e el_effect_get_show_gradient_lut(el_effect_handle_t effect, el_bool_t *outShow);
-
-    /** @brief Draw a coloured dot at each colour-stop position on the perimeter. */
-    EL_API el_result_e el_effect_set_show_color_stops(el_effect_handle_t effect, el_bool_t show);
-    EL_API el_result_e el_effect_get_show_color_stops(el_effect_handle_t effect, el_bool_t *outShow);
 
     /** @} */
 
@@ -76,7 +69,9 @@ extern "C"
      *           transparent; the other modes rasterise a coloured band shaped
      *           by @ref el_effect_set_inside_cutoff /
      *           @ref el_effect_set_outside_cutoff and filled with
-     *           @ref el_effect_set_opaque_color. */
+     *           @ref el_effect_set_opaque_color. To render the fill on its
+     *           own, with the emission suppressed, see
+     *           @ref el_effect_set_debug_opaque_only. */
     EL_API el_result_e el_effect_set_opaque_mode(el_effect_handle_t effect, el_opaque_mode_e mode);
     EL_API el_result_e el_effect_get_opaque_mode(el_effect_handle_t effect, el_opaque_mode_e *outMode);
 
@@ -388,27 +383,43 @@ extern "C"
 
     /** @} */
 
-    /** @name Optimized (half-res) renderer
-     *  A half-resolution neon variant that renders into a scaled FBO and
-     *  bilinear-blits back to full res. Visual parameters are shared with
-     *  the main neon layer; only the perf knobs live here.
+    /** @name Neon performance knobs
+     *  Cost/quality controls on the neon layer. All three used to belong to a
+     *  separate half-res renderer; there is one renderer now, drawing at a
+     *  resolution scale.
      *  @{ */
 
-    EL_API el_result_e el_effect_set_optimized_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled);
-    EL_API el_result_e el_effect_get_optimized_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
+    /** @brief Set the neon layer's resolution scale.
+     *  @details 1.0 is the full-resolution path - the gather draws straight
+     *           onto the target framebuffer, with no offscreen buffer and no
+     *           blit. Below 1.0 the gather renders into a buffer of that
+     *           fraction of the viewport and is bilinear-blitted back, which
+     *           costs @c scale^2 as many shaded fragments.
+     *
+     *           Clamped to (0, 1] at draw time: values above 1.0 do not
+     *           supersample, they are refused, because the point of the knob
+     *           is to shade fewer fragments. The opaque fill is always drawn
+     *           at full resolution regardless, since its analytic edge is the
+     *           whole reason it exists. */
+    EL_API el_result_e el_effect_set_neon_resolution_scale(el_effect_handle_t effect, float scale);
+    EL_API el_result_e el_effect_get_neon_resolution_scale(el_effect_handle_t effect, float *outScale);
 
-    /** @brief Set the internal FBO scale factor (0.5 = half, 0.25 = quarter). */
-    EL_API el_result_e el_effect_set_optimized_resolution_scale(el_effect_handle_t effect, float scale);
-    EL_API el_result_e el_effect_get_optimized_resolution_scale(el_effect_handle_t effect, float *outScale);
+    /** @brief Set the per-fragment gather sample count.
+     *  @details Clamped to [1, the shader's compile-time maximum]. Lower is
+     *           faster and roughly linear in cost: halving this from the
+     *           default to 64 measures at about 0.5x the gather time, for a
+     *           difference of at most a few levels out of 255 in the picture.
+     *           A host migrating from the old half-res renderer should set 64
+     *           explicitly - that renderer defaulted to it, and this one does
+     *           not. */
+    EL_API el_result_e el_effect_set_neon_num_samples(el_effect_handle_t effect, int32_t samples);
+    EL_API el_result_e el_effect_get_neon_num_samples(el_effect_handle_t effect, int32_t *outSamples);
 
-    /** @brief Set the per-fragment gather sample count (clamped to the
-     *         shader's compile-time maximum). Lower = faster. */
-    EL_API el_result_e el_effect_set_optimized_num_samples(el_effect_handle_t effect, int32_t samples);
-    EL_API el_result_e el_effect_get_optimized_num_samples(el_effect_handle_t effect, int32_t *outSamples);
-
-    /** @brief Set the precomputed gradient LUT size (power-of-two, 32-256). */
-    EL_API el_result_e el_effect_set_optimized_gradient_lut_size(el_effect_handle_t effect, int32_t size);
-    EL_API el_result_e el_effect_get_optimized_gradient_lut_size(el_effect_handle_t effect, int32_t *outSize);
+    /** @brief Set the baked gradient LUT's width in texels (power-of-two,
+     *         32-256). Larger resolves closely-spaced colour stops more
+     *         finely; it does not affect per-fragment cost. */
+    EL_API el_result_e el_effect_set_neon_gradient_lut_size(el_effect_handle_t effect, int32_t size);
+    EL_API el_result_e el_effect_get_neon_gradient_lut_size(el_effect_handle_t effect, int32_t *outSize);
 
     /** @} */
 
@@ -576,24 +587,90 @@ extern "C"
 
     /** @} */
 
-    /** @name Wireframe overlay
-     *  Debug: 1 px line loop around the target rectangle.
+    /** @name Debug overlays and diagnostics
+     *
+     *  Everything backed by the debug config, in one place. The three overlays
+     *  are drawn by a layer of their own, so they need @ref EL_RENDERER_DEBUG
+     *  in the mask handed to @ref el_effect_init_with_renderers
+     *  (@ref EL_RENDERER_ALL includes it). Without that layer these flags are
+     *  still stored and read back, but nothing is drawn. The layer is
+     *  registered after the neon and draws OVER it.
+     *
+     *  @ref el_effect_set_debug_opaque_only is the odd one out: it is stored
+     *  here with the overlay flags but is a mode of the NEON layer, so it
+     *  works whether or not the debug layer was registered, and
+     *  @ref el_effect_set_debug_enabled does not gate it.
      *  @{ */
 
-    EL_API el_result_e el_effect_set_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled);
-    EL_API el_result_e el_effect_get_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
+    /** @brief Master switch for the debug overlay layer.
+     *  @details Gates all three overlays at once - the gradient-LUT strip, the
+     *           colour-stop markers and the bounding box - without disturbing
+     *           which of them are individually selected. Defaults to enabled,
+     *           as does the box, so a registered debug layer draws the box out
+     *           of the box.
+     *
+     *           This is the layer's mute, not its registration: the layer must
+     *           still be in the mask handed to
+     *           @ref el_effect_init_with_renderers. */
+    EL_API el_result_e el_effect_set_debug_enabled(el_effect_handle_t effect, el_bool_t enabled);
+    EL_API el_result_e el_effect_get_debug_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
 
-    /** @brief Set the wireframe line colour (linear RGBA in [0, 1]). */
-    EL_API el_result_e el_effect_set_wireframe_color(el_effect_handle_t effect,
-                                                     float r, float g, float b, float a);
-    EL_API el_result_e el_effect_get_wireframe_color(el_effect_handle_t effect,
-                                                     float *outR, float *outG, float *outB, float *outA);
+    /** @brief Draw the baked gradient LUT as a strip across the rectangle, so
+     *         the colour ring actually going to the shader can be eyeballed.
+     *  @note Annotates the glow, so it is suppressed when there is none - neon
+     *        off, or @ref el_effect_set_debug_opaque_only set. */
+    EL_API el_result_e el_effect_set_debug_show_gradient_lut(el_effect_handle_t effect, el_bool_t show);
+    EL_API el_result_e el_effect_get_debug_show_gradient_lut(el_effect_handle_t effect, el_bool_t *outShow);
+
+    /** @brief Draw a coloured dot at each colour-stop position on the
+     *         perimeter, so the mapping from position to colour can be checked
+     *         against the strip and the on-screen glow.
+     *  @note Suppressed on the same terms as
+     *        @ref el_effect_set_debug_show_gradient_lut. */
+    EL_API el_result_e el_effect_set_debug_show_color_stops(el_effect_handle_t effect, el_bool_t show);
+    EL_API el_result_e el_effect_get_debug_show_color_stops(el_effect_handle_t effect, el_bool_t *outShow);
+
+    /** @brief Show or hide the 1 px bounding box around the rectangle.
+     *  @details Defaults to shown. Deliberately SHARP even when the geometry
+     *           has a corner radius: it shows the extent the config asked for,
+     *           not the rounded outline the neon traces, so the two can be
+     *           compared. Unlike the two overlays above it survives
+     *           @ref el_effect_set_debug_opaque_only, because it annotates the
+     *           geometry - which is there whether or not anything is lit -
+     *           rather than the glow. */
+    EL_API el_result_e el_effect_set_debug_show_wireframe(el_effect_handle_t effect, el_bool_t show);
+    EL_API el_result_e el_effect_get_debug_show_wireframe(el_effect_handle_t effect, el_bool_t *outShow);
+
+    /** @brief Set the bounding box's line colour (linear RGBA in [0, 1]).
+     *  @details Opaque green by default: it reads against a dark backdrop and
+     *           against most glow colours, and is obviously not part of the
+     *           effect. */
+    EL_API el_result_e el_effect_set_debug_wireframe_color(el_effect_handle_t effect,
+                                                           float r, float g, float b, float a);
+    EL_API el_result_e el_effect_get_debug_wireframe_color(el_effect_handle_t effect,
+                                                           float *outR, float *outG, float *outB, float *outA);
+
+    /** @brief Draw ONLY the opaque fill and skip the neon emission entirely -
+     *         no filament, no halo, no bloom.
+     *  @details A diagnostic: it isolates the fill's silhouette so it can be
+     *           compared against where the light actually reaches. The two
+     *           disagree at a sharp corner, where the fill's outer boundary is
+     *           square and the emission's is round.
+     *
+     *           Has no visible effect while @ref el_effect_set_opaque_mode is
+     *           @c EL_OPAQUE_MODE_NONE, since then there is no fill to isolate
+     *           and the frame comes out empty.
+     *
+     *           Two of the three overlays suppress themselves while this is
+     *           set - the strip and the markers annotate the glow, and here
+     *           there is no glow to annotate. The bounding box does NOT, so a
+     *           fill-only frame still carries it unless you clear
+     *           @ref el_effect_set_debug_show_wireframe or mute the layer with
+     *           @ref el_effect_set_debug_enabled. */
+    EL_API el_result_e el_effect_set_debug_opaque_only(el_effect_handle_t effect, el_bool_t opaqueOnly);
+    EL_API el_result_e el_effect_get_debug_opaque_only(el_effect_handle_t effect, el_bool_t *outOpaqueOnly);
 
     /** @} */
-
-    /* ======================================================================
-     * Effect lifecycle
-     * ==================================================================== */
 
     /** @name Lifecycle
      *  Create, initialise, tick, render, and destroy an effect. Every call
@@ -614,7 +691,7 @@ extern "C"
 
     /** @brief Initialise every renderer layer under the current GL context.
      *  @details Convenience wrapper for @ref el_effect_init_with_renderers with
-     *           @ref EL_RENDERER_ALL - registers the full stack (wireframe,
+     *           @ref EL_RENDERER_ALL - registers the full stack (neon, debug,
      *           neon, optimized, droplets, lens flare).
      *  @returns @ref EL_ERROR_INIT_FAILED if a renderer fails to initialise
      *           (usually a shader compile / link error - see native log). */

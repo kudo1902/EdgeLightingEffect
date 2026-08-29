@@ -44,13 +44,14 @@ what you see:
   and are independent of the master intensity, so a segment can shine on an
   otherwise-dark arc.
 
-The neon renderer is one of six renderers that can be enabled independently in
-the same effect: `NeonRenderer`, `NeonOptimizedRenderer` (half-res variant of
-the same shader), `WireframeRenderer` (a 1px debug bounding box),
-`DropletsRenderer` (rain on glass in a band along the perimeter),
-`LensFlareRenderer` (sun + ghosts riding the perimeter), and
-`LensFlareOptimizedRenderer` (its half-res variant). This document covers the
-neon parameters; the others are documented on their `Config` sub-structs.
+The neon renderer is one of five renderers that can be enabled independently in
+the same effect: `NeonRenderer` (which draws at any resolution scale - see
+3.9), `DebugRenderer` (its LUT strip, colour-stop and bounding-box overlays),
+`DropletsRenderer` (rain on
+glass in a band along the perimeter), `LensFlareRenderer` (sun + ghosts riding
+the perimeter), and `LensFlareOptimizedRenderer` (its half-res variant). This
+document covers the neon parameters; the others are documented on their
+`Config` sub-structs.
 
 ---
 
@@ -351,54 +352,78 @@ Typical animation patterns:
 
 ### 3.8 Debug visualisations
 
-**`neon.showGradientLUT`** (default false)
-Draws the baked 256-texel gradient LUT as a horizontal strip across the
-centre of the rectangle. Handy to eyeball what colours the shader is
-actually sampling from.
+Drawn by `DebugRenderer`, a separate layer registered after the neon one, so
+these live on `Config::debug` rather than `Config::neon`. Nothing is drawn
+unless that renderer is registered - through the C ABI that means
+`EL_RENDERER_DEBUG` in the mask, which `EL_RENDERER_ALL` includes.
 
-**`neon.showColorStops`** (default false)
+**`debug.enable`** (default `true`)
+Master switch for the overlay layer. Defaults on because both flags below
+default off, so it draws nothing until you ask it to; it is the mute for
+turning the layer off without losing which overlays you had selected.
+
+**`debug.showGradientLUT`** (default false)
+Draws the baked gradient LUT as a horizontal strip across the centre of the
+rectangle. Handy to eyeball what colours the shader is actually sampling
+from. The overlay bakes its own copy of the ring from the same inputs, so it
+tracks the cross-fade the glow is running.
+
+**`debug.showColorStops`** (default false)
 Draws a coloured dot at each colour-stop position on the perimeter so you
 can verify the `position -> colour` mapping against the LUT strip and the
 rendered halo.
 
-Both are demo-time debug aids; leave off in production.
+**`debug.showWireframe`** (default `true`)
+Draws a 1px `GL_LINE_LOOP` around the rectangle - deliberately sharp even when
+`geometry.cornerRadius` is set, so the configured extent can be compared
+against the rounded outline the neon actually traces. This was
+`wireframe.enable` on its own renderer; it keeps that default, so a host that
+had the box still has it. It now draws **over** the glow rather than under it,
+because the layer that owns it has to follow the neon for the other two
+overlays to work.
 
-### 3.9 Optimized neon (half-res variant)
+**`debug.wireframeColor`** (default opaque green `(0, 1, 0, 1)`)
+Colour of that line.
 
-The optimized renderer runs the same shader into a **downscaled FBO** then
-bilinear-blits it back to full resolution. All visual params (line width,
-intensity, colour stops, arcs, segments, hue rotation, ...) are read from
-`Config::neon` - the optimized renderer only adds its own perf-shaping
-fields:
+The strip and the markers are suppressed when the neon layer is off or
+`debug.opaqueOnly` is set - there is no glow to annotate in either case. The
+bounding box annotates the *geometry*, which is there regardless, so it
+survives both. All three draw at full resolution, whatever
+`neon.resolutionScale` is.
 
-**`optimizedNeon.enable`** (default false)
-Master switch for the half-res path. Can run concurrently with the full-res
-neon; the two composite additively, which is useful for A/B testing but
-typically only one of the two is on at a time.
+All are demo-time debug aids; leave off in production.
 
-**`optimizedNeon.resolutionScale`** (default 0.5)
-Fraction of the framebuffer resolution used for the internal FBO. `0.5`
-halves each axis (quarter-pixel work); `0.25` quarters each axis (16x
-speed-up). Below ~0.35 the bilinear upscale starts showing.
+### 3.9 Resolution and cost
 
-**`optimizedNeon.numSamples`** (default 64)
-Number of gather-loop samples per fragment. The full-res `NeonRenderer`
-always runs 128 (compile-time fixed to `NEON_MAX_LOOP_SAMPLES`); this
-renderer uses the slider value up to that ceiling. Fewer samples ->
-faster, but the halo can develop visible "beading" at low counts.
+`NeonRenderer` draws either straight onto the framebuffer it was handed or into
+a downscaled buffer that is bilinear-blitted back. It is one renderer either
+way - these three fields shape its cost and nothing else about how it looks.
 
-**`optimizedNeon.gradientLutSize`** (default 256)
+(Before the unification these lived on a second renderer, `NeonOptimizedRenderer`,
+under `Config::optimizedNeon`. The C ABI's `el_effect_*_optimized_*` functions
+still exist and now write these fields; see `el-effect.h`.)
+
+**`neon.resolutionScale`** (default 1.0)
+Fraction of the framebuffer resolution the gather runs at. `1.0` is the direct
+path: no offscreen buffer, no blit, nothing allocated. `0.5` halves each axis
+(quarter the fragment work); `0.25` quarters each axis. Below ~0.35 the
+bilinear upscale starts showing. Clamped to `(0, 1]` at draw time - values
+above 1.0 do not supersample.
+
+**`neon.numSamples`** (default 128)
+Number of gather-loop samples per fragment, capped at `NEON_MAX_LOOP_SAMPLES`
+(128), which sizes both the UBO and the shader's array. The samples are spread
+evenly around the perimeter, so lowering this widens the gap between lit
+samples rather than truncating the walk: fewer samples is faster, but the halo
+can develop visible "beading" at low counts.
+
+**`neon.gradientLutSize`** (default 256)
 Width of the precomputed gradient LUT (32 - 256). At the default 256 the
 gradient is smooth enough that dithering hides all seams; below ~64 you can
-see quantisation on smooth pans.
+see quantisation on smooth pans. A change to this **snaps** rather than
+cross-fading - two rings of different length cannot be blended element-wise.
 
-### 3.10 Wireframe overlay
 
-**`wireframe.enable`** (default `true`)
-Toggles a 1px `GL_LINE_LOOP` around the rectangle. Debug aid only.
-
-**`wireframe.color`** (default opaque green `(0, 1, 0, 1)`)
-Colour of the line.
 
 ---
 

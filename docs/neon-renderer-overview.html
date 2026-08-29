@@ -577,9 +577,9 @@
           <text x="74" y="102" class="dg-t">Neon</text>
           <text x="240" y="102" class="dg-t2">the glowing edge</text>
 
-          <rect x="60" y="120" width="440" height="34" class="dg-box-a"/>
-          <text x="74" y="142" class="dg-t">Neon (optimized)</text>
-          <text x="240" y="142" class="dg-t2">the half-resolution copy</text>
+          <rect x="60" y="120" width="440" height="34" class="dg-box"/>
+          <text x="74" y="142" class="dg-t">Debug</text>
+          <text x="240" y="142" class="dg-t2">LUT strip and colour-stop markers</text>
 
           <rect x="60" y="160" width="440" height="34" class="dg-box"/>
           <text x="74" y="182" class="dg-t">Droplets</text>
@@ -593,14 +593,12 @@
           <text x="74" y="262" class="dg-t">Lens flare (optimized)</text>
           <text x="240" y="262" class="dg-t2">the half-resolution copy</text>
 
-          <path d="M520,84 H532 V150 H520" class="dg-acc" stroke-width="1.5"/>
-          <text x="542" y="121" class="dg-t2 c-a">enable one, never both</text>
           <path d="M520,204 H532 V270 H520" class="dg-acc" stroke-width="1.5"/>
           <text x="542" y="241" class="dg-t2 c-a">enable one, never both</text>
 
           <text x="60" y="302" class="dg-t2">all six read the same geometry: position, size, corner radius, winding direction</text>
         </svg>
-        <figcaption><b>Fig 4</b> The registered layers, in the order the demo adds them. Each full-resolution renderer has a half-resolution twin that draws the same thing, so switching both on renders it twice, stacked on itself.</figcaption>
+        <figcaption><b>Fig 4</b> The registered layers, in the order the demo adds them. The lens flare still has a half-resolution twin that draws the same thing, so switching both on renders it twice, stacked on itself. The neon layer no longer does - it takes a resolution scale instead.</figcaption>
       </figure>
 
       <p>There is a thread running through them. Three of the six - neon, droplets and lens flare - build their geometry out of the same two measurements from Section 1:</p>
@@ -615,9 +613,9 @@
 
     <!-- ============================================================ -->
     <section id="s5">
-      <h2 class="sec"><span class="num">05</span> The half-resolution twins</h2>
+      <h2 class="sec"><span class="num">05</span> Drawing at half resolution</h2>
 
-      <p>The bloom covers a large area and every pixel in it runs the whole shader, but most of that area is a smooth gradient with no fine detail. So <code>NeonOptimizedRenderer</code> draws the neon into an offscreen buffer at half width and half height, then scales the result up. Half in each direction is a <strong>quarter of the pixels</strong>, so the per-pixel work drops roughly fourfold at the price of one cheap fullscreen copy.</p>
+      <p>The bloom covers a large area and every pixel in it runs the whole shader, but most of that area is a smooth gradient with no fine detail. So the neon renderer can draw into an offscreen buffer at half width and half height, then scale the result up - set <code>resolutionScale</code> below 1.0 and that is the path it takes. Half in each direction is a <strong>quarter of the pixels</strong>, so the per-pixel work drops roughly fourfold at the price of one cheap fullscreen copy. At 1.0 it skips the buffer entirely and draws straight onto the target.</p>
 
       <p>Two facts make this nearly free:</p>
 
@@ -630,7 +628,7 @@
 
       <div class="note">
         <span class="tag">Watch out</span>
-        Each <code>*Optimized</code> renderer is a near-fork of its full-res counterpart, in both the <code>.cpp</code> and the <code>.frag</code>, sharing visual config. A change to how the neon looks has to land in both copies or the two quietly drift apart, and the build system cannot tell you when they have.
+        The lens flare still keeps a separate <code>*Optimized</code> renderer, a near-fork in both the <code>.cpp</code> and the <code>.frag</code> sharing one visual config - a change to how the flare looks has to land in both copies, and the build system cannot tell you when they have drifted. The neon layer used to work that way too; it now scales inside one renderer and one shader, so there is no second copy to forget.
       </div>
     </section>
 

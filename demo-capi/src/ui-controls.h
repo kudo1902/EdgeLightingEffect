@@ -42,7 +42,7 @@ namespace EdgeLightingCapiDemo
         el_effect_get_winding(effect, &winding);
         el_bool_t neonOn = 0, wireOn = 0, playing = 0;
         el_effect_get_neon_renderer_enabled(effect, &neonOn);
-        el_effect_get_wireframe_renderer_enabled(effect, &wireOn);
+        el_effect_get_debug_show_wireframe(effect, &wireOn);
         el_effect_clock_is_playing(effect, &playing);
         el_blend_space_e blend = EL_BLEND_SPACE_RGB;
         el_effect_get_blend_space(effect, &blend);

@@ -39,6 +39,21 @@ uniform float uOutsideCutoff;         ///< Positive px distance OUTSIDE the rect
 uniform float uOutsideCutoffSoftness; ///< Feather width in px at the outside cutoff boundary.
 uniform int   uWinding;               ///< 0 = CLOCKWISE, 1 = COUNTER_CLOCKWISE (matches Winding enum).
 
+// Ratio between the buffer this pass is drawing into and the viewport the
+// caller sees: 1.0 when the gather runs at full resolution straight onto the
+// caller's framebuffer, NeonConfig::resolutionScale when it runs into the
+// scaled offscreen buffer that gets blitted back.
+//
+// Every pixel-valued uniform above ALREADY arrives pre-multiplied by it - the
+// renderer scales them once on the CPU. This exists for the other direction:
+// the px constants baked in from neon-tuning.h (FILAMENT_MIN_HALF_WIDTH,
+// HEAD/TAIL_FEATHER_PX, GLOW_GATE_FADE_PX) are written in full-res px, so each
+// use below converts it into the space everything else is in. Three sites, all
+// marked; forgetting one makes a feather or a gate change width with the
+// resolution scale, which reads as the scaled path "looking different" rather
+// than as a bug.
+uniform float uResolutionScale;
+
 // Loop sample positions (perimeter points) as a std140 uniform block. Each
 // entry is packed as a vec4 (only .xy is meaningful; std140 pads vec2 to a
 // 16-byte stride anyway) so the shader reads raw float32 out of the constant
@@ -48,6 +63,16 @@ layout(std140) uniform LoopSamplesBlock
 {
     vec4 uLoopSamples[NEON_MAX_LOOP_SAMPLES];
 };
+
+// How many of the block's entries are actually in use this frame, from
+// NeonConfig::numSamples (clamped to 1..NEON_MAX_LOOP_SAMPLES CPU-side). The
+// block is always allocated at full size; entries past this are (0,0,0,0) and
+// never read, because the gather stops here.
+//
+// The emission pre-pass is handed the SAME count and bakes its table over
+// exactly these indices, so texel i there is sample i here. The two must agree
+// or the gather reads emission belonging to a different perimeter position.
+uniform int uNumSamples;
 
 // Travelling segments - up to MAX_SEGMENT_BOOSTS independent coloured lights
 // on the perimeter. Each vec4 is packed as (position, invSigma, boost,
@@ -455,12 +480,14 @@ void main() {
     // lineWidth = FILAMENT_MIN_HALF_WIDTH * 2, so lineWidth = 0 means "no
     // line" instead of a single-pixel bright dot.
     //
-    // FILAMENT_MIN_HALF_WIDTH is used raw: uLineWidth is already in the same
-    // full-res px. neon-optimized.frag's copy of this block multiplies it by
-    // uResolutionScale because uLineWidth reaches it in FBO px - keep the two
-    // in step when tuning the constant.
+    // FILAMENT_MIN_HALF_WIDTH is a full-res px constant and uLineWidth arrives
+    // scaled, so the constant is converted into the same space before either
+    // is used. At uResolutionScale = 1.0 minHalf IS the constant and both lines
+    // below reduce to their full-res form; the 1e-3 floors only guard a scale
+    // driven pathologically close to zero.
+    float minHalf   = FILAMENT_MIN_HALF_WIDTH * uResolutionScale;
     float halfWidth = uLineWidth * 0.5;
-    float sigma     = max(halfWidth, FILAMENT_MIN_HALF_WIDTH);
+    float sigma     = max(halfWidth, max(minHalf, 1e-3));
     float N         = 2.0 * max(uFilamentFalloff, 1e-3);
     float core      = exp2(-pow(ad / sigma, N));
 
@@ -477,7 +504,7 @@ void main() {
     // the quad edge.
     float corePed   = exp2(-pow(reachSigmas, N));
     core            = max(core - corePed, 0.0) / max(1.0 - corePed, 1e-6);
-    float lineGate  = clamp(uLineWidth / (FILAMENT_MIN_HALF_WIDTH * 2.0), 0.0, 1.0);
+    float lineGate  = clamp(uLineWidth / max(minHalf * 2.0, 1e-3), 0.0, 1.0);
 
     // Perimeter of the rounded rect, in px. Used twice below: to size the
     // colour-gather kernel, and to convert the arc feathers from px to
@@ -529,12 +556,14 @@ void main() {
     float wsumLit   = 0.0; // SUM ARC-GATED g     - normalises `col` (see below)
     float wsumSegW  = 0.0; // SUM SEGMENT bell*g  - normalises the segment hue
 
-    // Compile-time constant loop bound: matches the LoopSamplesBlock UBO size
-    // and the C++-side NEON_MAX_LOOP_SAMPLES so the compiler can unroll if it
-    // wants to.
-    const int numSamples = NEON_MAX_LOOP_SAMPLES;
+    // Runtime loop bound, from NeonConfig::numSamples. The UBO behind
+    // uLoopSamples is always NEON_MAX_LOOP_SAMPLES long, so this only ever
+    // stops the walk EARLY - it can never run off the end. Hoisted into a
+    // local because a uniform in the condition is re-read per iteration on
+    // some drivers.
+    int n = uNumSamples;
 
-    for (int i = 0; i < numSamples; i++) {
+    for (int i = 0; i < n; i++) {
         vec2  dv  = vPos - uLoopSamples[i].xy;
         float dd  = dot(dv, dv);
 
@@ -592,12 +621,13 @@ void main() {
     // lit it for any arc starting at position 0.
     float sPos = perimeterPosition(vPos);
     // Inward feathers: convert pixel widths to perimeter fractions at the
-    // current geometry (`peri` is computed above the gather). Both sides are
-    // full-res px here, so the constants are used raw; neon-optimized.frag
-    // scales them by uResolutionScale because its `peri` is in FBO px - keep
-    // the two in step when tuning them.
-    float headF  = HEAD_FEATHER_PX / peri;
-    float tailF  = TAIL_FEATHER_PX / peri;
+    // current geometry (`peri` is computed above the gather). `peri` is derived
+    // from uRectSize and so is in SCALED px, while the two constants are
+    // full-res - hence the conversion, which is identity at scale 1.0. Getting
+    // it wrong changes the feather's width in perimeter fractions, i.e. the arc
+    // ends soften over a different length at a different resolution scale.
+    float headF  = HEAD_FEATHER_PX * uResolutionScale / peri;
+    float tailF  = TAIL_FEATHER_PX * uResolutionScale / peri;
     // ONE arc coverage, folding per-arc intensity in, and it drives the
     // filament as well as the halo and bloom. `col` is gated-normalised above,
     // so intensity cancels out of it and can no longer reach the filament that
@@ -768,7 +798,9 @@ void main() {
     // against a fixed pixel width: gating against the sampleSpacing-derived
     // floor instead would re-couple brightness to the rect size. (The bloom is
     // gated too now - the gather's spacing floor used to keep it finite here.)
-    float glowGate = clamp(uGlowRadius / GLOW_GATE_FADE_PX, 0.0, 1.0);
+    // Full-res constant against a scaled uGlowRadius, so it is converted like
+    // the feathers above - identity at scale 1.0.
+    float glowGate = clamp(uGlowRadius / (GLOW_GATE_FADE_PX * uResolutionScale), 0.0, 1.0);
 
     // Compose: base arc x intensity + segments (independent of intensity, so
     // a segment stays lit even on a dark arc - the whole point of the

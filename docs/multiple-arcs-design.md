@@ -168,7 +168,8 @@ branch. Segments continue to compose additively on top of the arc emission.
 
 ## 5. Renderers
 
-Both `NeonRenderer` and `NeonOptimizedRenderer` grow:
+`NeonRenderer` grows (at the time of writing this was two renderers, since
+unified - see `neon-unification-plan.md`):
 
 - `Texture2D mArcLUT` (RGBA8, 128 x `MAX_ARCS`, no wrap - each row is one arc's
   bake).
@@ -194,7 +195,7 @@ mArcBlock.SetData(&block, sizeof(block));
 mArcBlock.BindBase(ARC_BLOCK_BINDING);
 
 mArcLUT.Bind(2);
-mShaderProgram.SetUniform("uArcLUT", 2);
+mNeonShader.SetUniform("uArcLUT", 2);
 ```
 
 `uArcStart` / `uArcLength` uniform sets are removed.
@@ -322,11 +323,8 @@ Edited:
 - `lib/include/renderer/neon-tuning.h`      -- `MAX_ARCS = 8`
 - `lib/include/core/config.h`               -- `Arc` + `arcs` vector; drop `arcStart/Length`
 - `lib/shaders/neon.frag`                   -- swap uniforms for `ArcBlock` + `uArcLUT`, winner-take-all
-- `lib/shaders/neon-optimized.frag`         -- same
 - `lib/include/renderer/neon-renderer.h`    -- `mArcLUT`, `mArcBlock`, `mBakedArcs`, `rebuildArcLUT`
 - `lib/src/renderer/neon-renderer.cpp`      -- bake + per-frame pack
-- `lib/include/renderer/neon-optimized-renderer.h` -- mirror
-- `lib/src/renderer/neon-optimized-renderer.cpp`   -- mirror
 - `lib/include/animation/neon-animations.h` -- retarget `ArcWipe` / `OutlineTracer` to `arcs[0]`
 - `lib/include/animation/field-bound-animation.h`  -- `ArcField`, `AddArcField`, `AddArcStopField`, drop `NEON_ARC_*`
 - `lib/src/animation/field-bound-animation.cpp`    -- `writeArc`, `writeArcStop`, capture/restore

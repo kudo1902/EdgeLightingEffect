@@ -8,7 +8,7 @@ precision highp float;
 //
 // Why this pass exists
 // --------------------
-// The gather loop in neon.frag / neon-optimized.frag runs, for every sample
+// The gather loop in neon.frag runs, for every sample
 // AND every screen fragment: the arc winner-take-all search (uArcCount x
 // arcInside, four smoothsteps each), the travelling-segment loop
 // (uSegmentCount x exp()), and one to two filtered LUT fetches. None of that
@@ -89,7 +89,7 @@ layout(std140) uniform ArcBlock
 
 // Verbatim from the gather it replaces - the feather widths buy hue-blend
 // behaviour, so changing them here changes the ring's colour hand-over. Keep
-// in step with the copies in neon.frag / neon-optimized.frag.
+// in step with the copy in neon.frag.
 float arcInside(float si, float start, float length, float invNumSamples) {
     if (length >= 1.0 - 1e-6) return 1.0;   // full coverage
     if (length <= 1e-6)       return 0.0;   // empty

@@ -84,8 +84,9 @@ private:
     void buildGeometrySection(EdgeLighting::Config &cfg);
     void buildNeonSection(EdgeLighting::Config &cfg,
                           const EdgeLighting::Config &active);
-    void buildOptimizedNeonSection(EdgeLighting::Config &cfg,
-                                   const EdgeLighting::Config &active);
+    /// Overlays drawn by DebugRenderer. Takes no `active` config: these are
+    /// plain toggles, with nothing an animation could be driving.
+    void buildDebugSection(EdgeLighting::Config &cfg);
     void buildDropletsSection(EdgeLighting::Config &cfg);
     void buildLensFlareSection(EdgeLighting::Config &cfg);
     void buildAnimationSection(EdgeLighting::Config &cfg,

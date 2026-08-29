@@ -3,6 +3,14 @@
 What a host actually sees if this branch is merged, measured frame-by-frame
 against `main`.
 
+> **Superseded in part.** Measured while the neon effect had two renderers,
+> `NeonRenderer` and the half-res `NeonOptimizedRenderer`. Those were later
+> folded into one renderer drawing at `NeonConfig::resolutionScale`, and the
+> merged renderer's output was verified byte-identical to each fork at the
+> matching scale - so every number below still stands, but read "the optimized
+> renderer" as "the scaled path" and "the full-res renderer" as
+> "`resolutionScale` 1.0". See `neon-unification-plan.md`.
+
 Its sibling [`emission-prepass-comparison.md`](emission-prepass-comparison.md)
 deliberately isolates the pre-pass commit from its immediate parent, so it
 excludes the colour-stop alpha and stop-sorting work. This document is the

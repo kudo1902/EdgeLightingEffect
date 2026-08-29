@@ -17,6 +17,8 @@ Docs, in reading order. The three neon documents are tiers of the same material 
 - [`docs/effect-reference.md`](docs/effect-reference.md) - per-parameter reference and recipes.
 - [`docs/architecture-design.md`](docs/architecture-design.md) - full architecture. Note it predates the droplets and lens-flare renderers.
 - [`docs/coordinate-system.md`](docs/coordinate-system.md), [`docs/multiple-arcs-design.md`](docs/multiple-arcs-design.md).
+- [`docs/neon-unification-plan.md`](docs/neon-unification-plan.md) - how the half-res neon fork was folded into `NeonRenderer` as a resolution scale, and the debug overlays split into `DebugRenderer`. Read it if a doc or comment still refers to `NeonOptimizedRenderer`.
+- [`docs/neon-unification-comparison.md`](docs/neon-unification-comparison.md) - the evidence for that plan: eleven scenes rendered on both sides of the merge, nine byte-identical, the two that differ confined to the bounding box's compositing order.
 - [`docs/review-findings.md`](docs/review-findings.md) - open defects and rough edges, visual ones with offscreen repros. Check here before assuming a behaviour is intended.
 - [`docs/naming-review.md`](docs/naming-review.md) - identifier audit against `AGENTS.md`, plus the names that describe mechanisms the code no longer has. Read before renaming anything.
 
@@ -67,10 +69,10 @@ Shader sources under `lib/shaders/*.{vert,frag}` are read by `lib/CMakeLists.txt
 
 Per-frame contract: `Update(dt)` ticks the clock, advances every attached animation by the clock delta, rebuilds the active config, then forwards `(dt, clockTime, activeConfig)` to every renderer; `Render(w, h)` does the same for drawing. Both `SetConfig` and the per-frame refresh notify renderers via `OnConfigChanged` - but only when the composited config actually changed, so renderers can rely on that call being meaningful. Renderers are independent visual layers and composite by blending - enable any subset.
 
-Six renderers, all under `lib/include/renderer/`, all registered by the demo in this order:
+Five renderers, all under `lib/include/renderer/`, all registered by the demo in this order:
+- `NeonRenderer` - the neon stroke. Analytic rounded-box SDF plus a gather loop over `NeonConfig::numSamples` perimeter samples (positions in a UBO), reading three baked LUT textures: `uGradientLUT` (base colour ring), `uSegmentLUT` (per-segment gradient atlas, one row per segment), `uArcLUT` (per-arc atlas). All LUTs are baked on the CPU as **RGBA8** - float textures are deliberately avoided for edge-device compatibility. Also owns the opaque-fill pass (`black-rect.frag`).
 
-- `WireframeRenderer` - 1px `GL_LINE_LOOP` debug box, blending temporarily disabled.
-- `NeonRenderer` - full-res neon stroke. Analytic rounded-box SDF plus a gather loop over `NEON_MAX_LOOP_SAMPLES` perimeter samples (positions in a UBO), reading three baked LUT textures: `uGradientLUT` (base colour ring), `uSegmentLUT` (per-segment gradient atlas, one row per segment), `uArcLUT` (per-arc atlas). All LUTs are baked on the CPU as **RGBA8** - float textures are deliberately avoided for edge-device compatibility. Also owns the opaque-fill pass (`black-rect.frag`) and two debug overlays (LUT strip, colour-stop markers).
+  **One renderer, two resolution paths**, selected by `NeonConfig::resolutionScale`: at `1.0` the gather draws straight onto the framebuffer it was handed (no offscreen buffer, no blit); below `1.0` it draws into a buffer of that fraction of the viewport and is bilinear-blitted back (`neon-blit.frag`). The paths share one pass schedule - every pixel-valued uniform is multiplied by the scale unconditionally (a no-op at `1.0`) and the shader converts `neon-tuning.h`'s own full-res px constants with `uResolutionScale`. Only the render target, the blit and the buffer allocation are conditional, which is what keeps `1.0` bit-identical to the dedicated full-res renderer this replaced. The opaque fill is the exception: always full-res on the caller's framebuffer, since its analytic SDF edge is the whole point of it.
 
   Runs an **emission pre-pass** (`neon-emission.frag`): the gather's per-sample
   work (arc winner-take-all, segment bells, LUT fetches) is a pure function of
@@ -80,7 +82,14 @@ Six renderers, all under `lib/include/renderer/`, all registered by the demo in 
   preserve: **pure function of `(si, uTime, config)` goes in the pre-pass;
   anything reading `vPos` stays in the main shader.**
 
-  `Render` in both neon renderers is a **pass schedule**: derive the transform,
+  The table is `NEON_MAX_LOOP_SAMPLES x 2` - the sample-count CEILING, with
+  `numSamples` bounding only how much of it the gather reads - so its size is a
+  compile-time constant and it is allocated **once, in `Initialize`**, not per
+  frame. `Initialize` fails if no candidate format (`RGBA16F`, then `RGBA8`)
+  allocates. Size it to the live count instead and it goes straight back onto
+  the per-frame path.
+
+  `Render` is a **pass schedule**: derive the transform,
   then one call per `render*Pass` method. `Render` owns blend state; a pass owns
   its shader and, if it retargets, restores the framebuffer / viewport / blend
   it was handed - never framebuffer 0, never a forced `glEnable` (an
@@ -93,12 +102,12 @@ Six renderers, all under `lib/include/renderer/`, all registered by the demo in 
   [`docs/branch-vs-main-comparison.md`](docs/branch-vs-main-comparison.md) is
   the wider view: the whole branch against `main`, so it also covers the
   colour-stop alpha and stop-sorting behaviour changes that ship with it.
-- `NeonOptimizedRenderer` - half-res variant: renders into a scaled FBO and bilinear-blits back. Adds a runtime `numSamples` knob and a configurable LUT width. **Visual params are read from `Config::neon`**, not from its own sub-config, which only carries perf knobs.
+- `DebugRenderer` - every debug annotation, in one layer: the baked ring as a LUT strip (`neon-lut-debug.frag`), one disc per colour stop (`neon-stop-marker.frag`), and the 1px `GL_LINE_LOOP` bounding box (`wireframe.frag`, absorbed from the old `WireframeRenderer`), behind `DebugConfig::showGradientLUT` / `showColorStops` / `showWireframe`. Register it **after** `NeonRenderer` - it annotates what that layer drew. Always full-res, whatever the neon's resolution scale. Reads `Config::debug` for what to draw and `Config::neon` for what it is describing. The strip and the markers annotate the GLOW and are suppressed when it is absent (neon off, or `debug.opaqueOnly`); the box annotates the GEOMETRY and survives both. Note the box now draws **over** the glow - `WireframeRenderer` was registered first and drew under it, and the overlays that annotate the glow have to follow it. Bakes its **own** `GradientRingLUT` from the same inputs, which is what keeps `NeonRenderer` free of every debug member.
 - `DropletsRenderer` - rain-on-glass droplets in a band hugging the perimeter; screen-space gravity, self-lit drops, no framebuffer capture.
 - `LensFlareRenderer` - sun + hex-aperture flare (rays, chromatic ghosts) as one fullscreen premultiplied-alpha pass. The sun rides the perimeter in the same parameter space as neon segments/arcs.
 - `LensFlareOptimizedRenderer` - half-res variant of the above, same shader into a scaled FBO. Don't enable it alongside `LensFlareRenderer`; they draw the same flare and would double it.
 
-Note the `*Optimized` renderers are near-forks of their full-res counterparts (both the `.cpp` and the `.frag`), and share visual config. A change to neon or lens-flare appearance generally has to land in **both** copies to stay consistent.
+Note `LensFlareOptimizedRenderer` is a near-fork of `LensFlareRenderer` (both the `.cpp` and the `.frag`) and shares its visual config, so a change to flare appearance generally has to land in **both** copies. The neon pair used to work the same way and no longer does: `NeonOptimizedRenderer` and `neon-optimized.frag` were folded into `NeonRenderer` / `neon.frag` as a resolution scale, so there is exactly one copy of the neon appearance code. See [`docs/neon-unification-plan.md`](docs/neon-unification-plan.md) for what that merge involved.
 
 To add a renderer, subclass `BaseRenderer` (`Initialize` / `Update` / `Render` / `OnConfigChanged`), add a sub-config struct to `Config` with `operator==`, register it in `demo/src/main.cpp`, and add an ImGui section in `DebugUI`.
 

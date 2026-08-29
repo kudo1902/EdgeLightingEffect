@@ -24,22 +24,6 @@ namespace
     constexpr const char *GLSL_VERSION = "#version 300 es";
 #endif
 
-    // Warn when both neon paths are enabled at once: they draw the SAME glow
-    // from the same neon config, so it composites twice. Mirrors
-    // BothNeonPathsWarning in demo/src/debug-ui.cpp - keep the two in step.
-    void BothNeonPathsWarning(el_effect_handle_t effect)
-    {
-        el_bool_t neonOn = 0;
-        el_bool_t optOn = 0;
-        el_effect_get_neon_renderer_enabled(effect, &neonOn);
-        el_effect_get_optimized_renderer_enabled(effect, &optOn);
-        if (neonOn && optOn)
-        {
-            ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.2f, 1.0f),
-                               "Both neon paths on - glow drawn twice; disable one.");
-        }
-    }
-
     // --- Blend-space combo used by Neon / Optimized / segment / arc rows.
     bool BlendCombo(const char *label, el_blend_space_e &space)
     {
@@ -192,13 +176,12 @@ void DebugUI::Build(el_effect_handle_t effect)
 
     buildGeometrySection(effect);
     buildNeonSection(effect);
-    buildOptimizedNeonSection(effect);
+    buildDebugSection(effect);
     buildDropletsSection(effect);
     buildLensFlareSection(effect);
     buildColorPickerSection(effect);
     buildAnimationSection(effect);
     buildBackgroundSection();
-    buildWireframeSection(effect);
 
     ImGui::Separator();
     ImGui::Text("Clock: %s", playing ? "PLAYING" : "PAUSED");
@@ -669,10 +652,39 @@ void DebugUI::buildNeonSection(el_effect_handle_t effect)
     {
         el_effect_set_neon_renderer_enabled(effect, en ? 1 : 0);
     }
-    BothNeonPathsWarning(effect);
     if (!en)
     {
         return;
+    }
+
+    // --- Performance ------------------------------------------------------
+    // These reach the one neon layer through the el_effect_*_optimized_*
+    // entry points, which are deprecated in name only - the half-res path is
+    // a resolution scale on this renderer now, not a second one. Res Scale 1.0
+    // is the full-resolution path.
+    if (ImGui::TreeNodeEx("Performance##Neon", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        float scale = 0.0f;
+        el_effect_get_neon_resolution_scale(effect, &scale);
+        if (ImGui::SliderFloat("Res Scale##Neon", &scale, 0.125f, 1.0f, "%.3f"))
+        {
+            el_effect_set_neon_resolution_scale(effect, scale);
+        }
+
+        int32_t samples = 0;
+        el_effect_get_neon_num_samples(effect, &samples);
+        if (ImGui::SliderInt("Samples##Neon", &samples, 8, MAX_LOOP_SAMPLES))
+        {
+            el_effect_set_neon_num_samples(effect, samples);
+        }
+
+        int32_t lutSize = 0;
+        el_effect_get_neon_gradient_lut_size(effect, &lutSize);
+        if (ImGui::SliderInt("LUT Size##Neon", &lutSize, 32, MAX_GRADIENT_LUT_SIZE))
+        {
+            el_effect_set_neon_gradient_lut_size(effect, lutSize);
+        }
+        ImGui::TreePop();
     }
 
     el_opaque_mode_e opaqueMode = EL_OPAQUE_MODE_NONE;
@@ -702,21 +714,6 @@ void DebugUI::buildNeonSection(el_effect_handle_t effect)
         }
     }
 
-    el_bool_t showLut = 0;
-    el_effect_get_show_gradient_lut(effect, &showLut);
-    bool sl = showLut;
-    if (ImGui::Checkbox("Show Gradient LUT##Neon", &sl))
-    {
-        el_effect_set_show_gradient_lut(effect, sl ? 1 : 0);
-    }
-    el_bool_t showStops = 0;
-    el_effect_get_show_color_stops(effect, &showStops);
-    bool ss = showStops;
-    if (ImGui::Checkbox("Show Color Stops##Neon", &ss))
-    {
-        el_effect_set_show_color_stops(effect, ss ? 1 : 0);
-    }
-
     DrawSharedNeonSliders(effect, "Neon");
     DrawSegmentAndArcRows(effect, "Neon");
 
@@ -737,62 +734,61 @@ void DebugUI::buildNeonSection(el_effect_handle_t effect)
     DrawColorStopsList(effect, "Neon");
 }
 
-void DebugUI::buildOptimizedNeonSection(el_effect_handle_t effect)
+void DebugUI::buildDebugSection(el_effect_handle_t effect)
 {
-    if (!ImGui::CollapsingHeader("Optimized Neon (1/2-res)", ImGuiTreeNodeFlags_DefaultOpen))
+    if (!ImGui::CollapsingHeader("Debug Overlays"))
     {
         return;
     }
 
-    el_bool_t on = 0;
-    el_effect_get_optimized_renderer_enabled(effect, &on);
-    bool en = on;
-    if (ImGui::Checkbox("Enable##Opt", &en))
+    // Drawn by DebugRenderer, which the C ABI registers under
+    // EL_RENDERER_DEBUG (included in EL_RENDERER_ALL). There is no master
+    // enable through the ABI - the two flags are the whole surface.
+    el_bool_t showLut = 0;
+    el_effect_get_debug_show_gradient_lut(effect, &showLut);
+    bool sl = showLut;
+    if (ImGui::Checkbox("Show Gradient LUT##Debug", &sl))
     {
-        el_effect_set_optimized_renderer_enabled(effect, en ? 1 : 0);
+        el_effect_set_debug_show_gradient_lut(effect, sl ? 1 : 0);
     }
-    BothNeonPathsWarning(effect);
-    if (!en)
+    el_bool_t showStops = 0;
+    el_effect_get_debug_show_color_stops(effect, &showStops);
+    bool ss = showStops;
+    if (ImGui::Checkbox("Show Color Stops##Debug", &ss))
     {
-        return;
-    }
-
-    float scale = 0.0f;
-    el_effect_get_optimized_resolution_scale(effect, &scale);
-    if (ImGui::SliderFloat("Res Scale##Opt", &scale, 0.125f, 1.0f, "%.3f"))
-    {
-        el_effect_set_optimized_resolution_scale(effect, scale);
+        el_effect_set_debug_show_color_stops(effect, ss ? 1 : 0);
     }
 
-    int32_t samples = 0;
-    el_effect_get_optimized_num_samples(effect, &samples);
-    if (ImGui::SliderInt("Samples##Opt", &samples, 8, MAX_LOOP_SAMPLES))
+    // The bounding box - one of this layer's overlays now, not its own
+    // renderer. Reached through the unchanged el_effect_*_wireframe_* calls.
+    el_bool_t wire = 0;
+    el_effect_get_debug_show_wireframe(effect, &wire);
+    bool w = wire;
+    if (ImGui::Checkbox("Show Wireframe##Debug", &w))
     {
-        el_effect_set_optimized_num_samples(effect, samples);
+        el_effect_set_debug_show_wireframe(effect, w ? 1 : 0);
+    }
+    if (w)
+    {
+        float r = 0, g = 0, b = 0, a = 0;
+        el_effect_get_debug_wireframe_color(effect, &r, &g, &b, &a);
+        float col[4] = {r, g, b, a};
+        ImGui::SameLine();
+        if (ImGui::ColorEdit4("##WireColor", col,
+                              ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview))
+        {
+            el_effect_set_debug_wireframe_color(effect, col[0], col[1], col[2], col[3]);
+        }
     }
 
-    int32_t lutSize = 0;
-    el_effect_get_optimized_gradient_lut_size(effect, &lutSize);
-    if (ImGui::SliderInt("LUT Size##Opt", &lutSize, 32, MAX_GRADIENT_LUT_SIZE))
+    el_bool_t neonOn = 0;
+    el_effect_get_neon_renderer_enabled(effect, &neonOn);
+    if (!neonOn)
     {
-        el_effect_set_optimized_gradient_lut_size(effect, lutSize);
+        ImGui::TextDisabled("Neon is off - LUT / stops have nothing to annotate.");
     }
-
-    ImGui::Separator();
-    ImGui::TextDisabled("Visual params (shared with Neon)");
-
-    DrawSharedNeonSliders(effect, "Opt");
-    DrawSegmentAndArcRows(effect, "Opt");
-
-    el_blend_space_e blend = EL_BLEND_SPACE_RGB;
-    el_effect_get_blend_space(effect, &blend);
-    if (BlendCombo("Blend Space##Opt", blend))
-    {
-        el_effect_set_blend_space(effect, blend);
-    }
-
-    DrawColorStopsList(effect, "Opt");
 }
+
 
 // ---------------------------------------------------------------------------
 // Droplets
@@ -1121,7 +1117,7 @@ void DebugUI::buildAnimationSection(el_effect_handle_t effect)
 }
 
 // ---------------------------------------------------------------------------
-// Background + Wireframe
+// Background
 // ---------------------------------------------------------------------------
 
 void DebugUI::buildBackgroundSection()
@@ -1139,30 +1135,6 @@ void DebugUI::buildBackgroundSection()
     ImGui::SliderFloat("Checker Size##Bg", &mBgCheckerSize, 4.0f, 128.0f, "%.0f");
     ImGui::ColorEdit3("Color A##Bg", mBgColorA, ImGuiColorEditFlags_NoInputs);
     ImGui::ColorEdit3("Color B##Bg", mBgColorB, ImGuiColorEditFlags_NoInputs);
-}
-
-void DebugUI::buildWireframeSection(el_effect_handle_t effect)
-{
-    ImGui::Separator();
-    el_bool_t on = 0;
-    el_effect_get_wireframe_renderer_enabled(effect, &on);
-    bool en = on;
-    if (ImGui::Checkbox("Wireframe", &en))
-    {
-        el_effect_set_wireframe_renderer_enabled(effect, en ? 1 : 0);
-    }
-    if (en)
-    {
-        float r = 0, g = 0, b = 0, a = 0;
-        el_effect_get_wireframe_color(effect, &r, &g, &b, &a);
-        float col[4] = {r, g, b, a};
-        ImGui::SameLine();
-        if (ImGui::ColorEdit4("Wireframe Color", col,
-                              ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview))
-        {
-            el_effect_set_wireframe_color(effect, col[0], col[1], col[2], col[3]);
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------

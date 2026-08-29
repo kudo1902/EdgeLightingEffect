@@ -228,35 +228,37 @@ namespace EdgeLighting
     {
         bool enable = false; ///< Enable or disable the neon renderer
 
-        // --- Debug visualisations ---
+        // --- Resolution and cost knobs ---
+        //
+        // The renderer draws either straight onto the framebuffer it was handed
+        // (@c resolutionScale 1.0) or into a scaled offscreen buffer that is
+        // bilinear-blitted back (below 1.0). The defaults here are the full-res
+        // path, so a config left untouched renders as it always has.
 
-        /// Debug: draw the baked gradient LUT texture as a horizontal strip at
-        /// the centre of the rectangle so you can eyeball the colour ring
-        /// that's actually going to the shader.
-        bool showGradientLUT = false;
-
-        /// Debug: draw a coloured dot at each colour-stop position on the
-        /// perimeter so the mapping (perimeter position → colour) can be
-        /// verified against the LUT and the on-screen glow.
-        bool showColorStops = false;
-
-        /// Debug: render ONLY the @c opaqueMode fill and skip the neon
-        /// emission entirely - no filament, no halo, no bloom, and none of the
-        /// debug overlays above. Isolates the fill's silhouette so it can be
-        /// compared against where the light actually reaches.
+        /// Resolution scale for the internal neon buffer. 1.0 draws the gather
+        /// directly onto the caller's framebuffer - no offscreen buffer and no
+        /// blit. Below 1.0 the gather runs into a buffer of that fraction of
+        /// the viewport and is composited back with bilinear filtering
+        /// (0.5 = half-res, 0.25 = quarter). Clamped to (0, 1] at draw time.
         ///
-        /// The two disagree at a sharp corner: @c cornerRadius 0 makes the
-        /// fill's outer boundary square (the band is offset per-axis, see
-        /// bandOuterDistance in the shaders) while the emission is shaped by
-        /// the plain Euclidean SDF distance and stays radial. The wedge
-        /// between the square mask and the round glow renders as fill with no
-        /// light on it, and this flag is how you see its extent directly.
-        ///
-        /// No-ops when @c opaqueMode is NONE - there is no fill pass to keep,
-        /// so nothing is drawn at all. Debug only: the renderers read it at
-        /// draw time and it triggers no rebuilds, so it is safe to toggle
-        /// per-frame. Not exposed through the C API.
-        bool opaqueOnly = false;
+        /// What this buys is fragment work, which dominates the effect: the
+        /// glow quad is large and every fragment inside it walks the sample
+        /// loop.
+        float resolutionScale = 1.0f;
+
+        /// Number of perimeter gather samples per fragment. Capped at
+        /// @c NEON_MAX_LOOP_SAMPLES - the UBO and the shader's array are both
+        /// sized by it - and clamped to >= 1 at upload time. Lower is faster
+        /// and makes the halo grainier, since the gap between lit samples
+        /// grows.
+        int numSamples = NEON_MAX_LOOP_SAMPLES;
+
+        /// Width in texels of the baked colour-ring LUT (power of two, 32-256).
+        /// 256 resolves any gradient the eye can; a smaller ring bakes faster
+        /// and costs less texture memory. A change to this SNAPS rather than
+        /// cross-fading - two rings of different length cannot be blended
+        /// element-wise (see @ref GradientRingLUT).
+        int gradientLutSize = 256;
 
         // --- Compositing ---
 
@@ -445,9 +447,9 @@ namespace EdgeLighting
         bool operator==(const NeonConfig &o) const
         {
             return enable == o.enable &&
-                   showGradientLUT == o.showGradientLUT &&
-                   showColorStops == o.showColorStops &&
-                   opaqueOnly == o.opaqueOnly &&
+                   resolutionScale == o.resolutionScale &&
+                   numSamples == o.numSamples &&
+                   gradientLutSize == o.gradientLutSize &&
                    opaqueMode == o.opaqueMode &&
                    opaqueColor == o.opaqueColor &&
                    lineWidth == o.lineWidth &&
@@ -471,35 +473,99 @@ namespace EdgeLighting
         bool operator!=(const NeonConfig &o) const { return !(*this == o); }
     } NeonConfig;
 
-    /// Half-resolution optimized neon renderer configuration.
+    /// Debug configuration - everything that exists to inspect the effect
+    /// rather than to be part of it.
     ///
-    /// Renders the neon shader at half resolution then bilinear-blits to full res.
-    /// The perf wins are the half-res FBO + reduced gather samples (not reduced
-    /// precision - the shader uses highp; mediump = fp16 on ANGLE overflowed the
-    /// large fragment coordinates and produced NaN "noise dots").
-    /// Visual parameters (line width, intensity, colour stops, etc.) are shared
-    /// with Config::neon - adjust them in the Neon section of the debug UI.
-    typedef struct OptimizedNeonConfig
+    /// Two kinds live here, and they reach the frame differently:
+    ///
+    ///   - @c showGradientLUT / @c showColorStops / @c showWireframe are
+    ///     ANNOTATIONS, drawn on top of the neon layer by @ref DebugRenderer.
+    ///     Nothing in the neon renderer knows about them.
+    ///   - @c opaqueOnly is a debug MODE of the neon layer: it changes which
+    ///     of that renderer's passes run. @ref NeonRenderer reads it directly.
+    ///
+    /// So the read arrows point both ways across this struct and
+    /// @ref NeonConfig - the debug renderer reads neon state to know what it
+    /// is annotating, and the neon renderer reads this one flag to know
+    /// whether to stop after the fill. That is the cost of collecting the
+    /// debug surface in one place, and it is the right trade: a host looking
+    /// for "the debug knobs" finds all of them here, and none of them are
+    /// mixed in among the fields that describe how the effect should look.
+    typedef struct DebugConfig
     {
-        bool enable = false; ///< Enable or disable the optimized neon renderer
+        /// Master switch for the overlay layer. Defaults ON, and so does
+        /// @c showWireframe, so a registered @ref DebugRenderer draws the
+        /// bounding box out of the box exactly as the old WireframeRenderer
+        /// did. This is the mute for turning the whole layer off without
+        /// disturbing which overlays were selected.
+        ///
+        /// Applies to the three overlays only. @c opaqueOnly is a mode of the
+        /// neon renderer, not something this layer draws, so it is not gated
+        /// by this flag.
+        bool enable = true;
 
-        /// Resolution scale factor for the internal FBO (0.5 = half, 0.25 = quarter).
-        float resolutionScale = 0.5f;
-        /// Number of gather samples per fragment (max = NEON_MAX_LOOP_SAMPLES,
-        /// lower = faster). Clamped by the renderer at upload time.
-        int numSamples = 64;
-        /// Size of the precomputed gradient look-up texture (power-of-two, 32–256).
-        int gradientLutSize = 256;
+        /// Draw the baked gradient LUT texture as a horizontal strip at the
+        /// centre of the rectangle, so the colour ring actually going to the
+        /// shader can be eyeballed.
+        bool showGradientLUT = false;
 
-        bool operator==(const OptimizedNeonConfig &o) const
+        /// Draw a coloured dot at each colour-stop position on the perimeter,
+        /// so the mapping (perimeter position -> colour) can be verified
+        /// against the LUT strip and the on-screen glow.
+        bool showColorStops = false;
+
+        /// Draw a 1 px bounding box around the rectangle. Deliberately SHARP
+        /// even when @c RectGeometry::cornerRadius is set: it shows the extent
+        /// the config asked for, not the rounded outline the neon traces, so
+        /// the two can be compared.
+        ///
+        /// Defaults ON, unlike the two overlays above - this is the old
+        /// @c WireframeConfig::enable, kept at its original default so a host
+        /// that had the box sees no change. Still gated by @c enable.
+        bool showWireframe = true;
+
+        /// Colour of that box. Opaque green by default: it reads against the
+        /// dark backdrop and against most glow colours, and it is obviously
+        /// not part of the effect.
+        glm::vec4 wireframeColor = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
+
+        /// Render ONLY the @c NeonConfig::opaqueMode fill and skip the neon
+        /// emission entirely - no filament, no halo, no bloom. Isolates the
+        /// fill's silhouette so it can be compared against where the light
+        /// actually reaches.
+        ///
+        /// @ref DebugRenderer suppresses its two glow overlays while this is
+        /// set - the LUT strip and the stop markers annotate the glow, and
+        /// there is no glow to annotate here. The bounding box is NOT
+        /// suppressed: it annotates the geometry, which is there whether or
+        /// not anything is lit, so a fill-only frame still carries it unless
+        /// @c showWireframe or @c enable is cleared. See the gating in
+        /// @c DebugRenderer::Render.
+        ///
+        /// The two disagree at a sharp corner: @c cornerRadius 0 makes the
+        /// fill's outer boundary square (the band is offset per-axis, see
+        /// bandOuterDistance in the shaders) while the emission is shaped by
+        /// the plain Euclidean SDF distance and stays radial. The wedge
+        /// between the square mask and the round glow renders as fill with no
+        /// light on it, and this flag is how you see its extent directly.
+        ///
+        /// No-ops when @c opaqueMode is NONE - there is no fill pass to keep,
+        /// so nothing is drawn at all. The renderers read it at draw time and
+        /// it triggers no rebuilds, so it is safe to toggle per-frame. Not
+        /// exposed through the C API.
+        bool opaqueOnly = false;
+
+        bool operator==(const DebugConfig &o) const
         {
             return enable == o.enable &&
-                   resolutionScale == o.resolutionScale &&
-                   numSamples == o.numSamples &&
-                   gradientLutSize == o.gradientLutSize;
+                   showGradientLUT == o.showGradientLUT &&
+                   showColorStops == o.showColorStops &&
+                   showWireframe == o.showWireframe &&
+                   wireframeColor == o.wireframeColor &&
+                   opaqueOnly == o.opaqueOnly;
         }
-        bool operator!=(const OptimizedNeonConfig &o) const { return !(*this == o); }
-    } OptimizedNeonConfig;
+        bool operator!=(const DebugConfig &o) const { return !(*this == o); }
+    } DebugConfig;
 
     /// Rain-on-glass droplets configuration.
     ///
@@ -558,19 +624,6 @@ namespace EdgeLighting
         }
         bool operator!=(const DropletsConfig &o) const { return !(*this == o); }
     } DropletsConfig;
-
-    /// Wireframe debug overlay configuration.
-    typedef struct WireframeConfig
-    {
-        bool enable = true;                                  ///< Show or hide the wireframe bounding box
-        glm::vec4 color = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f); ///< Wireframe color
-
-        bool operator==(const WireframeConfig &o) const
-        {
-            return enable == o.enable && color == o.color;
-        }
-        bool operator!=(const WireframeConfig &o) const { return !(*this == o); }
-    } WireframeConfig;
 
     /// Lens-flare renderer configuration. Draws a full lens flare (sun core
     /// with rays + hex-aperture chromatic ghosts) as a single fullscreen pass.
@@ -717,10 +770,9 @@ namespace EdgeLighting
     typedef struct Config
     {
         RectGeometry geometry;                       ///< Rectangle geometry
-        NeonConfig neon;                             ///< Single-pass neon settings
-        OptimizedNeonConfig optimizedNeon;           ///< Half-res optimized neon settings
+        NeonConfig neon;                             ///< Neon stroke settings, including its resolution scale
+        DebugConfig debug;                           ///< LUT strip / colour-stop marker overlays
         DropletsConfig droplets;                     ///< Rain-on-glass droplets settings
-        WireframeConfig wireframe;                   ///< Wireframe overlay settings
         LensFlareConfig lensFlare;                   ///< Sun + lens flare (rays, chromatic ghosts)
         LensFlareOptimizedConfig optimizedLensFlare; ///< Half-res optimized lens flare settings
 
@@ -728,9 +780,8 @@ namespace EdgeLighting
         {
             return geometry == o.geometry &&
                    neon == o.neon &&
-                   optimizedNeon == o.optimizedNeon &&
+                   debug == o.debug &&
                    droplets == o.droplets &&
-                   wireframe == o.wireframe &&
                    lensFlare == o.lensFlare &&
                    optimizedLensFlare == o.optimizedLensFlare;
         }

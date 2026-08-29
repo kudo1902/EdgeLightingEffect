@@ -7,6 +7,16 @@ reproduced offscreen rather than argued from the source.
 Items marked FIXED have landed and carry a note on what was changed and how it
 was verified; the rest are still open.
 
+> **Written before the neon unification.** Findings here describe a tree with
+> two neon renderers, `NeonRenderer` and the half-res `NeonOptimizedRenderer`,
+> plus the debug overlays living inside the first. Those are now one renderer
+> drawing at `NeonConfig::resolutionScale`, with the overlays in a separate
+> `DebugRenderer`. Two findings changed state as a result - **I3** is now fixed
+> outright and **R6** is moot - and both say so in place. The rest are
+> unaffected: the merge was verified byte-identical to each fork at the
+> matching scale, so every pixel measurement below still holds. See
+> `neon-unification-plan.md`.
+
 Code references here name a **file and symbol**, never a line number. Line
 anchors in this document had already drifted twice - once when the fixes below
 landed and again when the helpers they added shifted everything under them -
@@ -16,7 +26,7 @@ description, so the reasoning that led to the change stays readable next to it.
 | | fixed | open |
 | - | ----- | ---- |
 | visual | V1, V2, V3, V6, V7 | V4, V5 (both closed as documented limitations) |
-| implementation | I1, I4, I6, I7 | I2 (declined), I3 (partly), I5 (documented), I8 (audited) |
+| implementation | I1, I3, I4, I6, I7 | I2 (declined), I5 (documented), I8 (audited) |
 | second pass | R1, R2, R3, R4, R5, R6 | R7 |
 | third pass | V8, I9, I10, I11, I12 (partly) | V9, I12's two stale design docs |
 
@@ -399,6 +409,20 @@ than once per frame, and the flag clears when the count drops back under the
 cap, so a host that overflows, fixes it, then overflows again is told both
 times.
 
+> **Reworked, and the segment half was dead.** The two latch flags are gone:
+> the warning now fires from `OnConfigChanged` on the TRANSITION into overflow
+> (previous count at or under the cap, new count above it), which gives the same
+> once-per-overflow behaviour with no flag to store, and takes the check off the
+> per-frame path - `OnConfigChanged` is the only place either count can change.
+>
+> Rewriting it surfaced a bug in the original: the segment warning measured
+> `mEffectiveSegments.size()`, but `SegmentUtils::FillEffectiveSegments` stops
+> merging at `MAX_SEGMENT_BOOSTS_CAP`, so that value is already clamped to the
+> cap and `requested <= cap` always held. **It could never fire.** It now counts
+> what the host asked for - `segmentBoosts` + `preservedSegmentBoosts`, which
+> share the slots - and reports the dropped entries as intended. Verified across
+> eight transitions for arcs and segments.
+
 Deliberately a warning and not a hard error: truncating is still the documented
 behaviour and a host may reasonably not care. Verified against the 12-arc case
 - one line, and silence from the other 18 probe cases.
@@ -468,7 +492,7 @@ Worth revisiting if a profile ever puts the pass on the critical path - the
 invalidation inputs are all already tracked by the existing dirty flags, so it
 is a contained change when there is evidence for it.
 
-### I3. Registering both neon renderers doubles the CPU-side work - PARTLY FIXED
+### I3. Registering both neon renderers doubles the CPU-side work - FIXED
 
 Each owns its own gradient / segment / arc LUTs, its own three UBOs and its own
 128x2 emission FBO, and `OnConfigChanged` bakes both regardless of `enable`. On
@@ -486,15 +510,18 @@ frame to zero, and a config-change frame from three to two. The precondition is
 now stated on both `packLightBlocks` declarations so the coupling is not
 accidental.
 
-Still open: the structural half. Each renderer owns a full private set of LUT
-textures, UBOs and an emission FBO, and bakes them regardless of its own
-`enable` flag. That follows from the two renderers being near-forks rather than
-sharing a base, so it is not a local fix - it is the same underlying issue as
-I8.
+**Now fixed outright**: the structural half went with the fork. The two
+renderers were folded into one drawing at `NeonConfig::resolutionScale`, so
+there is a single set of LUT textures, a single set of UBOs and a single
+emission FBO - not because the duplication was optimised away, but because
+there is no second renderer to own a second copy. The scaled buffer is the only
+resource the reduced-resolution path adds, and at scale 1.0 it is never
+allocated. See `neon-unification-plan.md`.
 
-### I4. `WireframeRenderer` does not follow the conventions the others do - FIXED
+### I4. `WireframeRenderer` does not follow the conventions the others do - FIXED, THEN ABSORBED
 
-Two deviations in [`wireframe-renderer.cpp`](../lib/src/renderer/wireframe-renderer.cpp):
+Two deviations in `wireframe-renderer.cpp` (since deleted - see the note at the
+end of this item):
 
 - `OnConfigChanged` re-uploads its VBO on **any** config change, which with an
   animation attached is every frame. The neon renderers gate the equivalent
@@ -515,6 +542,16 @@ around a rounded one. Defensible for a bounding box; worth a comment saying so.
   being registered first.
 - `buildGeometry` now says the sharp box is deliberate: it shows the extent the
   config asked for rather than tracing the rounded outline the neon draws.
+
+**Since absorbed.** `WireframeRenderer` no longer exists: the box is an overlay
+of `DebugRenderer`, behind `DebugConfig::showWireframe`, and all three fixes
+above travelled with it (geometry-gated rebuild, blend restored by the shared
+`Render`, the sharp-box rationale kept at the vertex build). The second one is
+now genuinely load-bearing rather than defensive - the debug layer is registered
+LAST of the overlay-drawing renderers, so what it hands back is what the next
+frame starts from. One behaviour change came with the move: the box draws over
+the glow instead of under it, because the layer that owns it must follow the
+neon for the strip and markers to annotate anything.
 
 Verified by counting lit pixels across a resize and a non-geometry change: the
 box tracks 200x140 (678 px lit) then 400x300 (1399), and a pure
@@ -573,6 +610,11 @@ samples undefined data in core profile.
 The comment there said the gather "reads a stale table". There is no stale
 table left at that point.
 
+> **Superseded.** The `bool` return described below no longer exists: the
+> emission target is allocated once in `Initialize`, which fails outright if no
+> candidate format works, so `renderEmissionPass` cannot reach this state and is
+> now `void`. The defect and its original fix are kept for the reasoning.
+
 **Fixed** by making `renderEmissionPass` return a `bool` in both renderers and
 having `Render` act on it:
 
@@ -600,8 +642,9 @@ reachable through `el_effect_set_*`. The three that looked missing on a
 name-match are covered by bundled setters (`el_effect_set_geometry` for
 `cornerRadius` and `height`, `el_effect_set_arc` / `_count` for `arcs`,
 `el_effect_set_segment_boost` / `_count` for `segmentBoosts`). The single true
-omission is `neon.opaqueOnly`, which `config.h:258` already documents as "Not
-exposed through the C API" - a debug-only flag, deliberately left out.
+omission is `opaqueOnly` (since moved to `DebugConfig`), which `config.h`
+already documents as "Not exposed through the C API" - a debug-only flag,
+deliberately left out.
 
 So the guarantee in `CLAUDE.md` holds. What is weaker than it looks is the
 **coverage of the guard**: a regression is only caught if `demo-capi` actually
@@ -833,7 +876,7 @@ carried through the gather's normalisation and the tone map / gamma grade.
   The debug toggle still works (nearest vs bilinear blit differs on 171462
   bytes, max 25).
 
-### R6. Nothing stops both neon renderers being enabled at once - FIXED
+### R6. Nothing stops both neon renderers being enabled at once - FIXED, THEN MOOT
 
 The lens-flare pair warns at
 [`DebugUI::buildLensFlareSection`](../demo/src/debug-ui.cpp). The neon pair has no
@@ -855,6 +898,16 @@ configuration away from a host. `Shift+O` still toggles `optimizedNeon.enable`
 on its own for the same reason - the warning is visible in the debug window the
 moment it does. Making the hotkey swap the two instead is a one-line change if
 that is preferred.
+
+**Since made moot.** The neon fork was folded into one renderer with a
+`resolutionScale`, so there is no second flag to contradict the first and the
+state this finding describes is unrepresentable. `BothNeonPathsWarning` was
+removed from both demos - it had to be, not merely as dead code: through the C
+ABI it compared `get_neon_renderer_enabled` against
+`get_optimized_renderer_enabled`, and the latter is now "enabled and below full
+resolution", so the warning would have fired on every scaled frame. `Shift+O`
+now toggles the scale between 1.0 and 0.5. The lens-flare pair still warns, and
+still needs to.
 
 ### R7. The halo and bloom band into 8-bit contours - OPEN
 
@@ -1070,7 +1123,7 @@ filament along 200 perimeter samples dips at most 2.3%, and at t = 0.170 rather
 than at either seam, matching the 2.5% the no-stops control shows); and base vs
 optimized agreement is unchanged.
 
-### V9. An arc's own gradient quantises to the gather grid, and the half-res default makes it visible - OPEN
+### V9. An arc's own gradient quantises to the gather grid, and a reduced sample count makes it visible - OPEN
 
 **Confirmed.** The two neon renderers agree everywhere at max 7 - except when
 arcs carry their own colour stops, where they diverge by up to 100/255 in tight
@@ -1318,16 +1371,17 @@ things about itself, and an output nobody can tell apart.
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
-I9, I10 and I11. Six items from the first pass remain deliberately open, each
-with the reasoning recorded next to the code rather than only here, plus R7 from
-the second pass and V9 and I12's remainder from the third:
+I9, I10 and I11. I3's structural half - the last thing on this list that was
+open rather than declined - closed with the neon unification, which deleted the
+fork it followed from. Five items from the first pass remain deliberately open,
+each with the reasoning recorded next to the code rather than only here, plus R7
+from the second pass and V9 and I12's remainder from the third:
 
 | item | state | why |
 | ---- | ----- | --- |
 | V4 | documented limitation | closing it needs a second distance field, which reintroduces the rect-size dependence the analytic profile removed |
 | V5 | residual, documented | closing it means plumbing pixel-space feathers into the pre-pass for an effect nobody has reported; read V9 alongside it, which measures the other half of the same mechanism |
 | I2 | declined | negligible measured-by-structure win against a real staleness-bug risk |
-| I3 | structural half open | follows from the two neon renderers being near-forks; same root as I8 |
 | I5 | documented | the alternative is a breaking renderer-API change for an unmeasured cost |
 | I8 | audited, no UI written | the C ABI itself is complete; what is missing is `demo-capi` coverage, ranked in the section above |
 | R7 | open | a measured quantisation defect with a cheap cure, but unproven visual severity; see the note there before starting |
