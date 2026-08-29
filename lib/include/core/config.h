@@ -712,7 +712,22 @@ namespace EdgeLighting
         /// anchored on the sun-to-centre axis and are not rotated.
         float rotationRate = 0.0f;
 
-        bool operator==(const LensFlareConfig &o) const
+        /// Fraction of the viewport the flare is rendered at before being
+        /// bilinear-blitted back to full resolution. 1.0 draws straight onto
+        /// the target framebuffer with no offscreen buffer and no blit; below
+        /// that costs @c resolutionScale^2 as many shaded fragments.
+        ///
+        /// Nearly lossless here, more so than for the neon: the flare is all
+        /// smooth low-frequency light (soft glow, ghosts, rays) and the shader
+        /// normalises every term by @c uResolution, so it is scale invariant -
+        /// drawing into a smaller buffer reproduces the same picture rather
+        /// than a differently-shaped one.
+        ///
+        /// Clamped to (0, 1] at draw time. Above 1.0 is refused rather than
+        /// supersampled: the point of the knob is to shade FEWER fragments,
+        /// and honouring 2.0 would quietly allocate four times the viewport.
+        float resolutionScale = 1.0f;
+bool operator==(const LensFlareConfig &o) const
         {
             return enable == o.enable &&
                    perimeterPosition == o.perimeterPosition &&
@@ -728,36 +743,11 @@ namespace EdgeLighting
                    ghostTint == o.ghostTint &&
                    flareCenter == o.flareCenter &&
                    rayDensity == o.rayDensity &&
-                   rotationRate == o.rotationRate;
+                   rotationRate == o.rotationRate &&
+                   resolutionScale == o.resolutionScale;
         }
         bool operator!=(const LensFlareConfig &o) const { return !(*this == o); }
     } LensFlareConfig;
-
-    /// Half-resolution variant of the lens flare. Renders the same lens-flare
-    /// shader into a scaled RGBA8 FBO then bilinear-blits to full res, so the
-    /// expensive per-pixel flare math (10-ghost loop, rays, ghosts) runs over
-    /// @c resolutionScale² fewer fragments. The flare is a smooth low-frequency
-    /// effect, so the bilinear upscale is nearly lossless.
-    ///
-    /// Visual parameters (sun position, colour, ghosts, rays, etc.) are shared
-    /// with @c Config::lensFlare - adjust them in the Lens Flare section of the
-    /// debug UI. This sub-config carries only the perf knobs specific to the
-    /// optimized path. Do not enable this and @c Config::lensFlare at the same
-    /// time; they draw the same flare and would double it.
-    typedef struct LensFlareOptimizedConfig
-    {
-        bool enable = false; ///< Enable or disable the optimized lens flare renderer
-
-        /// Resolution scale factor for the internal FBO (0.5 = half, 0.25 = quarter).
-        float resolutionScale = 0.5f;
-
-        bool operator==(const LensFlareOptimizedConfig &o) const
-        {
-            return enable == o.enable &&
-                   resolutionScale == o.resolutionScale;
-        }
-        bool operator!=(const LensFlareOptimizedConfig &o) const { return !(*this == o); }
-    } LensFlareOptimizedConfig;
 
     // -----------------------------------------------------------------------
     // Top-level configuration
@@ -774,7 +764,6 @@ namespace EdgeLighting
         DebugConfig debug;                           ///< LUT strip / colour-stop marker overlays
         DropletsConfig droplets;                     ///< Rain-on-glass droplets settings
         LensFlareConfig lensFlare;                   ///< Sun + lens flare (rays, chromatic ghosts)
-        LensFlareOptimizedConfig optimizedLensFlare; ///< Half-res optimized lens flare settings
 
         bool operator==(const Config &o) const
         {
@@ -782,8 +771,7 @@ namespace EdgeLighting
                    neon == o.neon &&
                    debug == o.debug &&
                    droplets == o.droplets &&
-                   lensFlare == o.lensFlare &&
-                   optimizedLensFlare == o.optimizedLensFlare;
+                   lensFlare == o.lensFlare;
         }
         bool operator!=(const Config &o) const { return !(*this == o); }
     } Config;
