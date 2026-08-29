@@ -97,6 +97,51 @@ extern "C"
         return el_effect_get_neon_gradient_lut_size(effect, outSize);
     }
 
+    // --- Deprecated: the "optimized" lens flare renderer --------------------
+
+    el_result_e el_effect_set_optimized_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_lens_flare_renderer_enabled");
+        if (enabled != 0)
+        {
+            effect->config.lensFlare.enable = true;
+            if (effect->config.lensFlare.resolutionScale >= 1.0f)
+            {
+                effect->config.lensFlare.resolutionScale = EL_LEGACY_OPTIMIZED_SCALE;
+            }
+        }
+        else
+        {
+            // Full resolution, but NOT disabled - see the neon shim above for
+            // why clearing the enable here would blank the layer for a host
+            // that is merely switching paths.
+            effect->config.lensFlare.resolutionScale = 1.0f;
+        }
+        LOG_D("effect=%p, enabled=%d -> lensFlare.enable=%d, scale=%f", (void *)effect, enabled,
+              effect->config.lensFlare.enable ? 1 : 0, effect->config.lensFlare.resolutionScale);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_optimized_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_lens_flare_renderer_enabled");
+        VALIDATE_OUT_PTR(outEnabled, "el_effect_get_optimized_lens_flare_renderer_enabled");
+        *outEnabled = (effect->config.lensFlare.enable &&
+                       effect->config.lensFlare.resolutionScale < 1.0f) ? 1 : 0;
+        LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_optimized_lens_flare_resolution_scale(el_effect_handle_t effect, float scale)
+    {
+        return el_effect_set_lens_flare_resolution_scale(effect, scale);
+    }
+
+    el_result_e el_effect_get_optimized_lens_flare_resolution_scale(el_effect_handle_t effect, float *outScale)
+    {
+        return el_effect_get_lens_flare_resolution_scale(effect, outScale);
+    }
+
     // --- Deprecated: the wireframe renderer --------------------------------
 
     el_result_e el_effect_set_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)

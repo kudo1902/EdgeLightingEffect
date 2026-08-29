@@ -295,13 +295,16 @@ extern "C"
         EL_RENDERER_DEBUG = 1 << 6,                /**< Debug overlays over the neon layer: LUT strip,
                                                     *   colour-stop markers, bounding box. */
         EL_RENDERER_DROPLETS = 1 << 3,             /**< Rain-on-glass droplets. */
-        EL_RENDERER_LENS_FLARE = 1 << 4,           /**< Sun + hex-aperture lens flare. */
-        EL_RENDERER_LENS_FLARE_OPTIMIZED = 1 << 5, /**< Half-res lens flare variant. Do not combine with
-                                                    *   @ref EL_RENDERER_LENS_FLARE - unlike the aliases
-                                                    *   below these are two real renderers drawing the
-                                                    *   same flare, so both on draws it twice. */
+        EL_RENDERER_LENS_FLARE = 1 << 4,           /**< Sun + hex-aperture lens flare, at any
+                                                    *   resolution scale. */
 
         /* --- Deprecated aliases (see @details) -------------------------- */
+        EL_RENDERER_LENS_FLARE_OPTIMIZED = 1 << 5, /**< -> @ref EL_RENDERER_LENS_FLARE. The half-res path
+                                                    *   is a resolution scale on that layer, not a second
+                                                    *   renderer. Safe to combine with it now: both bits
+                                                    *   register the layer exactly ONCE, where the two
+                                                    *   real renderers this replaced drew the flare
+                                                    *   twice. */
         EL_RENDERER_WIREFRAME = 1 << 0,      /**< -> @ref EL_RENDERER_DEBUG. The 1 px box is one of that
                                               *   layer's overlays now, not a renderer of its own. */
         EL_RENDERER_NEON_OPTIMIZED = 1 << 2, /**< -> @ref EL_RENDERER_NEON. The half-res path is a
