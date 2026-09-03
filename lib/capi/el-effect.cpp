@@ -1756,45 +1756,41 @@ extern "C"
         {
             effect->impl = std::make_unique<EdgeLighting::EdgeLightingEffect>();
 
-            // ONE neon layer for both bits. EL_RENDERER_NEON_OPTIMIZED is a
-            // deprecated alias now that the half-res path is a scale on this
-            // renderer rather than a second one - so the two bits are tested
-            // together and register a single instance. Testing them separately
-            // would give a host passing EL_RENDERER_ALL (or both bits) two
-            // neon layers drawing the same thing over each other.
-            if (rendererMask & (EL_RENDERER_NEON | EL_RENDERER_NEON_OPTIMIZED))
+            // ONE bit per layer: the content layers dense from 0, the debug
+            // layer on the top bit (see el_renderer_flags_e), which is what
+            // pins its value while content layers keep taking the next free
+            // low bit. The deprecated "optimized" and wireframe
+            // aliases that used to be ORed in beside these are gone: the
+            // half-res paths are a resolution scale on the neon and flare
+            // layers, and the bounding box is one of the debug layer's
+            // overlays. Nothing can double-register a layer any more, which is
+            // what the paired tests here existed to prevent.
+            //
+            // Compositing order is THIS sequence of ifs, and it matches the bit
+            // order: content layers first on the low bits, the debug layer
+            // last on the highest.
+            if (rendererMask & EL_RENDERER_NEON)
             {
                 LOG_I("registering NeonRenderer");
                 effect->impl->AddRenderer(std::make_shared<EdgeLighting::NeonRenderer>());
-            }
-            // After the neon layer: it annotates what that layer drew.
-            //
-            // EL_RENDERER_WIREFRAME is a deprecated alias - the bounding box is
-            // one of this layer's overlays now, not a renderer of its own - so
-            // the two bits are tested together and register a single instance,
-            // exactly as the two neon bits are above.
-            if (rendererMask & (EL_RENDERER_DEBUG | EL_RENDERER_WIREFRAME))
-            {
-                LOG_I("registering DebugRenderer");
-                effect->impl->AddRenderer(std::make_shared<EdgeLighting::DebugRenderer>());
             }
             if (rendererMask & EL_RENDERER_DROPLETS)
             {
                 LOG_I("registering DropletsRenderer");
                 effect->impl->AddRenderer(std::make_shared<EdgeLighting::DropletsRenderer>());
             }
-            // ONE flare layer for both bits. EL_RENDERER_LENS_FLARE_OPTIMIZED
-            // is a deprecated alias now that the half-res path is a scale on
-            // this renderer rather than a second one - so the two bits are
-            // tested together and register a single instance, exactly as the
-            // two neon bits are above. Testing them separately would give a
-            // host passing EL_RENDERER_ALL two flare layers drawing the same
-            // flare over each other, which is the double-draw the old ABI
-            // could only warn about in prose.
-            if (rendererMask & (EL_RENDERER_LENS_FLARE | EL_RENDERER_LENS_FLARE_OPTIMIZED))
+            if (rendererMask & EL_RENDERER_LENS_FLARE)
             {
                 LOG_I("registering LensFlareRenderer");
                 effect->impl->AddRenderer(std::make_shared<EdgeLighting::LensFlareRenderer>());
+            }
+            // LAST, so the annotations sit above every layer they describe -
+            // after the neon whose glow the strip and markers measure, and
+            // above the droplets and flare that would otherwise cover them.
+            if (rendererMask & EL_RENDERER_DEBUG)
+            {
+                LOG_I("registering DebugRenderer");
+                effect->impl->AddRenderer(std::make_shared<EdgeLighting::DebugRenderer>());
             }
             if (!effect->impl->Initialize())
             {
