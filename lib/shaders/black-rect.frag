@@ -2,22 +2,27 @@ precision highp float;
 
 // Opaque background pass drawn behind the neon when
 // config.neon.opaqueMode != NONE. Fills a rounded-rect band with
-// `uOpaqueColor` (default black). Drawn as a fullscreen NDC quad so the
-// fragment shader sees every pixel in the viewport; the silhouette comes
-// from an analytic rounded-box SDF read off gl_FragCoord (NOT an
-// interpolated varying). highp + gl_FragCoord keeps the SDF exact on
-// mobile GLES (Mali/Tizen), where a mediump varying carrying pixel
-// coordinates would lose precision and a vertex(highp)->fragment(mediump)
-// varying mismatch can even fail to link.
+// `uOpaqueColor` (default black). The silhouette comes from an analytic
+// rounded-box SDF read off gl_FragCoord (NOT an interpolated varying), so it
+// is independent of the geometry it is drawn on - which is what lets the CPU
+// bound this pass with a ring sized to the band (see
+// NeonRenderer::setupFillGeometry) instead of shading the whole viewport to
+// paint a 20 px band.
+//
+// highp + gl_FragCoord keeps the SDF exact on mobile GLES (Mali/Tizen), where
+// a mediump varying carrying pixel coordinates would lose precision and a
+// vertex(highp)->fragment(mediump) varying mismatch can even fail to link.
 //
 // Cutoffs are positive pixel distances measured from the rect edge along
 // their respective sides (see NeonConfig::insideCutoff / outsideCutoff).
 //
-//   NONE    - discarded before this shader is dispatched (CPU-side guard).
+//   NONE    - never dispatched; the CPU skips the pass entirely.
 //   OUTSIDE - fill 0 <= d <= outsideCutoff.
 //   INSIDE  - fill -insideCutoff <= d <= 0.
 //   BOTH    - fill -insideCutoff <= d <= outsideCutoff (the whole glow band).
-//   ALL     - fill the whole viewport (coverage = 1 everywhere).
+//   ALL     - never dispatched either: coverage is 1 at every pixel, so the
+//             CPU expresses it as a scissored glClear and no shader runs.
+//             The branch below is kept only as a safety fallback.
 //
 // The d == 0 rect edge gets exact 1 px box-filter coverage from fwidth(d);
 // the cutoff boundaries get a uOpaqueSoftness feather. See main().
@@ -76,9 +81,22 @@ float bandInnerDistance(float d, float cut) {
 }
 
 void main() {
-    if (uOpaqueMode == OPAQUE_MODE_NONE) discard; // guard - the CPU already
-                                                  // skips this pass, but be
-                                                  // explicit for safety.
+    // Guard - the CPU already skips this pass for NONE (and handles ALL with
+    // glClear), but be explicit for safety. Transparent black rather than
+    // discard, for the reason given at the coverage test below: this shader
+    // contains no discard at all, deliberately.
+    if (uOpaqueMode == OPAQUE_MODE_NONE) { fragColor = vec4(0.0); return; }
+
+    // ALL is coverage 1 at every pixel, so none of the shaping below can
+    // change its result. It is also the one mode the CPU still hands a
+    // fullscreen quad (every other mode is bounded by the band ring in
+    // NeonRenderer::setupFillGeometry), so it is the mode that shades the most
+    // fragments - and the SDF, the fwidth and the two smoothsteps would all be
+    // dead work in every one of them. Same output, taken directly.
+    if (uOpaqueMode == OPAQUE_MODE_ALL) {
+        fragColor = vec4(uOpaqueColor.rgb, 1.0);
+        return;
+    }
 
     vec2  localPos = gl_FragCoord.xy - uRectCenter;
     vec2  halfSize = uRectSize * 0.5;
@@ -152,9 +170,7 @@ void main() {
     float dIn  = bandInnerDistance(d, uInsideCutoff);
 
     float coverage = 0.0;
-    if (uOpaqueMode == OPAQUE_MODE_ALL) {
-        coverage = 1.0;
-    } else if (uOpaqueMode == OPAQUE_MODE_OUTSIDE) {
+    if (uOpaqueMode == OPAQUE_MODE_OUTSIDE) {
         // 0 <= d <= outsideCutoff
         float rise = edgeOut;
         float fall = 1.0 - smoothstep(-softHalf, softHalf, dOut);
@@ -171,7 +187,20 @@ void main() {
         coverage   = rise * fall;
     }
 
-    if (coverage <= 0.0) discard;
+    // Transparent black instead of discard, and NOT as a stylistic choice.
+    // Under this pass's glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA) a coverage
+    // of 0 gives dst = 0 + dst * (1 - 0) = dst, so the two are bit-exact - 135
+    // offscreen scenes come back byte-identical either way. What differs is
+    // speed: measured back to back in one process at 3840x2160, dropping the
+    // discard took ~0.2-0.3 ms off the fullscreen cases (an opaque mode whose
+    // cutoff is disabled, where the ring in NeonRenderer::setupFillGeometry
+    // has nothing to bound). It is worth ~0 on the bounded ring, which shades
+    // too few fragments for it to show.
+    //
+    // The effect scales with fragments shaded, so it should hold on the Mali /
+    // Tizen targets too - a shader with discard cannot use forward pixel kill
+    // there. That direction is UNVERIFIED here; if it ever measures worse on
+    // device, restoring `if (coverage <= 0.0) discard;` is the whole revert.
 
     // Coverage-weighted premultiplied output for
     // glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA): opaque uOpaqueColor.rgb
