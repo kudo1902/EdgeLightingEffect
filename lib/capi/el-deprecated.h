@@ -22,7 +22,8 @@
  * @c EL_RENDERER_NEON_OPTIMIZED and @c EL_RENDERER_LENS_FLARE_OPTIMIZED were
  * deleted from @c el-types.h along with the branches in
  * @c el_effect_init_with_renderers that ORed them in, and the remaining flags
- * were renumbered dense from bit 0 - so a host's renderer mask must be rebuilt
+ * were renumbered - the content layers dense from bit 0, the debug layer onto
+ * the top bit of @c EL_RENDERER_ALL - so a host's renderer mask must be rebuilt
  * from the named constants in this version of the header.
  *
  * @section why Why these are deprecated

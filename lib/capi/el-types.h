@@ -278,9 +278,14 @@ extern "C"
      *           FBO allocation); its @c el_effect_set_*_renderer_enabled flag
      *           still writes to the staging config but has no visual effect.
      *
-     *           The bits are dense from 0 and run in that same order: the three
-     *           content layers hold the low bits, the debug layer the last one
-     *           because its annotations draw over all of them.
+     *           The bits run in that same order: the content layers are dense
+     *           from 0, and the debug layer holds the TOP bit - bit 30, the
+     *           most significant one @ref EL_RENDERER_ALL covers (bit 31 is
+     *           unusable, the values being int-typed). It sits there for two
+     *           reasons: its annotations draw over all of them, and the top bit
+     *           is the one no future content layer can reach, so
+     *           @c EL_RENDERER_DEBUG keeps its numeric value however many
+     *           layers are added below it.
      *
      *           These values were RENUMBERED when the deprecated wireframe and
      *           "optimized" aliases were removed - they used to be frozen
@@ -291,8 +296,9 @@ extern "C"
      *           the wrong layers. @ref EL_RENDERER_ALL is the exception,
      *           unchanged at 0x7FFFFFFF.
      *
-     *           A layer added later takes the next free bit and joins
-     *           @ref EL_RENDERER_ALL without a further ABI change. */
+     *           A content layer added later takes the next free bit above
+     *           @ref EL_RENDERER_LENS_FLARE and joins @ref EL_RENDERER_ALL
+     *           without a further ABI change, leaving the debug bit alone. */
     typedef enum el_renderer_flags_e
     {
         EL_RENDERER_NONE = 0, /**< Register no renderers. */
@@ -304,9 +310,12 @@ extern "C"
                                           *   resolution scale. */
 
         /* --- Debug layer ----------------------------------------------- */
-        EL_RENDERER_DEBUG = 1 << 3, /**< Debug overlays describing the neon layer: LUT
-                                     *   strip, colour-stop markers, bounding box.
-                                     *   Drawn last, over every other layer. */
+        EL_RENDERER_DEBUG = 1 << 30, /**< Debug overlays describing the neon layer: LUT
+                                      *   strip, colour-stop markers, bounding box.
+                                      *   Drawn last, over every other layer. Holds the
+                                      *   most significant bit of @ref EL_RENDERER_ALL
+                                      *   rather than the next dense one, so new content
+                                      *   layers never renumber it. */
 
         /**< Every layer, including any added later: the mask covers bits not
          *   yet assigned, so a new renderer joins it without an ABI change.

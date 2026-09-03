@@ -1756,8 +1756,10 @@ extern "C"
         {
             effect->impl = std::make_unique<EdgeLighting::EdgeLightingEffect>();
 
-            // ONE bit per layer, and the bits are dense from 0 (see
-            // el_renderer_flags_e). The deprecated "optimized" and wireframe
+            // ONE bit per layer: the content layers dense from 0, the debug
+            // layer on the top bit (see el_renderer_flags_e), which is what
+            // pins its value while content layers keep taking the next free
+            // low bit. The deprecated "optimized" and wireframe
             // aliases that used to be ORed in beside these are gone: the
             // half-res paths are a resolution scale on the neon and flare
             // layers, and the bounding box is one of the debug layer's
@@ -1765,7 +1767,8 @@ extern "C"
             // what the paired tests here existed to prevent.
             //
             // Compositing order is THIS sequence of ifs, and it matches the bit
-            // order: content layers first, the debug layer last.
+            // order: content layers first on the low bits, the debug layer
+            // last on the highest.
             if (rendererMask & EL_RENDERER_NEON)
             {
                 LOG_I("registering NeonRenderer");
