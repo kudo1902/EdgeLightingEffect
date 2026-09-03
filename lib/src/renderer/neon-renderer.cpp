@@ -688,8 +688,9 @@ namespace EdgeLighting
         // softW/2 beyond it; SAFETY absorbs that rounding plus the fwidth-based
         // `aa` floor, which is ~1 px on a flat edge and up to ~1.4 px on a
         // diagonal one. Over-covering by a couple of pixels is free - those
-        // fragments discard - while under-covering would clip the feather, so
-        // this rounds outward on purpose.
+        // fragments come out at coverage 0, which this pass's premultiplied
+        // blend leaves the destination untouched by - while under-covering
+        // would clip the feather, so this rounds outward on purpose.
         constexpr float FILL_EDGE_SAFETY = 3.0f;
         const float softHalf = 0.5f * std::max(config.neon.opaqueSoftness,
                                                static_cast<float>(SIDE_SOFT_EPSILON));
@@ -1095,16 +1096,44 @@ namespace EdgeLighting
         {
             // glClear is bounded by the SCISSOR, not the viewport, so a
             // framebuffer larger than the viewport would be wiped outside it.
+            // Hence a scissor of our own - but INTERSECTED with whatever the
+            // host already had, never replacing it. The quad this replaced was
+            // clipped by a host scissor like any other draw; a clear box set
+            // to the bare viewport is not, and would paint over exactly the
+            // region the host clipped this pass out of. A host clipping the
+            // effect to a sub-rect saw the whole surface go opaque.
+            //
             // Every piece of state touched here is restored: a host that keeps
             // its own scissor or clear colour must not find them changed.
             const GLboolean prevScissor = glIsEnabled(GL_SCISSOR_TEST);
             GLint prevBox[4];
             glGetIntegerv(GL_SCISSOR_BOX, prevBox);
+
+            GLint clearX = 0;
+            GLint clearY = 0;
+            GLint clearW = viewportWidth;
+            GLint clearH = viewportHeight;
+            if (prevScissor)
+            {
+                const GLint maxX = std::min(clearX + clearW, prevBox[0] + prevBox[2]);
+                const GLint maxY = std::min(clearY + clearH, prevBox[1] + prevBox[3]);
+                clearX = std::max(clearX, prevBox[0]);
+                clearY = std::max(clearY, prevBox[1]);
+                clearW = std::max(maxX - clearX, 0);
+                clearH = std::max(maxY - clearY, 0);
+            }
+            // The host has clipped this pass away entirely. Return BEFORE
+            // touching any state, so there is nothing to put back.
+            if (clearW <= 0 || clearH <= 0)
+            {
+                return;
+            }
+
             GLfloat prevClear[4];
             glGetFloatv(GL_COLOR_CLEAR_VALUE, prevClear);
 
             glEnable(GL_SCISSOR_TEST);
-            glScissor(0, 0, viewportWidth, viewportHeight);
+            glScissor(clearX, clearY, clearW, clearH);
             // Alpha 1, matching the coverage the shader path writes - the
             // fill is opaque, whatever uOpaqueColor.a says (see the note on
             // the colour uniform in black-rect.frag).
