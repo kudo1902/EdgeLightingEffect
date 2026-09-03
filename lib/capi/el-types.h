@@ -278,37 +278,35 @@ extern "C"
      *           FBO allocation); its @c el_effect_set_*_renderer_enabled flag
      *           still writes to the staging config but has no visual effect.
      *
-     *           Two bits are DEPRECATED ALIASES of layers that absorbed them.
-     *           An alias registers the layer it points at, and an alias ORed
-     *           with its target still registers that layer exactly ONCE - so no
-     *           mask written against the old API can double-draw.
+     *           The bits are dense from 0 and run in that same order: the three
+     *           content layers hold the low bits, the debug layer the last one
+     *           because its annotations draw over all of them.
      *
-     *           The values are frozen for ABI compatibility, so they are not
-     *           sequential in this listing: live layers are grouped first and
-     *           the aliases last, rather than in bit order. */
+     *           These values were RENUMBERED when the deprecated wireframe and
+     *           "optimized" aliases were removed - they used to be frozen
+     *           around the three bits those aliases held - so EVERY layer flag
+     *           has a different numeric value than it did under the old ABI. A
+     *           host must be recompiled against this header; one passing a mask
+     *           it hard-coded, cached or linked against previously will select
+     *           the wrong layers. @ref EL_RENDERER_ALL is the exception,
+     *           unchanged at 0x7FFFFFFF.
+     *
+     *           A layer added later takes the next free bit and joins
+     *           @ref EL_RENDERER_ALL without a further ABI change. */
     typedef enum el_renderer_flags_e
     {
         EL_RENDERER_NONE = 0, /**< Register no renderers. */
 
-        /* --- Live layers, in compositing order ------------------------- */
-        EL_RENDERER_NEON = 1 << 1,                 /**< Neon stroke, at any resolution scale. */
-        EL_RENDERER_DEBUG = 1 << 6,                /**< Debug overlays over the neon layer: LUT strip,
-                                                    *   colour-stop markers, bounding box. */
-        EL_RENDERER_DROPLETS = 1 << 3,             /**< Rain-on-glass droplets. */
-        EL_RENDERER_LENS_FLARE = 1 << 4,           /**< Sun + hex-aperture lens flare, at any
-                                                    *   resolution scale. */
+        /* --- Content layers -------------------------------------------- */
+        EL_RENDERER_NEON = 1 << 0,       /**< Neon stroke, at any resolution scale. */
+        EL_RENDERER_DROPLETS = 1 << 1,   /**< Rain-on-glass droplets. */
+        EL_RENDERER_LENS_FLARE = 1 << 2, /**< Sun + hex-aperture lens flare, at any
+                                          *   resolution scale. */
 
-        /* --- Deprecated aliases (see @details) -------------------------- */
-        EL_RENDERER_LENS_FLARE_OPTIMIZED = 1 << 5, /**< -> @ref EL_RENDERER_LENS_FLARE. The half-res path
-                                                    *   is a resolution scale on that layer, not a second
-                                                    *   renderer. Safe to combine with it now: both bits
-                                                    *   register the layer exactly ONCE, where the two
-                                                    *   real renderers this replaced drew the flare
-                                                    *   twice. */
-        EL_RENDERER_WIREFRAME = 1 << 0,      /**< -> @ref EL_RENDERER_DEBUG. The 1 px box is one of that
-                                              *   layer's overlays now, not a renderer of its own. */
-        EL_RENDERER_NEON_OPTIMIZED = 1 << 2, /**< -> @ref EL_RENDERER_NEON. The half-res path is a
-                                              *   resolution scale on that layer, not a second renderer. */
+        /* --- Debug layer ----------------------------------------------- */
+        EL_RENDERER_DEBUG = 1 << 3, /**< Debug overlays describing the neon layer: LUT
+                                     *   strip, colour-stop markers, bounding box.
+                                     *   Drawn last, over every other layer. */
 
         /**< Every layer, including any added later: the mask covers bits not
          *   yet assigned, so a new renderer joins it without an ABI change.

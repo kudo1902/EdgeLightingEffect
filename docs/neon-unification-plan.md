@@ -37,7 +37,9 @@ Cleanups the merge made possible or exposed, in the order they were done:
   which of its passes run.
 - **`WireframeRenderer` absorbed into `DebugRenderer`.** The 1px box is a third
   overlay behind `DebugConfig::showWireframe`; `WireframeConfig` is gone and
-  `EL_RENDERER_WIREFRAME` is a deprecated alias for `EL_RENDERER_DEBUG`. The box
+  `EL_RENDERER_WIREFRAME` became a deprecated alias for `EL_RENDERER_DEBUG`
+  (since removed, and the surviving flags renumbered dense from bit 0 - see
+  `el-types.h`). The box
   now draws OVER the glow, since the layer that owns it has to follow the neon.
 - **All three `bool` latches removed from `NeonRenderer`.** The two overflow
   flags became a transition test in `OnConfigChanged` against counts already
@@ -225,6 +227,8 @@ restore `GL_SRC_ALPHA` on the way out. Early-out on `!config.debug.enable`, and 
 neither show-flag being set.
 
 Registered **after** `NeonRenderer` so the overlays land on top of the glow.
+(Since moved further: the layer is registered **last**, above the droplets
+and the flare as well, and holds the last `el_renderer_flags_e` bit.)
 
 ## Part 5 - C ABI (`lib/capi/`)
 

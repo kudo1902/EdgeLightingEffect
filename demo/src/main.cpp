@@ -108,10 +108,9 @@ int main()
     auto dropletsRenderer = std::make_shared<EdgeLighting::DropletsRenderer>();
 
     gEffect->AddRenderer(neonRenderer);
-    // After the neon layer - it annotates what that layer drew.
-    gEffect->AddRenderer(debugRenderer);
     gEffect->AddRenderer(dropletsRenderer);
     gEffect->AddRenderer(lensFlareRenderer);
+    gEffect->AddRenderer(debugRenderer);
 
     EdgeLighting::Config config;
     config.geometry.width = displayW / 2;

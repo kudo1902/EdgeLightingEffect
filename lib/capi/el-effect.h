@@ -694,7 +694,7 @@ extern "C"
     /** @brief Initialise every renderer layer under the current GL context.
      *  @details Convenience wrapper for @ref el_effect_init_with_renderers with
      *           @ref EL_RENDERER_ALL - registers the full stack (neon, debug,
-     *           neon, optimized, droplets, lens flare).
+     *           droplets, lens flare).
      *  @returns @ref EL_ERROR_INIT_FAILED if a renderer fails to initialise
      *           (usually a shader compile / link error - see native log). */
     EL_API el_result_e el_effect_init(el_effect_handle_t effect);
@@ -708,10 +708,17 @@ extern "C"
      *                      stack.
      *  @details Layers are always registered in the fixed compositing order
      *           regardless of the mask, so droplets still refract the neon
-     *           beneath them and the lens flare still sits on top. An omitted
+     *           beneath them, the lens flare still sits over both, and the
+     *           debug overlays still land on top of everything. An omitted
      *           layer is never constructed and pays no GL cost. Prefer this
      *           over @ref el_effect_init when a host only needs some layers
      *           (e.g. neon alone) and wants to skip the others' shader compiles.
+     *
+     *           Each layer has exactly one bit, and any bit outside
+     *           @ref el_renderer_flags_e registers nothing - so a mask gets the
+     *           layers its known bits name and no more. Note those values were
+     *           renumbered when the deprecated aliases were removed: pass the
+     *           named constants, not numbers carried over from the old ABI.
      *  @returns @ref EL_ERROR_INIT_FAILED if an included renderer fails to
      *           initialise (usually a shader compile / link error - see native
      *           log). */

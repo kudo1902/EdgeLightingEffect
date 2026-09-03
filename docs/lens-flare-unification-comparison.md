@@ -152,11 +152,14 @@ visible rather than subtle:
 Left: pre-merge, both paths on - washed out, every ray and ghost at roughly
 double strength. Right: merged, the same intent, drawn once.
 
-The C ABI keeps the hazard closed too: `EL_RENDERER_LENS_FLARE_OPTIMIZED` is now
-a deprecated alias, and both bits are tested through one `if` in
-`el_effect_init_with_renderers`, so `EL_RENDERER_LENS_FLARE`, both bits, the
-alias alone and `EL_RENDERER_ALL` all register the layer exactly once - verified
-at mean luma 50.05234 for all four.
+The C ABI kept the hazard closed too: at the time of the merge
+`EL_RENDERER_LENS_FLARE_OPTIMIZED` became a deprecated alias, and both bits were
+tested through one `if` in `el_effect_init_with_renderers`, so
+`EL_RENDERER_LENS_FLARE`, both bits, the alias alone and `EL_RENDERER_ALL` all
+registered the layer exactly once - verified at mean luma 50.05234 for all four.
+The alias has since been removed along with the other two, and the surviving
+flags renumbered dense from bit 0, so `EL_RENDERER_LENS_FLARE` is now the only
+bit that registers the layer and the paired test is gone.
 
 ## 5. Conclusion
 

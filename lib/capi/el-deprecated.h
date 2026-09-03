@@ -9,22 +9,21 @@
  *
  * @section removal Removing this header
  *
- * The whole deprecated surface is confined to two files, so retiring it is:
+ * What remains of the deprecated surface is confined to two files, so retiring
+ * it is:
  *
  * 1. delete @c lib/capi/el-deprecated.h and @c lib/capi/el-deprecated.cpp;
  * 2. drop @c capi/el-deprecated.cpp from @c lib/CMakeLists.txt;
- * 3. drop the @c \#include of this header from @c edge-lighting-capi.h;
- * 4. delete the two deprecated members of @ref el_renderer_flags_e in
- *    @c el-types.h - @c EL_RENDERER_WIREFRAME and
- *    @c EL_RENDERER_NEON_OPTIMIZED - and the branches in
- *    @c el_effect_init_with_renderers that OR them in. There are three:
- *    @c EL_RENDERER_WIREFRAME, @c EL_RENDERER_NEON_OPTIMIZED and
- *    @c EL_RENDERER_LENS_FLARE_OPTIMIZED.
+ * 3. drop the @c \#include of this header from @c edge-lighting-capi.h.
  *
- * Step 4 is the only part that does not live here. Enum members cannot be
- * moved to another header without changing their type, and their numeric
- * values are frozen for ABI compatibility, so they stay in @c el-types.h and
- * are listed above instead.
+ * The deprecated @ref el_renderer_flags_e aliases were the one part that did
+ * not live here, since an enum member cannot move to another header without
+ * changing its type. They are already gone: @c EL_RENDERER_WIREFRAME,
+ * @c EL_RENDERER_NEON_OPTIMIZED and @c EL_RENDERER_LENS_FLARE_OPTIMIZED were
+ * deleted from @c el-types.h along with the branches in
+ * @c el_effect_init_with_renderers that ORed them in, and the remaining flags
+ * were renumbered dense from bit 0 - so a host's renderer mask must be rebuilt
+ * from the named constants in this version of the header.
  *
  * @section why Why these are deprecated
  *
