@@ -275,6 +275,7 @@ namespace EdgeLighting
         }
         rebuildLoopSamples(mCurrentConfig);
         setupGeometry(mCurrentConfig);
+        setupFillGeometry(mCurrentConfig);
         // The atlas bakes read the merged transient+preserved view, which
         // OnConfigChanged normally keeps current; seed it here for the first.
         SegmentUtils::FillEffectiveSegments(mCurrentConfig.neon, mEffectiveSegments);
@@ -348,7 +349,7 @@ namespace EdgeLighting
         // and every one of them is allowed to skip.
         if (config.neon.opaqueMode != OpaqueMode::NONE)
         {
-            renderOpaqueFill(viewportHeight, config);
+            renderOpaqueFill(viewportWidth, viewportHeight, config);
         }
 
         // Debug: stop after the fill, on both paths. What lands on screen is
@@ -449,6 +450,16 @@ namespace EdgeLighting
                                    // reaches, so it sizes the quad too (see setupGeometry).
                                    config.neon.filamentFalloff != mCurrentConfig.neon.filamentFalloff ||
                                    config.neon.outsideCutoff != mCurrentConfig.neon.outsideCutoff;
+        // The fill ring is bounded by the CUTOFFS and the fill's own feather,
+        // not by the glow reach, so it gets its own gate rather than riding on
+        // geometryDirty: insideCutoff, opaqueMode and opaqueSoftness move the
+        // ring but not the glow quad, and glowRadius / bloomStrength move the
+        // glow quad but not the ring.
+        const bool fillDirty = config.geometry != mCurrentConfig.geometry ||
+                               config.neon.opaqueMode != mCurrentConfig.neon.opaqueMode ||
+                               config.neon.opaqueSoftness != mCurrentConfig.neon.opaqueSoftness ||
+                               config.neon.insideCutoff != mCurrentConfig.neon.insideCutoff ||
+                               config.neon.outsideCutoff != mCurrentConfig.neon.outsideCutoff;
         // Overflow warnings, before mCurrentConfig is overwritten below: the
         // previous counts are still in it, which is what lets these fire once
         // per overflow without a latch of their own.
@@ -487,6 +498,11 @@ namespace EdgeLighting
         if (geometryDirty)
         {
             setupGeometry(config);
+        }
+
+        if (fillDirty)
+        {
+            setupFillGeometry(config);
         }
 
         bakeLUTs(config);
@@ -535,8 +551,9 @@ namespace EdgeLighting
     {
         // Static NDC quad, shared by the three passes that cover their whole
         // target with an identity MVP: the emission bake, the opaque-mode
-        // black fill (whose shader derives its shape from gl_FragCoord, not
-        // aPos) and the scaled path's blit.
+        // black fill at OpaqueMode::ALL (whose shader derives its shape from
+        // gl_FragCoord, not aPos - every narrower mode is bounded by
+        // @ref setupFillGeometry's ring instead) and the scaled path's blit.
         //
         // Unlike setupGeometry's quad this one never changes - it is in NDC,
         // so it is independent of the geometry, the viewport and the
@@ -641,6 +658,122 @@ namespace EdgeLighting
 
         mGlowVertexArray.SetVertexData(verts, sizeof(verts));
         mGlowVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+    }
+
+    void NeonRenderer::setupFillGeometry(const Config &config)
+    {
+        // Bound the opaque fill with geometry, exactly as @ref setupGeometry
+        // bounds the glow. black-rect.frag shapes the band from an analytic
+        // SDF and discards everything outside it, so a fullscreen quad drew
+        // the right picture - but it SHADED every pixel in the viewport to do
+        // it, and a discarded fragment costs very nearly what a kept one does.
+        // Measured on a 3840x2160 target, that was a fixed ~1.4 ms per frame
+        // whether the band was 20 px wide or the whole screen.
+        //
+        // Everything here is FULL-RES and unscaled, matching the pass: the
+        // fill always draws on the caller's framebuffer at its own resolution,
+        // whatever NeonConfig::resolutionScale is doing to the glow.
+        //
+        // ALL covers the viewport by definition, so it keeps the fullscreen
+        // quad and this builds nothing. NONE never reaches the pass at all.
+        const OpaqueMode mode = config.neon.opaqueMode;
+        if (mode == OpaqueMode::NONE || mode == OpaqueMode::ALL)
+        {
+            mFillVertexCount = 0;
+            return;
+        }
+
+        // How far the fill's coverage can run past each boundary. The shader
+        // centres a ramp of width `softW` on the boundary, so it reaches
+        // softW/2 beyond it; SAFETY absorbs that rounding plus the fwidth-based
+        // `aa` floor, which is ~1 px on a flat edge and up to ~1.4 px on a
+        // diagonal one. Over-covering by a couple of pixels is free - those
+        // fragments discard - while under-covering would clip the feather, so
+        // this rounds outward on purpose.
+        constexpr float FILL_EDGE_SAFETY = 3.0f;
+        const float softHalf = 0.5f * std::max(config.neon.opaqueSoftness,
+                                               static_cast<float>(SIDE_SOFT_EPSILON));
+
+        // Per mode, how far the band extends either side of the rect edge.
+        // A side the mode does not fill still gets FILL_EDGE_SAFETY, because
+        // the d == 0 edge itself carries a one-pixel AA ramp that straddles it.
+        //
+        // A DISABLED cutoff arrives as the huge CUTOFF_DISABLED_SIZE sentinel
+        // and is handled by the arithmetic rather than by a branch: outward it
+        // pushes the ring off-viewport, where the rasteriser clips it (the
+        // fill genuinely does reach the screen edge there), and inward it
+        // drives the hole's half-extent to zero below, collapsing the ring
+        // into a solid quad (the fill genuinely does cover the interior).
+        float outerMargin = FILL_EDGE_SAFETY;
+        float innerMargin = FILL_EDGE_SAFETY;
+        if (mode == OpaqueMode::OUTSIDE || mode == OpaqueMode::BOTH)
+        {
+            outerMargin = GetCutoffSize(config.neon.outsideCutoff) + softHalf + FILL_EDGE_SAFETY;
+        }
+        if (mode == OpaqueMode::INSIDE || mode == OpaqueMode::BOTH)
+        {
+            innerMargin = GetCutoffSize(config.neon.insideCutoff) + softHalf + FILL_EDGE_SAFETY;
+        }
+
+        const float halfW = config.geometry.width * 0.5f;
+        const float halfH = config.geometry.height * 0.5f;
+        const float radius = GeometryUtils::GetEffectiveCornerRadius(config.geometry);
+
+        // OUTER edge. The outward parallel curve of a rounded box at distance m
+        // is a rounded box grown by m on each half-extent, so its axis-aligned
+        // bound is exactly this - no corner correction needed. Same at
+        // cornerRadius 0, where black-rect.frag's bandOuterDistance offsets the
+        // box per-axis and reaches halfSize + cut on the nose.
+        const float ow = halfW + outerMargin;
+        const float oh = halfH + outerMargin;
+
+        // HOLE. This one DOES need the corner correction, and getting it wrong
+        // is visible: the region the fill cannot reach is the INWARD parallel
+        // curve, a rounded box shrunk by innerMargin with its radius shrunk to
+        // match - and the largest axis-aligned rectangle inside a rounded box
+        // is not the box's own half-extents. Its corners have to clear the
+        // corner arc, which pulls each half-extent in by r - r/sqrt(2).
+        //
+        // Cutting the hole square instead left a triangular wedge at each
+        // corner outside the ring but inside the fill's real footprint, and the
+        // fill lost it: at the default cornerRadius of 40 that is a ~12 px bite
+        // out of all four corners of the band.
+        constexpr float CORNER_INSET_FACTOR = 0.2928932f; // 1 - 1/sqrt(2)
+        const float holeRadius = std::max(radius - innerMargin, 0.0f);
+        const float cornerInset = holeRadius * CORNER_INSET_FACTOR;
+        // Clamped at zero so an inside cutoff deeper than the rect - or a
+        // disabled one, arriving as the sentinel - collapses the hole and
+        // degenerates the ring into a filled quad instead of inverting it.
+        const float iw = std::max(halfW - innerMargin - cornerInset, 0.0f);
+        const float ih = std::max(halfH - innerMargin - cornerInset, 0.0f);
+
+        // Four quads that TILE the ring without overlapping - top and bottom
+        // full width, left and right only across the hole's height. Overlap
+        // would matter: the pass composites premultiplied-over, so a fragment
+        // covered twice would blend twice and read denser than the shader's
+        // own coverage. When the hole has collapsed (iw == ih == 0) top and
+        // bottom already meet at y = 0 and the side quads come out degenerate,
+        // which is the filled-quad case falling out for free.
+        // clang-format off
+        const float verts[] = {
+            // top band: y in [ih, oh]
+            -ow, oh,  -ow, ih,   ow, ih,
+            -ow, oh,   ow, ih,   ow, oh,
+            // bottom band: y in [-oh, -ih]
+            -ow, -ih,  -ow, -oh,   ow, -oh,
+            -ow, -ih,   ow, -oh,   ow, -ih,
+            // left band: x in [-ow, -iw], across the hole only
+            -ow, ih,  -ow, -ih,  -iw, -ih,
+            -ow, ih,  -iw, -ih,  -iw,  ih,
+            // right band: x in [iw, ow], across the hole only
+             iw, ih,   iw, -ih,   ow, -ih,
+             iw, ih,   ow, -ih,   ow,  ih,
+        };
+        // clang-format on
+
+        mFillVertexArray.SetVertexData(verts, sizeof(verts));
+        mFillVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+        mFillVertexCount = 24;
     }
 
     void NeonRenderer::rebuildLoopSamples(const Config &config)
@@ -919,12 +1052,12 @@ namespace EdgeLighting
         return true;
     }
 
-    void NeonRenderer::renderOpaqueFill(int viewportHeight, const Config &config)
+    void NeonRenderer::renderOpaqueFill(int viewportWidth, int viewportHeight, const Config &config)
     {
-        // A fullscreen NDC quad (identity MVP); the fragment shader shapes the
-        // black coverage from an analytic rounded-box SDF read off gl_FragCoord
-        // (highp - exact on Mali/Tizen):
-        //   BOTH    -> black everywhere (whole viewport opaque).
+        // The fragment shader shapes the black coverage from an analytic
+        // rounded-box SDF read off gl_FragCoord (highp - exact on Mali/Tizen):
+        //   ALL     -> black everywhere (whole viewport opaque).
+        //   BOTH    -> black across the whole band, inside cutoff to outside.
         //   INSIDE  -> black only where d <= softEdge (off-side stays clear).
         //   OUTSIDE -> mirror of INSIDE.
         //
@@ -942,8 +1075,63 @@ namespace EdgeLighting
         const glm::vec2 centerFull(config.geometry.position.x + halfRectW,
                                    static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
 
+        // ALL covers the viewport, so it keeps the fullscreen NDC quad and an
+        // identity MVP. Every other mode draws the band ring built by
+        // @ref setupFillGeometry, which is in full-res rect-local pixels and so
+        // needs a full-res transform to place it. The SDF is unaffected either
+        // way - it reads gl_FragCoord, not the vertex position, so the
+        // transform decides only WHICH fragments are shaded, never what they
+        // shade to.
+        // ALL is a flat overwrite of every pixel in the viewport, so it does
+        // not need a shader at all. Premultiplied-over with coverage 1 leaves
+        // exactly uOpaqueColor.rgb and alpha 1, which is what glClear writes -
+        // and a clear costs no fragments, no blending and no vertex work. On a
+        // tiler it says something stronger still: the previous contents are
+        // dead, so the tile never has to be loaded from memory to be painted
+        // over. Measured here at 3840x2160 it takes ~0.4 ms off the pass, the
+        // one case @ref setupFillGeometry's ring cannot help with because the
+        // coverage really is the whole screen.
+        if (config.neon.opaqueMode == OpaqueMode::ALL)
+        {
+            // glClear is bounded by the SCISSOR, not the viewport, so a
+            // framebuffer larger than the viewport would be wiped outside it.
+            // Every piece of state touched here is restored: a host that keeps
+            // its own scissor or clear colour must not find them changed.
+            const GLboolean prevScissor = glIsEnabled(GL_SCISSOR_TEST);
+            GLint prevBox[4];
+            glGetIntegerv(GL_SCISSOR_BOX, prevBox);
+            GLfloat prevClear[4];
+            glGetFloatv(GL_COLOR_CLEAR_VALUE, prevClear);
+
+            glEnable(GL_SCISSOR_TEST);
+            glScissor(0, 0, viewportWidth, viewportHeight);
+            // Alpha 1, matching the coverage the shader path writes - the
+            // fill is opaque, whatever uOpaqueColor.a says (see the note on
+            // the colour uniform in black-rect.frag).
+            glClearColor(config.neon.opaqueColor.r, config.neon.opaqueColor.g,
+                         config.neon.opaqueColor.b, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+
+            glClearColor(prevClear[0], prevClear[1], prevClear[2], prevClear[3]);
+            glScissor(prevBox[0], prevBox[1], prevBox[2], prevBox[3]);
+            if (!prevScissor)
+            {
+                glDisable(GL_SCISSOR_TEST);
+            }
+            return;
+        }
+
+        const bool ring = (mFillVertexCount > 0);
+        glm::mat4 fillMvp(1.0f);
+        if (ring)
+        {
+            const glm::mat4 proj = glm::ortho(0.0f, static_cast<float>(viewportWidth),
+                                              0.0f, static_cast<float>(viewportHeight), -1.0f, 1.0f);
+            fillMvp = proj * glm::translate(glm::mat4(1.0f), glm::vec3(centerFull, 0.0f));
+        }
+
         mBlackRectShader.Use();
-        mBlackRectShader.SetUniform("uMVP", glm::mat4(1.0f));
+        mBlackRectShader.SetUniform("uMVP", fillMvp);
         mBlackRectShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
         mBlackRectShader.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry));
         mBlackRectShader.SetUniform("uRectCenter", centerFull);
@@ -954,7 +1142,14 @@ namespace EdgeLighting
         mBlackRectShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
         mBlackRectShader.SetUniform("uOpaqueSoftness", opaqueSoft);
         mBlackRectShader.SetUniform("uOpaqueColor", config.neon.opaqueColor);
-        mFullscreenVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        if (ring)
+        {
+            mFillVertexArray.DrawArrays(GL_TRIANGLES, mFillVertexCount);
+        }
+        else
+        {
+            mFullscreenVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        }
         mBlackRectShader.Unuse();
     }
 
