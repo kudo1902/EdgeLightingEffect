@@ -81,22 +81,27 @@ float bandInnerDistance(float d, float cut) {
 }
 
 void main() {
-    // Guard - the CPU already skips this pass for NONE (and handles ALL with
-    // glClear), but be explicit for safety. Transparent black rather than
-    // discard, for the reason given at the coverage test below: this shader
-    // contains no discard at all, deliberately.
-    if (uOpaqueMode == OPAQUE_MODE_NONE) { fragColor = vec4(0.0); return; }
-
-    // ALL is coverage 1 at every pixel, so none of the shaping below can
-    // change its result. It is also the one mode the CPU still hands a
-    // fullscreen quad (every other mode is bounded by the band ring in
-    // NeonRenderer::setupFillGeometry), so it is the mode that shades the most
-    // fragments - and the SDF, the fwidth and the two smoothsteps would all be
-    // dead work in every one of them. Same output, taken directly.
-    if (uOpaqueMode == OPAQUE_MODE_ALL) {
-        fragColor = vec4(uOpaqueColor.rgb, 1.0);
-        return;
-    }
+    // ONE straight-line path to a single write at the bottom: no early return
+    // above the derivative, and no discard anywhere. Both of those are load
+    // bearing, and each cost a separate measurement to learn.
+    //
+    // NO EARLY RETURN. The NONE and ALL guards used to sit here as
+    // `fragColor = ...; return;`, ahead of the fwidth(d) below. They read as
+    // free - they branch on a uniform, so every lane in the draw takes the
+    // same side - but the compiler does not get to assume that, and a
+    // derivative downstream of a return it cannot prove uniform lands the
+    // whole shader on a slower path. Measured at 3840x2160 on a fill covering
+    // the surface: 0.29 ms before the returns were added, 0.41 ms with them,
+    // 0.26 ms once they moved back into the chain below. That is a ~35%
+    // penalty paid by EVERY fragment in EVERY mode, to skip work in two modes
+    // the CPU never dispatches (NONE is guarded caller-side, ALL is a
+    // scissored glClear). Keep the guards where they are - folded into the
+    // coverage chain, below the derivative - and if a new one is ever needed,
+    // it goes there too, not up here.
+    //
+    // NONE is not tested at all: it matches no arm of that chain, so it falls
+    // through at coverage 0 and writes transparent black, which is the correct
+    // no-op for this pass's blend.
 
     vec2  localPos = gl_FragCoord.xy - uRectCenter;
     vec2  halfSize = uRectSize * 0.5;
@@ -170,7 +175,13 @@ void main() {
     float dIn  = bandInnerDistance(d, uInsideCutoff);
 
     float coverage = 0.0;
-    if (uOpaqueMode == OPAQUE_MODE_OUTSIDE) {
+    if (uOpaqueMode == OPAQUE_MODE_ALL) {
+        // Coverage 1 everywhere - none of the shaping above changes it.
+        // Unreachable in practice (the CPU clears instead), so this only has
+        // to be correct, not fast; see the note at the top of main() for why
+        // it is an arm of this chain rather than an early return.
+        coverage = 1.0;
+    } else if (uOpaqueMode == OPAQUE_MODE_OUTSIDE) {
         // 0 <= d <= outsideCutoff
         float rise = edgeOut;
         float fall = 1.0 - smoothstep(-softHalf, softHalf, dOut);
@@ -187,20 +198,20 @@ void main() {
         coverage   = rise * fall;
     }
 
-    // Transparent black instead of discard, and NOT as a stylistic choice.
-    // Under this pass's glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA) a coverage
-    // of 0 gives dst = 0 + dst * (1 - 0) = dst, so the two are bit-exact - 135
-    // offscreen scenes come back byte-identical either way. What differs is
-    // speed: measured back to back in one process at 3840x2160, dropping the
-    // discard took ~0.2-0.3 ms off the fullscreen cases (an opaque mode whose
-    // cutoff is disabled, where the ring in NeonRenderer::setupFillGeometry
-    // has nothing to bound). It is worth ~0 on the bounded ring, which shades
-    // too few fragments for it to show.
+    // No `if (coverage <= 0.0) discard;` here, and it is safe to leave out:
+    // under this pass's glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA) a coverage
+    // of 0 gives dst = 0 + dst * (1 - 0) = dst, so writing transparent black
+    // is bit-exact with discarding - 333 offscreen scenes come back
+    // byte-identical either way.
     //
-    // The effect scales with fragments shaded, so it should hold on the Mali /
-    // Tizen targets too - a shader with discard cannot use forward pixel kill
-    // there. That direction is UNVERIFIED here; if it ever measures worse on
-    // device, restoring `if (coverage <= 0.0) discard;` is the whole revert.
+    // It buys nothing measurable HERE: restoring the discard and re-running
+    // the 3840x2160 cases came back inside noise, because the ring in
+    // NeonRenderer::setupFillGeometry already keeps most zero-coverage
+    // fragments from being rasterised at all, and the cases it cannot bound
+    // are the ones where coverage is 1 and the discard never fires anyway.
+    // It is left out because a shader with no discard is the friendlier shape
+    // for the Mali / Tizen targets, where discard defeats forward pixel kill -
+    // UNVERIFIED on device, but it costs nothing to be on the right side of.
 
     // Coverage-weighted premultiplied output for
     // glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA): opaque uOpaqueColor.rgb
