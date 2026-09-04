@@ -449,8 +449,25 @@ void main() {
     // razor-sharp while the cutoff joins fade smoothly, and per-side so the
     // interior and exterior can taper at different rates. Disabled sides
     // arrive with size = a huge sentinel, so these branches no-op.
-    float inSoft  = max(uInsideCutoffSoftness,  SIDE_SOFT_EPSILON);
-    float outSoft = max(uOutsideCutoffSoftness, SIDE_SOFT_EPSILON);
+    //
+    // The floor tightens - but does not close - a HARD cutoff's placement on
+    // the scaled path. Softness 0 leaves a step function, and this shader is
+    // rasterised at the buffer's rate before the blit upsamples it, so the
+    // boundary quantises to the buffer grid; half a buffer pixel of feather
+    // lets the sample nearest the boundary carry a fractional value instead of
+    // just 0 or 1. CUTOFF_SOFT_FLOOR_PX is in BUFFER px and so is NOT
+    // converted with uResolutionScale like the full-res constants elsewhere.
+    // See neon-tuning.h for the measured before/after and for why scale 0.50
+    // specifically is unmoved by it.
+    //
+    // Gated to the scaled path. At scale 1.0 the gather already runs at the
+    // destination rate, so a hard cutoff is pixel-exact there and the floor
+    // would only soften it; the direct path also has to stay bit-identical to
+    // the full-res renderer it replaced. NeonRenderer::setupGeometry mirrors
+    // this gate when it caps the quad.
+    float softFloor = (uResolutionScale < 1.0) ? CUTOFF_SOFT_FLOOR_PX : SIDE_SOFT_EPSILON;
+    float inSoft  = max(uInsideCutoffSoftness,  softFloor);
+    float outSoft = max(uOutsideCutoffSoftness, softFloor);
     // Band boundaries measured against the offset rect, so a cornerRadius-0
     // band keeps square corners instead of being rounded by the cut distance.
     float dOut = bandOuterDistance(vPos, d, halfSize, uCornerRadius, uOutsideCutoff);
