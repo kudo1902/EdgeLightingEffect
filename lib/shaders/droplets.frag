@@ -85,7 +85,7 @@ precision highp float;
 /// being dragged. Taking the smaller of the two keeps it a bead at any count.
 #define TRAIL_FLAT_DROPS 2.0
 
-in vec2 vPos; ///< Fullscreen NDC ([-1,+1]); we drive UVs off gl_FragCoord.
+in vec2 vPos; ///< Rect-local px from the band quad; we drive UVs off gl_FragCoord.
 out vec4 fragColor;
 
 uniform vec2  uRectSize;          ///< Rect size (px).
@@ -313,7 +313,15 @@ void main() {
 
     // Early bail. A thin band is a small slice of the viewport, so rejecting
     // before any droplet work is where most of this pass's cost goes away.
-    if (across < -0.25 || across > 1.25)
+    // The window is widened by DROPLET_BAND_GUARD on both sides because
+    // BandFade reads a drop's neighbourhood, not just the drop.
+    //
+    // This is the OUTER bound on anything this shader can write, so the
+    // renderer sizes its draw quad from the same constant - see
+    // droplets-tuning.h. Fragments outside it never reach here at all now;
+    // this stays as the exact bound, since the quad is a rectangle and the
+    // band is a rounded ring inside it.
+    if (across < -DROPLET_BAND_GUARD || across > 1.0 + DROPLET_BAND_GUARD)
     {
         discard;
     }
