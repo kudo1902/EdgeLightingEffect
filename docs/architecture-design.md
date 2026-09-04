@@ -269,6 +269,14 @@ the inner boundary - it is a rounded rect, the strips are axis-aligned, so the
 omitted box is the largest one inscribed in it and the four corner slivers are
 covered rather than dropped.
 
+Inside the shader the same principle applies to the heaviest term. The
+height-field gradient that drives the crescent rim and the specular dot is
+taken by finite difference, so it evaluates the whole droplet field twice more
+- but the normal reaches the output only through `rim` and `spec`, and both are
+multiplied to zero when the drop mask `c.x` is zero. Most in-band fragments are
+the gaps between drops, where that holds exactly, so the taps are gated on
+`c.x > 0`: identical output, roughly 1.6x less work.
+
 This is also why the renderer has no `resolutionScale`: it never shaded the
 whole viewport to begin with.
 

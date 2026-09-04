@@ -380,11 +380,38 @@ void main() {
     vec2 c = Drops(uv, t, staticDrops, layer1, layer2, uvToPx);
 
     // Height-field gradient in cell space - independent of viewport size.
-    vec2 e = vec2(0.001, 0.0);
-    float cx = Drops(uv + e.xy, t, staticDrops, layer1, layer2, uvToPx).x;
-    float cy = Drops(uv + e.yx, t, staticDrops, layer1, layer2, uvToPx).x;
-    vec2 normal = vec2(cx - c.x, cy - c.x);
-    vec2 nrm = normal / max(length(normal), 1e-5);
+    //
+    // Gated on c.x, which makes this the single most expensive thing the
+    // shader can skip: the two taps are two more FULL evaluations of the
+    // droplet field, so an ungated fragment pays for the field three times
+    // over. Most in-band fragments are the gaps BETWEEN drops, where c.x is
+    // exactly 0 (`Drops` closes with S(0.3, 1.0, ...), which returns a hard
+    // zero below the threshold) and the two taps are pure waste.
+    //
+    // Skipping there is EXACT, not an approximation. nrm reaches the output
+    // through exactly two terms, and c.x = 0 annihilates both:
+    //
+    //   rim  = pow(clamp(c.x * (1 - c.x) * 4, 0, 1), 1.5)  -> 0, and the
+    //          `facing` weight built from nrm only scales that zero.
+    //   spec = pow(max(0, dot(nrm, lightDir)), 16) * c.x    -> 0.
+    //
+    // So with c.x = 0 the fragment's colour and alpha do not depend on nrm at
+    // all, and vec2(0) is as good as the real gradient. It has to stay finite
+    // rather than undefined for that: dot(vec2(0), lightDir) is 0, so `facing`
+    // lands at 0.5 and nothing downstream sees a NaN to propagate.
+    //
+    // Note this gates on c.x alone, NOT on the trail channel c.y. A fragment
+    // with c.x = 0 and c.y > 0 still emits light through `bright`, but that
+    // path never reads nrm either, so it is correctly served by the skip.
+    vec2 nrm = vec2(0.0);
+    if (c.x > 0.0)
+    {
+        vec2 e = vec2(0.001, 0.0);
+        float cx = Drops(uv + e.xy, t, staticDrops, layer1, layer2, uvToPx).x;
+        float cy = Drops(uv + e.yx, t, staticDrops, layer1, layer2, uvToPx).x;
+        vec2 normal = vec2(cx - c.x, cy - c.x);
+        nrm = normal / max(length(normal), 1e-5);
+    }
 
     // --- Water shading ---------------------------------------------------
     // Water has no pigment. A drop is legible only through what it does to the
