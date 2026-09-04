@@ -96,8 +96,14 @@ namespace EdgeLighting
         /// the band was 20 px or the entire screen - measurably, a fixed
         /// full-viewport charge on every frame with @c opaqueMode set.
         ///
-        /// Covers OUTSIDE / INSIDE / BOTH. @c ALL keeps the fullscreen quad,
-        /// since there its coverage really is every pixel.
+        /// Builds nothing (@c mFillVertexCount 0) whenever the fill's coverage
+        /// is 1 at every pixel - @c ALL by definition, and @c BOTH with both
+        /// cutoffs disabled by arithmetic (the default cutoff state, so the
+        /// common way in). Those modes need no bounding geometry either way:
+        /// @ref renderOpaqueFill clears for them, and on the rare state where
+        /// a clear would not clip like a draw it falls back to the static
+        /// fullscreen quad, never to a ring. Both passes ask one shared
+        /// predicate so they cannot disagree; see @c FillsWholeViewport.
         void setupFillGeometry(const Config &config);
         void rebuildLoopSamples(const Config &config);
         /// Re-bake the three colour LUTs. Each wrapper self-guards, so this is
@@ -203,8 +209,13 @@ namespace EdgeLighting
         /// @c opaqueMode != NONE.
         ///
         /// Draws @c mFillVertexArray (the band ring from
-        /// @ref setupFillGeometry) for OUTSIDE / INSIDE / BOTH, and the
-        /// fullscreen NDC quad for ALL.
+        /// @ref setupFillGeometry) for every mode whose coverage is shaped.
+        /// A fill that covers every pixel at coverage 1 runs no shader: it is
+        /// a scissored @c glClear, bounded by the intersection of the queried
+        /// viewport with the host's own scissor. That substitution is dropped -
+        /// for the fullscreen quad, shader and all - when @c GL_STENCIL_TEST
+        /// or @c GL_DEPTH_TEST is enabled, since a clear ignores both and would
+        /// paint through a mask the host set up to clip this pass.
         void renderOpaqueFill(int viewportWidth, int viewportHeight, const Config &config);
 
         /// Pass 2b: bilinear composite of the scaled buffer onto the caller's

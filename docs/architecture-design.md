@@ -179,10 +179,14 @@ Single-pass full-resolution neon stroke. Highlights:
   `NeonConfig::opaqueColor`. Shape from an SDF read off `gl_FragCoord`;
   corners AA cleanly via `fwidth`. Because the silhouette comes from the SDF
   and not from the vertices, the CPU is free to bound the pass with whatever
-  geometry fits it tightest: `OUTSIDE` / `INSIDE` / `BOTH` draw a rectangular
-  annulus sized to the band (`NeonRenderer::setupFillGeometry`), and `ALL`
-  runs no shader at all - coverage 1 everywhere is what a scissored `glClear`
-  writes.
+  geometry fits it tightest: a shaped mode draws a rectangular annulus sized
+  to the band (`NeonRenderer::setupFillGeometry`), while a fill whose coverage
+  is 1 at every pixel runs no shader at all - that is what a scissored
+  `glClear` writes. The coverage-1 test is `NeonRenderer::FillsWholeViewport`,
+  not the enum: `ALL` by definition, and `BOTH` with both cutoffs disabled,
+  which is their default state. The clear is dropped for the fullscreen quad
+  when `GL_DEPTH_TEST` or `GL_STENCIL_TEST` is on, since a clear ignores both
+  and would paint through a mask the host set up to clip this pass.
 
 ### 4.1a Two colour-sampling spaces
 

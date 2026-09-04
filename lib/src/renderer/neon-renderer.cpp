@@ -24,6 +24,67 @@ namespace EdgeLighting
             return c.enable ? c.size : CUTOFF_DISABLED_SIZE;
         }
 
+        /// Does this config's opaque fill cover EVERY pixel at coverage 1?
+        ///
+        /// The question the fill passes actually need answered is not "which
+        /// OpaqueMode did the host pick" but "is the coverage uniformly 1",
+        /// because that is what decides between a scissored glClear and a
+        /// shaded draw. ALL says so by definition. BOTH says so too whenever
+        /// NEITHER cutoff is enabled - and since both cutoffs default to
+        /// disabled (@ref NeonConfig::insideCutoff / outsideCutoff), that is
+        /// the state a host lands in by simply selecting BOTH.
+        ///
+        /// Trace it: a disabled cutoff arrives as CUTOFF_DISABLED_SIZE, so in
+        /// black-rect.frag dIn = d + 1e6 is hugely positive and dOut = d - 1e6
+        /// hugely negative, both smoothsteps saturate, and coverage is exactly
+        /// 1 at every fragment. @ref setupFillGeometry independently
+        /// degenerates its ring to a solid +-1e6 quad in the same case (the
+        /// hole collapses to zero extent). The two together were drawing the
+        /// whole viewport through the shader to write what a clear writes -
+        /// measured at ~0.4 ms per frame at 3840x2160, the exact cost the ALL
+        /// clear path exists to avoid.
+        ///
+        /// Deliberately NOT normalised into the stored config: the C ABI
+        /// getters round-trip @c opaqueMode, so a host that sets BOTH must
+        /// read BOTH back. This is a render-time question, asked at both the
+        /// geometry build and the draw so the two cannot disagree.
+        ///
+        /// The partial cases stay on the shader path, and must: BOTH with one
+        /// cutoff enabled is bounded on that side, OUTSIDE with its cutoff
+        /// disabled covers the viewport MINUS the rect interior, and INSIDE
+        /// with its cutoff disabled covers only the interior. None of those is
+        /// a clear.
+        inline bool FillsWholeViewport(const NeonConfig &neon)
+        {
+            return neon.opaqueMode == OpaqueMode::ALL ||
+                   (neon.opaqueMode == OpaqueMode::BOTH &&
+                    !neon.insideCutoff.enable && !neon.outsideCutoff.enable);
+        }
+
+        /// Would a glClear land on the same pixels a coverage-1 fullscreen
+        /// draw would, given the CURRENT GL state?
+        ///
+        /// A clear is not a draw, and the difference is entirely in what CLIPS
+        /// it. Scissor and colour mask apply to both, which is what makes the
+        /// substitution work at all. The DEPTH and STENCIL tests apply only to
+        /// the draw - a clear is defined to ignore them. So a host masking the
+        /// effect through a stencil buffer (a rounded window, a cut-out, a
+        /// portal) had that honoured by the fullscreen quad and would find a
+        /// clear painting straight through it.
+        ///
+        /// Queried rather than assumed because this renderer never touches
+        /// either test: whatever they hold is the host's, and the host is
+        /// exactly who would be relying on them.
+        ///
+        /// @note Blending is NOT part of this question even though a clear
+        ///       ignores it too - @ref NeonRenderer::Render owns the blend
+        ///       mode for the phase and sets premultiplied-over immediately
+        ///       above, under which a coverage-1 source composites to itself.
+        inline bool ClearClipsLikeDraw()
+        {
+            return !glIsEnabled(GL_STENCIL_TEST) && !glIsEnabled(GL_DEPTH_TEST);
+        }
+
         /// CPU-side mirror of neon.frag's std140 `SegmentBlock`: the int is
         /// padded to 16 bytes and each vec3 element to a vec4 stride.
         typedef struct SegmentBlockData
@@ -273,6 +334,24 @@ namespace EdgeLighting
             LOG_E("Failed to allocate the NeonRenderer emission table in any supported format.");
             return false;
         }
+        // Vertex FORMAT for the two arrays whose contents are rebuilt at
+        // runtime, declared once here rather than on every rebuild.
+        //
+        // A VAO remembers both the attribute format and the buffer it reads
+        // from, and neither ever changes for these two: the layout is a fixed
+        // vec2, and the VBO ids are fixed for the life of the renderer
+        // (VertexArray is move-only and both are members, never reassigned).
+        // So re-declaring it alongside each upload was four redundant GL calls
+        // - bind VAO, bind VBO, enable array, attrib pointer - describing state
+        // that had not moved. glVertexAttribPointer only records the binding;
+        // it does not need the store to exist yet, which is why this can run
+        // before the uploads below.
+        //
+        // @ref setupFullscreenQuad keeps its own paired call: that one uploads
+        // exactly once and never returns, so there is nothing to separate.
+        mGlowVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+        mFillVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+
         rebuildLoopSamples(mCurrentConfig);
         setupGeometry(mCurrentConfig);
         setupFillGeometry(mCurrentConfig);
@@ -656,8 +735,24 @@ namespace EdgeLighting
         };
         // clang-format on
 
-        mGlowVertexArray.SetVertexData(verts, sizeof(verts));
-        mGlowVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+        // GL_DYNAMIC_DRAW, and no SetAttribPointer - the format was declared
+        // once in Initialize.
+        //
+        // The hint is the part that matters. This quad is rebuilt from
+        // geometryDirty, whose inputs include intensity, lineWidth, glowRadius,
+        // bloomStrength and filamentFalloff - and every one of those is an
+        // AnimatableField. So an intensity pulse, the most ordinary animation
+        // this library offers, respecifies this buffer EVERY FRAME. Telling
+        // the driver GL_STATIC_DRAW ("specify once, use many") about a buffer
+        // rewritten 60 times a second is the wrong hint, and invites exactly
+        // the placement that makes a per-frame rewrite expensive.
+        //
+        // Still glBufferData and not glBufferSubData, deliberately. A whole
+        // respecification lets the driver orphan the old store and hand back
+        // fresh memory, which is the standard way to rewrite a buffer the GPU
+        // may still be reading; a SubData into that same store is what risks
+        // an implicit sync. Same reasoning in @ref setupFillGeometry.
+        mGlowVertexArray.SetVertexData(verts, sizeof(verts), GL_DYNAMIC_DRAW);
     }
 
     void NeonRenderer::setupFillGeometry(const Config &config)
@@ -674,10 +769,13 @@ namespace EdgeLighting
         // fill always draws on the caller's framebuffer at its own resolution,
         // whatever NeonConfig::resolutionScale is doing to the glow.
         //
-        // ALL covers the viewport by definition, so it keeps the fullscreen
-        // quad and this builds nothing. NONE never reaches the pass at all.
+        // A fill that covers the viewport at coverage 1 needs no geometry at
+        // all - @ref renderOpaqueFill clears instead. That is ALL by
+        // definition and BOTH with both cutoffs disabled by arithmetic; see
+        // @ref FillsWholeViewport, which is the ONE place the two passes agree
+        // on the question. NONE never reaches the pass at all.
         const OpaqueMode mode = config.neon.opaqueMode;
-        if (mode == OpaqueMode::NONE || mode == OpaqueMode::ALL)
+        if (mode == OpaqueMode::NONE || FillsWholeViewport(config.neon))
         {
             mFillVertexCount = 0;
             return;
@@ -702,8 +800,9 @@ namespace EdgeLighting
         // A DISABLED cutoff arrives as the huge CUTOFF_DISABLED_SIZE sentinel
         // and is handled by the arithmetic rather than by a branch: outward it
         // pushes the ring off-viewport, where the rasteriser clips it (the
-        // fill genuinely does reach the screen edge there), and inward it
-        // drives the hole's half-extent to zero below, collapsing the ring
+        // fill genuinely does reach the screen edge there, and the cap below
+        // keeps "off-viewport" from meaning "1e6 px off-viewport"), and inward
+        // it drives the hole's half-extent to zero below, collapsing the ring
         // into a solid quad (the fill genuinely does cover the interior).
         float outerMargin = FILL_EDGE_SAFETY;
         float innerMargin = FILL_EDGE_SAFETY;
@@ -715,6 +814,39 @@ namespace EdgeLighting
         {
             innerMargin = GetCutoffSize(config.neon.insideCutoff) + softHalf + FILL_EDGE_SAFETY;
         }
+
+        // Cap on how far OUTWARD the ring is allowed to run, in full-res px.
+        //
+        // Only the outward direction needs one. Inward, the sentinel is
+        // absorbed before it can reach a vertex - it drives holeRadius and
+        // both hole half-extents through a max(..., 0) below, so innerMargin
+        // never appears in the buffer. Outward it lands in `ow` / `oh`
+        // directly, which meant a disabled outside cutoff shipped vertices at
+        // ~1e6 px: about 555 in NDC on a 3600-wide viewport, far outside any
+        // guard band, so the driver has to genuinely clip rather than trivially
+        // accept. Eight triangles make that cheap, and nothing observably wrong
+        // has been seen from it here - this is insurance for the Mali / Tizen
+        // side, not a fix for a reproduced defect.
+        //
+        // What makes the clamp SAFE is that this geometry is a conservative
+        // bound and nothing else: the silhouette comes from the SDF reading
+        // gl_FragCoord, and the shader still receives the true sentinel through
+        // uOutsideCutoff. Replacing one conservative bound with a tighter one
+        // changes which fragments are rasterised, never what they shade to -
+        // so long as the tighter one still covers every pixel the shader would
+        // give non-zero coverage.
+        //
+        // It does. A disabled outside cutoff means "fill everything outside the
+        // rect", which is bounded in practice by the viewport, and a viewport
+        // cannot exceed GL_MAX_VIEWPORT_DIMS - 16384 or 32768 on the hardware
+        // this targets. 65536 clears the larger of those by 2x while staying an
+        // exactly-representable float with room to spare (integers are exact to
+        // 2^24), so a rect placed anywhere inside any legal viewport is still
+        // covered to its far corner. Viewport-independence is preserved, which
+        // matters: the ring is built from OnConfigChanged, which has no
+        // viewport to consult, and a resize must keep not rebuilding it.
+        constexpr float FILL_MAX_OUTER_MARGIN = 65536.0f;
+        outerMargin = std::min(outerMargin, FILL_MAX_OUTER_MARGIN);
 
         const float halfW = config.geometry.width * 0.5f;
         const float halfH = config.geometry.height * 0.5f;
@@ -772,8 +904,14 @@ namespace EdgeLighting
         };
         // clang-format on
 
-        mFillVertexArray.SetVertexData(verts, sizeof(verts));
-        mFillVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+        // GL_DYNAMIC_DRAW and no SetAttribPointer, for the reasons spelled out
+        // at the end of @ref setupGeometry. Latent here rather than live: the
+        // ring's dirty set (geometry, opaqueMode, opaqueSoftness, the two
+        // cutoffs) contains no AnimatableField today, so this fires on host
+        // edits and not per frame. It is hinted correctly anyway, because the
+        // day a cutoff or the geometry becomes animatable is not the day
+        // anyone will think to come back and look at a usage flag.
+        mFillVertexArray.SetVertexData(verts, sizeof(verts), GL_DYNAMIC_DRAW);
         mFillVertexCount = 24;
     }
 
@@ -988,14 +1126,16 @@ namespace EdgeLighting
             }
             mScaledBuffer.Bind();
 
-            // The clear colour is global GL state, so put it back: a host that
-            // sets its own once at startup would otherwise find it silently
-            // replaced with transparent black by whichever frame ran this pass.
-            GLfloat prevClear[4];
-            glGetFloatv(GL_COLOR_CLEAR_VALUE, prevClear);
-            glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-            glClear(GL_COLOR_BUFFER_BIT);
-            glClearColor(prevClear[0], prevClear[1], prevClear[2], prevClear[3]);
+            // Transparent black, passed as an ARGUMENT rather than staged
+            // through GL_COLOR_CLEAR_VALUE. This used to save the host's clear
+            // colour, overwrite it, clear, and put it back - a glGetFloatv and
+            // two glClearColor calls every frame on the scaled path, plus a
+            // window in which a host reading its own clear colour would find
+            // it replaced. glClearBufferfv touches none of that context state.
+            // See the fuller note in @ref renderOpaqueFill, which makes the
+            // same swap on the pass's other clear.
+            static const GLfloat TRANSPARENT_BLACK[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+            glClearBufferfv(GL_COLOR, 0, TRANSPARENT_BLACK);
         }
 
         // Every pixel-valued uniform below is multiplied by `scale`, which is
@@ -1062,6 +1202,10 @@ namespace EdgeLighting
         //   INSIDE  -> black only where d <= softEdge (off-side stays clear).
         //   OUTSIDE -> mirror of INSIDE.
         //
+        // ...except that the two of those whose coverage is 1 everywhere never
+        // reach the shader at all - see @ref FillsWholeViewport and the clear
+        // below.
+        //
         // Everything here is FULL-RES and unscaled, unlike every other pass:
         // this one always draws on the caller's framebuffer. Rounded corners
         // anti-alias analytically via fwidth(d), so drawing the silhouette at
@@ -1076,23 +1220,59 @@ namespace EdgeLighting
         const glm::vec2 centerFull(config.geometry.position.x + halfRectW,
                                    static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
 
-        // ALL covers the viewport, so it keeps the fullscreen NDC quad and an
-        // identity MVP. Every other mode draws the band ring built by
+        // A shaped mode reaching the shader below draws the band ring built by
         // @ref setupFillGeometry, which is in full-res rect-local pixels and so
-        // needs a full-res transform to place it. The SDF is unaffected either
-        // way - it reads gl_FragCoord, not the vertex position, so the
-        // transform decides only WHICH fragments are shaded, never what they
-        // shade to.
-        // ALL is a flat overwrite of every pixel in the viewport, so it does
-        // not need a shader at all. Premultiplied-over with coverage 1 leaves
-        // exactly uOpaqueColor.rgb and alpha 1, which is what glClear writes -
-        // and a clear costs no fragments, no blending and no vertex work. On a
-        // tiler it says something stronger still: the previous contents are
-        // dead, so the tile never has to be loaded from memory to be painted
-        // over. Measured here at 3840x2160 it takes ~0.4 ms off the pass, the
+        // needs a full-res transform to place it. A coverage-1 mode that could
+        // not take the clear draws the identity-MVP fullscreen quad instead,
+        // which is what `ring` selects between - no ring was built for it. The
+        // SDF is unaffected either way: it reads gl_FragCoord, not the vertex
+        // position, so the transform decides only WHICH fragments are shaded,
+        // never what they shade to.
+        // A fill whose coverage is 1 at every pixel is a flat overwrite, so it
+        // does not need a shader at all. Premultiplied-over with coverage 1
+        // leaves exactly uOpaqueColor.rgb and alpha 1, which is what glClear
+        // writes - and a clear costs no fragments, no blending and no vertex
+        // work. Measured here at 3840x2160 it takes ~0.4 ms off the pass, the
         // one case @ref setupFillGeometry's ring cannot help with because the
         // coverage really is the whole screen.
-        if (config.neon.opaqueMode == OpaqueMode::ALL)
+        //
+        // The test is @ref FillsWholeViewport, not `mode == ALL`: BOTH with
+        // both cutoffs disabled produces identical output, and that is the
+        // DEFAULT cutoff state, so it was the common way into this cost rather
+        // than a corner case. @ref setupFillGeometry asks the same function, so
+        // a coverage-1 mode always arrives with mFillVertexCount == 0.
+        //
+        // Measured on that BOTH case with debug.opaqueOnly isolating the pass,
+        // 3600x2126, min of 200 frames around glFinish: 1.18 ms before the
+        // routing, 0.59 ms after, stable to +-0.07 ms across runs. The frame
+        // is byte-identical either way - and byte-identical to ALL, which is
+        // the whole argument for the routing.
+        //
+        // WHAT THIS DOES NOT BUY, because an earlier version of this comment
+        // claimed it did: on a tile-based GPU a clear can mean "the previous
+        // contents are dead, never load the tile from memory". That is a
+        // property of an UNSCISSORED, full-attachment clear at the START of a
+        // render pass, and this clear is neither. It runs mid-pass - the host
+        // has already drawn its backdrop into this target and the neon is
+        // still to come - so the load has happened either way; and it is
+        // scissored by construction (see the box derivation below), which is
+        // enough on its own to keep most tilers off the fast path. Expect the
+        // saving here to be exactly what the numbers above measure - no
+        // fragments, no blending, no vertex work - and nothing structural
+        // beyond it. Still a clear win, just a smaller one than advertised.
+        // Both measurements are desktop macOS, an immediate-mode renderer;
+        // the tiler behaviour is reasoned, not measured on device.
+        //
+        // @ref ClearClipsLikeDraw is the second half of the condition, and it
+        // is a correctness guard rather than an optimisation: the clear is an
+        // exact substitute only while nothing that clips a draw but not a
+        // clear is switched on. When one is, this falls through to the shader
+        // path below and pays the full-viewport shade, which is the right way
+        // round - a host enabled those tests in order to clip something, and
+        // the saving is not worth silently ignoring it. Note the short-circuit
+        // ordering: the two glIsEnabled queries run only for the modes that
+        // could actually use a clear, not on every frame of every mode.
+        if (FillsWholeViewport(config.neon) && ClearClipsLikeDraw())
         {
             // glClear is bounded by the SCISSOR, not the viewport, so a
             // framebuffer larger than the viewport would be wiped outside it.
@@ -1104,15 +1284,40 @@ namespace EdgeLighting
             // effect to a sub-rect saw the whole surface go opaque.
             //
             // Every piece of state touched here is restored: a host that keeps
-            // its own scissor or clear colour must not find them changed.
+            // its own scissor must not find it changed. The scissor is now the
+            // ONLY state this branch touches - see the glClearBufferfv note
+            // below for how the clear colour stopped being part of that list.
+            //
+            // These two queries are the irreducible ones. The box has to be
+            // read to be intersected with, and whether the test is on decides
+            // both the intersection and the restore - there is no way to ask
+            // "clear this rectangle" without going through the scissor, and no
+            // shadow copy would be trustworthy since the host owns this state
+            // between frames. Both are static-state reads, the cheap kind of
+            // glGet; they are not the pipeline-draining kind that reads back a
+            // result. Kept deliberately, not overlooked.
             const GLboolean prevScissor = glIsEnabled(GL_SCISSOR_TEST);
             GLint prevBox[4];
             glGetIntegerv(GL_SCISSOR_BOX, prevBox);
 
-            GLint clearX = 0;
-            GLint clearY = 0;
-            GLint clearW = viewportWidth;
-            GLint clearH = viewportHeight;
+            // The box starts at the VIEWPORT, and the viewport is QUERIED
+            // rather than assumed to be (0, 0, viewportWidth, viewportHeight).
+            // A fullscreen NDC quad - what this clear replaced - is clipped to
+            // wherever the viewport actually sits, so reproducing that is the
+            // whole job here. Assuming the origin instead meant a host drawing
+            // through glViewport(x, y, w, h) with a non-zero origin got a
+            // different rectangle erased than the one it asked the effect to
+            // draw into; erased, note, not merely clipped, which is the worse
+            // way round to be wrong. Read before this pass binds anything -
+            // the fill runs first in Render's schedule, so this IS the host's
+            // viewport.
+            GLint vp[4];
+            glGetIntegerv(GL_VIEWPORT, vp);
+
+            GLint clearX = vp[0];
+            GLint clearY = vp[1];
+            GLint clearW = vp[2];
+            GLint clearH = vp[3];
             if (prevScissor)
             {
                 const GLint maxX = std::min(clearX + clearW, prevBox[0] + prevBox[2]);
@@ -1129,19 +1334,36 @@ namespace EdgeLighting
                 return;
             }
 
-            GLfloat prevClear[4];
-            glGetFloatv(GL_COLOR_CLEAR_VALUE, prevClear);
-
             glEnable(GL_SCISSOR_TEST);
             glScissor(clearX, clearY, clearW, clearH);
+
+            // glClearBufferfv, not glClearColor + glClear. It takes the colour
+            // as an ARGUMENT instead of reading it out of context state, which
+            // deletes the whole save-mutate-restore dance this used to need:
+            // one glGetFloatv(GL_COLOR_CLEAR_VALUE) and two glClearColor calls
+            // per frame, all three of them gone. Better than making the query
+            // cheap - the clear colour is now never touched, so there is no
+            // window in which a host that reads its own GL_COLOR_CLEAR_VALUE
+            // could observe it as transparent black, and no restore to get
+            // wrong on an early return.
+            //
+            // Same clipping semantics as the glClear it replaces, which is
+            // what makes the swap safe: scissor and colour mask apply, depth
+            // and stencil do not (hence @ref ClearClipsLikeDraw above, still
+            // exactly the right guard). GL 3.0 / GLES 3.0 core, so it is
+            // available on both of this project's version lines. Only draw
+            // buffer 0 is cleared rather than every enabled one, which is the
+            // same thing here - these targets carry a single colour
+            // attachment.
+            //
             // Alpha 1, matching the coverage the shader path writes - the
             // fill is opaque, whatever uOpaqueColor.a says (see the note on
             // the colour uniform in black-rect.frag).
-            glClearColor(config.neon.opaqueColor.r, config.neon.opaqueColor.g,
-                         config.neon.opaqueColor.b, 1.0f);
-            glClear(GL_COLOR_BUFFER_BIT);
+            const GLfloat fillRGBA[4] = {config.neon.opaqueColor.r,
+                                         config.neon.opaqueColor.g,
+                                         config.neon.opaqueColor.b, 1.0f};
+            glClearBufferfv(GL_COLOR, 0, fillRGBA);
 
-            glClearColor(prevClear[0], prevClear[1], prevClear[2], prevClear[3]);
             glScissor(prevBox[0], prevBox[1], prevBox[2], prevBox[3]);
             if (!prevScissor)
             {
