@@ -250,6 +250,36 @@ with the band width so the effect holds up however thin the band is. Drops
 are self-lit (transparent body + crescent rim + specular dot); there is no
 framebuffer capture or refraction pass.
 
+The draw is a band-fitted ring - four strips tiling the gap between the rect
+offset outward by the furthest distance the shader can write and the rect
+offset inward by the nearest, both derived from `DROPLET_BAND_GUARD` in
+`droplets-tuning.h` (shared verbatim with `droplets.frag`). A fullscreen quad
+rasterised millions of fragments that computed a band coordinate and
+discarded; the ring rasterises roughly what it shades, which removes this
+pass's dependence on the viewport AND on the rect's area without changing a
+drawn pixel. Where the band reaches the middle - a wide `BOTH` or `INSIDE`
+band, or a deep offset - there is no hole to cut and the ring degenerates to
+one quad.
+
+Two invariants hold it together. The strips must TILE, not merely cover: the
+pass blends premultiplied, so a pixel covered by two strips would composite
+twice and show as a seam, which is why they share exact edge coordinates and
+lean on GL's fill rule. And the hole may only omit what fits strictly inside
+the inner boundary - it is a rounded rect, the strips are axis-aligned, so the
+omitted box is the largest one inscribed in it and the four corner slivers are
+covered rather than dropped.
+
+Inside the shader the same principle applies to the heaviest term. The
+height-field gradient that drives the crescent rim and the specular dot is
+taken by finite difference, so it evaluates the whole droplet field twice more
+- but the normal reaches the output only through `rim` and `spec`, and both are
+multiplied to zero when the drop mask `c.x` is zero. Most in-band fragments are
+the gaps between drops, where that holds exactly, so the taps are gated on
+`c.x > 0`: identical output, roughly 1.6x less work.
+
+This is also why the renderer has no `resolutionScale`: it never shaded the
+whole viewport to begin with.
+
 ### 4.4 LensFlareRenderer / LensFlareOptimizedRenderer
 
 A sun with rays plus hex-aperture chromatic ghosts, drawn as one fullscreen

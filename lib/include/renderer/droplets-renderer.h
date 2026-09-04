@@ -9,8 +9,18 @@ namespace EdgeLighting
 {
     /// Rain-on-glass droplets renderer.
     ///
-    /// Draws a fullscreen quad whose fragment shader (droplets.frag) paints
+    /// Draws a band-fitted RING whose fragment shader (droplets.frag) paints
     /// self-lit droplets into a band hugging the rounded-rect perimeter.
+    ///
+    /// The geometry is four strips bounding the band itself - not the
+    /// viewport, and not the rect either. The band is thin, so a fullscreen
+    /// quad rasterised millions of fragments that computed a band coordinate
+    /// and discarded; the ring rasterises roughly what it shades. This pass's
+    /// cost is therefore a function of the PERIMETER and the band width, not
+    /// of the rect's area and not of the display it lands on.
+    /// @ref setupGeometry builds it; the transform in @ref Render places it.
+    /// Nothing drawn changes - every fragment the ring drops was discarded by
+    /// the shader anyway.
     ///
     /// The droplet field is hashed in screen space under a single global
     /// gravity, so rain falls straight down rather than circulating around the
@@ -42,9 +52,10 @@ namespace EdgeLighting
         void setupGeometry(const Config &config);
 
     private:
-        Config mCurrentConfig;
+        Config mCurrentConfig; ///< Last config seen; @ref setupGeometry sizes the quad from it.
         ShaderProgram mShaderProgram;
-        VertexArray mVertexArray{"DropletsRenderer"}; ///< Fullscreen NDC quad; the shader masks it to the band.
+        VertexArray mVertexArray{"DropletsRenderer"}; ///< Band ring (or one quad when the band has no hole).
+        int mVertexCount = 6;                          ///< Vertices @ref setupGeometry last built: 24 for a ring, 6 for a quad.
     };
 }
 
