@@ -83,25 +83,22 @@ four virtuals:
 | `Update(dt, t, cfg)` | every frame | Time-based state that is not drawing (e.g. the neon's colour cross-fade). |
 | `Render(w, h, t, cfg)` | every frame | Bind and draw. |
 
-Five renderers ship, registered by the demo in this order:
+Four renderers ship, registered by the demo in this order:
 
 | # | Renderer | Layer |
 |---|---|---|
 | 1 | `NeonRenderer` | The neon stroke: an emission pre-pass, the opaque fill, the gather, and - below `resolutionScale` 1.0 - a scaled buffer plus its blit. |
 | 2 | `DebugRenderer` | The LUT strip, colour-stop markers and the 1px bounding box, drawn over the neon layer. Always full-res. |
 | 3 | `DropletsRenderer` | Rain-on-glass in a band hugging the perimeter. Screen-space gravity, self-lit, no framebuffer capture. |
-| 4 | `LensFlareRenderer` | Sun plus hex-aperture flare as one fullscreen premultiplied pass. The sun rides the perimeter. |
-| 5 | `LensFlareOptimizedRenderer` | Half-res variant of 4. |
+| 4 | `LensFlareRenderer` | Sun plus hex-aperture flare as one fullscreen premultiplied pass. The sun rides the perimeter, and - below `resolutionScale` 1.0 - a scaled buffer plus its blit. |
 
-`LensFlareOptimizedRenderer` is a **near-fork** of `LensFlareRenderer`, both
-`.cpp` and `.frag`, sharing visual config. An appearance change has to land in
-both copies, and enabling the pair at once draws the flare twice.
-
-The neon layer used to have a fork of its own. It does not any more: the
-half-res path is `NeonConfig::resolutionScale` on the one renderer, where 1.0
-draws straight onto the target and anything lower renders into a scaled buffer
-and blits back. One `.cpp`, one `.frag`, no pair to keep in step and no way to
-double-draw. See `docs/neon-unification-plan.md`.
+**There are no forked renderer pairs left.** Both layers that had one now carry
+the half-res path as a resolution scale on a single renderer: `NeonConfig::
+resolutionScale` and `LensFlareConfig::resolutionScale`, where 1.0 draws
+straight onto the target and anything lower renders into a scaled buffer and
+blits back. One `.cpp` and one `.frag` each, no pair to keep in step and no way
+to double-draw. See `docs/neon-unification-plan.md` and
+`docs/lens-flare-unification-comparison.md`.
 
 To add a renderer: subclass `BaseRenderer`, add a sub-config struct to `Config`
 with `operator==`, register it in [`demo/src/main.cpp`](../demo/src/main.cpp),

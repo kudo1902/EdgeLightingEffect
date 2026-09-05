@@ -29,6 +29,7 @@ description, so the reasoning that led to the change stays readable next to it.
 | implementation | I1, I3, I4, I6, I7 | I2 (declined), I5 (documented), I8 (audited) |
 | second pass | R1, R2, R3, R4, R5, R6 | R7 |
 | third pass | V8, I9, I10, I11, I12 (partly) | V9, I12's two stale design docs |
+| fourth pass | I14 | I13 |
 
 The R items come from a re-read after the V and I fixes landed - see
 [Second pass](#second-pass-after-bbdba62). V8 and V9 come from a later read of
@@ -36,6 +37,11 @@ The R items come from a re-read after the V and I fixes landed - see
 `BaseLUT` / `GradientRingLUT` / `SpanAtlasLUT` - see
 [Third pass](#third-pass-after-7380710). They continue the visual numbering
 because both are visual; neither is caused by that refactor.
+
+I13 and I14 come from a performance review of `LensFlareRenderer` - see
+[Fourth pass](#fourth-pass-the-lens-flare-performance-review). That review's
+own measurements and reasoning live in `lens-flare-perf-review.md`; only the
+defects it turned up are recorded here.
 
 ## How the visual items were reproduced
 
@@ -1366,6 +1372,62 @@ no-fade reference, base vs optimized 0.1101 / max 7, V8's wrapping arc within
 seam. That is the result these items want: a wrapper layer that now says true
 things about itself, and an output nobody can tell apart.
 
+## Fourth pass (the lens flare performance review)
+
+A read of `LensFlareRenderer` and `lens-flare.frag` driven by cost rather than
+correctness: the flare measured 9.94 ms at 3840x2160, against 6.21 ms for the
+neon and 0.37 ms for the droplets. Five changes followed and are documented in
+`lens-flare-perf-review.md`. Two defects came out of it, one fixed in passing
+and one left open because closing it is a behaviour decision.
+
+### I13. `pow()` takes a negative base in the ghost ring term - OPEN
+
+`circle()` in `lens-flare.frag` evaluates
+
+```glsl
+c1 = max(FLARE_RING_BIAS - pow(l - FLARE_RING_SHIFT, FLARE_RING_EXP) + sl, 0.0) * 3.0;
+```
+
+where `l = length(...) + size * FLARE_RING_L_BIAS` and `size` is
+`LensFlareConfig::ghostSize`. With `FLARE_RING_L_BIAS` 0.5 and
+`FLARE_RING_SHIFT` 0.3, any `ghostSize` below 0.6 lets `l - FLARE_RING_SHIFT`
+go negative near the ghost centre, and `pow` of a negative base is **undefined
+in GLSL** - not merely inaccurate. What comes back is a driver's choice: a NaN
+that then propagates through the accumulated `color`, or a silently wrong
+finite value.
+
+Not reachable from either demo: both `SliderWithInput("Ghost Size##Lens", ...)`
+in `DebugUI` and its `demo-capi` twin start at 1.0. It is reachable from the C
+ABI, where `el_effect_set_lens_flare_ghost_size` stores the float it is given
+with no clamp, as does `LensFlareConfig` itself.
+
+Captured at `ghostSize` 0.5 and 0.0 on this machine's GPU, the frames are
+well-formed - so this driver returns something finite - which is exactly why it
+is recorded rather than assumed benign. The CPU side is already guarded:
+`GetGhostRingFloor` clamps its own `pow` base to zero, so the gate it derives
+stays correct in that range and simply stays open. The shader expression is
+untouched.
+
+Closing it means either clamping in the shader (`max(l - FLARE_RING_SHIFT,
+0.0)`, which is exact wherever the current expression is defined and makes the
+term defined everywhere else) or clamping `ghostSize` at the config boundary,
+which changes what the C ABI accepts. The first is the smaller change; the
+second is the one that also protects the bloom term's `pow` exponent. Neither
+was taken, because both are behaviour decisions rather than repairs.
+
+### I14. `LensFlareRenderer::mCurrentConfig` was assigned and never read - FIXED
+
+`OnConfigChanged` stored a full `Config` copy into `mCurrentConfig`, which no
+other member function referenced. Every value the renderer draws from is read
+out of the `Config` that `Render` is handed, so the member was a per-config-
+change copy of a struct nobody consulted.
+
+**Fixed** by deleting the member and emptying `OnConfigChanged`, which now
+carries a comment saying why there is nothing to cache - the uniform setters'
+own value caching already skips unchanged uploads, so a cached config would not
+have saved work even if something read it. Verified byte-identical across the
+eight-scene sweep in `lens-flare-perf-review.md`.
+
 ---
 
 ## What is left
@@ -1375,7 +1437,8 @@ I9, I10 and I11. I3's structural half - the last thing on this list that was
 open rather than declined - closed with the neon unification, which deleted the
 fork it followed from. Five items from the first pass remain deliberately open,
 each with the reasoning recorded next to the code rather than only here, plus R7
-from the second pass and V9 and I12's remainder from the third:
+from the second pass, V9 and I12's remainder from the third, and I13 from the
+fourth:
 
 | item | state | why |
 | ---- | ----- | --- |
@@ -1387,6 +1450,7 @@ from the second pass and V9 and I12's remainder from the third:
 | R7 | open | a measured quantisation defect with a cheap cure, but unproven visual severity; see the note there before starting |
 | V9 | open | the honest fix is a design decision (interpolate the arc colour between adjacent samples in the consumer), not a patch; the three options are ranked in the section |
 | I12 | partly fixed | the live shader comment is corrected; `architecture-design.md` and `multiple-arcs-design.md` still name the removed LUT functions, and both are design prose rather than comments beside live code |
+| I13 | open | undefined `pow` reachable only through the C ABI; both cures change what the boundary accepts or what the term computes below `ghostSize` 0.6, so it is a behaviour decision rather than a repair |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch
