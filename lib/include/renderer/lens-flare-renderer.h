@@ -44,6 +44,15 @@ namespace EdgeLighting
         bool setupShaders();
         void setupGeometry();
 
+        /// Bake the per-ghost distance + colour table into @c mGhostBlock.
+        ///
+        /// Split out from @ref Render, where it used to run every frame, so
+        /// the bake happens where its inputs change. It reads exactly three
+        /// fields - @c ghostOffset, @c ghostColor, @c ghostTint - and produces
+        /// FLARE_GHOST_COUNT vec4s from ten sin/cos pairs plus a hash per
+        /// ghost.
+        void bakeGhostBlock(const LensFlareConfig &flare);
+
     private:
         ShaderProgram mFlareShader; ///< The flare itself (lens-flare.frag).
         /// Scaled path only: composites the scaled buffer back at full res.
@@ -55,11 +64,25 @@ namespace EdgeLighting
         /// Allocated only when the scaled path first runs; at scale 1.0 this
         /// stays empty and costs nothing.
         Framebuffer mScaledBuffer{"LensFlare.Scaled"};
-        /// Per-ghost distance + colour table (std140 GhostBlock). Baked by
-        /// BakeGhostTable and re-uploaded per frame; the bake is ten sin/cos
-        /// pairs, so it is not worth a dirty flag.
+        /// Per-ghost distance + colour table (std140 GhostBlock). Filled by
+        /// @ref bakeGhostBlock when its three inputs move, and bound every
+        /// frame by @ref Render.
         UniformBuffer mGhostBlock{"LensFlare.GhostBlock"};
         VertexArray mVertexArray{"LensFlare"};
+
+        /// The flare config behind the current @c mGhostBlock contents.
+        ///
+        /// A whole @c LensFlareConfig rather than the three fields the bake
+        /// reads: it holds no vectors, so copying and comparing it is a few
+        /// dozen bytes, and a struct that already carries its own
+        /// @c operator== cannot fall out of step with itself the way three
+        /// hand-picked members would. Deliberately NOT a whole @c Config -
+        /// nothing outside @c Config::lensFlare reaches the ghost table.
+        LensFlareConfig mCurrentFlare;
+        /// Whether @c mGhostBlock has been filled for @c mCurrentFlare. Starts
+        /// false so the first bake is unconditional however the renderer is
+        /// brought up - @ref Initialize and @ref OnConfigChanged both honour it.
+        bool mGhostsBaked = false;
     };
 }
 

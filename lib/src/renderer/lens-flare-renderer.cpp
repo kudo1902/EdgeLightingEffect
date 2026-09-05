@@ -148,6 +148,12 @@ namespace EdgeLighting
             return false;
         }
         setupGeometry();
+        // mCurrentFlare is whatever the last OnConfigChanged left - the effect
+        // calls it on registration, so by here it is usually the host's real
+        // config rather than the defaults. Either way the block is filled from
+        // this point on, and OnConfigChanged re-bakes it on every change to
+        // the three fields it reads.
+        bakeGhostBlock(mCurrentFlare);
         return true;
     }
 
@@ -232,10 +238,12 @@ namespace EdgeLighting
         mFlareShader.SetUniform("uGhostSize", config.lensFlare.ghostSize);
 
         // ghostOffset / ghostColor / ghostTint reach the shader only through
-        // this block, so there are no uniforms of their own to set.
-        GhostBlockData ghostBlock = {};
-        BakeGhostTable(config.lensFlare, ghostBlock.ghosts);
-        mGhostBlock.SetData(&ghostBlock, sizeof(ghostBlock));
+        // this block, so there are no uniforms of their own to set. The bake
+        // itself has moved to OnConfigChanged - it is a pure function of those
+        // three fields, so running it here meant re-deriving the same table
+        // every frame of every flare. Only the bind is per-frame, because the
+        // binding point is global context state rather than something this
+        // renderer can assume it still owns.
         mGhostBlock.BindBase(GHOST_BLOCK_BINDING);
 
         // Support bounds for the two compactly-supported ghost terms, so the
@@ -289,13 +297,34 @@ namespace EdgeLighting
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     }
 
-    void LensFlareRenderer::OnConfigChanged(const Config &)
+    void LensFlareRenderer::OnConfigChanged(const Config &config)
     {
-        // Nothing to cache. Every value this renderer draws from is read out
-        // of the Config that Render is handed, and the two derived tables
-        // (uGhosts, and the two support bounds) are cheap enough to rebuild
-        // there - the uniform setters' own value caching already skips the
-        // upload when they have not moved.
+        // Almost nothing to cache. Every value this renderer draws from is
+        // read out of the Config that Render is handed, and the two support
+        // bounds (uBloomRadius / uRingFloor) are genuinely cheap enough to
+        // rebuild there - they are uniform setters, whose own last-value
+        // caching skips the upload when they have not moved.
+        //
+        // The ghost table is the exception, and the difference is the
+        // mechanism rather than the size: it reaches the shader through a UBO,
+        // not a uniform, so no setter cache stood between a per-frame bake and
+        // the buffer. (UniformBuffer::SetData compares bytes and does skip the
+        // GL call, but only after the table has been rebuilt to compare.)
+        // Baking it here instead reduces the per-frame cost to a bind.
+        const bool ghostsDirty = !mGhostsBaked ||
+                                 config.lensFlare.ghostOffset != mCurrentFlare.ghostOffset ||
+                                 config.lensFlare.ghostColor != mCurrentFlare.ghostColor ||
+                                 config.lensFlare.ghostTint != mCurrentFlare.ghostTint;
+
+        mCurrentFlare = config.lensFlare;
+
+        // Gated on the three fields BakeGhostTable reads, not on the whole
+        // sub-config: rotationRate, spread and the rest move constantly under
+        // an animation and change nothing in this table.
+        if (ghostsDirty)
+        {
+            bakeGhostBlock(mCurrentFlare);
+        }
     }
 
     bool LensFlareRenderer::setupShaders()
@@ -327,6 +356,14 @@ namespace EdgeLighting
         // clang-format on
         mVertexArray.SetVertexData(ndc, sizeof(ndc));
         mVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+    }
+
+    void LensFlareRenderer::bakeGhostBlock(const LensFlareConfig &flare)
+    {
+        GhostBlockData ghostBlock = {};
+        BakeGhostTable(flare, ghostBlock.ghosts);
+        mGhostBlock.SetData(&ghostBlock, sizeof(ghostBlock));
+        mGhostsBaked = true;
     }
 
 } // namespace EdgeLighting
