@@ -44,14 +44,13 @@ what you see:
   and are independent of the master intensity, so a segment can shine on an
   otherwise-dark arc.
 
-The neon renderer is one of five renderers that can be enabled independently in
+The neon renderer is one of four renderers that can be enabled independently in
 the same effect: `NeonRenderer` (which draws at any resolution scale - see
 3.9), `DebugRenderer` (its LUT strip, colour-stop and bounding-box overlays),
-`DropletsRenderer` (rain on
-glass in a band along the perimeter), `LensFlareRenderer` (sun + ghosts riding
-the perimeter), and `LensFlareOptimizedRenderer` (its half-res variant). This
-document covers the neon parameters; the others are documented on their
-`Config` sub-structs.
+`DropletsRenderer` (rain on glass in a band along the perimeter), and
+`LensFlareRenderer` (sun + ghosts riding the perimeter, which draws at any
+resolution scale too). This document covers the neon parameters; the others are
+documented on their `Config` sub-structs.
 
 ---
 
