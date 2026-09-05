@@ -47,6 +47,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lens-flare.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/neon-tuning.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/droplets-tuning.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/lens-flare-tuning.h"
 )
 
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/wireframe.vert" WIREFRAME_VERT_CONTENT)
@@ -69,6 +70,11 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/neon-tuning.h" NEON_TUNI
 # Shared droplet band #defines, injected into droplets.frag via
 # @DROPLETS_TUNING@ in shaders.h.in (also #included by the C++ renderer).
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/droplets-tuning.h" DROPLETS_TUNING)
+
+# Shared ghost-term #defines, injected into lens-flare.frag via
+# @LENS_FLARE_TUNING@ in shaders.h.in (also #included by the C++ renderer,
+# which derives the ghost support bounds from them).
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/lens-flare-tuning.h" LENS_FLARE_TUNING)
 
 set(SHADER_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 configure_file(

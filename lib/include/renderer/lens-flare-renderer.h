@@ -5,6 +5,7 @@
 #include "gl/shader-program.h"
 #include "gl/vertex-array.h"
 #include "gl/framebuffer.h"
+#include "gl/uniform-buffer.h"
 
 namespace EdgeLighting
 {
@@ -44,7 +45,6 @@ namespace EdgeLighting
         void setupGeometry();
 
     private:
-        Config mCurrentConfig;
         ShaderProgram mFlareShader; ///< The flare itself (lens-flare.frag).
         /// Scaled path only: composites the scaled buffer back at full res.
         /// Built unconditionally rather than lazily - a shader compile in the
@@ -55,6 +55,10 @@ namespace EdgeLighting
         /// Allocated only when the scaled path first runs; at scale 1.0 this
         /// stays empty and costs nothing.
         Framebuffer mScaledBuffer{"LensFlare.Scaled"};
+        /// Per-ghost distance + colour table (std140 GhostBlock). Baked by
+        /// BakeGhostTable and re-uploaded per frame; the bake is ten sin/cos
+        /// pairs, so it is not worth a dirty flag.
+        UniformBuffer mGhostBlock{"LensFlare.GhostBlock"};
         VertexArray mVertexArray{"LensFlare"};
     };
 }
