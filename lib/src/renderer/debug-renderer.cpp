@@ -21,6 +21,27 @@ namespace EdgeLighting
         /// keeps the discs inside the rect on very tall or thin geometries.
         constexpr float MARKER_RADIUS_FRAC = 0.06f;
         constexpr float MARKER_RADIUS_MAX = 12.0f;
+
+        /// Whether the LUT strip will be drawn this frame.
+        ///
+        /// @ref DebugRenderer::renderGradientLUTStrip is the ONLY thing that
+        /// samples @c mGradientLUT, so this is also the condition under which
+        /// the ring is worth maintaining at all - the bake and the cross-fade
+        /// tick both gate on it. This renderer keeps its own ring rather than
+        /// borrowing the neon one (that separation is the point - see the
+        /// class note), which means every frame of a colour cross-fade blended
+        /// and re-uploaded a SECOND ring for an overlay that is off by
+        /// default and invisible even when the whole debug layer is on.
+        ///
+        /// One predicate, shared by the gate and the draw, so the two cannot
+        /// drift: a gate that stopped matching would show a stale ring the
+        /// moment the strip was switched on, which is exactly the sort of bug
+        /// a debug overlay must not have.
+        inline bool IsStripVisible(const Config &config)
+        {
+            return config.debug.enable && config.debug.showGradientLUT &&
+                   config.neon.enable && !config.debug.opaqueOnly;
+        }
     }
 
     bool DebugRenderer::Initialize()
@@ -38,14 +59,29 @@ namespace EdgeLighting
         return true;
     }
 
-    void DebugRenderer::Update(float deltaTime, float, const Config &)
+    void DebugRenderer::Update(float deltaTime, float, const Config &config)
     {
         // Advances this renderer's own copy of the ring cross-fade. It is
         // handed the same deltaTime as the neon renderer's copy and was baked
         // from the same stops, so the two stay in step frame for frame - which
         // is what makes the strip a preview of the glow rather than of some
         // near-miss of it.
-        mGradientLUT.Tick(deltaTime);
+        //
+        // Only while the strip is actually on screen, though. A tick during a
+        // fade is a full ring blend plus a texture upload, and with the strip
+        // hidden nothing samples the result.
+        //
+        // Hiding it does not strand the ring, because the bake is gated on the
+        // same predicate. A fade in flight when the strip is hidden simply
+        // PAUSES - mDisplay holds, and the tick resumes it on re-show. Stops
+        // that change while it is hidden are not baked at all, so the re-show
+        // is itself a config change that bakes them and cross-fades from the
+        // last ring shown to the current one. Either way what ends up on
+        // screen is the ring for the current stops.
+        if (IsStripVisible(config))
+        {
+            mGradientLUT.Tick(deltaTime);
+        }
     }
 
     void DebugRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
@@ -72,7 +108,12 @@ namespace EdgeLighting
         // (`enable` above covers all three but NOT opaqueOnly, which is a mode
         // of the neon renderer that happens to live in the same struct.)
         const bool glowVisible = config.neon.enable && !config.debug.opaqueOnly;
-        const bool wantStrip = config.debug.showGradientLUT && glowVisible;
+        // The same predicate the ring's bake and tick gate on, so the strip can
+        // never be drawn from a ring those two decided not to maintain.
+        // (Re-tests debug.enable, which the early return above already
+        // guarantees - the helper is self-contained because its other two
+        // callers have no such early return.)
+        const bool wantStrip = IsStripVisible(config);
         const bool wantMarkers = config.debug.showColorStops && glowVisible &&
                                  !config.neon.colorStops.empty();
         const bool wantBox = config.debug.showWireframe;
@@ -145,12 +186,22 @@ namespace EdgeLighting
             setupGeometry(config);
         }
 
-        // Self-guarding (see GradientRingLUT::Bake), so it is called
-        // unconditionally - which is also what keeps this copy of the ring in
-        // step with the neon renderer's: both are offered every config change
-        // and both re-bake on exactly the ones that move the gradient.
-        mGradientLUT.Bake(config.neon.colorStops, config.neon.blendSpace,
-                          config.neon.gradientLutSize, config.neon.colorTransitionDuration);
+        // Self-guarding (see GradientRingLUT::Bake), so within a visible strip
+        // it is called unconditionally - which is what keeps this copy of the
+        // ring in step with the neon renderer's: both are offered every config
+        // change and both re-bake on exactly the ones that move the gradient.
+        //
+        // Gated on the strip being drawn at all, though, because unlike the
+        // neon renderer's ring this one has exactly one consumer and it is an
+        // overlay that is off by default. A bake is a full ring plus a texture
+        // upload; spending that on a hidden strip buys nothing. Becoming
+        // visible is itself a config change, so the bake it needs arrives with
+        // it - see the note in @ref Update for what a fade does across the gap.
+        if (IsStripVisible(config))
+        {
+            mGradientLUT.Bake(config.neon.colorStops, config.neon.blendSpace,
+                              config.neon.gradientLutSize, config.neon.colorTransitionDuration);
+        }
     }
 
     bool DebugRenderer::setupShaders()
