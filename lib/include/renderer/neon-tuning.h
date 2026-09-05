@@ -192,6 +192,43 @@
 #define SIDE_SOFT_EPSILON         1e-5
 #define WSUM_EPSILON              1e-6
 
+// --- Cutoff anti-aliasing floor, in BUFFER pixels.
+//
+//     The odd one out in this file: every other px constant here is stated in
+//     FULL-RES px and converted with uResolutionScale at the point of use.
+//     This one is already in the space the gather rasterises into, and must
+//     NOT be converted - the whole point is to be a fixed fraction of the
+//     buffer's own pixel, whatever that pixel is worth on screen.
+//
+//     A cutoff with softness 0 is a step function. On the scaled path the
+//     gather samples it at buffer-pixel centres and the blit bilinearly
+//     upsamples, so the boundary snaps to the buffer grid and reconstructs as
+//     a 2-3 px ramp instead of the ~0.8 px one the direct path gives. Half a
+//     buffer pixel of feather lets the one sample nearest the boundary carry
+//     a fractional value, which the blit can then place sub-texel.
+//
+//     What it buys, measured on 1280x720 at cutoff 30, softness 0, as the
+//     error between the stated cutoff and where the coverage actually ends:
+//
+//       scale        0.50   0.55   0.60   0.65   0.70   0.75   0.80   0.90
+//       without    -0.06  +0.82  -0.08  -0.75  -0.09  +0.16  -0.08  -0.10
+//       with       -0.06  +0.43  -0.08  +0.33  -0.09  +0.29  -0.08  -0.10
+//
+//     Spread 1.57 px -> 0.53 px. Note scale 0.50 does not move, and that is
+//     not a defect in this constant: at exactly one half, integer geometry
+//     puts the boundary either exactly ON a buffer texel centre or exactly
+//     BETWEEN two, and a symmetric feather one texel wide or narrower gives
+//     the identical sample pattern in both cases. Widening past 1.0 does not
+//     recover it either - it only softens the edge and biases it outward
+//     (measured +0.83 at 1.25). The residual +-0.5 px there is information the
+//     half-res buffer does not contain; a cutoff that must be pixel-exact
+//     wants resolutionScale 1.0, and one that must merely LOOK clean wants a
+//     real softness, where both paths already agree to 0.08 px.
+//
+//     Applied only when uResolutionScale < 1.0 - see neon.frag's softFloor and
+//     the matching cap in NeonRenderer::setupGeometry.
+#define CUTOFF_SOFT_FLOOR_PX      0.5
+
 // --- Glow reach (quad sizing). The draw quad is sized to
 //     rect + glowRadius * RADIUS_FACTOR * (1 + bloomStrength * intensity).
 //

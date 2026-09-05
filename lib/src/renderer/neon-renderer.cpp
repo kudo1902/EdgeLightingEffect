@@ -402,8 +402,33 @@ namespace EdgeLighting
         // centre is mirrored about the viewport height BEFORE scaling.
         const float halfRectW = config.geometry.width * 0.5f;
         const float halfRectH = config.geometry.height * 0.5f;
-        const glm::mat4 proj = glm::ortho(0.0f, static_cast<float>(bufW),
-                                          0.0f, static_cast<float>(bufH), -1.0f, 1.0f);
+        // The extent is the EXACT scaled viewport, NOT the truncated buffer
+        // size, and the difference is a global stretch rather than a rounding
+        // detail. Trace the round trip: the gather places world x at scaled
+        // coordinate x * scale, this ortho maps [0, extent] onto a viewport
+        // bufW wide, and @ref renderBlitPass then maps the WHOLE buffer back
+        // across the full-width viewport with a fullscreen quad. Composed,
+        // that scales by (viewport * scale) / extent. Feeding it bufW makes
+        // the factor viewport * scale / floor(viewport * scale) - greater than
+        // 1 whenever the product is not an integer - so everything is pushed
+        // outward from the viewport origin by an amount that GROWS with
+        // distance from it. Measured on a 1234 px viewport at scale 0.7, the
+        // outside-cutoff boundary landed 0.9 px past its stated size, and the
+        // rect drifted with it. On 1280x720 every common scale divides
+        // exactly, which is why this hid for so long.
+        //
+        // extent = viewport * scale makes that factor exactly 1 whatever the
+        // truncation does. bufW/bufH stay the buffer's real size, so the
+        // buffer still covers the viewport corner to corner; the gather just
+        // samples at bufW / viewport rather than at `scale`, a sub-0.2%
+        // density difference that nothing here is measured against. At scale
+        // 1.0 the extent IS bufW and the direct path does not move.
+        //
+        // The max() only guards a zero viewport from reaching glm::ortho as an
+        // empty range - bufW's own max(1) used to cover that.
+        const glm::mat4 proj = glm::ortho(0.0f, std::max(static_cast<float>(viewportWidth) * scale, 1.0e-3f),
+                                          0.0f, std::max(static_cast<float>(viewportHeight) * scale, 1.0e-3f),
+                                          -1.0f, 1.0f);
         const glm::vec2 center((config.geometry.position.x + halfRectW) * scale,
                                (static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH) * scale);
         const glm::mat4 mvp = proj * glm::translate(glm::mat4(1.0f), glm::vec3(center, 0.0f));
@@ -714,8 +739,17 @@ namespace EdgeLighting
         // at the same cutoff size regardless of scale.
         if (config.neon.outsideCutoff.enable)
         {
-            float outSoft = std::max(config.neon.outsideCutoff.softness,
-                                     static_cast<float>(SIDE_SOFT_EPSILON));
+            // Mirrors neon.frag's softFloor, which is what actually decides how
+            // far past the cutoff the feather runs and therefore how much quad
+            // the shader needs. The shader floors in BUFFER px, so it is
+            // converted back to full-res here - this whole expression is
+            // full-res and scaled once, per the note above. Leave it out and
+            // the quad edge lands inside the widened feather, which is exactly
+            // the rectangular seam the +1 safety exists to prevent.
+            const float softFloor = (scale < 1.0f)
+                                        ? (static_cast<float>(CUTOFF_SOFT_FLOOR_PX) / scale)
+                                        : static_cast<float>(SIDE_SOFT_EPSILON);
+            float outSoft = std::max(config.neon.outsideCutoff.softness, softFloor);
             float cutoffCap = (config.neon.outsideCutoff.size + outSoft + 1.0f) * scale;
             margin = std::min(margin, cutoffCap);
         }
