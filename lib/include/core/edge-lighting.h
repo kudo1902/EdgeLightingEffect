@@ -69,13 +69,13 @@ namespace EdgeLighting
 
         /// @brief Replace the base configuration and notify all renderers.
         ///
-        /// Renderers are notified from HERE only while no animation is
-        /// attached, because only then is the base config also the composited
-        /// one. With animations attached the notification is left to the next
-        /// @ref Update, which is the first point this frame's overlays exist -
-        /// notifying twice would hand the renderers the bare base first and
-        /// the real composite immediately after. @ref GetActiveConfig
-        /// therefore still reports the LAST composite until that Update runs.
+        /// Writes the BASE config, then recomposes and notifies through the
+        /// same path @ref Update uses. With animations attached that composite
+        /// carries the overlays at their CURRENT values - this frame's advance
+        /// happens in the next @ref Update, which recomposes and notifies
+        /// again. Callers following the documented Update-then-Render contract
+        /// therefore see one notification per frame from Update, and one extra
+        /// on frames where they also changed the base mid-animation.
         ///
         /// @param config New base configuration to apply.
         void SetConfig(const Config &config);
