@@ -604,7 +604,7 @@
 }
 float bandInnerDistance(float d, float cut) { return d + cut; }</code></pre>
 
-      <p>The <code>r == 0</code> branch exists because the parallel curve of a <em>sharp</em> corner is an arc of radius <code>cut</code>. Taking <code>d - cut</code> there would round the outer corners of a rectangle the designer explicitly asked to be square, and the opaque fill (drawn on a fullscreen quad with no such rounding) would then bulge black past the glow at each corner. Offsetting per-axis instead keeps the corner square at the cost of the band being about 1.41x wider measured diagonally across it. A uniform width and a square outer corner cannot both hold at a sharp corner.</p>
+      <p>The <code>r == 0</code> branch exists because the parallel curve of a <em>sharp</em> corner is an arc of radius <code>cut</code>. Taking <code>d - cut</code> there would round the outer corners of a rectangle the designer explicitly asked to be square, and the opaque fill - whose own <code>bandOuterDistance</code> makes the same per-axis offset, so it keeps its square corner - would then bulge black past the glow at each corner. Offsetting per-axis instead keeps the corner square at the cost of the band being about 1.41x wider measured diagonally across it. A uniform width and a square outer corner cannot both hold at a sharp corner.</p>
 
       <p>Both functions no-op for disabled cutoffs: the sentinel drives <code>dIn</code> hugely positive and <code>dOut</code> hugely negative, so both masks evaluate to 1.</p>
     </section>
@@ -1037,7 +1037,7 @@ float fadeStart = (cutEdge &lt; uQuadMargin) ? max(fadeFloor, cutEdge) : fadeFlo
 float dQuad     = sdRoundBox(vPos, halfSize + vec2(uQuadMargin), 0.0);
 result *= 1.0 - smoothstep(-(uQuadMargin - fadeStart), 0.0, dQuad);</code></pre>
 
-      <p>Measured <strong>per-axis via <code>dQuad</code>, not from the Euclidean <code>d</code></strong>. What the fade hides is the <em>quad</em>, and the quad is a plain rectangle; keying on <code>d</code> put the ramp on a rounded contour that ate the corners early. At <code>cornerRadius</code> 0 on the stock 800x600 rect at cutoff 12, the band ran out to <code>d = 16.97</code> at a corner while the <code>d</code>-keyed ramp was already zero by <code>d = 14</code>, erasing the outer ~30% of every corner - while <code>black-rect.frag</code>, drawn on a fullscreen quad with no fade, kept its square corner. With the cutoff disabled the same rounding chopped the bloom at <code>d = uQuadMargin</code> though the quad ran on to its own corner, so corners faded sooner than edges for no reason.</p>
+      <p>Measured <strong>per-axis via <code>dQuad</code>, not from the Euclidean <code>d</code></strong>. What the fade hides is the <em>quad</em>, and the quad is a plain rectangle; keying on <code>d</code> put the ramp on a rounded contour that ate the corners early. At <code>cornerRadius</code> 0 on the stock 800x600 rect at cutoff 12, the band ran out to <code>d = 16.97</code> at a corner while the <code>d</code>-keyed ramp was already zero by <code>d = 14</code>, erasing the outer ~30% of every corner - while <code>black-rect.frag</code>, which has no such fade, kept its square corner. With the cutoff disabled the same rounding chopped the bloom at <code>d = uQuadMargin</code> though the quad ran on to its own corner, so corners faded sooner than edges for no reason.</p>
 
       <p><code>QUAD_FADE_START_FRAC</code> is a fraction rather than a pixel span because the margin is proportional to <code>glowRadius</code> and so is the bloom profile it hides; a fixed ramp would vanish on a wide glow and dominate a narrow one. At stock <code>glowRadius</code> 5 / bloom 0.3 / intensity 1 the margin is 312 px, giving a 62 px ramp. Nothing derives 0.8 specifically.</p>
 
@@ -1101,7 +1101,33 @@ result *= 1.0 - smoothstep(-outSoft, outSoft, dOut);</code></pre>
 
       <h3>The opaque fill <span class="src">black-rect.frag</span></h3>
 
-      <p>An optional pass drawn <em>before</em> the neon, on a fullscreen quad with an identity MVP, so the effect can sit on its own background instead of only adding light. <code>opaqueMode</code> selects the region: <code>NONE</code>, <code>INSIDE</code>, <code>OUTSIDE</code>, <code>BOTH</code> (the band between the two cutoffs), or <code>ALL</code> (the whole viewport). It has its own analytic SDF anti-aliasing, which is why the fill lands cleanly on rounded corners at any softness.</p>
+      <p>An optional pass drawn <em>before</em> the neon, so the effect can sit on its own background instead of only adding light. <code>opaqueMode</code> selects the region: <code>NONE</code>, <code>INSIDE</code>, <code>OUTSIDE</code>, <code>BOTH</code> (the band between the two cutoffs), or <code>ALL</code> (the whole viewport). It has its own analytic SDF anti-aliasing, which is why the fill lands cleanly on rounded corners at any softness.</p>
+
+      <h3>What the pass is drawn on</h3>
+
+      <p>The silhouette comes from the SDF and <code>gl_FragCoord</code>, never from the vertex position, so the geometry underneath is free to be whatever bounds the band tightest - the same trade <code>setupGeometry</code> makes for the glow. <code>NeonRenderer::setupFillGeometry</code> takes it: <code>OUTSIDE</code> / <code>INSIDE</code> / <code>BOTH</code> draw a <strong>rectangular annulus</strong> in full-res rect-local pixels, sized to each cutoff plus the fill's own feather plus a 3 px margin that absorbs the <code>fwidth</code> floor. A 20 px band then costs 20 px of fragments rather than a whole viewport: measured at 3840x2160, 0.30 ms to 0.03 ms.</p>
+
+      <p>The hole matters more than it looks. The region the fill cannot reach is the <em>inward</em> parallel curve - a rounded box shrunk by the inside margin, its radius shrunk to match - and the largest axis-aligned rectangle inside a rounded box is not that box's own half-extents. Each corner has to clear the corner arc, which pulls both half-extents in by <code>r(1 - 1/sqrt(2))</code>. Cut the hole square instead and a triangular wedge at each corner falls outside the ring but inside the fill's real footprint; at the default <code>cornerRadius</code> of 40 that is a ~12 px bite out of all four corners of the band.</p>
+
+      <p>A disabled cutoff arrives as a huge sentinel and needs no branch of its own: outward it pushes the ring off-viewport, where the rasteriser clips it, and inward it drives the hole's half-extent to zero, collapsing the ring into a solid quad. Both are what the fill genuinely covers there. The ring is viewport-independent by construction, so a resize never rebuilds it - only the pass's MVP moves.</p>
+
+      <p>A fill whose coverage is <strong>1 at every pixel</strong> runs <strong>no shader at all</strong>. Composited premultiplied-over, coverage 1 leaves exactly <code>uOpaqueColor.rgb</code> at alpha 1 - which is what <code>glClear</code> writes, for no fragments, no blending and no vertex work (0.27 ms to 0.003 ms at 3840x2160).</p>
+
+      <p>The test is <code>NeonRenderer::FillsWholeViewport</code>, not <code>mode == ALL</code>. <code>ALL</code> qualifies by definition; <code>BOTH</code> qualifies too whenever <em>neither</em> cutoff is enabled, because disabled cutoffs arrive as the huge sentinel and both smoothsteps saturate. That is the <strong>default</strong> state of both cutoffs, so it was the common way into the cost rather than a corner case: shading the whole viewport to write what a clear writes, measured at 1.18 ms to 0.59 ms on a 3600x2126 fill isolated with <code>debug.opaqueOnly</code>. <code>setupFillGeometry</code> asks the same predicate and builds no ring for either.</p>
+
+      <p>The clear is scissored, because <code>glClear</code> is bounded by the scissor and not the viewport. That box starts from the <strong>queried</strong> <code>GL_VIEWPORT</code> rather than an assumed <code>(0, 0, w, h)</code> - the fullscreen quad this replaced was clipped to wherever the viewport actually sat - and is then <strong>intersected</strong> with any scissor the host already had rather than replacing it. A host clipping the effect to a sub-rect must not find the whole surface painted.</p>
+
+      <p>Scissor and colour mask are the only clipping state a clear and a draw share. The <strong>depth and stencil tests apply to the draw and not to the clear</strong>, so when either is enabled (<code>NeonRenderer::ClearClipsLikeDraw</code>) the substitution is dropped and the fullscreen quad is drawn instead, shader and all. A host masking the effect through a stencil buffer had that honoured before and would otherwise find the clear painting straight through it. The full-viewport shade is the correct price there: the host enabled those tests in order to clip something.</p>
+
+      <p>One claim to <em>not</em> make about this clear, since an earlier version of this page made it: that on a tile-based GPU it tells the driver the previous tile contents are dead and spares the tile load. That is a property of an unscissored, full-attachment clear at the <em>start</em> of a render pass, and this clear is neither - it runs mid-pass, with the host's backdrop already in the target and the neon still to come, and it is scissored by construction. Expect the measured saving (no fragments, no blending, no vertex work) and nothing structural beyond it. Both figures above are desktop macOS, an immediate-mode renderer; the tiler behaviour is reasoned, not measured on device.</p>
+
+      <h3>One straight-line path through <code>main()</code></h3>
+
+      <p>The fragment program has no early <code>return</code> above its derivative and no <code>discard</code> anywhere, and both are load bearing.</p>
+
+      <p>The <code>NONE</code> and <code>ALL</code> guards look like free early exits - they branch on a uniform, so every lane in the draw takes the same side - but the compiler does not get to assume that, and a derivative downstream of a <code>return</code> it cannot prove uniform lands the whole shader on a slower path. Measured at 3840x2160 on a fill covering the surface: 0.29 ms without the returns, 0.41 ms with them, 0.26 ms once they moved back below the derivative. That is a ~35% penalty paid by every fragment in every mode, to skip work in two modes the CPU almost never dispatches. Both guards therefore live as arms of the coverage chain; <code>NONE</code> is not tested at all, since it matches no arm and falls through at coverage 0. "Almost never" rather than "never": the depth / stencil fallback above does dispatch the coverage-1 modes, so the <code>ALL</code> arm is rare live code, not a dead branch.</p>
+
+      <p><code>discard</code> is left out because it is not needed: coverage 0 under <code>glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)</code> gives <code>dst = 0 + dst * (1 - 0)</code>, so writing transparent black is bit-exact with discarding. It measures the same either way here - the ring already keeps most zero-coverage fragments off the rasteriser - but a shader with no <code>discard</code> is the friendlier shape for the Mali / Tizen targets, where one cannot use forward pixel kill.</p>
 
       <p>In the optimized renderer this pass is drawn at <strong>full resolution</strong>, straight to the target framebuffer, and the half-res neon is composited over it. A hard-edged silhouette is the one part of the effect where a soft upscale would be visible.</p>
     </section>
@@ -1524,7 +1550,7 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
           <!-- left lane -->
           <rect x="40" y="240" width="460" height="46" class="dg-box"/>
           <text x="52" y="260" class="dg-t">pass 1: black-rect fill</text>
-          <text x="52" y="276" class="dg-t2">skipped when opaqueMode == NONE; fullscreen quad</text>
+          <text x="52" y="276" class="dg-t2">skipped when NONE; band ring - ALL is a glClear</text>
           <line x1="270" y1="286" x2="270" y2="300" class="dg-line" marker-end="url(#fa2)"/>
 
           <rect x="40" y="302" width="460" height="46" class="dg-box"/>
@@ -1613,7 +1639,7 @@ void main() {
 
       <p>That is the whole thing, and its brevity is the point. <code>aPos</code> arrives already in <strong>rect-local pixels</strong> - <code>setupGeometry</code> wrote the quad corners as <code>+/-(halfSize + margin)</code> - so passing it through untouched gives every fragment its own position in exactly the space the SDF wants. No inverse transform, no screen-space reconstruction, no resolution uniform in the distance path. <code>uMVP</code> is used only to put the quad on screen.</p>
 
-      <p>The same vertex shader backs <code>black-rect.frag</code>, <code>neon-blit.frag</code> and both debug overlays; the fill and blit passes simply bind an identity <code>uMVP</code> so <code>vPos</code> comes through as NDC.</p>
+      <p>The same vertex shader backs <code>black-rect.frag</code>, <code>neon-blit.frag</code> and both debug overlays. The blit binds an identity <code>uMVP</code> so <code>vPos</code> comes through as NDC. The fill binds a full-res <code>ortho * translate</code> to place its band ring, and is the one consumer that ignores <code>vPos</code> altogether - its shape comes from <code>gl_FragCoord</code>, which is what lets the ring bound it in the first place.</p>
 
       <h3>The fragment program, as dataflow</h3>
 

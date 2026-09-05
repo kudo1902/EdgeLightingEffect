@@ -175,9 +175,18 @@ Single-pass full-resolution neon stroke. Highlights:
   baked textures over `NeonConfig::colorTransitionDuration` seconds when
   colour stops or blend space change. The fade blends the whole 256-texel
   LUT (not per-stop pairing), so it works even when stop counts differ.
-- **Opaque-mode background pass** - a fullscreen NDC quad drawn *behind* the
-  neon with `NeonConfig::opaqueColor`. Shape from an SDF read off
-  `gl_FragCoord`; corners AA cleanly via `fwidth`.
+- **Opaque-mode background pass** - a solid fill drawn *behind* the neon with
+  `NeonConfig::opaqueColor`. Shape from an SDF read off `gl_FragCoord`;
+  corners AA cleanly via `fwidth`. Because the silhouette comes from the SDF
+  and not from the vertices, the CPU is free to bound the pass with whatever
+  geometry fits it tightest: a shaped mode draws a rectangular annulus sized
+  to the band (`NeonRenderer::setupFillGeometry`), while a fill whose coverage
+  is 1 at every pixel runs no shader at all - that is what a scissored
+  `glClear` writes. The coverage-1 test is `NeonRenderer::FillsWholeViewport`,
+  not the enum: `ALL` by definition, and `BOTH` with both cutoffs disabled,
+  which is their default state. The clear is dropped for the fullscreen quad
+  when `GL_DEPTH_TEST` or `GL_STENCIL_TEST` is on, since a clear ignores both
+  and would paint through a mask the host set up to clip this pass.
 
 ### 4.1a Two colour-sampling spaces
 

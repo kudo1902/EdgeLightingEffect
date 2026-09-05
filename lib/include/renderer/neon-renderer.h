@@ -86,6 +86,25 @@ namespace EdgeLighting
         /// viewport and the resolution scale, and never needs rebuilding.
         void setupFullscreenQuad();
         void setupGeometry(const Config &config);
+        /// Build @c mFillVertexArray: the geometry that BOUNDS the opaque
+        /// fill, as a rectangular annulus in full-resolution rect-local pixels.
+        ///
+        /// The fill used to rasterise the whole viewport and let the fragment
+        /// shader @c discard everything outside the band. That is the pattern
+        /// @ref setupGeometry exists to avoid ("geometry bounds the far region
+        /// instead of a per-fragment discard"), and it cost the same whether
+        /// the band was 20 px or the entire screen - measurably, a fixed
+        /// full-viewport charge on every frame with @c opaqueMode set.
+        ///
+        /// Builds nothing (@c mFillVertexCount 0) whenever the fill's coverage
+        /// is 1 at every pixel - @c ALL by definition, and @c BOTH with both
+        /// cutoffs disabled by arithmetic (the default cutoff state, so the
+        /// common way in). Those modes need no bounding geometry either way:
+        /// @ref renderOpaqueFill clears for them, and on the rare state where
+        /// a clear would not clip like a draw it falls back to the static
+        /// fullscreen quad, never to a ring. Both passes ask one shared
+        /// predicate so they cannot disagree; see @c FillsWholeViewport.
+        void setupFillGeometry(const Config &config);
         void rebuildLoopSamples(const Config &config);
         /// Re-bake the three colour LUTs. Each wrapper self-guards, so this is
         /// called unconditionally on every config change; see the note at the
@@ -184,9 +203,20 @@ namespace EdgeLighting
         /// FULL resolution on the caller's framebuffer regardless of the
         /// resolution scale - it is a flat shape from an analytic SDF, so
         /// scaling it would only cost it its clean edges. The fragment shader
-        /// reads @c gl_FragCoord, hence the viewport height rather than a
-        /// transform. Caller guards on @c opaqueMode != NONE.
-        void renderOpaqueFill(int viewportHeight, const Config &config);
+        /// reads @c gl_FragCoord, so the shape is still derived in window
+        /// space - the transform only places the bounding geometry, and the
+        /// viewport is what both are expressed in. Caller guards on
+        /// @c opaqueMode != NONE.
+        ///
+        /// Draws @c mFillVertexArray (the band ring from
+        /// @ref setupFillGeometry) for every mode whose coverage is shaped.
+        /// A fill that covers every pixel at coverage 1 runs no shader: it is
+        /// a scissored @c glClear, bounded by the intersection of the queried
+        /// viewport with the host's own scissor. That substitution is dropped -
+        /// for the fullscreen quad, shader and all - when @c GL_STENCIL_TEST
+        /// or @c GL_DEPTH_TEST is enabled, since a clear ignores both and would
+        /// paint through a mask the host set up to clip this pass.
+        void renderOpaqueFill(int viewportWidth, int viewportHeight, const Config &config);
 
         /// Pass 2b: bilinear composite of the scaled buffer onto the caller's
         /// framebuffer. Only runs when the scaled path did.
@@ -201,7 +231,13 @@ namespace EdgeLighting
         ShaderProgram mBlackRectShader;                    ///< Opaque-mode black background fill (black-rect.frag).
         ShaderProgram mBlitShader;                         ///< Scaled-path upscale composite (neon-blit.frag).
         VertexArray mGlowVertexArray{"NeonRenderer.Glow"};             ///< Tight glow quad (rect + glow reach), in scaled space.
-        VertexArray mFullscreenVertexArray{"NeonRenderer.Fullscreen"}; ///< NDC quad: emission bake, opaque fill, blit.
+        VertexArray mFullscreenVertexArray{"NeonRenderer.Fullscreen"}; ///< NDC quad: emission bake, ALL-mode opaque fill, blit.
+        VertexArray mFillVertexArray{"NeonRenderer.Fill"};             ///< Opaque-fill band ring (rect +- cutoffs), in FULL-RES rect-local px.
+        /// Vertex count in @c mFillVertexArray - 24 for a ring (8 triangles),
+        /// 0 when there is no ring and the fullscreen quad is used instead.
+        /// Written by @ref setupFillGeometry, read by @ref renderOpaqueFill,
+        /// and doubles as the "is it built" flag so the two cannot disagree.
+        int mFillVertexCount = 0;
 
         /// Backs neon.frag's std140 `SegmentBlock` (DALi-compatible uniform
         /// block holding uSegmentCount + uSegments[]).

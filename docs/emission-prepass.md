@@ -106,7 +106,7 @@ runs, never the order or the guards.
 | pass | method | target | draw |
 | ---- | ------ | ------ | ---- |
 | - | (inline) | - | derives proj / center / mvp, in SCALED space |
-| 2a | `renderOpaqueFill` | caller's framebuffer | black rounded-rect fill (opaque modes only), always full-res |
+| 2a | `renderOpaqueFill` | caller's framebuffer | black rounded-rect fill (opaque modes only), always full-res; a band ring bounds it, and a coverage-1 fill (`ALL`, or `BOTH` with both cutoffs disabled) is a scissored `glClear` with no draw unless depth / stencil testing is on |
 | - | `packLightBlocks` | - | UBO upload only |
 | 0 | `renderEmissionPass` | `mEmissionBuffer` (N x 2, allocated at `Initialize`) | `mFullVertexArray`, identity MVP |
 | 1 | `renderNeonPass` | caller's framebuffer, or `mScaledBuffer` when scaled | tight glow quad, `neon.frag` |
