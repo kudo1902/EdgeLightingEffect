@@ -439,12 +439,27 @@ namespace EdgeLighting
                                (static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH) * scale);
         const glm::mat4 mvp = proj * glm::translate(glm::mat4(1.0f), glm::vec3(center, 0.0f));
 
-        // The framebuffer this renderer was handed. Usually the window's
-        // default one, but an offscreen frame capture (@ref OffscreenCapture)
-        // binds a real FBO, so every pass that retargets has to come back to
-        // whatever was bound rather than assuming 0. Read BEFORE any pass binds
-        // one of its own - querying later would capture that instead.
-        const GLuint targetFbo = Framebuffer::GetBoundId();
+        // The render target this renderer was handed - framebuffer AND
+        // viewport, saved as a pair because pass 2b has to put both back. The
+        // framebuffer is not always the window's: an offscreen frame capture
+        // (@ref OffscreenCapture) binds a real FBO, so a retargeting pass must
+        // return to what was bound rather than assuming 0. Read BEFORE any
+        // pass binds a target of its own - querying later would capture that.
+        //
+        // SCALED PATH ONLY, because it is the only one that retargets: on the
+        // direct path pass 1 draws straight onto the caller's framebuffer and
+        // there is nothing to come back to. (The framebuffer half used to be
+        // read unconditionally and then used only inside the scaled branch -
+        // one glGetIntegerv a frame for a value nothing read.)
+        //
+        // @ref renderEmissionPass captures its own rather than being handed
+        // this one: a pass restores what IT finds, which is what keeps it
+        // correct wherever it is called from.
+        RenderTargetState prevTarget;
+        if (scaled)
+        {
+            prevTarget = RenderTargetState::Capture();
+        }
 
         // Premultiplied-alpha "over": final = src.rgb + dst * (1 - src.a). Used
         // for the opaque black fill, the neon and the blit, so each composites
@@ -523,12 +538,11 @@ namespace EdgeLighting
         // fill rather than blitting a stale buffer from an earlier frame.
         if (scaled)
         {
-            // Back to the caller's target and its full-resolution viewport.
+            // Back to the caller's target and viewport, both at once.
             // Unconditional: pass 1 binds the scaled buffer before it can fail
             // at Resize, and leaving the caller on our buffer would silently
             // redirect every renderer after this one.
-            Framebuffer::BindId(targetFbo);
-            glViewport(0, 0, viewportWidth, viewportHeight);
+            prevTarget.Restore();
             if (glowReady)
             {
                 renderBlitPass();
@@ -1207,30 +1221,19 @@ namespace EdgeLighting
     void NeonRenderer::renderEmissionPass(int viewportWidth, int viewportHeight,
                                           float time, const Config &config)
     {
-        // The target the gather below draws into. NOT necessarily the default
+        // The render target handed to this pass - framebuffer AND viewport,
+        // both of which the bind below replaces. NOT necessarily the window's
         // framebuffer: an offscreen frame capture (@ref OffscreenCapture) hands
-        // this renderer a real FBO, and the gather has no bind of its own, so
-        // restoring 0 here would silently redirect the whole neon pass to the
-        // window and leave the capture empty. Read BEFORE the resize below, so
-        // it stays correct even if a reallocation ever rebinds.
-        const GLuint targetFbo = Framebuffer::GetBoundId();
-
-        // The viewport BOX, not just its size. This used to restore
-        // (0, 0, viewportWidth, viewportHeight), which is the same thing only
-        // while the caller's viewport starts at the origin and fills the
-        // target - the assumption Render's signature encourages but does not
-        // enforce. A host drawing the effect into a sub-rect got its viewport
-        // silently replaced with the full one here.
+        // this renderer a real FBO, and the gather that follows has no bind of
+        // its own, so returning to 0 here would redirect the whole neon pass to
+        // the window and leave the capture empty.
         //
-        // That was invisible while this pass ran unconditionally, because
-        // every frame was overwritten the same way. Now that it is skipped on
-        // frames the table has not moved, a bake frame and a skip frame would
-        // leave DIFFERENT viewports and the glow would jump between them -
-        // which is how the sub-rect case surfaced. Restoring what was actually
-        // found makes the two paths identical, and matches the rule every
-        // other pass here follows: hand back the state you were given.
-        GLint prevViewport[4] = {0, 0, viewportWidth, viewportHeight};
-        glGetIntegerv(GL_VIEWPORT, prevViewport);
+        // Capturing the viewport rather than reconstructing it matters a
+        // little more here than at the other sites, because this pass can be
+        // SKIPPED: anything a run frame leaves behind that a skipped frame does
+        // not is a difference the glow can show, and "hand back what you
+        // found" needs no precondition to hold for the two to agree.
+        const RenderTargetState prevTarget = RenderTargetState::Capture();
 
         // Binds the FBO and sets the viewport to NEON_MAX_LOOP_SAMPLES x 2. No
         // clear: the NDC quad covers every texel, so each one is written.
@@ -1256,8 +1259,7 @@ namespace EdgeLighting
 
         // Hand the framebuffer and viewport back exactly as found. Blend mode
         // is untouched here - it is a phase property owned by Render.
-        Framebuffer::BindId(targetFbo);
-        glViewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
+        prevTarget.Restore();
 
         // What the buffer now holds. Recorded by the only writer of it, so the
         // staleness test upstream can never describe a bake that did not run.

@@ -173,9 +173,10 @@ namespace EdgeLighting
         ///       without a matching viewport is a half-configured state. A pass
         ///       that calls this must therefore restore BOTH (see
         ///       @ref GetBoundId / @ref BindId for the framebuffer half).
-        ///       Renderers restore the viewport by reconstruction rather than
-        ///       by querying GL_VIEWPORT; @ref BaseRenderer::Render documents
-        ///       why that is sufficient.
+        ///       @c BaseRenderer::Render's @pre permits either capture or
+        ///       reconstruction for the viewport half; this library's passes
+        ///       capture, which under that precondition is the same four
+        ///       integers and one fewer assumption to carry.
         void Bind() const
         {
             glBindFramebuffer(GL_FRAMEBUFFER, mFbo);
@@ -318,6 +319,61 @@ namespace EdgeLighting
         GLint mFilter = GL_LINEAR;        ///< Tracked for the same reason.
         std::string mName = "unnamed";
     };
+
+    /// The render target a pass was handed: framebuffer id AND viewport box.
+    ///
+    /// One type because the two travel together - @ref Framebuffer::Bind
+    /// writes both, since a bound target without a matching viewport is a
+    /// half-configured state, so anything that puts one back owes the other.
+    /// Saving them as a pair is what stops a restore from being half done.
+    ///
+    /// Captured rather than reconstructed as @c (0, 0, width, height).
+    /// @c BaseRenderer::Render's @pre fixes the viewport there and permits
+    /// either, so under that precondition the two agree; capture is simply one
+    /// fewer assumption to carry, and it earns most where a pass can be
+    /// SKIPPED, since a run frame and a skipped frame have to leave the same
+    /// state behind.
+    ///
+    /// Two queries, so capture only where something actually retargets:
+    /// @code
+    ///     RenderTargetState prev;              // captures nothing
+    ///     if (scaled) { prev = RenderTargetState::Capture(); }
+    ///     // ... offscreen work ...
+    ///     prev.Restore();                      // no-op unless captured
+    /// @endcode
+    /// An uncaptured state restores nothing, so a path that never leaves the
+    /// caller's target pays neither the queries nor a bogus restore to
+    /// framebuffer 0 at a zero-size viewport.
+    typedef struct RenderTargetState
+    {
+        /// Read the framebuffer and viewport currently bound for DRAWING.
+        /// Call before anything binds a target of its own.
+        static RenderTargetState Capture()
+        {
+            RenderTargetState state;
+            state.fbo = Framebuffer::GetBoundId();
+            glGetIntegerv(GL_VIEWPORT, state.viewport);
+            state.captured = true;
+            return state;
+        }
+
+        /// Put both back, exactly as found. A no-op on a state that was never
+        /// @ref Capture d - see the class note for why that matters.
+        void Restore() const
+        {
+            if (!captured)
+            {
+                return;
+            }
+
+            Framebuffer::BindId(fbo);
+            glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+        }
+
+        GLuint fbo = 0;
+        GLint viewport[4] = {0, 0, 0, 0};
+        bool captured = false; ///< False on a default-constructed state; see @ref Restore.
+    } RenderTargetState;
 
 } // namespace EdgeLighting
 

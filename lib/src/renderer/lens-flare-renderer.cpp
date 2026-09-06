@@ -177,14 +177,22 @@ namespace EdgeLighting
         const int bufW = std::max(static_cast<int>(static_cast<float>(viewportWidth) * scale), 1);
         const int bufH = std::max(static_cast<int>(static_cast<float>(viewportHeight) * scale), 1);
 
-        // The framebuffer this renderer was handed. Usually the window's
-        // default one, but an offscreen frame capture (@ref OffscreenCapture)
-        // binds a real FBO, so the blit has to come back to whatever was bound
-        // rather than assuming 0. Read BEFORE the resize below.
-        const GLuint targetFbo = Framebuffer::GetBoundId();
+        // The render target this renderer was handed - framebuffer AND
+        // viewport, saved as a pair because the blit has to put both back. The
+        // framebuffer is not always the window's: an offscreen frame capture
+        // (@ref OffscreenCapture) binds a real FBO, so returning to 0 would
+        // redirect the composite to the window. Read BEFORE the resize below.
+        //
+        // SCALED PATH ONLY, because it is the only one that retargets: on the
+        // direct path the flare draws straight onto the caller's framebuffer
+        // and there is nothing to come back to. Same shape, same reasoning, as
+        // NeonRenderer::Render.
+        RenderTargetState prevTarget;
 
         if (scaled)
         {
+            prevTarget = RenderTargetState::Capture();
+
             // Resize destroys the attachment on its failure path, so a failure
             // leaves mScaledBuffer holding id 0 - and Bind would then bind the
             // CALLER'S framebuffer, with only Framebuffer::ClearBuffer's own
@@ -275,12 +283,11 @@ namespace EdgeLighting
 
         if (scaled)
         {
-            // Back to the caller's target and its full-resolution viewport,
-            // then composite. Bilinear upscaling of premultiplied alpha is
+            // Back to the caller's target and viewport, both at once, then
+            // composite. Bilinear upscaling of premultiplied alpha is
             // fringe-free; the blit shader is a plain texture read over
             // whatever is on the target already.
-            Framebuffer::BindId(targetFbo);
-            glViewport(0, 0, viewportWidth, viewportHeight);
+            prevTarget.Restore();
 
             mBlitShader.Use();
             mBlitShader.SetUniform("uMVP", glm::mat4(1.0f));
