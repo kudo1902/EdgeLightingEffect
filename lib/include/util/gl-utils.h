@@ -159,6 +159,74 @@ namespace EdgeLighting
             LOG_I("----------------");
         }
 
+        /// Turns @c GL_SCISSOR_TEST off for the duration of a scope and puts
+        /// the host's setting back afterwards.
+        ///
+        /// For one situation, and it is not "this pass would rather not be
+        /// clipped": a pass rendering into an OFFSCREEN BUFFER OF ITS OWN.
+        ///
+        /// The scissor box is in the caller's window coordinates, and an
+        /// internal buffer is not in that space - it is either a different
+        /// size (a resolution-scaled copy of the viewport) or an entirely
+        /// different quantity (@c NeonRenderer's N x 2 emission table, whose
+        /// axes are sample index and row). Leaving the test on therefore does
+        /// not clip such a pass, it CORRUPTS it: the box lands on unrelated
+        /// texels, the clear and the draw skip everything outside it, and what
+        /// survives is whatever the buffer held last frame. On the emission
+        /// table, whose height is 2, any box with a y origin above 1 discards
+        /// the entire bake.
+        ///
+        /// The host's clip is not lost by doing this. It still applies to the
+        /// draw that composites the buffer back onto the caller's framebuffer,
+        /// which is the one draw that IS in the caller's coordinate space and
+        /// so the only place the box means what it says. Passes that draw
+        /// straight onto the caller's framebuffer - the opaque fill, the
+        /// unscaled gather, every debug overlay - must NOT use this; their
+        /// clipping is exactly what the host asked for. (@c renderOpaqueFill
+        /// goes further and intersects its clear box with the host's, because
+        /// a clear is not clipped by the viewport the way its draw was.)
+        ///
+        /// Costs one @c glIsEnabled, a static-state query, and touches nothing
+        /// when the host had no scissor. The box itself is never written, so
+        /// there is none to put back.
+        class NoScissorScope
+        {
+        public:
+            /// @param active pass @c false to make the whole thing a no-op,
+            ///        for a pass that only sometimes retargets. The query is
+            ///        short-circuited too, so the non-retargeting path pays
+            ///        nothing at all.
+            explicit NoScissorScope(bool active = true)
+                : mRestore(active && glIsEnabled(GL_SCISSOR_TEST))
+            {
+                if (mRestore)
+                {
+                    glDisable(GL_SCISSOR_TEST);
+                }
+            }
+
+            ~NoScissorScope() { Restore(); }
+
+            NoScissorScope(const NoScissorScope &) = delete;
+            NoScissorScope &operator=(const NoScissorScope &) = delete;
+
+            /// End the scope early. Idempotent, and the destructor calls it -
+            /// this is for the case where the composite that has to see the
+            /// host's clip lives in the same scope as the offscreen work, so
+            /// the guard cannot simply be allowed to fall off the end.
+            void Restore()
+            {
+                if (mRestore)
+                {
+                    glEnable(GL_SCISSOR_TEST);
+                    mRestore = false;
+                }
+            }
+
+        private:
+            bool mRestore;
+        };
+
     } // namespace GLUtils
 } // namespace EdgeLighting
 

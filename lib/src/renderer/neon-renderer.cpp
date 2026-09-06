@@ -4,6 +4,7 @@
 #include "util/segment-utils.h"
 #include "shaders.h"
 #include "util/log-util.h"
+#include "util/gl-utils.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
 #include <cmath>
@@ -698,8 +699,8 @@ namespace EdgeLighting
     bool NeonRenderer::setupShaders()
     {
         mNeonShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
-                                       ShaderSource::NEON_FRAG_SRC,
-                                       "NeonRenderer");
+                                    ShaderSource::NEON_FRAG_SRC,
+                                    "NeonRenderer");
         // Emission pre-pass. Reuses the neon vertex shader (uMVP -> vPos); the
         // fragment shader ignores vPos and keys off gl_FragCoord instead.
         mEmissionShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
@@ -1235,6 +1236,15 @@ namespace EdgeLighting
         // found" needs no precondition to hold for the two to agree.
         const RenderTargetState prevTarget = RenderTargetState::Capture();
 
+        // The emission table's axes are sample index and row, not pixels, so a
+        // host scissor box - which is in the CALLER's window coordinates -
+        // means nothing here and would discard most of the bake. The table is
+        // two texels tall, so any box with a y origin above 1 discards ALL of
+        // it and the gather reads whatever the buffer held last frame. See
+        // GLUtils::NoScissorScope; the host's clip still applies to pass 1,
+        // which is where it belongs.
+        GLUtils::NoScissorScope noScissor;
+
         // Binds the FBO and sets the viewport to NEON_MAX_LOOP_SAMPLES x 2. No
         // clear: the NDC quad covers every texel, so each one is written.
         mEmissionBuffer.Bind();
@@ -1272,14 +1282,33 @@ namespace EdgeLighting
     {
         const float scale = GetClampedResolutionScale(config);
 
+        // SCALED PATH ONLY: mScaledBuffer is a reduced-size copy of the
+        // viewport, so a host scissor box - in the CALLER's window coordinates
+        // - lands on the wrong texels of it. The clear and the gather below
+        // would skip everything outside the box, and pass 2b would then read
+        // the region the box maps DOWN to, which is a different region again
+        // and one nothing wrote this frame: last frame's pixels, blitted back
+        // under the host's clip. See GLUtils::NoScissorScope.
+        //
+        // The direct path takes none of this - `scaled` false short-circuits
+        // even the query - because there the gather IS the composite, drawn
+        // straight onto the caller's framebuffer in the caller's coordinates,
+        // and the host's clip is exactly what it asked for. The scaled path's
+        // composite gets the same treatment once this scope ends, which is
+        // before Render calls renderBlitPass.
+        GLUtils::NoScissorScope noScissor(scaled);
+
         if (scaled)
         {
             // Resize destroys the attachment on its failure path, so a failure
-            // leaves mScaledBuffer holding id 0 - and Bind() would then bind
-            // the CALLER'S framebuffer, whereupon the glClear below erases
-            // everything already drawn this frame (glClear is not clipped by
-            // the viewport). Under an OffscreenCapture that target is the
-            // capture. Bail instead; Render skips the blit with us.
+            // leaves mScaledBuffer holding id 0 - and Bind would then bind the
+            // CALLER'S framebuffer, with only Framebuffer::ClearBuffer's own
+            // no-attachment guard standing between that and erasing everything
+            // already drawn this frame (a clear is not clipped by the
+            // viewport). Under an OffscreenCapture that target is the capture.
+            // Do not lean on that guard - bail here instead;
+            // Render skips the blit with us, and noScissor puts the host's
+            // scissor back as this return unwinds.
             //
             // The filter is requested through Resize, which is the ONLY writer
             // of the tracked value, so it cannot drift. Setting it on the
@@ -1311,7 +1340,7 @@ namespace EdgeLighting
         mNeonShader.SetUniform("uMVP", mvp);
         mNeonShader.SetUniform("uResolutionScale", scale);
         mNeonShader.SetUniform("uRectSize", glm::vec2(config.geometry.width * scale,
-                                                         config.geometry.height * scale));
+                                                      config.geometry.height * scale));
         mNeonShader.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry) * scale);
         mNeonShader.SetUniform("uLineWidth", config.neon.lineWidth * scale);
         mNeonShader.SetUniform("uFilamentFalloff", config.neon.filamentFalloff);

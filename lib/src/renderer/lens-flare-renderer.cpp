@@ -3,6 +3,7 @@
 #include "shaders.h"
 #include "util/geometry-utils.h"
 #include "util/log-util.h"
+#include "util/gl-utils.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -189,6 +190,21 @@ namespace EdgeLighting
         // NeonRenderer::Render.
         RenderTargetState prevTarget;
 
+        // SCALED PATH ONLY: mScaledBuffer is a reduced-size copy of the
+        // viewport, so a host scissor box - in the CALLER's window coordinates
+        // - lands on the wrong texels of it. The clear and the flare draw
+        // would skip everything outside the box, and the blit would then read
+        // the region the box maps DOWN to, which is a different region again
+        // and one nothing wrote this frame. See GLUtils::NoScissorScope.
+        //
+        // The direct path takes none of this - `scaled` false short-circuits
+        // even the query - because there the flare draws straight onto the
+        // caller's framebuffer and the host's clip is exactly what it asked
+        // for. Ended explicitly below rather than at the end of this function,
+        // because unlike the neon renderer's the composite that has to see
+        // that clip restored lives in this same scope.
+        GLUtils::NoScissorScope noScissor(scaled);
+
         if (scaled)
         {
             prevTarget = RenderTargetState::Capture();
@@ -283,6 +299,13 @@ namespace EdgeLighting
 
         if (scaled)
         {
+            // The host's clip comes back BEFORE the composite, not after: this
+            // is the one draw here that lands on the caller's framebuffer in
+            // the caller's coordinates, so it is the one draw the scissor box
+            // describes correctly. Everything above it went into a buffer the
+            // box does not address.
+            noScissor.Restore();
+
             // Back to the caller's target and viewport, both at once, then
             // composite. Bilinear upscaling of premultiplied alpha is
             // fringe-free; the blit shader is a plain texture read over
