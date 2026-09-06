@@ -53,9 +53,18 @@ namespace EdgeLighting
         }
         setupStopMarkerQuad();
         setupGeometry(mCurrentConfig);
+        // Unconditional, unlike the bake in OnConfigChanged, and it is the
+        // safety net that lets that one be gated: a host whose config never
+        // changes after registration gets no OnConfigChanged with a valid
+        // shader, so this is the only bake the strip would ever have. Seeding
+        // it here costs one ring at startup and makes "the strip is visible"
+        // imply "the ring is uploaded" for the life of the renderer.
         mGradientLUT.Bake(mCurrentConfig.neon.colorStops, mCurrentConfig.neon.blendSpace,
                           mCurrentConfig.neon.gradientLutSize,
                           mCurrentConfig.neon.colorTransitionDuration);
+        // What that bake was for, so a later reveal is judged against it
+        // rather than against the flag's initial value.
+        mStripVisible = IsStripVisible(mCurrentConfig);
         return true;
     }
 
@@ -75,9 +84,11 @@ namespace EdgeLighting
         // same predicate. A fade in flight when the strip is hidden simply
         // PAUSES - mDisplay holds, and the tick resumes it on re-show. Stops
         // that change while it is hidden are not baked at all, so the re-show
-        // is itself a config change that bakes them and cross-fades from the
-        // last ring shown to the current one. Either way what ends up on
-        // screen is the ring for the current stops.
+        // is itself a config change that bakes them - and bakes them with no
+        // fade, because a cross-fade from a ring nobody has seen for the last
+        // however-many seconds is not a preview of anything. See
+        // @c mStripVisible. Either way the strip is showing the ring for the
+        // current stops from the frame it reappears.
         if (IsStripVisible(config))
         {
             mGradientLUT.Tick(deltaTime);
@@ -197,11 +208,27 @@ namespace EdgeLighting
         // upload; spending that on a hidden strip buys nothing. Becoming
         // visible is itself a config change, so the bake it needs arrives with
         // it - see the note in @ref Update for what a fade does across the gap.
-        if (IsStripVisible(config))
+        const bool stripVisible = IsStripVisible(config);
+        if (stripVisible)
         {
+            // Zero duration on the RISING EDGE, so a re-show lands on the
+            // current stops immediately. The gate above means stop changes
+            // made while the strip was hidden were never baked, so the
+            // catch-up bake arriving here would otherwise cross-fade from
+            // whatever was last on screen - a ring that can be arbitrarily
+            // stale - and the strip would spend colorTransitionDuration
+            // previewing colours the glow settled away from long ago. The
+            // strip's whole claim is that it is a preview of the glow.
+            //
+            // Only ever a snap where there is something new to snap TO: Bake
+            // returns early when the gradient inputs have not moved, so a
+            // hide/show over an unchanged ring never reaches the duration at
+            // all and a fade paused by the hide resumes as before.
+            const float fadeDuration = mStripVisible ? config.neon.colorTransitionDuration : 0.0f;
             mGradientLUT.Bake(config.neon.colorStops, config.neon.blendSpace,
-                              config.neon.gradientLutSize, config.neon.colorTransitionDuration);
+                              config.neon.gradientLutSize, fadeDuration);
         }
+        mStripVisible = stripVisible;
     }
 
     bool DebugRenderer::setupShaders()
