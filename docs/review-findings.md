@@ -853,6 +853,49 @@ carried through the gather's normalisation and the tone map / gamma grade.
   its `glClear`. That is one more state query per frame per renderer, the same
   cost and the same justification as the `GetBoundId` call discussed in I5:
   this renderer does not own the context it draws into.
+
+  **Superseded, and the second fix is better than the first.** All three clears
+  in the library now use `glClearBufferfv(GL_COLOR, 0, rgba)`, which takes the
+  colour as an *argument* instead of staging it through context state -
+  `NeonRenderer`'s scaled-path clear and its coverage-1 opaque fill, and
+  `LensFlareRenderer`'s scaled-path clear. The `glGetFloatv` and both
+  `glClearColor` calls are gone from each, so there is no query to pay, no
+  restore to get wrong on an early return, and no window in which a host
+  reading its own `GL_COLOR_CLEAR_VALUE` could observe it as transparent black.
+  The clipping semantics are identical (scissor and colour mask apply, depth
+  and stencil do not), and clearing only draw buffer 0 rather than every
+  enabled one is the same thing on these single-attachment targets.
+  `glClearBufferfv` is GL 3.0 / GLES 3.0 core, so it is available on both of
+  this project's version lines. The right shape for this class of problem is
+  *not touching the state*, not saving and restoring it.
+
+  The two scaled-path clears then moved into `Framebuffer::ClearBuffer`, which
+  is where they belonged - the class owns the attachment, so it should own how
+  the attachment is cleared. Call sites pair it with an explicit `Bind`,
+  keeping the two GL steps visible as two calls rather than folding them into
+  one `BindAndClear`. It takes four scalars and builds the four-float local
+  `glClearBufferfv` wants a pointer to. A `glm::vec4` parameter plus
+  `glm::value_ptr` removes that local - `ShaderProgram::SetUniform` does
+  exactly that, correctly, since uploading glm types is its job - but it was
+  tried here and reverted: the local is a stack slot the compiler already has,
+  and buying its removal costs the lowest-level wrapper in the tree a
+  dependency on all of glm, in every translation unit that touches a
+  framebuffer. A clear colour is four floats, not a math type.
+
+  That leaves a precondition to defend, because a clear acts on whatever is
+  *bound* rather than on the object it is called through. `ClearBuffer` carries
+  the `@pre`, and it early-outs when there is no attachment - which closes the
+  one failure that actually occurs here: "`Resize` fails, leaves id 0, `Bind`
+  binds the caller's framebuffer, `ClearBuffer` erases the frame". Both
+  renderers still bail on that `Resize` before reaching either call, so the
+  guard makes the hazard unreachable rather than merely unreached. A missing
+  `Bind` with a live attachment stays undetectable without a `glGetIntegerv`
+  per clear, which is the same trade I5 declines for the same reason; the
+  mitigation is keeping the two calls adjacent.
+
+  `renderOpaqueFill`'s clear stays raw, correctly - it clears the caller's
+  framebuffer under a scissor deliberately intersected with the host's, and
+  there is no `Framebuffer` object involved.
 - `renderBlitPass` now only calls `BindTexture(0)`. It sets no texture
   parameters at all: the `showHalfRes` filter is requested through
   `Resize` in pass 1, which is the **only** writer of the tracked `mFilter`, so
@@ -1264,8 +1307,11 @@ has to bind something.
 **Fixed** by making `Upload` leave texture-unit state as it found it: save
 `GL_ACTIVE_TEXTURE`, activate unit 0 and save its `GL_TEXTURE_BINDING_2D`, do
 the upload, then restore both. Two state queries, on a path that only runs when
-a bake is actually dirty - a strictly cheaper version of the trade R5 already
-accepted for the clear colour, which pays a query every frame.
+a bake is actually dirty - which is the cheap end of the trade R5 first accepted
+for the clear colour, and the only end left: R5's own per-frame query has since
+been deleted outright by moving to `glClearBufferfv`. Texture-unit state has no
+equivalent escape - there is no way to upload without binding - so save/restore
+on a dirty-only path is the floor here, not a stopgap.
 
 ### I11. `SpanAtlasLUT::Bake` does not guard its dimensions - FIXED
 
@@ -1430,15 +1476,68 @@ eight-scene sweep in `lens-flare-perf-review.md`.
 
 ---
 
+## Fifth pass (the redundant-call review)
+
+### I15. A host scissor corrupts every offscreen pass - FIXED
+
+`Framebuffer::Bind()` sets the framebuffer and the viewport and *not* the
+scissor, which is right - the scissor is the host's state. But three passes
+render into a buffer of their own while a host's `GL_SCISSOR_TEST` is still
+enabled, and a scissor box is in the **caller's window coordinates**. An
+internal buffer is not in that space, so the box does not clip those passes,
+it lands on unrelated texels of them:
+
+- `NeonRenderer::renderNeonPass` (scaled path) and `LensFlareRenderer::Render`
+  (scaled path) draw into a reduced-size copy of the viewport. At
+  `resolutionScale` 0.5 with a host box of `(100, 100, 200, 200)`, the clear
+  and the draw write only that box *in the scaled buffer*, while the composite
+  reads the region the box maps down to - `(50, 50, 100, 100)` - which nothing
+  wrote this frame. The result is last frame's pixels blitted back inside the
+  host's clip, or garbage on the first frame.
+- `NeonRenderer::renderEmissionPass` is worse, because the emission table's
+  axes are sample index and row rather than pixels, and it is **two texels
+  tall**. Any box with a y origin above 1 discards the entire bake, and the
+  gather reads whatever the buffer held before.
+
+The inconsistency is the tell, and it is what makes this a defect rather than
+an unsupported configuration. `BaseRenderer::Render`'s `@pre` rules out a
+sub-viewport outright, so a scissor box **is** the supported way for a host to
+clip the effect to a sub-rect - and `renderOpaqueFill` supports exactly that,
+intersecting its clear box with the host's rather than replacing it, off the
+back of a real report ("a host clipping the effect to a sub-rect saw the whole
+surface go opaque"). Three passes next door were silently broken by the one
+clipping mechanism the library actually offers.
+
+**Fixed** with `GLUtils::NoScissorScope`, an RAII guard that disables the test
+for the duration of an offscreen excursion and restores the host's setting
+after. One `glIsEnabled` and, when the host had no scissor, nothing else; the
+box is never written, so there is none to put back. Constructed with `false` on
+the paths that do not retarget, which short-circuits even the query.
+
+The host's clip is not lost. It still applies to the draw that composites the
+buffer back onto the caller's framebuffer, which is the one draw in the
+caller's coordinate space and so the only place the box means what it says. In
+`NeonRenderer` the scope ends when `renderNeonPass` returns, which is before
+`Render` calls `renderBlitPass`; in `LensFlareRenderer` the composite is in the
+same function, so the guard is ended explicitly with `Restore()` immediately
+before it. Passes that draw straight onto the caller's framebuffer - the opaque
+fill, the unscaled gather and flare, the droplets, every debug overlay - are
+deliberately untouched: their clipping is exactly what the host asked for.
+
+No visual change without a host scissor, which is why this survived: the demos
+never set one outside `renderOpaqueFill`'s own clear.
+
+---
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
 I9, I10 and I11. I3's structural half - the last thing on this list that was
 open rather than declined - closed with the neon unification, which deleted the
-fork it followed from. Five items from the first pass remain deliberately open,
-each with the reasoning recorded next to the code rather than only here, plus R7
-from the second pass, V9 and I12's remainder from the third, and I13 from the
-fourth:
+fork it followed from. The fifth pass's I15 landed with it. Five items from the
+first pass remain deliberately open, each with the reasoning recorded next to
+the code rather than only here, plus R7 from the second pass, V9 and I12's
+remainder from the third, and I13 from the fourth:
 
 | item | state | why |
 | ---- | ----- | --- |

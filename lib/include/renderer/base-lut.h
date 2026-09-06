@@ -164,6 +164,16 @@ namespace EdgeLighting
         /// once @c mUploaded is set.
         int mTextureWidth = 0;
         int mTextureHeight = 0;
+        /// @note DEFENSIVE, and today unreachable past the first upload: every
+        ///       LUT passes a wrap that is fixed for the life of the object
+        ///       (@c GL_REPEAT from @c GradientRingLUT, @c GL_CLAMP_TO_EDGE
+        ///       from @c SpanAtlasLUT), so the mismatch this guards against
+        ///       cannot currently happen and no test can reach it. It is kept
+        ///       because the alternative failure is silent: a future LUT that
+        ///       varies its wrap would get the FIRST one it ever uploaded with,
+        ///       for every bake after, with nothing to say so. The initial 0 is
+        ///       not a valid GL wrap mode, so it can never collide with a real
+        ///       one before the first upload sets it.
         GLint mTextureWrapS = 0;
     };
 
