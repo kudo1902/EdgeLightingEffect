@@ -1289,18 +1289,15 @@ namespace EdgeLighting
             {
                 return false;
             }
+            // Bind, then clear to transparent black. Keep the two adjacent:
+            // ClearBuffer acts on whatever is BOUND, so the bind is its
+            // precondition rather than a nicety - see Framebuffer::ClearBuffer,
+            // which also carries the reason the clear touches no context state
+            // (it used to save, overwrite and restore GL_COLOR_CLEAR_VALUE
+            // every frame on this path). The scissor guard above is the other
+            // half of making this clear land where it is meant to.
             mScaledBuffer.Bind();
-
-            // Transparent black, passed as an ARGUMENT rather than staged
-            // through GL_COLOR_CLEAR_VALUE. This used to save the host's clear
-            // colour, overwrite it, clear, and put it back - a glGetFloatv and
-            // two glClearColor calls every frame on the scaled path, plus a
-            // window in which a host reading its own clear colour would find
-            // it replaced. glClearBufferfv touches none of that context state.
-            // See the fuller note in @ref renderOpaqueFill, which makes the
-            // same swap on the pass's other clear.
-            static const GLfloat TRANSPARENT_BLACK[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-            glClearBufferfv(GL_COLOR, 0, TRANSPARENT_BLACK);
+            mScaledBuffer.ClearBuffer();
         }
 
         // Every pixel-valued uniform below is multiplied by `scale`, which is

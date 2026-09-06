@@ -182,6 +182,40 @@ namespace EdgeLighting
             glViewport(0, 0, mWidth, mHeight);
         }
 
+        /// Clear the colour attachment - transparent black by default, which
+        /// is what a premultiplied-alpha layer wants under it.
+        ///
+        /// @c glClearBufferfv, not @c glClearColor + @c glClear: the colour is
+        /// an ARGUMENT, so no global clear-colour state is saved, overwritten
+        /// and put back. GL 3.0 / GLES 3.0 core.
+        ///
+        /// @pre @ref Bind has run. A clear acts on whatever is BOUND, not on
+        ///      the object it is called through, so without the bind this
+        ///      wipes the framebuffer the caller was drawing into - under an
+        ///      @c OffscreenCapture, the capture. Keep the two calls adjacent;
+        ///      detecting it here would cost a @c glGetIntegerv per clear.
+        ///
+        /// @note The early-out covers the other half of that: @ref Resize
+        ///       destroys the attachment when it fails, and a @ref Bind on the
+        ///       wreckage binds framebuffer 0. No attachment, nothing to clear.
+        ///
+        /// @note SCISSOR still applies, and on an offscreen target it is
+        ///       almost never wanted - the host's box is in the CALLER's
+        ///       coordinate space, which this attachment is not in. Wrap the
+        ///       whole excursion in a @c GLUtils::NoScissorScope; this method
+        ///       cannot, because the guard has to cover the draws too.
+        void ClearBuffer(GLfloat r = 0.0f, GLfloat g = 0.0f,
+                         GLfloat b = 0.0f, GLfloat a = 0.0f) const
+        {
+            if (!IsValid())
+            {
+                return;
+            }
+
+            const GLfloat rgba[4] = {r, g, b, a};
+            glClearBufferfv(GL_COLOR, 0, rgba);
+        }
+
         /// Restores the default framebuffer. Does NOT touch the viewport - the
         /// caller is responsible for setting it back to the window size.
         ///

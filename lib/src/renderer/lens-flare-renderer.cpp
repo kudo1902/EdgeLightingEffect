@@ -186,26 +186,28 @@ namespace EdgeLighting
         if (scaled)
         {
             // Resize destroys the attachment on its failure path, so a failure
-            // leaves mScaledBuffer holding id 0 - and Bind() would then bind
-            // the CALLER'S framebuffer, whereupon the glClear below erases
-            // everything already drawn this frame (glClear is not clipped by
-            // the viewport). Under an OffscreenCapture that target is the
-            // capture. Nothing has been drawn or any state changed at this
-            // point, so returning leaves the frame exactly as it was found.
+            // leaves mScaledBuffer holding id 0 - and Bind would then bind the
+            // CALLER'S framebuffer, with only Framebuffer::ClearBuffer's own
+            // no-attachment guard standing between that and erasing everything
+            // already drawn this frame (a clear is not clipped by the
+            // viewport). Under an OffscreenCapture that target is the capture.
+            // Do not lean on that guard - bail here. Nothing has been
+            // drawn here, and the only state touched so far is the scissor
+            // enable, which noScissor puts back as this return unwinds - so
+            // returning leaves the frame exactly as it was found.
             if (!mScaledBuffer.Resize(bufW, bufH))
             {
                 return;
             }
+            // Bind, then clear to transparent black. Keep the two adjacent:
+            // ClearBuffer acts on whatever is BOUND, so the bind is its
+            // precondition rather than a nicety - see Framebuffer::ClearBuffer,
+            // which also carries the reason the clear touches no context state
+            // (it used to save, overwrite and restore GL_COLOR_CLEAR_VALUE
+            // every frame on this path). The scissor guard above is the other
+            // half of making this clear land where it is meant to.
             mScaledBuffer.Bind();
-
-            // Clear colour is global GL state, so put it back: a host that
-            // sets its own once at startup would otherwise find it silently
-            // replaced with transparent black by whichever frame ran this.
-            GLfloat prevClear[4];
-            glGetFloatv(GL_COLOR_CLEAR_VALUE, prevClear);
-            glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-            glClear(GL_COLOR_BUFFER_BIT);
-            glClearColor(prevClear[0], prevClear[1], prevClear[2], prevClear[3]);
+            mScaledBuffer.ClearBuffer();
         }
 
         // Premultiplied "over": alpha = brightest channel, so the flare
