@@ -3,6 +3,7 @@
 #include "shaders.h"
 #include "util/geometry-utils.h"
 #include "util/log-util.h"
+#include "util/gl-utils.h"
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -148,6 +149,12 @@ namespace EdgeLighting
             return false;
         }
         setupGeometry();
+        // mCurrentFlare is whatever the last OnConfigChanged left - the effect
+        // calls it on registration, so by here it is usually the host's real
+        // config rather than the defaults. Either way the block is filled from
+        // this point on, and OnConfigChanged re-bakes it on every change to
+        // the three fields it reads.
+        bakeGhostBlock(mCurrentFlare);
         return true;
     }
 
@@ -171,35 +178,60 @@ namespace EdgeLighting
         const int bufW = std::max(static_cast<int>(static_cast<float>(viewportWidth) * scale), 1);
         const int bufH = std::max(static_cast<int>(static_cast<float>(viewportHeight) * scale), 1);
 
-        // The framebuffer this renderer was handed. Usually the window's
-        // default one, but an offscreen frame capture (@ref OffscreenCapture)
-        // binds a real FBO, so the blit has to come back to whatever was bound
-        // rather than assuming 0. Read BEFORE the resize below.
-        const GLuint targetFbo = Framebuffer::GetBoundId();
+        // The render target this renderer was handed - framebuffer AND
+        // viewport, saved as a pair because the blit has to put both back. The
+        // framebuffer is not always the window's: an offscreen frame capture
+        // (@ref OffscreenCapture) binds a real FBO, so returning to 0 would
+        // redirect the composite to the window. Read BEFORE the resize below.
+        //
+        // SCALED PATH ONLY, because it is the only one that retargets: on the
+        // direct path the flare draws straight onto the caller's framebuffer
+        // and there is nothing to come back to. Same shape, same reasoning, as
+        // NeonRenderer::Render.
+        RenderTargetState prevTarget;
+
+        // SCALED PATH ONLY: mScaledBuffer is a reduced-size copy of the
+        // viewport, so a host scissor box - in the CALLER's window coordinates
+        // - lands on the wrong texels of it. The clear and the flare draw
+        // would skip everything outside the box, and the blit would then read
+        // the region the box maps DOWN to, which is a different region again
+        // and one nothing wrote this frame. See GLUtils::NoScissorScope.
+        //
+        // The direct path takes none of this - `scaled` false short-circuits
+        // even the query - because there the flare draws straight onto the
+        // caller's framebuffer and the host's clip is exactly what it asked
+        // for. Ended explicitly below rather than at the end of this function,
+        // because unlike the neon renderer's the composite that has to see
+        // that clip restored lives in this same scope.
+        GLUtils::NoScissorScope noScissor(scaled);
 
         if (scaled)
         {
+            prevTarget = RenderTargetState::Capture();
+
             // Resize destroys the attachment on its failure path, so a failure
-            // leaves mScaledBuffer holding id 0 - and Bind() would then bind
-            // the CALLER'S framebuffer, whereupon the glClear below erases
-            // everything already drawn this frame (glClear is not clipped by
-            // the viewport). Under an OffscreenCapture that target is the
-            // capture. Nothing has been drawn or any state changed at this
-            // point, so returning leaves the frame exactly as it was found.
+            // leaves mScaledBuffer holding id 0 - and Bind would then bind the
+            // CALLER'S framebuffer, with only Framebuffer::ClearBuffer's own
+            // no-attachment guard standing between that and erasing everything
+            // already drawn this frame (a clear is not clipped by the
+            // viewport). Under an OffscreenCapture that target is the capture.
+            // Do not lean on that guard - bail here. Nothing has been
+            // drawn here, and the only state touched so far is the scissor
+            // enable, which noScissor puts back as this return unwinds - so
+            // returning leaves the frame exactly as it was found.
             if (!mScaledBuffer.Resize(bufW, bufH))
             {
                 return;
             }
+            // Bind, then clear to transparent black. Keep the two adjacent:
+            // ClearBuffer acts on whatever is BOUND, so the bind is its
+            // precondition rather than a nicety - see Framebuffer::ClearBuffer,
+            // which also carries the reason the clear touches no context state
+            // (it used to save, overwrite and restore GL_COLOR_CLEAR_VALUE
+            // every frame on this path). The scissor guard above is the other
+            // half of making this clear land where it is meant to.
             mScaledBuffer.Bind();
-
-            // Clear colour is global GL state, so put it back: a host that
-            // sets its own once at startup would otherwise find it silently
-            // replaced with transparent black by whichever frame ran this.
-            GLfloat prevClear[4];
-            glGetFloatv(GL_COLOR_CLEAR_VALUE, prevClear);
-            glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
-            glClear(GL_COLOR_BUFFER_BIT);
-            glClearColor(prevClear[0], prevClear[1], prevClear[2], prevClear[3]);
+            mScaledBuffer.ClearBuffer();
         }
 
         // Premultiplied "over": alpha = brightest channel, so the flare
@@ -232,10 +264,12 @@ namespace EdgeLighting
         mFlareShader.SetUniform("uGhostSize", config.lensFlare.ghostSize);
 
         // ghostOffset / ghostColor / ghostTint reach the shader only through
-        // this block, so there are no uniforms of their own to set.
-        GhostBlockData ghostBlock = {};
-        BakeGhostTable(config.lensFlare, ghostBlock.ghosts);
-        mGhostBlock.SetData(&ghostBlock, sizeof(ghostBlock));
+        // this block, so there are no uniforms of their own to set. The bake
+        // itself has moved to OnConfigChanged - it is a pure function of those
+        // three fields, so running it here meant re-deriving the same table
+        // every frame of every flare. Only the bind is per-frame, because the
+        // binding point is global context state rather than something this
+        // renderer can assume it still owns.
         mGhostBlock.BindBase(GHOST_BLOCK_BINDING);
 
         // Support bounds for the two compactly-supported ghost terms, so the
@@ -265,12 +299,18 @@ namespace EdgeLighting
 
         if (scaled)
         {
-            // Back to the caller's target and its full-resolution viewport,
-            // then composite. Bilinear upscaling of premultiplied alpha is
+            // The host's clip comes back BEFORE the composite, not after: this
+            // is the one draw here that lands on the caller's framebuffer in
+            // the caller's coordinates, so it is the one draw the scissor box
+            // describes correctly. Everything above it went into a buffer the
+            // box does not address.
+            noScissor.Restore();
+
+            // Back to the caller's target and viewport, both at once, then
+            // composite. Bilinear upscaling of premultiplied alpha is
             // fringe-free; the blit shader is a plain texture read over
             // whatever is on the target already.
-            Framebuffer::BindId(targetFbo);
-            glViewport(0, 0, viewportWidth, viewportHeight);
+            prevTarget.Restore();
 
             mBlitShader.Use();
             mBlitShader.SetUniform("uMVP", glm::mat4(1.0f));
@@ -289,13 +329,34 @@ namespace EdgeLighting
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     }
 
-    void LensFlareRenderer::OnConfigChanged(const Config &)
+    void LensFlareRenderer::OnConfigChanged(const Config &config)
     {
-        // Nothing to cache. Every value this renderer draws from is read out
-        // of the Config that Render is handed, and the two derived tables
-        // (uGhosts, and the two support bounds) are cheap enough to rebuild
-        // there - the uniform setters' own value caching already skips the
-        // upload when they have not moved.
+        // Almost nothing to cache. Every value this renderer draws from is
+        // read out of the Config that Render is handed, and the two support
+        // bounds (uBloomRadius / uRingFloor) are genuinely cheap enough to
+        // rebuild there - they are uniform setters, whose own last-value
+        // caching skips the upload when they have not moved.
+        //
+        // The ghost table is the exception, and the difference is the
+        // mechanism rather than the size: it reaches the shader through a UBO,
+        // not a uniform, so no setter cache stood between a per-frame bake and
+        // the buffer. (UniformBuffer::SetData compares bytes and does skip the
+        // GL call, but only after the table has been rebuilt to compare.)
+        // Baking it here instead reduces the per-frame cost to a bind.
+        const bool ghostsDirty = !mGhostsBaked ||
+                                 config.lensFlare.ghostOffset != mCurrentFlare.ghostOffset ||
+                                 config.lensFlare.ghostColor != mCurrentFlare.ghostColor ||
+                                 config.lensFlare.ghostTint != mCurrentFlare.ghostTint;
+
+        mCurrentFlare = config.lensFlare;
+
+        // Gated on the three fields BakeGhostTable reads, not on the whole
+        // sub-config: rotationRate, spread and the rest move constantly under
+        // an animation and change nothing in this table.
+        if (ghostsDirty)
+        {
+            bakeGhostBlock(mCurrentFlare);
+        }
     }
 
     bool LensFlareRenderer::setupShaders()
@@ -327,6 +388,14 @@ namespace EdgeLighting
         // clang-format on
         mVertexArray.SetVertexData(ndc, sizeof(ndc));
         mVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+    }
+
+    void LensFlareRenderer::bakeGhostBlock(const LensFlareConfig &flare)
+    {
+        GhostBlockData ghostBlock = {};
+        BakeGhostTable(flare, ghostBlock.ghosts);
+        mGhostBlock.SetData(&ghostBlock, sizeof(ghostBlock));
+        mGhostsBaked = true;
     }
 
 } // namespace EdgeLighting

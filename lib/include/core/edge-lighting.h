@@ -67,8 +67,17 @@ namespace EdgeLighting
         /// @param viewportHeight Current framebuffer height in pixels.
         void Render(int viewportWidth, int viewportHeight);
 
-        /// @brief Replace the active configuration and notify all renderers.
-        /// @param config New configuration to apply.
+        /// @brief Replace the base configuration and notify all renderers.
+        ///
+        /// Writes the BASE config, then recomposes and notifies through the
+        /// same path @ref Update uses. With animations attached that composite
+        /// carries the overlays at their CURRENT values - this frame's advance
+        /// happens in the next @ref Update, which recomposes and notifies
+        /// again. Callers following the documented Update-then-Render contract
+        /// therefore see one notification per frame from Update, and one extra
+        /// on frames where they also changed the base mid-animation.
+        ///
+        /// @param config New base configuration to apply.
         void SetConfig(const Config &config);
 
         /// @brief The base (authored) configuration.

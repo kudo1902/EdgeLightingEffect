@@ -4,6 +4,7 @@
 #include "util/segment-utils.h"
 #include "shaders.h"
 #include "util/log-util.h"
+#include "util/gl-utils.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
 #include <cmath>
@@ -366,7 +367,13 @@ namespace EdgeLighting
 
     void NeonRenderer::Update(float deltaTime, float, const Config &)
     {
-        mGradientLUT.Tick(deltaTime);
+        // A fade frame re-uploads the ring the emission table is baked FROM,
+        // and does it without any config change for OnConfigChanged to catch -
+        // so the table has to be invalidated from here or it would hold the
+        // ring's colours from the frame the fade began for the whole fade.
+        // |=, not =: a config change earlier in this same frame must not be
+        // cleared by a settled ring reporting false.
+        mEmissionDirty = mGradientLUT.Tick(deltaTime) || mEmissionDirty;
     }
 
     void NeonRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
@@ -433,12 +440,27 @@ namespace EdgeLighting
                                (static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH) * scale);
         const glm::mat4 mvp = proj * glm::translate(glm::mat4(1.0f), glm::vec3(center, 0.0f));
 
-        // The framebuffer this renderer was handed. Usually the window's
-        // default one, but an offscreen frame capture (@ref OffscreenCapture)
-        // binds a real FBO, so every pass that retargets has to come back to
-        // whatever was bound rather than assuming 0. Read BEFORE any pass binds
-        // one of its own - querying later would capture that instead.
-        const GLuint targetFbo = Framebuffer::GetBoundId();
+        // The render target this renderer was handed - framebuffer AND
+        // viewport, saved as a pair because pass 2b has to put both back. The
+        // framebuffer is not always the window's: an offscreen frame capture
+        // (@ref OffscreenCapture) binds a real FBO, so a retargeting pass must
+        // return to what was bound rather than assuming 0. Read BEFORE any
+        // pass binds a target of its own - querying later would capture that.
+        //
+        // SCALED PATH ONLY, because it is the only one that retargets: on the
+        // direct path pass 1 draws straight onto the caller's framebuffer and
+        // there is nothing to come back to. (The framebuffer half used to be
+        // read unconditionally and then used only inside the scaled branch -
+        // one glGetIntegerv a frame for a value nothing read.)
+        //
+        // @ref renderEmissionPass captures its own rather than being handed
+        // this one: a pass restores what IT finds, which is what keeps it
+        // correct wherever it is called from.
+        RenderTargetState prevTarget;
+        if (scaled)
+        {
+            prevTarget = RenderTargetState::Capture();
+        }
 
         // Premultiplied-alpha "over": final = src.rgb + dst * (1 - src.a). Used
         // for the opaque black fill, the neon and the blit, so each composites
@@ -481,10 +503,21 @@ namespace EdgeLighting
         // here - the fill has already landed, and this pass restores the target
         // it was handed.
         packLightBlocks(config);
-        // A table write is not a composite: blending would mix this frame's
-        // emission into last frame's.
-        glDisable(GL_BLEND);
-        renderEmissionPass(viewportWidth, viewportHeight, time, config);
+        // ...and only re-bake the table when something it reads has actually
+        // moved. The buffer is allocated once and nothing else writes it, so a
+        // frame that changes neither the config nor (at a non-zero hue rate)
+        // the time reads the same texels the last bake left. A still ring
+        // therefore costs one FBO bind, eight uniform sets, three texture binds
+        // and a draw on the frame it changes, and nothing on the frames after.
+        if (isEmissionTableStale(time, config))
+        {
+            // A table write is not a composite: blending would mix this frame's
+            // emission into last frame's. Pass 1 below re-asserts the blend
+            // mode unconditionally, so leaving this alone on the skip path
+            // changes nothing downstream.
+            glDisable(GL_BLEND);
+            renderEmissionPass(viewportWidth, viewportHeight, time, config);
+        }
 
         // --- Pass 1: the neon gather ----------------------------------------
         // Re-assert the phase mode: pass 0 leaves blending disabled. Setting it
@@ -506,12 +539,11 @@ namespace EdgeLighting
         // fill rather than blitting a stale buffer from an earlier frame.
         if (scaled)
         {
-            // Back to the caller's target and its full-resolution viewport.
+            // Back to the caller's target and viewport, both at once.
             // Unconditional: pass 1 binds the scaled buffer before it can fail
             // at Resize, and leaving the caller on our buffer would silently
             // redirect every renderer after this one.
-            Framebuffer::BindId(targetFbo);
-            glViewport(0, 0, viewportWidth, viewportHeight);
+            prevTarget.Restore();
             if (glowReady)
             {
                 renderBlitPass();
@@ -564,6 +596,15 @@ namespace EdgeLighting
                                config.neon.opaqueSoftness != mCurrentConfig.neon.opaqueSoftness ||
                                config.neon.insideCutoff != mCurrentConfig.neon.insideCutoff ||
                                config.neon.outsideCutoff != mCurrentConfig.neon.outsideCutoff;
+        // The merged transient+preserved view is a pure function of the two
+        // segment pools, so it gets a gate like every other rebuild here. It
+        // used to run on EVERY config change, which with an animation attached
+        // is nearly every frame - and it is not free: SegmentBoost owns a
+        // colorStops vector, so clear() + push_back frees and reallocates one
+        // heap block per stopped segment each time, to reproduce a list that
+        // in a segment-less animation never differs.
+        const bool segmentsDirty = config.neon.segmentBoosts != mCurrentConfig.neon.segmentBoosts ||
+                                   config.neon.preservedSegmentBoosts != mCurrentConfig.neon.preservedSegmentBoosts;
         // Overflow warnings, before mCurrentConfig is overwritten below: the
         // previous counts are still in it, which is what lets these fire once
         // per overflow without a latch of their own.
@@ -584,9 +625,52 @@ namespace EdgeLighting
                        int(MAX_SEGMENT_BOOSTS));
 
         // The merged transient+preserved view feeds both the segment atlas
-        // below and the per-frame UBO pack, so it is refilled here on every
-        // config change and nowhere else in this call.
-        SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
+        // below and the per-frame UBO pack, so it is refilled here - on a
+        // change to either pool, and nowhere else in this call. Leaving it
+        // alone otherwise is safe precisely because it is derived: an
+        // unchanged pair of pools rebuilds to the list already in it, which
+        // mSegmentLUT's own dirty check and packLightBlocks would both then
+        // see as unmoved anyway.
+        if (segmentsDirty)
+        {
+            SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
+        }
+
+        // The emission table reads a wide slice of this config - the hue rate,
+        // the sample count, all three LUTs and both light UBOs - so it is
+        // invalidated on any change rather than on a gate that has to be kept
+        // in step with the shader. A missed field would be a stale ring; a
+        // spare rebuild is one small pass.
+        mEmissionDirty = true;
+        // The light blocks get the OPPOSITE treatment, because their inputs are
+        // narrow and visible rather than wide and indirect: @ref
+        // packLightBlockData reads mEffectiveSegments and config.neon.arcs, and
+        // nothing else. mEffectiveSegments moves exactly when segmentsDirty
+        // does - it was rebuilt from that flag ten lines up - so the two
+        // together are the whole input set, and gating on them is the same
+        // enumeration samplesDirty and fillDirty above already do. Being
+        // conservative here would cost the gate its point: the common animation
+        // is an intensity or geometry sweep that touches neither list, and
+        // "any config change" would repack on every frame of it.
+        //
+        // ACCUMULATED, not assigned, and the difference is not subtle.
+        //
+        // This runs BEFORE the first Render - AddRenderer calls it - and on
+        // that call the incoming config usually matches the defaults it is
+        // compared against, so both terms are false. An assignment would clear
+        // the `true` the flag is born with, no Render would ever pack, and the
+        // two UBOs would be left with no data store at all: SetData is the only
+        // glBufferData they ever get. Binding those and letting the shader read
+        // them segfaults in the driver - measured, reproducibly, on the first
+        // frame. Not a stale frame; no frame.
+        //
+        // The same hazard returns later in a milder form: a host that calls
+        // SetConfig twice before Update gets two of these, and the second
+        // compares against the arcs the first one already installed.
+        // mEmissionDirty is immune to all of it only because it is
+        // unconditional; a narrow gate has to hold until the pack clears it.
+        mLightBlocksDirty = mLightBlocksDirty || segmentsDirty ||
+                            config.neon.arcs != mCurrentConfig.neon.arcs;
 
         mCurrentConfig = config;
         if (!mNeonShader.IsValid())
@@ -615,8 +699,8 @@ namespace EdgeLighting
     bool NeonRenderer::setupShaders()
     {
         mNeonShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
-                                       ShaderSource::NEON_FRAG_SRC,
-                                       "NeonRenderer");
+                                    ShaderSource::NEON_FRAG_SRC,
+                                    "NeonRenderer");
         // Emission pre-pass. Reuses the neon vertex shader (uMVP -> vPos); the
         // fragment shader ignores vPos and keys off gl_FragCoord instead.
         mEmissionShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
@@ -985,7 +1069,9 @@ namespace EdgeLighting
         // start / length / intensity) ride the UBOs and never dirty a LUT.
         //
         // @note mEffectiveSegments must already hold the merged
-        //       transient+preserved view - both callers fill it first.
+        //       transient+preserved view - both callers leave it current
+        //       first (Initialize fills it outright; OnConfigChanged refills
+        //       it on a change to either pool and otherwise it is unmoved).
         // The ring width is a runtime knob; a change to it makes GradientRingLUT
         // SNAP rather than fade, since two rings of different length cannot be
         // blended element-wise. The two atlases below keep fixed widths - a
@@ -1046,20 +1132,40 @@ namespace EdgeLighting
     void NeonRenderer::packLightBlocks(const Config &config)
     {
         // Both the emission pre-pass and the main pass read these, so they are
-        // packed once per frame before either draws.
+        // current before either draws.
         //
+        // The PACK is gated; the BIND is not. The block contents are a pure
+        // function of the config, so repacking them on a frame that changed
+        // nothing reproduces bytes byte for byte - the same argument the
+        // emission table rests on, one tier cheaper. The binding is different:
+        // glBindBufferBase writes global context state that a host (or a
+        // future pass) can repoint between frames, and re-asserting it costs
+        // two calls against a whole frame's worth of drawing, so it stays
+        // unconditional rather than being inferred from a flag this class
+        // owns.
+        if (mLightBlocksDirty)
+        {
+            packLightBlockData(config);
+            mLightBlocksDirty = false;
+        }
+        mSegmentBlock.BindBase(SEGMENT_BLOCK_BINDING);
+        mArcBlock.BindBase(ARC_BLOCK_BINDING);
+    }
+
+    void NeonRenderer::packLightBlockData(const Config &config)
+    {
         // Pack the segment vector as vec4(position, invSigma, boost, hasStops)
         // into the std140 SegmentBlock UBO (DALi-compatible pattern - see
         // neon.frag). Empty vector -> uSegmentCount=0 and both shaders skip the
         // whole feature.
         SegmentBlockData segBlock = {};
-        // mEffectiveSegments is NOT refilled here. OnConfigChanged fills it
-        // whenever the composited config changes, and this runs once per frame
-        // from Render - so on a frame where nothing changed the merged view is
-        // already current, and on a frame where something did, OnConfigChanged
-        // has already run (Update -> refreshActiveConfig precedes Render).
-        // Refilling here would be a second FillEffectiveSegments of the
-        // same frame.
+        // mEffectiveSegments is NOT refilled here. OnConfigChanged refills it
+        // whenever either segment pool changes, and this runs once per frame
+        // from Render - so on a frame where the pools did not move the merged
+        // view is already current, and on a frame where they did,
+        // OnConfigChanged has already run (Update -> refreshActiveConfig
+        // precedes Render). Refilling here would be a second
+        // FillEffectiveSegments of the same frame.
         const std::vector<SegmentBoost> &effSegments = mEffectiveSegments;
         int segCount = std::min(static_cast<int>(effSegments.size()),
                                 int(MAX_SEGMENT_BOOSTS));
@@ -1075,7 +1181,6 @@ namespace EdgeLighting
             segBlock.segments[i] = glm::vec4(s.position, invSigma, s.boost, hasStops);
         }
         mSegmentBlock.SetData(&segBlock, sizeof(segBlock));
-        mSegmentBlock.BindBase(SEGMENT_BLOCK_BINDING);
 
         // Pack the arcs vector into ArcBlock: vec4(start, length, intensity,
         // hasStops) per entry. .w picks between the winner arc's own atlas row
@@ -1092,19 +1197,53 @@ namespace EdgeLighting
             arcBlock.arcs[i] = glm::vec4(a.start, a.length, a.intensity, flags);
         }
         mArcBlock.SetData(&arcBlock, sizeof(arcBlock));
-        mArcBlock.BindBase(ARC_BLOCK_BINDING);
+    }
+
+    bool NeonRenderer::isEmissionTableStale(float time, const Config &config) const
+    {
+        if (mEmissionDirty)
+        {
+            return true;
+        }
+
+        // uTime enters neon-emission.frag in exactly one place - `float ti =
+        // si - uTime * uHueRotationRate` - so at rate 0 it is multiplied out
+        // and the table is the same at every time. That is not a tolerance:
+        // the product is exactly zero, so the two bakes agree bit for bit.
+        //
+        // The comparison is exact for the same reason it can be: `time` is
+        // fed straight back from the last bake, not recomputed, so an
+        // unchanged clock reproduces the identical float. A moving clock
+        // essentially never lands on the same value twice, and if it did the
+        // table it wants IS the one already in the buffer.
+        return config.neon.hueRotationRate != 0.0f && time != mEmissionTime;
     }
 
     void NeonRenderer::renderEmissionPass(int viewportWidth, int viewportHeight,
                                           float time, const Config &config)
     {
-        // The target the gather below draws into. NOT necessarily the default
+        // The render target handed to this pass - framebuffer AND viewport,
+        // both of which the bind below replaces. NOT necessarily the window's
         // framebuffer: an offscreen frame capture (@ref OffscreenCapture) hands
-        // this renderer a real FBO, and the gather has no bind of its own, so
-        // restoring 0 here would silently redirect the whole neon pass to the
-        // window and leave the capture empty. Read BEFORE the resize below, so
-        // it stays correct even if a reallocation ever rebinds.
-        const GLuint targetFbo = Framebuffer::GetBoundId();
+        // this renderer a real FBO, and the gather that follows has no bind of
+        // its own, so returning to 0 here would redirect the whole neon pass to
+        // the window and leave the capture empty.
+        //
+        // Capturing the viewport rather than reconstructing it matters a
+        // little more here than at the other sites, because this pass can be
+        // SKIPPED: anything a run frame leaves behind that a skipped frame does
+        // not is a difference the glow can show, and "hand back what you
+        // found" needs no precondition to hold for the two to agree.
+        const RenderTargetState prevTarget = RenderTargetState::Capture();
+
+        // The emission table's axes are sample index and row, not pixels, so a
+        // host scissor box - which is in the CALLER's window coordinates -
+        // means nothing here and would discard most of the bake. The table is
+        // two texels tall, so any box with a y origin above 1 discards ALL of
+        // it and the gather reads whatever the buffer held last frame. See
+        // GLUtils::NoScissorScope; the host's clip still applies to pass 1,
+        // which is where it belongs.
+        GLUtils::NoScissorScope noScissor;
 
         // Binds the FBO and sets the viewport to NEON_MAX_LOOP_SAMPLES x 2. No
         // clear: the NDC quad covers every texel, so each one is written.
@@ -1130,8 +1269,12 @@ namespace EdgeLighting
 
         // Hand the framebuffer and viewport back exactly as found. Blend mode
         // is untouched here - it is a phase property owned by Render.
-        Framebuffer::BindId(targetFbo);
-        glViewport(0, 0, viewportWidth, viewportHeight);
+        prevTarget.Restore();
+
+        // What the buffer now holds. Recorded by the only writer of it, so the
+        // staleness test upstream can never describe a bake that did not run.
+        mEmissionDirty = false;
+        mEmissionTime = time;
     }
 
     bool NeonRenderer::renderNeonPass(const glm::mat4 &mvp, int bufWidth, int bufHeight,
@@ -1139,14 +1282,33 @@ namespace EdgeLighting
     {
         const float scale = GetClampedResolutionScale(config);
 
+        // SCALED PATH ONLY: mScaledBuffer is a reduced-size copy of the
+        // viewport, so a host scissor box - in the CALLER's window coordinates
+        // - lands on the wrong texels of it. The clear and the gather below
+        // would skip everything outside the box, and pass 2b would then read
+        // the region the box maps DOWN to, which is a different region again
+        // and one nothing wrote this frame: last frame's pixels, blitted back
+        // under the host's clip. See GLUtils::NoScissorScope.
+        //
+        // The direct path takes none of this - `scaled` false short-circuits
+        // even the query - because there the gather IS the composite, drawn
+        // straight onto the caller's framebuffer in the caller's coordinates,
+        // and the host's clip is exactly what it asked for. The scaled path's
+        // composite gets the same treatment once this scope ends, which is
+        // before Render calls renderBlitPass.
+        GLUtils::NoScissorScope noScissor(scaled);
+
         if (scaled)
         {
             // Resize destroys the attachment on its failure path, so a failure
-            // leaves mScaledBuffer holding id 0 - and Bind() would then bind
-            // the CALLER'S framebuffer, whereupon the glClear below erases
-            // everything already drawn this frame (glClear is not clipped by
-            // the viewport). Under an OffscreenCapture that target is the
-            // capture. Bail instead; Render skips the blit with us.
+            // leaves mScaledBuffer holding id 0 - and Bind would then bind the
+            // CALLER'S framebuffer, with only Framebuffer::ClearBuffer's own
+            // no-attachment guard standing between that and erasing everything
+            // already drawn this frame (a clear is not clipped by the
+            // viewport). Under an OffscreenCapture that target is the capture.
+            // Do not lean on that guard - bail here instead;
+            // Render skips the blit with us, and noScissor puts the host's
+            // scissor back as this return unwinds.
             //
             // The filter is requested through Resize, which is the ONLY writer
             // of the tracked value, so it cannot drift. Setting it on the
@@ -1158,18 +1320,15 @@ namespace EdgeLighting
             {
                 return false;
             }
+            // Bind, then clear to transparent black. Keep the two adjacent:
+            // ClearBuffer acts on whatever is BOUND, so the bind is its
+            // precondition rather than a nicety - see Framebuffer::ClearBuffer,
+            // which also carries the reason the clear touches no context state
+            // (it used to save, overwrite and restore GL_COLOR_CLEAR_VALUE
+            // every frame on this path). The scissor guard above is the other
+            // half of making this clear land where it is meant to.
             mScaledBuffer.Bind();
-
-            // Transparent black, passed as an ARGUMENT rather than staged
-            // through GL_COLOR_CLEAR_VALUE. This used to save the host's clear
-            // colour, overwrite it, clear, and put it back - a glGetFloatv and
-            // two glClearColor calls every frame on the scaled path, plus a
-            // window in which a host reading its own clear colour would find
-            // it replaced. glClearBufferfv touches none of that context state.
-            // See the fuller note in @ref renderOpaqueFill, which makes the
-            // same swap on the pass's other clear.
-            static const GLfloat TRANSPARENT_BLACK[4] = {0.0f, 0.0f, 0.0f, 0.0f};
-            glClearBufferfv(GL_COLOR, 0, TRANSPARENT_BLACK);
+            mScaledBuffer.ClearBuffer();
         }
 
         // Every pixel-valued uniform below is multiplied by `scale`, which is
@@ -1181,7 +1340,7 @@ namespace EdgeLighting
         mNeonShader.SetUniform("uMVP", mvp);
         mNeonShader.SetUniform("uResolutionScale", scale);
         mNeonShader.SetUniform("uRectSize", glm::vec2(config.geometry.width * scale,
-                                                         config.geometry.height * scale));
+                                                      config.geometry.height * scale));
         mNeonShader.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry) * scale);
         mNeonShader.SetUniform("uLineWidth", config.neon.lineWidth * scale);
         mNeonShader.SetUniform("uFilamentFalloff", config.neon.filamentFalloff);

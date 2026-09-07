@@ -113,6 +113,23 @@ namespace EdgeLighting
         /// bakes against each other - far more coupling than a 1 KB texture is
         /// worth.
         GradientRingLUT mGradientLUT;
+
+        /// Whether the strip was visible at the last bake, i.e. whether the
+        /// ring currently in @c mGradientLUT is one a viewer actually saw.
+        ///
+        /// Read for exactly one decision: a bake that arrives on the strip's
+        /// rising edge SNAPS instead of cross-fading. The bake is gated on
+        /// visibility, so stop changes made while the strip was hidden are not
+        /// baked at all - and the catch-up bake on re-show would otherwise
+        /// fade from a ring that may be many seconds stale, leaving the strip
+        /// previewing colours the glow settled away from long ago. A fade is
+        /// only meaningful between two rings the viewer saw.
+        ///
+        /// It cannot cause a false snap, because @ref GradientRingLUT::Bake
+        /// self-guards: with nothing to re-bake the fade duration is never
+        /// consulted, so a hide/show across an unchanged gradient still
+        /// RESUMES a paused cross-fade rather than snapping it.
+        bool mStripVisible = false;
     };
 
 } // namespace EdgeLighting

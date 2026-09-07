@@ -55,7 +55,7 @@ namespace EdgeLighting
         Config mCurrentConfig; ///< Last config seen; @ref setupGeometry sizes the quad from it.
         ShaderProgram mShaderProgram;
         VertexArray mVertexArray{"DropletsRenderer"}; ///< Band ring (or one quad when the band has no hole).
-        int mVertexCount = 6;                          ///< Vertices @ref setupGeometry last built: 24 for a ring, 6 for a quad.
+        int mVertexCount = 6;                         ///< Vertices @ref setupGeometry last built: 24 for a ring, 6 for a quad.
     };
 }
 

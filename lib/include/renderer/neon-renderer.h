@@ -163,19 +163,51 @@ namespace EdgeLighting
         // takes the viewport height, since it always draws at full resolution
         // on the caller's framebuffer.
 
-        /// Pack the segment + arc UBOs. Called before the emission pre-pass
-        /// because BOTH passes read them: the pre-pass to bake the per-sample
-        /// emission, the main pass for the continuous filament gate.
+        /// Make the segment + arc UBOs current and bind them. Called before the
+        /// emission pre-pass because BOTH passes read them: the pre-pass to
+        /// bake the per-sample emission, the main pass for the continuous
+        /// filament gate.
+        ///
+        /// Repacks only when @c mLightBlocksDirty says the config moved; the
+        /// bind is unconditional. See the definition for why the two are
+        /// treated differently.
         /// @pre @c mEffectiveSegments is current for @p config - i.e.
         ///      @ref OnConfigChanged has run for any change since the last
         ///      frame, which the effect guarantees by calling Update before
         ///      Render. This method deliberately does not refill it.
         void packLightBlocks(const Config &config);
 
+        /// The pack half of @ref packLightBlocks, split out so the gate reads
+        /// as one branch rather than wrapping forty lines of std140 packing.
+        void packLightBlockData(const Config &config);
+
+        /// Whether @c mEmissionBuffer's contents still describe
+        /// (@p time, @p config), i.e. whether pass 0 has to run at all.
+        ///
+        /// The table is a pure function of (si, uTime, config) - the same
+        /// invariant the pre-pass itself rests on - and the buffer is
+        /// allocated once for the renderer's lifetime, so a frame that moves
+        /// neither input can read what is already in it. The pre-pass hoists
+        /// the gather's fragment-invariant half out of every FRAGMENT; this is
+        /// what hoists it out of every FRAME as well.
+        ///
+        /// Two things can move it:
+        ///   - @c uTime, which reaches neon-emission.frag exactly once, as
+        ///     `si - uTime * uHueRotationRate`. At a rate of 0 time drops out
+        ///     of the table altogether, so a still ring rebakes nothing however
+        ///     the clock runs; at any other rate every distinct time does.
+        ///   - @c mEmissionDirty, which covers everything else. See its
+        ///     declaration for what sets it.
+        bool isEmissionTableStale(float time, const Config &config) const;
+
         /// Pass 0: bake the fragment-invariant half of the gather into
         /// @c mEmissionBuffer, at the clamped sample count so texel i here is
         /// sample i in the gather. Retargets the framebuffer and viewport, so
         /// it restores both before returning - see docs/emission-prepass.md.
+        ///
+        /// Records what it baked (@c mEmissionDirty, @c mEmissionTime) on the
+        /// way out, so @ref isEmissionTableStale reads a snapshot written by the
+        /// only thing that ever writes the buffer.
         /// @pre Blending disabled - a table write is not a composite.
         /// @pre @c mEmissionBuffer is allocated, which @ref Initialize
         ///      guarantees for the renderer's lifetime - hence no failure to
@@ -226,10 +258,10 @@ namespace EdgeLighting
 
     private:
         Config mCurrentConfig;
-        ShaderProgram mNeonShader;                         ///< The neon gather (neon.frag).
-        ShaderProgram mEmissionShader;                     ///< Perimeter emission pre-pass (neon-emission.frag).
-        ShaderProgram mBlackRectShader;                    ///< Opaque-mode black background fill (black-rect.frag).
-        ShaderProgram mBlitShader;                         ///< Scaled-path upscale composite (neon-blit.frag).
+        ShaderProgram mNeonShader;                                     ///< The neon gather (neon.frag).
+        ShaderProgram mEmissionShader;                                 ///< Perimeter emission pre-pass (neon-emission.frag).
+        ShaderProgram mBlackRectShader;                                ///< Opaque-mode black background fill (black-rect.frag).
+        ShaderProgram mBlitShader;                                     ///< Scaled-path upscale composite (neon-blit.frag).
         VertexArray mGlowVertexArray{"NeonRenderer.Glow"};             ///< Tight glow quad (rect + glow reach), in scaled space.
         VertexArray mFullscreenVertexArray{"NeonRenderer.Fullscreen"}; ///< NDC quad: emission bake, ALL-mode opaque fill, blit.
         VertexArray mFillVertexArray{"NeonRenderer.Fill"};             ///< Opaque-fill band ring (rect +- cutoffs), in FULL-RES rect-local px.
@@ -271,8 +303,11 @@ namespace EdgeLighting
         SpanAtlasLUT<Arc> mArcLUT;
 
         /// Perimeter emission table, NEON_MAX_LOOP_SAMPLES x 2 (see
-        /// neon-emission.frag for the row packing). Rebuilt every frame by
+        /// neon-emission.frag for the row packing). Written by
         /// @ref renderEmissionPass and read by the gather with texelFetch.
+        /// Rebuilt only when @ref isEmissionTableStale says its inputs moved -
+        /// the buffer is allocated once and nothing else writes it, so its
+        /// contents survive between frames.
         ///
         /// Also remembers, on the renderer's behalf, whether the driver would
         /// give it RGBA16F: @ref renderEmissionPass asks a live buffer for the
@@ -284,6 +319,40 @@ namespace EdgeLighting
         /// @c resolutionScale 1.0 - not allocated, not bound, not blitted - so
         /// the full-res path pays nothing for its existence.
         Framebuffer mScaledBuffer{"NeonRenderer.Scaled"};
+
+        /// Everything but time that can invalidate @c mEmissionBuffer.
+        ///
+        /// Set by @ref OnConfigChanged on ANY config change - deliberately not
+        /// a narrow gate, because the table reads a wide slice of the config
+        /// (hueRotationRate, numSamples, all three LUTs, and both light UBOs),
+        /// and a missed field here is a silently stale ring rather than a
+        /// rebuild that costs one small pass.
+        ///
+        /// Also set from @ref Update when @c GradientRingLUT::Tick re-uploads
+        /// mid-cross-fade: the ring texture moves there with no config change
+        /// to announce it.
+        ///
+        /// Starts true - the buffer holds undefined texels until the first
+        /// bake, and no config change is guaranteed before the first frame.
+        bool mEmissionDirty = true;
+        /// The @c time @ref renderEmissionPass last baked at. Only meaningful
+        /// while @c hueRotationRate is non-zero; at 0 the table does not
+        /// depend on time and this is not consulted.
+        float mEmissionTime = 0.0f;
+
+        /// Whether @c mSegmentBlock / @c mArcBlock still hold the current
+        /// config. Cleared by @ref packLightBlocks once it has repacked.
+        ///
+        /// Unlike @c mEmissionDirty this is NOT set on every config change:
+        /// the blocks are packed from @c mEffectiveSegments and
+        /// @c NeonConfig::arcs and nothing else, so @ref OnConfigChanged gates
+        /// it on exactly those two. It accumulates rather than being assigned,
+        /// because that call can run more than once before the next
+        /// @ref Render - see the note there.
+        ///
+        /// Starts true because @ref Initialize does not pack - the first
+        /// @ref Render is what fills them.
+        bool mLightBlocksDirty = true;
     };
 }
 

@@ -116,11 +116,18 @@ namespace EdgeLighting
         /// @param deltaTime raw frame delta, NOT clock time - a colour change
         ///        should still fade smoothly while the animation clock is
         ///        paused.
-        void Tick(float deltaTime)
+        /// @return true if the ring texture was re-uploaded by this call.
+        ///         Anything CACHED from the ring has to be rebuilt when it is -
+        ///         a fade moves the texture with no config change to announce
+        ///         it, so a consumer gating on OnConfigChanged alone would hold
+        ///         a stale derivative for the length of the fade. The neon
+        ///         emission table is that consumer; see
+        ///         @c NeonRenderer::isEmissionTableStale.
+        bool Tick(float deltaTime)
         {
             if (!mFading)
             {
-                return;
+                return false;
             }
 
             mElapsed += deltaTime;
@@ -141,6 +148,7 @@ namespace EdgeLighting
                 mDisplay = mTarget; // land exactly on the target
                 mFading = false;
             }
+            return true;
         }
 
     private:

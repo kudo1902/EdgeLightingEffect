@@ -119,8 +119,34 @@ namespace EdgeLighting
             GLint prevTexture = 0;
             glGetIntegerv(GL_TEXTURE_BINDING_2D, &prevTexture);
 
-            mTexture.SetData(data, width, height, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
-            mTexture.SetParams(GL_LINEAR, GL_LINEAR, wrapS, GL_CLAMP_TO_EDGE);
+            // Allocate only when there is nothing to write into, or the shape
+            // changed; otherwise write over what is there.
+            //
+            // Both do the same job at the same cost in bytes, but SetData
+            // re-specifies - the driver frees and reallocates the texture's
+            // storage every call. That is invisible on a bake, which happens
+            // when the colours change, and not on a fade: GradientRingLUT::Tick
+            // re-uploads a same-sized ring EVERY FRAME for the length of the
+            // cross-fade, so this was a texture reallocation per frame per
+            // ring. Sampler state is per-texture-object and survives a
+            // sub-upload, so it only has to be re-sent when the object is
+            // re-specified or the wrap mode actually moves.
+            const bool respecify = !mUploaded || width != mTextureWidth || height != mTextureHeight;
+            if (respecify)
+            {
+                mTexture.SetData(data, width, height, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE);
+                mTextureWidth = width;
+                mTextureHeight = height;
+            }
+            else
+            {
+                mTexture.SetSubData(data, width, height, GL_RGBA, GL_UNSIGNED_BYTE);
+            }
+            if (respecify || wrapS != mTextureWrapS)
+            {
+                mTexture.SetParams(GL_LINEAR, GL_LINEAR, wrapS, GL_CLAMP_TO_EDGE);
+                mTextureWrapS = wrapS;
+            }
             mUploaded = true;
 
             glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevTexture));
@@ -133,6 +159,22 @@ namespace EdgeLighting
         /// texture NAME exists from construction, so this is the only thing
         /// that distinguishes an empty LUT from a baked one.
         bool mUploaded = false;
+        /// The shape and sampler state currently in @c mTexture, so @ref Upload
+        /// can tell a same-sized rewrite from a reallocation. Only meaningful
+        /// once @c mUploaded is set.
+        int mTextureWidth = 0;
+        int mTextureHeight = 0;
+        /// @note DEFENSIVE, and today unreachable past the first upload: every
+        ///       LUT passes a wrap that is fixed for the life of the object
+        ///       (@c GL_REPEAT from @c GradientRingLUT, @c GL_CLAMP_TO_EDGE
+        ///       from @c SpanAtlasLUT), so the mismatch this guards against
+        ///       cannot currently happen and no test can reach it. It is kept
+        ///       because the alternative failure is silent: a future LUT that
+        ///       varies its wrap would get the FIRST one it ever uploaded with,
+        ///       for every bake after, with nothing to say so. The initial 0 is
+        ///       not a valid GL wrap mode, so it can never collide with a real
+        ///       one before the first upload sets it.
+        GLint mTextureWrapS = 0;
     };
 
 } // namespace EdgeLighting
