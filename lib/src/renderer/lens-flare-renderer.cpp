@@ -44,6 +44,23 @@ namespace EdgeLighting
             return std::clamp(config.lensFlare.resolutionScale, MIN_FLARE_RESOLUTION_SCALE, 1.0f);
         }
 
+        /// Whether this config gives @c mScaledBuffer anything to do.
+        ///
+        /// ONE predicate for two questions that have to agree: @ref Render asks
+        /// it to pick the path, and @ref OnConfigChanged asks it to decide
+        /// whether the buffer may be freed. Answer them separately and they
+        /// drift - the failure being a release of the buffer the very pass that
+        /// needs it is about to bind, which Resize would then quietly rebuild
+        /// once per frame. Same shape, same reasoning, as NeonRenderer's.
+        ///
+        /// Only @c enable is a genuine gate on the PASS - @ref Render returns
+        /// on it before the scale is even clamped - so inside Render, past that
+        /// return, this is exactly @c scale < 1.0.
+        inline bool UsesScaledBuffer(const Config &config)
+        {
+            return config.lensFlare.enable && GetClampedFlareScale(config) < 1.0f;
+        }
+
         /// Radius outside which a ghost's bloom term is exactly zero, for
         /// @c uBloomRadius. Derivation and shared constants live in
         /// lens-flare-tuning.h.
@@ -174,7 +191,10 @@ namespace EdgeLighting
         // the blend timeline, and not the uniforms, bar the two that say which
         // resolution is being drawn into.
         const float scale = GetClampedFlareScale(config);
-        const bool scaled = (scale < 1.0f);
+        // Past the enable return above, this is `scale < 1.0` - asked through
+        // the shared predicate so it cannot disagree with the release gate in
+        // OnConfigChanged about which configs want the buffer.
+        const bool scaled = UsesScaledBuffer(config);
         const int bufW = std::max(static_cast<int>(static_cast<float>(viewportWidth) * scale), 1);
         const int bufH = std::max(static_cast<int>(static_cast<float>(viewportHeight) * scale), 1);
 
@@ -356,6 +376,29 @@ namespace EdgeLighting
         if (ghostsDirty)
         {
             bakeGhostBlock(mCurrentFlare);
+        }
+
+        // Give the scaled buffer back the moment this config stops wanting it -
+        // the layer switched off, or the scale returned to 1.0. It is by far
+        // the largest thing this renderer owns: at 1920x1080 and scale 0.5 it
+        // is 2.1 MB of colour attachment, against a 160-byte ghost block and
+        // one fullscreen quad for everything else. Nothing freed it before, so
+        // a host that ran the flare at a reduced scale and then turned it off
+        // held that for the life of the effect.
+        //
+        // Cheap to get wrong in only one direction, and this is the safe one:
+        // @ref Render re-Resizes before it binds, so a release of a buffer that
+        // turns out to be wanted again costs one allocation on the next drawn
+        // frame and nothing else. Resize's own early-out then keeps it
+        // allocated for as long as the size and format hold.
+        //
+        // Here rather than in Render because Render must not be the thing that
+        // deletes a framebuffer - see Framebuffer::Release on why the deletion
+        // wants to be outside a pass. Pre-Initialize (AddRenderer calls this)
+        // Release no-ops on the buffer it finds unallocated.
+        if (!UsesScaledBuffer(config))
+        {
+            mScaledBuffer.Release();
         }
     }
 
