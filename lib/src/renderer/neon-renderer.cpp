@@ -277,6 +277,26 @@ namespace EdgeLighting
             return std::clamp(config.neon.resolutionScale, MIN_RESOLUTION_SCALE, 1.0f);
         }
 
+        /// Whether this config gives @c mScaledBuffer anything to do.
+        ///
+        /// ONE predicate for two questions that have to agree: @ref Render asks
+        /// it to pick the path, and @ref OnConfigChanged asks it to decide
+        /// whether the buffer may be freed. Answer them separately and they
+        /// drift - the failure being a release of the buffer the very pass that
+        /// needs it is about to bind, which Resize would then quietly rebuild
+        /// once per frame.
+        ///
+        /// Both terms matter, and for the same reason: the buffer is
+        /// @c width * height * 4 bytes and neither a disabled layer nor the
+        /// direct path ever reads it. Only @c enable is a genuine gate on the
+        /// PASS, though - @ref Render returns on it before the scale is even
+        /// clamped - so inside Render, past that return, this is exactly
+        /// @c scale < 1.0.
+        inline bool UsesScaledBuffer(const Config &config)
+        {
+            return config.neon.enable && GetClampedResolutionScale(config) < 1.0f;
+        }
+
         /// @c NeonConfig::numSamples clamped to [1, NEON_MAX_LOOP_SAMPLES] -
         /// the UBO and the shader array are sized by that ceiling, and a count
         /// of zero would leave the gather with nothing to normalise by.
@@ -395,7 +415,10 @@ namespace EdgeLighting
         // correct whether the glow arrives directly (it composites over the
         // fill) or through the blit (which composites over it later).
         const float scale = GetClampedResolutionScale(config);
-        const bool scaled = (scale < 1.0f);
+        // Past the enable return above, this is `scale < 1.0` - asked through
+        // the shared predicate so it cannot disagree with the release gate in
+        // OnConfigChanged about which configs want the buffer.
+        const bool scaled = UsesScaledBuffer(config);
         const int bufW = std::max(static_cast<int>(static_cast<float>(viewportWidth) * scale), 1);
         const int bufH = std::max(static_cast<int>(static_cast<float>(viewportHeight) * scale), 1);
 
@@ -673,6 +696,37 @@ namespace EdgeLighting
                             config.neon.arcs != mCurrentConfig.neon.arcs;
 
         mCurrentConfig = config;
+
+        // Give the scaled buffer back the moment this config stops wanting it -
+        // the layer switched off, or the scale returned to 1.0. It is the only
+        // allocation in this renderer that is not a handful of KB: at 1920x1080
+        // and scale 0.5 it is 2.1 MB of colour attachment, and nothing else
+        // here freed it, so a host that enabled the neon at a reduced scale
+        // during setup and then turned it off held that for the life of the
+        // effect. Everything else the renderer owns - the three atlases, the
+        // emission table, the UBOs, the quads - is fixed-size and small enough
+        // that reclaiming it would cost more in reallocation than it saves.
+        //
+        // Cheap to get wrong in only one direction, and this is the safe one:
+        // @ref renderNeonPass re-Resizes before it binds, so a release of a
+        // buffer that turns out to be wanted again costs one allocation on the
+        // next drawn frame and nothing else. Resize's own early-out then keeps
+        // it allocated for as long as the size and format hold.
+        //
+        // Here rather than in Render because Render must not be the thing that
+        // deletes a framebuffer - see Framebuffer::Release on why the deletion
+        // wants to be outside a pass. This runs between frames, from SetConfig
+        // or the effect's active-config refresh.
+        //
+        // BEFORE the shader-validity return below, which guards REBUILDS: a
+        // release is not one, and this path is also reachable pre-Initialize
+        // (AddRenderer calls OnConfigChanged), where Release no-ops on the
+        // buffer it finds unallocated.
+        if (!UsesScaledBuffer(config))
+        {
+            mScaledBuffer.Release();
+        }
+
         if (!mNeonShader.IsValid())
         {
             return;

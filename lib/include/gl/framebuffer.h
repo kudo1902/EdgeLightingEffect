@@ -166,6 +166,42 @@ namespace EdgeLighting
             return true;
         }
 
+        /// Free the FBO and its colour attachment, returning the object to the
+        /// state a fresh construction leaves it in. A no-op when nothing is
+        /// allocated, so it is safe to call every time the owner's gate says
+        /// the buffer is not wanted rather than only on the transition.
+        ///
+        /// This is the counterpart @ref Resize needs to be useful for a buffer
+        /// whose need comes and goes: an offscreen colour target is
+        /// @c width * height * 4 bytes, so a renderer that allocated one for a
+        /// scaled pass and was then switched off holds megabytes it will never
+        /// read. Resize alone cannot give that back - it only ever trades one
+        /// allocation for another.
+        ///
+        /// Re-arming costs exactly one @ref Resize on the next frame that
+        /// draws, which is already the path every scaled pass takes; Resize's
+        /// own early-out means a buffer that is still wanted at the same size
+        /// is never reallocated, so this cannot introduce per-frame churn on
+        /// its own. What it CAN do is churn under a caller that toggles its
+        /// gate every frame - that is the caller's to avoid, and none of the
+        /// gates in this library move faster than a UI action.
+        ///
+        /// @pre A GL context is current - this deletes GL objects.
+        /// @note If this framebuffer is the one currently BOUND, GL reverts the
+        ///       binding to 0 as it is deleted, which under an
+        ///       @c OffscreenCapture is not the target the caller was drawing
+        ///       into. Call it outside a pass, not in the middle of one.
+        void Release()
+        {
+            if (mFbo == 0 && mTexture == 0)
+            {
+                return;
+            }
+            LOG_I("Framebuffer[%s] released (id=%u, tex=%u, was %dx%d).",
+                  mName.c_str(), mFbo, mTexture, mWidth, mHeight);
+            destroy();
+        }
+
         /// Activates this framebuffer for rendering and sets the GL viewport
         /// to match its dimensions. Caller is expected to clear if desired.
         ///
