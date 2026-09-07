@@ -21,6 +21,7 @@ Docs, in reading order. The three neon documents are tiers of the same material 
 - [`docs/neon-unification-comparison.md`](docs/neon-unification-comparison.md) - the evidence for that plan: eleven scenes rendered on both sides of the merge, nine byte-identical, the two that differ confined to the bounding box's compositing order.
 - [`docs/lens-flare-unification-comparison.md`](docs/lens-flare-unification-comparison.md) - the same for the lens flare pair, the last fork in the tree: twelve scenes, all byte-identical, plus the two defects the merge closed (an unclamped resolution scale and the double-draw).
 - [`docs/lens-flare-perf-review.md`](docs/lens-flare-perf-review.md) - why the flare was the pipeline's most expensive layer and what the five changes that halved it did. Per-term cost attribution, the tuning header those changes forced, and the reason one of them cannot be byte-identical on any GPU. Read before touching `lens-flare.frag`'s ghost loop.
+- [`docs/neon-perf-review.md`](docs/neon-perf-review.md) - the same for the neon layer, which is 81% of the frame and whose gather loop is 95% of that. Per-term attribution, the three changes that took it to 1.46x, and the two directions that were measured and rejected (a windowed gather, an interior hole in the draw quad). Section 8 is the measured shape of `resolutionScale` / `numSamples` / `glowRadius` - read it before tuning any of them for speed. Read before touching `neon.frag`'s gather loop.
 - [`docs/review-findings.md`](docs/review-findings.md) - open defects and rough edges, visual ones with offscreen repros. Check here before assuming a behaviour is intended.
 - [`docs/naming-review.md`](docs/naming-review.md) - identifier audit against `AGENTS.md`, plus the names that describe mechanisms the code no longer has. Read before renaming anything.
 
@@ -35,6 +36,8 @@ cmake -S . -B build -G Ninja
 cmake --build build
 ./build/demo/edge-lighting-demo
 ```
+
+**That configure defaults to `Release`.** The root `CMakeLists.txt` sets `CMAKE_BUILD_TYPE` to `Release` when the caller has not chosen one, because an empty build type contributes no `-O` flag at all and the command above used to ship an unoptimised library (11.6 MB of `.a`, and every CPU path in it - LUT bakes, colour conversion, the contour tracer, the whole C ABI - built at `-O0`). Pass `-DCMAKE_BUILD_TYPE=Debug` explicitly when you want that; the default only applies when nothing is set, and multi-config generators are left alone. See [`docs/neon-perf-review.md`](docs/neon-perf-review.md) section 3.
 
 There is no test target. The build produces four artifacts:
 

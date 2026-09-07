@@ -21,7 +21,12 @@ namespace EdgeLighting
     /// Per-fragment work: an analytic rounded-box SDF, plus a gather loop over
     /// @c NeonConfig::numSamples perimeter samples (positions live in a UBO)
     /// that costs two @c texelFetch calls per sample into @c uEmission - the
-    /// table baked by the emission pre-pass. The per-sample arc scan, segment
+    /// table baked by the emission pre-pass - or ONE where the config carries
+    /// no segments, since the pre-pass then writes row 1 as all zeros and the
+    /// shader takes a second, shorter loop body. That branch is on a uniform
+    /// and sits OUTSIDE the loop; see the note at the gather in neon.frag for
+    /// why inside was measured slower than not branching at all. The
+    /// per-sample arc scan, segment
     /// loop and filtered LUT reads that used to run here are all
     /// fragment-invariant and moved to @c neon-emission.frag, which is why the
     /// per-fragment cost no longer scales with the arc or segment count. See

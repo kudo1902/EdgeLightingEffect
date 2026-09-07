@@ -122,6 +122,29 @@ namespace EdgeLighting
     private:
         Config mBaseConfig;   ///< Authored config - what SetConfig sets.
         Config mActiveConfig; ///< Base + animation overlays - forwarded to renderers.
+        /// Scratch the animated composite is built in, held as a member so the
+        /// per-frame path does no heap allocation.
+        ///
+        /// A local `Config active = mBaseConfig;` copy-CONSTRUCTS, which
+        /// allocates fresh storage for every vector the config owns - the base
+        /// colour stops, both segment pools, the arcs, and each of their own
+        /// stop lists. Measured with a global operator new counter and one
+        /// animation attached, that was 3 allocations and 3 frees per frame on
+        /// the default config and 19 of each at the segment / arc caps, every
+        /// frame, forever. Copy-ASSIGNING into a warm member instead reuses the
+        /// capacity already there: 0 allocations.
+        ///
+        /// Not a throughput win - it measured ~1 microsecond a frame on a
+        /// desktop allocator, which is nothing next to the GPU frame. It is
+        /// here for the targets this library is actually aimed at, where ~1100
+        /// malloc/free pairs a second is a fragmentation and jitter source
+        /// rather than a cost in cycles.
+        ///
+        /// @ref refreshActiveConfig SWAPS this with @c mActiveConfig rather
+        /// than assigning, which is what keeps the capacity: the scratch comes
+        /// back owning the buffers the previous active config held, already the
+        /// right size for the next frame's copy.
+        Config mScratchConfig;
         Clock mClock;
         std::unique_ptr<AnimationManager> mAnimationManager;
         std::vector<std::shared_ptr<BaseRenderer>> mRenderers;

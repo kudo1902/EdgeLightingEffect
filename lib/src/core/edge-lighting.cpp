@@ -2,6 +2,7 @@
 #include "animation/animation-manager.h"
 #include "util/log-util.h"
 #include "util/gl-utils.h"
+#include <utility> // std::swap - refreshActiveConfig swaps the composite scratch
 
 namespace EdgeLighting
 {
@@ -119,13 +120,23 @@ namespace EdgeLighting
         }
         else
         {
-            Config active = mBaseConfig;
-            mAnimationManager->Apply(active);
-            if (active == mActiveConfig)
+            // Copy-ASSIGN into the member scratch, never a local copy-construct
+            // - the assignment reuses the vector capacity already in there, so
+            // this whole path allocates nothing once it has run a frame. See
+            // mScratchConfig for the measurements behind that.
+            mScratchConfig = mBaseConfig;
+            mAnimationManager->Apply(mScratchConfig);
+            if (mScratchConfig == mActiveConfig)
             {
                 return;
             }
-            mActiveConfig = std::move(active);
+            // SWAP, not move-assign. A move would leave the scratch holding
+            // moved-from (empty) vectors, and the next frame's assignment would
+            // then have to allocate all of them again - which is the cost this
+            // is here to remove. The swap hands the scratch the buffers the
+            // outgoing active config owned: already allocated, already the
+            // right size for the config it is about to be handed again.
+            std::swap(mActiveConfig, mScratchConfig);
         }
 
         for (auto &renderer : mRenderers)

@@ -558,7 +558,8 @@ void main() {
     // term is precomputed by neon-emission.frag into uEmission.
     //
     // Per iteration: 1 UBO read for the sample position, 1 sub, 1 dot, 1
-    // reciprocal, and 2 texelFetches. What used to live here - the arc
+    // reciprocal, and 2 texelFetches - 1 where the config has no segments and
+    // the branch below takes the shorter body. What used to live here - the arc
     // winner-take-all scan over uArcCount, the segment loop over
     // uSegmentCount, and one to two FILTERED LUT fetches - was a pure function
     // of (si, uTime, config), so it did not belong in a loop that runs once
@@ -580,47 +581,95 @@ void main() {
     // some drivers.
     int n = uNumSamples;
 
-    for (int i = 0; i < n; i++) {
-        vec2  dv  = vPos - uLoopSamples[i].xy;
-        float dd  = dot(dv, dv);
+    // TWO LOOP BODIES, ONE UNIFORM BRANCH, and the duplication is deliberate.
+    //
+    // Row 1 of the emission table is the segment term, and neon-emission.frag
+    // writes it as vec4(segSum, bellSum) over a loop bounded by uSegmentCount.
+    // At uSegmentCount == 0 that loop does not execute, so the row is exactly
+    // vec4(0.0) at every texel - and the two accumulations it feeds here are
+    // provably no-ops. A config with no segments was therefore issuing one
+    // texture read per sample per fragment to add zero: 128 of them, over a
+    // quad that covers most of the viewport at the default glowRadius.
+    //
+    // The branch has to be OUTSIDE the loop, not inside it. Gating the fetch
+    // per iteration (`uSegmentCount > 0 ? texelFetch(...) : vec4(0.0)`) was
+    // measured SLOWER than leaving the fetch alone - 4.52 ms against a 4.23 ms
+    // baseline at 1920x1080 - because the per-iteration branch costs what the
+    // fetch it skips cost. Hoisting it so each body is straight-line is what
+    // actually pays: 1.46x on the whole neon layer, measured as an interleaved
+    // A/B over seven rounds at two resolutions.
+    //
+    // The uSegmentCount > 0 body below is the original loop VERBATIM, which is
+    // what makes a segmented config byte-identical by construction rather than
+    // by measurement. The segment-less body drops exactly the two dead
+    // accumulations and the fetch that fed them; segAcc and wsumSegW keep the
+    // vec3(0.0) / 0.0 they were initialised with, which is what the deleted
+    // adds would have left them holding. Verified 0 of 2073600 pixels changed
+    // across six scenes - no segments, a plain segment, a segment with its own
+    // stops, four arcs with stops, both cutoffs enabled, and resolutionScale
+    // 0.5.
+    //
+    // Branching on a uniform is safe here for the same reason the lens flare's
+    // uSpread guard is (see lens-flare.frag): the condition is uniform across
+    // the draw, so control flow stays uniform. Nothing in either body takes a
+    // derivative in any case - texelFetch has no LOD to compute.
+    if (uSegmentCount > 0) {
+        for (int i = 0; i < n; i++) {
+            vec2  dv  = vPos - uLoopSamples[i].xy;
+            float dd  = dot(dv, dv);
 
-        float g   = 1.0 / (dd + kc2);
+            float g   = 1.0 / (dd + kc2);
 
-        // Both rows of the emission table for this sample. Row 0 carries the
-        // arc term already premultiplied by its own gather weight arcW, plus
-        // arcW itself for the denominator; row 1 does the same for the summed
-        // segment term. texelFetch (not texture): integer sample index, no
-        // filtering, no wrap math, no LOD derivatives.
-        vec4 e0 = texelFetch(uEmission, ivec2(i, 0), 0);
-        vec4 e1 = texelFetch(uEmission, ivec2(i, 1), 0);
+            // Both rows of the emission table for this sample. Row 0 carries
+            // the arc term already premultiplied by its own gather weight
+            // arcW, plus arcW itself for the denominator; row 1 does the same
+            // for the summed segment term. texelFetch (not texture): integer
+            // sample index, no filtering, no wrap math, no LOD derivatives.
+            vec4 e0 = texelFetch(uEmission, ivec2(i, 0), 0);
+            vec4 e1 = texelFetch(uEmission, ivec2(i, 1), 0);
 
-        // GATED normalisation, and it is the point. Dividing by the same
-        // weight the numerator was gathered with makes `col` a pure hue of
-        // unit magnitude: it carries no coverage and no per-arc intensity,
-        // both of which cancel. Those reach the emission solely through
-        // emitCover / filamentGate below, which are px-based and
-        // size-invariant. segAcc / wsumSegW does the identical thing for the
-        // segment hue.
-        //
-        // Both used to divide by an UNGATED sum over every sample, so an unlit
-        // far side of the ring dragged the lit colour toward black by roughly
-        // kc / rectHeight. With kc pinned to a fixed px span that ratio grew as
-        // the rect shrank: a quarter-perimeter arc measured 0.79 of full
-        // brightness at 200x150 against 0.97 at 1920x1080. Gated normalisation
-        // is exactly 1.0 at every size.
-        //
-        // e0.rgb is baseColI * arcW and e0.a is arcW, so these two lines are
-        // exactly the old `acc += baseColI * lg` / `wsumLit += lg` with
-        // lg = g * arcW.
-        acc      += e0.rgb * g;
-        wsumLit  += e0.a   * g;
+            // GATED normalisation, and it is the point. Dividing by the same
+            // weight the numerator was gathered with makes `col` a pure hue of
+            // unit magnitude: it carries no coverage and no per-arc intensity,
+            // both of which cancel. Those reach the emission solely through
+            // emitCover / filamentGate below, which are px-based and
+            // size-invariant. segAcc / wsumSegW does the identical thing for
+            // the segment hue.
+            //
+            // Both used to divide by an UNGATED sum over every sample, so an
+            // unlit far side of the ring dragged the lit colour toward black by
+            // roughly kc / rectHeight. With kc pinned to a fixed px span that
+            // ratio grew as the rect shrank: a quarter-perimeter arc measured
+            // 0.79 of full brightness at 200x150 against 0.97 at 1920x1080.
+            // Gated normalisation is exactly 1.0 at every size.
+            //
+            // e0.rgb is baseColI * arcW and e0.a is arcW, so these two lines
+            // are exactly the old `acc += baseColI * lg` / `wsumLit += lg` with
+            // lg = g * arcW.
+            acc      += e0.rgb * g;
+            wsumLit  += e0.a   * g;
 
-        // Segments are gathered with the raw proximity weight g, NOT the
-        // arc-gated one, so a segment lights even on perimeter stretches no
-        // arc covers. e1 holds SUM(segColour * bell) and SUM(bell) over every
-        // segment, so the old inner loop collapses to one add each.
-        segAcc   += e1.rgb * g;
-        wsumSegW += e1.a   * g;
+            // Segments are gathered with the raw proximity weight g, NOT the
+            // arc-gated one, so a segment lights even on perimeter stretches no
+            // arc covers. e1 holds SUM(segColour * bell) and SUM(bell) over
+            // every segment, so the old inner loop collapses to one add each.
+            segAcc   += e1.rgb * g;
+            wsumSegW += e1.a   * g;
+        }
+    } else {
+        // No segments: row 1 is all zeros, so the fetch and the two adds it
+        // feeds are dropped. Everything else is the body above, line for line.
+        for (int i = 0; i < n; i++) {
+            vec2  dv  = vPos - uLoopSamples[i].xy;
+            float dd  = dot(dv, dv);
+
+            float g   = 1.0 / (dd + kc2);
+
+            vec4 e0 = texelFetch(uEmission, ivec2(i, 0), 0);
+
+            acc      += e0.rgb * g;
+            wsumLit  += e0.a   * g;
+        }
     }
 
     // Both are pure hues of unit magnitude now; the magnitudes are attached
