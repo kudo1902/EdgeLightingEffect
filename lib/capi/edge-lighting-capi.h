@@ -92,4 +92,8 @@
 #include "el-animation.h"
 #include "el-modulator.h"
 
+/* Still-exported names scheduled for removal; see the checklist at the top of
+ * that header. Included last so the replacements above are declared first. */
+#include "el-deprecated.h"
+
 #endif // _EDGE_LIGHTING_CAPI_H_

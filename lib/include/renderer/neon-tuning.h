@@ -5,10 +5,15 @@
 // Shared neon tuning constants - single source of truth.
 //
 // Consumed by BOTH:
-//   - the single-pass neon shaders (neon.frag, neon-optimized.frag), where
-//     CMake text-injects this file via @NEON_TUNING@ in shaders.h.in, and
-//   - the C++ renderers (neon-renderer.cpp, neon-optimized-renderer.cpp),
-//     which #include it for the early-out quad-sizing factors.
+//   - the neon shaders (neon.frag, neon-emission.frag), where CMake
+//     text-injects this file via @NEON_TUNING@ in shaders.h.in, and
+//   - the C++ renderer (neon-renderer.cpp), which #includes it for the
+//     glow-reach quad-sizing factors.
+//
+// The px constants below are written in FULL-RESOLUTION pixels. Where the
+// renderer draws at a reduced NeonConfig::resolutionScale, the shader converts
+// each one with uResolutionScale at the point of use; the notes on the
+// individual constants say which need it and which do not.
 //
 // Why macros and not const/constexpr: GLSL ES 3.00 has no constexpr and
 // rejects the 'f' float-literal suffix, so a `const float X = 0.9f;` cannot
@@ -26,7 +31,7 @@
 #define FILAMENT_MIN_HALF_WIDTH   0.5
 #define FILAMENT_GAIN             12.0
 
-// --- Continuous-arc filament gate feathers (neon.frag / neon-optimized.frag).
+// --- Continuous-arc filament gate feathers (neon.frag).
 //     INWARD FEATHER: the smooth ramp sits INSIDE the arc's own perimeter
 //     span, so nothing outside the arc gets lit -> no corner bleed regardless
 //     of width, no perpendicular spike, and the profile is a plain smoothstep
@@ -76,6 +81,20 @@
 //     all until it exceeded the floor (~56 px on a 1920x1080 rect, i.e. most
 //     of its usable range). An analytic profile cannot bead at any radius, so
 //     no floor is needed and glowRadius sets the width directly. ---
+//     KNOWN LIMITATION - interior medial-axis creases. Both terms are closed
+//     forms of ad = abs(SDF distance). Inside the shape the rounded-box SDF's
+//     GRADIENT is discontinuous along the medial axis (the diagonals running in
+//     from each corner, plus the central spine), so halo and bloom inherit a C1
+//     crease there and the interior glow reads as a mitred picture frame. The
+//     gather this replaced summed over perimeter samples and was smooth; a
+//     nearest-distance profile cannot be. Subtle at the default glowRadius 5,
+//     unmistakable at 30 and above.
+//
+//     Accepted, not overlooked: the trade bought geometry-independent glow
+//     width, no beading at any radius, and no sample-spacing floor, which is
+//     the whole reason the analytic form exists. Softening ad near the axis
+//     would need a second distance field, and blending the two would put the
+//     rect-size dependence straight back. See docs/review-findings.md V4. ---
 #define HALO_GAIN                 0.90
 #define HALO_NORM_FACTOR          0.43
 
@@ -109,11 +128,11 @@
 //         rect that large. The margin is a guarantee for dense colour stops,
 //         not a fix for an observed artifact.)
 //
-//       - Renderer agreement. Both shaders derive the kernel from the same
-//         NEON_MAX_LOOP_SAMPLES-based fraction rather than from their own
-//         runtime sample count, so NeonOptimizedRenderer's numSamples slider
-//         does not move the colour blend. (An earlier sampleSpacing-derived
-//         floor divided by the live count and landed 2x wider there.)
+//       - Sample-count independence. The kernel comes from the
+//         NEON_MAX_LOOP_SAMPLES-based fraction rather than from the runtime
+//         sample count, so the numSamples knob does not move the colour
+//         blend. (An earlier sampleSpacing-derived floor divided by the live
+//         count and landed 2x wider at reduced counts.)
 //
 //     Deliberately NOT coupled to glowRadius. The gather produces colour only -
 //     the halo and bloom have been closed-form since they stopped riding on it -
@@ -125,9 +144,9 @@
 //     geometry, matching the previous fixed span, so default-sized output is
 //     unchanged.
 //
-//     NOTE: unit-free, unlike the px constants around it. neon-optimized.frag
-//     multiplies it by a perimeter that is already in FBO px, so it needs no
-//     uResolutionScale correction. ---
+//     NOTE: unit-free, unlike the px constants around it. The shader
+//     multiplies it by a perimeter that is already in scaled px, so it needs
+//     no uResolutionScale correction - applying one would double-apply. ---
 #define COLOR_BLEND_PERIM_FRAC    0.0088
 
 // --- Emission on/off ramp. glowRadius = 0 must read as "filament only", but
@@ -137,9 +156,9 @@
 //     sampleSpacing-derived floor instead would re-couple brightness to the
 //     rect size, which is the whole thing this design removes.
 //
-//     NOTE: full-res pixel span. neon-optimized.frag compares it against a
-//     glowRadius already scaled into FBO px, so its copy multiplies by
-//     uResolutionScale - keep the two in step when tuning. ---
+//     NOTE: full-res pixel span, compared against a uGlowRadius that arrives
+//     already scaled, so the shader multiplies this by uResolutionScale at
+//     the point of use. Identity at scale 1.0. ---
 #define GLOW_GATE_FADE_PX         2.0
 
 // --- Lower bound on the analytic emission widths. Guards the divides only;
@@ -159,10 +178,10 @@
 //     Overlap resolves winner-take-all (max mask*intensity wins). ---
 #define MAX_ARCS                  8
 
-// --- Perimeter gather-loop upper bound. Sizes the LoopSamplesBlock UBO in
-//     both shaders. NeonRenderer runs the full loop at compile-time-fixed
-//     count; NeonOptimizedRenderer's shader iterates only uNumSamples of them
-//     (its numSamples slider), so this is a ceiling, not a fixed cost. ---
+// --- Perimeter gather-loop upper bound. Sizes the LoopSamplesBlock UBO and
+//     the shader's array. The gather iterates only uNumSamples of them
+//     (NeonConfig::numSamples, which defaults to this), so it is a ceiling,
+//     not a fixed cost. ---
 #define NEON_MAX_LOOP_SAMPLES     128
 
 // --- Grading ---
@@ -173,8 +192,53 @@
 #define SIDE_SOFT_EPSILON         1e-5
 #define WSUM_EPSILON              1e-6
 
-// --- Far early-out (quad sizing). The draw quad is sized to
+// --- Cutoff anti-aliasing floor, in BUFFER pixels.
+//
+//     The odd one out in this file: every other px constant here is stated in
+//     FULL-RES px and converted with uResolutionScale at the point of use.
+//     This one is already in the space the gather rasterises into, and must
+//     NOT be converted - the whole point is to be a fixed fraction of the
+//     buffer's own pixel, whatever that pixel is worth on screen.
+//
+//     A cutoff with softness 0 is a step function. On the scaled path the
+//     gather samples it at buffer-pixel centres and the blit bilinearly
+//     upsamples, so the boundary snaps to the buffer grid and reconstructs as
+//     a 2-3 px ramp instead of the ~0.8 px one the direct path gives. Half a
+//     buffer pixel of feather lets the one sample nearest the boundary carry
+//     a fractional value, which the blit can then place sub-texel.
+//
+//     What it buys, measured on 1280x720 at cutoff 30, softness 0, as the
+//     error between the stated cutoff and where the coverage actually ends:
+//
+//       scale        0.50   0.55   0.60   0.65   0.70   0.75   0.80   0.90
+//       without    -0.06  +0.82  -0.08  -0.75  -0.09  +0.16  -0.08  -0.10
+//       with       -0.06  +0.43  -0.08  +0.33  -0.09  +0.29  -0.08  -0.10
+//
+//     Spread 1.57 px -> 0.53 px. Note scale 0.50 does not move, and that is
+//     not a defect in this constant: at exactly one half, integer geometry
+//     puts the boundary either exactly ON a buffer texel centre or exactly
+//     BETWEEN two, and a symmetric feather one texel wide or narrower gives
+//     the identical sample pattern in both cases. Widening past 1.0 does not
+//     recover it either - it only softens the edge and biases it outward
+//     (measured +0.83 at 1.25). The residual +-0.5 px there is information the
+//     half-res buffer does not contain; a cutoff that must be pixel-exact
+//     wants resolutionScale 1.0, and one that must merely LOOK clean wants a
+//     real softness, where both paths already agree to 0.08 px.
+//
+//     Applied only when uResolutionScale < 1.0 - see neon.frag's softFloor and
+//     the matching cap in NeonRenderer::setupGeometry.
+#define CUTOFF_SOFT_FLOOR_PX      0.5
+
+// --- Glow reach (quad sizing). The draw quad is sized to
 //     rect + glowRadius * RADIUS_FACTOR * (1 + bloomStrength * intensity).
+//
+//     Named for the reach, not for an early-out: the per-fragment
+//     `ad > earlyOut -> discard` this constant was originally calibrated for
+//     no longer exists. Geometry culls the far region instead, which is
+//     tiler-friendly, so what the factor sets is how far the glow is allowed to
+//     reach before the quad stops covering it. The locals it feeds already say
+//     so - `glowReach` in both setupGeometry implementations, `reach` in both
+//     shaders.
 //
 //     glowRadius only: the companion sampleSpacing * SPACING_FACTOR term is
 //     gone. sampleSpacing is perimeter / NEON_MAX_LOOP_SAMPLES, so it won on
@@ -186,7 +250,7 @@
 //     Used by the renderers' setupGeometry AND by the shaders, which recompute
 //     the same expression to place the bloom pedestal that lets this margin
 //     stay tight without the truncation showing. Keep the two in step. ---
-#define EARLY_OUT_RADIUS_FACTOR   48.0
+#define GLOW_REACH_RADIUS_FACTOR  48.0
 
 // --- Where the shaders' quad-edge fade begins, as a FRACTION of the quad
 //     margin. The emission ramps to zero over [FRAC * margin, margin], so the
@@ -194,7 +258,7 @@
 //     as a hard rectangle.
 //
 //     A fraction, not a pixel span, because the margin is proportional to
-//     glowRadius (see EARLY_OUT_RADIUS_FACTOR) and so is the bloom profile it
+//     glowRadius (see GLOW_REACH_RADIUS_FACTOR) and so is the bloom profile it
 //     hides. A fraction keeps the ramp at a constant proportion of the bloom's
 //     reach, so the fade reads the same at every glow radius; a fixed px ramp
 //     would vanish on a wide glow and dominate a narrow one. At the stock

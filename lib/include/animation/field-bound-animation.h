@@ -31,9 +31,9 @@ namespace EdgeLighting
         NEON_GLOW_SIDE_SOFTNESS = 5,
         NEON_HUE_ROTATION_RATE = 6,
 
-        // Lens flare scalar leaves (LensFlareConfig). Shared by the full-res
-        // LensFlareRenderer and the half-res LensFlareOptimizedRenderer, so a
-        // binding drives whichever variant is enabled. Numbered from 100 (a gap
+        // Lens flare scalar leaves (LensFlareConfig). Read by the one
+        // LensFlareRenderer at whatever resolution scale it is drawing at.
+        // Numbered from 100 (a gap
         // after the neon block) so future neon fields can append at 7+ without
         // disturbing these; mirrored 1:1 by el_config_field_e (parity
         // static_assert in capi-internal.h).

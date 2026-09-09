@@ -1,5 +1,15 @@
 #include "capi-internal.h"
 
+namespace
+{
+    /// Seed for colour stops created by the set_*_count growers. Matches what
+    /// el-effect.h documents (position 0, opaque white); a plain resize()
+    /// value-initialises to transparent black instead, and because
+    /// ColorStop::color.a is an emission scale rather than a blend opacity,
+    /// that renders as "dark here" instead of as a merely unset colour.
+    const EdgeLighting::ColorStop DEFAULT_COLOR_STOP{0.0f, glm::vec4(1.0f)};
+}
+
 extern "C"
 {
 
@@ -80,38 +90,6 @@ extern "C"
         return EL_SUCCESS;
     }
 
-    el_result_e el_effect_set_show_gradient_lut(el_effect_handle_t effect, el_bool_t show)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_show_gradient_lut");
-        SET_AND_LOG(effect->config.neon.showGradientLUT, show != 0,
-                    "effect=%p, show=%d", (void *)effect, show);
-    }
-
-    el_result_e el_effect_get_show_gradient_lut(el_effect_handle_t effect, el_bool_t *outShow)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_show_gradient_lut");
-        VALIDATE_OUT_PTR(outShow, "el_effect_get_show_gradient_lut");
-        *outShow = effect->config.neon.showGradientLUT ? 1 : 0;
-        LOG_D("effect=%p, show=%d", (void *)effect, *outShow);
-        return EL_SUCCESS;
-    }
-
-    el_result_e el_effect_set_show_color_stops(el_effect_handle_t effect, el_bool_t show)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_show_color_stops");
-        SET_AND_LOG(effect->config.neon.showColorStops, show != 0,
-                    "effect=%p, show=%d", (void *)effect, show);
-    }
-
-    el_result_e el_effect_get_show_color_stops(el_effect_handle_t effect, el_bool_t *outShow)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_show_color_stops");
-        VALIDATE_OUT_PTR(outShow, "el_effect_get_show_color_stops");
-        *outShow = effect->config.neon.showColorStops ? 1 : 0;
-        LOG_D("effect=%p, show=%d", (void *)effect, *outShow);
-        return EL_SUCCESS;
-    }
-
     el_result_e el_effect_set_opaque_mode(el_effect_handle_t effect, el_opaque_mode_e mode)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque_mode");
@@ -128,6 +106,10 @@ extern "C"
         LOG_D("effect=%p, mode=%d", (void *)effect, static_cast<int>(*outMode));
         return EL_SUCCESS;
     }
+
+    // Lives in DebugConfig with the overlay flags, but it selects which of the
+    // NEON renderer's passes run - so it is declared and implemented here with
+    // the rest of the opaque group rather than with the overlays.
 
     el_result_e el_effect_set_opaque_color(el_effect_handle_t effect,
                                            float r, float g, float b, float a)
@@ -409,7 +391,7 @@ extern "C"
             return EL_SUCCESS;
         }
         LOG_I("effect=%p, count=%d", (void *)effect, count);
-        effect->config.neon.colorStops.resize(newSize);
+        effect->config.neon.colorStops.resize(newSize, DEFAULT_COLOR_STOP);
         return EL_SUCCESS;
     }
 
@@ -910,7 +892,7 @@ extern "C"
             LOG_E("el_effect_set_segment_color_stop_count: segmentIndex %d out of range (size=%zu)", segmentIndex, boosts.size());
             return EL_ERROR_INVALID_PARAMETER;
         }
-        boosts[segIdx].colorStops.resize(newSize);
+        boosts[segIdx].colorStops.resize(newSize, DEFAULT_COLOR_STOP);
         return EL_SUCCESS;
     }
 
@@ -1142,7 +1124,7 @@ extern "C"
             LOG_E("el_effect_set_arc_color_stop_count: arcIndex %d out of range (size=%zu)", arcIndex, arcs.size());
             return EL_ERROR_INVALID_PARAMETER;
         }
-        arcs[arcIdx].colorStops.resize(newSize);
+        arcs[arcIdx].colorStops.resize(newSize, DEFAULT_COLOR_STOP);
         return EL_SUCCESS;
     }
 
@@ -1245,72 +1227,53 @@ extern "C"
         stops.clear();
         return EL_SUCCESS;
     }
+    // --- Neon performance knobs ---
 
-    // --- Optimized neon ---
+    el_result_e el_effect_set_neon_resolution_scale(el_effect_handle_t effect, float scale)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_neon_resolution_scale");
+        SET_AND_LOG(effect->config.neon.resolutionScale, scale,
+                    "effect=%p, scale=%f", (void *)effect, scale);
+    }
 
-    el_result_e el_effect_set_optimized_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
+    el_result_e el_effect_get_neon_resolution_scale(el_effect_handle_t effect, float *outScale)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_renderer_enabled");
-        SET_AND_LOG(effect->config.optimizedNeon.enable, enabled != 0, "effect=%p, enabled=%d", (void *)effect, enabled);
-    }
-    el_result_e el_effect_get_optimized_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_renderer_enabled");
-        VALIDATE_OUT_PTR(outEnabled, "el_effect_get_optimized_renderer_enabled");
-        *outEnabled = effect->config.optimizedNeon.enable ? 1 : 0;
-        LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled);
-        return EL_SUCCESS;
-    }
-    el_result_e el_effect_set_optimized_resolution_scale(el_effect_handle_t effect, float scale)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_resolution_scale");
-        SET_AND_LOG(effect->config.optimizedNeon.resolutionScale, scale, "effect=%p, scale=%f", (void *)effect, scale);
-    }
-    el_result_e el_effect_get_optimized_resolution_scale(el_effect_handle_t effect, float *outScale)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_resolution_scale");
-        VALIDATE_OUT_PTR(outScale, "el_effect_get_optimized_resolution_scale");
-        *outScale = effect->config.optimizedNeon.resolutionScale;
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_neon_resolution_scale");
+        VALIDATE_OUT_PTR(outScale, "el_effect_get_neon_resolution_scale");
+        *outScale = effect->config.neon.resolutionScale;
         LOG_D("effect=%p, scale=%f", (void *)effect, *outScale);
         return EL_SUCCESS;
     }
-    el_result_e el_effect_set_optimized_num_samples(el_effect_handle_t effect, int32_t samples)
+
+    el_result_e el_effect_set_neon_num_samples(el_effect_handle_t effect, int32_t samples)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_num_samples");
-        SET_AND_LOG(effect->config.optimizedNeon.numSamples, samples, "effect=%p, samples=%d", (void *)effect, samples);
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_neon_num_samples");
+        SET_AND_LOG(effect->config.neon.numSamples, samples,
+                    "effect=%p, samples=%d", (void *)effect, samples);
     }
-    el_result_e el_effect_get_optimized_num_samples(el_effect_handle_t effect, int32_t *outSamples)
+
+    el_result_e el_effect_get_neon_num_samples(el_effect_handle_t effect, int32_t *outSamples)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_num_samples");
-        VALIDATE_OUT_PTR(outSamples, "el_effect_get_optimized_num_samples");
-        *outSamples = effect->config.optimizedNeon.numSamples;
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_neon_num_samples");
+        VALIDATE_OUT_PTR(outSamples, "el_effect_get_neon_num_samples");
+        *outSamples = effect->config.neon.numSamples;
         LOG_D("effect=%p, samples=%d", (void *)effect, *outSamples);
         return EL_SUCCESS;
     }
-    el_result_e el_effect_set_optimized_gradient_lut_size(el_effect_handle_t effect, int32_t size)
+
+    el_result_e el_effect_set_neon_gradient_lut_size(el_effect_handle_t effect, int32_t size)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_gradient_lut_size");
-        SET_AND_LOG(effect->config.optimizedNeon.gradientLutSize, size, "effect=%p, size=%d", (void *)effect, size);
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_neon_gradient_lut_size");
+        SET_AND_LOG(effect->config.neon.gradientLutSize, size,
+                    "effect=%p, size=%d", (void *)effect, size);
     }
-    el_result_e el_effect_get_optimized_gradient_lut_size(el_effect_handle_t effect, int32_t *outSize)
+
+    el_result_e el_effect_get_neon_gradient_lut_size(el_effect_handle_t effect, int32_t *outSize)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_gradient_lut_size");
-        VALIDATE_OUT_PTR(outSize, "el_effect_get_optimized_gradient_lut_size");
-        *outSize = effect->config.optimizedNeon.gradientLutSize;
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_neon_gradient_lut_size");
+        VALIDATE_OUT_PTR(outSize, "el_effect_get_neon_gradient_lut_size");
+        *outSize = effect->config.neon.gradientLutSize;
         LOG_D("effect=%p, size=%d", (void *)effect, *outSize);
-        return EL_SUCCESS;
-    }
-    el_result_e el_effect_set_optimized_show_half_res(el_effect_handle_t effect, el_bool_t show)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_show_half_res");
-        SET_AND_LOG(effect->config.optimizedNeon.showHalfRes, show != 0, "effect=%p, show=%d", (void *)effect, show);
-    }
-    el_result_e el_effect_get_optimized_show_half_res(el_effect_handle_t effect, el_bool_t *outShow)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_show_half_res");
-        VALIDATE_OUT_PTR(outShow, "el_effect_get_optimized_show_half_res");
-        *outShow = effect->config.optimizedNeon.showHalfRes ? 1 : 0;
-        LOG_D("effect=%p, show=%d", (void *)effect, *outShow);
         return EL_SUCCESS;
     }
 
@@ -1624,68 +1587,129 @@ extern "C"
         LOG_D("effect=%p, rate=%f", (void *)effect, *outRate);
         return EL_SUCCESS;
     }
+    // --- Lens flare performance knob ---
 
-    // --- Optimized (half-res) lens flare ---
+    el_result_e el_effect_set_lens_flare_resolution_scale(el_effect_handle_t effect, float scale)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_resolution_scale");
+        SET_AND_LOG(effect->config.lensFlare.resolutionScale, scale,
+                    "effect=%p, scale=%f", (void *)effect, scale);
+    }
 
-    el_result_e el_effect_set_optimized_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
+    el_result_e el_effect_get_lens_flare_resolution_scale(el_effect_handle_t effect, float *outScale)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_lens_flare_renderer_enabled");
-        SET_AND_LOG(effect->config.optimizedLensFlare.enable, enabled != 0, "effect=%p, enabled=%d", (void *)effect, enabled);
-    }
-    el_result_e el_effect_get_optimized_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_lens_flare_renderer_enabled");
-        VALIDATE_OUT_PTR(outEnabled, "el_effect_get_optimized_lens_flare_renderer_enabled");
-        *outEnabled = effect->config.optimizedLensFlare.enable ? 1 : 0;
-        LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled);
-        return EL_SUCCESS;
-    }
-    el_result_e el_effect_set_optimized_lens_flare_resolution_scale(el_effect_handle_t effect, float scale)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_lens_flare_resolution_scale");
-        SET_AND_LOG(effect->config.optimizedLensFlare.resolutionScale, scale, "effect=%p, scale=%f", (void *)effect, scale);
-    }
-    el_result_e el_effect_get_optimized_lens_flare_resolution_scale(el_effect_handle_t effect, float *outScale)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_lens_flare_resolution_scale");
-        VALIDATE_OUT_PTR(outScale, "el_effect_get_optimized_lens_flare_resolution_scale");
-        *outScale = effect->config.optimizedLensFlare.resolutionScale;
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_resolution_scale");
+        VALIDATE_OUT_PTR(outScale, "el_effect_get_lens_flare_resolution_scale");
+        *outScale = effect->config.lensFlare.resolutionScale;
         LOG_D("effect=%p, scale=%f", (void *)effect, *outScale);
         return EL_SUCCESS;
     }
 
-    // --- Wireframe ---
+    // ==========================================================================
+    // Debug overlays and diagnostics
+    //
+    // Order matches the declaration order in el-effect.h. `opaque_only` sits
+    // last because it is the one entry here that drives the NEON layer rather
+    // than the overlay layer.
+    // ==========================================================================
 
-    el_result_e el_effect_set_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
+    el_result_e el_effect_set_debug_enabled(el_effect_handle_t effect, el_bool_t enabled)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_wireframe_renderer_enabled");
-        SET_AND_LOG(effect->config.wireframe.enable, enabled != 0, "effect=%p, enabled=%d", (void *)effect, enabled);
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_debug_enabled");
+        SET_AND_LOG(effect->config.debug.enable, enabled != 0,
+                    "effect=%p, enabled=%d", (void *)effect, enabled);
     }
-    el_result_e el_effect_get_wireframe_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
+
+    el_result_e el_effect_get_debug_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_wireframe_renderer_enabled");
-        VALIDATE_OUT_PTR(outEnabled, "el_effect_get_wireframe_renderer_enabled");
-        *outEnabled = effect->config.wireframe.enable ? 1 : 0;
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_debug_enabled");
+        VALIDATE_OUT_PTR(outEnabled, "el_effect_get_debug_enabled");
+        *outEnabled = effect->config.debug.enable ? 1 : 0;
         LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled);
         return EL_SUCCESS;
     }
-    el_result_e el_effect_set_wireframe_color(el_effect_handle_t effect, float r, float g, float b, float a)
+
+    el_result_e el_effect_set_debug_show_gradient_lut(el_effect_handle_t effect, el_bool_t show)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_wireframe_color");
-        SET_AND_LOG(effect->config.wireframe.color, glm::vec4(r, g, b, a), "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a);
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_debug_show_gradient_lut");
+        SET_AND_LOG(effect->config.debug.showGradientLUT, show != 0,
+                    "effect=%p, show=%d", (void *)effect, show);
     }
-    el_result_e el_effect_get_wireframe_color(el_effect_handle_t effect, float *outR, float *outG, float *outB, float *outA)
+
+    el_result_e el_effect_get_debug_show_gradient_lut(el_effect_handle_t effect, el_bool_t *outShow)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_wireframe_color");
-        VALIDATE_OUT_PTR(outR, "el_effect_get_wireframe_color");
-        VALIDATE_OUT_PTR(outG, "el_effect_get_wireframe_color");
-        VALIDATE_OUT_PTR(outB, "el_effect_get_wireframe_color");
-        VALIDATE_OUT_PTR(outA, "el_effect_get_wireframe_color");
-        *outR = effect->config.wireframe.color.r;
-        *outG = effect->config.wireframe.color.g;
-        *outB = effect->config.wireframe.color.b;
-        *outA = effect->config.wireframe.color.a;
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_debug_show_gradient_lut");
+        VALIDATE_OUT_PTR(outShow, "el_effect_get_debug_show_gradient_lut");
+        *outShow = effect->config.debug.showGradientLUT ? 1 : 0;
+        LOG_D("effect=%p, show=%d", (void *)effect, *outShow);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_debug_show_color_stops(el_effect_handle_t effect, el_bool_t show)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_debug_show_color_stops");
+        SET_AND_LOG(effect->config.debug.showColorStops, show != 0,
+                    "effect=%p, show=%d", (void *)effect, show);
+    }
+
+    el_result_e el_effect_get_debug_show_color_stops(el_effect_handle_t effect, el_bool_t *outShow)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_debug_show_color_stops");
+        VALIDATE_OUT_PTR(outShow, "el_effect_get_debug_show_color_stops");
+        *outShow = effect->config.debug.showColorStops ? 1 : 0;
+        LOG_D("effect=%p, show=%d", (void *)effect, *outShow);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_debug_show_wireframe(el_effect_handle_t effect, el_bool_t show)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_debug_show_wireframe");
+        SET_AND_LOG(effect->config.debug.showWireframe, show != 0, "effect=%p, show=%d", (void *)effect, show);
+    }
+
+    el_result_e el_effect_get_debug_show_wireframe(el_effect_handle_t effect, el_bool_t *outShow)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_debug_show_wireframe");
+        VALIDATE_OUT_PTR(outShow, "el_effect_get_debug_show_wireframe");
+        *outShow = effect->config.debug.showWireframe ? 1 : 0;
+        LOG_D("effect=%p, show=%d", (void *)effect, *outShow);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_debug_wireframe_color(el_effect_handle_t effect, float r, float g, float b, float a)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_debug_wireframe_color");
+        SET_AND_LOG(effect->config.debug.wireframeColor, glm::vec4(r, g, b, a), "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a);
+    }
+
+    el_result_e el_effect_get_debug_wireframe_color(el_effect_handle_t effect, float *outR, float *outG, float *outB, float *outA)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_debug_wireframe_color");
+        VALIDATE_OUT_PTR(outR, "el_effect_get_debug_wireframe_color");
+        VALIDATE_OUT_PTR(outG, "el_effect_get_debug_wireframe_color");
+        VALIDATE_OUT_PTR(outB, "el_effect_get_debug_wireframe_color");
+        VALIDATE_OUT_PTR(outA, "el_effect_get_debug_wireframe_color");
+        *outR = effect->config.debug.wireframeColor.r;
+        *outG = effect->config.debug.wireframeColor.g;
+        *outB = effect->config.debug.wireframeColor.b;
+        *outA = effect->config.debug.wireframeColor.a;
         LOG_D("effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, *outR, *outG, *outB, *outA);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_debug_opaque_only(el_effect_handle_t effect, el_bool_t opaqueOnly)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_debug_opaque_only");
+        SET_AND_LOG(effect->config.debug.opaqueOnly, opaqueOnly != 0,
+                    "effect=%p, opaqueOnly=%d", (void *)effect, opaqueOnly);
+    }
+
+    el_result_e el_effect_get_debug_opaque_only(el_effect_handle_t effect, el_bool_t *outOpaqueOnly)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_debug_opaque_only");
+        VALIDATE_OUT_PTR(outOpaqueOnly, "el_effect_get_debug_opaque_only");
+        *outOpaqueOnly = effect->config.debug.opaqueOnly ? 1 : 0;
+        LOG_D("effect=%p, opaqueOnly=%d", (void *)effect, *outOpaqueOnly);
         return EL_SUCCESS;
     }
 
@@ -1732,20 +1756,23 @@ extern "C"
         {
             effect->impl = std::make_unique<EdgeLighting::EdgeLightingEffect>();
 
-            if (rendererMask & EL_RENDERER_WIREFRAME)
-            {
-                LOG_I("registering WireframeRenderer");
-                effect->impl->AddRenderer(std::make_shared<EdgeLighting::WireframeRenderer>());
-            }
+            // ONE bit per layer: the content layers dense from 0, the debug
+            // layer on the top bit (see el_renderer_flags_e), which is what
+            // pins its value while content layers keep taking the next free
+            // low bit. The deprecated "optimized" and wireframe
+            // aliases that used to be ORed in beside these are gone: the
+            // half-res paths are a resolution scale on the neon and flare
+            // layers, and the bounding box is one of the debug layer's
+            // overlays. Nothing can double-register a layer any more, which is
+            // what the paired tests here existed to prevent.
+            //
+            // Compositing order is THIS sequence of ifs, and it matches the bit
+            // order: content layers first on the low bits, the debug layer
+            // last on the highest.
             if (rendererMask & EL_RENDERER_NEON)
             {
                 LOG_I("registering NeonRenderer");
                 effect->impl->AddRenderer(std::make_shared<EdgeLighting::NeonRenderer>());
-            }
-            if (rendererMask & EL_RENDERER_NEON_OPTIMIZED)
-            {
-                LOG_I("registering NeonOptimizedRenderer");
-                effect->impl->AddRenderer(std::make_shared<EdgeLighting::NeonOptimizedRenderer>());
             }
             if (rendererMask & EL_RENDERER_DROPLETS)
             {
@@ -1757,10 +1784,13 @@ extern "C"
                 LOG_I("registering LensFlareRenderer");
                 effect->impl->AddRenderer(std::make_shared<EdgeLighting::LensFlareRenderer>());
             }
-            if (rendererMask & EL_RENDERER_LENS_FLARE_OPTIMIZED)
+            // LAST, so the annotations sit above every layer they describe -
+            // after the neon whose glow the strip and markers measure, and
+            // above the droplets and flare that would otherwise cover them.
+            if (rendererMask & EL_RENDERER_DEBUG)
             {
-                LOG_I("registering LensFlareOptimizedRenderer");
-                effect->impl->AddRenderer(std::make_shared<EdgeLighting::LensFlareOptimizedRenderer>());
+                LOG_I("registering DebugRenderer");
+                effect->impl->AddRenderer(std::make_shared<EdgeLighting::DebugRenderer>());
             }
             if (!effect->impl->Initialize())
             {

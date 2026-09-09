@@ -128,17 +128,21 @@ namespace
         case GLFW_KEY_G:
         {
             el_bool_t on = 0;
-            el_effect_get_wireframe_renderer_enabled(gEffect, &on);
-            el_effect_set_wireframe_renderer_enabled(gEffect, on ? 0 : 1);
+            el_effect_get_debug_show_wireframe(gEffect, &on);
+            el_effect_set_debug_show_wireframe(gEffect, on ? 0 : 1);
             break;
         }
         case GLFW_KEY_O:
         {
             if (mods & GLFW_MOD_SHIFT)
             {
-                el_bool_t on = 0;
-                el_effect_get_optimized_renderer_enabled(gEffect, &on);
-                el_effect_set_optimized_renderer_enabled(gEffect, on ? 0 : 1);
+                // Toggle the neon layer between full resolution and half.
+                // There is no second renderer to switch to any more - this IS
+                // the old "optimized on/off", expressed as the scale it always
+                // was. Mirrors the same hotkey in demo/src/main.cpp.
+                float scale = 1.0f;
+                el_effect_get_neon_resolution_scale(gEffect, &scale);
+                el_effect_set_neon_resolution_scale(gEffect, (scale < 1.0f) ? 1.0f : 0.5f);
             }
             else
             {
@@ -254,8 +258,8 @@ int main()
                            static_cast<float>(displayH) / 4.0f,
                            0.0f);
     el_effect_set_neon_renderer_enabled(gEffect, 1);
-    el_effect_set_wireframe_renderer_enabled(gEffect, 1);
-    el_effect_set_wireframe_color(gEffect, 0.0f, 1.0f, 0.0f, 1.0f);
+    el_effect_set_debug_show_wireframe(gEffect, 1);
+    el_effect_set_debug_wireframe_color(gEffect, 0.0f, 1.0f, 0.0f, 1.0f);
 
     EdgeLightingCapiDemo::BackgroundQuad background;
     if (!background.Init())

@@ -21,6 +21,23 @@ extern "C"
 #define EL_API __attribute__((visibility("default")))
 #endif
 
+/* --------------------------------------------------------------------------
+ * Deprecation
+ *
+ * Marks a symbol that still works but is scheduled for removal. Every function
+ * carrying this lives in el-deprecated.h; @p msg names what to call instead.
+ * Define EL_NO_DEPRECATION_WARNINGS to silence the whole set while migrating.
+ * ------------------------------------------------------------------------ */
+#if defined(EL_NO_DEPRECATION_WARNINGS)
+#define EL_DEPRECATED(msg)
+#elif defined(_MSC_VER)
+#define EL_DEPRECATED(msg) __declspec(deprecated(msg))
+#elif defined(__GNUC__) || defined(__clang__)
+#define EL_DEPRECATED(msg) __attribute__((deprecated(msg)))
+#else
+#define EL_DEPRECATED(msg)
+#endif
+
     /* ======================================================================
      * Result codes and shared scalar types
      * ==================================================================== */
@@ -254,23 +271,56 @@ extern "C"
     /** @brief Bitmask selecting which renderer layers @ref el_effect_init_with_renderers
      *         registers on the effect.
      *  @details OR the flags for the layers you want. Registration always
-     *           happens in the fixed compositing order (wireframe, neon,
-     *           optimized, droplets, lens flare, optimized lens flare)
-     *           regardless of how the bits are combined - the mask only decides
-     *           inclusion, not order. A layer that is not included is never
-     *           constructed, so it pays no GL cost (no shader compile, no FBO
-     *           allocation); its @c el_effect_set_*_renderer_enabled flag still
-     *           writes to the staging config but has no visual effect. */
+     *           happens in the fixed compositing order the list below is
+     *           written in, regardless of how the bits are combined - the mask
+     *           decides inclusion, not order. A layer that is not included is
+     *           never constructed, so it pays no GL cost (no shader compile, no
+     *           FBO allocation); its @c el_effect_set_*_renderer_enabled flag
+     *           still writes to the staging config but has no visual effect.
+     *
+     *           The bits run in that same order: the content layers are dense
+     *           from 0, and the debug layer holds the TOP bit - bit 30, the
+     *           most significant one @ref EL_RENDERER_ALL covers (bit 31 is
+     *           unusable, the values being int-typed). It sits there for two
+     *           reasons: its annotations draw over all of them, and the top bit
+     *           is the one no future content layer can reach, so
+     *           @c EL_RENDERER_DEBUG keeps its numeric value however many
+     *           layers are added below it.
+     *
+     *           These values were RENUMBERED when the deprecated wireframe and
+     *           "optimized" aliases were removed - they used to be frozen
+     *           around the three bits those aliases held - so EVERY layer flag
+     *           has a different numeric value than it did under the old ABI. A
+     *           host must be recompiled against this header; one passing a mask
+     *           it hard-coded, cached or linked against previously will select
+     *           the wrong layers. @ref EL_RENDERER_ALL is the exception,
+     *           unchanged at 0x7FFFFFFF.
+     *
+     *           A content layer added later takes the next free bit above
+     *           @ref EL_RENDERER_LENS_FLARE and joins @ref EL_RENDERER_ALL
+     *           without a further ABI change, leaving the debug bit alone. */
     typedef enum el_renderer_flags_e
     {
-        EL_RENDERER_NONE = 0,                      /**< Register no renderers. */
-        EL_RENDERER_WIREFRAME = 1 << 0,            /**< 1 px debug line loop. */
-        EL_RENDERER_NEON = 1 << 1,                 /**< Single-pass neon stroke. */
-        EL_RENDERER_NEON_OPTIMIZED = 1 << 2,       /**< Half-res neon variant. */
-        EL_RENDERER_DROPLETS = 1 << 3,             /**< Rain-on-glass droplets. */
-        EL_RENDERER_LENS_FLARE = 1 << 4,           /**< Sun + hex-aperture lens flare. */
-        EL_RENDERER_LENS_FLARE_OPTIMIZED = 1 << 5, /**< Half-res lens flare variant. */
-        EL_RENDERER_ALL = 0x7FFFFFFF               /**< Every renderer (what @ref el_effect_init uses). */
+        EL_RENDERER_NONE = 0, /**< Register no renderers. */
+
+        /* --- Content layers -------------------------------------------- */
+        EL_RENDERER_NEON = 1 << 0,       /**< Neon stroke, at any resolution scale. */
+        EL_RENDERER_DROPLETS = 1 << 1,   /**< Rain-on-glass droplets. */
+        EL_RENDERER_LENS_FLARE = 1 << 2, /**< Sun + hex-aperture lens flare, at any
+                                          *   resolution scale. */
+
+        /* --- Debug layer ----------------------------------------------- */
+        EL_RENDERER_DEBUG = 1 << 30, /**< Debug overlays describing the neon layer: LUT
+                                      *   strip, colour-stop markers, bounding box.
+                                      *   Drawn last, over every other layer. Holds the
+                                      *   most significant bit of @ref EL_RENDERER_ALL
+                                      *   rather than the next dense one, so new content
+                                      *   layers never renumber it. */
+
+        /**< Every layer, including any added later: the mask covers bits not
+         *   yet assigned, so a new renderer joins it without an ABI change.
+         *   What @ref el_effect_init uses. */
+        EL_RENDERER_ALL = 0x7FFFFFFF
     } el_renderer_flags_e;
 
     /* ====================== d================================================

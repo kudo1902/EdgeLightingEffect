@@ -432,10 +432,9 @@
         <table>
           <thead><tr><th>File</th><th>Role</th></tr></thead>
           <tbody>
-            <tr><td class="mono nw">lib/shaders/neon.frag</td><td>The full-resolution neon fragment program. Everything in sections 3 to 13.</td></tr>
+            <tr><td class="mono nw">lib/shaders/neon.frag</td><td>The neon fragment program, at any resolution scale. Everything in sections 3 to 13.</td></tr>
             <tr><td class="mono nw">lib/shaders/neon.vert</td><td>Twelve lines. Passes the quad corner through as <code>vPos</code> and applies <code>uMVP</code>.</td></tr>
-            <tr><td class="mono nw">lib/shaders/neon-optimized.frag</td><td>Half-resolution fork. Identical except for the corrections in section 14.</td></tr>
-            <tr><td class="mono nw">lib/shaders/neon-blit.frag</td><td>Two statements. Bilinear composite of the half-res FBO.</td></tr>
+                        <tr><td class="mono nw">lib/shaders/neon-blit.frag</td><td>Two statements. Bilinear composite of the scaled FBO, on the scaled path only.</td></tr>
             <tr><td class="mono nw">lib/shaders/black-rect.frag</td><td>The opaque fill pass (section 12).</td></tr>
             <tr><td class="mono nw">lib/shaders/droplets.frag</td><td>Section 15.</td></tr>
             <tr><td class="mono nw">lib/shaders/lens-flare.frag</td><td>Section 16.</td></tr>
@@ -451,7 +450,7 @@
         <li><strong>Local space</strong> is what <code>vPos</code> carries: pixels, origin at the rectangle's centre, <code>+Y</code> up. All SDF work happens here.</li>
         <li><code>d</code> is the <strong>signed</strong> rounded-box distance: negative inside, 0 on the outline, positive outside. <code>ad = abs(d)</code>.</li>
         <li><code>t</code> / <code>sPos</code> / <code>si</code> are perimeter positions in <code>[0, 1)</code>, measured by <strong>arc length</strong> from the start of the top edge, in the configured winding direction.</li>
-        <li>Every length uniform reaching the shader is in <strong>pixels</strong> - full-resolution pixels in <code>neon.frag</code>, FBO pixels in <code>neon-optimized.frag</code>. That distinction is the whole of section 14.</li>
+        <li>Every length uniform reaching the shader is in <strong>pixels</strong> - scaled by <code>uResolutionScale</code> on the CPU, so full-resolution pixels when that is 1.0 and FBO pixels below it. That distinction is the whole of section 14.</li>
         <li>Output is <strong>premultiplied alpha</strong>, paired with <code>glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)</code>.</li>
       </ul>
 
@@ -486,8 +485,8 @@
             <tr><td class="mono nw">uInsideCutoffSoftness<br>uOutsideCutoffSoftness</td><td class="mono">float</td><td>Feather widths at those boundaries. Floored at <code>SIDE_SOFT_EPSILON</code>.</td></tr>
             <tr><td class="mono nw">uWinding</td><td class="mono">int</td><td>0 CLOCKWISE / 1 COUNTER_CLOCKWISE. Selects the segment-base table in section 4.</td></tr>
             <tr><td class="mono nw">uQuadMargin</td><td class="mono">float</td><td>Distance from the rect edge to the draw quad edge, per axis. Drives the edge fade.</td></tr>
-            <tr><td class="mono nw">uResolutionScale</td><td class="mono">float</td><td><strong><code>neon-optimized.frag</code> only.</strong> Converts baked px constants into FBO px. See section 14.</td></tr>
-            <tr><td class="mono nw">uNumSamples</td><td class="mono">int</td><td><strong><code>neon-optimized.frag</code> only.</strong> Live gather-loop bound, 1..128.</td></tr>
+            <tr><td class="mono nw">uResolutionScale</td><td class="mono">float</td><td>Converts baked px constants into the space every other px uniform is already in. 1.0 on the direct path, where every conversion is identity. See section 14.</td></tr>
+            <tr><td class="mono nw">uNumSamples</td><td class="mono">int</td><td>Live gather-loop bound, 1..128. The emission pre-pass is handed the same value, so texel <code>i</code> there is sample <code>i</code> here.</td></tr>
           </tbody>
         </table>
       </div>
@@ -605,7 +604,7 @@
 }
 float bandInnerDistance(float d, float cut) { return d + cut; }</code></pre>
 
-      <p>The <code>r == 0</code> branch exists because the parallel curve of a <em>sharp</em> corner is an arc of radius <code>cut</code>. Taking <code>d - cut</code> there would round the outer corners of a rectangle the designer explicitly asked to be square, and the opaque fill (drawn on a fullscreen quad with no such rounding) would then bulge black past the glow at each corner. Offsetting per-axis instead keeps the corner square at the cost of the band being about 1.41x wider measured diagonally across it. A uniform width and a square outer corner cannot both hold at a sharp corner.</p>
+      <p>The <code>r == 0</code> branch exists because the parallel curve of a <em>sharp</em> corner is an arc of radius <code>cut</code>. Taking <code>d - cut</code> there would round the outer corners of a rectangle the designer explicitly asked to be square, and the opaque fill - whose own <code>bandOuterDistance</code> makes the same per-axis offset, so it keeps its square corner - would then bulge black past the glow at each corner. Offsetting per-axis instead keeps the corner square at the cost of the band being about 1.41x wider measured diagonally across it. A uniform width and a square outer corner cannot both hold at a sharp corner.</p>
 
       <p>Both functions no-op for disabled cutoffs: the sentinel drives <code>dIn</code> hugely positive and <code>dOut</code> hugely negative, so both masks evaluate to 1.</p>
     </section>
@@ -685,7 +684,7 @@ cp = (e.x &lt; e.y) ? vec2(sx * halfW, p.y) : vec2(p.x, sy * halfH);</code></pre
 
       <div class="warn">
         <span class="tag">If you change this</span>
-        Four places must move together: <code>perimeterPosition</code> in <code>neon.frag</code>, its copy in <code>neon-optimized.frag</code>, <code>GeometryUtils::GetPointOnRectangle</code> (and its <code>Detail::GetPointOnRectCW</code> / <code>CCW</code> helpers), and <code>GetSunFragPosition</code>, which places the lens-flare sun in the same parameter space. A mismatch shows up as arcs that do not line up with where the UI says they are.
+        Three places must move together: <code>perimeterPosition</code> in <code>neon.frag</code>, <code>GeometryUtils::GetPointOnRectangle</code> (and its <code>Detail::GetPointOnRectCW</code> / <code>CCW</code> helpers), and <code>GetSunFragPosition</code>, which places the lens-flare sun in the same parameter space. A mismatch shows up as arcs that do not line up with where the UI says they are.
       </div>
     </section>
 
@@ -926,7 +925,7 @@ wsumLit += lg;</code></pre>
 
       <ul class="body">
         <li><strong>A constant anti-bead margin.</strong> The kernel must stay at or above about one sample spacing or the blend collapses between samples. Spacing is <code>perimeter / 128</code>, so a perimeter fraction pins the ratio at <code>COLOR_BLEND_PERIM_FRAC * 128 = 1.13</code> spacings on every geometry. The previous fixed 24 px span met that bound only up to a ~3000 px perimeter and was down to 0.31 spacings by 9900 px. (No beading was actually measurable there - a DFT of the hue around the perimeter put the 128-cycle component at the noise floor - because the gradient varies slowly over one spacing on a rect that large. The margin is a guarantee for dense colour stops, not a fix for an observed artifact.)</li>
-        <li><strong>Renderer agreement.</strong> Both shaders derive the kernel from the same <code>NEON_MAX_LOOP_SAMPLES</code>-based fraction rather than from their own runtime sample count, so <code>NeonOptimizedRenderer</code>'s <code>numSamples</code> slider does not move the colour blend. An earlier <code>sampleSpacing</code>-derived floor divided by the live count and landed 2x wider there.</li>
+        <li><strong>Scale agreement.</strong> The kernel comes from the <code>NEON_MAX_LOOP_SAMPLES</code>-based fraction rather than from the runtime sample count, so the <code>numSamples</code> knob does not move the colour blend. An earlier <code>sampleSpacing</code>-derived floor divided by the live count and landed 2x wider there.</li>
       </ul>
 
       <p><code>0.0088</code> puts the kernel at 24.0 px on the stock 800x600 / radius 40 geometry, matching the previous fixed span, so default-sized output is unchanged. It is deliberately <strong>not coupled to <code>glowRadius</code></strong>: the gather produces colour only, so a wide glow has no reason to desaturate the gradient, and the old <code>max(glowRadius, floor)</code> reintroduced exactly the pixel-space dependence this constant exists to remove.</p>
@@ -969,9 +968,9 @@ vec3 segColHue = segAcc / max(wsumSegW, WSUM_EPSILON);</code></pre>
           <thead><tr><th>Bake</th><th>Rebuilds when</th><th>Produces</th></tr></thead>
           <tbody>
             <tr><td class="mono nw">rebuildLoopSamples</td><td><code>config.geometry</code> changed</td><td>128 <code>vec4</code>s from <code>GetPointOnRectangle(i / 128)</code>, evenly spaced by arc length, straight into the UBO.</td></tr>
-            <tr><td class="mono nw">rebuildGradientLUT</td><td><code>colorStops</code> or <code>blendSpace</code> changed</td><td>256 RGBA float texels via <code>ColorUtils::SampleStops</code>, held as <code>mLUTTarget</code>. Sampled at <code>t = i / 256</code> so the wrap is seamless.</td></tr>
-            <tr><td class="mono nw">rebuildSegmentLUT</td><td>the merged effective segment set differs from <code>mBakedSegments</code></td><td>128 x 8 RGBA8 atlas, one row per segment.</td></tr>
-            <tr><td class="mono nw">rebuildArcLUT</td><td><code>config.neon.arcs</code> differs from <code>mBakedArcs</code></td><td>128 x 8 RGBA8 atlas, one row per arc.</td></tr>
+            <tr><td class="mono nw">mGradientLUT.Bake</td><td><code>colorStops</code>, <code>blendSpace</code> or the ring width differs from the snapshot inside the wrapper</td><td>256 RGBA float texels via <code>ColorUtils::SampleRing</code>, held as the wrapper's target ring. Sampled at <code>t = i / 256</code> so the wrap is seamless.</td></tr>
+            <tr><td class="mono nw">mSegmentLUT.Bake</td><td>a merged effective segment's <code>colorStops</code> or <code>blendSpace</code> differs from the snapshot inside the wrapper</td><td>128 x 8 RGBA8 atlas, one row per segment.</td></tr>
+            <tr><td class="mono nw">mArcLUT.Bake</td><td>an arc's <code>colorStops</code> or <code>blendSpace</code> differs from the snapshot inside the wrapper</td><td>128 x 8 RGBA8 atlas, one row per arc.</td></tr>
           </tbody>
         </table>
       </div>
@@ -995,15 +994,16 @@ vec3 segColHue = segAcc / max(wsumSegW, WSUM_EPSILON);</code></pre>
 
       <h3>The colour cross-fade</h3>
 
-      <p>Held entirely in the gradient bake and <code>Update</code>. On a stop change the renderer snapshots what is currently displayed as <code>mLUTFrom</code>, keeps the new bake as <code>mLUTTarget</code>, and blends toward it over <code>colorTransitionDuration</code> seconds, re-uploading <code>mLUTDisplay</code> each frame. Three paths:</p>
+      <p>Held entirely inside <code>GradientRingLUT</code>, driven by <code>Bake</code> and <code>Tick</code>. On a stop change the wrapper snapshots what is currently displayed as its source ring, keeps the new bake as its target, and blends toward it over <code>colorTransitionDuration</code> seconds, re-uploading the blended ring each frame. Four paths:</p>
 
       <ul class="body">
-        <li><strong>First bake</strong> (<code>!mHasBakedLUT</code>): seed all three buffers and upload; there is nothing to fade from.</li>
+        <li><strong>First bake</strong>: seed all three buffers and upload; there is nothing to fade from.</li>
+        <li><strong>Ring width changed</strong>: snap. Source and target have different lengths and cannot be blended element-wise. Only reachable from the half-res renderer, whose width is a runtime knob.</li>
         <li><strong>Duration &lt;= 0</strong>: snap display to target, no fade.</li>
         <li><strong>Otherwise</strong>: fade from whatever is on screen, mid-fade or settled, so repeated changes chain smoothly rather than jumping back to the last settled ring.</li>
       </ul>
 
-      <p><code>Update</code> drives it with <strong>raw frame time, not the animation clock</strong>, so a colour change still fades while animations are paused. The shader is not involved and cannot tell a fade is happening.</p>
+      <p><code>Tick</code> is driven from <code>Update</code> with <strong>raw frame time, not the animation clock</strong>, so a colour change still fades while animations are paused. The shader is not involved and cannot tell a fade is happening.</p>
     </section>
 
     <!-- ============================================================ -->
@@ -1026,7 +1026,7 @@ if (outsideCutoff.enable)
 
       <div class="warn">
         <span class="tag">Keep in step</span>
-        Three places compute this expression: <code>setupGeometry</code> in <code>neon-renderer.cpp</code>, its copy in <code>neon-optimized-renderer.cpp</code>, and the <code>reach</code> line in both fragment shaders (for the bloom pedestal). They must agree or the pedestal lands at the wrong distance.
+        Two places compute this expression: <code>setupGeometry</code> in <code>neon-renderer.cpp</code> and the <code>reach</code> line in both fragment shaders (for the bloom pedestal). They must agree or the pedestal lands at the wrong distance.
       </div>
 
       <h3>The quad-edge fade</h3>
@@ -1037,7 +1037,7 @@ float fadeStart = (cutEdge &lt; uQuadMargin) ? max(fadeFloor, cutEdge) : fadeFlo
 float dQuad     = sdRoundBox(vPos, halfSize + vec2(uQuadMargin), 0.0);
 result *= 1.0 - smoothstep(-(uQuadMargin - fadeStart), 0.0, dQuad);</code></pre>
 
-      <p>Measured <strong>per-axis via <code>dQuad</code>, not from the Euclidean <code>d</code></strong>. What the fade hides is the <em>quad</em>, and the quad is a plain rectangle; keying on <code>d</code> put the ramp on a rounded contour that ate the corners early. At <code>cornerRadius</code> 0 on the stock 800x600 rect at cutoff 12, the band ran out to <code>d = 16.97</code> at a corner while the <code>d</code>-keyed ramp was already zero by <code>d = 14</code>, erasing the outer ~30% of every corner - while <code>black-rect.frag</code>, drawn on a fullscreen quad with no fade, kept its square corner. With the cutoff disabled the same rounding chopped the bloom at <code>d = uQuadMargin</code> though the quad ran on to its own corner, so corners faded sooner than edges for no reason.</p>
+      <p>Measured <strong>per-axis via <code>dQuad</code>, not from the Euclidean <code>d</code></strong>. What the fade hides is the <em>quad</em>, and the quad is a plain rectangle; keying on <code>d</code> put the ramp on a rounded contour that ate the corners early. At <code>cornerRadius</code> 0 on the stock 800x600 rect at cutoff 12, the band ran out to <code>d = 16.97</code> at a corner while the <code>d</code>-keyed ramp was already zero by <code>d = 14</code>, erasing the outer ~30% of every corner - while <code>black-rect.frag</code>, which has no such fade, kept its square corner. With the cutoff disabled the same rounding chopped the bloom at <code>d = uQuadMargin</code> though the quad ran on to its own corner, so corners faded sooner than edges for no reason.</p>
 
       <p><code>QUAD_FADE_START_FRAC</code> is a fraction rather than a pixel span because the margin is proportional to <code>glowRadius</code> and so is the bloom profile it hides; a fixed ramp would vanish on a wide glow and dominate a narrow one. At stock <code>glowRadius</code> 5 / bloom 0.3 / intensity 1 the margin is 312 px, giving a 62 px ramp. Nothing derives 0.8 specifically.</p>
 
@@ -1101,7 +1101,33 @@ result *= 1.0 - smoothstep(-outSoft, outSoft, dOut);</code></pre>
 
       <h3>The opaque fill <span class="src">black-rect.frag</span></h3>
 
-      <p>An optional pass drawn <em>before</em> the neon, on a fullscreen quad with an identity MVP, so the effect can sit on its own background instead of only adding light. <code>opaqueMode</code> selects the region: <code>NONE</code>, <code>INSIDE</code>, <code>OUTSIDE</code>, <code>BOTH</code> (the band between the two cutoffs), or <code>ALL</code> (the whole viewport). It has its own analytic SDF anti-aliasing, which is why the fill lands cleanly on rounded corners at any softness.</p>
+      <p>An optional pass drawn <em>before</em> the neon, so the effect can sit on its own background instead of only adding light. <code>opaqueMode</code> selects the region: <code>NONE</code>, <code>INSIDE</code>, <code>OUTSIDE</code>, <code>BOTH</code> (the band between the two cutoffs), or <code>ALL</code> (the whole viewport). It has its own analytic SDF anti-aliasing, which is why the fill lands cleanly on rounded corners at any softness.</p>
+
+      <h3>What the pass is drawn on</h3>
+
+      <p>The silhouette comes from the SDF and <code>gl_FragCoord</code>, never from the vertex position, so the geometry underneath is free to be whatever bounds the band tightest - the same trade <code>setupGeometry</code> makes for the glow. <code>NeonRenderer::setupFillGeometry</code> takes it: <code>OUTSIDE</code> / <code>INSIDE</code> / <code>BOTH</code> draw a <strong>rectangular annulus</strong> in full-res rect-local pixels, sized to each cutoff plus the fill's own feather plus a 3 px margin that absorbs the <code>fwidth</code> floor. A 20 px band then costs 20 px of fragments rather than a whole viewport: measured at 3840x2160, 0.30 ms to 0.03 ms.</p>
+
+      <p>The hole matters more than it looks. The region the fill cannot reach is the <em>inward</em> parallel curve - a rounded box shrunk by the inside margin, its radius shrunk to match - and the largest axis-aligned rectangle inside a rounded box is not that box's own half-extents. Each corner has to clear the corner arc, which pulls both half-extents in by <code>r(1 - 1/sqrt(2))</code>. Cut the hole square instead and a triangular wedge at each corner falls outside the ring but inside the fill's real footprint; at the default <code>cornerRadius</code> of 40 that is a ~12 px bite out of all four corners of the band.</p>
+
+      <p>A disabled cutoff arrives as a huge sentinel and needs no branch of its own: outward it pushes the ring off-viewport, where the rasteriser clips it, and inward it drives the hole's half-extent to zero, collapsing the ring into a solid quad. Both are what the fill genuinely covers there. The ring is viewport-independent by construction, so a resize never rebuilds it - only the pass's MVP moves.</p>
+
+      <p>A fill whose coverage is <strong>1 at every pixel</strong> runs <strong>no shader at all</strong>. Composited premultiplied-over, coverage 1 leaves exactly <code>uOpaqueColor.rgb</code> at alpha 1 - which is what <code>glClear</code> writes, for no fragments, no blending and no vertex work (0.27 ms to 0.003 ms at 3840x2160).</p>
+
+      <p>The test is <code>NeonRenderer::FillsWholeViewport</code>, not <code>mode == ALL</code>. <code>ALL</code> qualifies by definition; <code>BOTH</code> qualifies too whenever <em>neither</em> cutoff is enabled, because disabled cutoffs arrive as the huge sentinel and both smoothsteps saturate. That is the <strong>default</strong> state of both cutoffs, so it was the common way into the cost rather than a corner case: shading the whole viewport to write what a clear writes, measured at 1.18 ms to 0.59 ms on a 3600x2126 fill isolated with <code>debug.opaqueOnly</code>. <code>setupFillGeometry</code> asks the same predicate and builds no ring for either.</p>
+
+      <p>The clear is scissored, because <code>glClear</code> is bounded by the scissor and not the viewport. That box starts from the <strong>queried</strong> <code>GL_VIEWPORT</code> rather than an assumed <code>(0, 0, w, h)</code> - the fullscreen quad this replaced was clipped to wherever the viewport actually sat - and is then <strong>intersected</strong> with any scissor the host already had rather than replacing it. A host clipping the effect to a sub-rect must not find the whole surface painted.</p>
+
+      <p>Scissor and colour mask are the only clipping state a clear and a draw share. The <strong>depth and stencil tests apply to the draw and not to the clear</strong>, so when either is enabled (<code>NeonRenderer::ClearClipsLikeDraw</code>) the substitution is dropped and the fullscreen quad is drawn instead, shader and all. A host masking the effect through a stencil buffer had that honoured before and would otherwise find the clear painting straight through it. The full-viewport shade is the correct price there: the host enabled those tests in order to clip something.</p>
+
+      <p>One claim to <em>not</em> make about this clear, since an earlier version of this page made it: that on a tile-based GPU it tells the driver the previous tile contents are dead and spares the tile load. That is a property of an unscissored, full-attachment clear at the <em>start</em> of a render pass, and this clear is neither - it runs mid-pass, with the host's backdrop already in the target and the neon still to come, and it is scissored by construction. Expect the measured saving (no fragments, no blending, no vertex work) and nothing structural beyond it. Both figures above are desktop macOS, an immediate-mode renderer; the tiler behaviour is reasoned, not measured on device.</p>
+
+      <h3>One straight-line path through <code>main()</code></h3>
+
+      <p>The fragment program has no early <code>return</code> above its derivative and no <code>discard</code> anywhere, and both are load bearing.</p>
+
+      <p>The <code>NONE</code> and <code>ALL</code> guards look like free early exits - they branch on a uniform, so every lane in the draw takes the same side - but the compiler does not get to assume that, and a derivative downstream of a <code>return</code> it cannot prove uniform lands the whole shader on a slower path. Measured at 3840x2160 on a fill covering the surface: 0.29 ms without the returns, 0.41 ms with them, 0.26 ms once they moved back below the derivative. That is a ~35% penalty paid by every fragment in every mode, to skip work in two modes the CPU almost never dispatches. Both guards therefore live as arms of the coverage chain; <code>NONE</code> is not tested at all, since it matches no arm and falls through at coverage 0. "Almost never" rather than "never": the depth / stencil fallback above does dispatch the coverage-1 modes, so the <code>ALL</code> arm is rare live code, not a dead branch.</p>
+
+      <p><code>discard</code> is left out because it is not needed: coverage 0 under <code>glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)</code> gives <code>dst = 0 + dst * (1 - 0)</code>, so writing transparent black is bit-exact with discarding. It measures the same either way here - the ring already keeps most zero-coverage fragments off the rasteriser - but a shader with no <code>discard</code> is the friendlier shape for the Mali / Tizen targets, where one cannot use forward pixel kill.</p>
 
       <p>In the optimized renderer this pass is drawn at <strong>full resolution</strong>, straight to the target framebuffer, and the half-res neon is composited over it. A hard-edged silhouette is the one part of the effect where a soft upscale would be visible.</p>
     </section>
@@ -1163,11 +1189,11 @@ fragColor = vec4(result, alpha);</code></pre>
 
       <h3>What the shader must correct</h3>
 
-      <p>A constant written into the shader cannot scale itself. <code>uResolutionScale</code> is uploaded purely so the shader can convert the baked pixel constants, and it is the only uniform in the pair that exists because of the optimization.</p>
+      <p>A constant written into the shader cannot scale itself. <code>uResolutionScale</code> is uploaded purely so the shader can convert the baked pixel constants. There are exactly three such sites, all marked in the source; at scale 1.0 every one of them is an identity, which is what makes the direct path bit-for-bit what the shader computed before the scale existed.</p>
 
       <div class="tbl-wrap">
         <table>
-          <thead><tr><th>Constant</th><th class="mono">neon.frag</th><th class="mono">neon-optimized.frag</th></tr></thead>
+          <thead><tr><th>Constant</th><th class="mono">as written</th><th>correction in <code class="mono">neon.frag</code></th></tr></thead>
           <tbody>
             <tr><td>Filament min half-width</td><td class="mono">FILAMENT_MIN_HALF_WIDTH</td><td class="mono">* uResolutionScale</td></tr>
             <tr><td>Arc head / tail feathers</td><td class="mono">HEAD/TAIL_FEATHER_PX</td><td class="mono">* uResolutionScale</td></tr>
@@ -1177,9 +1203,9 @@ fragColor = vec4(result, alpha);</code></pre>
         </table>
       </div>
 
-      <p><strong>The rule: a constant measured in pixels needs the correction; a constant that is a plain fraction does not</strong>, because the value it multiplies is already in FBO pixels. <code>COLOR_BLEND_PERIM_FRAC</code> multiplies a <code>peri</code> that is already scaled, so correcting it would double-apply.</p>
+      <p><strong>The rule: a constant measured in pixels needs the correction; a constant that is a plain fraction does not</strong>, because the value it multiplies is already in scaled pixels. <code>COLOR_BLEND_PERIM_FRAC</code> multiplies a <code>peri</code> that is already scaled, so correcting it would double-apply.</p>
 
-      <p>Miss one and the symptom is geometric. The arc feathers without their correction inset each arc's filament twice as deep as the full-res renderer does, leaving a visible stretch of bare halo past the ends.</p>
+      <p>Miss one and the symptom is geometric, and only at scales below 1.0 - which is the awkward part, since the default path looks perfect. The arc feathers without their correction inset each arc's filament twice as deep at scale 0.5, leaving a visible stretch of bare halo past the ends.</p>
 
       <h3>The sample count</h3>
 
@@ -1441,8 +1467,8 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
           <text x="322" y="247" class="dg-t">lutDirty</text>
           <line x1="484" y1="242" x2="516" y2="242" class="dg-line" marker-end="url(#ra)"/>
           <rect x="520" y="210" width="260" height="64" class="dg-box"/>
-          <text x="532" y="237" class="dg-t">rebuildGradientLUT()</text>
-          <text x="532" y="254" class="dg-t2">256 x ColorUtils::SampleStops</text>
+          <text x="532" y="237" class="dg-t">mGradientLUT.Bake()</text>
+          <text x="532" y="254" class="dg-t2">256 x ColorUtils::SampleRing</text>
           <line x1="784" y1="242" x2="806" y2="242" class="dg-line" marker-end="url(#ra)"/>
           <rect x="810" y="210" width="230" height="64" class="dg-box"/>
           <text x="822" y="237" class="dg-t">mGradientLUT</text>
@@ -1457,7 +1483,7 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
           <text x="322" y="319" class="dg-t">segLutDirty</text>
           <line x1="484" y1="314" x2="516" y2="314" class="dg-line" marker-end="url(#ra)"/>
           <rect x="520" y="282" width="260" height="64" class="dg-box"/>
-          <text x="532" y="309" class="dg-t">rebuildSegmentLUT()</text>
+          <text x="532" y="309" class="dg-t">mSegmentLUT.Bake()</text>
           <text x="532" y="326" class="dg-t2">one 128-px row per segment</text>
           <line x1="784" y1="314" x2="806" y2="314" class="dg-line" marker-end="url(#ra)"/>
           <rect x="810" y="282" width="230" height="64" class="dg-box"/>
@@ -1473,7 +1499,7 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
           <text x="322" y="391" class="dg-t">arcLutDirty</text>
           <line x1="484" y1="386" x2="516" y2="386" class="dg-line" marker-end="url(#ra)"/>
           <rect x="520" y="354" width="260" height="64" class="dg-box"/>
-          <text x="532" y="381" class="dg-t">rebuildArcLUT()</text>
+          <text x="532" y="381" class="dg-t">mArcLUT.Bake()</text>
           <text x="532" y="398" class="dg-t2">one 128-px row per arc</text>
           <line x1="784" y1="386" x2="806" y2="386" class="dg-line" marker-end="url(#ra)"/>
           <rect x="810" y="354" width="230" height="64" class="dg-box"/>
@@ -1508,7 +1534,7 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
 
           <rect x="200" y="82" width="660" height="46" class="dg-box"/>
           <text x="530" y="102" class="dg-t" text-anchor="middle">renderer-&gt;Update(dt, t, cfg)</text>
-          <text x="530" y="118" class="dg-t2" text-anchor="middle">colour cross-fade only: mLUTDisplay = mix(mLUTFrom, mLUTTarget) -&gt; re-upload</text>
+          <text x="530" y="118" class="dg-t2" text-anchor="middle">colour cross-fade only: mGradientLUT.Tick() blends source -&gt; target, re-uploads</text>
           <line x1="530" y1="128" x2="530" y2="146" class="dg-line" marker-end="url(#fa2)"/>
 
           <rect x="200" y="148" width="660" height="46" class="dg-box-a"/>
@@ -1519,12 +1545,12 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
           <path d="M530,194 V214 H790 V238" class="dg-line" marker-end="url(#fa2)"/>
 
           <text x="40"  y="230" class="dg-h">NeonRenderer - full resolution</text>
-          <text x="560" y="230" class="dg-h">NeonOptimizedRenderer - half resolution</text>
+          <text x="560" y="230" class="dg-h">NeonRenderer - resolutionScale below 1.0</text>
 
           <!-- left lane -->
           <rect x="40" y="240" width="460" height="46" class="dg-box"/>
           <text x="52" y="260" class="dg-t">pass 1: black-rect fill</text>
-          <text x="52" y="276" class="dg-t2">skipped when opaqueMode == NONE; fullscreen quad</text>
+          <text x="52" y="276" class="dg-t2">skipped when NONE; band ring - ALL is a glClear</text>
           <line x1="270" y1="286" x2="270" y2="300" class="dg-line" marker-end="url(#fa2)"/>
 
           <rect x="40" y="302" width="460" height="46" class="dg-box"/>
@@ -1613,7 +1639,7 @@ void main() {
 
       <p>That is the whole thing, and its brevity is the point. <code>aPos</code> arrives already in <strong>rect-local pixels</strong> - <code>setupGeometry</code> wrote the quad corners as <code>+/-(halfSize + margin)</code> - so passing it through untouched gives every fragment its own position in exactly the space the SDF wants. No inverse transform, no screen-space reconstruction, no resolution uniform in the distance path. <code>uMVP</code> is used only to put the quad on screen.</p>
 
-      <p>The same vertex shader backs <code>black-rect.frag</code>, <code>neon-blit.frag</code> and both debug overlays; the fill and blit passes simply bind an identity <code>uMVP</code> so <code>vPos</code> comes through as NDC.</p>
+      <p>The same vertex shader backs <code>black-rect.frag</code>, <code>neon-blit.frag</code> and both debug overlays. The blit binds an identity <code>uMVP</code> so <code>vPos</code> comes through as NDC. The fill binds a full-res <code>ortho * translate</code> to place its band ring, and is the one consumer that ignores <code>vPos</code> altogether - its shape comes from <code>gl_FragCoord</code>, which is what lets the ring bound it in the first place.</p>
 
       <h3>The fragment program, as dataflow</h3>
 
@@ -1779,7 +1805,7 @@ void main() {
 
       <div class="warn">
         <span class="tag">The pairs to keep in step</span>
-        <code>neon.frag</code> and <code>neon-optimized.frag</code>; <code>neon-renderer.cpp</code> and <code>neon-optimized-renderer.cpp</code>; <code>lens-flare.frag</code> and its optimized fork; <code>demo/src/debug-ui.cpp</code> and its <code>demo-capi/</code> counterpart. Also the four places that must agree on the perimeter parameterisation (section 4) and the three that must agree on the quad margin (section 11). None of these are checked by the build. Only the eye catches a drift.
+        <code>lens-flare.frag</code> and its optimized fork; <code>demo/src/debug-ui.cpp</code> and its <code>demo-capi/</code> counterpart. Also the four places that must agree on the perimeter parameterisation (section 4) and the three that must agree on the quad margin (section 11). None of these are checked by the build. Only the eye catches a drift.
       </div>
     </section>
 

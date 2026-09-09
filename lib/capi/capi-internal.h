@@ -5,12 +5,10 @@
 
 #include "core/edge-lighting.h"
 #include "animation/animation-manager.h"
-#include "renderer/wireframe-renderer.h"
 #include "renderer/neon-renderer.h"
-#include "renderer/neon-optimized-renderer.h"
+#include "renderer/debug-renderer.h"
 #include "renderer/droplets-renderer.h"
 #include "renderer/lens-flare-renderer.h"
-#include "renderer/lens-flare-optimized-renderer.h"
 #include "animation/neon-animations.h"
 #include "animation/field-bound-animation.h"
 #include "animation/modulator.h"

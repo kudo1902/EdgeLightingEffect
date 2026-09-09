@@ -22,7 +22,8 @@ Build outputs:
 
 - `build/lib/libedge-lighting.a` - the static library
 - `build/lib/libedge-lighting-c.dylib` - flat C ABI surface for FFI / P/Invoke
-- `build/demo/edge-lighting-demo` - the demo executable
+- `build/demo/edge-lighting-demo` - demo driving the C++ library directly
+- `build/demo-capi/edge-lighting-capi-demo` - the same UI driving only the C ABI
 
 The demo opens two windows sharing a GL context: the main render surface and a
 floating debug panel with all the sliders. `RES_DIR` is baked into the demo
@@ -30,24 +31,40 @@ binary at compile time, so the demo can be launched from anywhere.
 
 ## Renderers
 
-Three visual layers, independent and additive. Enable any subset via `Config`.
+Six visual layers, independent and additive. Enable any subset via `Config`.
 
 - **WireframeRenderer** - 1 px `GL_LINE_LOOP` debug outline of the rect.
 - **NeonRenderer** - single-pass neon stroke. Analytic rounded-box SDF + a
-  precomputed 1D gradient LUT (RGBA32F, 256 px) so each shader sample is one
-  texture lookup. Precomputes 128 sample positions on the perimeter.
+  precomputed gradient LUT (RGBA8, 256 px, REPEAT-wrapped) so each shader
+  sample is one texture lookup. Precomputes 128 sample positions on the
+  perimeter. Float textures are deliberately avoided - many edge devices
+  lack support - so the LUTs are baked to 8-bit on the CPU.
 - **NeonOptimizedRenderer** - half-resolution variant that renders to a scaled
   FBO and bilinear-blits back to full res. Shares visual params with the
-  single-pass renderer.
+  single-pass renderer; its own sub-config carries only perf knobs
+  (resolution scale, sample count, LUT width).
+- **DropletsRenderer** - rain-on-glass droplets in a band that follows the
+  perimeter. Screen-space gravity, self-lit drops, no framebuffer capture.
+- **LensFlareRenderer** - sun + hex-aperture flare (rays, chromatic ghosts) in
+  one fullscreen pass. The sun rides the perimeter in the same parameter space
+  as neon segments and arcs, so the same modulators drive it.
+- **LensFlareOptimizedRenderer** - half-res variant of the lens flare. Don't
+  enable it alongside `LensFlareRenderer`; they draw the same flare and would
+  double it.
 
 ## Debug UI (ImGui)
 
 - **Geometry** - width/height/position/corner radius/winding
 - **Neon** - line width, filament falloff, intensity, glow radius, bloom,
-  glow side + softness, blend space (RGB / HSV / HSL), color stops (up to 128),
-  hue rotation rate, segment boosts (travelling brightness peaks), arc gating
+  glow side + softness, opaque mode + colour, inside/outside cutoffs, blend
+  space (RGB / HSV / HSL), color stops (up to 128), hue rotation rate, segment
+  boosts (travelling brightness peaks), arc gating
 - **Optimized Neon (½-res)** - internal resolution scale, sample count, LUT
   size, plus reuses the Neon section's visual params
+- **Droplets (rain on glass)** - rain amount, speed, lanes, band width/offset,
+  tint
+- **Lens Flare** - perimeter position/offset, size, intensity, ray density,
+  rotation, and the ghost controls (spacing, size, offset, tint, centre)
 - **Border Color Picker** - pick any image from `res/`, sample colors from its
   border, and apply them as neon color stops. See below.
 - **Animation** - add / remove presets from an animation group; play / pause /

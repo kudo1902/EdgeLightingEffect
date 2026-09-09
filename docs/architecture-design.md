@@ -34,9 +34,11 @@ Config ────► │ EdgeLightingEffect   │◄──── Clock (Play/P
                        │  Render(w, h, t, config)
                        ▼
        ┌─────────────────────────────────────────┐
-       │  WireframeRenderer  (debug outline)     │
-       │  NeonRenderer       (full-res neon)     │
-       │  NeonOptimizedRenderer (half-res neon)  │
+       │  NeonRenderer      (neon, any res scale) │
+       │  DebugRenderer   (strip, markers, box)   │
+       │  DropletsRenderer       (rain on glass) │
+       │  LensFlareRenderer      (sun + ghosts)  │
+       │  LensFlareOptimizedRenderer (half-res)  │
        └─────────────────────────────────────────┘
 ```
 
@@ -55,12 +57,15 @@ lib/
   include/animation/  Modulator family + Animation presets + AnimationManager
                       + FieldBoundAnimation
   include/gl/         Move-only RAII wrappers: ShaderProgram, VertexArray,
-                      Texture(1D/2D), Framebuffer, UniformBuffer
+                      Texture + Texture2D, Framebuffer, UniformBuffer
   include/util/       geometry-utils, color-utils, contour-tracer, stb-image,
                       capture-util, log-util
   shaders/            .vert/.frag sources + shaders.h.in template
   src/                Renderer + effect + animation implementations
-  capi/               Flat extern "C" ABI (edge-lighting-capi.{h,cpp})
+  capi/               Flat extern "C" ABI: edge-lighting-capi.h aggregates
+                      el-types.h + el-effect / el-animation / el-modulator
+                      (.h/.cpp), with capi-internal.h holding the handle
+                      definitions and the enum-parity static_asserts
 
 demo/                 C++ demo - links libedge-lighting directly
   src/                Entry point + ImGui debug window + border-color-picker
@@ -97,12 +102,24 @@ Config
  │                         Default = one arc covering the whole perimeter.
  │                       - segments: vector<SegmentBoost> (position, length,
  │                         boost, own colorStops + blendSpace). Default empty.
- │                       - compositing: opaque + opaqueColor
- │                       - debug: showGradientLUT, showColorStops
- ├── OptimizedNeonConfig half-res knobs (enable, resolutionScale, numSamples,
- │                       gradientLutSize, showHalfRes). *Shares* NeonConfig
- │                       for every visual param above.
- └── WireframeConfig     enable + color
+ │                       - compositing: opaqueMode + opaqueColor +
+ │                         opaqueSoftness, insideCutoff / outsideCutoff
+ │                       - cost: resolutionScale (1.0 = full res, direct),
+ │                         numSamples, gradientLutSize
+ ├── DebugConfig         everything for inspecting rather than drawing:
+ │                       enable, showGradientLUT, showColorStops (the
+ │                       overlay layer) plus opaqueOnly, a debug MODE of
+ │                       NeonRenderer that it reads back out of here.
+ ├── DropletsConfig      rain on glass: amount, speed, lanes, bandWidth,
+ │                       bandOffset, tint. Band side comes from
+ │                       NeonConfig::glowSide.
+ ├── LensFlareConfig     sun + ghosts: perimeterPosition / perimeterOffset,
+ │                       size, color, intensity, spread, rayDensity,
+ │                       rotationRate + the ghost group (spacing, size,
+ │                       offset, color, tint, flareCenter)
+ ├── LensFlareOptimizedConfig
+ │                       enable + resolutionScale only. *Shares*
+ │                       LensFlareConfig for every visual param.
 ```
 
 Host code produces a `Config` (usually a copy of `effect.GetConfig()`,
@@ -158,9 +175,18 @@ Single-pass full-resolution neon stroke. Highlights:
   baked textures over `NeonConfig::colorTransitionDuration` seconds when
   colour stops or blend space change. The fade blends the whole 256-texel
   LUT (not per-stop pairing), so it works even when stop counts differ.
-- **Opaque-mode background pass** - a fullscreen NDC quad drawn *behind* the
-  neon with `NeonConfig::opaqueColor`. Shape from an SDF read off
-  `gl_FragCoord`; corners AA cleanly via `fwidth`.
+- **Opaque-mode background pass** - a solid fill drawn *behind* the neon with
+  `NeonConfig::opaqueColor`. Shape from an SDF read off `gl_FragCoord`;
+  corners AA cleanly via `fwidth`. Because the silhouette comes from the SDF
+  and not from the vertices, the CPU is free to bound the pass with whatever
+  geometry fits it tightest: a shaped mode draws a rectangular annulus sized
+  to the band (`NeonRenderer::setupFillGeometry`), while a fill whose coverage
+  is 1 at every pixel runs no shader at all - that is what a scissored
+  `glClear` writes. The coverage-1 test is `NeonRenderer::FillsWholeViewport`,
+  not the enum: `ALL` by definition, and `BOTH` with both cutoffs disabled,
+  which is their default state. The clear is dropped for the fullscreen quad
+  when `GL_DEPTH_TEST` or `GL_STENCIL_TEST` is on, since a clear ignores both
+  and would paint through a mask the host set up to clip this pass.
 
 ### 4.1a Two colour-sampling spaces
 
@@ -186,18 +212,113 @@ This split was the design outcome recorded in
 [`multiple-arcs-design.md`](multiple-arcs-design.md); the perimeter-space
 fallback for empty arcs preserves the pre-multi-arc single-slice behaviour.
 
-### 4.2 NeonOptimizedRenderer
+### 4.1b Emission pre-pass
 
-Two-pass half-resolution variant. Pass 1 renders into a scaled RGBA8 FBO
-with a dynamic shader loop bound (`uNumSamples = optimizedNeon.numSamples`,
-1..128). Pass 2 bilinear-blits back to full res. Shares all visual params
-with `NeonConfig`. Meant for edge devices - the resolution-scale + sample-
-count sliders are the primary perf knobs.
+Both neon renderers run a small pre-pass first. The gather's per-sample work -
+the arc winner-take-all scan, the segment bells, the LUT fetches - is a pure
+function of `(si, uTime, config)`, so it does not belong in a loop that runs
+once per fragment. It is baked once per frame into an `N x 2` RGBA16F table
+(`neon-emission.frag`) and the gather reads it with `texelFetch`.
 
-### 4.3 WireframeRenderer
+Per-fragment cost becomes `O(samples)` instead of
+`O(samples * (arcs + segments))`: measured full-res, an 8-arc + 8-segment scene
+went 158.2 ms -> 10.6 ms, and the whole "after" column is flat across scene
+complexity. Output is identical to within one LSB.
 
-A `GL_LINE_LOOP` debug outline. Blending briefly disabled for crisp 1 px
-lines.
+`Render` in both neon renderers is a pass schedule as a result - a derived
+transform then one call per `render*Pass` method, with `Render` owning blend
+state and each retargeting pass restoring the framebuffer, viewport and blend
+it was handed.
+
+Full write-up, including why the table needs two rows here where the original
+design used one: [`emission-prepass.md`](emission-prepass.md). Measured
+before/after on visuals, performance and memory:
+[`emission-prepass-comparison.md`](emission-prepass-comparison.md).
+
+### 4.2 DebugRenderer
+
+Every debug annotation as a layer of its own: the baked ring
+as a LUT strip, one disc per colour stop at its perimeter position, and the
+1 px `GL_LINE_LOOP` bounding box absorbed from the former `WireframeRenderer`
+(which drew UNDER the glow; here it draws over). Reads
+`DebugConfig` for what to draw and `NeonConfig` for what it is describing,
+and draws the strip and the markers only while there is a glow to annotate -
+neon on, `debug.opaqueOnly` off - while the box, which annotates the geometry,
+survives both. Bakes
+its own `GradientRingLUT` from the same inputs, which is what keeps every
+debug member out of `NeonRenderer`. Register it after the neon layer.
+
+### 4.3 DropletsRenderer
+
+Rain-on-glass droplets in a band that follows the rounded-rect perimeter.
+The band's thickness is `droplets.bandWidth` and its side comes from
+`neon.glowSide`, so the rain shares the neon's geometry. The droplet field
+is hashed in screen space under a single global gravity - rain falls straight
+down rather than circulating around the perimeter - and droplet size scales
+with the band width so the effect holds up however thin the band is. Drops
+are self-lit (transparent body + crescent rim + specular dot); there is no
+framebuffer capture or refraction pass.
+
+The draw is a band-fitted ring - four strips tiling the gap between the rect
+offset outward by the furthest distance the shader can write and the rect
+offset inward by the nearest, both derived from `DROPLET_BAND_GUARD` in
+`droplets-tuning.h` (shared verbatim with `droplets.frag`). A fullscreen quad
+rasterised millions of fragments that computed a band coordinate and
+discarded; the ring rasterises roughly what it shades, which removes this
+pass's dependence on the viewport AND on the rect's area without changing a
+drawn pixel. Where the band reaches the middle - a wide `BOTH` or `INSIDE`
+band, or a deep offset - there is no hole to cut and the ring degenerates to
+one quad.
+
+Two invariants hold it together. The strips must TILE, not merely cover: the
+pass blends premultiplied, so a pixel covered by two strips would composite
+twice and show as a seam, which is why they share exact edge coordinates and
+lean on GL's fill rule. And the hole may only omit what fits strictly inside
+the inner boundary - it is a rounded rect, the strips are axis-aligned, so the
+omitted box is the largest one inscribed in it and the four corner slivers are
+covered rather than dropped.
+
+Inside the shader the same principle applies to the heaviest term. The
+height-field gradient that drives the crescent rim and the specular dot is
+taken by finite difference, so it evaluates the whole droplet field twice more
+- but the normal reaches the output only through `rim` and `spec`, and both are
+multiplied to zero when the drop mask `c.x` is zero. Most in-band fragments are
+the gaps between drops, where that holds exactly, so the taps are gated on
+`c.x > 0`: identical output, roughly 1.6x less work.
+
+This is also why the renderer has no `resolutionScale`: it never shaded the
+whole viewport to begin with.
+
+### 4.4 LensFlareRenderer / LensFlareOptimizedRenderer
+
+A sun with rays plus hex-aperture chromatic ghosts, drawn as one fullscreen
+premultiplied-alpha pass. The sun rides the perimeter via
+`lensFlare.perimeterPosition` - the same parameter space as `Arc::start` and
+`SegmentBoost::position` - so the same modulators that drive neon segments
+drive the flare, and it stays tied to the frame wherever the geometry moves.
+
+`LensFlareOptimizedRenderer` renders the identical shader into a scaled FBO
+and bilinear-blits back, which is nearly lossless because the flare is smooth
+and low-frequency. The two share `LensFlareConfig`, so **enabling both draws
+the flare twice** - pick one.
+
+### 4.5 The lens-flare pair, and the neon pair that was
+
+`LensFlareOptimizedRenderer` is a near-fork of `LensFlareRenderer` rather than
+a thin wrapper: it duplicates its sibling's fragment shader and most of its
+C++ setup, and the pair shares one visual sub-config. That was a deliberate
+trade (the optimized path can diverge without destabilising the reference
+path), but it means **a change to how the flare looks has to land in both
+copies** or the two drift apart visually.
+
+The neon pair was the same shape and no longer exists. `NeonOptimizedRenderer`
+and `neon-optimized.frag` were folded into `NeonRenderer` / `neon.frag`, where
+the half-res path is `NeonConfig::resolutionScale`: pixel uniforms are scaled
+on the CPU, the shader converts its own px constants with `uResolutionScale`,
+and only the render target, the blit and the buffer allocation are
+conditional. The forks' outputs were byte-identical to the merged renderer at
+the matching scales, so nothing was traded away for the dedup. See
+[`neon-unification-plan.md`](neon-unification-plan.md).
 
 ## 5. Animation - Clock + Modulators + AnimationManager
 
@@ -263,7 +384,7 @@ void NeonRenderer::OnConfigChanged(const Config &config)
                             || config.neon.blendSpace != mCurrentConfig.neon.blendSpace;
 
     mCurrentConfig = config;
-    if (!mShaderProgram.IsValid()) { return; }
+    if (!mNeonShader.IsValid()) { return; }
 
     if (samplesDirty)  { rebuildLoopSamples(config); }
     if (geometryDirty) { setupGeometry(config); }
@@ -335,8 +456,10 @@ must not touch `glGen*` / `glDelete*` directly.
   skips redundant GL calls.
 - `VertexArray` - VAO + VBO with `SetVertexData` / `SetAttribPointer` /
   `DrawArrays`.
-- `Texture` (base) + `Texture1D` / `Texture2D` - `Bind(unit)`, `SetData`,
-  `SetParams`, plus `Texture2D::SetDataFromFile` (stb_image).
+- `Texture` (base) + `Texture2D` - `Bind(unit)`, `SetData`, `SetParams`, plus
+  `Texture2D::SetDataFromFile` (stb_image). There is no `Texture1D`: GLES 3.0
+  has no `sampler1D`, so the gradient LUT is a 1-row 2D texture sampled at
+  `v = 0.5`.
 - `Framebuffer` - with a colour texture, resize-idempotent.
 - `UniformBuffer` - std140-shaped buffer with a byte-level upload cache
   (skips `glBufferData` when the block bytes are unchanged).
@@ -360,6 +483,40 @@ center_ogl.y = viewportH - position.y - halfH;
 
 All renderers use the same MVP formula so local-space vertices (origin at
 rect center, +Y up) render correctly on screen (origin at top-left, +Y down).
+
+### The viewport origin is assumed to be (0, 0)
+
+`BaseRenderer::Render(viewportWidth, viewportHeight, ...)` takes the viewport
+*size*, never its origin, and every renderer assumes the viewport is
+`(0, 0, viewportWidth, viewportHeight)`. **A sub-viewport is not supported.**
+
+The assumption is not a tidiness convention; it is baked into the shaders.
+Several read `gl_FragCoord`, which is in **window** coordinates, and compare it
+against uniforms the CPU derives as though the viewport origin were the window
+origin - `black-rect.frag` is the clearest case:
+
+```glsl
+vec2 localPos = gl_FragCoord.xy - uRectCenter;   // uRectCenter from geometry.position
+```
+
+Render into a viewport at origin `(x, y)` and every such comparison is off by
+exactly that origin, so the silhouette draws displaced from the glow. The neon
+gather picks up the same coupling through `vPos`. Supporting sub-viewports
+therefore means threading an origin through to those uniforms - not simply
+restoring the viewport more carefully.
+
+Two practical consequences:
+
+- A renderer that retargets may restore the viewport by **reconstruction**
+  (`glViewport(0, 0, viewportWidth, viewportHeight)`) rather than by querying
+  `GL_VIEWPORT`. Doing it exactly would imply a generality the shaders do not
+  have.
+- The **framebuffer** gets the opposite treatment, because it genuinely varies:
+  it may be the default framebuffer or a real FBO (`OffscreenCapture`), so a
+  multi-pass renderer captures it with `Framebuffer::GetBoundId` and restores
+  precisely that. `OffscreenCapture` itself does save and restore the full
+  four-component viewport - it wraps arbitrary host rendering and must not
+  disturb it, which is a different role from a renderer that owns its target.
 
 ## 10. Demo - the ImGui side
 

@@ -4,6 +4,31 @@ project(EdgeLightingEffect C CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# ---------------------------------------------------------------------------
+# Default build type
+# ---------------------------------------------------------------------------
+# Without this, a bare `cmake -S . -B build` - the command in README.md and
+# CLAUDE.md, and so the one everybody actually runs - leaves CMAKE_BUILD_TYPE
+# empty, and an empty build type contributes NO optimisation flag at all. The
+# compile line for the library was literally:
+#
+#     clang++ -DPLATFORM_MACOS -I... -g -std=gnu++17 -arch arm64 -fPIC -c ...
+#
+# so every host linking libedge-lighting.a got an unoptimised build of the LUT
+# bakes, the colour conversions, the contour tracer and the whole C ABI.
+# Measured against -O3: the per-frame config path ran 1.5x slower and the
+# static library was 11.6 MB instead of 844 KB.
+#
+# Only a default. An explicit -DCMAKE_BUILD_TYPE=Debug (or a multi-config
+# generator, which drives the choice per-build and leaves this variable empty
+# by design) is left exactly as it was found.
+get_property(_isMultiConfig GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+if(NOT _isMultiConfig AND NOT CMAKE_BUILD_TYPE)
+    set(CMAKE_BUILD_TYPE "Release" CACHE STRING "Build type (Debug, Release, RelWithDebInfo, MinSizeRel)" FORCE)
+    message(STATUS "EdgeLightingEffect: no CMAKE_BUILD_TYPE set - defaulting to Release")
+endif()
+set_property(CACHE CMAKE_BUILD_TYPE PROPERTY STRINGS Debug Release RelWithDebInfo MinSizeRel)
+
 # Build everything position-independent so the static lib + glad can be linked
 # into the edge-lighting-c shared library (required on Linux; harmless on macOS).
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)

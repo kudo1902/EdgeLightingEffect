@@ -17,6 +17,13 @@ Docs, in reading order. The three neon documents are tiers of the same material 
 - [`docs/effect-reference.md`](docs/effect-reference.md) - per-parameter reference and recipes.
 - [`docs/architecture-design.md`](docs/architecture-design.md) - full architecture. Note it predates the droplets and lens-flare renderers.
 - [`docs/coordinate-system.md`](docs/coordinate-system.md), [`docs/multiple-arcs-design.md`](docs/multiple-arcs-design.md).
+- [`docs/neon-unification-plan.md`](docs/neon-unification-plan.md) - how the half-res neon fork was folded into `NeonRenderer` as a resolution scale, and the debug overlays split into `DebugRenderer`. Read it if a doc or comment still refers to `NeonOptimizedRenderer`.
+- [`docs/neon-unification-comparison.md`](docs/neon-unification-comparison.md) - the evidence for that plan: eleven scenes rendered on both sides of the merge, nine byte-identical, the two that differ confined to the bounding box's compositing order.
+- [`docs/lens-flare-unification-comparison.md`](docs/lens-flare-unification-comparison.md) - the same for the lens flare pair, the last fork in the tree: twelve scenes, all byte-identical, plus the two defects the merge closed (an unclamped resolution scale and the double-draw).
+- [`docs/lens-flare-perf-review.md`](docs/lens-flare-perf-review.md) - why the flare was the pipeline's most expensive layer and what the five changes that halved it did. Per-term cost attribution, the tuning header those changes forced, and the reason one of them cannot be byte-identical on any GPU. Read before touching `lens-flare.frag`'s ghost loop.
+- [`docs/neon-perf-review.md`](docs/neon-perf-review.md) - the same for the neon layer, which is 81% of the frame and whose gather loop is 95% of that. Per-term attribution, the three changes that took it to 1.46x, and the two directions that were measured and rejected (a windowed gather, an interior hole in the draw quad). Section 8 is the measured shape of `resolutionScale` / `numSamples` / `glowRadius` - read it before tuning any of them for speed. Read before touching `neon.frag`'s gather loop.
+- [`docs/review-findings.md`](docs/review-findings.md) - open defects and rough edges, visual ones with offscreen repros. Check here before assuming a behaviour is intended.
+- [`docs/naming-review.md`](docs/naming-review.md) - identifier audit against `AGENTS.md`, plus the names that describe mechanisms the code no longer has. Read before renaming anything.
 
 When the docs go out of date, treat the headers under `lib/include/` as the source of truth.
 
@@ -29,6 +36,8 @@ cmake -S . -B build -G Ninja
 cmake --build build
 ./build/demo/edge-lighting-demo
 ```
+
+**That configure defaults to `Release`.** The root `CMakeLists.txt` sets `CMAKE_BUILD_TYPE` to `Release` when the caller has not chosen one, because an empty build type contributes no `-O` flag at all and the command above used to ship an unoptimised library (11.6 MB of `.a`, and every CPU path in it - LUT bakes, colour conversion, the contour tracer, the whole C ABI - built at `-O0`). Pass `-DCMAKE_BUILD_TYPE=Debug` explicitly when you want that; the default only applies when nothing is set, and multi-config generators are left alone. See [`docs/neon-perf-review.md`](docs/neon-perf-review.md) section 3.
 
 There is no test target. The build produces four artifacts:
 
@@ -47,9 +56,11 @@ The root `CMakeLists.txt` has `PLATFORM_WINDOWS` / `PLATFORM_LINUX` branches tha
 
 ## Shaders are embedded at configure time
 
-Shader sources under `lib/shaders/*.{vert,frag}` are read by `lib/CMakeLists.txt` and substituted into `shaders.h.in` via `configure_file()`, producing `build/lib/generated/shaders.h` with each shader as a `const char* const` raw string literal in `EdgeLighting::ShaderSource::*`. There is no runtime file I/O for shaders. `@GLSL_VERSION@` supplies the version line and `@NEON_TUNING@` injects `lib/include/renderer/neon-tuning.h`, so the tuning constants are shared verbatim between the shaders and the C++ renderers.
+Shader sources under `lib/shaders/*.{vert,frag}` are read by `lib/CMakeLists.txt` and substituted into `shaders.h.in` via `configure_file()`, producing `build/lib/generated/shaders.h` with each shader as a `const char* const` raw string literal in `EdgeLighting::ShaderSource::*`. There is no runtime file I/O for shaders. `@GLSL_VERSION@` supplies the version line and three tuning headers are injected verbatim so their constants are shared between the shaders and the C++ renderers: `@NEON_TUNING@` injects `lib/include/renderer/neon-tuning.h` into the neon shaders, `@DROPLETS_TUNING@` injects `lib/include/renderer/droplets-tuning.h` into `droplets.frag`, and `@LENS_FLARE_TUNING@` injects `lib/include/renderer/lens-flare-tuning.h` into `lens-flare.frag`.
 
-`CMAKE_CONFIGURE_DEPENDS` lists every shader file *and* `neon-tuning.h`, so editing any of them triggers a re-configure on the next build. **If you add a new shader you must update three places**: `lib/CMakeLists.txt` (both the `CMAKE_CONFIGURE_DEPENDS` and `file(READ ...)` lists) and `lib/shaders/shaders.h.in`.
+`CMAKE_CONFIGURE_DEPENDS` lists every shader file *and* all three tuning headers, so editing any of them triggers a re-configure on the next build. **If you add a new shader you must update three places**: `lib/CMakeLists.txt` (both the `CMAKE_CONFIGURE_DEPENDS` and `file(READ ...)` lists) and `lib/shaders/shaders.h.in`.
+
+**Never declare a bare uniform array** (`uniform vec4 uFoo[N]`) in a shader. The form is not available on the restricted GL targets this library ships against, and it will compile and run correctly on desktop GL, so testing will not catch it. Per-index data goes in a `layout(std140) uniform` block, uploaded through the `UniformBuffer` wrapper and bound to its own binding point - `LoopSamplesBlock`, `SegmentBlock`, `ArcBlock` (neon) and `GhostBlock` (lens flare) are the existing examples, and their array bounds are compile-time constants from the tuning headers. `ShaderProgram`'s array `SetUniform` overloads and its `UNIFORM_ARRAY_DIRECT` fallback exist for the upload path only; neither makes a bare array declaration portable.
 
 ## Architecture
 
@@ -65,16 +76,56 @@ Shader sources under `lib/shaders/*.{vert,frag}` are read by `lib/CMakeLists.txt
 
 Per-frame contract: `Update(dt)` ticks the clock, advances every attached animation by the clock delta, rebuilds the active config, then forwards `(dt, clockTime, activeConfig)` to every renderer; `Render(w, h)` does the same for drawing. Both `SetConfig` and the per-frame refresh notify renderers via `OnConfigChanged` - but only when the composited config actually changed, so renderers can rely on that call being meaningful. Renderers are independent visual layers and composite by blending - enable any subset.
 
-Six renderers, all under `lib/include/renderer/`, all registered by the demo in this order:
+Four renderers, all under `lib/include/renderer/`, all registered by the demo in this order:
+- `NeonRenderer` - the neon stroke. Analytic rounded-box SDF plus a gather loop over `NeonConfig::numSamples` perimeter samples (positions in a UBO), reading three baked LUT textures: `uGradientLUT` (base colour ring), `uSegmentLUT` (per-segment gradient atlas, one row per segment), `uArcLUT` (per-arc atlas). All LUTs are baked on the CPU as **RGBA8** - float textures are deliberately avoided for edge-device compatibility. Also owns the opaque-fill pass (`black-rect.frag`).
 
-- `WireframeRenderer` - 1px `GL_LINE_LOOP` debug box, blending temporarily disabled.
-- `NeonRenderer` - full-res single-pass neon stroke. Analytic rounded-box SDF plus a gather loop over `NEON_MAX_LOOP_SAMPLES` perimeter samples (positions in a UBO), reading three baked LUT textures: `uGradientLUT` (base colour ring), `uSegmentLUT` (per-segment gradient atlas, one row per segment), `uArcLUT` (per-arc atlas). All LUTs are baked on the CPU as **RGBA8** - float textures are deliberately avoided for edge-device compatibility. Also owns the opaque-fill pass (`black-rect.frag`) and two debug overlays (LUT strip, colour-stop markers).
-- `NeonOptimizedRenderer` - half-res variant: renders into a scaled FBO and bilinear-blits back. Adds a runtime `numSamples` knob and a configurable LUT width. **Visual params are read from `Config::neon`**, not from its own sub-config, which only carries perf knobs.
-- `DropletsRenderer` - rain-on-glass droplets in a band hugging the perimeter; screen-space gravity, self-lit drops, no framebuffer capture.
-- `LensFlareRenderer` - sun + hex-aperture flare (rays, chromatic ghosts) as one fullscreen premultiplied-alpha pass. The sun rides the perimeter in the same parameter space as neon segments/arcs.
-- `LensFlareOptimizedRenderer` - half-res variant of the above, same shader into a scaled FBO. Don't enable it alongside `LensFlareRenderer`; they draw the same flare and would double it.
+  **One renderer, two resolution paths**, selected by `NeonConfig::resolutionScale`: at `1.0` the gather draws straight onto the framebuffer it was handed (no offscreen buffer, no blit); below `1.0` it draws into a buffer of that fraction of the viewport and is bilinear-blitted back (`neon-blit.frag`). The paths share one pass schedule - every pixel-valued uniform is multiplied by the scale unconditionally (a no-op at `1.0`) and the shader converts `neon-tuning.h`'s own full-res px constants with `uResolutionScale`. Only the render target, the blit and the buffer allocation are conditional, which is what keeps `1.0` bit-identical to the dedicated full-res renderer this replaced. The opaque fill is the exception: always full-res on the caller's framebuffer, since its analytic SDF edge is the whole point of it.
 
-Note the `*Optimized` renderers are near-forks of their full-res counterparts (both the `.cpp` and the `.frag`), and share visual config. A change to neon or lens-flare appearance generally has to land in **both** copies to stay consistent.
+  Runs an **emission pre-pass** (`neon-emission.frag`): the gather's per-sample
+  work (arc winner-take-all, segment bells, LUT fetches) is a pure function of
+  `(si, uTime, config)`, so it is baked into an `N x 2` RGBA16F table and the
+  gather reads it with `texelFetch`. Per-fragment cost is `O(samples)` instead
+  of `O(samples * (arcs + segments))`. The invariant to preserve: **pure
+  function of `(si, uTime, config)` goes in the pre-pass; anything reading
+  `vPos` stays in the main shader.**
+
+  That same purity is why the pass is **skipped on frames neither input moved**
+  (`isEmissionTableStale`) - the buffer is allocated once and nothing else
+  writes it, so a still ring costs nothing after the frame it changes. Two ways
+  in: `mEmissionDirty`, set on ANY config change (deliberately wide - a missed
+  field is a stale ring, a spare rebuild is one small pass) and also from
+  `Update` when `GradientRingLUT::Tick` reports a cross-fade re-upload; and
+  `uTime`, which reaches the shader only as `si - uTime * uHueRotationRate`, so
+  at rate 0 it drops out entirely. Adding an input to that shader means adding
+  a term here - see [`docs/emission-prepass.md`](docs/emission-prepass.md) §3.
+
+  The table is `NEON_MAX_LOOP_SAMPLES x 2` - the sample-count CEILING, with
+  `numSamples` bounding only how much of it the gather reads - so its size is a
+  compile-time constant and it is allocated **once, in `Initialize`**, not per
+  frame. `Initialize` fails if no candidate format (`RGBA16F`, then `RGBA8`)
+  allocates. Size it to the live count instead and it goes straight back onto
+  the per-frame path.
+
+  `Render` is a **pass schedule**: derive the transform,
+  then one call per `render*Pass` method. `Render` owns blend state; a pass owns
+  its shader and, if it retargets, restores the framebuffer / viewport / blend
+  it was handed - never framebuffer 0, never a forced `glEnable` (an
+  `OffscreenCapture` hands the renderer a real FBO). Header declaration order,
+  .cpp definition order and the pass numbering all agree; the one deliberate
+  exception is documented at the declaration. See
+  [`docs/emission-prepass.md`](docs/emission-prepass.md) for the pass tables and
+  [`docs/emission-prepass-comparison.md`](docs/emission-prepass-comparison.md)
+  for the measured before/after of the pre-pass commit alone.
+  [`docs/branch-vs-main-comparison.md`](docs/branch-vs-main-comparison.md) is
+  the wider view: the whole branch against `main`, so it also covers the
+  colour-stop alpha and stop-sorting behaviour changes that ship with it.
+- `DebugRenderer` - every debug annotation, in one layer: the baked ring as a LUT strip (`neon-lut-debug.frag`), one disc per colour stop (`neon-stop-marker.frag`), and the 1px `GL_LINE_LOOP` bounding box (`wireframe.frag`, absorbed from the old `WireframeRenderer`), behind `DebugConfig::showGradientLUT` / `showColorStops` / `showWireframe`. Register it **last** - it annotates what the layers under it drew, so its overlays have to sit above all of them (the C ABI registers it last too, and gives it the last flag bit). Always full-res, whatever the neon's resolution scale. Reads `Config::debug` for what to draw and `Config::neon` for what it is describing. The strip and the markers annotate the GLOW and are suppressed when it is absent (neon off, or `debug.opaqueOnly`); the box annotates the GEOMETRY and survives both. Note the box now draws **over** the glow - `WireframeRenderer` was registered first and drew under it, and the overlays that annotate the glow have to follow it. Bakes its **own** `GradientRingLUT` from the same inputs, which is what keeps `NeonRenderer` free of every debug member. That ring is maintained only while the strip is actually on screen - one predicate, `IsStripVisible`, gates the bake, the cross-fade tick and the draw, so they cannot drift. Because stop changes made while it is hidden are therefore never baked, the catch-up bake on re-show **snaps** instead of cross-fading (`mStripVisible`): a fade from a ring nobody has seen for the last however-many seconds would leave the strip previewing colours the glow settled away from long ago.
+- `DropletsRenderer` - rain-on-glass droplets in a band hugging the perimeter; screen-space gravity, self-lit drops, no framebuffer capture. Draws a **band-fitted ring** - four strips bounding the band itself - rather than a fullscreen quad, so the pass costs what the perimeter and the band width cost rather than what the display costs. `droplets-tuning.h` holds the one constant the ring and the shader's discard must agree on; widen one without the other and the band clips to a straight line. The strips must tile without overlapping: this pass blends premultiplied, so a double-covered pixel composites twice. The other invariant is in the shader: the height-field gradient costs two more full evaluations of the droplet field, so it is **gated on `c.x > 0`** - exact, because `c.x = 0` annihilates both terms the normal reaches (`rim` and `spec`). Ungate it and the pass costs ~1.6x more for identical output. No resolution scale: unlike neon and the flare this pass never shaded the whole viewport, and its rims and speculars are single-pixel features a half-res blit would erase.
+- `LensFlareRenderer` - sun + hex-aperture flare (rays, chromatic ghosts) as a fullscreen premultiplied-alpha pass. The sun rides the perimeter in the same parameter space as neon segments/arcs. Like `NeonRenderer` it is **one renderer with two resolution paths**, selected by `LensFlareConfig::resolutionScale`; unlike the neon's, only two uniforms differ between them (`uResolution` and `uSunPos`), because the flare shader normalises every term by the resolution and is therefore scale invariant.
+
+  The ghost loop is ~88% of the fragment cost, so three things about it are load-bearing. **Per-ghost distance and colour are CPU work**, baked into the std140 `GhostBlock` by `BakeGhostTable` - they are pure functions of the ghost index and the config, the same invariant the neon emission pre-pass rests on, one tier cheaper (one 160-byte block, no texture, no pass). It consumes `ghostOffset` / `ghostColor` / `ghostTint` entirely, which is why the shader declares no uniforms for them - and it runs in `OnConfigChanged`, gated on exactly those three fields, so `Render` only binds. (Narrow rather than wide, unlike the neon table's gate, because the three inputs are visible in the same file; `rotationRate` and `spread` move every frame under an animation and change nothing here. `Initialize` bakes unconditionally so the block is filled whichever order registration and initialisation happen in.) **The bloom and ring terms are gated** on exact support bounds derived from `ghostSize` in `GetGhostBloomRadius` / `GetGhostRingFloor`; the constants those share with the shader terms live in `lens-flare-tuning.h`, and changing one there without rebuilding the derivation silently clips ghost pixels. **The hex sprite is deliberately NOT gated the same way** - `hexCoverage` calls `fwidth`, and a derivative in non-uniform control flow is undefined; the `uSpread` guard around the whole loop is safe only because it branches on a uniform. See [`docs/lens-flare-perf-review.md`](docs/lens-flare-perf-review.md) for the measurements and the one open defect.
+
+There are no longer any forked renderer pairs. `NeonOptimizedRenderer` / `neon-optimized.frag` were folded into `NeonRenderer` / `neon.frag` as a resolution scale (see [`docs/neon-unification-plan.md`](docs/neon-unification-plan.md)), and `LensFlareOptimizedRenderer` was folded into `LensFlareRenderer` the same way. Both merges are byte-identical at every scale tested. A change to neon or flare appearance now lands in exactly one place.
 
 To add a renderer, subclass `BaseRenderer` (`Initialize` / `Update` / `Render` / `OnConfigChanged`), add a sub-config struct to `Config` with `operator==`, register it in `demo/src/main.cpp`, and add an ImGui section in `DebugUI`.
 
@@ -93,7 +144,7 @@ The effect embeds the manager, so the host does **not** hand-composite animation
 `libedge-lighting-c` wraps the static library in a flat `extern "C"` surface for P-Invoke / ctypes / cgo. `edge-lighting-capi.h` is the single public include, aggregating `el-types.h` (enums, result codes, `EL_API`), `el-effect.h`, `el-animation.h`, `el-modulator.h`. Key points:
 
 - Three opaque handle families - effect, animation, modulator - defined in `capi-internal.h`. Attaching an animation does not transfer ownership.
-- Each effect handle carries a **staging `Config`**: every `el_effect_set_*` mutates staging and calls `SetConfig` immediately; every `el_effect_get_*` reads staging back, *not* the animation-overlaid active config. `el_effect_capture` re-syncs staging from the effect's base.
+- Each effect handle carries a **staging `Config`**: every `el_effect_set_*` mutates staging and nothing else; every `el_effect_get_*` reads staging back, *not* the animation-overlaid active config. Staging reaches the effect in `el_effect_update`, which is the only place that calls `SetConfig` - so a host that sets config and then calls only `el_effect_render` renders the previous frame's config. `el_effect_capture` re-syncs staging from the effect's base.
 - No C++ exception escapes the boundary; everything maps to an `el_result_e`.
 - Enum ABI parity between the C++ enums and their `el_*` mirrors is enforced by a wall of `static_assert`s at the top of `capi-internal.h`. **If you reorder or renumber a C++ enum that has an `el_*` mirror, add/adjust the assert there** - append new values at the end to stay forward-compatible.
 - Symbols are hidden by default (`CXX_VISIBILITY_PRESET hidden`); only `EL_API`-marked `el_*` functions are exported.

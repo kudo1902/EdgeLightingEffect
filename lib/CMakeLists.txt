@@ -37,7 +37,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/wireframe.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.vert"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.frag"
-    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-optimized.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-emission.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-blit.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/black-rect.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-lut-debug.frag"
@@ -46,13 +46,15 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lens-flare.vert"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lens-flare.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/neon-tuning.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/droplets-tuning.h"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/lens-flare-tuning.h"
 )
 
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/wireframe.vert" WIREFRAME_VERT_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/wireframe.frag" WIREFRAME_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.vert" NEON_VERT_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.frag" NEON_FRAG_CONTENT)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-optimized.frag" NEON_OPTIMIZED_FRAG_CONTENT)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-emission.frag" NEON_EMISSION_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-blit.frag" NEON_BLIT_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/black-rect.frag" BLACK_RECT_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-lut-debug.frag" NEON_LUT_DEBUG_FRAG_CONTENT)
@@ -64,6 +66,15 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lens-flare.frag" LENS_FLARE_FRAG_
 # Shared neon tuning #defines, injected into the single-pass neon shaders via
 # @NEON_TUNING@ in shaders.h.in (also #included by the C++ renderers).
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/neon-tuning.h" NEON_TUNING)
+
+# Shared droplet band #defines, injected into droplets.frag via
+# @DROPLETS_TUNING@ in shaders.h.in (also #included by the C++ renderer).
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/droplets-tuning.h" DROPLETS_TUNING)
+
+# Shared ghost-term #defines, injected into lens-flare.frag via
+# @LENS_FLARE_TUNING@ in shaders.h.in (also #included by the C++ renderer,
+# which derives the ghost support bounds from them).
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/lens-flare-tuning.h" LENS_FLARE_TUNING)
 
 set(SHADER_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 configure_file(
@@ -77,12 +88,10 @@ add_library(edge-lighting STATIC
     src/animation/easing-function.cpp
     src/animation/field-bound-animation.cpp
     src/core/edge-lighting.cpp
-    src/renderer/wireframe-renderer.cpp
     src/renderer/neon-renderer.cpp
-    src/renderer/neon-optimized-renderer.cpp
+    src/renderer/debug-renderer.cpp
     src/renderer/droplets-renderer.cpp
     src/renderer/lens-flare-renderer.cpp
-    src/renderer/lens-flare-optimized-renderer.cpp
     src/util/capture-util.cpp
     src/util/contour-tracer.cpp
     src/util/stb-image.cpp
@@ -110,6 +119,7 @@ add_library(edge-lighting-c SHARED
     capi/el-effect.cpp
     capi/el-animation.cpp
     capi/el-modulator.cpp
+    capi/el-deprecated.cpp
 )
 
 target_include_directories(edge-lighting-c PUBLIC

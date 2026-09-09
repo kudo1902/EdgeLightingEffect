@@ -15,7 +15,9 @@ precision highp float;
 // Structure (matches the reference so the visual reads the same):
 //   10x ghosts    - `circle()` called in a loop. Each iteration is a group of
 //                   {big pow-based ghost, ring, hex sprite} at a pseudo-random
-//                   distance / size along the sun axis.
+//                   distance / size along the sun axis. The distance and the
+//                   group's colour are read from uGhosts, which the renderer
+//                   bakes; the reference derived them here, per fragment.
 //                   Hex shape comes from regShape(N=6).
 //   sun rays+core - three layered terms on top of the ghosts, tinted by
 //                   uSunColor so the sun's temperature is controllable.
@@ -26,6 +28,17 @@ precision highp float;
 // palette anyway), noise-texture reads replaced with hash so no atlas needed,
 // sky-gradient background removed (this renderer's single responsibility is
 // the flare itself - use a dedicated background renderer for atmosphere).
+//
+// Three departures from the reference are performance, not looks. The
+// reference's hex distance went through atan(); it is a max of three dot
+// products instead. Its two compactly-supported ghost terms were evaluated at
+// every fragment; they are now gated on the exact radius outside which each is
+// zero. Both are value-preserving - see hexCoverage and circle below. And its
+// per-ghost distance and palette, pure functions of the ghost index and the
+// config, were re-derived in every fragment; they now arrive baked in uGhosts.
+// That last one shifts ghost placement in the third decimal, for the reason
+// the renderer's BakeGhostTable spells out. The ghost loop was 88% of this
+// shader's cost, and hexCoverage alone 43%.
 
 out vec4 fragColor;
 
@@ -39,17 +52,32 @@ uniform float uRotation;     // Ray-angle offset in radians; drives sun/ray spin
 uniform float uRayDensity;   // Angular density of the ray pattern (see the doc block on the ray recipe).
 uniform float uGhostSpacing;  // Ghost placement stretch along the sun axis (1 = reference). Scales spread only, not colour/size.
 uniform float uGhostSize;     // Uniform per-ghost size/falloff exponent, shared by every ghost so they all read the same size.
-uniform float uGhostOffset;   // Signed shift of every ghost's distance along the sun axis. 0 = reference (blooms at centre); negative pulls the cluster toward the sun/border.
-uniform vec3  uGhostColor;    // Tint the ghosts lean toward when uGhostTint > 0.
-uniform float uGhostTint;     // Blend from the procedural rainbow (0) to a single uGhostColor (1).
 uniform vec2  uFlareCenter;   // Ghost convergence point in normalised screen coords (0..1, y-down). (0.5, 0.5) = screen centre.
+uniform float uBloomRadius;   // Radius outside which a ghost's bloom term is exactly zero. Derived from uGhostSize on the CPU; see lens-flare-tuning.h.
+uniform float uRingFloor;     // Lower bound sin(l * 30) must clear before a ghost's ring term can be non-zero. Same derivation.
 
-float rnd(vec2 p) { return fract(sin(dot(p, vec2(12.1234, 72.8392)) * 45123.2)); }
-float rnd(float w) { return fract(sin(w) * 1000.0); }
+// Per-ghost table as a std140 uniform block, baked by the renderer: xyz is a
+// ghost's final colour, w its distance along the sun axis.
+//
+// Both were derived here, per fragment, from the ghost index and three
+// uniforms - LensFlareConfig's ghostOffset, ghostColor and ghostTint, which is
+// why those no longer appear above. They were the same ten values in every
+// fragment of the viewport, so they are the renderer's work, not the shader's.
+// Same split the neon emission pre-pass is built on, one tier cheaper: one
+// 160-byte block, no texture and no pass.
+//
+// A BLOCK, not a bare `uniform vec4 uGhosts[N]`: every per-index array in this
+// tree is packed into a std140 block, because the bare array form is not
+// available on the restricted GL targets this library ships against. Same
+// pattern as neon.frag's LoopSamplesBlock / SegmentBlock / ArcBlock.
+layout(std140) uniform GhostBlock
+{
+    vec4 uGhosts[FLARE_GHOST_COUNT];
+};
 
-// N-gon aperture sprite (N=6 gives hex ghosts). Returns anti-aliased *inside*
-// coverage: 1 within the polygon, 0 outside, with the edge feathered over the
-// pixel footprint of the polygon distance.
+// Hex aperture sprite. Returns anti-aliased *inside* coverage: 1 within the
+// hexagon, 0 outside, with the edge feathered over the pixel footprint of the
+// polygon distance.
 //
 // The reference sliced the sprite out with `max(0.01 - regShape, 0)`, where
 // regShape was a 0.5..0.51 smoothstep. That threshold lands at the flat bottom
@@ -59,34 +87,80 @@ float rnd(float w) { return fract(sin(w) * 1000.0); }
 // Building coverage straight from the polygon distance with an fwidth-sized
 // edge keeps the boundary ~1px wide at whatever resolution the pass runs at,
 // so the hex ghosts resolve cleanly at full and half res alike.
-float hexCoverage(vec2 p, float N)
+//
+// WHY THERE IS NO atan HERE
+//   The distance being measured is the hexagon's support function: p projected
+//   onto whichever of the six edge normals it lies nearest. The reference found
+//   that normal by angle - atan(p.x, p.y), snapped to the nearest multiple of
+//   2 PI / N, then cos(snapped - a) * length(p). But for a convex regular
+//   polygon the nearest normal is also the one with the LARGEST projection:
+//   every other normal sits further round, so its cosine is smaller. That makes
+//   the whole construction a plain max over the six dot products, with no
+//   transcendental in it. Opposite normals differ only in sign, so three
+//   abs()-ed dots cover all six.
+//
+//   Same value to within float noise (max deviation 5e-6 over the plane, which
+//   is the reference's own 6.28319 truncation), at roughly a third of the cost.
+//   atan alone was ~43% of this shader.
+//
+// HEX_AXIS_* are dir(k * 2 PI / 6 - 0.2) for k = 0, 1, 2, in the reference's
+// (sin, cos) convention and carrying its +0.2 radian aperture roll.
+const vec2 HEX_AXIS_0 = vec2(-0.198669331,  0.980066578);
+const vec2 HEX_AXIS_1 = vec2( 0.749428406,  0.662085390);
+const vec2 HEX_AXIS_2 = vec2( 0.948096722, -0.317982085);
+
+float hexCoverage(vec2 p)
 {
-    float a = atan(p.x, p.y) + 0.2;
-    float b = 6.28319 / N;
-    float d = cos(floor(0.5 + a / b) * b - a) * length(p);
+    float d = max(max(abs(dot(p, HEX_AXIS_0)), abs(dot(p, HEX_AXIS_1))),
+                  abs(dot(p, HEX_AXIS_2)));
     float w = max(fwidth(d), 1e-4);
     return 1.0 - smoothstep(0.5 - w, 0.5 + w, d);
 }
 
 // One ghost group at parametric distance `dist` along the sun axis.
-vec3 circle(vec2 p, float size, float dist, vec2 sunUV)
+//
+// The bloom and ring terms are compactly supported - each is exactly zero
+// outside a radius that depends only on `size` - so each is gated on the bound
+// the renderer solved for it. A ghost covers a few percent of the viewport but
+// used to be evaluated in full at every fragment of it. lens-flare-tuning.h
+// carries the derivation of both bounds and the constants they share with the
+// terms below.
+//
+// The hex sprite is deliberately NOT gated the same way: hexCoverage calls
+// fwidth, and a derivative taken in non-uniform control flow is undefined in
+// GLSL. It stays at the top level of the function, where the whole quad
+// evaluates it or none of it does.
+//
+// `color` arrives from uGhosts rather than being derived here; `dist` still
+// shapes all three terms, so it is still a parameter.
+vec3 circle(vec2 p, float size, float dist, vec2 sunUV, vec3 color)
 {
-    float l  = length(p + sunUV * (dist * 4.0)) + size / 2.0;
-    float c  = max(0.01 - pow(length(p + sunUV * dist), size * 1.4), 0.0) * 50.0;
-    float c1 = max(0.001 - pow(l - 0.3, 1.0 / 40.0) + sin(l * 30.0), 0.0) * 3.0;
+    // Bloom. `pow` is strictly increasing, so lq < uBloomRadius is exactly the
+    // condition for a non-zero term, not an approximation of it.
+    float lq = length(p + sunUV * dist);
+    float c  = 0.0;
+    if (lq < uBloomRadius)
+    {
+        c = max(FLARE_BLOOM_CUT - pow(lq, size * FLARE_BLOOM_EXP), 0.0) * 50.0;
+    }
+
+    // Ring. The sin is the cheap half of the comparison and uRingFloor bounds
+    // the expensive half from below, so test the sin first and only pay for the
+    // pow on the thin annuli where the term can actually be non-zero.
+    float l  = length(p + sunUV * (dist * 4.0)) + size * FLARE_RING_L_BIAS;
+    float sl = sin(l * 30.0);
+    float c1 = 0.0;
+    if (sl > uRingFloor)
+    {
+        c1 = max(FLARE_RING_BIAS - pow(l - FLARE_RING_SHIFT, FLARE_RING_EXP) + sl, 0.0) * 3.0;
+    }
+
     // Flat-filled hex sprite (magnitude 0.05, matching the reference's
     // 0.01 * 5) with an anti-aliased edge from hexCoverage.
-    float s  = hexCoverage(p * 5.0 + sunUV * dist * 5.0 + 0.9, 6.0) * 0.05;
+    float s  = hexCoverage(p * 5.0 + sunUV * dist * 5.0 + 0.9) * 0.05;
 
-    // Procedural per-ghost palette; distance-modulated so no two ghosts read
-    // the same colour. This overrode the reference's caller-supplied colour
-    // params, so those params are dropped in this port.
-    vec3 color = cos(vec3(0.44, 0.24, 0.2) * 8.0 + dist * 4.0) * 0.5 + 0.5;
-    // Lean the per-ghost hue toward a caller tint. uGhostTint 0 keeps the
-    // procedural rainbow; 1 makes every ghost the same uGhostColor. Brightness
-    // still comes from the (c + c1 + s) shape terms, so ghosts keep their
-    // falloff either way.
-    color = mix(color, uGhostColor, uGhostTint);
+    // Brightness comes from the (c + c1 + s) shape terms and hue from the
+    // baked table, so ghosts keep their falloff whatever the tint.
     return (c + c1 + s) * color - 0.01;
 }
 
@@ -107,22 +181,33 @@ void main()
     vec2 flareCentre = vec2((uFlareCenter.x - 0.5) * aspect,
                             0.5 - uFlareCenter.y);
 
-    // --- 10 ghost groups scattered along the sun -> flare-centre axis.
+    // --- Ghost groups scattered along the sun -> flare-centre axis.
     // Working relative to flareCentre re-anchors the whole cluster: ghostP puts
     // dist 0 at flareCentre, and ghostAxis is the flareCentre -> sun direction,
     // so the ghost line runs through flareCentre and the sun. uGhostSpacing
     // stretches the placement axis without touching per-ghost colour/size.
-    vec2 ghostP    = uv    - flareCentre;
-    vec2 ghostAxis = (sunUV - flareCentre) * uGhostSpacing;
-    for (float i = 0.0; i < 10.0; i++)
+    //
+    // uGhostSize replaces the reference's per-ghost random size so every ghost
+    // reads the same size; only distance (placement) still varies, and that
+    // distance now arrives baked in uGhosts[i].w. dist 0 is the flare centre
+    // and dist ~ -1 is the sun, which is the axis LensFlareConfig::ghostOffset
+    // slides the cluster along before the bake.
+    //
+    // Every term the loop produces is multiplied by uSpread, so at zero the
+    // whole block contributes exactly nothing and is skipped outright - and
+    // zero is a documented setting (LensFlareConfig::spread, "suppress
+    // ghosts"), not a degenerate one. uSpread is a uniform, so this is uniform
+    // control flow: every invocation in the draw takes the same side, which is
+    // what keeps circle()'s fwidth call legal inside it, and what makes the
+    // branch itself free.
+    if (uSpread != 0.0)
     {
-        // uGhostSize replaces the reference's per-ghost random size so every
-        // ghost reads the same size; only distance (placement) still varies.
-        // uGhostOffset slides the whole cluster along the axis: dist 0 is the
-        // flare centre and dist ~ -1 is the sun, so a negative offset pulls
-        // the ghosts off centre and up against the sun / border edge.
-        float ghostDist = rnd(i * 20.0) * 3.0 + 0.2 - 0.5 + uGhostOffset;
-        color += circle(ghostP, uGhostSize, ghostDist, ghostAxis) * uSpread;
+        vec2 ghostP    = uv    - flareCentre;
+        vec2 ghostAxis = (sunUV - flareCentre) * uGhostSpacing;
+        for (int i = 0; i < FLARE_GHOST_COUNT; i++)
+        {
+            color += circle(ghostP, uGhostSize, uGhosts[i].w, ghostAxis, uGhosts[i].xyz) * uSpread;
+        }
     }
 
     // --- Sun rays + core; tint governed by uSunColor. Size scale divides the

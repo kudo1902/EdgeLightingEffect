@@ -31,6 +31,26 @@ namespace EdgeLighting
             glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, data);
         }
 
+        /// Replace the pixels of an ALREADY-ALLOCATED image of the same size.
+        ///
+        /// @ref SetData re-specifies the texture: the driver frees the old
+        /// storage and allocates new storage on every call. That is the right
+        /// call when the dimensions or the format move, and the wrong one for
+        /// a stream of same-sized updates - a cross-fading @c GradientRingLUT
+        /// re-uploads its ring every frame, and re-allocating a texture per
+        /// frame to write the same number of bytes is pure overhead.
+        ///
+        /// @pre @ref SetData has run at these exact dimensions; there is no
+        ///      allocation here, so a mismatched size is undefined behaviour
+        ///      in GL rather than a resize. @c BaseLUT tracks the dimensions
+        ///      and picks between the two.
+        void SetSubData(const void *data, GLsizei width, GLsizei height,
+                        GLenum format = GL_RGBA, GLenum type = GL_UNSIGNED_BYTE) const
+        {
+            Bind();
+            glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, format, type, data);
+        }
+
         void SetParams(GLint minFilter = GL_LINEAR, GLint magFilter = GL_LINEAR,
                        GLint wrapS = GL_CLAMP_TO_EDGE, GLint wrapT = GL_CLAMP_TO_EDGE) const
         {
