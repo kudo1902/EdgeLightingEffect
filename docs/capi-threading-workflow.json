@@ -1,0 +1,355 @@
+{
+  "schema_version": 2,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "EdgeLighting C ABI - one frame in both threading models",
+    "locale": "en",
+    "quality_profile": "showcase",
+    "legend": {
+      "mode": "auto",
+      "entries": {
+        "frontend": {
+          "label": "Host API call"
+        },
+        "backend": {
+          "label": "GL thread work"
+        },
+        "messagebus": {
+          "label": "Shared slot"
+        }
+      }
+    }
+  },
+  "lanes": [
+    {
+      "id": "single",
+      "label": "EL_THREADING_SINGLE - one GL thread"
+    },
+    {
+      "id": "data",
+      "label": "EL_THREADING_SPLIT - data thread"
+    },
+    {
+      "id": "shared",
+      "label": "Shared state behind the handle"
+    },
+    {
+      "id": "render",
+      "label": "EL_THREADING_SPLIT - render thread, owns GL"
+    }
+  ],
+  "phases": [
+    {
+      "id": "author",
+      "label": "Author + publish",
+      "fromCol": 0,
+      "toCol": 1
+    },
+    {
+      "id": "handoff",
+      "label": "Cross the boundary",
+      "fromCol": 2,
+      "toCol": 3,
+      "variant": "emphasis"
+    },
+    {
+      "id": "frame",
+      "label": "Tick, draw, read back",
+      "fromCol": 4,
+      "toCol": 5
+    }
+  ],
+  "mainPath": [
+    "d_config",
+    "d_publish",
+    "mailbox",
+    "r_drain",
+    "r_tick",
+    "r_render"
+  ],
+  "nodes": [
+    {
+      "id": "s_author",
+      "lane": "single",
+      "col": 0,
+      "type": "frontend",
+      "label": "el_effect_set_*",
+      "sublabel": "writes staging",
+      "width": 152
+    },
+    {
+      "id": "s_update",
+      "lane": "single",
+      "col": 4,
+      "type": "backend",
+      "label": "el_effect_update",
+      "sublabel": "SetConfig, Update",
+      "tag": "no lock, no queue",
+      "width": 152
+    },
+    {
+      "id": "s_render",
+      "lane": "single",
+      "col": 5,
+      "type": "backend",
+      "label": "el_effect_render",
+      "sublabel": "draws the frame",
+      "width": 152
+    },
+    {
+      "id": "d_config",
+      "lane": "data",
+      "col": 0,
+      "type": "frontend",
+      "label": "el_effect_set_*",
+      "sublabel": "writes staging",
+      "width": 152
+    },
+    {
+      "id": "d_publish",
+      "lane": "data",
+      "col": 1,
+      "type": "frontend",
+      "label": "el_effect_publish",
+      "sublabel": "into pending slot",
+      "width": 152
+    },
+    {
+      "id": "d_anim",
+      "lane": "data",
+      "col": 2,
+      "type": "frontend",
+      "label": "el_animation_*",
+      "sublabel": "while attached",
+      "width": 152
+    },
+    {
+      "id": "d_read",
+      "lane": "data",
+      "col": 4,
+      "type": "frontend",
+      "label": "el_animation_get_*",
+      "sublabel": "reads the mirrors",
+      "width": 152
+    },
+    {
+      "id": "d_poll",
+      "lane": "data",
+      "col": 5,
+      "type": "frontend",
+      "label": "el_effect_poll_callbacks",
+      "sublabel": "runs callbacks",
+      "width": 176
+    },
+    {
+      "id": "mailbox",
+      "lane": "shared",
+      "col": 2,
+      "type": "messagebus",
+      "label": "Config mailbox",
+      "sublabel": "newest wins",
+      "tag": "one mutex",
+      "width": 152
+    },
+    {
+      "id": "cmdq",
+      "lane": "shared",
+      "col": 3,
+      "type": "messagebus",
+      "label": "Command queue",
+      "sublabel": "FIFO, max 256",
+      "width": 152
+    },
+    {
+      "id": "mirrors",
+      "lane": "shared",
+      "col": 4,
+      "type": "messagebus",
+      "label": "Animation mirrors",
+      "sublabel": "relaxed atomics",
+      "width": 152
+    },
+    {
+      "id": "cbq",
+      "lane": "shared",
+      "col": 5,
+      "type": "messagebus",
+      "label": "Callback queue",
+      "sublabel": "render to data",
+      "width": 152
+    },
+    {
+      "id": "r_drain",
+      "lane": "render",
+      "col": 3,
+      "type": "backend",
+      "label": "el_effect_update",
+      "sublabel": "swap, then drain",
+      "tag": "GL thread",
+      "width": 152
+    },
+    {
+      "id": "r_tick",
+      "lane": "render",
+      "col": 4,
+      "type": "backend",
+      "label": "SetConfig + Update(dt)",
+      "sublabel": "frame-locked tick",
+      "width": 152
+    },
+    {
+      "id": "r_render",
+      "lane": "render",
+      "col": 5,
+      "type": "backend",
+      "label": "el_effect_render",
+      "sublabel": "draws the frame",
+      "width": 152
+    }
+  ],
+  "edges": [
+    {
+      "id": "s-author-update",
+      "from": "s_author",
+      "to": "s_update",
+      "label": "staging read directly, no handoff",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "id": "s-update-render",
+      "from": "s_update",
+      "to": "s_render",
+      "label": "same thread, same frame",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "id": "d-config-publish",
+      "from": "d_config",
+      "to": "d_publish",
+      "variant": "default",
+      "role": "main"
+    },
+    {
+      "id": "d-publish-mailbox",
+      "from": "d_publish",
+      "to": "mailbox",
+      "label": "copy-assign into pending",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "id": "d-anim-cmdq",
+      "from": "d_anim",
+      "to": "cmdq",
+      "label": "queue a Command",
+      "variant": "dashed",
+      "role": "async"
+    },
+    {
+      "id": "mailbox-drain",
+      "from": "mailbox",
+      "to": "r_drain",
+      "label": "swap(pending, consumed)",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "id": "cmdq-drain",
+      "from": "cmdq",
+      "to": "r_drain",
+      "label": "swap(commands, drain)",
+      "variant": "default",
+      "role": "branch"
+    },
+    {
+      "id": "drain-tick",
+      "from": "r_drain",
+      "to": "r_tick",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "id": "tick-render",
+      "from": "r_tick",
+      "to": "r_render",
+      "label": "same thread, GL",
+      "variant": "emphasis",
+      "role": "main"
+    },
+    {
+      "id": "tick-mirrors",
+      "from": "r_tick",
+      "to": "mirrors",
+      "label": "publishMirrors",
+      "variant": "dashed",
+      "role": "async"
+    },
+    {
+      "id": "mirrors-read",
+      "from": "mirrors",
+      "to": "d_read",
+      "label": "one frame behind",
+      "variant": "dashed",
+      "role": "return"
+    },
+    {
+      "id": "tick-cbq",
+      "from": "r_tick",
+      "to": "cbq",
+      "label": "OnComplete deferred",
+      "variant": "dashed",
+      "role": "async"
+    },
+    {
+      "id": "cbq-poll",
+      "from": "cbq",
+      "to": "d_poll",
+      "label": "run on the data thread",
+      "variant": "dashed",
+      "role": "return"
+    }
+  ],
+  "semanticChecks": {
+    "allowedRoots": [
+      "s_author",
+      "d_config",
+      "d_anim"
+    ],
+    "allowedTerminals": [
+      "s_render",
+      "r_render",
+      "d_read",
+      "d_poll"
+    ]
+  },
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "Single mode is the historical path",
+      "items": [
+        "No mutex taken, no queue allocated, el_effect_publish a no-op",
+        "Callbacks fire inline, because gDispatchTarget is null off the render thread"
+      ]
+    },
+    {
+      "dot": "violet",
+      "title": "What crosses the boundary in split mode",
+      "items": [
+        "Config is state, so the mailbox is newest-wins rather than a backlog",
+        "Animation mutations are events, so they queue FIFO and drain before Update",
+        "Callbacks defer, so a host callback may legally call el_effect_set_*"
+      ]
+    },
+    {
+      "dot": "amber",
+      "title": "The seam is not update versus render",
+      "items": [
+        "el_effect_update uploads LUTs, VBOs and UBOs through OnConfigChanged",
+        "That makes it a GL phase, so it stays on the render thread beside render",
+        "Animations stay frame-locked there too, so timing matches single mode"
+      ]
+    }
+  ]
+}
