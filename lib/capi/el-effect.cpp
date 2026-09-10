@@ -1,5 +1,19 @@
 #include "capi-internal.h"
 
+#include <algorithm>
+#include <mutex>
+#include <utility>
+
+namespace EdgeLighting
+{
+    namespace Capi
+    {
+        /// Declared in capi-internal.h; defined here because el-animation.cpp
+        /// reads it and this is the translation unit that writes it.
+        thread_local el_effect_handle_t gDispatchTarget = nullptr;
+    }
+}
+
 namespace
 {
     /// Seed for colour stops created by the set_*_count growers. Matches what
@@ -8,6 +22,180 @@ namespace
     /// ColorStop::color.a is an emission scale rather than a blend opacity,
     /// that renders as "dark here" instead of as a merely unset colour.
     const EdgeLighting::ColorStop DEFAULT_COLOR_STOP{0.0f, glm::vec4(1.0f)};
+
+    using EdgeLighting::Capi::Command;
+    using EdgeLighting::Capi::CommandOp;
+
+    /// Run one queued mutation. RENDER THREAD, called from the drain in
+    /// el_effect_update with gDispatchTarget already set - which is what makes
+    /// a state-change callback fired from in here defer like any other.
+    ///
+    /// An op whose animation went null between queue and drain is skipped
+    /// rather than treated as an error: the only way to get one is a handle
+    /// created with a null animation, which every el_animation_* entry point
+    /// already tolerates.
+    void runCommand(el_effect_handle_t effect, Command &cmd)
+    {
+        auto &st = *effect->threaded;
+        auto &impl = *effect->impl;
+
+        // Effect-level ops first - these carry no animation.
+        switch (cmd.op)
+        {
+        case CommandOp::CLOCK_PLAY:
+        {
+            impl.GetClock().Play();
+            return;
+        }
+        case CommandOp::CLOCK_PAUSE:
+        {
+            impl.GetClock().Pause();
+            return;
+        }
+        case CommandOp::DETACH_ALL:
+        {
+            impl.GetAnimationManager().DetachAll();
+            // Acknowledge before dropping the list - this is what releases
+            // each animation back to the data thread. See AnimMirror::attached.
+            for (auto &entry : st.attached)
+            {
+                if (entry.second)
+                {
+                    entry.second->attached.store(false, std::memory_order_release);
+                }
+            }
+            st.attached.clear();
+            return;
+        }
+        default:
+        {
+            break;
+        }
+        }
+
+        if (!cmd.anim)
+        {
+            return;
+        }
+
+        switch (cmd.op)
+        {
+        case CommandOp::PLAY:
+        {
+            cmd.anim->Play();
+            break;
+        }
+        case CommandOp::PAUSE:
+        {
+            cmd.anim->Pause();
+            break;
+        }
+        case CommandOp::STOP:
+        {
+            cmd.anim->Stop();
+            break;
+        }
+        case CommandOp::RESET:
+        {
+            // Into a throwaway seeded from the effect's BASE config, not into
+            // the data thread's staging - staging lives on the other thread,
+            // and the config half of Reset is redundant for an attached
+            // animation anyway. See ThreadedState::resetScratch.
+            st.resetScratch = impl.GetConfig();
+            cmd.anim->Reset(st.resetScratch);
+            break;
+        }
+        case CommandOp::CAPTURE_BASELINE:
+        {
+            cmd.anim->CaptureBaseline(impl.GetConfig());
+            break;
+        }
+        case CommandOp::SET_ELAPSED:
+        {
+            cmd.anim->SetElapsed(cmd.f);
+            break;
+        }
+        case CommandOp::SET_PROGRESS:
+        {
+            cmd.anim->SetProgress(cmd.f);
+            break;
+        }
+        case CommandOp::SET_SPEED:
+        {
+            cmd.anim->SetSpeed(cmd.f);
+            break;
+        }
+        case CommandOp::SET_DURATION:
+        {
+            cmd.anim->SetDuration(cmd.f);
+            break;
+        }
+        case CommandOp::SET_END_ACTION:
+        {
+            cmd.anim->SetEndAction(toEndAction(static_cast<el_end_action_e>(cmd.i)));
+            break;
+        }
+        case CommandOp::SET_PLAYBACK_MODE:
+        {
+            cmd.anim->SetPlaybackMode(toPlaybackMode(static_cast<el_playback_mode_e>(cmd.i)));
+            break;
+        }
+        case CommandOp::ATTACH:
+        {
+            impl.Attach(cmd.anim);
+            st.attached.emplace_back(cmd.anim, cmd.mirror);
+            // Already true - the data thread set it when it queued this - but
+            // set it again so a re-attach queued behind a DETACH still ends up
+            // true after both have run, whatever order the host asked in.
+            if (cmd.mirror)
+            {
+                cmd.mirror->attached.store(true, std::memory_order_release);
+            }
+            break;
+        }
+        case CommandOp::DETACH:
+        {
+            impl.Detach(cmd.anim);
+            for (auto &entry : st.attached)
+            {
+                if (entry.first == cmd.anim && entry.second)
+                {
+                    entry.second->attached.store(false, std::memory_order_release);
+                }
+            }
+            st.attached.erase(
+                std::remove_if(st.attached.begin(), st.attached.end(),
+                               [&cmd](const auto &entry)
+                               { return entry.first == cmd.anim; }),
+                st.attached.end());
+            break;
+        }
+        default:
+        {
+            break;
+        }
+        }
+    }
+
+    /// Republish the render thread's animation state for the data thread's
+    /// getters. RENDER THREAD, after the manager has ticked.
+    void publishMirrors(el_effect_handle_t effect)
+    {
+        auto &st = *effect->threaded;
+        st.clockPlaying.store(effect->impl->GetClock().IsPlaying(),
+                              std::memory_order_relaxed);
+        for (auto &entry : st.attached)
+        {
+            if (!entry.second || !entry.first)
+            {
+                continue;
+            }
+            entry.second->state.store(static_cast<int32_t>(fromAnimationState(entry.first->GetState())),
+                                      std::memory_order_relaxed);
+            entry.second->elapsed.store(entry.first->GetElapsed(), std::memory_order_relaxed);
+            entry.second->progress.store(entry.first->GetProgress(), std::memory_order_relaxed);
+        }
+    }
 }
 
 extern "C"
@@ -1739,6 +1927,25 @@ extern "C"
         {
             return EL_SUCCESS;
         }
+        if (isSplit(effect))
+        {
+            // Animation handles outlive the effect in plenty of hosts ("destroy
+            // the effect, then the animations"), and each one attached to this
+            // effect still points at it. Sever those now, or the first
+            // el_animation_* call after this is a use-after-free on the queue.
+            //
+            // Safe to touch data-thread state from here: by the shutdown
+            // protocol the data thread has already called el_effect_shutdown
+            // and stopped touching the handle.
+            for (auto *handle : effect->threaded->stagedHandles)
+            {
+                handle->stagedOwner = nullptr;
+                if (handle->mirror)
+                {
+                    handle->mirror->attached.store(false, std::memory_order_release);
+                }
+            }
+        }
         delete effect;
         return EL_SUCCESS;
     }
@@ -1797,6 +2004,18 @@ extern "C"
                 LOG_E("el_effect_init_with_renderers: renderer initialisation failed");
                 return EL_ERROR_INIT_FAILED;
             }
+            if (isSplit(effect))
+            {
+                // Re-seed: the host may have configured the effect between
+                // choosing the mode and initialising. Nothing else is running
+                // yet, so this needs no lock - but taking it costs nothing on
+                // a one-off path and keeps every touch of `consumed` uniform.
+                auto &st = *effect->threaded;
+                std::lock_guard<std::mutex> lock(st.mutex);
+                st.consumed = effect->config;
+                st.clockPlaying.store(effect->impl->GetClock().IsPlaying(),
+                                      std::memory_order_relaxed);
+            }
             return EL_SUCCESS;
         }
         catch (const std::exception &e)
@@ -1806,10 +2025,138 @@ extern "C"
         }
     }
 
+    el_result_e el_effect_set_threading_mode(el_effect_handle_t effect, el_threading_mode_e mode)
+    {
+        LOG_I("effect=%p, mode=%d", (void *)effect, (int)mode);
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_threading_mode");
+        if (mode != EL_THREADING_SINGLE && mode != EL_THREADING_SPLIT)
+        {
+            LOG_E("el_effect_set_threading_mode: unknown mode %d", (int)mode);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        // Immutable past init: the mode decides who owns the staging config,
+        // and a live render thread is already reading on that assumption.
+        if (effect->impl)
+        {
+            LOG_E("el_effect_set_threading_mode: effect already initialised");
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        if (effect->mode == mode)
+        {
+            return EL_SUCCESS;
+        }
+        try
+        {
+            effect->mode = mode;
+            if (mode == EL_THREADING_SPLIT)
+            {
+                effect->threaded = std::make_unique<EdgeLighting::Capi::ThreadedState>();
+                // Seed both slots from staging so a host that configures the
+                // effect up front and then starts its render thread gets the
+                // config it authored on frame one, published or not.
+                effect->threaded->consumed = effect->config;
+                effect->threaded->pending = effect->config;
+            }
+            else
+            {
+                effect->threaded.reset();
+            }
+            return EL_SUCCESS;
+        }
+        catch (const std::exception &e)
+        {
+            LOG_E("exception: %s", e.what());
+            return mapExceptionToResult(e);
+        }
+    }
+
+    el_result_e el_effect_publish(el_effect_handle_t effect)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_publish");
+        if (!isSplit(effect))
+        {
+            return EL_SUCCESS;
+        }
+        try
+        {
+            auto &st = *effect->threaded;
+            std::lock_guard<std::mutex> lock(st.mutex);
+            if (st.closed)
+            {
+                return EL_SUCCESS;
+            }
+            // Copy-ASSIGN into the warm slot, never a copy-construct: the
+            // assignment reuses the vector capacity already there, so a steady
+            // stream of publishes allocates nothing. Same property
+            // refreshActiveConfig's mScratchConfig documents at length.
+            st.pending = effect->config;
+            st.hasPending = true;
+            return EL_SUCCESS;
+        }
+        catch (const std::exception &e)
+        {
+            LOG_E("exception: %s", e.what());
+            return mapExceptionToResult(e);
+        }
+    }
+
+    el_result_e el_effect_poll_callbacks(el_effect_handle_t effect)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_poll_callbacks");
+        if (!isSplit(effect))
+        {
+            return EL_SUCCESS;
+        }
+        auto &st = *effect->threaded;
+        {
+            std::lock_guard<std::mutex> lock(st.mutex);
+            std::swap(st.callbacks, st.callbackDrain);
+        }
+        // Invoked OUTSIDE the lock. A host callback is arbitrary code and may
+        // well call straight back into el_effect_set_* / el_effect_publish -
+        // which is the entire point of deferring it to this thread, and would
+        // self-deadlock if we were still holding the mutex.
+        for (auto &cb : st.callbackDrain)
+        {
+            if (cb.complete)
+            {
+                cb.complete(cb.userData);
+            }
+            else if (cb.stateChanged)
+            {
+                cb.stateChanged(cb.previous, cb.current, cb.userData);
+            }
+        }
+        st.callbackDrain.clear();
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_shutdown(el_effect_handle_t effect)
+    {
+        LOG_I("effect=%p", (void *)effect);
+        VALIDATE_EFFECT_PTR(effect, "el_effect_shutdown");
+        if (!isSplit(effect))
+        {
+            return EL_SUCCESS;
+        }
+        auto &st = *effect->threaded;
+        std::lock_guard<std::mutex> lock(st.mutex);
+        st.closed = true;
+        return EL_SUCCESS;
+    }
+
     el_result_e el_effect_capture(el_effect_handle_t effect)
     {
         LOG_I("effect=%p", (void *)effect);
         VALIDATE_EFFECT_PTR(effect, "el_effect_capture");
+        if (isSplit(effect))
+        {
+            // Not merely unsafe - meaningless. In split mode staging is
+            // UPSTREAM of the effect's base config, so the value this would
+            // fetch is one the data thread published itself.
+            LOG_E("el_effect_capture: not available in EL_THREADING_SPLIT mode");
+            return EL_ERROR_INVALID_PARAMETER;
+        }
         try
         {
             effect->config = effect->impl->GetConfig();
@@ -1827,12 +2174,52 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_update");
         try
         {
-            effect->impl->SetConfig(effect->config);
+            if (!isSplit(effect))
+            {
+                effect->impl->SetConfig(effect->config);
+                effect->impl->Update(deltaTime);
+                return EL_SUCCESS;
+            }
+
+            auto &st = *effect->threaded;
+            {
+                std::lock_guard<std::mutex> lock(st.mutex);
+                // SWAP, not copy. This is the whole reason the mailbox is two
+                // slots and a mutex rather than one slot: the render thread's
+                // time under the lock is six vector pointer swaps, so it can
+                // never be made to wait on the data thread's copy.
+                if (st.hasPending)
+                {
+                    std::swap(st.pending, st.consumed);
+                    st.hasPending = false;
+                }
+                std::swap(st.commands, st.commandDrain);
+            }
+
+            // Everything below runs outside the lock. gDispatchTarget marks
+            // the window in which a host callback fired by a command or by the
+            // manager's own tick must be deferred rather than run here.
+            EdgeLighting::Capi::gDispatchTarget = effect;
+            for (auto &cmd : st.commandDrain)
+            {
+                runCommand(effect, cmd);
+            }
+            // Releases the AnimationPtr each command held, but keeps the
+            // capacity the next swap hands back to the producer.
+            st.commandDrain.clear();
+
+            effect->impl->SetConfig(st.consumed);
             effect->impl->Update(deltaTime);
+            publishMirrors(effect);
+            EdgeLighting::Capi::gDispatchTarget = nullptr;
             return EL_SUCCESS;
         }
         catch (const std::exception &e)
         {
+            // Must not leave the marker set on a thread that is about to go
+            // back to the host - a later direct callback would defer into a
+            // queue nobody is polling.
+            EdgeLighting::Capi::gDispatchTarget = nullptr;
             LOG_E("exception: %s", e.what());
             return mapExceptionToResult(e);
         }
@@ -1857,6 +2244,18 @@ extern "C"
     el_result_e el_effect_clock_play(el_effect_handle_t effect)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_clock_play");
+        if (isSplit(effect))
+        {
+            // The mirror is a frame stale, so this filters repeat calls
+            // without being load-bearing - Clock::Play is idempotent, and a
+            // duplicate command is one branch on the render thread.
+            if (effect->threaded->clockPlaying.load(std::memory_order_relaxed))
+            {
+                return EL_SUCCESS;
+            }
+            LOG_I("effect=%p", (void *)effect);
+            return enqueueCommand(effect, {EdgeLighting::Capi::CommandOp::CLOCK_PLAY});
+        }
         if (effect->impl->GetClock().IsPlaying())
         {
             return EL_SUCCESS;
@@ -1869,6 +2268,15 @@ extern "C"
     el_result_e el_effect_clock_pause(el_effect_handle_t effect)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_clock_pause");
+        if (isSplit(effect))
+        {
+            if (!effect->threaded->clockPlaying.load(std::memory_order_relaxed))
+            {
+                return EL_SUCCESS;
+            }
+            LOG_I("effect=%p", (void *)effect);
+            return enqueueCommand(effect, {EdgeLighting::Capi::CommandOp::CLOCK_PAUSE});
+        }
         if (!effect->impl->GetClock().IsPlaying())
         {
             return EL_SUCCESS;
@@ -1882,7 +2290,14 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_clock_is_playing");
         VALIDATE_OUT_PTR(outPlaying, "el_effect_clock_is_playing");
-        *outPlaying = effect->impl->GetClock().IsPlaying() ? 1 : 0;
+        if (isSplit(effect))
+        {
+            *outPlaying = effect->threaded->clockPlaying.load(std::memory_order_relaxed) ? 1 : 0;
+        }
+        else
+        {
+            *outPlaying = effect->impl->GetClock().IsPlaying() ? 1 : 0;
+        }
         LOG_D("effect=%p, playing=%d", (void *)effect, *outPlaying);
         return EL_SUCCESS;
     }
@@ -1894,11 +2309,70 @@ extern "C"
         LOG_I("effect=%p, anim=%p", (void *)effect, (void *)anim);
         VALIDATE_EFFECT_PTR(effect, "el_effect_attach_animation");
         VALIDATE_ANIM_PTR(anim, "el_effect_attach_animation");
-        if (anim->ptr)
+        if (!anim->ptr)
+        {
+            return EL_SUCCESS;
+        }
+        if (!isSplit(effect))
         {
             effect->impl->Attach(anim->ptr);
+            return EL_SUCCESS;
         }
-        return EL_SUCCESS;
+        try
+        {
+            auto &st = *effect->threaded;
+            // The manager ignores duplicates; this mirrors that here so the
+            // data thread's count cannot drift above the render thread's.
+            if (std::find(st.stagedAttached.begin(), st.stagedAttached.end(), anim->ptr) !=
+                st.stagedAttached.end())
+            {
+                return EL_SUCCESS;
+            }
+            if (!anim->mirror)
+            {
+                anim->mirror = std::make_shared<EdgeLighting::Capi::AnimMirror>();
+            }
+            // Seed the data-thread shadows here, the last moment at which the
+            // animation is provably not on the render thread's list yet, so
+            // this read of the live object cannot race the drain.
+            anim->shadowSpeed = anim->ptr->GetSpeed();
+            anim->shadowDuration = anim->ptr->GetDuration();
+            anim->shadowEndAction = static_cast<int32_t>(fromEndAction(anim->ptr->GetEndAction()));
+            anim->shadowPlaybackMode = static_cast<int32_t>(fromPlaybackMode(anim->ptr->GetPlaybackMode()));
+            anim->mirror->state.store(static_cast<int32_t>(fromAnimationState(anim->ptr->GetState())),
+                                      std::memory_order_relaxed);
+            anim->mirror->elapsed.store(anim->ptr->GetElapsed(), std::memory_order_relaxed);
+            anim->mirror->progress.store(anim->ptr->GetProgress(), std::memory_order_relaxed);
+            // Set BEFORE the command is queued, so the window between here and
+            // the render thread running the ATTACH already routes mutations
+            // through the queue rather than applying them inline.
+            anim->mirror->attached.store(true, std::memory_order_release);
+
+            EdgeLighting::Capi::Command cmd;
+            cmd.op = EdgeLighting::Capi::CommandOp::ATTACH;
+            cmd.anim = anim->ptr;
+            cmd.mirror = anim->mirror;
+            const el_result_e rc = enqueueCommand(effect, std::move(cmd));
+            if (rc != EL_SUCCESS)
+            {
+                return rc;
+            }
+            // Only once the command is safely queued, so a full queue does not
+            // leave the data thread believing in an attach that never happened.
+            st.stagedAttached.push_back(anim->ptr);
+            if (std::find(st.stagedHandles.begin(), st.stagedHandles.end(), anim) ==
+                st.stagedHandles.end())
+            {
+                st.stagedHandles.push_back(anim);
+            }
+            anim->stagedOwner = effect;
+            return EL_SUCCESS;
+        }
+        catch (const std::exception &e)
+        {
+            LOG_E("exception: %s", e.what());
+            return mapExceptionToResult(e);
+        }
     }
 
     el_result_e el_effect_detach_animation(el_effect_handle_t effect, el_animation_handle_t anim)
@@ -1906,10 +2380,31 @@ extern "C"
         LOG_I("effect=%p, anim=%p", (void *)effect, (void *)anim);
         VALIDATE_EFFECT_PTR(effect, "el_effect_detach_animation");
         VALIDATE_ANIM_PTR(anim, "el_effect_detach_animation");
-        if (anim->ptr)
+        if (!anim->ptr)
+        {
+            return EL_SUCCESS;
+        }
+        if (!isSplit(effect))
         {
             effect->impl->Detach(anim->ptr);
+            return EL_SUCCESS;
         }
+        EdgeLighting::Capi::Command cmd;
+        cmd.op = EdgeLighting::Capi::CommandOp::DETACH;
+        cmd.anim = anim->ptr;
+        const el_result_e rc = enqueueCommand(effect, std::move(cmd));
+        if (rc != EL_SUCCESS)
+        {
+            return rc;
+        }
+        auto &st = *effect->threaded;
+        st.stagedAttached.erase(
+            std::remove(st.stagedAttached.begin(), st.stagedAttached.end(), anim->ptr),
+            st.stagedAttached.end());
+        // stagedOwner and the stagedHandles entry deliberately SURVIVE. The
+        // render thread has not run the DETACH yet, so the animation is still
+        // its to touch and mutations must keep queuing; splitOwner clears the
+        // pointer once the acknowledgement arrives.
         return EL_SUCCESS;
     }
 
@@ -1917,7 +2412,19 @@ extern "C"
     {
         LOG_I("effect=%p", (void *)effect);
         VALIDATE_EFFECT_PTR(effect, "el_effect_detach_all_animations");
-        effect->impl->GetAnimationManager().DetachAll();
+        if (!isSplit(effect))
+        {
+            effect->impl->GetAnimationManager().DetachAll();
+            return EL_SUCCESS;
+        }
+        const el_result_e rc = enqueueCommand(effect, {EdgeLighting::Capi::CommandOp::DETACH_ALL});
+        if (rc != EL_SUCCESS)
+        {
+            return rc;
+        }
+        // Same asynchrony as the single detach: stagedOwner survives on every
+        // handle until the render thread acknowledges the DETACH_ALL.
+        effect->threaded->stagedAttached.clear();
         return EL_SUCCESS;
     }
 
@@ -1925,7 +2432,13 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_animation_count");
         VALIDATE_OUT_PTR(outCount, "el_effect_get_animation_count");
-        *outCount = static_cast<int32_t>(effect->impl->GetAnimationManager().GetCount());
+        // Answered from the data thread's own records in split mode. It issued
+        // every attach and detach, so it does not need to reach across for
+        // this - and a queued command not yet drained still counts, which is
+        // the answer a caller reading back its own writes expects.
+        *outCount = isSplit(effect)
+                        ? static_cast<int32_t>(effect->threaded->stagedAttached.size())
+                        : static_cast<int32_t>(effect->impl->GetAnimationManager().GetCount());
         LOG_D("effect=%p, count=%d", (void *)effect, *outCount);
         return EL_SUCCESS;
     }
@@ -1936,7 +2449,18 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_contains_animation");
         VALIDATE_ANIM_PTR(anim, "el_effect_contains_animation");
         VALIDATE_OUT_PTR(outContains, "el_effect_contains_animation");
-        *outContains = (anim->ptr && effect->impl->GetAnimationManager().Contains(anim->ptr)) ? 1 : 0;
+        if (isSplit(effect))
+        {
+            const auto &staged = effect->threaded->stagedAttached;
+            *outContains = (anim->ptr &&
+                            std::find(staged.begin(), staged.end(), anim->ptr) != staged.end())
+                               ? 1
+                               : 0;
+        }
+        else
+        {
+            *outContains = (anim->ptr && effect->impl->GetAnimationManager().Contains(anim->ptr)) ? 1 : 0;
+        }
         LOG_D("effect=%p, anim=%p, contains=%d", (void *)effect, (void *)anim, *outContains);
         return EL_SUCCESS;
     }

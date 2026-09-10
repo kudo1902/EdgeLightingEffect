@@ -676,7 +676,10 @@ extern "C"
 
     /** @name Lifecycle
      *  Create, initialise, tick, render, and destroy an effect. Every call
-     *  in this section must run on the thread that owns the GL context.
+     *  in this section must run on the thread that owns the GL context -
+     *  under @ref EL_THREADING_SPLIT too, where "the GL thread" means the
+     *  render thread. The two exceptions are @ref el_effect_publish and
+     *  @ref el_effect_shutdown, which are data-thread calls and say so.
      *  @{ */
 
     /** @brief Allocate a new effect handle with default staging config.
@@ -724,14 +727,90 @@ extern "C"
      *           log). */
     EL_API el_result_e el_effect_init_with_renderers(el_effect_handle_t effect, uint32_t rendererMask);
 
+    /** @brief Choose the threading model. Call BEFORE @ref el_effect_init.
+     *  @details @ref EL_THREADING_SINGLE (the default) is the historical
+     *           contract: every call on the GL thread, no mutex, no queues.
+     *           @ref EL_THREADING_SPLIT allocates the mailbox and the two
+     *           cross-thread queues and moves ownership of the staging config
+     *           to a data thread - see the Threading section in
+     *           @c edge-lighting-capi.h for which call belongs to which
+     *           thread.
+     *
+     *           Switching to split mode seeds the mailbox from the current
+     *           staging config, so a host that configures the effect before
+     *           starting its render thread does not have to publish first.
+     *  @returns @ref EL_ERROR_INVALID_PARAMETER if the effect is already
+     *           initialised - the mode is immutable past @ref el_effect_init -
+     *           or if @p mode is not a valid enumerator. */
+    EL_API el_result_e el_effect_set_threading_mode(el_effect_handle_t effect,
+                                                    el_threading_mode_e mode);
+
+    /** @brief Make the current staging config visible to the render thread.
+     *  @details DATA THREAD. Copies staging into the mailbox; the render
+     *           thread picks it up in its next @ref el_effect_update. Newest
+     *           wins - publishing twice before a frame is not a backlog, the
+     *           second snapshot simply replaces the first.
+     *
+     *           Cheap enough to call every host tick unconditionally: the
+     *           copy reuses the mailbox slot's existing vector capacity and
+     *           allocates nothing, and an unchanged config still costs nothing
+     *           downstream because @c SetConfig gates on equality.
+     *
+     *           A no-op returning @ref EL_SUCCESS in @ref EL_THREADING_SINGLE
+     *           mode and after @ref el_effect_shutdown, so a host can call it
+     *           unconditionally in both. */
+    EL_API el_result_e el_effect_publish(el_effect_handle_t effect);
+
+    /** @brief Run host callbacks the render thread deferred.
+     *  @details DATA THREAD. In split mode an animation's completion and
+     *           state-change callbacks fire from inside
+     *           @ref el_effect_update on the render thread, so they are queued
+     *           instead of invoked there and run here, on the thread that owns
+     *           the staging config. That is what makes it legal for a callback
+     *           to turn round and call @c el_effect_set_*.
+     *
+     *           A no-op returning @ref EL_SUCCESS in single mode, where the
+     *           callbacks fire directly as they always have. */
+    EL_API el_result_e el_effect_poll_callbacks(el_effect_handle_t effect);
+
+    /** @brief Close the data thread's side of the handle before destruction.
+     *  @details DATA THREAD, and the FIRST half of a two-step teardown:
+     *
+     *           1. data thread calls @ref el_effect_shutdown, then stops
+     *              touching the handle entirely;
+     *           2. render thread leaves its loop and calls
+     *              @ref el_effect_destroy.
+     *
+     *           Past step 1 every publish and every queued animation call
+     *           succeeds and does nothing, so a data thread mid-call cannot
+     *           wedge on a queue nobody will drain again.
+     *
+     *           Skipping step 1 and destroying while the data thread is still
+     *           publishing is a use-after-free. Nothing in the ABI can catch
+     *           that for you - the handle is gone.
+     *
+     *           A no-op returning @ref EL_SUCCESS in single mode. */
+    EL_API el_result_e el_effect_shutdown(el_effect_handle_t effect);
+
     /** @brief Pull the effect's base config back into the effect's staging config.
      *  @details Snapshots the last-authored values (what @c SetConfig
      *           received) - does NOT include animation overlays. Use this
      *           to re-sync the staging config after external mutation
-     *           (e.g. presets applied inside the effect). */
+     *           (e.g. presets applied inside the effect).
+     *  @returns @ref EL_ERROR_INVALID_PARAMETER in @ref EL_THREADING_SPLIT
+     *           mode. There the staging config is upstream of the effect's
+     *           base and lives on the other thread, so the value this would
+     *           fetch is one the data thread published itself - the call has
+     *           no meaning rather than merely being unsafe. */
     EL_API el_result_e el_effect_capture(el_effect_handle_t effect);
 
     /** @brief Apply staging config then tick clock, animations, and renderers.
+     *  @details In @ref EL_THREADING_SPLIT mode this is the render thread's
+     *           whole frame-side contract. Before doing what it always did it
+     *           takes the newest published config out of the mailbox and runs
+     *           every animation command the data thread queued. Animations
+     *           still run HERE, frame-locked, so timing is identical to single
+     *           mode.
      *  @param deltaTime Seconds since the last @c update call. Values <= 0
      *                   still process animations but advance no time. */
     EL_API el_result_e el_effect_update(el_effect_handle_t effect, float deltaTime);

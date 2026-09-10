@@ -1210,6 +1210,12 @@ void DebugUI::uploadColorPickerTexture()
                  mColorPicker.Pixels().data());
     glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
     glBindTexture(GL_TEXTURE_2D, 0);
+    // This runs in one context and the thumbnail is sampled from the other -
+    // the debug window draws it in ImGui, the main window uses it as the
+    // backdrop. Shared contexts do not guarantee the write is visible to the
+    // other side without a flush, and under --threaded that other side is a
+    // different thread as well. A rare, user-triggered upload, so free.
+    glFlush();
 }
 
 void DebugUI::buildColorPickerSection(el_effect_handle_t effect)

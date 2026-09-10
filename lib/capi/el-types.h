@@ -137,6 +137,36 @@ extern "C"
         EL_ANIM_STATE_PAUSED = 2   /**< Elapsed frozen; Apply still writes the frozen value. */
     } el_animation_state_e;
 
+/** @brief Capacity of each cross-thread queue in @ref EL_THREADING_SPLIT mode.
+ *  @details One bound, applied separately to the data-thread-to-render-thread
+ *           animation command queue and the render-thread-to-data-thread
+ *           deferred callback queue.
+ *
+ *           Exceeding it on the producing side fails the call with
+ *           @ref EL_ERROR_OUT_OF_MEMORY rather than blocking or growing: a
+ *           data thread that outruns one frame's drain by this many commands
+ *           has a bug, and blocking the host's UI thread on the GL thread is
+ *           the exact failure the split model exists to avoid. Retry after the
+ *           render thread's next frame. */
+#define EL_THREADED_QUEUE_CAPACITY 256
+
+    /** @brief How the host drives the effect across threads.
+     *  @details Selected once per effect with @c el_effect_set_threading_mode
+     *           BEFORE @c el_effect_init, and immutable afterwards. See the
+     *           Threading section in @c edge-lighting-capi.h for the full
+     *           ownership rules, and @c docs/capi-threading-design.md for why
+     *           the split is where it is.
+     *
+     *           @ref EL_THREADING_SINGLE is the default and is the historical
+     *           contract byte for byte: no mutex is taken, no queue is
+     *           allocated, and @c el_effect_publish is a no-op. An existing
+     *           host recompiles and behaves identically. */
+    typedef enum el_threading_mode_e
+    {
+        EL_THREADING_SINGLE = 0, /**< Every effect call runs on the GL thread. */
+        EL_THREADING_SPLIT = 1   /**< Data thread authors config; render thread owns GL. */
+    } el_threading_mode_e;
+
     /** @brief What the animation writes once it enters the STOPPED state.
      *  @details Mirrors @c EdgeLighting::EndAction. A never-played animation
      *           is a no-op regardless of end action - the field stays at its

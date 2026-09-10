@@ -128,6 +128,18 @@ extern "C"
         {
             return EL_SUCCESS;
         }
+        // Unregister from the split-mode effect's LIVE-handle list so a later
+        // el_effect_detach_all_animations cannot dereference this handle.
+        //
+        // Deliberately does NOT detach the animation. The manager holds its own
+        // shared_ptr and keeps ticking it, which is exactly what destroying an
+        // attached handle does in single mode - so stagedAttached, which is
+        // what the count and contains getters read, is left alone.
+        if (anim->stagedOwner && anim->stagedOwner->threaded)
+        {
+            auto &handles = anim->stagedOwner->threaded->stagedHandles;
+            handles.erase(std::remove(handles.begin(), handles.end(), anim), handles.end());
+        }
         delete anim;
         return EL_SUCCESS;
     }
@@ -336,10 +348,12 @@ extern "C"
     {
         LOG_I("anim=%p", (void *)anim);
         VALIDATE_ANIM_PTR(anim, "el_animation_play");
-        if (anim->ptr)
+        if (!anim->ptr)
         {
-            anim->ptr->Play();
+            return EL_SUCCESS;
         }
+        QUEUE_IF_SPLIT(anim, PLAY, 0.0f, 0);
+        anim->ptr->Play();
         return EL_SUCCESS;
     }
 
@@ -347,10 +361,12 @@ extern "C"
     {
         LOG_I("anim=%p", (void *)anim);
         VALIDATE_ANIM_PTR(anim, "el_animation_pause");
-        if (anim->ptr)
+        if (!anim->ptr)
         {
-            anim->ptr->Pause();
+            return EL_SUCCESS;
         }
+        QUEUE_IF_SPLIT(anim, PAUSE, 0.0f, 0);
+        anim->ptr->Pause();
         return EL_SUCCESS;
     }
 
@@ -358,10 +374,12 @@ extern "C"
     {
         LOG_I("anim=%p", (void *)anim);
         VALIDATE_ANIM_PTR(anim, "el_animation_stop");
-        if (anim->ptr)
+        if (!anim->ptr)
         {
-            anim->ptr->Stop();
+            return EL_SUCCESS;
         }
+        QUEUE_IF_SPLIT(anim, STOP, 0.0f, 0);
+        anim->ptr->Stop();
         return EL_SUCCESS;
     }
 
@@ -370,6 +388,10 @@ extern "C"
         LOG_I("anim=%p, effect=%p", (void *)anim, (void *)effect);
         VALIDATE_ANIM_PTR(anim, "el_animation_reset");
         VALIDATE_EFFECT_PTR(effect, "el_animation_reset");
+        // Queued against the effect it is ATTACHED to, which need not be the
+        // one passed in. The render thread runs it against that effect's base
+        // config rather than this staging one - see runCommand.
+        QUEUE_IF_SPLIT(anim, RESET, 0.0f, 0);
         try
         {
             anim->ptr->Reset(effect->config);
@@ -386,6 +408,17 @@ extern "C"
     {
         LOG_I("anim=%p, dt=%f", (void *)anim, dt);
         VALIDATE_ANIM_PTR(anim, "el_animation_update");
+        // The manual-composition escape hatch, from before the effect owned an
+        // AnimationManager. For an ATTACHED animation in split mode there is
+        // nothing sensible to do with it: the manager is already ticking this
+        // object every frame on the other thread, so running it here is a data
+        // race and not a feature. Detached, it works exactly as it always has.
+        if (splitOwner(anim))
+        {
+            LOG_E("el_animation_update: animation is attached to an "
+                  "EL_THREADING_SPLIT effect - the render thread ticks it");
+            return EL_ERROR_INVALID_PARAMETER;
+        }
         if (anim->ptr)
         {
             anim->ptr->Update(dt);
@@ -398,6 +431,13 @@ extern "C"
         LOG_I("anim=%p, effect=%p", (void *)anim, (void *)effect);
         VALIDATE_ANIM_PTR(anim, "el_animation_apply");
         VALIDATE_EFFECT_PTR(effect, "el_animation_apply");
+        // See el_animation_update - same escape hatch, same reason.
+        if (splitOwner(anim))
+        {
+            LOG_E("el_animation_apply: animation is attached to an "
+                  "EL_THREADING_SPLIT effect - the render thread composites it");
+            return EL_ERROR_INVALID_PARAMETER;
+        }
         try
         {
             anim->ptr->Apply(effect->config);
@@ -416,26 +456,18 @@ extern "C"
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_get_state");
         VALIDATE_OUT_PTR(outState, "el_animation_get_state");
-        if (!anim->ptr)
+        if (splitOwner(anim) && anim->mirror)
+        {
+            *outState = static_cast<el_animation_state_e>(
+                anim->mirror->state.load(std::memory_order_relaxed));
+        }
+        else if (!anim->ptr)
         {
             *outState = EL_ANIM_STATE_STOPPED;
         }
         else
         {
-            using ES = EdgeLighting::AnimationState;
-            switch (anim->ptr->GetState())
-            {
-            case ES::PLAYING:
-                *outState = EL_ANIM_STATE_PLAYING;
-                break;
-            case ES::PAUSED:
-                *outState = EL_ANIM_STATE_PAUSED;
-                break;
-            case ES::STOPPED:
-            default:
-                *outState = EL_ANIM_STATE_STOPPED;
-                break;
-            }
+            *outState = fromAnimationState(anim->ptr->GetState());
         }
         LOG_D("anim=%p, state=%d", (void *)anim, (int)*outState);
         return EL_SUCCESS;
@@ -445,7 +477,11 @@ extern "C"
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_get_elapsed");
         VALIDATE_OUT_PTR(outElapsed, "el_animation_get_elapsed");
-        *outElapsed = anim->ptr ? anim->ptr->GetElapsed() : 0.0f;
+        // The render thread republishes this every frame; reading the live
+        // Animation from here would race its tick.
+        *outElapsed = (splitOwner(anim) && anim->mirror)
+                        ? anim->mirror->elapsed.load(std::memory_order_relaxed)
+                        : (anim->ptr ? anim->ptr->GetElapsed() : 0.0f);
         LOG_D("anim=%p, elapsed=%f", (void *)anim, *outElapsed);
         return EL_SUCCESS;
     }
@@ -453,7 +489,12 @@ extern "C"
     el_result_e el_animation_set_elapsed(el_animation_handle_t anim, float elapsed)
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_set_elapsed");
-        if (!anim->ptr || anim->ptr->GetElapsed() == elapsed)
+        if (!anim->ptr)
+        {
+            return EL_SUCCESS;
+        }
+        QUEUE_IF_SPLIT(anim, SET_ELAPSED, elapsed, 0);
+        if (anim->ptr->GetElapsed() == elapsed)
         {
             return EL_SUCCESS;
         }
@@ -466,7 +507,11 @@ extern "C"
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_get_progress");
         VALIDATE_OUT_PTR(outProgress, "el_animation_get_progress");
-        *outProgress = anim->ptr ? anim->ptr->GetProgress() : 0.0f;
+        // The render thread republishes this every frame; reading the live
+        // Animation from here would race its tick.
+        *outProgress = (splitOwner(anim) && anim->mirror)
+                        ? anim->mirror->progress.load(std::memory_order_relaxed)
+                        : (anim->ptr ? anim->ptr->GetProgress() : 0.0f);
         LOG_D("anim=%p, progress=%f", (void *)anim, *outProgress);
         return EL_SUCCESS;
     }
@@ -474,7 +519,12 @@ extern "C"
     el_result_e el_animation_set_progress(el_animation_handle_t anim, float progress)
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_set_progress");
-        if (!anim->ptr || anim->ptr->GetProgress() == progress)
+        if (!anim->ptr)
+        {
+            return EL_SUCCESS;
+        }
+        QUEUE_IF_SPLIT(anim, SET_PROGRESS, progress, 0);
+        if (anim->ptr->GetProgress() == progress)
         {
             return EL_SUCCESS;
         }
@@ -489,7 +539,10 @@ extern "C"
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_get_end_action");
         VALIDATE_OUT_PTR(outAction, "el_animation_get_end_action");
-        *outAction = anim->ptr ? fromEndAction(anim->ptr->GetEndAction()) : EL_END_ACTION_HOLD_CURRENT;
+        *outAction = splitOwner(anim)
+                         ? static_cast<el_end_action_e>(anim->shadowEndAction)
+                         : (anim->ptr ? fromEndAction(anim->ptr->GetEndAction())
+                                      : EL_END_ACTION_HOLD_CURRENT);
         LOG_D("anim=%p, action=%d", (void *)anim, (int)*outAction);
         return EL_SUCCESS;
     }
@@ -497,8 +550,14 @@ extern "C"
     el_result_e el_animation_set_end_action(el_animation_handle_t anim, el_end_action_e action)
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_set_end_action");
-        auto newVal = toEndAction(action);
-        if (!anim->ptr || anim->ptr->GetEndAction() == newVal)
+        if (!anim->ptr)
+        {
+            return EL_SUCCESS;
+        }
+        QUEUE_SHADOWED(anim, SET_END_ACTION, 0.0f, static_cast<int32_t>(action),
+                       shadowEndAction, static_cast<int32_t>(action));
+        const auto newVal = toEndAction(action);
+        if (anim->ptr->GetEndAction() == newVal)
         {
             return EL_SUCCESS;
         }
@@ -512,6 +571,7 @@ extern "C"
         LOG_I("anim=%p, effect=%p", (void *)anim, (void *)effect);
         VALIDATE_ANIM_PTR(anim, "el_animation_capture_baseline");
         VALIDATE_EFFECT_PTR(effect, "el_animation_capture_baseline");
+        QUEUE_IF_SPLIT(anim, CAPTURE_BASELINE, 0.0f, 0);
         try
         {
             if (anim->ptr)
@@ -533,7 +593,10 @@ extern "C"
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_get_playback_mode");
         VALIDATE_OUT_PTR(outMode, "el_animation_get_playback_mode");
-        *outMode = anim->ptr ? fromPlaybackMode(anim->ptr->GetPlaybackMode()) : EL_PLAYBACK_LOOP;
+        *outMode = splitOwner(anim)
+                       ? static_cast<el_playback_mode_e>(anim->shadowPlaybackMode)
+                       : (anim->ptr ? fromPlaybackMode(anim->ptr->GetPlaybackMode())
+                                    : EL_PLAYBACK_LOOP);
         LOG_D("anim=%p, mode=%d", (void *)anim, (int)*outMode);
         return EL_SUCCESS;
     }
@@ -541,8 +604,14 @@ extern "C"
     el_result_e el_animation_set_playback_mode(el_animation_handle_t anim, el_playback_mode_e mode)
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_set_playback_mode");
-        auto newVal = toPlaybackMode(mode);
-        if (!anim->ptr || anim->ptr->GetPlaybackMode() == newVal)
+        if (!anim->ptr)
+        {
+            return EL_SUCCESS;
+        }
+        QUEUE_SHADOWED(anim, SET_PLAYBACK_MODE, 0.0f, static_cast<int32_t>(mode),
+                       shadowPlaybackMode, static_cast<int32_t>(mode));
+        const auto newVal = toPlaybackMode(mode);
+        if (anim->ptr->GetPlaybackMode() == newVal)
         {
             return EL_SUCCESS;
         }
@@ -557,7 +626,8 @@ extern "C"
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_get_duration");
         VALIDATE_OUT_PTR(outSeconds, "el_animation_get_duration");
-        *outSeconds = anim->ptr ? anim->ptr->GetDuration() : 0.0f;
+        *outSeconds = splitOwner(anim) ? anim->shadowDuration
+                                        : (anim->ptr ? anim->ptr->GetDuration() : 0.0f);
         LOG_D("anim=%p, seconds=%f", (void *)anim, *outSeconds);
         return EL_SUCCESS;
     }
@@ -565,7 +635,12 @@ extern "C"
     el_result_e el_animation_set_duration(el_animation_handle_t anim, float seconds)
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_set_duration");
-        if (!anim->ptr || anim->ptr->GetDuration() == seconds)
+        if (!anim->ptr)
+        {
+            return EL_SUCCESS;
+        }
+        QUEUE_SHADOWED(anim, SET_DURATION, seconds, 0, shadowDuration, seconds);
+        if (anim->ptr->GetDuration() == seconds)
         {
             return EL_SUCCESS;
         }
@@ -580,7 +655,8 @@ extern "C"
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_get_speed");
         VALIDATE_OUT_PTR(outSpeed, "el_animation_get_speed");
-        *outSpeed = anim->ptr ? anim->ptr->GetSpeed() : 1.0f;
+        *outSpeed = splitOwner(anim) ? anim->shadowSpeed
+                                      : (anim->ptr ? anim->ptr->GetSpeed() : 1.0f);
         LOG_D("anim=%p, speed=%f", (void *)anim, *outSpeed);
         return EL_SUCCESS;
     }
@@ -588,7 +664,12 @@ extern "C"
     el_result_e el_animation_set_speed(el_animation_handle_t anim, float speed)
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_set_speed");
-        if (!anim->ptr || anim->ptr->GetSpeed() == speed)
+        if (!anim->ptr)
+        {
+            return EL_SUCCESS;
+        }
+        QUEUE_SHADOWED(anim, SET_SPEED, speed, 0, shadowSpeed, speed);
+        if (anim->ptr->GetSpeed() == speed)
         {
             return EL_SUCCESS;
         }
@@ -615,6 +696,18 @@ extern "C"
         }
         anim->ptr->OnComplete = [callback, userData]()
         {
+            // gDispatchTarget is non-null exactly inside a split-mode render
+            // thread frame. Deferring there is what makes it legal for the
+            // host's callback to turn round and call el_effect_set_*.
+            el_effect_handle_t target = EdgeLighting::Capi::gDispatchTarget;
+            if (target != nullptr && target->threaded != nullptr)
+            {
+                EdgeLighting::Capi::PendingCallback pending;
+                pending.complete = callback;
+                pending.userData = userData;
+                enqueueCallback(target, pending);
+                return;
+            }
             callback(userData);
         };
         return EL_SUCCESS;
@@ -638,9 +731,21 @@ extern "C"
         anim->ptr->OnStateChanged = [callback, userData](EdgeLighting::AnimationState prev,
                                                          EdgeLighting::AnimationState now)
         {
-            callback(static_cast<el_animation_state_e>(prev),
-                     static_cast<el_animation_state_e>(now),
-                     userData);
+            const el_animation_state_e previous = fromAnimationState(prev);
+            const el_animation_state_e current = fromAnimationState(now);
+            // See OnComplete above.
+            el_effect_handle_t target = EdgeLighting::Capi::gDispatchTarget;
+            if (target != nullptr && target->threaded != nullptr)
+            {
+                EdgeLighting::Capi::PendingCallback pending;
+                pending.stateChanged = callback;
+                pending.userData = userData;
+                pending.previous = previous;
+                pending.current = current;
+                enqueueCallback(target, pending);
+                return;
+            }
+            callback(previous, current, userData);
         };
         return EL_SUCCESS;
     }
