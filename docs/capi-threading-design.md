@@ -3,16 +3,29 @@
 **Status: implemented.** The model in this document ships in `lib/capi/`.
 Section 10 is still out of scope and still is not implemented.
 
-One thing the design got wrong survived into the code and was caught by
-ThreadSanitizer rather than by review: **detach is asynchronous**, and the
-first cut treated it as synchronous. Section 7.4 is the finding and the fix -
-it is the most useful paragraph here for anyone extending this.
+Three things the design got wrong survived into the code, and none was found by
+reading it. **Detach is asynchronous** (section 7.4), which the first cut
+treated as synchronous. **A command must never be gated on a mirror** (section
+7.7), which shipped in the clock and silently dropped a `play()` issued behind
+an undrained `pause()`. And **attach cannot read the live animation** (section
+7.8), which raced `Animation::Update` and rolled a shadow back on any re-attach
+issued before the detach was acknowledged. ThreadSanitizer found the first and
+third; `tests/capi-threading-contract.c` found the second and the visible half
+of the third.
+
+All three are one mistake wearing different clothes: **a render-thread value
+treated as though the data thread owned it.** 7.4 and 7.8 are the same
+predicate missing from two different call sites. Those three sections are the
+most useful paragraphs here for anyone extending this.
 
 The goal is a host that drives the library from two threads: a **data thread**
 that authors config, and a **render thread** that owns the GL context. That is
 the shape a P/Invoke or JNI host naturally has - a UI thread and a
 `GLSurfaceView` / swapchain thread - and today the ABI forbids it outright
 ([`edge-lighting-capi.h:79`](../lib/capi/edge-lighting-capi.h#L79)).
+
+A drawn version of section 2's model, both threading paths side by side, is
+[`capi-threading-workflow.html`](capi-threading-workflow.html).
 
 ## 0. The finding that reframes the question
 
@@ -110,7 +123,10 @@ Every exported symbol falls into one of four buckets.
 
 **Data thread only.** All `el_effect_set_*` and `el_effect_get_*` (they read
 and write staging and nothing else), plus `el_effect_publish`,
-`el_effect_shutdown`. This is the large majority of the ABI surface.
+`el_effect_shutdown`. This is the large majority of the ABI surface. The one
+exception is the `el_effect_get_active_*` family, which is still data-thread
+only but does not read staging - it crosses the boundary and is in the table
+below.
 
 **Render thread only.** `el_effect_init` / `el_effect_init_with_renderers`,
 `el_effect_update`, `el_effect_render`, `el_effect_destroy`. These create,
@@ -127,8 +143,9 @@ animation surface:
 | function | direction | resolution |
 | -------- | --------- | ---------- |
 | `el_effect_capture` | reads `impl->GetConfig()` into staging | `EL_ERROR_INVALID_PARAMETER` in split mode; staging IS the source of truth there, so the call has no meaning (section 7.1) |
+| `el_effect_get_active_*` | reads `impl->GetActiveConfig()` | reverse mailbox - the render thread publishes a copy at the tail of `update`, the data thread swaps it out on read (section 4.2) |
 | `el_effect_clock_play` / `_pause` | writes `impl` | queued command |
-| `el_effect_clock_is_playing` | reads `impl` | mirrored atomic |
+| `el_effect_clock_is_playing` | reads `impl` | data thread shadows what it set, falling back to a mirrored atomic while it has never set anything (section 7.7) |
 | `el_effect_attach_animation` / `_detach_animation` / `_detach_all_animations` | writes `impl` | queued command, carrying an `AnimationPtr` |
 | `el_effect_get_animation_count` / `_contains_animation` | reads `impl` | data thread tracks its own attach set - it issued every command |
 | `el_animation_play` / `_pause` / `_stop` / `_reset` | writes a live `Animation` | queued command |
@@ -143,6 +160,8 @@ The 20 symbols in `el-deprecated.h` touch staging only and inherit the
 data-thread rule.
 
 ## 4. The config handoff
+
+### 4.1 Data thread -> render thread: the staging config
 
 A mutex and two `Config` slots. **Not a lock-free triple buffer.**
 
@@ -205,6 +224,88 @@ measure at one publish per host tick.
 of an unchanged config still costs nothing downstream. A host may publish every
 tick without thinking about it.
 
+### 4.2 Render thread -> data thread: the active config
+
+The same mailbox run backwards, and it is what backs `el_effect_get_active_*`
+(base + every attached animation's overlay - what the renderers actually drew,
+as opposed to the staging config every other `el_effect_get_*` reads).
+
+`mActiveConfig` is rebuilt inside the render thread's `Update`, so the data
+thread cannot read it directly, and what a direct read would tear is a whole
+`Config` - vectors included - not a scalar. That is 7.4 restated in the read
+direction: a render-thread value treated as the data thread's own.
+
+**Three slots, not two.** The direction is reversed, so a two-slot swap would
+put the copy on the wrong side of the lock:
+
+```cpp
+Config activeStage;      // RENDER THREAD, outside the lock. Copy target.
+Config activePublished;  // swapped in by the render thread under the lock
+Config activeRead;       // DATA THREAD, outside the lock, between swaps
+bool hasActivePublished = false;
+std::atomic<bool> activeWanted{false};
+```
+
+`publishActiveConfig` (render thread), at the tail of `el_effect_update`:
+
+```cpp
+if (!activeWanted.load(std::memory_order_relaxed)) { return; }
+activeStage = effect->impl->GetActiveConfig();      // copy OUTSIDE the lock
+{
+    std::lock_guard<std::mutex> lock(mutex);
+    std::swap(activeStage, activePublished);        // O(1)
+    hasActivePublished = true;
+}
+```
+
+`activeConfigFor` (data thread), inside every active getter:
+
+```cpp
+activeWanted.store(true, std::memory_order_relaxed);
+{
+    std::lock_guard<std::mutex> lock(mutex);
+    if (hasActivePublished)
+    {
+        std::swap(activePublished, activeRead);
+        hasActivePublished = false;
+    }
+}
+return &activeRead;
+```
+
+Copy straight into `activePublished` under the lock instead and the render
+thread holds the mutex for a full `Config` copy, which is exactly what 4.1's
+two-slot swap exists to prevent. The third slot buys that back. Note also that
+each swap hands the other side the buffers the outgoing config owned, so after
+the first published frame neither the copy nor the swap allocates - the same
+capacity-recycling property as `mScratchConfig`.
+
+Three consequences, all of them in the header:
+
+1. **One frame behind.** A read sees the last `update` that finished, never the
+   one in flight. There is no version of this that does not, short of blocking
+   the data thread on the render thread's frame.
+2. **The first read arms publication and reports the config as of
+   `el_effect_init`.** Publication costs one `Config` copy-assign per frame, and
+   most hosts never ask for animated values, so nothing is published until
+   someone does - `activeWanted` is the gate, and a host that never reads pays
+   one relaxed load per frame and nothing else. The price is that the arming
+   read has no frame to report yet; `el_effect_init` seeds `activeRead` from the
+   staging config so it returns something true rather than a default-constructed
+   `Config`, and live values arrive from the next update.
+3. **A run of reads can straddle a frame.** Each getter independently takes the
+   newest published frame, so a publish landing midway through a host's UI pass
+   leaves later fields from the newer frame. This is the same bargain
+   `AnimMirror` already strikes for `el_animation_get_elapsed` (5.2), and for
+   the same readout: nobody perceives one slider lagging its neighbour by a
+   frame, and the alternative is holding the render thread's mutex across the
+   host's entire UI pass.
+
+Single mode does none of this - the caller is the only thread, so the getters
+read `GetActiveConfig()` straight through. The split path is behind
+`activeConfigFor`, so both modes present one API and a host writes one code
+path.
+
 ## 5. The animation control queue
 
 ### 5.1 Commands
@@ -256,13 +357,20 @@ thread's hot path.
 not go in the mirror, but they do need a **shadow** on the handle rather than a
 read-through to the live object: the render thread WRITES those four when it
 drains the corresponding command, so reading them back off the `Animation`
-would be a data race on a non-atomic float. The shadows are seeded at attach -
-the last moment the animation is provably not yet on the render thread's list -
+would be a data race on a non-atomic float. The shadows are seeded at attach
 and advance only when a queued setter is accepted, so a full queue cannot leave
 the data thread reporting a value that never landed.
 
+"Seeded at attach" carried a rider that was wrong: *the last moment the
+animation is provably not yet on the render thread's list*. It is not provable
+there, and section 7.8 is the case where it is false.
+
 The mirror carries a fourth field beyond the three above, `attached`, which is
 an acknowledgement rather than a readout. Section 7.4.
+
+The clock's play state belongs on the shadow side of this line too, for exactly
+the reason the four animation values do - the data thread is its only writer.
+Getting that wrong is section 7.7.
 
 ## 6. Callbacks
 
@@ -300,6 +408,13 @@ In split mode the data thread cannot read `impl`, and the call has no meaning
 anyway: staging is upstream of `mBaseConfig`, so the value it would fetch is
 one the data thread published itself. Return `EL_ERROR_INVALID_PARAMETER` in
 split mode and document the reason. Unchanged in single mode.
+
+Note this is not the same question as reading the ACTIVE config, which is a
+real one and has a real answer: `mActiveConfig` is base plus the animation
+overlays the render thread composited, so it is genuinely not something the
+data thread already knows. That is what `el_effect_get_active_*` and the
+reverse mailbox in 4.2 are for. Capture stays refused because it targets
+staging; the active family crosses the boundary properly instead.
 
 ### 7.2 Destruction
 
@@ -392,6 +507,83 @@ macOS and Windows by
 are safe by construction and need no mechanism. That is most of the getter
 surface, and it is worth noting because the natural assumption is the opposite.
 
+### 7.7 Never gate a command on a mirror
+
+**The second one the design got wrong**, and the same shape as 7.4: a
+render-thread readout used as though it were the data thread's own record.
+
+`el_effect_clock_play` / `_pause` shipped with their idempotence guard reading
+`clockPlaying`, the mirror section 5.2 describes. That mirror only advances
+inside `el_effect_update`, so an opposing pair issued between two frames found
+it still reading the pre-drain value on the second call and returned
+`EL_SUCCESS` **without queueing anything**. The last command lost:
+
+```c
+el_effect_clock_pause(fx);   /* queues PAUSE; mirror still says "playing" */
+el_effect_clock_play(fx);    /* sees "playing", concludes no-op, DROPS it  */
+/* ... one el_effect_update later: the clock is paused. */
+```
+
+The window is one render frame wide, and a data thread deliberately decoupled
+from vsync - which is the entire motivation in section 1 - crosses it
+constantly. `tests/capi-threading-contract.c` covers both orderings.
+
+The fix is `ThreadedState::shadowClockPlaying`, the same device as the four
+`el_animation_handle_impl` shadows and for the same reason. Which puts the
+general rule plainly, because the two mechanisms in section 5.2 are not
+interchangeable and this is the distinction:
+
+- a value the **render thread computes** (`state`, `elapsed`, `progress`) is a
+  **mirror**. Read it, never gate on it - it is by construction a frame old.
+- a value the **data thread sets** and nothing in the library changes on its
+  own (`speed`, `duration`, `endAction`, `playbackMode`, and the clock's play
+  state - nothing inside `EdgeLightingEffect` ever starts or stops the clock)
+  is a **shadow**. Gate on it, read it back from it, and advance it only when
+  the enqueue is accepted, so a full queue cannot leave the data thread
+  reporting a value the render thread never got.
+
+`shadowClockPlaying` is tri-state (`-1` = the host has never touched the clock)
+rather than a bool, because the clock's own default is not knowable at
+`el_effect_set_threading_mode` time - there is no `impl` yet - and guessing it
+would reintroduce the same dropped command one frame earlier. While it is `-1`,
+`el_effect_clock_is_playing` falls through to the mirror, which is the one case
+the data thread genuinely has no record of.
+
+### 7.8 Attach cannot read the live animation
+
+A corollary of 7.4, and the one the extended contract test found.
+
+`el_effect_attach_animation` seeded the four shadows and the three mirror
+fields by reading the live `Animation`, on the reasoning quoted in 5.2: at that
+line the animation is not on the render thread's list yet. That holds for a
+first attach. It is false for a **re-attach issued before the DETACH ahead of
+it has been acknowledged** - `stagedAttached` is already empty by then, so the
+duplicate check lets the call through, while the manager is still ticking the
+object every frame. The eight reads race `Animation::Update`, and TSan flags it
+on the first detach/attach pair.
+
+It is not only a race. The value read back is *stale*, because a setter queued
+just before the detach has not been drained yet, so the re-attach rolls the
+shadow back to a value the host already overwrote:
+
+```c
+el_animation_set_speed(anim, 3.0f);   /* queued; shadow says 3.0 */
+el_effect_detach_animation(fx, anim); /* queued, not acknowledged */
+el_effect_attach_animation(fx, anim); /* re-seeds from the live object... */
+el_animation_get_speed(anim, &s);     /* ...and s is 2.5, the pre-set value */
+```
+
+The fix is one predicate: seed only when `splitOwner` says the animation is
+genuinely the data thread's. When it is not, there is nothing to seed from -
+the animation never left the render thread, so the shadows already hold what
+the original attach seeded plus every setter accepted since, and the mirror is
+still being republished each frame.
+
+The general form, which is 7.4 restated: **`splitOwner` is the only predicate
+that answers "may I touch this animation", and every path that touches one has
+to ask it - reads included.** The mutating setters route through
+`QUEUE_IF_SPLIT`, which asks. Attach did not.
+
 ## 8. ABI additions
 
 Deliberately small. The host loop keeps its current shape.
@@ -412,6 +604,11 @@ EL_API el_result_e el_effect_shutdown(el_effect_handle_t effect);
 `el_effect_set_threading_mode` must be called before `el_effect_init` and is
 immutable afterwards. Everything else - `el_effect_update`, `el_effect_render`,
 every setter - keeps its current signature.
+
+The `el_effect_get_active_*` family added later is not on this list on purpose:
+it is not a split-mode call. It works in both modes with one signature, and the
+reverse mailbox of 4.2 lives entirely behind it, so the host loop below gains
+nothing and a host reading animated values writes the same code either way.
 
 `el-types.h` also gained `EL_THREADED_QUEUE_CAPACITY` (256), the bound on both
 queues. It is public because a host that can receive
@@ -437,18 +634,27 @@ is a no-op returning `EL_SUCCESS`, the command ring is never allocated, no
 mutex is taken. An existing host recompiles and behaves identically, and
 `demo-capi/` needs no change.
 
-**Verified**, by a C-only two-thread program built against the `.dylib` (the
-same kind of guard `demo-capi/` is, one thread further). It is not in-tree -
-there is no test target to hang it on - so to reproduce, write it against
-`lib/capi` and build it the way `demo-capi` links, which is the one detail
-worth writing down:
+**Verified**, by a C-only program built against the `.dylib` (the same kind of
+guard `demo-capi/` is, one thread further):
+[`tests/capi-threading-contract.c`](../tests/capi-threading-contract.c). It is
+in-tree but deliberately **not wired into CMake** - there is still no test
+target and this does not add one - so it is built by hand, the way `demo-capi`
+links, which is the one detail worth writing down:
 
 ```
-clang -std=c11 -I lib/capi -I external/include test.c -o test \
-  -L build/lib -ledge-lighting-c -L external/lib/x86_64 -lglfw.3 \
-  -Wl,-rpath,"$PWD/build/lib" -Wl,-rpath,"$PWD/external/lib/x86_64" \
+clang -std=c11 -I lib/capi -I external/include tests/capi-threading-contract.c \
+  -o build/capi-threading-contract \
+  -L build/lib -ledge-lighting-c -L external/lib/arm64 -lglfw.3 \
+  -Wl,-rpath,"$PWD/build/lib" -Wl,-rpath,"$PWD/external/lib/arm64" \
   -framework Cocoa -framework OpenGL -framework IOKit
 ```
+
+It runs in two phases. Phase 1 drives both sides from one thread and calls
+`el_effect_update` by hand, which makes every ordering rule in this document
+deterministic rather than timing-dependent - that is what lets it assert things
+like "`contains` goes false immediately but the escape hatch is still refused
+until the ack". Phase 2 spawns a real render thread and hammers it, and asserts
+almost nothing: it exists to give ThreadSanitizer something to watch.
 
 Do **not** also compile `external/src/glad.c` into it. The dylib exports its
 own glad symbols (glad.c is C, so the `hidden` visibility preset on the C++
@@ -458,23 +664,76 @@ the library's stay null, and the first `glClear` inside the library segfaults.
 `demo-capi` avoids this by accident of link order; a hand-built program has to
 avoid it on purpose.
 
-What it covers:
+What it covers - 81 assertions:
 
-- One scene rendered for 30 frames in each mode, hashed per frame index and
-  compared frame for frame. All 30 pairs byte-identical, and stable across
-  runs. Split mode changes *when* a config reaches `SetConfig`, never *what*
-  the renderers do with it, and the hashes say so.
-- 41 contract assertions: mode immutability past init, `el_effect_capture`
-  refusal, published config arriving, unpublished edits NOT arriving, the clock
-  command plus mirror round trip, attach/count/contains, the
-  `el_animation_update` / `_apply` refusals while attached, the deferred
-  completion callback firing exactly once and on the DATA thread, the shadowed
-  getters, queue overflow failing rather than blocking, recovery after a drain,
-  and the shutdown protocol.
-- The whole thing under **ThreadSanitizer**, against a TSan-instrumented build
-  of the library: zero races. That is what found section 7.4, and it is the
-  check to re-run after any change here - the contract is not the sort of thing
-  reading can confirm.
+- Mode selection: unknown enumerator refused, immutability past init,
+  re-selecting the current mode accepted as a no-op.
+- The config mailbox: `el_effect_capture` refused, staging authored before
+  `el_effect_init` reaching frame one without a publish, published config
+  arriving, unpublished edits NOT arriving, two publishes before a frame being
+  newest-wins rather than a backlog.
+- The clock, twice over. Once through `el_effect_clock_is_playing`, which
+  reports the data thread's own record, and once **end to end** - a paused
+  clock feeds the manager a zero delta, so a frozen mirrored `elapsed` is the
+  only evidence the flat ABI exposes for what the render thread's clock is
+  really doing. Both same-frame orderings, each starting from the state its
+  FIRST call changes: begin a pair in the state its second call asks for and
+  the dropped command changes nothing observable, so the test passes against
+  the bug. That is section 7.7's regression, and getting the precondition
+  right is most of it.
+- Attach / count / contains answered from the data thread's own record while
+  still undrained, attach deduplicated, and the `el_animation_update` /
+  `_apply` refusals while attached.
+- **Section 7.4's window explicitly**: after a detach, `contains` goes false
+  immediately but the escape hatches are still refused until the render thread
+  acknowledges, and are allowed the moment it does. Same for `DETACH_ALL`, and
+  a re-attach afterwards routes through the queue again.
+- Shadowed getters reading back before the drain; mirrored getters lagging one
+  frame by design and catching up after it.
+- Section 7.8: a re-attach issued before the ack leaving the shadows alone,
+  which is that bug's visible half - TSan sees the race, phase 1 sees the
+  rolled-back value.
+- Both deferred callbacks: not fired from `el_effect_update`, fired exactly
+  once from `el_effect_poll_callbacks`, on the DATA thread, and not repeated by
+  a second poll.
+- Queue overflow accepting exactly `EL_THREADED_QUEUE_CAPACITY` and then
+  failing rather than blocking, recovery after a drain, and the whole capacity
+  being available again the next frame.
+- The shutdown protocol, and an animation outliving its effect staying safe to
+  mutate.
+
+- Phase 2 additionally counts every callback that fires on a thread other than
+  the data thread, which is section 6's guarantee and the one property phase
+  2's non-reproducible timing can still assert exactly.
+
+Then phase 2 under **ThreadSanitizer**, against a TSan-instrumented build of
+the library: zero races. That is what found section 7.4, and it is the check to
+re-run after any change here - the contract is not the sort of thing reading
+can confirm. Note that phase 1's determinism cuts the other way too: it drains
+by hand, so it can prove the *ordering* rules and cannot see a race at all.
+
+- **The 30-frame pixel hash**, in both directions. Phase 3 renders one
+  deterministic scene - fixed dt, a live animation, three colour stops - into
+  an FBO it owns, and hashes each frame. SINGLE and SPLIT come out
+  byte-identical on all 30, which is the "split mode changes *when* a config
+  reaches `SetConfig`, never *what* the renderers do with it" claim measured
+  rather than argued. It also prints each frame's hash as
+  `HASH single <i> <hex>`, so running the same binary against two builds of the
+  library and diffing those lines is how you check that a change to `lib/capi`
+  left the single-threaded path alone.
+
+  Two traps that phase carries its own guards for, having fallen into both.
+  `NeonConfig::enable` defaults to **false** and `DebugConfig::showWireframe`
+  to **true**, so a scene that only sets geometry renders the debug box and
+  nothing else; and the base `colorStops` vector is empty by default, so an
+  enabled ring with no stops bakes to black. Either one makes every frame hash
+  identical and the cross-mode comparison vacuously true - it would "pass" over
+  two blank images. Hence the third assertion, that the hashes are not all one
+  value.
+
+One thing the landed file does **not** do: nothing here reaches the exception
+path inside the command drain, which requires an allocation failure in
+`runCommand`. The normal-path clear is covered.
 
 Also verified through **`demo-capi --threaded`**, which drives the existing
 ImGui UI across the split - the ergonomics test rather than the contract test.
