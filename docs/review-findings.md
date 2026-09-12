@@ -1706,6 +1706,52 @@ animation stopped and STOPPED where it paused - which is the bug that shipped
 unnoticed because no test had ever exercised the callback path against a
 reordered enum.
 
+### I23. Detaching an animation from its own completion callback segfaulted - FIXED
+
+The first memory-safety defect in this sequence of reviews, and the only one
+reachable by writing the obvious thing:
+
+```
+attached=4; ticking past the one-shot duration...
+   OnComplete for anim 0 -> detaching from inside the callback
+   OnComplete for anim 2 -> detaching from inside the callback
+exit code 139 (SIGSEGV)
+```
+
+Two failures in three lines. Animations 1 and 3 never fired - erasing element 0
+shifts the rest down while the iterator keeps advancing, so every other entry is
+skipped - and then the process died.
+
+`AnimationManager::Update` walked `mAnimations` with a range-for.
+`Animation::Update` fires `OnComplete` and `OnStateChanged` synchronously from
+inside that walk, those are the host's C callbacks, and
+`el_effect_detach_animation` erases from the very vector being iterated.
+`el_effect_detach_all_animations` (a `clear()`) and `el_effect_attach_animation`
+(a reallocating `push_back`) are the same hazard. `Apply` is unaffected - it
+fires no callbacks. Reachable identically from C++ (`anim->OnComplete = [&]{
+effect.Detach(anim); }`).
+
+Nothing warned against it, and the guidance pointed the other way: the worked
+example at `animation.h:167` is `pulse->OnComplete = [next]() { next->Play(); };`
+which is safe only because `Play()` does not touch the manager. The docs
+demonstrated doing work in `OnComplete` without noting the one category of work
+that corrupts memory.
+
+Fixed by ticking over a reusable scratch copy of the pointer list, the same
+device `EdgeLightingEffect` already uses for its scratch config: copy-assigned
+so it reuses capacity, `clear()`ed after the loop so a detached animation is not
+kept alive into the next frame. Measured at **zero** allocations across 1000
+ticks after warmup, so the re-entrancy safety is free in steady state.
+
+That also pins down semantics that never had a definition: the tick set is taken
+at entry, so an animation detached mid-tick still receives that frame's tick and
+one attached mid-tick starts on the next. Holding a reference for the duration
+of the loop is what makes destroying a handle from inside its own callback safe
+as well.
+
+Regression covers all four shapes - detach self, detach all, attach, and destroy
+the handle - from inside a callback.
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,

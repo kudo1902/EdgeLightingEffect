@@ -80,6 +80,17 @@ namespace EdgeLighting
         ///        @ref Animation::Update).
         /// @param dt Time to advance (typically the effect clock's delta, so a
         ///           paused clock freezes every animation).
+        ///
+        /// @par Re-entrancy
+        /// SAFE to @ref Attach, @ref Detach or @ref DetachAll from inside a
+        /// callback this tick fires (@c Animation::OnComplete and
+        /// @c OnStateChanged both run from here, so "remove this animation when
+        /// it finishes" lands in exactly that position). The tick set is taken
+        /// once at entry, so the semantics are fixed: an animation detached
+        /// mid-tick still receives this frame's tick, and one attached mid-tick
+        /// starts on the next frame. It also keeps each animation alive for the
+        /// duration of the tick, so destroying a handle from a callback cannot
+        /// pull the object out from under the loop.
         void Update(float dt);
 
         /// @brief Apply every attached animation onto @p target in attach order
@@ -89,6 +100,19 @@ namespace EdgeLighting
 
     private:
         std::vector<AnimationPtr> mAnimations;
+
+        /// The list @ref Update actually walks - a copy of @c mAnimations taken
+        /// at entry, so a callback firing mid-tick can mutate @c mAnimations
+        /// without invalidating the iteration.
+        ///
+        /// Copy-ASSIGNED rather than constructed per frame, so it reuses the
+        /// capacity it already holds and allocates nothing after the first tick
+        /// at a given size - the same reason @c EdgeLightingEffect keeps a
+        /// scratch config instead of a local. Copying shared_ptrs (a refcount
+        /// bump each) is the cost; for the handful of animations a frame
+        /// carries that is far cheaper than the alternative, which was
+        /// undefined behaviour.
+        std::vector<AnimationPtr> mTickScratch;
     };
 
 } // namespace EdgeLighting
