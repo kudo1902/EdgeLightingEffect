@@ -253,7 +253,8 @@ namespace EdgeLighting
         /// grows.
         int numSamples = NEON_MAX_LOOP_SAMPLES;
 
-        /// Width in texels of the baked colour-ring LUT (power of two, 32-256).
+        /// Width in texels of the baked colour-ring LUT (32-256, power of two
+        /// recommended; see MIN/MAX_GRADIENT_LUT_SIZE - the range is enforced).
         /// 256 resolves any gradient the eye can; a smaller ring bakes faster
         /// and costs less texture memory. A change to this SNAPS rather than
         /// cross-fading - two rings of different length cannot be blended
@@ -383,6 +384,38 @@ namespace EdgeLighting
         /// (@c SegmentUtils::FillEffectiveSegments) - the transient and preserved
         /// pools share these slots.
         static constexpr int MAX_SEGMENT_BOOSTS_CAP = MAX_SEGMENT_BOOSTS;
+
+        /// Maximum length of ANY colour-stop list - the base ring, a segment's,
+        /// an arc's, a preserved entry's.
+        ///
+        /// Unlike @c MAX_SEGMENT_BOOSTS_CAP this is not a shader array size:
+        /// stops never reach the GPU as stops, they are baked on the CPU into a
+        /// LUT. The bound is the LUT they bake into. @c gradientLutSize tops out
+        /// at 256 texels, so beyond 256 stops the extra ones cannot be resolved
+        /// by the texture that carries them - they would cost bake time and
+        /// change nothing on screen.
+        ///
+        /// It exists mostly to stop a bad argument becoming a bad allocation:
+        /// these lists are resized straight from host-supplied counts, and an
+        /// unbounded one turns a single API call into gigabytes.
+        static constexpr int MAX_COLOR_STOPS_CAP = 256;
+
+        /// Bounds on @c gradientLutSize, the range its doc comment has always
+        /// named. The upper one is the load-bearing half: the ring is baked
+        /// into a vector of @c size * 4 bytes at RENDER time, inside a pass
+        /// with no exception guard, so an out-of-range value is an allocation
+        /// measured in gigabytes rather than a merely ugly gradient. Both LUT
+        /// bakes clamp to these, so the bound holds whichever door the config
+        /// came through; the C API additionally REJECTS an out-of-range size
+        /// rather than quietly substituting one.
+        ///
+        /// A power of two is recommended and not enforced: the field's own
+        /// comment has always said "power of two", but no GL version this
+        /// targets needs it (3.3 core and 3.0 ES both sample NPOT with REPEAT),
+        /// and enforcing it would cost a continuous size control every
+        /// intermediate value for no benefit.
+        static constexpr int MIN_GRADIENT_LUT_SIZE = 32;
+        static constexpr int MAX_GRADIENT_LUT_SIZE = 256;
 
         /// Transient, index-addressed hotspots. This is the "freely overwritten"
         /// pool: @c set_segment_boost_count resizes it, @c clear_segment_boosts

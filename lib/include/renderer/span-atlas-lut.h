@@ -56,7 +56,7 @@ namespace EdgeLighting
         ///                Clamped to >= 1 for the same reason.
         void Bake(const std::vector<T> &items, int width, int maxRows)
         {
-            width = std::max(width, 2);
+            width = std::min(std::max(width, 2), NeonConfig::MAX_GRADIENT_LUT_SIZE);
             maxRows = std::max(maxRows, 1);
 
             // Clamped BEFORE the dirty check, so the snapshot the check

@@ -385,13 +385,27 @@ extern "C"
             LOG_E("el_effect_set_color_stop_count: negative count");
             return EL_ERROR_INVALID_PARAMETER;
         }
+        if (count > EdgeLighting::NeonConfig::MAX_COLOR_STOPS_CAP)
+        {
+            LOG_E("el_effect_set_color_stop_count: %d exceeds colour-stop cap %d",
+                  count, EdgeLighting::NeonConfig::MAX_COLOR_STOPS_CAP);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
         size_t newSize = static_cast<size_t>(count);
         if (effect->config.neon.colorStops.size() == newSize)
         {
             return EL_SUCCESS;
         }
         LOG_I("effect=%p, count=%d", (void *)effect, count);
-        effect->config.neon.colorStops.resize(newSize, DEFAULT_COLOR_STOP);
+        try
+        {
+            effect->config.neon.colorStops.resize(newSize, DEFAULT_COLOR_STOP);
+        }
+        catch (const std::exception &e)
+        {
+            LOG_E("el_effect_set_color_stop_count: resize failed: %s", e.what());
+            return MapExceptionToResult(e);
+        }
         return EL_SUCCESS;
     }
 
@@ -492,7 +506,15 @@ extern "C"
             return EL_SUCCESS;
         }
         LOG_I("effect=%p, count=%d", (void *)effect, count);
-        effect->config.neon.segmentBoosts.resize(newSize);
+        try
+        {
+            effect->config.neon.segmentBoosts.resize(newSize);
+        }
+        catch (const std::exception &e)
+        {
+            LOG_E("el_effect_set_segment_boost_count: resize failed: %s", e.what());
+            return MapExceptionToResult(e);
+        }
         return EL_SUCCESS;
     }
 
@@ -711,6 +733,12 @@ extern "C"
             LOG_E("el_effect_set_preserved_segment_color_stop_count: negative count");
             return EL_ERROR_INVALID_PARAMETER;
         }
+        if (count > EdgeLighting::NeonConfig::MAX_COLOR_STOPS_CAP)
+        {
+            LOG_E("el_effect_set_preserved_segment_color_stop_count: %d exceeds colour-stop cap %d",
+                  count, EdgeLighting::NeonConfig::MAX_COLOR_STOPS_CAP);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
         int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
         if (idx < 0)
         {
@@ -724,7 +752,15 @@ extern "C"
             return EL_SUCCESS;
         }
         LOG_I("effect=%p, id=%u, count=%d", (void *)effect, id, count);
-        stops.resize(newSize);
+        try
+        {
+            stops.resize(newSize);
+        }
+        catch (const std::exception &e)
+        {
+            LOG_E("el_effect_set_preserved_segment_color_stop_count: resize failed: %s", e.what());
+            return MapExceptionToResult(e);
+        }
         return EL_SUCCESS;
     }
 
@@ -889,6 +925,12 @@ extern "C"
             LOG_E("el_effect_set_segment_color_stop_count: negative count");
             return EL_ERROR_INVALID_PARAMETER;
         }
+        if (count > EdgeLighting::NeonConfig::MAX_COLOR_STOPS_CAP)
+        {
+            LOG_E("el_effect_set_segment_color_stop_count: %d exceeds colour-stop cap %d",
+                  count, EdgeLighting::NeonConfig::MAX_COLOR_STOPS_CAP);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
         auto &boosts = effect->config.neon.segmentBoosts;
         size_t segIdx = static_cast<size_t>(segmentIndex);
         size_t newSize = static_cast<size_t>(count);
@@ -902,7 +944,15 @@ extern "C"
             LOG_E("el_effect_set_segment_color_stop_count: segmentIndex %d out of range (size=%zu)", segmentIndex, boosts.size());
             return EL_ERROR_INVALID_PARAMETER;
         }
-        boosts[segIdx].colorStops.resize(newSize, DEFAULT_COLOR_STOP);
+        try
+        {
+            boosts[segIdx].colorStops.resize(newSize, DEFAULT_COLOR_STOP);
+        }
+        catch (const std::exception &e)
+        {
+            LOG_E("el_effect_set_segment_color_stop_count: resize failed: %s", e.what());
+            return MapExceptionToResult(e);
+        }
         return EL_SUCCESS;
     }
 
@@ -1031,7 +1081,15 @@ extern "C"
             return EL_SUCCESS;
         }
         LOG_I("effect=%p, count=%d", (void *)effect, count);
-        effect->config.neon.arcs.resize(newSize);
+        try
+        {
+            effect->config.neon.arcs.resize(newSize);
+        }
+        catch (const std::exception &e)
+        {
+            LOG_E("el_effect_set_arc_count: resize failed: %s", e.what());
+            return MapExceptionToResult(e);
+        }
         return EL_SUCCESS;
     }
 
@@ -1128,6 +1186,12 @@ extern "C"
             LOG_E("el_effect_set_arc_color_stop_count: negative count");
             return EL_ERROR_INVALID_PARAMETER;
         }
+        if (count > EdgeLighting::NeonConfig::MAX_COLOR_STOPS_CAP)
+        {
+            LOG_E("el_effect_set_arc_color_stop_count: %d exceeds colour-stop cap %d",
+                  count, EdgeLighting::NeonConfig::MAX_COLOR_STOPS_CAP);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
         auto &arcs = effect->config.neon.arcs;
         size_t arcIdx = static_cast<size_t>(arcIndex);
         size_t newSize = static_cast<size_t>(count);
@@ -1141,7 +1205,15 @@ extern "C"
             LOG_E("el_effect_set_arc_color_stop_count: arcIndex %d out of range (size=%zu)", arcIndex, arcs.size());
             return EL_ERROR_INVALID_PARAMETER;
         }
-        arcs[arcIdx].colorStops.resize(newSize, DEFAULT_COLOR_STOP);
+        try
+        {
+            arcs[arcIdx].colorStops.resize(newSize, DEFAULT_COLOR_STOP);
+        }
+        catch (const std::exception &e)
+        {
+            LOG_E("el_effect_set_arc_color_stop_count: resize failed: %s", e.what());
+            return MapExceptionToResult(e);
+        }
         return EL_SUCCESS;
     }
 
@@ -1281,6 +1353,22 @@ extern "C"
     el_result_e el_effect_set_neon_gradient_lut_size(el_effect_handle_t effect, int32_t size)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_neon_gradient_lut_size");
+        // The range the field's doc comment has always named, now enforced.
+        // Rejected rather than clamped, matching the count setters: a host that
+        // asks for 100 and is quietly given 128 has no way to find that out.
+        if (size < EdgeLighting::NeonConfig::MIN_GRADIENT_LUT_SIZE ||
+            size > EdgeLighting::NeonConfig::MAX_GRADIENT_LUT_SIZE)
+        {
+            LOG_E("el_effect_set_neon_gradient_lut_size: %d outside [%d, %d]", size,
+                  EdgeLighting::NeonConfig::MIN_GRADIENT_LUT_SIZE,
+                  EdgeLighting::NeonConfig::MAX_GRADIENT_LUT_SIZE);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        // Deliberately NOT rejecting a non-power-of-two. Both bakes handle any
+        // width and every GL version this targets (3.3 core, and the 3.0 ES the
+        // non-Apple branches select) samples NPOT with REPEAT correctly, so the
+        // rule would buy nothing and cost a continuous size control its
+        // intermediate values. See MIN/MAX_GRADIENT_LUT_SIZE.
         SET_AND_LOG(effect->config.neon.gradientLutSize, size,
                     "effect=%p, size=%d", (void *)effect, size);
     }

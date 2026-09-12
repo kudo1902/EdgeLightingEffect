@@ -196,7 +196,10 @@ extern "C"
 
     /** @brief Resize the base colour-stops vector.
      *  @details Growing seeds new entries with defaults (position=0, opaque
-     *           white); shrinking truncates. */
+     *           white); shrinking truncates.
+     *           Cap is @c NeonConfig::MAX_COLOR_STOPS_CAP; above that returns
+     *           @ref EL_ERROR_INVALID_PARAMETER. Stops bake into a LUT of at
+     *           most 256 texels, so more cannot be resolved. */
     EL_API el_result_e el_effect_set_color_stop_count(el_effect_handle_t effect, int32_t count);
     EL_API el_result_e el_effect_get_color_stop_count(el_effect_handle_t effect, int32_t *outCount);
 
@@ -247,7 +250,10 @@ extern "C"
                                                          int32_t segmentIndex, el_blend_space_e *outBlendSpace);
 
     /** @brief Resize a segment's own colour-stops vector (empty = inherit
-     *         the base gradient at each perimeter sample). */
+     *         the base gradient at each perimeter sample).
+     *  @details Cap is @c NeonConfig::MAX_COLOR_STOPS_CAP; above that returns
+     *           @ref EL_ERROR_INVALID_PARAMETER. Stops bake into a LUT of at
+     *           most 256 texels, so more cannot be resolved. */
     EL_API el_result_e el_effect_set_segment_color_stop_count(el_effect_handle_t effect,
                                                               int32_t segmentIndex, int32_t count);
     EL_API el_result_e el_effect_get_segment_color_stop_count(el_effect_handle_t effect,
@@ -329,7 +335,10 @@ extern "C"
                                                                    uint32_t id, el_blend_space_e *outBlendSpace);
 
     /** @brief Resize the preserved entry's own colour-stops list (0 = inherit
-     *         the base gradient). */
+     *         the base gradient).
+     *  @details Cap is @c NeonConfig::MAX_COLOR_STOPS_CAP; above that returns
+     *           @ref EL_ERROR_INVALID_PARAMETER. Stops bake into a LUT of at
+     *           most 256 texels, so more cannot be resolved. */
     EL_API el_result_e el_effect_set_preserved_segment_color_stop_count(el_effect_handle_t effect,
                                                                         uint32_t id, int32_t count);
     EL_API el_result_e el_effect_get_preserved_segment_color_stop_count(el_effect_handle_t effect,
@@ -377,7 +386,10 @@ extern "C"
     EL_API el_result_e el_effect_clear_arcs(el_effect_handle_t effect);
 
     /** @brief Resize an arc's own colour-stops vector (empty = inherit the
-     *         base gradient at each perimeter sample). */
+     *         base gradient at each perimeter sample).
+     *  @details Cap is @c NeonConfig::MAX_COLOR_STOPS_CAP; above that returns
+     *           @ref EL_ERROR_INVALID_PARAMETER. Stops bake into a LUT of at
+     *           most 256 texels, so more cannot be resolved. */
     EL_API el_result_e el_effect_set_arc_color_stop_count(el_effect_handle_t effect,
                                                           int32_t arcIndex, int32_t count);
     EL_API el_result_e el_effect_get_arc_color_stop_count(el_effect_handle_t effect,
@@ -430,6 +442,17 @@ extern "C"
     /** @brief Set the baked gradient LUT's width in texels (power-of-two,
      *         32-256). Larger resolves closely-spaced colour stops more
      *         finely; it does not affect per-fragment cost. */
+    /** @brief Width in texels of the baked colour-ring LUT.
+     *  @details Must be within [@c NeonConfig::MIN_GRADIENT_LUT_SIZE,
+     *           @c NeonConfig::MAX_GRADIENT_LUT_SIZE] (32 to 256); outside that
+     *           returns @ref EL_ERROR_INVALID_PARAMETER rather than being
+     *           clamped, so a rejected size is visible instead of silent.
+     *           A power of two is RECOMMENDED, not required - any width bakes
+     *           and samples correctly on every GL version this targets.
+     *           256 resolves any gradient the eye can; smaller bakes faster and
+     *           costs less texture memory. A change SNAPS rather than
+     *           cross-fading - two rings of different length cannot be blended
+     *           element-wise. */
     EL_API el_result_e el_effect_set_neon_gradient_lut_size(el_effect_handle_t effect, int32_t size);
     EL_API el_result_e el_effect_get_neon_gradient_lut_size(el_effect_handle_t effect, int32_t *outSize);
 

@@ -1579,6 +1579,87 @@ to `SegmentUtils::CountEffectiveSegments`, which lives immediately beside the
 merge it has to agree with. That agreement is the thing to guard: it is checked
 exhaustively over every pool combination up to three past the cap.
 
+### I18. An animation index sized a vector directly - FIXED
+
+`EnsureSegmentSlot` grew `segmentBoosts` to `index + 1` with no cap check, so a
+travelling-segment animation's index parameter sized the pool:
+
+```
+SegmentTravel(index=50).ApplyAt    -> 51 entries  (cap 8)
+SegmentTravel(index=200000)        -> 200001 entries
+```
+
+I16 had enforced the cap on the C ABI's count setters, which made this worse by
+making the two front doors disagree: a C++ host could build a state the C ABI
+refused. The cap is a property of the shader's fixed array, so it belongs on the
+pool operation, not on one of the two ways in.
+
+Fixed by returning `SegmentBoost *` and giving it the same nullptr-on-miss
+contract the slot accessors in `field-access.h` use; the two `ApplyAt` callers
+skip when it returns null. Clamping the index to the last slot was rejected -
+two animations with different over-cap indices would then silently drive the
+SAME segment, which is harder to diagnose than a segment that never lights.
+
+Not reachable from C: the ABI's factory passes `SegmentTravel(duration, length,
+boost)` and the index defaults to 0. That was luck, not design.
+
+### I19. Six resizing setters could allocate without bound, none guarded - FIXED
+
+`resize()` is called from six setters. Four had no cap on the count they were
+handed, and **none** of the six wrapped the call, against an ABI that documents
+"no C++ exception crosses the boundary; everything maps to an `el_result_e`".
+
+Measured before the fix:
+
+```
+el_effect_set_color_stop_count(e, INT32_MAX)
+  -> EL_SUCCESS, 4.7 s, 43 GB peak footprint, 6.5 GB resident
+```
+
+One call and one large argument. It returned success here because this machine
+had the address space to back it; on the edge devices this library targets -
+the same constraint that drives RGBA8 LUTs over float textures - it is the OOM
+killer. And where the allocation *does* fail, `bad_alloc` unwinds out of an
+`extern "C"` frame with no handler.
+
+Fixed with `NeonConfig::MAX_COLOR_STOPS_CAP` (256, the largest LUT the stops
+bake into - beyond it the extra stops cannot be resolved by the texture that
+carries them) on all four stop-count setters, and a `try`/`catch` mapping to
+`MapExceptionToResult` around all six resizes. The same call now returns
+`EL_ERROR_INVALID_PARAMETER` in 0.0 ms with a 1 MB footprint.
+
+Note the exception path itself was never exercised: the allocation succeeded on
+this host, so the escape is inferred from the missing handler rather than
+observed. The guard is cheap either way.
+
+### I20. `gradientLutSize` documented a range nothing enforced - FIXED
+
+Same family as I16. The field was documented "power of two, 32-256";
+`el_effect_set_neon_gradient_lut_size` was a bare `SET_AND_LOG`. Unlike the stop
+counts it does not allocate in the setter, so a bad value surfaced later as a
+LUT bake of that many texels - `2000000000` would have asked for an 8 GB vector
+inside a render pass, where there is no exception guard at all.
+
+The two halves of the documented rule turned out to deserve opposite treatment.
+
+**The range is enforced, at both doors.** `MIN_GRADIENT_LUT_SIZE` /
+`MAX_GRADIENT_LUT_SIZE` (32 / 256) are now named constants. The C API rejects
+out-of-range sizes rather than clamping, matching the count setters. Both LUT
+bakes clamp to the upper bound, so the allocation is bounded whichever door the
+config came through - the I18 lesson applied up front rather than after the
+fact. Each bake's existing lower guard (`max(size, 4)`, `max(width, 2)`) was
+left alone so no currently-working small size changes behaviour.
+
+**The power-of-two half was relaxed to a recommendation, and the docs corrected
+to say so.** Enforcing it was implemented first and then reverted: `demo-capi`
+drives this through a continuous `SliderInt(32, 256)`, so rejecting
+non-powers-of-two left the control dead at every value except 32/64/128/256 -
+caught by running the demo, not by the assertions, which had encoded the rule
+rather than questioned it. No GL version this targets needs the rule (3.3 core
+and the 3.0 ES the non-Apple branches select both sample NPOT with REPEAT), so
+it was buying nothing and costing a working control. Making the documentation
+honest was the right fix rather than making the code obey a stale comment.
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,

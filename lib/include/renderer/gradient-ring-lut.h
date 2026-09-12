@@ -58,7 +58,11 @@ namespace EdgeLighting
         void Bake(const std::vector<ColorStop> &stops, BlendSpace space,
                   int size, float fadeDuration)
         {
-            size = std::max(size, 4);
+            // Lower guard unchanged; the upper one is new - see
+            // NeonConfig::MAX_GRADIENT_LUT_SIZE. Clamped rather than rejected
+            // because a bake has no way to report, and an oversized ring is an
+            // allocation the pass cannot survive.
+            size = std::min(std::max(size, 4), NeonConfig::MAX_GRADIENT_LUT_SIZE);
             if (HasUploaded() && size == mSize && space == mBakedSpace && stops == mBakedStops)
             {
                 return;
