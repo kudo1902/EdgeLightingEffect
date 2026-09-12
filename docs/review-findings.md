@@ -1531,6 +1531,54 @@ never set one outside `renderOpaqueFill`'s own clear.
 
 ---
 
+## Sixth pass (the active-config C ABI review)
+
+### I16. Two count setters ignored the cap their own docs promised - FIXED
+
+`el_effect_set_segment_boost_count` and `el_effect_set_arc_count` both carried
+`@details Cap is ...; values above that return EL_ERROR_INVALID_PARAMETER`.
+Neither checked. Both rejected negatives and then `resize()`d to whatever was
+asked, so `set_segment_boost_count(20)` returned `EL_SUCCESS` against a cap of 8.
+
+The entries were real as far as the config was concerned - stored, reported by
+every getter, and carried into the active config - and then silently dropped by
+the renderer's fixed-size UBO. The only signal a host got was the overflow
+warning in the native log at draw time (see V7). A host reading its own config
+back had no way to know a third of its segments would never light.
+
+Fixed by checking `MAX_SEGMENT_BOOSTS_CAP` / `MAX_ARCS_CAP` before the resize,
+matching `el_effect_acquire_preserved_segment`, which was already the only
+place in `el-effect.cpp` that enforced a pool cap. This is a behaviour change
+for any host that was setting counts above the cap and relying on silent
+truncation - it now gets the error the header always documented.
+
+The four colour-stop count setters make no cap claim and were left alone.
+
+### I17. `EL_CONFIG_SOURCE_ACTIVE` was documented as "what renderers draw" - FIXED
+
+It is what renderers are *handed*. Three things sit between it and the pixels,
+all verified by probe:
+
+| | ACTIVE reports | actually drawn |
+| --- | --- | --- |
+| over-cap counts (before I16) | 20 segments / 20 arcs | 8 |
+| preserved-first merge | `preserved=8, transient=3` | 8 preserved, **0 transient** |
+| disabled layer | intensity 1.00, 3 segments | nothing |
+
+The middle row is the one that misleads rather than merely over-reports:
+`SegmentUtils::FillEffectiveSegments` lays down preserved entries first and
+stops at the cap, so a full preserved pool leaves every transient boost dark
+however many there are. A host reading the two pools separately cannot work that
+out.
+
+Fixed in two parts. The claim is corrected wherever it was made (`el_types.h`,
+the read group in `el-effect.h`, `CLAUDE.md`), and `EL_CONTAINER_EFFECTIVE_SEGMENTS`
+was added so the question "how many segments are actually lit" has an answer at
+all. It is the one container whose value is not a plain `.size()`; it delegates
+to `SegmentUtils::CountEffectiveSegments`, which lives immediately beside the
+merge it has to agree with. That agreement is the thing to guard: it is checked
+exhaustively over every pool combination up to three past the cap.
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,

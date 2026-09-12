@@ -703,6 +703,15 @@ extern "C"
      *  @ref EL_CONFIG_SOURCE_ACTIVE, the only way to observe what an attached
      *  animation is currently producing.
      *
+     *  @par What ACTIVE is, and is not
+     *  It is the config the renderers are handed, not a description of the
+     *  pixels. A disabled layer still reports its values; counts are what the
+     *  config holds, which for segments and arcs can exceed the shader cap; and
+     *  the segments actually lit are a preserved-first merge of two pools, so
+     *  a full preserved pool leaves every transient boost dark no matter what
+     *  @ref EL_CONTAINER_SEGMENTS says. @ref EL_CONTAINER_EFFECTIVE_SEGMENTS is
+     *  the one container that reports the merged, capped result.
+     *
      *  The addressing enums are the ones @c el_animation_add_*_field binds
      *  with, so the enum naming a modulator's target also names where to read
      *  its output.

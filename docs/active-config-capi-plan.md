@@ -100,6 +100,16 @@ and leave ACTIVE stale. And no reader retains the resolved `Config *` past its
 own call, which is what makes reading through a pointer into a config that gets
 swapped safe at all - a constraint now worth knowing before anyone caches one.
 
+### Second review pass
+
+Taking the `ACTIVE` documentation at its word turned up two more, recorded as
+I16 and I17 in [`review-findings.md`](review-findings.md): two count setters
+that ignored the cap their own docs promised, and the `ACTIVE` claim itself,
+which said "what renderers draw" when it means "what renderers are handed".
+`EL_CONTAINER_EFFECTIVE_SEGMENTS` came out of the second - it is the only call
+that answers how many segments are actually lit, since that is a preserved-first
+merge of two pools capped at the shader limit, not the size of either.
+
 ## Context
 
 ### The three configs

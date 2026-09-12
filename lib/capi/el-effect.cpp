@@ -476,6 +476,16 @@ extern "C"
             LOG_E("el_effect_set_segment_boost_count: negative count");
             return EL_ERROR_INVALID_PARAMETER;
         }
+        // The cap the header has always documented, now actually enforced.
+        // Entries past it were accepted, stored, reported by every getter, and
+        // then silently dropped by the renderer's fixed-size UBO - so the only
+        // signal a host got was a warning in the native log at draw time.
+        if (count > EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP)
+        {
+            LOG_E("el_effect_set_segment_boost_count: %d exceeds cap %d",
+                  count, EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
         size_t newSize = static_cast<size_t>(count);
         if (effect->config.neon.segmentBoosts.size() == newSize)
         {
@@ -1006,6 +1016,13 @@ extern "C"
         if (count < 0)
         {
             LOG_E("el_effect_set_arc_count: negative count");
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        // As for segment boosts above: the documented cap, now enforced.
+        if (count > EdgeLighting::NeonConfig::MAX_ARCS_CAP)
+        {
+            LOG_E("el_effect_set_arc_count: %d exceeds cap %d",
+                  count, EdgeLighting::NeonConfig::MAX_ARCS_CAP);
             return EL_ERROR_INVALID_PARAMETER;
         }
         size_t newSize = static_cast<size_t>(count);
@@ -1916,6 +1933,14 @@ extern "C"
         case EL_CONTAINER_ARCS:
         {
             count = neon.arcs.size();
+            break;
+        }
+        case EL_CONTAINER_EFFECTIVE_SEGMENTS:
+        {
+            // The odd one out: every other container reports what the config
+            // holds, this reports what survives the preserved-first merge and
+            // the shader cap. Delegated so the rule lives next to the merge.
+            count = static_cast<size_t>(EdgeLighting::SegmentUtils::CountEffectiveSegments(neon));
             break;
         }
         case EL_CONTAINER_SEGMENT_STOPS:

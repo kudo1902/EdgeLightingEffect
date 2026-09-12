@@ -282,9 +282,16 @@ extern "C"
      *             which is the only caller, so the two diverge from the moment
      *             a setter runs until the next update.
      *           - @c ACTIVE is base plus every attached animation's overlay -
-     *             what the renderers actually draw. It is discarded and
-     *             rebuilt from base each frame, and an animation can grow it
-     *             beyond base (see @ref el_effect_read_count).
+     *             what the renderers are HANDED. It is discarded and rebuilt
+     *             from base each frame, and an animation can grow it beyond
+     *             base (see @ref el_effect_read_count).
+     *
+     *           ACTIVE is not a description of the pixels. Three things still
+     *           sit between it and what is drawn: a layer's @c enable flag
+     *           (ACTIVE keeps reporting a disabled renderer's values), the
+     *           shader's fixed caps, and the preserved-first segment merge -
+     *           for which @ref EL_CONTAINER_EFFECTIVE_SEGMENTS is the one call
+     *           that answers what is actually lit.
      *
      *           STAGING is readable on a handle that has not been initialised
      *           yet; BASE and ACTIVE are not, because they live in the effect
@@ -293,7 +300,7 @@ extern "C"
     {
         EL_CONFIG_SOURCE_STAGING = 0, /**< Pending edits; what @c el_effect_get_* read. */
         EL_CONFIG_SOURCE_BASE = 1,    /**< Last committed authored values. */
-        EL_CONFIG_SOURCE_ACTIVE = 2   /**< Base + animation overlays; what renderers draw. */
+        EL_CONFIG_SOURCE_ACTIVE = 2   /**< Base + animation overlays; what renderers are handed. */
     } el_config_source_e;
 
     /** @brief Which variable-length container @ref el_effect_read_count
@@ -308,7 +315,14 @@ extern "C"
         EL_CONTAINER_ARCS = 2,                    /**< @c neon.arcs. No parent. */
         EL_CONTAINER_SEGMENT_STOPS = 3,           /**< Colour stops of one segment; parent = segment index. */
         EL_CONTAINER_PRESERVED_SEGMENT_STOPS = 4, /**< Colour stops of one preserved entry; parent = its id. */
-        EL_CONTAINER_ARC_STOPS = 5                /**< Colour stops of one arc; parent = arc index. */
+        EL_CONTAINER_ARC_STOPS = 5,               /**< Colour stops of one arc; parent = arc index. */
+        /** How many segments are actually LIT, which is not the size of either
+         *  segment pool. The renderer merges preserved entries first, then
+         *  transient boosts, and stops at the shader's fixed cap - so a full
+         *  preserved pool leaves every transient boost dark. Every other value
+         *  here reports what the config holds; this one reports what survives
+         *  the merge. No parent. */
+        EL_CONTAINER_EFFECTIVE_SEGMENTS = 6
     } el_container_e;
 
     /** @brief Bitmask selecting which renderer layers @ref el_effect_init_with_renderers
