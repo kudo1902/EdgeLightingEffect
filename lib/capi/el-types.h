@@ -268,6 +268,49 @@ extern "C"
         EL_STOP_FIELD_A = 4         /**< Alpha channel. */
     } el_color_stop_field_e;
 
+    /** @brief Which of the three configs an effect handle reaches.
+     *  @details Paired with a field enum by the @c el_effect_read_* family.
+     *           These are three different objects answering three different
+     *           questions, not three views of one:
+     *
+     *           - @c STAGING is the handle's own @c Config. Every
+     *             @c el_effect_set_* writes it and every @c el_effect_get_*
+     *             reads it back. It exists only in this ABI - a C++ host has
+     *             no staging config.
+     *           - @c BASE is what the effect last received through
+     *             @c SetConfig. Staging reaches it in @ref el_effect_update,
+     *             which is the only caller, so the two diverge from the moment
+     *             a setter runs until the next update.
+     *           - @c ACTIVE is base plus every attached animation's overlay -
+     *             what the renderers actually draw. It is discarded and
+     *             rebuilt from base each frame, and an animation can grow it
+     *             beyond base (see @ref el_effect_read_count).
+     *
+     *           STAGING is readable on a handle that has not been initialised
+     *           yet; BASE and ACTIVE are not, because they live in the effect
+     *           @ref el_effect_init creates. */
+    typedef enum el_config_source_e
+    {
+        EL_CONFIG_SOURCE_STAGING = 0, /**< Pending edits; what @c el_effect_get_* read. */
+        EL_CONFIG_SOURCE_BASE = 1,    /**< Last committed authored values. */
+        EL_CONFIG_SOURCE_ACTIVE = 2   /**< Base + animation overlays; what renderers draw. */
+    } el_config_source_e;
+
+    /** @brief Which variable-length container @ref el_effect_read_count
+     *         measures.
+     *  @details The three @c _STOPS containers are nested, so they take a
+     *           parent: a segment index, a preserved-entry id, or an arc index
+     *           respectively. The other three are top-level and ignore it. */
+    typedef enum el_container_e
+    {
+        EL_CONTAINER_SEGMENTS = 0,                /**< @c neon.segmentBoosts. No parent. */
+        EL_CONTAINER_PRESERVED_SEGMENTS = 1,      /**< @c neon.preservedSegmentBoosts. No parent. */
+        EL_CONTAINER_ARCS = 2,                    /**< @c neon.arcs. No parent. */
+        EL_CONTAINER_SEGMENT_STOPS = 3,           /**< Colour stops of one segment; parent = segment index. */
+        EL_CONTAINER_PRESERVED_SEGMENT_STOPS = 4, /**< Colour stops of one preserved entry; parent = its id. */
+        EL_CONTAINER_ARC_STOPS = 5                /**< Colour stops of one arc; parent = arc index. */
+    } el_container_e;
+
     /** @brief Bitmask selecting which renderer layers @ref el_effect_init_with_renderers
      *         registers on the effect.
      *  @details OR the flags for the layers you want. Registration always
@@ -323,7 +366,7 @@ extern "C"
         EL_RENDERER_ALL = 0x7FFFFFFF
     } el_renderer_flags_e;
 
-    /* ====================== d================================================
+    /* =====================================================================
      * Opaque handles
      * ==================================================================== */
 
