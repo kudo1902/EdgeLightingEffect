@@ -127,15 +127,28 @@ extern "C"
     EL_API el_result_e el_animation_stop(el_animation_handle_t anim);
 
     /** @brief Zero elapsed and write the modulator's t=0 value into the
-     *         effect's staging config. Does NOT change state. */
+     *         effect's staging config. Does NOT change state.
+     *  @note Writes staging, so it carries the same persistence caveat as
+     *        @ref el_animation_apply - the t=0 value becomes an authored one. */
     EL_API el_result_e el_animation_reset(el_animation_handle_t anim, el_effect_handle_t effect);
 
     /** @brief Advance the animation by @p dt seconds (only if PLAYING). */
     EL_API el_result_e el_animation_update(el_animation_handle_t anim, float dt);
 
     /** @brief Write the animation's current value into the effect's staging
-     *         config. Called automatically by @ref el_effect_update for
-     *         attached animations. */
+     *         config.
+     *  @details This is the MANUAL composition path, and it is not what an
+     *           attached animation does. Staging is committed to the base
+     *           config by the next @ref el_effect_update, so a value written
+     *           here becomes an authored value and outlives the animation -
+     *           stopping or detaching it will not take the value back.
+     *
+     *           An animation attached with @ref el_effect_attach_animation is
+     *           applied by @ref el_effect_update into the ACTIVE config
+     *           instead, leaving the base untouched, which is what makes a
+     *           stopped animation revert. Do not call this on an attached
+     *           animation: it would apply the overlay twice, once
+     *           permanently. */
     EL_API el_result_e el_animation_apply(el_animation_handle_t anim, el_effect_handle_t effect);
 
     /** @} */

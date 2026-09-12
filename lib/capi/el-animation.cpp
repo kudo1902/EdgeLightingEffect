@@ -171,7 +171,7 @@ extern "C"
     {
         try
         {
-            auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::IntensityFadeIn>(targetIntensity, duration, toEasing(easing))};
+            auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::IntensityFadeIn>(targetIntensity, duration, ConvertFromCapi(easing))};
             LOG_I("anim=%p, targetIntensity=%f, duration=%f, easing=%d", (void *)handle, targetIntensity, duration, (int)easing);
             return handle;
         }
@@ -187,7 +187,7 @@ extern "C"
     {
         try
         {
-            auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::IntensityFadeOut>(startIntensity, duration, toEasing(easing))};
+            auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::IntensityFadeOut>(startIntensity, duration, ConvertFromCapi(easing))};
             LOG_I("anim=%p, startIntensity=%f, duration=%f, easing=%d", (void *)handle, startIntensity, duration, (int)easing);
             return handle;
         }
@@ -300,7 +300,7 @@ extern "C"
     {
         try
         {
-            auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::OutlineTracer>(duration, toEasing(easing), maxLength)};
+            auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::OutlineTracer>(duration, ConvertFromCapi(easing), maxLength)};
             LOG_I("anim=%p, duration=%f, easing=%d, maxLength=%f", (void *)handle, duration, (int)easing, maxLength);
             return handle;
         }
@@ -319,7 +319,7 @@ extern "C"
         try
         {
             auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::ArcWipe>(
-                duration, startPosition, endPosition, maxLength, toEasing(easing))};
+                duration, startPosition, endPosition, maxLength, ConvertFromCapi(easing))};
             LOG_I("anim=%p, duration=%f, startPosition=%f, endPosition=%f, maxLength=%f, easing=%d", (void *)handle, duration, startPosition, endPosition, maxLength, (int)easing);
             return handle;
         }
@@ -378,7 +378,7 @@ extern "C"
         catch (const std::exception &e)
         {
             LOG_E("exception: %s", e.what());
-            return mapExceptionToResult(e);
+            return MapExceptionToResult(e);
         }
     }
 
@@ -406,7 +406,7 @@ extern "C"
         catch (const std::exception &e)
         {
             LOG_E("exception: %s", e.what());
-            return mapExceptionToResult(e);
+            return MapExceptionToResult(e);
         }
     }
 
@@ -489,7 +489,7 @@ extern "C"
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_get_end_action");
         VALIDATE_OUT_PTR(outAction, "el_animation_get_end_action");
-        *outAction = anim->ptr ? fromEndAction(anim->ptr->GetEndAction()) : EL_END_ACTION_HOLD_CURRENT;
+        *outAction = anim->ptr ? ConvertToCapi(anim->ptr->GetEndAction()) : EL_END_ACTION_HOLD_CURRENT;
         LOG_D("anim=%p, action=%d", (void *)anim, (int)*outAction);
         return EL_SUCCESS;
     }
@@ -497,7 +497,7 @@ extern "C"
     el_result_e el_animation_set_end_action(el_animation_handle_t anim, el_end_action_e action)
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_set_end_action");
-        auto newVal = toEndAction(action);
+        auto newVal = ConvertFromCapi(action);
         if (!anim->ptr || anim->ptr->GetEndAction() == newVal)
         {
             return EL_SUCCESS;
@@ -523,7 +523,7 @@ extern "C"
         catch (const std::exception &e)
         {
             LOG_E("exception: %s", e.what());
-            return mapExceptionToResult(e);
+            return MapExceptionToResult(e);
         }
     }
 
@@ -533,7 +533,7 @@ extern "C"
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_get_playback_mode");
         VALIDATE_OUT_PTR(outMode, "el_animation_get_playback_mode");
-        *outMode = anim->ptr ? fromPlaybackMode(anim->ptr->GetPlaybackMode()) : EL_PLAYBACK_LOOP;
+        *outMode = anim->ptr ? ConvertToCapi(anim->ptr->GetPlaybackMode()) : EL_PLAYBACK_LOOP;
         LOG_D("anim=%p, mode=%d", (void *)anim, (int)*outMode);
         return EL_SUCCESS;
     }
@@ -541,7 +541,7 @@ extern "C"
     el_result_e el_animation_set_playback_mode(el_animation_handle_t anim, el_playback_mode_e mode)
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_set_playback_mode");
-        auto newVal = toPlaybackMode(mode);
+        auto newVal = ConvertFromCapi(mode);
         if (!anim->ptr || anim->ptr->GetPlaybackMode() == newVal)
         {
             return EL_SUCCESS;
@@ -661,7 +661,7 @@ extern "C"
         try
         {
             auto a = std::make_shared<EdgeLighting::FieldBoundAnimation>(
-                toAnimatableField(field), mod->ptr);
+                ConvertFromCapi(field), mod->ptr);
             auto *handle = new el_animation_handle_impl{std::move(a)};
             LOG_I("anim=%p", (void *)handle);
             return handle;
@@ -701,7 +701,7 @@ extern "C"
             LOG_E("el_animation_add_field: animation is not a FieldBoundAnimation");
             return EL_ERROR_INVALID_PARAMETER;
         }
-        fb->AddField(toAnimatableField(field), mod->ptr);
+        fb->AddField(ConvertFromCapi(field), mod->ptr);
         return EL_SUCCESS;
     }
 
