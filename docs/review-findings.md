@@ -1660,6 +1660,52 @@ and the 3.0 ES the non-Apple branches select both sample NPOT with REPEAT), so
 it was buying nothing and costing a working control. Making the documentation
 honest was the right fix rather than making the code obey a stale comment.
 
+### I21. `OpaqueMode` crossed the ABI on a bare cast, unguarded - FIXED
+
+The parity wall in `capi-internal.h` covered eight mirrored enums and missed
+this one. `el_effect_set/get_opaque_mode` cast in both directions with nothing
+asserting the two numberings agreed.
+
+Live rather than theoretical: `EdgeLighting::OpaqueMode` declares its values
+IMPLICITLY (`NONE, OUTSIDE, INSIDE, BOTH, ALL`) while `el_opaque_mode_e` numbers
+them explicitly 0-4, so inserting or reordering a mode is a one-line edit that
+silently remaps every host's opaque mode with no compile error anywhere. The
+wall's own comment enumerates the enums deliberately exempted and `OpaqueMode`
+is not among them, so this was an omission rather than a decision.
+
+Fixed with the five missing asserts. Verified by reordering the C++ enum and
+confirming the build fails naming the enumerator that moved - a parity assert
+nobody has ever tripped is only a comment.
+
+### I22. `AnimationState` was exempted from the wall on a half-true claim - FIXED
+
+The wall said:
+
+> PlaybackMode / EndAction / AnimationState use dedicated to\*/from\* helpers, so
+> their ABI decoupling is enforced at the switch site rather than by parity - no
+> static_asserts needed.
+
+True of `el_animation_get_state`, which decoupled through a switch. Not true of
+the `OnStateChanged` callback bridge, which cast both arguments raw. So the enum
+had neither parity asserts - waived on that claim - nor complete decoupling, and
+was the one mirrored enum with no protection at all.
+
+Worse than I21 in kind: there the guard was forgotten, here it was deliberately
+removed against a written justification one call site did not honour.
+
+Fixed by extracting the switch as `ConvertToCapi(AnimationState)` and routing
+both crossings through it, and by rewriting the comment to say what the
+exemption actually depends on - that EVERY crossing goes through a switch, not
+merely that one does.
+
+Verified from both directions. Reordering `AnimationState` (STOPPED 0 -> 2,
+PAUSED 2 -> 0) now compiles and every state still maps correctly, which is what
+the exemption is supposed to buy. Restoring the old raw cast under the same
+reorder fails two assertions - a host's callback receives PAUSED where the
+animation stopped and STOPPED where it paused - which is the bug that shipped
+unnoticed because no test had ever exercised the callback path against a
+reordered enum.
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,

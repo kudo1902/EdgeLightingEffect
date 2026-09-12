@@ -38,6 +38,12 @@ static_assert(static_cast<int>(EdgeLighting::GlowSide::BOTH) == EL_GLOW_SIDE_BOT
 static_assert(static_cast<int>(EdgeLighting::GlowSide::INSIDE) == EL_GLOW_SIDE_INSIDE);
 static_assert(static_cast<int>(EdgeLighting::GlowSide::OUTSIDE) == EL_GLOW_SIDE_OUTSIDE);
 
+static_assert(static_cast<int>(EdgeLighting::OpaqueMode::NONE) == EL_OPAQUE_MODE_NONE);
+static_assert(static_cast<int>(EdgeLighting::OpaqueMode::OUTSIDE) == EL_OPAQUE_MODE_OUTSIDE);
+static_assert(static_cast<int>(EdgeLighting::OpaqueMode::INSIDE) == EL_OPAQUE_MODE_INSIDE);
+static_assert(static_cast<int>(EdgeLighting::OpaqueMode::BOTH) == EL_OPAQUE_MODE_BOTH);
+static_assert(static_cast<int>(EdgeLighting::OpaqueMode::ALL) == EL_OPAQUE_MODE_ALL);
+
 static_assert(static_cast<int>(EdgeLighting::BlendSpace::RGB) == EL_BLEND_SPACE_RGB);
 static_assert(static_cast<int>(EdgeLighting::BlendSpace::HSV) == EL_BLEND_SPACE_HSV);
 static_assert(static_cast<int>(EdgeLighting::BlendSpace::HSL) == EL_BLEND_SPACE_HSL);
@@ -81,9 +87,16 @@ static_assert(static_cast<int>(EdgeLighting::ColorStopField::G) == EL_STOP_FIELD
 static_assert(static_cast<int>(EdgeLighting::ColorStopField::B) == EL_STOP_FIELD_B);
 static_assert(static_cast<int>(EdgeLighting::ColorStopField::A) == EL_STOP_FIELD_A);
 
-// PlaybackMode / EndAction / AnimationState use dedicated to*/from* helpers,
-// so their ABI decoupling is enforced at the switch site rather than by
-// parity - no static_asserts needed.
+// PlaybackMode / EndAction / AnimationState / easing curves are deliberately
+// NOT parity-checked: they cross through the ConvertToCapi / ConvertFromCapi
+// switches below, which decouple the two numberings entirely, so a reorder on
+// either side is a compile error at the switch rather than a silent remap.
+//
+// That exemption is only worth anything while EVERY crossing goes through a
+// switch. AnimationState once had one call site that did not - the
+// OnStateChanged callback bridge cast raw - which left it with neither parity
+// asserts nor decoupling. If you add a path for one of these enums, route it
+// through the converter; do not cast.
 
 // ==========================================================================
 // Opaque handle definitions
@@ -299,6 +312,26 @@ inline EdgeLighting::PlaybackMode ConvertFromCapi(el_playback_mode_e m)
     return m == EL_PLAYBACK_ONE_SHOT
                ? EdgeLighting::PlaybackMode::ONE_SHOT
                : EdgeLighting::PlaybackMode::LOOP;
+}
+
+inline el_animation_state_e ConvertToCapi(EdgeLighting::AnimationState s)
+{
+    switch (s)
+    {
+    case EdgeLighting::AnimationState::PLAYING:
+    {
+        return EL_ANIM_STATE_PLAYING;
+    }
+    case EdgeLighting::AnimationState::PAUSED:
+    {
+        return EL_ANIM_STATE_PAUSED;
+    }
+    case EdgeLighting::AnimationState::STOPPED:
+    default:
+    {
+        return EL_ANIM_STATE_STOPPED;
+    }
+    }
 }
 
 inline el_playback_mode_e ConvertToCapi(EdgeLighting::PlaybackMode m)

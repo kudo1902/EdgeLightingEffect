@@ -416,27 +416,7 @@ extern "C"
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_get_state");
         VALIDATE_OUT_PTR(outState, "el_animation_get_state");
-        if (!anim->ptr)
-        {
-            *outState = EL_ANIM_STATE_STOPPED;
-        }
-        else
-        {
-            using ES = EdgeLighting::AnimationState;
-            switch (anim->ptr->GetState())
-            {
-            case ES::PLAYING:
-                *outState = EL_ANIM_STATE_PLAYING;
-                break;
-            case ES::PAUSED:
-                *outState = EL_ANIM_STATE_PAUSED;
-                break;
-            case ES::STOPPED:
-            default:
-                *outState = EL_ANIM_STATE_STOPPED;
-                break;
-            }
-        }
+        *outState = anim->ptr ? ConvertToCapi(anim->ptr->GetState()) : EL_ANIM_STATE_STOPPED;
         LOG_D("anim=%p, state=%d", (void *)anim, (int)*outState);
         return EL_SUCCESS;
     }
@@ -638,9 +618,10 @@ extern "C"
         anim->ptr->OnStateChanged = [callback, userData](EdgeLighting::AnimationState prev,
                                                          EdgeLighting::AnimationState now)
         {
-            callback(static_cast<el_animation_state_e>(prev),
-                     static_cast<el_animation_state_e>(now),
-                     userData);
+            // Through the converter, not a cast. This bridge casting raw was
+            // what left AnimationState with neither parity asserts nor
+            // decoupling - see the note above the assert wall.
+            callback(ConvertToCapi(prev), ConvertToCapi(now), userData);
         };
         return EL_SUCCESS;
     }
