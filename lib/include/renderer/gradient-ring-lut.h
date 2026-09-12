@@ -18,8 +18,8 @@ namespace EdgeLighting
     /// one row, sampled at v = 0.5, REPEAT on U so the sweep wraps.
     ///
     /// RGBA8, not float - see @ref BaseLUT, which owns the texture and the
-    /// upload format; the ring quantises through @ref ColorUtils::ToByte on its
-    /// way there.
+    /// upload format; the ring goes through @ref ColorUtils::QuantiseToByte on
+    /// its way there.
     ///
     /// A colour change does not snap. @ref Bake stores the new ring as the
     /// target and snapshots what is currently on screen as the source;
@@ -159,7 +159,7 @@ namespace EdgeLighting
             mBytes.resize(mDisplay.size());
             for (size_t i = 0; i < mDisplay.size(); ++i)
             {
-                mBytes[i] = ColorUtils::ToByte(mDisplay[i]);
+                mBytes[i] = ColorUtils::QuantiseToByte(mDisplay[i]);
             }
 
             // 1-row 2D texture (sampled at v = 0.5 in the shader). REPEAT on

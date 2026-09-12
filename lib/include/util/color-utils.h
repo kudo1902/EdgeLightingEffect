@@ -211,7 +211,7 @@ namespace EdgeLighting
         /// authored colours. GL's own float-to-unorm conversion rounds, so
         /// truncating here was the CPU bake disagreeing with the hardware it
         /// feeds. The clamp comes after the bias so 1.0 still maps to 255.
-        inline unsigned char ToByte(float v)
+        inline unsigned char QuantiseToByte(float v)
         {
             return static_cast<unsigned char>(std::clamp(v * 255.0f + 0.5f, 0.0f, 255.0f));
         }
