@@ -16,13 +16,25 @@ extern "C"
     /* ======================================================================
      * Effect - config setters and getters
      *
-     * Every setter mutates the effect's staging @c Config and immediately
-     * calls @c SetConfig on the underlying effect. Every getter reads that
-     * staging copy - not the animation-overlaid active config. Getters
-     * always require a non-null @p out* pointer.
+     * Every setter mutates the effect's staging @c Config and NOTHING else.
+     * Staging reaches the effect in @ref el_effect_update, which is the only
+     * caller of @c SetConfig - so a host that sets config and then calls only
+     * @ref el_effect_render draws the previous frame's config. Every getter
+     * reads that same staging copy back, NOT the last-committed base and not
+     * the animation-overlaid active config. Getters always require a non-null
+     * @p out* pointer.
      *
      * Setters are idempotent: assigning the same value twice is a cheap
      * no-op and still returns @ref EL_SUCCESS.
+     *
+     * Two read families, and the difference is which config they see:
+     *
+     *   - @c el_effect_get_* - one function per named scalar, always staging.
+     *     What you want when reading back a value you authored.
+     *   - @c el_effect_read_* - takes an @ref el_config_source_e and a field
+     *     enum, so it reads staging, base, or the animation-overlaid active
+     *     config. The only way to observe what an attached animation is
+     *     producing. See the "Source-parameterised reads" group below.
      * ==================================================================== */
 
     /** @name Geometry
@@ -671,6 +683,97 @@ extern "C"
      *           @ref el_effect_set_debug_enabled. */
     EL_API el_result_e el_effect_set_debug_opaque_only(el_effect_handle_t effect, el_bool_t opaqueOnly);
     EL_API el_result_e el_effect_get_debug_opaque_only(el_effect_handle_t effect, el_bool_t *outOpaqueOnly);
+
+    /** @} */
+
+    /** @name Source-parameterised reads
+     *
+     *  The uniform read path. Where an @c el_effect_get_* names one scalar and
+     *  always reads staging, these take an @ref el_config_source_e and an
+     *  addressing enum, so the same call reads whichever config you ask for.
+     *  The two families overlap by design:
+     *
+     *  @code
+     *  el_effect_get_intensity(e, &v);
+     *  el_effect_read_field(e, EL_CONFIG_SOURCE_STAGING, EL_FIELD_NEON_INTENSITY, &v);
+     *  @endcode
+     *
+     *  are the same read. Use @c get for a named scalar you author; use
+     *  @c read when the source matters - above all
+     *  @ref EL_CONFIG_SOURCE_ACTIVE, the only way to observe what an attached
+     *  animation is currently producing.
+     *
+     *  The addressing enums are the ones @c el_animation_add_*_field binds
+     *  with, so the enum naming a modulator's target also names where to read
+     *  its output.
+     *
+     *  @par Which frame you get
+     *  These read live, with no snapshot step. Values therefore come from the
+     *  last completed @ref el_effect_update, and a set of reads interleaved
+     *  with an update straddles two frames. A host that builds its UI before
+     *  calling update - which is the usual shape, and what both in-tree demos
+     *  do - sees one consistent frame.
+     *
+     *  @par Errors
+     *  @ref EL_ERROR_INVALID_PARAMETER for a null @p out, an unknown enum
+     *  value, an out-of-range index or stop, an unknown preserved id, and for
+     *  @ref EL_CONFIG_SOURCE_BASE / @ref EL_CONFIG_SOURCE_ACTIVE on a handle
+     *  that has not been through @ref el_effect_init. On any error @p out is
+     *  left untouched. Reading @ref EL_CONFIG_SOURCE_ACTIVE for a field no
+     *  animation drives is NOT an error: the active config is a complete
+     *  @c Config, so it simply reads back the base value.
+     *  @{ */
+
+    /** @brief Read one scalar @c Config leaf from @p source. */
+    EL_API el_result_e el_effect_read_field(el_effect_handle_t effect, el_config_source_e source,
+                                            el_config_field_e field, float *out);
+
+    /** @brief Read a scalar from @c segmentBoosts[index] in @p source.
+     *  @note Under a @c SegmentTravel-style animation this pool is larger in
+     *        @ref EL_CONFIG_SOURCE_ACTIVE than in base - the animation grows
+     *        it. Size the read with @ref el_effect_read_count on the same
+     *        source, never with the staging count. */
+    EL_API el_result_e el_effect_read_segment_field(el_effect_handle_t effect, el_config_source_e source,
+                                                    int32_t index, el_segment_field_e field, float *out);
+
+    /** @brief Read a scalar from the preserved entry owning @p id in @p source. */
+    EL_API el_result_e el_effect_read_preserved_segment_field(el_effect_handle_t effect, el_config_source_e source,
+                                                              uint32_t id, el_segment_field_e field, float *out);
+
+    /** @brief Read a scalar from @c arcs[index] in @p source. */
+    EL_API el_result_e el_effect_read_arc_field(el_effect_handle_t effect, el_config_source_e source,
+                                                int32_t index, el_arc_field_e field, float *out);
+
+    /** @brief Read one channel of one colour stop inside @c segmentBoosts[segIndex]. */
+    EL_API el_result_e el_effect_read_segment_stop_field(el_effect_handle_t effect, el_config_source_e source,
+                                                         int32_t segIndex, int32_t stopIndex,
+                                                         el_color_stop_field_e field, float *out);
+
+    /** @brief Read one channel of one colour stop inside the preserved entry owning @p id. */
+    EL_API el_result_e el_effect_read_preserved_segment_stop_field(el_effect_handle_t effect, el_config_source_e source,
+                                                                   uint32_t id, int32_t stopIndex,
+                                                                   el_color_stop_field_e field, float *out);
+
+    /** @brief Read one channel of one colour stop inside @c arcs[arcIndex]. */
+    EL_API el_result_e el_effect_read_arc_stop_field(el_effect_handle_t effect, el_config_source_e source,
+                                                     int32_t arcIndex, int32_t stopIndex,
+                                                     el_color_stop_field_e field, float *out);
+
+    /** @brief Measure one variable-length container in @p source.
+     *  @details The counts are a separate call rather than seven, because
+     *           unlike the readers above they differ only in which container
+     *           is measured.
+     *  @param container Which container. The three @c _STOPS values are
+     *                   nested and take a @p parent; the other three ignore it.
+     *  @param parent    Segment index, preserved-entry id, or arc index,
+     *                   per @p container. Ignored for the top-level three.
+     *  @note This is the call that makes an animation's structural growth
+     *        visible: an effect whose base has no segment boosts can have
+     *        several in @ref EL_CONFIG_SOURCE_ACTIVE. A fresh handle reads 1
+     *        for @ref EL_CONTAINER_ARCS and 0 for @ref EL_CONTAINER_SEGMENTS -
+     *        @c arcs defaults to a single full-perimeter entry. */
+    EL_API el_result_e el_effect_read_count(el_effect_handle_t effect, el_config_source_e source,
+                                            el_container_e container, uint32_t parent, int32_t *out);
 
     /** @} */
 
