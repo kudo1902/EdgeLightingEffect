@@ -40,15 +40,29 @@ namespace EdgeLighting
         // erase from the vector this loop was iterating. The result was half
         // the list silently skipped and then a segfault. See the re-entrancy
         // note on the declaration for the semantics this fixes them to.
-        mTickScratch = mAnimations;
-        for (const AnimationPtr &a : mTickScratch)
+        // The walk must be over a container NOTHING a callback can reach, which
+        // rules out two things rather than one:
+        //   - not mAnimations, because a callback can detach or attach; and
+        //   - not a shared member either, because a callback can re-enter
+        //     Update, and the nested tick assigning to that member would
+        //     reallocate the buffer this loop is iterating. A member scratch
+        //     fixed the first hazard and introduced the second.
+        // So: swap the member into a LOCAL for the duration of the tick. At
+        // depth 0 the local arrives carrying the capacity the previous tick
+        // left, so the copy still allocates nothing in steady state. A nested
+        // tick finds the member empty and allocates its own - the right trade
+        // for a path that should be rare.
+        std::vector<AnimationPtr> ticking;
+        ticking.swap(mTickScratch);
+        ticking = mAnimations;
+        for (const AnimationPtr &a : ticking)
         {
             a->Update(dt);
         }
-        // Dropped here rather than left holding references until the next tick:
-        // an animation detached during the loop should not be kept alive by the
-        // manager afterwards. clear() keeps the capacity for the next frame.
-        mTickScratch.clear();
+        // Cleared before the capacity goes back, so an animation detached during
+        // the loop is not kept alive by the manager afterwards.
+        ticking.clear();
+        ticking.swap(mTickScratch);
     }
 
     void AnimationManager::Apply(Config &target) const

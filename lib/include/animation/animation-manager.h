@@ -101,17 +101,18 @@ namespace EdgeLighting
     private:
         std::vector<AnimationPtr> mAnimations;
 
-        /// The list @ref Update actually walks - a copy of @c mAnimations taken
-        /// at entry, so a callback firing mid-tick can mutate @c mAnimations
-        /// without invalidating the iteration.
+        /// Spare capacity for @ref Update's tick list - NOT the list it walks.
         ///
-        /// Copy-ASSIGNED rather than constructed per frame, so it reuses the
-        /// capacity it already holds and allocates nothing after the first tick
-        /// at a given size - the same reason @c EdgeLightingEffect keeps a
-        /// scratch config instead of a local. Copying shared_ptrs (a refcount
-        /// bump each) is the cost; for the handful of animations a frame
-        /// carries that is far cheaper than the alternative, which was
-        /// undefined behaviour.
+        /// Update swaps this into a local, copies @c mAnimations into that, and
+        /// swaps the buffer back on the way out. The buffer being walked is
+        /// therefore a stack object no callback can reach, which is what makes
+        /// mutating @c mAnimations *and* re-entering @ref Update both safe; a
+        /// member walked directly would survive the first and not the second.
+        ///
+        /// It exists purely so the copy allocates nothing in steady state - the
+        /// local arrives carrying the previous tick's capacity, the same reason
+        /// @c EdgeLightingEffect keeps a scratch config. A nested tick finds it
+        /// empty and allocates its own.
         std::vector<AnimationPtr> mTickScratch;
     };
 

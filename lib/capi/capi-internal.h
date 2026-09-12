@@ -105,6 +105,12 @@ struct el_effect_handle_impl
 {
     EdgeLighting::Config config;
     std::unique_ptr<EdgeLighting::EdgeLightingEffect> impl;
+
+    /// The mask the FIRST el_effect_init_with_renderers was given, kept so a
+    /// later call can tell a GL rebuild (same mask, re-initialise in place)
+    /// from a request to change the layer set (which needs a new effect and is
+    /// refused). Only meaningful once @c impl exists.
+    uint32_t rendererMask = 0;
 };
 
 struct el_animation_handle_impl

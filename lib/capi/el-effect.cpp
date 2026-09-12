@@ -2139,7 +2139,38 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_init_with_renderers");
         try
         {
+            // Already initialised: re-initialise IN PLACE rather than building a
+            // new effect. This is the GL-context-loss path - rebuild shaders and
+            // GL objects, keep everything that is not GL. Replacing the effect
+            // silently detached every attached animation and reset the clock
+            // while still returning EL_SUCCESS, and the C++ Initialize() this
+            // wraps has always documented re-entry as supported, so the two
+            // doors disagreed with the C one being the destructive surprise.
+            if (effect->impl)
+            {
+                if (rendererMask != effect->rendererMask)
+                {
+                    // Refused rather than ignored. The layer set is decided by
+                    // the registration order in this function and there is no
+                    // unregister, so honouring a new mask means a new effect -
+                    // which is destroy + create, and the caller's decision to
+                    // make, not something to do behind a rebuild call.
+                    LOG_E("el_effect_init_with_renderers: already initialised with mask 0x%x; "
+                          "cannot change it to 0x%x - destroy and create a new effect instead",
+                          effect->rendererMask, rendererMask);
+                    return EL_ERROR_INVALID_PARAMETER;
+                }
+                LOG_I("re-initialising in place (attached animations and clock are kept)");
+                if (!effect->impl->Initialize())
+                {
+                    LOG_E("el_effect_init_with_renderers: re-initialisation failed");
+                    return EL_ERROR_INIT_FAILED;
+                }
+                return EL_SUCCESS;
+            }
+
             effect->impl = std::make_unique<EdgeLighting::EdgeLightingEffect>();
+            effect->rendererMask = rendererMask;
 
             // ONE bit per layer: the content layers dense from 0, the debug
             // layer on the top bit (see el_renderer_flags_e), which is what

@@ -1752,6 +1752,76 @@ as well.
 Regression covers all four shapes - detach self, detach all, attach, and destroy
 the handle - from inside a callback.
 
+**The first version of this fix was wrong; see I24.**
+
+### I24. The I23 fix made `Update` non-re-entrant - FIXED
+
+I23 moved the tick from `mAnimations` to a scratch MEMBER. That closed the
+mutate-during-tick hole and opened a second one: a callback can also re-enter
+`Update`, and a nested tick assigning to that member reallocates the buffer the
+outer loop is walking.
+
+Confirmed by growing the attach list past the scratch's capacity inside a
+callback and then re-entering - the nested copy reallocates, and the outer loop
+segfaults the moment the nested call returns. A one-level re-entry WITHOUT the
+growth appears to work, which is the dangerous part: with capacity to spare the
+assignment writes in place and the outer walk carries on over elements a nested
+`clear()` has already destroyed. Undefined either way, visibly broken only
+sometimes.
+
+Fixed by swapping the member into a LOCAL for the duration of the tick, so the
+walked buffer is a stack object no callback can reach. Depth 0 still allocates
+nothing - the local arrives carrying the previous tick's capacity, measured at
+zero allocations across 1000 ticks - and a nested tick finds the member empty
+and allocates its own, which is the right trade for a rare path.
+
+The general shape is worth keeping in mind: a callback fired mid-iteration can
+do anything the public API allows, including calling back into the function it
+was fired from. Guarding against mutation is half the problem; the container
+being iterated has to be unreachable, not merely separate.
+
+Regression now covers both re-entry shapes, with and without the reallocating
+nested copy.
+
+### I25. `el_effect_init` silently detached every animation on a second call - FIXED
+
+The C++ `Initialize()` documents re-entry as supported and preserves everything
+that is not GL. The C ABI's `el_effect_init_with_renderers` did not re-initialise
+- it built a whole new `EdgeLightingEffect` and dropped the old one:
+
+```
+BEFORE re-init: animations=1 staging=2.50 base=2.50 active=1.60
+--- el_effect_init(e) again ---   returned 0
+AFTER  re-init: animations=0 staging=2.50 base=1.00
+AFTER  one update: animations=0 base=2.50 active=2.50
+```
+
+The config self-healed (staging is re-pushed on the next update) which is
+probably why this was never noticed. The animations did not: silently detached,
+permanently, with `EL_SUCCESS` returned. The host's handles stayed valid and
+playing, attached to an effect object that no longer existed.
+
+Re-init is not an exotic path - it is what a host does after **GL context loss**,
+and there is no other call in the ABI that rebuilds GL resources. The function's
+own documentation ("Initialise every renderer layer under the current GL
+context") described the C++ behaviour rather than its own. Same shape as I18: one
+concept, two doors, different semantics, with the C door being the surprise.
+
+Fixed by re-initialising in place when the effect already exists, which is what
+the wrapped C++ call has always done. Attached animations, clock state and
+config now survive a rebuild.
+
+The renderer mask needed a rule, since the layer set is decided by the
+registration order in that function and there is no unregister. A second call
+with a DIFFERENT mask returns `EL_ERROR_INVALID_PARAMETER` rather than being
+ignored - changing the layer set means destroy and create, and that is the
+caller's decision, not something to do behind a rebuild call. The mask is stored
+on the handle to make the comparison possible.
+
+Regression covers a rebuild keeping animations / elapsed / clock / base config
+and still rendering, a mismatched mask being refused without disturbing the
+effect, and a partial first mask repeating correctly.
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,

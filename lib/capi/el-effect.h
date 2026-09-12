@@ -880,6 +880,9 @@ extern "C"
      *  @details Convenience wrapper for @ref el_effect_init_with_renderers with
      *           @ref EL_RENDERER_ALL - registers the full stack (neon, debug,
      *           droplets, lens flare).
+     *
+     *           Safe to call again on an already-initialised effect - see
+     *           @ref el_effect_init_with_renderers for what a rebuild keeps.
      *  @returns @ref EL_ERROR_INIT_FAILED if a renderer fails to initialise
      *           (usually a shader compile / link error - see native log). */
     EL_API el_result_e el_effect_init(el_effect_handle_t effect);
@@ -904,9 +907,22 @@ extern "C"
      *           layers its known bits name and no more. Note those values were
      *           renumbered when the deprecated aliases were removed: pass the
      *           named constants, not numbers carried over from the old ABI.
+     *
+     *  @par Calling it again (GL context loss)
+     *  Supported, and the intended way to recover when the GL context is lost
+     *  and rebuilt. A second call RE-INITIALISES IN PLACE: shaders are
+     *  recompiled and every GL object reallocated, while everything that is not
+     *  GL is kept - attached animations stay attached, the clock keeps its play
+     *  state and elapsed time, and the config is untouched.
+     *
+     *  @p rendererMask must match the first call. The layer set is fixed at
+     *  first init (there is no unregister), so a different mask returns
+     *  @ref EL_ERROR_INVALID_PARAMETER rather than being quietly ignored;
+     *  changing the layer set means @ref el_effect_destroy and a new effect.
      *  @returns @ref EL_ERROR_INIT_FAILED if an included renderer fails to
      *           initialise (usually a shader compile / link error - see native
-     *           log). */
+     *           log); @ref EL_ERROR_INVALID_PARAMETER if @p rendererMask differs
+     *           from the mask this effect was first initialised with. */
     EL_API el_result_e el_effect_init_with_renderers(el_effect_handle_t effect, uint32_t rendererMask);
 
     /** @brief Pull the effect's base config back into the effect's staging config.
