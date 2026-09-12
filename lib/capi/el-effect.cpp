@@ -1963,6 +1963,28 @@ extern "C"
         return EL_SUCCESS;
     }
 
+    el_result_e el_effect_read_preserved_id(el_effect_handle_t effect, el_config_source_e source,
+                                            int32_t index, uint32_t *outId)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_read_preserved_id");
+        VALIDATE_OUT_PTR(outId, "el_effect_read_preserved_id");
+        const EdgeLighting::Config *cfg = ResolveConfigSource(effect, source);
+        VALIDATE_SOURCE(cfg, source, "el_effect_read_preserved_id");
+
+        // Positional, unlike everything else that touches this pool - it is the
+        // one call that converts an index into the id the others want.
+        const auto &pool = cfg->neon.preservedSegmentBoosts;
+        if (!IsValidIndex(index) || static_cast<size_t>(index) >= pool.size())
+        {
+            LOG_E("el_effect_read_preserved_id: index %d out of range (size=%zu) in source %d",
+                  index, pool.size(), (int)source);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        *outId = pool[static_cast<size_t>(index)].id;
+        LOG_D("effect=%p, source=%d, index=%d, id=%u", (void *)effect, (int)source, index, *outId);
+        return EL_SUCCESS;
+    }
+
     // ==========================================================================
     // Effect lifecycle
     // ==========================================================================

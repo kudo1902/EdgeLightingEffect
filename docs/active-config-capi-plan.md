@@ -7,16 +7,17 @@ It closed the one gap the animation C ABI left open: a C host could attach and
 play an animation, and could not observe a single value it produced.
 
 The shape, in one line: **one source-parameterised read family, not a parallel
-set of `_active_` getters.** Twelve new exports carrying an
+set of `_active_` getters.** Thirteen new exports carrying an
 `el_config_source_e`, addressed by the enums the animation API already uses.
 Purely additive - no existing signature changes, so no host is forced to
 recompile.
 
 ## What landed, and where it deviated
 
-Twelve exports, as planned: seven field readers plus `el_effect_read_count`
-over `el_container_e`, and the `el_config_source_e` / `el_container_e` enums
-they take. `demo-capi/` compiled unchanged against the new header before Part 4
+Thirteen exports: seven field readers, `el_effect_read_count` over
+`el_container_e`, `el_effect_read_preserved_id`, and the `el_config_source_e` /
+`el_container_e` enums they take. The last of those came out of a review pass
+after the fact - see below. `demo-capi/` compiled unchanged against the new header before Part 4
 was written, which is the no-ABI-regression check.
 
 Deviations from the plan as written, all deliberate:
@@ -59,6 +60,45 @@ Two things found while doing it, neither a defect but both worth knowing:
   `el_effect_init`, with no diagnostic. `demo-capi/` is linked such that the
   two coalesce, so nothing in-tree hits it. Undocumented in the header; worth a
   line there, which this change did not add.
+
+## What the post-merge review turned up
+
+Two things worth fixing, found by reviewing the finished surface rather than the
+plan.
+
+**`EL_CONTAINER_PRESERVED_SEGMENTS` returned a count nothing could use.** Every
+preserved accessor is addressed by a stable id; the count is in index space; and
+no call in the ABI converted one to the other - `el_effect_acquire_preserved_segment`
+hands out an id at creation and nothing ever listed them. A host that did not
+acquire the ids itself could learn there were three entries and read none of
+them. Closed by `el_effect_read_preserved_id`, the positional half of the pair.
+The failure was at least loud rather than silent: ids start at 10 and the pool
+caps at `MAX_SEGMENT_BOOSTS` (8), so an index can never alias an id - but that is
+a property of the current bounds, not a guarantee, and the header now says so.
+
+**The read family had no documented thread affinity.** Only the lifecycle group
+mentions the GL thread, and these reads touch no GL, so a host could reasonably
+call them from a UI thread to drive sliders. That is a data race and not merely
+an unsynchronised one: `refreshActiveConfig` SWAPS the active config's vectors
+with the scratch copy, and the next frame overwrites the buffers the swap handed
+over, so a concurrent read of an indexed entry can walk reallocated memory. Now
+documented on the group.
+
+Three smaller doc gaps were closed at the same time, each verified by probe
+rather than argued: before the first `el_effect_update` both BASE and ACTIVE
+read the default config rather than the staging values already set; a paused
+clock leaves an overlay frozen in ACTIVE instead of reverting to the authored
+value; and a stopped-but-still-attached animation keeps overlaying, because
+`EL_END_ACTION_HOLD_CURRENT` is the default. Only *detach* reverts, which is
+what the verification harness had been testing.
+
+The review also confirmed the two things that could have been badly wrong and
+were not. Every one of the 18 animatable fields, all three containers, and the
+`SegmentBoost` / `Arc` / `ColorStop` element types are covered by their
+`operator==`, so there is no field whose change `refreshActiveConfig` would miss
+and leave ACTIVE stale. And no reader retains the resolved `Config *` past its
+own call, which is what makes reading through a pointer into a config that gets
+swapped safe at all - a constraint now worth knowing before anyone caches one.
 
 ## Context
 

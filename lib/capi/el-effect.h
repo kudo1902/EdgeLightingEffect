@@ -707,12 +707,29 @@ extern "C"
      *  with, so the enum naming a modulator's target also names where to read
      *  its output.
      *
+     *  @par Threading
+     *  Same thread as @ref el_effect_update, which in practice means the thread
+     *  that owns the GL context. These touch no GL of their own, so nothing
+     *  stops a host calling them from a UI thread - but doing so is a data
+     *  race, not merely unsynchronised: rebuilding the active config SWAPS its
+     *  vectors with a scratch copy, and the following frame overwrites the
+     *  buffers the swap handed over. A concurrent read of an indexed entry can
+     *  therefore walk memory that has been reallocated underneath it. Read on
+     *  the update thread and hand values to other threads yourself.
+     *
      *  @par Which frame you get
      *  These read live, with no snapshot step. Values therefore come from the
      *  last completed @ref el_effect_update, and a set of reads interleaved
      *  with an update straddles two frames. A host that builds its UI before
      *  calling update - which is the usual shape, and what both in-tree demos
      *  do - sees one consistent frame.
+     *
+     *  Before the FIRST @ref el_effect_update there is no such frame:
+     *  @ref EL_CONFIG_SOURCE_ACTIVE and @ref EL_CONFIG_SOURCE_BASE read the
+     *  default-constructed config, not the staging values already set on the
+     *  handle. Pausing the clock does not change what these return either - an
+     *  attached animation's overlay stays frozen in the active config at the
+     *  value it last reached, rather than reverting to the authored one.
      *
      *  @par Errors
      *  @ref EL_ERROR_INVALID_PARAMETER for a null @p out, an unknown enum
@@ -774,6 +791,39 @@ extern "C"
      *        @c arcs defaults to a single full-perimeter entry. */
     EL_API el_result_e el_effect_read_count(el_effect_handle_t effect, el_config_source_e source,
                                             el_container_e container, uint32_t parent, int32_t *out);
+
+    /** @brief Stable id of the preserved entry at @p index in @p source.
+     *  @details The other half of @ref EL_CONTAINER_PRESERVED_SEGMENTS. Every
+     *           preserved accessor is addressed by id, while the count is in
+     *           index space, so without this the count cannot be turned into
+     *           anything you can read - a host that did not call
+     *           @ref el_effect_acquire_preserved_segment itself (one driving an
+     *           effect configured elsewhere, or restoring after a reload) has no
+     *           other way to discover the ids.
+     *
+     *           Walk the pool as index -> id -> value:
+     *  @code
+     *  int32_t n = 0;
+     *  el_effect_read_count(e, src, EL_CONTAINER_PRESERVED_SEGMENTS, 0, &n);
+     *  for (int32_t i = 0; i < n; ++i)
+     *  {
+     *      uint32_t id = 0;
+     *      el_effect_read_preserved_id(e, src, i, &id);
+     *      el_effect_read_preserved_segment_field(e, src, id, EL_SEGMENT_FIELD_BOOST, &v);
+     *  }
+     *  @endcode
+     *
+     *           Do NOT pass the index straight to an id parameter. It is
+     *           rejected rather than silently wrong - ids start at 10 and the
+     *           pool is capped well below that, so an index can never alias an
+     *           id - but that is a property of the current bounds, not a
+     *           guarantee to lean on.
+     *  @param index Position in the pool, 0 to the
+     *               @ref EL_CONTAINER_PRESERVED_SEGMENTS count minus one.
+     *  @note Indices are positional and shift when an entry is released; ids do
+     *        not. Re-enumerate after any release rather than caching an index. */
+    EL_API el_result_e el_effect_read_preserved_id(el_effect_handle_t effect, el_config_source_e source,
+                                                   int32_t index, uint32_t *outId);
 
     /** @} */
 

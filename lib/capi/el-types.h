@@ -304,7 +304,7 @@ extern "C"
     typedef enum el_container_e
     {
         EL_CONTAINER_SEGMENTS = 0,                /**< @c neon.segmentBoosts. No parent. */
-        EL_CONTAINER_PRESERVED_SEGMENTS = 1,      /**< @c neon.preservedSegmentBoosts. No parent. */
+        EL_CONTAINER_PRESERVED_SEGMENTS = 1,      /**< @c neon.preservedSegmentBoosts. No parent. Turn the count into ids with @ref el_effect_read_preserved_id - every other preserved call wants an id, not an index. */
         EL_CONTAINER_ARCS = 2,                    /**< @c neon.arcs. No parent. */
         EL_CONTAINER_SEGMENT_STOPS = 3,           /**< Colour stops of one segment; parent = segment index. */
         EL_CONTAINER_PRESERVED_SEGMENT_STOPS = 4, /**< Colour stops of one preserved entry; parent = its id. */
