@@ -825,7 +825,9 @@ static_cast<unsigned char>(std::clamp(c.r * 255.0f, 0.0f, 255.0f))
 No `+ 0.5f`, so every baked texel is biased down by up to 1 LSB and by ~0.5 LSB
 on average, in all three LUTs, in both renderers.
 
-**Fixed** with a `ToByte` helper in both renderers, replacing all 18 sites. The
+**Fixed** with a rounding helper in both renderers, replacing all 18 sites - it
+shipped as `ToByte` and is now `ColorUtils::QuantiseToByte` (N6 in
+[`naming-review.md`](naming-review.md)). The
 clamp comes after the bias so 1.0 still maps to 255. GL's own float-to-unorm
 conversion rounds, so the bake now agrees with the hardware it feeds.
 

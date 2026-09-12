@@ -12,7 +12,9 @@ the code no longer has will send the next reader down the wrong path.
 **Status:** N3, S3 and S8 are fixed, along with the `AGENTS.md` gap. S1 was applied
 and then reverted by decision - see there. `demo/`, `demo-capi/` and the C ABI
 were explicitly left out of that pass, so N1, N2, N4 and N5 stand open by scope
-rather than by judgement.
+rather than by judgement. N6 was found and fixed later, outside the original
+pass, and added the free-function rule to `AGENTS.md`; N7 is the tail it left
+open.
 
 ## Conformance summary
 
@@ -108,12 +110,116 @@ reserved space. In practice no toolchain collides here, and changing it is a
 47-file sweep, so this is recorded as a standards nit rather than a
 recommendation.
 
+### N6. `capi-internal.h`'s helpers were `camelCase` - FIXED
+
+The conformance table's C ABI row counts the 212 exported `el_*` functions and
+the rest of the `EL_*` surface. It does not reach the *internal* helpers in
+[`capi-internal.h`](../lib/capi/capi-internal.h), which are ordinary C++ free
+functions in no namespace and were never audited by either pass.
+
+All eight of them were `camelCase` - `mapExceptionToResult`, `toEasing`,
+`toWaveform`, `toEndAction`, `fromEndAction`, `toPlaybackMode`,
+`fromPlaybackMode`, `toAnimatableField` - against a tree that uses verb-first
+`PascalCase` everywhere else a free function appears: `AcquireSegment` /
+`FindPreservedSegment` / `ReleaseSegment` in `segment-utils.h`, the
+`ReadField` / `WriteField` family in `field-access.h`, and
+`GetClampedResolutionScale` in the neon renderer, which was renamed *into* that
+convention by the unification (see `neon-unification-plan.md`).
+
+`AGENTS.md` was the reason this survived: its Functions / Methods section covered
+public, private and protected *methods* and said nothing about free functions,
+so there was no rule to check them against.
+
+Fixed by renaming all nine (the eight above plus `ResolveConfigSource`, added
+by the active-config work) plus `IsValidIndex` in `el-effect.cpp`, 46 call sites
+across four files, and the eight anonymous-namespace helpers in
+`field-access.cpp` that the same work moved out of `field-bound-animation.cpp`.
+Purely internal: the export table is unchanged at 238 symbols, none of these
+among them, so no host is affected.
+
+`AGENTS.md` now carries the free-function rule, so the gap is closed and the
+next pass can check this class mechanically.
+
+The rule went in three times, each pass catching what the last one's wording let
+through.
+
+1. **`PascalCase` only.** The rename obeyed the case and left three noun-phrase
+   names - `SegmentSlot`, `ColorStopSlot`, `ArcSlot` - which read at a call site
+   as objects rather than calls. Now `FindSegmentSlot` / `FindColorStopSlot` /
+   `FindArcSlot`: `Find` is the tree's verb for a lookup that can fail
+   (`FindPreservedSegment`) and the exact contrast with `EnsureSegmentSlot` in
+   `neon-animations.h`, which grows to reach the slot.
+2. **Verb-first spelled out, conversions exempted.** `To*` / `From*` was blessed
+   as an established shape on the strength of `ToByte` in `color-utils.h`.
+3. **Exemption withdrawn, and the shape reconsidered.** A conversion has the
+   same defect as any other noun phrase: `To*` names the destination type, not
+   the operation. A first fix put `Map` in front of all seven, which fixed the
+   grammar and left the worse half in place - direction was still relative to
+   whichever type the name mentioned, so `MapFromPlaybackMode` could not be read
+   without knowing that the named type is always the C++ one.
+
+   The seven collapsed instead into two overload sets, `ConvertFromCapi` and
+   `ConvertToCapi`, resolved on the argument type. The axis the whole file turns
+   on is named once rather than seven times, and the direction is absolute. Safe
+   because every argument type is distinct - unscoped C enums on one side, all
+   `enum class` on the other. `Native` was rejected for the pole: at an FFI
+   boundary the host would call the C side native, so it points the wrong way.
+
+   `MapExceptionToResult` keeps `Map` and stays out of the overload set: many
+   exception types onto one error code is a classification with information
+   loss, not a change of representation. Predicates (`Is*`, `Has*`) remain the
+   only shape that counts as verb-first without a verb.
+
+`ToByte` in [`color-utils.h`](../lib/include/util/color-utils.h) was the last
+name left under the old shape, and it went the same way. Not to `ConvertToByte`:
+its own doc comment opens "Quantise a [0, 1] colour channel to 8 bits", every
+caller describes itself as quantising through it, and the comment's whole
+subject is the rounding bias that makes it lossy. `Convert` would have named the
+narrowing and dropped the part that matters, so it is **`QuantiseToByte`** - the
+verb the surrounding prose was already using for it. Eight call sites across
+four headers; the two comments that then read "quantises through
+QuantiseToByte" were reworded.
+
+**One correction to an earlier draft of this entry**, which claimed the tree's
+practice here was unanimous. It is not, and the rule as written is a decision
+rather than a transcription. Header-declared free functions *are* unanimously
+`PascalCase` (`segment-utils.h`, `field-access.h`). File-local ones in anonymous
+namespaces are split: `GetClampedResolutionScale` / `GetClampedNumSamples`
+(`neon-renderer.cpp`) and `IsStripVisible` (`debug-renderer.cpp`) are
+`PascalCase`, while the helpers in N7 below are `camelCase`. The rule follows
+the `PascalCase` side because that is where the deliberate renames went - the
+neon unification moved two helpers *into* it on purpose (see
+`neon-unification-plan.md`) - and because linkage is not visible at a call site,
+so making the name shape depend on it hides rather than informs.
+
+---
+
 ### N5. `#endif` guard comments are inconsistent in `demo-capi`
 
 Five of the seven headers end with a bare `#endif`; `gl-mini.h` and
 `ui-controls.h` carry the guard name, as every `lib/` and `demo/` header does.
 
 ---
+
+### N7. Seven anonymous-namespace helpers in `util/` are still `camelCase` - OPEN
+
+The free-function rule added to `AGENTS.md` for N6 leaves these behind:
+
+| file | helpers |
+| ---- | ------- |
+| [`lib/src/util/capture-util.cpp`](../lib/src/util/capture-util.cpp) | `flipRows` |
+| [`lib/src/util/contour-tracer.cpp`](../lib/src/util/contour-tracer.cpp) | `resolveSaddle`, `lerpAlpha`, `edgePos`, `chainSegments`, `resampleUniform`, `prevKey` |
+
+All seven are file-local, none is reachable from another translation unit, and
+renaming them is a contained sweep of two files with no header or ABI effect.
+They are recorded rather than fixed because the change that surfaced them
+(the active-config C ABI work) had no reason to be in `util/` at all, and a
+rename sweep riding along in an unrelated commit is exactly what makes a diff
+hard to review.
+
+Worth doing as its own change. Until then this is the only place the rule and
+the code disagree, so a script checking N6's rule will report these seven and
+nothing else.
 
 ## Semantic issues
 
