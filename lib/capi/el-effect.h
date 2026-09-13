@@ -16,13 +16,25 @@ extern "C"
     /* ======================================================================
      * Effect - config setters and getters
      *
-     * Every setter mutates the effect's staging @c Config and immediately
-     * calls @c SetConfig on the underlying effect. Every getter reads that
-     * staging copy - not the animation-overlaid active config. Getters
-     * always require a non-null @p out* pointer.
+     * Every setter mutates the effect's staging @c Config and NOTHING else.
+     * Staging reaches the effect in @ref el_effect_update, which is the only
+     * caller of @c SetConfig - so a host that sets config and then calls only
+     * @ref el_effect_render draws the previous frame's config. Every getter
+     * reads that same staging copy back, NOT the last-committed base and not
+     * the animation-overlaid active config. Getters always require a non-null
+     * @p out* pointer.
      *
      * Setters are idempotent: assigning the same value twice is a cheap
      * no-op and still returns @ref EL_SUCCESS.
+     *
+     * Two read families, and the difference is which config they see:
+     *
+     *   - @c el_effect_get_* - one function per named scalar, always staging.
+     *     What you want when reading back a value you authored.
+     *   - @c el_effect_read_* - takes an @ref el_config_source_e and a field
+     *     enum, so it reads staging, base, or the animation-overlaid active
+     *     config. The only way to observe what an attached animation is
+     *     producing. See the "Source-parameterised reads" group below.
      * ==================================================================== */
 
     /** @name Geometry
@@ -184,7 +196,10 @@ extern "C"
 
     /** @brief Resize the base colour-stops vector.
      *  @details Growing seeds new entries with defaults (position=0, opaque
-     *           white); shrinking truncates. */
+     *           white); shrinking truncates.
+     *           Cap is @c NeonConfig::MAX_COLOR_STOPS_CAP; above that returns
+     *           @ref EL_ERROR_INVALID_PARAMETER. Stops bake into a LUT of at
+     *           most 256 texels, so more cannot be resolved. */
     EL_API el_result_e el_effect_set_color_stop_count(el_effect_handle_t effect, int32_t count);
     EL_API el_result_e el_effect_get_color_stop_count(el_effect_handle_t effect, int32_t *outCount);
 
@@ -235,7 +250,10 @@ extern "C"
                                                          int32_t segmentIndex, el_blend_space_e *outBlendSpace);
 
     /** @brief Resize a segment's own colour-stops vector (empty = inherit
-     *         the base gradient at each perimeter sample). */
+     *         the base gradient at each perimeter sample).
+     *  @details Cap is @c NeonConfig::MAX_COLOR_STOPS_CAP; above that returns
+     *           @ref EL_ERROR_INVALID_PARAMETER. Stops bake into a LUT of at
+     *           most 256 texels, so more cannot be resolved. */
     EL_API el_result_e el_effect_set_segment_color_stop_count(el_effect_handle_t effect,
                                                               int32_t segmentIndex, int32_t count);
     EL_API el_result_e el_effect_get_segment_color_stop_count(el_effect_handle_t effect,
@@ -317,7 +335,10 @@ extern "C"
                                                                    uint32_t id, el_blend_space_e *outBlendSpace);
 
     /** @brief Resize the preserved entry's own colour-stops list (0 = inherit
-     *         the base gradient). */
+     *         the base gradient).
+     *  @details Cap is @c NeonConfig::MAX_COLOR_STOPS_CAP; above that returns
+     *           @ref EL_ERROR_INVALID_PARAMETER. Stops bake into a LUT of at
+     *           most 256 texels, so more cannot be resolved. */
     EL_API el_result_e el_effect_set_preserved_segment_color_stop_count(el_effect_handle_t effect,
                                                                         uint32_t id, int32_t count);
     EL_API el_result_e el_effect_get_preserved_segment_color_stop_count(el_effect_handle_t effect,
@@ -365,7 +386,10 @@ extern "C"
     EL_API el_result_e el_effect_clear_arcs(el_effect_handle_t effect);
 
     /** @brief Resize an arc's own colour-stops vector (empty = inherit the
-     *         base gradient at each perimeter sample). */
+     *         base gradient at each perimeter sample).
+     *  @details Cap is @c NeonConfig::MAX_COLOR_STOPS_CAP; above that returns
+     *           @ref EL_ERROR_INVALID_PARAMETER. Stops bake into a LUT of at
+     *           most 256 texels, so more cannot be resolved. */
     EL_API el_result_e el_effect_set_arc_color_stop_count(el_effect_handle_t effect,
                                                           int32_t arcIndex, int32_t count);
     EL_API el_result_e el_effect_get_arc_color_stop_count(el_effect_handle_t effect,
@@ -418,6 +442,17 @@ extern "C"
     /** @brief Set the baked gradient LUT's width in texels (power-of-two,
      *         32-256). Larger resolves closely-spaced colour stops more
      *         finely; it does not affect per-fragment cost. */
+    /** @brief Width in texels of the baked colour-ring LUT.
+     *  @details Must be within [@c NeonConfig::MIN_GRADIENT_LUT_SIZE,
+     *           @c NeonConfig::MAX_GRADIENT_LUT_SIZE] (32 to 256); outside that
+     *           returns @ref EL_ERROR_INVALID_PARAMETER rather than being
+     *           clamped, so a rejected size is visible instead of silent.
+     *           A power of two is RECOMMENDED, not required - any width bakes
+     *           and samples correctly on every GL version this targets.
+     *           256 resolves any gradient the eye can; smaller bakes faster and
+     *           costs less texture memory. A change SNAPS rather than
+     *           cross-fading - two rings of different length cannot be blended
+     *           element-wise. */
     EL_API el_result_e el_effect_set_neon_gradient_lut_size(el_effect_handle_t effect, int32_t size);
     EL_API el_result_e el_effect_get_neon_gradient_lut_size(el_effect_handle_t effect, int32_t *outSize);
 
@@ -674,6 +709,156 @@ extern "C"
 
     /** @} */
 
+    /** @name Source-parameterised reads
+     *
+     *  The uniform read path. Where an @c el_effect_get_* names one scalar and
+     *  always reads staging, these take an @ref el_config_source_e and an
+     *  addressing enum, so the same call reads whichever config you ask for.
+     *  The two families overlap by design:
+     *
+     *  @code
+     *  el_effect_get_intensity(e, &v);
+     *  el_effect_read_field(e, EL_CONFIG_SOURCE_STAGING, EL_FIELD_NEON_INTENSITY, &v);
+     *  @endcode
+     *
+     *  are the same read. Use @c get for a named scalar you author; use
+     *  @c read when the source matters - above all
+     *  @ref EL_CONFIG_SOURCE_ACTIVE, the only way to observe what an attached
+     *  animation is currently producing.
+     *
+     *  @par What ACTIVE is, and is not
+     *  It is the config the renderers are handed, not a description of the
+     *  pixels. A disabled layer still reports its values; counts are what the
+     *  config holds, which for segments and arcs can exceed the shader cap; and
+     *  the segments actually lit are a preserved-first merge of two pools, so
+     *  a full preserved pool leaves every transient boost dark no matter what
+     *  @ref EL_CONTAINER_SEGMENTS says. @ref EL_CONTAINER_EFFECTIVE_SEGMENTS is
+     *  the one container that reports the merged, capped result.
+     *
+     *  The addressing enums are the ones @c el_animation_add_*_field binds
+     *  with, so the enum naming a modulator's target also names where to read
+     *  its output.
+     *
+     *  @par Threading
+     *  Same thread as @ref el_effect_update, which in practice means the thread
+     *  that owns the GL context. These touch no GL of their own, so nothing
+     *  stops a host calling them from a UI thread - but doing so is a data
+     *  race, not merely unsynchronised: rebuilding the active config SWAPS its
+     *  vectors with a scratch copy, and the following frame overwrites the
+     *  buffers the swap handed over. A concurrent read of an indexed entry can
+     *  therefore walk memory that has been reallocated underneath it. Read on
+     *  the update thread and hand values to other threads yourself.
+     *
+     *  @par Which frame you get
+     *  These read live, with no snapshot step. Values therefore come from the
+     *  last completed @ref el_effect_update, and a set of reads interleaved
+     *  with an update straddles two frames. A host that builds its UI before
+     *  calling update - which is the usual shape, and what both in-tree demos
+     *  do - sees one consistent frame.
+     *
+     *  Before the FIRST @ref el_effect_update there is no such frame:
+     *  @ref EL_CONFIG_SOURCE_ACTIVE and @ref EL_CONFIG_SOURCE_BASE read the
+     *  default-constructed config, not the staging values already set on the
+     *  handle. Pausing the clock does not change what these return either - an
+     *  attached animation's overlay stays frozen in the active config at the
+     *  value it last reached, rather than reverting to the authored one.
+     *
+     *  @par Errors
+     *  @ref EL_ERROR_INVALID_PARAMETER for a null @p out, an unknown enum
+     *  value, an out-of-range index or stop, an unknown preserved id, and for
+     *  @ref EL_CONFIG_SOURCE_BASE / @ref EL_CONFIG_SOURCE_ACTIVE on a handle
+     *  that has not been through @ref el_effect_init. On any error @p out is
+     *  left untouched. Reading @ref EL_CONFIG_SOURCE_ACTIVE for a field no
+     *  animation drives is NOT an error: the active config is a complete
+     *  @c Config, so it simply reads back the base value.
+     *  @{ */
+
+    /** @brief Read one scalar @c Config leaf from @p source. */
+    EL_API el_result_e el_effect_read_field(el_effect_handle_t effect, el_config_source_e source,
+                                            el_config_field_e field, float *out);
+
+    /** @brief Read a scalar from @c segmentBoosts[index] in @p source.
+     *  @note Under a @c SegmentTravel-style animation this pool is larger in
+     *        @ref EL_CONFIG_SOURCE_ACTIVE than in base - the animation grows
+     *        it. Size the read with @ref el_effect_read_count on the same
+     *        source, never with the staging count. */
+    EL_API el_result_e el_effect_read_segment_field(el_effect_handle_t effect, el_config_source_e source,
+                                                    int32_t index, el_segment_field_e field, float *out);
+
+    /** @brief Read a scalar from the preserved entry owning @p id in @p source. */
+    EL_API el_result_e el_effect_read_preserved_segment_field(el_effect_handle_t effect, el_config_source_e source,
+                                                              uint32_t id, el_segment_field_e field, float *out);
+
+    /** @brief Read a scalar from @c arcs[index] in @p source. */
+    EL_API el_result_e el_effect_read_arc_field(el_effect_handle_t effect, el_config_source_e source,
+                                                int32_t index, el_arc_field_e field, float *out);
+
+    /** @brief Read one channel of one colour stop inside @c segmentBoosts[segIndex]. */
+    EL_API el_result_e el_effect_read_segment_stop_field(el_effect_handle_t effect, el_config_source_e source,
+                                                         int32_t segIndex, int32_t stopIndex,
+                                                         el_color_stop_field_e field, float *out);
+
+    /** @brief Read one channel of one colour stop inside the preserved entry owning @p id. */
+    EL_API el_result_e el_effect_read_preserved_segment_stop_field(el_effect_handle_t effect, el_config_source_e source,
+                                                                   uint32_t id, int32_t stopIndex,
+                                                                   el_color_stop_field_e field, float *out);
+
+    /** @brief Read one channel of one colour stop inside @c arcs[arcIndex]. */
+    EL_API el_result_e el_effect_read_arc_stop_field(el_effect_handle_t effect, el_config_source_e source,
+                                                     int32_t arcIndex, int32_t stopIndex,
+                                                     el_color_stop_field_e field, float *out);
+
+    /** @brief Measure one variable-length container in @p source.
+     *  @details The counts are a separate call rather than seven, because
+     *           unlike the readers above they differ only in which container
+     *           is measured.
+     *  @param container Which container. The three @c _STOPS values are
+     *                   nested and take a @p parent; the other three ignore it.
+     *  @param parent    Segment index, preserved-entry id, or arc index,
+     *                   per @p container. Ignored for the top-level three.
+     *  @note This is the call that makes an animation's structural growth
+     *        visible: an effect whose base has no segment boosts can have
+     *        several in @ref EL_CONFIG_SOURCE_ACTIVE. A fresh handle reads 1
+     *        for @ref EL_CONTAINER_ARCS and 0 for @ref EL_CONTAINER_SEGMENTS -
+     *        @c arcs defaults to a single full-perimeter entry. */
+    EL_API el_result_e el_effect_read_count(el_effect_handle_t effect, el_config_source_e source,
+                                            el_container_e container, uint32_t parent, int32_t *out);
+
+    /** @brief Stable id of the preserved entry at @p index in @p source.
+     *  @details The other half of @ref EL_CONTAINER_PRESERVED_SEGMENTS. Every
+     *           preserved accessor is addressed by id, while the count is in
+     *           index space, so without this the count cannot be turned into
+     *           anything you can read - a host that did not call
+     *           @ref el_effect_acquire_preserved_segment itself (one driving an
+     *           effect configured elsewhere, or restoring after a reload) has no
+     *           other way to discover the ids.
+     *
+     *           Walk the pool as index -> id -> value:
+     *  @code
+     *  int32_t n = 0;
+     *  el_effect_read_count(e, src, EL_CONTAINER_PRESERVED_SEGMENTS, 0, &n);
+     *  for (int32_t i = 0; i < n; ++i)
+     *  {
+     *      uint32_t id = 0;
+     *      el_effect_read_preserved_id(e, src, i, &id);
+     *      el_effect_read_preserved_segment_field(e, src, id, EL_SEGMENT_FIELD_BOOST, &v);
+     *  }
+     *  @endcode
+     *
+     *           Do NOT pass the index straight to an id parameter. It is
+     *           rejected rather than silently wrong - ids start at 10 and the
+     *           pool is capped well below that, so an index can never alias an
+     *           id - but that is a property of the current bounds, not a
+     *           guarantee to lean on.
+     *  @param index Position in the pool, 0 to the
+     *               @ref EL_CONTAINER_PRESERVED_SEGMENTS count minus one.
+     *  @note Indices are positional and shift when an entry is released; ids do
+     *        not. Re-enumerate after any release rather than caching an index. */
+    EL_API el_result_e el_effect_read_preserved_id(el_effect_handle_t effect, el_config_source_e source,
+                                                   int32_t index, uint32_t *outId);
+
+    /** @} */
+
     /** @name Lifecycle
      *  Create, initialise, tick, render, and destroy an effect. Every call
      *  in this section must run on the thread that owns the GL context.
@@ -695,6 +880,9 @@ extern "C"
      *  @details Convenience wrapper for @ref el_effect_init_with_renderers with
      *           @ref EL_RENDERER_ALL - registers the full stack (neon, debug,
      *           droplets, lens flare).
+     *
+     *           Safe to call again on an already-initialised effect - see
+     *           @ref el_effect_init_with_renderers for what a rebuild keeps.
      *  @returns @ref EL_ERROR_INIT_FAILED if a renderer fails to initialise
      *           (usually a shader compile / link error - see native log). */
     EL_API el_result_e el_effect_init(el_effect_handle_t effect);
@@ -719,9 +907,22 @@ extern "C"
      *           layers its known bits name and no more. Note those values were
      *           renumbered when the deprecated aliases were removed: pass the
      *           named constants, not numbers carried over from the old ABI.
+     *
+     *  @par Calling it again (GL context loss)
+     *  Supported, and the intended way to recover when the GL context is lost
+     *  and rebuilt. A second call RE-INITIALISES IN PLACE: shaders are
+     *  recompiled and every GL object reallocated, while everything that is not
+     *  GL is kept - attached animations stay attached, the clock keeps its play
+     *  state and elapsed time, and the config is untouched.
+     *
+     *  @p rendererMask must match the first call. The layer set is fixed at
+     *  first init (there is no unregister), so a different mask returns
+     *  @ref EL_ERROR_INVALID_PARAMETER rather than being quietly ignored;
+     *  changing the layer set means @ref el_effect_destroy and a new effect.
      *  @returns @ref EL_ERROR_INIT_FAILED if an included renderer fails to
      *           initialise (usually a shader compile / link error - see native
-     *           log). */
+     *           log); @ref EL_ERROR_INVALID_PARAMETER if @p rendererMask differs
+     *           from the mask this effect was first initialised with. */
     EL_API el_result_e el_effect_init_with_renderers(el_effect_handle_t effect, uint32_t rendererMask);
 
     /** @brief Pull the effect's base config back into the effect's staging config.

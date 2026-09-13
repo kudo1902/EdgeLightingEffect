@@ -18,8 +18,8 @@ namespace EdgeLighting
     /// one row, sampled at v = 0.5, REPEAT on U so the sweep wraps.
     ///
     /// RGBA8, not float - see @ref BaseLUT, which owns the texture and the
-    /// upload format; the ring quantises through @ref ColorUtils::ToByte on its
-    /// way there.
+    /// upload format; the ring goes through @ref ColorUtils::QuantiseToByte on
+    /// its way there.
     ///
     /// A colour change does not snap. @ref Bake stores the new ring as the
     /// target and snapshots what is currently on screen as the source;
@@ -58,7 +58,11 @@ namespace EdgeLighting
         void Bake(const std::vector<ColorStop> &stops, BlendSpace space,
                   int size, float fadeDuration)
         {
-            size = std::max(size, 4);
+            // Lower guard unchanged; the upper one is new - see
+            // NeonConfig::MAX_GRADIENT_LUT_SIZE. Clamped rather than rejected
+            // because a bake has no way to report, and an oversized ring is an
+            // allocation the pass cannot survive.
+            size = std::min(std::max(size, 4), NeonConfig::MAX_GRADIENT_LUT_SIZE);
             if (HasUploaded() && size == mSize && space == mBakedSpace && stops == mBakedStops)
             {
                 return;
@@ -159,7 +163,7 @@ namespace EdgeLighting
             mBytes.resize(mDisplay.size());
             for (size_t i = 0; i < mDisplay.size(); ++i)
             {
-                mBytes[i] = ColorUtils::ToByte(mDisplay[i]);
+                mBytes[i] = ColorUtils::QuantiseToByte(mDisplay[i]);
             }
 
             // 1-row 2D texture (sampled at v = 0.5 in the shader). REPEAT on

@@ -14,8 +14,8 @@ namespace EdgeLighting
     /// holding its own @ref Texture2D:
     ///
     ///   - **RGBA8, never float.** Edge devices often lack float-texture
-    ///     support, so every LUT here bakes on the CPU and quantises through
-    ///     @c ColorUtils::ToByte. There is nothing to assert: @ref Upload is
+    ///     support, so every LUT here bakes on the CPU and goes through
+    ///     @c ColorUtils::QuantiseToByte. There is nothing to assert: @ref Upload is
     ///     the single call site and it passes the format literally, so a LUT
     ///     cannot ask for anything else.
     ///   - **A LUT's texture is a derived value.** @c mTexture is private, so

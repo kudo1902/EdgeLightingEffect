@@ -80,6 +80,17 @@ namespace EdgeLighting
         ///        @ref Animation::Update).
         /// @param dt Time to advance (typically the effect clock's delta, so a
         ///           paused clock freezes every animation).
+        ///
+        /// @par Re-entrancy
+        /// SAFE to @ref Attach, @ref Detach or @ref DetachAll from inside a
+        /// callback this tick fires (@c Animation::OnComplete and
+        /// @c OnStateChanged both run from here, so "remove this animation when
+        /// it finishes" lands in exactly that position). The tick set is taken
+        /// once at entry, so the semantics are fixed: an animation detached
+        /// mid-tick still receives this frame's tick, and one attached mid-tick
+        /// starts on the next frame. It also keeps each animation alive for the
+        /// duration of the tick, so destroying a handle from a callback cannot
+        /// pull the object out from under the loop.
         void Update(float dt);
 
         /// @brief Apply every attached animation onto @p target in attach order
@@ -89,6 +100,20 @@ namespace EdgeLighting
 
     private:
         std::vector<AnimationPtr> mAnimations;
+
+        /// Spare capacity for @ref Update's tick list - NOT the list it walks.
+        ///
+        /// Update swaps this into a local, copies @c mAnimations into that, and
+        /// swaps the buffer back on the way out. The buffer being walked is
+        /// therefore a stack object no callback can reach, which is what makes
+        /// mutating @c mAnimations *and* re-entering @ref Update both safe; a
+        /// member walked directly would survive the first and not the second.
+        ///
+        /// It exists purely so the copy allocates nothing in steady state - the
+        /// local arrives carrying the previous tick's capacity, the same reason
+        /// @c EdgeLightingEffect keeps a scratch config. A nested tick finds it
+        /// empty and allocates its own.
+        std::vector<AnimationPtr> mTickScratch;
     };
 
 } // namespace EdgeLighting

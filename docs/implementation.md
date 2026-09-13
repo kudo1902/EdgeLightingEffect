@@ -237,6 +237,21 @@ surface. `edge-lighting-capi.h` is the single public include, aggregating
   `SetConfig` - so a host that sets config and then calls only
   `el_effect_render` renders the previous frame's config. `el_effect_capture`
   re-syncs staging from the effect's base.
+- So a handle reaches **three** configs, not two: staging (pending edits),
+  base (last committed, `GetConfig`), and active (base + overlays,
+  `GetActiveConfig`). The `el_effect_read_*` family takes an
+  `el_config_source_e` naming which one to read, addressed by the same field
+  enums `el_animation_add_*_field` binds with. `el_effect_get_intensity(e,&v)`
+  is exactly
+  `el_effect_read_field(e, EL_CONFIG_SOURCE_STAGING, EL_FIELD_NEON_INTENSITY, &v)`;
+  `EL_CONFIG_SOURCE_ACTIVE` is the only way a C host can observe what an
+  attached animation is producing. `el_effect_read_count` measures the
+  variable-length containers per source, because an animation can grow them
+  beyond base. The switches behind all of this are the `Read*` / `Write*`
+  pair in [`lib/include/animation/field-access.h`](../lib/include/animation/field-access.h),
+  shared with `FieldBoundAnimation` so a reader cannot disagree with its
+  writer about what is in range. See
+  [`active-config-capi-plan.md`](active-config-capi-plan.md).
 - No C++ exception crosses the boundary; everything maps to `el_result_e`.
 - Enum ABI parity is enforced by a wall of `static_assert`s at the top of
   `capi-internal.h`. **Reordering or renumbering a mirrored C++ enum means

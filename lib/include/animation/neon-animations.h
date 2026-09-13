@@ -336,18 +336,36 @@ namespace EdgeLighting
     namespace
     {
         /// Grow @c cfg.neon.segmentBoosts up to @p index inclusive so a
-        /// travelling-segment animation can safely write to
-        /// @c segmentBoosts[index] regardless of the current size.
-        /// New entries are initialised with the animation's own length/boost
-        /// so a freshly added animation immediately produces a visible bump.
-        inline SegmentBoost &EnsureSegmentSlot(Config &cfg, size_t index,
+        /// travelling-segment animation can write to @c segmentBoosts[index]
+        /// whatever the current size. New entries are initialised with the
+        /// animation's own length/boost so a freshly added animation
+        /// immediately produces a visible bump.
+        ///
+        /// Grows only WITHIN @c NeonConfig::MAX_SEGMENT_BOOSTS_CAP, and returns
+        /// nullptr for an index at or past it - the nullptr-on-miss contract
+        /// the slot accessors in @c field-access.h use. The cap is the shader's
+        /// fixed array size, so a slot past it could never have been drawn; the
+        /// old unbounded resize meant an animation's index parameter sized a
+        /// vector directly, and a large one allocated accordingly. Clamping to
+        /// the last slot instead was rejected: two animations with different
+        /// over-cap indices would silently drive the SAME segment.
+        ///
+        /// Callers skip when this returns nullptr, which makes an out-of-range
+        /// animation a visible no-op rather than a wrong-slot write.
+        inline SegmentBoost *EnsureSegmentSlot(Config &cfg, size_t index,
                                                float defaultLength, float defaultBoost)
         {
+            if (index >= static_cast<size_t>(NeonConfig::MAX_SEGMENT_BOOSTS_CAP))
+            {
+                LOG_E("EnsureSegmentSlot: index %zu is past the cap of %d; skipping",
+                      index, NeonConfig::MAX_SEGMENT_BOOSTS_CAP);
+                return nullptr;
+            }
             if (cfg.neon.segmentBoosts.size() <= index)
             {
                 cfg.neon.segmentBoosts.resize(index + 1, SegmentBoost{0.0f, defaultLength, defaultBoost, {}, BlendSpace::RGB});
             }
-            return cfg.neon.segmentBoosts[index];
+            return &cfg.neon.segmentBoosts[index];
         }
     }
 
@@ -375,10 +393,14 @@ namespace EdgeLighting
 
         void ApplyAt(Config &cfg, float elapsed) const override
         {
-            auto &s = EnsureSegmentSlot(cfg, mIndex, mLength, mBoost);
-            s.position = mPosOsc.Evaluate(elapsed);
-            s.length = mLength;
-            s.boost = mBoost;
+            SegmentBoost *s = EnsureSegmentSlot(cfg, mIndex, mLength, mBoost);
+            if (!s)
+            {
+                return;
+            }
+            s->position = mPosOsc.Evaluate(elapsed);
+            s->length = mLength;
+            s->boost = mBoost;
         }
 
         // Segment animations auto-grow segmentBoosts and mutate a specific
@@ -424,10 +446,14 @@ namespace EdgeLighting
 
         void ApplyAt(Config &cfg, float elapsed) const override
         {
-            auto &s = EnsureSegmentSlot(cfg, mIndex, mLength, mBoost);
-            s.position = mPosOsc.Evaluate(elapsed);
-            s.length = mLength;
-            s.boost = mBoost;
+            SegmentBoost *s = EnsureSegmentSlot(cfg, mIndex, mLength, mBoost);
+            if (!s)
+            {
+                return;
+            }
+            s->position = mPosOsc.Evaluate(elapsed);
+            s->length = mLength;
+            s->boost = mBoost;
         }
 
         void CaptureBaseline(const Config &cfg) override { mSavedBoosts = cfg.neon.segmentBoosts; }

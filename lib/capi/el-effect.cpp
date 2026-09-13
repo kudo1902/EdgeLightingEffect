@@ -385,13 +385,27 @@ extern "C"
             LOG_E("el_effect_set_color_stop_count: negative count");
             return EL_ERROR_INVALID_PARAMETER;
         }
+        if (count > EdgeLighting::NeonConfig::MAX_COLOR_STOPS_CAP)
+        {
+            LOG_E("el_effect_set_color_stop_count: %d exceeds colour-stop cap %d",
+                  count, EdgeLighting::NeonConfig::MAX_COLOR_STOPS_CAP);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
         size_t newSize = static_cast<size_t>(count);
         if (effect->config.neon.colorStops.size() == newSize)
         {
             return EL_SUCCESS;
         }
         LOG_I("effect=%p, count=%d", (void *)effect, count);
-        effect->config.neon.colorStops.resize(newSize, DEFAULT_COLOR_STOP);
+        try
+        {
+            effect->config.neon.colorStops.resize(newSize, DEFAULT_COLOR_STOP);
+        }
+        catch (const std::exception &e)
+        {
+            LOG_E("el_effect_set_color_stop_count: resize failed: %s", e.what());
+            return MapExceptionToResult(e);
+        }
         return EL_SUCCESS;
     }
 
@@ -476,13 +490,31 @@ extern "C"
             LOG_E("el_effect_set_segment_boost_count: negative count");
             return EL_ERROR_INVALID_PARAMETER;
         }
+        // The cap the header has always documented, now actually enforced.
+        // Entries past it were accepted, stored, reported by every getter, and
+        // then silently dropped by the renderer's fixed-size UBO - so the only
+        // signal a host got was a warning in the native log at draw time.
+        if (count > EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP)
+        {
+            LOG_E("el_effect_set_segment_boost_count: %d exceeds cap %d",
+                  count, EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
         size_t newSize = static_cast<size_t>(count);
         if (effect->config.neon.segmentBoosts.size() == newSize)
         {
             return EL_SUCCESS;
         }
         LOG_I("effect=%p, count=%d", (void *)effect, count);
-        effect->config.neon.segmentBoosts.resize(newSize);
+        try
+        {
+            effect->config.neon.segmentBoosts.resize(newSize);
+        }
+        catch (const std::exception &e)
+        {
+            LOG_E("el_effect_set_segment_boost_count: resize failed: %s", e.what());
+            return MapExceptionToResult(e);
+        }
         return EL_SUCCESS;
     }
 
@@ -701,6 +733,12 @@ extern "C"
             LOG_E("el_effect_set_preserved_segment_color_stop_count: negative count");
             return EL_ERROR_INVALID_PARAMETER;
         }
+        if (count > EdgeLighting::NeonConfig::MAX_COLOR_STOPS_CAP)
+        {
+            LOG_E("el_effect_set_preserved_segment_color_stop_count: %d exceeds colour-stop cap %d",
+                  count, EdgeLighting::NeonConfig::MAX_COLOR_STOPS_CAP);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
         int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
         if (idx < 0)
         {
@@ -714,7 +752,15 @@ extern "C"
             return EL_SUCCESS;
         }
         LOG_I("effect=%p, id=%u, count=%d", (void *)effect, id, count);
-        stops.resize(newSize);
+        try
+        {
+            stops.resize(newSize);
+        }
+        catch (const std::exception &e)
+        {
+            LOG_E("el_effect_set_preserved_segment_color_stop_count: resize failed: %s", e.what());
+            return MapExceptionToResult(e);
+        }
         return EL_SUCCESS;
     }
 
@@ -879,6 +925,12 @@ extern "C"
             LOG_E("el_effect_set_segment_color_stop_count: negative count");
             return EL_ERROR_INVALID_PARAMETER;
         }
+        if (count > EdgeLighting::NeonConfig::MAX_COLOR_STOPS_CAP)
+        {
+            LOG_E("el_effect_set_segment_color_stop_count: %d exceeds colour-stop cap %d",
+                  count, EdgeLighting::NeonConfig::MAX_COLOR_STOPS_CAP);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
         auto &boosts = effect->config.neon.segmentBoosts;
         size_t segIdx = static_cast<size_t>(segmentIndex);
         size_t newSize = static_cast<size_t>(count);
@@ -892,7 +944,15 @@ extern "C"
             LOG_E("el_effect_set_segment_color_stop_count: segmentIndex %d out of range (size=%zu)", segmentIndex, boosts.size());
             return EL_ERROR_INVALID_PARAMETER;
         }
-        boosts[segIdx].colorStops.resize(newSize, DEFAULT_COLOR_STOP);
+        try
+        {
+            boosts[segIdx].colorStops.resize(newSize, DEFAULT_COLOR_STOP);
+        }
+        catch (const std::exception &e)
+        {
+            LOG_E("el_effect_set_segment_color_stop_count: resize failed: %s", e.what());
+            return MapExceptionToResult(e);
+        }
         return EL_SUCCESS;
     }
 
@@ -1008,13 +1068,28 @@ extern "C"
             LOG_E("el_effect_set_arc_count: negative count");
             return EL_ERROR_INVALID_PARAMETER;
         }
+        // As for segment boosts above: the documented cap, now enforced.
+        if (count > EdgeLighting::NeonConfig::MAX_ARCS_CAP)
+        {
+            LOG_E("el_effect_set_arc_count: %d exceeds cap %d",
+                  count, EdgeLighting::NeonConfig::MAX_ARCS_CAP);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
         size_t newSize = static_cast<size_t>(count);
         if (effect->config.neon.arcs.size() == newSize)
         {
             return EL_SUCCESS;
         }
         LOG_I("effect=%p, count=%d", (void *)effect, count);
-        effect->config.neon.arcs.resize(newSize);
+        try
+        {
+            effect->config.neon.arcs.resize(newSize);
+        }
+        catch (const std::exception &e)
+        {
+            LOG_E("el_effect_set_arc_count: resize failed: %s", e.what());
+            return MapExceptionToResult(e);
+        }
         return EL_SUCCESS;
     }
 
@@ -1111,6 +1186,12 @@ extern "C"
             LOG_E("el_effect_set_arc_color_stop_count: negative count");
             return EL_ERROR_INVALID_PARAMETER;
         }
+        if (count > EdgeLighting::NeonConfig::MAX_COLOR_STOPS_CAP)
+        {
+            LOG_E("el_effect_set_arc_color_stop_count: %d exceeds colour-stop cap %d",
+                  count, EdgeLighting::NeonConfig::MAX_COLOR_STOPS_CAP);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
         auto &arcs = effect->config.neon.arcs;
         size_t arcIdx = static_cast<size_t>(arcIndex);
         size_t newSize = static_cast<size_t>(count);
@@ -1124,7 +1205,15 @@ extern "C"
             LOG_E("el_effect_set_arc_color_stop_count: arcIndex %d out of range (size=%zu)", arcIndex, arcs.size());
             return EL_ERROR_INVALID_PARAMETER;
         }
-        arcs[arcIdx].colorStops.resize(newSize, DEFAULT_COLOR_STOP);
+        try
+        {
+            arcs[arcIdx].colorStops.resize(newSize, DEFAULT_COLOR_STOP);
+        }
+        catch (const std::exception &e)
+        {
+            LOG_E("el_effect_set_arc_color_stop_count: resize failed: %s", e.what());
+            return MapExceptionToResult(e);
+        }
         return EL_SUCCESS;
     }
 
@@ -1264,6 +1353,22 @@ extern "C"
     el_result_e el_effect_set_neon_gradient_lut_size(el_effect_handle_t effect, int32_t size)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_neon_gradient_lut_size");
+        // The range the field's doc comment has always named, now enforced.
+        // Rejected rather than clamped, matching the count setters: a host that
+        // asks for 100 and is quietly given 128 has no way to find that out.
+        if (size < EdgeLighting::NeonConfig::MIN_GRADIENT_LUT_SIZE ||
+            size > EdgeLighting::NeonConfig::MAX_GRADIENT_LUT_SIZE)
+        {
+            LOG_E("el_effect_set_neon_gradient_lut_size: %d outside [%d, %d]", size,
+                  EdgeLighting::NeonConfig::MIN_GRADIENT_LUT_SIZE,
+                  EdgeLighting::NeonConfig::MAX_GRADIENT_LUT_SIZE);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        // Deliberately NOT rejecting a non-power-of-two. Both bakes handle any
+        // width and every GL version this targets (3.3 core, and the 3.0 ES the
+        // non-Apple branches select) samples NPOT with REPEAT correctly, so the
+        // rule would buy nothing and cost a continuous size control its
+        // intermediate values. See MIN/MAX_GRADIENT_LUT_SIZE.
         SET_AND_LOG(effect->config.neon.gradientLutSize, size,
                     "effect=%p, size=%d", (void *)effect, size);
     }
@@ -1714,6 +1819,286 @@ extern "C"
     }
 
     // ==========================================================================
+    // Source-parameterised reads
+    //
+    // Each of these is the same four steps: validate, resolve the source to one
+    // of the three configs, hand the addressing over to the matching Read* in
+    // field-access.h, and turn its false into EL_ERROR_INVALID_PARAMETER. The
+    // bounds live there, shared with the Write* the animation system uses, so
+    // a reader cannot disagree with its writer about what is in range.
+    //
+    // LOG_D, not LOG_I: a host UI calls these once per field per frame.
+    // ==========================================================================
+
+    // Indices arrive as int32_t for ABI reasons but address a std::vector. A
+    // negative one is rejected here rather than wrapped into a huge size_t and
+    // left for the bounds check - same outcome, but the log says what happened.
+    static bool IsValidIndex(int32_t index) { return index >= 0; }
+
+    el_result_e el_effect_read_field(el_effect_handle_t effect, el_config_source_e source,
+                                     el_config_field_e field, float *out)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_read_field");
+        VALIDATE_OUT_PTR(out, "el_effect_read_field");
+        const EdgeLighting::Config *cfg = ResolveConfigSource(effect, source);
+        VALIDATE_SOURCE(cfg, source, "el_effect_read_field");
+
+        float value = 0.0f;
+        if (!EdgeLighting::ReadField(*cfg, ConvertFromCapi(field), value))
+        {
+            LOG_E("el_effect_read_field: unknown field %d", (int)field);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        *out = value;
+        LOG_D("effect=%p, source=%d, field=%d, value=%f", (void *)effect, (int)source, (int)field, value);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_read_segment_field(el_effect_handle_t effect, el_config_source_e source,
+                                             int32_t index, el_segment_field_e field, float *out)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_read_segment_field");
+        VALIDATE_OUT_PTR(out, "el_effect_read_segment_field");
+        const EdgeLighting::Config *cfg = ResolveConfigSource(effect, source);
+        VALIDATE_SOURCE(cfg, source, "el_effect_read_segment_field");
+
+        float value = 0.0f;
+        if (!IsValidIndex(index) ||
+            !EdgeLighting::ReadSegmentField(*cfg, static_cast<size_t>(index),
+                                            static_cast<EdgeLighting::SegmentField>(field), value))
+        {
+            LOG_E("el_effect_read_segment_field: index %d or field %d out of range for source %d",
+                  index, (int)field, (int)source);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        *out = value;
+        LOG_D("effect=%p, source=%d, index=%d, field=%d, value=%f",
+              (void *)effect, (int)source, index, (int)field, value);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_read_preserved_segment_field(el_effect_handle_t effect, el_config_source_e source,
+                                                       uint32_t id, el_segment_field_e field, float *out)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_read_preserved_segment_field");
+        VALIDATE_OUT_PTR(out, "el_effect_read_preserved_segment_field");
+        const EdgeLighting::Config *cfg = ResolveConfigSource(effect, source);
+        VALIDATE_SOURCE(cfg, source, "el_effect_read_preserved_segment_field");
+
+        float value = 0.0f;
+        if (!EdgeLighting::ReadPreservedSegmentField(*cfg, id,
+                                                     static_cast<EdgeLighting::SegmentField>(field), value))
+        {
+            LOG_E("el_effect_read_preserved_segment_field: id %u not live, or field %d unknown, in source %d",
+                  id, (int)field, (int)source);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        *out = value;
+        LOG_D("effect=%p, source=%d, id=%u, field=%d, value=%f",
+              (void *)effect, (int)source, id, (int)field, value);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_read_arc_field(el_effect_handle_t effect, el_config_source_e source,
+                                         int32_t index, el_arc_field_e field, float *out)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_read_arc_field");
+        VALIDATE_OUT_PTR(out, "el_effect_read_arc_field");
+        const EdgeLighting::Config *cfg = ResolveConfigSource(effect, source);
+        VALIDATE_SOURCE(cfg, source, "el_effect_read_arc_field");
+
+        float value = 0.0f;
+        if (!IsValidIndex(index) ||
+            !EdgeLighting::ReadArcField(*cfg, static_cast<size_t>(index),
+                                        static_cast<EdgeLighting::ArcField>(field), value))
+        {
+            LOG_E("el_effect_read_arc_field: index %d or field %d out of range for source %d",
+                  index, (int)field, (int)source);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        *out = value;
+        LOG_D("effect=%p, source=%d, index=%d, field=%d, value=%f",
+              (void *)effect, (int)source, index, (int)field, value);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_read_segment_stop_field(el_effect_handle_t effect, el_config_source_e source,
+                                                  int32_t segIndex, int32_t stopIndex,
+                                                  el_color_stop_field_e field, float *out)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_read_segment_stop_field");
+        VALIDATE_OUT_PTR(out, "el_effect_read_segment_stop_field");
+        const EdgeLighting::Config *cfg = ResolveConfigSource(effect, source);
+        VALIDATE_SOURCE(cfg, source, "el_effect_read_segment_stop_field");
+
+        float value = 0.0f;
+        if (!IsValidIndex(segIndex) || !IsValidIndex(stopIndex) ||
+            !EdgeLighting::ReadSegmentStopField(*cfg, static_cast<size_t>(segIndex),
+                                                static_cast<size_t>(stopIndex),
+                                                static_cast<EdgeLighting::ColorStopField>(field), value))
+        {
+            LOG_E("el_effect_read_segment_stop_field: segment %d / stop %d / field %d out of range for source %d",
+                  segIndex, stopIndex, (int)field, (int)source);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        *out = value;
+        LOG_D("effect=%p, source=%d, seg=%d, stop=%d, field=%d, value=%f",
+              (void *)effect, (int)source, segIndex, stopIndex, (int)field, value);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_read_preserved_segment_stop_field(el_effect_handle_t effect, el_config_source_e source,
+                                                            uint32_t id, int32_t stopIndex,
+                                                            el_color_stop_field_e field, float *out)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_read_preserved_segment_stop_field");
+        VALIDATE_OUT_PTR(out, "el_effect_read_preserved_segment_stop_field");
+        const EdgeLighting::Config *cfg = ResolveConfigSource(effect, source);
+        VALIDATE_SOURCE(cfg, source, "el_effect_read_preserved_segment_stop_field");
+
+        float value = 0.0f;
+        if (!IsValidIndex(stopIndex) ||
+            !EdgeLighting::ReadPreservedSegmentStopField(*cfg, id, static_cast<size_t>(stopIndex),
+                                                         static_cast<EdgeLighting::ColorStopField>(field), value))
+        {
+            LOG_E("el_effect_read_preserved_segment_stop_field: id %u / stop %d / field %d out of range for source %d",
+                  id, stopIndex, (int)field, (int)source);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        *out = value;
+        LOG_D("effect=%p, source=%d, id=%u, stop=%d, field=%d, value=%f",
+              (void *)effect, (int)source, id, stopIndex, (int)field, value);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_read_arc_stop_field(el_effect_handle_t effect, el_config_source_e source,
+                                              int32_t arcIndex, int32_t stopIndex,
+                                              el_color_stop_field_e field, float *out)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_read_arc_stop_field");
+        VALIDATE_OUT_PTR(out, "el_effect_read_arc_stop_field");
+        const EdgeLighting::Config *cfg = ResolveConfigSource(effect, source);
+        VALIDATE_SOURCE(cfg, source, "el_effect_read_arc_stop_field");
+
+        float value = 0.0f;
+        if (!IsValidIndex(arcIndex) || !IsValidIndex(stopIndex) ||
+            !EdgeLighting::ReadArcStopField(*cfg, static_cast<size_t>(arcIndex),
+                                            static_cast<size_t>(stopIndex),
+                                            static_cast<EdgeLighting::ColorStopField>(field), value))
+        {
+            LOG_E("el_effect_read_arc_stop_field: arc %d / stop %d / field %d out of range for source %d",
+                  arcIndex, stopIndex, (int)field, (int)source);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        *out = value;
+        LOG_D("effect=%p, source=%d, arc=%d, stop=%d, field=%d, value=%f",
+              (void *)effect, (int)source, arcIndex, stopIndex, (int)field, value);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_read_count(el_effect_handle_t effect, el_config_source_e source,
+                                     el_container_e container, uint32_t parent, int32_t *out)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_read_count");
+        VALIDATE_OUT_PTR(out, "el_effect_read_count");
+        const EdgeLighting::Config *cfg = ResolveConfigSource(effect, source);
+        VALIDATE_SOURCE(cfg, source, "el_effect_read_count");
+
+        const EdgeLighting::NeonConfig &neon = cfg->neon;
+        size_t count = 0;
+        switch (container)
+        {
+        case EL_CONTAINER_SEGMENTS:
+        {
+            count = neon.segmentBoosts.size();
+            break;
+        }
+        case EL_CONTAINER_PRESERVED_SEGMENTS:
+        {
+            count = neon.preservedSegmentBoosts.size();
+            break;
+        }
+        case EL_CONTAINER_ARCS:
+        {
+            count = neon.arcs.size();
+            break;
+        }
+        case EL_CONTAINER_EFFECTIVE_SEGMENTS:
+        {
+            // The odd one out: every other container reports what the config
+            // holds, this reports what survives the preserved-first merge and
+            // the shader cap. Delegated so the rule lives next to the merge.
+            count = static_cast<size_t>(EdgeLighting::SegmentUtils::CountEffectiveSegments(neon));
+            break;
+        }
+        case EL_CONTAINER_SEGMENT_STOPS:
+        {
+            if (parent >= neon.segmentBoosts.size())
+            {
+                LOG_E("el_effect_read_count: segment %u out of range (size=%zu) in source %d",
+                      parent, neon.segmentBoosts.size(), (int)source);
+                return EL_ERROR_INVALID_PARAMETER;
+            }
+            count = neon.segmentBoosts[parent].colorStops.size();
+            break;
+        }
+        case EL_CONTAINER_PRESERVED_SEGMENT_STOPS:
+        {
+            const int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(neon, parent);
+            if (idx < 0)
+            {
+                LOG_E("el_effect_read_count: preserved id %u not live in source %d", parent, (int)source);
+                return EL_ERROR_INVALID_PARAMETER;
+            }
+            count = neon.preservedSegmentBoosts[static_cast<size_t>(idx)].segment.colorStops.size();
+            break;
+        }
+        case EL_CONTAINER_ARC_STOPS:
+        {
+            if (parent >= neon.arcs.size())
+            {
+                LOG_E("el_effect_read_count: arc %u out of range (size=%zu) in source %d",
+                      parent, neon.arcs.size(), (int)source);
+                return EL_ERROR_INVALID_PARAMETER;
+            }
+            count = neon.arcs[parent].colorStops.size();
+            break;
+        }
+        default:
+        {
+            LOG_E("el_effect_read_count: unknown container %d", (int)container);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        }
+        *out = static_cast<int32_t>(count);
+        LOG_D("effect=%p, source=%d, container=%d, parent=%u, count=%d",
+              (void *)effect, (int)source, (int)container, parent, *out);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_read_preserved_id(el_effect_handle_t effect, el_config_source_e source,
+                                            int32_t index, uint32_t *outId)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_read_preserved_id");
+        VALIDATE_OUT_PTR(outId, "el_effect_read_preserved_id");
+        const EdgeLighting::Config *cfg = ResolveConfigSource(effect, source);
+        VALIDATE_SOURCE(cfg, source, "el_effect_read_preserved_id");
+
+        // Positional, unlike everything else that touches this pool - it is the
+        // one call that converts an index into the id the others want.
+        const auto &pool = cfg->neon.preservedSegmentBoosts;
+        if (!IsValidIndex(index) || static_cast<size_t>(index) >= pool.size())
+        {
+            LOG_E("el_effect_read_preserved_id: index %d out of range (size=%zu) in source %d",
+                  index, pool.size(), (int)source);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        *outId = pool[static_cast<size_t>(index)].id;
+        LOG_D("effect=%p, source=%d, index=%d, id=%u", (void *)effect, (int)source, index, *outId);
+        return EL_SUCCESS;
+    }
+
+    // ==========================================================================
     // Effect lifecycle
     // ==========================================================================
 
@@ -1754,7 +2139,38 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_init_with_renderers");
         try
         {
+            // Already initialised: re-initialise IN PLACE rather than building a
+            // new effect. This is the GL-context-loss path - rebuild shaders and
+            // GL objects, keep everything that is not GL. Replacing the effect
+            // silently detached every attached animation and reset the clock
+            // while still returning EL_SUCCESS, and the C++ Initialize() this
+            // wraps has always documented re-entry as supported, so the two
+            // doors disagreed with the C one being the destructive surprise.
+            if (effect->impl)
+            {
+                if (rendererMask != effect->rendererMask)
+                {
+                    // Refused rather than ignored. The layer set is decided by
+                    // the registration order in this function and there is no
+                    // unregister, so honouring a new mask means a new effect -
+                    // which is destroy + create, and the caller's decision to
+                    // make, not something to do behind a rebuild call.
+                    LOG_E("el_effect_init_with_renderers: already initialised with mask 0x%x; "
+                          "cannot change it to 0x%x - destroy and create a new effect instead",
+                          effect->rendererMask, rendererMask);
+                    return EL_ERROR_INVALID_PARAMETER;
+                }
+                LOG_I("re-initialising in place (attached animations and clock are kept)");
+                if (!effect->impl->Initialize())
+                {
+                    LOG_E("el_effect_init_with_renderers: re-initialisation failed");
+                    return EL_ERROR_INIT_FAILED;
+                }
+                return EL_SUCCESS;
+            }
+
             effect->impl = std::make_unique<EdgeLighting::EdgeLightingEffect>();
+            effect->rendererMask = rendererMask;
 
             // ONE bit per layer: the content layers dense from 0, the debug
             // layer on the top bit (see el_renderer_flags_e), which is what
@@ -1802,7 +2218,7 @@ extern "C"
         catch (const std::exception &e)
         {
             LOG_E("exception: %s", e.what());
-            return mapExceptionToResult(e);
+            return MapExceptionToResult(e);
         }
     }
 
@@ -1818,7 +2234,7 @@ extern "C"
         catch (const std::exception &e)
         {
             LOG_E("exception: %s", e.what());
-            return mapExceptionToResult(e);
+            return MapExceptionToResult(e);
         }
     }
 
@@ -1834,7 +2250,7 @@ extern "C"
         catch (const std::exception &e)
         {
             LOG_E("exception: %s", e.what());
-            return mapExceptionToResult(e);
+            return MapExceptionToResult(e);
         }
     }
 
@@ -1850,7 +2266,7 @@ extern "C"
         catch (const std::exception &e)
         {
             LOG_E("exception: %s", e.what());
-            return mapExceptionToResult(e);
+            return MapExceptionToResult(e);
         }
     }
 

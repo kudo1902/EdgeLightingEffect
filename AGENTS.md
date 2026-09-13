@@ -32,6 +32,34 @@
   private one. A protected virtual is API for subclasses to override or call,
   not an implementation detail of this class.
   - e.g. `RestoreBaseline()`, `ApplyAt()`, `CaptureBaseline()`, `OnDurationChanged()`
+- Free functions: `PascalCase`, verb-first - **whatever their linkage**. A
+  function declared in a header, one marked `static`, and one in an anonymous
+  namespace all take the same name shape. `camelCase` means "private method",
+  and a free function is not a method of anything, so reusing it there makes a
+  reader look for the enclosing class.
+  - e.g. `AcquireSegment()`, `FindPreservedSegment()` (header-declared),
+    `ReadField()`, `WriteField()` (header-declared),
+    `GetClampedResolutionScale()`, `IsStripVisible()` (anonymous namespace)
+  - **Verb-first is half the rule and the half that gets missed.** A bare noun
+    phrase names a *thing*, so it reads as a variable at the call site:
+    `SegmentSlot(cfg, i)` looks like a type or an object, `FindSegmentSlot(cfg, i)`
+    says what it does. Pick the verb for what happens on the failure path -
+    `Find*` may return null / -1, `Ensure*` creates what is missing, `Get*`
+    always succeeds. `FindSegmentSlot` and `EnsureSegmentSlot` are the same
+    lookup and differ only there.
+  - Predicates are the one shape that counts as verb-first without a verb:
+    `Is*`, `Has*` (e.g. `IsStripVisible()`, `IsValidIndex()`).
+  - **A conversion is not exempt.** `To*` / `From*` reads as a preposition and
+    names the destination type, not the operation, so it falls to the noun-phrase
+    problem above. Give it a verb: `ConvertFromCapi()`, `ConvertToCapi()`.
+  - Where a whole layer converts between two representations, name the axis
+    once and overload, rather than spelling out one function per type. Name the
+    fixed pole and let `To` / `From` carry the direction, so it is absolute
+    instead of relative to whichever type the name mentions. Avoid `Native` for
+    a pole at an FFI boundary - which side is "native" depends on who is
+    asking.
+  - This includes `extern "C"` helpers that are *not* part of the exported ABI.
+    The exported `el_*` surface follows the C ABI rule below instead.
 
 ## Event Callbacks
 - `PascalCase` with `On` prefix

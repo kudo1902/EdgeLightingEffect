@@ -248,29 +248,87 @@ void DebugUI::buildGeometrySection(el_effect_handle_t effect)
 
 namespace
 {
+    /// Slider whose knob follows the ACTIVE config - what the shader is drawing
+    /// this frame, animation overlays included - while every edit still writes
+    /// the BASE through the ordinary setter.
+    ///
+    /// The C++ demo gets the animated value straight from
+    /// @c EdgeLightingEffect::GetActiveConfig(). Over the C ABI it comes from
+    /// @c el_effect_read_field with @c EL_CONFIG_SOURCE_ACTIVE, which is the
+    /// only way a C host can see what an attached animation is producing - the
+    /// @c el_effect_get_* family reads the staging config, so under an
+    /// animation it reports the authored value while the screen shows another.
+    ///
+    /// The rest matches the C++ demo, including the drag pin: while THIS
+    /// slider is being dragged the knob is pinned to the base, otherwise the
+    /// per-frame overlay and the drag fight over it. ImGui has no "was I active
+    /// last frame" query and there is no item to ask about before drawing, so
+    /// the answer is stashed per-slider in ImGui's own state storage, keyed by
+    /// the widget id, and read back on the next frame.
+    bool AnimatedSlider(el_effect_handle_t effect, const char *label,
+                        el_config_field_e field,
+                        el_result_e (*getFn)(el_effect_handle_t, float *),
+                        el_result_e (*setFn)(el_effect_handle_t, float),
+                        float lo, float hi, const char *fmt)
+    {
+        float base = 0.0f;
+        getFn(effect, &base);
+
+        // Fall back to the base if ACTIVE cannot be read - an effect that has
+        // not been initialised yet has no active config, and a slider is not
+        // the place to report that.
+        float active = base;
+        el_effect_read_field(effect, EL_CONFIG_SOURCE_ACTIVE, field, &active);
+
+        ImGuiStorage *storage = ImGui::GetStateStorage();
+        const ImGuiID id = ImGui::GetID(label);
+        const bool wasDragging = storage->GetBool(id, false);
+
+        float shown = wasDragging ? base : active;
+        const bool changed = ImGui::SliderFloat(label, &shown, lo, hi, fmt);
+        const bool isDragging = ImGui::IsItemActive();
+        storage->SetBool(id, isDragging);
+
+        // Only a live drag writes back. Without the guard, a `changed` reported
+        // on a frame the user is not holding the widget would push the animated
+        // value it is currently showing into the base - the animation would
+        // ratchet its own overlay into the authored config.
+        if (changed && isDragging)
+        {
+            setFn(effect, shown);
+            return true;
+        }
+        return false;
+    }
+
     // Draw the sliders shared between Neon and Optimized Neon sections. Reads
     // via getters and writes via setters. Suffix distinguishes ID scopes.
     void DrawSharedNeonSliders(el_effect_handle_t effect, const char *idSuffix)
     {
-        auto slider = [&](const char *base, auto getFn, auto setFn,
-                          float lo, float hi, const char *fmt = "%.2f")
+        // The six fields an animation can drive get the animated knob; the
+        // controls below them stay plain, matching the C++ demo exactly.
+        auto animated = [&](const char *base, el_config_field_e field,
+                            el_result_e (*getFn)(el_effect_handle_t, float *),
+                            el_result_e (*setFn)(el_effect_handle_t, float),
+                            float lo, float hi, const char *fmt = "%.2f")
         {
             char label[64];
             std::snprintf(label, sizeof(label), "%s##%s", base, idSuffix);
-            float v = 0.0f;
-            getFn(effect, &v);
-            if (ImGui::SliderFloat(label, &v, lo, hi, fmt))
-            {
-                setFn(effect, v);
-            }
+            AnimatedSlider(effect, label, field, getFn, setFn, lo, hi, fmt);
         };
 
-        slider("Line Width", el_effect_get_line_width, el_effect_set_line_width, 0.0f, 20.0f, "%.0f");
-        slider("Filament Falloff", el_effect_get_filament_falloff, el_effect_set_filament_falloff, 0.0f, 5.0f);
-        slider("Intensity", el_effect_get_intensity, el_effect_set_intensity, 0.0f, 3.0f);
-        slider("Glow Radius", el_effect_get_glow_radius, el_effect_set_glow_radius, 0.0f, 80.0f, "%.0f");
-        slider("Bloom Strength", el_effect_get_bloom_strength, el_effect_set_bloom_strength, 0.0f, 2.0f);
-        slider("Hue Rotation Rate", el_effect_get_hue_rotation_rate, el_effect_set_hue_rotation_rate, 0.0f, 2.0f);
+        animated("Line Width", EL_FIELD_NEON_LINE_WIDTH,
+                 el_effect_get_line_width, el_effect_set_line_width, 0.0f, 20.0f, "%.0f");
+        animated("Filament Falloff", EL_FIELD_NEON_FILAMENT_FALLOFF,
+                 el_effect_get_filament_falloff, el_effect_set_filament_falloff, 0.0f, 5.0f);
+        animated("Intensity", EL_FIELD_NEON_INTENSITY,
+                 el_effect_get_intensity, el_effect_set_intensity, 0.0f, 3.0f);
+        animated("Glow Radius", EL_FIELD_NEON_GLOW_RADIUS,
+                 el_effect_get_glow_radius, el_effect_set_glow_radius, 0.0f, 80.0f, "%.0f");
+        animated("Bloom Strength", EL_FIELD_NEON_BLOOM_STRENGTH,
+                 el_effect_get_bloom_strength, el_effect_set_bloom_strength, 0.0f, 2.0f);
+        animated("Hue Rotation Rate", EL_FIELD_NEON_HUE_ROTATION_RATE,
+                 el_effect_get_hue_rotation_rate, el_effect_set_hue_rotation_rate, 0.0f, 2.0f);
 
         el_glow_side_e side = EL_GLOW_SIDE_BOTH;
         el_effect_get_glow_side(effect, &side);

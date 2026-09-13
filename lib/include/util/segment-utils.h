@@ -2,6 +2,7 @@
 #define _EDGE_LIGHTING_SEGMENT_UTILS_H_
 
 #include "core/config.h"
+#include <algorithm>
 #include <vector>
 
 namespace EdgeLighting
@@ -105,6 +106,29 @@ namespace EdgeLighting
                 }
                 out.push_back(s);
             }
+        }
+
+        /// How many segments @ref FillEffectiveSegments would produce, without
+        /// building them.
+        ///
+        /// The two MUST agree - this is the answer to "how many segments are
+        /// actually lit", and it is not the size of either pool. Preserved
+        /// entries are laid down first and the merge stops at the cap, so a
+        /// full preserved pool leaves every transient boost unlit however many
+        /// of them there are. A host reading the pools separately cannot work
+        /// that out; this is the one call that says so.
+        ///
+        /// Kept beside @ref FillEffectiveSegments rather than derived from it
+        /// because a count query should not copy up to
+        /// @c MAX_SEGMENT_BOOSTS_CAP segments (each carrying its own colour-stop
+        /// vector) just to call @c size() on the result. The cost is that the
+        /// merge rule is written twice, in the two functions immediately above
+        /// and below each other: change one and change the other.
+        inline int CountEffectiveSegments(const NeonConfig &neon)
+        {
+            const size_t total = neon.preservedSegmentBoosts.size() + neon.segmentBoosts.size();
+            return static_cast<int>(
+                std::min(total, static_cast<size_t>(NeonConfig::MAX_SEGMENT_BOOSTS_CAP)));
         }
     } // namespace SegmentUtils
 } // namespace EdgeLighting

@@ -541,6 +541,15 @@ so the knob follows the live value; while the user is dragging the same
 slider, it pins to the base to avoid a tug-of-war with the per-frame
 overlay.
 
+`demo-capi/` does the same thing through the C ABI, where the animated value
+comes from `el_effect_read_field(effect, EL_CONFIG_SOURCE_ACTIVE, field, &v)`
+instead of a direct `GetActiveConfig()`. That one call is the whole difference
+between the two implementations - the drag pin and the write-back guard are
+identical. The C ABI reaches the animatable scalar leaves only, so the two
+demos are at parity on the six animated neon sliders and still differ on the
+cutoff rows, whose `size` / `softness` are not animatable fields and therefore
+have no field enum to address.
+
 The picker (`demo/src/border-color-picker.{h,cpp}`) samples pixels along
 an image's border and emits `ColorStop`s that snap to the rect's own
 perimeter parameterisation. See `README.md` for user-facing knobs

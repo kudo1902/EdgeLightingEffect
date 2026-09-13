@@ -11,6 +11,7 @@
 #include "renderer/lens-flare-renderer.h"
 #include "animation/neon-animations.h"
 #include "animation/field-bound-animation.h"
+#include "animation/field-access.h"
 #include "animation/modulator.h"
 #include "util/log-util.h"
 #include "util/segment-utils.h"
@@ -36,6 +37,12 @@ static_assert(static_cast<int>(EdgeLighting::Winding::COUNTER_CLOCKWISE) == EL_W
 static_assert(static_cast<int>(EdgeLighting::GlowSide::BOTH) == EL_GLOW_SIDE_BOTH);
 static_assert(static_cast<int>(EdgeLighting::GlowSide::INSIDE) == EL_GLOW_SIDE_INSIDE);
 static_assert(static_cast<int>(EdgeLighting::GlowSide::OUTSIDE) == EL_GLOW_SIDE_OUTSIDE);
+
+static_assert(static_cast<int>(EdgeLighting::OpaqueMode::NONE) == EL_OPAQUE_MODE_NONE);
+static_assert(static_cast<int>(EdgeLighting::OpaqueMode::OUTSIDE) == EL_OPAQUE_MODE_OUTSIDE);
+static_assert(static_cast<int>(EdgeLighting::OpaqueMode::INSIDE) == EL_OPAQUE_MODE_INSIDE);
+static_assert(static_cast<int>(EdgeLighting::OpaqueMode::BOTH) == EL_OPAQUE_MODE_BOTH);
+static_assert(static_cast<int>(EdgeLighting::OpaqueMode::ALL) == EL_OPAQUE_MODE_ALL);
 
 static_assert(static_cast<int>(EdgeLighting::BlendSpace::RGB) == EL_BLEND_SPACE_RGB);
 static_assert(static_cast<int>(EdgeLighting::BlendSpace::HSV) == EL_BLEND_SPACE_HSV);
@@ -80,9 +87,16 @@ static_assert(static_cast<int>(EdgeLighting::ColorStopField::G) == EL_STOP_FIELD
 static_assert(static_cast<int>(EdgeLighting::ColorStopField::B) == EL_STOP_FIELD_B);
 static_assert(static_cast<int>(EdgeLighting::ColorStopField::A) == EL_STOP_FIELD_A);
 
-// PlaybackMode / EndAction / AnimationState use dedicated to*/from* helpers,
-// so their ABI decoupling is enforced at the switch site rather than by
-// parity - no static_asserts needed.
+// PlaybackMode / EndAction / AnimationState / easing curves are deliberately
+// NOT parity-checked: they cross through the ConvertToCapi / ConvertFromCapi
+// switches below, which decouple the two numberings entirely, so a reorder on
+// either side is a compile error at the switch rather than a silent remap.
+//
+// That exemption is only worth anything while EVERY crossing goes through a
+// switch. AnimationState once had one call site that did not - the
+// OnStateChanged callback bridge cast raw - which left it with neither parity
+// asserts nor decoupling. If you add a path for one of these enums, route it
+// through the converter; do not cast.
 
 // ==========================================================================
 // Opaque handle definitions
@@ -91,6 +105,12 @@ struct el_effect_handle_impl
 {
     EdgeLighting::Config config;
     std::unique_ptr<EdgeLighting::EdgeLightingEffect> impl;
+
+    /// The mask the FIRST el_effect_init_with_renderers was given, kept so a
+    /// later call can tell a GL rebuild (same mask, re-initialise in place)
+    /// from a request to change the layer set (which needs a new effect and is
+    /// refused). Only meaningful once @c impl exists.
+    uint32_t rendererMask = 0;
 };
 
 struct el_animation_handle_impl
@@ -146,6 +166,21 @@ struct el_modulator_handle_impl
         }                                         \
     } while (0)
 
+/// Companion to @c ResolveConfigSource: bail out when it could not resolve.
+/// Covers both of its failure modes, which are the same class of caller error -
+/// an enum value the ABI does not define, or BASE/ACTIVE asked of a handle that
+/// has no effect behind it yet.
+#define VALIDATE_SOURCE(cfgPtr, source, fn)                                      \
+    do                                                                           \
+    {                                                                            \
+        if (!(cfgPtr))                                                           \
+        {                                                                        \
+            LOG_E("%s: unknown config source %d, or effect not initialised", fn, \
+                  (int)(source));                                                \
+            return EL_ERROR_INVALID_PARAMETER;                                   \
+        }                                                                        \
+    } while (0)
+
 /// Short-circuit setter that only logs + assigns when the incoming value
 /// actually differs from what @c field already holds, then returns @c EL_SUCCESS.
 #define SET_AND_LOG(field, newVal, ...) \
@@ -162,8 +197,27 @@ struct el_modulator_handle_impl
 
 // ==========================================================================
 // Enum conversion helpers
+//
+// Everything at this seam exists twice: once as an ABI enum and once as the
+// library's own. @c ConvertFromCapi / @c ConvertToCapi are the two directions,
+// overloaded on the argument type rather than spelled out per type - the axis
+// is named once instead of seven times, and the direction is absolute rather
+// than relative to which type the name happens to mention.
+//
+// The overloads are grouped by TYPE below, not by direction, so a pair sits
+// together and it is obvious at a glance which types round-trip and which are
+// one-way. Adding a type means adding its overload(s) beside the others.
+//
+// Overload resolution is safe here because every argument type is distinct:
+// the C side are separate unscoped enums (which convert to int, never to each
+// other) and the C++ side are all @c enum @c class. An untyped literal would be
+// ambiguous, and that is a compile error rather than a wrong pick.
+//
+// @c MapExceptionToResult is deliberately NOT part of this: it is a genuine
+// many-to-one classification, not a change of representation, so it keeps its
+// own verb.
 // ==========================================================================
-inline el_result_e mapExceptionToResult(const std::exception &e)
+inline el_result_e MapExceptionToResult(const std::exception &e)
 {
     if (dynamic_cast<const std::bad_alloc *>(&e) != nullptr)
     {
@@ -172,7 +226,7 @@ inline el_result_e mapExceptionToResult(const std::exception &e)
     return EL_ERROR_INVALID_PARAMETER;
 }
 
-inline EdgeLighting::EasingFunction::Curve toEasing(el_easing_e e)
+inline EdgeLighting::EasingFunction::Curve ConvertFromCapi(el_easing_e e)
 {
     using namespace EdgeLighting;
     switch (e)
@@ -208,7 +262,7 @@ inline EdgeLighting::EasingFunction::Curve toEasing(el_easing_e e)
     }
 }
 
-inline EdgeLighting::Waveform toWaveform(el_waveform_e w)
+inline EdgeLighting::Waveform ConvertFromCapi(el_waveform_e w)
 {
     using namespace EdgeLighting;
     switch (w)
@@ -225,7 +279,7 @@ inline EdgeLighting::Waveform toWaveform(el_waveform_e w)
     }
 }
 
-inline EdgeLighting::EndAction toEndAction(el_end_action_e a)
+inline EdgeLighting::EndAction ConvertFromCapi(el_end_action_e a)
 {
     using namespace EdgeLighting;
     switch (a)
@@ -242,7 +296,7 @@ inline EdgeLighting::EndAction toEndAction(el_end_action_e a)
     }
 }
 
-inline el_end_action_e fromEndAction(EdgeLighting::EndAction a)
+inline el_end_action_e ConvertToCapi(EdgeLighting::EndAction a)
 {
     using namespace EdgeLighting;
     switch (a)
@@ -259,23 +313,70 @@ inline el_end_action_e fromEndAction(EdgeLighting::EndAction a)
     }
 }
 
-inline EdgeLighting::PlaybackMode toPlaybackMode(el_playback_mode_e m)
+inline EdgeLighting::PlaybackMode ConvertFromCapi(el_playback_mode_e m)
 {
     return m == EL_PLAYBACK_ONE_SHOT
                ? EdgeLighting::PlaybackMode::ONE_SHOT
                : EdgeLighting::PlaybackMode::LOOP;
 }
 
-inline el_playback_mode_e fromPlaybackMode(EdgeLighting::PlaybackMode m)
+inline el_animation_state_e ConvertToCapi(EdgeLighting::AnimationState s)
+{
+    switch (s)
+    {
+    case EdgeLighting::AnimationState::PLAYING:
+    {
+        return EL_ANIM_STATE_PLAYING;
+    }
+    case EdgeLighting::AnimationState::PAUSED:
+    {
+        return EL_ANIM_STATE_PAUSED;
+    }
+    case EdgeLighting::AnimationState::STOPPED:
+    default:
+    {
+        return EL_ANIM_STATE_STOPPED;
+    }
+    }
+}
+
+inline el_playback_mode_e ConvertToCapi(EdgeLighting::PlaybackMode m)
 {
     return m == EdgeLighting::PlaybackMode::ONE_SHOT
                ? EL_PLAYBACK_ONE_SHOT
                : EL_PLAYBACK_LOOP;
 }
 
-inline EdgeLighting::AnimatableField toAnimatableField(el_config_field_e f)
+inline EdgeLighting::AnimatableField ConvertFromCapi(el_config_field_e f)
 {
     return static_cast<EdgeLighting::AnimatableField>(f);
+}
+
+/// The one place that knows which storage each @ref el_config_source_e names.
+/// Returns nullptr for an unknown source, and for BASE / ACTIVE on a handle
+/// that has not been through @c el_effect_init - those two live in the effect,
+/// which does not exist yet. STAGING is always available: it is the handle's
+/// own member, filled with defaults from the moment @c el_effect_create
+/// returns.
+inline const EdgeLighting::Config *ResolveConfigSource(el_effect_handle_t effect,
+                                                       el_config_source_e source)
+{
+    switch (source)
+    {
+    case EL_CONFIG_SOURCE_STAGING:
+    {
+        return &effect->config;
+    }
+    case EL_CONFIG_SOURCE_BASE:
+    {
+        return effect->impl ? &effect->impl->GetConfig() : nullptr;
+    }
+    case EL_CONFIG_SOURCE_ACTIVE:
+    {
+        return effect->impl ? &effect->impl->GetActiveConfig() : nullptr;
+    }
+    }
+    return nullptr;
 }
 
 #endif // _CAPI_INTERNAL_H_

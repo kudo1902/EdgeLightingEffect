@@ -56,7 +56,7 @@ namespace EdgeLighting
         ///                Clamped to >= 1 for the same reason.
         void Bake(const std::vector<T> &items, int width, int maxRows)
         {
-            width = std::max(width, 2);
+            width = std::min(std::max(width, 2), NeonConfig::MAX_GRADIENT_LUT_SIZE);
             maxRows = std::max(maxRows, 1);
 
             // Clamped BEFORE the dirty check, so the snapshot the check
@@ -94,10 +94,10 @@ namespace EdgeLighting
                     // must hold their end colours rather than wrapping. See
                     // ColorUtils::SampleSpan.
                     glm::vec4 c = ColorUtils::SampleSpan(t, stops, item.blendSpace);
-                    row[x * 4 + 0] = ColorUtils::ToByte(c.r);
-                    row[x * 4 + 1] = ColorUtils::ToByte(c.g);
-                    row[x * 4 + 2] = ColorUtils::ToByte(c.b);
-                    row[x * 4 + 3] = ColorUtils::ToByte(c.a);
+                    row[x * 4 + 0] = ColorUtils::QuantiseToByte(c.r);
+                    row[x * 4 + 1] = ColorUtils::QuantiseToByte(c.g);
+                    row[x * 4 + 2] = ColorUtils::QuantiseToByte(c.b);
+                    row[x * 4 + 3] = ColorUtils::QuantiseToByte(c.a);
                 }
             }
 

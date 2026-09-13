@@ -825,7 +825,9 @@ static_cast<unsigned char>(std::clamp(c.r * 255.0f, 0.0f, 255.0f))
 No `+ 0.5f`, so every baked texel is biased down by up to 1 LSB and by ~0.5 LSB
 on average, in all three LUTs, in both renderers.
 
-**Fixed** with a `ToByte` helper in both renderers, replacing all 18 sites. The
+**Fixed** with a rounding helper in both renderers, replacing all 18 sites - it
+shipped as `ToByte` and is now `ColorUtils::QuantiseToByte` (N6 in
+[`naming-review.md`](naming-review.md)). The
 clamp comes after the bias so 1.0 still maps to 255. GL's own float-to-unorm
 conversion rounds, so the bake now agrees with the hardware it feeds.
 
@@ -1528,6 +1530,297 @@ No visual change without a host scissor, which is why this survived: the demos
 never set one outside `renderOpaqueFill`'s own clear.
 
 ---
+
+## Sixth pass (the active-config C ABI review)
+
+### I16. Two count setters ignored the cap their own docs promised - FIXED
+
+`el_effect_set_segment_boost_count` and `el_effect_set_arc_count` both carried
+`@details Cap is ...; values above that return EL_ERROR_INVALID_PARAMETER`.
+Neither checked. Both rejected negatives and then `resize()`d to whatever was
+asked, so `set_segment_boost_count(20)` returned `EL_SUCCESS` against a cap of 8.
+
+The entries were real as far as the config was concerned - stored, reported by
+every getter, and carried into the active config - and then silently dropped by
+the renderer's fixed-size UBO. The only signal a host got was the overflow
+warning in the native log at draw time (see V7). A host reading its own config
+back had no way to know a third of its segments would never light.
+
+Fixed by checking `MAX_SEGMENT_BOOSTS_CAP` / `MAX_ARCS_CAP` before the resize,
+matching `el_effect_acquire_preserved_segment`, which was already the only
+place in `el-effect.cpp` that enforced a pool cap. This is a behaviour change
+for any host that was setting counts above the cap and relying on silent
+truncation - it now gets the error the header always documented.
+
+The four colour-stop count setters make no cap claim and were left alone.
+
+### I17. `EL_CONFIG_SOURCE_ACTIVE` was documented as "what renderers draw" - FIXED
+
+It is what renderers are *handed*. Three things sit between it and the pixels,
+all verified by probe:
+
+| | ACTIVE reports | actually drawn |
+| --- | --- | --- |
+| over-cap counts (before I16) | 20 segments / 20 arcs | 8 |
+| preserved-first merge | `preserved=8, transient=3` | 8 preserved, **0 transient** |
+| disabled layer | intensity 1.00, 3 segments | nothing |
+
+The middle row is the one that misleads rather than merely over-reports:
+`SegmentUtils::FillEffectiveSegments` lays down preserved entries first and
+stops at the cap, so a full preserved pool leaves every transient boost dark
+however many there are. A host reading the two pools separately cannot work that
+out.
+
+Fixed in two parts. The claim is corrected wherever it was made (`el_types.h`,
+the read group in `el-effect.h`, `CLAUDE.md`), and `EL_CONTAINER_EFFECTIVE_SEGMENTS`
+was added so the question "how many segments are actually lit" has an answer at
+all. It is the one container whose value is not a plain `.size()`; it delegates
+to `SegmentUtils::CountEffectiveSegments`, which lives immediately beside the
+merge it has to agree with. That agreement is the thing to guard: it is checked
+exhaustively over every pool combination up to three past the cap.
+
+### I18. An animation index sized a vector directly - FIXED
+
+`EnsureSegmentSlot` grew `segmentBoosts` to `index + 1` with no cap check, so a
+travelling-segment animation's index parameter sized the pool:
+
+```
+SegmentTravel(index=50).ApplyAt    -> 51 entries  (cap 8)
+SegmentTravel(index=200000)        -> 200001 entries
+```
+
+I16 had enforced the cap on the C ABI's count setters, which made this worse by
+making the two front doors disagree: a C++ host could build a state the C ABI
+refused. The cap is a property of the shader's fixed array, so it belongs on the
+pool operation, not on one of the two ways in.
+
+Fixed by returning `SegmentBoost *` and giving it the same nullptr-on-miss
+contract the slot accessors in `field-access.h` use; the two `ApplyAt` callers
+skip when it returns null. Clamping the index to the last slot was rejected -
+two animations with different over-cap indices would then silently drive the
+SAME segment, which is harder to diagnose than a segment that never lights.
+
+Not reachable from C: the ABI's factory passes `SegmentTravel(duration, length,
+boost)` and the index defaults to 0. That was luck, not design.
+
+### I19. Six resizing setters could allocate without bound, none guarded - FIXED
+
+`resize()` is called from six setters. Four had no cap on the count they were
+handed, and **none** of the six wrapped the call, against an ABI that documents
+"no C++ exception crosses the boundary; everything maps to an `el_result_e`".
+
+Measured before the fix:
+
+```
+el_effect_set_color_stop_count(e, INT32_MAX)
+  -> EL_SUCCESS, 4.7 s, 43 GB peak footprint, 6.5 GB resident
+```
+
+One call and one large argument. It returned success here because this machine
+had the address space to back it; on the edge devices this library targets -
+the same constraint that drives RGBA8 LUTs over float textures - it is the OOM
+killer. And where the allocation *does* fail, `bad_alloc` unwinds out of an
+`extern "C"` frame with no handler.
+
+Fixed with `NeonConfig::MAX_COLOR_STOPS_CAP` (256, the largest LUT the stops
+bake into - beyond it the extra stops cannot be resolved by the texture that
+carries them) on all four stop-count setters, and a `try`/`catch` mapping to
+`MapExceptionToResult` around all six resizes. The same call now returns
+`EL_ERROR_INVALID_PARAMETER` in 0.0 ms with a 1 MB footprint.
+
+Note the exception path itself was never exercised: the allocation succeeded on
+this host, so the escape is inferred from the missing handler rather than
+observed. The guard is cheap either way.
+
+### I20. `gradientLutSize` documented a range nothing enforced - FIXED
+
+Same family as I16. The field was documented "power of two, 32-256";
+`el_effect_set_neon_gradient_lut_size` was a bare `SET_AND_LOG`. Unlike the stop
+counts it does not allocate in the setter, so a bad value surfaced later as a
+LUT bake of that many texels - `2000000000` would have asked for an 8 GB vector
+inside a render pass, where there is no exception guard at all.
+
+The two halves of the documented rule turned out to deserve opposite treatment.
+
+**The range is enforced, at both doors.** `MIN_GRADIENT_LUT_SIZE` /
+`MAX_GRADIENT_LUT_SIZE` (32 / 256) are now named constants. The C API rejects
+out-of-range sizes rather than clamping, matching the count setters. Both LUT
+bakes clamp to the upper bound, so the allocation is bounded whichever door the
+config came through - the I18 lesson applied up front rather than after the
+fact. Each bake's existing lower guard (`max(size, 4)`, `max(width, 2)`) was
+left alone so no currently-working small size changes behaviour.
+
+**The power-of-two half was relaxed to a recommendation, and the docs corrected
+to say so.** Enforcing it was implemented first and then reverted: `demo-capi`
+drives this through a continuous `SliderInt(32, 256)`, so rejecting
+non-powers-of-two left the control dead at every value except 32/64/128/256 -
+caught by running the demo, not by the assertions, which had encoded the rule
+rather than questioned it. No GL version this targets needs the rule (3.3 core
+and the 3.0 ES the non-Apple branches select both sample NPOT with REPEAT), so
+it was buying nothing and costing a working control. Making the documentation
+honest was the right fix rather than making the code obey a stale comment.
+
+### I21. `OpaqueMode` crossed the ABI on a bare cast, unguarded - FIXED
+
+The parity wall in `capi-internal.h` covered eight mirrored enums and missed
+this one. `el_effect_set/get_opaque_mode` cast in both directions with nothing
+asserting the two numberings agreed.
+
+Live rather than theoretical: `EdgeLighting::OpaqueMode` declares its values
+IMPLICITLY (`NONE, OUTSIDE, INSIDE, BOTH, ALL`) while `el_opaque_mode_e` numbers
+them explicitly 0-4, so inserting or reordering a mode is a one-line edit that
+silently remaps every host's opaque mode with no compile error anywhere. The
+wall's own comment enumerates the enums deliberately exempted and `OpaqueMode`
+is not among them, so this was an omission rather than a decision.
+
+Fixed with the five missing asserts. Verified by reordering the C++ enum and
+confirming the build fails naming the enumerator that moved - a parity assert
+nobody has ever tripped is only a comment.
+
+### I22. `AnimationState` was exempted from the wall on a half-true claim - FIXED
+
+The wall said:
+
+> PlaybackMode / EndAction / AnimationState use dedicated to\*/from\* helpers, so
+> their ABI decoupling is enforced at the switch site rather than by parity - no
+> static_asserts needed.
+
+True of `el_animation_get_state`, which decoupled through a switch. Not true of
+the `OnStateChanged` callback bridge, which cast both arguments raw. So the enum
+had neither parity asserts - waived on that claim - nor complete decoupling, and
+was the one mirrored enum with no protection at all.
+
+Worse than I21 in kind: there the guard was forgotten, here it was deliberately
+removed against a written justification one call site did not honour.
+
+Fixed by extracting the switch as `ConvertToCapi(AnimationState)` and routing
+both crossings through it, and by rewriting the comment to say what the
+exemption actually depends on - that EVERY crossing goes through a switch, not
+merely that one does.
+
+Verified from both directions. Reordering `AnimationState` (STOPPED 0 -> 2,
+PAUSED 2 -> 0) now compiles and every state still maps correctly, which is what
+the exemption is supposed to buy. Restoring the old raw cast under the same
+reorder fails two assertions - a host's callback receives PAUSED where the
+animation stopped and STOPPED where it paused - which is the bug that shipped
+unnoticed because no test had ever exercised the callback path against a
+reordered enum.
+
+### I23. Detaching an animation from its own completion callback segfaulted - FIXED
+
+The first memory-safety defect in this sequence of reviews, and the only one
+reachable by writing the obvious thing:
+
+```
+attached=4; ticking past the one-shot duration...
+   OnComplete for anim 0 -> detaching from inside the callback
+   OnComplete for anim 2 -> detaching from inside the callback
+exit code 139 (SIGSEGV)
+```
+
+Two failures in three lines. Animations 1 and 3 never fired - erasing element 0
+shifts the rest down while the iterator keeps advancing, so every other entry is
+skipped - and then the process died.
+
+`AnimationManager::Update` walked `mAnimations` with a range-for.
+`Animation::Update` fires `OnComplete` and `OnStateChanged` synchronously from
+inside that walk, those are the host's C callbacks, and
+`el_effect_detach_animation` erases from the very vector being iterated.
+`el_effect_detach_all_animations` (a `clear()`) and `el_effect_attach_animation`
+(a reallocating `push_back`) are the same hazard. `Apply` is unaffected - it
+fires no callbacks. Reachable identically from C++ (`anim->OnComplete = [&]{
+effect.Detach(anim); }`).
+
+Nothing warned against it, and the guidance pointed the other way: the worked
+example at `animation.h:167` is `pulse->OnComplete = [next]() { next->Play(); };`
+which is safe only because `Play()` does not touch the manager. The docs
+demonstrated doing work in `OnComplete` without noting the one category of work
+that corrupts memory.
+
+Fixed by ticking over a reusable scratch copy of the pointer list, the same
+device `EdgeLightingEffect` already uses for its scratch config: copy-assigned
+so it reuses capacity, `clear()`ed after the loop so a detached animation is not
+kept alive into the next frame. Measured at **zero** allocations across 1000
+ticks after warmup, so the re-entrancy safety is free in steady state.
+
+That also pins down semantics that never had a definition: the tick set is taken
+at entry, so an animation detached mid-tick still receives that frame's tick and
+one attached mid-tick starts on the next. Holding a reference for the duration
+of the loop is what makes destroying a handle from inside its own callback safe
+as well.
+
+Regression covers all four shapes - detach self, detach all, attach, and destroy
+the handle - from inside a callback.
+
+**The first version of this fix was wrong; see I24.**
+
+### I24. The I23 fix made `Update` non-re-entrant - FIXED
+
+I23 moved the tick from `mAnimations` to a scratch MEMBER. That closed the
+mutate-during-tick hole and opened a second one: a callback can also re-enter
+`Update`, and a nested tick assigning to that member reallocates the buffer the
+outer loop is walking.
+
+Confirmed by growing the attach list past the scratch's capacity inside a
+callback and then re-entering - the nested copy reallocates, and the outer loop
+segfaults the moment the nested call returns. A one-level re-entry WITHOUT the
+growth appears to work, which is the dangerous part: with capacity to spare the
+assignment writes in place and the outer walk carries on over elements a nested
+`clear()` has already destroyed. Undefined either way, visibly broken only
+sometimes.
+
+Fixed by swapping the member into a LOCAL for the duration of the tick, so the
+walked buffer is a stack object no callback can reach. Depth 0 still allocates
+nothing - the local arrives carrying the previous tick's capacity, measured at
+zero allocations across 1000 ticks - and a nested tick finds the member empty
+and allocates its own, which is the right trade for a rare path.
+
+The general shape is worth keeping in mind: a callback fired mid-iteration can
+do anything the public API allows, including calling back into the function it
+was fired from. Guarding against mutation is half the problem; the container
+being iterated has to be unreachable, not merely separate.
+
+Regression now covers both re-entry shapes, with and without the reallocating
+nested copy.
+
+### I25. `el_effect_init` silently detached every animation on a second call - FIXED
+
+The C++ `Initialize()` documents re-entry as supported and preserves everything
+that is not GL. The C ABI's `el_effect_init_with_renderers` did not re-initialise
+- it built a whole new `EdgeLightingEffect` and dropped the old one:
+
+```
+BEFORE re-init: animations=1 staging=2.50 base=2.50 active=1.60
+--- el_effect_init(e) again ---   returned 0
+AFTER  re-init: animations=0 staging=2.50 base=1.00
+AFTER  one update: animations=0 base=2.50 active=2.50
+```
+
+The config self-healed (staging is re-pushed on the next update) which is
+probably why this was never noticed. The animations did not: silently detached,
+permanently, with `EL_SUCCESS` returned. The host's handles stayed valid and
+playing, attached to an effect object that no longer existed.
+
+Re-init is not an exotic path - it is what a host does after **GL context loss**,
+and there is no other call in the ABI that rebuilds GL resources. The function's
+own documentation ("Initialise every renderer layer under the current GL
+context") described the C++ behaviour rather than its own. Same shape as I18: one
+concept, two doors, different semantics, with the C door being the surprise.
+
+Fixed by re-initialising in place when the effect already exists, which is what
+the wrapped C++ call has always done. Attached animations, clock state and
+config now survive a rebuild.
+
+The renderer mask needed a rule, since the layer set is decided by the
+registration order in that function and there is no unregister. A second call
+with a DIFFERENT mask returns `EL_ERROR_INVALID_PARAMETER` rather than being
+ignored - changing the layer set means destroy and create, and that is the
+caller's decision, not something to do behind a rebuild call. The mask is stored
+on the handle to make the comparison possible.
+
+Regression covers a rebuild keeping animations / elapsed / clock / base config
+and still rendering, a mismatched mask being refused without disturbing the
+effect, and a partial first mask repeating correctly.
 
 ## What is left
 
