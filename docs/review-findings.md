@@ -1822,6 +1822,93 @@ Regression covers a rebuild keeping animations / elapsed / clock / base config
 and still rendering, a mismatched mask being refused without disturbing the
 effect, and a partial first mask repeating correctly.
 
+### I26. A stopped animation kept writing, with no way to hand the field back - FIXED
+
+Reported from a host: set intensity to 0.5 through the C API, animate it 0 -> 1,
+and afterwards intensity can never be set again.
+
+```
+2. fade 0->1 finished        staging=0.500 base=0.500 active=1.000
+3. after set 0.5 + update    staging=0.500 base=0.500 active=1.000
+4. after set 0.3 + update    staging=0.300 base=0.300 active=1.000   <- base moved, screen did not
+```
+
+The setter was working - staging and base both moved. The completed one-shot was
+STOPPED and still overwriting the field every frame, because `AnimationState`
+says only that elapsed has stopped advancing, and what a stopped animation
+writes is `EndAction`, defaulting to `HOLD_CURRENT`.
+
+That default is correct and must stay: a fade-out that wrote nothing on
+completion would pop back to the base value on its final frame, undoing itself. Measured -
+a fade from 1.5 to 0 ends at 0.000 and stays there only because the stopped
+animation keeps writing.
+
+The actual gap was that all four end actions kept writing - three holds and a
+snapshot - so nothing short of `Detach` returned a field to config control.
+`RESTORE` does not help either: it pins the CAPTURED value, so later base edits
+stay invisible.
+
+Fixed by adding `EndAction::HOLD_NONE` / `EL_END_ACTION_HOLD_NONE`: a stopped
+animation writes nothing, so whatever else would have written the field shows
+through, and the animation stays attached and replayable. `Apply` already had
+exactly this path for a never-played animation; HOLD_NONE reaches it
+deliberately.
+
+Named for the family it joins - HOLD_CURRENT / HOLD_END / HOLD_START / HOLD_NONE
+answer one question, *which value do I hold*, and the set explains itself without
+the doc comment. `RELEASE` was rejected because "release" already means free/
+destroy here (`el_effect_release_preserved_segment`, `Framebuffer::Release`), and
+anything built on REVERT or BASE was rejected as factually wrong: measured with
+two animations on one field, a HOLD_NONE animation yields to the OTHER animation,
+not to base. It steps aside rather than restoring anything.
+
+Appended at the end of both enums, and added to BOTH `ConvertToCapi` /
+`ConvertFromCapi` switches - each has a `default:` that would otherwise have
+reported HOLD_NONE back to a host as `HOLD_CURRENT`, silently, which is the I22
+failure shape exactly.
+
+**The documentation was actively wrong, and is the likely source of the
+expectation.** `AnimationManager::Apply` promised "Stopped animations no-op,
+leaving @p target's field at its incoming (base) value" - false for every end
+action. The same header's field-lifetime block had it right, so the file stated
+both. Corrected there, in `el_animation_set_end_action`, and in `CLAUDE.md`,
+which also claimed "There is no 'revert to base' end action".
+
+### I27. `el_animation_reset` silently destroyed the authored config - DEPRECATED, demos fixed
+
+Found auditing the animation C ABI for unused / deprecated surface.
+
+`el_animation_reset(anim, effect)` zeroes elapsed AND writes the modulator's t=0
+value into the staging config. Staging is committed to base by the next
+`el_effect_update`, so on an ATTACHED animation it overwrites the authored value
+permanently:
+
+```
+authored 0.5                  staging=0.500 base=0.500 active=0.500
+attached + playing            staging=0.500 base=0.500 active=3.951
+after el_animation_reset()    staging=3.000 base=3.000   <- 0.5 gone
+after detach (expect 0.5)     staging=3.000 base=3.000   <- unrecoverable
+```
+
+Invisible while it happens: the animation's own overlay is what gets drawn, so
+the damage only surfaces later, when the animation is detached and the field
+settles on a value the host never authored.
+
+**Both demos wired their Reset button straight to it** - `el_animation_reset` in
+`demo-capi`, `anim.Reset(cfg)` in `demo/` - on animations that are always
+attached. Every press destroyed the config. The C++ demo's comment described the
+config write as a feature ("the config field is restored"), which is true for a
+DETACHED animation and wrong for an attached one.
+
+Both now call the rewind alone (`el_animation_set_elapsed(anim, 0)` /
+`anim.SetElapsed(0)`), which is all a Reset button wants. Verified: the authored
+0.5 now survives Reset and detaching returns to it.
+
+`el_animation_reset` is marked `EL_DEPRECATED` pointing at
+`el_animation_set_elapsed`. It is not moved to `el-deprecated.h`, because that
+header's contract is thin forwarders onto a replacement and the config write it
+carries has no replacement to forward to - it is the part being retired.
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,

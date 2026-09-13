@@ -146,7 +146,21 @@ extern "C"
         EL_END_ACTION_HOLD_CURRENT = 0, /**< Freeze at the value at stop time (default). */
         EL_END_ACTION_HOLD_END = 1,     /**< Snap to the modulator's value at t=duration. */
         EL_END_ACTION_HOLD_START = 2,   /**< Snap to the modulator's value at t=0. */
-        EL_END_ACTION_RESTORE = 3       /**< Restore the pre-play baseline; needs @ref el_animation_capture_baseline. */
+        EL_END_ACTION_RESTORE = 3,      /**< Restore the pre-play baseline; needs @ref el_animation_capture_baseline. */
+        /** Holds nothing: a stopped animation does not write the field at all,
+         *  so whatever else would have written it shows through - the effect's
+         *  own config value when nothing else touches that field, or a later
+         *  animation in attach order when one does. It does NOT put the config
+         *  value back; it steps out of the way.
+         *
+         *  The other four all hold something, so this is the only end action
+         *  that returns a field to config control without
+         *  @ref el_effect_detach_animation - and unlike detaching, the
+         *  animation stays attached and can be replayed. Keep
+         *  @ref EL_END_ACTION_HOLD_CURRENT for a transition whose point is the
+         *  value it leaves behind: a fade-out set to HOLD_NONE would pop back
+         *  on its last frame and undo itself. */
+        EL_END_ACTION_HOLD_NONE = 4
     } el_end_action_e;
 
     /** @brief Easing curves available to @c Ease / factory animations.

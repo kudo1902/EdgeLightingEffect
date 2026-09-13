@@ -32,10 +32,14 @@ namespace EdgeLighting
     ///                 @ref Animation::EndAction specifies (HOLD_CURRENT by
     ///                 default: the value the modulator was writing at the
     ///                 moment of stop). HOLD_END / HOLD_START / RESTORE pick
-    ///                 different resting values. To let the base config show
-    ///                 through after Stop, @ref Detach the animation - there's
-    ///                 no dedicated "revert" mode because Detach already gives
-    ///                 that behaviour.
+    ///                 different resting values - note all four KEEP WRITING,
+    ///                 so the base value stays hidden under any of them.
+    ///                 @c EndAction::HOLD_NONE is the one that writes nothing,
+    ///                 letting whatever else would have written the field show
+    ///                 through - usually the base, or a later animation in
+    ///                 attach order. @ref Detach does the same from the
+    ///                 outside, and is right when the animation is finished
+    ///                 with entirely rather than merely idle.
     ///
     /// An @ref AnimationGroup is itself an @ref Animation, so a whole group can
     /// be @ref Attach ed as a single phase-locked unit.
@@ -94,8 +98,20 @@ namespace EdgeLighting
         void Update(float dt);
 
         /// @brief Apply every attached animation onto @p target in attach order
-        ///        (forwards to each @ref Animation::Apply). Stopped animations
-        ///        no-op, leaving @p target's field at its incoming (base) value.
+        ///        (forwards to each @ref Animation::Apply).
+        ///
+        /// A STOPPED animation does NOT stop writing. @c AnimationState is a
+        /// statement about time - elapsed no longer advances - and what a
+        /// stopped animation writes is decided separately by its
+        /// @ref Animation::EndAction. With the default @c HOLD_CURRENT it keeps
+        /// writing its frozen value indefinitely, so @p target's incoming
+        /// value is overwritten every frame and edits to it are invisible.
+        /// That is deliberate: it is what makes a completed fade hold its final
+        /// value instead of popping back on the last frame.
+        ///
+        /// Two things leave @p target's own value in place: an animation that
+        /// has never played, and @c EndAction::HOLD_NONE. @ref Detach does the same
+        /// from the outside.
         void Apply(Config &target) const;
 
     private:

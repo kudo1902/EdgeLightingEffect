@@ -186,6 +186,12 @@ extern "C"
     /** @brief Set the animation's end-action policy.
      *  @details Takes effect on the frame after stop - the currently running
      *           value is untouched. See @ref el_end_action_e for the menu. */
+    /** @note All of HOLD_CURRENT / HOLD_END / HOLD_START / RESTORE keep
+     *        WRITING once the animation stops, so the effect's own config value
+     *        stays hidden underneath and @c el_effect_set_* edits to that field
+     *        have no visible result. @ref EL_END_ACTION_HOLD_NONE stops writing and
+     *        hands the field back; @ref el_effect_detach_animation does the
+     *        same from the outside. */
     EL_API el_result_e el_animation_set_end_action(el_animation_handle_t anim,
                                                    el_end_action_e action);
 
