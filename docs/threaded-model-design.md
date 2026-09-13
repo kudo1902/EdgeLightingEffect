@@ -375,7 +375,14 @@ EL_API el_result_e el_effect_end_batch(el_effect_handle_t effect);
 ```
 
 `begin_batch` takes the data lock and `end_batch` releases it, with a depth
-count so nesting works. Inside the scope every setter and every reader finds the
+count so nesting works. The piece that needed care and is not obvious from the
+sketch: `end_batch` has to know whether the CALLING THREAD owns the scope before
+it unlocks, and at that moment it may own nothing at all - an unmatched close,
+or a close from the wrong thread. Reading the depth counter to find out is the
+very race the answer is needed to avoid, and unlocking a `recursive_mutex` this
+thread does not hold is undefined behaviour rather than an error code. So the
+owner is an `std::atomic<std::thread::id>`, written under the lock and read
+without it. Inside the scope every setter and every reader finds the
 lock already held by its own thread (it is recursive), so writes commit as a
 group and BASE/ACTIVE hold still across a whole read loop.
 
@@ -508,6 +515,18 @@ Five changes, each shippable on its own:
 3. **Animation lock adoption.** Section 5.4, including the modulator decision.
 4. **The consistency scope.** Section 5.5.
 5. **Threaded `demo-capi` under TSan** and the comparison doc.
+
+Steps 1 to 4 have landed. What each one turned up that this plan did not
+predict is recorded where the code is; the two worth repeating here:
+
+- The C ABI crashed on TWELVE pre-init calls, not the one this plan named.
+  `el_effect_update` was the only one it listed; `capture`, `render`, every
+  clock call and every animation call dereferenced the same null `unique_ptr`.
+- The library's own logger was not thread-safe. `Util::Print` did six
+  unsynchronised `operator<<` on one `std::cout`, which ThreadSanitizer
+  reported as 82 races the first time anything drove the library from two
+  threads. It is a pre-existing defect, invisible until then, and a blocker for
+  any threaded host with logging on.
 
 ## 9. Open items
 

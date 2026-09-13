@@ -2273,6 +2273,31 @@ extern "C"
         {
             return EL_SUCCESS;
         }
+
+        // A batch left open is a host bug, but destroying the handle on top of
+        // it turns that bug into a hang somewhere else entirely: the mutex is
+        // shared, so it outlives this handle through every attached animation
+        // and stays locked forever, and the next el_animation_* call blocks for
+        // good. Unwind what this thread holds and say so loudly.
+        //
+        // Only this thread's scopes can be unwound. One opened by another
+        // thread cannot be released from here at all - that is what the
+        // "stop your data thread before destroying" contract is for.
+        if (effect->batchOwner.load(std::memory_order_acquire) == std::this_thread::get_id())
+        {
+            const int leaked = effect->batchDepth;
+            LOG_E("el_effect_destroy: %d batch(es) still open on effect %p - "
+                  "every el_effect_begin_batch needs a matching el_effect_end_batch; "
+                  "unwinding so the shared lock is not left held",
+                  leaked, (void *)effect);
+            effect->batchDepth = 0;
+            effect->batchOwner.store(std::thread::id{}, std::memory_order_release);
+            for (int i = 0; i < leaked; ++i)
+            {
+                effect->dataMutex->unlock();
+            }
+        }
+
         delete effect;
         return EL_SUCCESS;
     }
@@ -2388,6 +2413,54 @@ extern "C"
             LOG_E("exception: %s", e.what());
             return MapExceptionToResult(e);
         }
+    }
+
+    el_result_e el_effect_begin_batch(el_effect_handle_t effect)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_begin_batch");
+        // Manual lock/unlock, the one place in this file that does not use a
+        // scope guard - by definition, since the scope being held open is the
+        // HOST's and spans two separate ABI calls. Everything else here is
+        // LOCK_EFFECT.
+        effect->dataMutex->lock();
+        // Both writes happen with the lock held, which is what makes the plain
+        // int safe. The owner is published last: until it names this thread,
+        // el_effect_end_batch on any thread correctly refuses.
+        ++effect->batchDepth;
+        effect->batchOwner.store(std::this_thread::get_id(), std::memory_order_release);
+        LOG_D("effect=%p, depth=%d", (void *)effect, effect->batchDepth);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_end_batch(el_effect_handle_t effect)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_end_batch");
+        // Checked BEFORE unlocking and without taking the lock, because the
+        // caller may hold nothing at all. Unlocking a recursive_mutex this
+        // thread does not own is undefined behaviour, so an unmatched close
+        // has to be refused rather than attempted.
+        if (effect->batchOwner.load(std::memory_order_acquire) != std::this_thread::get_id())
+        {
+            LOG_E("el_effect_end_batch: this thread holds no open batch on effect %p - "
+                  "unmatched end, or end from a thread that did not begin",
+                  (void *)effect);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+
+        // Past that check this thread demonstrably holds the lock, so the depth
+        // counter needs no atomicity of its own.
+        --effect->batchDepth;
+        if (effect->batchDepth == 0)
+        {
+            // Cleared BEFORE the unlock. The other order would leave a window
+            // where another thread takes the lock while this one is still
+            // named as owner, and its end_batch would then unlock a scope it
+            // never opened.
+            effect->batchOwner.store(std::thread::id{}, std::memory_order_release);
+        }
+        LOG_D("effect=%p, depth=%d", (void *)effect, effect->batchDepth);
+        effect->dataMutex->unlock();
+        return EL_SUCCESS;
     }
 
     el_result_e el_effect_update(el_effect_handle_t effect, float deltaTime)

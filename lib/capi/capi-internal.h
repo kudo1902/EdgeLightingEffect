@@ -18,8 +18,10 @@
 #include "util/segment-utils.h"
 
 #include <algorithm>
+#include <atomic>
 #include <memory>
 #include <mutex>
+#include <thread>
 #include <new>
 #include <exception>
 
@@ -162,6 +164,24 @@ struct el_effect_handle_impl
     /// from a request to change the layer set (which needs a new effect and is
     /// refused). Only meaningful once @c impl exists.
     uint32_t rendererMask = 0;
+
+    /// Which thread currently holds an open batch, or a default-constructed id
+    /// when there is none.
+    ///
+    /// ATOMIC because @c el_effect_end_batch has to answer "do I own this
+    /// scope?" BEFORE it can safely unlock, and at that moment it may own
+    /// nothing at all - a host calling end without begin, or the wrong thread
+    /// calling end. Reading @c batchDepth to find out would be the very race
+    /// the answer is needed to avoid, and unlocking a @c recursive_mutex this
+    /// thread does not hold is undefined behaviour, not an error code.
+    /// @c std::thread::id is trivially copyable, so this is well formed, and it
+    /// is lock-free on every target this ships to.
+    std::atomic<std::thread::id> batchOwner{std::thread::id{}};
+
+    /// Nesting depth of the open batch. Plain @c int, not atomic, and that is
+    /// correct: it is only ever touched by a thread that has already proved it
+    /// holds the lock, so the lock is its synchronisation.
+    int batchDepth = 0;
 };
 
 struct el_animation_handle_impl

@@ -95,6 +95,7 @@
  * | @c el_effect_destroy                                 | the GL thread, AFTER the data thread has stopped |
  * | @c el_effect_set_* / @c _get_* / @c _read_* / @c _capture | any |
  * | @c el_effect_attach_animation / @c _detach* / @c _clock_* | any |
+ * | @c el_effect_begin_batch / @c _end_batch              | any, closed by the thread that opened it |
  * | @c el_effect_update                                  | any, one thread at a time |
  * | @c el_effect_render                                  | the GL-owning thread, exclusively |
  * | @c el_animation_* / @c el_modulator_* factories      | any |
@@ -109,11 +110,13 @@
  *   handle's lock held. Re-entering the effect from one is legal (the lock is
  *   recursive) and so is detaching the animation that fired it; BLOCKING in one
  *   stalls that thread. Marshal to your UI thread yourself.
- * - **A group of calls is not atomic.** Each call is individually safe, but an
- *   update can land between two of them - so setting colour stops in a loop can
- *   publish a half-updated gradient, and an @ref el_effect_read_count followed
- *   by indexed reads can straddle two frames. Every read re-validates its own
- *   index, so this is never a crash, only a mix of two frames.
+ * - **A group of calls is not atomic by default.** Each call is individually
+ *   safe, but an update can land between two of them - so setting colour stops
+ *   in a loop can publish a half-updated gradient, and an
+ *   @ref el_effect_read_count followed by indexed reads can straddle two
+ *   frames. Every read re-validates its own index, so this is never a crash,
+ *   only a mix of two frames. Wrap the group in
+ *   @ref el_effect_begin_batch / @ref el_effect_end_batch when that matters.
  *
  * Animation handles are covered too, by ADOPTION: attaching hands the
  * animation the effect's lock, so every @c el_animation_* call on an attached

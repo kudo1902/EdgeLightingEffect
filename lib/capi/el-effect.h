@@ -958,7 +958,14 @@ extern "C"
      *           (e.g. presets applied inside the effect). */
     EL_API el_result_e el_effect_capture(el_effect_handle_t effect);
 
-    /** @brief Apply staging config then tick clock, animations, and renderers.
+
+
+    /** @brief Apply staging config, tick the clock and animations, and publish
+     *         the result for @ref el_effect_render.
+     *  @details Touches no GL and no renderer - everything that follows from a
+     *           config change happens in @ref el_effect_render, off the snapshot
+     *           this publishes. That is what lets the two run on different
+     *           threads.
      *  @param deltaTime Seconds since the last @c update call. Values <= 0
      *                   still process animations but advance no time. */
     EL_API el_result_e el_effect_update(el_effect_handle_t effect, float deltaTime);
@@ -966,6 +973,53 @@ extern "C"
     /** @brief Draw every enabled renderer at the given viewport size. */
     EL_API el_result_e el_effect_render(el_effect_handle_t effect,
                                         int32_t viewportWidth, int32_t viewportHeight);
+
+    /** @} */
+
+    /** @name Consistency scope
+     *  Make a GROUP of calls atomic with respect to @ref el_effect_update.
+     *
+     *  Every individual call on an effect is already thread-safe. A group of
+     *  them is not: an update can land between any two, so a colour-stop
+     *  rewrite done as @ref el_effect_set_color_stop_count plus N
+     *  @ref el_effect_set_color_stop calls can publish a half-updated gradient,
+     *  and an @ref el_effect_read_count followed by indexed reads can return
+     *  values from two different frames. Wrap the group to fix both.
+     *
+     *  @code
+     *  el_effect_begin_batch(e);
+     *  el_effect_set_color_stop_count(e, 4);
+     *  for (int i = 0; i < 4; ++i) { el_effect_set_color_stop(e, i, ...); }
+     *  el_effect_end_batch(e);          // all four land in one frame
+     *  @endcode
+     *
+     *  It covers reads and writes alike, and covers @c el_animation_* calls on
+     *  animations attached to this effect, since those share its lock.
+     *
+     *  What it costs: an open scope BLOCKS @ref el_effect_update on whatever
+     *  thread is calling it. It does NOT block @ref el_effect_render, which
+     *  takes no lock - so a long or leaked scope stalls animation, never the
+     *  frame rate. Keep scopes short, and never wait on another thread inside
+     *  one.
+     *  @{ */
+
+    /** @brief Open a consistency scope on @p effect, blocking until it is free.
+     *  @details Nests: N calls need N matching @ref el_effect_end_batch calls.
+     *           Re-entrant on the calling thread, so a scope opened around code
+     *           that opens its own is fine.
+     *  @warning Every path out of the scope must close it, including error
+     *           returns and exceptions in the host. A leaked scope stops the
+     *           effect updating for as long as the handle lives. */
+    EL_API el_result_e el_effect_begin_batch(el_effect_handle_t effect);
+
+    /** @brief Close a consistency scope opened by @ref el_effect_begin_batch.
+     *  @returns @ref EL_ERROR_INVALID_PARAMETER if the calling thread does not
+     *           hold an open scope on @p effect - an unmatched close, or a
+     *           close from a thread that did not open it. Nothing is unlocked
+     *           in that case: releasing a lock this thread does not hold is
+     *           undefined behaviour, not a recoverable error, so it is refused
+     *           rather than attempted. */
+    EL_API el_result_e el_effect_end_batch(el_effect_handle_t effect);
 
     /** @} */
 
