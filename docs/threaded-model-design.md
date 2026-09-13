@@ -448,6 +448,12 @@ held".
 
 ## 6. The host contract
 
+The ASCII below is the authoritative version and travels with this document.
+The same two flows are also rendered as interactive diagrams - pan, zoom,
+light/dark, and PNG/SVG export - if you would rather look than read:
+[`threaded-model-single-thread.html`](threaded-model-single-thread.html) and
+[`threaded-model-threads.html`](threaded-model-threads.html).
+
 ### 6.1 Single-threaded
 
 What both in-tree demos do, and what any host that never spawns a thread gets.
