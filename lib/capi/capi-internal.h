@@ -469,6 +469,8 @@ inline EdgeLighting::EndAction ConvertFromCapi(el_end_action_e a)
         return EndAction::HOLD_START;
     case EL_END_ACTION_RESTORE:
         return EndAction::RESTORE;
+    case EL_END_ACTION_HOLD_NONE:
+        return EndAction::HOLD_NONE;
     case EL_END_ACTION_HOLD_CURRENT:
     default:
         return EndAction::HOLD_CURRENT;
@@ -486,6 +488,8 @@ inline el_end_action_e ConvertToCapi(EdgeLighting::EndAction a)
         return EL_END_ACTION_HOLD_START;
     case EndAction::RESTORE:
         return EL_END_ACTION_RESTORE;
+    case EndAction::HOLD_NONE:
+        return EL_END_ACTION_HOLD_NONE;
     case EndAction::HOLD_CURRENT:
     default:
         return EL_END_ACTION_HOLD_CURRENT;

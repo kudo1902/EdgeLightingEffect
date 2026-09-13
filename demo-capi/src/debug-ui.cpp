@@ -847,7 +847,6 @@ void DebugUI::buildDebugSection(el_effect_handle_t effect)
     }
 }
 
-
 // ---------------------------------------------------------------------------
 // Droplets
 // ---------------------------------------------------------------------------
@@ -1116,14 +1115,30 @@ void DebugUI::buildAnimationSection(el_effect_handle_t effect)
             el_animation_set_playback_mode(h, modeIdx == 0 ? EL_PLAYBACK_LOOP : EL_PLAYBACK_ONE_SHOT);
         }
 
+        // What a STOPPED animation writes. One entry per el_end_action_e, in
+        // enum order - the index IS the enum value, so a missing entry is an
+        // out-of-bounds read here rather than a compile error. Add to both
+        // when el_end_action_e grows.
         el_end_action_e end = EL_END_ACTION_HOLD_CURRENT;
         el_animation_get_end_action(h, &end);
         int endIdx = static_cast<int>(end);
-        const char *endItems[] = {"Hold current", "Hold end", "Hold start", "Restore"};
+        const char *endItems[] = {"Hold current", "Hold end", "Hold start", "Restore", "Hold none"};
         ImGui::SetNextItemWidth(160.0f);
         if (ImGui::Combo("End action", &endIdx, endItems, IM_ARRAYSIZE(endItems)))
         {
             el_animation_set_end_action(h, static_cast<el_end_action_e>(endIdx));
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip(
+                "What this animation writes once it STOPS.\n"
+                "Stopping does not stop it writing - state is about time, not output.\n\n"
+                "Hold current/end/start  keep writing a value, so edits to that\n"
+                "                        field in the panels above stay invisible.\n"
+                "Restore                 writes back the value captured before Play.\n"
+                "Hold none               writes nothing, so the config's own value\n"
+                "                        shows through and is editable again - while\n"
+                "                        the animation stays attached and replayable.");
         }
 
         float dur = 0.0f;

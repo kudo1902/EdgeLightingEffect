@@ -297,7 +297,6 @@ namespace
         return remove;
     }
 
-
     /// "Opaque Only" debug toggle, drawn in the Debug section alongside the
     /// other @c DebugConfig fields. It only does anything while
     /// @c NeonConfig::opaqueMode is set - there is no fill to keep otherwise -
@@ -823,14 +822,23 @@ namespace
         //   Hold end     : field settles at ApplyAt(cfg, duration).
         //   Hold start   : field settles at ApplyAt(cfg, 0).
         //   Restore      : field settles at the pre-play value (subclass hook).
+        //   Hold none    : writes nothing - whatever else would have written
+        //                  the field shows through (the base config, or a later
+        //                  animation in attach order), and stays editable.
         // Only meaningful once the animation has played at least once; a
-        // freshly-added Stopped animation is a no-op regardless. If you want
-        // the base config to show through after Stop, detach the animation.
+        // freshly-added Stopped animation is a no-op regardless. The first four
+        // all keep writing, so base edits to that field stay invisible under
+        // them; Hold none or Detach are the two ways to get the field back.
+        //
+        // One entry per EndAction, in enum order - the index IS the enum value,
+        // so a missing entry reads past the end of this array rather than
+        // failing to compile. Keep it in step with the enum.
         const char *endActionItems[] = {
             "Hold current",
             "Hold end",
             "Hold start",
             "Restore",
+            "Hold none",
         };
         int endActionIdx = static_cast<int>(anim.GetEndAction());
         ImGui::SetNextItemWidth(160.0f);

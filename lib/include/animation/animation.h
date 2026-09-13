@@ -64,7 +64,8 @@ namespace EdgeLighting
         HOLD_CURRENT = 0, ///< Field settles at @c ApplyAt(cfg, elapsed-at-stop) - wherever the animation was paused/stopped. (Default.)
         HOLD_END,         ///< Field settles at @c ApplyAt(cfg, mDuration).
         HOLD_START,       ///< Field settles at @c ApplyAt(cfg, 0) - the modulator's t=0 value.
-        RESTORE           ///< Field settles at the value it had immediately before @ref Animation::Play. Requires a subclass override of @ref Animation::CaptureBaseline / @ref Animation::RestoreBaseline; the base default is a no-op (falls through to base).
+        RESTORE,          ///< Field settles at the value it had immediately before @ref Animation::Play. Requires a subclass override of @ref Animation::CaptureBaseline / @ref Animation::RestoreBaseline; the base default is a no-op (falls through to base).
+        HOLD_NONE         ///< Holds nothing: a stopped animation does not write the field at all, so whatever else would have written it shows through - the config's own value when nothing else touches the field, or a later animation in attach order when one does. It does NOT write the base value back; it steps out of the way. The other four all hold something (three values and a snapshot), so this is the only one that returns a field to whoever else owns it without detaching, and the animation stays attached and replayable. Keep @c HOLD_CURRENT for a transition whose whole point is the value it leaves behind - a fade-out set to @c HOLD_NONE would pop back on its final frame, undoing itself.
     } EndAction;
 
     /// @brief Per-animation state.
@@ -308,6 +309,12 @@ namespace EdgeLighting
         ///          never-played animation is a no-op regardless of end
         ///          action, so freshly-attached hold animations don't snap
         ///          the field to a terminal value on attach.
+        ///
+        ///          Note what this means: STOPPED is a statement about TIME
+        ///          (elapsed stops advancing), not about output. A stopped
+        ///          animation keeps writing unless its end action is
+        ///          @c HOLD_NONE, which is what makes a completed fade hold
+        ///          its final value instead of popping back on its last frame.
         /// @note Virtual so composite animations (@ref AnimationGroup) can
         ///       bypass the Stopped dispatch and always forward to children;
         ///       the group's own state is a broadcast label, not a gate on
@@ -343,6 +350,13 @@ namespace EdgeLighting
             case EndAction::RESTORE:
             {
                 RestoreBaseline(cfg);
+                return;
+            }
+            case EndAction::HOLD_NONE:
+            {
+                // Write nothing, so whatever the config already holds survives
+                // this animation - the same outcome as the !mHasRun guard
+                // above, reached deliberately rather than by never playing.
                 return;
             }
             }
