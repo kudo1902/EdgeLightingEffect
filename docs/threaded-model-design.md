@@ -6,6 +6,13 @@ context is driven from another.
 
 Status: design only. Nothing in this document is implemented yet.
 
+Re-checked against `8c28e37` (the active-config C ABI merge). `lib/src/core/`,
+`lib/include/core/edge-lighting.h` and every renderer are byte-unchanged since
+this was first written, so sections 2 to 4 stand as they were. The C ABI is not:
+the `el_effect_read_*` family, the in-place re-init path and the enforced config
+caps all landed, and sections 5 onward are rewritten for them. Section 9's
+"reading animated values" item is closed by work that has now shipped.
+
 ## 1. What this is for, and what it is not for
 
 The decision that shapes everything else: **the library spawns no threads.**
@@ -13,8 +20,8 @@ The host owns both. Native gains a thread-safe seam, not a scheduler.
 
 | | |
 | --- | --- |
-| Goal | A C# host may call setters, animation control and the clock from any thread while `el_effect_render` runs on the GL thread, with no races and no half-applied frames. |
-| Data side owns | staging config, base config, `Clock`, `AnimationManager`, config composition. |
+| Goal | A C# host may call setters, the `el_effect_read_*` family, animation control and the clock from any thread while `el_effect_render` runs on the GL thread, with no races and no half-applied frames. |
+| Data side owns | staging config, base config, active config, `Clock`, `AnimationManager`, config composition. |
 | Render side owns | every renderer, every LUT, every GL object, every bake. |
 | Threads created by the library | none. |
 | Host framework | irrelevant. The contract is a per-function thread table, nothing more. |
@@ -31,6 +38,10 @@ Explicitly **not** goals:
   thread inside `OnConfigChanged`.
 - A library-owned render loop or context handoff.
 - Any change to renderer internals. No renderer is touched by this plan.
+- Any change to the effect's lifecycle semantics. In particular the in-place
+  re-initialisation path added in `62253a1` stays exactly as it is; see section
+  5.6, which replaces an earlier draft of this document that would have broken
+  it.
 
 ## 2. The coupling that is in the way
 
@@ -78,7 +89,9 @@ Three fields that each answer a question the render side cannot answer itself:
   accumulator, not a delta**, so that a render thread which misses snapshots
   still advances the fade by the right amount: `dt = snap.wallTime -
   lastWallTime` is correct whether zero, one or five snapshots were dropped in
-  between.
+  between. (`Bake` and `Tick` gained an upper size clamp in the active-config
+  merge and nothing else; their fade semantics are unchanged, so this reasoning
+  still holds.)
 - **`configGeneration`** is how the render side knows whether to call
   `OnConfigChanged`. `refreshActiveConfig` already does the deep `Config`
   compare on the data side; the render side must not repeat it every frame, and
@@ -119,9 +132,9 @@ accident:
   thread-private; the atomic cell is the only shared word. The release store on
   publish and the acquire load on take are what make the vector contents
   visible.
-- **Neither side ever blocks.** The render thread takes no lock at all (see
-  section 5.2), so a stalled UI thread can never hold up a frame. That is the
-  property this whole plan exists to buy.
+- **Neither side ever blocks.** `el_effect_render` takes no lock (see section
+  5.2), so a stalled UI thread can never hold up a frame. That is the property
+  this whole plan exists to buy.
 - **The render thread always has something valid to draw.** Nothing new means
   it keeps the slot it holds and redraws it. Render faster than data is a
   supported, silent case.
@@ -131,15 +144,26 @@ accident:
 - **Zero allocations after warm-up.** Each slot's `Config` keeps the vector
   capacity it was last written with, so `slot.config = mActiveConfig` is a
   copy-assign into warm buffers - the same property `mScratchConfig` was
-  introduced for and documented at length in `edge-lighting.h`. The slots must
+  introduced for and documented at length in `edge-lighting.h`, and the same
+  one `AnimationManager::mTickScratch` was later built on. The slots must
   therefore never be default-reconstructed, cleared or moved from.
+
+Cost: three resident `Config` copies where there were two, plus one extra
+copy-assign per tick (the publish). Sub-microsecond, zero allocations.
+
+The worst case is now bounded rather than open-ended, which it was not when this
+document was first drafted. `MAX_COLOR_STOPS_CAP` (256) caps every stop list,
+`MAX_SEGMENT_BOOSTS_CAP` and `MAX_ARCS_CAP` are both 8, and the C ABI count
+setters now reject past them (review finding I16). So a `Config` holds at most
+1 + 8 + 8 + 8 = 25 stop lists of 256 stops: on the order of 128 KB fully
+saturated, and a few hundred bytes for any realistic config. Three extra
+resident copies is therefore a bounded few hundred KB in the pathological case
+and nothing in practice. Quantify `sizeof(Config)` and the measured heap in the
+comparison doc.
+
 - **All three slots are seeded with the default config at construction**, so a
   `Render` that arrives before any `Update` draws what it draws today rather
   than nothing.
-
-Cost: three resident `Config` copies where there were two, plus one extra
-copy-assign per tick (the publish). Sub-microsecond, zero allocations. Quantify
-`sizeof(Config)` and the cap-case heap footprint in the comparison doc.
 
 ## 4. `EdgeLightingEffect`: one class, two sides
 
@@ -176,6 +200,14 @@ for (auto &r : mRenderers) { r->Render(w, h, s.clockTime, s.config); }
 `AddRenderer`'s immediate hand-over of the current config now reads the render
 side's held snapshot rather than `mActiveConfig`.
 
+A side benefit worth naming, because the code it protects is new: `Initialize`
+is re-entrant by contract (review finding R1) and `el_effect_init_with_renderers`
+now uses that as the GL-context-loss recovery path, rebuilding shaders and GL
+objects in place and dropping any renderer whose re-initialisation fails. Under
+this split that path touches only render-side state, because `Update` no longer
+reaches `mRenderers` at all. Recovering from context loss while a data thread is
+mid-tick is therefore safe by construction rather than by timing.
+
 ### 4.1 Equivalence for a single-threaded host
 
 Both demos and the whole offscreen-capture comparison methodology drive
@@ -210,32 +242,96 @@ keeps working because it is the same code path.
 ```cpp
 struct el_effect_handle_impl
 {
-    std::recursive_mutex dataMutex;   ///< guards staging + the effect's data side
+    std::recursive_mutex dataMutex;   ///< guards staging, impl, and the effect's data side
     EdgeLighting::Config config;      ///< staging
     std::unique_ptr<EdgeLighting::EdgeLightingEffect> impl;
+    uint32_t rendererMask = 0;
 };
 ```
 
 | call group | lock |
 | --- | --- |
 | `el_effect_set_*`, `el_effect_get_*`, `el_effect_capture` | take it briefly |
+| **`el_effect_read_*` (the whole family)** | **take it for the whole call** - see 5.3 |
 | `el_effect_attach_animation` / `detach*` / `clock_*` | take it briefly |
 | `el_effect_update` | hold for the whole tick (compose + publish) |
+| `el_effect_init*` | take it (setup and context-loss recovery, not the frame path) |
 | `el_effect_render` | **takes no lock at all** |
 
-The render thread touching nothing but its own slot and one atomic is the
-point. Hold time on the update path is the measured 0.0002 ms plus one snapshot
-copy; setters run at UI rates, where a ~20 ns uncontended lock is free.
+State the invariant precisely, because `init` is also a render-thread call: the
+guarantee is that **`el_effect_render` never blocks**, not that the render
+thread never touches the lock. Init taking it is correct and costs nothing; it
+runs at startup and on context loss, not per frame.
+
+Hold time on the update path is the measured 0.0002 ms plus one snapshot copy;
+setters run at UI rates, where a ~20 ns uncontended lock is free.
 
 **Why recursive.** Animation callbacks (`el_animation_on_completed_callback`,
 `el_animation_on_state_changed_callback`) fire from inside `impl->Update`, so
-with the lock held. A host callback that calls back into `el_effect_set_*`
-would self-deadlock on a plain mutex. The cleaner alternative - collect
-callbacks and fire them after unlocking, so the callback observes a settled
-state - requires changing `Animation`'s dispatch and is worth doing later;
-recursive is the contained choice now.
+with the lock held. The most natural thing to write in one is "detach me now",
+which reaches `el_effect_detach_animation` and re-enters the lock; on a plain
+mutex that is a self-deadlock. `AnimationManager::Update` was reworked to make
+exactly that callback shape safe - it walks a local copy swapped out of
+`mTickScratch`, so attach, detach and re-entry from a callback are all
+supported - and a plain mutex here would take that back by turning a supported
+pattern into a hang. The cleaner alternative, collecting callbacks and firing
+them after unlocking so the callback observes a settled state, requires changing
+`Animation`'s dispatch and is worth doing later; recursive is the contained
+choice now.
 
-### 5.3 Animation and modulator handles
+While the lock is being added, fix a null dereference it sits next to:
+`el_effect_update` does `effect->impl->SetConfig(...)` with no check, so calling
+it before `el_effect_init` crashes. Every `el_effect_read_*` guards this through
+`ResolveConfigSource`; update does not.
+
+### 5.3 The `el_effect_read_*` family
+
+This family did not exist when this document was first drafted and it is the
+largest new surface the threaded model has to cover. It is also the one place
+where the hazard is a use-after-free rather than a stale value.
+
+Each reader calls `ResolveConfigSource`, which hands back a raw
+`const EdgeLighting::Config *` pointing at `effect->config` (STAGING),
+`impl->GetConfig()` (BASE) or `impl->GetActiveConfig()` (ACTIVE), and then reads
+one scalar through `field-access.h`. For BASE and ACTIVE that pointer aims
+straight at live data-side state:
+
+- `refreshActiveConfig` **swaps** the active config's vectors with the scratch
+  copy, and the next tick overwrites the buffers the swap handed over. A
+  concurrent indexed read walks reallocated memory.
+- `SetConfig` copy-assigns into `mBaseConfig`, which reallocates its vectors
+  whenever the incoming config is larger.
+
+`el-effect.h` already documents this, under `@par Threading` on the read group:
+read on the update thread, and hand values to other threads yourself. That
+wording is correct today and **this plan supersedes it** - the whole point is
+that a C# slider should be able to read ACTIVE from the UI thread. Taking the
+data lock for the duration of each reader is what makes it true, and it is
+enough for memory safety because of a property the active-config review already
+established and wrote down: *no reader retains the resolved `Config *` past its
+own call*. Under the lock that constraint tightens to "past its own lock scope",
+and it must stay an invariant of the family.
+
+Two things the lock does **not** fix, both of which are about consistency rather
+than safety:
+
+- **A read loop is not atomic.** The documented idiom is `el_effect_read_count`
+  followed by N indexed reads, and an `el_effect_update` can land in the middle.
+  Every reader re-validates its own index, so there is no out-of-range access -
+  the host just gets a mix of two frames, and `el_effect_read_preserved_id`
+  followed by a preserved field read can report an id that is no longer live.
+  Section 5.5 is the answer.
+- **`el_effect_read_count` on `EL_CONTAINER_EFFECTIVE_SEGMENTS`** delegates to
+  `SegmentUtils::CountEffectiveSegments`, which is pure arithmetic over two
+  `.size()` calls and allocates nothing. Cheap to hold the lock across, and no
+  special handling needed.
+
+The existing `@par Which frame you get` paragraph needs rewording rather than
+replacing: "the last completed `el_effect_update`" stays true, but it is now
+the last completed update *on whichever thread runs it*, and the interleaving
+warning becomes the reason section 5.5's scope exists.
+
+### 5.4 Animation and modulator handles
 
 `el_animation_*` mutates objects the data thread walks every tick, and those
 calls receive no effect handle, so they cannot reach the effect's lock on their
@@ -249,6 +345,7 @@ own. Proposal: **an attached animation adopts its effect's lock.**
   special when null (a detached animation is owned by whoever built it).
 
 Consequences to document:
+
 - Attaching one animation handle to two effects becomes unsupported. The
   existing "attach does not transfer ownership" wording already implies a single
   owner; this makes it a rule.
@@ -259,79 +356,106 @@ Consequences to document:
   holds them, or document append as construction-time only. **Open item** -
   resolve during implementation.
 
-### 5.4 Batched writes
+### 5.5 A consistency scope, for reads and writes
 
-A UI thread that sets colour stops in a loop (`el_effect_set_color_stop` per
-index) can be interrupted by a tick and publish a half-updated gradient. Single
-scalar setters are mostly harmless and `el_effect_set_geometry` already takes
-all five fields in one call, so the exposure is the indexed families: colour
-stops, segments, preserved segments, arcs.
+Two problems, one answer:
+
+- A UI thread that sets colour stops in a loop (`el_effect_set_color_stop` per
+  index) can be interrupted by a tick and publish a half-updated gradient.
+  Single scalar setters are mostly harmless and `el_effect_set_geometry` already
+  takes all five fields in one call, so the write exposure is the indexed
+  families: colour stops, segments, preserved segments, arcs.
+- A read loop straddles two frames (section 5.3).
 
 ```c
 EL_API el_result_e el_effect_begin_batch(el_effect_handle_t effect);
 EL_API el_result_e el_effect_end_batch(el_effect_handle_t effect);
 ```
 
-Implemented so that **no lock is ever held across host code**:
+`begin_batch` takes the data lock and `end_batch` releases it, with a depth
+count so nesting works. Inside the scope every setter and every reader finds the
+lock already held by its own thread (it is recursive), so writes commit as a
+group and BASE/ACTIVE hold still across a whole read loop.
 
-- `begin_batch` locks, copies staging into a shadow `Config`, records the owner
-  thread id, sets a depth counter, unlocks.
-- Setters called on the owner thread while a batch is open write the shadow
-  with no lock at all (it is thread-private). Getters on the owner thread read
-  the shadow, so a read-back inside the batch sees what was just written.
-- `end_batch` locks, copies shadow into staging, clears the flag, unlocks.
+This is a deliberate reversal of an earlier draft, which had `begin_batch` copy
+staging into a thread-private shadow so that no lock was ever held across host
+code. That design is safer against a host that forgets `end_batch`, but it
+cannot give read consistency at all - a shadow of staging says nothing about
+BASE or ACTIVE - and the read family is now the bigger half of the problem.
+Holding the lock is the only thing that covers both.
 
-Document: one open batch at a time, from one thread, and other threads must not
-write staging while it is open.
+What that costs, stated plainly: a host that leaves a batch open stalls the next
+`el_effect_update`. It does **not** stall rendering, because `el_effect_render`
+takes no lock; the ring simply stops advancing until the batch closes. Document
+it as one open scope at a time, from one thread, closed on every path including
+error returns - which matters more now that the count setters actually reject
+over-cap values (review finding I16) and a mid-batch setter can fail.
 
-### 5.5 Handle lifetime
+### 5.6 Handle lifetime
 
-`el_effect_init_with_renderers` currently constructs a brand new
-`EdgeLightingEffect` and assigns it to `impl`. Under two threads that is a
-pointer swap racing with every data-side call. Fix:
+**No change.** An earlier draft of this document proposed constructing `impl` in
+`el_effect_create` and refusing a second `el_effect_init`. Both halves of that
+are now wrong, and the reasons are worth recording so nobody proposes them
+again:
 
-- `el_effect_create` constructs `impl`, so the pointer is immutable for the
-  handle's lifetime.
-- `el_effect_init_with_renderers` only registers and initialises renderers, and
-  returns an error if called twice (today a second call silently rebuilds
-  everything; after the change it would double-register layers).
+- **Refusing a second init** would undo `62253a1`. A second call with the same
+  mask is the GL-context-loss recovery path: re-initialise in place, keep
+  attached animations and the clock. A second call with a *different* mask is
+  already refused, for the separate reason that the layer set is fixed by the
+  registration order and there is no unregister.
+- **Constructing `impl` at create** would make BASE and ACTIVE readable before
+  init, which contradicts the semantics `el_config_source_e` documents and that
+  the active-config work verified by probe: STAGING is readable on an
+  uninitialised handle, BASE and ACTIVE are refused.
 
-Ordering rules to document and, where cheap, to enforce:
+The threading problem the draft was trying to solve - a non-atomic `impl`
+pointer observed by a concurrent reader - is handled by the data lock instead
+(section 5.2), which is where it belonged. `impl` is written once, inside the
+lock, and every reader of it takes the lock.
+
+Ordering rules to document:
 
 | call | thread |
 | --- | --- |
 | `el_effect_create` | any |
-| `el_effect_init*` | the GL thread, before the data thread starts |
+| `el_effect_init*` | the GL thread; first call before the data thread starts, re-init safe at any time |
 | `el_effect_destroy` | the GL thread, after the data thread has stopped |
 
 `el_effect_destroy` runs GL deletes through the RAII wrappers, so it is a
 render-thread call. The host is responsible for quiescing its own data thread
-first; the library cannot do it, having spawned nothing.
+first; the library cannot do it, having spawned nothing, and a lock cannot help
+because the object holding it is the one going away.
 
-### 5.6 Documentation
+### 5.7 Documentation
 
 Rewrite the `@section threading` block in `edge-lighting-capi.h`. It currently
 says every effect call must run on the GL thread, which stops being true. It
 becomes the table in section 6, plus a `@thread` note on each function group in
-`el-effect.h` and `el-animation.h`.
+`el-effect.h` and `el-animation.h`. The `@par Threading` paragraph on the read
+group in `el-effect.h` is superseded wholesale (section 5.3), and
+`el-animation.h`'s "called on the effect thread" note on the callbacks becomes
+"called on whichever thread called `el_effect_update`, with the effect's lock
+held".
 
 ## 6. The host contract
 
 | call group | thread |
 | --- | --- |
 | `el_effect_create` | any |
-| `el_effect_init*` | GL thread, before the data thread starts |
+| `el_effect_init*` | GL thread; first call before the data thread starts |
 | `el_effect_destroy` | GL thread, after the data thread has stopped |
 | `el_effect_set_*` / `get_*` / `capture` / `attach_*` / `clock_*` | any |
-| `el_effect_begin_batch` / `end_batch` | any, one open batch from one thread |
+| `el_effect_read_*` | any (was: the update thread) |
+| `el_effect_begin_batch` / `end_batch` | any, one open scope from one thread |
 | `el_effect_update` | any, one thread at a time |
 | `el_effect_render` | the GL-owning thread, exclusively |
 | `el_animation_*` / `el_modulator_*` factories | any |
 
 Notes a C# host needs and nothing more:
 
-- Animation callbacks fire on whichever thread called `el_effect_update`.
-  Marshal to the UI thread yourself.
+- Animation callbacks fire on whichever thread called `el_effect_update`, with
+  the effect's lock held. Re-entering the effect from one is legal; blocking in
+  one stalls the data thread. Marshal to the UI thread yourself.
 - The library creates no threads, so there is no reverse-P/Invoke attach
   concern beyond the usual: keep delegates alive with a `GCHandle` for as long
   as native holds the function pointer.
@@ -347,18 +471,25 @@ this change should meet it.
    on both sides of the change, single-threaded, and compare as raw RGBA8. The
    `configGeneration` consolidation from section 4.1 is the one place a
    difference could appear.
-2. **Races.** The `-fsanitize=thread` build is already a workflow here (there is
-   a configured `build-tsan/`). Add a `--threaded` mode to `demo-capi`: run
-   `el_effect_update` on a spawned thread while ImGui and `el_effect_render`
-   stay on the GL thread and the UI's setters fire from the GL thread. That
-   exercises all three roles at once and keeps `demo-capi` in its designated
+2. **Races.** Add a `--threaded` mode to `demo-capi`: run `el_effect_update` on
+   a spawned thread while ImGui and `el_effect_render` stay on the GL thread and
+   the UI's setters and `el_effect_read_*` calls fire from the GL thread. That
+   exercises all three roles at once, drives the read family across a thread
+   boundary (which is the new hazard), and keeps `demo-capi` in its designated
    role as the proof that the ABI is self-sufficient for a real host. Run it
-   under TSan.
+   under `-fsanitize=thread`.
 3. **Allocations.** Reuse the global `operator new` counter harness from the
    perf review to show the snapshot publish is 0 allocations per frame once
    warm.
 4. **Doc.** `docs/threaded-model-comparison.md` with the capture table, the TSan
    result, and the allocation and `sizeof(Config)` numbers.
+
+The harness style is already established: the active-config work was verified by
+four standalone assertion programs (C-only against the dylib, and one with a
+hidden GLFW context), none checked in because "there is nowhere for them to
+live yet". A threading harness has the same problem and a worse consequence -
+a race harness that nobody can re-run is a race harness that rots. Worth
+deciding, as part of this work, whether these get a `tests/` directory.
 
 ## 8. Sequencing
 
@@ -368,10 +499,12 @@ Five changes, each shippable on its own:
    `ConfigSnapshotBuffer`, renderer notification moved from `Update` to
    `Render`. No ABI change. All the behavioural risk lives here, and validation
    1 and 3 gate it.
-2. **C ABI lock and lifetime.** `dataMutex`, `impl` constructed at create, the
-   init-twice guard, the threading docs.
-3. **Animation lock adoption.** Section 5.3, including the modulator decision.
-4. **Batching.** Section 5.4.
+2. **The data lock.** `dataMutex` across staging, `impl`, the setters, the
+   getters and the whole `el_effect_read_*` family; the `el_effect_update` null
+   check; the threading docs including the superseded read-group paragraph.
+   No lifecycle changes.
+3. **Animation lock adoption.** Section 5.4, including the modulator decision.
+4. **The consistency scope.** Section 5.5.
 5. **Threaded `demo-capi` under TSan** and the comparison doc.
 
 ## 9. Open items
@@ -381,9 +514,10 @@ Five changes, each shippable on its own:
   120 Hz. Acceptable, or should `el_effect_render` gain a render-supplied delta?
 - **Modulator mutation after attach** (`el_modulator_sequence_append`) - adopt
   the lock, or document as construction-time only?
-- **Reading animated values from the host.** There is no active-config read in
-  the C ABI at all today; `el_effect_get_*` returns staging. A C# slider that
-  should follow an animated value has nothing to read. The natural source is
-  `GetActiveConfig` on the data side, under the same lock - an
-  `el_effect_get_active_*` family, or one struct-shaped read. Worth adding
-  alongside this work, or separately?
+- **Where the assertion harnesses live.** Section 7.
+
+Closed since the first draft:
+
+- ~~Reading animated values from the host.~~ The `el_effect_read_*` family
+  shipped in `8c28e37` with `EL_CONFIG_SOURCE_ACTIVE`, which is exactly this.
+  It turns into work for this plan rather than a question for it: section 5.3.
