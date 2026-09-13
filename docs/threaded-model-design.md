@@ -448,6 +448,94 @@ held".
 
 ## 6. The host contract
 
+### 6.1 Single-threaded
+
+What both in-tree demos do, and what any host that never spawns a thread gets.
+The seam is still there and still used; it just has one thread on both ends.
+
+```
+HOST THREAD  (owns the GL context)
+│
+├─ el_effect_set_intensity(...)            [lock: taken, never contended]
+│     └─► staging Config
+│
+├─ el_effect_update(dt)                    [lock: taken]
+│    │
+│    ├─ SetConfig(staging) ─► base
+│    │    └─ refreshActiveConfig()  base + overlays ─► active
+│    │         └─ composite moved? ++configGeneration ─► publishSnapshot() ──┐
+│    ├─ Clock::Update(dt) ─► AnimationManager::Update ─► host callbacks      │
+│    ├─ refreshActiveConfig()  (again, now with this frame's overlays)       │
+│    ├─ mRawAccumulatedTime += dt                                            │
+│    └─ publishSnapshot()  (unconditional: the two clocks always moved) ─────┤
+│                                                                            ▼
+│                                            ┌─────────┬─────────┬─────────┐
+│                                            │ slot 0  │ slot 1  │ slot 2  │
+│                                            └─────────┴─────────┴─────────┘
+│                                                        │
+└─ el_effect_render(w, h)                   [NO lock]    │
+     ├─ AcquireLatest() ◄─────────────────────────────────┘
+     ├─ generation changed? ─► OnConfigChanged(cfg)  on every renderer   [GL]
+     ├─ new snapshot?       ─► renderer->Update(fadeDt, clockTime, cfg)  [GL]
+     └─                        renderer->Render(w, h, clockTime, cfg)    [GL]
+```
+
+Two things in that picture are easy to miss and are not threading artefacts.
+
+A single `el_effect_update` can publish **twice** - once from `SetConfig` when
+the host's setters moved the composite, once unconditionally at the end because
+the two clocks always moved. The render acquires only the newest, so the
+intermediate one is dropped. A single-threaded host therefore exercises the
+buffer's drop path on every frame it changes config, which is worth knowing
+before treating that path as exotic.
+
+And the lock is taken on every call here even though nothing can contend it.
+Measured at **+13 ns** on an idempotent setter, against roughly 9,600 ns for a
+setter that actually logs.
+
+### 6.2 Two threads, or three
+
+What `demo-capi --threaded` does, and the shape a C# host is expected to use.
+The UI thread is optional - fold it into the data thread and this is two.
+
+```
+ UI THREAD                DATA THREAD                 RENDER THREAD (owns GL)
+ set_* / read_* /         el_effect_update(dt)        el_effect_render(w, h)
+ clock_* / animation_*           │                            │
+      │                          │                            │
+      │   ┌──── dataMutex (recursive) ────┐                   │  never takes
+      └───┤  ONE mutex, not two:          │                   │  the lock
+          │  an attached animation        │                   │
+          │  ADOPTS the effect's          │                   │
+          └───────────────┬───────────────┘                   │
+                          │                                   │
+                 publishSnapshot()                            │
+                          ▼                                   │
+          ┌─────────┬─────────┬─────────┐                     │
+          │ slot 0  │ slot 1  │ slot 2  │ ──── AcquireLatest()─┘
+          └─────────┴─────────┴─────────┘
+             writer owns one ▲   ▲ reader owns one
+                             └───┴─ the third is in the atomic cell
+```
+
+Skid in either direction is handled, and the two directions mean different
+things:
+
+| | what happens | why that is correct |
+| --- | --- | --- |
+| data faster than render | intermediate snapshots dropped | `OnConfigChanged` is idempotent with respect to the final state, so a skipped intermediate is a skipped frame. `rawAccumulatedTime` is absolute, so the cross-fade loses no time |
+| render faster than data | `AcquireLatest` returns false, the held slot is redrawn | no re-notify, no re-tick |
+| UI thread holds the lock | `el_effect_update` waits | `el_effect_render` does not |
+
+The one structural difference between the two diagrams is the **blocking edge**.
+In the threaded case `el_effect_update` can wait on the UI thread, and nothing
+can ever wait on the render thread. That asymmetry is the design rather than a
+consequence of it, and it is why `el_effect_render` is the single entry point
+without `LOCK_EFFECT`: a slider drag or a long read loop can stall animation,
+never the frame rate.
+
+### 6.3 Which thread may call what
+
 | call group | thread |
 | --- | --- |
 | `el_effect_create` | any |
