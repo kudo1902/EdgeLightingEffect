@@ -600,13 +600,27 @@ namespace EdgeLighting
 
         // --- Composition -------------------------------------------------
 
-        /// @brief Append a child. Added children start in whatever state they
-        ///        already carry (typically Stopped - call @c child->Play() or
-        ///        @ref Play on the group to start them).
+        /// @brief Append a child. Added children start in whatever play STATE
+        ///        they already carry (typically Stopped - call @c child->Play()
+        ///        or @ref Play on the group to start them).
+        ///
+        /// Their END ACTION is not theirs to keep, though: the group's current
+        /// one is applied here, exactly as @ref SetEndAction applies it to the
+        /// children that already exist. Without this the fan-out would work
+        /// only when every child was added BEFORE the policy was set, and a
+        /// child added after would silently ignore a policy @ref GetEndAction
+        /// still reported as set - the same defect the fan-out exists to fix,
+        /// made conditional on call order instead of unconditional. See
+        /// review-findings I34, and I29 for the fix this one completes.
+        ///
+        /// So a per-child exception has to be set on the child AFTER it joins,
+        /// not before. That is the cost of letting the group own the policy,
+        /// and it is the same cost @ref SetEndAction already carries.
         void Add(AnimationPtr animation)
         {
             if (animation)
             {
+                animation->SetEndAction(GetEndAction());
                 mAnimations.push_back(std::move(animation));
             }
         }

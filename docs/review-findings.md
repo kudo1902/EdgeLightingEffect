@@ -2172,6 +2172,89 @@ writes, and only a never-played animation or `HOLD_NONE` leaves the target's own
 value in place. No behaviour change.
 
 
+## Eighth pass (the post-fix review)
+
+A second review of the same branch, after the seventh pass's fixes landed. Two
+items, both fixed. One is a defect the seventh pass's own fix introduced, which
+is the reason a review after a fix is worth running at all.
+
+### I33. The raw-time accumulator was a float, and stopped advancing - FIXED
+
+`mRawAccumulatedTime` is the running sum of the deltas handed to `Update`, and
+the render side differences it to drive the colour cross-fade. It was a `float`.
+
+A float's ULP grows with its value, so a float accumulator eventually cannot
+represent the increment being added to it. Simulated at 120 Hz:
+
+```
+after 60h of 120 Hz updates:
+  float accumulator : 262144.0 s      <- pinned at 2^18
+  first ZERO add    : 57.84 h in
+  total stalled adds: 933045
+  same as double    : drift 0.0000 s
+```
+
+262144 is 2^18, where the ULP is 0.031s against a 0.0083s increment. From that
+point the accumulator never moves again, `fadeDelta` is permanently 0, and any
+colour change starts a cross-fade that freezes mid-blend forever - nothing in
+the log, nothing in an error code.
+
+Confirmed end to end, not just in a simulation. A real `EdgeLightingEffect`
+pushed past the stall point, then given a one-second fade over 40 frames:
+
+```
+                       luma frame 1   luma frame 40
+  all-float build          95.425         95.425     <- frozen
+  after the fix            95.425        130.134     <- advances
+```
+
+The all-float row is a clean control build, not the pre-fix binary: reverting
+only the member types leaves the header and the arithmetic disagreeing and
+produces a mixed-layout archive whose result proves nothing. Revert the
+`std::max` call with them.
+
+Fixed by widening the whole chain to `double` - `ConfigSnapshot::rawAccumulatedTime`,
+`mRawAccumulatedTime`, `mRenderedRawAccumulatedTime`. The DIFFERENCE is still
+handed to the renderers as a float, which loses nothing: it is a frame delta and
+tiny. It was only ever the running total that needed the width.
+
+This has a visible cost, recorded in
+[`threaded-model-comparison.md`](threaded-model-comparison.md) section 1: one of
+the sixteen capture scenes stops being byte-identical. `double_update`
+accumulates two deltas per frame, so the blend lands a hair differently - 221 of
+196,608 pixels, every one of them off by exactly 1/255, whole-frame luma
+unchanged to five decimals. Last-bit quantisation against a fade that froze
+after 58 hours is not a close trade.
+
+`Clock::mTime` has the identical defect and feeds the shaders' `uTime`. It
+predates this branch and is NOT fixed here - see the open list.
+
+### I34. The I29 fix worked only when children were added first - FIXED
+
+I29 made `AnimationGroup::SetEndAction` fan out to children, because the group's
+`Apply` forwards to them and never reaches the end-action dispatch. `Add` did not
+propagate it, so the order mattered:
+
+```
+  Add then SetEndAction : intensity 0.50   (host value survived)
+  SetEndAction then Add : intensity 0.50   <- was OVERWRITTEN before this fix
+```
+
+A child added after the policy was set kept its own default `HOLD_CURRENT` while
+`GetEndAction` on the group went on reporting `HOLD_NONE`. That is the same
+defect I29 exists to fix, made conditional on call order rather than
+unconditional - which is harder to notice, not easier.
+
+Not reachable through the C ABI: there is no group-add export, and the preset
+factories add every child before the handle escapes. `AnimationGroup` is in
+`lib/include` though, so a C++ host can reach it.
+
+Fixed by having `Add` apply the group's current end action to the incoming
+child. The cost is the same one `SetEndAction` already carries and is stated at
+both: the group owns the policy, so a per-child exception has to be set on the
+child AFTER it joins.
+
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
@@ -2181,8 +2264,9 @@ fork it followed from. The fifth pass's I15 landed with it. Five items from the
 first pass remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, and I13 from the fourth. The seventh pass's I28 to
-I32 were written up before being fixed and have all since landed, so nothing
-from it is on this list:
+I32 were written up before being fixed and have all since landed. The eighth
+pass's I33 and I34 likewise landed; the one thing it turned up and did not fix
+is on this list as I33b:
 
 | item | state | why |
 | ---- | ----- | --- |
@@ -2195,6 +2279,7 @@ from it is on this list:
 | V9 | open | the honest fix is a design decision (interpolate the arc colour between adjacent samples in the consumer), not a patch; the three options are ranked in the section |
 | I12 | partly fixed | the live shader comment is corrected; `architecture-design.md` and `multiple-arcs-design.md` still name the removed LUT functions, and both are design prose rather than comments beside live code |
 | I13 | open | undefined `pow` reachable only through the C ABI; both cures change what the boundary accepts or what the term computes below `ghostSize` 0.6, so it is a behaviour decision rather than a repair |
+| I33b | open | `Clock::mTime` is a float accumulator with the identical stall I33 fixed, and it feeds the shaders' `uTime`. Widening it is easy; making it actually correct is not, because the value reaches GLSL as a 32-bit float either way - the real cure is wrapping time before the uniform, which is a change to what every time-dependent shader term sees |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

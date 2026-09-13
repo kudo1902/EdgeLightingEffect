@@ -23,7 +23,25 @@ As in [`neon-unification-comparison.md`](neon-unification-comparison.md),
 `hueRotationRate` and `colorTransitionDuration` are pinned to zero except where
 a scene is about them.
 
-**16 of 16 scenes byte-identical.**
+**15 of 16 scenes byte-identical**, and the sixteenth differs by exactly one
+LSB.
+
+`double_update` - the scene that calls `Update` twice per `Render` - stopped
+matching when the raw-time accumulator was widened from `float` to `double`
+(review-findings I33, which fixed a cross-fade that froze permanently after 58
+hours of uptime). Accumulating two deltas per frame makes the blend land a hair
+differently:
+
+| | |
+| --- | --- |
+| pixels differing | 221 of 196,608 (0.112%) |
+| max channel delta | **1**/255 |
+| mean over differing pixels | 1.00 - every difference is exactly 1 |
+| whole-frame luma | 45.1028 before, 45.1028 after |
+
+That is last-bit quantisation, not a behaviour change, and it is the correct
+side of the trade. The other fifteen scenes, including the three other fade
+scenes, remain byte-identical.
 
 Nine are controls - `fullres`, `scaled_50`, `scaled_25`, `opaque_fill`, `arcs`,
 `segments`, `droplets`, `flare`, `overlays`. The other seven exist because the

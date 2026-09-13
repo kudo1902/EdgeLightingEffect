@@ -216,7 +216,11 @@ namespace EdgeLighting
         /// difference it for @c GradientRingLUT::Tick, which is documented to
         /// want the raw frame delta precisely so a colour change still fades
         /// while the animation is not running.
-        float mRawAccumulatedTime = 0.0f;
+        ///
+        /// DOUBLE for the reason spelled out on @c ConfigSnapshot::rawAccumulatedTime:
+        /// as a float it stopped advancing after 57.8 hours at 120 Hz and froze
+        /// every colour cross-fade from then on.
+        double mRawAccumulatedTime = 0.0;
 
         /// Bumped by @ref refreshActiveConfig when the composite really moved.
         /// The render side compares it against @c mNotifiedGeneration to decide
@@ -239,8 +243,9 @@ namespace EdgeLighting
         /// Render side: @c rawAccumulatedTime of the last snapshot consumed,
         /// differenced against the next one to get the cross-fade delta. The
         /// published value is absolute rather than a per-frame delta so that
-        /// dropped snapshots neither lose nor double-count fade time.
-        float mRenderedRawAccumulatedTime = 0.0f;
+        /// dropped snapshots neither lose nor double-count fade time. Double,
+        /// to match what it is differenced against.
+        double mRenderedRawAccumulatedTime = 0.0;
         /// Set once @ref Initialize has run, so @ref AddRenderer knows whether
         /// a newly registered renderer still has an Initialize coming or has
         /// missed it and must be initialised immediately.

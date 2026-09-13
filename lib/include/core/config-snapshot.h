@@ -46,7 +46,16 @@ namespace EdgeLighting
         float clockTime = 0.0f;
         /// Seconds, summed from the deltas handed to @c Update - no clock
         /// control moves it. Absolute, not a delta.
-        float rawAccumulatedTime = 0.0f;
+        ///
+        /// DOUBLE, and it has to be. A float's ULP grows with its value, so a
+        /// float accumulator eventually cannot represent the increment being
+        /// added to it: at 120 Hz this one pinned at 262144.0 (2^18, where the
+        /// ULP is 0.031s against a 0.0083s increment) after 57.8 hours and
+        /// never advanced again. The render side differences this to drive the
+        /// colour cross-fade, so a stalled accumulator freezes every fade
+        /// mid-blend, permanently, with nothing in the log. The same 60-hour
+        /// run in double drifts 0.0000s. See review-findings I33.
+        double rawAccumulatedTime = 0.0;
         /// Bumped only when @c config actually changed. 0 means "as constructed".
         uint64_t configGeneration = 0;
     } ConfigSnapshot;

@@ -49,7 +49,7 @@ namespace EdgeLighting
         // the render side differences for GradientRingLUT::Tick, and a colour
         // change has to keep fading whatever the clock is doing - paused,
         // stopped, reset or scrubbed.
-        mRawAccumulatedTime += deltaTime;
+        mRawAccumulatedTime += static_cast<double>(deltaTime);
 
         // Unconditional, unlike the publish in SetConfig - the two times move
         // every frame even when the config does not, and they are half of what
@@ -84,7 +84,14 @@ namespace EdgeLighting
         {
             // Clamped because a host is free to hand Update a negative delta;
             // the fade must not run backwards.
-            const float fadeDelta = std::max(0.0f, snapshot.rawAccumulatedTime - mRenderedRawAccumulatedTime);
+            // Differenced in double, handed on as float: the DIFFERENCE is a
+            // frame delta and tiny, so it loses nothing on the way out. It is
+            // the running total that needed the width.
+            // Differenced in double, handed on as float: the DIFFERENCE is a
+            // frame delta and tiny, so it loses nothing on the way out. It is
+            // the running total that needed the width.
+            const float fadeDelta = static_cast<float>(
+                std::max(0.0, snapshot.rawAccumulatedTime - mRenderedRawAccumulatedTime));
             mRenderedRawAccumulatedTime = snapshot.rawAccumulatedTime;
             for (auto &renderer : mRenderers)
             {
