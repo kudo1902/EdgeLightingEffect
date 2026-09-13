@@ -68,9 +68,13 @@ namespace EdgeLighting
     void AnimationManager::Apply(Config &target) const
     {
         // Layer every animation on top of the incoming base in attach order.
-        // Stopped animations no-op (Animation::Apply skips them), so their
-        // field stays at the base value - except a hold-final-value one-shot
-        // that has completed, which keeps writing its terminal value.
+        //
+        // A STOPPED animation does NOT stop writing - see the declaration for
+        // the full rule. AnimationState is a statement about TIME (elapsed no
+        // longer advances); what a stopped animation writes is decided by its
+        // EndAction, and the default HOLD_CURRENT keeps writing the frozen
+        // value indefinitely. Only two things leave target's own value in
+        // place: an animation that has never played, and EndAction::HOLD_NONE.
         for (const AnimationPtr &a : mAnimations)
         {
             a->Apply(target);

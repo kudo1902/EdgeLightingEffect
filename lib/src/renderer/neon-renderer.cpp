@@ -379,6 +379,28 @@ namespace EdgeLighting
         // The atlas bakes read the merged transient+preserved view, which
         // OnConfigChanged normally keeps current; seed it here for the first.
         SegmentUtils::FillEffectiveSegments(mCurrentConfig.neon, mEffectiveSegments);
+
+        // Drop the three LUT textures before re-baking them, but only on a
+        // RE-initialise. That is the context-loss path
+        // el_effect_init_with_renderers takes, and without this it silently
+        // does not recover: every bake below is input-gated and mCurrentConfig
+        // has not moved across a re-init, so all three Bake calls would return
+        // immediately and leave the gather sampling texture names whose
+        // contents are gone. See review-findings I28.
+        //
+        // Gated on the first call because there it is pure waste, and not the
+        // trivial kind: both demos and the C ABI register renderers BEFORE
+        // Initialize, so AddRenderer's OnConfigChanged has already baked and
+        // uploaded all three by the time this runs. Invalidating would discard
+        // those and upload them again - measured, one extra upload per LUT at
+        // startup - on top of regenerating three texture names for nothing.
+        if (mHasInitialized)
+        {
+            mGradientLUT.Invalidate();
+            mSegmentLUT.Invalidate();
+            mArcLUT.Invalidate();
+        }
+        mHasInitialized = true;
         bakeLUTs(mCurrentConfig);
 
         setupFullscreenQuad();

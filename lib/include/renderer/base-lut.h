@@ -20,9 +20,9 @@ namespace EdgeLighting
     ///     cannot ask for anything else.
     ///   - **A LUT's texture is a derived value.** @c mTexture is private, so
     ///     not even a subclass can reach @c Texture2D::SetData directly - the
-    ///     only way to write the texture is @ref Upload, and the only thing a
-    ///     caller can do with it is @ref Bind. Whatever the last bake produced
-    ///     is what is on the GPU.
+    ///     only way to write the texture is @ref Upload. A caller can sample it
+    ///     (@ref Bind) or throw it away (@ref Invalidate), but never write it,
+    ///     so whatever the last bake produced is what is on the GPU.
     ///   - **"Has a texture name" is not "has an image".** @c Texture's
     ///     constructor calls @c glGenTextures, so the name exists from the
     ///     moment a LUT is constructed, long before anything is baked into it.
@@ -67,6 +67,43 @@ namespace EdgeLighting
         /// for. Not for binding (use @ref Bind) and not for writing: the
         /// texture is a derived value, see the class note.
         GLuint GetId() const { return mTexture.GetId(); }
+
+        /// Throw away the texture and forget that anything was ever uploaded,
+        /// so the next @c Bake re-uploads instead of short-circuiting.
+        ///
+        /// This exists for exactly one caller: a renderer's @c Initialize on a
+        /// SECOND call, which is the GL-context-loss recovery path
+        /// (@c el_effect_init_with_renderers re-initialises in place). Without
+        /// it that path silently does not recover the LUTs. Every bake in the
+        /// tree is input-gated - @c GradientRingLUT::Bake guards on
+        /// @c HasUploaded() plus the stops it last baked, @c SpanAtlasLUT::Bake
+        /// on @c isDirty() - so re-baking with the config the renderer already
+        /// holds is a no-op, and the renderer is left sampling a texture name
+        /// whose contents are gone. See review-findings I28.
+        ///
+        /// Both halves are needed. Clearing @c mUploaded is what defeats the
+        /// guards; replacing the @c Texture2D is what deals with a name that a
+        /// lost context has already invalidated, since uploading into a stale
+        /// name is not a recovery. Move-assignment deletes the old one, which
+        /// is a no-op on a dead name and correct on a live one - so this is
+        /// also safe to call when the context never went away.
+        ///
+        /// It ALWAYS costs one texture object, including on a LUT that has
+        /// never uploaded: the name is regenerated regardless, because "never
+        /// uploaded" does not imply "name is still live" once a context has
+        /// been lost. What it never costs is an extra upload - a LUT with
+        /// nothing uploaded had no guard to defeat.
+        ///
+        /// NOT for invalidating on a config change: the bakes already track
+        /// their own inputs and calling this would defeat the caching this
+        /// class exists to provide.
+        void Invalidate()
+        {
+            mTexture = Texture2D();
+            mUploaded = false;
+            mTextureWidth = 0;
+            mTextureHeight = 0;
+        }
 
     protected:
         BaseLUT() = default;

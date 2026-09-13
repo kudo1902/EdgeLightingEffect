@@ -53,6 +53,16 @@ namespace EdgeLighting
         }
         setupStopMarkerQuad();
         setupGeometry(mCurrentConfig);
+        // Same reason, and the same gate, as NeonRenderer::Initialize: on a
+        // RE-init the bake below would short-circuit on unchanged stops and
+        // leave the strip sampling a texture a lost context has emptied; on the
+        // first it would discard a ring AddRenderer has already uploaded. See
+        // review-findings I28.
+        if (mHasInitialized)
+        {
+            mGradientLUT.Invalidate();
+        }
+        mHasInitialized = true;
         // Unconditional, unlike the bake in OnConfigChanged, and it is the
         // safety net that lets that one be gated: a host whose config never
         // changes after registration gets no OnConfigChanged with a valid

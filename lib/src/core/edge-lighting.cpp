@@ -142,11 +142,27 @@ namespace EdgeLighting
         }
 
         mRenderers.push_back(renderer);
-        // Hand over the current composited config, not the base: a renderer
-        // joining mid-animation should see what every other renderer sees.
+        // The held SNAPSHOT, not mActiveConfig. Both carry a composited config,
+        // which is what a renderer joining mid-animation needs, but only one of
+        // them is this side's to read: mActiveConfig belongs to the data side,
+        // which mutates it by swapping its vectors out from under any reader
+        // (refreshActiveConfig). AddRenderer is a render-side call - it runs
+        // Initialize, which is GL - so reaching across was a data race for any
+        // C++ host following the split this class documents. The C ABI never
+        // saw it, because el_effect_init_with_renderers holds the handle lock
+        // across the whole thing. See review-findings I31.
+        //
+        // No AcquireLatest here, deliberately: the new renderer joins with
+        // exactly what its peers are currently drawing rather than with
+        // something newer they have not seen. If a newer snapshot is already
+        // published, the next Render acquires it and notifies EVERY renderer,
+        // this one included - which is also why mNotifiedGeneration must not be
+        // touched here. Advancing it would make the others miss that
+        // generation.
+        //
         // Renderers gate their own rebuilds on shader validity, so this is also
         // safe on the pre-Initialize path where nothing is compiled yet.
-        renderer->OnConfigChanged(mActiveConfig);
+        renderer->OnConfigChanged(mSnapshots.Current().config);
     }
 
     Clock &EdgeLightingEffect::GetClock() { return mClock; }

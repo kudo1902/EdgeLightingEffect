@@ -1909,6 +1909,269 @@ Both now call the rewind alone (`el_animation_set_elapsed(anim, 0)` /
 header's contract is thin forwarders onto a replacement and the config write it
 carries has no replacement to forward to - it is the part being retired.
 
+## Seventh pass (the threaded-model review)
+
+A review of the whole `design_threaded_model` branch against `main` - the
+config-snapshot seam, the C ABI's data lock, lock adoption, the consistency
+scope, and the `HOLD_NONE` work that landed alongside them. Five items, all
+since fixed. They were written up before being touched, so each entry below
+states the defect first and the repair last - the repro blocks are the
+before-state, and each one now runs clean.
+
+Nothing was found in the threading machinery itself. Every `el_effect_*` and
+`el_animation_*` entry point was audited mechanically for a missing lock, and
+the only ones without it are the six that are meant to be without it:
+`el_effect_create` (no handle yet), `el_effect_destroy` and `el_effect_render`
+(both documented exceptions), `el_effect_init` (delegates to the locking
+variant), and `el_effect_begin_batch` / `el_effect_end_batch` (which lock and
+unlock by hand because the scope they hold is the host's). The four items below
+are in the code around the seam rather than in it.
+
+### I28. Re-initialisation does not restore the LUT textures - FIXED
+
+I25 made `el_effect_init_with_renderers` re-initialise in place, and named the
+reason: re-init "is what a host does after **GL context loss**, and there is no
+other call in the ABI that rebuilds GL resources". That path rebuilds less than
+it claims.
+
+`NeonRenderer::Initialize` re-creates the shader programs (`setupShaders`
+move-assigns fresh `ShaderProgram`s), re-allocates the emission buffer, and
+re-uploads both VBOs. It then calls `bakeLUTs(mCurrentConfig)`. But the three
+`Texture2D` members behind `mGradientLUT` / `mSegmentLUT` / `mArcLUT` are
+constructed once in the renderer's constructor and never re-created, and all
+three `Bake` calls short-circuit, because `mCurrentConfig` has not moved:
+`GradientRingLUT::Bake` guards on
+`HasUploaded() && size == mSize && space == mBakedSpace && stops == mBakedStops`,
+and `SpanAtlasLUT::Bake` guards on `isDirty()`.
+
+Reproduced directly against `GradientRingLUT`, wiping the texture in between to
+stand in for what a lost-and-restored context leaves behind - a live name with
+no contents:
+
+```
+after first bake              : 190 non-zero bytes of 256
+after wiping the texture      : 0 non-zero bytes
+after re-bake                 : 0 non-zero bytes      <-- guard blocked it
+after re-bake w/ CHANGED stops: 128 non-zero bytes    <-- control: upload works
+```
+
+The control row is what pins the cause on the dirty guard rather than on
+anything else being broken.
+
+So on a target where context loss is real - ANGLE, GLES, Android - a host that
+calls `el_effect_init` again to recover gets its shaders and its emission buffer
+back, and three dead LUT texture names. The gather samples all three every
+fragment, so the ring renders black or garbage, with `EL_SUCCESS` returned and
+nothing in the log.
+
+Not reproducible on macOS desktop GL, where the context does not get lost, which
+is why it has never been seen. The guard itself is correct and wanted on the
+ordinary path - it is what keeps a slider drag from re-uploading the ring every
+frame. What was missing was a way for `Initialize` to say "the textures behind
+you are gone, upload regardless".
+
+Fixed with `BaseLUT::Invalidate()`, called by `NeonRenderer::Initialize` on all
+three LUTs and by `DebugRenderer::Initialize` on its own copy, immediately
+before the bake - but **only on a re-initialise**, behind a `mHasInitialized`
+flag on each renderer.
+
+That gate is not tidiness. Both demos and the C ABI register renderers BEFORE
+`Initialize`, so `AddRenderer`'s `OnConfigChanged` has already baked and
+uploaded every LUT by the time `Initialize` runs. Invalidating unconditionally
+discarded those and uploaded them all again - measured, one extra upload per
+LUT at startup, on top of regenerating four texture names for nothing:
+
+```
+demo order (AddRenderer before Initialize), ungated:
+  after AddRenderer bake : 191 bytes
+  after Initialize bake  : 191 bytes -> UPLOADED (was skipped before)
+  old behaviour          : 0 bytes   -> skipped
+```
+
+Gated, a first `Initialize` is byte-for-byte the old path and a second one
+recovers. End to end through `EdgeLightingEffect`, rendering the same scene
+either side of a re-init:
+
+```
+luma before re-init : 116.538
+luma after  re-init : 116.538   -> recovered, identical
+``` It does both halves deliberately: clearing `mUploaded` is what
+defeats the guards, and replacing the `Texture2D` is what deals with a name a
+lost context has already invalidated, since uploading into a stale name is not a
+recovery. On a first call it changes nothing; on a re-init with a live context it
+costs one texture object. The same probe now reports:
+
+```
+after first bake              : 190 non-zero bytes of 256
+after wiping the texture      : 0 non-zero bytes
+after re-bake                 : 190 non-zero bytes    <-- restored
+```
+
+The public/protected line moved with it: `Invalidate` is public, beside `Bind`
+and `GetId`, because the renderer that owns the LUT is the caller. The class's
+"a caller can only sample it" invariant is restated as "sample it or throw it
+away, but never write it", which is still the property that matters.
+
+### I29. `AnimationGroup` ignores every end action, and reports that it did not - FIXED
+
+`AnimationGroup::Apply` overrides the base and forwards to children
+unconditionally, so it never reaches the `switch` that honours `mEndAction`.
+`SetEndAction` still stores the value and `GetEndAction` still reads it back, so
+there is no way for a host to detect that nothing happened.
+
+This is not reachable only from C++. `el_animation_create(EL_ANIM_SHIMMER)` and
+`EL_ANIM_AURORA` both build groups (`el-animation.cpp:45` and `:53`), so the
+whole thing happens through the flat ABI with no GL context:
+
+```
+                       set  readback  -> intensity
+plain IntensityPulse    4       4        0.50   (host value survived)
+EL_ANIM_SHIMMER (group) 4       4        0.82   (OVERWRITTEN)
+```
+
+Identical calls, identical read-back of `EL_END_ACTION_HOLD_NONE`, opposite
+behaviour. The host authored `0.50`, set `HOLD_NONE` so a stopped animation
+would hand the field back, stopped it, and got `0.82` anyway.
+
+The override predates this branch, and for `HOLD_CURRENT` - the default - it is
+harmless, since forwarding to children is what they would each have done. I26
+is what makes it bite: `HOLD_NONE` is documented as "the only end action that
+returns a field to config control without detaching", and it is exactly the two
+presets a host is most likely to reach for that silently refuse it.
+
+Two shapes of fix, and they are not equivalent. Broadcasting the group's end
+action down to its children on `SetEndAction` is what a host expects but
+overwrites per-child settings. Honouring the group's own end action in its
+`Apply` keeps children independent but means a group holds a value its children
+would not have.
+
+Broadcasting won, because the class had already decided: `AnimationGroup`
+overrides `Play`, `Pause`, `Stop`, `Reset` and `Update` to fan out, and its own
+state is documented as "a broadcast label, not a gate on the children". An end
+action that did not fan out was the odd one in its own class. `SetEndAction` is
+now virtual for the same reason `Play` and `Stop` are, and the group's override
+follows the identical `Animation::SetEndAction(action)`-then-fan-out shape.
+
+The cost is real and is stated at the override: fanning out OVERWRITES any end
+action a child was given individually, so set the group's policy first and any
+per-child exceptions after. The probe now reads:
+
+```
+                       set  readback  -> intensity
+plain IntensityPulse    4       4        0.50   (host value survived)
+EL_ANIM_SHIMMER (group) 4       4        0.50   (host value survived)
+```
+
+### I30. An over-cap segment animation logs at ERROR every frame, forever - FIXED
+
+I18 gave `EnsureSegmentSlot` a cap check and a null return, which fixed the
+unbounded `resize`. The rejection logs:
+
+```cpp
+LOG_E("EnsureSegmentSlot: index %zu is past the cap of %d; skipping", ...);
+```
+
+`EnsureSegmentSlot` is called from `ApplyAt`, which runs once per frame for as
+long as the animation is attached and playing. So `SegmentTravel(index = 12)`
+against a cap of 8 emits 60 ERROR lines a second indefinitely.
+
+The branch makes this worse in a way that is easy to miss. `Util::Print` now
+takes a process-wide mutex (added because the logger was racing - see
+`threaded-model-comparison.md` section 4), and `Apply` runs inside
+`el_effect_update` while it holds the handle's `dataMutex`. Every one of those
+per-frame lines now contends the log lock with the render thread's own logging
+*while the data lock is held*, so a misconfigured index is no longer only noise.
+
+The codebase already has the right pattern for this: `WarnOnOverflow` in
+`neon-renderer.cpp` latches on the previous count and fires once per overflow
+rather than once per frame.
+
+Fixed without needing a latch at all, because there is nothing to latch: the
+index is a constructor parameter and never moves, so there is exactly one thing
+to report and exactly one moment to report it. `EnsureSegmentSlot` is now silent
+on the over-cap path - it still returns nullptr, so the animation is still a
+visible no-op - and `WarnIfSegmentIndexPastCap` says it once, from the
+`SegmentTravel` and `SegmentBounce` constructors. 300 frames of an
+`index = 12` animation against a cap of 8:
+
+```
+[ERROR] SegmentTravel: segment index 12 is at or past the cap of 8 - this
+        animation will never light anything
+--- 300 frames done ---
+segmentBoosts size: 0          (the slot is past the cap, as intended)
+ERROR lines total: 1           (was 300)
+```
+
+### I31. `AddRenderer` reads data-side state from the render side - FIXED
+
+`EdgeLightingEffect`'s class comment assigns the two halves explicitly: the data
+side is `SetConfig` / `Update` / clock / animations, the render side is
+`Initialize` / `AddRenderer` / `Render` / the destructor. `AddRenderer` then ends
+with
+
+```cpp
+renderer->OnConfigChanged(mActiveConfig);
+```
+
+and `mActiveConfig` is data-side state that `refreshActiveConfig` mutates by
+`std::swap`ping its vectors with the scratch.
+
+A C++ host that follows the documented split - data thread calling `Update`, GL
+thread calling `AddRenderer` to enable a layer at runtime - therefore races on
+those vectors while they are being swapped, and the new renderer bakes from
+buffers in mid-swap.
+
+The C ABI never hits it: `el_effect_init_with_renderers` is the only caller and
+it holds the handle lock throughout. Every other render-side member
+(`mRenderers`, `mNotifiedGeneration`, `mRenderedRawAccumulatedTime`) respects the
+split; this one line does not, which is what makes it worth recording rather than
+shrugging at - the split is only as good as its exceptions are known.
+
+Fixed by handing the renderer the render side's own held snapshot,
+`mSnapshots.Current().config`, which is data this side already owns.
+
+Two details that are easy to get wrong and are commented at the site. There is
+deliberately no `AcquireLatest()` first: the new renderer joins with exactly what
+its peers are currently drawing rather than with something newer they have not
+seen, and if a newer snapshot is already published the next `Render` acquires it
+and notifies every renderer including this one. And `mNotifiedGeneration` must
+NOT be advanced here - doing so would make the other renderers miss that
+generation entirely.
+
+The 16-scene capture suite is the guard for this one, since it changes what a
+renderer is handed at registration; all 16 stay byte-identical.
+
+### I32. `AnimationManager::Apply`'s comment contradicts the header it implements - FIXED
+
+I26 rewrote the declaration's documentation to say, at length, that a stopped
+animation keeps writing:
+
+> A STOPPED animation does NOT stop writing. `AnimationState` is a statement
+> about time - elapsed no longer advances - and what a stopped animation writes
+> is decided separately by its `EndAction`.
+
+The implementation's own comment, three lines above the loop, still says the
+opposite:
+
+```cpp
+// Stopped animations no-op (Animation::Apply skips them), so their
+// field stays at the base value - except a hold-final-value one-shot
+// that has completed, which keeps writing its terminal value.
+```
+
+Both doors, one concept, opposite claims - the same shape as I18 and I25, in
+prose rather than in behaviour. It matters here more than it usually would
+because the stale comment describes exactly the misconception I26 was filed to
+correct: a reader debugging why their `el_effect_set_intensity` is invisible
+opens the `.cpp`, reads that stopped animations no-op, and rules out the stopped
+animation that is in fact overwriting the field every frame.
+
+Fixed: the implementation comment now states the same rule as the declaration -
+`AnimationState` is about time, `EndAction` decides what a stopped animation
+writes, and only a never-played animation or `HOLD_NONE` leaves the target's own
+value in place. No behaviour change.
+
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
@@ -1917,7 +2180,9 @@ open rather than declined - closed with the neon unification, which deleted the
 fork it followed from. The fifth pass's I15 landed with it. Five items from the
 first pass remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
-remainder from the third, and I13 from the fourth:
+remainder from the third, and I13 from the fourth. The seventh pass's I28 to
+I32 were written up before being fixed and have all since landed, so nothing
+from it is on this list:
 
 | item | state | why |
 | ---- | ----- | --- |

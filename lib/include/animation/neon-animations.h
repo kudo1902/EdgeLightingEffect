@@ -352,13 +352,19 @@ namespace EdgeLighting
         ///
         /// Callers skip when this returns nullptr, which makes an out-of-range
         /// animation a visible no-op rather than a wrong-slot write.
+        /// Deliberately SILENT on the over-cap path. This runs from @c ApplyAt,
+        /// once per frame for as long as the animation is attached and playing,
+        /// so a diagnostic here is a diagnostic forever - 60 ERROR lines a
+        /// second from one mistyped index, and since @c Util::Print took a
+        /// mutex it also contends the log lock with the render thread on every
+        /// one of them, while the C ABI holds its data lock. The index cannot
+        /// change after construction, so @ref WarnIfSegmentIndexPastCap says it
+        /// once, there. See review-findings I30.
         inline SegmentBoost *EnsureSegmentSlot(Config &cfg, size_t index,
                                                float defaultLength, float defaultBoost)
         {
             if (index >= static_cast<size_t>(NeonConfig::MAX_SEGMENT_BOOSTS_CAP))
             {
-                LOG_E("EnsureSegmentSlot: index %zu is past the cap of %d; skipping",
-                      index, NeonConfig::MAX_SEGMENT_BOOSTS_CAP);
                 return nullptr;
             }
             if (cfg.neon.segmentBoosts.size() <= index)
@@ -366,6 +372,25 @@ namespace EdgeLighting
                 cfg.neon.segmentBoosts.resize(index + 1, SegmentBoost{0.0f, defaultLength, defaultBoost, {}, BlendSpace::RGB});
             }
             return &cfg.neon.segmentBoosts[index];
+        }
+
+        /// Say once, at construction, what @ref EnsureSegmentSlot will then do
+        /// silently every frame: this animation drives a slot the shader has no
+        /// room for, so it will never light anything.
+        ///
+        /// Construction time is the whole point - the index is a constructor
+        /// parameter and never moves, so there is exactly one thing to report
+        /// and exactly one moment to report it. Same shape as
+        /// @c WarnOnOverflow in neon-renderer.cpp, which fires per overflow
+        /// rather than per frame.
+        inline void WarnIfSegmentIndexPastCap(size_t index, const char *who)
+        {
+            if (index >= static_cast<size_t>(NeonConfig::MAX_SEGMENT_BOOSTS_CAP))
+            {
+                LOG_E("%s: segment index %zu is at or past the cap of %d - this animation "
+                      "will never light anything",
+                      who, index, NeonConfig::MAX_SEGMENT_BOOSTS_CAP);
+            }
         }
     }
 
@@ -389,6 +414,7 @@ namespace EdgeLighting
               mLength(length), mBoost(boost), mIndex(index)
         {
             SetDuration(duration);
+            WarnIfSegmentIndexPastCap(mIndex, "SegmentTravel");
         }
 
         void ApplyAt(Config &cfg, float elapsed) const override
@@ -442,6 +468,7 @@ namespace EdgeLighting
               mLength(length), mBoost(boost), mIndex(index)
         {
             SetDuration(duration);
+            WarnIfSegmentIndexPastCap(mIndex, "SegmentBounce");
         }
 
         void ApplyAt(Config &cfg, float elapsed) const override

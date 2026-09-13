@@ -475,7 +475,13 @@ namespace EdgeLighting
         ///          paths route through the same STOPPED-Apply dispatch.
         ///          Takes effect the next frame; the current running value
         ///          is unaffected.
-        void SetEndAction(EndAction action) { mEndAction = action; }
+        /// @note Virtual for the same reason @ref Play and @ref Stop are:
+        ///       @ref AnimationGroup has to fan it out to its children. A
+        ///       group's own @c Apply forwards to them and never reaches the
+        ///       STOPPED dispatch, so an end action stored only on the group
+        ///       would be read back by @ref GetEndAction and do nothing at all
+        ///       - which is what it used to do. See review-findings I29.
+        virtual void SetEndAction(EndAction action) { mEndAction = action; }
 
         /// @brief Current end-action policy.
         EndAction GetEndAction() const { return mEndAction; }
@@ -656,6 +662,26 @@ namespace EdgeLighting
             for (const auto &a : mAnimations)
             {
                 a->Stop();
+            }
+        }
+
+        /// Fans out like the control methods above, and for a sharper reason:
+        /// this group's @ref Apply forwards straight to the children and never
+        /// reaches the STOPPED dispatch that reads @c mEndAction, so an end
+        /// action kept only here would have no effect whatsoever while
+        /// @ref GetEndAction cheerfully reported it as set. A host asking a
+        /// preset built from a group (EL_ANIM_SHIMMER, EL_ANIM_AURORA) for
+        /// @c HOLD_NONE got its field overwritten anyway. See I29.
+        ///
+        /// The cost of fanning out, stated because it is real: this OVERWRITES
+        /// any end action a child was given individually. Set the group's
+        /// policy first, then any per-child exceptions.
+        void SetEndAction(EndAction action) override
+        {
+            Animation::SetEndAction(action);
+            for (const auto &a : mAnimations)
+            {
+                a->SetEndAction(action);
             }
         }
 
