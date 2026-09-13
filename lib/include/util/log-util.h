@@ -2,6 +2,7 @@
 #define _EDGE_LIGHTING_LOG_UTIL_H_
 
 #include <iostream>
+#include <mutex>
 #include <thread>
 #include <cstring>
 #include <cstdarg>
@@ -73,6 +74,24 @@ namespace EdgeLighting
 
         inline void Print(Level level, const char *file, const char *func, int line, const std::string &message)
         {
+            // One lock around the whole line, for two reasons.
+            //
+            // Correctness: six unsynchronised operator<< calls on one
+            // std::cout from two threads is a data race on the stream's own
+            // state, not merely interleaved output. ThreadSanitizer reports it
+            // as one, and it was the ONLY thing it found once the C ABI took
+            // its data lock - every effect and animation call logs, and the
+            // render thread logs without that lock by design.
+            //
+            // Legibility: without it two threads' lines interleave mid-token,
+            // which makes the log useless for the exact case it matters most -
+            // working out what a threaded host did and in what order. The
+            // thread id in the prefix only helps if lines stay whole.
+            //
+            // Function-local static, so this stays header-only and there is
+            // still exactly one mutex across every translation unit.
+            static std::mutex sPrintMutex;
+            std::lock_guard<std::mutex> lock(sPrintMutex);
             std::cout << "[Thread:" << std::this_thread::get_id() << "]["
                       << LevelToString(level) << "] "
                       << GetFileName(file) << ": "

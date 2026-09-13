@@ -115,8 +115,24 @@
  *   by indexed reads can straddle two frames. Every read re-validates its own
  *   index, so this is never a crash, only a mix of two frames.
  *
- * Animation and modulator handles carry no lock of their own yet: treat a
- * handle as owned by one thread once it is attached.
+ * Animation handles are covered too, by ADOPTION: attaching hands the
+ * animation the effect's lock, so every @c el_animation_* call on an attached
+ * animation excludes @c el_effect_update. One mutex rather than two, which is
+ * why an animation call can never deadlock against an effect call, and why a
+ * host callback can call back into either. A DETACHED animation takes no lock
+ * and belongs to whoever built it.
+ *
+ * Two things adoption does not cover:
+ *
+ * - **Attach and detach write the adopted lock**, and that write is not atomic.
+ *   Do not attach or detach a handle while another thread is calling something
+ *   else on that same handle. An animation handle also serves one effect at a
+ *   time; detach before attaching it elsewhere.
+ * - **Modulators have no lock.** Every modulator call but one is a factory or
+ *   a pure evaluate; the exception, @c el_modulator_sequence_append, mutates
+ *   and is construction-time only. There is no coherent lock to adopt, because
+ *   one modulator can be bound into several animations across several effects.
+ *   Build a sequence fully, then bind it.
  */
 #ifndef _EDGE_LIGHTING_CAPI_H_
 #define _EDGE_LIGHTING_CAPI_H_

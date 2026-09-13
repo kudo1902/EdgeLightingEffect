@@ -336,6 +336,7 @@ extern "C"
     {
         LOG_I("anim=%p", (void *)anim);
         VALIDATE_ANIM_PTR(anim, "el_animation_play");
+        LOCK_ANIMATION(anim);
         if (anim->ptr)
         {
             anim->ptr->Play();
@@ -347,6 +348,7 @@ extern "C"
     {
         LOG_I("anim=%p", (void *)anim);
         VALIDATE_ANIM_PTR(anim, "el_animation_pause");
+        LOCK_ANIMATION(anim);
         if (anim->ptr)
         {
             anim->ptr->Pause();
@@ -358,6 +360,7 @@ extern "C"
     {
         LOG_I("anim=%p", (void *)anim);
         VALIDATE_ANIM_PTR(anim, "el_animation_stop");
+        LOCK_ANIMATION(anim);
         if (anim->ptr)
         {
             anim->ptr->Stop();
@@ -369,6 +372,7 @@ extern "C"
     {
         LOG_I("anim=%p, effect=%p", (void *)anim, (void *)effect);
         VALIDATE_ANIM_PTR(anim, "el_animation_reset");
+        LOCK_ANIMATION(anim);
         VALIDATE_EFFECT_PTR(effect, "el_animation_reset");
         LOCK_EFFECT(effect);
         try
@@ -387,6 +391,7 @@ extern "C"
     {
         LOG_I("anim=%p, dt=%f", (void *)anim, dt);
         VALIDATE_ANIM_PTR(anim, "el_animation_update");
+        LOCK_ANIMATION(anim);
         if (anim->ptr)
         {
             anim->ptr->Update(dt);
@@ -398,6 +403,7 @@ extern "C"
     {
         LOG_I("anim=%p, effect=%p", (void *)anim, (void *)effect);
         VALIDATE_ANIM_PTR(anim, "el_animation_apply");
+        LOCK_ANIMATION(anim);
         VALIDATE_EFFECT_PTR(effect, "el_animation_apply");
         LOCK_EFFECT(effect);
         try
@@ -417,6 +423,7 @@ extern "C"
     el_result_e el_animation_get_state(el_animation_handle_t anim, el_animation_state_e *outState)
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_get_state");
+        LOCK_ANIMATION(anim);
         VALIDATE_OUT_PTR(outState, "el_animation_get_state");
         *outState = anim->ptr ? ConvertToCapi(anim->ptr->GetState()) : EL_ANIM_STATE_STOPPED;
         LOG_D("anim=%p, state=%d", (void *)anim, (int)*outState);
@@ -426,6 +433,7 @@ extern "C"
     el_result_e el_animation_get_elapsed(el_animation_handle_t anim, float *outElapsed)
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_get_elapsed");
+        LOCK_ANIMATION(anim);
         VALIDATE_OUT_PTR(outElapsed, "el_animation_get_elapsed");
         *outElapsed = anim->ptr ? anim->ptr->GetElapsed() : 0.0f;
         LOG_D("anim=%p, elapsed=%f", (void *)anim, *outElapsed);
@@ -435,6 +443,7 @@ extern "C"
     el_result_e el_animation_set_elapsed(el_animation_handle_t anim, float elapsed)
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_set_elapsed");
+        LOCK_ANIMATION(anim);
         if (!anim->ptr || anim->ptr->GetElapsed() == elapsed)
         {
             return EL_SUCCESS;
@@ -447,6 +456,7 @@ extern "C"
     el_result_e el_animation_get_progress(el_animation_handle_t anim, float *outProgress)
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_get_progress");
+        LOCK_ANIMATION(anim);
         VALIDATE_OUT_PTR(outProgress, "el_animation_get_progress");
         *outProgress = anim->ptr ? anim->ptr->GetProgress() : 0.0f;
         LOG_D("anim=%p, progress=%f", (void *)anim, *outProgress);
@@ -456,6 +466,7 @@ extern "C"
     el_result_e el_animation_set_progress(el_animation_handle_t anim, float progress)
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_set_progress");
+        LOCK_ANIMATION(anim);
         if (!anim->ptr || anim->ptr->GetProgress() == progress)
         {
             return EL_SUCCESS;
@@ -470,6 +481,7 @@ extern "C"
     el_result_e el_animation_get_end_action(el_animation_handle_t anim, el_end_action_e *outAction)
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_get_end_action");
+        LOCK_ANIMATION(anim);
         VALIDATE_OUT_PTR(outAction, "el_animation_get_end_action");
         *outAction = anim->ptr ? ConvertToCapi(anim->ptr->GetEndAction()) : EL_END_ACTION_HOLD_CURRENT;
         LOG_D("anim=%p, action=%d", (void *)anim, (int)*outAction);
@@ -479,6 +491,7 @@ extern "C"
     el_result_e el_animation_set_end_action(el_animation_handle_t anim, el_end_action_e action)
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_set_end_action");
+        LOCK_ANIMATION(anim);
         auto newVal = ConvertFromCapi(action);
         if (!anim->ptr || anim->ptr->GetEndAction() == newVal)
         {
@@ -493,6 +506,7 @@ extern "C"
     {
         LOG_I("anim=%p, effect=%p", (void *)anim, (void *)effect);
         VALIDATE_ANIM_PTR(anim, "el_animation_capture_baseline");
+        LOCK_ANIMATION(anim);
         VALIDATE_EFFECT_PTR(effect, "el_animation_capture_baseline");
         LOCK_EFFECT(effect);
         try
@@ -515,6 +529,7 @@ extern "C"
     el_result_e el_animation_get_playback_mode(el_animation_handle_t anim, el_playback_mode_e *outMode)
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_get_playback_mode");
+        LOCK_ANIMATION(anim);
         VALIDATE_OUT_PTR(outMode, "el_animation_get_playback_mode");
         *outMode = anim->ptr ? ConvertToCapi(anim->ptr->GetPlaybackMode()) : EL_PLAYBACK_LOOP;
         LOG_D("anim=%p, mode=%d", (void *)anim, (int)*outMode);
@@ -524,6 +539,7 @@ extern "C"
     el_result_e el_animation_set_playback_mode(el_animation_handle_t anim, el_playback_mode_e mode)
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_set_playback_mode");
+        LOCK_ANIMATION(anim);
         auto newVal = ConvertFromCapi(mode);
         if (!anim->ptr || anim->ptr->GetPlaybackMode() == newVal)
         {
@@ -539,6 +555,7 @@ extern "C"
     el_result_e el_animation_get_duration(el_animation_handle_t anim, float *outSeconds)
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_get_duration");
+        LOCK_ANIMATION(anim);
         VALIDATE_OUT_PTR(outSeconds, "el_animation_get_duration");
         *outSeconds = anim->ptr ? anim->ptr->GetDuration() : 0.0f;
         LOG_D("anim=%p, seconds=%f", (void *)anim, *outSeconds);
@@ -548,6 +565,7 @@ extern "C"
     el_result_e el_animation_set_duration(el_animation_handle_t anim, float seconds)
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_set_duration");
+        LOCK_ANIMATION(anim);
         if (!anim->ptr || anim->ptr->GetDuration() == seconds)
         {
             return EL_SUCCESS;
@@ -562,6 +580,7 @@ extern "C"
     el_result_e el_animation_get_speed(el_animation_handle_t anim, float *outSpeed)
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_get_speed");
+        LOCK_ANIMATION(anim);
         VALIDATE_OUT_PTR(outSpeed, "el_animation_get_speed");
         *outSpeed = anim->ptr ? anim->ptr->GetSpeed() : 1.0f;
         LOG_D("anim=%p, speed=%f", (void *)anim, *outSpeed);
@@ -571,6 +590,7 @@ extern "C"
     el_result_e el_animation_set_speed(el_animation_handle_t anim, float speed)
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_set_speed");
+        LOCK_ANIMATION(anim);
         if (!anim->ptr || anim->ptr->GetSpeed() == speed)
         {
             return EL_SUCCESS;
@@ -587,6 +607,7 @@ extern "C"
     {
         LOG_I("anim=%p, callback=%p, userData=%p", (void *)anim, (void *)callback, userData);
         VALIDATE_ANIM_PTR(anim, "el_animation_set_on_complete_callback");
+        LOCK_ANIMATION(anim);
         if (!anim->ptr)
         {
             return EL_SUCCESS;
@@ -609,6 +630,7 @@ extern "C"
     {
         LOG_I("anim=%p, callback=%p, userData=%p", (void *)anim, (void *)callback, userData);
         VALIDATE_ANIM_PTR(anim, "el_animation_set_on_state_changed_callback");
+        LOCK_ANIMATION(anim);
         if (!anim->ptr)
         {
             return EL_SUCCESS;
@@ -678,6 +700,7 @@ extern "C"
     {
         LOG_I("anim=%p, field=%d, mod=%p", (void *)anim, (int)field, (void *)mod);
         VALIDATE_ANIM_PTR(anim, "el_animation_add_field");
+        LOCK_ANIMATION(anim);
         VALIDATE_MOD_PTR(mod, "el_animation_add_field");
         auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
         if (!fb)
@@ -694,6 +717,7 @@ extern "C"
     {
         LOG_I("anim=%p, index=%d, field=%d, mod=%p", (void *)anim, index, (int)field, (void *)mod);
         VALIDATE_ANIM_PTR(anim, "el_animation_add_segment_field");
+        LOCK_ANIMATION(anim);
         VALIDATE_MOD_PTR(mod, "el_animation_add_segment_field");
         auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
         if (!fb)
@@ -711,6 +735,7 @@ extern "C"
     {
         LOG_I("anim=%p, id=%u, field=%d, mod=%p", (void *)anim, id, (int)field, (void *)mod);
         VALIDATE_ANIM_PTR(anim, "el_animation_add_preserved_segment_field");
+        LOCK_ANIMATION(anim);
         VALIDATE_MOD_PTR(mod, "el_animation_add_preserved_segment_field");
         auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
         if (!fb)
@@ -728,6 +753,7 @@ extern "C"
     {
         LOG_I("anim=%p, id=%u, stopIndex=%d, field=%d, mod=%p", (void *)anim, id, stopIndex, (int)field, (void *)mod);
         VALIDATE_ANIM_PTR(anim, "el_animation_add_preserved_segment_stop_field");
+        LOCK_ANIMATION(anim);
         VALIDATE_MOD_PTR(mod, "el_animation_add_preserved_segment_stop_field");
         if (stopIndex < 0)
         {
@@ -750,6 +776,7 @@ extern "C"
     {
         LOG_I("anim=%p, index=%d, field=%d, mod=%p", (void *)anim, index, (int)field, (void *)mod);
         VALIDATE_ANIM_PTR(anim, "el_animation_add_arc_field");
+        LOCK_ANIMATION(anim);
         VALIDATE_MOD_PTR(mod, "el_animation_add_arc_field");
         auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
         if (!fb)
@@ -768,6 +795,7 @@ extern "C"
     {
         LOG_I("anim=%p, arcIndex=%d, stopIndex=%d, field=%d, mod=%p", (void *)anim, arcIndex, stopIndex, (int)field, (void *)mod);
         VALIDATE_ANIM_PTR(anim, "el_animation_add_arc_stop_field");
+        LOCK_ANIMATION(anim);
         VALIDATE_MOD_PTR(mod, "el_animation_add_arc_stop_field");
         auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
         if (!fb)
@@ -786,6 +814,7 @@ extern "C"
     {
         LOG_I("anim=%p, segmentIndex=%d, stopIndex=%d, field=%d, mod=%p", (void *)anim, segmentIndex, stopIndex, (int)field, (void *)mod);
         VALIDATE_ANIM_PTR(anim, "el_animation_add_segment_stop_field");
+        LOCK_ANIMATION(anim);
         VALIDATE_MOD_PTR(mod, "el_animation_add_segment_stop_field");
         auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
         if (!fb)

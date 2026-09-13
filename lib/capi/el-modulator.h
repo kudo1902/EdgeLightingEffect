@@ -57,7 +57,19 @@ extern "C"
 
     /** @brief Append @p stage to the tail of @p seq, running for @p duration seconds.
      *  @details The sequence retains a strong reference to @p stage; the
-     *           caller can destroy the outer stage handle immediately. */
+     *           caller can destroy the outer stage handle immediately.
+     *
+     *  @par Threading
+     *  CONSTRUCTION TIME ONLY. This is the one call in the modulator API that
+     *  mutates an existing object rather than building a new one, and it takes
+     *  no lock. Appending to a sequence that is already bound into an ATTACHED
+     *  animation races the effect's update, which evaluates that same sequence
+     *  every frame.
+     *
+     *  It is not given the adopted lock that @c el_animation_* calls use,
+     *  because there is nothing coherent to adopt: one modulator can be bound
+     *  into several animations across several effects, so there is no single
+     *  lock that covers it. Build the sequence fully, then bind it. */
     EL_API el_result_e el_modulator_sequence_append(el_modulator_handle_t seq,
                                                     el_modulator_handle_t stage, float duration);
 

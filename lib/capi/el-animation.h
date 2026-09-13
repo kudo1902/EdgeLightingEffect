@@ -108,6 +108,24 @@ extern "C"
      *  affect any other. Explicit Update / Apply are only needed for
      *  detached animations; attached animations are driven automatically by
      *  @ref el_effect_update.
+     *
+     *  @par Threading
+     *  Any thread, for every @c el_animation_* call in this header. An ATTACHED
+     *  animation takes the lock of the effect it is attached to, so these
+     *  exclude @ref el_effect_update - which is required, since that call reads
+     *  and writes the very elapsed, state and mode these touch. A DETACHED
+     *  animation takes no lock at all and belongs to whoever built it: drive it
+     *  from one thread.
+     *
+     *  It is the effect's lock and not one of the animation's own, deliberately.
+     *  One mutex means these calls can never deadlock against an effect call,
+     *  and it is what lets a host callback fired from inside
+     *  @ref el_effect_update turn round and call @ref el_animation_pause on the
+     *  animation that fired it.
+     *
+     *  The gap: attaching and detaching WRITE that adopted lock, and the write
+     *  is not atomic. Do not attach or detach a handle while another thread is
+     *  calling something else on that same handle.
      *  @{ */
 
     /** @brief Enter the PLAYING state.

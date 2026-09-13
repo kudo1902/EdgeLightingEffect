@@ -2,6 +2,7 @@
 #define _CAPI_INTERNAL_H_
 
 #include "edge-lighting-capi.h"
+#include "adopted-lock.h"
 
 #include "core/edge-lighting.h"
 #include "animation/animation-manager.h"
@@ -141,7 +142,17 @@ struct el_effect_handle_impl
     /// unlocking, so a callback observes settled state rather than a
     /// half-applied frame. That needs a change to @c Animation's dispatch,
     /// which is why this is the contained choice for now and not the final one.
-    mutable std::recursive_mutex dataMutex;
+    ///
+    /// HEAP-ALLOCATED AND SHARED, not a plain member, because an attached
+    /// animation handle adopts it (see @c el_animation_handle_impl) and there
+    /// is no way to hand it back on every path. @c el_effect_detach_all_animations
+    /// detaches at the manager level and never sees the @c el_animation_handle_t
+    /// values at all, so a handle can outlive its attachment still pointing
+    /// here. As a member that would be a use-after-free on the next
+    /// @c el_animation_* call after @c el_effect_destroy; as a shared_ptr the
+    /// mutex simply outlives the effect until the last handle lets go. The cost
+    /// is one allocation per effect and one indirection per lock.
+    std::shared_ptr<std::recursive_mutex> dataMutex = std::make_shared<std::recursive_mutex>();
 
     EdgeLighting::Config config;
     std::unique_ptr<EdgeLighting::EdgeLightingEffect> impl;
@@ -156,6 +167,31 @@ struct el_effect_handle_impl
 struct el_animation_handle_impl
 {
     EdgeLighting::AnimationPtr ptr;
+
+    /// The effect lock this animation has ADOPTED, or null while detached.
+    ///
+    /// An attached animation is walked every frame by the effect's data side:
+    /// @c AnimationManager::Update reads and writes its elapsed, state and
+    /// playback mode, and @c Apply reads its bindings. Every @c el_animation_*
+    /// call therefore has to exclude @c el_effect_update - and the only way to
+    /// do that is to take the SAME mutex, not one of its own. Adoption is what
+    /// makes that possible without the animation knowing what an effect is.
+    ///
+    /// One mutex, never two, which is the property that keeps this free of
+    /// lock-ordering hazards: an @c el_animation_* call from a host callback
+    /// fired inside @c el_effect_update re-enters the one lock already held,
+    /// which is exactly the case @c dataMutex is recursive for.
+    ///
+    /// Set by @c el_effect_attach_animation and cleared by
+    /// @c el_effect_detach_animation, both under that same lock. Two gaps the
+    /// host has to respect, neither closable from here in C++17:
+    ///   - @c el_effect_detach_all_animations cannot clear it (it never sees
+    ///     handles), so a detached animation may keep locking a mutex nothing
+    ///     else contends. Harmless, and the shared_ptr is what makes it so.
+    ///   - writing this pointer is not atomic, so attach/detach on a handle
+    ///     must not run concurrently with another call on that SAME handle.
+    ///     Attach from the thread that owns the handle.
+    std::shared_ptr<std::recursive_mutex> dataMutex;
 };
 
 struct el_modulator_handle_impl
@@ -164,7 +200,22 @@ struct el_modulator_handle_impl
 };
 
 // ==========================================================================
-// Validation helpers
+// Entry-point prologue: VALIDATION
+//
+// Every one of these can RETURN from the enclosing function, which is the whole
+// point of the VALIDATE_ prefix in this file - reading one at a call site means
+// "check this or bail with an error code".
+//
+// The prologue of an effect entry point is three steps in a fixed order, and
+// the order is load-bearing rather than stylistic:
+//
+//     VALIDATE_EFFECT_PTR(effect, fn);   // 1. the handle is not null
+//     LOCK_EFFECT(effect);               // 2. take the lock (see below)
+//     VALIDATE_EFFECT_READY(effect, fn); // 3. ...and only now read impl
+//
+// Step 2 dereferences the handle, so it cannot precede step 1; step 3 reads
+// `impl`, which the lock protects, so it cannot precede step 2. Checks that
+// touch nothing on the handle (VALIDATE_OUT_PTR and friends) may go anywhere.
 // ==========================================================================
 #define VALIDATE_EFFECT_PTR(effect, fn)      \
     do                                       \
@@ -175,28 +226,6 @@ struct el_modulator_handle_impl
             return EL_ERROR_INVALID_HANDLE;  \
         }                                    \
     } while (0)
-
-/// Hold the handle's data lock for the rest of the enclosing scope.
-///
-/// Goes immediately after @c VALIDATE_EFFECT_PTR in every effect entry point
-/// but one. Two ordering rules, both load-bearing:
-///   - AFTER the null check, because it dereferences the handle;
-///   - BEFORE @c VALIDATE_EFFECT_READY and before any use of @c config or
-///     @c impl, because those are the things it protects.
-/// Cheap argument checks that touch nothing on the handle (@c VALIDATE_OUT_PTR
-/// and friends) may go either side of it.
-///
-/// The one entry point that does NOT take it is @c el_effect_render, and that
-/// omission is the whole design rather than an oversight: the render path
-/// touches only the renderers and one atomic snapshot cell, so no host thread
-/// can ever stall a frame. @c el_effect_destroy also skips it, for the
-/// unrelated reason that it cannot lock a mutex it is about to destroy - the
-/// host must quiesce its data thread first, and no lock here could help.
-///
-/// NOT a single statement: it declares a guard that has to outlive the macro.
-/// So it belongs at the top of a function body, never under an unbraced @c if.
-#define LOCK_EFFECT(effect) \
-    std::lock_guard<std::recursive_mutex> elDataLock((effect)->dataMutex)
 
 /// Reject a live handle that has not been through @c el_effect_init yet.
 ///
@@ -268,6 +297,49 @@ struct el_modulator_handle_impl
         }                                                                        \
     } while (0)
 
+// ==========================================================================
+// Entry-point prologue: LOCKING
+//
+// Kept apart from the validators above because they are a different kind of
+// thing: a validator RETURNS, a lock DECLARES a guard that lives to the closing
+// brace. Neither is a single statement, so both belong at the top of a function
+// body and never under an unbraced `if`.
+//
+// The animation prologue mirrors the effect one:
+//
+//     VALIDATE_ANIM_PTR(anim, fn);       // 1. the handle is not null
+//     LOCK_ANIMATION(anim);              // 2. take whatever lock it adopted
+//                                        // 3. ...and only now read anim->ptr
+//
+// Two entry points take no lock and both omissions are deliberate:
+// el_effect_render, which is the design, and el_effect_destroy, which cannot
+// lock a mutex it is about to destroy. See LOCK_EFFECT.
+// ==========================================================================
+/// Hold the handle's data lock for the rest of the enclosing scope.
+///
+/// Two entry points deliberately omit it:
+///   - @c el_effect_render, which is the whole design rather than an oversight.
+///     The render path touches only the renderers and one atomic snapshot cell,
+///     so no host thread can ever stall a frame.
+///   - @c el_effect_destroy, for the unrelated reason that it cannot lock a
+///     mutex it is about to destroy. The host must quiesce its data thread
+///     first, and no lock here could help with that.
+#define LOCK_EFFECT(effect) \
+    std::lock_guard<std::recursive_mutex> elDataLock(*(effect)->dataMutex)
+
+/// Take the effect lock this animation has ADOPTED, for the rest of the scope.
+///
+/// A no-op while the animation is detached, which is the documented ownership
+/// model: a detached animation belongs to whoever built it. See
+/// @c el_animation_handle_impl for why it is the effect's lock and not one of
+/// the animation's own, and @c AdoptedLock for why this needs a guard of its
+/// own rather than @c std::lock_guard.
+#define LOCK_ANIMATION(anim) \
+    AdoptedLock elAnimLock((anim)->dataMutex)
+
+// ==========================================================================
+// Setter helper
+// ==========================================================================
 /// Short-circuit setter that only logs + assigns when the incoming value
 /// actually differs from what @c field already holds, then returns @c EL_SUCCESS.
 #define SET_AND_LOG(field, newVal, ...) \

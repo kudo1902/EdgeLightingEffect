@@ -2489,6 +2489,22 @@ extern "C"
         if (anim->ptr)
         {
             effect->impl->Attach(anim->ptr);
+            // Adoption, overwriting whatever was here. An animation holds ONE
+            // lock, so attaching a handle that is still live in ANOTHER
+            // effect's manager leaves it excluding the wrong el_effect_update
+            // and silently racing the first - documented as unsupported on
+            // el_effect_attach_animation.
+            //
+            // Refusing that case outright was tried and removed: a stale
+            // adoption is indistinguishable from a live one from here.
+            // el_effect_detach_all_animations cannot clear adoptions (it never
+            // sees handles), so the check fired on the perfectly ordinary
+            // detach_all-then-attach-elsewhere sequence. A check that rejects
+            // legitimate calls is worse than no check. Telling the two apart
+            // needs a back-pointer to the owning effect handle, which would
+            // dangle the moment a host destroyed an effect without detaching -
+            // trading a documented constraint for a use-after-free.
+            anim->dataMutex = effect->dataMutex;
         }
         return EL_SUCCESS;
     }
@@ -2503,6 +2519,10 @@ extern "C"
         if (anim->ptr)
         {
             effect->impl->Detach(anim->ptr);
+            // Cleared even if it was never attached here: this handle is
+            // demonstrably not attached to THIS effect afterwards, and leaving
+            // a stale adoption would only make a later attach elsewhere refuse.
+            anim->dataMutex.reset();
         }
         return EL_SUCCESS;
     }

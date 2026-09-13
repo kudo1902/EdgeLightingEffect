@@ -996,13 +996,46 @@ extern "C"
      *  Attach animation handles to the effect. Attach does NOT transfer
      *  ownership - the caller still owns the handle and must destroy it.
      *  Order of attach is the order of Apply per frame (later writes win).
+     *
+     *  @par Threading
+     *  Attaching also hands the animation this effect's lock, which is what
+     *  makes every @c el_animation_* call on it safe against a concurrent
+     *  @ref el_effect_update (see @ref el_animation_play). Detaching hands it
+     *  back. Both run under that lock, so they are safe against the data
+     *  thread - but writing the adoption is not itself atomic, so do not attach
+     *  or detach a handle while ANOTHER thread is calling something else on
+     *  that same handle. Attach from the thread that owns the handle.
      *  @{ */
 
-    /** @brief Attach an animation. Duplicates and null handles are ignored. */
+    /** @brief Attach an animation. Duplicates and null handles are ignored.
+     *  @details Also adopts this effect's lock into @p anim, so subsequent
+     *           @c el_animation_* calls on it exclude @ref el_effect_update.
+     *
+     *  @warning **One animation handle serves one effect.** It can hold one
+     *           lock, so attaching a handle that is still attached to a
+     *           different effect leaves it excluding the wrong update and
+     *           silently racing the first. Detach before re-attaching
+     *           elsewhere. This is not enforced: a stale adoption left by
+     *           @ref el_effect_detach_all_animations is indistinguishable from
+     *           a live one, so a check here would reject legitimate calls.
+     *           Re-attaching to the SAME effect is always fine. */
     EL_API el_result_e el_effect_attach_animation(el_effect_handle_t effect, el_animation_handle_t anim);
-    /** @brief Detach an animation by identity. */
+    /** @brief Detach an animation by identity.
+     *  @details Also releases the adopted lock, so the handle is cleanly free
+     *           to be attached elsewhere. This is the detach to use when the
+     *           handle is going to another effect. */
     EL_API el_result_e el_effect_detach_animation(el_effect_handle_t effect, el_animation_handle_t anim);
-    /** @brief Detach every animation currently attached to the effect. */
+    /** @brief Detach every animation currently attached to the effect.
+     *  @details Detaches at the manager level and never sees the
+     *           @c el_animation_handle_t values, so it CANNOT release their
+     *           adopted locks - those handles go on locking this effect's mutex
+     *           until they are attached elsewhere or destroyed. Harmless in
+     *           itself: the lock outlives the effect by design and nothing else
+     *           contends it. But a handle detached this way is no longer
+     *           distinguishable from an attached one, which is why
+     *           @ref el_effect_attach_animation cannot police re-attachment.
+     *           Prefer @ref el_effect_detach_animation for a handle you intend
+     *           to move. */
     EL_API el_result_e el_effect_detach_all_animations(el_effect_handle_t effect);
     /** @brief Number of animations currently attached. */
     EL_API el_result_e el_effect_get_animation_count(el_effect_handle_t effect, int32_t *outCount);
