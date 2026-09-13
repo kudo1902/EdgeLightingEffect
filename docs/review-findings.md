@@ -2229,6 +2229,58 @@ after 58 hours is not a close trade.
 `Clock::mTime` has the identical defect and feeds the shaders' `uTime`. It
 predates this branch and is NOT fixed here - see the open list.
 
+### I33b. Clock time reached the shaders as a float, and stopped resolving - FIXED
+
+I33 fixed the cross-fade accumulator and recorded this one beside it:
+`Clock::mTime` had the identical stall, and unlike the cross-fade its value
+reaches GLSL as a 32-bit float either way, so widening the accumulator alone
+turns a freeze into a stutter rather than fixing it.
+
+Both halves are now done.
+
+**The accumulator.** `Clock::mTime` is a `double`, and `GetTime`,
+`ConfigSnapshot::clockTime` and the two `BaseRenderer` entry points carry it at
+that width. The interface change is the point rather than a side effect: the
+reduction below has to happen at full precision, so the renderer that knows what
+its own shader does with the value is the one that has to do it.
+
+**The uniform.** `TimeUtils::WrapHueTime` removes whole TURNS before the value
+becomes a float. Every shader that reads `uTime` uses it in exactly one term -
+`position - uTime * uHueRotationRate`, sampling a `GL_REPEAT` ring - so removing
+`k/rate` seconds lands on the same texel. That is exact, not approximate, and it
+needs no shader change. The lens flare gets the same treatment for `uRotation`,
+where it is exact for a different reason: the angle is used only as
+`mod(a, TWO_PI)` and inside `abs(sin(a*N/2))` / `abs(cos(a*N/2))`, and
+`|sin(x + pi*N)| == |sin(x)|` for integer N.
+
+Exactness was checked rather than argued. A rotating ring run for five whole
+turns, captured with the reduction and against a control build using raw time:
+
+```
+  pixels differing: 0 of 196608   max delta: 0/255
+```
+
+And the reduction is what keeps it turning. Frames that did not move at all, out
+of 60, at a given uptime:
+
+```
+                    0 h     27.8 h    72.8 h    277.8 h   2778 h   27778 h
+  raw time           0         0        28         44        -        -
+  reduced            0         0         0          0         0        0
+```
+
+**The residual, which is NOT fixed: droplets.** `droplets.frag` is the one
+shader that does not use time purely as a phase. `uv.y += t * 0.75` feeds
+`floor(uv * grid)` into a per-cell hash, so removing any amount of time moves
+every drop into a different cell and reshuffles the field visibly. There is no
+period to wrap at. Its float uniform therefore stops resolving a frame of drop
+motion at roughly 39 hours and the rain slows to a stop.
+
+Curing that means making the droplet field periodic in `uv.y`, which changes
+what the effect looks like - a design decision, not a repair, so it is recorded
+at the `SetUniform` call where someone would otherwise try the same wrap and be
+puzzled when the rain jumps.
+
 ### I34. The I29 fix worked only when children were added first - FIXED
 
 I29 made `AnimationGroup::SetEndAction` fan out to children, because the group's
@@ -2265,8 +2317,9 @@ first pass remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, and I13 from the fourth. The seventh pass's I28 to
 I32 were written up before being fixed and have all since landed. The eighth
-pass's I33 and I34 likewise landed; the one thing it turned up and did not fix
-is on this list as I33b:
+pass's I33, I33b and I34 likewise landed, I33b with one residual recorded in
+its own entry rather than here, because it is a change to what the effect looks
+like rather than a repair:
 
 | item | state | why |
 | ---- | ----- | --- |
@@ -2279,7 +2332,6 @@ is on this list as I33b:
 | V9 | open | the honest fix is a design decision (interpolate the arc colour between adjacent samples in the consumer), not a patch; the three options are ranked in the section |
 | I12 | partly fixed | the live shader comment is corrected; `architecture-design.md` and `multiple-arcs-design.md` still name the removed LUT functions, and both are design prose rather than comments beside live code |
 | I13 | open | undefined `pow` reachable only through the C ABI; both cures change what the boundary accepts or what the term computes below `ghostSize` 0.6, so it is a behaviour decision rather than a repair |
-| I33b | open | `Clock::mTime` is a float accumulator with the identical stall I33 fixed, and it feeds the shaders' `uTime`. Widening it is easy; making it actually correct is not, because the value reaches GLSL as a 32-bit float either way - the real cure is wrapping time before the uniform, which is a change to what every time-dependent shader term sees |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

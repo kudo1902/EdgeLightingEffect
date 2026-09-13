@@ -130,7 +130,7 @@ Four renderers, all under `lib/include/renderer/`, all registered by the demo in
 
 There are no longer any forked renderer pairs. `NeonOptimizedRenderer` / `neon-optimized.frag` were folded into `NeonRenderer` / `neon.frag` as a resolution scale (see [`docs/neon-unification-plan.md`](docs/neon-unification-plan.md)), and `LensFlareOptimizedRenderer` was folded into `LensFlareRenderer` the same way. Both merges are byte-identical at every scale tested. A change to neon or flare appearance now lands in exactly one place.
 
-To add a renderer, subclass `BaseRenderer` (`Initialize` / `Update` / `Render` / `OnConfigChanged`), add a sub-config struct to `Config` with `operator==`, register it in `demo/src/main.cpp`, and add an ImGui section in `DebugUI`.
+To add a renderer, subclass `BaseRenderer` (`Initialize` / `Update` / `Render` / `OnConfigChanged`). **`time` arrives as a `double` and must be reduced before it reaches a float uniform** - a raw clock time large enough stops resolving a frame of motion (the neon ring stuttered on 44 frames in 60 at 278 hours of uptime). `TimeUtils::WrapHueTime` does it exactly for anything that uses time as a PHASE; a shader that uses it as an unbounded scroll, as `droplets.frag` does, has no period to wrap at and is documented at its call site. See `docs/review-findings.md` I33b, add a sub-config struct to `Config` with `operator==`, register it in `demo/src/main.cpp`, and add an ImGui section in `DebugUI`.
 
 ### Animation: Clock + Modulators + Animations
 

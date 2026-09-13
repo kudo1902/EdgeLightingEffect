@@ -121,7 +121,7 @@ four virtuals:
 |---|---|---|
 | `Initialize()` | once | Compile shaders, allocate GL objects. Returning false makes the orchestrator drop the renderer. |
 | `OnConfigChanged(cfg)` | on change | Re-bake whatever the changed fields feed. Dirty-gated internally. |
-| `Update(dt, t, cfg)` | every frame | Time-based state that is not drawing (e.g. the neon's colour cross-fade). |
+| `Update(dt, t, cfg)` | every frame | Time-based state that is not drawing (e.g. the neon's colour cross-fade). `t` is a `double`; reduce it before it reaches a float uniform (`TimeUtils::WrapHueTime`). |
 | `Render(w, h, t, cfg)` | every frame | Bind and draw. |
 
 Four renderers ship, registered by the demo in this order:

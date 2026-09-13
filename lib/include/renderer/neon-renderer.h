@@ -79,8 +79,8 @@ namespace EdgeLighting
         virtual ~NeonRenderer() = default;
 
         virtual bool Initialize() override;
-        virtual void Update(float deltaTime, float time, const Config &config) override;
-        virtual void Render(int viewportWidth, int viewportHeight, float time, const Config &config) override;
+        virtual void Update(float deltaTime, double time, const Config &config) override;
+        virtual void Render(int viewportWidth, int viewportHeight, double time, const Config &config) override;
         virtual void OnConfigChanged(const Config &config) override;
 
     private:
@@ -203,7 +203,7 @@ namespace EdgeLighting
         ///     the clock runs; at any other rate every distinct time does.
         ///   - @c mEmissionDirty, which covers everything else. See its
         ///     declaration for what sets it.
-        bool isEmissionTableStale(float time, const Config &config) const;
+        bool isEmissionTableStale(double hueTime, const Config &config) const;
 
         /// Pass 0: bake the fragment-invariant half of the gather into
         /// @c mEmissionBuffer, at the clamped sample count so texel i here is
@@ -217,7 +217,7 @@ namespace EdgeLighting
         /// @pre @c mEmissionBuffer is allocated, which @ref Initialize
         ///      guarantees for the renderer's lifetime - hence no failure to
         ///      report and nothing to allocate here.
-        void renderEmissionPass(int viewportWidth, int viewportHeight, float time, const Config &config);
+        void renderEmissionPass(int viewportWidth, int viewportHeight, double hueTime, const Config &config);
 
         /// Pass 1: the neon gather on the tight glow quad. Reads the emission
         /// table produced by @ref renderEmissionPass, so it must run after it.
@@ -353,7 +353,7 @@ namespace EdgeLighting
         /// The @c time @ref renderEmissionPass last baked at. Only meaningful
         /// while @c hueRotationRate is non-zero; at 0 the table does not
         /// depend on time and this is not consulted.
-        float mEmissionTime = 0.0f;
+        double mEmissionTime = 0.0;
 
         /// Whether @c mSegmentBlock / @c mArcBlock still hold the current
         /// config. Cleared by @ref packLightBlocks once it has repacked.

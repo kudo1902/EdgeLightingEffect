@@ -46,22 +46,27 @@ namespace EdgeLighting
             {
                 return 0.0f;
             }
-            mTime += deltaTime;
+            mTime += static_cast<double>(deltaTime);
             return deltaTime;
         }
 
         /// @brief Jump to an explicit time value.
         /// @param time New clock time in seconds (useful for scrubbing/testing).
-        void SetTime(float time) { mTime = time; }
+        void SetTime(double time) { mTime = time; }
 
         /// @brief Current accumulated time in seconds.
-        float GetTime() const { return mTime; }
+        double GetTime() const { return mTime; }
 
         /// @brief Whether the clock is currently accumulating time.
         bool IsPlaying() const { return mIsPlaying; }
 
     private:
-        float mTime = 0.0f;
+        /// DOUBLE, like @c EdgeLightingEffect::mRawAccumulatedTime and for the
+        /// same reason: as a float this stopped advancing after about 58 hours
+        /// at 120 Hz, because the ULP had grown past the per-frame increment.
+        /// Renderers receive it at full precision and each reduces it for its
+        /// own shader - see @c TimeUtils::WrapHueTime and review-findings I33b.
+        double mTime = 0.0;
         bool mIsPlaying = true;
     };
 

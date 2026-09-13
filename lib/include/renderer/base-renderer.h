@@ -24,7 +24,7 @@ namespace EdgeLighting
         /// @param deltaTime  Seconds since the last frame.
         /// @param time       Accumulated wall-clock time in seconds (paused when the animation is paused).
         /// @param config     Current active configuration.
-        virtual void Update(float deltaTime, float time, const Config &config) = 0;
+        virtual void Update(float deltaTime, double time, const Config &config) = 0;
 
         /// Draws the renderer's visual layer.
         ///
@@ -53,7 +53,7 @@ namespace EdgeLighting
         /// @param viewportHeight Current framebuffer height.
         /// @param time       Accumulated wall-clock time in seconds (paused when the animation is paused).
         /// @param config     Current active configuration.
-        virtual void Render(int viewportWidth, int viewportHeight, float time, const Config &config) = 0;
+        virtual void Render(int viewportWidth, int viewportHeight, double time, const Config &config) = 0;
 
         /// Called when the configuration changes (e.g. on key press).
         /// @param config  The new configuration to adapt to.

@@ -2,6 +2,7 @@
 #include "renderer/neon-tuning.h"
 #include "util/geometry-utils.h"
 #include "util/segment-utils.h"
+#include "util/time-utils.h"
 #include "shaders.h"
 #include "util/log-util.h"
 #include "util/gl-utils.h"
@@ -407,7 +408,7 @@ namespace EdgeLighting
         return true;
     }
 
-    void NeonRenderer::Update(float deltaTime, float, const Config &)
+    void NeonRenderer::Update(float deltaTime, double, const Config &)
     {
         // A fade frame re-uploads the ring the emission table is baked FROM,
         // and does it without any config change for OnConfigChanged to catch -
@@ -418,7 +419,7 @@ namespace EdgeLighting
         mEmissionDirty = mGradientLUT.Tick(deltaTime) || mEmissionDirty;
     }
 
-    void NeonRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
+    void NeonRenderer::Render(int viewportWidth, int viewportHeight, double time, const Config &config)
     {
         if (!config.neon.enable)
         {
@@ -554,14 +555,20 @@ namespace EdgeLighting
         // the time reads the same texels the last bake left. A still ring
         // therefore costs one FBO bind, eight uniform sets, three texture binds
         // and a draw on the frame it changes, and nothing on the frames after.
-        if (isEmissionTableStale(time, config))
+        //
+        // Reduced ONCE, before the check, so the staleness test, the bake and
+        // the gather's own uniform all key off the SAME value. Comparing raw
+        // times here would re-bake on frames whose reduced phase had not moved.
+        // See TimeUtils::WrapHueTime.
+        const double hueTime = TimeUtils::WrapHueTime(time, config.neon.hueRotationRate);
+        if (isEmissionTableStale(hueTime, config))
         {
             // A table write is not a composite: blending would mix this frame's
             // emission into last frame's. Pass 1 below re-asserts the blend
             // mode unconditionally, so leaving this alone on the skip path
             // changes nothing downstream.
             glDisable(GL_BLEND);
-            renderEmissionPass(viewportWidth, viewportHeight, time, config);
+            renderEmissionPass(viewportWidth, viewportHeight, hueTime, config);
         }
 
         // --- Pass 1: the neon gather ----------------------------------------
@@ -1275,7 +1282,7 @@ namespace EdgeLighting
         mArcBlock.SetData(&arcBlock, sizeof(arcBlock));
     }
 
-    bool NeonRenderer::isEmissionTableStale(float time, const Config &config) const
+    bool NeonRenderer::isEmissionTableStale(double hueTime, const Config &config) const
     {
         if (mEmissionDirty)
         {
@@ -1292,11 +1299,11 @@ namespace EdgeLighting
         // unchanged clock reproduces the identical float. A moving clock
         // essentially never lands on the same value twice, and if it did the
         // table it wants IS the one already in the buffer.
-        return config.neon.hueRotationRate != 0.0f && time != mEmissionTime;
+        return config.neon.hueRotationRate != 0.0f && hueTime != mEmissionTime;
     }
 
     void NeonRenderer::renderEmissionPass(int viewportWidth, int viewportHeight,
-                                          float time, const Config &config)
+                                          double hueTime, const Config &config)
     {
         // The render target handed to this pass - framebuffer AND viewport,
         // both of which the bind below replaces. NOT necessarily the window's
@@ -1327,7 +1334,12 @@ namespace EdgeLighting
 
         mEmissionShader.Use();
         mEmissionShader.SetUniform("uMVP", glm::mat4(1.0f));
-        mEmissionShader.SetUniform("uTime", time);
+        // REDUCED, not raw. uTime reaches this shader in exactly one term,
+        // `si - uTime * uHueRotationRate`, sampling a GL_REPEAT ring - so
+        // removing whole turns is exact, and it is what keeps the float uniform
+        // resolving a frame of rotation after days of uptime. See
+        // TimeUtils::WrapHueTime and review-findings I33b.
+        mEmissionShader.SetUniform("uTime", static_cast<float>(hueTime));
         mEmissionShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
         // The SAME count the gather is given below - texel i here has to be
         // sample i there, or every fragment reads emission belonging to a
@@ -1350,7 +1362,7 @@ namespace EdgeLighting
         // What the buffer now holds. Recorded by the only writer of it, so the
         // staleness test upstream can never describe a bake that did not run.
         mEmissionDirty = false;
-        mEmissionTime = time;
+        mEmissionTime = hueTime;
     }
 
     bool NeonRenderer::renderNeonPass(const glm::mat4 &mvp, int bufWidth, int bufHeight,
@@ -1421,7 +1433,7 @@ namespace EdgeLighting
         mNeonShader.SetUniform("uLineWidth", config.neon.lineWidth * scale);
         mNeonShader.SetUniform("uFilamentFalloff", config.neon.filamentFalloff);
         mNeonShader.SetUniform("uIntensity", config.neon.intensity);
-        mNeonShader.SetUniform("uTime", time);
+        mNeonShader.SetUniform("uTime", static_cast<float>(TimeUtils::WrapHueTime(time, config.neon.hueRotationRate)));
         mNeonShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
         mNeonShader.SetUniform("uGlowRadius", config.neon.glowRadius * scale);
         mNeonShader.SetUniform("uBloomStrength", config.neon.bloomStrength);

@@ -2,6 +2,7 @@
 #include "util/geometry-utils.h"
 #include "shaders.h"
 #include "util/log-util.h"
+#include "util/time-utils.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
 
@@ -78,7 +79,7 @@ namespace EdgeLighting
         return true;
     }
 
-    void DebugRenderer::Update(float deltaTime, float, const Config &config)
+    void DebugRenderer::Update(float deltaTime, double, const Config &config)
     {
         // Advances this renderer's own copy of the ring cross-fade. It is
         // handed the same deltaTime as the neon renderer's copy and was baked
@@ -105,7 +106,7 @@ namespace EdgeLighting
         }
     }
 
-    void DebugRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
+    void DebugRenderer::Render(int viewportWidth, int viewportHeight, double time, const Config &config)
     {
         if (!config.debug.enable)
         {
@@ -316,7 +317,7 @@ namespace EdgeLighting
         mWireframeVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
     }
 
-    void DebugRenderer::renderGradientLUTStrip(const glm::mat4 &mvp, float time, const Config &config)
+    void DebugRenderer::renderGradientLUTStrip(const glm::mat4 &mvp, double time, const Config &config)
     {
         // Overwrites the neon output within the strip rect so the baked ring is
         // readable regardless of the glow's tone-mapped brightness, which is
@@ -324,7 +325,11 @@ namespace EdgeLighting
         mLUTDebugShader.Use();
         mLUTDebugShader.SetUniform("uMVP", mvp);
         mLUTDebugShader.SetUniform("uStripHalfSize", mLUTStripHalfSize);
-        mLUTDebugShader.SetUniform("uTime", time);
+        // Reduced like the neon layer's, and it has to match: the strip is a
+        // preview of the glow's ring, so the two must sample it at the same
+        // phase. See TimeUtils::WrapHueTime.
+        mLUTDebugShader.SetUniform("uTime",
+                                   static_cast<float>(TimeUtils::WrapHueTime(time, config.neon.hueRotationRate)));
         mLUTDebugShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
         mGradientLUT.Bind(0);
         mLUTDebugShader.SetUniform("uGradientLUT", 0);

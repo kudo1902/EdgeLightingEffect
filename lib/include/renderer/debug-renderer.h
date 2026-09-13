@@ -52,8 +52,8 @@ namespace EdgeLighting
         virtual ~DebugRenderer() = default;
 
         virtual bool Initialize() override;
-        virtual void Update(float deltaTime, float time, const Config &config) override;
-        virtual void Render(int viewportWidth, int viewportHeight, float time, const Config &config) override;
+        virtual void Update(float deltaTime, double time, const Config &config) override;
+        virtual void Render(int viewportWidth, int viewportHeight, double time, const Config &config) override;
         virtual void OnConfigChanged(const Config &config) override;
 
     private:
@@ -75,7 +75,7 @@ namespace EdgeLighting
         /// The baked gradient LUT as a strip at the geometry centre.
         /// Caller guards on @c showGradientLUT.
         /// @pre Blending disabled - the strip overwrites the glow beneath it.
-        void renderGradientLUTStrip(const glm::mat4 &mvp, float time, const Config &config);
+        void renderGradientLUTStrip(const glm::mat4 &mvp, double time, const Config &config);
 
         /// One filled disc per colour stop at its perimeter position.
         /// Caller guards on @c showColorStops + a non-empty list.

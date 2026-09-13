@@ -1,6 +1,7 @@
 #include "renderer/lens-flare-renderer.h"
 #include "renderer/lens-flare-tuning.h"
 #include "shaders.h"
+#include "util/time-utils.h"
 #include "util/geometry-utils.h"
 #include "util/log-util.h"
 #include "util/gl-utils.h"
@@ -175,11 +176,11 @@ namespace EdgeLighting
         return true;
     }
 
-    void LensFlareRenderer::Update(float, float, const Config &)
+    void LensFlareRenderer::Update(float, double, const Config &)
     {
     }
 
-    void LensFlareRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
+    void LensFlareRenderer::Render(int viewportWidth, int viewportHeight, double time, const Config &config)
     {
         if (!config.lensFlare.enable)
         {
@@ -303,7 +304,15 @@ namespace EdgeLighting
         mFlareShader.SetUniform("uSize", config.lensFlare.size);
 
         constexpr float TWO_PI = 6.28318530717958647692f;
-        mFlareShader.SetUniform("uRotation", time * config.lensFlare.rotationRate * TWO_PI);
+        // Reduced by whole turns first. uRotation reaches the shader only as
+        // mod(a, TWO_PI) and inside abs(sin(a*N/2)) / abs(cos(a*N/2)), and
+        // |sin(x + pi*N)| == |sin(x)| for integer N, so removing 2pi is exact -
+        // while a raw time large enough stops resolving a frame of spin at all.
+        // See TimeUtils::WrapHueTime and review-findings I33b.
+        mFlareShader.SetUniform(
+            "uRotation",
+            static_cast<float>(TimeUtils::WrapHueTime(time, config.lensFlare.rotationRate) *
+                               config.lensFlare.rotationRate * TWO_PI));
         // Quantise the [0, 1] density into an integer slot count for the
         // shader; the shader needs an integer so `abs(sin(a * N/2))` closes
         // cleanly at 2 PI. MAX_RAY_SLOTS caps the top of the range so

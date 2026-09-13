@@ -42,8 +42,9 @@ namespace EdgeLighting
         /// Active config: base plus every attached animation's overlay.
         Config config;
         /// Seconds, straight from @c Clock - pause, stop, reset and scrub all
-        /// move it.
-        float clockTime = 0.0f;
+        /// move it. Double, so the value a renderer reduces for its own shader
+        /// is reduced from a number that is still exact (review-findings I33b).
+        double clockTime = 0.0;
         /// Seconds, summed from the deltas handed to @c Update - no clock
         /// control moves it. Absolute, not a delta.
         ///
