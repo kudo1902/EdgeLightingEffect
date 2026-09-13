@@ -31,6 +31,7 @@ extern "C"
     el_result_e el_effect_set_optimized_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_renderer_enabled");
+        LOCK_EFFECT(effect);
         if (enabled != 0)
         {
             // Enabling the "optimized renderer" now means enabling the neon
@@ -60,6 +61,7 @@ extern "C"
     el_result_e el_effect_get_optimized_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_renderer_enabled");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outEnabled, "el_effect_get_optimized_renderer_enabled");
         // "The optimized path is on" == neon is drawing, below full res.
         *outEnabled = (effect->config.neon.enable && effect->config.neon.resolutionScale < 1.0f) ? 1 : 0;
@@ -102,6 +104,7 @@ extern "C"
     el_result_e el_effect_set_optimized_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_optimized_lens_flare_renderer_enabled");
+        LOCK_EFFECT(effect);
         if (enabled != 0)
         {
             effect->config.lensFlare.enable = true;
@@ -125,6 +128,7 @@ extern "C"
     el_result_e el_effect_get_optimized_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_optimized_lens_flare_renderer_enabled");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outEnabled, "el_effect_get_optimized_lens_flare_renderer_enabled");
         *outEnabled = (effect->config.lensFlare.enable &&
                        effect->config.lensFlare.resolutionScale < 1.0f) ? 1 : 0;

@@ -23,6 +23,7 @@ extern "C"
                                        float width, float height, float posX, float posY, float cornerRadius)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_geometry");
+        LOCK_EFFECT(effect);
         auto &g = effect->config.geometry;
         glm::vec2 pos(posX, posY);
         if (g.width == width && g.height == height && g.position == pos && g.cornerRadius == cornerRadius)
@@ -42,6 +43,7 @@ extern "C"
                                        float *outCornerRadius)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_geometry");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outWidth, "el_effect_get_geometry");
         VALIDATE_OUT_PTR(outHeight, "el_effect_get_geometry");
         VALIDATE_OUT_PTR(outPosX, "el_effect_get_geometry");
@@ -59,6 +61,7 @@ extern "C"
     el_result_e el_effect_set_winding(el_effect_handle_t effect, el_winding_e winding)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_winding");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.geometry.winding, static_cast<EdgeLighting::Winding>(winding),
                     "effect=%p, winding=%d", (void *)effect, (int)winding);
     }
@@ -66,6 +69,7 @@ extern "C"
     el_result_e el_effect_get_winding(el_effect_handle_t effect, el_winding_e *outWinding)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_winding");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outWinding, "el_effect_get_winding");
         *outWinding = static_cast<el_winding_e>(effect->config.geometry.winding);
         LOG_D("effect=%p, winding=%d", (void *)effect, (int)*outWinding);
@@ -77,6 +81,7 @@ extern "C"
     el_result_e el_effect_set_neon_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_neon_renderer_enabled");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.neon.enable, enabled != 0,
                     "effect=%p, enabled=%d", (void *)effect, enabled);
     }
@@ -84,6 +89,7 @@ extern "C"
     el_result_e el_effect_get_neon_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_neon_renderer_enabled");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outEnabled, "el_effect_get_neon_renderer_enabled");
         *outEnabled = effect->config.neon.enable ? 1 : 0;
         LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled);
@@ -93,6 +99,7 @@ extern "C"
     el_result_e el_effect_set_opaque_mode(el_effect_handle_t effect, el_opaque_mode_e mode)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque_mode");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.neon.opaqueMode,
                     static_cast<EdgeLighting::OpaqueMode>(mode),
                     "effect=%p, mode=%d", (void *)effect, static_cast<int>(mode));
@@ -101,6 +108,7 @@ extern "C"
     el_result_e el_effect_get_opaque_mode(el_effect_handle_t effect, el_opaque_mode_e *outMode)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_opaque_mode");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outMode, "el_effect_get_opaque_mode");
         *outMode = static_cast<el_opaque_mode_e>(effect->config.neon.opaqueMode);
         LOG_D("effect=%p, mode=%d", (void *)effect, static_cast<int>(*outMode));
@@ -115,6 +123,7 @@ extern "C"
                                            float r, float g, float b, float a)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque_color");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.neon.opaqueColor, glm::vec4(r, g, b, a),
                     "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a);
     }
@@ -123,6 +132,7 @@ extern "C"
                                            float *outR, float *outG, float *outB, float *outA)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_opaque_color");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outR, "el_effect_get_opaque_color");
         VALIDATE_OUT_PTR(outG, "el_effect_get_opaque_color");
         VALIDATE_OUT_PTR(outB, "el_effect_get_opaque_color");
@@ -138,6 +148,7 @@ extern "C"
     el_result_e el_effect_set_opaque_softness(el_effect_handle_t effect, float softness)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque_softness");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.neon.opaqueSoftness, softness,
                     "effect=%p, softness=%f", (void *)effect, softness);
     }
@@ -145,6 +156,7 @@ extern "C"
     el_result_e el_effect_get_opaque_softness(el_effect_handle_t effect, float *outSoftness)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_opaque_softness");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outSoftness, "el_effect_get_opaque_softness");
         *outSoftness = effect->config.neon.opaqueSoftness;
         LOG_D("effect=%p, softness=%f", (void *)effect, *outSoftness);
@@ -155,6 +167,7 @@ extern "C"
                                             el_bool_t enable, float size, float softness)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_inside_cutoff");
+        LOCK_EFFECT(effect);
         auto &c = effect->config.neon.insideCutoff;
         bool en = (enable != 0);
         if (c.enable == en && c.size == size && c.softness == softness)
@@ -172,6 +185,7 @@ extern "C"
                                             el_bool_t *outEnable, float *outSize, float *outSoftness)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_inside_cutoff");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outEnable, "el_effect_get_inside_cutoff");
         VALIDATE_OUT_PTR(outSize, "el_effect_get_inside_cutoff");
         VALIDATE_OUT_PTR(outSoftness, "el_effect_get_inside_cutoff");
@@ -187,6 +201,7 @@ extern "C"
                                              el_bool_t enable, float size, float softness)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_outside_cutoff");
+        LOCK_EFFECT(effect);
         auto &c = effect->config.neon.outsideCutoff;
         bool en = (enable != 0);
         if (c.enable == en && c.size == size && c.softness == softness)
@@ -204,6 +219,7 @@ extern "C"
                                              el_bool_t *outEnable, float *outSize, float *outSoftness)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_outside_cutoff");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outEnable, "el_effect_get_outside_cutoff");
         VALIDATE_OUT_PTR(outSize, "el_effect_get_outside_cutoff");
         VALIDATE_OUT_PTR(outSoftness, "el_effect_get_outside_cutoff");
@@ -218,6 +234,7 @@ extern "C"
     el_result_e el_effect_set_line_width(el_effect_handle_t effect, float width)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_line_width");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.neon.lineWidth, width,
                     "effect=%p, width=%f", (void *)effect, width);
     }
@@ -225,6 +242,7 @@ extern "C"
     el_result_e el_effect_get_line_width(el_effect_handle_t effect, float *outWidth)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_line_width");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outWidth, "el_effect_get_line_width");
         *outWidth = effect->config.neon.lineWidth;
         LOG_D("effect=%p, width=%f", (void *)effect, *outWidth);
@@ -234,6 +252,7 @@ extern "C"
     el_result_e el_effect_set_filament_falloff(el_effect_handle_t effect, float falloff)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_filament_falloff");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.neon.filamentFalloff, falloff,
                     "effect=%p, falloff=%f", (void *)effect, falloff);
     }
@@ -241,6 +260,7 @@ extern "C"
     el_result_e el_effect_get_filament_falloff(el_effect_handle_t effect, float *outFalloff)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_filament_falloff");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outFalloff, "el_effect_get_filament_falloff");
         *outFalloff = effect->config.neon.filamentFalloff;
         LOG_D("effect=%p, falloff=%f", (void *)effect, *outFalloff);
@@ -250,6 +270,7 @@ extern "C"
     el_result_e el_effect_set_intensity(el_effect_handle_t effect, float intensity)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_intensity");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.neon.intensity, intensity,
                     "effect=%p, intensity=%f", (void *)effect, intensity);
     }
@@ -257,6 +278,7 @@ extern "C"
     el_result_e el_effect_get_intensity(el_effect_handle_t effect, float *outIntensity)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_intensity");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outIntensity, "el_effect_get_intensity");
         *outIntensity = effect->config.neon.intensity;
         LOG_D("effect=%p, intensity=%f", (void *)effect, *outIntensity);
@@ -266,6 +288,7 @@ extern "C"
     el_result_e el_effect_set_glow_radius(el_effect_handle_t effect, float radius)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_glow_radius");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.neon.glowRadius, radius,
                     "effect=%p, radius=%f", (void *)effect, radius);
     }
@@ -273,6 +296,7 @@ extern "C"
     el_result_e el_effect_get_glow_radius(el_effect_handle_t effect, float *outRadius)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_glow_radius");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outRadius, "el_effect_get_glow_radius");
         *outRadius = effect->config.neon.glowRadius;
         LOG_D("effect=%p, radius=%f", (void *)effect, *outRadius);
@@ -282,6 +306,7 @@ extern "C"
     el_result_e el_effect_set_bloom_strength(el_effect_handle_t effect, float strength)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_bloom_strength");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.neon.bloomStrength, strength,
                     "effect=%p, strength=%f", (void *)effect, strength);
     }
@@ -289,6 +314,7 @@ extern "C"
     el_result_e el_effect_get_bloom_strength(el_effect_handle_t effect, float *outStrength)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_bloom_strength");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outStrength, "el_effect_get_bloom_strength");
         *outStrength = effect->config.neon.bloomStrength;
         LOG_D("effect=%p, strength=%f", (void *)effect, *outStrength);
@@ -298,6 +324,7 @@ extern "C"
     el_result_e el_effect_set_glow_side(el_effect_handle_t effect, el_glow_side_e side)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_glow_side");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.neon.glowSide, static_cast<EdgeLighting::GlowSide>(side),
                     "effect=%p, side=%d", (void *)effect, (int)side);
     }
@@ -305,6 +332,7 @@ extern "C"
     el_result_e el_effect_get_glow_side(el_effect_handle_t effect, el_glow_side_e *outSide)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_glow_side");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outSide, "el_effect_get_glow_side");
         *outSide = static_cast<el_glow_side_e>(effect->config.neon.glowSide);
         LOG_D("effect=%p, side=%d", (void *)effect, (int)*outSide);
@@ -314,6 +342,7 @@ extern "C"
     el_result_e el_effect_set_glow_side_softness(el_effect_handle_t effect, float softness)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_glow_side_softness");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.neon.glowSideSoftness, softness,
                     "effect=%p, softness=%f", (void *)effect, softness);
     }
@@ -321,6 +350,7 @@ extern "C"
     el_result_e el_effect_get_glow_side_softness(el_effect_handle_t effect, float *outSoftness)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_glow_side_softness");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outSoftness, "el_effect_get_glow_side_softness");
         *outSoftness = effect->config.neon.glowSideSoftness;
         LOG_D("effect=%p, softness=%f", (void *)effect, *outSoftness);
@@ -330,6 +360,7 @@ extern "C"
     el_result_e el_effect_set_blend_space(el_effect_handle_t effect, el_blend_space_e space)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_blend_space");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.neon.blendSpace, static_cast<EdgeLighting::BlendSpace>(space),
                     "effect=%p, space=%d", (void *)effect, (int)space);
     }
@@ -337,6 +368,7 @@ extern "C"
     el_result_e el_effect_get_blend_space(el_effect_handle_t effect, el_blend_space_e *outSpace)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_blend_space");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outSpace, "el_effect_get_blend_space");
         *outSpace = static_cast<el_blend_space_e>(effect->config.neon.blendSpace);
         LOG_D("effect=%p, space=%d", (void *)effect, (int)*outSpace);
@@ -346,6 +378,7 @@ extern "C"
     el_result_e el_effect_set_hue_rotation_rate(el_effect_handle_t effect, float rate)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_hue_rotation_rate");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.neon.hueRotationRate, rate,
                     "effect=%p, rate=%f", (void *)effect, rate);
     }
@@ -353,6 +386,7 @@ extern "C"
     el_result_e el_effect_get_hue_rotation_rate(el_effect_handle_t effect, float *outRate)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_hue_rotation_rate");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outRate, "el_effect_get_hue_rotation_rate");
         *outRate = effect->config.neon.hueRotationRate;
         LOG_D("effect=%p, rate=%f", (void *)effect, *outRate);
@@ -362,6 +396,7 @@ extern "C"
     el_result_e el_effect_set_color_transition_duration(el_effect_handle_t effect, float seconds)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_color_transition_duration");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.neon.colorTransitionDuration, seconds,
                     "effect=%p, seconds=%f", (void *)effect, seconds);
     }
@@ -369,6 +404,7 @@ extern "C"
     el_result_e el_effect_get_color_transition_duration(el_effect_handle_t effect, float *outSeconds)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_color_transition_duration");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outSeconds, "el_effect_get_color_transition_duration");
         *outSeconds = effect->config.neon.colorTransitionDuration;
         LOG_D("effect=%p, seconds=%f", (void *)effect, *outSeconds);
@@ -380,6 +416,7 @@ extern "C"
     el_result_e el_effect_set_color_stop_count(el_effect_handle_t effect, int32_t count)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_color_stop_count");
+        LOCK_EFFECT(effect);
         if (count < 0)
         {
             LOG_E("el_effect_set_color_stop_count: negative count");
@@ -412,6 +449,7 @@ extern "C"
     el_result_e el_effect_get_color_stop_count(el_effect_handle_t effect, int32_t *outCount)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_color_stop_count");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outCount, "el_effect_get_color_stop_count");
         *outCount = static_cast<int32_t>(effect->config.neon.colorStops.size());
         LOG_D("effect=%p, count=%d", (void *)effect, *outCount);
@@ -422,6 +460,7 @@ extern "C"
                                          float position, float r, float g, float b, float a)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_color_stop");
+        LOCK_EFFECT(effect);
         if (index < 0)
         {
             LOG_E("el_effect_set_color_stop: negative index");
@@ -448,6 +487,7 @@ extern "C"
                                          float *outPosition, float *outR, float *outG, float *outB, float *outA)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_color_stop");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outPosition, "el_effect_get_color_stop");
         VALIDATE_OUT_PTR(outR, "el_effect_get_color_stop");
         VALIDATE_OUT_PTR(outG, "el_effect_get_color_stop");
@@ -471,6 +511,7 @@ extern "C"
     el_result_e el_effect_clear_color_stops(el_effect_handle_t effect)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_clear_color_stops");
+        LOCK_EFFECT(effect);
         if (effect->config.neon.colorStops.empty())
         {
             return EL_SUCCESS;
@@ -485,6 +526,7 @@ extern "C"
     el_result_e el_effect_set_segment_boost_count(el_effect_handle_t effect, int32_t count)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_segment_boost_count");
+        LOCK_EFFECT(effect);
         if (count < 0)
         {
             LOG_E("el_effect_set_segment_boost_count: negative count");
@@ -521,6 +563,7 @@ extern "C"
     el_result_e el_effect_get_segment_boost_count(el_effect_handle_t effect, int32_t *outCount)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_segment_boost_count");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outCount, "el_effect_get_segment_boost_count");
         *outCount = static_cast<int32_t>(effect->config.neon.segmentBoosts.size());
         LOG_D("effect=%p, count=%d", (void *)effect, *outCount);
@@ -531,6 +574,7 @@ extern "C"
                                             float position, float length, float boost)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_segment_boost");
+        LOCK_EFFECT(effect);
         if (index < 0)
         {
             LOG_E("el_effect_set_segment_boost: negative index");
@@ -562,6 +606,7 @@ extern "C"
                                             float *outPosition, float *outLength, float *outBoost)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_segment_boost");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outPosition, "el_effect_get_segment_boost");
         VALIDATE_OUT_PTR(outLength, "el_effect_get_segment_boost");
         VALIDATE_OUT_PTR(outBoost, "el_effect_get_segment_boost");
@@ -581,6 +626,7 @@ extern "C"
     el_result_e el_effect_clear_segment_boosts(el_effect_handle_t effect)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_clear_segment_boosts");
+        LOCK_EFFECT(effect);
         if (effect->config.neon.segmentBoosts.empty())
         {
             return EL_SUCCESS;
@@ -595,6 +641,7 @@ extern "C"
     el_result_e el_effect_acquire_preserved_segment(el_effect_handle_t effect, uint32_t *outId)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_acquire_preserved_segment");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outId, "el_effect_acquire_preserved_segment");
         uint32_t id = EdgeLighting::SegmentUtils::AcquireSegment(effect->config.neon);
         if (id == 0)
@@ -612,6 +659,7 @@ extern "C"
                                                 float position, float length, float boost)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_preserved_segment");
+        LOCK_EFFECT(effect);
         int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
         if (idx < 0)
         {
@@ -634,6 +682,7 @@ extern "C"
                                                 float *outPosition, float *outLength, float *outBoost)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_preserved_segment");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outPosition, "el_effect_get_preserved_segment");
         VALIDATE_OUT_PTR(outLength, "el_effect_get_preserved_segment");
         VALIDATE_OUT_PTR(outBoost, "el_effect_get_preserved_segment");
@@ -654,6 +703,7 @@ extern "C"
     el_result_e el_effect_release_preserved_segment(el_effect_handle_t effect, uint32_t id)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_release_preserved_segment");
+        LOCK_EFFECT(effect);
         if (!EdgeLighting::SegmentUtils::ReleaseSegment(effect->config.neon, id))
         {
             LOG_E("el_effect_release_preserved_segment: no preserved entry with id %u", id);
@@ -666,6 +716,7 @@ extern "C"
     el_result_e el_effect_get_preserved_segment_count(el_effect_handle_t effect, int32_t *outCount)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_preserved_segment_count");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outCount, "el_effect_get_preserved_segment_count");
         *outCount = static_cast<int32_t>(effect->config.neon.preservedSegmentBoosts.size());
         LOG_D("effect=%p, count=%d", (void *)effect, *outCount);
@@ -675,6 +726,7 @@ extern "C"
     el_result_e el_effect_clear_preserved_segments(el_effect_handle_t effect)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_clear_preserved_segments");
+        LOCK_EFFECT(effect);
         if (effect->config.neon.preservedSegmentBoosts.empty())
         {
             return EL_SUCCESS;
@@ -690,6 +742,7 @@ extern "C"
                                                             uint32_t id, el_blend_space_e blendSpace)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_preserved_segment_blend_space");
+        LOCK_EFFECT(effect);
         int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
         if (idx < 0)
         {
@@ -711,6 +764,7 @@ extern "C"
                                                             uint32_t id, el_blend_space_e *outBlendSpace)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_preserved_segment_blend_space");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outBlendSpace, "el_effect_get_preserved_segment_blend_space");
         int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
         if (idx < 0)
@@ -728,6 +782,7 @@ extern "C"
                                                                  uint32_t id, int32_t count)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_preserved_segment_color_stop_count");
+        LOCK_EFFECT(effect);
         if (count < 0)
         {
             LOG_E("el_effect_set_preserved_segment_color_stop_count: negative count");
@@ -768,6 +823,7 @@ extern "C"
                                                                  uint32_t id, int32_t *outCount)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_preserved_segment_color_stop_count");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outCount, "el_effect_get_preserved_segment_color_stop_count");
         int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
         if (idx < 0)
@@ -786,6 +842,7 @@ extern "C"
                                                            float position, float r, float g, float b, float a)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_preserved_segment_color_stop");
+        LOCK_EFFECT(effect);
         if (stopIndex < 0)
         {
             LOG_E("el_effect_set_preserved_segment_color_stop: negative stopIndex");
@@ -820,6 +877,7 @@ extern "C"
                                                            float *outPosition, float *outR, float *outG, float *outB, float *outA)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_preserved_segment_color_stop");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outPosition, "el_effect_get_preserved_segment_color_stop");
         VALIDATE_OUT_PTR(outR, "el_effect_get_preserved_segment_color_stop");
         VALIDATE_OUT_PTR(outG, "el_effect_get_preserved_segment_color_stop");
@@ -851,6 +909,7 @@ extern "C"
     el_result_e el_effect_clear_preserved_segment_color_stops(el_effect_handle_t effect, uint32_t id)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_clear_preserved_segment_color_stops");
+        LOCK_EFFECT(effect);
         int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
         if (idx < 0)
         {
@@ -873,6 +932,7 @@ extern "C"
                                                   int32_t segmentIndex, el_blend_space_e blendSpace)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_segment_blend_space");
+        LOCK_EFFECT(effect);
         if (segmentIndex < 0)
         {
             LOG_E("el_effect_set_segment_blend_space: negative segmentIndex");
@@ -899,6 +959,7 @@ extern "C"
                                                   int32_t segmentIndex, el_blend_space_e *outBlendSpace)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_segment_blend_space");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outBlendSpace, "el_effect_get_segment_blend_space");
         if (segmentIndex < 0 || static_cast<size_t>(segmentIndex) >= effect->config.neon.segmentBoosts.size())
         {
@@ -915,6 +976,7 @@ extern "C"
                                                        int32_t segmentIndex, int32_t count)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_segment_color_stop_count");
+        LOCK_EFFECT(effect);
         if (segmentIndex < 0)
         {
             LOG_E("el_effect_set_segment_color_stop_count: negative segmentIndex");
@@ -960,6 +1022,7 @@ extern "C"
                                                        int32_t segmentIndex, int32_t *outCount)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_segment_color_stop_count");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outCount, "el_effect_get_segment_color_stop_count");
         if (segmentIndex < 0 || static_cast<size_t>(segmentIndex) >= effect->config.neon.segmentBoosts.size())
         {
@@ -977,6 +1040,7 @@ extern "C"
                                                  float position, float r, float g, float b, float a)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_segment_color_stop");
+        LOCK_EFFECT(effect);
         if (segmentIndex < 0 || stopIndex < 0)
         {
             LOG_E("el_effect_set_segment_color_stop: negative index");
@@ -1013,6 +1077,7 @@ extern "C"
                                                  float *outPosition, float *outR, float *outG, float *outB, float *outA)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_segment_color_stop");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outPosition, "el_effect_get_segment_color_stop");
         VALIDATE_OUT_PTR(outR, "el_effect_get_segment_color_stop");
         VALIDATE_OUT_PTR(outG, "el_effect_get_segment_color_stop");
@@ -1043,6 +1108,7 @@ extern "C"
     el_result_e el_effect_clear_segment_color_stops(el_effect_handle_t effect, int32_t segmentIndex)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_clear_segment_color_stops");
+        LOCK_EFFECT(effect);
         if (segmentIndex < 0 || static_cast<size_t>(segmentIndex) >= effect->config.neon.segmentBoosts.size())
         {
             LOG_E("el_effect_clear_segment_color_stops: segmentIndex %d out of range (size=%zu)", segmentIndex, effect->config.neon.segmentBoosts.size());
@@ -1063,6 +1129,7 @@ extern "C"
     el_result_e el_effect_set_arc_count(el_effect_handle_t effect, int32_t count)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_arc_count");
+        LOCK_EFFECT(effect);
         if (count < 0)
         {
             LOG_E("el_effect_set_arc_count: negative count");
@@ -1096,6 +1163,7 @@ extern "C"
     el_result_e el_effect_get_arc_count(el_effect_handle_t effect, int32_t *outCount)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_arc_count");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outCount, "el_effect_get_arc_count");
         *outCount = static_cast<int32_t>(effect->config.neon.arcs.size());
         LOG_D("effect=%p, count=%d", (void *)effect, *outCount);
@@ -1106,6 +1174,7 @@ extern "C"
                                   float start, float length, float intensity, el_blend_space_e blendSpace)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_arc");
+        LOCK_EFFECT(effect);
         if (index < 0)
         {
             LOG_E("el_effect_set_arc: negative index");
@@ -1140,6 +1209,7 @@ extern "C"
                                   el_blend_space_e *outBlendSpace)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_arc");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outStart, "el_effect_get_arc");
         VALIDATE_OUT_PTR(outLength, "el_effect_get_arc");
         VALIDATE_OUT_PTR(outIntensity, "el_effect_get_arc");
@@ -1161,6 +1231,7 @@ extern "C"
     el_result_e el_effect_clear_arcs(el_effect_handle_t effect)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_clear_arcs");
+        LOCK_EFFECT(effect);
         if (effect->config.neon.arcs.empty())
         {
             return EL_SUCCESS;
@@ -1176,6 +1247,7 @@ extern "C"
                                                    int32_t arcIndex, int32_t count)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_arc_color_stop_count");
+        LOCK_EFFECT(effect);
         if (arcIndex < 0)
         {
             LOG_E("el_effect_set_arc_color_stop_count: negative arcIndex");
@@ -1221,6 +1293,7 @@ extern "C"
                                                    int32_t arcIndex, int32_t *outCount)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_arc_color_stop_count");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outCount, "el_effect_get_arc_color_stop_count");
         if (arcIndex < 0 || static_cast<size_t>(arcIndex) >= effect->config.neon.arcs.size())
         {
@@ -1238,6 +1311,7 @@ extern "C"
                                              float position, float r, float g, float b, float a)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_arc_color_stop");
+        LOCK_EFFECT(effect);
         if (arcIndex < 0 || stopIndex < 0)
         {
             LOG_E("el_effect_set_arc_color_stop: negative index");
@@ -1273,6 +1347,7 @@ extern "C"
                                              float *outPosition, float *outR, float *outG, float *outB, float *outA)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_arc_color_stop");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outPosition, "el_effect_get_arc_color_stop");
         VALIDATE_OUT_PTR(outR, "el_effect_get_arc_color_stop");
         VALIDATE_OUT_PTR(outG, "el_effect_get_arc_color_stop");
@@ -1302,6 +1377,7 @@ extern "C"
     el_result_e el_effect_clear_arc_color_stops(el_effect_handle_t effect, int32_t arcIndex)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_clear_arc_color_stops");
+        LOCK_EFFECT(effect);
         if (arcIndex < 0 || static_cast<size_t>(arcIndex) >= effect->config.neon.arcs.size())
         {
             LOG_E("el_effect_clear_arc_color_stops: arcIndex %d out of range (size=%zu)", arcIndex, effect->config.neon.arcs.size());
@@ -1321,6 +1397,7 @@ extern "C"
     el_result_e el_effect_set_neon_resolution_scale(el_effect_handle_t effect, float scale)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_neon_resolution_scale");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.neon.resolutionScale, scale,
                     "effect=%p, scale=%f", (void *)effect, scale);
     }
@@ -1328,6 +1405,7 @@ extern "C"
     el_result_e el_effect_get_neon_resolution_scale(el_effect_handle_t effect, float *outScale)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_neon_resolution_scale");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outScale, "el_effect_get_neon_resolution_scale");
         *outScale = effect->config.neon.resolutionScale;
         LOG_D("effect=%p, scale=%f", (void *)effect, *outScale);
@@ -1337,6 +1415,7 @@ extern "C"
     el_result_e el_effect_set_neon_num_samples(el_effect_handle_t effect, int32_t samples)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_neon_num_samples");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.neon.numSamples, samples,
                     "effect=%p, samples=%d", (void *)effect, samples);
     }
@@ -1344,6 +1423,7 @@ extern "C"
     el_result_e el_effect_get_neon_num_samples(el_effect_handle_t effect, int32_t *outSamples)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_neon_num_samples");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outSamples, "el_effect_get_neon_num_samples");
         *outSamples = effect->config.neon.numSamples;
         LOG_D("effect=%p, samples=%d", (void *)effect, *outSamples);
@@ -1353,6 +1433,7 @@ extern "C"
     el_result_e el_effect_set_neon_gradient_lut_size(el_effect_handle_t effect, int32_t size)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_neon_gradient_lut_size");
+        LOCK_EFFECT(effect);
         // The range the field's doc comment has always named, now enforced.
         // Rejected rather than clamped, matching the count setters: a host that
         // asks for 100 and is quietly given 128 has no way to find that out.
@@ -1376,6 +1457,7 @@ extern "C"
     el_result_e el_effect_get_neon_gradient_lut_size(el_effect_handle_t effect, int32_t *outSize)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_neon_gradient_lut_size");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outSize, "el_effect_get_neon_gradient_lut_size");
         *outSize = effect->config.neon.gradientLutSize;
         LOG_D("effect=%p, size=%d", (void *)effect, *outSize);
@@ -1387,11 +1469,13 @@ extern "C"
     el_result_e el_effect_set_droplets_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_renderer_enabled");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.droplets.enable, enabled != 0, "effect=%p, enabled=%d", (void *)effect, enabled);
     }
     el_result_e el_effect_get_droplets_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_renderer_enabled");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outEnabled, "el_effect_get_droplets_renderer_enabled");
         *outEnabled = effect->config.droplets.enable ? 1 : 0;
         LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled);
@@ -1400,11 +1484,13 @@ extern "C"
     el_result_e el_effect_set_droplets_amount(el_effect_handle_t effect, float amount)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_amount");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.droplets.amount, amount, "effect=%p, amount=%f", (void *)effect, amount);
     }
     el_result_e el_effect_get_droplets_amount(el_effect_handle_t effect, float *outAmount)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_amount");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outAmount, "el_effect_get_droplets_amount");
         *outAmount = effect->config.droplets.amount;
         LOG_D("effect=%p, amount=%f", (void *)effect, *outAmount);
@@ -1413,11 +1499,13 @@ extern "C"
     el_result_e el_effect_set_droplets_speed(el_effect_handle_t effect, float speed)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_speed");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.droplets.speed, speed, "effect=%p, speed=%f", (void *)effect, speed);
     }
     el_result_e el_effect_get_droplets_speed(el_effect_handle_t effect, float *outSpeed)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_speed");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outSpeed, "el_effect_get_droplets_speed");
         *outSpeed = effect->config.droplets.speed;
         LOG_D("effect=%p, speed=%f", (void *)effect, *outSpeed);
@@ -1426,11 +1514,13 @@ extern "C"
     el_result_e el_effect_set_droplets_lanes(el_effect_handle_t effect, int lanes)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_lanes");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.droplets.lanes, lanes, "effect=%p, lanes=%d", (void *)effect, lanes);
     }
     el_result_e el_effect_get_droplets_lanes(el_effect_handle_t effect, int *outLanes)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_lanes");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outLanes, "el_effect_get_droplets_lanes");
         *outLanes = effect->config.droplets.lanes;
         LOG_D("effect=%p, lanes=%d", (void *)effect, *outLanes);
@@ -1439,11 +1529,13 @@ extern "C"
     el_result_e el_effect_set_droplets_band_width(el_effect_handle_t effect, float bandWidth)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_band_width");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.droplets.bandWidth, bandWidth, "effect=%p, bandWidth=%f", (void *)effect, bandWidth);
     }
     el_result_e el_effect_get_droplets_band_width(el_effect_handle_t effect, float *outBandWidth)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_band_width");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outBandWidth, "el_effect_get_droplets_band_width");
         *outBandWidth = effect->config.droplets.bandWidth;
         LOG_D("effect=%p, bandWidth=%f", (void *)effect, *outBandWidth);
@@ -1452,11 +1544,13 @@ extern "C"
     el_result_e el_effect_set_droplets_band_offset(el_effect_handle_t effect, float bandOffset)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_band_offset");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.droplets.bandOffset, bandOffset, "effect=%p, bandOffset=%f", (void *)effect, bandOffset);
     }
     el_result_e el_effect_get_droplets_band_offset(el_effect_handle_t effect, float *outBandOffset)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_band_offset");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outBandOffset, "el_effect_get_droplets_band_offset");
         *outBandOffset = effect->config.droplets.bandOffset;
         LOG_D("effect=%p, bandOffset=%f", (void *)effect, *outBandOffset);
@@ -1466,11 +1560,13 @@ extern "C"
     el_result_e el_effect_set_droplets_tint(el_effect_handle_t effect, float r, float g, float b, float a)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_tint");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.droplets.tint, glm::vec4(r, g, b, a), "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a);
     }
     el_result_e el_effect_get_droplets_tint(el_effect_handle_t effect, float *outR, float *outG, float *outB, float *outA)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_tint");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outR, "el_effect_get_droplets_tint");
         VALIDATE_OUT_PTR(outG, "el_effect_get_droplets_tint");
         VALIDATE_OUT_PTR(outB, "el_effect_get_droplets_tint");
@@ -1488,11 +1584,13 @@ extern "C"
     el_result_e el_effect_set_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_renderer_enabled");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.lensFlare.enable, enabled != 0, "effect=%p, enabled=%d", (void *)effect, enabled);
     }
     el_result_e el_effect_get_lens_flare_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_renderer_enabled");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outEnabled, "el_effect_get_lens_flare_renderer_enabled");
         *outEnabled = effect->config.lensFlare.enable ? 1 : 0;
         LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled);
@@ -1501,11 +1599,13 @@ extern "C"
     el_result_e el_effect_set_lens_flare_perimeter_position(el_effect_handle_t effect, float position)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_perimeter_position");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.lensFlare.perimeterPosition, position, "effect=%p, position=%f", (void *)effect, position);
     }
     el_result_e el_effect_get_lens_flare_perimeter_position(el_effect_handle_t effect, float *outPosition)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_perimeter_position");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outPosition, "el_effect_get_lens_flare_perimeter_position");
         *outPosition = effect->config.lensFlare.perimeterPosition;
         LOG_D("effect=%p, position=%f", (void *)effect, *outPosition);
@@ -1514,11 +1614,13 @@ extern "C"
     el_result_e el_effect_set_lens_flare_perimeter_offset(el_effect_handle_t effect, float offset)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_perimeter_offset");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.lensFlare.perimeterOffset, offset, "effect=%p, offset=%f", (void *)effect, offset);
     }
     el_result_e el_effect_get_lens_flare_perimeter_offset(el_effect_handle_t effect, float *outOffset)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_perimeter_offset");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outOffset, "el_effect_get_lens_flare_perimeter_offset");
         *outOffset = effect->config.lensFlare.perimeterOffset;
         LOG_D("effect=%p, offset=%f", (void *)effect, *outOffset);
@@ -1527,11 +1629,13 @@ extern "C"
     el_result_e el_effect_set_lens_flare_size(el_effect_handle_t effect, float size)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_size");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.lensFlare.size, size, "effect=%p, size=%f", (void *)effect, size);
     }
     el_result_e el_effect_get_lens_flare_size(el_effect_handle_t effect, float *outSize)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_size");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outSize, "el_effect_get_lens_flare_size");
         *outSize = effect->config.lensFlare.size;
         LOG_D("effect=%p, size=%f", (void *)effect, *outSize);
@@ -1540,11 +1644,13 @@ extern "C"
     el_result_e el_effect_set_lens_flare_color(el_effect_handle_t effect, float r, float g, float b, float a)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_color");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.lensFlare.color, glm::vec4(r, g, b, a), "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a);
     }
     el_result_e el_effect_get_lens_flare_color(el_effect_handle_t effect, float *outR, float *outG, float *outB, float *outA)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_color");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outR, "el_effect_get_lens_flare_color");
         VALIDATE_OUT_PTR(outG, "el_effect_get_lens_flare_color");
         VALIDATE_OUT_PTR(outB, "el_effect_get_lens_flare_color");
@@ -1559,11 +1665,13 @@ extern "C"
     el_result_e el_effect_set_lens_flare_intensity(el_effect_handle_t effect, float intensity)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_intensity");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.lensFlare.intensity, intensity, "effect=%p, intensity=%f", (void *)effect, intensity);
     }
     el_result_e el_effect_get_lens_flare_intensity(el_effect_handle_t effect, float *outIntensity)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_intensity");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outIntensity, "el_effect_get_lens_flare_intensity");
         *outIntensity = effect->config.lensFlare.intensity;
         LOG_D("effect=%p, intensity=%f", (void *)effect, *outIntensity);
@@ -1572,11 +1680,13 @@ extern "C"
     el_result_e el_effect_set_lens_flare_spread(el_effect_handle_t effect, float spread)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_spread");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.lensFlare.spread, spread, "effect=%p, spread=%f", (void *)effect, spread);
     }
     el_result_e el_effect_get_lens_flare_spread(el_effect_handle_t effect, float *outSpread)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_spread");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outSpread, "el_effect_get_lens_flare_spread");
         *outSpread = effect->config.lensFlare.spread;
         LOG_D("effect=%p, spread=%f", (void *)effect, *outSpread);
@@ -1585,11 +1695,13 @@ extern "C"
     el_result_e el_effect_set_lens_flare_ghost_spacing(el_effect_handle_t effect, float ghostSpacing)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_spacing");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.lensFlare.ghostSpacing, ghostSpacing, "effect=%p, ghostSpacing=%f", (void *)effect, ghostSpacing);
     }
     el_result_e el_effect_get_lens_flare_ghost_spacing(el_effect_handle_t effect, float *outGhostSpacing)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_spacing");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outGhostSpacing, "el_effect_get_lens_flare_ghost_spacing");
         *outGhostSpacing = effect->config.lensFlare.ghostSpacing;
         LOG_D("effect=%p, ghostSpacing=%f", (void *)effect, *outGhostSpacing);
@@ -1598,11 +1710,13 @@ extern "C"
     el_result_e el_effect_set_lens_flare_ghost_size(el_effect_handle_t effect, float ghostSize)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_size");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.lensFlare.ghostSize, ghostSize, "effect=%p, ghostSize=%f", (void *)effect, ghostSize);
     }
     el_result_e el_effect_get_lens_flare_ghost_size(el_effect_handle_t effect, float *outGhostSize)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_size");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outGhostSize, "el_effect_get_lens_flare_ghost_size");
         *outGhostSize = effect->config.lensFlare.ghostSize;
         LOG_D("effect=%p, ghostSize=%f", (void *)effect, *outGhostSize);
@@ -1611,11 +1725,13 @@ extern "C"
     el_result_e el_effect_set_lens_flare_ghost_offset(el_effect_handle_t effect, float ghostOffset)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_offset");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.lensFlare.ghostOffset, ghostOffset, "effect=%p, ghostOffset=%f", (void *)effect, ghostOffset);
     }
     el_result_e el_effect_get_lens_flare_ghost_offset(el_effect_handle_t effect, float *outGhostOffset)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_offset");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outGhostOffset, "el_effect_get_lens_flare_ghost_offset");
         *outGhostOffset = effect->config.lensFlare.ghostOffset;
         LOG_D("effect=%p, ghostOffset=%f", (void *)effect, *outGhostOffset);
@@ -1624,11 +1740,13 @@ extern "C"
     el_result_e el_effect_set_lens_flare_ghost_color(el_effect_handle_t effect, float r, float g, float b)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_color");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.lensFlare.ghostColor, glm::vec3(r, g, b), "effect=%p, r=%f, g=%f, b=%f", (void *)effect, r, g, b);
     }
     el_result_e el_effect_get_lens_flare_ghost_color(el_effect_handle_t effect, float *outR, float *outG, float *outB)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_color");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outR, "el_effect_get_lens_flare_ghost_color");
         VALIDATE_OUT_PTR(outG, "el_effect_get_lens_flare_ghost_color");
         VALIDATE_OUT_PTR(outB, "el_effect_get_lens_flare_ghost_color");
@@ -1641,11 +1759,13 @@ extern "C"
     el_result_e el_effect_set_lens_flare_ghost_tint(el_effect_handle_t effect, float ghostTint)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_tint");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.lensFlare.ghostTint, ghostTint, "effect=%p, ghostTint=%f", (void *)effect, ghostTint);
     }
     el_result_e el_effect_get_lens_flare_ghost_tint(el_effect_handle_t effect, float *outGhostTint)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ghost_tint");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outGhostTint, "el_effect_get_lens_flare_ghost_tint");
         *outGhostTint = effect->config.lensFlare.ghostTint;
         LOG_D("effect=%p, ghostTint=%f", (void *)effect, *outGhostTint);
@@ -1654,11 +1774,13 @@ extern "C"
     el_result_e el_effect_set_lens_flare_flare_center(el_effect_handle_t effect, float x, float y)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_flare_center");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.lensFlare.flareCenter, glm::vec2(x, y), "effect=%p, x=%f, y=%f", (void *)effect, x, y);
     }
     el_result_e el_effect_get_lens_flare_flare_center(el_effect_handle_t effect, float *outX, float *outY)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_flare_center");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outX, "el_effect_get_lens_flare_flare_center");
         VALIDATE_OUT_PTR(outY, "el_effect_get_lens_flare_flare_center");
         *outX = effect->config.lensFlare.flareCenter.x;
@@ -1669,11 +1791,13 @@ extern "C"
     el_result_e el_effect_set_lens_flare_ray_density(el_effect_handle_t effect, float rayDensity)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ray_density");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.lensFlare.rayDensity, rayDensity, "effect=%p, rayDensity=%f", (void *)effect, rayDensity);
     }
     el_result_e el_effect_get_lens_flare_ray_density(el_effect_handle_t effect, float *outRayDensity)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_ray_density");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outRayDensity, "el_effect_get_lens_flare_ray_density");
         *outRayDensity = effect->config.lensFlare.rayDensity;
         LOG_D("effect=%p, rayDensity=%f", (void *)effect, *outRayDensity);
@@ -1682,11 +1806,13 @@ extern "C"
     el_result_e el_effect_set_lens_flare_rotation_rate(el_effect_handle_t effect, float rate)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_rotation_rate");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.lensFlare.rotationRate, rate, "effect=%p, rate=%f", (void *)effect, rate);
     }
     el_result_e el_effect_get_lens_flare_rotation_rate(el_effect_handle_t effect, float *outRate)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_rotation_rate");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outRate, "el_effect_get_lens_flare_rotation_rate");
         *outRate = effect->config.lensFlare.rotationRate;
         LOG_D("effect=%p, rate=%f", (void *)effect, *outRate);
@@ -1697,6 +1823,7 @@ extern "C"
     el_result_e el_effect_set_lens_flare_resolution_scale(el_effect_handle_t effect, float scale)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_resolution_scale");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.lensFlare.resolutionScale, scale,
                     "effect=%p, scale=%f", (void *)effect, scale);
     }
@@ -1704,6 +1831,7 @@ extern "C"
     el_result_e el_effect_get_lens_flare_resolution_scale(el_effect_handle_t effect, float *outScale)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_lens_flare_resolution_scale");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outScale, "el_effect_get_lens_flare_resolution_scale");
         *outScale = effect->config.lensFlare.resolutionScale;
         LOG_D("effect=%p, scale=%f", (void *)effect, *outScale);
@@ -1721,6 +1849,7 @@ extern "C"
     el_result_e el_effect_set_debug_enabled(el_effect_handle_t effect, el_bool_t enabled)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_debug_enabled");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.debug.enable, enabled != 0,
                     "effect=%p, enabled=%d", (void *)effect, enabled);
     }
@@ -1728,6 +1857,7 @@ extern "C"
     el_result_e el_effect_get_debug_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_debug_enabled");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outEnabled, "el_effect_get_debug_enabled");
         *outEnabled = effect->config.debug.enable ? 1 : 0;
         LOG_D("effect=%p, enabled=%d", (void *)effect, *outEnabled);
@@ -1737,6 +1867,7 @@ extern "C"
     el_result_e el_effect_set_debug_show_gradient_lut(el_effect_handle_t effect, el_bool_t show)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_debug_show_gradient_lut");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.debug.showGradientLUT, show != 0,
                     "effect=%p, show=%d", (void *)effect, show);
     }
@@ -1744,6 +1875,7 @@ extern "C"
     el_result_e el_effect_get_debug_show_gradient_lut(el_effect_handle_t effect, el_bool_t *outShow)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_debug_show_gradient_lut");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outShow, "el_effect_get_debug_show_gradient_lut");
         *outShow = effect->config.debug.showGradientLUT ? 1 : 0;
         LOG_D("effect=%p, show=%d", (void *)effect, *outShow);
@@ -1753,6 +1885,7 @@ extern "C"
     el_result_e el_effect_set_debug_show_color_stops(el_effect_handle_t effect, el_bool_t show)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_debug_show_color_stops");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.debug.showColorStops, show != 0,
                     "effect=%p, show=%d", (void *)effect, show);
     }
@@ -1760,6 +1893,7 @@ extern "C"
     el_result_e el_effect_get_debug_show_color_stops(el_effect_handle_t effect, el_bool_t *outShow)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_debug_show_color_stops");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outShow, "el_effect_get_debug_show_color_stops");
         *outShow = effect->config.debug.showColorStops ? 1 : 0;
         LOG_D("effect=%p, show=%d", (void *)effect, *outShow);
@@ -1769,12 +1903,14 @@ extern "C"
     el_result_e el_effect_set_debug_show_wireframe(el_effect_handle_t effect, el_bool_t show)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_debug_show_wireframe");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.debug.showWireframe, show != 0, "effect=%p, show=%d", (void *)effect, show);
     }
 
     el_result_e el_effect_get_debug_show_wireframe(el_effect_handle_t effect, el_bool_t *outShow)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_debug_show_wireframe");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outShow, "el_effect_get_debug_show_wireframe");
         *outShow = effect->config.debug.showWireframe ? 1 : 0;
         LOG_D("effect=%p, show=%d", (void *)effect, *outShow);
@@ -1784,12 +1920,14 @@ extern "C"
     el_result_e el_effect_set_debug_wireframe_color(el_effect_handle_t effect, float r, float g, float b, float a)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_debug_wireframe_color");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.debug.wireframeColor, glm::vec4(r, g, b, a), "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a);
     }
 
     el_result_e el_effect_get_debug_wireframe_color(el_effect_handle_t effect, float *outR, float *outG, float *outB, float *outA)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_debug_wireframe_color");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outR, "el_effect_get_debug_wireframe_color");
         VALIDATE_OUT_PTR(outG, "el_effect_get_debug_wireframe_color");
         VALIDATE_OUT_PTR(outB, "el_effect_get_debug_wireframe_color");
@@ -1805,6 +1943,7 @@ extern "C"
     el_result_e el_effect_set_debug_opaque_only(el_effect_handle_t effect, el_bool_t opaqueOnly)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_debug_opaque_only");
+        LOCK_EFFECT(effect);
         SET_AND_LOG(effect->config.debug.opaqueOnly, opaqueOnly != 0,
                     "effect=%p, opaqueOnly=%d", (void *)effect, opaqueOnly);
     }
@@ -1812,6 +1951,7 @@ extern "C"
     el_result_e el_effect_get_debug_opaque_only(el_effect_handle_t effect, el_bool_t *outOpaqueOnly)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_debug_opaque_only");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outOpaqueOnly, "el_effect_get_debug_opaque_only");
         *outOpaqueOnly = effect->config.debug.opaqueOnly ? 1 : 0;
         LOG_D("effect=%p, opaqueOnly=%d", (void *)effect, *outOpaqueOnly);
@@ -1839,6 +1979,7 @@ extern "C"
                                      el_config_field_e field, float *out)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_read_field");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(out, "el_effect_read_field");
         const EdgeLighting::Config *cfg = ResolveConfigSource(effect, source);
         VALIDATE_SOURCE(cfg, source, "el_effect_read_field");
@@ -1858,6 +1999,7 @@ extern "C"
                                              int32_t index, el_segment_field_e field, float *out)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_read_segment_field");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(out, "el_effect_read_segment_field");
         const EdgeLighting::Config *cfg = ResolveConfigSource(effect, source);
         VALIDATE_SOURCE(cfg, source, "el_effect_read_segment_field");
@@ -1881,6 +2023,7 @@ extern "C"
                                                        uint32_t id, el_segment_field_e field, float *out)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_read_preserved_segment_field");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(out, "el_effect_read_preserved_segment_field");
         const EdgeLighting::Config *cfg = ResolveConfigSource(effect, source);
         VALIDATE_SOURCE(cfg, source, "el_effect_read_preserved_segment_field");
@@ -1903,6 +2046,7 @@ extern "C"
                                          int32_t index, el_arc_field_e field, float *out)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_read_arc_field");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(out, "el_effect_read_arc_field");
         const EdgeLighting::Config *cfg = ResolveConfigSource(effect, source);
         VALIDATE_SOURCE(cfg, source, "el_effect_read_arc_field");
@@ -1927,6 +2071,7 @@ extern "C"
                                                   el_color_stop_field_e field, float *out)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_read_segment_stop_field");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(out, "el_effect_read_segment_stop_field");
         const EdgeLighting::Config *cfg = ResolveConfigSource(effect, source);
         VALIDATE_SOURCE(cfg, source, "el_effect_read_segment_stop_field");
@@ -1952,6 +2097,7 @@ extern "C"
                                                             el_color_stop_field_e field, float *out)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_read_preserved_segment_stop_field");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(out, "el_effect_read_preserved_segment_stop_field");
         const EdgeLighting::Config *cfg = ResolveConfigSource(effect, source);
         VALIDATE_SOURCE(cfg, source, "el_effect_read_preserved_segment_stop_field");
@@ -1976,6 +2122,7 @@ extern "C"
                                               el_color_stop_field_e field, float *out)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_read_arc_stop_field");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(out, "el_effect_read_arc_stop_field");
         const EdgeLighting::Config *cfg = ResolveConfigSource(effect, source);
         VALIDATE_SOURCE(cfg, source, "el_effect_read_arc_stop_field");
@@ -2000,6 +2147,7 @@ extern "C"
                                      el_container_e container, uint32_t parent, int32_t *out)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_read_count");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(out, "el_effect_read_count");
         const EdgeLighting::Config *cfg = ResolveConfigSource(effect, source);
         VALIDATE_SOURCE(cfg, source, "el_effect_read_count");
@@ -2080,6 +2228,7 @@ extern "C"
                                             int32_t index, uint32_t *outId)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_read_preserved_id");
+        LOCK_EFFECT(effect);
         VALIDATE_OUT_PTR(outId, "el_effect_read_preserved_id");
         const EdgeLighting::Config *cfg = ResolveConfigSource(effect, source);
         VALIDATE_SOURCE(cfg, source, "el_effect_read_preserved_id");
@@ -2137,6 +2286,7 @@ extern "C"
     {
         LOG_I("effect=%p, rendererMask=0x%x", (void *)effect, rendererMask);
         VALIDATE_EFFECT_PTR(effect, "el_effect_init_with_renderers");
+        LOCK_EFFECT(effect);
         try
         {
             // Already initialised: re-initialise IN PLACE rather than building a
@@ -2226,6 +2376,8 @@ extern "C"
     {
         LOG_I("effect=%p", (void *)effect);
         VALIDATE_EFFECT_PTR(effect, "el_effect_capture");
+        LOCK_EFFECT(effect);
+        VALIDATE_EFFECT_READY(effect, "el_effect_capture");
         try
         {
             effect->config = effect->impl->GetConfig();
@@ -2241,6 +2393,8 @@ extern "C"
     el_result_e el_effect_update(el_effect_handle_t effect, float deltaTime)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_update");
+        LOCK_EFFECT(effect);
+        VALIDATE_EFFECT_READY(effect, "el_effect_update");
         try
         {
             effect->impl->SetConfig(effect->config);
@@ -2257,7 +2411,21 @@ extern "C"
     el_result_e el_effect_render(el_effect_handle_t effect,
                                  int32_t viewportWidth, int32_t viewportHeight)
     {
+        // Note the MISSING LOCK_EFFECT. This is the only effect entry point in
+        // the ABI without one, and the omission is the guarantee the threading
+        // model is built on: Render touches the renderers and one atomic
+        // snapshot cell, neither of which the data side can reach, so a host
+        // thread holding the lock - dragging a slider, walking a read loop -
+        // can never stall a frame. Adding a lock here would silently undo that.
+        // See el_effect_handle_impl::dataMutex.
+        //
+        // Reading `impl` unlocked is sound for the documented contract and only
+        // for it: `impl` is written exactly once, by the first
+        // el_effect_init_with_renderers, and init and render both belong to the
+        // GL thread. A host that initialises off the GL thread, or concurrently
+        // with a render, is outside the contract and racing on the pointer.
         VALIDATE_EFFECT_PTR(effect, "el_effect_render");
+        VALIDATE_EFFECT_READY(effect, "el_effect_render");
         try
         {
             effect->impl->Render(viewportWidth, viewportHeight);
@@ -2273,6 +2441,8 @@ extern "C"
     el_result_e el_effect_clock_play(el_effect_handle_t effect)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_clock_play");
+        LOCK_EFFECT(effect);
+        VALIDATE_EFFECT_READY(effect, "el_effect_clock_play");
         if (effect->impl->GetClock().IsPlaying())
         {
             return EL_SUCCESS;
@@ -2285,6 +2455,8 @@ extern "C"
     el_result_e el_effect_clock_pause(el_effect_handle_t effect)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_clock_pause");
+        LOCK_EFFECT(effect);
+        VALIDATE_EFFECT_READY(effect, "el_effect_clock_pause");
         if (!effect->impl->GetClock().IsPlaying())
         {
             return EL_SUCCESS;
@@ -2297,6 +2469,8 @@ extern "C"
     el_result_e el_effect_clock_is_playing(el_effect_handle_t effect, el_bool_t *outPlaying)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_clock_is_playing");
+        LOCK_EFFECT(effect);
+        VALIDATE_EFFECT_READY(effect, "el_effect_clock_is_playing");
         VALIDATE_OUT_PTR(outPlaying, "el_effect_clock_is_playing");
         *outPlaying = effect->impl->GetClock().IsPlaying() ? 1 : 0;
         LOG_D("effect=%p, playing=%d", (void *)effect, *outPlaying);
@@ -2309,6 +2483,8 @@ extern "C"
     {
         LOG_I("effect=%p, anim=%p", (void *)effect, (void *)anim);
         VALIDATE_EFFECT_PTR(effect, "el_effect_attach_animation");
+        LOCK_EFFECT(effect);
+        VALIDATE_EFFECT_READY(effect, "el_effect_attach_animation");
         VALIDATE_ANIM_PTR(anim, "el_effect_attach_animation");
         if (anim->ptr)
         {
@@ -2321,6 +2497,8 @@ extern "C"
     {
         LOG_I("effect=%p, anim=%p", (void *)effect, (void *)anim);
         VALIDATE_EFFECT_PTR(effect, "el_effect_detach_animation");
+        LOCK_EFFECT(effect);
+        VALIDATE_EFFECT_READY(effect, "el_effect_detach_animation");
         VALIDATE_ANIM_PTR(anim, "el_effect_detach_animation");
         if (anim->ptr)
         {
@@ -2333,6 +2511,8 @@ extern "C"
     {
         LOG_I("effect=%p", (void *)effect);
         VALIDATE_EFFECT_PTR(effect, "el_effect_detach_all_animations");
+        LOCK_EFFECT(effect);
+        VALIDATE_EFFECT_READY(effect, "el_effect_detach_all_animations");
         effect->impl->GetAnimationManager().DetachAll();
         return EL_SUCCESS;
     }
@@ -2340,6 +2520,8 @@ extern "C"
     el_result_e el_effect_get_animation_count(el_effect_handle_t effect, int32_t *outCount)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_animation_count");
+        LOCK_EFFECT(effect);
+        VALIDATE_EFFECT_READY(effect, "el_effect_get_animation_count");
         VALIDATE_OUT_PTR(outCount, "el_effect_get_animation_count");
         *outCount = static_cast<int32_t>(effect->impl->GetAnimationManager().GetCount());
         LOG_D("effect=%p, count=%d", (void *)effect, *outCount);
@@ -2350,6 +2532,8 @@ extern "C"
                                              el_animation_handle_t anim, el_bool_t *outContains)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_contains_animation");
+        LOCK_EFFECT(effect);
+        VALIDATE_EFFECT_READY(effect, "el_effect_contains_animation");
         VALIDATE_ANIM_PTR(anim, "el_effect_contains_animation");
         VALIDATE_OUT_PTR(outContains, "el_effect_contains_animation");
         *outContains = (anim->ptr && effect->impl->GetAnimationManager().Contains(anim->ptr)) ? 1 : 0;

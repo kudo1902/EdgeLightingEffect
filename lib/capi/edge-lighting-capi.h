@@ -78,11 +78,45 @@
  *
  * @section threading Threading
  *
- * The renderer holds live GL state; every function that touches an effect
- * (create/init/update/render/set/get) must run on the thread that owns the
- * GL context. Animation and modulator factories touch no GL and may run on
- * any thread as long as the resulting handle is only passed into effect
- * calls on the GL thread.
+ * An effect has a DATA side (staging config, base config, clock, animations)
+ * and a RENDER side (every renderer, every GL object). They meet at one
+ * published config snapshot, so they can run on different threads.
+ *
+ * Every entry point below except @ref el_effect_render takes the handle's
+ * internal lock, so calling them from any thread is safe. @ref el_effect_render
+ * takes NO lock: it touches only the renderers and one atomic snapshot cell.
+ * That is deliberate and load-bearing - a host thread dragging a slider or
+ * walking a read loop can never stall a frame.
+ *
+ * | call group                                          | thread |
+ * | --------------------------------------------------- | ------ |
+ * | @c el_effect_create                                  | any |
+ * | @c el_effect_init*                                   | the GL thread; first call before the data thread starts |
+ * | @c el_effect_destroy                                 | the GL thread, AFTER the data thread has stopped |
+ * | @c el_effect_set_* / @c _get_* / @c _read_* / @c _capture | any |
+ * | @c el_effect_attach_animation / @c _detach* / @c _clock_* | any |
+ * | @c el_effect_update                                  | any, one thread at a time |
+ * | @c el_effect_render                                  | the GL-owning thread, exclusively |
+ * | @c el_animation_* / @c el_modulator_* factories      | any |
+ *
+ * Three things a host has to get right, none of which a lock can do for it:
+ *
+ * - **Destroy ordering.** @ref el_effect_destroy runs GL deletes and cannot
+ *   lock a mutex it is about to destroy. Stop the data thread first. The
+ *   library spawns no threads and cannot do this for you.
+ * - **Callbacks run on the caller's thread.** An animation callback fires from
+ *   inside @ref el_effect_update, on whichever thread called it, with the
+ *   handle's lock held. Re-entering the effect from one is legal (the lock is
+ *   recursive) and so is detaching the animation that fired it; BLOCKING in one
+ *   stalls that thread. Marshal to your UI thread yourself.
+ * - **A group of calls is not atomic.** Each call is individually safe, but an
+ *   update can land between two of them - so setting colour stops in a loop can
+ *   publish a half-updated gradient, and an @ref el_effect_read_count followed
+ *   by indexed reads can straddle two frames. Every read re-validates its own
+ *   index, so this is never a crash, only a mix of two frames.
+ *
+ * Animation and modulator handles carry no lock of their own yet: treat a
+ * handle as owned by one thread once it is attached.
  */
 #ifndef _EDGE_LIGHTING_CAPI_H_
 #define _EDGE_LIGHTING_CAPI_H_

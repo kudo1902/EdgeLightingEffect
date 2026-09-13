@@ -18,6 +18,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <mutex>
 #include <new>
 #include <exception>
 
@@ -103,6 +104,45 @@ static_assert(static_cast<int>(EdgeLighting::ColorStopField::A) == EL_STOP_FIELD
 // ==========================================================================
 struct el_effect_handle_impl
 {
+    /// Guards everything on this handle EXCEPT the render path: @c config,
+    /// @c impl (both the pointer and the effect's data side), and
+    /// @c rendererMask. Taken through @c LOCK_EFFECT, which every effect entry
+    /// point but one uses, immediately after @c VALIDATE_EFFECT_PTR.
+    ///
+    /// The one exception is @c el_effect_render, which simply does not call
+    /// @c LOCK_EFFECT. That is the guarantee the whole threaded model rests on:
+    /// a host's UI thread cannot stall a frame, whatever it does with this
+    /// handle.
+    ///
+    /// RECURSIVE, for exactly one reason, and it is worth being precise about
+    /// which - a recursive mutex is a real cost (holding it no longer implies
+    /// the invariants hold, because you may be re-entering mid-mutation), so it
+    /// should not be kept alive by reasons that turn out to be false.
+    ///
+    /// The reason: **host callbacks run with this held.** An animation's
+    /// @c OnComplete / @c OnStateChanged fires synchronously from inside
+    /// @c impl->Update, which is inside @c el_effect_update, which holds this.
+    /// Anything the host calls from there re-locks on the same thread. That is
+    /// not a hypothetical shape to tolerate but one the library deliberately
+    /// supports: @c AnimationManager::Update walks a copy specifically so that
+    /// "detach me when I finish" is safe to write in a callback, and the header
+    /// docs tell hosts it is legal. A plain mutex would turn that documented,
+    /// supported pattern into a hang.
+    ///
+    /// What is NOT a reason, checked rather than assumed, because both look
+    /// like re-entry and neither is: @c el_effect_init delegates to
+    /// @c el_effect_init_with_renderers WITHOUT locking first, and the
+    /// el-deprecated.cpp shims that delegate to a modern setter do not lock
+    /// either (the four that lock do their own work instead). The ABI does not
+    /// re-enter itself anywhere. If the callback problem below is ever solved,
+    /// nothing else here needs recursion.
+    ///
+    /// The better end state is to collect callbacks and fire them after
+    /// unlocking, so a callback observes settled state rather than a
+    /// half-applied frame. That needs a change to @c Animation's dispatch,
+    /// which is why this is the contained choice for now and not the final one.
+    mutable std::recursive_mutex dataMutex;
+
     EdgeLighting::Config config;
     std::unique_ptr<EdgeLighting::EdgeLightingEffect> impl;
 
@@ -134,6 +174,53 @@ struct el_modulator_handle_impl
             LOG_E("%s: effect is null", fn); \
             return EL_ERROR_INVALID_HANDLE;  \
         }                                    \
+    } while (0)
+
+/// Hold the handle's data lock for the rest of the enclosing scope.
+///
+/// Goes immediately after @c VALIDATE_EFFECT_PTR in every effect entry point
+/// but one. Two ordering rules, both load-bearing:
+///   - AFTER the null check, because it dereferences the handle;
+///   - BEFORE @c VALIDATE_EFFECT_READY and before any use of @c config or
+///     @c impl, because those are the things it protects.
+/// Cheap argument checks that touch nothing on the handle (@c VALIDATE_OUT_PTR
+/// and friends) may go either side of it.
+///
+/// The one entry point that does NOT take it is @c el_effect_render, and that
+/// omission is the whole design rather than an oversight: the render path
+/// touches only the renderers and one atomic snapshot cell, so no host thread
+/// can ever stall a frame. @c el_effect_destroy also skips it, for the
+/// unrelated reason that it cannot lock a mutex it is about to destroy - the
+/// host must quiesce its data thread first, and no lock here could help.
+///
+/// NOT a single statement: it declares a guard that has to outlive the macro.
+/// So it belongs at the top of a function body, never under an unbraced @c if.
+#define LOCK_EFFECT(effect) \
+    std::lock_guard<std::recursive_mutex> elDataLock((effect)->dataMutex)
+
+/// Reject a live handle that has not been through @c el_effect_init yet.
+///
+/// Use after @c LOCK_EFFECT in any entry point that dereferences @c impl - the
+/// lock is what makes reading @c impl sound in the first place. The
+/// effect object does not exist until init builds it, and every one of these
+/// calls used to dereference the null @c unique_ptr and crash the host -
+/// update, render, capture, all four clock calls and all five animation calls.
+/// The @c el_effect_read_* family was already careful here, through
+/// @c ResolveConfigSource; this is the same guarantee for everyone else.
+///
+/// EL_ERROR_INVALID_HANDLE rather than EL_ERROR_INVALID_PARAMETER: no argument
+/// is at fault, the handle is simply not in a state where the call means
+/// anything. Nothing depended on the old behaviour, which was a crash.
+#define VALIDATE_EFFECT_READY(effect, fn)              \
+    do                                                 \
+    {                                                  \
+        if (!(effect)->impl)                           \
+        {                                              \
+            LOG_E("%s: effect not initialised - call " \
+                  "el_effect_init first",              \
+                  fn);                                 \
+            return EL_ERROR_INVALID_HANDLE;            \
+        }                                              \
     } while (0)
 
 #define VALIDATE_ANIM_PTR(anim, fn)         \

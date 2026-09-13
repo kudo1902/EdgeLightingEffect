@@ -740,14 +740,25 @@ extern "C"
      *  its output.
      *
      *  @par Threading
-     *  Same thread as @ref el_effect_update, which in practice means the thread
-     *  that owns the GL context. These touch no GL of their own, so nothing
-     *  stops a host calling them from a UI thread - but doing so is a data
-     *  race, not merely unsynchronised: rebuilding the active config SWAPS its
-     *  vectors with a scratch copy, and the following frame overwrites the
-     *  buffers the swap handed over. A concurrent read of an indexed entry can
-     *  therefore walk memory that has been reallocated underneath it. Read on
-     *  the update thread and hand values to other threads yourself.
+     *  Any thread. Each of these takes the handle's lock for the whole call,
+     *  which is what makes driving a UI slider off @ref EL_CONFIG_SOURCE_ACTIVE
+     *  from a UI thread safe.
+     *
+     *  It has to be the whole call, not just the lookup, and the reason is
+     *  worth knowing before anyone narrows it: rebuilding the active config
+     *  SWAPS its vectors with a scratch copy, and the next frame overwrites the
+     *  buffers the swap handed over. A read that resolved its config and then
+     *  released would be walking reallocated memory, not merely reading a stale
+     *  value. The invariant that keeps this sound is that no reader holds the
+     *  resolved config past its own call - keep it that way.
+     *
+     *  A read LOOP is still not atomic. @ref el_effect_read_count followed by
+     *  indexed reads can straddle an @ref el_effect_update, so the values may
+     *  come from two frames and an id from @ref el_effect_read_preserved_id may
+     *  no longer be live by the time you read its fields. Never a crash - every
+     *  reader re-validates its own index - but size the loop defensively and
+     *  treat a mid-loop @ref EL_ERROR_INVALID_PARAMETER as "it moved", not as a
+     *  bug.
      *
      *  @par Which frame you get
      *  These read live, with no snapshot step. Values therefore come from the
@@ -860,8 +871,23 @@ extern "C"
     /** @} */
 
     /** @name Lifecycle
-     *  Create, initialise, tick, render, and destroy an effect. Every call
-     *  in this section must run on the thread that owns the GL context.
+     *  Create, initialise, tick, render, and destroy an effect.
+     *
+     *  @par Threading
+     *  This group is the one with real thread affinity; see @ref threading for
+     *  the whole table. @ref el_effect_init and @ref el_effect_destroy touch GL
+     *  and must run on the thread owning the context. @ref el_effect_render
+     *  must run there too, exclusively, and is the only call in the ABI that
+     *  takes no lock - which is what stops a busy host thread from stalling a
+     *  frame. @ref el_effect_create and @ref el_effect_update may run anywhere
+     *  (update on one thread at a time).
+     *
+     *  @ref el_effect_destroy cannot lock the mutex it is about to destroy, so
+     *  the host must stop whatever thread is calling @ref el_effect_update
+     *  before destroying. The library spawns no threads and cannot do it.
+     *
+     *  Every call here except @ref el_effect_create needs an initialised
+     *  handle and returns @ref EL_ERROR_INVALID_HANDLE without one.
      *  @{ */
 
     /** @brief Allocate a new effect handle with default staging config.

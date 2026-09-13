@@ -50,7 +50,7 @@ extern "C"
     typedef enum el_result_e
     {
         EL_SUCCESS = 0,                  /**< Success. */
-        EL_ERROR_INVALID_HANDLE = -1,    /**< A required handle (effect/animation/modulator) was null or destroyed. */
+        EL_ERROR_INVALID_HANDLE = -1,    /**< A required handle (effect/animation/modulator) was null or destroyed, or an effect handle has not been through @ref el_effect_init and the call needs the effect behind it. The uninitialised case used to be a crash, so nothing can depend on the older behaviour. */
         EL_ERROR_INIT_FAILED = -2,       /**< Renderer/GL initialisation failed (see native log). */
         EL_ERROR_OUT_OF_MEMORY = -3,     /**< Allocation failed (@c std::bad_alloc caught at the ABI boundary). */
         EL_ERROR_INVALID_PARAMETER = -4, /**< A non-handle argument was null, out of range, or the wrong shape; also the catch-all for other C++ exceptions caught at the ABI boundary. */

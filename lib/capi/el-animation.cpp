@@ -370,6 +370,7 @@ extern "C"
         LOG_I("anim=%p, effect=%p", (void *)anim, (void *)effect);
         VALIDATE_ANIM_PTR(anim, "el_animation_reset");
         VALIDATE_EFFECT_PTR(effect, "el_animation_reset");
+        LOCK_EFFECT(effect);
         try
         {
             anim->ptr->Reset(effect->config);
@@ -398,6 +399,7 @@ extern "C"
         LOG_I("anim=%p, effect=%p", (void *)anim, (void *)effect);
         VALIDATE_ANIM_PTR(anim, "el_animation_apply");
         VALIDATE_EFFECT_PTR(effect, "el_animation_apply");
+        LOCK_EFFECT(effect);
         try
         {
             anim->ptr->Apply(effect->config);
@@ -492,6 +494,7 @@ extern "C"
         LOG_I("anim=%p, effect=%p", (void *)anim, (void *)effect);
         VALIDATE_ANIM_PTR(anim, "el_animation_capture_baseline");
         VALIDATE_EFFECT_PTR(effect, "el_animation_capture_baseline");
+        LOCK_EFFECT(effect);
         try
         {
             if (anim->ptr)

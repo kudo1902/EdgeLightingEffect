@@ -225,8 +225,12 @@ extern "C"
      * ==================================================================== */
 
     /** @brief Fired once when a ONE_SHOT animation completes its cycle.
-     *  @details Called on the effect thread from inside
-     *           @ref el_effect_update. Never fires for LOOP animations. */
+     *  @details Called from inside @ref el_effect_update, on whichever thread
+     *           called it, with the effect handle's lock held. Calling back
+     *           into the effect is therefore legal - including detaching the
+     *           animation that fired - but BLOCKING here stalls that thread,
+     *           so marshal to your UI thread rather than working in it.
+     *           Never fires for LOOP animations. */
     typedef void (*el_animation_on_completed_callback)(void *userData);
 
     /** @brief Fired on every animation state transition.
