@@ -72,8 +72,8 @@ New header `lib/include/core/config-snapshot.h`:
 typedef struct ConfigSnapshot
 {
     Config config;                 ///< active = base + animation overlays
-    float clockTime = 0.0f;        ///< Clock::GetTime() - freezes when paused
-    float wallTime = 0.0f;         ///< monotonic sum of raw dt - never freezes
+    float clockTime = 0.0f;        ///< Clock::GetTime() - every clock control moves it
+    float rawAccumulatedTime = 0.0f; ///< sum of the dt fed to Update - no clock control moves it
     uint64_t configGeneration = 0; ///< bumped ONLY when the composite actually changed
 } ConfigSnapshot;
 ```
@@ -83,13 +83,15 @@ Three fields that each answer a question the render side cannot answer itself:
 - **`clockTime`** is what renderers receive as their `time` argument. It pauses
   with the clock, which is today's behaviour and what the shaders' `uTime`
   expects.
-- **`wallTime`** exists because `GradientRingLUT::Tick` is documented to take
-  the *raw* frame delta, not clock time - a colour change must keep fading
-  while the animation clock is paused. It is stored as an **absolute
-  accumulator, not a delta**, so that a render thread which misses snapshots
-  still advances the fade by the right amount: `dt = snap.wallTime -
-  lastWallTime` is correct whether zero, one or five snapshots were dropped in
-  between. (`Bake` and `Tick` gained an upper size clamp in the active-config
+- **`rawAccumulatedTime`** is the running sum of the deltas handed to `Update`,
+  and **no clock control reaches it** - not pause, not stop, not reset, not a
+  scrub, all of which move `clockTime`. It exists because
+  `GradientRingLUT::Tick` is documented to take the *raw* frame delta, not
+  clock time: a colour change must keep fading whatever the animation is doing.
+  It is stored as an **absolute accumulator, not a delta**, so that a render
+  thread which misses snapshots still advances the fade by the right amount:
+  `dt = snap.rawAccumulatedTime - lastRawAccumulatedTime` is correct whether
+  zero, one or five snapshots were dropped in between. (`Bake` and `Tick` gained an upper size clamp in the active-config
   merge and nothing else; their fade semantics are unchanged, so this reasoning
   still holds.)
 - **`configGeneration`** is how the render side knows whether to call
@@ -191,8 +193,8 @@ if (s.configGeneration != mLastConfigGeneration)
     for (auto &r : mRenderers) { r->OnConfigChanged(s.config); }
     mLastConfigGeneration = s.configGeneration;
 }
-const float fadeDt = std::max(0.0f, s.wallTime - mLastWallTime);
-mLastWallTime = s.wallTime;
+const float fadeDt = std::max(0.0f, s.rawAccumulatedTime - mLastRawAccumulatedTime);
+mLastRawAccumulatedTime = s.rawAccumulatedTime;
 for (auto &r : mRenderers) { r->Update(fadeDt, s.clockTime, s.config); }
 for (auto &r : mRenderers) { r->Render(w, h, s.clockTime, s.config); }
 ```
@@ -217,7 +219,7 @@ identically, and the reasoning is:
 - Relative order is preserved: `OnConfigChanged`, then renderer `Update`, then
   `Render`.
 - `renderer->Update`'s delta was the value passed to `Update`; it is now the
-  `wallTime` difference, which for update-then-render is the same number.
+  `rawAccumulatedTime` difference, which for update-then-render is the same number.
 - **`OnConfigChanged` now fires once per frame instead of the documented
   up-to-twice.** `SetConfig` notifies, then `Update` recomposes and notifies
   again; the second call almost always carried the same config. This is the one

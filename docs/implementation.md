@@ -30,20 +30,31 @@ is an **orchestrator**. It owns no drawing code. It owns state and a list of
 renderer plugins, and forwards to them:
 
 ```
-Config (base) ─┐
-               ├─► active Config ─► for each renderer: Update / Render
-animations ────┘
+        DATA SIDE (no GL)                 │  RENDER SIDE (GL)
+                                          │
+Config (base) ─┐                          │
+               ├─► active Config ─► snapshot ─► for each renderer:
+animations ────┘                          │      OnConfigChanged / Update / Render
 ```
 
 Concretely it holds:
 
 - a **base** `Config` - geometry plus one sub-config per renderer. What
   `SetConfig` writes and `GetConfig` reads.
-- an **active** `Config` - base with animation overlays composited on top. What
-  renderers actually see, readable via `GetActiveConfig()`.
+- an **active** `Config` - base with animation overlays composited on top,
+  readable via `GetActiveConfig()`.
 - a `Clock` (play/pause time accumulator).
 - an `AnimationManager` (by `unique_ptr`).
+- a `ConfigSnapshotBuffer`
+  ([`core/config-snapshot.h`](../lib/include/core/config-snapshot.h)) - the one
+  member the two sides share.
 - a `vector<shared_ptr<BaseRenderer>>`, registered by the host.
+
+The two sides meet only at that buffer. `Update` and `SetConfig` publish into
+it and touch no GL; `Render` acquires from it and owns everything GL. That is
+why `Update` calls no renderer method - renderer notification used to live
+there, which made `Update` a GL call and pinned the class to one thread. See
+[`threaded-model-design.md`](threaded-model-design.md).
 
 Renderers are independent visual layers with no scene graph and no depth
 sorting. They composite by blending, list order is stacking order, and any
@@ -53,23 +64,53 @@ subset can be enabled.
 
 Two calls per frame, from the host:
 
-**`Update(dt)`** - [`edge-lighting.cpp:38`](../lib/src/core/edge-lighting.cpp)
+**`Update(dt)`** - data side, no GL.
 
 1. Tick the clock, advance every attached animation by the clock delta.
-2. Rebuild the active config (`refreshActiveConfig()`).
-3. If the active config actually changed, call `OnConfigChanged(active)` on
-   every renderer.
-4. Call `Update(dt, clockTime, active)` on every renderer.
+2. Rebuild the active config (`refreshActiveConfig()`), bumping
+   `mConfigGeneration` if the composite actually moved.
+3. Accumulate the RAW delta into `mRawAccumulatedTime` - not the clock's,
+   because colour cross-fades must keep running whatever the clock is doing.
+   No clock control reaches this counter: pause, stop, reset and scrub all
+   move `clockTime` and leave it advancing.
+4. Publish a snapshot: the active config plus `clockTime`, `rawAccumulatedTime`
+   and the generation.
 
-**`Render(w, h)`** - calls `Render(w, h, clockTime, active)` on every renderer,
-in registration order.
+`SetConfig` publishes too, but only when the composite moved, which is what
+keeps a set-then-render sequence (no update between) drawing what was set.
 
-The step-3 condition matters and is easy to misread: `SetConfig` returns early
-when the base is unchanged, and `refreshActiveConfig` returns early when the
-composited result is unchanged. So `OnConfigChanged` is **not** a per-frame
-callback. An idle effect never fires it; an effect with a running animation
-fires it on nearly every frame. Renderers can therefore treat the call as
-meaningful, but must still gate their own rebuilds (§5).
+**`Render(w, h)`** - render side, needs a GL context.
+
+1. Acquire the newest snapshot. Nothing new means the previously held one is
+   reused, so rendering faster than updating just redraws.
+2. If its generation differs from the last one announced, call
+   `OnConfigChanged(snapshot.config)` on every renderer.
+3. Once per newly acquired snapshot, call
+   `Update(rawAccumulatedTimeDelta, clockTime, config)` on every renderer.
+4. Call `Render(w, h, clockTime, config)` on every renderer, in registration
+   order.
+
+Three things about that are load-bearing:
+
+- **Step 2 gates on the generation, not on whether a snapshot arrived.** A
+  snapshot can carry an unchanged config with only time advanced, and a second
+  `Render` on the same snapshot must not re-notify.
+- **Step 3 gates on the acquire.** The renderer tick advances the colour
+  cross-fade, and it is not idempotent: `GradientRingLUT::Tick` re-uploads the
+  ring and reports true whenever a fade is in flight even for a zero delta,
+  which would re-bake the neon emission table for nothing. The demo renders
+  twice in one frame on its capture path, so this is a live case.
+- **`rawAccumulatedTime` is published absolute, not as a delta.** Differencing it against
+  the last snapshot consumed is correct whether none or five publishes were
+  dropped in between, so a render side running slower than the data side loses
+  no fade time.
+
+`OnConfigChanged` is still **not** a per-frame callback. `SetConfig` returns
+early when the base is unchanged and `refreshActiveConfig` returns early when
+the composite is, so the generation does not move and step 2 does nothing. An
+idle effect never fires it; one with a running animation fires it on nearly
+every frame. Renderers can therefore treat the call as meaningful, but must
+still gate their own rebuilds (§5).
 
 ## 4. The renderer contract
 

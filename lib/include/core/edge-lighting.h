@@ -2,9 +2,11 @@
 #define _EDGE_LIGHTING_EDGE_LIGHTING_H_
 
 #include "core/config.h"
+#include "core/config-snapshot.h"
 #include "animation/clock.h"
 #include "animation/animation.h"
 #include "renderer/base-renderer.h"
+#include <cstdint>
 #include <vector>
 #include <memory>
 
@@ -37,6 +39,26 @@ namespace EdgeLighting
     /// @ref Modulator family; the animation subclasses (@ref IntensityPulse,
     /// @ref ArcWipe, @ref FieldBoundAnimation, ...) wrap those into @ref Config
     /// writes.
+    ///
+    /// ## Data side and render side
+    ///
+    /// The class has two halves that meet at exactly one place, a
+    /// @ref ConfigSnapshotBuffer:
+    ///
+    /// - The **data side** - @ref SetConfig, @ref Update, the clock and the
+    ///   animation manager - touches no GL at all. It composes the active
+    ///   config and PUBLISHES a snapshot of it.
+    /// - The **render side** - @ref Initialize, @ref AddRenderer, @ref Render
+    ///   and the destructor - owns every renderer, every LUT and every GL
+    ///   object. It ACQUIRES the newest snapshot and does everything that
+    ///   follows from it: @c OnConfigChanged, @c Update, @c Render.
+    ///
+    /// That is why @ref Update no longer calls a renderer method. Renderer
+    /// notification used to happen there, which made @ref Update a GL call and
+    /// pinned the whole class to one thread. Both in-tree demos and the C ABI
+    /// still drive the two sides from one thread and see the behaviour they
+    /// always did; the split is what makes running them on two threads a matter
+    /// of guarding the data side rather than a rewrite.
     class EdgeLightingEffect
     {
     public:
@@ -58,24 +80,55 @@ namespace EdgeLighting
         /// @returns false if any renderer failed to initialise.
         bool Initialize();
 
-        /// @brief Advance animation time and propagate updates to renderers.
-        /// @param deltaTime Seconds since the last frame.
+        /// @brief Advance animation time, recompose the active config, and
+        ///        publish it for the render side.
+        ///
+        /// DATA SIDE: touches no GL and calls no renderer method. Everything
+        /// that follows from a config change - @c OnConfigChanged, the renderer
+        /// @c Update pass, the draw - happens in @ref Render, off the snapshot
+        /// this publishes.
+        ///
+        /// @param deltaTime Seconds since the last frame. Accumulated raw (it
+        ///        is what drives colour cross-fades, which must keep running
+        ///        while the clock is paused) as well as through the clock.
         void Update(float deltaTime);
 
-        /// @brief Render all active renderers in registration order.
+        /// @brief Acquire the newest published config and draw every renderer
+        ///        in registration order.
+        ///
+        /// RENDER SIDE: needs a current GL context. Notifies renderers when the
+        /// acquired snapshot carries a config they have not seen, ticks them
+        /// once per published frame, then draws.
+        ///
+        /// Safe to call more than once per @ref Update - the extra calls redraw
+        /// the same snapshot without re-notifying or re-ticking, which is what
+        /// the demo's capture path relies on. Safe to call before any
+        /// @ref Update too: the buffer starts holding a default-constructed
+        /// snapshot.
+        ///
         /// @param viewportWidth  Current framebuffer width in pixels.
         /// @param viewportHeight Current framebuffer height in pixels.
         void Render(int viewportWidth, int viewportHeight);
 
-        /// @brief Replace the base configuration and notify all renderers.
+        /// @brief Replace the base configuration and publish the recomposed
+        ///        result.
         ///
-        /// Writes the BASE config, then recomposes and notifies through the
-        /// same path @ref Update uses. With animations attached that composite
+        /// DATA SIDE. Writes the BASE config, then recomposes through the same
+        /// path @ref Update uses. With animations attached that composite
         /// carries the overlays at their CURRENT values - this frame's advance
-        /// happens in the next @ref Update, which recomposes and notifies
-        /// again. Callers following the documented Update-then-Render contract
-        /// therefore see one notification per frame from Update, and one extra
-        /// on frames where they also changed the base mid-animation.
+        /// happens in the next @ref Update, which recomposes and publishes
+        /// again.
+        ///
+        /// Publishing here rather than leaving it to the next @ref Update is
+        /// what keeps a set-then-render call sequence (no update in between)
+        /// drawing what was just set. It costs one extra snapshot copy on
+        /// frames where the base actually moved the composite, and nothing at
+        /// all otherwise: both this and @ref refreshActiveConfig bail out when
+        /// the value they were handed matches what is already there.
+        ///
+        /// Renderers see the result on the next @ref Render, not here - one
+        /// notification per frame rather than the up-to-two this path used to
+        /// produce with @ref Update.
         ///
         /// @param config New base configuration to apply.
         void SetConfig(const Config &config);
@@ -117,7 +170,16 @@ namespace EdgeLighting
         const Clock &GetClock() const;
 
     private:
-        void refreshActiveConfig();
+        /// Recompose @c mActiveConfig from base + overlays.
+        /// @return true if the composite actually changed, in which case
+        ///         @c mConfigGeneration has been bumped. Callers publish on
+        ///         true; nothing else in the class acts on a config change any
+        ///         more, which is what took the renderers off this path.
+        bool refreshActiveConfig();
+
+        /// Copy @c mActiveConfig and the two clocks into the write slot and
+        /// hand it to the render side. Data side only.
+        void publishSnapshot();
 
     private:
         Config mBaseConfig;   ///< Authored config - what SetConfig sets.
@@ -147,7 +209,38 @@ namespace EdgeLighting
         Config mScratchConfig;
         Clock mClock;
         std::unique_ptr<AnimationManager> mAnimationManager;
+
+        /// Running sum of the deltas handed to @ref Update. NOT clock time: no
+        /// clock control reaches it, so pausing, stopping, resetting or
+        /// scrubbing leaves it advancing. Published so the render side can
+        /// difference it for @c GradientRingLUT::Tick, which is documented to
+        /// want the raw frame delta precisely so a colour change still fades
+        /// while the animation is not running.
+        float mRawAccumulatedTime = 0.0f;
+
+        /// Bumped by @ref refreshActiveConfig when the composite really moved.
+        /// The render side compares it against @c mNotifiedGeneration to decide
+        /// whether @c OnConfigChanged is owed, which is how the deep config
+        /// compare stays on this side and happens once.
+        uint64_t mConfigGeneration = 0;
+
+        /// The seam. Written by the data side, read by the render side, and the
+        /// only member either half of the class shares with the other.
+        ConfigSnapshotBuffer mSnapshots;
+
         std::vector<std::shared_ptr<BaseRenderer>> mRenderers;
+
+        /// Render side: the generation the renderers have been told about.
+        /// Starts at 0 to match a freshly constructed snapshot, which is
+        /// correct because @ref AddRenderer hands every renderer the current
+        /// config as it joins.
+        uint64_t mNotifiedGeneration = 0;
+
+        /// Render side: @c rawAccumulatedTime of the last snapshot consumed,
+        /// differenced against the next one to get the cross-fade delta. The
+        /// published value is absolute rather than a per-frame delta so that
+        /// dropped snapshots neither lose nor double-count fade time.
+        float mRenderedRawAccumulatedTime = 0.0f;
         /// Set once @ref Initialize has run, so @ref AddRenderer knows whether
         /// a newly registered renderer still has an Initialize coming or has
         /// missed it and must be initialised immediately.

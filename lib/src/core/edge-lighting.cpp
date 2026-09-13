@@ -2,7 +2,8 @@
 #include "animation/animation-manager.h"
 #include "util/log-util.h"
 #include "util/gl-utils.h"
-#include <utility> // std::swap - refreshActiveConfig swaps the composite scratch
+#include <algorithm> // std::max - Render clamps the cross-fade delta
+#include <utility>   // std::swap - refreshActiveConfig swaps the composite scratch
 
 namespace EdgeLighting
 {
@@ -44,19 +45,56 @@ namespace EdgeLighting
         mAnimationManager->Update(mClock.Update(deltaTime));
         refreshActiveConfig();
 
-        float time = mClock.GetTime();
-        for (auto &renderer : mRenderers)
-        {
-            renderer->Update(deltaTime, time, mActiveConfig);
-        }
+        // RAW delta, deliberately not routed through the clock: this is what
+        // the render side differences for GradientRingLUT::Tick, and a colour
+        // change has to keep fading whatever the clock is doing - paused,
+        // stopped, reset or scrubbed.
+        mRawAccumulatedTime += deltaTime;
+
+        // Unconditional, unlike the publish in SetConfig - the two times move
+        // every frame even when the config does not, and they are half of what
+        // the render side consumes.
+        publishSnapshot();
     }
 
     void EdgeLightingEffect::Render(int viewportWidth, int viewportHeight)
     {
-        float t = mClock.GetTime();
+        const bool fresh = mSnapshots.AcquireLatest();
+        const ConfigSnapshot &snapshot = mSnapshots.Current();
+
+        // Gated on the generation, not on `fresh`: a snapshot can arrive with
+        // the config unmoved (only time advanced), and conversely a re-entered
+        // Render on the SAME snapshot must not re-notify.
+        if (snapshot.configGeneration != mNotifiedGeneration)
+        {
+            for (auto &renderer : mRenderers)
+            {
+                renderer->OnConfigChanged(snapshot.config);
+            }
+            mNotifiedGeneration = snapshot.configGeneration;
+        }
+
+        // Exactly once per PUBLISHED frame, which is what `fresh` buys. The
+        // renderer tick is the cross-fade advance, and it is not idempotent:
+        // GradientRingLUT::Tick re-uploads the ring and reports true whenever a
+        // fade is in flight, even for a zero delta, which would re-bake the
+        // neon emission table for nothing. The demo renders twice in one frame
+        // on the capture path, so this is a live case, not a hypothetical.
+        if (fresh)
+        {
+            // Clamped because a host is free to hand Update a negative delta;
+            // the fade must not run backwards.
+            const float fadeDelta = std::max(0.0f, snapshot.rawAccumulatedTime - mRenderedRawAccumulatedTime);
+            mRenderedRawAccumulatedTime = snapshot.rawAccumulatedTime;
+            for (auto &renderer : mRenderers)
+            {
+                renderer->Update(fadeDelta, snapshot.clockTime, snapshot.config);
+            }
+        }
+
         for (auto &renderer : mRenderers)
         {
-            renderer->Render(viewportWidth, viewportHeight, t, mActiveConfig);
+            renderer->Render(viewportWidth, viewportHeight, snapshot.clockTime, snapshot.config);
         }
     }
 
@@ -67,7 +105,13 @@ namespace EdgeLighting
             return;
         }
         mBaseConfig = config;
-        refreshActiveConfig();
+        // Only when the COMPOSITE moved. A base change an animation fully
+        // overrides leaves the active config - and therefore the snapshot -
+        // identical to what was last published, so there is nothing to send.
+        if (refreshActiveConfig())
+        {
+            publishSnapshot();
+        }
     }
 
     const Config &EdgeLightingEffect::GetConfig() const { return mBaseConfig; }
@@ -108,13 +152,13 @@ namespace EdgeLighting
     Clock &EdgeLightingEffect::GetClock() { return mClock; }
     const Clock &EdgeLightingEffect::GetClock() const { return mClock; }
 
-    void EdgeLightingEffect::refreshActiveConfig()
+    bool EdgeLightingEffect::refreshActiveConfig()
     {
         if (mAnimationManager->GetCount() == 0)
         {
             if (mActiveConfig == mBaseConfig)
             {
-                return;
+                return false;
             }
             mActiveConfig = mBaseConfig;
         }
@@ -128,7 +172,7 @@ namespace EdgeLighting
             mAnimationManager->Apply(mScratchConfig);
             if (mScratchConfig == mActiveConfig)
             {
-                return;
+                return false;
             }
             // SWAP, not move-assign. A move would leave the scratch holding
             // moved-from (empty) vectors, and the next frame's assignment would
@@ -139,10 +183,26 @@ namespace EdgeLighting
             std::swap(mActiveConfig, mScratchConfig);
         }
 
-        for (auto &renderer : mRenderers)
-        {
-            renderer->OnConfigChanged(mActiveConfig);
-        }
+        // Reached only when the composite really moved, which is the whole
+        // value of this counter: the render side gets to skip OnConfigChanged
+        // on an unchanged frame without repeating the deep compare that just
+        // happened above.
+        ++mConfigGeneration;
+        return true;
+    }
+
+    void EdgeLightingEffect::publishSnapshot()
+    {
+        ConfigSnapshot &slot = mSnapshots.BeginWrite();
+        // Copy-ASSIGN into a slot that already owns the right-sized buffers,
+        // for the reason spelled out on mScratchConfig: this is a per-frame
+        // path, and a copy-construct here would allocate every vector the
+        // config owns, every frame, forever.
+        slot.config = mActiveConfig;
+        slot.clockTime = mClock.GetTime();
+        slot.rawAccumulatedTime = mRawAccumulatedTime;
+        slot.configGeneration = mConfigGeneration;
+        mSnapshots.Publish();
     }
 
 } // namespace EdgeLighting
