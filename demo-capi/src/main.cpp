@@ -7,14 +7,59 @@
 #include "image-quad.h"
 #include "ui-controls.h"
 
+#include <atomic>
+#include <chrono>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <memory>
+#include <thread>
 
 namespace
 {
     // Effect handle is global so the resize / key callbacks can reach it.
     // Ownership is the main function's - callbacks only borrow.
     el_effect_handle_t gEffect = nullptr;
+
+    // --threaded: run el_effect_update on its own thread instead of inline on
+    // the GL thread, which is the shape a C# host is expected to use.
+    //
+    // This exists in demo-capi and NOT in demo/, and the asymmetry is the point
+    // rather than drift between the two forks. Splitting update off the GL
+    // thread is safe here because every el_effect_* call takes the handle's
+    // lock; EdgeLightingEffect itself has no lock, so the same split in demo/
+    // would race - its ImGui panel edits the config from the GL thread while
+    // the data thread composes. The C++ class supports ONE data thread plus one
+    // render thread; the C ABI is what supports a UI thread as well.
+    std::atomic<bool> gStopDataThread{false};
+    // Counted so a run can prove the split actually happened. A sanitizer
+    // reporting zero races on a thread that never ran proves nothing.
+    std::atomic<long long> gDataThreadUpdates{0};
+
+    // Runs until told to stop. Keeps its own clock, because in this mode the
+    // data side is no longer paced by the frame loop.
+    void DataThreadMain()
+    {
+        auto last = std::chrono::steady_clock::now();
+        while (!gStopDataThread.load(std::memory_order_relaxed))
+        {
+            const auto now = std::chrono::steady_clock::now();
+            const float dt = std::chrono::duration<float>(now - last).count();
+            last = now;
+
+            const el_result_e r = el_effect_update(gEffect, dt);
+            if (r != EL_SUCCESS)
+            {
+                std::fprintf(stderr, "[data thread] el_effect_update failed: %d\n", (int)r);
+            }
+            gDataThreadUpdates.fetch_add(1, std::memory_order_relaxed);
+            // ~120 Hz. Deliberately NOT matched to the display: the whole point
+            // of the split is that the two sides are paced independently, and a
+            // data rate above the frame rate exercises the snapshot buffer's
+            // drop path.
+            std::this_thread::sleep_for(std::chrono::milliseconds(8));
+        }
+    }
 
     void OnResize(GLFWwindow * /*window*/, int width, int height)
     {
@@ -166,8 +211,26 @@ namespace
     }
 } // namespace
 
-int main()
+int main(int argc, char **argv)
 {
+    bool threaded = false;
+    // Exits on its own after this many seconds. 0 means run until the window is
+    // closed, which is the interactive default. It exists so the demo can be
+    // driven non-interactively under a sanitizer - a race harness nobody can
+    // re-run is a race harness that rots.
+    double runSeconds = 0.0;
+    for (int i = 1; i < argc; ++i)
+    {
+        if (std::strcmp(argv[i], "--threaded") == 0)
+        {
+            threaded = true;
+        }
+        else if (std::strcmp(argv[i], "--seconds") == 0 && i + 1 < argc)
+        {
+            runSeconds = atof(argv[++i]);
+        }
+    }
+
     if (!glfwInit())
     {
         std::fprintf(stderr, "Failed to initialize GLFW\n");
@@ -275,9 +338,30 @@ int main()
     EdgeLightingCapiDemo::PrintControls();
     EdgeLightingCapiDemo::PrintCurrentStatus(gEffect);
 
+    // AFTER el_effect_init, per the documented ordering: init is a GL-thread
+    // call and must complete before any data thread touches the handle.
+    std::thread dataThread;
+    if (threaded)
+    {
+        dataThread = std::thread(DataThreadMain);
+        std::printf("[mode] THREADED: el_effect_update on its own thread; "
+                    "ImGui, the setters and el_effect_render stay on this one.\n");
+    }
+    else
+    {
+        std::printf("[mode] single-threaded (pass --threaded to split the data side off).\n");
+    }
+
+    const double startTime = glfwGetTime();
+    long long frameCount = 0;
     float lastFrameTime = 0.0f;
     while (!glfwWindowShouldClose(window) && !glfwWindowShouldClose(debugUI.GetWindow()))
     {
+        if (runSeconds > 0.0 && (glfwGetTime() - startTime) >= runSeconds)
+        {
+            break;
+        }
+
         const float now = static_cast<float>(glfwGetTime());
         const float dt = now - lastFrameTime;
         lastFrameTime = now;
@@ -309,16 +393,32 @@ int main()
                                debugUI.GetImageBackdropTextureId());
             }
 
-            el_effect_update(gEffect, dt);
+            if (!threaded)
+            {
+                el_effect_update(gEffect, dt);
+            }
             const double t0 = glfwGetTime();
             el_effect_render(gEffect, fbW, fbH);
             const double t1 = glfwGetTime();
             debugUI.SetLastRenderTimeMs(static_cast<float>((t1 - t0) * 1000.0));
 
             glfwSwapBuffers(window);
+            ++frameCount;
         }
 
         glfwPollEvents();
+    }
+
+    // Quiesce the data thread BEFORE destroying the handle. The library spawns
+    // no threads and cannot do this itself, and el_effect_destroy cannot lock
+    // the mutex it is about to release - so this ordering is the host's job and
+    // it is not optional.
+    if (dataThread.joinable())
+    {
+        gStopDataThread.store(true, std::memory_order_relaxed);
+        dataThread.join();
+        std::printf("[mode] data thread ran %lld updates alongside %lld frames.\n",
+                    gDataThreadUpdates.load(), frameCount);
     }
 
     debugUI.Shutdown();

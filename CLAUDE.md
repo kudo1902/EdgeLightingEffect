@@ -25,6 +25,8 @@ Docs, in reading order. The three neon documents are tiers of the same material 
 - [`docs/review-findings.md`](docs/review-findings.md) - open defects and rough edges, visual ones with offscreen repros. Check here before assuming a behaviour is intended.
 - [`docs/naming-review.md`](docs/naming-review.md) - identifier audit against `AGENTS.md`, plus the names that describe mechanisms the code no longer has. Read before renaming anything.
 - [`docs/active-config-capi-plan.md`](docs/active-config-capi-plan.md) - how the C ABI got a source-parameterised read family (`el_effect_read_*`), so a C host can see the animation-overlaid active config and not just its own staging edits. Read before adding a getter to `el-effect.h`, or before assuming `el_effect_get_*` tells you what is on screen.
+- [`docs/threaded-model-design.md`](docs/threaded-model-design.md) - the data-side / render-side split: why `Update` publishes a `ConfigSnapshot` instead of calling renderers, what the C ABI's lock covers and what it deliberately does not, and the five steps it landed in. Read before touching anything in `lib/capi` that takes a handle.
+- [`docs/threaded-model-comparison.md`](docs/threaded-model-comparison.md) - the evidence for it: 16 scenes byte-identical, 0 allocations added to the per-frame path, and a threaded `demo-capi` clean under ThreadSanitizer - plus the negative control proving the sanitizer was looking, and the two pre-existing defects the work uncovered (a racing logger, twelve pre-init crashes).
 
 When the docs go out of date, treat the headers under `lib/include/` as the source of truth.
 

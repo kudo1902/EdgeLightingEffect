@@ -516,6 +516,8 @@ Five changes, each shippable on its own:
 4. **The consistency scope.** Section 5.5.
 5. **Threaded `demo-capi` under TSan** and the comparison doc.
 
+All five have landed. The results are in [`threaded-model-comparison.md`](threaded-model-comparison.md).
+
 Steps 1 to 4 have landed. What each one turned up that this plan did not
 predict is recorded where the code is; the two worth repeating here:
 
