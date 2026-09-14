@@ -79,11 +79,15 @@ extern "C"
     /** @brief Where the opaque-mode fill covers pixels.
      *  @details See @ref el_opaque_mode_e. NONE keeps the effect purely
      *           transparent; the other modes rasterise a coloured band shaped
-     *           by @ref el_effect_set_inside_cutoff /
-     *           @ref el_effect_set_outside_cutoff and filled with
+     *           by @ref el_effect_set_opaque_cutoff and filled with
      *           @ref el_effect_set_opaque_color. To render the fill on its
      *           own, with the emission suppressed, see
-     *           @ref el_effect_set_debug_opaque_only. */
+     *           @ref el_effect_set_debug_opaque_only.
+     *
+     *           NOTE the band is shaped by the FILL's cutoffs, not the glow's
+     *           @ref el_effect_set_inside_cutoff /
+     *           @ref el_effect_set_outside_cutoff. Those were the same pair
+     *           before the split; see @ref el_effect_set_opaque_cutoff. */
     EL_API el_result_e el_effect_set_opaque_mode(el_effect_handle_t effect, el_opaque_mode_e mode);
     EL_API el_result_e el_effect_get_opaque_mode(el_effect_handle_t effect, el_opaque_mode_e *outMode);
 
@@ -108,20 +112,61 @@ extern "C"
      *           decay bounds the emission). @c size is the pixel distance from
      *           the rect edge to the cutoff boundary along the interior side
      *           (always positive). @c softness is the feather width in pixels
-     *           at the boundary (0 = hard, larger = smoother fade). Also caps
-     *           the geometric footprint of @c INSIDE / @c BOTH opaque fills. */
+     *           at the boundary (0 = hard, larger = smoother fade).
+     *
+     *           Bounds the EMISSION only. The opaque fill has its own cutoffs
+     *           - see @ref el_effect_set_opaque_cutoff - so a tight glow can
+     *           sit on a wide fill, or the reverse. This call used to bound
+     *           both. */
     EL_API el_result_e el_effect_set_inside_cutoff(el_effect_handle_t effect,
                                                    el_bool_t enable, float size, float softness);
     EL_API el_result_e el_effect_get_inside_cutoff(el_effect_handle_t effect,
                                                    el_bool_t *outEnable, float *outSize, float *outSoftness);
 
     /** @brief Outside cutoff (rect exterior side). Mirror of @ref el_effect_set_inside_cutoff.
-     *  @details Also caps @c OUTSIDE / @c BOTH opaque fills and sizes the neon
-     *           draw quad so far-exterior pixels are rasteriser-culled. */
+     *  @details Also sizes the neon draw quad so far-exterior pixels are
+     *           rasteriser-culled. Like the inside cutoff it bounds the
+     *           emission only. */
     EL_API el_result_e el_effect_set_outside_cutoff(el_effect_handle_t effect,
                                                     el_bool_t enable, float size, float softness);
     EL_API el_result_e el_effect_get_outside_cutoff(el_effect_handle_t effect,
                                                     el_bool_t *outEnable, float *outSize, float *outSoftness);
+
+    /** @brief Per-side hard geometric limit for the OPAQUE FILL.
+     *  @details Addressed by @p side (@ref el_cutoff_side_e) rather than split
+     *           across a named function per side, so the surface grows by one
+     *           pair of exports rather than two.
+     *
+     *           @c enable = 0 leaves the fill uncapped on that side: outward
+     *           it runs to the viewport edge, inward it covers the whole
+     *           interior. @p size is the pixel distance from the rect edge to
+     *           the fill boundary along that side (always positive; the sign
+     *           is implicit in @p side) and must be finite.
+     *
+     *           There is no @c softness here, and that is deliberate: the fill
+     *           has ONE feather, @ref el_effect_set_opaque_softness, shared by
+     *           both of its boundaries. A per-side softness the fill never
+     *           reads would be a trap.
+     *
+     *           INDEPENDENT of @ref el_effect_set_inside_cutoff /
+     *           @ref el_effect_set_outside_cutoff, which bound the glow. The
+     *           two were one pair of cutoffs before the split, so a host that
+     *           shaped its fill through the glow cutoffs has to set this pair
+     *           too. Both sides default to disabled, which means
+     *           @c EL_OPAQUE_MODE_BOTH with neither set fills the whole
+     *           viewport.
+     *
+     *           Read only by the modes that reach the side: @c INSIDE and
+     *           @c BOTH read the inside cutoff, @c OUTSIDE and @c BOTH the
+     *           outside one; @c ALL reads neither and @c NONE draws nothing.
+     *  @param side Which boundary to set; anything outside
+     *              @ref el_cutoff_side_e returns @c EL_ERROR_INVALID_PARAMETER. */
+    EL_API el_result_e el_effect_set_opaque_cutoff(el_effect_handle_t effect,
+                                                   el_cutoff_side_e side,
+                                                   el_bool_t enable, float size);
+    EL_API el_result_e el_effect_get_opaque_cutoff(el_effect_handle_t effect,
+                                                   el_cutoff_side_e side,
+                                                   el_bool_t *outEnable, float *outSize);
 
     /** @} */
 

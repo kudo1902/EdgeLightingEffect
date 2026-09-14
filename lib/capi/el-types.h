@@ -92,17 +92,39 @@ extern "C"
         EL_GLOW_SIDE_OUTSIDE = 2 /**< Glow only outside the rectangle. */
     } el_glow_side_e;
 
+    /** @brief Which side of the rect edge a cutoff bounds.
+     *  @details Addressing for @ref el_effect_set_opaque_cutoff /
+     *           @ref el_effect_get_opaque_cutoff. Has no C++ mirror enum -
+     *           the C++ config names the two sides as separate fields
+     *           (@c opaqueInsideCutoff / @c opaqueOutsideCutoff) rather than
+     *           indexing them - so there is no enum-parity assert for it in
+     *           capi-internal.h. */
+    typedef enum el_cutoff_side_e
+    {
+        EL_CUTOFF_SIDE_INSIDE = 0, /**< Rect interior side: the boundary at d = -size. */
+        EL_CUTOFF_SIDE_OUTSIDE = 1 /**< Rect exterior side: the boundary at d = +size. */
+    } el_cutoff_side_e;
+
     /** @brief Where the opaque-mode fill covers pixels.
      *  @details Mirrors @c EdgeLighting::OpaqueMode. The fill is a rounded
-     *           band sized by @ref el_effect_set_inside_cutoff /
-     *           @ref el_effect_set_outside_cutoff; the neon emission still
-     *           composites on top inside the glow band. */
+     *           band sized by @ref el_effect_set_opaque_cutoff - the FILL's
+     *           own cutoffs, not the glow's
+     *           @ref el_effect_set_inside_cutoff /
+     *           @ref el_effect_set_outside_cutoff. The neon emission still
+     *           composites on top inside the glow band.
+     *
+     *           The two were one pair of cutoffs before the split: a host that
+     *           bounded its fill by enabling the glow cutoffs must now set the
+     *           opaque pair as well, or the fill comes out uncapped on that
+     *           side. In particular @c EL_OPAQUE_MODE_BOTH with neither opaque
+     *           cutoff enabled - the default state of the pair - covers the
+     *           whole viewport. */
     typedef enum el_opaque_mode_e
     {
         EL_OPAQUE_MODE_NONE = 0,    /**< No opaque pass; effect composites transparently. */
-        EL_OPAQUE_MODE_OUTSIDE = 1, /**< Fill outer half of the band: 0 <= d <= outsideCutoff. */
-        EL_OPAQUE_MODE_INSIDE = 2,  /**< Fill inner half of the band: -insideCutoff <= d <= 0. */
-        EL_OPAQUE_MODE_BOTH = 3,    /**< Fill the whole band: -insideCutoff <= d <= +outsideCutoff. */
+        EL_OPAQUE_MODE_OUTSIDE = 1, /**< Fill outer half of the band: 0 <= d <= opaque outside cutoff. */
+        EL_OPAQUE_MODE_INSIDE = 2,  /**< Fill inner half of the band: -opaque inside cutoff <= d <= 0. */
+        EL_OPAQUE_MODE_BOTH = 3,    /**< Fill the whole band: -opaque inside cutoff <= d <= +opaque outside cutoff. */
         EL_OPAQUE_MODE_ALL = 4      /**< Fill the whole viewport. */
     } el_opaque_mode_e;
 

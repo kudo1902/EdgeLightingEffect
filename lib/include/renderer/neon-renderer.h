@@ -103,8 +103,8 @@ namespace EdgeLighting
         ///
         /// Builds nothing (@c mFillVertexCount 0) whenever the fill's coverage
         /// is 1 at every pixel - @c ALL by definition, and @c BOTH with both
-        /// cutoffs disabled by arithmetic (the default cutoff state, so the
-        /// common way in). Those modes need no bounding geometry either way:
+        /// OPAQUE cutoffs disabled by arithmetic (the default state of that
+        /// pair, so the common way in). Those modes need no bounding geometry either way:
         /// @ref renderOpaqueFill clears for them, and on the rare state where
         /// a clear would not clip like a draw it falls back to the static
         /// fullscreen quad, never to a ring. Both passes ask one shared
@@ -279,7 +279,7 @@ namespace EdgeLighting
         ShaderProgram mBlitShader;                                     ///< Scaled-path upscale composite (neon-blit.frag).
         VertexArray mGlowVertexArray{"NeonRenderer.Glow"};             ///< Tight glow quad (rect + glow reach), in scaled space.
         VertexArray mFullscreenVertexArray{"NeonRenderer.Fullscreen"}; ///< NDC quad: emission bake, ALL-mode opaque fill, blit.
-        VertexArray mFillVertexArray{"NeonRenderer.Fill"};             ///< Opaque-fill band ring (rect +- cutoffs), in FULL-RES rect-local px.
+        VertexArray mFillVertexArray{"NeonRenderer.Fill"};             ///< Opaque-fill band ring (rect +- the OPAQUE cutoffs), in FULL-RES rect-local px.
         /// Vertex count in @c mFillVertexArray - 24 for a ring (8 triangles),
         /// 0 when there is no ring and the fullscreen quad is used instead.
         /// Written by @ref setupFillGeometry, read by @ref renderOpaqueFill,

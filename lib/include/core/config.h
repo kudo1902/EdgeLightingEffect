@@ -53,17 +53,50 @@ namespace EdgeLighting
         bool operator!=(const Cutoff &o) const { return !(*this == o); }
     } Cutoff;
 
+    /// Per-side hard geometric limit for the OPAQUE FILL, independent of the
+    /// glow's @ref Cutoff.
+    ///
+    /// Two fields, not three: the fill's feather is @c
+    /// NeonConfig::opaqueSoftness, a single TOTAL width shared by both of its
+    /// boundaries, so there is no per-side softness to carry here. That is the
+    /// only difference from @ref Cutoff and it is deliberate - a @c softness
+    /// field the fill never reads would be a trap.
+    ///
+    ///   enable - true = bound the fill at @c size; false = the fill is
+    ///            uncapped on this side (outward it runs to the viewport edge,
+    ///            inward it covers the whole interior).
+    ///   size   - distance in pixels from the rect edge to the fill boundary
+    ///            along this side (always positive; the sign is implicit in
+    ///            whether it is the inside or the outside cutoff).
+    typedef struct OpaqueCutoff
+    {
+        bool enable = false;
+        float size = 0.0f;
+
+        bool operator==(const OpaqueCutoff &o) const
+        {
+            return enable == o.enable && CompareUtils::IsSameValue(size, o.size);
+        }
+        bool operator!=(const OpaqueCutoff &o) const { return !(*this == o); }
+    } OpaqueCutoff;
+
     /// Where the opaque-mode fill covers pixels. All modes fill @c
     /// NeonConfig::opaqueColor; the neon emission still composites on top of the
-    /// fill inside the glow band. Cutoff distances come from @c
-    /// NeonConfig::insideCutoff / @c outsideCutoff (both positive pixel values
-    /// measured from the rect edge along their respective sides).
+    /// fill inside the glow band.
+    ///
+    /// Cutoff distances come from @c NeonConfig::opaqueInsideCutoff / @c
+    /// opaqueOutsideCutoff - the FILL's own pair, NOT the glow's @c
+    /// insideCutoff / @c outsideCutoff. The two were one pair of fields until
+    /// the split; a config that bounded its fill by enabling the glow cutoffs
+    /// now has to set the opaque pair as well, or the fill comes out uncapped
+    /// on that side (and @c BOTH with neither opaque cutoff enabled covers the
+    /// whole viewport - see @c NeonRenderer::FillsWholeViewport).
     typedef enum class OpaqueMode
     {
         NONE,    ///< No opaque pass; the effect composites transparently over whatever's behind it.
-        OUTSIDE, ///< Fill only the outer half of the band: 0 <= d <= outsideCutoff.
-        INSIDE,  ///< Fill only the inner half of the band: -insideCutoff <= d <= 0.
-        BOTH,    ///< Fill the whole band: -insideCutoff <= d <= +outsideCutoff.
+        OUTSIDE, ///< Fill only the outer half of the band: 0 <= d <= opaqueOutsideCutoff.
+        INSIDE,  ///< Fill only the inner half of the band: -opaqueInsideCutoff <= d <= 0.
+        BOTH,    ///< Fill the whole band: -opaqueInsideCutoff <= d <= +opaqueOutsideCutoff.
         ALL      ///< Fill the whole viewport (matches the old opaque=true + glowSide=BOTH behaviour).
     } OpaqueMode;
 
@@ -262,14 +295,21 @@ namespace EdgeLighting
         /// element-wise (see @ref GradientRingLUT).
         int gradientLutSize = 256;
 
-        // --- Compositing ---
+        // --- Compositing (the opaque fill: every opaque* field is here) ---
+        //
+        // The fill's own geometry lives in this block, deliberately: mode,
+        // colour, its two cutoffs and the feather they share. The GLOW's
+        // cutoffs are a SEPARATE pair under "Glow" below - same idea, same
+        // units, different pass, and nothing reads both. Keeping each pair
+        // beside the thing it bounds is what stops them being read as one
+        // setting, which is what they were before the split.
 
         /// Where (if anywhere) an opaque background fill is drawn behind the
         /// neon emission. NONE keeps the effect purely additive over whatever
         /// was previously in the framebuffer; the other modes rasterise a
-        /// coloured shape defined by @c insideCutoff / @c outsideCutoff (see
-        /// the @c OpaqueMode enum for exact geometry). The neon glow composites
-        /// on top of the fill inside the band.
+        /// coloured shape defined by @c opaqueInsideCutoff / @c
+        /// opaqueOutsideCutoff (see the @c OpaqueMode enum for exact geometry).
+        /// The neon glow composites on top of the fill inside the band.
         OpaqueMode opaqueMode = OpaqueMode::NONE;
 
         /// Fill colour for the opaque-mode background pass. Applied whenever
@@ -278,6 +318,30 @@ namespace EdgeLighting
         /// partial-fill pass and is applied by neither the renderer nor the
         /// shader yet. Default is black.
         glm::vec4 opaqueColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
+
+        /// Inside cutoff (rect interior side) for the OPAQUE FILL. See
+        /// @ref OpaqueCutoff for the fields, and @c opaqueSoftness for the
+        /// feather both fill boundaries share.
+        ///
+        /// Caps the geometric footprint of @c OpaqueMode::INSIDE / @c BOTH:
+        /// the fill runs from the rect edge inward to
+        /// @c d = -opaqueInsideCutoff.size. @c enable = false leaves it
+        /// uncapped, i.e. the fill covers the whole interior.
+        ///
+        /// Read only when @c opaqueMode is INSIDE or BOTH; OUTSIDE and ALL
+        /// never look at it, and NONE never dispatches the pass.
+        OpaqueCutoff opaqueInsideCutoff = {false, 0.0f};
+
+        /// Outside cutoff (rect exterior side) for the OPAQUE FILL. Mirror of
+        /// @c opaqueInsideCutoff, capping @c OpaqueMode::OUTSIDE / @c BOTH.
+        /// @c enable = false leaves the exterior uncapped, i.e. the fill runs
+        /// out to the viewport edge.
+        ///
+        /// Note what BOTH with NEITHER opaque cutoff enabled means: coverage 1
+        /// at every pixel, which @c NeonRenderer::FillsWholeViewport routes to
+        /// a scissored @c glClear. That is the default state of this pair, so
+        /// selecting BOTH and nothing else fills the viewport.
+        OpaqueCutoff opaqueOutsideCutoff = {false, 0.0f};
 
         /// TOTAL feather width in pixels at the opaque-mode fill's cutoff
         /// boundaries: the fade runs from fully covered to fully clear over
@@ -288,6 +352,10 @@ namespace EdgeLighting
         /// per-side @c Cutoff::softness so the emission and the fill can taper
         /// at different rates - e.g. a wide fill fade under a tight emission
         /// fall-off.
+        ///
+        /// This is the ONLY feather the fill has, and it is shared by both of
+        /// its boundaries - which is why @ref OpaqueCutoff carries no softness
+        /// field of its own.
         ///
         /// NOTE the shader used to spread this over 2x the stated width, so
         /// values tuned before that fix render half as wide now (and finally
@@ -337,16 +405,21 @@ namespace EdgeLighting
         /// below so the two feathers can be tuned independently.
         float glowSideSoftness = 0.0f;
 
-        /// Inside cutoff (rect interior side). See @ref Cutoff for the fields.
-        /// The emission fades to zero over @c insideCutoff.softness at
-        /// @c d = -insideCutoff.size and is culled past it. Also caps the
-        /// geometric footprint of @c OpaqueMode::INSIDE / @c BOTH fills.
+        /// Inside cutoff (rect interior side) for the GLOW. See @ref Cutoff for
+        /// the fields. The emission fades to zero over @c insideCutoff.softness
+        /// at @c d = -insideCutoff.size and is culled past it.
         /// @c insideCutoff.enable = false leaves the interior uncapped.
+        ///
+        /// Bounds the EMISSION only. The opaque fill has its own pair, up in
+        /// the Compositing block with the rest of the opaque* fields - see
+        /// @c opaqueInsideCutoff - so a tight glow can sit on a wide fill, or
+        /// the reverse. (It used to bound both; a config written before the
+        /// split has to set the opaque pair too.)
         Cutoff insideCutoff = {false, 0.0f, 0.0f};
 
-        /// Outside cutoff (rect exterior side). Mirror of @c insideCutoff.
-        /// Also caps @c OpaqueMode::OUTSIDE / @c BOTH fills and sizes the
-        /// neon draw quad so far-exterior pixels are rasteriser-culled.
+        /// Outside cutoff (rect exterior side) for the GLOW. Mirror of
+        /// @c insideCutoff. Also sizes the neon draw quad so far-exterior
+        /// pixels are rasteriser-culled.
         /// @c outsideCutoff.enable = false leaves the exterior uncapped
         /// (natural halo / bloom decay bounds the emission instead).
         Cutoff outsideCutoff = {false, 0.0f, 0.0f};
@@ -486,6 +559,9 @@ namespace EdgeLighting
                    gradientLutSize == o.gradientLutSize &&
                    opaqueMode == o.opaqueMode &&
                    CompareUtils::IsSameValue(opaqueColor, o.opaqueColor) &&
+                   opaqueInsideCutoff == o.opaqueInsideCutoff &&
+                   opaqueOutsideCutoff == o.opaqueOutsideCutoff &&
+                   CompareUtils::IsSameValue(opaqueSoftness, o.opaqueSoftness) &&
                    CompareUtils::IsSameValue(lineWidth, o.lineWidth) &&
                    CompareUtils::IsSameValue(filamentFalloff, o.filamentFalloff) &&
                    CompareUtils::IsSameValue(intensity, o.intensity) &&
@@ -495,7 +571,6 @@ namespace EdgeLighting
                    CompareUtils::IsSameValue(glowSideSoftness, o.glowSideSoftness) &&
                    insideCutoff == o.insideCutoff &&
                    outsideCutoff == o.outsideCutoff &&
-                   CompareUtils::IsSameValue(opaqueSoftness, o.opaqueSoftness) &&
                    blendSpace == o.blendSpace &&
                    colorStops == o.colorStops &&
                    CompareUtils::IsSameValue(hueRotationRate, o.hueRotationRate) &&

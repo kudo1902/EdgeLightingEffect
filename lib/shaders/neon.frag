@@ -950,6 +950,12 @@ void main() {
     // three). Flooring the start at the cutoff boundary hands everything up to
     // that point back to the cutoff smoothstep.
     //
+    // Note for anyone re-running that diagnostic: the glow and the fill now
+    // carry SEPARATE cutoffs, so "sharing an outer rect" has to be arranged.
+    // Set neon.outsideCutoff AND neon.opaqueOutsideCutoff to the same size -
+    // one used to set both. Nothing about the mechanism here changed; only
+    // the setup does. uOutsideCutoff below is, and always was, the GLOW's.
+    //
     // Only when that boundary actually falls inside the quad, though. A
     // disabled cutoff arrives as a huge sentinel, and the whole point of this
     // fade is the case where uQuadMargin is SMALLER than outsideCutoff - in

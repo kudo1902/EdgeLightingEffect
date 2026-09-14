@@ -25,6 +25,14 @@ namespace EdgeLighting
         {
             return c.enable ? c.size : CUTOFF_DISABLED_SIZE;
         }
+        /// Same sentinel, same reasoning, for the fill's own pair. Overloaded
+        /// rather than templated so the two cannot be handed to each other's
+        /// consumer by accident: the glow reads @ref Cutoff, the fill reads
+        /// @ref OpaqueCutoff, and since the split those are different numbers.
+        inline float GetCutoffSize(const OpaqueCutoff &c)
+        {
+            return c.enable ? c.size : CUTOFF_DISABLED_SIZE;
+        }
 
         /// Does this config's opaque fill cover EVERY pixel at coverage 1?
         ///
@@ -33,8 +41,15 @@ namespace EdgeLighting
         /// because that is what decides between a scissored glClear and a
         /// shaded draw. ALL says so by definition. BOTH says so too whenever
         /// NEITHER cutoff is enabled - and since both cutoffs default to
-        /// disabled (@ref NeonConfig::insideCutoff / outsideCutoff), that is
-        /// the state a host lands in by simply selecting BOTH.
+        /// disabled (@ref NeonConfig::opaqueInsideCutoff /
+        /// opaqueOutsideCutoff), that is the state a host lands in by simply
+        /// selecting BOTH.
+        ///
+        /// The cutoffs asked about here are the FILL's, not the glow's. Before
+        /// the two were split these were one pair of fields, so enabling a
+        /// glow cutoff also took this case off the clear path; it no longer
+        /// does, and a config that bounds only its emission now lands on the
+        /// clear.
         ///
         /// Trace it: a disabled cutoff arrives as CUTOFF_DISABLED_SIZE, so in
         /// black-rect.frag dIn = d + 1e6 is hugely positive and dOut = d - 1e6
@@ -60,7 +75,7 @@ namespace EdgeLighting
         {
             return neon.opaqueMode == OpaqueMode::ALL ||
                    (neon.opaqueMode == OpaqueMode::BOTH &&
-                    !neon.insideCutoff.enable && !neon.outsideCutoff.enable);
+                    !neon.opaqueInsideCutoff.enable && !neon.opaqueOutsideCutoff.enable);
         }
 
         /// Would a glClear land on the same pixels a coverage-1 fullscreen
@@ -673,16 +688,22 @@ namespace EdgeLighting
                                    // reaches, so it sizes the quad too (see setupGeometry).
                                    config.neon.filamentFalloff != mCurrentConfig.neon.filamentFalloff ||
                                    config.neon.outsideCutoff != mCurrentConfig.neon.outsideCutoff;
-        // The fill ring is bounded by the CUTOFFS and the fill's own feather,
-        // not by the glow reach, so it gets its own gate rather than riding on
-        // geometryDirty: insideCutoff, opaqueMode and opaqueSoftness move the
-        // ring but not the glow quad, and glowRadius / bloomStrength move the
-        // glow quad but not the ring.
+        // The fill ring is bounded by the FILL's OWN cutoffs and feather, not
+        // by the glow reach, so it gets its own gate rather than riding on
+        // geometryDirty: opaqueInsideCutoff / opaqueOutsideCutoff, opaqueMode
+        // and opaqueSoftness move the ring but not the glow quad, and
+        // glowRadius / bloomStrength move the glow quad but not the ring.
+        //
+        // Note the two gates now share NO cutoff field. geometryDirty watches
+        // neon.outsideCutoff because that caps the glow quad; this one watches
+        // the opaque pair because that bounds the ring. Since the split those
+        // are independent inputs, so gating either rebuild on the other's
+        // cutoff would leave a stale buffer on screen.
         const bool fillDirty = config.geometry != mCurrentConfig.geometry ||
                                config.neon.opaqueMode != mCurrentConfig.neon.opaqueMode ||
                                config.neon.opaqueSoftness != mCurrentConfig.neon.opaqueSoftness ||
-                               config.neon.insideCutoff != mCurrentConfig.neon.insideCutoff ||
-                               config.neon.outsideCutoff != mCurrentConfig.neon.outsideCutoff;
+                               config.neon.opaqueInsideCutoff != mCurrentConfig.neon.opaqueInsideCutoff ||
+                               config.neon.opaqueOutsideCutoff != mCurrentConfig.neon.opaqueOutsideCutoff;
         // The merged transient+preserved view is a pure function of the two
         // segment pools, so it gets a gate like every other rebuild here. It
         // used to run on EVERY config change, which with an animation attached
@@ -1033,6 +1054,12 @@ namespace EdgeLighting
         // A side the mode does not fill still gets FILL_EDGE_SAFETY, because
         // the d == 0 edge itself carries a one-pixel AA ramp that straddles it.
         //
+        // The cutoffs read here are the FILL's (@ref NeonConfig::
+        // opaqueInsideCutoff / opaqueOutsideCutoff), never the glow's. The
+        // ring bounds which fragments this pass rasterises, and since the
+        // split the glow's cutoffs say nothing about that - sizing it from
+        // them would clip a wide fill under a tight glow.
+        //
         // A DISABLED cutoff arrives as the huge CUTOFF_DISABLED_SIZE sentinel
         // and is handled by the arithmetic rather than by a branch: outward it
         // pushes the ring off-viewport, where the rasteriser clips it (the
@@ -1044,11 +1071,11 @@ namespace EdgeLighting
         float innerMargin = FILL_EDGE_SAFETY;
         if (mode == OpaqueMode::OUTSIDE || mode == OpaqueMode::BOTH)
         {
-            outerMargin = GetCutoffSize(config.neon.outsideCutoff) + softHalf + FILL_EDGE_SAFETY;
+            outerMargin = GetCutoffSize(config.neon.opaqueOutsideCutoff) + softHalf + FILL_EDGE_SAFETY;
         }
         if (mode == OpaqueMode::INSIDE || mode == OpaqueMode::BOTH)
         {
-            innerMargin = GetCutoffSize(config.neon.insideCutoff) + softHalf + FILL_EDGE_SAFETY;
+            innerMargin = GetCutoffSize(config.neon.opaqueInsideCutoff) + softHalf + FILL_EDGE_SAFETY;
         }
 
         // Cap on how far OUTWARD the ring is allowed to run, in full-res px.
@@ -1067,7 +1094,7 @@ namespace EdgeLighting
         // What makes the clamp SAFE is that this geometry is a conservative
         // bound and nothing else: the silhouette comes from the SDF reading
         // gl_FragCoord, and the shader still receives the true sentinel through
-        // uOutsideCutoff. Replacing one conservative bound with a tighter one
+        // uOpaqueOutsideCutoff. Replacing one conservative bound with a tighter one
         // changes which fragments are rasterised, never what they shade to -
         // so long as the tighter one still covers every pixel the shader would
         // give non-zero coverage.
@@ -1519,7 +1546,8 @@ namespace EdgeLighting
         // The fragment shader shapes the black coverage from an analytic
         // rounded-box SDF read off gl_FragCoord (highp - exact on Mali/Tizen):
         //   ALL     -> black everywhere (whole viewport opaque).
-        //   BOTH    -> black across the whole band, inside cutoff to outside.
+        //   BOTH    -> black across the whole band, opaque inside cutoff to
+        //              opaque outside cutoff.
         //   INSIDE  -> black only where d <= softEdge (off-side stays clear).
         //   OUTSIDE -> mirror of INSIDE.
         //
@@ -1558,9 +1586,9 @@ namespace EdgeLighting
         // coverage really is the whole screen.
         //
         // The test is @ref FillsWholeViewport, not `mode == ALL`: BOTH with
-        // both cutoffs disabled produces identical output, and that is the
-        // DEFAULT cutoff state, so it was the common way into this cost rather
-        // than a corner case. @ref setupFillGeometry asks the same function, so
+        // both OPAQUE cutoffs disabled produces identical output, and that is
+        // the DEFAULT state of that pair, so it was the common way into this
+        // cost rather than a corner case. @ref setupFillGeometry asks the same function, so
         // a coverage-1 mode always arrives with mFillVertexCount == 0.
         //
         // Measured on that BOTH case with debug.opaqueOnly isolating the pass,
@@ -1710,8 +1738,13 @@ namespace EdgeLighting
         float opaqueSoft = std::max(config.neon.opaqueSoftness,
                                     static_cast<float>(SIDE_SOFT_EPSILON));
         mBlackRectShader.SetUniform("uOpaqueMode", static_cast<int>(config.neon.opaqueMode));
-        mBlackRectShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
-        mBlackRectShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
+        // The FILL's cutoffs, not the glow's - the two are independent since
+        // the split, and this is the pass that reads the opaque pair. The glow
+        // pair is uploaded to mNeonShader in @ref renderNeonPass under the
+        // same uniform names minus the prefix; the names differ here precisely
+        // so the two uploads cannot be mistaken for one another.
+        mBlackRectShader.SetUniform("uOpaqueInsideCutoff", GetCutoffSize(config.neon.opaqueInsideCutoff));
+        mBlackRectShader.SetUniform("uOpaqueOutsideCutoff", GetCutoffSize(config.neon.opaqueOutsideCutoff));
         mBlackRectShader.SetUniform("uOpaqueSoftness", opaqueSoft);
         mBlackRectShader.SetUniform("uOpaqueColor", config.neon.opaqueColor);
         if (ring)

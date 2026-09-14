@@ -237,6 +237,80 @@ extern "C"
         return EL_SUCCESS;
     }
 
+    /// The fill's own cutoff pair, addressed by side.
+    ///
+    /// One parameterised pair of exports rather than a named function per
+    /// side: the distinction between the two sides already exists as an enum
+    /// value, so it costs nothing to make it an argument, and a later third
+    /// boundary would extend the enum instead of adding two more symbols.
+    ///
+    /// Resolving @p side to the field is the whole of the side handling, so it
+    /// lives in one helper shared by the setter and the getter - a switch in
+    /// each is how they drift apart.
+    static EdgeLighting::OpaqueCutoff *ResolveOpaqueCutoff(el_effect_handle_t effect,
+                                                           el_cutoff_side_e side)
+    {
+        switch (side)
+        {
+        case EL_CUTOFF_SIDE_INSIDE:
+        {
+            return &effect->config.neon.opaqueInsideCutoff;
+        }
+        case EL_CUTOFF_SIDE_OUTSIDE:
+        {
+            return &effect->config.neon.opaqueOutsideCutoff;
+        }
+        default:
+        {
+            return nullptr;
+        }
+        }
+    }
+
+    el_result_e el_effect_set_opaque_cutoff(el_effect_handle_t effect,
+                                            el_cutoff_side_e side,
+                                            el_bool_t enable, float size)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque_cutoff");
+        LOCK_EFFECT(effect);
+        VALIDATE_FINITE(size, "el_effect_set_opaque_cutoff");
+        EdgeLighting::OpaqueCutoff *c = ResolveOpaqueCutoff(effect, side);
+        if (c == nullptr)
+        {
+            LOG_E("el_effect_set_opaque_cutoff: unknown side %d", (int)side);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        bool en = (enable != 0);
+        if (c->enable == en && c->size == size)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, side=%d, enable=%d, size=%f", (void *)effect, (int)side, enable, size);
+        c->enable = en;
+        c->size = size;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_opaque_cutoff(el_effect_handle_t effect,
+                                            el_cutoff_side_e side,
+                                            el_bool_t *outEnable, float *outSize)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_opaque_cutoff");
+        LOCK_EFFECT(effect);
+        VALIDATE_OUT_PTR(outEnable, "el_effect_get_opaque_cutoff");
+        VALIDATE_OUT_PTR(outSize, "el_effect_get_opaque_cutoff");
+        const EdgeLighting::OpaqueCutoff *c = ResolveOpaqueCutoff(effect, side);
+        if (c == nullptr)
+        {
+            LOG_E("el_effect_get_opaque_cutoff: unknown side %d", (int)side);
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        *outEnable = c->enable ? 1 : 0;
+        *outSize = c->size;
+        LOG_D("effect=%p, side=%d, enable=%d, size=%f", (void *)effect, (int)side, *outEnable, *outSize);
+        return EL_SUCCESS;
+    }
+
     el_result_e el_effect_set_line_width(el_effect_handle_t effect, float width)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_line_width");
