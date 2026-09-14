@@ -42,7 +42,15 @@ cmake --build build
 
 **That configure defaults to `Release`.** The root `CMakeLists.txt` sets `CMAKE_BUILD_TYPE` to `Release` when the caller has not chosen one, because an empty build type contributes no `-O` flag at all and the command above used to ship an unoptimised library (11.6 MB of `.a`, and every CPU path in it - LUT bakes, colour conversion, the contour tracer, the whole C ABI - built at `-O0`). Pass `-DCMAKE_BUILD_TYPE=Debug` explicitly when you want that; the default only applies when nothing is set, and multi-config generators are left alone. See [`docs/neon-perf-review.md`](docs/neon-perf-review.md) section 3.
 
-**Floats crossing the C ABI must be finite** - every one of the 66 float-taking entry points rejects NaN and infinity through `VALIDATE_FINITE` (see `capi-internal.h`), and `Config::operator==` compares numerics with `CompareUtils::IsSameValue` (`lib/include/util/compare-utils.h`) so two NaNs count as equal. Both exist for the same defect: a NaN makes a config unequal to itself, and the change detection then fires on every frame forever. Add a float to the ABI and add its guard. See `docs/review-findings.md` I40.
+**Floats crossing the C ABI must be finite** - every float-taking entry point rejects NaN and infinity through `VALIDATE_FINITE` (see `capi-internal.h`), and `Config::operator==` compares numerics with `CompareUtils::IsSameValue` (`lib/include/util/compare-utils.h`) so two NaNs count as equal. Both exist for the same defect: a NaN makes a config unequal to itself, and the change detection then fires on every frame forever. Add a float to the ABI and add its guard. See `docs/review-findings.md` I40.
+
+The guard count is 72 as of the cutoff split, but **check it rather than trusting it** - this sentence carried a stale "66" for several ABI additions before anyone counted:
+
+```bash
+grep -c VALIDATE_FINITE lib/capi/el-effect.cpp lib/capi/el-animation.cpp lib/capi/el-modulator.cpp
+```
+
+A **positive distance** crossing the ABI needs a second guard, `VALIDATE_NON_NEGATIVE`. Finiteness is not enough for one: a negative cutoff size is perfectly finite and lands in vertex data, inverting the fill ring so the fill silently disappears. It is on the three cutoff `size` parameters (`el_effect_set_inside_cutoff` / `set_outside_cutoff` / `set_opaque_cutoff`) and deliberately NOT on the softness fields, which are floored downstream by `neon.frag` and `renderOpaqueFill` and so cannot reach geometry.
 
 **The two library targets build with `-Wimplicit-float-conversion`** (Clang only, paired with `-Wno-implicit-int-float-conversion`; see the block in `lib/CMakeLists.txt`). It is the only warning flag in the tree and it is there for one reason: the renderer interface carries `time` as a `double` so each renderer can reduce it at full precision, and a private pass method declared with a `float` parameter silently undoes that - which is exactly what shipped as `docs/review-findings.md` I35. The library builds at zero warnings; keep it there, since that is the only state in which a new one is visible. The flag is deliberately NOT on the demos, which compile ImGui.
 
