@@ -21,17 +21,44 @@ namespace EdgeLighting
         /// smoothstep / discard math naturally no-ops on realistic geometry;
         /// only the CPU knows this number, shaders see it as a plain uniform.
         constexpr float CUTOFF_DISABLED_SIZE = 1.0e6f;
+
+        /// A cutoff is a DISTANCE, so the floor at 0 is not cosmetic - it is
+        /// what keeps @c mQuadMargin positive, and the shader has an invariant
+        /// riding on that.
+        ///
+        /// Trace a negative through without it. @ref setupGeometry computes
+        /// cutoffCap = (size + outSoft + 1) * scale, so size -50 gives -45 and
+        /// `margin = min(margin, cutoffCap)` hands -45 to mQuadMargin. In
+        /// neon.frag that makes fadeFloor = -45 * 0.8 = -36 and the ramp width
+        /// uQuadMargin - fadeStart = -9, so the fade evaluates
+        /// smoothstep(9.0, 0.0, dQuad) - edge0 above edge1, which that
+        /// shader's own comment records as UNDEFINED in GLSL. The draw quad
+        /// has also shrunk 45 px INSIDE the rect by then, which on its own
+        /// loses the entire glow layer.
+        ///
+        /// Clamped HERE rather than at each consumer because every path that
+        /// can carry a size to a vertex or a uniform goes through this
+        /// function - the quad margin, the fill ring's two margins, and the
+        /// uInsideCutoff / uOutsideCutoff uploads. One floor, no consumer able
+        /// to miss it.
+        ///
+        /// This is a floor, not validation: @c SetConfig returns void and has
+        /// no way to refuse. The C ABI rejects a negative outright
+        /// (@c VALIDATE_NON_NEGATIVE) so an FFI host hears about its bug at
+        /// the call site that caused it; a C++ host writing the field direct
+        /// has no such boundary, and this is what stands in for it.
         inline float GetCutoffSize(const Cutoff &c)
         {
-            return c.enable ? c.size : CUTOFF_DISABLED_SIZE;
+            return c.enable ? std::max(c.size, 0.0f) : CUTOFF_DISABLED_SIZE;
         }
-        /// Same sentinel, same reasoning, for the fill's own pair. Overloaded
-        /// rather than templated so the two cannot be handed to each other's
-        /// consumer by accident: the glow reads @ref Cutoff, the fill reads
-        /// @ref OpaqueCutoff, and since the split those are different numbers.
+        /// Same sentinel, same floor, same reasoning, for the fill's own pair.
+        /// Overloaded rather than templated so the two cannot be handed to
+        /// each other's consumer by accident: the glow reads @ref Cutoff, the
+        /// fill reads @ref OpaqueCutoff, and since the split those are
+        /// different numbers.
         inline float GetCutoffSize(const OpaqueCutoff &c)
         {
-            return c.enable ? c.size : CUTOFF_DISABLED_SIZE;
+            return c.enable ? std::max(c.size, 0.0f) : CUTOFF_DISABLED_SIZE;
         }
 
         /// Does this config's opaque fill cover EVERY pixel at coverage 1?
@@ -973,9 +1000,19 @@ namespace EdgeLighting
                                         ? (static_cast<float>(CUTOFF_SOFT_FLOOR_PX) / scale)
                                         : static_cast<float>(SIDE_SOFT_EPSILON);
             float outSoft = std::max(config.neon.outsideCutoff.softness, softFloor);
-            float cutoffCap = (config.neon.outsideCutoff.size + outSoft + 1.0f) * scale;
+            // Through GetCutoffSize, not off the field: this is the one site
+            // that used to read .size raw, and it is the site a negative did
+            // the most damage at (see the derivation on GetCutoffSize). Inside
+            // this branch the cutoff is enabled, so the helper returns the
+            // floored size and never the disabled sentinel.
+            float cutoffCap = (GetCutoffSize(config.neon.outsideCutoff) + outSoft + 1.0f) * scale;
             margin = std::min(margin, cutoffCap);
         }
+        // Positive by construction, which neon.frag's quad fade depends on:
+        // filamentReach carries a FILAMENT_MIN_HALF_WIDTH floor so the max()
+        // above cannot be <= 0, and cutoffCap is (floored size >= 0) + outSoft
+        // + 1 with outSoft itself floored, so the min() cannot pull it under
+        // either. Both floors are load bearing - see GetCutoffSize.
         mQuadMargin = margin;
 
         float halfW = config.geometry.width * 0.5f * scale;

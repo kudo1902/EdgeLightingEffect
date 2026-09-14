@@ -47,10 +47,12 @@ cmake --build build
 The guard count is 72 as of the cutoff split, but **check it rather than trusting it** - this sentence carried a stale "66" for several ABI additions before anyone counted:
 
 ```bash
-grep -c VALIDATE_FINITE lib/capi/el-effect.cpp lib/capi/el-animation.cpp lib/capi/el-modulator.cpp
+grep -h -c VALIDATE_FINITE lib/capi/el-*.cpp | paste -sd+ - | bc
 ```
 
-A **positive distance** crossing the ABI needs a second guard, `VALIDATE_NON_NEGATIVE`. Finiteness is not enough for one: a negative cutoff size is perfectly finite and lands in vertex data, inverting the fill ring so the fill silently disappears. It is on the three cutoff `size` parameters (`el_effect_set_inside_cutoff` / `set_outside_cutoff` / `set_opaque_cutoff`) and deliberately NOT on the softness fields, which are floored downstream by `neon.frag` and `renderOpaqueFill` and so cannot reach geometry.
+A **positive distance** crossing the ABI needs a second guard, `VALIDATE_NON_NEGATIVE`, paired after `VALIDATE_FINITE`. Finiteness is not enough for one: a negative cutoff size is perfectly finite and reaches geometry, where it either inverts the fill ring (the fill silently disappears) or drives `mQuadMargin` negative, which loses the whole glow layer AND inverts `neon.frag`'s quad fade into an undefined `smoothstep`. It is on the three cutoff `size` parameters (`el_effect_set_inside_cutoff` / `set_outside_cutoff` / `set_opaque_cutoff`) and deliberately NOT on the softness fields, which are floored downstream by `neon.frag` and `renderOpaqueFill` and so cannot reach geometry.
+
+**That guard is the ABI's half only.** A C++ host writes `Config` fields directly and `SetConfig` returns void, so it cannot refuse anything - the renderer therefore floors the same value in `GetCutoffSize` (`neon-renderer.cpp`), which is the single choke point every cutoff size passes through on its way to a vertex or a uniform. Validate at the boundary, clamp at the consumer; a new field of this shape needs both.
 
 **The two library targets build with `-Wimplicit-float-conversion`** (Clang only, paired with `-Wno-implicit-int-float-conversion`; see the block in `lib/CMakeLists.txt`). It is the only warning flag in the tree and it is there for one reason: the renderer interface carries `time` as a `double` so each renderer can reduce it at full precision, and a private pass method declared with a `float` parameter silently undoes that - which is exactly what shipped as `docs/review-findings.md` I35. The library builds at zero warnings; keep it there, since that is the only state in which a new one is visible. The flag is deliberately NOT on the demos, which compile ImGui.
 

@@ -363,15 +363,33 @@ struct el_modulator_handle_impl
         VALIDATE_FINITE(d, fn);          \
     } while (0)
 
-/// Refuse a negative value on a parameter documented as a positive DISTANCE.
+/// Refuse a value that is not a non-negative DISTANCE.
 ///
 /// Narrower than @ref VALIDATE_FINITE by design: it guards the few floats a
 /// negative silently corrupts GEOMETRY with, not every float in the ABI. The
-/// cutoff sizes are those - they reach @c NeonRenderer::setupFillGeometry's
-/// margins and land in vertex data, where a negative inverts the ring (its
-/// outer edge ends up inside its own hole) while the shader's own boundary
-/// test flips sign and returns coverage 0. The fill then vanishes with no
-/// error anywhere, which is the worst of both: wrong picture, silent API.
+/// three cutoff sizes are those, and they reach geometry by two different
+/// routes with two different outcomes - both bad, the glow's worse:
+///
+///   - The FILL pair (@c el_effect_set_opaque_cutoff) lands in
+///     @c NeonRenderer::setupFillGeometry's margins and inverts the band ring,
+///     its outer edge ending up inside its own hole, while the shader's
+///     boundary test flips sign and returns coverage 0. The fill vanishes with
+///     no error anywhere: wrong picture, silent API.
+///   - The GLOW pair (@c el_effect_set_inside_cutoff /
+///     @c el_effect_set_outside_cutoff) instead lands in
+///     @c NeonRenderer::setupGeometry's quad margin and drives it NEGATIVE, so
+///     the draw quad shrinks inside the rect and the whole glow layer is lost.
+///     Worse than lost: a negative @c uQuadMargin inverts neon.frag's quad
+///     fade into @c smoothstep(edge0 > edge1, ...), which is UNDEFINED in
+///     GLSL - that shader's own comment at the fadeStart derivation is where
+///     the invariant is written down.
+///
+/// PAIR IT WITH @ref VALIDATE_FINITE, and put that one first. This test is
+/// written as a negated >= rather than a plain < specifically so a NaN does
+/// not sail through it (NaN compares false to everything, so `v < 0` would
+/// admit one), but the ordering still matters for the message the host gets:
+/// VALIDATE_FINITE names the real problem, where this one can only say the
+/// value is not a valid distance.
 ///
 /// Note what does NOT need this and why, so nobody adds it there: the
 /// SOFTNESS fields are already floored downstream - neon.frag takes
@@ -382,15 +400,19 @@ struct el_modulator_handle_impl
 ///
 /// Rejects rather than clamps, for @ref VALIDATE_FINITE's reason plus one of
 /// its own: every el_effect_set_* here round-trips through its getter, and a
-/// clamp would hand the host back a value it never set.
-#define VALIDATE_NON_NEGATIVE(v, fn)                                     \
-    do                                                                   \
-    {                                                                    \
-        if ((v) < 0.0f)                                                  \
-        {                                                                \
-            LOG_E("%s: negative distance %f - rejected", fn, (v));       \
-            return EL_ERROR_INVALID_PARAMETER;                           \
-        }                                                                \
+/// clamp would hand the host back a value it never set. The RENDERER clamps
+/// instead (@c GetCutoffSize), because a C++ host writes the config field
+/// directly and @c SetConfig has no way to refuse - this guard is the C ABI's
+/// share of that job, not the whole of it.
+#define VALIDATE_NON_NEGATIVE(v, fn)                          \
+    do                                                        \
+    {                                                         \
+        if (!((v) >= 0.0f))                                   \
+        {                                                     \
+            LOG_E("%s: %f is not a distance >= 0 - rejected", \
+                  fn, (v));                                   \
+            return EL_ERROR_INVALID_PARAMETER;                \
+        }                                                     \
     } while (0)
 
 /// @ref VALIDATE_FINITE for the entry points that return a HANDLE rather than
