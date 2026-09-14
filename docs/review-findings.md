@@ -35,6 +35,7 @@ description, so the reasoning that led to the change stays readable next to it.
 | seventh pass | I28 to I32 | - |
 | eighth pass | I33, I33b, I34 | - |
 | ninth pass | I35, I36, I37, I38 | - |
+| tenth pass | I39, I40, I41 | - |
 
 The R items come from a re-read after the V and I fixes landed - see
 [Second pass](#second-pass-after-bbdba62). V8 and V9 come from a later read of
@@ -54,6 +55,11 @@ the eighth pass's fixes landed - see
 earlier pass left at three call sites out of four: I35 finishes I33b (fixed) and
 I38 finishes I28. That pass also records what it checked and found sound, which
 the earlier ones do not.
+
+I39 to I41 come from a read taken straight after those landed - see
+[Tenth pass](#tenth-pass-after-the-ninth-passs-fixes). I39 is a regression the
+ninth pass's own fix introduced, I40 is the oldest defect either pass turned up,
+and I41 is the remainder of I36.
 
 ## How the visual items were reproduced
 
@@ -2797,6 +2803,188 @@ worth as much as a finding when someone comes back to change it.
     `Apply` walks the member directly, which is safe because that path fires no
     callbacks.
 
+## Tenth pass (after the ninth pass's fixes)
+
+A read of the tree at `be5d621`, immediately after I35 to I38 landed. Three
+items, all fixed. The first is a regression the ninth pass's own fix introduced,
+which is the second time in three passes that a review-after-a-fix has paid for
+itself.
+
+### I39. The I36 fix put a heap allocation back on the per-frame path - FIXED
+
+I36 made `AnimationGroup::Update` walk a COPY of its children, because
+`Animation::Update` fires `OnComplete` synchronously and a callback that clears
+the group would otherwise erase the vector being iterated. It took that copy as
+a plain local, with a comment arguing the cost did not matter because "the
+manager's own scratch already removes the per-frame allocation from the path
+that matters".
+
+That argument is wrong, and it is worth being precise about how, because the
+shape of the mistake is easy to repeat: `AnimationManager::mTickScratch` removes
+the allocation `AnimationManager::Update` would make. It has nothing to do with
+one made inside a child's `Update`. The new copy was simply an additional
+allocation, one level further down, on the same per-frame path.
+
+Measured with a global `operator new` counter, the same instrument
+`mScratchConfig` and `mTickScratch` were measured with:
+
+```
+                                        before      after
+  leaf (IntensityPulse)                   0.00       0.00   new+delete per frame
+  AnimationGroup, 2 children              1.00       0.00
+  AnimationGroup, 3 children (AURORA)     1.00       0.00
+  nested: 3 groups of 2                   4.00       0.00
+```
+
+At 60 Hz one attached group was 60 malloc/free pairs a second and the nested
+case 240 - against the standard `mScratchConfig` sets out, which calls ~1100 a
+second "a fragmentation and jitter source rather than a cost in cycles" and
+exists to remove 3 per frame. Reintroducing one per group undoes that work one
+level down.
+
+Fixed with the member scratch swapped into a local, which is exactly what
+`AnimationManager::Update` does and for both of its reasons: the swap keeps the
+capacity across frames, and it keeps the walked buffer unreachable from any
+callback, so a NESTED `Update` on the same group cannot reallocate the vector
+the outer loop is iterating.
+
+### I40. One NaN in the config permanently defeats change detection - FIXED
+
+`NaN != NaN`, so a `Config` holding one is not equal to a bitwise copy of
+itself. `EdgeLightingEffect::refreshActiveConfig` therefore reports a change on
+EVERY frame, for the rest of the process. On a settled config with no animations
+attached and nothing written after the first frame:
+
+```
+  intensity 1.0     OnConfigChanged   0 times in 120 settled frames
+  intensity NaN     OnConfigChanged 120 times in 120 settled frames   <- every frame
+  intensity inf     OnConfigChanged   0 times in 120 settled frames
+```
+
+Specifically NaN; `inf` compares equal to itself and is harmless to the
+comparison. What follows from it is worse than a wasted compare:
+`NeonRenderer::OnConfigChanged` sets `mEmissionDirty` unconditionally, so the
+emission table re-bakes every frame - the precise per-frame cost
+`docs/emission-prepass.md` exists to remove, silently reinstated by one bad
+float, with nothing in the log.
+
+Three routes in, and all three are now closed. They are separate fixes because
+they are separate problems - one of them is the library's own arithmetic, not a
+host's input.
+
+**The library manufactured NaN itself.** Every oscillator-based animation in
+`neon-animations.h` builds its frequency as `1.0f / duration`, so a duration of
+0 handed `Oscillator` an infinity - and `Evaluate` begins `t = mFreq * time`
+then `t -= floor(t)`, where `inf - inf` is NaN. Fifteen call sites reach it the
+same way, so the guard went into `Oscillator`'s constructor rather than at each
+of them: a non-finite frequency is taken as 0, which reads as "no oscillation"
+and holds the field at its phase-0 value. `Ease` and `OutlineTracer` already
+guarded their own divisions by duration; this is the same guard for the one that
+did not have it.
+
+```
+                                          before     after
+  IntensityPulse(duration = 0)               NaN        0.7
+  GlowRadiusBreath(duration = 0)             NaN        7.5
+  IntensityPulse, then SetDuration(0)        NaN        0.7
+```
+
+**The C ABI accepted any float.** There were 66 float-taking entry points and
+ZERO finiteness checks anywhere in `lib/capi` - 72 `EL_ERROR_INVALID_PARAMETER`
+sites existed for counts, indices and enums, so the boundary did validate; it
+simply never looked at floats. All 66 now reject non-finite values through
+`VALIDATE_FINITE` (and `VALIDATE_FINITE_H` for the factories, which can only say
+no with a null handle). Infinities are refused alongside NaN even though they do
+not break the comparison: nothing downstream has a meaning for an infinite glow
+radius, and one rule a caller can remember - finite, or an error - is worth more
+than a narrower one. Rejection rather than clamping, because there is no
+defensible finite substitute for a NaN line width and silently inventing one
+turns a host's arithmetic bug into a rendering mystery.
+
+**And the comparison itself is now reflexive**, which is the backstop for the
+route neither of the above covers: a C++ host writing a NaN into a `Config`
+directly. All 46 numeric comparisons in the `operator==` family go through
+`CompareUtils::IsSameValue`, which differs from `==` in exactly one case - two
+NaNs compare equal. It lives in its own header, `util/compare-utils.h`, which is
+the one file in that directory that does NOT include `core/config.h` - `Config`
+includes IT, so the usual dependency would be a cycle.
+
+GLM is not carrying that. `glm::equal(a, b)` is component-wise `==` and has the
+identical NaN semantics, so it would leave the defect where it was; what GLM
+does carry is the component-wise machinery - `glm::equal`, `glm::isnan`,
+`glm::all` and the bool-vector operators - which says the rule once as
+`all(equal(a,b) || (isnan(a) && isnan(b)))` for `vec2`, `vec3` and `vec4`
+together instead of three near-identical overloads. The template is pinned to
+`float` rather than a free `T` because `glm::isnan` static_asserts on integers,
+and failing to match here is a better error than failing deep inside GLM. That is the right answer for the question these operators are actually
+asked: a field that was NaN last frame and is NaN now did not move. It says
+nothing about whether the value is usable, which is what the two guards above
+are for.
+
+The risk in that edit is obvious - it is a mechanical change to the code all
+change detection rests on - so it is covered by a test that mutates each field
+in turn:
+
+```
+  40 fields checked, 0 failures
+  NaN config equals a copy of itself                yes
+  ...and a real change beside the NaN is seen       yes
+  ...and NaN -> 1.0 is seen as a change             yes
+```
+
+### I41. A group's duration and progress getters still disagree with their setters - FIXED (documented)
+
+Left over from I36, and the last of it. `SetDuration` fans out correctly - the
+children really do get the value - but `GetDuration` is a DERIVED aggregate that
+returns 0 whenever any child loops, which every built-in preset's children do:
+
+```
+  SetDuration(5.0) alone on a LOOP group -> GetDuration() = 0.0
+    children durations: 5.0, 5.0   (the fan-out DID reach them)
+  SetProgress(0.5) on that group         -> GetProgress() = 0.00
+    children progress:  0.50, 0.50
+```
+
+Send `SetPlaybackMode(ONE_SHOT)` first and the two agree, which is the sequence
+I36's own evidence table happens to use without saying that it matters.
+
+This is the aggregate rule doing exactly what it documents rather than a setter
+failing, so it is fixed as documentation rather than behaviour - changing it
+would mean making the group STORE a duration and overriding the getter to prefer
+it, which trades a stated rule for a hidden one and breaks the "derived
+aggregate" contract the class is built on. The ordering requirement is now
+stated at `AnimationGroup::SetDuration` and, more importantly, in
+`el-animation.h` at `el_animation_set_duration`, which is where a C host meets
+it: that header previously did not mention groups at all, so nothing told a
+caller which presets are composite. `EL_ANIM_SHIMMER` and `EL_ANIM_AURORA` are.
+
+The C++ demo already sidesteps it by disabling the Duration slider when
+`GetDuration()` is 0 and labelling it "modulator-owned"; a C host had no
+equivalent hint.
+
+### What this pass checked and found sound
+
+  - **`ShaderProgram`'s move-assignment discards the stale uniform and location
+    caches.** This was the main risk in I38's re-init work: `setupShaders`
+    move-assigns a freshly linked program over the old one, and a cache carried
+    across would have pointed uniform names at locations in a deleted program.
+    It moves the fresh (empty) maps in and drops the old ones.
+  - **`Framebuffer::destroy` deletes both the FBO and its texture and resets the
+    size AND format**, which is what makes `Framebuffer::Invalidate` a complete
+    reset rather than a partial one - the format reset in particular is what
+    lets `resizeEmissionBuffer` start its walk from the preferred format again.
+  - **I38's re-init block is in the right order**: invalidate, then
+    `mHasInitialized = true`, then `resizeEmissionBuffer`, then `bakeLUTs`. The
+    buffers have to be dropped before the resize is asked for them.
+  - **`Ease` and `OutlineTracer` already guard their divisions by duration**
+    (`mDuration <= 0` returns `mTo`; `duration > 0` around the speed
+    derivation), so I40's first half really was the one remaining gap rather
+    than one of many.
+  - **Negative durations are not a defect.** They produce a negative frequency,
+    which oscillates in reverse and stays finite.
+  - **Both demos expose Speed / Playback mode / Duration** and both therefore
+    pick up I36; no drift was introduced between the two forks.
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
@@ -2808,8 +2996,8 @@ the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, and I13 from the fourth. The seventh pass's I28 to
 I32 were written up before being fixed and have all since landed, and so did the
 eighth pass's I33, I33b and I34 - so nothing from either is on this list. The
-ninth pass's I35 to I38 have all landed, so nothing from it is on this list
-either:
+ninth pass's I35 to I38 and the tenth pass's I39 to I41 have all landed, so
+nothing from either is on this list:
 
 | item | state | why |
 | ---- | ----- | --- |

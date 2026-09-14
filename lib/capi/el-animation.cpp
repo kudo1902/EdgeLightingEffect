@@ -137,6 +137,7 @@ extern "C"
     el_animation_handle_t el_animation_create_intensity_pulse(float duration,
                                                               float minIntensity, float maxIntensity)
     {
+        VALIDATE_FINITE_H3(duration, minIntensity, maxIntensity, "el_animation_create_intensity_pulse");
         try
         {
             auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::IntensityPulse>(duration, minIntensity, maxIntensity)};
@@ -153,6 +154,7 @@ extern "C"
     el_animation_handle_t el_animation_create_intensity_strobe(float duration,
                                                                float offIntensity, float onIntensity)
     {
+        VALIDATE_FINITE_H3(duration, offIntensity, onIntensity, "el_animation_create_intensity_strobe");
         try
         {
             auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::IntensityStrobe>(duration, offIntensity, onIntensity)};
@@ -169,6 +171,7 @@ extern "C"
     el_animation_handle_t el_animation_create_intensity_fade_in(float targetIntensity,
                                                                 float duration, el_easing_e easing)
     {
+        VALIDATE_FINITE_H2(targetIntensity, duration, "el_animation_create_intensity_fade_in");
         try
         {
             auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::IntensityFadeIn>(targetIntensity, duration, ConvertFromCapi(easing))};
@@ -185,6 +188,7 @@ extern "C"
     el_animation_handle_t el_animation_create_intensity_fade_out(float startIntensity,
                                                                  float duration, el_easing_e easing)
     {
+        VALIDATE_FINITE_H2(startIntensity, duration, "el_animation_create_intensity_fade_out");
         try
         {
             auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::IntensityFadeOut>(startIntensity, duration, ConvertFromCapi(easing))};
@@ -201,6 +205,7 @@ extern "C"
     el_animation_handle_t el_animation_create_glow_radius_breath(float duration,
                                                                  float minRadius, float maxRadius)
     {
+        VALIDATE_FINITE_H3(duration, minRadius, maxRadius, "el_animation_create_glow_radius_breath");
         try
         {
             auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::GlowRadiusBreath>(duration, minRadius, maxRadius)};
@@ -217,6 +222,7 @@ extern "C"
     el_animation_handle_t el_animation_create_bloom_pulse(float duration,
                                                           float minStrength, float maxStrength)
     {
+        VALIDATE_FINITE_H3(duration, minStrength, maxStrength, "el_animation_create_bloom_pulse");
         try
         {
             auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::BloomPulse>(duration, minStrength, maxStrength)};
@@ -233,6 +239,7 @@ extern "C"
     el_animation_handle_t el_animation_create_hue_rotation_reverse(float peakRate,
                                                                    float duration)
     {
+        VALIDATE_FINITE_H2(peakRate, duration, "el_animation_create_hue_rotation_reverse");
         try
         {
             auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::HueRotationReverse>(peakRate, duration)};
@@ -249,6 +256,7 @@ extern "C"
     el_animation_handle_t el_animation_create_hue_rotation_ease_reverse(float peakRate,
                                                                         float duration)
     {
+        VALIDATE_FINITE_H2(peakRate, duration, "el_animation_create_hue_rotation_ease_reverse");
         try
         {
             auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::HueRotationEaseReverse>(peakRate, duration)};
@@ -265,6 +273,7 @@ extern "C"
     el_animation_handle_t el_animation_create_segment_travel(float duration,
                                                              float length, float boost)
     {
+        VALIDATE_FINITE_H3(duration, length, boost, "el_animation_create_segment_travel");
         try
         {
             auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::SegmentTravel>(duration, length, boost)};
@@ -281,6 +290,7 @@ extern "C"
     el_animation_handle_t el_animation_create_segment_bounce(float duration,
                                                              float length, float boost)
     {
+        VALIDATE_FINITE_H3(duration, length, boost, "el_animation_create_segment_bounce");
         try
         {
             auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::SegmentBounce>(duration, length, boost)};
@@ -298,6 +308,7 @@ extern "C"
                                                              el_easing_e easing,
                                                              float maxLength)
     {
+        VALIDATE_FINITE_H2(duration, maxLength, "el_animation_create_outline_tracer");
         try
         {
             auto *handle = new el_animation_handle_impl{std::make_shared<EdgeLighting::OutlineTracer>(duration, ConvertFromCapi(easing), maxLength)};
@@ -315,6 +326,7 @@ extern "C"
                                                        float startPosition, float endPosition, float maxLength,
                                                        el_easing_e easing)
     {
+        VALIDATE_FINITE_H4(duration, startPosition, endPosition, maxLength, "el_animation_create_arc_wipe");
         LOG_I("duration=%f, startPosition=%f, endPosition=%f, maxLength=%f, easing=%d", duration, startPosition, endPosition, maxLength, (int)easing);
         try
         {
@@ -392,6 +404,7 @@ extern "C"
         LOG_I("anim=%p, dt=%f", (void *)anim, dt);
         VALIDATE_ANIM_PTR(anim, "el_animation_update");
         LOCK_ANIMATION(anim);
+        VALIDATE_FINITE(dt, "el_animation_update");
         if (anim->ptr)
         {
             anim->ptr->Update(dt);
@@ -444,6 +457,7 @@ extern "C"
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_set_elapsed");
         LOCK_ANIMATION(anim);
+        VALIDATE_FINITE(elapsed, "el_animation_set_elapsed");
         if (!anim->ptr || anim->ptr->GetElapsed() == elapsed)
         {
             return EL_SUCCESS;
@@ -467,6 +481,7 @@ extern "C"
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_set_progress");
         LOCK_ANIMATION(anim);
+        VALIDATE_FINITE(progress, "el_animation_set_progress");
         if (!anim->ptr || anim->ptr->GetProgress() == progress)
         {
             return EL_SUCCESS;
@@ -566,6 +581,7 @@ extern "C"
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_set_duration");
         LOCK_ANIMATION(anim);
+        VALIDATE_FINITE(seconds, "el_animation_set_duration");
         if (!anim->ptr || anim->ptr->GetDuration() == seconds)
         {
             return EL_SUCCESS;
@@ -591,6 +607,7 @@ extern "C"
     {
         VALIDATE_ANIM_PTR(anim, "el_animation_set_speed");
         LOCK_ANIMATION(anim);
+        VALIDATE_FINITE(speed, "el_animation_set_speed");
         if (!anim->ptr || anim->ptr->GetSpeed() == speed)
         {
             return EL_SUCCESS;

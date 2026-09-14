@@ -92,12 +92,34 @@ namespace EdgeLighting
         /// @param max       Upper bound of the output range.
         /// @param phase     Initial phase offset in cycles [0, 1).
         /// @param waveform  Shape of the oscillation.
+        /// @note A NON-FINITE @p frequency is taken as 0, which reads as "no
+        ///       oscillation": every @ref Evaluate returns the phase-0 value
+        ///       and the field simply holds still.
+        ///
+        ///       That guard is here rather than at the callers because there
+        ///       are fifteen of them and they all reach it the same way. Every
+        ///       oscillator-based animation in neon-animations.h builds its
+        ///       frequency as @c 1.0f/duration, so a duration of 0 hands this
+        ///       constructor an infinity - and @ref Evaluate's first two lines
+        ///       are @c t @c = @c mFreq @c * @c time, then @c t @c -= @c
+        ///       floor(t), where @c inf @c - @c inf is a NaN. The NaN lands in
+        ///       a @c Config field, and from there it is not a local problem:
+        ///       @c NaN @c != @c NaN, so the config never again compares equal
+        ///       to itself and @c EdgeLightingEffect's change detection fires
+        ///       on every frame for the rest of the process. See
+        ///       review-findings I40.
+        ///
+        ///       @c Ease and @c OutlineTracer already guarded their own
+        ///       divisions by duration (@c mDuration @c <= @c 0 returns @c mTo;
+        ///       @c duration @c > @c 0 around the speed derivation); this is
+        ///       the same guard for the one that did not have it.
         Oscillator(float frequency,
                    float min = 0.0f,
                    float max = 1.0f,
                    float phase = 0.0f,
                    Waveform waveform = Waveform::SINE)
-            : mFreq(frequency), mMin(min), mMax(max), mPhase(phase), mWave(waveform)
+            : mFreq(std::isfinite(frequency) ? frequency : 0.0f),
+              mMin(min), mMax(max), mPhase(phase), mWave(waveform)
         {
         }
 

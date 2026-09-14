@@ -24,6 +24,8 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_geometry");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE4(width, height, posX, posY, "el_effect_set_geometry");
+        VALIDATE_FINITE(cornerRadius, "el_effect_set_geometry");
         auto &g = effect->config.geometry;
         glm::vec2 pos(posX, posY);
         if (g.width == width && g.height == height && g.position == pos && g.cornerRadius == cornerRadius)
@@ -124,6 +126,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque_color");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE4(r, g, b, a, "el_effect_set_opaque_color");
         SET_AND_LOG(effect->config.neon.opaqueColor, glm::vec4(r, g, b, a),
                     "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a);
     }
@@ -149,6 +152,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque_softness");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(softness, "el_effect_set_opaque_softness");
         SET_AND_LOG(effect->config.neon.opaqueSoftness, softness,
                     "effect=%p, softness=%f", (void *)effect, softness);
     }
@@ -168,6 +172,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_inside_cutoff");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE2(size, softness, "el_effect_set_inside_cutoff");
         auto &c = effect->config.neon.insideCutoff;
         bool en = (enable != 0);
         if (c.enable == en && c.size == size && c.softness == softness)
@@ -202,6 +207,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_outside_cutoff");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE2(size, softness, "el_effect_set_outside_cutoff");
         auto &c = effect->config.neon.outsideCutoff;
         bool en = (enable != 0);
         if (c.enable == en && c.size == size && c.softness == softness)
@@ -235,6 +241,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_line_width");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(width, "el_effect_set_line_width");
         SET_AND_LOG(effect->config.neon.lineWidth, width,
                     "effect=%p, width=%f", (void *)effect, width);
     }
@@ -253,6 +260,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_filament_falloff");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(falloff, "el_effect_set_filament_falloff");
         SET_AND_LOG(effect->config.neon.filamentFalloff, falloff,
                     "effect=%p, falloff=%f", (void *)effect, falloff);
     }
@@ -271,6 +279,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_intensity");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(intensity, "el_effect_set_intensity");
         SET_AND_LOG(effect->config.neon.intensity, intensity,
                     "effect=%p, intensity=%f", (void *)effect, intensity);
     }
@@ -289,6 +298,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_glow_radius");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(radius, "el_effect_set_glow_radius");
         SET_AND_LOG(effect->config.neon.glowRadius, radius,
                     "effect=%p, radius=%f", (void *)effect, radius);
     }
@@ -307,6 +317,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_bloom_strength");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(strength, "el_effect_set_bloom_strength");
         SET_AND_LOG(effect->config.neon.bloomStrength, strength,
                     "effect=%p, strength=%f", (void *)effect, strength);
     }
@@ -343,6 +354,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_glow_side_softness");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(softness, "el_effect_set_glow_side_softness");
         SET_AND_LOG(effect->config.neon.glowSideSoftness, softness,
                     "effect=%p, softness=%f", (void *)effect, softness);
     }
@@ -379,6 +391,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_hue_rotation_rate");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(rate, "el_effect_set_hue_rotation_rate");
         SET_AND_LOG(effect->config.neon.hueRotationRate, rate,
                     "effect=%p, rate=%f", (void *)effect, rate);
     }
@@ -397,6 +410,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_color_transition_duration");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(seconds, "el_effect_set_color_transition_duration");
         SET_AND_LOG(effect->config.neon.colorTransitionDuration, seconds,
                     "effect=%p, seconds=%f", (void *)effect, seconds);
     }
@@ -461,6 +475,8 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_color_stop");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE4(position, r, g, b, "el_effect_set_color_stop");
+        VALIDATE_FINITE(a, "el_effect_set_color_stop");
         if (index < 0)
         {
             LOG_E("el_effect_set_color_stop: negative index");
@@ -575,6 +591,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_segment_boost");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE3(position, length, boost, "el_effect_set_segment_boost");
         if (index < 0)
         {
             LOG_E("el_effect_set_segment_boost: negative index");
@@ -660,6 +677,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_preserved_segment");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE3(position, length, boost, "el_effect_set_preserved_segment");
         int idx = EdgeLighting::SegmentUtils::FindPreservedSegment(effect->config.neon, id);
         if (idx < 0)
         {
@@ -843,6 +861,8 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_preserved_segment_color_stop");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE4(position, r, g, b, "el_effect_set_preserved_segment_color_stop");
+        VALIDATE_FINITE(a, "el_effect_set_preserved_segment_color_stop");
         if (stopIndex < 0)
         {
             LOG_E("el_effect_set_preserved_segment_color_stop: negative stopIndex");
@@ -1041,6 +1061,8 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_segment_color_stop");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE4(position, r, g, b, "el_effect_set_segment_color_stop");
+        VALIDATE_FINITE(a, "el_effect_set_segment_color_stop");
         if (segmentIndex < 0 || stopIndex < 0)
         {
             LOG_E("el_effect_set_segment_color_stop: negative index");
@@ -1175,6 +1197,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_arc");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE3(start, length, intensity, "el_effect_set_arc");
         if (index < 0)
         {
             LOG_E("el_effect_set_arc: negative index");
@@ -1312,6 +1335,8 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_arc_color_stop");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE4(position, r, g, b, "el_effect_set_arc_color_stop");
+        VALIDATE_FINITE(a, "el_effect_set_arc_color_stop");
         if (arcIndex < 0 || stopIndex < 0)
         {
             LOG_E("el_effect_set_arc_color_stop: negative index");
@@ -1398,6 +1423,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_neon_resolution_scale");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(scale, "el_effect_set_neon_resolution_scale");
         SET_AND_LOG(effect->config.neon.resolutionScale, scale,
                     "effect=%p, scale=%f", (void *)effect, scale);
     }
@@ -1485,6 +1511,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_amount");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(amount, "el_effect_set_droplets_amount");
         SET_AND_LOG(effect->config.droplets.amount, amount, "effect=%p, amount=%f", (void *)effect, amount);
     }
     el_result_e el_effect_get_droplets_amount(el_effect_handle_t effect, float *outAmount)
@@ -1500,6 +1527,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_speed");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(speed, "el_effect_set_droplets_speed");
         SET_AND_LOG(effect->config.droplets.speed, speed, "effect=%p, speed=%f", (void *)effect, speed);
     }
     el_result_e el_effect_get_droplets_speed(el_effect_handle_t effect, float *outSpeed)
@@ -1530,6 +1558,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_band_width");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(bandWidth, "el_effect_set_droplets_band_width");
         SET_AND_LOG(effect->config.droplets.bandWidth, bandWidth, "effect=%p, bandWidth=%f", (void *)effect, bandWidth);
     }
     el_result_e el_effect_get_droplets_band_width(el_effect_handle_t effect, float *outBandWidth)
@@ -1545,6 +1574,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_band_offset");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(bandOffset, "el_effect_set_droplets_band_offset");
         SET_AND_LOG(effect->config.droplets.bandOffset, bandOffset, "effect=%p, bandOffset=%f", (void *)effect, bandOffset);
     }
     el_result_e el_effect_get_droplets_band_offset(el_effect_handle_t effect, float *outBandOffset)
@@ -1561,6 +1591,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_tint");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE4(r, g, b, a, "el_effect_set_droplets_tint");
         SET_AND_LOG(effect->config.droplets.tint, glm::vec4(r, g, b, a), "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a);
     }
     el_result_e el_effect_get_droplets_tint(el_effect_handle_t effect, float *outR, float *outG, float *outB, float *outA)
@@ -1600,6 +1631,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_perimeter_position");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(position, "el_effect_set_lens_flare_perimeter_position");
         SET_AND_LOG(effect->config.lensFlare.perimeterPosition, position, "effect=%p, position=%f", (void *)effect, position);
     }
     el_result_e el_effect_get_lens_flare_perimeter_position(el_effect_handle_t effect, float *outPosition)
@@ -1615,6 +1647,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_perimeter_offset");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(offset, "el_effect_set_lens_flare_perimeter_offset");
         SET_AND_LOG(effect->config.lensFlare.perimeterOffset, offset, "effect=%p, offset=%f", (void *)effect, offset);
     }
     el_result_e el_effect_get_lens_flare_perimeter_offset(el_effect_handle_t effect, float *outOffset)
@@ -1630,6 +1663,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_size");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(size, "el_effect_set_lens_flare_size");
         SET_AND_LOG(effect->config.lensFlare.size, size, "effect=%p, size=%f", (void *)effect, size);
     }
     el_result_e el_effect_get_lens_flare_size(el_effect_handle_t effect, float *outSize)
@@ -1645,6 +1679,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_color");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE4(r, g, b, a, "el_effect_set_lens_flare_color");
         SET_AND_LOG(effect->config.lensFlare.color, glm::vec4(r, g, b, a), "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a);
     }
     el_result_e el_effect_get_lens_flare_color(el_effect_handle_t effect, float *outR, float *outG, float *outB, float *outA)
@@ -1666,6 +1701,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_intensity");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(intensity, "el_effect_set_lens_flare_intensity");
         SET_AND_LOG(effect->config.lensFlare.intensity, intensity, "effect=%p, intensity=%f", (void *)effect, intensity);
     }
     el_result_e el_effect_get_lens_flare_intensity(el_effect_handle_t effect, float *outIntensity)
@@ -1681,6 +1717,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_spread");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(spread, "el_effect_set_lens_flare_spread");
         SET_AND_LOG(effect->config.lensFlare.spread, spread, "effect=%p, spread=%f", (void *)effect, spread);
     }
     el_result_e el_effect_get_lens_flare_spread(el_effect_handle_t effect, float *outSpread)
@@ -1696,6 +1733,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_spacing");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(ghostSpacing, "el_effect_set_lens_flare_ghost_spacing");
         SET_AND_LOG(effect->config.lensFlare.ghostSpacing, ghostSpacing, "effect=%p, ghostSpacing=%f", (void *)effect, ghostSpacing);
     }
     el_result_e el_effect_get_lens_flare_ghost_spacing(el_effect_handle_t effect, float *outGhostSpacing)
@@ -1711,6 +1749,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_size");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(ghostSize, "el_effect_set_lens_flare_ghost_size");
         SET_AND_LOG(effect->config.lensFlare.ghostSize, ghostSize, "effect=%p, ghostSize=%f", (void *)effect, ghostSize);
     }
     el_result_e el_effect_get_lens_flare_ghost_size(el_effect_handle_t effect, float *outGhostSize)
@@ -1726,6 +1765,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_offset");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(ghostOffset, "el_effect_set_lens_flare_ghost_offset");
         SET_AND_LOG(effect->config.lensFlare.ghostOffset, ghostOffset, "effect=%p, ghostOffset=%f", (void *)effect, ghostOffset);
     }
     el_result_e el_effect_get_lens_flare_ghost_offset(el_effect_handle_t effect, float *outGhostOffset)
@@ -1741,6 +1781,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_color");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE3(r, g, b, "el_effect_set_lens_flare_ghost_color");
         SET_AND_LOG(effect->config.lensFlare.ghostColor, glm::vec3(r, g, b), "effect=%p, r=%f, g=%f, b=%f", (void *)effect, r, g, b);
     }
     el_result_e el_effect_get_lens_flare_ghost_color(el_effect_handle_t effect, float *outR, float *outG, float *outB)
@@ -1760,6 +1801,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ghost_tint");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(ghostTint, "el_effect_set_lens_flare_ghost_tint");
         SET_AND_LOG(effect->config.lensFlare.ghostTint, ghostTint, "effect=%p, ghostTint=%f", (void *)effect, ghostTint);
     }
     el_result_e el_effect_get_lens_flare_ghost_tint(el_effect_handle_t effect, float *outGhostTint)
@@ -1775,6 +1817,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_flare_center");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE2(x, y, "el_effect_set_lens_flare_flare_center");
         SET_AND_LOG(effect->config.lensFlare.flareCenter, glm::vec2(x, y), "effect=%p, x=%f, y=%f", (void *)effect, x, y);
     }
     el_result_e el_effect_get_lens_flare_flare_center(el_effect_handle_t effect, float *outX, float *outY)
@@ -1792,6 +1835,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_ray_density");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(rayDensity, "el_effect_set_lens_flare_ray_density");
         SET_AND_LOG(effect->config.lensFlare.rayDensity, rayDensity, "effect=%p, rayDensity=%f", (void *)effect, rayDensity);
     }
     el_result_e el_effect_get_lens_flare_ray_density(el_effect_handle_t effect, float *outRayDensity)
@@ -1807,6 +1851,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_rotation_rate");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(rate, "el_effect_set_lens_flare_rotation_rate");
         SET_AND_LOG(effect->config.lensFlare.rotationRate, rate, "effect=%p, rate=%f", (void *)effect, rate);
     }
     el_result_e el_effect_get_lens_flare_rotation_rate(el_effect_handle_t effect, float *outRate)
@@ -1824,6 +1869,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_lens_flare_resolution_scale");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(scale, "el_effect_set_lens_flare_resolution_scale");
         SET_AND_LOG(effect->config.lensFlare.resolutionScale, scale,
                     "effect=%p, scale=%f", (void *)effect, scale);
     }
@@ -1921,6 +1967,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_debug_wireframe_color");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE4(r, g, b, a, "el_effect_set_debug_wireframe_color");
         SET_AND_LOG(effect->config.debug.wireframeColor, glm::vec4(r, g, b, a), "effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, r, g, b, a);
     }
 
@@ -2467,6 +2514,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_update");
         LOCK_EFFECT(effect);
+        VALIDATE_FINITE(deltaTime, "el_effect_update");
         VALIDATE_EFFECT_READY(effect, "el_effect_update");
         try
         {

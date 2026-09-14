@@ -230,7 +230,18 @@ extern "C"
     /** @brief Read the length of one animation cycle (seconds). */
     EL_API el_result_e el_animation_get_duration(el_animation_handle_t anim, float *outSeconds);
     /** @brief Set the length of one animation cycle (seconds).
-     *  @details 0 means the internal modulator owns its own periodicity. */
+     *  @details 0 means the internal modulator owns its own periodicity.
+     *
+     *  COMPOSITE PRESETS. @c EL_ANIM_SHIMMER and @c EL_ANIM_AURORA are groups
+     *  of several animations, and a group holds no field of its own - this
+     *  reaches its children, and the group's own duration is DERIVED back from
+     *  them. That derivation reports 0 whenever any child loops, which every
+     *  built-in preset's children do, so on those two presets this call takes
+     *  effect while @ref el_animation_get_duration still answers 0. Send
+     *  @ref el_animation_set_playback_mode @c EL_PLAYBACK_ONE_SHOT first and
+     *  the setter and getter agree. The same applies to
+     *  @ref el_animation_set_progress, which normalises against that duration.
+     *  Non-composite presets are unaffected. */
     EL_API el_result_e el_animation_set_duration(el_animation_handle_t anim, float seconds);
 
     /** @brief Read the playback speed multiplier (1.0 = normal). */

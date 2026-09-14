@@ -751,6 +751,16 @@ namespace EdgeLighting
         /// point - the oscillator-based animations rebuild their modulator so
         /// the visual cycle matches the number you set, rather than only the
         /// completion latch moving.
+        ///
+        /// ORDER MATTERS AGAINST THE GETTER, and it is the one rough edge left
+        /// here. @ref GetDuration returns 0 whenever ANY child loops, so on a
+        /// group of loopers - which every built-in preset is - this call
+        /// reaches the children correctly and @ref GetDuration still answers 0.
+        /// Set @ref SetPlaybackMode to @c ONE_SHOT first and the two agree.
+        /// The same applies to @ref SetProgress, which normalises against the
+        /// same derived duration. That is the aggregate rule doing what it
+        /// says rather than a setter failing, but a host reading back to
+        /// populate a slider will see it. See review-findings I41.
         void SetDuration(float duration) override
         {
             Animation::SetDuration(duration);
@@ -849,16 +859,32 @@ namespace EdgeLighting
             // fixed at entry, so a child removed mid-tick still receives this
             // frame's tick and one added mid-tick starts on the next.
             //
-            // A LOCAL copy rather than a member scratch, and unlike
-            // AnimationManager this one does not bother reusing capacity: a
-            // group holds a handful of children, is itself one entry in the
-            // manager's list, and the manager's own scratch already removes the
-            // per-frame allocation from the path that matters.
-            const std::vector<AnimationPtr> ticking = mAnimations;
+            // SWAPPED out of a member scratch, exactly as AnimationManager does
+            // it, and for the same measured reason. A plain local copy here
+            // costs one malloc/free per group per FRAME - measured at 1.00 of
+            // each for a two- or three-child group and 4.00 for three nested
+            // groups of two, against 0.00 for a leaf animation. That is the
+            // cost mScratchConfig and mTickScratch were both built to remove,
+            // so reintroducing it one level down would undo them. See
+            // review-findings I39.
+            //
+            // The swap rather than a bare member is what makes a NESTED tick
+            // safe: a callback fired below can re-enter this same Update on
+            // this same group, and a nested call assigning to the member would
+            // reallocate the buffer the outer loop is walking. The inner call
+            // finds the member empty and allocates its own, which is the right
+            // trade for a path that should be rare.
+            std::vector<AnimationPtr> ticking;
+            ticking.swap(mTickScratch);
+            ticking = mAnimations;
             for (const auto &a : ticking)
             {
                 a->Update(childDt);
             }
+            // Cleared before the capacity goes back, so a child removed during
+            // the loop is not kept alive by the scratch afterwards.
+            ticking.clear();
+            ticking.swap(mTickScratch);
         }
 
         /// @brief Forward Apply to every child unconditionally.
@@ -919,6 +945,15 @@ namespace EdgeLighting
 
     private:
         std::vector<AnimationPtr> mAnimations;
+
+        /// Spare capacity for @ref Update's tick list - NOT the list it walks.
+        ///
+        /// The exact counterpart of @c AnimationManager::mTickScratch, one
+        /// level down, and it exists for the same measured reason: @ref Update
+        /// has to walk a copy so a callback can mutate @c mAnimations, and a
+        /// plain local copy would make that a heap allocation on every frame.
+        /// See @ref Update and review-findings I39.
+        std::vector<AnimationPtr> mTickScratch;
     };
 
     /// @}

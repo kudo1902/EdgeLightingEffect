@@ -2,6 +2,7 @@
 #define _EDGE_LIGHTING_CONFIG_H_
 
 #include "renderer/neon-tuning.h" // MAX_SEGMENT_BOOSTS + MAX_ARCS shared with the shaders
+#include "util/compare-utils.h" // CompareUtils::IsSameValue - the operator== family below
 #include <glm/glm.hpp>
 #include <cstdint>
 #include <vector>
@@ -47,7 +48,7 @@ namespace EdgeLighting
 
         bool operator==(const Cutoff &o) const
         {
-            return enable == o.enable && size == o.size && softness == o.softness;
+            return enable == o.enable && CompareUtils::IsSameValue(size, o.size) && CompareUtils::IsSameValue(softness, o.softness);
         }
         bool operator!=(const Cutoff &o) const { return !(*this == o); }
     } Cutoff;
@@ -91,7 +92,7 @@ namespace EdgeLighting
 
         bool operator==(const ColorStop &o) const
         {
-            return position == o.position && color == o.color;
+            return CompareUtils::IsSameValue(position, o.position) && CompareUtils::IsSameValue(color, o.color);
         }
         bool operator!=(const ColorStop &o) const { return !(*this == o); }
     } ColorStop;
@@ -124,9 +125,9 @@ namespace EdgeLighting
 
         bool operator==(const SegmentBoost &o) const
         {
-            return position == o.position &&
-                   length == o.length &&
-                   boost == o.boost &&
+            return CompareUtils::IsSameValue(position, o.position) &&
+                   CompareUtils::IsSameValue(length, o.length) &&
+                   CompareUtils::IsSameValue(boost, o.boost) &&
                    colorStops == o.colorStops &&
                    blendSpace == o.blendSpace;
         }
@@ -183,9 +184,9 @@ namespace EdgeLighting
 
         bool operator==(const Arc &o) const
         {
-            return start == o.start &&
-                   length == o.length &&
-                   intensity == o.intensity &&
+            return CompareUtils::IsSameValue(start, o.start) &&
+                   CompareUtils::IsSameValue(length, o.length) &&
+                   CompareUtils::IsSameValue(intensity, o.intensity) &&
                    colorStops == o.colorStops &&
                    blendSpace == o.blendSpace;
         }
@@ -210,10 +211,10 @@ namespace EdgeLighting
 
         bool operator==(const RectGeometry &o) const
         {
-            return width == o.width &&
-                   height == o.height &&
-                   position == o.position &&
-                   cornerRadius == o.cornerRadius &&
+            return CompareUtils::IsSameValue(width, o.width) &&
+                   CompareUtils::IsSameValue(height, o.height) &&
+                   CompareUtils::IsSameValue(position, o.position) &&
+                   CompareUtils::IsSameValue(cornerRadius, o.cornerRadius) &&
                    winding == o.winding;
         }
         bool operator!=(const RectGeometry &o) const { return !(*this == o); }
@@ -480,28 +481,28 @@ namespace EdgeLighting
         bool operator==(const NeonConfig &o) const
         {
             return enable == o.enable &&
-                   resolutionScale == o.resolutionScale &&
+                   CompareUtils::IsSameValue(resolutionScale, o.resolutionScale) &&
                    numSamples == o.numSamples &&
                    gradientLutSize == o.gradientLutSize &&
                    opaqueMode == o.opaqueMode &&
-                   opaqueColor == o.opaqueColor &&
-                   lineWidth == o.lineWidth &&
-                   filamentFalloff == o.filamentFalloff &&
-                   intensity == o.intensity &&
-                   glowRadius == o.glowRadius &&
-                   bloomStrength == o.bloomStrength &&
+                   CompareUtils::IsSameValue(opaqueColor, o.opaqueColor) &&
+                   CompareUtils::IsSameValue(lineWidth, o.lineWidth) &&
+                   CompareUtils::IsSameValue(filamentFalloff, o.filamentFalloff) &&
+                   CompareUtils::IsSameValue(intensity, o.intensity) &&
+                   CompareUtils::IsSameValue(glowRadius, o.glowRadius) &&
+                   CompareUtils::IsSameValue(bloomStrength, o.bloomStrength) &&
                    glowSide == o.glowSide &&
-                   glowSideSoftness == o.glowSideSoftness &&
+                   CompareUtils::IsSameValue(glowSideSoftness, o.glowSideSoftness) &&
                    insideCutoff == o.insideCutoff &&
                    outsideCutoff == o.outsideCutoff &&
-                   opaqueSoftness == o.opaqueSoftness &&
+                   CompareUtils::IsSameValue(opaqueSoftness, o.opaqueSoftness) &&
                    blendSpace == o.blendSpace &&
                    colorStops == o.colorStops &&
-                   hueRotationRate == o.hueRotationRate &&
+                   CompareUtils::IsSameValue(hueRotationRate, o.hueRotationRate) &&
                    segmentBoosts == o.segmentBoosts &&
                    preservedSegmentBoosts == o.preservedSegmentBoosts &&
                    arcs == o.arcs &&
-                   colorTransitionDuration == o.colorTransitionDuration;
+                   CompareUtils::IsSameValue(colorTransitionDuration, o.colorTransitionDuration);
         }
         bool operator!=(const NeonConfig &o) const { return !(*this == o); }
     } NeonConfig;
@@ -594,7 +595,7 @@ namespace EdgeLighting
                    showGradientLUT == o.showGradientLUT &&
                    showColorStops == o.showColorStops &&
                    showWireframe == o.showWireframe &&
-                   wireframeColor == o.wireframeColor &&
+                   CompareUtils::IsSameValue(wireframeColor, o.wireframeColor) &&
                    opaqueOnly == o.opaqueOnly;
         }
         bool operator!=(const DebugConfig &o) const { return !(*this == o); }
@@ -648,12 +649,12 @@ namespace EdgeLighting
         bool operator==(const DropletsConfig &o) const
         {
             return enable == o.enable &&
-                   amount == o.amount &&
-                   speed == o.speed &&
+                   CompareUtils::IsSameValue(amount, o.amount) &&
+                   CompareUtils::IsSameValue(speed, o.speed) &&
                    lanes == o.lanes &&
-                   bandWidth == o.bandWidth &&
-                   bandOffset == o.bandOffset &&
-                   tint == o.tint;
+                   CompareUtils::IsSameValue(bandWidth, o.bandWidth) &&
+                   CompareUtils::IsSameValue(bandOffset, o.bandOffset) &&
+                   CompareUtils::IsSameValue(tint, o.tint);
         }
         bool operator!=(const DropletsConfig &o) const { return !(*this == o); }
     } DropletsConfig;
@@ -763,21 +764,21 @@ namespace EdgeLighting
 bool operator==(const LensFlareConfig &o) const
         {
             return enable == o.enable &&
-                   perimeterPosition == o.perimeterPosition &&
-                   perimeterOffset == o.perimeterOffset &&
-                   size == o.size &&
-                   color == o.color &&
-                   intensity == o.intensity &&
-                   spread == o.spread &&
-                   ghostSpacing == o.ghostSpacing &&
-                   ghostSize == o.ghostSize &&
-                   ghostOffset == o.ghostOffset &&
-                   ghostColor == o.ghostColor &&
-                   ghostTint == o.ghostTint &&
-                   flareCenter == o.flareCenter &&
-                   rayDensity == o.rayDensity &&
-                   rotationRate == o.rotationRate &&
-                   resolutionScale == o.resolutionScale;
+                   CompareUtils::IsSameValue(perimeterPosition, o.perimeterPosition) &&
+                   CompareUtils::IsSameValue(perimeterOffset, o.perimeterOffset) &&
+                   CompareUtils::IsSameValue(size, o.size) &&
+                   CompareUtils::IsSameValue(color, o.color) &&
+                   CompareUtils::IsSameValue(intensity, o.intensity) &&
+                   CompareUtils::IsSameValue(spread, o.spread) &&
+                   CompareUtils::IsSameValue(ghostSpacing, o.ghostSpacing) &&
+                   CompareUtils::IsSameValue(ghostSize, o.ghostSize) &&
+                   CompareUtils::IsSameValue(ghostOffset, o.ghostOffset) &&
+                   CompareUtils::IsSameValue(ghostColor, o.ghostColor) &&
+                   CompareUtils::IsSameValue(ghostTint, o.ghostTint) &&
+                   CompareUtils::IsSameValue(flareCenter, o.flareCenter) &&
+                   CompareUtils::IsSameValue(rayDensity, o.rayDensity) &&
+                   CompareUtils::IsSameValue(rotationRate, o.rotationRate) &&
+                   CompareUtils::IsSameValue(resolutionScale, o.resolutionScale);
         }
         bool operator!=(const LensFlareConfig &o) const { return !(*this == o); }
     } LensFlareConfig;

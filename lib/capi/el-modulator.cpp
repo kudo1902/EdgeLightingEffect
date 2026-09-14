@@ -9,6 +9,7 @@ extern "C"
 
     el_modulator_handle_t el_modulator_create_constant(float value)
     {
+        VALIDATE_FINITE_H(value, "el_modulator_create_constant");
         try
         {
             auto *handle = new el_modulator_handle_impl{std::make_shared<EdgeLighting::Constant>(value)};
@@ -25,6 +26,7 @@ extern "C"
     el_modulator_handle_t el_modulator_create_oscillator(float frequency,
                                                          float minValue, float maxValue, float phase, el_waveform_e waveform)
     {
+        VALIDATE_FINITE_H4(frequency, minValue, maxValue, phase, "el_modulator_create_oscillator");
         try
         {
             auto *handle = new el_modulator_handle_impl{std::make_shared<EdgeLighting::Oscillator>(
@@ -42,6 +44,7 @@ extern "C"
     el_modulator_handle_t el_modulator_create_ease(float from, float to,
                                                    float duration, el_easing_e easing, el_bool_t loop)
     {
+        VALIDATE_FINITE_H3(from, to, duration, "el_modulator_create_ease");
         try
         {
             auto *handle = new el_modulator_handle_impl{std::make_shared<EdgeLighting::Ease>(
@@ -78,6 +81,7 @@ extern "C"
     {
         LOG_I("seq=%p, stage=%p, duration=%f", (void *)seq, (void *)stage, duration);
         VALIDATE_MOD_PTR(seq, "el_modulator_sequence_append");
+        VALIDATE_FINITE(duration, "el_modulator_sequence_append");
         VALIDATE_MOD_PTR(stage, "el_modulator_sequence_append");
         auto *s = dynamic_cast<EdgeLighting::Sequence *>(seq->ptr.get());
         if (!s)
@@ -134,6 +138,7 @@ extern "C"
     el_modulator_handle_t el_modulator_create_remap(el_modulator_handle_t inner,
                                                     float outMin, float outMax)
     {
+        VALIDATE_FINITE_H2(outMin, outMax, "el_modulator_create_remap");
         if (!inner)
         {
             LOG_E("el_modulator_create_remap: inner is null");
@@ -166,6 +171,7 @@ extern "C"
     el_result_e el_modulator_evaluate(el_modulator_handle_t mod, float time, float *outValue)
     {
         VALIDATE_MOD_PTR(mod, "el_modulator_evaluate");
+        VALIDATE_FINITE(time, "el_modulator_evaluate");
         VALIDATE_OUT_PTR(outValue, "el_modulator_evaluate");
         *outValue = mod->ptr ? mod->ptr->Evaluate(time) : 0.0f;
         LOG_D("mod=%p, time=%f, value=%f", (void *)mod, time, *outValue);

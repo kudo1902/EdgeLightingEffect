@@ -19,6 +19,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cmath> // std::isfinite - VALIDATE_FINITE
 #include <memory>
 #include <mutex>
 #include <thread>
@@ -300,6 +301,108 @@ struct el_modulator_handle_impl
             LOG_E("%s: out pointer is null", fn); \
             return EL_ERROR_INVALID_PARAMETER;    \
         }                                         \
+    } while (0)
+
+/// Reject a NaN or an infinity before it can reach a @c Config field.
+///
+/// Every float this ABI accepts goes through here, and the reason is not that
+/// a bad float draws badly - it is that a NaN is not a LOCAL problem. Once one
+/// is in the config, @c NaN @c != @c NaN makes that config unequal to ITSELF
+/// forever, so @c EdgeLightingEffect::refreshActiveConfig reports a change on
+/// every frame for the rest of the process: measured, 120 of 120 settled
+/// frames against 0 of 120 healthy. Every renderer's @c OnConfigChanged then
+/// fires per frame, which among other things sets @c mEmissionDirty and
+/// re-bakes the neon emission table every frame - the exact per-frame cost
+/// docs/emission-prepass.md exists to remove. One bad float silently undoes it,
+/// with nothing in the log. See review-findings I40.
+///
+/// Infinities are rejected alongside NaN even though @c inf @c == @c inf and so
+/// does NOT break the comparison. They are refused because nothing downstream
+/// has a meaning for them - an infinite glow radius or corner radius is not a
+/// value the shaders can do anything sane with - and because a host that
+/// computed one has a bug it is better off hearing about. It also keeps the
+/// rule to one word a caller can remember: finite, or an error.
+///
+/// Deliberately NOT a clamp. There is no defensible finite value to substitute
+/// (what is a "reasonable" replacement for a NaN line width?), and silently
+/// swapping one in is how a host's arithmetic bug becomes a rendering mystery
+/// instead of a return code at the call site that produced it.
+#define VALIDATE_FINITE(v, fn)                                    \
+    do                                                            \
+    {                                                             \
+        if (!std::isfinite(v))                                    \
+        {                                                         \
+            LOG_E("%s: non-finite value %f - rejected", fn, (v)); \
+            return EL_ERROR_INVALID_PARAMETER;                    \
+        }                                                         \
+    } while (0)
+
+/// @ref VALIDATE_FINITE for the colour and vector setters, so a four-component
+/// call does not need four lines of prologue.
+#define VALIDATE_FINITE2(a, b, fn) \
+    do                             \
+    {                              \
+        VALIDATE_FINITE(a, fn);    \
+        VALIDATE_FINITE(b, fn);    \
+    } while (0)
+
+#define VALIDATE_FINITE3(a, b, c, fn) \
+    do                                \
+    {                                 \
+        VALIDATE_FINITE(a, fn);       \
+        VALIDATE_FINITE(b, fn);       \
+        VALIDATE_FINITE(c, fn);       \
+    } while (0)
+
+#define VALIDATE_FINITE4(a, b, c, d, fn) \
+    do                                   \
+    {                                    \
+        VALIDATE_FINITE(a, fn);          \
+        VALIDATE_FINITE(b, fn);          \
+        VALIDATE_FINITE(c, fn);          \
+        VALIDATE_FINITE(d, fn);          \
+    } while (0)
+
+/// @ref VALIDATE_FINITE for the entry points that return a HANDLE rather than
+/// an @c el_result_e - the animation and modulator factories. Same rule, same
+/// reasoning; only the failure value differs, because @c nullptr is the only
+/// thing those signatures can say "no" with.
+///
+/// A rejected factory therefore looks exactly like an allocation failure to the
+/// caller, which the factories already document: they return @c nullptr and log
+/// the reason. The log line is what tells the two apart.
+#define VALIDATE_FINITE_H(v, fn)                                  \
+    do                                                            \
+    {                                                             \
+        if (!std::isfinite(v))                                    \
+        {                                                         \
+            LOG_E("%s: non-finite value %f - rejected", fn, (v)); \
+            return nullptr;                                       \
+        }                                                         \
+    } while (0)
+
+#define VALIDATE_FINITE_H2(a, b, fn) \
+    do                               \
+    {                                \
+        VALIDATE_FINITE_H(a, fn);    \
+        VALIDATE_FINITE_H(b, fn);    \
+    } while (0)
+
+#define VALIDATE_FINITE_H3(a, b, c, fn) \
+    do                                  \
+    {                                   \
+        VALIDATE_FINITE_H(a, fn);       \
+        VALIDATE_FINITE_H(b, fn);       \
+        VALIDATE_FINITE_H(c, fn);       \
+    } while (0)
+
+#define VALIDATE_FINITE_H4(a, b, c, d, fn) \
+    do                                     \
+    {                                      \
+        VALIDATE_FINITE_H(a, fn);          \
+        VALIDATE_FINITE_H(b, fn);          \
+        VALIDATE_FINITE_H(c, fn);          \
+        VALIDATE_FINITE_H(d, fn);          \
     } while (0)
 
 /// Companion to @c ResolveConfigSource: bail out when it could not resolve.
