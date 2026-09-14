@@ -363,6 +363,36 @@ struct el_modulator_handle_impl
         VALIDATE_FINITE(d, fn);          \
     } while (0)
 
+/// Refuse a negative value on a parameter documented as a positive DISTANCE.
+///
+/// Narrower than @ref VALIDATE_FINITE by design: it guards the few floats a
+/// negative silently corrupts GEOMETRY with, not every float in the ABI. The
+/// cutoff sizes are those - they reach @c NeonRenderer::setupFillGeometry's
+/// margins and land in vertex data, where a negative inverts the ring (its
+/// outer edge ends up inside its own hole) while the shader's own boundary
+/// test flips sign and returns coverage 0. The fill then vanishes with no
+/// error anywhere, which is the worst of both: wrong picture, silent API.
+///
+/// Note what does NOT need this and why, so nobody adds it there: the
+/// SOFTNESS fields are already floored downstream - neon.frag takes
+/// max(softness, softFloor) and renderOpaqueFill takes max(opaqueSoftness,
+/// SIDE_SOFT_EPSILON) - so a negative is absorbed before it can reach
+/// geometry. Guarding them too would only turn a harmless value into an
+/// error.
+///
+/// Rejects rather than clamps, for @ref VALIDATE_FINITE's reason plus one of
+/// its own: every el_effect_set_* here round-trips through its getter, and a
+/// clamp would hand the host back a value it never set.
+#define VALIDATE_NON_NEGATIVE(v, fn)                                     \
+    do                                                                   \
+    {                                                                    \
+        if ((v) < 0.0f)                                                  \
+        {                                                                \
+            LOG_E("%s: negative distance %f - rejected", fn, (v));       \
+            return EL_ERROR_INVALID_PARAMETER;                           \
+        }                                                                \
+    } while (0)
+
 /// @ref VALIDATE_FINITE for the entry points that return a HANDLE rather than
 /// an @c el_result_e - the animation and modulator factories. Same rule, same
 /// reasoning; only the failure value differs, because @c nullptr is the only

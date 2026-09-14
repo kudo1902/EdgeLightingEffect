@@ -173,6 +173,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_inside_cutoff");
         LOCK_EFFECT(effect);
         VALIDATE_FINITE2(size, softness, "el_effect_set_inside_cutoff");
+        VALIDATE_NON_NEGATIVE(size, "el_effect_set_inside_cutoff");
         auto &c = effect->config.neon.insideCutoff;
         bool en = (enable != 0);
         if (c.enable == en && c.size == size && c.softness == softness)
@@ -208,6 +209,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_outside_cutoff");
         LOCK_EFFECT(effect);
         VALIDATE_FINITE2(size, softness, "el_effect_set_outside_cutoff");
+        VALIDATE_NON_NEGATIVE(size, "el_effect_set_outside_cutoff");
         auto &c = effect->config.neon.outsideCutoff;
         bool en = (enable != 0);
         if (c.enable == en && c.size == size && c.softness == softness)
@@ -274,6 +276,7 @@ extern "C"
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque_cutoff");
         LOCK_EFFECT(effect);
         VALIDATE_FINITE(size, "el_effect_set_opaque_cutoff");
+        VALIDATE_NON_NEGATIVE(size, "el_effect_set_opaque_cutoff");
         EdgeLighting::OpaqueCutoff *c = ResolveOpaqueCutoff(effect, side);
         if (c == nullptr)
         {

@@ -111,8 +111,12 @@ extern "C"
      *  @details @c enable = 0 leaves the interior uncapped (natural halo/bloom
      *           decay bounds the emission). @c size is the pixel distance from
      *           the rect edge to the cutoff boundary along the interior side
-     *           (always positive). @c softness is the feather width in pixels
-     *           at the boundary (0 = hard, larger = smoother fade).
+     *           and must be finite and non-negative - a negative reaches the
+     *           draw quad as geometry, so it is refused with
+     *           @c EL_ERROR_INVALID_PARAMETER rather than clamped.
+     *           @c softness is the feather width in pixels at the boundary
+     *           (0 = hard, larger = smoother fade); it is floored downstream,
+     *           so it takes the finite check only.
      *
      *           Bounds the EMISSION only. The opaque fill has its own cutoffs
      *           - see @ref el_effect_set_opaque_cutoff - so a tight glow can
@@ -140,8 +144,11 @@ extern "C"
      *           @c enable = 0 leaves the fill uncapped on that side: outward
      *           it runs to the viewport edge, inward it covers the whole
      *           interior. @p size is the pixel distance from the rect edge to
-     *           the fill boundary along that side (always positive; the sign
-     *           is implicit in @p side) and must be finite.
+     *           the fill boundary along that side (the sign is implicit in
+     *           @p side) and must be finite and non-negative - a negative
+     *           reaches the fill ring as geometry and silently erases the
+     *           fill, so it is refused with @c EL_ERROR_INVALID_PARAMETER
+     *           rather than clamped.
      *
      *           There is no @c softness here, and that is deliberate: the fill
      *           has ONE feather, @ref el_effect_set_opaque_softness, shared by
