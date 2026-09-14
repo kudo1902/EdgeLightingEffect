@@ -18,9 +18,11 @@ When a doc value drifts from those headers, the headers win.
 
 ## 1. What the effect is
 
-A single fragment shader that draws an animated neon-style glow along the
-perimeter of a rounded rectangle. The image is the sum of three coloured
-layers, all evaluated per pixel in HDR and tone-mapped together at the end:
+An animated neon-style glow drawn along the perimeter of a rounded rectangle.
+The picture you see comes out of one gather shader (helped by a small
+pre-pass, and optionally sat on an opaque fill - see 3.2); within it the image
+is the sum of three coloured layers, all evaluated per pixel in HDR and
+tone-mapped together at the end:
 
 - **Filament** - the sharp bright line right on the perimeter. A generalised
   Gaussian falloff perpendicular to the edge. Peak brightness is always 1.0
@@ -66,7 +68,10 @@ comes out. Every value is the compiler-visible default from `config.h`.
 | Geometry | cornerRadius | 40 px |
 | Geometry | winding | CCW (top-left -> left -> bottom -> right -> top) |
 | Neon | enable | **false** - the renderer is off by default; the host opts in |
-| Neon | opaque | false (premultiplied blend onto the framebuffer) |
+| Neon | opaqueMode | NONE (premultiplied blend onto the framebuffer; no fill pass) |
+| Neon | opaqueColor | black (0, 0, 0, 1) |
+| Neon | opaqueSoftness | 0 (hard fill edge, floored to a 1 px AA ramp) |
+| Neon | opaqueInsideCutoff / opaqueOutsideCutoff | both off - the fill, when on, is unbounded |
 | Neon | lineWidth | 4 px |
 | Neon | filamentFalloff | 1.0 (pure Gaussian) |
 | Neon | intensity | 1.0 |
@@ -74,20 +79,27 @@ comes out. Every value is the compiler-visible default from `config.h`.
 | Neon | bloomStrength | 0.3 |
 | Neon | glowSide | BOTH |
 | Neon | glowSideSoftness | 0 (only used when glowSide != BOTH) |
+| Neon | insideCutoff / outsideCutoff | both off - the glow is bounded by its own decay |
 | Neon | blendSpace | RGB |
 | Neon | colorStops | red(0.00), green(0.25), blue(0.50), yellow(0.75) |
 | Neon | hueRotationRate | 0.5 revolutions / second |
 | Neon | arcs | one arc {start=0, length=1, intensity=1, no stops} - full perimeter lit |
 | Neon | segmentBoosts | empty - no travelling lights |
 | Neon | colorTransitionDuration | 0.3 s |
-| Optimized | enable | false |
-| Wireframe | enable | true |
-| Wireframe | color | opaque green |
+| Neon | resolutionScale | 1.0 (direct path - no offscreen buffer, no blit) |
+| Neon | numSamples | 128 (`NEON_MAX_LOOP_SAMPLES`) |
+| Neon | gradientLutSize | 256 |
+| Debug | enable | true (the overlay layer's mute) |
+| Debug | showGradientLUT / showColorStops | false |
+| Debug | showWireframe | true |
+| Debug | wireframeColor | opaque green (0, 1, 0, 1) |
+| Debug | opaqueOnly | false |
 
 Turning `neon.enable = true` on top of these defaults gives you a full-loop
 rainbow (red -> green -> blue -> yellow, blending back to red) marching slowly
 around an 800x600 rectangle at 0.5 rev/s, with a modest 5 px halo and a light
-bloom bleed. That's the effect's "hello world" - the shader and defaults are
+bloom bleed. If you also registered `DebugRenderer`, expect a green 1 px box
+around the rectangle on top of that - `debug.showWireframe` defaults **on**. That's the effect's "hello world" - the shader and defaults are
 tuned so this looks like a real neon strip out of the box.
 
 ---
@@ -131,16 +143,74 @@ Master switch for the single-pass neon renderer. Nothing renders when
 The host must set this to `true` to see any neon at all; the demo does this
 in its startup code.
 
-**`neon.opaque`** (default `false`)
-- `false`: premultiplied "over" blend - dark surround is transparent, the
-  effect composites onto whatever was in the framebuffer.
-- `true`: the surround is filled with `neon.opaqueColor` first (occluding
-  the background), and the neon glow is composited on top. Useful when you
-  want the effect to *replace* the background inside its draw region.
+**`neon.opaqueMode`** (default `NONE`)
+Where, if anywhere, a solid fill is drawn *behind* the glow before the neon
+pass - so the effect can sit on its own background instead of only adding
+light to whatever was already there. The fill is `neon.opaqueColor`, and the
+glow still composites on top of it.
+
+`d` below is signed distance from the rect edge: negative inside, positive
+outside.
+
+- `NONE`: no fill pass at all. Premultiplied "over" blend - the dark surround
+  is transparent and the effect composites onto the existing framebuffer.
+- `OUTSIDE`: fill the outer band, `0 <= d <= opaqueOutsideCutoff`. Reads as a
+  solid frame around the rectangle with the interior left untouched.
+- `INSIDE`: fill the inner band, `-opaqueInsideCutoff <= d <= 0`. The mirror -
+  a solid inner border, exterior untouched.
+- `BOTH`: fill the whole band, `-opaqueInsideCutoff <= d <= +opaqueOutsideCutoff`.
+- `ALL`: fill the whole viewport. The effect *replaces* the background
+  entirely.
+
+The fill has its own analytic SDF anti-aliasing, which is why it lands cleanly
+on rounded corners at any softness.
+
+> **`BOTH` with neither opaque cutoff enabled covers the whole viewport**, the
+> same as `ALL` - an unbounded band in both directions *is* everything. Since
+> both cutoffs default to off, selecting `BOTH` and nothing else gives you a
+> full-screen fill. Set `opaqueInsideCutoff` / `opaqueOutsideCutoff` to get an
+> actual band.
 
 **`neon.opaqueColor`** (default black `(0, 0, 0, 1)`)
-RGBA colour used to fill the surround when `neon.opaque = true`. Only the
-`.rgb` is used today; `.a` is reserved.
+RGBA colour the fill is painted in. Applied whenever `opaqueMode != NONE`.
+Only the `.rgb` is used today; `.a` is reserved for a later partial-fill pass
+and is applied by neither the renderer nor the shader.
+
+**`neon.opaqueSoftness`** (default 0)
+Total feather width in pixels at the fill's cutoff boundaries - the fade runs
+from fully covered to fully clear over this many pixels, centred on the
+boundary. `0` = hard fill edge (floored to a 1 px anti-aliasing ramp so it
+cannot stair-step); larger values soften where the fill fades into the
+background.
+
+This is the **only** feather the fill has, and both of its boundaries share
+it. That is deliberate: it is kept independent of the glow's per-side
+`Cutoff::softness` so the fill and the emission can taper at different rates -
+a wide fill fade under a tight emission fall-off, say.
+
+**`neon.opaqueInsideCutoff`, `neon.opaqueOutsideCutoff`** (default both off)
+How far the *fill* reaches either side of the rect edge, in pixels. Two fields
+each - `enable` and `size` - and no softness, because the feather is the
+shared `opaqueSoftness` above.
+
+- `enable = false`: unbounded on that side. Outward the fill runs to the
+  viewport edge; inward it covers the whole interior.
+- `enable = true`: the fill stops at `size` px from the edge along that side.
+
+Only the sides the mode actually reaches are read: `INSIDE` and `BOTH` read
+the inside cutoff, `OUTSIDE` and `BOTH` the outside one. `ALL` reads neither,
+and `NONE` draws nothing.
+
+**These are independent of the glow's `insideCutoff` / `outsideCutoff`** (3.4).
+Either pair can be the wider one, and moving one does not move the other -
+bounding the glow does not shrink the fill, and widening the fill does not let
+the glow reach further. Recipe 4.9 works through which orientation actually
+reads on screen, since the fill is drawn *behind* the emission and a fill
+narrower than the glow is hidden by it.
+
+The two were one pair of fields until they were split, so a config written
+before that which bounded its fill by enabling the *glow* cutoffs no longer
+does; it has to set this pair as well.
 
 ### 3.3 Filament (the bright line)
 
@@ -200,7 +270,26 @@ Which side of the perimeter line the halo + bloom are allowed to spill onto.
 **`neon.glowSideSoftness`** (default 0)
 Softness of the one-sided cut in pixels. `0` = hard edge along the axis;
 `~2` = a subtle feather to hide the aliased transition. Ignored when
-`glowSide == BOTH`.
+`glowSide == BOTH`. Does **not** affect the cutoff boundaries below - those
+carry their own feather so the two can be tuned independently.
+
+**`neon.insideCutoff`, `neon.outsideCutoff`** (default both off)
+Hard geometric limits on how far the *light* may travel, one per side. Three
+fields each: `enable`, `size` (px from the rect edge along that side, always
+positive) and `softness` (feather width at the boundary).
+
+- `enable = false`: that side is uncapped, and the emission's own halo / bloom
+  decay is what bounds it. This is the default.
+- `enable = true`: the emission fades to zero over `softness` px at the
+  boundary and is culled past it - so a wide `glowRadius` can be clipped to a
+  stated band, whatever the natural decay would have done.
+
+`outsideCutoff` does one more thing: it sizes the draw quad, so far-exterior
+pixels are rasteriser-culled rather than shaded and thrown away. Enabling it
+is therefore a small performance win as well as a look.
+
+These bound the **glow only**. The opaque fill has its own pair
+(`opaqueInsideCutoff` / `opaqueOutsideCutoff`, 3.2), and nothing reads both.
 
 ### 3.5 Colour and hue rotation
 
@@ -357,9 +446,11 @@ unless that renderer is registered - through the C ABI that means
 `EL_RENDERER_DEBUG` in the mask, which `EL_RENDERER_ALL` includes.
 
 **`debug.enable`** (default `true`)
-Master switch for the overlay layer. Defaults on because both flags below
-default off, so it draws nothing until you ask it to; it is the mute for
-turning the layer off without losing which overlays you had selected.
+Master switch for the overlay layer - the mute for turning every overlay off
+at once without losing which ones you had selected. Note this does **not**
+mean the layer is silent by default: `showWireframe` below defaults on, so a
+registered `DebugRenderer` draws the bounding box out of the box. The other
+two overlays default off.
 
 **`debug.showGradientLUT`** (default false)
 Draws the baked gradient LUT as a horizontal strip across the centre of the
@@ -528,6 +619,42 @@ A 0.5-long arc races around the perimeter from `0.1` back to `0.1` (full
 loop), growing / chasing / shrinking through three phases so both ends
 move at constant speed. Fire-and-forget one-shot.
 
+### 4.9 Solid mat under a tight line
+
+```cpp
+cfg.neon.enable = true;
+cfg.neon.glowRadius = 20.0f;
+cfg.neon.bloomStrength = 0.25f;
+
+// The fill: a wide 48 px solid band, centred on the edge.
+cfg.neon.opaqueMode = EdgeLighting::OpaqueMode::BOTH;
+cfg.neon.opaqueColor = glm::vec4(0.12f, 0.12f, 0.16f, 1.0f);
+cfg.neon.opaqueSoftness = 6.0f;
+cfg.neon.opaqueInsideCutoff = {true, 48.0f};
+cfg.neon.opaqueOutsideCutoff = {true, 48.0f};
+
+// The glow: clipped to 12 px, so it stays well inside the fill.
+cfg.neon.insideCutoff = {true, 12.0f, 4.0f};
+cfg.neon.outsideCutoff = {true, 12.0f, 4.0f};
+```
+
+A wide grey mat sits under the rectangle, occluding whatever is behind it out
+to 48 px either side, with a tight bright line running down its middle and the
+background untouched beyond the band. Before the split this was not
+expressible - one pair of cutoffs could not be 12 and 48 at once.
+
+**Which pair should be the wider one is not a free choice.** The fill is drawn
+*behind* the emission, and the emission is brightest exactly over the band, so
+**a fill narrower than the glow is invisible** - the light covers it. If you
+want to see the fill, it has to reach past the light, as above. The reverse
+orientation (a tight fill under a wide glow) is still useful, but for
+occluding a busy background right at the edge rather than for any look of its
+own.
+
+The unbounded reverse is a distinct, visible thing though: clip the glow and
+leave *both* fill cutoffs off, and `BOTH` covers the whole viewport - a full
+flat panel with a thin bright line on it.
+
 ---
 
 ## 5. Interaction cheatsheet
@@ -542,6 +669,10 @@ Which control affects which pixels:
 | How much soft background wash | `neon.bloomStrength` |
 | Overall brightness | `neon.intensity` (arcs), segment `boost` (segments) |
 | Which side the glow spills to | `neon.glowSide` (+ `glowSideSoftness`) |
+| A hard limit on how far the glow reaches | `neon.insideCutoff` / `neon.outsideCutoff` |
+| Whether there is a solid fill behind the glow | `neon.opaqueMode` (+ `neon.opaqueColor`) |
+| How far that fill reaches | `neon.opaqueInsideCutoff` / `neon.opaqueOutsideCutoff` |
+| How softly the fill fades out | `neon.opaqueSoftness` (both boundaries share it) |
 | The colours around the perimeter | `neon.colorStops` (+ `neon.blendSpace`) |
 | How fast colours move | `neon.hueRotationRate` |
 | Which slices of the perimeter are on | `neon.arcs` |
