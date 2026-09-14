@@ -64,6 +64,7 @@ namespace EdgeLighting
         /// Allocated only when the scaled path first runs; at scale 1.0 this
         /// stays empty and costs nothing.
         Framebuffer mScaledBuffer{"LensFlare.Scaled"};
+
         /// Per-ghost distance + colour table (std140 GhostBlock). Filled by
         /// @ref bakeGhostBlock when its three inputs move, and bound every
         /// frame by @ref Render.
@@ -83,6 +84,15 @@ namespace EdgeLighting
         /// false so the first bake is unconditional however the renderer is
         /// brought up - @ref Initialize and @ref OnConfigChanged both honour it.
         bool mGhostsBaked = false;
+
+        /// Whether @ref Initialize has already run once.
+        ///
+        /// Gates exactly one thing: dropping @c mScaledBuffer on a SECOND
+        /// Initialize, which is the GL-context-loss path. A first Initialize
+        /// has nothing to recover - the buffer has not been allocated yet -
+        /// and invalidating there would only cost a delete of a name that does
+        /// not exist. See review-findings I38.
+        bool mHasInitialized = false;
     };
 }
 

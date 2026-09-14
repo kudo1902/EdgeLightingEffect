@@ -129,17 +129,17 @@ namespace EdgeLighting
         /// self-guards: with nothing to re-bake the fade duration is never
         /// consulted, so a hide/show across an unchanged gradient still
         /// RESUMES a paused cross-fade rather than snapping it.
+        bool mStripVisible = false;
+
         /// Whether @ref Initialize has already run once.
         ///
-        /// The only thing it gates is the LUT invalidation below: a FIRST
-        /// Initialize has nothing to recover, and invalidating there would
-        /// throw away textures @c AddRenderer's @c OnConfigChanged has usually
-        /// just baked - one wasted upload per LUT at startup, measured. A
-        /// SECOND Initialize is the context-loss path and must invalidate. See
-        /// review-findings I28.
+        /// The only thing it gates is the LUT invalidation in @ref Initialize
+        /// itself: a FIRST Initialize has nothing to recover, and invalidating
+        /// there would throw away textures @c AddRenderer's @c OnConfigChanged
+        /// has usually just baked - one wasted upload per LUT at startup,
+        /// measured. A SECOND Initialize is the context-loss path and must
+        /// invalidate. See review-findings I28.
         bool mHasInitialized = false;
-
-        bool mStripVisible = false;
     };
 
 } // namespace EdgeLighting

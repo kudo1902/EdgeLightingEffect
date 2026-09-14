@@ -230,11 +230,21 @@ namespace EdgeLighting
         ///      the glow over what is already there; into the cleared
         ///      transparent buffer it leaves premultiplied colour + coverage
         ///      alpha for the blit to composite instead.
+        /// @param hueTime The REDUCED phase, not the clock. @ref Render derives
+        ///        it once with @c TimeUtils::WrapHueTime and hands the same
+        ///        value here and to @ref renderEmissionPass, which is what
+        ///        makes the gather's @c uTime and the table it samples agree
+        ///        exactly rather than approximately. Reducing it here instead
+        ///        would be too late: the parameter was a @c float, so the
+        ///        clock lost the precision the reduction exists to preserve
+        ///        before this function could ever see it, and the
+        ///        base-gradient alpha judder that followed did NOT show in the
+        ///        hue, which comes from the table. See review-findings I35.
         /// @return false if the scaled target could not be allocated, in which
         ///         case nothing was drawn and pass 2b must be skipped too - it
         ///         would otherwise composite a stale or undefined buffer.
         bool renderNeonPass(const glm::mat4 &mvp, int bufWidth, int bufHeight,
-                            bool scaled, float time, const Config &config);
+                            bool scaled, double hueTime, const Config &config);
 
         /// Pass 2a: opaque-mode background fill on a fullscreen NDC quad, at
         /// FULL resolution on the caller's framebuffer regardless of the
@@ -339,17 +349,8 @@ namespace EdgeLighting
         ///
         /// Starts true - the buffer holds undefined texels until the first
         /// bake, and no config change is guaranteed before the first frame.
-        /// Whether @ref Initialize has already run once.
-        ///
-        /// The only thing it gates is the LUT invalidation below: a FIRST
-        /// Initialize has nothing to recover, and invalidating there would
-        /// throw away textures @c AddRenderer's @c OnConfigChanged has usually
-        /// just baked - one wasted upload per LUT at startup, measured. A
-        /// SECOND Initialize is the context-loss path and must invalidate. See
-        /// review-findings I28.
-        bool mHasInitialized = false;
-
         bool mEmissionDirty = true;
+
         /// The @c time @ref renderEmissionPass last baked at. Only meaningful
         /// while @c hueRotationRate is non-zero; at 0 the table does not
         /// depend on time and this is not consulted.
@@ -368,6 +369,16 @@ namespace EdgeLighting
         /// Starts true because @ref Initialize does not pack - the first
         /// @ref Render is what fills them.
         bool mLightBlocksDirty = true;
+
+        /// Whether @ref Initialize has already run once.
+        ///
+        /// The only thing it gates is the LUT invalidation in @ref Initialize
+        /// itself: a FIRST Initialize has nothing to recover, and invalidating
+        /// there would throw away textures @c AddRenderer's @c OnConfigChanged
+        /// has usually just baked - one wasted upload per LUT at startup,
+        /// measured. A SECOND Initialize is the context-loss path and must
+        /// invalidate. See review-findings I28.
+        bool mHasInitialized = false;
     };
 }
 

@@ -377,7 +377,10 @@ namespace EdgeLighting
         ///          NOT change state or trigger @ref OnComplete on its own -
         ///          the next @ref Update tick will complete a one-shot whose
         ///          elapsed has crossed @ref GetDuration.
-        void SetElapsed(float elapsed) { mElapsed = std::max(0.0f, elapsed); }
+        /// @note Virtual for the same reason @ref SetEndAction is: an
+        ///       @ref AnimationGroup writes no field of its own, so a value
+        ///       parked on the group alone would drive nothing. See I36.
+        virtual void SetElapsed(float elapsed) { mElapsed = std::max(0.0f, elapsed); }
 
         /// @brief Normalised playback position in @c [0, 1].
         /// @details @c elapsed / @c duration - the reciprocal of a duration
@@ -403,7 +406,8 @@ namespace EdgeLighting
         ///          a @c ONE_SHOT animation set past its end still needs an
         ///          @ref Update tick to fire @ref OnComplete. No-op when
         ///          @ref GetDuration is 0 (modulator owns its periodicity).
-        void SetProgress(float progress)
+        /// @note Virtual, like @ref SetElapsed and for the same reason. See I36.
+        virtual void SetProgress(float progress)
         {
             const float d = GetDuration();
             if (d <= 0.0f)
@@ -431,7 +435,9 @@ namespace EdgeLighting
         virtual PlaybackMode GetPlaybackMode() const { return mMode; }
 
         /// @brief Set the playback mode. Does NOT touch the duration.
-        void SetPlaybackMode(PlaybackMode mode) { mMode = mode; }
+        /// @note Virtual so @ref AnimationGroup can fan it out to the children
+        ///       its own @ref GetPlaybackMode is derived from. See I36.
+        virtual void SetPlaybackMode(PlaybackMode mode) { mMode = mode; }
 
         /// @brief Length of one animation cycle in seconds.
         /// @details In @c LOOP mode, elapsed wraps at this value so the
@@ -447,7 +453,9 @@ namespace EdgeLighting
         ///          any duration-dependent internal modulators (e.g. an
         ///          @ref Ease whose visual transition must match the
         ///          completion latch).
-        void SetDuration(float duration)
+        /// @note Virtual so @ref AnimationGroup can fan it out to the children
+        ///       its own @ref GetDuration is derived from. See I36.
+        virtual void SetDuration(float duration)
         {
             if (duration != mDuration)
             {
@@ -588,6 +596,30 @@ namespace EdgeLighting
     ///     * Mode is LOOP if any child loops, else ONE_SHOT.
     ///     * Duration is the longest child duration (0 if any child loops).
     ///
+    /// ## A group writes no config field, so every setter has to reach the
+    /// children
+    ///
+    /// This is the one rule that makes the class work, and it was learned three
+    /// times: @ref Apply forwards straight to the children and never touches a
+    /// @ref Config itself, so ANY value parked on the group alone drives
+    /// nothing at all while its getter cheerfully reports it as set. I29 found
+    /// it for the end action, I34 for the end action of a late-added child, and
+    /// I36 for the remaining five. All five now reach the children, in one of
+    /// two ways:
+    ///
+    /// - @ref SetSpeed is applied in @ref Update, as a multiplier on the delta
+    ///   the children are handed. It composes with each child's own speed
+    ///   rather than overwriting it, and needs nothing from @ref Add.
+    /// - @ref SetDuration, @ref SetPlaybackMode, @ref SetElapsed and
+    ///   @ref SetProgress fan out, like @ref SetEndAction. Fanning out
+    ///   OVERWRITES whatever a child was given individually, so set the group's
+    ///   value first and any per-child exception after.
+    ///
+    /// Only @ref SetEndAction is also seeded onto a late-added child by
+    /// @ref Add. The others do not need it and must not have it - see the note
+    /// on @ref SetDuration for why seeding a derived aggregate is not merely
+    /// redundant but actively unsafe.
+    ///
     /// Later-added children write their fields on top of earlier ones - the
     /// natural "base → modulation" layering.  Prefer @ref OnComplete on
     /// individual children for sequencing (chain B to fire when A finishes).
@@ -699,6 +731,85 @@ namespace EdgeLighting
             }
         }
 
+        /// Set every child's cycle length, and the group's own alongside them.
+        ///
+        /// Fans out for the same reason @ref SetEndAction does: the group
+        /// writes no config field, so a duration held only here would drive
+        /// nothing while @ref GetDuration went on reporting something. It is
+        /// not the same KIND of policy, though, and the difference decides how
+        /// @ref Add behaves. An end action is STORED on the group and read back
+        /// from it, which is why @ref Add has to seed a late child with it
+        /// (review-findings I34). A duration is a DERIVED AGGREGATE - the
+        /// getter below computes it from the children every time - so a child
+        /// added later is simply a new input to that aggregate, and the getter
+        /// keeps telling the truth without any seeding. Seeding would in fact
+        /// be harmful here: @ref GetDuration returns 0 whenever any child
+        /// loops, and handing 0 to a child whose @c OnDurationChanged builds an
+        /// oscillator at @c 1/d is a division by zero.
+        ///
+        /// Note this reaches each child's @c OnDurationChanged, which is the
+        /// point - the oscillator-based animations rebuild their modulator so
+        /// the visual cycle matches the number you set, rather than only the
+        /// completion latch moving.
+        void SetDuration(float duration) override
+        {
+            Animation::SetDuration(duration);
+            for (const auto &a : mAnimations)
+            {
+                a->SetDuration(duration);
+            }
+        }
+
+        /// Set every child's playback mode, and the group's own alongside them.
+        /// Derived-aggregate reasoning exactly as for @ref SetDuration: after
+        /// this, @ref GetPlaybackMode reports what was set because every child
+        /// now carries it.
+        void SetPlaybackMode(PlaybackMode mode) override
+        {
+            Animation::SetPlaybackMode(mode);
+            for (const auto &a : mAnimations)
+            {
+                a->SetPlaybackMode(mode);
+            }
+        }
+
+        /// Scrub every child to the same ABSOLUTE elapsed.
+        ///
+        /// A command rather than a policy, which is why - unlike
+        /// @ref SetEndAction - there is nothing for @ref Add to propagate: it
+        /// names a moment, and a child that joins afterwards was not present at
+        /// it.
+        void SetElapsed(float elapsed) override
+        {
+            Animation::SetElapsed(elapsed);
+            for (const auto &a : mAnimations)
+            {
+                a->SetElapsed(elapsed);
+            }
+        }
+
+        /// Scrub every child to the same NORMALISED position.
+        ///
+        /// Per-child @ref SetProgress, not a shared elapsed, and the difference
+        /// matters whenever the children have different durations: this puts
+        /// each one at @p progress of its OWN cycle, which is the phase-locked
+        /// reading a group exists for, and it is also what keeps
+        /// @ref GetProgress agreeing with what was just set. Handing them all
+        /// one elapsed would instead leave a short child past its end while the
+        /// group reported half way.
+        ///
+        /// A child whose duration is 0 ignores this, exactly as a standalone
+        /// one does - its modulator owns its own periodicity and there is no
+        /// normalisation to apply.
+        void SetProgress(float progress) override
+        {
+            Animation::SetProgress(progress);
+            for (const auto &a : mAnimations)
+            {
+                a->SetProgress(progress);
+            }
+        }
+
         void Reset(Config &cfg) override
         {
             Animation::Reset(cfg);
@@ -710,12 +821,43 @@ namespace EdgeLighting
 
         // --- Drive -------------------------------------------------------
 
+        /// Advance every child, scaled by the GROUP's speed.
+        ///
+        /// @ref SetSpeed is deliberately NOT fanned out the way the policy
+        /// setters below are. A group's speed is applied HERE, as a multiplier
+        /// on the delta the children receive, which is better than writing it
+        /// into them in three ways: it COMPOSES with each child's own speed
+        /// instead of overwriting it, it needs no "set the group first, then
+        /// per-child exceptions" rule, and it reaches a child added later
+        /// without any propagation in @ref Add. Nested groups multiply, which
+        /// is the reading anyone would expect of "run this subtree at 2x".
+        ///
+        /// Before this the group's speed drove only @c Animation::Update's
+        /// advance of the group's OWN elapsed, which nothing reads - so
+        /// @c el_animation_set_speed on a group preset returned EL_SUCCESS,
+        /// read back the value it was given, and changed nothing on screen.
+        /// See review-findings I36.
         void Update(float dt) override
         {
             Animation::Update(dt);
-            for (const auto &a : mAnimations)
+            const float childDt = dt * GetSpeed();
+            // Walk a COPY, for the reason AnimationManager::Update walks one:
+            // Animation::Update above fires OnComplete and OnStateChanged
+            // synchronously, those are host callbacks, and "clear the group
+            // when it finishes" is a natural thing to write in one - which
+            // would erase the vector this loop is iterating. The tick set is
+            // fixed at entry, so a child removed mid-tick still receives this
+            // frame's tick and one added mid-tick starts on the next.
+            //
+            // A LOCAL copy rather than a member scratch, and unlike
+            // AnimationManager this one does not bother reusing capacity: a
+            // group holds a handful of children, is itself one entry in the
+            // manager's list, and the manager's own scratch already removes the
+            // per-frame allocation from the path that matters.
+            const std::vector<AnimationPtr> ticking = mAnimations;
+            for (const auto &a : ticking)
             {
-                a->Update(dt);
+                a->Update(childDt);
             }
         }
 

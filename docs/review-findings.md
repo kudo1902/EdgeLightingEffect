@@ -30,6 +30,11 @@ description, so the reasoning that led to the change stays readable next to it.
 | second pass | R1, R2, R3, R4, R5, R6 | R7 |
 | third pass | V8, I9, I10, I11, I12 (partly) | V9, I12's two stale design docs |
 | fourth pass | I14 | I13 |
+| fifth pass | I15 | - |
+| sixth pass | I16 to I26, I27 (deprecated) | - |
+| seventh pass | I28 to I32 | - |
+| eighth pass | I33, I33b, I34 | - |
+| ninth pass | I35, I36, I37, I38 | - |
 
 The R items come from a re-read after the V and I fixes landed - see
 [Second pass](#second-pass-after-bbdba62). V8 and V9 come from a later read of
@@ -42,6 +47,13 @@ I13 and I14 come from a performance review of `LensFlareRenderer` - see
 [Fourth pass](#fourth-pass-the-lens-flare-performance-review). That review's
 own measurements and reasoning live in `lens-flare-perf-review.md`; only the
 defects it turned up are recorded here.
+
+I35 to I38 come from a full read of `design_threaded_model` at `f8f6d83`, after
+the eighth pass's fixes landed - see
+[Ninth pass](#ninth-pass-the-threaded-branch-read). Two of them finish a fix an
+earlier pass left at three call sites out of four: I35 finishes I33b (fixed) and
+I38 finishes I28. That pass also records what it checked and found sound, which
+the earlier ones do not.
 
 ## How the visual items were reproduced
 
@@ -2012,6 +2024,13 @@ and `GetId`, because the renderer that owns the LUT is the caller. The class's
 "a caller can only sample it" invariant is restated as "sample it or throw it
 away, but never write it", which is still the property that matters.
 
+The three LUTs were the whole of this fix, and they were not the whole of the
+path. Three more things on the same re-init short-circuited for the same reason
+the bakes did and were not carried across: `mSegmentBlock` / `mArcBlock`,
+`mEmissionBuffer`, and `LensFlareRenderer`'s scaled buffer. I38 closed those and
+moved the invalidation this item added to the top of `Initialize`, where the
+framebuffers have to be dropped before the resize asks for them.
+
 ### I29. `AnimationGroup` ignores every end action, and reports that it did not - FIXED
 
 `AnimationGroup::Apply` overrides the base and forwards to children
@@ -2318,6 +2337,13 @@ The cost is that the field repeats: about 42 minutes at the default speed,
 proportionally sooner at higher speeds. For rain that is imperceptible, and it
 is the only way to bound a scroll.
 
+**One call site was missed, and is now fixed.** `NeonRenderer::renderNeonPass`
+took its `time` as a `float`, so the gather - the pass that draws the glow -
+narrowed before it reduced. The table above is the emission pre-pass, which was
+always correct; the gather juddered at the same uptimes, and because the hue
+beside it did not, the failure there was a desync rather than a stall. See I35,
+which closed it and added the compiler flag that finds this class.
+
 ### I34. The I29 fix worked only when children were added first - FIXED
 
 I29 made `AnimationGroup::SetEndAction` fan out to children, because the group's
@@ -2344,6 +2370,433 @@ both: the group owns the policy, so a per-child exception has to be set on the
 child AFTER it joins.
 
 
+## Ninth pass (the threaded-branch read)
+
+A full read of `design_threaded_model` at `f8f6d83`, after the eighth pass's
+fixes landed. Four items. Two of them are places where a fix from an earlier
+pass reached three of its four call sites - I35 finishes I33b and I38 finishes
+I28 - which is the same reason the eighth pass was worth running.
+
+All four are fixed. I36 and I38 were written up as open because closing them
+meant choosing semantics rather than correcting a slip; the choices made, and
+why, are in the entries.
+
+### I35. The I33b fix missed the gather's own time parameter - FIXED
+
+I33b widened the renderer interface to `double` so each renderer could reduce
+clock time at full precision before it became a float uniform. Inside
+`NeonRenderer` that reached `Render`, `Update`, `isEmissionTableStale` and
+`renderEmissionPass`. It did not reach `renderNeonPass`, which still declares
+its `time` parameter as `float` - so `Render` narrows the double at the call and
+`TimeUtils::WrapHueTime` then runs on a value that has already lost the
+precision the reduction exists to preserve.
+
+The compiler finds it on its own. `-Wimplicit-float-conversion` over every
+translation unit in `lib/` fires exactly once in the whole library, on that call:
+
+```
+lib/src/renderer/neon-renderer.cpp: warning: implicit conversion loses
+floating-point precision: 'double' to 'float' [-Wimplicit-float-conversion]
+```
+
+Two things follow, and the second is the visible one.
+
+**The stated invariant is false.** `Render` reduces once and comments that it
+does so "so the staleness test, the bake and the gather's own uniform all key
+off the SAME value". The staleness test and the bake do - both take the reduced
+`hueTime`. The gather does not: it is handed the raw `time`, narrowed, and calls
+`WrapHueTime` a second time on it.
+
+**The base-gradient alpha stutters while the hue does not.** `uTime` reaches
+`neon.frag` in exactly one term, the pointwise `baseAlphaPt` fetch that scales
+filament, halo, bloom and the premultiplied output alpha together. Everything
+else the gather draws comes from the emission table, which is reduced correctly.
+So the two halves of the same ring disagree. Frames out of 60 on which `uTime`
+does not move at all, at `hueRotationRate` 0.5 and 60 Hz:
+
+```
+  uptime                     0 h    27.8 h    72.8 h   277.8 h   2778 h   27778 h
+  emission pre-pass            0         0         0         0        0        0
+  gather (renderNeonPass)      0         0         0        43       58       59
+```
+
+The emission row is the one I33b measured and published. The gather row is what
+this item is. Note the failure is a DESYNC rather than the uniform stall I33b
+fixed: the hue keeps turning smoothly while the alpha modulation judders behind
+it, which is why the I33b verification did not catch it.
+
+It is invisible on the default config, where every base colour stop has alpha
+1.0 and `baseAlphaPt` is a constant. It becomes visible exactly when per-stop
+alpha varies around the ring - which is the behaviour
+[`branch-vs-main-comparison.md`](branch-vs-main-comparison.md) records as new
+against `main` (colour-stop alpha as an emission scale, `ec9fc87`). Its scenes
+04 and 06 are already the right repro; they just need running at uptime rather
+than at zero.
+
+The fix is smaller than the defect, because the value it needs already exists.
+`Render` computes `hueTime` in double two statements above the call, so
+`renderNeonPass` now takes `double hueTime` and is handed that; its own
+`WrapHueTime` call is gone. The precision is corrected and the invariant the
+comment claims is made true by the same edit, rather than one being patched and
+the other left.
+
+**Verified against a control build**, which is the only way to see this one: the
+metric that catches I33b does NOT catch I35. "Is this frame identical to the
+last" stays 0 on both builds at every uptime, because the emission table is
+turning correctly on both and moves pixels whatever the alpha term does - which
+is the desync restated as a measurement problem. So the two builds are compared
+against each other instead, same scene, frame for frame:
+
+```
+      uptime   pixels differing       of   max delta
+       0.0 h                  0    81920           0   <- byte-identical
+      27.8 h              44744    81920          29
+      72.8 h              68346    81920          53
+     277.8 h              81016    81920         124
+    2778.0 h              81476    81920         221
+   27778.0 h              81476    81920         221
+```
+
+The first row is the one that says the fix is safe: at ordinary uptimes nothing
+moves at all, so no existing capture, comparison or reference image changes. The
+rest is the error being removed, and it grows with uptime to 221 of 255 on a
+channel - most of the range, not a last-bit rounding difference.
+
+The arithmetic underneath it, read out of the running renderer at 277.8 h with
+`hueRotationRate` 0.5 - the reduced phase the gather was handed, before and
+after:
+
+```
+  frame   uTime (double)   uTime (narrowed)
+      0      0.000000000        0.000000000
+      1      0.016666667        0.000000000   <- held
+      2      0.033333333        0.062500000
+      3      0.050000000        0.062500000   <- held
+      4      0.066666667        0.062500000   <- held
+      5      0.083333333        0.062500000   <- held
+      6      0.100000000        0.125000000
+      7      0.116666667        0.125000000   <- held
+```
+
+**And the compiler now holds the line.** `lib/CMakeLists.txt` gives both library
+targets `-Wimplicit-float-conversion`, which is the flag that found this. The
+build had no warning flags at all before it.
+
+Two things about that which are worth knowing before touching it. It is paired
+with `-Wno-implicit-int-float-conversion` because in Clang the first name is a
+GROUP and pulls the INT variant in with it: six hits in `contour-tracer.cpp`,
+all small pixel coordinates where the precision loss the warning names cannot
+occur below 2^24. That is a separate judgement about a separate file and does
+not belong inside this fix; narrowing the group to the half with a live defect
+behind it is what keeps the build at zero warnings, which is the only state in
+which a new one gets noticed. And it is guarded on the compiler: GCC has no
+`-Wimplicit-float-conversion` and folds this into `-Wfloat-conversion`, which in
+Clang means float -> int instead and would not have caught I35 at all.
+
+The one warning the build still emits is `sprintf` deprecation inside
+`external/include/stb/stb_image_write.h`. It predates this and is unrelated -
+`-Wdeprecated-declarations` is on by default and fires with or without the flag
+above.
+
+### I36. `AnimationGroup` ignores five of its own setters, and one getter reports otherwise - FIXED
+
+I29 found that `AnimationGroup::SetEndAction` had no effect because the group's
+`Apply` forwards to children and never reaches the dispatch that reads the
+policy, and fixed it by fanning out. I34 finished that for `Add`. The same
+argument applies unchanged to `SetSpeed`, `SetDuration`, `SetPlaybackMode`,
+`SetElapsed` and `SetProgress`, and none of them fans out.
+
+`SetSpeed` is the sharp one. `AnimationGroup::Update` calls `Animation::Update`
+(which advances the GROUP's own elapsed by `dt * mSpeed`, driving nothing) and
+then forwards raw `dt` to every child. The group's speed is applied to an
+accumulator no child reads. Driven through `AnimationManager` with no GL, the
+shimmer preset built exactly as `el_animation_create(EL_ANIM_SHIMMER)` builds
+it, intensity after 7 frames at 60 Hz:
+
+```
+                              speed 1.0    speed 4.0   GetSpeed reads back
+  IntensityPulse (leaf)          0.9990       0.7538   4.0
+  AnimationGroup (SHIMMER)       0.9990       0.9990   4.0     <- no effect
+```
+
+That last column is what makes it I29's defect rather than merely a missing
+feature: `GetSpeed` is not virtual, so it returns the value that was set while
+nothing acts on it. The host is told the call worked.
+
+The other four are milder for one reason only - their getters ARE virtual and
+report the derived aggregate, so a host that reads back can at least see the
+disagreement:
+
+```
+  set speed         4.0   -> get 4.0        <- agrees, and does nothing
+  set duration      5.0   -> get 0.0
+  set mode     ONE_SHOT   -> get LOOP
+  set progress      0.5   -> get 0.0
+```
+
+Reachable from C, unlike I34. `EL_ANIM_SHIMMER` and `EL_ANIM_AURORA` are both
+groups, and `el_animation_set_speed` / `set_duration` / `set_playback_mode` /
+`set_elapsed` / `set_progress` all take any animation handle and return
+`EL_SUCCESS`. "Make the shimmer twice as fast" is the obvious thing a host
+reaches for and the obvious thing to get no answer from.
+
+Closed by making all five reach the children, but NOT all in the same way. The
+split is the whole of the fix, so it is worth stating why each half is where it
+is.
+
+**`SetSpeed` is applied in `Update`, not fanned out.** `AnimationGroup::Update`
+now hands its children `dt * GetSpeed()`. That is better than writing the value
+into them on three counts: it COMPOSES with each child's own speed instead of
+overwriting it, it needs no "set the group first, per-child exceptions after"
+rule, and it reaches a child added later with no propagation in `Add` at all.
+Nested groups multiply, which is what anyone would expect "run this subtree at
+2x" to mean. It also needed no `virtual`.
+
+**`SetDuration`, `SetPlaybackMode`, `SetElapsed` and `SetProgress` fan out**,
+like `SetEndAction`, and are now virtual for it. Fanning out overwrites what a
+child was given individually - the same cost `SetEndAction` already carries and
+states.
+
+**`Add` seeds none of them, and that is deliberate rather than an oversight of
+the I34 kind.** I34 had to seed a late child with the end action because the
+group STORES that policy and reads it back from itself. Duration and mode are
+DERIVED AGGREGATES - the getters recompute them from the children on every call
+- so a child joining later is simply a new input and the getter keeps telling
+the truth unaided. Seeding would in fact be a defect here: `GetDuration` returns
+0 whenever any child loops, and handing 0 to a child whose `OnDurationChanged`
+builds an oscillator at `1/d` is a division by zero. `SetElapsed` and
+`SetProgress` are commands rather than policies - they name a moment, and a
+child that joins afterwards was not present at it.
+
+`SetProgress` had the one genuinely ambiguous choice: the same elapsed for every
+child, or the same normalised position for each. It fans out per-child
+`SetProgress`, so each lands at that fraction of its OWN cycle. That is the
+phase-locked reading a group exists for, and it is also the one that keeps
+`GetProgress` agreeing with what was just set - a shared elapsed would leave a
+short child past its end while the group reported half way.
+
+Measured the same way as above, and against the same shimmer preset:
+
+```
+                              speed 1.0    speed 4.0   GetSpeed reads back
+  IntensityPulse (leaf)          0.9990       0.7538   4.0
+  AnimationGroup (SHIMMER)       0.9990       0.7538   4.0   <- was 0.9990 / 0.9990
+```
+
+The group now tracks the leaf exactly. Composition, and every setter against its
+own getter:
+
+```
+  group speed 2.0, child[0] speed 3.0  -> child[0] keeps 3.0   (composes, no clobber)
+
+  set speed         4.0   -> get 4.0
+  set mode     ONE_SHOT   -> get ONE_SHOT     <- was LOOP
+  set duration      5.0   -> get 5.0          <- was 0.0
+  set progress      0.5   -> get 0.50         <- was 0.0
+  set elapsed       2.0   -> get 2.0, children 2.0 / 2.0
+```
+
+**One re-entrancy defect came with it and is fixed too.** Making duration and
+mode real on a group makes the group's OWN one-shot completion reachable, and
+`AnimationGroup::Update` called `Animation::Update` - which fires `OnComplete`
+synchronously - and then iterated `mAnimations` directly. "Clear the group when
+it finishes" is the natural thing to write in that callback and it would have
+erased the vector being walked. This is exactly I23/I24 one level down, so it
+takes the same cure: the child walk is over a copy taken at entry. A local copy
+rather than `AnimationManager`'s member scratch, because a group holds a handful
+of children and is itself one entry in the manager's list, whose scratch already
+removes the allocation from the path that matters.
+
+```
+  clearing the group from its own OnComplete: fired yes, children now 0, no crash
+```
+
+What is NOT closed, and is now the only group-shaped gap left: `el-animation.h`
+still does not mention groups anywhere, so a C host cannot tell which presets
+are composites (`EL_ANIM_SHIMMER` and `EL_ANIM_AURORA` are). That matters much
+less now that every setter does the right thing on one, which is why it is a
+documentation note rather than an item.
+
+### I37. Two member doc blocks were merged onto the wrong member - FIXED
+
+The I28 fix added a `mHasInitialized` flag to both `NeonRenderer` and
+`DebugRenderer`. In both headers the new member was inserted INSIDE the doc
+comment of the member below it rather than after it, so one comment block now
+runs two explanations together and terminates on `mHasInitialized`:
+
+  - `neon-renderer.h` - `mEmissionDirty`'s block (the wide-gate rationale, the
+    `GradientRingLUT::Tick` note, "starts true because the buffer holds
+    undefined texels") now documents `mHasInitialized`. `mEmissionDirty`, which
+    is declared after it, has no documentation at all.
+  - `debug-renderer.h` - identical shape. `mStripVisible`'s block, which is the
+    only written record of the snap-instead-of-fade rule on the strip's rising
+    edge, now documents `mHasInitialized`. `mStripVisible` has none.
+
+Cosmetic in the sense that no pixel moves, and not cosmetic in a tree where the
+comment beside a flag is the only place its rule is written down: both orphaned
+blocks explain a decision that is invisible in the code and expensive to
+re-derive. `mEmissionDirty`'s in particular is the argument for why that flag is
+deliberately a wide gate while `mLightBlocksDirty` beside it is a narrow one.
+
+Both copies also said "the LUT invalidation below", which is above them, in
+`Initialize`.
+
+Fixed by moving `mHasInitialized` and its own block OUT of the middle of the
+member list and to the END of it, in both headers, so each doc block sits on the
+member it describes. Last is the right place for it on its own terms, not just
+to break the collision: it is a lifecycle flag that gates one branch in
+`Initialize` and is read nowhere else, so it belongs after the members that
+carry the renderer's actual state rather than wedged between them - and it
+leaves `mEmissionDirty` / `mEmissionTime` and `mStripVisible` as the intact
+groups they were meant to be. `LensFlareRenderer` gained the same flag under
+I38 and follows the same placement, so all three agree.
+
+The "below" was corrected to name `Initialize` directly, since the failure mode
+here is precisely a comment that points somewhere other than where it means.
+
+### I38. The re-initialise path does not restore the two light UBOs - FIXED
+
+I28 fixed `NeonRenderer::Initialize`'s second call - the path
+`el_effect_init_with_renderers` documents as GL-context-loss recovery - for the
+three LUT textures, whose bakes are input-gated and would otherwise
+short-circuit against an unmoved `mCurrentConfig`. The same argument applies to
+two more GL objects on that path and was not carried to them.
+
+  - `mSegmentBlock` / `mArcBlock` get their only data store from
+    `packLightBlocks`, which is gated on `mLightBlocksDirty`. That flag was
+    cleared by the last pack before the re-init and no config change follows
+    one, so neither UBO is refilled. This is the same state the comment on
+    `mLightBlocksDirty` records as measured: "binding those and letting the
+    shader read them segfaults in the driver - measured, reproducibly, on the
+    first frame".
+  - `mEmissionBuffer` is re-requested through `resizeEmissionBuffer`, but
+    `Framebuffer::Resize` returns early when the fbo name is non-zero and the
+    dimensions and format match - which they always do here, since the table's
+    size is a compile-time constant. So the attachment is never reallocated.
+
+Everything else on that path is covered: `setupShaders` rebuilds the programs,
+`rebuildLoopSamples` uploads its UBO unconditionally, and both geometry uploads
+run every time.
+
+Harmless for the use the path actually gets, which is re-initialising in place
+under a live context - the names are still valid and the data is still there.
+It matters only against the contract the call advertises.
+
+The claim was kept rather than narrowed, so all of it is now covered.
+
+**`Framebuffer::Invalidate`** is the counterpart of `BaseLUT::Invalidate`, and
+exists for the same single caller. It resets the format as well as the name,
+which matters more than it looks: a buffer that fell back to a weaker format on
+the old context re-requests exactly that one from `GetInternalFormat`, so
+without the reset a fallback would be inherited by a new context that might
+support the preferred format - see `NeonRenderer::resizeEmissionBuffer`, whose
+walk starts from whatever the buffer already holds.
+
+**One block at the TOP of `NeonRenderer::Initialize`** now drops everything on
+that renderer whose rebuild is input-gated: the three LUTs (I28's half), both
+framebuffers, `mLightBlocksDirty` and `mEmissionDirty`. The position is
+load-bearing - the buffers have to be invalidated BEFORE `resizeEmissionBuffer`
+is asked for them, and the emission table's size is a compile-time constant, so
+it matches the early-out condition every single time. Gathering all of it in one
+place also states the rule once: unconditional rebuilds recover by themselves,
+input-gated ones cannot, and a re-init moves none of their inputs.
+
+**`LensFlareRenderer` had the same hole and was fixed with it.** Its scaled
+buffer is input-gated the same way, and `Render` asks for the same
+viewport-derived size every frame. Its ghost UBO was already safe, because
+`Initialize` bakes it unconditionally - the contrast with neon's two gated light
+blocks is exactly the rule above.
+
+Verified by calling `Initialize` twice on a live context and counting what the
+second one actually allocated. Framebuffer allocations logged across the whole
+run, first init plus second:
+
+```
+                                    control      fixed
+  NeonRenderer.Emission                   1          2   <- rebuilt on re-init
+  LensFlare.Scaled                        1          2   <- rebuilt on re-init
+  Capture.Offscreen (the harness)         1          1
+```
+
+The control's second `Initialize` allocated NOTHING, which is the defect stated
+as a measurement: every `Resize` on that path early-outed on a matching size.
+
+And the recovery is complete rather than merely noisy - same scene, same clock,
+captured either side of the re-init, with segments and arcs configured so both
+light UBOs carry real data:
+
+```
+  pixels differing across the re-init: 0 of 81920, max delta 0
+```
+
+That a live context makes the control produce the same pixels is the point of
+the test rather than a weakness of it: on a live context the stale names still
+work, which is precisely why this defect could sit there unseen. What the
+allocation counts show is that the resources are now genuinely rebuilt, and what
+the pixel comparison shows is that rebuilding them changes nothing when it did
+not need to.
+
+### Smaller items
+
+Recorded for completeness rather than tracked. None of them changes a pixel or
+is reachable by a supported call sequence.
+
+  - **`el_animation_reset` and `el_animation_apply` dereference `anim->ptr`
+    unguarded.** Every other entry point in `el-animation.cpp` checks it, and
+    `el_animation_capture_baseline` immediately below these two does. No factory
+    can currently produce a handle with a null `ptr` - they all return `nullptr`
+    on failure instead - so this is an inconsistency in a defensive layer rather
+    than a live crash.
+  - **Those two plus `capture_baseline` take two locks in a fixed order**: the
+    animation's adopted lock, then the effect's. Those are the same
+    `recursive_mutex` when the animation is attached to the effect passed, which
+    is the intended pairing. Pass a DIFFERENT effect handle and they are two
+    mutexes taken in an order another thread can take the other way round. The
+    comment on `el_animation_handle_impl::dataMutex` claims "one mutex, never
+    two, which is the property that keeps this free of lock-ordering hazards" -
+    true for the intended pairing and not in general.
+  - **`Clock::Stop` and `Clock::Reset` assign `0.0f` to `mTime`**, which I33b
+    made a `double`. Exact either way; it just no longer matches what it writes to.
+  - **`el_effect_set_color_stop` logs before it range-checks**, so an
+    out-of-range index produces an INFO line reporting the write followed by the
+    ERROR saying it did not happen.
+
+### What this pass checked and found sound
+
+Recorded because most of the branch is new and the absence of a finding is
+worth as much as a finding when someone comes back to change it.
+
+  - **`ConfigSnapshotBuffer`.** The three-slot protocol was traced through
+    publish/acquire interleavings including double-publish and a publish landing
+    between the reader's load and its exchange. Slot ownership stays disjoint in
+    every ordering - writer, reader and cell always name three different slots -
+    and the `acq_rel` on both exchanges is what the "reader had finished with
+    the slot handed back" argument needs, not decoration.
+  - **Droplet periodicity is exact, not approximate.** `uv.y += t * 0.75` with
+    `grid.y` 2 moves `id.y` by exactly 768 per period, which is
+    `DROPLET_CYCLE_CELLS`; `fract(t + n.z)` and `fract(uv * grid)` are both
+    invariant under an integer shift; and the fine layer's `uv * 1.85` scales
+    the sample point but not the scroll, so it wraps at the same period rather
+    than at 1/1.85 of it. The two constants really are locked.
+  - **The lens-flare rotation reduction is exact.** The residual is `k * 2pi`
+    for integer k, and `mod(a, TWO_PI)`, `abs(sin(a * N / 2))` and
+    `abs(cos(a * N / 2))` are all invariant under it because `uRayDensity` is
+    rounded to an integer before it crosses.
+  - **Every `operator==` covers every field.** Checked by script across all
+    eleven config structs, since a missed field is silent and this is what the
+    snapshot generation counter rests on.
+  - **`field-access.cpp`'s Read/Write pairs agree on bounds** in all eight
+    families, and both switches are exhaustive with no `default`, so a new
+    enumerator is a compile error rather than a silent miss - which is the
+    property the header says it is arranged to protect.
+  - **`SegmentUtils::CountEffectiveSegments` agrees with
+    `FillEffectiveSegments`**, including the case the comment warns about, where
+    a full preserved pool leaves every transient boost unlit.
+  - **`AnimationManager::Update`'s swap-into-local** handles both hazards it
+    documents - detach from a callback, and a callback re-entering `Update`.
+    `Apply` walks the member directly, which is safe because that path fires no
+    callbacks.
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
@@ -2353,9 +2806,10 @@ fork it followed from. The fifth pass's I15 landed with it. Five items from the
 first pass remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, and I13 from the fourth. The seventh pass's I28 to
-I32 were written up before being fixed and have all since landed. The eighth
-pass's I33, I33b and I34 likewise landed, so nothing from either is on this
-list:
+I32 were written up before being fixed and have all since landed, and so did the
+eighth pass's I33, I33b and I34 - so nothing from either is on this list. The
+ninth pass's I35 to I38 have all landed, so nothing from it is on this list
+either:
 
 | item | state | why |
 | ---- | ----- | --- |

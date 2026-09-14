@@ -167,11 +167,30 @@ namespace EdgeLighting
             return false;
         }
         setupGeometry();
+        // RE-INITIALISE ONLY, and for the reason spelled out at the top of
+        // NeonRenderer::Initialize: this is the GL-context-loss path, and the
+        // scaled buffer is the one thing here whose rebuild is INPUT-GATED.
+        // Framebuffer::Resize early-outs on a matching size, and Render asks
+        // for the same viewport-derived size every frame, so without this the
+        // flare would keep compositing from a dead attachment.
+        //
+        // Nothing else in this renderer needs it: setupShaders and
+        // setupGeometry above both rebuild unconditionally, and so does the
+        // ghost block below. See review-findings I38.
+        if (mHasInitialized)
+        {
+            mScaledBuffer.Invalidate();
+        }
+        mHasInitialized = true;
         // mCurrentFlare is whatever the last OnConfigChanged left - the effect
         // calls it on registration, so by here it is usually the host's real
         // config rather than the defaults. Either way the block is filled from
         // this point on, and OnConfigChanged re-bakes it on every change to
         // the three fields it reads.
+        //
+        // UNCONDITIONAL, which is what already makes the ghost UBO immune to
+        // the defect above - contrast NeonRenderer's two light blocks, which
+        // are gated and had to be dirtied by hand.
         bakeGhostBlock(mCurrentFlare);
         return true;
     }

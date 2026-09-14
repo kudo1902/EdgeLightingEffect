@@ -110,6 +110,49 @@ target_include_directories(edge-lighting PRIVATE
 target_link_libraries(edge-lighting PUBLIC glad)
 
 # ---------------------------------------------------------------------------
+# Narrowing guard: double -> float must be deliberate.
+# ---------------------------------------------------------------------------
+# The renderer interface carries `time` as a double specifically so each
+# renderer can reduce it at full precision before it becomes a float uniform
+# (TimeUtils::WrapHueTime, review-findings I33b). That contract is invisible at
+# a call site: a private pass method declared with a float parameter silently
+# undoes it, and the frame it breaks is one at days of uptime that nobody runs.
+# NeonRenderer::renderNeonPass did exactly that and shipped - see I35.
+#
+# One flag catches the whole class, and after I35 it fires on zero lines of
+# this library. Every conversion that IS intended already goes through an
+# explicit static_cast, which the warning does not touch.
+#
+# The -Wno is not a workaround, it is the scope. In Clang
+# -Wimplicit-float-conversion is a GROUP, and it pulls in the INT -> float
+# variant with it - six hits in contour-tracer.cpp, all of them small integer
+# pixel coordinates converted to float, where the "precision loss" the warning
+# names cannot happen below 2^24 and none of these come close. That is a
+# separate judgement about a separate file, and silently rewriting it under a
+# double -> float fix would be the wrong place to make it. Narrowing the group
+# to the half that has a live defect behind it keeps the build at zero warnings,
+# which is the only state in which a new one gets noticed.
+#
+# PRIVATE and scoped to the two library targets deliberately. It is a rule about
+# THIS code, not about the code that links it, and it must not reach the two
+# third-party sources compiled elsewhere in the tree (glad has its own target,
+# ImGui is compiled into the demos) - neither is ours to keep clean.
+#
+# Guarded on the compiler because the spelling is not portable: GCC has no
+# -Wimplicit-float-conversion at all and folds this into -Wfloat-conversion,
+# which in Clang means float -> int instead and would NOT catch I35. Only the
+# Clang/AppleClang name is asserted here because that is the only toolchain the
+# tree currently builds on; a GCC branch belongs with the rest of the
+# PLATFORM_LINUX scaffolding when that is finished.
+#
+# Applied to edge-lighting-c at the bottom of this file, where that target
+# exists.
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(EL_NARROWING_FLAGS -Wimplicit-float-conversion -Wno-implicit-int-float-conversion)
+    target_compile_options(edge-lighting PRIVATE ${EL_NARROWING_FLAGS})
+endif()
+
+# ---------------------------------------------------------------------------
 # C ABI shared library for FFI / C# interop.
 # ---------------------------------------------------------------------------
 # Wraps the static edge-lighting lib in a flat extern "C" surface and links it
@@ -135,3 +178,7 @@ set_target_properties(edge-lighting-c PROPERTIES
     VISIBILITY_INLINES_HIDDEN ON
     OUTPUT_NAME edge-lighting-c
 )
+
+# The ABI sources get the same narrowing guard as the static library - see the
+# block above it for why. Empty on a non-Clang toolchain, which is a no-op.
+target_compile_options(edge-lighting-c PRIVATE ${EL_NARROWING_FLAGS})

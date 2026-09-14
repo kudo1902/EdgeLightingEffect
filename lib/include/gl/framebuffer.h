@@ -327,6 +327,35 @@ namespace EdgeLighting
         const char *GetName() const { return mName.c_str(); }
         void SetName(const char *name) { mName = name ? name : "unnamed"; }
 
+        /// Throw the attachment away and forget its size and format, so the
+        /// next @ref Resize reallocates instead of early-outing.
+        ///
+        /// The exact counterpart of @c BaseLUT::Invalidate, and it exists for
+        /// the same single caller: a renderer's @c Initialize on a SECOND call,
+        /// which is the GL-context-loss recovery path that
+        /// @c el_effect_init_with_renderers takes. @ref Resize is
+        /// input-gated - it returns early when the fbo name is non-zero and the
+        /// size and format match - so a buffer whose dimensions are a
+        /// compile-time constant (the neon emission table) or simply unchanged
+        /// across the re-init is never rebuilt, and the renderer is left
+        /// pointing at a name whose contents are gone. See review-findings I38.
+        ///
+        /// Resetting the FORMAT matters as much as the name. A buffer that fell
+        /// back to a weaker format on the old context re-requests exactly that
+        /// one from @c GetInternalFormat, so without this a fallback would be
+        /// inherited by a new context that might well support the preferred
+        /// format - see @c NeonRenderer::resizeEmissionBuffer, which starts its
+        /// walk from whatever the buffer already holds and so starts from the
+        /// top again only once this has run.
+        ///
+        /// Safe on a buffer that was never allocated (nothing to delete) and on
+        /// one whose context is gone (deleting a dead name is a no-op), which
+        /// is what lets the caller apply it without knowing which it has.
+        ///
+        /// NOT for reacting to a size change: @ref Resize already handles that,
+        /// and calling this first would only cost an extra delete.
+        void Invalidate() { destroy(); }
+
     private:
         void destroy()
         {

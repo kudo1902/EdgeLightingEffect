@@ -347,10 +347,63 @@ namespace EdgeLighting
             LOG_E("Failed to compile/link NeonRenderer shaders.");
             return false;
         }
+
+        // RE-INITIALISE ONLY: drop everything whose rebuild is INPUT-GATED,
+        // because on this path none of those inputs has moved.
+        //
+        // This is the GL-context-loss path el_effect_init_with_renderers takes.
+        // setupShaders above recompiles unconditionally and so recovers by
+        // itself, and so do the unconditional uploads below (the loop-samples
+        // UBO, both geometry buffers, the fullscreen quad). Everything ELSE in
+        // this renderer decides whether to rebuild by comparing against state
+        // that a re-init does not change - mCurrentConfig for the LUT bakes,
+        // mLightBlocksDirty for the two light UBOs, the existing size and
+        // format for the two framebuffers - so every one of them would
+        // correctly conclude there is nothing to do and leave the renderer
+        // pointing at GL names whose contents are gone.
+        //
+        // The LUT half of this was review-findings I28; the other three were
+        // missed by it and are I38. They are together here, at the TOP, because
+        // the two buffers have to be dropped BEFORE the resize below is asked
+        // for them - Framebuffer::Resize early-outs on a matching size, and the
+        // emission table's size is a compile-time constant, so it matches every
+        // single time.
+        //
+        // Gated on the first call because there it is pure waste, and not the
+        // trivial kind: both demos and the C ABI register renderers BEFORE
+        // Initialize, so AddRenderer's OnConfigChanged has already baked and
+        // uploaded the LUTs by the time this runs. Invalidating would discard
+        // those and upload them again - measured, one extra upload per LUT at
+        // startup - on top of regenerating texture names for nothing.
+        if (mHasInitialized)
+        {
+            mGradientLUT.Invalidate();
+            mSegmentLUT.Invalidate();
+            mArcLUT.Invalidate();
+            mEmissionBuffer.Invalidate();
+            mScaledBuffer.Invalidate();
+            // The two light UBOs get their ONLY data store from
+            // packLightBlocks, which is gated on this flag and would find it
+            // false - the last pack before the re-init cleared it and no config
+            // change follows one. Binding an unfilled UBO and letting the
+            // shader read it is the failure the comment on this flag in
+            // OnConfigChanged records as measured: a driver segfault on the
+            // first frame, not a stale one.
+            mLightBlocksDirty = true;
+            // The table itself is a pure function of (si, uTime, config) and is
+            // skipped on frames neither moved, so a fresh buffer would be
+            // sampled before anything wrote it.
+            mEmissionDirty = true;
+        }
+        mHasInitialized = true;
+
         // Allocated ONCE, here, and never touched again: the emission table's
         // dimensions are compile-time constants, so unlike every other buffer
         // in the renderer it has no reason to be revisited per frame. Its
-        // format is settled here too - see resizeEmissionBuffer.
+        // format is settled here too - see resizeEmissionBuffer. (On a re-init
+        // the invalidation above is what makes this a real allocation again
+        // rather than an early-out, and what lets the format walk start from
+        // the top in case the new context supports what the old one refused.)
         if (!resizeEmissionBuffer())
         {
             LOG_E("Failed to allocate the NeonRenderer emission table in any supported format.");
@@ -381,27 +434,9 @@ namespace EdgeLighting
         // OnConfigChanged normally keeps current; seed it here for the first.
         SegmentUtils::FillEffectiveSegments(mCurrentConfig.neon, mEffectiveSegments);
 
-        // Drop the three LUT textures before re-baking them, but only on a
-        // RE-initialise. That is the context-loss path
-        // el_effect_init_with_renderers takes, and without this it silently
-        // does not recover: every bake below is input-gated and mCurrentConfig
-        // has not moved across a re-init, so all three Bake calls would return
-        // immediately and leave the gather sampling texture names whose
-        // contents are gone. See review-findings I28.
-        //
-        // Gated on the first call because there it is pure waste, and not the
-        // trivial kind: both demos and the C ABI register renderers BEFORE
-        // Initialize, so AddRenderer's OnConfigChanged has already baked and
-        // uploaded all three by the time this runs. Invalidating would discard
-        // those and upload them again - measured, one extra upload per LUT at
-        // startup - on top of regenerating three texture names for nothing.
-        if (mHasInitialized)
-        {
-            mGradientLUT.Invalidate();
-            mSegmentLUT.Invalidate();
-            mArcLUT.Invalidate();
-        }
-        mHasInitialized = true;
+        // The LUTs were dropped at the top of this function on a re-init, which
+        // is what makes these bakes do real work rather than early-out on an
+        // unmoved mCurrentConfig. See the block up there.
         bakeLUTs(mCurrentConfig);
 
         setupFullscreenQuad();
@@ -582,7 +617,7 @@ namespace EdgeLighting
         // the emission table was secured at Initialize. A failure skips the
         // blit below with us, so the frame degrades to the opaque fill rather
         // than compositing a stale buffer.
-        const bool glowReady = renderNeonPass(mvp, bufW, bufH, scaled, time, config);
+        const bool glowReady = renderNeonPass(mvp, bufW, bufH, scaled, hueTime, config);
 
         // --- Pass 2b: composite the scaled gather ---------------------------
         // Only the scaled path has anything to composite; on the direct path
@@ -1366,7 +1401,7 @@ namespace EdgeLighting
     }
 
     bool NeonRenderer::renderNeonPass(const glm::mat4 &mvp, int bufWidth, int bufHeight,
-                                      bool scaled, float time, const Config &config)
+                                      bool scaled, double hueTime, const Config &config)
     {
         const float scale = GetClampedResolutionScale(config);
 
@@ -1433,7 +1468,12 @@ namespace EdgeLighting
         mNeonShader.SetUniform("uLineWidth", config.neon.lineWidth * scale);
         mNeonShader.SetUniform("uFilamentFalloff", config.neon.filamentFalloff);
         mNeonShader.SetUniform("uIntensity", config.neon.intensity);
-        mNeonShader.SetUniform("uTime", static_cast<float>(TimeUtils::WrapHueTime(time, config.neon.hueRotationRate)));
+        // The SAME reduced phase the emission table was baked at, derived once
+        // in Render. Not re-reduced here, and not derived from the clock here:
+        // this parameter used to be a float, so the clock arrived already
+        // narrowed and WrapHueTime then ran on a value that had lost the
+        // precision it exists to preserve. See review-findings I35.
+        mNeonShader.SetUniform("uTime", static_cast<float>(hueTime));
         mNeonShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
         mNeonShader.SetUniform("uGlowRadius", config.neon.glowRadius * scale);
         mNeonShader.SetUniform("uBloomStrength", config.neon.bloomStrength);
