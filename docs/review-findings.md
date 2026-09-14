@@ -2269,17 +2269,54 @@ of 60, at a given uptime:
   reduced            0         0         0          0         0        0
 ```
 
-**The residual, which is NOT fixed: droplets.** `droplets.frag` is the one
-shader that does not use time purely as a phase. `uv.y += t * 0.75` feeds
+**Droplets needed a period rather than a reduction.** `droplets.frag` is the
+one shader that does not use time purely as a phase: `uv.y += t * 0.75` feeds
 `floor(uv * grid)` into a per-cell hash, so removing any amount of time moves
-every drop into a different cell and reshuffles the field visibly. There is no
-period to wrap at. Its float uniform therefore stops resolving a frame of drop
-motion at roughly 39 hours and the rain slows to a stop.
+every drop into a different cell. There was no period to wrap at, and its float
+uniform stopped resolving a frame of drop motion at roughly 39 hours - the rain
+slowed and then stood still.
 
-Curing that means making the droplet field periodic in `uv.y`, which changes
-what the effect looks like - a design decision, not a repair, so it is recorded
-at the `SetUniform` call where someone would otherwise try the same wrap and be
-puzzled when the rain jumps.
+So the field was given a period. Two halves, locked together in
+`droplets-tuning.h` because the shader and the renderer must agree:
+
+  - the CPU reduces `t` modulo `DROPLET_PHASE_PERIOD` (512) in double, after
+    folding in `0.2 * speed`, and passes it as `uDropPhase`. The uniform stays
+    small and exact however long the process has run. `uTime` and `uSpeed` are
+    gone from this shader; computing either there would be too late, since the
+    float would have lost the precision first;
+  - the shader reduces the hash input `id.y` modulo `DROPLET_CYCLE_CELLS`
+    (768), so the cells either side of a wrap carry the SAME drops.
+
+768 is not a free choice: it is exactly the cells the scroll covers in one
+period, `512 * 0.75 * 2`. And 512 has to be a whole number, because
+`fract(t + n.z)` sets each drop's fall phase and only stays continuous across
+the wrap if `t` wraps on an integer. Change one constant without the other and
+the rain reshuffles every period.
+
+That the second half is load-bearing was measured, not assumed. Stepping 90
+frames across a wrap (which lands at frame ~60) and recording the worst
+frame-to-frame change:
+
+```
+                    worst frame   worst delta   median
+  without mod(id.y)      58          15.48       1.46     <- the wrap tears
+  with    mod(id.y)      41           6.80       0.79     <- ordinary rain burst
+```
+
+Without the reduction the worst frame IS the wrap frame. With it, the wrap does
+not even register - frame 41 is a drop spawning, which is what rain looks like.
+
+And the rain now keeps moving indefinitely. Frames that did not move at all,
+out of 90:
+
+```
+  uptime      0 h   0.7 h   38.9 h   277.8 h   2778 h
+  still        0      0        0         0        0
+```
+
+The cost is that the field repeats: about 42 minutes at the default speed,
+proportionally sooner at higher speeds. For rain that is imperceptible, and it
+is the only way to bound a scroll.
 
 ### I34. The I29 fix worked only when children were added first - FIXED
 
@@ -2317,9 +2354,8 @@ first pass remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, and I13 from the fourth. The seventh pass's I28 to
 I32 were written up before being fixed and have all since landed. The eighth
-pass's I33, I33b and I34 likewise landed, I33b with one residual recorded in
-its own entry rather than here, because it is a change to what the effect looks
-like rather than a repair:
+pass's I33, I33b and I34 likewise landed, so nothing from either is on this
+list:
 
 | item | state | why |
 | ---- | ----- | --- |

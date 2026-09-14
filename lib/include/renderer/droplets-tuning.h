@@ -39,6 +39,36 @@
 /// edge into a straight line along all four sides.
 #define DROPLET_BAND_GUARD 0.25
 
+/// The droplet field's repeat period, in the shader's own `t` units, and the
+/// matching vertical cell count.
+///
+/// The field was the one place in the tree that used time as an unbounded
+/// SCROLL rather than as a phase: `uv.y += t * 0.75` feeds `floor(uv * grid)`
+/// into a per-cell hash, so `t` grew forever and the float carrying it stopped
+/// resolving a frame of drop motion at roughly 39 hours of uptime - the rain
+/// slowed and then stood still. Every other shader could simply have whole
+/// turns removed (see TimeUtils::WrapHueTime); this one had no period to
+/// remove them at, so it was given one.
+///
+/// The two numbers are locked together and neither is free:
+///   - the CPU reduces `t` modulo PERIOD before it becomes a float uniform, so
+///     the value stays small and exact however long the process has run;
+///   - the hash reduces `id.y` modulo CYCLE_CELLS, so the cells either side of
+///     a wrap carry the SAME drops.
+/// CYCLE_CELLS must therefore be exactly the number of cells the scroll covers
+/// in one period: PERIOD * 0.75 (the scroll rate) * 2 (grid.y) = 1.5 * PERIOD.
+/// Change one without the other and the rain visibly reshuffles every period.
+///
+/// PERIOD must also be a whole number, because `fract(t + n.z)` sets each
+/// drop's fall phase in both layers and only stays continuous across the wrap
+/// if `t` wraps on an integer.
+///
+/// 512 buys about 42 minutes at the default speed before the field repeats -
+/// imperceptible for rain - while keeping `t * 0.75` under 384, where a float
+/// still resolves a slow drop's per-frame motion with room to spare.
+#define DROPLET_PHASE_PERIOD 512.0
+#define DROPLET_CYCLE_CELLS  768.0
+
 // clang-format on
 
 #endif // _EDGE_LIGHTING_DROPLETS_TUNING_H_

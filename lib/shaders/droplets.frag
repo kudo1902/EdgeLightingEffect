@@ -91,9 +91,8 @@ out vec4 fragColor;
 uniform vec2  uRectSize;          ///< Rect size (px).
 uniform vec2  uRectCenter;        ///< Rect centre (px) in framebuffer space.
 uniform float uCornerRadius;
-uniform float uTime;
+uniform float uDropPhase;  // Pre-scaled, pre-wrapped droplet time; see droplets-tuning.h.
 uniform float uAmount;
-uniform float uSpeed;
 uniform int   uLanes;             ///< Droplet lanes across the band (>= 1).
 uniform vec4  uTint;
 uniform int   uGlowSide;          ///< GLOW_SIDE_BOTH / INSIDE / OUTSIDE.
@@ -208,7 +207,12 @@ vec2 DropLayer(vec2 uv, float t, float uvToPx) {
     uv.y += colShift;
     id = floor(uv * grid);
 
-    vec3 n = N13(id.x * 35.2 + id.y * 2376.1);
+    // id.y REDUCED to one cycle, so the cells either side of the phase wrap
+    // hash to the same drops and the wrap cannot be seen. Without this the
+    // whole field reshuffles every DROPLET_PHASE_PERIOD. id.y is never
+    // negative here (uv, the scroll and colShift are all >= 0), so below one
+    // cycle this is the identity and changes nothing.
+    vec3 n = N13(id.x * 35.2 + mod(id.y, DROPLET_CYCLE_CELLS) * 2376.1);
     vec2 st = fract(uv * grid) - vec2(0.5, 0.0);
 
     float x = n.x - 0.5;
@@ -344,7 +348,11 @@ void main() {
     float uvToPx = CELL_UV * cellPx;
     vec2 uv = gl_FragCoord.xy / uvToPx;
 
-    float t = uTime * 0.2 * uSpeed;
+    // Already scaled by 0.2 * speed and already reduced modulo
+    // DROPLET_PHASE_PERIOD, both on the CPU and both in double. Doing either
+    // here would be too late: the float uniform would have lost the precision
+    // first, which is the whole defect this replaced.
+    float t = uDropPhase;
 
     // --- Orientation-aware layer mix -------------------------------------
     // How vertical the local run of band is. `q` is the per-axis distance to

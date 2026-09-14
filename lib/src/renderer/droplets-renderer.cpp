@@ -3,6 +3,7 @@
 #include "util/geometry-utils.h"
 #include "shaders.h"
 #include "util/log-util.h"
+#include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
 
@@ -134,20 +135,15 @@ namespace EdgeLighting
         mShaderProgram.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
         mShaderProgram.SetUniform("uRectCenter", rectCenter);
         mShaderProgram.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry));
-        // RAW, and deliberately not reduced. Unlike the neon and flare layers,
-        // this shader does not use time only as a phase: `uv.y += t * 0.75`
-        // feeds floor(uv * grid) into a per-cell hash, so removing any amount
-        // of time moves every drop to a different cell and reshuffles the whole
-        // field visibly. There is no period to wrap at.
-        //
-        // The consequence is recorded rather than hidden: the float uniform
-        // stops resolving a frame of drop motion at roughly 39 hours of
-        // uptime, and the rain slows and then stands still. Curing it means
-        // making the droplet field periodic in uv.y, which is a change to what
-        // the effect looks like. See review-findings I33b.
-        mShaderProgram.SetUniform("uTime", static_cast<float>(time));
+        // Scaled and REDUCED here, in double, before it can become a float.
+        // Unlike the neon and flare layers this shader uses time as a scroll,
+        // not a phase, so it has no natural period - the field was given one
+        // (DROPLET_PHASE_PERIOD) and the shader reduces its cell hash to match.
+        // See droplets-tuning.h for why the two constants are locked together.
+        const double dropPhase = std::fmod(time * 0.2 * static_cast<double>(config.droplets.speed),
+                                           static_cast<double>(DROPLET_PHASE_PERIOD));
+        mShaderProgram.SetUniform("uDropPhase", static_cast<float>(dropPhase));
         mShaderProgram.SetUniform("uAmount", config.droplets.amount);
-        mShaderProgram.SetUniform("uSpeed", config.droplets.speed);
         mShaderProgram.SetUniform("uLanes", std::max(config.droplets.lanes, 1));
         mShaderProgram.SetUniform("uBandWidth", config.droplets.bandWidth);
         mShaderProgram.SetUniform("uBandOffset", config.droplets.bandOffset);
