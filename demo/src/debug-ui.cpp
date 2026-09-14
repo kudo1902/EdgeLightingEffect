@@ -320,6 +320,37 @@ namespace
         }
     }
 
+    /// One row per OpaqueCutoff struct - the fill's pair. Same shape as
+    /// @ref CutoffRow minus the softness slider, because the fill's feather is
+    /// the single shared "Opaque Softness" above and not a per-side value.
+    ///
+    /// No AnimatedSlider here: the fill's cutoffs carry no AnimatableField, so
+    /// there is no overlay for the slider to show through. Swap it in if one
+    /// is ever added, or the slider will keep showing the base while the fill
+    /// draws something else.
+    inline void OpaqueCutoffRow(const char *label, const char *idSuffix,
+                                EdgeLighting::OpaqueCutoff &cutoff)
+    {
+        ImGui::PushID(idSuffix);
+        char enableLabel[64];
+        std::snprintf(enableLabel, sizeof(enableLabel), "%s##Enable", label);
+        ImGui::Checkbox(enableLabel, &cutoff.enable);
+        ImGui::Indent();
+        if (!cutoff.enable)
+        {
+            ImGui::BeginDisabled();
+        }
+        char sizeLabel[64];
+        std::snprintf(sizeLabel, sizeof(sizeLabel), "size##%s", idSuffix);
+        SliderWithInput(sizeLabel, cutoff.size, 0.0f, 200.0f, "%.0f");
+        if (!cutoff.enable)
+        {
+            ImGui::EndDisabled();
+        }
+        ImGui::Unindent();
+        ImGui::PopID();
+    }
+
     /// One row per Cutoff struct: enable checkbox on the left, size + softness
     /// sliders indented on the right. Grays out the sliders when enable is off
     /// so the "unbounded on this side" state reads at a glance.
@@ -598,6 +629,31 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
         ImGui::ColorEdit4("Opaque Color##Neon", &cfg.neon.opaqueColor.x,
                           ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
         SliderWithInput("Opaque Softness##Neon", cfg.neon.opaqueSoftness, 0.0f, 20.0f, "%.1f");
+        // The FILL's cutoffs, deliberately sited here under the fill's own
+        // controls rather than beside the glow's pair further down - they are
+        // independent values and putting them side by side invited reading
+        // them as one setting, which is what they used to be.
+        //
+        // Only the sides the mode actually reads are shown: INSIDE never looks
+        // at the outer boundary, OUTSIDE never at the inner, and ALL at
+        // neither. A slider that changes nothing is worse than an absent one.
+        const bool fillReadsInside = cfg.neon.opaqueMode == EdgeLighting::OpaqueMode::INSIDE ||
+                                     cfg.neon.opaqueMode == EdgeLighting::OpaqueMode::BOTH;
+        const bool fillReadsOutside = cfg.neon.opaqueMode == EdgeLighting::OpaqueMode::OUTSIDE ||
+                                      cfg.neon.opaqueMode == EdgeLighting::OpaqueMode::BOTH;
+        if (fillReadsInside)
+        {
+            OpaqueCutoffRow("Opaque Inside Cutoff", "OpaqueInside", cfg.neon.opaqueInsideCutoff);
+        }
+        if (fillReadsOutside)
+        {
+            OpaqueCutoffRow("Opaque Outside Cutoff", "OpaqueOutside", cfg.neon.opaqueOutsideCutoff);
+        }
+        if (cfg.neon.opaqueMode == EdgeLighting::OpaqueMode::BOTH &&
+            !cfg.neon.opaqueInsideCutoff.enable && !cfg.neon.opaqueOutsideCutoff.enable)
+        {
+            ImGui::TextDisabled("Both fill cutoffs off - fill covers the whole viewport.");
+        }
     }
     AnimatedSlider("Line Width##Neon", cfg.neon.lineWidth, active.neon.lineWidth, 0.0f, 20.0f, "%.0f");
     AnimatedSlider("Filament Falloff##Neon", cfg.neon.filamentFalloff, active.neon.filamentFalloff, 0.0f, 5.0f);
@@ -617,8 +673,9 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
         SliderWithInput("Side Softness##Neon", cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
     }
 
-    CutoffRow("Inside Cutoff", "NeonInside", cfg.neon.insideCutoff, active.neon.insideCutoff);
-    CutoffRow("Outside Cutoff", "NeonOutside", cfg.neon.outsideCutoff, active.neon.outsideCutoff);
+    // Glow-only since the split; the fill's pair sits under "Opaque" above.
+    CutoffRow("Glow Inside Cutoff", "NeonInside", cfg.neon.insideCutoff, active.neon.insideCutoff);
+    CutoffRow("Glow Outside Cutoff", "NeonOutside", cfg.neon.outsideCutoff, active.neon.outsideCutoff);
 
     // --- Travelling segments (independent additive lights on the perimeter) ---
     ImGui::TextDisabled("Segment Lights (%zu / %d) - additive, independent of intensity",

@@ -67,6 +67,22 @@ namespace EdgeLightingDemo
             }
             return buf;
         }
+
+        /// The fill's pair. No softness to print - both fill boundaries
+        /// feather at the single shared NeonConfig::opaqueSoftness, which the
+        /// opaqueMode line below already reports.
+        inline const char *OpaqueCutoffStr(const EdgeLighting::OpaqueCutoff &c, char *buf, size_t n)
+        {
+            if (!c.enable)
+            {
+                snprintf(buf, n, "off");
+            }
+            else
+            {
+                snprintf(buf, n, "on  size %.1f px", c.size);
+            }
+            return buf;
+        }
     } // namespace Detail
 
     /// Full multi-line dump of everything that shapes the current frame.
@@ -126,8 +142,8 @@ namespace EdgeLightingDemo
         std::cout << "  bloomStrength    " << n.bloomStrength << "\n";
         std::cout << "  glowSide         " << sideItems[static_cast<int>(n.glowSide)]
                   << ", softness " << n.glowSideSoftness << " px\n";
-        std::cout << "  insideCutoff     " << Detail::CutoffStr(n.insideCutoff, buf, sizeof buf) << "\n";
-        std::cout << "  outsideCutoff    " << Detail::CutoffStr(n.outsideCutoff, buf, sizeof buf) << "\n";
+        std::cout << "  insideCutoff     " << Detail::CutoffStr(n.insideCutoff, buf, sizeof buf) << "   (glow)\n";
+        std::cout << "  outsideCutoff    " << Detail::CutoffStr(n.outsideCutoff, buf, sizeof buf) << "   (glow)\n";
         std::cout << "  hueRotationRate  " << n.hueRotationRate << " cycles/s\n";
         std::cout << "  blendSpace       " << blendItems[static_cast<int>(n.blendSpace)] << "\n";
         std::cout << "  opaqueMode       " << opaqueItems[static_cast<int>(n.opaqueMode)];
@@ -139,6 +155,14 @@ namespace EdgeLightingDemo
             if (config.debug.opaqueOnly)
             {
                 std::cout << ", OPAQUE ONLY (neon emission suppressed)";
+            }
+            std::cout << "\n";
+            std::cout << "  opaqueInCutoff   " << Detail::OpaqueCutoffStr(n.opaqueInsideCutoff, buf, sizeof buf) << "   (fill)\n";
+            std::cout << "  opaqueOutCutoff  " << Detail::OpaqueCutoffStr(n.opaqueOutsideCutoff, buf, sizeof buf) << "   (fill)";
+            if (n.opaqueMode == OpaqueMode::BOTH &&
+                !n.opaqueInsideCutoff.enable && !n.opaqueOutsideCutoff.enable)
+            {
+                std::cout << "\n                   both off -> fill covers the whole viewport";
             }
         }
         std::cout << "\n";

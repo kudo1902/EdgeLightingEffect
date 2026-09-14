@@ -374,8 +374,9 @@ namespace
                 setFn(effect, en ? 1 : 0, size, soft);
             }
         };
-        cutoffRow("Inside Cutoff", el_effect_get_inside_cutoff, el_effect_set_inside_cutoff);
-        cutoffRow("Outside Cutoff", el_effect_get_outside_cutoff, el_effect_set_outside_cutoff);
+        // Glow-only since the split; the fill's pair is drawn under "Opaque".
+        cutoffRow("Glow Inside Cutoff", el_effect_get_inside_cutoff, el_effect_set_inside_cutoff);
+        cutoffRow("Glow Outside Cutoff", el_effect_get_outside_cutoff, el_effect_set_outside_cutoff);
     }
 
     // Segment boost row: reads/writes one segment through capi accessors.
@@ -769,6 +770,58 @@ void DebugUI::buildNeonSection(el_effect_handle_t effect)
         if (ImGui::SliderFloat("Opaque Softness##Neon", &opaqueSoftness, 0.0f, 20.0f, "%.1f"))
         {
             el_effect_set_opaque_softness(effect, opaqueSoftness);
+        }
+
+        // The FILL's own cutoffs, addressed by side through the one
+        // parameterised pair of entry points. No softness row: the fill
+        // feathers at the single "Opaque Softness" slider above, which is why
+        // el_effect_set_opaque_cutoff takes no softness argument.
+        auto opaqueCutoffRow = [&](const char *base, el_cutoff_side_e side)
+        {
+            el_bool_t enable = 0;
+            float size = 0.0f;
+            el_effect_get_opaque_cutoff(effect, side, &enable, &size);
+            bool en = enable != 0;
+            char enableLabel[64], sizeLabel[64];
+            std::snprintf(enableLabel, sizeof(enableLabel), "%s##NeonOpaque", base);
+            std::snprintf(sizeLabel, sizeof(sizeLabel), "%s size##NeonOpaque", base);
+            bool changed = ImGui::Checkbox(enableLabel, &en);
+            ImGui::Indent();
+            if (!en)
+                ImGui::BeginDisabled();
+            changed |= ImGui::SliderFloat(sizeLabel, &size, 0.0f, 200.0f, "%.0f");
+            if (!en)
+                ImGui::EndDisabled();
+            ImGui::Unindent();
+            if (changed)
+            {
+                el_effect_set_opaque_cutoff(effect, side, en ? 1 : 0, size);
+            }
+        };
+        // Only the sides this mode actually reads - a slider that changes
+        // nothing is worse than an absent one.
+        const bool fillReadsInside = opaqueMode == EL_OPAQUE_MODE_INSIDE ||
+                                     opaqueMode == EL_OPAQUE_MODE_BOTH;
+        const bool fillReadsOutside = opaqueMode == EL_OPAQUE_MODE_OUTSIDE ||
+                                      opaqueMode == EL_OPAQUE_MODE_BOTH;
+        if (fillReadsInside)
+        {
+            opaqueCutoffRow("Opaque Inside Cutoff", EL_CUTOFF_SIDE_INSIDE);
+        }
+        if (fillReadsOutside)
+        {
+            opaqueCutoffRow("Opaque Outside Cutoff", EL_CUTOFF_SIDE_OUTSIDE);
+        }
+        if (opaqueMode == EL_OPAQUE_MODE_BOTH)
+        {
+            el_bool_t inEn = 0, outEn = 0;
+            float ignored = 0.0f;
+            el_effect_get_opaque_cutoff(effect, EL_CUTOFF_SIDE_INSIDE, &inEn, &ignored);
+            el_effect_get_opaque_cutoff(effect, EL_CUTOFF_SIDE_OUTSIDE, &outEn, &ignored);
+            if (!inEn && !outEn)
+            {
+                ImGui::TextDisabled("Both fill cutoffs off - fill covers the whole viewport.");
+            }
         }
     }
 
