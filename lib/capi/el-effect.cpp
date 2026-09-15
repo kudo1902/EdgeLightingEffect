@@ -1327,6 +1327,27 @@ extern "C"
         return EL_SUCCESS;
     }
 
+    el_result_e el_effect_set_spotlight_resolution_scale(el_effect_handle_t effect, float scale)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_resolution_scale");
+        if (effect->config.spotlight.resolutionScale == scale)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, scale=%f", (void *)effect, scale);
+        effect->config.spotlight.resolutionScale = scale;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_spotlight_resolution_scale(el_effect_handle_t effect, float *outScale)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_spotlight_resolution_scale");
+        VALIDATE_OUT_PTR(outScale, "el_effect_get_spotlight_resolution_scale");
+        *outScale = effect->config.spotlight.resolutionScale;
+        LOG_D("effect=%p, scale=%f", (void *)effect, *outScale);
+        return EL_SUCCESS;
+    }
+
     el_result_e el_effect_clear_spotlights(el_effect_handle_t effect)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_clear_spotlights");

@@ -865,10 +865,22 @@ void DebugUI::buildSpotlightSection(el_effect_handle_t effect)
     if (!en)
         return;
 
+    float resScale = 1.0f;
+    el_effect_get_spotlight_resolution_scale(effect, &resScale);
+    if (ImGui::SliderFloat("Res Scale##Spot", &resScale, 0.125f, 1.0f, "%.3f"))
+    {
+        el_effect_set_spotlight_resolution_scale(effect, resScale);
+    }
+
     // The ceiling is the library's, not this demo's - and this file cannot see
     // spotlight-tuning.h, which is the point of the fork. Kept in step by hand,
     // and only used to grey out the Add button.
     const int MAX_LAMPS = 8;
+
+    if (resScale < 1.0f)
+    {
+        ImGui::TextDisabled("Below 1.0 only pays above ~6 lamps.");
+    }
 
     int count = 0;
     el_effect_get_spotlight_count(effect, &count);

@@ -37,9 +37,45 @@ costs more than the shading does.
 
 The prototype that established the term stack and the geometry is at
 <https://claude.ai/artifact/KGcghi21RLNVipwqXiANDT>. The measurement that
-motivates Part 4: bounding each cone with an oriented box rasterised **559% of a
-1280x720 viewport** for five lamps; the solved strip rasterises **100%** for the
-same rig and the same pixels.
+motivated Part 4 came from there: bounding each cone with a naively-sized
+oriented box rasterised **559% of a 1280x720 viewport** for five lamps against
+**100%** for a solved strip.
+
+**That prototype figure does not describe the shipped renderer**, and it was
+briefly miscited in `CLAUDE.md` as if it did. Measured here with a
+`GL_SAMPLES_PASSED` occlusion query around `Render`, at 1280x720:
+
+| scene | lamps | fragments | of viewport | vs fullscreen loop |
+| ----- | ----- | --------- | ----------- | ------------------ |
+| one lamp down | 1 | 183,868 | 20.0% | 5.01x |
+| one lamp at 45 deg | 1 | 225,254 | 24.4% | 4.09x |
+| five-lamp fan | 5 | 1,131,073 | 122.7% | 4.07x |
+| bloom removed | 1 | 109,715 | 11.9% | 8.40x |
+| bloom + intensity high | 1 | 921,228 | 100.0% | 1.00x |
+| softness 1 | 1 | 399,707 | 43.4% | 2.31x |
+| tight 5 deg, 700 px throw | 1 | 178,669 | 19.4% | 5.16x |
+| two overlapping | 2 | 413,380 | 44.9% | 4.46x |
+| origin off-screen | 1 | 156,809 | 17.0% | 5.88x |
+
+Flattening the taper into an oriented bounding box **of the same solve** costs
+1.16x to 1.50x more, not 5.6x - the prototype's box was cruder than the solve,
+which is where the larger figure came from.
+
+Two things the numbers say that the plan did not anticipate:
+
+**The bloom, not the throw, is what blows the area up.** The worst scene is a
+single lamp: `bloomRadius` 90 gives the aperture glow a support of
+`90 * SPOT_BLOOM_SUPPORT` = 720 px, which fills a 1280x720 frame on its own. A
+long tight beam (700 px throw, 5 degrees) costs 19%.
+
+**A `resolutionScale` makes this renderer SLOWER** at anything under about six
+lamps. Half-res quarters the strips but adds a full viewport of blit fragments,
+so it only pays once the strips exceed `blit / (1 - scale^2)` - 1.23 M fragments
+at 0.5. The five-lamp fan sits at 1.13 M, just under.
+
+A scale was added anyway, at explicit request, as
+[Part 9](#part-9---resolution-scale-added-after-the-fact). The prediction above
+was then tested rather than trusted, and it held.
 
 ## The light model
 
@@ -371,6 +407,51 @@ ModulatorPtr)`, an out-of-range index being a logged no-op as the existing
 - `docs/spotlight-renderer.md`: the per-parameter reference, written after it
   lands so it describes what shipped.
 - This file: flipped to `**Status: done.**` with the verification results.
+
+## Part 9 - Resolution scale (added after the fact)
+
+`SpotlightConfig::resolutionScale`, defaulting to 1.0, selecting between a
+direct path and a scaled path exactly as `NeonRenderer` and
+`LensFlareRenderer` do: at 1.0 the strips draw onto the framebuffer handed in;
+below 1.0 they draw into a buffer of that fraction and are bilinear-blitted
+back. Clamped to [0.125, 1.0]. `Framebuffer` + blit shader + blit quad on the
+renderer; `RenderTargetState` and `GLUtils::NoScissorScope` around the scaled
+path; the buffer released in `OnConfigChanged` when a config stops asking for
+it.
+
+**Not one uniform differs between the paths** - fewer than the flare's two, and
+none at all. The ortho is over app coordinates and the viewport transform alone
+carries the scale, so a vertex lands at `scale * its app pixel` in a
+scale-sized buffer. The fragment stage then reads only `vLocal`, interpolating
+in full-res lamp pixels, against flat per-lamp values that are full-res pixels
+too - it never learns which buffer it is shading into.
+
+### What it actually costs
+
+Occlusion query around `Render` (so the count includes the blit), 1280x720:
+
+| scene | lamps | 1.0 | 0.75 | 0.5 | 0.25 |
+| ----- | ----- | --- | ---- | --- | ---- |
+| one lamp down | 1 | 183,868 | - | 967,599 | 933,076 |
+| five-lamp fan | 5 | 1,131,073 | - | 1,204,301 | 992,285 |
+| eight lamps | 8 | 1,900,287 | 1,990,469 | **1,396,661** | **1,040,340** |
+
+A single lamp at 0.5 costs **5.3x MORE** than at 1.0, and at 0.25 every scene
+converges on ~101-113% of the viewport because the blit's ~922 k fragments are
+a floor nothing gets under. Only the eight-lamp rig wins: 1.36x at 0.5, 1.83x
+at 0.25. At 0.75 nothing in range wins, including eight lamps.
+
+This is the opposite of the neon and the flare, whose fullscreen gathers are
+always above the line, and it is why the default is 1.0 and why the demo prints
+a warning under the slider when the lamp count is below six.
+
+### Verified
+
+- **1.0 is bit-identical** to the single-path renderer, across all ten original
+  scenes. Only the render target, the blit and the buffer allocation are
+  conditional, which is what makes that hold.
+- **0.5 renders correctly** - same shape, softer aperture cores from the
+  bilinear upscale, no artefacts, no clipping.
 
 ## Verification
 

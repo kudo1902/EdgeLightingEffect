@@ -128,7 +128,21 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
 
 - `SpotlightRenderer` - freely placed and aimed cones of light, as ONE additive pass. The odd one out: it is **not a perimeter effect** and reads nothing but `Config::spotlight` - a lamp sits at a `SpotLight::position` in **app coordinates (origin top-left, +y down**, the same space as `RectGeometry::position`) and points at a `SpotLight::angle` in degrees, 0 = right, increasing clockwise. Moving the rect therefore does NOT move the rig. Light only: no backdrop, no fixture housings, no capture, no LUT, no resolution scale, and nothing occludes a cone.
 
-  **The geometry is the interesting part.** Each lamp gets a strip of `SPOT_STRIP_SEGMENTS` quads hugging the region where it writes anything at all, all lamps in one VBO drawn with one `glDrawArrays`. The bound is **solved, not guessed**: `SolveConeAcross` inverts `spotlight.frag`'s own falloff to find where it drops below half an 8-bit step, shared across the enabled lamps so the rig's whole clipped remainder stays under one half step. Bounding the same cones with oriented boxes instead rasterised ~5.6x the area for an identical image.
+  **The geometry is the interesting part.** Each lamp gets a strip of `SPOT_STRIP_SEGMENTS` quads hugging the region where it writes anything at all, all lamps in one VBO drawn with one `glDrawArrays`. The bound is **solved, not guessed**: `SolveConeAcross` inverts `spotlight.frag`'s own falloff to find where it drops below half an 8-bit step, shared across the enabled lamps so the rig's whole clipped remainder stays under one half step.
+
+  **One renderer, two resolution paths**, selected by `SpotlightConfig::resolutionScale`, exactly as in `NeonRenderer` and `LensFlareRenderer` - and **not one uniform differs between them**, fewer than the flare's two. The fragment stage reads only interpolated full-res lamp-local coordinates and flat per-lamp pixel values, so the scale lives entirely in the viewport transform; only the render target, the blit and the buffer allocation are conditional. 1.0 is verified bit-identical to the single-path renderer this grew out of.
+
+  **But the scale is NOT the bargain it is for the other two, and the default is 1.0 for that reason.** Neon and the flare shade the whole viewport, so quartering their fragments always beats a blit. This layer already bounds its geometry to what the lamps light, so the blit's ~922k fragments are a FIXED floor it may never earn back. Measured with an occlusion query at 1280x720:
+
+  | scene | scale 1.0 | scale 0.5 | scale 0.25 |
+  | ----- | --------- | --------- | ---------- |
+  | one lamp | 183,868 (20%) | 967,599 (105%) | 933,076 (101%) |
+  | five-lamp fan | 1,131,073 (123%) | 1,204,301 (131%) | 992,285 (108%) |
+  | eight lamps | 1,900,287 (206%) | **1,396,661 (152%)** | **1,040,340 (113%)** |
+
+  A single lamp at 0.5 costs **5.3x more** than at 1.0. The crossover is where the full-res strips exceed `blit / (1 - scale^2)`: at 0.5 that is ~1.23M fragments, which the five-lamp fan (1.13M) sits just under and the eight-lamp rig clears - winning 1.36x at 0.5 and 1.83x at 0.25. At 0.75 nothing in range wins at all. Lower it only for a large rig, and measure.
+
+  Against a fullscreen pass looping over the lamps, the strips are a 4.1x saving at five lamps. Flattening the taper to an oriented bounding box of the same solve costs **1.16x to 1.50x** more. The pathological case for area is a large `bloomRadius`, not a long throw - the aperture bloom's support is `bloomRadius * SPOT_BLOOM_SUPPORT`, so radius 90 fills a 1280x720 frame on its own.
 
   **Per-lamp scalars ride as vertex attributes** (`flat`-qualified), constant across each strip, rather than in a std140 block - so there is no per-index array in either stage and the no-bare-uniform-arrays rule is satisfied by construction. The vertex stage pre-rotates each corner into the lamp's frame, so the fragment program never touches a sin, a cos, or `gl_FragCoord`.
 

@@ -508,6 +508,19 @@ extern "C"
      *         the list is re-created via @ref el_effect_set_spotlight_count. */
     EL_API el_result_e el_effect_clear_spotlights(el_effect_handle_t effect);
 
+    /** @brief Fraction of the viewport the lamps render at before being
+     *         bilinear-blitted back. 1.0 (default) draws direct - no offscreen
+     *         buffer, no blit. Clamped to [0.125, 1.0] at draw time.
+     *  @note  Lossless in shape: not one uniform differs between the paths.
+     *         But unlike the neon and flare scales this one is NOT
+     *         automatically a saving - this layer already bounds its geometry
+     *         to what the lamps light, so the blit's full viewport of
+     *         fragments is a fixed cost. Measured at 1280x720 it only wins
+     *         above roughly six lamps. Leave it at 1.0 unless a profile says
+     *         otherwise. */
+    EL_API el_result_e el_effect_set_spotlight_resolution_scale(el_effect_handle_t effect, float scale);
+    EL_API el_result_e el_effect_get_spotlight_resolution_scale(el_effect_handle_t effect, float *outScale);
+
     EL_API el_result_e el_effect_set_droplets_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled);
     EL_API el_result_e el_effect_get_droplets_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
 

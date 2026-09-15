@@ -4,6 +4,7 @@
 #include "renderer/base-renderer.h"
 #include "gl/shader-program.h"
 #include "gl/vertex-array.h"
+#include "gl/framebuffer.h"
 
 namespace EdgeLighting
 {
@@ -16,18 +17,41 @@ namespace EdgeLighting
     /// it - a cone crosses the frame freely.
     ///
     /// It also emits LIGHT ONLY. No backdrop, no fixture housings, no floor,
-    /// no framebuffer capture, no offscreen buffer, no LUT, no resolution
-    /// scale. What it is is the whole term stack in spotlight.frag, evaluated
-    /// over the smallest geometry that can contain it.
+    /// no framebuffer capture, no LUT. What it is is the whole term stack in
+    /// spotlight.frag, evaluated over the smallest geometry that can contain
+    /// it.
+    ///
+    /// **One renderer, two resolution paths**, selected by
+    /// @c SpotlightConfig::resolutionScale: at 1.0 the strips draw straight
+    /// onto the framebuffer this renderer was handed (no offscreen buffer, no
+    /// blit); below 1.0 they draw into a buffer of that fraction of the
+    /// viewport and are bilinear-blitted back.
+    ///
+    /// **Not one uniform differs between the paths** - fewer than the flare's
+    /// two. The fragment stage reads only interpolated full-res lamp-local
+    /// coordinates and flat per-lamp pixel values, so the scaling happens
+    /// entirely in the viewport transform: the same ortho over the same app
+    /// coordinates, rasterised into a smaller buffer. Only the render target,
+    /// the blit and the buffer allocation are conditional, which is what keeps
+    /// 1.0 bit-identical to the single-path renderer this grew out of.
+    ///
+    /// Be aware of what the scale is worth here, because it is NOT the neon's
+    /// or the flare's bargain: those shade the whole viewport, so quartering
+    /// their fragments always beats a blit. This pass already bounds itself to
+    /// what the lamps light, so the blit's full viewport of fragments is a
+    /// FIXED cost it may not earn back - measured, it wins only above about
+    /// six lamps at default settings. The default is 1.0 for that reason.
     ///
     /// **The geometry is the interesting part.** Each lamp gets a strip of
     /// @c SPOT_STRIP_SEGMENTS quads that hugs the region where that lamp
     /// writes anything at all, and every lamp's strip goes into one VBO drawn
     /// with one @c glDrawArrays. The bound is SOLVED, not guessed: the
     /// renderer inverts spotlight.frag's own falloff to find where it drops
-    /// below one 8-bit step (@ref SolveConeAcross), and stops there. Bounding
-    /// the same cones with oriented boxes instead rasterised roughly ten times
-    /// the area for an identical image.
+    /// below half an 8-bit step (@ref SolveConeAcross), shared across the
+    /// enabled lamps, and stops there. Measured at 1280x720, a typical single
+    /// lamp rasterises 12-44% of the viewport and a five-lamp fan 123%;
+    /// flattening the taper into an oriented bounding box of the same solve
+    /// costs 1.16x to 1.50x more for an identical image.
     ///
     /// **Per-lamp scalars ride as vertex attributes**, constant across each
     /// strip, rather than in a std140 block. There is therefore no per-index
@@ -56,6 +80,7 @@ namespace EdgeLighting
 
     private:
         bool setupShaders();
+        void setupBlitGeometry();
 
         /// Allocate the VBO at its CEILING size and record the attribute
         /// layout, once. Never sized to the live lamp count: that would put a
@@ -76,7 +101,21 @@ namespace EdgeLighting
 
     private:
         ShaderProgram mShaderProgram;
+        /// Scaled path only: composites the scaled buffer back at full res.
+        /// Built unconditionally rather than lazily - a shader compile in the
+        /// middle of a frame, the first time someone drags the scale slider
+        /// off 1.0, is a stall exactly where it will be blamed on the scale.
+        /// (Reuses the neon blit shader - identical job.)
+        ShaderProgram mBlitShader;
+        /// Allocated only when the scaled path first runs; at scale 1.0 this
+        /// stays empty and costs nothing, and it is released again as soon as
+        /// a config stops asking for it.
+        Framebuffer mScaledBuffer{"Spotlight.Scaled"};
         VertexArray mVertexArray{"SpotlightRenderer"};
+        /// Fullscreen NDC quad for the blit. A second VAO rather than a reuse
+        /// of @c mVertexArray: that one carries the five-attribute strip
+        /// layout, and the blit wants a bare vec2 at location 0.
+        VertexArray mBlitQuad{"Spotlight.Blit"};
 
         /// The spotlight config behind the current VBO contents. A whole
         /// @c SpotlightConfig rather than hand-picked fields: it carries its

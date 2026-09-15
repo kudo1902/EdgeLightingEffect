@@ -834,9 +834,34 @@ bool operator==(const LensFlareConfig &o) const
         /// around and enable a subset.
         std::vector<SpotLight> lights;
 
+        /// Fraction of the viewport the lamps are rendered at before being
+        /// bilinear-blitted back to full resolution. 1.0 draws straight onto
+        /// the target framebuffer with no offscreen buffer and no blit; below
+        /// that shades @c resolutionScale^2 as many fragments.
+        ///
+        /// **Lossless in shape, and cheaper only above a threshold.** The
+        /// fragment stage works entirely in full-res lamp-local pixels that
+        /// arrive interpolated, so drawing into a smaller buffer reproduces
+        /// the same picture at lower resolution rather than a differently
+        /// shaped one - not one uniform differs between the two paths.
+        ///
+        /// But this layer does NOT shade the whole viewport: its strips are
+        /// bounded to what each lamp lights, so a scale that quarters them
+        /// still pays a full viewport of blit fragments. Measured at
+        /// 1280x720, that only wins once the strips exceed about 4/3 of the
+        /// viewport - roughly six lamps at default settings, or fewer with a
+        /// large @c SpotLight::bloomRadius. Below that it costs more than it
+        /// saves, which is why the default is 1.0 and why this is a knob
+        /// rather than a policy. See docs/spotlight-renderer-plan.md.
+        ///
+        /// Clamped to (0, 1] at draw time. Above 1.0 is refused rather than
+        /// supersampled: the point of the knob is to shade FEWER fragments.
+        float resolutionScale = 1.0f;
+
         bool operator==(const SpotlightConfig &o) const
         {
-            return enable == o.enable && lights == o.lights;
+            return enable == o.enable && lights == o.lights &&
+                   resolutionScale == o.resolutionScale;
         }
         bool operator!=(const SpotlightConfig &o) const { return !(*this == o); }
     } SpotlightConfig;

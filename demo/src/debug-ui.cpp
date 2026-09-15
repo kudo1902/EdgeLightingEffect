@@ -1081,6 +1081,16 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
         return;
     }
 
+    // 1.0 is the direct path (no offscreen buffer, no blit). Unlike the neon
+    // and flare scales, lowering this is NOT automatically cheaper here - the
+    // strips are already bounded, so the blit is a fixed full-viewport cost
+    // that only pays above roughly six lamps.
+    SliderWithInput("Res Scale##Spot", cfg.spotlight.resolutionScale, 0.125f, 1.0f, "%.3f");
+    if (cfg.spotlight.resolutionScale < 1.0f && cfg.spotlight.lights.size() < 6)
+    {
+        ImGui::TextDisabled("Below 1.0 costs more than it saves at this lamp count.");
+    }
+
     auto &lights = cfg.spotlight.lights;
     const int maxLights = SPOT_MAX_LIGHTS;
 

@@ -1,6 +1,7 @@
 #include "renderer/spotlight-renderer.h"
 #include "renderer/spotlight-tuning.h"
 #include "util/log-util.h"
+#include "util/gl-utils.h"
 #include "shaders.h"
 
 #include <glm/gtc/matrix_transform.hpp>
@@ -37,6 +38,28 @@ namespace EdgeLighting
         /// disagreeing near zero.
         constexpr float MIN_APERTURE = 1.0f;
         constexpr float MIN_THROW = 1.0f;
+
+        /// Floor under SpotlightConfig::resolutionScale. Below this the blit
+        /// is reading so few texels that the light turns to blocks, and the
+        /// strips are already the cheap part.
+        constexpr float MIN_RESOLUTION_SCALE = 0.125f;
+
+        float GetClampedSpotScale(const Config &config)
+        {
+            return std::min(std::max(config.spotlight.resolutionScale, MIN_RESOLUTION_SCALE), 1.0f);
+        }
+
+        /// Whether this config gives @c mScaledBuffer anything to do.
+        ///
+        /// ONE predicate for two questions that have to agree: @ref Render asks
+        /// it to pick the path, and @ref OnConfigChanged asks it to decide
+        /// whether to release the buffer. Split them and a config that stops
+        /// using the buffer can leave it allocated forever, or - worse - one
+        /// that still needs it can have it freed underneath.
+        bool UsesScaledBuffer(const Config &config)
+        {
+            return config.spotlight.enable && GetClampedSpotScale(config) < 1.0f;
+        }
 
         /// Sub-samples per half-interval when widening a strip sample to the
         /// support's maximum over the span its chords cover. CPU-only and
@@ -242,6 +265,8 @@ namespace EdgeLighting
             return false;
         }
 
+        setupBlitGeometry();
+
         // mCurrentSpotlight is whatever the last OnConfigChanged left - the
         // effect calls it on registration, so by here it is usually the host's
         // real config rather than the defaults. Either way the strips exist
@@ -261,6 +286,45 @@ namespace EdgeLighting
             viewportWidth <= 0 || viewportHeight <= 0)
         {
             return;
+        }
+
+        const float scale = GetClampedSpotScale(config);
+        const bool scaled = UsesScaledBuffer(config);
+        const int bufW = std::max(static_cast<int>(static_cast<float>(viewportWidth) * scale), 1);
+        const int bufH = std::max(static_cast<int>(static_cast<float>(viewportHeight) * scale), 1);
+
+        // The render target this renderer was handed - framebuffer AND
+        // viewport, saved as a pair because the blit has to put both back. The
+        // framebuffer is not always the window's: an offscreen frame capture
+        // binds a real FBO, so returning to 0 would redirect the composite to
+        // the window. Read BEFORE the resize below.
+        //
+        // SCALED PATH ONLY, because it is the only one that retargets. Same
+        // shape, same reasoning, as LensFlareRenderer::Render.
+        RenderTargetState prevTarget;
+
+        // SCALED PATH ONLY: mScaledBuffer is a reduced-size copy of the
+        // viewport, so a host scissor box - in the CALLER's window coordinates
+        // - lands on the wrong texels of it. See GLUtils::NoScissorScope.
+        GLUtils::NoScissorScope noScissor(scaled);
+
+        if (scaled)
+        {
+            prevTarget = RenderTargetState::Capture();
+
+            // Resize destroys the attachment on its failure path, so a failure
+            // would leave mScaledBuffer holding id 0 and Bind would then bind
+            // the CALLER'S framebuffer - with ClearBuffer about to wipe it.
+            // Bail instead: nothing has been drawn, and noScissor puts the
+            // scissor enable back as this return unwinds.
+            if (!mScaledBuffer.Resize(bufW, bufH))
+            {
+                return;
+            }
+            // Bind, then clear to transparent black. Keep the two adjacent:
+            // ClearBuffer acts on whatever is BOUND.
+            mScaledBuffer.Bind();
+            mScaledBuffer.ClearBuffer();
         }
 
         // A y-FLIPPED ortho: note bottom and top are swapped relative to the
@@ -284,11 +348,50 @@ namespace EdgeLighting
         glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
         mShaderProgram.Use();
+
+        // NOT ONE UNIFORM differs between the two paths - fewer than the
+        // flare's two, and none at all. The ortho is over APP coordinates, and
+        // the viewport transform alone carries the scale: the same vertex
+        // lands at scale * its app pixel in a scale-sized buffer. The fragment
+        // stage then reads only vLocal, which interpolates in full-res lamp
+        // pixels, against flat per-lamp values that are full-res pixels too -
+        // so it never learns, and never needs to learn, which buffer it is
+        // shading into. That is what makes 1.0 bit-identical.
         mShaderProgram.SetUniform("uMVP", mvp);
 
         mVertexArray.DrawArrays(GL_TRIANGLES, mVertexCount);
 
         mShaderProgram.Unuse();
+
+        if (scaled)
+        {
+            // The host's clip comes back BEFORE the composite: this is the one
+            // draw here that lands on the caller's framebuffer in the caller's
+            // coordinates, so it is the one draw the scissor box describes
+            // correctly. Everything above it went into a buffer the box does
+            // not address.
+            noScissor.Restore();
+
+            // Back to the caller's target and viewport, both at once, then
+            // composite. The buffer holds premultiplied colour with alpha 0
+            // throughout - light only adds - so this blit is a plain bilinear
+            // read added onto whatever is already there.
+            //
+            // One behavioural note the direct path does not have: overlapping
+            // lamps sum into an RGBA8 buffer and clamp THERE before reaching
+            // the target, whereas at 1.0 they clamp once against the target's
+            // existing content. Only reachable where several lamps already sum
+            // past white, and the same trade every accumulate-then-composite
+            // path in this library makes.
+            prevTarget.Restore();
+
+            mBlitShader.Use();
+            mBlitShader.SetUniform("uMVP", glm::mat4(1.0f));
+            mScaledBuffer.BindTexture(0);
+            mBlitShader.SetUniform("uSource", 0);
+            mBlitQuad.DrawArrays(GL_TRIANGLES, 6);
+            mBlitShader.Unuse();
+        }
 
         // Restore the blend state convention the other renderers leave behind.
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
@@ -296,6 +399,19 @@ namespace EdgeLighting
 
     void SpotlightRenderer::OnConfigChanged(const Config &config)
     {
+        // Give the buffer back the moment a config stops asking for it - the
+        // layer switched off, or the scale went back to 1.0 - so a rig that
+        // visits a scaled path once does not hold a viewport-sized texture for
+        // the rest of the session.
+        //
+        // Here rather than in Render because Render must not be the thing that
+        // deletes a framebuffer. Pre-Initialize (AddRenderer calls this)
+        // Release no-ops on the buffer it finds unallocated.
+        if (!UsesScaledBuffer(config))
+        {
+            mScaledBuffer.Release();
+        }
+
         if (mBuilt && config.spotlight == mCurrentSpotlight)
         {
             return;
@@ -310,7 +426,26 @@ namespace EdgeLighting
         mShaderProgram = ShaderProgram(ShaderSource::SPOTLIGHT_VERT_SRC,
                                        ShaderSource::SPOTLIGHT_FRAG_SRC,
                                        "SpotlightRenderer");
-        return mShaderProgram.IsValid();
+        mBlitShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
+                                    ShaderSource::NEON_BLIT_FRAG_SRC,
+                                    "SpotlightRenderer.Blit");
+        return mShaderProgram.IsValid() && mBlitShader.IsValid();
+    }
+
+    void SpotlightRenderer::setupBlitGeometry()
+    {
+        // Static fullscreen NDC quad for the scaled path's composite. Built
+        // unconditionally alongside the blit shader, for the same reason: a
+        // buffer upload in the middle of the first scaled frame is a stall
+        // where it will be blamed on the scale.
+        // clang-format off
+        const float ndc[] = {
+            -1.0f,  1.0f,  -1.0f, -1.0f,   1.0f, -1.0f,
+            -1.0f,  1.0f,   1.0f, -1.0f,   1.0f,  1.0f,
+        };
+        // clang-format on
+        mBlitQuad.SetVertexData(ndc, sizeof(ndc));
+        mBlitQuad.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
     }
 
     void SpotlightRenderer::ensureBuffer()
