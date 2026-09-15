@@ -87,9 +87,6 @@ namespace EdgeLighting
             // Differenced in double, handed on as float: the DIFFERENCE is a
             // frame delta and tiny, so it loses nothing on the way out. It is
             // the running total that needed the width.
-            // Differenced in double, handed on as float: the DIFFERENCE is a
-            // frame delta and tiny, so it loses nothing on the way out. It is
-            // the running total that needed the width.
             const float fadeDelta = static_cast<float>(
                 std::max(0.0, snapshot.rawAccumulatedTime - mRenderedRawAccumulatedTime));
             mRenderedRawAccumulatedTime = snapshot.rawAccumulatedTime;

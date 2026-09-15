@@ -28,7 +28,9 @@ namespace EdgeLighting
     /// run between stop sets that differ in count or position - there is no
     /// per-stop pairing to work out.
     ///
-    /// Owned by both neon renderers. Per frame:
+    /// Owned by @ref NeonRenderer and, from its own bake of the same stops, by
+    /// @ref DebugRenderer. Per frame - and all three of these reach it from
+    /// @c EdgeLightingEffect::Render, in this order, off one snapshot:
     ///
     ///     // OnConfigChanged - self-guarding, safe to call unconditionally
     ///     mGradientLUT.Bake(config.neon.colorStops, config.neon.blendSpace,
@@ -107,8 +109,11 @@ namespace EdgeLighting
 
             // Fade from whatever is currently on screen - settled or mid-fade -
             // toward the new target. The first blended upload happens in this
-            // same frame's Tick, since SetConfig -> OnConfigChanged runs before
-            // Update.
+            // same frame's Tick: EdgeLightingEffect::Render calls
+            // OnConfigChanged (which is what reached this Bake) before the
+            // renderer Update pass that ticks. The two cannot come apart -
+            // Render only notifies on a generation it acquired this call, and
+            // acquiring is exactly what arms the tick.
             mFrom = mDisplay;
             mElapsed = 0.0f;
             mDuration = fadeDuration;

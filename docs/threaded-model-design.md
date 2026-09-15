@@ -187,17 +187,26 @@ untouched and keeps the change reviewable.
 - `Render(int w, int h)` - acquire the newest snapshot, then:
 
 ```cpp
-const ConfigSnapshot &s = mSnapshots.Acquire();
-if (s.configGeneration != mLastConfigGeneration)
+const bool fresh = mSnapshots.AcquireLatest();
+const ConfigSnapshot &s = mSnapshots.Current();
+if (s.configGeneration != mNotifiedGeneration)
 {
     for (auto &r : mRenderers) { r->OnConfigChanged(s.config); }
-    mLastConfigGeneration = s.configGeneration;
+    mNotifiedGeneration = s.configGeneration;
 }
-const float fadeDt = std::max(0.0f, s.rawAccumulatedTime - mLastRawAccumulatedTime);
-mLastRawAccumulatedTime = s.rawAccumulatedTime;
-for (auto &r : mRenderers) { r->Update(fadeDt, s.clockTime, s.config); }
+if (fresh) // exactly once per PUBLISHED frame - see 4.2
+{
+    const float fadeDt = static_cast<float>(
+        std::max(0.0, s.rawAccumulatedTime - mRenderedRawAccumulatedTime));
+    mRenderedRawAccumulatedTime = s.rawAccumulatedTime;
+    for (auto &r : mRenderers) { r->Update(fadeDt, s.clockTime, s.config); }
+}
 for (auto &r : mRenderers) { r->Render(w, h, s.clockTime, s.config); }
 ```
+
+The `fresh` gate and the two-step acquire are not in the sketch this section
+originally carried; both arrived with the implementation, for the reasons in
+4.2.
 
 `AddRenderer`'s immediate hand-over of the current config now reads the render
 side's held snapshot rather than `mActiveConfig`.
@@ -227,6 +236,118 @@ identically, and the reasoning is:
   semantics keyed off when it is called. Both calls happen within the same
   frame before any draw, so the visible result should be identical - but this is
   exactly what the byte-identical capture suite in section 7 is for.
+
+### 4.2 Why the renderer `Update` pass is render-side
+
+The renderer tick is the one part of the split that looks like it could sit on
+either side, so it is worth writing down why it cannot. The short version:
+**`BaseRenderer::Update` is a GL call and nothing else.**
+
+Across the four registered renderers:
+
+| renderer | `Update` body |
+| --- | --- |
+| `LensFlareRenderer` | empty |
+| `DropletsRenderer` | empty |
+| `NeonRenderer` | `mEmissionDirty = mGradientLUT.Tick(deltaTime) \|\| mEmissionDirty;` |
+| `DebugRenderer` | `if (IsStripVisible(config)) { mGradientLUT.Tick(deltaTime); }` |
+
+So the slot has exactly one job: advance the colour cross-fade. Everything else
+that might plausibly live in a per-frame tick was deliberately pushed to a
+neighbour - config-gated derivation to `OnConfigChanged` (the LUT bakes, the
+flare's `GhostBlock`, the geometry quads, the segment merge), cheap per-frame
+math to `Render`, expensive-but-pure per-frame work to the GPU (the neon
+emission pre-pass).
+
+And that one job bottoms out in a texture upload:
+
+```
+NeonRenderer::Update(deltaTime)
++- GradientRingLUT::Tick(deltaTime)
+   +- CPU: smoothstep, lerp mFrom -> mTarget into mDisplay
+   +- upload()
+      +- CPU: quantise mDisplay -> mBytes (ColorUtils::QuantiseToByte)
+      +- BaseLUT::Upload(...)                            <- GL from here
+         +- glGetIntegerv(GL_ACTIVE_TEXTURE)
+         +- glActiveTexture(GL_TEXTURE0)
+         +- glGetIntegerv(GL_TEXTURE_BINDING_2D)
+         +- glBindTexture + glTexSubImage2D  (glTexImage2D on a respecify)
+         +- glTexParameteri x4, when respecified or the wrap moved
+         +- glBindTexture   (restore)
+         +- glActiveTexture (restore)
+```
+
+Roughly eight GL calls per fade frame per ring, and two rings are live: the
+neon's and the debug strip's own copy. The CPU arithmetic in front of the
+upload is real but small, and it exists *only* to be uploaded - no other code
+reads `mDisplay`. That is why the obvious compromise does not exist: there is
+no data half to keep on the data side once the upload is taken out.
+
+#### Why it is easy to get wrong
+
+`Tick` early-returns `false` when `!mFading`. On a settled ring it issues
+**zero** GL calls, which is most frames. It touches GL only during a
+cross-fade, for `colorTransitionDuration` seconds after a colour stop moves.
+
+A build with the tick moved to the data side therefore looks entirely healthy:
+renderers tick, nothing errors, the effect draws. It fails only when someone
+changes a colour while the data thread has no context current - and a GL call
+with no current context is dropped silently on CGL, so the symptom is a fade
+that does not happen, with nothing in the log. "Only sometimes GL" is still GL,
+and the frames where it matters are exactly the frames where it does GL.
+
+#### What else moving it would break
+
+Beyond the context problem, four things:
+
+1. **It would run under the ABI lock.** `el_effect_update` takes `dataMutex`;
+   `el_effect_render` is the single entry point that deliberately does not,
+   because a host thread must never be able to stall a frame (5.2). Putting a
+   driver upload inside the locked call inverts that rule. Knock-on: a leaked
+   `begin_batch` scope currently stalls animation but not frame rate, and would
+   start stalling cross-fade uploads too.
+2. **There is no config it could safely be handed.** The only composited config
+   on the data side is `mActiveConfig`, which `refreshActiveConfig` mutates by
+   swapping its vectors out. Passing that to a renderer is review-finding I31
+   re-introduced. `DebugRenderer::Update` does read its config, so it would gate
+   its tick on a config that is not the one it draws with.
+3. **`Bake` and `Tick` would swap order.** `Bake` runs from `OnConfigChanged`,
+   which fires from `Render`. With the tick in `Update`, a stop-change frame
+   becomes Tick-then-Bake instead of Bake-then-Tick, and the first blended
+   upload slips a frame. `GradientRingLUT::Bake` documents the current order as
+   an invariant.
+4. **The skid gets worse in the direction that matters.** Render side slower
+   than data side: today the absolute `rawAccumulatedTime` difference advances
+   the fade by exactly the elapsed time, one upload per drawn frame. Ticking
+   per `Update` would issue N uploads between two draws, N-1 of a ring nobody
+   samples.
+
+#### Why the `fresh` gate exists
+
+`Tick` is not idempotent. It re-uploads and returns `true` whenever a fade is in
+flight, even for a zero delta - and `NeonRenderer` ORs that return into
+`mEmissionDirty`, so a redundant tick re-bakes the emission table for nothing.
+Both demos render twice per update on the capture path
+(`demo/src/main.cpp:222` and `:242`), so this is a live case rather than a
+hypothetical. Gating on `AcquireLatest()` gives exactly one tick per published
+snapshot, which is the property a per-`Update` tick would have given for free
+and is the only thing moving it would have bought.
+
+Note that the gate cannot come apart from the notification above it: `Render`
+only sees a new generation on a call where it acquired a new snapshot, so
+`OnConfigChanged` firing implies the tick runs in the same `Render`.
+
+#### The slot's real contract
+
+Narrower than `base-renderer.h` suggests. `Update` is for **state that advances
+with time, is independent of config, and must happen exactly once per published
+frame.** Today that is one thing. A renderer with per-frame work that does not
+meet all three tests belongs in `OnConfigChanged` or `Render` instead.
+
+One loose end worth knowing before anyone tidies the interface: the `double
+time` parameter is unused by all four implementations, and only `DebugRenderer`
+reads `config`. The signature matches `Render`'s, which is presumably why.
+
 
 ## 5. C ABI changes
 
