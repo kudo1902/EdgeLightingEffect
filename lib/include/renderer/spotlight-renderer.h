@@ -6,6 +6,8 @@
 #include "gl/vertex-array.h"
 #include "gl/framebuffer.h"
 
+#include <vector>
+
 namespace EdgeLighting
 {
     /// Freely placed and aimed cones of light, drawn as ONE additive pass.
@@ -79,6 +81,24 @@ namespace EdgeLighting
         virtual void OnConfigChanged(const Config &config) override;
 
     private:
+        /// One vertex of a lamp's strip. Declared here rather than in the .cpp
+        /// only so @c mStripVerts below can be a member; nothing outside this
+        /// class names it. The four non-position members are constant across a
+        /// whole strip - see spotlight.vert for why they ride as attributes
+        /// instead of sitting in a uniform block.
+        typedef struct StripVertex
+        {
+            float pos[2];   ///< App px, top-left origin, +y down.
+            float local[2]; ///< (along, across) px in the lamp's frame.
+            float p0[4];    ///< tanHalfBeam, throwLength, softK, intensity.
+            float p1[4];    ///< apertureWidth, bloom, bloomRadius, bloomSupport.
+            float color[3]; ///< Linear RGB.
+        } StripVertex;
+
+        static_assert(sizeof(StripVertex) == 15 * sizeof(float),
+                      "StripVertex must be tightly packed - ensureBuffer's "
+                      "attribute pointers use sizeof(StripVertex) as the stride.");
+
         bool setupShaders();
         void setupBlitGeometry();
 
@@ -93,10 +113,26 @@ namespace EdgeLighting
         /// Runs from @ref OnConfigChanged (and @ref Initialize), not from
         /// @ref Render, because its inputs are exactly @c Config::spotlight -
         /// the same invariant the lens flare's ghost table rests on. Under an
-        /// animation driving any lamp scalar it therefore runs every frame:
-        /// that is ~100 transcendental calls and a <= 34 KB
-        /// @c glBufferSubData, which is the number to look at first if this
-        /// layer ever shows up in a profile.
+        /// animation driving any lamp scalar it therefore runs EVERY FRAME,
+        /// so it is worth knowing what one costs.
+        ///
+        /// Measured over 2,000 rebuilds, best of nine runs: **~20 us for one
+        /// lamp, ~32 us for eight**, or 0.1 - 0.2% of a 16.7 ms frame. That
+        /// includes the <= 34 KB @c glBufferSubData into the ceiling-sized
+        /// allocation @ref ensureBuffer made once.
+        ///
+        /// The flatness across lamp counts is the useful part of that number.
+        /// The arithmetic is **998 transcendental calls for one lamp and 7,880
+        /// for eight** (counted: 705 / 5,688 @c log, 290 / 2,168 @c sqrt), so
+        /// eight lamps do eight times the maths for 1.6x the time - most of
+        /// what is left is the upload and the call. A profile that lands here
+        /// is more likely to be showing the driver than the solve.
+        ///
+        /// If the solve ever IS the cost, ~88% of those calls are the
+        /// @c WIDEN_SUBSAMPLES loop - 208 @ref SupportAt evaluations per lamp
+        /// against 13 for the sampling it corrects. Read the comment there
+        /// first: it buys a guarantee, not an image, and it has never changed
+        /// a pixel in any verification scene.
         void buildStrips(const SpotlightConfig &spotlight);
 
     private:
@@ -123,6 +159,13 @@ namespace EdgeLighting
         /// Deliberately NOT a whole @c Config - nothing outside
         /// @c Config::spotlight reaches the strips.
         SpotlightConfig mCurrentSpotlight;
+
+        /// Staging for @ref buildStrips, a member rather than a local for the
+        /// reason @ref ensureBuffer gives about the VBO: under an animation
+        /// that method runs every frame, and a local would heap-allocate and
+        /// free its 34 KB ceiling on each one. Cleared, never shrunk, so it
+        /// allocates exactly once.
+        std::vector<StripVertex> mStripVerts;
 
         int mVertexCount = 0;       ///< Vertices @ref buildStrips last wrote.
         bool mBufferReady = false;  ///< Whether @ref ensureBuffer has run.

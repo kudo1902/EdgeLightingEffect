@@ -8,26 +8,14 @@
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
-#include <vector>
 
 namespace EdgeLighting
 {
     namespace
     {
-        /// One vertex of a lamp's strip. 15 floats; the four non-position
-        /// members are constant across a whole strip (see spotlight.vert).
-        struct StripVertex
-        {
-            float pos[2];   ///< App px, top-left origin, +y down.
-            float local[2]; ///< (along, across) px in the lamp's frame.
-            float p0[4];    ///< tanHalfBeam, throwLength, softK, intensity.
-            float p1[4];    ///< apertureWidth, bloom, bloomRadius, bloomSupport.
-            float color[3]; ///< Linear RGB.
-        };
-
-        static_assert(sizeof(StripVertex) == 15 * sizeof(float),
-                      "StripVertex must be tightly packed - the attribute "
-                      "pointers below use sizeof(StripVertex) as the stride.");
+        // StripVertex lives in the header, next to the mStripVerts member it
+        // has to type, along with the packing static_assert that used to sit
+        // here.
 
         constexpr int VERTS_PER_LAMP = SPOT_STRIP_SEGMENTS * 6;
         constexpr int MAX_VERTS = SPOT_MAX_LIGHTS * VERTS_PER_LAMP;
@@ -62,17 +50,29 @@ namespace EdgeLighting
         }
 
         /// Sub-samples per half-interval when widening a strip sample to the
-        /// support's maximum over the span its chords cover. CPU-only and
-        /// cheap: it buys a tighter guarantee, never a different image.
+        /// support's maximum over the span its chords cover. CPU-only, and it
+        /// buys a tighter guarantee rather than a different image.
+        ///
+        /// NOT cheap relative to the rest of the solve, which an earlier
+        /// version of this comment claimed. At 8 it is 208 SupportAt
+        /// evaluations per lamp against 13 for the sampling it corrects -
+        /// about 88% of buildStrips' transcendental calls, and the first thing
+        /// to lower if the solve ever shows up in a profile. It is still only
+        /// a few microseconds of a ~20 us rebuild (see buildStrips' comment),
+        /// which is why it is set where the guarantee is comfortable rather
+        /// than where the cost is.
         constexpr int WIDEN_SUBSAMPLES = 8;
 
         /// Blackbody colour anchors, linearly interpolated between. Local to
         /// this renderer because it is the only consumer - the same split
         /// droplets-tuning.h's comment describes for one-consumer constants.
-        struct KelvinAnchor
+        ///
+        /// THE SOLVE DEPENDS ON THIS TABLE, and not in an obvious way - see
+        /// the static_assert below it.
+        typedef struct KelvinAnchor
         {
             float k, r, g, b;
-        };
+        } KelvinAnchor;
 
         constexpr KelvinAnchor KELVIN_TABLE[] = {
             {1800.0f, 1.00f, 0.55f, 0.22f},
@@ -86,6 +86,56 @@ namespace EdgeLighting
         };
 
         constexpr int KELVIN_COUNT = static_cast<int>(sizeof(KELVIN_TABLE) / sizeof(KELVIN_TABLE[0]));
+
+        /// Whether some ONE channel is exactly 1 in both @p a and @p b.
+        ///
+        /// Not "each row's brightest channel is 1", which is weaker and not
+        /// enough: the interpolation is per channel, so two rows that peak on
+        /// DIFFERENT channels blend to a colour whose brightest channel is
+        /// below 1 somewhere in between. It has to be the same channel in both.
+        constexpr bool SharesFullChannel(const KelvinAnchor &a, const KelvinAnchor &b)
+        {
+            return (a.r == 1.0f && b.r == 1.0f) ||
+                   (a.g == 1.0f && b.g == 1.0f) ||
+                   (a.b == 1.0f && b.b == 1.0f);
+        }
+
+        constexpr bool KelvinTableKeepsAFullChannel()
+        {
+            for (int i = 1; i < KELVIN_COUNT; i++)
+            {
+                if (!SharesFullChannel(KELVIN_TABLE[i - 1], KELVIN_TABLE[i]))
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        // WHY THE SOLVE NEEDS THIS.
+        //
+        // spotlight.frag writes `vColor * intensity * (cone + bloom)`, but
+        // SolveConeAcross and DeriveLamp bound `intensity * cone` and
+        // `intensity * bloom` with no colour factor in either. That is exact
+        // for the BRIGHTEST channel - and conservative for the other two -
+        // only while every colour this table can produce has a channel at
+        // exactly 1. Drop below that and the strip cuts the brightest channel
+        // above the floor it was solved against, which shows up as a straight
+        // edge across the dim tail of the cone with nothing in the log.
+        //
+        // Cheaper to pin here than to carry through the solve: multiplying the
+        // bound by max(colour) would be correct too, but it would make every
+        // lamp's geometry depend on its colour temperature for no visible gain
+        // while the table holds.
+        //
+        // If a future table cannot satisfy this - a real Planckian fit
+        // normalised by luminance, say, or an added RGB tint - then delete
+        // this assert and fold max(color.r, color.g, color.b) into
+        // LampSolve::intensity instead. That is the whole fix; it is recorded
+        // here because the assert is the only thing that will tell you.
+        static_assert(KelvinTableKeepsAFullChannel(),
+                      "KELVIN_TABLE: every adjacent pair must share a channel at exactly 1.0, "
+                      "or the strip solve stops bounding the brightest channel - see above.");
 
         glm::vec3 KelvinToRgb(float kelvin)
         {
@@ -114,7 +164,7 @@ namespace EdgeLighting
         }
 
         /// Everything the solve and the upload need, derived once per lamp.
-        struct LampSolve
+        typedef struct LampSolve
         {
             float tanHalf;   ///< tan(beamAngle / 2)
             float thr;       ///< throwLength, floored
@@ -127,7 +177,7 @@ namespace EdgeLighting
             float bloomBound;  ///< Where the bloom actually stops being visible.
             float floor;       ///< This lamp's share of the half-step budget.
             glm::vec3 color;
-        };
+        } LampSolve;
 
         /// Half-width of the CONE's support at @p a, in the lamp's frame.
         ///
@@ -193,9 +243,34 @@ namespace EdgeLighting
             return hi;
         }
 
-        /// Half-width of the WHOLE support at @p a: the cone, unioned with the
+        /// Half-width of the WHOLE support at @p a: the cone, UNIONED with the
         /// aperture bloom's disc. The +1 is a rasterisation safety margin, the
         /// same spirit as droplets-renderer.cpp's SAFETY_PX.
+        ///
+        /// UNION, but spotlight.frag ADDS - `cone + bloom`. So what this
+        /// bounds is "each term alone is under the floor", which is not quite
+        /// "their sum is". Where the cone's lateral boundary crosses the
+        /// bloom's disc, both terms can sit just below the floor and add to
+        /// just above it, and a pixel in that thin region can round to 1/255
+        /// outside the strip.
+        ///
+        /// Left as a union rather than solved against floor/2 per term, which
+        /// would close it exactly, because two things already cover it and the
+        /// tighter bound costs geometry everywhere to buy it:
+        ///
+        ///   - the +1 px margin. At the cone boundary the gaussian falls by
+        ///     roughly a factor of two per pixel for a typical lamp, so the
+        ///     drawn edge already sits where the cone is about half the floor.
+        ///   - the bloom's window reaches exactly zero at `bloomWindow`, not
+        ///     merely "under the floor". Wherever the disc is window-limited -
+        ///     which is the common case, and always so for a strong bloom -
+        ///     its term is 0 at the boundary and there is nothing to add.
+        ///
+        /// Measured over fourteen single-lamp scenes at 1280x720 against a CPU
+        /// evaluation of the shader: at most 5 clipped channels out of 2.76
+        /// million, every one at value 1, which is the rounding coin-flip at
+        /// the boundary rather than this gap. See I17 in
+        /// docs/review-findings.md.
         float SupportAt(const LampSolve &s, float a)
         {
             float c = SolveConeAcross(s, a);
@@ -242,8 +317,13 @@ namespace EdgeLighting
             // spotlight.frag's window closes, and where the inverse-square
             // core itself drops under the visibility floor. Solving
             //   intensity * bloom * r^2 / (d^2 + r^2) = floor
-            // for d gives the second. Taking the min is exact, not
-            // conservative - past either one the term is provably zero.
+            // for d gives the second. Taking the min is right for this TERM -
+            // past the window it is exactly zero, past the visible bound it is
+            // under the floor.
+            //
+            // For the term. Not for the fragment, which also carries the cone:
+            // see the note on SupportAt for where the two bounds meet and what
+            // that is worth in practice.
             out.bloomBound = 0.0f;
             const float peak = out.intensity * out.bloom;
             if (peak > out.floor)
@@ -254,6 +334,39 @@ namespace EdgeLighting
             }
 
             return true;
+        }
+
+        /// Warn when a host hands over more lamps than one pass can draw.
+        /// @ref SpotlightRenderer::buildStrips clamps the list with
+        /// @c std::min against @c SPOT_MAX_LIGHTS and everything past it never
+        /// reaches the VBO, so without this the excess disappears with no log
+        /// line and no result code. Both demo UIs cap their Add button, so
+        /// neither of them can see it; a library host writing
+        /// @c SpotlightConfig::lights directly, or a C-ABI host calling
+        /// @c el_effect_set_spotlight_count, can.
+        ///
+        /// The truncation itself is INTENDED - `config.h` documents a longer
+        /// list as a legitimate way to keep indices (and the animation
+        /// bindings that address them) stable while enabling a subset. This
+        /// only says which end of the list wins.
+        ///
+        /// Counted over the whole list, not the enabled lamps: the clamp is by
+        /// INDEX, so a disabled entry at slot 3 still costs slot 3.
+        ///
+        /// Fires on the TRANSITION into overflow - @p prev at or under the cap,
+        /// @p now above it - which keeps it to one line per overflow with no
+        /// latch to store, exactly as @c WarnOnOverflow does in
+        /// neon-renderer.cpp. Two arguments rather than that one's four because
+        /// there is a single cap and a single kind of entry here.
+        inline void WarnOnLampOverflow(size_t prev, size_t now)
+        {
+            if (static_cast<int>(now) > SPOT_MAX_LIGHTS &&
+                static_cast<int>(prev) <= SPOT_MAX_LIGHTS)
+            {
+                LOG_E("SpotlightRenderer: %zu lamps configured but only %d fit - "
+                      "the rest are ignored.",
+                      now, static_cast<int>(SPOT_MAX_LIGHTS));
+            }
         }
     }
 
@@ -412,6 +525,14 @@ namespace EdgeLighting
             mScaledBuffer.Release();
         }
 
+        // Before the rebuild gate below, and before mCurrentSpotlight is
+        // overwritten, because both halves of the transition are read from it.
+        // Ahead of the gate rather than behind it so the diagnostic is never
+        // coupled to whether a rebuild happens - an unchanged config cannot be
+        // a transition anyway, so the placement costs one size comparison.
+        // This is the only place the lamp count can change.
+        WarnOnLampOverflow(mCurrentSpotlight.lights.size(), config.spotlight.lights.size());
+
         if (mBuilt && config.spotlight == mCurrentSpotlight)
         {
             return;
@@ -472,8 +593,13 @@ namespace EdgeLighting
         ensureBuffer();
         mBuilt = true;
 
-        std::vector<StripVertex> verts;
-        verts.reserve(static_cast<size_t>(MAX_VERTS));
+        // Reused, never reallocated: clear() keeps the capacity, and the
+        // reserve is a no-op after the first call. Under an animation this
+        // method runs every frame, and a local vector would malloc and free
+        // its 34 KB ceiling on each one - the same argument ensureBuffer makes
+        // for the VBO, applied to the staging that fills it.
+        mStripVerts.clear();
+        mStripVerts.reserve(static_cast<size_t>(MAX_VERTS));
 
         const int lampCount = std::min(static_cast<int>(spotlight.lights.size()),
                                        static_cast<int>(SPOT_MAX_LIGHTS));
@@ -532,7 +658,9 @@ namespace EdgeLighting
             // (it carries a sqrt of a term going to zero), so a midpoint pair
             // does not bound the last chord. Measured: it changed no pixel in
             // any verification scene, so this is a guarantee being made true
-            // rather than a bug being fixed.
+            // rather than a bug being fixed - and it is also where most of
+            // this method's arithmetic goes, so read WIDEN_SUBSAMPLES before
+            // deciding it is free.
             float sampleA[SPOT_STRIP_SEGMENTS + 1];
             float sampleC[SPOT_STRIP_SEGMENTS + 1];
             for (int k = 0; k <= SPOT_STRIP_SEGMENTS; k++)
@@ -596,12 +724,12 @@ namespace EdgeLighting
                     v.color[0] = s.color.r;
                     v.color[1] = s.color.g;
                     v.color[2] = s.color.b;
-                    verts.push_back(v);
+                    mStripVerts.push_back(v);
                 }
             }
         }
 
-        mVertexCount = static_cast<int>(verts.size());
+        mVertexCount = static_cast<int>(mStripVerts.size());
         if (mVertexCount == 0)
         {
             return;
@@ -612,7 +740,7 @@ namespace EdgeLighting
         // a reallocation per frame is exactly what the ceiling is for.
         mVertexArray.BindBuffer();
         glBufferSubData(GL_ARRAY_BUFFER, 0,
-                        static_cast<GLsizeiptr>(verts.size() * sizeof(StripVertex)),
-                        verts.data());
+                        static_cast<GLsizeiptr>(mStripVerts.size() * sizeof(StripVertex)),
+                        mStripVerts.data());
     }
 }
