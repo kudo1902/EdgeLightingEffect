@@ -1296,6 +1296,44 @@ extern "C"
         return EL_SUCCESS;
     }
 
+    el_result_e el_effect_set_spotlight_tint(el_effect_handle_t effect, int32_t index,
+                                             float r, float g, float b)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_tint");
+        auto *l = SpotlightSlot(effect, index, "el_effect_set_spotlight_tint");
+        if (!l)
+        {
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        if (l->tint.r == r && l->tint.g == g && l->tint.b == b)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, index=%d, r=%f, g=%f, b=%f", (void *)effect, index, r, g, b);
+        l->tint.r = r;
+        l->tint.g = g;
+        l->tint.b = b;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_spotlight_tint(el_effect_handle_t effect, int32_t index,
+                                             float *outR, float *outG, float *outB)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_spotlight_tint");
+        VALIDATE_OUT_PTR(outR, "el_effect_get_spotlight_tint");
+        VALIDATE_OUT_PTR(outG, "el_effect_get_spotlight_tint");
+        VALIDATE_OUT_PTR(outB, "el_effect_get_spotlight_tint");
+        auto *l = SpotlightSlot(effect, index, "el_effect_get_spotlight_tint");
+        if (!l)
+        {
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        *outR = l->tint.r;
+        *outG = l->tint.g;
+        *outB = l->tint.b;
+        return EL_SUCCESS;
+    }
+
     el_result_e el_effect_set_spotlight_enabled(el_effect_handle_t effect, int32_t index, el_bool_t enabled)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_enabled");

@@ -270,7 +270,10 @@ extern "C"
         EL_SPOTLIGHT_FIELD_INTENSITY = 7,
         EL_SPOTLIGHT_FIELD_BLOOM = 8,
         EL_SPOTLIGHT_FIELD_BLOOM_RADIUS = 9,
-        EL_SPOTLIGHT_FIELD_COLOR_TEMP = 10
+        EL_SPOTLIGHT_FIELD_COLOR_TEMP = 10,
+        EL_SPOTLIGHT_FIELD_TINT_R = 11,
+        EL_SPOTLIGHT_FIELD_TINT_G = 12,
+        EL_SPOTLIGHT_FIELD_TINT_B = 13
     } el_spotlight_field_e;
 
     /** @brief Scalar inside a single colour stop.

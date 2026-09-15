@@ -1184,6 +1184,18 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
     SliderWithInput("Bloom Radius##Spot", l.bloomRadius, 4.0f, 160.0f, "%.0f px");
     SliderWithInput("Color Temp##Spot", l.colorTemp, 1800.0f, 8000.0f, "%.0f K");
 
+    // Multiplied onto the colour temperature above, not a replacement for it -
+    // blackbody cannot reach a saturated green or magenta at any Kelvin. Left
+    // unclamped on purpose: above 1 brightens, and the strip solve folds the
+    // brightest channel into its bound so the geometry follows.
+    ImGui::ColorEdit3("Tint##Spot", &l.tint.x,
+                      ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Reset##SpotTint"))
+    {
+        l.tint = glm::vec3(1.0f, 1.0f, 1.0f);
+    }
+
     ImGui::TextDisabled("Positions are app coords (0,0 = top-left).");
     ImGui::TextDisabled("Lamps do not follow the rect when it moves.");
 }

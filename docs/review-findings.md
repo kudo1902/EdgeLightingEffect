@@ -1672,18 +1672,37 @@ scene out of 2.76 million, every one at value 1.
 
 **Fixed, differently for each half.**
 
-The colour multiply is now a **compile-time invariant** rather than a comment.
-`KelvinTableKeepsAFullChannel` is a `constexpr` predicate over `KELVIN_TABLE`
-asserted at namespace scope, and it pins the precise condition rather than the
-obvious one: *every adjacent pair must share a channel that is exactly 1.0*.
-"each row's brightest channel is 1" would not do - the interpolation is per
+The colour multiply was first closed as a **compile-time invariant**:
+`KelvinTableKeepsAFullChannel`, a `constexpr` predicate over `KELVIN_TABLE`
+asserted at namespace scope, pinning the precise condition rather than the
+obvious one - *every adjacent pair must share a channel that is exactly 1.0*.
+("each row's brightest channel is 1" would not do: the interpolation is per
 channel, so two rows peaking on different channels blend to a colour whose
-brightest channel dips below 1 in between. All seven pairs satisfy it (red
-below 6500 K, blue from 6500 K up). Verified to bite: moving the 8000 K row's
-blue to 0.98 fails the build with the message naming the consequence. The
-comment above it records the fix if a future table cannot satisfy it - fold
-`max(color.r, color.g, color.b)` into `LampSolve::intensity` - so the assert is
-a fork in the road rather than a wall.
+brightest channel dips below 1 in between.) All seven pairs satisfied it, and
+it was verified to bite - moving the 8000 K row's blue to 0.98 failed the build
+with a message naming the consequence.
+
+> **Superseded, by the fork in the road that assert's own comment described.**
+> `SpotLight::tint` - an arbitrary linear RGB multiplier, added so a lamp can
+> be a colour blackbody cannot reach - breaks the table invariant by
+> construction, so the alternative the comment recorded was taken instead:
+> `LampSolve` gained a `solveIntensity` carrying
+> `intensity * max(color.r, color.g, color.b)`, and everything that bounds
+> geometry reads that rather than `intensity`. The predicate and the assert are
+> gone; `KELVIN_TABLE`'s comment records what they were for.
+>
+> The fold subsumes the assert and is strictly stronger - it is exact for the
+> brightest channel whatever the colour, where the assert only held while the
+> colour came from that one table. Measured with the CPU-model harness at
+> 1280x720, over saturated, dim and boosted tints: **at most 2 clipped channels
+> per scene, all at value 1** - the same residue as an untinted lamp. Removing
+> just the fold (one line) and re-running the same scenes clips **18,236
+> channels at tint 2.5x and 157,133 at 8x, up to 4/255**, which is what the
+> assert had been standing in for. A dim tint moves the other way: the strip
+> shrinks to 51% of its untinted area, because the solve now knows the lamp is
+> dimmer than its `intensity` suggests. An A/B of the two libraries, runs
+> interleaved, put the fold's own cost at nothing measurable (29.7 us against
+> 29.5 us for a one-lamp rebuild).
 
 The sum is fixed as a **correction to what is claimed**, not to the geometry.
 `SupportAt`'s comment now says it bounds each term separately, names the thin

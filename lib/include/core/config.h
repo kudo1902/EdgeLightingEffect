@@ -799,6 +799,24 @@ bool operator==(const LensFlareConfig &o) const
         /// tungsten is around 2700-3200; 5600 is daylight; above ~6500 goes
         /// blue.
         float colorTemp = 5600.0f;
+        /// Linear RGB multiplied onto the blackbody colour @c colorTemp bakes.
+        ///
+        /// Blackbody radiation cannot produce a saturated green, cyan or
+        /// magenta - the Kelvin curve runs amber to white to blue-white and
+        /// nowhere else - so this is how a gelled or coloured lamp is reached.
+        /// White (the default) leaves @c colorTemp's colour exactly as it was.
+        ///
+        /// Multiplies rather than replaces on purpose: a gel in front of a
+        /// tungsten lamp and the same gel in front of a daylight lamp are
+        /// different colours, and keeping both controls preserves that.
+        ///
+        /// NOT clamped, and values above 1 are legal - the renderer folds the
+        /// brightest channel of @c colorTemp * @c tint into the bound it
+        /// solves the geometry against, so a boosted tint grows the lit region
+        /// instead of being clipped by a strip that was sized without it.
+        /// An all-zero tint switches the lamp off as surely as
+        /// @c intensity 0 does, and costs the same: no geometry at all.
+        glm::vec3 tint = glm::vec3(1.0f, 1.0f, 1.0f);
         /// false skips the lamp without removing it from the list, so a host
         /// can keep indices (and any animation bound to them) stable.
         bool enable = true;
@@ -815,6 +833,7 @@ bool operator==(const LensFlareConfig &o) const
                    bloom == o.bloom &&
                    bloomRadius == o.bloomRadius &&
                    colorTemp == o.colorTemp &&
+                   tint == o.tint &&
                    enable == o.enable;
         }
         bool operator!=(const SpotLight &o) const { return !(*this == o); }

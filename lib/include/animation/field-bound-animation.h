@@ -96,6 +96,9 @@ namespace EdgeLighting
         BLOOM = 8,          ///< @c SpotLight::bloom
         BLOOM_RADIUS = 9,   ///< @c SpotLight::bloomRadius, px
         COLOR_TEMP = 10,    ///< @c SpotLight::colorTemp, Kelvin
+        TINT_R = 11,        ///< @c SpotLight::tint.r, linear
+        TINT_G = 12,        ///< @c SpotLight::tint.g, linear
+        TINT_B = 13,        ///< @c SpotLight::tint.b, linear
     } SpotlightField;
 
     /// @brief Which scalar to drive inside a single stop of

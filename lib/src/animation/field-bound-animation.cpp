@@ -449,6 +449,21 @@ namespace EdgeLighting
                 l.colorTemp = value;
                 break;
             }
+            case SpotlightField::TINT_R:
+            {
+                l.tint.r = value;
+                break;
+            }
+            case SpotlightField::TINT_G:
+            {
+                l.tint.g = value;
+                break;
+            }
+            case SpotlightField::TINT_B:
+            {
+                l.tint.b = value;
+                break;
+            }
             }
         }
 

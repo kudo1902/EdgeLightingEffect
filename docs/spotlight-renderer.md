@@ -42,6 +42,10 @@ own frame - `along` the axis and `across` it:
 - **Aperture bloom** - an inverse-square glow centred on the lamp itself, the
   bright spill at the fixture.
 
+Both are multiplied by one colour, `colorTemp` baked to linear RGB and scaled
+by `tint`. The colour is per lamp and constant across it - there is no gradient
+along or across a beam.
+
 The full expression is written out at the top of
 [`spotlight.frag`](../lib/shaders/spotlight.frag), because the renderer inverts
 exactly it to decide where to stop drawing.
@@ -75,6 +79,7 @@ A default-constructed `SpotLight` is a fairly narrow, warm-white downlight:
 | `bloom` | `0.4` |
 | `bloomRadius` | `20` px |
 | `colorTemp` | `5600` K |
+| `tint` | `(1, 1, 1)` - white, i.e. no tint |
 | `enable` | `true` |
 
 Note the position: a lamp added with no placement sits in the corner and throws
@@ -210,11 +215,25 @@ clamps to the end anchors.
 | 6500 | white |
 | 8000 | cool blue-white |
 
-There is **no RGB tint**, so a saturated non-blackbody lamp (a pure green
-gel, say) is not reachable. Adding one means a `glm::vec3 tint` multiplied on
-top - and note the strip solve currently assumes the brightest channel of the
-baked colour is exactly 1.0, which every row of the blackbody table satisfies
-and an arbitrary tint would not.
+**`SpotLight::tint`** (default `(1, 1, 1)`)
+Linear RGB multiplied onto the colour `colorTemp` bakes. This is the only way
+to reach a saturated lamp: the blackbody curve runs amber to white to
+blue-white and cannot produce green, cyan or magenta at any Kelvin value.
+
+Multiplies rather than replaces on purpose - a gel in front of a tungsten lamp
+and the same gel in front of a daylight lamp are different colours, and keeping
+both controls preserves that. White leaves `colorTemp`'s result untouched, so
+the default costs nothing and changes nothing.
+
+**Not clamped, and values above 1 are legal.** They brighten the lamp, and the
+geometry follows: the renderer folds `max(r, g, b)` of the final colour into
+the value it solves the strip bound against (`LampSolve::solveIntensity`), so a
+boosted tint grows the lit region rather than being clipped by a strip that was
+sized without it. The fold runs the other way too - a dim tint shrinks the
+strip, measured at 51% of the untinted area for a tint peaking at 0.2.
+
+An all-zero tint switches the lamp off exactly as `intensity` 0 does, and costs
+the same: `DeriveLamp` bails before the solve, so no geometry is emitted.
 
 ### 4.5 Aperture bloom
 
@@ -247,7 +266,8 @@ Every spotlight scalar is per-lamp, so there is no spotlight block in
 ([`field-bound-animation.h`](../lib/include/animation/field-bound-animation.h))
 is the whole animatable surface: `POSITION_X`, `POSITION_Y`, `ANGLE`,
 `BEAM_ANGLE`, `THROW_LENGTH`, `APERTURE_WIDTH`, `SOFTNESS`, `INTENSITY`,
-`BLOOM`, `BLOOM_RADIUS`, `COLOR_TEMP`. Bind one with
+`BLOOM`, `BLOOM_RADIUS`, `COLOR_TEMP`, `TINT_R`, `TINT_G`, `TINT_B`. Bind one
+with
 
 ```cpp
 anim->AddSpotlightField(lampIndex, SpotlightField::ANGLE, modulator);
@@ -260,10 +280,10 @@ out-of-range index at apply time is a logged no-op.
 coordinates, so driving *any* of these fields makes the renderer rebuild its
 vertex buffer on every frame the value moves. Most of them earn it - `POSITION_*`
 and `ANGLE` move the strip, and `BEAM_ANGLE`, `THROW_LENGTH`, `APERTURE_WIDTH`,
-`SOFTNESS`, `INTENSITY`, `BLOOM` and `BLOOM_RADIUS` all feed the solve that
-sizes it. `COLOR_TEMP` is the one that changes no geometry and rebuilds anyway,
-because the gate is the whole `SpotlightConfig` rather than a per-field
-comparison.
+`SOFTNESS`, `INTENSITY`, `BLOOM`, `BLOOM_RADIUS` and the three `TINT_*` all
+feed the solve that sizes it - the tint through the brightest-channel fold
+described in 4.4. `COLOR_TEMP` is the only one that can change the bound
+without obviously looking like it does, for the same reason.
 
 The rebuild is bounded and small - tens of microseconds for a full eight-lamp
 rig, sub-data into a buffer allocated once at its ceiling - but it is not free
@@ -325,9 +345,12 @@ one function per scalar, mirroring the arc family:
 | `el_effect_set_spotlight_placement` | `position.x`, `position.y`, `angle` |
 | `el_effect_set_spotlight_beam` | `beamAngle`, `throwLength`, `apertureWidth`, `softness` |
 | `el_effect_set_spotlight_look` | `intensity`, `bloom`, `bloomRadius`, `colorTemp` |
+| `el_effect_set_spotlight_tint` | `tint.r`, `tint.g`, `tint.b` |
 | `el_effect_set_spotlight_enabled` | per-lamp `enable` |
 
-Each has a matching `el_effect_get_*`. None of them grows the list, so
+Each has a matching `el_effect_get_*`. The tint is its own call rather than two
+more parameters on `el_effect_set_spotlight_look`, which is already published
+with four - this ABI parameterises rather than re-signs. None of them grows the list, so
 `el_effect_set_spotlight_count` comes first; an out-of-range index is a logged
 `EL_ERROR_INVALID_PARAMETER`. The layer is registered by
 `EL_RENDERER_SPOTLIGHT` (and by `EL_RENDERER_ALL`, which is what
@@ -352,6 +375,7 @@ then calls only `el_effect_render` renders the previous frame's rig.
 | Overall brightness of one lamp | `intensity` |
 | The glow at the fixture | `bloom`, `bloomRadius` |
 | Warm vs cool | `colorTemp` |
+| A saturated or gelled colour | `tint` (multiplies `colorTemp`; above 1 brightens) |
 | Turn one lamp off, keep its index | `SpotLight::enable` |
 | Turn the whole layer off | `spotlight.enable` |
 | Trade quality for speed (large rigs only) | `spotlight.resolutionScale` |

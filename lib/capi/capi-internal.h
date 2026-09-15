@@ -86,6 +86,9 @@ static_assert(static_cast<int>(EdgeLighting::SpotlightField::INTENSITY) == EL_SP
 static_assert(static_cast<int>(EdgeLighting::SpotlightField::BLOOM) == EL_SPOTLIGHT_FIELD_BLOOM);
 static_assert(static_cast<int>(EdgeLighting::SpotlightField::BLOOM_RADIUS) == EL_SPOTLIGHT_FIELD_BLOOM_RADIUS);
 static_assert(static_cast<int>(EdgeLighting::SpotlightField::COLOR_TEMP) == EL_SPOTLIGHT_FIELD_COLOR_TEMP);
+static_assert(static_cast<int>(EdgeLighting::SpotlightField::TINT_R) == EL_SPOTLIGHT_FIELD_TINT_R);
+static_assert(static_cast<int>(EdgeLighting::SpotlightField::TINT_G) == EL_SPOTLIGHT_FIELD_TINT_G);
+static_assert(static_cast<int>(EdgeLighting::SpotlightField::TINT_B) == EL_SPOTLIGHT_FIELD_TINT_B);
 
 static_assert(static_cast<int>(EdgeLighting::ColorStopField::POSITION) == EL_STOP_FIELD_POSITION);
 static_assert(static_cast<int>(EdgeLighting::ColorStopField::R) == EL_STOP_FIELD_R);

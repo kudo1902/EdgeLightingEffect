@@ -67,8 +67,12 @@ namespace EdgeLighting
         /// this renderer because it is the only consumer - the same split
         /// droplets-tuning.h's comment describes for one-consumer constants.
         ///
-        /// THE SOLVE DEPENDS ON THIS TABLE, and not in an obvious way - see
-        /// the static_assert below it.
+        /// Free to change. It used to carry an invariant the strip solve
+        /// depended on - every adjacent pair sharing a channel at exactly 1.0,
+        /// pinned by a static_assert - because the solve bounded a scalar with
+        /// no colour in it. @c DeriveLamp now folds the brightest channel into
+        /// @c LampSolve::solveIntensity instead, which is what makes
+        /// @c SpotLight::tint possible, so any anchors at all are safe here.
         typedef struct KelvinAnchor
         {
             float k, r, g, b;
@@ -86,56 +90,6 @@ namespace EdgeLighting
         };
 
         constexpr int KELVIN_COUNT = static_cast<int>(sizeof(KELVIN_TABLE) / sizeof(KELVIN_TABLE[0]));
-
-        /// Whether some ONE channel is exactly 1 in both @p a and @p b.
-        ///
-        /// Not "each row's brightest channel is 1", which is weaker and not
-        /// enough: the interpolation is per channel, so two rows that peak on
-        /// DIFFERENT channels blend to a colour whose brightest channel is
-        /// below 1 somewhere in between. It has to be the same channel in both.
-        constexpr bool SharesFullChannel(const KelvinAnchor &a, const KelvinAnchor &b)
-        {
-            return (a.r == 1.0f && b.r == 1.0f) ||
-                   (a.g == 1.0f && b.g == 1.0f) ||
-                   (a.b == 1.0f && b.b == 1.0f);
-        }
-
-        constexpr bool KelvinTableKeepsAFullChannel()
-        {
-            for (int i = 1; i < KELVIN_COUNT; i++)
-            {
-                if (!SharesFullChannel(KELVIN_TABLE[i - 1], KELVIN_TABLE[i]))
-                {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        // WHY THE SOLVE NEEDS THIS.
-        //
-        // spotlight.frag writes `vColor * intensity * (cone + bloom)`, but
-        // SolveConeAcross and DeriveLamp bound `intensity * cone` and
-        // `intensity * bloom` with no colour factor in either. That is exact
-        // for the BRIGHTEST channel - and conservative for the other two -
-        // only while every colour this table can produce has a channel at
-        // exactly 1. Drop below that and the strip cuts the brightest channel
-        // above the floor it was solved against, which shows up as a straight
-        // edge across the dim tail of the cone with nothing in the log.
-        //
-        // Cheaper to pin here than to carry through the solve: multiplying the
-        // bound by max(colour) would be correct too, but it would make every
-        // lamp's geometry depend on its colour temperature for no visible gain
-        // while the table holds.
-        //
-        // If a future table cannot satisfy this - a real Planckian fit
-        // normalised by luminance, say, or an added RGB tint - then delete
-        // this assert and fold max(color.r, color.g, color.b) into
-        // LampSolve::intensity instead. That is the whole fix; it is recorded
-        // here because the assert is the only thing that will tell you.
-        static_assert(KelvinTableKeepsAFullChannel(),
-                      "KELVIN_TABLE: every adjacent pair must share a channel at exactly 1.0, "
-                      "or the strip solve stops bounding the brightest channel - see above.");
 
         glm::vec3 KelvinToRgb(float kelvin)
         {
@@ -176,6 +130,15 @@ namespace EdgeLighting
             float bloomWindow; ///< Where spotlight.frag's window closes.
             float bloomBound;  ///< Where the bloom actually stops being visible.
             float floor;       ///< This lamp's share of the half-step budget.
+            /// @c intensity scaled by the BRIGHTEST channel of @c color.
+            ///
+            /// Everything that bounds geometry reads this; only the shader
+            /// reads @c intensity. They are separate because spotlight.frag
+            /// writes `color * intensity * (cone + bloom)` while the solve
+            /// works on a scalar, so the scalar it works on has to be the
+            /// largest value any channel will actually reach. See the note in
+            /// @ref DeriveLamp.
+            float solveIntensity;
             glm::vec3 color;
         } LampSolve;
 
@@ -183,19 +146,23 @@ namespace EdgeLighting
         ///
         /// This inverts spotlight.frag's falloff. Taking logs of
         ///
-        ///   intensity * exp(-a / thr) * (nearW / halfW) * exp(-lat^2 * softK)
+        ///   solveIntensity * exp(-a / thr) * (nearW / halfW) * exp(-lat^2 * softK)
         ///       >= SPOT_VISIBILITY_FLOOR
         ///
         /// and solving for lat gives the expression below. `smoothstep`'s
         /// near-end fade is not inverted - it only ever REDUCES the term, and
         /// the strip's start is bounded separately and conservatively.
         ///
+        /// @c solveIntensity, not @c intensity: it already carries the
+        /// brightest channel of the lamp's colour, which is what keeps this
+        /// bound right for a tinted lamp. See @ref LampSolve::solveIntensity.
+        ///
         /// Returns 0 where the cone cannot reach the visibility floor at all.
         float SolveConeAcross(const LampSolve &s, float a)
         {
             const float alongPos = std::max(a, 0.0f);
             const float halfW = s.nearW + alongPos * s.tanHalf;
-            const float headroom = std::log(s.intensity) - std::log(s.floor) -
+            const float headroom = std::log(s.solveIntensity) - std::log(s.floor) -
                                    alongPos / s.thr -
                                    std::log(halfW / s.nearW);
             if (headroom <= 0.0f)
@@ -303,8 +270,38 @@ namespace EdgeLighting
             out.intensity = light.intensity;
             out.bloom = std::max(light.bloom, 0.0f);
             out.bloomRadius = std::max(light.bloomRadius, 1.0f);
-            out.color = KelvinToRgb(light.colorTemp);
+            out.color = KelvinToRgb(light.colorTemp) * light.tint;
             out.floor = floor;
+
+            // WHY THE SOLVE GETS ITS OWN INTENSITY.
+            //
+            // spotlight.frag writes `color * intensity * (cone + bloom)`; the
+            // solve below bounds a scalar. Folding the brightest channel of
+            // the colour into that scalar makes the bound EXACT for whichever
+            // channel reaches furthest and conservative for the other two,
+            // whatever the colour is - which is what lets SpotLight::tint be
+            // an arbitrary linear RGB value, above 1 included.
+            //
+            // Without the fold this would only be sound while every colour
+            // KelvinToRgb can return has a channel at exactly 1, which is true
+            // of KELVIN_TABLE and was once pinned by a static_assert over it.
+            // A tint breaks that invariant in both directions: a dim tint
+            // makes the strip larger than it needs to be (wasteful), and a
+            // tint above 1 makes it CLIP the brightest channel (a straight
+            // edge across the dim tail, with nothing in the log). The fold
+            // handles both, and subsumes the assert it replaced.
+            const float maxChannel = std::max(std::max(out.color.r, out.color.g), out.color.b);
+            out.solveIntensity = out.intensity * maxChannel;
+
+            // A black tint is as much an off switch as intensity 0, and has to
+            // be caught here: std::log(0) is -inf, which would propagate
+            // through every headroom the solve computes. Bail before the
+            // arithmetic rather than draw a degenerate strip for a lamp that
+            // writes nothing.
+            if (out.solveIntensity <= 0.0f)
+            {
+                return false;
+            }
 
             const float softness = std::min(std::max(light.softness, 0.0f), 1.0f);
             out.softK = static_cast<float>(SPOT_SOFT_MIN) +
@@ -325,7 +322,7 @@ namespace EdgeLighting
             // see the note on SupportAt for where the two bounds meet and what
             // that is worth in practice.
             out.bloomBound = 0.0f;
-            const float peak = out.intensity * out.bloom;
+            const float peak = out.solveIntensity * out.bloom;
             if (peak > out.floor)
             {
                 const float ratio = peak / out.floor - 1.0f;

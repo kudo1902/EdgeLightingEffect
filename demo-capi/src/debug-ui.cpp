@@ -995,6 +995,23 @@ void DebugUI::buildSpotlightSection(el_effect_handle_t effect)
         el_effect_set_spotlight_look(effect, sel, intensity, bloom, bloomRadius, colorTemp);
     }
 
+    // Multiplied onto the colour temperature above rather than replacing it:
+    // blackbody cannot reach a saturated green or magenta at any Kelvin.
+    // Unclamped on purpose - above 1 brightens, and the renderer's strip solve
+    // folds the brightest channel into its bound so the geometry follows.
+    float tint[3] = {1.0f, 1.0f, 1.0f};
+    el_effect_get_spotlight_tint(effect, sel, &tint[0], &tint[1], &tint[2]);
+    if (ImGui::ColorEdit3("Tint##Spot", tint,
+                          ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR))
+    {
+        el_effect_set_spotlight_tint(effect, sel, tint[0], tint[1], tint[2]);
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Reset##SpotTint"))
+    {
+        el_effect_set_spotlight_tint(effect, sel, 1.0f, 1.0f, 1.0f);
+    }
+
     ImGui::TextDisabled("Positions are app coords (0,0 = top-left).");
     ImGui::TextDisabled("Lamps do not follow the rect when it moves.");
 }

@@ -545,9 +545,10 @@ was checked.
   None is a visual defect - that pass re-verified the strip bound by a method
   independent of the one in [Verification](#verification) above, and it holds.
   Four are fixed: the missing overflow diagnostic (I16), the two unstated
-  assumptions in the support solve (I17, one of which is now a `static_assert`
-  over `KELVIN_TABLE`), the rebuild-cost comment and its staging allocation
-  (I19), and this documentation gap (I20).
+  assumptions in the support solve (I17 - the colour one now folded into
+  `LampSolve::solveIntensity`, which is also what made `SpotLight::tint`
+  possible), the rebuild-cost comment and its staging allocation (I19), and
+  this documentation gap (I20).
 
   **I18** remains: `SPOT_VISIBILITY_FLOOR` is divided by the enabled-lamp count
   to guarantee a sub-half-step total that the 8-bit blend then discards anyway,

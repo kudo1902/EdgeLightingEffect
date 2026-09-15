@@ -499,6 +499,26 @@ extern "C"
                                                     float *outIntensity, float *outBloom,
                                                     float *outBloomRadius, float *outColorTemp);
 
+    /** @brief Linear RGB multiplied onto the blackbody colour @c colorTemp bakes.
+     *  @details A separate call rather than two more parameters on
+     *           @ref el_effect_set_spotlight_look, which is already published
+     *           with four. White (1, 1, 1) is the default and leaves the
+     *           colour-temperature result untouched.
+     *
+     *           This is the only way to reach a saturated lamp: blackbody
+     *           radiation runs amber to white to blue-white and cannot produce
+     *           green, cyan or magenta at any Kelvin value.
+     *
+     *           Not clamped. Values above 1 are legal and brighten the lamp -
+     *           the renderer folds the brightest channel into the bound it
+     *           solves its geometry against, so a boosted tint grows the lit
+     *           region rather than being clipped by it. An all-zero tint
+     *           switches the lamp off exactly as @c intensity 0 does. */
+    EL_API el_result_e el_effect_set_spotlight_tint(el_effect_handle_t effect, int32_t index,
+                                                    float r, float g, float b);
+    EL_API el_result_e el_effect_get_spotlight_tint(el_effect_handle_t effect, int32_t index,
+                                                    float *outR, float *outG, float *outB);
+
     /** @brief Skip lamp @p index without removing it, so indices - and any
      *         animation bound to them - stay stable. */
     EL_API el_result_e el_effect_set_spotlight_enabled(el_effect_handle_t effect, int32_t index, el_bool_t enabled);
