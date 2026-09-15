@@ -44,13 +44,22 @@ what you see:
   and are independent of the master intensity, so a segment can shine on an
   otherwise-dark arc.
 
-The neon renderer is one of four renderers that can be enabled independently in
-the same effect: `NeonRenderer` (which draws at any resolution scale - see
-3.9), `DebugRenderer` (its LUT strip, colour-stop and bounding-box overlays),
-`DropletsRenderer` (rain on glass in a band along the perimeter), and
-`LensFlareRenderer` (sun + ghosts riding the perimeter, which draws at any
-resolution scale too). This document covers the neon parameters; the others are
-documented on their `Config` sub-structs.
+The neon renderer is one of five renderers that can be enabled independently in
+the same effect:
+
+- `NeonRenderer` - this document. Draws at any resolution scale; see 3.9.
+- `DropletsRenderer` - rain on glass in a band along the perimeter.
+- `LensFlareRenderer` - sun + ghosts riding the perimeter, at any resolution
+  scale too.
+- `SpotlightRenderer` - freely placed and aimed cones of light. The odd one out:
+  it is **not** a perimeter effect and reads nothing but `Config::spotlight`, so
+  moving the rect does not move the lamps. Documented in
+  [`spotlight-renderer.md`](spotlight-renderer.md).
+- `DebugRenderer` - the neon's LUT strip, colour-stop and bounding-box overlays.
+  Registered last so its annotations sit above every layer they describe.
+
+This document covers the neon parameters. The spotlight has its own reference,
+linked above; the other two are documented on their `Config` sub-structs.
 
 ---
 

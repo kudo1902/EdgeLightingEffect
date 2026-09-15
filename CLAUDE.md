@@ -15,6 +15,7 @@ Docs, in reading order. The three neon documents are tiers of the same material 
 - [`docs/neon-renderer-explained.html`](docs/neon-renderer-explained.html) - the same ground at length, with the reasoning and the bugs behind each decision.
 - [`docs/neon-renderer-reference.html`](docs/neon-renderer-reference.html) - full mechanism reference: every uniform, constant, derivation and gating rule, plus the droplet and flare term stacks. Sections 18 and 19 are flow charts - what the CPU rebuilds and which GL object each bake writes, one frame's draw sequence for both renderers, and the fragment program as annotated GLSL dataflow. Read this before changing a shader.
 - [`docs/effect-reference.md`](docs/effect-reference.md) - per-parameter reference and recipes.
+- [`docs/spotlight-renderer.md`](docs/spotlight-renderer.md) - the same for the spotlight layer: every `SpotLight` field, the app-coordinate convention, the animatable surface, and the measured cost of its resolution scale.
 - [`docs/architecture-design.md`](docs/architecture-design.md) - full architecture. Note it predates the droplets and lens-flare renderers.
 - [`docs/coordinate-system.md`](docs/coordinate-system.md), [`docs/multiple-arcs-design.md`](docs/multiple-arcs-design.md).
 - [`docs/neon-unification-plan.md`](docs/neon-unification-plan.md) - how the half-res neon fork was folded into `NeonRenderer` as a resolution scale, and the debug overlays split into `DebugRenderer`. Read it if a doc or comment still refers to `NeonOptimizedRenderer`.

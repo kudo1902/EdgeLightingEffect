@@ -1,8 +1,12 @@
 # Add a SpotlightRenderer
 
-**Status: done.** All eight parts landed, with three corrections the plan did
-not anticipate - each recorded below where it applies, and all three found by
-the offscreen verification rather than by reading the code.
+**Status: done.** The renderer landed, along with a ninth part (the resolution
+scale) the plan did not originally have, and with three corrections it did not
+anticipate - each recorded below where it applies, and all three found by the
+offscreen verification rather than by reading the code.
+
+Part 8's `docs/spotlight-renderer.md` was outstanding for a while and is now
+written; see [Still open](#still-open) for what remains.
 
 Decisions taken at approval: `SPOT_MAX_LIGHTS` = 8, colour by `colorTemp`
 (Kelvin), and no rect gating - a cone crosses the frame freely.
@@ -515,9 +519,41 @@ was checked.
 
 ## Still open
 
-- **Verification 4 and 5 were not run.** Resize invariance and the C-only ABI
-  smoke program are specified above but untested. The ABI compiles and the
-  `demo-capi` fork drives the new surface, which is weaker evidence than a
-  capture diff.
-- **No `docs/spotlight-renderer.md`.** The per-parameter reference is still only
-  the doc comments in `config.h`.
+- **Verification 4 has since been run, and passes.** Rendering the same
+  three-lamp rig at 1280x720, then 800x600, then 1280x720 again returns a
+  **byte-identical** first and third frame, and the app-space region the two
+  sizes share differs by **one channel in 1,440,000, by a single LSB** - the
+  rounding coin-flip, the same residue the coverage test leaves. The second half
+  of the item, that the VBO is not re-uploaded on a resize, holds by
+  construction rather than by measurement: `Render` never calls `buildStrips`,
+  and the buffer holds app coordinates, so a resize can only move the ortho.
+- **Verification 5 was not run.** The C-only program that builds the same rig
+  through `libedge-lighting-c` and diffs its capture against the C++ path is
+  still untested. The ABI compiles, its eleven `SpotlightField` values are
+  pinned by `static_assert`, and the `demo-capi` fork drives the whole new
+  surface - all of which is weaker evidence than a capture diff.
+- **Part 8 is complete.** [`spotlight-renderer.md`](spotlight-renderer.md) is
+  written, and the three documents left behind by the same omission -
+  `implementation.md`, `effect-reference.md` and `README.md`, all of which still
+  described a four-renderer library - are corrected. See **I20** in
+  [`review-findings.md`](review-findings.md#i20-three-documents-still-describe-a-four-renderer-library---fixed),
+  including the two further errors that surfaced in those tables while fixing
+  them.
+- **One finding from a later read is still open.** A full pass over the landed
+  code recorded I16 to I20 in
+  [`review-findings.md`](review-findings.md#sixth-pass-the-spotlight-renderer-review).
+  None is a visual defect - that pass re-verified the strip bound by a method
+  independent of the one in [Verification](#verification) above, and it holds.
+  Four are fixed: the missing overflow diagnostic (I16), the two unstated
+  assumptions in the support solve (I17, one of which is now a `static_assert`
+  over `KELVIN_TABLE`), the rebuild-cost comment and its staging allocation
+  (I19), and this documentation gap (I20).
+
+  **I18** remains: `SPOT_VISIBILITY_FLOOR` is divided by the enabled-lamp count
+  to guarantee a sub-half-step total that the 8-bit blend then discards anyway,
+  at a cost of roughly 15% wider strips on an eight-lamp rig. Closing it is a
+  design decision - drop the division, document what it does and does not
+  cover, or accumulate at higher precision - not a repair. Note that I17's
+  unclosed half (the cone and bloom bounds are unioned where the shader sums)
+  has a one-character exact fix that is being held back for the same reason:
+  it pulls in the direction I18 argues against.
