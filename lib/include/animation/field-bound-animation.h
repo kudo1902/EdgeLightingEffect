@@ -74,6 +74,30 @@ namespace EdgeLighting
         INTENSITY = 2,
     } ArcField;
 
+    /// @brief Which scalar to drive inside a @c SpotlightConfig::lights entry.
+    ///
+    /// Paired with an index at bind time via
+    /// @ref FieldBoundAnimation::AddSpotlightField. Numerically mirrored by
+    /// @c el_spotlight_field_e in the C ABI.
+    ///
+    /// Every spotlight scalar is per-lamp, so there is no spotlight block in
+    /// @ref AnimatableField - this enum is the whole animatable surface of the
+    /// layer.
+    typedef enum class SpotlightField
+    {
+        POSITION_X = 0,     ///< @c SpotLight::position.x, app px
+        POSITION_Y = 1,     ///< @c SpotLight::position.y, app px
+        ANGLE = 2,          ///< @c SpotLight::angle, degrees
+        BEAM_ANGLE = 3,     ///< @c SpotLight::beamAngle, degrees
+        THROW_LENGTH = 4,   ///< @c SpotLight::throwLength, px
+        APERTURE_WIDTH = 5, ///< @c SpotLight::apertureWidth, px
+        SOFTNESS = 6,       ///< @c SpotLight::softness, [0, 1]
+        INTENSITY = 7,      ///< @c SpotLight::intensity
+        BLOOM = 8,          ///< @c SpotLight::bloom
+        BLOOM_RADIUS = 9,   ///< @c SpotLight::bloomRadius, px
+        COLOR_TEMP = 10,    ///< @c SpotLight::colorTemp, Kelvin
+    } SpotlightField;
+
     /// @brief Which scalar to drive inside a single stop of
     ///        @c NeonConfig::segmentBoosts[segIdx].colorStops[stopIdx].
     ///
@@ -211,6 +235,14 @@ namespace EdgeLighting
             ModulatorPtr modulator;
         } ArcStopBinding;
 
+        /// @brief A single (spotlight.lights[index].field, modulator) binding.
+        typedef struct SpotlightBinding
+        {
+            size_t index;
+            SpotlightField field;
+            ModulatorPtr modulator;
+        } SpotlightBinding;
+
         // --- Construction ------------------------------------------------
 
         /// @brief Zero-binding animation. Extend via @ref AddField /
@@ -309,6 +341,20 @@ namespace EdgeLighting
             mArcStopBindings.push_back({arcIdx, stopIdx, field, std::move(modulator)});
         }
 
+        /// @brief Bind a scalar inside @c spotlight.lights[index] to a modulator.
+        /// @details No auto-grow: @c cfg.spotlight.lights must already hold
+        ///          @p index. A binding whose @p index is out of range at apply
+        ///          time is a logged no-op.
+        /// @note Driving @c POSITION_X / @c POSITION_Y / @c ANGLE (or any field
+        ///       that changes a lamp's extent) makes @c SpotlightRenderer
+        ///       rebuild its vertex buffer on every frame the value moves.
+        ///       That is a bounded cost - see the class comment there - but it
+        ///       is not free, unlike animating a pure shader uniform.
+        void AddSpotlightField(size_t index, SpotlightField field, ModulatorPtr modulator)
+        {
+            mSpotlightBindings.push_back({index, field, std::move(modulator)});
+        }
+
         // --- Introspection -----------------------------------------------
 
         /// @brief Read-only view of the scalar-field bindings.
@@ -344,13 +390,19 @@ namespace EdgeLighting
             return mArcStopBindings;
         }
 
+        /// @brief Read-only view of the spotlight-field bindings.
+        const std::vector<SpotlightBinding> &GetSpotlightBindings() const
+        {
+            return mSpotlightBindings;
+        }
+
         /// @brief Total number of bindings across every kind.
         size_t GetBindingCount() const
         {
             return mScalarBindings.size() + mSegmentBindings.size() +
                    mPreservedSegmentBindings.size() + mPreservedSegmentStopBindings.size() +
                    mSegmentStopBindings.size() + mArcBindings.size() +
-                   mArcStopBindings.size();
+                   mArcStopBindings.size() + mSpotlightBindings.size();
         }
 
         /// @brief Drop every binding (leaves state / duration alone).
@@ -363,6 +415,7 @@ namespace EdgeLighting
             mSegmentStopBindings.clear();
             mArcBindings.clear();
             mArcStopBindings.clear();
+            mSpotlightBindings.clear();
         }
 
         // --- Drive -------------------------------------------------------
@@ -394,6 +447,8 @@ namespace EdgeLighting
         std::vector<ArcBinding> mArcBindings;
         std::vector<ArcStopBinding> mArcStopBindings;
 
+        std::vector<SpotlightBinding> mSpotlightBindings;
+
         /// One saved value per scalar binding, index-aligned with
         /// @c mScalarBindings at the moment @ref CaptureBaseline was called.
         std::vector<float> mSavedScalarValues;
@@ -416,6 +471,12 @@ namespace EdgeLighting
         /// mSavedSegmentBoosts.
         std::vector<Arc> mSavedArcs;
         bool mArcsCaptured = false;
+
+        /// Snapshot of the whole @c spotlight.lights vector, for the same
+        /// reason @c mSavedArcs snapshots the whole arc vector: one copy
+        /// covers every field of every lamp without per-slot bookkeeping.
+        std::vector<SpotLight> mSavedSpotlights;
+        bool mSpotlightsCaptured = false;
     };
 
 } // namespace EdgeLighting

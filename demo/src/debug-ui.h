@@ -87,8 +87,13 @@ private:
     /// Overlays drawn by DebugRenderer. Takes no `active` config: these are
     /// plain toggles, with nothing an animation could be driving.
     void buildDebugSection(EdgeLighting::Config &cfg);
+    /// Which lamp the Spotlights section is editing. Clamped to the live
+    /// list every frame, so removing a lamp cannot leave it dangling.
+    int mSpotlightSelected = 0;
+
     void buildDropletsSection(EdgeLighting::Config &cfg);
     void buildLensFlareSection(EdgeLighting::Config &cfg);
+    void buildSpotlightSection(EdgeLighting::Config &cfg);
     void buildAnimationSection(EdgeLighting::Config &cfg,
                                EdgeLighting::AnimationManager &manager);
     void buildBackgroundSection();

@@ -753,6 +753,94 @@ bool operator==(const LensFlareConfig &o) const
     // Top-level configuration
     // -----------------------------------------------------------------------
 
+    /// One spotlight: a cone of light with its own place and aim.
+    ///
+    /// Nothing here is derived from @c Config::geometry. Unlike every other
+    /// renderer in this library, the spotlight layer is not a perimeter effect
+    /// - a lamp sits where the caller puts it and points where the caller aims
+    /// it, and the rect is not involved in the light at all.
+    typedef struct SpotLight
+    {
+        /// Lamp position in APP coordinates - the same space as
+        /// @c RectGeometry::position: origin at the viewport's TOP-LEFT,
+        /// +x right, +y DOWN.
+        ///
+        /// Deliberately NOT rect-local, which has one consequence worth
+        /// stating plainly: moving @c RectGeometry::position moves the rect
+        /// and leaves the lamps where they are. If a rig should travel with
+        /// the frame, the caller moves it.
+        glm::vec2 position = glm::vec2(0.0f, 0.0f);
+        /// Direction the beam points, in degrees. 0 = +x (right), increasing
+        /// CLOCKWISE on screen - which is what a +y-down space makes natural:
+        /// 90 = straight down, 180 = left, 270 = up.
+        float angle = 90.0f;
+        /// Full field angle of the cone in degrees. The beam has no hard edge
+        /// at this angle; it is the width of the gaussian, not a cut.
+        float beamAngle = 26.0f;
+        /// Distance in px along the axis at which the beam falls to 1/e of its
+        /// peak. Not where it ends - the renderer solves for that.
+        float throwLength = 215.0f;
+        /// Half-width of the beam at the lamp itself, in px. Also sets how
+        /// tight the bright core is, since the cone's brightness carries a
+        /// factor of @c apertureWidth / (width at this distance).
+        float apertureWidth = 13.0f;
+        /// Beam cross-section softness in [0, 1]. 0 is the tightest gaussian,
+        /// 1 the broadest. There is no value that produces a visible beam
+        /// EDGE - see spotlight.frag.
+        float softness = 0.55f;
+        /// Master brightness for this lamp.
+        float intensity = 1.15f;
+        /// Aperture glow strength - the bright spill right at the lamp.
+        /// 0 removes the term, and removes its cost with it.
+        float bloom = 0.4f;
+        /// Aperture glow size in px.
+        float bloomRadius = 20.0f;
+        /// Colour temperature in Kelvin, baked to linear RGB on the CPU. Warm
+        /// tungsten is around 2700-3200; 5600 is daylight; above ~6500 goes
+        /// blue.
+        float colorTemp = 5600.0f;
+        /// false skips the lamp without removing it from the list, so a host
+        /// can keep indices (and any animation bound to them) stable.
+        bool enable = true;
+
+        bool operator==(const SpotLight &o) const
+        {
+            return position == o.position &&
+                   angle == o.angle &&
+                   beamAngle == o.beamAngle &&
+                   throwLength == o.throwLength &&
+                   apertureWidth == o.apertureWidth &&
+                   softness == o.softness &&
+                   intensity == o.intensity &&
+                   bloom == o.bloom &&
+                   bloomRadius == o.bloomRadius &&
+                   colorTemp == o.colorTemp &&
+                   enable == o.enable;
+        }
+        bool operator!=(const SpotLight &o) const { return !(*this == o); }
+    } SpotLight;
+
+    /// Spotlight renderer configuration: a list of independently placed lamps.
+    ///
+    /// The layer emits LIGHT ONLY - no backdrop, no fixture housings, no floor
+    /// - and composites additively over whatever is behind it. Nothing is
+    /// occluded by the rect: a cone crosses the frame freely.
+    typedef struct SpotlightConfig
+    {
+        bool enable = false; ///< Enable or disable the spotlight renderer
+
+        /// The lamps. Entries past @c SPOT_MAX_LIGHTS are ignored at draw
+        /// time rather than rejected here, so a host can keep a longer list
+        /// around and enable a subset.
+        std::vector<SpotLight> lights;
+
+        bool operator==(const SpotlightConfig &o) const
+        {
+            return enable == o.enable && lights == o.lights;
+        }
+        bool operator!=(const SpotlightConfig &o) const { return !(*this == o); }
+    } SpotlightConfig;
+
     /// Top-level configuration for the EdgeLightingEffect pipeline.
     ///
     /// Holds one sub-config per renderer. Renderers are independent - enable
@@ -764,6 +852,7 @@ bool operator==(const LensFlareConfig &o) const
         DebugConfig debug;                           ///< LUT strip / colour-stop marker overlays
         DropletsConfig droplets;                     ///< Rain-on-glass droplets settings
         LensFlareConfig lensFlare;                   ///< Sun + lens flare (rays, chromatic ghosts)
+        SpotlightConfig spotlight;                   ///< Freely placed and aimed cones of light
 
         bool operator==(const Config &o) const
         {
@@ -771,7 +860,8 @@ bool operator==(const LensFlareConfig &o) const
                    neon == o.neon &&
                    debug == o.debug &&
                    droplets == o.droplets &&
-                   lensFlare == o.lensFlare;
+                   lensFlare == o.lensFlare &&
+                   spotlight == o.spotlight;
         }
         bool operator!=(const Config &o) const { return !(*this == o); }
     } Config;

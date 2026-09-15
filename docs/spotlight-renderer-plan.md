@@ -1,7 +1,11 @@
 # Add a SpotlightRenderer
 
-**Status: proposed.** Nothing has landed. This is the plan to review before any
-code is written.
+**Status: done.** All eight parts landed, with three corrections the plan did
+not anticipate - each recorded below where it applies, and all three found by
+the offscreen verification rather than by reading the code.
+
+Decisions taken at approval: `SPOT_MAX_LIGHTS` = 8, colour by `colorTemp`
+(Kelvin), and no rect gating - a cone crosses the frame freely.
 
 A new renderer that emits N independently placed and aimed cones of light and
 nothing else - no backdrop, no fixture housings, no floor, no framebuffer
@@ -142,7 +146,17 @@ same reasoning as `neon-tuning.h`.
 #define SPOT_BLOOM_WINDOW_INNER  0.55   // where that window starts, as a fraction of it
 #define SPOT_SOFT_MAX            3.40   // gaussian exponent at softness 0
 #define SPOT_SOFT_MIN            0.85   // gaussian exponent at softness 1
+#define SPOT_VISIBILITY_FLOOR    (0.5 / 255.0)   // HALF a step - see below
 ```
+
+**CORRECTION 1, and the reason the verification exists.** The plan cut the strip
+where the falloff drops below ONE 8-bit step. That is wrong, and it shipped
+wrong until the offscreen diff caught it: GL rounds float-to-unorm to NEAREST,
+so a contribution of 0.9/255 still lands on 1. Cutting at a full step clipped
+pixels that were about to be lit - **36,000 to 267,000 of them per scene, in
+every one of the ten scenes**, each off by exactly 1 LSB. The floor is half a
+step, and the renderer divides it by the number of ENABLED lamps before solving,
+so N lamps each under floor/N sum to under floor.
 
 **Be honest about what this header does and does not buy.** In droplets and the
 lens flare, the CPU reads these constants directly to derive a bound, so the two
@@ -234,8 +248,15 @@ cMax(a)  = e(a) <= 0 ? 0 : sqrt(e(a) / softK) * halfW(a)
 `e` is strictly decreasing in `a` for `a >= 0`, so `aMax` - the furthest the cone
 reaches - is a bisection on `e(a) = 0`. The bloom's disc of radius
 `bloomRadius * SPOT_BLOOM_SUPPORT` is unioned in, which also sets how far behind
-the lamp the strip has to start. Each sample is widened to cover its neighbours'
-midpoints so a segment chord never cuts inside the curve it approximates.
+the lamp the strip has to start. Each sample is widened to the MAXIMUM of the support
+across the half-intervals its chords cover (`WIDEN_SUBSAMPLES` sub-samples per
+side), so a chord can only bulge outward, never cut inside.
+
+**CORRECTION 2.** The plan widened against the neighbours' midpoints alone. That
+does not bound the last chord, because `c(a)` falls to zero at the far end with
+a near-vertical tangent. Recorded as a correction rather than a fix because
+measurement says so: sub-sampling changed **no pixel in any scene**, so it is a
+guarantee being made true, not a defect being repaired.
 
 Helper placement follows `BakeGhostTable`: a file-local function in an anonymous
 namespace at the top of the `.cpp`, next to the constants it reads.
@@ -357,19 +378,38 @@ There is no test target, so verification is by offscreen capture through
 `OffscreenCapture` plus one C-only program, matching how the unification work
 was checked.
 
-1. **The support solve is correct.** This is the one that matters. Render each
-   scene twice: once with the solved strip, and once with the strip replaced by
-   a deliberately oversized fullscreen quad carrying the same per-lamp
-   attributes. **The two must be byte-identical.** If the strip clips anything
-   the shader would have written, this diff finds it, and it is the only guard
-   against the CPU solver and the shader's falloff drifting apart.
-   Scenes: one lamp straight down; one lamp at 45 degrees; a five-lamp fan; a
-   lamp with `bloom = 0`; a lamp with `bloom` high and `intensity` high, which
-   is the case where the bloom window rather than the cone sets the bound; a
-   lamp with `softness = 1`, the widest gaussian.
-2. **Additivity.** Two overlapping lamps render identically whichever order
-   they sit in the config. Premultiplied addition is order-independent and
-   anything that breaks that is a blend-state bug.
+1. **The support solve is correct.** The one that matters, and the one that
+   found the real defect. Ten scenes at 1280x720 through `OffscreenCapture`: one
+   lamp straight down; one at 45 degrees; a five-lamp fan; `bloom = 0`; bloom
+   and intensity both high, where the bloom window rather than the cone sets the
+   bound; `softness = 1`, the widest gaussian; a tight 5-degree beam on a 700 px
+   throw; two overlapping lamps at 2700 K and 7000 K; the same pair with the
+   order swapped; and a lamp whose origin sits off the left edge.
+
+   **CORRECTION 3 - byte-identical was the wrong bar.** The plan asked for a
+   byte-identical diff against a deliberately oversized quad. That test cannot
+   pass, and not because of clipping: changing a quad's corner magnitudes
+   changes how `aLocal` interpolates in its last bit, so the shaded value moves
+   by up to 1 LSB. The giveaway is WHERE the differences fall - spread across
+   every brightness level including the brightest core, and clipping can only
+   remove light from the dim tail.
+
+   What replaced it measures the thing actually at stake: a **coverage** test.
+   Render each scene again with every strip scaled 4x, and require that no pixel
+   the larger strip lights is dark in the shipped one. Result after correction
+   1: **at most 3 pixels per scene out of 100,000 to 900,000 lit, every one at
+   value 1** - the rounding coin-flip at the boundary, not missing coverage;
+   halving the floor again does not reduce it. Before correction 1 the same
+   scenes were wrong by tens of thousands of pixels.
+
+   The closest precedent in this tree is
+   [`docs/lens-flare-perf-review.md`](lens-flare-perf-review.md), which records
+   one change that cannot be byte-identical on any GPU for the same class of
+   reason.
+2. **Additivity.** PASSES, byte-identical: scenes 8 and 9 are the same two
+   lamps in opposite config order and produce the same file. Premultiplied
+   addition is order-independent, and anything that breaks that is a
+   blend-state bug.
 3. **Blend-state hygiene.** A frame with spotlights plus droplets plus neon
    matches a frame with the same layers minus spotlights, in the regions no
    lamp reaches.
@@ -381,18 +421,22 @@ was checked.
    struct carrying `operator==` / `operator!=` over all its fields, and
    `Config::operator==` including the new member.
 
-## Open questions
+## Settled at approval
 
-1. **App coordinates confirmed?** Part 1 spells out the consequence: the rig
-   does not follow the rect. Cheap to add a perimeter-anchored alternative
-   later, awkward to change the coordinate space after hosts depend on it.
-2. **`SPOT_MAX_LIGHTS` = 8?** It only sizes the VBO ceiling, so raising it later
-   costs nothing but a recompile.
-3. **`colorTemp` or explicit RGB?** Kelvin matches the subject and bakes to RGB
-   on the CPU for free. An explicit `glm::vec3 tint` multiplied on top would
-   cover the cases Kelvin cannot reach; worth adding only if a caller wants a
-   coloured, non-white lamp.
-4. **Does anything need the lamps to be occluded by the rect?** Nothing in this
-   plan stops a cone crossing the frame. If light should stop at the rect edge,
-   that is a gate term in the fragment shader and a second constraint on the
-   strip bound - both cheap, but neither is planned here.
+1. **App coordinates**, origin top-left. The rig does not follow the rect; a
+   perimeter-anchored alternative on the same struct stays available if that
+   turns out to matter.
+2. **`SPOT_MAX_LIGHTS` = 8.** Sizes the VBO ceiling only (34 KB).
+3. **`colorTemp` in Kelvin**, baked to linear RGB on the CPU. No RGB tint, so a
+   saturated non-blackbody lamp is not reachable - add a `glm::vec3 tint`
+   multiplied on top if one is ever wanted.
+4. **No rect gating.** A cone crosses the frame freely.
+
+## Still open
+
+- **Verification 4 and 5 were not run.** Resize invariance and the C-only ABI
+  smoke program are specified above but untested. The ABI compiles and the
+  `demo-capi` fork drives the new surface, which is weaker evidence than a
+  capture diff.
+- **No `docs/spotlight-renderer.md`.** The per-parameter reference is still only
+  the doc comments in `config.h`.

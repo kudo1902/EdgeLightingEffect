@@ -46,8 +46,13 @@ private:
     void buildGeometrySection(el_effect_handle_t effect);
     void buildNeonSection(el_effect_handle_t effect);
     void buildDebugSection(el_effect_handle_t effect);
+    /// Which lamp the Spotlights section is editing. Clamped to the live
+    /// count every frame, so removing a lamp cannot leave it dangling.
+    int mSpotlightSelected = 0;
+
     void buildDropletsSection(el_effect_handle_t effect);
     void buildLensFlareSection(el_effect_handle_t effect);
+    void buildSpotlightSection(el_effect_handle_t effect);
     void buildColorPickerSection(el_effect_handle_t effect);
     void buildAnimationSection(el_effect_handle_t effect);
     void buildBackgroundSection();

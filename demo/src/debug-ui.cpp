@@ -1,4 +1,6 @@
 #include "debug-ui.h"
+#include "renderer/spotlight-tuning.h"
+#include <cstdio>
 #include "animation/animation-manager.h"
 #include "core/config.h"
 #include "core/edge-lighting.h"
@@ -449,6 +451,7 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     buildDebugSection(cfg);
     buildDropletsSection(cfg);
     buildLensFlareSection(cfg);
+    buildSpotlightSection(cfg);
     buildColorPickerSection(cfg);
     buildAnimationSection(cfg, effect.GetAnimationManager());
     buildBackgroundSection();
@@ -1063,6 +1066,116 @@ void DebugUI::buildLensFlareSection(EdgeLighting::Config &cfg)
     ImGui::SliderFloat2("Flare Center##Lens", &cfg.lensFlare.flareCenter.x, 0.0f, 1.0f, "%.2f");
     SliderWithInput("Ray Density##Lens", cfg.lensFlare.rayDensity, 0.0f, 1.0f, "%.2f");
     SliderWithInput("Rotation Rate##Lens", cfg.lensFlare.rotationRate, -2.0f, 2.0f, "%.3f rev/s");
+}
+
+void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
+{
+    if (!ImGui::CollapsingHeader("Spotlights", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+
+    ImGui::Checkbox("Enable##Spot", &cfg.spotlight.enable);
+    if (!cfg.spotlight.enable)
+    {
+        return;
+    }
+
+    auto &lights = cfg.spotlight.lights;
+    const int maxLights = SPOT_MAX_LIGHTS;
+
+    ImGui::Text("%d / %d lamps", static_cast<int>(lights.size()), maxLights);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("+ Add##Spot") && static_cast<int>(lights.size()) < maxLights)
+    {
+        // New lamps land above the rect pointing down, which is where a
+        // showcase rig starts, rather than at the origin where they would be
+        // half off screen.
+        EdgeLighting::SpotLight l;
+        l.position = glm::vec2(cfg.geometry.position.x + cfg.geometry.width * 0.5f,
+                               cfg.geometry.position.y - 60.0f);
+        l.angle = 90.0f;
+        lights.push_back(l);
+        mSpotlightSelected = static_cast<int>(lights.size()) - 1;
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Clear##Spot"))
+    {
+        lights.clear();
+        mSpotlightSelected = 0;
+    }
+
+    if (lights.empty())
+    {
+        ImGui::TextDisabled("No lamps. Add one to light something.");
+        return;
+    }
+
+    if (mSpotlightSelected >= static_cast<int>(lights.size()))
+    {
+        mSpotlightSelected = static_cast<int>(lights.size()) - 1;
+    }
+    if (mSpotlightSelected < 0)
+    {
+        mSpotlightSelected = 0;
+    }
+
+    // Lamp picker: one row each, so the selected index (which any animation
+    // binding also addresses) is always visible.
+    for (int i = 0; i < static_cast<int>(lights.size()); i++)
+    {
+        char label[64];
+        std::snprintf(label, sizeof(label), "lamp %d  %.0f deg##SpotPick%d",
+                      i, lights[static_cast<size_t>(i)].angle, i);
+        if (ImGui::RadioButton(label, mSpotlightSelected == i))
+        {
+            mSpotlightSelected = i;
+        }
+        ImGui::SameLine();
+        char killLabel[32];
+        std::snprintf(killLabel, sizeof(killLabel), "x##SpotKill%d", i);
+        if (ImGui::SmallButton(killLabel))
+        {
+            lights.erase(lights.begin() + i);
+            if (mSpotlightSelected >= static_cast<int>(lights.size()))
+            {
+                mSpotlightSelected = static_cast<int>(lights.size()) - 1;
+            }
+            return;
+        }
+    }
+
+    if (lights.empty())
+    {
+        return;
+    }
+
+    EdgeLighting::SpotLight &l = lights[static_cast<size_t>(mSpotlightSelected)];
+
+    ImGui::Separator();
+    ImGui::Checkbox("Lamp Enabled##Spot", &l.enable);
+
+    // App coordinates, top-left origin, +y down - the same space as
+    // Geometry > Position, which is why the ranges here are viewport-sized
+    // rather than centred on zero.
+    SliderWithInput("Position X##Spot", l.position.x, -200.0f, 2400.0f, "%.0f px");
+    SliderWithInput("Position Y##Spot", l.position.y, -200.0f, 1600.0f, "%.0f px");
+    SliderWithInput("Direction##Spot", l.angle, -180.0f, 360.0f, "%.1f deg");
+
+    ImGui::Separator();
+    SliderWithInput("Beam Angle##Spot", l.beamAngle, 3.0f, 120.0f, "%.1f deg");
+    SliderWithInput("Throw##Spot", l.throwLength, 20.0f, 900.0f, "%.0f px");
+    SliderWithInput("Aperture##Spot", l.apertureWidth, 2.0f, 120.0f, "%.1f px");
+    SliderWithInput("Softness##Spot", l.softness, 0.0f, 1.0f, "%.2f");
+
+    ImGui::Separator();
+    SliderWithInput("Intensity##Spot", l.intensity, 0.0f, 3.0f, "%.2f");
+    SliderWithInput("Bloom##Spot", l.bloom, 0.0f, 3.0f, "%.2f");
+    SliderWithInput("Bloom Radius##Spot", l.bloomRadius, 4.0f, 160.0f, "%.0f px");
+    SliderWithInput("Color Temp##Spot", l.colorTemp, 1800.0f, 8000.0f, "%.0f K");
+
+    ImGui::TextDisabled("Positions are app coords (0,0 = top-left).");
+    ImGui::TextDisabled("Lamps do not follow the rect when it moves.");
 }
 
 void DebugUI::buildAnimationSection(EdgeLighting::Config &cfg,

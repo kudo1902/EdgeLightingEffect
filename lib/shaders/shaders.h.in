@@ -63,6 +63,15 @@ namespace EdgeLighting
 @LENS_FLARE_FRAG_CONTENT@
 )shadersrc";
 
+                static const char *const SPOTLIGHT_VERT_SRC = R"shadersrc(@GLSL_VERSION@
+@SPOTLIGHT_VERT_CONTENT@
+)shadersrc";
+
+                static const char *const SPOTLIGHT_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
+@SPOTLIGHT_TUNING@
+@SPOTLIGHT_FRAG_CONTENT@
+)shadersrc";
+
         }
 }
 

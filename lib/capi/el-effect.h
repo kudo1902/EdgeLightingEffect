@@ -431,6 +431,83 @@ extern "C"
      *  through the pane. Mirrors @c EdgeLighting::DropletsConfig.
      *  @{ */
 
+
+    /* ====================================================================
+     * Spotlights (Config::spotlight)
+     * ====================================================================
+     *
+     * Freely placed and aimed cones of light. Unlike every other layer, this
+     * one is NOT a perimeter effect: a lamp sits at an absolute app-space
+     * position and points at an absolute angle, and @c Config::geometry is not
+     * consulted at all. Moving the rect therefore leaves the lamps where they
+     * are.
+     *
+     * Positions are APP COORDINATES - origin at the viewport's TOP-LEFT,
+     * +x right, +y DOWN - the same space @ref el_effect_set_position uses.
+     * Angles are degrees, 0 = +x (right), increasing CLOCKWISE, which is what
+     * a +y-down space makes natural: 90 = straight down.
+     *
+     * The setters are grouped by concern rather than one per scalar: placement
+     * (where and which way), beam (the cone's shape) and look (how it reads).
+     * All three address a lamp by index; size the list with
+     * @ref el_effect_set_spotlight_count first, exactly as the arc family
+     * requires.
+     */
+
+    /** @brief Enable or disable the spotlight layer as a whole. */
+    EL_API el_result_e el_effect_set_spotlight_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled);
+    EL_API el_result_e el_effect_get_spotlight_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
+
+    /** @brief Resize the lamp list. New entries carry the C++ defaults.
+     *  @note  Entries past the renderer's SPOT_MAX_LIGHTS ceiling are ignored
+     *         at draw time rather than rejected here. */
+    EL_API el_result_e el_effect_set_spotlight_count(el_effect_handle_t effect, int32_t count);
+    EL_API el_result_e el_effect_get_spotlight_count(el_effect_handle_t effect, int32_t *outCount);
+
+    /** @brief Where lamp @p index sits and which way it points.
+     *  @param x,y    App coordinates, top-left origin, +y down.
+     *  @param angle  Degrees, 0 = right, increasing clockwise. */
+    EL_API el_result_e el_effect_set_spotlight_placement(el_effect_handle_t effect, int32_t index,
+                                                         float x, float y, float angle);
+    EL_API el_result_e el_effect_get_spotlight_placement(el_effect_handle_t effect, int32_t index,
+                                                         float *outX, float *outY, float *outAngle);
+
+    /** @brief The shape of lamp @p index's cone.
+     *  @param beamAngle      Full field angle in degrees. The beam has no hard
+     *                        edge at this angle - it is the gaussian's width.
+     *  @param throwLength    Px along the axis to 1/e of peak, not where it ends.
+     *  @param apertureWidth  Half-width at the lamp itself, px.
+     *  @param softness       [0, 1]; 0 is the tightest cross-section, 1 the
+     *                        broadest. No value produces a visible beam EDGE. */
+    EL_API el_result_e el_effect_set_spotlight_beam(el_effect_handle_t effect, int32_t index,
+                                                    float beamAngle, float throwLength,
+                                                    float apertureWidth, float softness);
+    EL_API el_result_e el_effect_get_spotlight_beam(el_effect_handle_t effect, int32_t index,
+                                                    float *outBeamAngle, float *outThrowLength,
+                                                    float *outApertureWidth, float *outSoftness);
+
+    /** @brief How lamp @p index reads.
+     *  @param intensity    Master brightness for this lamp.
+     *  @param bloom        Aperture glow strength; 0 removes the term.
+     *  @param bloomRadius  Aperture glow size, px.
+     *  @param colorTemp    Kelvin, baked to linear RGB on the CPU. ~2700-3200
+     *                      is tungsten, 5600 daylight, above ~6500 goes blue. */
+    EL_API el_result_e el_effect_set_spotlight_look(el_effect_handle_t effect, int32_t index,
+                                                    float intensity, float bloom,
+                                                    float bloomRadius, float colorTemp);
+    EL_API el_result_e el_effect_get_spotlight_look(el_effect_handle_t effect, int32_t index,
+                                                    float *outIntensity, float *outBloom,
+                                                    float *outBloomRadius, float *outColorTemp);
+
+    /** @brief Skip lamp @p index without removing it, so indices - and any
+     *         animation bound to them - stay stable. */
+    EL_API el_result_e el_effect_set_spotlight_enabled(el_effect_handle_t effect, int32_t index, el_bool_t enabled);
+    EL_API el_result_e el_effect_get_spotlight_enabled(el_effect_handle_t effect, int32_t index, el_bool_t *outEnabled);
+
+    /** @brief Drop every lamp. Any index-bound animation becomes a no-op until
+     *         the list is re-created via @ref el_effect_set_spotlight_count. */
+    EL_API el_result_e el_effect_clear_spotlights(el_effect_handle_t effect);
+
     EL_API el_result_e el_effect_set_droplets_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled);
     EL_API el_result_e el_effect_get_droplets_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
 
