@@ -444,9 +444,15 @@ namespace EdgeLighting
         // the buffer depends only on Config::spotlight and a resize costs this
         // uniform rather than a rebuild.
         //
-        // The flip reverses triangle winding. Harmless here: nothing in this
-        // library enables GL_CULL_FACE, and the fragment stage reads no
-        // gl_FragCoord, so there is no other handedness to keep in step.
+        // The flip reverses triangle winding, which used to be written off
+        // here as harmless because nothing in THIS library enables
+        // GL_CULL_FACE. That was the wrong half of the question - the host owns
+        // that state, and on a shared surface view so does whatever else draws
+        // into the context. buildStrips winds for the flip, and
+        // EdgeLightingEffect::Render's NoCullScope covers every cull
+        // configuration for every layer; see both for the measurement. No other
+        // handedness has to be kept in step, since the fragment stage reads no
+        // gl_FragCoord.
         const glm::mat4 mvp = glm::ortho(0.0f, static_cast<float>(viewportWidth),
                                          static_cast<float>(viewportHeight), 0.0f,
                                          -1.0f, 1.0f);
@@ -698,7 +704,33 @@ namespace EdgeLighting
 
                 const float corner[4][2] = {
                     {aA, -cA}, {aB, -cB}, {aB, cB}, {aA, cA}};
-                const int idx[6] = {0, 1, 2, 0, 2, 3};
+                // COUNTER-CLOCKWISE once Render's y-flipped ortho has been
+                // applied, which is why the indices run backwards round the
+                // quad. The corners above are listed the natural way for APP
+                // space (+y down); the projection's negative y scale reverses
+                // winding, so listing them {0,1,2, 0,2,3} emitted triangles
+                // that were back-facing on screen.
+                //
+                // That made this the ONLY back-facing geometry in the library
+                // - every other renderer projects y-up and comes out CCW - and
+                // so the only layer a host with GL_CULL_FACE on deletes
+                // outright. Invisible on any desktop demo, where culling is off
+                // by default and nothing ever enables it; very visible on an
+                // embedded surface view sharing its context with a video
+                // pipeline or web engine that left culling behind.
+                //
+                // EdgeLightingEffect::Render's NoCullScope covers the rest of
+                // the ways a host can cull (GL_FRONT, a GL_CW front face) for
+                // every layer at once. This is the half that stops THIS
+                // geometry from being wrong in the first place, so the strips
+                // are correct on their own terms rather than only because
+                // something upstream switches culling off.
+                //
+                // Nothing about the image changes: GL's fill rule is
+                // orientation-independent, and every vertex of a lamp's strip
+                // carries the same flat attributes, so the provoking vertex
+                // moving cannot change them either.
+                const int idx[6] = {0, 2, 1, 0, 3, 2};
 
                 for (int k = 0; k < 6; k++)
                 {

@@ -227,6 +227,77 @@ namespace EdgeLighting
             bool mRestore;
         };
 
+        /// Turns @c GL_CULL_FACE off for the duration of a scope and puts the
+        /// host's setting back afterwards.
+        ///
+        /// Taken ONCE per frame, by @c EdgeLightingEffect::Render, around the
+        /// whole renderer fan-out. Not tidiness and not a preference: nothing
+        /// this library draws is meant to be face-culled - every layer is a
+        /// flat screen-space quad, ring or strip with no back side to hide - so
+        /// a cull state can only ever delete pixels that were meant to be
+        /// there.
+        ///
+        /// Two measurements, offscreen at 640x360, are what put it there:
+        ///
+        ///   - With GL_CULL_FACE on and the GL defaults (GL_BACK / GL_CCW), the
+        ///     spotlight rendered 0 lit pixels while every other layer was
+        ///     unchanged to the pixel. @c SpotlightRenderer draws through a
+        ///     y-FLIPPED ortho so its VBO can hold app coordinates verbatim,
+        ///     and a negative determinant reverses winding, which made it the
+        ///     one back-facing layer here. (That is now also fixed at the
+        ///     source, in @c SpotlightRenderer::buildStrips, so the strips are
+        ///     correct on their own terms and not merely because of this
+        ///     guard.)
+        ///   - With culling on and the host's winding order reversed to GL_CW,
+        ///     EVERY layer but the debug bounding box rendered 0 pixels. The
+        ///     box survives only because it is a GL_LINE_LOOP, and culling does
+        ///     not apply to lines. Winding the geometry correctly is therefore
+        ///     not sufficient on its own: @c glCullFace and @c glFrontFace
+        ///     belong to the host as much as @c GL_CULL_FACE does.
+        ///
+        /// Why a host would have culling on at all: the GL context is not
+        /// always this library's alone. On an embedded surface view (Tizen
+        /// Evas_GL, Android GLSurfaceView) a video pipeline or web engine
+        /// shares it and leaves its own state behind, and none of this shows up
+        /// on a desktop demo where GL_CULL_FACE is off by default and nothing
+        /// ever enables it.
+        ///
+        /// Costs one @c glIsEnabled, a static-state query, and touches nothing
+        /// when the host had no culling. The cull MODE and winding order are
+        /// never written, so there is none to put back.
+        class NoCullScope
+        {
+        public:
+            /// @param active pass @c false to make the whole thing a no-op,
+            ///        matching @ref NoScissorScope's signature.
+            explicit NoCullScope(bool active = true)
+                : mRestore(active && glIsEnabled(GL_CULL_FACE))
+            {
+                if (mRestore)
+                {
+                    glDisable(GL_CULL_FACE);
+                }
+            }
+
+            ~NoCullScope() { Restore(); }
+
+            NoCullScope(const NoCullScope &) = delete;
+            NoCullScope &operator=(const NoCullScope &) = delete;
+
+            /// End the scope early. Idempotent, and the destructor calls it.
+            void Restore()
+            {
+                if (mRestore)
+                {
+                    glEnable(GL_CULL_FACE);
+                    mRestore = false;
+                }
+            }
+
+        private:
+            bool mRestore;
+        };
+
     } // namespace GLUtils
 } // namespace EdgeLighting
 
