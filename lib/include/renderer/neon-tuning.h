@@ -28,7 +28,48 @@
 
 // clang-format off
 // --- Filament (the sharp bright line) ---
+//
+//     FILAMENT_MIN_HALF_WIDTH is a STATED-width floor: it is what makes
+//     lineWidth 0 mean "no line" rather than a single bright dot, and it is
+//     paired with lineGate, which fades the filament in over the same span. It
+//     describes the width the caller asked for, so it is a FULL-RES px constant
+//     and the shader converts it with uResolutionScale like every other one.
+//
+//     FILAMENT_NYQUIST_HALF_WIDTH is a SAMPLING floor, and the distinction is
+//     the whole point of having two names for the same number. Below
+//     resolutionScale 1.0 the gather rasterises into a reduced buffer and
+//     neon-blit.frag bilinearly upsamples it, so a filament narrower than the
+//     buffer can sample is not reconstructed - it is resampled, and what comes
+//     out depends on where the rect edge happens to fall between buffer texel
+//     centres. That is a property of the BUFFER, so this one is in BUFFER px
+//     and is NOT converted with uResolutionScale.
+//
+//     Getting that backwards is what made a 1 px line at scale 0.5 disagree
+//     with the same line at 1.0. sigma was floored only by the converted
+//     constant, which at scale 0.5 is 0.25 buffer px, so the line sat under the
+//     buffer's Nyquist limit and its peak swung with the rect's sub-pixel
+//     position - 217 on a texel centre, 180 half a texel off, against a 1.0
+//     reference that holds 230-241 at every position. With the sampling floor
+//     in place the peak tracks the reference to within 10/255 at every phase,
+//     at 0.5 and at 0.25.
+//
+//     The line does read WIDER at a reduced scale, and that part is not a
+//     defect to tune away: a 1 px line cannot exist in a buffer sampled every
+//     2 px. The floor buys a stable, correctly-bright line of the narrowest
+//     width the buffer can actually carry. Deliberately NOT paired with an
+//     amplitude compensation to conserve the line's integral - the grade at the
+//     end of neon.frag tonemaps per-fragment INSIDE the buffer and
+//     FILAMENT_GAIN puts the core deep in saturation, so scaling the linear
+//     amplitude barely moves the 8-bit value while it does measurably dim the
+//     peak (error 15-23/255 against 0-10 without it). See
+//     docs/corner-crease-and-filament-nyquist.md section 2.
+//
+//     Equal at 1.0, where the converted stated floor already supplies a
+//     buffer-px half width of 0.5, so the sampling floor is a no-op there and
+//     the direct path stays bit-identical. Separate names so that lowering one
+//     cannot silently take the other with it. ---
 #define FILAMENT_MIN_HALF_WIDTH   0.5
+#define FILAMENT_NYQUIST_HALF_WIDTH 0.5
 #define FILAMENT_GAIN             12.0
 
 // --- Continuous-arc filament gate feathers (neon.frag).
@@ -80,21 +121,34 @@
 //     brightness, both tracked the rect size, and glowRadius did nothing at
 //     all until it exceeded the floor (~56 px on a 1920x1080 rect, i.e. most
 //     of its usable range). An analytic profile cannot bead at any radius, so
-//     no floor is needed and glowRadius sets the width directly. ---
-//     KNOWN LIMITATION - interior medial-axis creases. Both terms are closed
-//     forms of ad = abs(SDF distance). Inside the shape the rounded-box SDF's
-//     GRADIENT is discontinuous along the medial axis (the diagonals running in
-//     from each corner, plus the central spine), so halo and bloom inherit a C1
-//     crease there and the interior glow reads as a mitred picture frame. The
-//     gather this replaced summed over perimeter samples and was smooth; a
-//     nearest-distance profile cannot be. Subtle at the default glowRadius 5,
-//     unmistakable at 30 and above.
+//     no floor is needed and glowRadius sets the width directly.
 //
-//     Accepted, not overlooked: the trade bought geometry-independent glow
-//     width, no beading at any radius, and no sample-spacing floor, which is
-//     the whole reason the analytic form exists. Softening ad near the axis
-//     would need a second distance field, and blending the two would put the
-//     rect-size dependence straight back. See docs/review-findings.md V4. ---
+//     Those two limits are of an INFINITE emitter, and evaluating one of them
+//     at ad = the nearest-edge distance is what used to produce the interior
+//     medial-axis creases - the dark wedges running in from each corner, plus
+//     the central spine. A fragment on a corner diagonal has two edges equally
+//     near and was lit by exactly one of them: measured against a fragment with
+//     a single edge at the same distance, the ratio was 1.000 at every distance
+//     tested, where physics says roughly 2.
+//
+//     neon.frag now sums the FINITE-SEGMENT form of the same two integrals over
+//     the four straight edges instead (haloSegment / bloomSegment). Integrating
+//     the same kernels from t1 to t2 along a segment at perpendicular distance
+//     a gives elementary antiderivatives, and as t1 -> -inf, t2 -> +inf each one
+//     reduces to exactly the limit above - so this is a strict generalisation
+//     and the NORM factors keep the calibration they already had. The corner
+//     sweep went from a V kinked at exactly 45 degrees (21 levels deep at
+//     r = 160) to a smooth basin of 12, which is genuine falloff rather than a
+//     crease, and mid-edge brightness moved by 2/255 as the far edges started
+//     contributing their (small) real share. Cost is ~1.06-1.10x of the neon
+//     frame; the gather loop is still the overwhelming majority of it.
+//
+//     The four segments run to the SHARP corner - the quarter-arc emitter above
+//     cornerRadius 0 has no elementary closed form and is omitted, with the
+//     over-extension of the straights past the tangent point roughly standing
+//     in for it. Exact at cornerRadius 0. See
+//     docs/corner-crease-and-filament-nyquist.md section 1 and
+//     docs/review-findings.md V4. ---
 #define HALO_GAIN                 0.90
 #define HALO_NORM_FACTOR          0.43
 

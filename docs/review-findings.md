@@ -34,7 +34,7 @@ old fork survived.
 
 | | fixed | open |
 | - | ----- | ---- |
-| visual | V1, V2, V3, V6, V7 | V4, V5 (both closed as documented limitations) |
+| visual | V1, V2, V3, V4, V6, V7 | V5 (closed as a documented limitation) |
 | implementation | I1, I3, I4, I6, I7 | I2 (declined), I5 (documented), I8 (audited) |
 | second pass | R1, R2, R3, R4, R5, R6 | R7 |
 | third pass | V8, I9, I10, I11, I12 (partly) | V9, I12's two stale design docs |
@@ -282,7 +282,7 @@ Verified: the frame after 0.6 s of rotation is now bit-identical to the frame
 at t = 0 - the arc's own gradient is stationary. Base vs optimized agreement
 unchanged (mean |diff| 0.161, max 7).
 
-### V4. The interior glow has visible medial-axis creases - DOCUMENTED, NOT FIXED
+### V4. The interior glow has visible medial-axis creases - FIXED
 
 **Confirmed.** `glowRadius` 60, `bloomStrength` 1.0.
 
@@ -304,12 +304,48 @@ radius, no sample-spacing floor - is worth keeping, and softening `ad` near the
 axis would need a second distance field whose blend would reintroduce exactly
 the rect-size dependence the analytic form removed.
 
-**Left as-is, but no longer undocumented**: the halo block in
-[`neon-tuning.h`](../lib/include/renderer/neon-tuning.h) now carries a KNOWN
-LIMITATION note naming the artifact, where it happens, at what `glowRadius` it
-becomes visible, and why it is accepted. The next person to look at a creased
-interior will find the answer next to the constants rather than rediscovering
-it.
+**That last sentence is what kept this open, and it was answering the wrong
+question.** `ad` never needed softening. The defect is that ONE term was being
+evaluated where FOUR belong: both expressions are the field of an *infinite*
+line, so a fragment on a corner diagonal with two edges equally near was lit by
+exactly one of them. Measured on a flat white ring against a fragment with a
+single edge at the same distance, the ratio was **1.000 at every distance
+tested** - two edges delivering the light of one, where physics says roughly
+two. No second distance field is involved in seeing that, or in fixing it.
+
+**Fixed** in [`neon.frag`](../lib/shaders/neon.frag) by replacing each
+infinite-line term with the **finite-segment** form of the same integral,
+summed over the four straight edges (`haloSegment` / `bloomSegment`). Both have
+elementary antiderivatives and both reduce to exactly the old expressions as the
+segment goes to infinity, so this is a strict generalisation: `HALO_NORM_FACTOR`
+and `BLOOM_NORM_FACTOR` keep their calibration and the peak on a long edge does
+not move.
+
+| | before | after |
+| --- | ------ | ----- |
+| corner sweep at r=160, 0 / 45 / 90 deg | 192 / **177** / 192 | 201 / **190** / 202 |
+| equal-`ad` ratio, one edge vs two | 1.000 | 1.011 - 1.021 |
+| neon frame cost, 1280x720 | 1.67 ms | 1.88 ms (**1.13x**) |
+
+The kinked V at exactly 45 degrees is now a smooth basin, and what remains of
+it is genuine falloff - that point really is eight times further from the
+nearest edge than the sample beside it.
+
+Two things the fix does not do, both recorded at the call site:
+
+- The four segments run to the **sharp** corner. The quarter-arc emitter above
+  `cornerRadius` 0 has no elementary closed form and is omitted; the
+  over-extension of the straights past the tangent point roughly stands in for
+  it. Exact at `cornerRadius` 0.
+- A **small rect now glows less**, which is the point of the change rather than
+  a side effect of it: an edge shorter than a few multiples of `bw` subtends
+  less than the infinite line the old form assumed. Measured at the default
+  `glowRadius` 5, 30 px off the middle of the top edge: 20 px wide rect 62 ->
+  35, 40 px 67 -> 54, 80 px 72 -> 71, 320 px and above within 2/255. The old
+  behaviour gave a 20 px rect 87% of the glow of a 1200 px one.
+
+Full measurements and the probes in
+[`corner-crease-and-filament-nyquist.md`](corner-crease-and-filament-nyquist.md).
 
 ### V5. An arc's lit span is inset, but its colour is not - MOSTLY RESOLVED BY V2
 
@@ -1985,7 +2021,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 
 | item | state | why |
 | ---- | ----- | --- |
-| V4 | documented limitation | closing it needs a second distance field, which reintroduces the rect-size dependence the analytic profile removed |
+| V4 | fixed | the premise was wrong: `ad` never needed softening, one infinite-line term was being evaluated where four finite-segment ones belong |
 | V5 | residual, documented | closing it means plumbing pixel-space feathers into the pre-pass for an effect nobody has reported; read V9 alongside it, which measures the other half of the same mechanism |
 | I2 | declined | negligible measured-by-structure win against a real staleness-bug risk |
 | I5 | documented | the alternative is a breaking renderer-API change for an unmeasured cost |

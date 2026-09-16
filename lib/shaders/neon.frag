@@ -157,6 +157,45 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
     return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
 }
 
+// --- Finite-segment halo / bloom ---------------------------------------
+// The halo and bloom kernels integrated along a STRAIGHT SEGMENT rather than
+// an infinite line: `a` is the perpendicular distance from the fragment to the
+// segment's line, and t1/t2 are the segment's endpoints measured along it from
+// the fragment's foot of perpendicular. Both integrands have elementary
+// antiderivatives, and as t1 -> -inf, t2 -> +inf these reduce to exactly
+// 2k^2/(a^2+k^2) and PI*k/sqrt(a^2+k^2) - the infinite-line limits the
+// HALO_NORM_FACTOR / BLOOM_NORM_FACTOR calibration was set against. Summing
+// them over the rect's four edges is therefore a strict generalisation of the
+// single nearest-edge term this replaced, not a retune.
+//
+// This is what removes the interior medial-axis creases: a fragment on a
+// corner diagonal has two edges equally near, and a nearest-distance profile
+// counted one of them. See neon-tuning.h's halo block.
+float haloSegment(float a, float t1, float t2, float k) {
+    float c2 = a * a + k * k;
+    return k * k / c2 * (t2 / sqrt(c2 + t2 * t2) - t1 / sqrt(c2 + t1 * t1));
+}
+float bloomSegment(float a, float t1, float t2, float k) {
+    float c = sqrt(a * a + k * k);
+    return k / c * (atan(t2 / c) - atan(t1 / c));
+}
+
+// The bloom's 1/a tail is heavy enough that it has to be pedestal-subtracted to
+// reach zero at the draw quad's edge (see the block that calls this). Each edge
+// carries its OWN pedestal - the same segment evaluated at `reach` - so that
+// edge's contribution lands on zero at `reach` from it, whatever the other
+// three are doing.
+//
+// One shared pedestal taken from the infinite-line form does not work here,
+// which is what the nearest-edge version this replaced used. A finite segment
+// is always dimmer than the infinite line it is cut from, so that pedestal
+// over-subtracts and clamps the sum to zero early: measured at glowRadius 5,
+// the exterior tail ended 300 px out instead of running the full 420+ to the
+// quad edge.
+float bloomSegmentPedestalled(float a, float t1, float t2, float k, float reach) {
+    return max(bloomSegment(a, t1, t2, k) - bloomSegment(reach, t1, t2, k), 0.0);
+}
+
 // --- Band boundary distances -------------------------------------------
 // The band's two boundaries, expressed as signed distances: dIn >= 0 means
 // "past the inside cutoff", dOut <= 0 means "within the outside cutoff".
@@ -504,7 +543,27 @@ void main() {
     // driven pathologically close to zero.
     float minHalf   = FILAMENT_MIN_HALF_WIDTH * uResolutionScale;
     float halfWidth = uLineWidth * 0.5;
-    float sigma     = max(halfWidth, max(minHalf, 1e-3));
+    // Two floors, and they are in different spaces on purpose.
+    //
+    // minHalf is the STATED-width floor, converted like every other full-res
+    // constant here; it is what pairs with lineGate below to make lineWidth 0
+    // mean "no line". FILAMENT_NYQUIST_HALF_WIDTH is the SAMPLING floor and is
+    // in BUFFER px, so it is NOT converted: it exists because below
+    // resolutionScale 1.0 this shader rasterises into a reduced buffer that
+    // neon-blit.frag then bilinearly upsamples, and a filament narrower than
+    // that buffer can sample does not survive the round trip - its peak lands
+    // wherever the rect edge happens to fall between buffer texel centres.
+    //
+    // Converting this one as well is what made a 1 px line at scale 0.5 look
+    // wrong: sigma floored at 0.25 buffer px, and the line's peak swung with
+    // the rect's sub-pixel position against a 1.0 reference that does not move.
+    //
+    // No-op at scale 1.0, where minHalf already supplies the same 0.5, so the
+    // direct path is bit-identical. Deliberately not paired with an amplitude
+    // compensation - see neon-tuning.h for why conserving the line's integral
+    // makes it worse rather than better through the grade at the bottom of
+    // this file.
+    float sigma     = max(max(halfWidth, max(minHalf, 1e-3)), FILAMENT_NYQUIST_HALF_WIDTH);
     float N         = 2.0 * max(uFilamentFalloff, 1e-3);
     float core      = exp2(-pow(ad / sigma, N));
 
@@ -811,52 +870,90 @@ void main() {
     float filamentGate = max(smoothstep(0.5, 1.0, min(segCoverPt, 1.0)), emitCover);
 
     // --- Analytic halo + bloom --------------------------------------------
-    // Closed form of the sums this shader used to run over the perimeter
-    // samples. For a locally straight emitter of unit density:
+    // Closed forms of the sums this shader used to run over the perimeter
+    // samples, evaluated as a SUM OVER THE FOUR STRAIGHT EDGES - each as a
+    // FINITE segment - rather than once at the nearest-edge distance.
     //
-    //   sum g*sqrt(g) * spacing*kh^2*HALO_NORM  -> HALO_NORM  * 2*kh^2/(ad^2 + kh^2)
-    //   sum 1/(dd+bw^2) * spacing*bw*BLOOM_NORM -> BLOOM_NORM * PI*bw/sqrt(ad^2 + bw^2)
+    // Analytic rather than gathered, because a closed form cannot bead however
+    // far apart the loop samples are, so it needs no sample-spacing floor and
+    // glowRadius sets the width directly at any rect size. That property is
+    // untouched by the four-edge form: kh and bw still set the profile width.
     //
-    // Peak values at ad = 0 are identical to the gather's (0.86 and 1.005), so
-    // the NORM factors keep their calibration. Both are pure functions of the
-    // SDF distance, so neither can bead and neither carries any dependence on
-    // the sample spacing - which is what frees glowRadius to set the width
-    // directly at any rect size.
+    // Four terms rather than one, because a single term at the nearest distance
+    // is the field of an INFINITE line, and it buys two things:
     //
-    // Known difference from the gather: on the concave side of a corner the
-    // sum picked up both incident edges, so corners ran hotter (measured ~40%
-    // at 25 px inside a 40 px corner with glowRadius 25). A nearest-distance
-    // profile cannot reproduce that; the gap closes as glowRadius shrinks
-    // relative to cornerRadius and is nil at cornerRadius 0.
-    float halo  = HALO_NORM_FACTOR  * 2.0 * kh * kh / (ad * ad + kh * kh);
-    float bloom = BLOOM_NORM_FACTOR * PI * bw / sqrt(ad * ad + bw * bw);
+    //   - No interior medial-axis creases. A fragment on a corner diagonal has
+    //     two edges equally near; the nearest-distance form lit it from one,
+    //     which is where the dark diagonal wedges came from.
+    //   - The corner behaviour of the gather this replaced, which summed over
+    //     perimeter samples and so picked up both incident edges at a corner.
+    //
+    // haloSegment / bloomSegment reduce to the old infinite-line expressions in
+    // the limit, so HALO_NORM_FACTOR / BLOOM_NORM_FACTOR keep the calibration
+    // they were tuned to and the peak on a long edge is unmoved.
+    //
+    // What DOES move is a small rect: an edge shorter than a few multiples of
+    // bw subtends less than the infinite line the old form assumed, so its
+    // bloom is now dimmer - correctly, since a short tube emits less light.
+    // Below about 100 px wide at the default glowRadius; at 320 px and up the
+    // difference is under 2/255. See docs/corner-crease-and-filament-nyquist.md.
+    //
+    // Per edge: the perpendicular distance is the per-axis offset, and the
+    // segment runs the full extent of the opposite axis, relative to this
+    // fragment's foot of perpendicular. The corner arcs above cornerRadius 0
+    // are not modelled - see neon-tuning.h.
+    float aLeft  = abs(vPos.x + halfSize.x);
+    float aRight = abs(vPos.x - halfSize.x);
+    float aTop   = abs(vPos.y + halfSize.y);
+    float aBot   = abs(vPos.y - halfSize.y);
+    float tv1    = -halfSize.y - vPos.y;
+    float tv2    =  halfSize.y - vPos.y;
+    float th1    = -halfSize.x - vPos.x;
+    float th2    =  halfSize.x - vPos.x;
 
-    // Pedestal-subtract the bloom so it reaches exactly zero at the draw
-    // quad's edge. The 1/ad tail is heavy - at the quad edge it is still ~10%
-    // of peak - so without this the quad has to be enormous, or the emission
-    // gets visibly chopped. `reach` recomputes the CPU's uncapped quad-sizing
-    // formula (see setupGeometry): a pure function of glowRadius, bloomStrength
-    // and intensity, so the pedestal is size-invariant even where the outside
-    // cutoff clamps the actual quad smaller - that path is masked by the cutoff
-    // smoothstep anyway, and feeding it the clamped margin here would subtract
-    // a huge pedestal and dim the whole band.
-    //
-    // Renormalised by peak/(peak - pedestal) so the value at ad = 0 is
-    // unchanged and BLOOM_NORM_FACTOR keeps its calibration; the tail is
+    float halo  = HALO_NORM_FACTOR * (haloSegment(aLeft,  tv1, tv2, kh) +
+                                      haloSegment(aRight, tv1, tv2, kh) +
+                                      haloSegment(aTop,   th1, th2, kh) +
+                                      haloSegment(aBot,   th1, th2, kh));
+
+    // Distance at which the emission has to be gone: the CPU's uncapped
+    // quad-sizing formula, recomputed here (see setupGeometry). A pure function
+    // of glowRadius, bloomStrength and intensity, so the pedestal below is
+    // size-invariant even where the outside cutoff clamps the actual quad
+    // smaller - that path is masked by the cutoff smoothstep anyway, and
+    // feeding it the clamped margin would subtract a huge pedestal and dim the
+    // whole band. `sigma` is the filament half-width from the block above, so
+    // the second term is the same filament-reach floor setupGeometry applies -
+    // without it the two disagree at small glowRadius, and `reach` hits 0 at
+    // glowRadius 0, making the pedestal subtract the entire bloom.
+    float reach = max(uGlowRadius * GLOW_REACH_RADIUS_FACTOR *
+                      (1.0 + uBloomStrength * uIntensity),
+                      sigma * reachSigmas);
+
+    float bloom = BLOOM_NORM_FACTOR * (bloomSegmentPedestalled(aLeft,  tv1, tv2, bw, reach) +
+                                       bloomSegmentPedestalled(aRight, tv1, tv2, bw, reach) +
+                                       bloomSegmentPedestalled(aTop,   th1, th2, bw, reach) +
+                                       bloomSegmentPedestalled(aBot,   th1, th2, bw, reach));
+
+    // The pedestal itself is applied per-edge inside the sum above - see
+    // bloomSegmentPedestalled for why it cannot be one shared subtraction any
+    // more. What is left here is the RENORMALISATION: scale the pedestalled
+    // sum back up by peak/(peak - pedestal) so the value on the line is
+    // unchanged and BLOOM_NORM_FACTOR keeps its calibration, with the tail
     // slightly compressed in exchange for going cleanly to zero.
     //
-    // The halo needs no pedestal: it falls as 1/ad^2, so at the same distance
-    // it is ~2e-4 of peak - already invisible.
-    // `sigma` is the filament half-width from the block above, so the second
-    // term is the same filament-reach floor setupGeometry applies - without it
-    // the two disagree at small glowRadius (and `reach` hits 0 at glowRadius 0,
-    // making the pedestal subtract the entire bloom).
-    float reach     = max(uGlowRadius * GLOW_REACH_RADIUS_FACTOR *
-                          (1.0 + uBloomStrength * uIntensity),
-                          sigma * reachSigmas);
+    // The gain still uses the infinite-line pedestal. On the line the nearest
+    // edge is the whole of the sum to within a few percent, and its own
+    // pedestal differs from this one only by how much of that edge is cut off -
+    // a few percent again, against a tuning constant. Deriving it from the
+    // near edge's own extents would mean branching to find which edge that is,
+    // on the one term where it would buy nothing visible.
+    //
+    // The halo needs no pedestal at all: it falls as 1/a^2, so at `reach` it is
+    // ~2e-4 of peak - already invisible.
     float bloomPeak = BLOOM_NORM_FACTOR * PI;
     float bloomPed  = BLOOM_NORM_FACTOR * PI * bw / sqrt(reach * reach + bw * bw);
-    bloom = max(bloom - bloomPed, 0.0) * (bloomPeak / max(bloomPeak - bloomPed, 1e-6));
+    bloom = bloom * (bloomPeak / max(bloomPeak - bloomPed, 1e-6));
 
     // glowRadius == 0 must read as "filament only", but an analytic profile at
     // radius 0 is a sub-pixel spike of FULL height rather than nothing, so
