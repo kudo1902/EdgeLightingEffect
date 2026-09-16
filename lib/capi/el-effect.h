@@ -850,6 +850,45 @@ extern "C"
     EL_API el_result_e el_effect_render(el_effect_handle_t effect,
                                         int32_t viewportWidth, int32_t viewportHeight);
 
+    /** @brief Log a full GL diagnostic for the next @p frames renders.
+     *  @details For a layer that draws correctly in a desktop build and is
+     *           simply absent on device, where there is no GL debugger to
+     *           attach and the log is the only channel out. Each armed
+     *           @ref el_effect_render emits, in order:
+     *
+     *           - the host's pipeline state on entry: cull face and winding,
+     *             depth, stencil, scissor, blend factors and equation, colour
+     *             mask, rasterizer discard, viewport. This is what catches
+     *             state another GL client in the same context left behind,
+     *             which is the usual cause on an embedded surface view where a
+     *             video pipeline or web engine shares the context;
+     *           - the bound draw framebuffer, its completeness, and whether it
+     *             has an alpha channel;
+     *           - per renderer: any GL error it raised, plus an occlusion query
+     *             reporting whether it rasterised any fragment at all;
+     *           - a pixel readback at each enabled lamp position.
+     *
+     *           Those last two are what make the dump conclusive. A missing
+     *           layer with a ZERO sample count was stopped before
+     *           rasterisation, and the state block says by what. A non-zero
+     *           count with a black readback means it drew into something other
+     *           than the presented target. A non-zero count with a COLOURED
+     *           readback means the library put the pixels in the framebuffer
+     *           and the loss is downstream of it - a window system composite,
+     *           an overlay plane, or a surface whose alpha is being read as
+     *           coverage (the readback line flags that case explicitly).
+     *
+     *           Output goes through the library's own logging, so a host that
+     *           needs it in dlogutil must have that routed already.
+     *
+     *  @param frames Number of subsequent renders to dump. Pass 1; pass 0 to
+     *                disarm early. NOT for continuous use - every part of the
+     *                dump is a pipeline stall (the query blocks on its result,
+     *                the readback on the driver), so an armed frame is far
+     *                slower than a normal one. It disarms itself after the
+     *                requested count either way. */
+    EL_API el_result_e el_effect_diagnose(el_effect_handle_t effect, uint32_t frames);
+
     /** @} */
 
     /** @name Clock control

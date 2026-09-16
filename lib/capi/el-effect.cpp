@@ -2162,6 +2162,22 @@ extern "C"
         }
     }
 
+    el_result_e el_effect_diagnose(el_effect_handle_t effect, uint32_t frames)
+    {
+        LOG_I("effect=%p, frames=%u", (void *)effect, frames);
+        VALIDATE_EFFECT_PTR(effect, "el_effect_diagnose");
+        try
+        {
+            effect->impl->Diagnose(frames);
+            return EL_SUCCESS;
+        }
+        catch (const std::exception &e)
+        {
+            LOG_E("exception: %s", e.what());
+            return mapExceptionToResult(e);
+        }
+    }
+
     el_result_e el_effect_clock_play(el_effect_handle_t effect)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_clock_play");

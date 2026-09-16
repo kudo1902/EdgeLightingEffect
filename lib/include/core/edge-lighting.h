@@ -67,6 +67,39 @@ namespace EdgeLighting
         /// @param viewportHeight Current framebuffer height in pixels.
         void Render(int viewportWidth, int viewportHeight);
 
+        /// @brief Log a full GL diagnostic for the next @p frames renders.
+        ///
+        /// For the case this library cannot debug any other way: a layer that
+        /// renders correctly on a desktop demo and is simply absent on a
+        /// device, where there is no GL debugger to attach and the only channel
+        /// out is the log. One armed frame produces, in order:
+        ///
+        ///   - the host's pipeline state on entry (cull, depth, stencil,
+        ///     scissor, blend, colour mask, rasterizer discard, viewport), so
+        ///     a state the host or another GL client in the same context left
+        ///     behind is visible rather than inferred;
+        ///   - what is bound for drawing and whether it carries alpha;
+        ///   - per renderer: any GL error it raised, and an occlusion query
+        ///     saying whether it rasterised ANY fragment at all;
+        ///   - a pixel readback at each enabled lamp, which is what separates
+        ///     "the light never got drawn" from "the light was drawn and the
+        ///     window system composite dropped it".
+        ///
+        /// Read the three together. A layer that is missing on screen with a
+        /// zero sample count was stopped before rasterisation, and the state
+        /// dump says by what. A non-zero count with a black probe means it went
+        /// somewhere other than the target. A non-zero count with a coloured
+        /// probe means this library did its job and the loss is downstream of
+        /// it entirely.
+        ///
+        /// NOT FOR CONTINUOUS USE. Every part of it is a pipeline stall: the
+        /// query blocks on its result and the probe blocks on a readback. Arm
+        /// it for a frame or two around the moment the bug appears.
+        ///
+        /// @param frames How many subsequent @ref Render calls to dump. 0
+        ///               disarms an armed dump; 1 is the useful value.
+        void Diagnose(unsigned int frames);
+
         /// @brief Replace the base configuration and notify all renderers.
         ///
         /// Writes the BASE config, then recomposes and notifies through the
@@ -119,6 +152,10 @@ namespace EdgeLighting
     private:
         void refreshActiveConfig();
 
+        /// @ref Render's instrumented twin, taken when @ref Diagnose has armed
+        /// a dump. Separate so the ordinary path stays one branch and one loop.
+        void renderDiagnosed(int viewportWidth, int viewportHeight, float time);
+
     private:
         Config mBaseConfig;   ///< Authored config - what SetConfig sets.
         Config mActiveConfig; ///< Base + animation overlays - forwarded to renderers.
@@ -152,6 +189,10 @@ namespace EdgeLighting
         /// a newly registered renderer still has an Initialize coming or has
         /// missed it and must be initialised immediately.
         bool mInitialized = false;
+        /// Renders still to be dumped; see @ref Diagnose. Counts down in
+        /// @ref Render, so an armed dump expires on its own and a host that
+        /// forgets to disarm does not leave a stall on the frame path.
+        unsigned int mDiagnoseFrames = 0;
     };
 
 } // namespace EdgeLighting

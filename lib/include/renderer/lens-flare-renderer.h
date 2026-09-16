@@ -39,6 +39,7 @@ namespace EdgeLighting
         virtual void Update(float deltaTime, float time, const Config &config) override;
         virtual void Render(int viewportWidth, int viewportHeight, float time, const Config &config) override;
         virtual void OnConfigChanged(const Config &config) override;
+        virtual const char *GetName() const override { return "LensFlareRenderer"; }
 
     private:
         bool setupShaders();

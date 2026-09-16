@@ -58,6 +58,13 @@ namespace EdgeLighting
         /// Called when the configuration changes (e.g. on key press).
         /// @param config  The new configuration to adapt to.
         virtual void OnConfigChanged(const Config &config) = 0;
+
+        /// Short label for this layer, used only in diagnostic logs.
+        ///
+        /// Defaulted rather than pure so an existing or host-written renderer
+        /// keeps compiling; a renderer that does not override it just shows up
+        /// by its index in a dump. See @c EdgeLightingEffect::Diagnose.
+        virtual const char *GetName() const { return "renderer"; }
     };
 
 } // namespace EdgeLighting

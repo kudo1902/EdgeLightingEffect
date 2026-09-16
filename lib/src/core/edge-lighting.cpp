@@ -2,7 +2,9 @@
 #include "animation/animation-manager.h"
 #include "util/log-util.h"
 #include "util/gl-utils.h"
+#include "util/gl-diagnostics.h"
 #include <utility> // std::swap - refreshActiveConfig swaps the composite scratch
+#include <string>  // std::to_string - diagnostic probe labels
 
 namespace EdgeLighting
 {
@@ -79,10 +81,97 @@ namespace EdgeLighting
         GLUtils::NoCullScope noCull;
 
         float t = mClock.GetTime();
-        for (auto &renderer : mRenderers)
+
+        // Fast path: one branch, and nothing below it runs. Everything the
+        // armed path does is a pipeline stall, so it must not be reachable by
+        // accident. See Diagnose.
+        if (mDiagnoseFrames == 0)
         {
-            renderer->Render(viewportWidth, viewportHeight, t, mActiveConfig);
+            for (auto &renderer : mRenderers)
+            {
+                renderer->Render(viewportWidth, viewportHeight, t, mActiveConfig);
+            }
+            return;
         }
+
+        mDiagnoseFrames--;
+        renderDiagnosed(viewportWidth, viewportHeight, t);
+    }
+
+    void EdgeLightingEffect::Diagnose(unsigned int frames)
+    {
+        mDiagnoseFrames = frames;
+        LOG_E("[diag] armed for %u frame(s)", frames);
+    }
+
+    void EdgeLightingEffect::renderDiagnosed(int viewportWidth, int viewportHeight, float time)
+    {
+        // BEFORE anything of ours draws, and before the error drain below, so
+        // what is reported is the state this library was HANDED. That is the
+        // whole point: on a shared surface view the interesting state is the
+        // state somebody else left behind.
+        //
+        // NOTE the cull line will read "off" even on a host that had culling
+        // on, because Render's NoCullScope has already neutralised it by the
+        // time we get here. That is deliberate - it reports the state the
+        // renderers actually see. What the HOST set is in the scope's own
+        // restore, so compare this against a dump taken outside the library if
+        // that distinction matters.
+        LOG_E("[diag] ---- frame begin: %dx%d, %zu renderer(s) ----",
+              viewportWidth, viewportHeight, mRenderers.size());
+        GLDiagnostics::DumpPipelineState("host-state");
+        GLDiagnostics::DumpDrawTarget("host-target");
+
+        // Whatever is already queued belongs to the caller, not to us. Drained
+        // here so the per-renderer checks below cannot inherit it and report
+        // the wrong culprit.
+        GLDiagnostics::DrainErrors("pre-existing");
+
+        for (size_t i = 0; i < mRenderers.size(); i++)
+        {
+            auto &renderer = mRenderers[i];
+            const char *name = renderer->GetName();
+
+            GLDiagnostics::SampleCounter counter(true);
+            renderer->Render(viewportWidth, viewportHeight, time, mActiveConfig);
+            counter.End(name);
+            GLDiagnostics::DrainErrors(name);
+        }
+
+        // AFTER every layer, so the probe sees the composited result the host
+        // is about to present rather than an intermediate one.
+        //
+        // The lamps are what this exists for: the spotlight is the library's
+        // one purely additive layer, so it is the one whose pixels can be
+        // present in the framebuffer and still be discarded by a composite
+        // that reads alpha as coverage. Probing AT the lamp position catches
+        // the aperture bloom, which is the brightest thing that layer draws.
+        if (mActiveConfig.spotlight.enable)
+        {
+            for (size_t i = 0; i < mActiveConfig.spotlight.lights.size(); i++)
+            {
+                const SpotLight &lamp = mActiveConfig.spotlight.lights[i];
+                if (!lamp.enable || lamp.intensity <= 0.0f)
+                {
+                    continue;
+                }
+                const std::string label = "lamp" + std::to_string(i);
+                GLDiagnostics::ProbePixel(label.c_str(),
+                                          static_cast<int>(lamp.position.x),
+                                          static_cast<int>(lamp.position.y),
+                                          viewportHeight);
+            }
+        }
+        else
+        {
+            LOG_E("[diag] spotlight layer is DISABLED in the active config - "
+                  "nothing to probe");
+        }
+
+        // The state we are handing back, which is what the next thing to draw
+        // into this context inherits from us.
+        GLDiagnostics::DumpDrawTarget("exit-target");
+        LOG_E("[diag] ---- frame end ----");
     }
 
     void EdgeLightingEffect::SetConfig(const Config &config)
