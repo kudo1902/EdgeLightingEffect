@@ -457,11 +457,41 @@ namespace EdgeLighting
                                          static_cast<float>(viewportHeight), 0.0f,
                                          -1.0f, 1.0f);
 
-        // Premultiplied "over" with alpha 0 throughout, which is pure
-        // addition: light only ever adds. Also order-independent, so the lamp
-        // order in the config cannot change the image.
+        // FULLY ADDITIVE, colour and alpha alike, and the only separate-alpha
+        // blend in the library. Both halves are deliberate.
+        //
+        // COLOUR is GL_ONE / GL_ONE because light only ever adds - which also
+        // makes the pass order-independent, so the lamp order in the config
+        // cannot change the image. That is unchanged behaviour: this used to
+        // be GL_ONE / GL_ONE_MINUS_SRC_ALPHA against a shader that emitted a
+        // literal alpha 0, and 1 - 0 is 1, so the destination factor was
+        // always exactly GL_ONE anyway. Writing it out is what lets
+        // spotlight.frag start emitting a real alpha without the colour
+        // channel quietly acquiring an occlusion term the other layers have
+        // and this one should not.
+        //
+        // ALPHA is GL_ONE / GL_ONE because the framebuffer's alpha has to end
+        // up saying "there is light here". It did not before. Every other
+        // layer writes a coverage alpha; the spotlight wrote 0 and so left the
+        // surface transparent wherever it was the only thing that drew. On a
+        // desktop window that is invisible - the window is opaque and nobody
+        // reads the alpha back. On an embedded surface it is fatal: a
+        // compositor or hardware video plane finishes the frame with
+        // `out = ui.rgb * ui.a + video * (1 - ui.a)`, and every lit spotlight
+        // pixel is multiplied by zero. That is the Tizen report - the layer
+        // missing over a playing video while neon, droplets and the flare
+        // (all of which write coverage) came through.
+        //
+        // Measured offscreen at 640x360 over a transparent clear, before the
+        // fix: one lamp lit 72,615 pixels of colour and 0 pixels of alpha, and
+        // composited to nothing at all.
+        //
+        // Accumulating the alpha rather than compositing it keeps the
+        // order-independence the colour has: N lamps overlapping sum their
+        // coverage and saturate at the framebuffer, whatever order they are
+        // in.
         glEnable(GL_BLEND);
-        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        glBlendFuncSeparate(GL_ONE, GL_ONE, GL_ONE, GL_ONE);
 
         mShaderProgram.Use();
 
@@ -489,9 +519,14 @@ namespace EdgeLighting
             noScissor.Restore();
 
             // Back to the caller's target and viewport, both at once, then
-            // composite. The buffer holds premultiplied colour with alpha 0
-            // throughout - light only adds - so this blit is a plain bilinear
-            // read added onto whatever is already there.
+            // composite. The buffer holds premultiplied colour and the
+            // accumulated coverage alpha, and the blend above is still in
+            // force, so this blit is a plain bilinear read ADDED onto whatever
+            // is already there - colour and alpha alike. That is what carries
+            // the coverage through to the caller's framebuffer, which is the
+            // whole point of writing it; a blit under the old
+            // GL_ONE_MINUS_SRC_ALPHA would instead have let the buffer's new
+            // alpha eat the destination it is supposed to be adding to.
             //
             // One behavioural note the direct path does not have: overlapping
             // lamps sum into an RGBA8 buffer and clamp THERE before reaching
@@ -510,6 +545,9 @@ namespace EdgeLighting
         }
 
         // Restore the blend state convention the other renderers leave behind.
+        // glBlendFunc sets the RGB and alpha factors to the same pair, so it
+        // also undoes the glBlendFuncSeparate above - nothing downstream
+        // inherits this pass's split.
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     }
 

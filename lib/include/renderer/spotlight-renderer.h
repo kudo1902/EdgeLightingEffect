@@ -23,6 +23,13 @@ namespace EdgeLighting
     /// spotlight.frag, evaluated over the smallest geometry that can contain
     /// it.
     ///
+    /// Light only, but NOT alpha-free: the pass is additive in the alpha
+    /// channel as well as in colour, so the framebuffer ends up recording
+    /// where light was written. It used to emit a literal alpha 0, which costs
+    /// nothing on an opaque desktop window and erases the entire layer on an
+    /// embedded surface a compositor or hardware video plane blends by alpha.
+    /// See @ref Render for the blend and the measurement.
+    ///
     /// **One renderer, two resolution paths**, selected by
     /// @c SpotlightConfig::resolutionScale: at 1.0 the strips draw straight
     /// onto the framebuffer this renderer was handed (no offscreen buffer, no

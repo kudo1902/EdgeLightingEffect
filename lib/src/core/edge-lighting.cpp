@@ -78,6 +78,20 @@ namespace EdgeLighting
         // had culling on for its own geometry finds it on again afterwards.
         GLUtils::NoCullScope noCull;
 
+        // The rest of the state this fan-out cannot draw correctly without and
+        // never sets for itself: a full colour+alpha write mask, GL_FUNC_ADD,
+        // and no depth test or depth write. Same argument as the cull scope
+        // above, same shared-context hazard, same once-per-frame placement.
+        //
+        // The alpha half is the load-bearing one. Every layer here writes a
+        // coverage alpha, and on an embedded surface that alpha is what
+        // decides whether the pixel is seen at all - the compositor or the
+        // hardware video plane finishes the frame with it. A host that left
+        // alpha writes masked off makes all of that a silent no-op: the colour
+        // lands, the alpha keeps whatever was already in the buffer, and the
+        // layer is invisible over video with nothing in the log to say why.
+        GLUtils::CompositeStateScope compositeState;
+
         float t = mClock.GetTime();
         for (auto &renderer : mRenderers)
         {

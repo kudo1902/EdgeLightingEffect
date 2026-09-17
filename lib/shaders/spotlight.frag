@@ -36,8 +36,23 @@ precision highp float;
 // lamp's frame. That is why the y-flip in Render is free, and why the
 // sub-viewport caveat in BaseRenderer's doc comment does not apply here.
 //
-// Output is premultiplied with alpha 0, so under the house
-// GL_ONE / GL_ONE_MINUS_SRC_ALPHA blend it is pure addition. Light only adds.
+// Output is premultiplied colour plus a COVERAGE ALPHA, the same
+// max-of-channels rule neon.frag and lens-flare.frag use. The renderer pairs
+// it with a separate-alpha blend (GL_ONE / GL_ONE on both channels), so the
+// colour is still pure addition - light only adds, and lamp order still cannot
+// change the image - while the alpha channel accumulates a record of where
+// light was written.
+//
+// That alpha is NOT decoration and this shader is the reason the whole layer
+// once vanished on a device. Every other layer here writes a coverage alpha;
+// this one wrote a literal 0.0, which is invisible on a desktop demo (the
+// window is opaque, so nothing ever reads the framebuffer's alpha back) and
+// fatal on an embedded surface that a compositor or hardware video plane
+// blends: `out = ui.rgb * ui.a + video * (1 - ui.a)` multiplies every lit
+// spotlight pixel by zero. Measured offscreen at 640x360 over a transparent
+// clear, a single lamp lit 72,615 pixels of colour and exactly 0 pixels of
+// alpha, and composited to nothing at all over a background. See
+// SpotlightRenderer::Render.
 
 in vec2 vLocal;      ///< (along, across) px in this lamp's frame.
 flat in vec4 vP0;    ///< tanHalfBeam, throwLength, softK, intensity.
@@ -68,5 +83,12 @@ void main() {
     float bloom = vP1.y * r2 / (d2 + r2);
     bloom *= 1.0 - smoothstep(sup * SPOT_BLOOM_WINDOW_INNER, sup, sqrt(d2));
 
-    fragColor = vec4(vColor * vP0.w * (cone + bloom), 0.0);
+    vec3 lit = vColor * vP0.w * (cone + bloom);
+
+    // Coverage = brightest channel, exactly as in neon.frag and
+    // lens-flare.frag: a bright aperture core reads as solid to whatever
+    // composites this surface, the dim spill stays as good as additive, and an
+    // unlit fragment leaves the alpha it found alone (the blend adds, so 0
+    // contributes nothing).
+    fragColor = vec4(lit, clamp(max(max(lit.r, lit.g), lit.b), 0.0, 1.0));
 }

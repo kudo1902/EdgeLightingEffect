@@ -298,6 +298,128 @@ namespace EdgeLighting
             bool mRestore;
         };
 
+        /// Forces the three pieces of pipeline state every layer here ASSUMES
+        /// but none of them ever sets, and puts the host's back afterwards:
+        /// a full colour+alpha write mask, a @c GL_FUNC_ADD blend equation,
+        /// and depth test and depth writes off.
+        ///
+        /// Taken ONCE per frame by @c EdgeLightingEffect::Render, alongside
+        /// @ref NoCullScope and for the same reason: on a shared surface view
+        /// (Tizen Evas_GL, Android GLSurfaceView) a video pipeline or web
+        /// engine draws into the same context and leaves its own state behind,
+        /// and none of it reproduces on a desktop demo where every one of
+        /// these is still at its GL default.
+        ///
+        /// What each one costs if it is wrong:
+        ///
+        ///   - COLOUR MASK. Every layer writes a coverage alpha, and on an
+        ///     embedded surface that alpha is what decides whether the pixel
+        ///     is seen at all - the compositor or hardware video plane
+        ///     finishes the frame with it. A host that left alpha writes
+        ///     masked off turns all of it into a silent no-op: the colour is
+        ///     there, the alpha is whatever was in the buffer, and the layer
+        ///     is invisible over video with nothing in the log. This is the
+        ///     specific failure that would defeat spotlight.frag's coverage
+        ///     alpha, so it is the reason this scope exists.
+        ///   - BLEND EQUATION. This library never calls @c glBlendEquation,
+        ///     so every @c glBlendFunc in it is written expecting
+        ///     @c GL_FUNC_ADD. A host that left @c GL_MAX or
+        ///     @c GL_FUNC_REVERSE_SUBTRACT behind silently reinterprets every
+        ///     composite in the pipeline.
+        ///   - DEPTH. Every layer is a flat screen-space quad, ring or strip
+        ///     at z = 0 with nothing to be in front of or behind, so a depth
+        ///     test can only ever delete pixels that were meant to be there -
+        ///     the same argument @ref NoCullScope makes for culling - and a
+        ///     depth WRITE would corrupt a buffer that belongs to the host.
+        ///
+        /// Costs four static-state queries per frame, once for the whole
+        /// fan-out rather than once per layer, and writes nothing back that it
+        /// did not have to change.
+        class CompositeStateScope
+        {
+        public:
+            explicit CompositeStateScope(bool active = true)
+                : mActive(active)
+            {
+                if (!mActive)
+                {
+                    return;
+                }
+
+                glGetBooleanv(GL_COLOR_WRITEMASK, mColorMask);
+                if (!mColorMask[0] || !mColorMask[1] || !mColorMask[2] || !mColorMask[3])
+                {
+                    mMaskChanged = true;
+                    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+                }
+
+                glGetIntegerv(GL_BLEND_EQUATION_RGB, &mEquationRGB);
+                glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &mEquationAlpha);
+                if (mEquationRGB != GL_FUNC_ADD || mEquationAlpha != GL_FUNC_ADD)
+                {
+                    mEquationChanged = true;
+                    glBlendEquation(GL_FUNC_ADD);
+                }
+
+                mDepthTest = (glIsEnabled(GL_DEPTH_TEST) == GL_TRUE);
+                if (mDepthTest)
+                {
+                    glDisable(GL_DEPTH_TEST);
+                }
+
+                GLboolean depthMask = GL_FALSE;
+                glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMask);
+                mDepthWrite = (depthMask == GL_TRUE);
+                if (mDepthWrite)
+                {
+                    glDepthMask(GL_FALSE);
+                }
+            }
+
+            ~CompositeStateScope() { Restore(); }
+
+            CompositeStateScope(const CompositeStateScope &) = delete;
+            CompositeStateScope &operator=(const CompositeStateScope &) = delete;
+
+            /// End the scope early. Idempotent, and the destructor calls it.
+            void Restore()
+            {
+                if (!mActive)
+                {
+                    return;
+                }
+                mActive = false;
+
+                if (mMaskChanged)
+                {
+                    glColorMask(mColorMask[0], mColorMask[1], mColorMask[2], mColorMask[3]);
+                }
+                if (mEquationChanged)
+                {
+                    glBlendEquationSeparate(static_cast<GLenum>(mEquationRGB),
+                                            static_cast<GLenum>(mEquationAlpha));
+                }
+                if (mDepthTest)
+                {
+                    glEnable(GL_DEPTH_TEST);
+                }
+                if (mDepthWrite)
+                {
+                    glDepthMask(GL_TRUE);
+                }
+            }
+
+        private:
+            bool mActive;
+            bool mMaskChanged = false;
+            bool mEquationChanged = false;
+            bool mDepthTest = false;
+            bool mDepthWrite = false;
+            GLboolean mColorMask[4] = {GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
+            GLint mEquationRGB = GL_FUNC_ADD;
+            GLint mEquationAlpha = GL_FUNC_ADD;
+        };
+
     } // namespace GLUtils
 } // namespace EdgeLighting
 

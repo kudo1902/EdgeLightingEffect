@@ -246,11 +246,21 @@ Evaluates the two terms from **The light model** above on `vLocal`, sums them,
 and writes
 
 ```glsl
-fragColor = vec4(vColor * vP0.w * (cone + bloom), 0.0);
+vec3 lit = vColor * vP0.w * (cone + bloom);
+fragColor = vec4(lit, clamp(max(max(lit.r, lit.g), lit.b), 0.0, 1.0));
 ```
 
-Premultiplied with `alpha = 0`, so under the house blend it is pure addition.
-Light only ever adds.
+Premultiplied colour plus a coverage alpha, under a fully additive
+`glBlendFuncSeparate(GL_ONE, GL_ONE, GL_ONE, GL_ONE)`. Light only ever adds,
+and the alpha accumulates rather than compositing, so the pass stays
+order-independent in both channels.
+
+The alpha was originally a literal `0.0` and the blend a plain
+`GL_ONE / GL_ONE_MINUS_SRC_ALPHA`. Algebraically the same for colour - `1 - 0`
+is `1` - but it left the framebuffer's alpha untouched wherever the spotlight
+was the only thing that drew, and a compositor or hardware video plane that
+blends the surface by alpha then multiplies every lit pixel by zero. See
+`docs/spotlight-renderer.md` for the measurement.
 
 Note for whoever maintains this: the fragment stage **never reads
 `gl_FragCoord`**. Everything it needs arrives interpolated in the lamp's own

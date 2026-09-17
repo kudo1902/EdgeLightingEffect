@@ -28,9 +28,20 @@ at all:
   moves it.
 - **Nothing occludes a cone.** It crosses the rect, the droplets and the flare
   freely. There is no shadow model and no rect gating.
-- **Light only adds.** Output is premultiplied with alpha 0, so under the house
-  blend it is pure addition - which also makes the layer order-independent. The
-  order of `SpotlightConfig::lights` cannot change the image.
+- **Light only adds.** The pass is fully additive - `glBlendFuncSeparate(GL_ONE,
+  GL_ONE, GL_ONE, GL_ONE)` - in the alpha channel as well as in colour, which
+  also makes the layer order-independent. The order of
+  `SpotlightConfig::lights` cannot change the image.
+- **It writes a coverage alpha**, the same max-of-channels rule neon and the
+  flare use. It did not always: the shader emitted a literal `0.0`, which is
+  invisible on a desktop window (opaque, nobody reads the alpha back) and
+  erases the whole layer on an embedded surface a compositor or hardware video
+  plane blends by alpha - `out = ui.rgb * ui.a + video * (1 - ui.a)` multiplies
+  every lit pixel by zero. That was the Tizen bug: the spotlight missing over a
+  playing video while every other layer came through. Measured offscreen at
+  640x360 over a transparent clear, one lamp lit 72,615 pixels of colour and 0
+  of alpha. Adding the alpha left the **colour byte-identical** in all six
+  verification scenes, both resolution scales included.
 
 Each lamp's brightness is the sum of two terms, both evaluated in that lamp's
 own frame - `along` the axis and `across` it:
