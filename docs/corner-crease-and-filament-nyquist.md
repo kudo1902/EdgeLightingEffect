@@ -422,14 +422,178 @@ argument: nine scenes covering both glow sides, an outside cutoff, an opaque
 fill, `resolutionScale` 1.0 / 0.5 / 0.25, `glowRadius` 0 and a wide glow, all
 `cmp`-equal to the same scene rendered by `b2fead5`.
 
-### 1.8.4 What is still approximate
+### 1.8.4 What was still approximate
 
-A **circle** is the residual case, at 18 to 23 levels: with
+A **circle** was the residual case, at 18 to 23 levels: with
 `cornerRadius == halfMin` the perimeter is four developed arcs and no straights,
 so every fragment is served entirely by the approximation, and one of the four
 is always in the degenerate fallback (its `w` has both components negative
 wherever the fragment sits on an axis). Everything between a sharp rect and a
-circle is single digits.
+circle was single digits.
+
+That was the right order of magnitude and the wrong shape of claim, which is
+why it read as acceptable and was not. Twenty levels of SMOOTH error is
+invisible. What the circle actually had was four levels of error shaped like a
+cross, and that is not - see 1.9.
+
+### 1.9 The development rate: a cross at every arc's centre of curvature
+
+#### 1.9.1 The defect
+
+`arcTangentSegment` laid each arc out at its own arclength: one unit of tangent
+per unit of arc, `t1 = -r*th - off`, `t2 = r*(HALF_PI - th) - off`. That is the
+natural reading of "develop the arc", and it is only correct for a fragment
+sitting ON the arc.
+
+Two things went wrong with it, and they are the same thing seen from two sides.
+
+**At the centre of curvature it under-counted.** A fragment there is at
+distance `r` from every point of the arc, so the honest answer is
+`f(r) * PI*r/2`. Rate `r` cannot say that: the nearest arc point is degenerate,
+the fallback picks an endpoint, and the whole arc develops to ONE side of the
+foot, `t` running `0 .. r*PI/2`. Both kernels peak at `t = 0`, so a one-sided
+range collects less than a straddling one. On a circle - where all four arc
+centres coincide at the middle of the shape - the sum came to **54%** of the
+true value (0.0334 against 0.0619 for the halo integrand at `r` 200, `k` 20).
+
+**And it creased.** Crossing the line `w.y = 0` the arc's endpoints slide at
+`-r * d(th)` on the facing side, which is `-r/w.x`, and at `-d(off)` on the
+clamped side, which is `-1`. Those agree only at `w.x == r`, the tangent point.
+Every other point of the two lines through an arc centre carried a C1 kink, and
+the kink grows without bound as the fragment approaches the centre.
+
+Rendered, that is an L-shaped seam per corner - one arm horizontal, one
+vertical, meeting at the arc centre - and on a circle, where the four coincide,
+one unmistakable dark cross at the middle of the shape. It is confined to the
+neighbourhood of the centre of curvature, so it only reaches the eye when that
+point is inside the lit region: a large `cornerRadius`, a large `glowRadius`, or
+both. At the stock `cornerRadius` 40 the vertical second difference along the
+crease ray is 0 to 1 levels, i.e. at the quantisation floor.
+
+#### 1.9.2 The rate the kernels actually want
+
+The exact distance from a fragment to the arc point `dphi` away from the nearest
+one, with `rho = length(w)`:
+
+```
+D^2 = a^2 + (2*sqrt(rho*r)*sin(dphi/2))^2,     a = abs(rho - r)
+```
+
+which is the straight-segment form `D^2 = a^2 + t^2` under the substitution
+`t = 2*sqrt(rho*r)*sin(dphi/2)`. Its slope at the foot is **`sqrt(rho*r)`**, not
+`r`. So the tangent coordinate the closed forms want is developed at that rate,
+and since rate times length has to stay the emitter's arclength, the segment is
+scaled by `r/rate` to put the measure back.
+
+`arcTangentSegment` now returns that weight as `.w` and uses
+
+```
+lam = sqrt(rho * min(rho, r))
+```
+
+The `min` is the inner branch. Outside the arc `sqrt(rho*r)` is the
+linearisation above; inside, the rate has to be `rho` for the clamp to join
+smoothly, which is the same condition that produced the crease - the facing
+side slides at `-lam/w.x` and the clamped side at `-1`, and they agree
+everywhere exactly when `lam` is `length(w)`. The two branches meet at
+`rho == r`, where `lam` is `r` and the weight is 1, so **a fragment on the tube
+is bit-identical to the rate-`r` form** and the calibration `HALO_NORM_FACTOR`
+and `BLOOM_NORM_FACTOR` carry is untouched.
+
+At `rho -> 0` the segment collapses to zero length against an unbounded weight,
+and the limit is `f(a) * lam*HALF_PI * r/lam = f(r) * PI*r/2` - the honest
+answer, exactly. `rho` is floored by `ARC_FRAME_EPSILON` so the division cannot
+be by zero; the floor is far under a pixel and the limit it lands on is the
+value above anyway.
+
+The shared bloom pedestal (1.8.2) follows: the developed extent is
+`lam*HALF_PI`, and `lam` is per-fragment, so the centred evaluation stops being
+an expression in uniforms alone. It becomes one again by pinning `lam` to what a
+fragment AT `reach` from the arc would carry - such a fragment sits `reach + r`
+from the arc centre, where `lam` is `sqrt(rho*r)`. That is the only distance the
+pedestal is meant to be exact at, and it was already an approximation
+everywhere else.
+
+#### 1.9.3 Measured
+
+Against a numerically integrated emitter (6000-point quadrature over the true
+rounded-rect perimeter), on a 40x28 grid covering the interior and out to 1.5x
+the rect. Halo kernel, worst error as a percentage of truth:
+
+| geometry | `glowRadius` | rate `r` | rate `lam` |
+| -------- | ------------ | -------- | ---------- |
+| 600x400 r=40 | 20 | 16.5% | **9.8%** |
+| 600x400 r=40 | 60 | 7.2% | **4.1%** |
+| 600x400 r=150 | 20 | 21.2% | **16.1%** |
+| 600x400 r=150 | 60 | 19.7% | **13.5%** |
+| 600x400 r=200 (stadium) | 20 | 27.6% | **23.7%** |
+| 600x400 r=200 (stadium) | 60 | 26.6% | **20.9%** |
+| 400x400 r=200 (circle) | 20 | 37.3% | **26.3%** |
+| 400x400 r=200 (circle) | 60 | 36.1% | **23.8%** |
+
+Better on the worst case of every geometry tested, and better on the mean of
+all but one (600x400 r=40 at `glowRadius` 60, 1.4% -> 1.6%). The accuracy is a
+side effect; the crease is the point:
+
+**Spurious curvature** - the second difference of `(model - truth)`, which is
+zero for any smooth model because truth is smooth - along the crease ray, one
+quarter arc at `r` 100, `k` 60, as a percentage of the local value:
+
+| | rate `r` | rate `lam` |
+| --- | -------- | ---------- |
+| worst over the ray | 19.9% | **0.5%** |
+
+**Rendered**, the same thing read off the framebuffer: the vertical second
+difference over an 8 px span, walking the horizontal ray out from an arc centre
+at 6, 10, 16 and 24 px.
+
+| scene | `65c95d8` | fixed |
+| ----- | --------- | ----- |
+| 400x400 r=200 circle, `glowRadius` 20 | 4, 3, 2, 2 | **0, 0, 0, 0** |
+| 400x400 r=200 circle, `glowRadius` 60 | 4, 4, 3, 3 | **0, 0, 0, 0** |
+| 600x400 r=150, `glowRadius` 60 | 0, 0, 0, 0 | 0, 1, -1, -1 |
+| 600x400 r=40, `glowRadius` 60 | 1, -1, -1, 0 | 1, -1, 0, 0 |
+
+The two rounded-rect rows are at the quantisation floor on both sides, which is
+the point of the 1.9.1 caveat: below a large `cornerRadius` the crease is real
+but sub-LSB. High-passing the `r` 150 frame at one arc centre shows the seam
+plainly on `65c95d8` and nothing on either side of it.
+
+The interior value the under-count was eating comes back with it. Circle,
+`glowRadius` 20, 400x400:
+
+| | `b2fead5` | `65c95d8` | fixed |
+| --- | --------- | --------- | ----- |
+| centre pixel | 68 | 53 | **66** |
+| interior mean | 74.8 | 62.2 | **78.7** |
+
+`b2fead5` is not the target - it is the build with the phantom straights, which
+is why its interior is in the right range for the wrong reason. The fixed column
+is the one with neither the phantom nor the cross.
+
+#### 1.9.4 Cost, and what stays bit-identical
+
+`cornerRadius` 0 is **still** bit-identical: `cmp`-equal to both `65c95d8` and
+`b2fead5` on the sharp scene, since the branch this lives behind never runs.
+
+1280x720, 1200x700 rect, `glowRadius` 30, best of five runs of 240 frames with
+`glFinish` either side, interleaved to keep thermal drift out of it:
+
+| scene | `65c95d8` | fixed | ratio |
+| ----- | --------- | ----- | ----- |
+| `cornerRadius` 0 | 1.556 ms | 1.597 ms | 1.026x |
+| `cornerRadius` 40 | 1.866 ms | 1.930 ms | 1.034x |
+| `cornerRadius` 150 | 1.882 ms | 1.972 ms | 1.048x |
+| `cornerRadius` 350 | 1.887 ms | 1.949 ms | 1.033x |
+
+The sharp row is the one to notice. It executes none of this and still pays
+1.026x, which is the register-pressure effect 1.8.3 recorded from the other
+direction - re-time a `cornerRadius` 0 scene as well as a rounded one after
+touching this block.
+
+A formulation trading the `length`, the `sqrt` and the divide for two
+`inversesqrt`s was measured and landed inside the run-to-run noise, so the
+readable form stays.
 
 ---
 
@@ -591,6 +755,134 @@ after     (0.5)   141 163 208 230 230 208 163 137
 Scale 1.0 is untouched by this: `minHalf` there is already 0.5, so the floor is
 a no-op and the expression reduces to exactly what it was.
 
+### 2.8 The floor was a fixed half width, and that is the wrong question
+
+#### 2.8.1 The report
+
+`lineWidth` 1, `filamentFalloff` 0.27. At `resolutionScale` 1.0 nothing is
+wrong. Below it the filament renders about **twice as wide** at 0.5 and roughly
+four times at 0.25 - not two pixels wider, thirty.
+
+#### 2.8.2 Why a soft falloff is the case that breaks it
+
+`sigma` does not only set the core. It multiplies `reachSigmas`, so it sets the
+whole profile:
+
+```
+reachSigmas = clamp(pow(log2(FILAMENT_GAIN / FILAMENT_CUTOFF), 1/N),
+                    FILAMENT_REACH_MIN_SIGMAS, FILAMENT_REACH_MAX_SIGMAS)
+```
+
+At `filamentFalloff` 0.27, N is 0.54 and that expression wants 108, so it
+clamps at `FILAMENT_REACH_MAX_SIGMAS` = 64. The filament's own tail is 64
+sigmas. Holding `sigma` at a flat 0.5 BUFFER px means holding it at 1.0
+full-res px at scale 0.5, against the 0.5 the caller asked for - so the tail
+goes from 32 full-res px to 64.
+
+Tail extent, in px outward from the edge to where the filament reaches 0, at
+`lineWidth` 1, `glowRadius` 0, measured on the top edge at x = 500:
+
+| `filamentFalloff` | N | scale 1.0 | 0.5, no floor | 0.5, flat 0.5 floor |
+| ----------------- | - | --------- | ------------- | ------------------- |
+| **0.27** | 0.54 | 31 | 31 | **61** |
+| 0.40 | 0.80 | 11 | 12 | 22 |
+| 0.50 | 1.00 | 7 | 8 | 13 |
+| 0.70 | 1.40 | 4 | 4 | 8 |
+| 1.00 | 2.00 | 3 | 4 | 6 |
+| 1.50 | 3.00 | 2 | 4 | 4 |
+
+The ratio is ~2x everywhere, because the floor scales sigma by 2 at this
+resolution scale whatever the falloff. What changes with the falloff is what 2x
+is worth in pixels: three at the default, thirty at 0.27.
+
+#### 2.8.3 The floor was buying almost nothing there
+
+Max per-phase peak error against the 1.0 reference at the SAME sub-pixel phase,
+scale 0.5:
+
+| `filamentFalloff` | no floor | flat 0.5 floor |
+| ----------------- | -------- | -------------- |
+| 0.27 | 13 | 8 |
+| 1.00 | **82** | 12 |
+
+At the default the floor is doing essential work - without it the peak collapses
+to 153 against a 235 reference, and at `filamentFalloff` 1.5 to 24. At 0.27 it
+buys five levels and costs a doubled filament.
+
+The reason is that a soft profile is already many buffer pixels wide. Section
+2.2's mechanism - the peak landing between texel centres - needs the
+NEIGHBOURING texel to be dark. At N = 2 and `sigma` 0.25 buffer px, one buffer
+px out the profile is `exp2(-(1/0.25)^2)`, which is 2e-8: the neighbour carries
+nothing and the bilinear filter has nothing to rebuild the peak from. At
+N = 0.54 the same point is `exp2(-(1/0.25)^0.54)` = 0.22 - the neighbour carries
+a fifth of the peak, and the reconstruction is fine without any help.
+
+#### 2.8.4 The fix: floor on the SHARE, not on the half width
+
+So the floor is stated as what actually matters, and inverted for sigma:
+
+```
+core(FILAMENT_NYQUIST_SAMPLE_PX) >= FILAMENT_NYQUIST_MIN_SHARE
+  <=>  sigma >= SAMPLE_PX / pow(log2(1 / MIN_SHARE), 1/N)
+```
+
+with `SAMPLE_PX` = 1.0 (one buffer texel) and `MIN_SHARE` = 0.0625. Those two
+are today's behaviour restated rather than a retune: at N = 2 the right-hand
+side is `1.0 / pow(4, 0.5)` = exactly 0.5, the constant it replaces.
+
+Gated to `resolutionScale < 1.0` in both `neon.frag` and
+`NeonRenderer::setupGeometry`. The flat constant was a no-op at 1.0 by
+arithmetic coincidence - it equalled the converted stated floor - and this
+expression is not, above N = 2, so the gate is written down now.
+
+#### 2.8.5 Measured
+
+`lineWidth` 1, `glowRadius` 0, scale 0.5. `floor` is what the expression asks
+for in buffer px; `p` is the peak and `z` the tail extent:
+
+| falloff | N | floor | ref (1.0) | no floor | flat 0.5 | share form |
+| ------- | - | ----- | --------- | -------- | -------- | ---------- |
+| 0.27 | 0.54 | 0.077 | p235 z31 | p228 z31 | p235 z**61** | **p228 z31** |
+| 0.40 | 0.80 | 0.177 | p235 z11 | p223 z12 | p235 z**22** | **p223 z12** |
+| 0.50 | 1.00 | 0.250 | p235 z7 | p217 z8 | p235 z**13** | **p217 z8** |
+| 0.70 | 1.40 | 0.371 | p235 z4 | p201 z4 | p235 z8 | **p227 z6** |
+| 1.00 | 2.00 | 0.500 | p235 z3 | p153 z4 | p235 z6 | **p235 z6** |
+| 1.50 | 3.00 | 0.630 | p235 z2 | p24 z4 | p235 z4 | **p240 z4** |
+
+The default row is identical to the flat floor, by construction. Above it the
+floor engages slightly harder, which is the direction the evidence points -
+`filamentFalloff` 1.5 unfloored is a peak of 24 against 235.
+
+Blast radius, over the 47-scene capture set: **34 scenes byte-identical, 13
+changed, and every one of the 13 is at a reduced resolution scale with a
+non-default falloff.** Every `resolutionScale` 1.0 scene is untouched, and so is
+every default-falloff scene including `w_fo100_s050` and the four sub-pixel
+phase captures at scale 0.5.
+
+Cost: none measurable. The block gains one `pow` and one compare per fragment
+(the `log2` is of literals and folds). Five interleaved runs of the section
+1.9.4 harness on the most stable scene gave 1.613 to 1.658 ms before and 1.580
+to 1.661 ms after - the two ranges overlap completely.
+
+#### 2.8.6 What this deliberately does not fix
+
+Around `filamentFalloff` 0.4 to 0.5 the floor now stops engaging while the
+unfloored peak error is still 12 to 18 levels - the `p223` and `p217` cells
+above. That band trades a correct 12 px tail for an 18-level peak error where
+the flat floor traded a 6 px tail error for none.
+
+It is a deliberate crossover, not an oversight. Lowering `MIN_SHARE` to cover
+that band raises the floor at N = 2 as well, which stops the default case being
+bit-identical - and the default case is the one every existing render sits on.
+
+A variant that covers both was measured and not taken: keep the flat floor but
+cap how many px of EXTENT it may add, `sigma = min(max(stated, FLAT), stated +
+K/reachSigmas)`. With K = 3 buffer px that holds the default unchanged, keeps
+the 0.4-0.7 band floored, and bounds 0.27 to a 38 px tail against the correct
+31. It is strictly better on this sweep and strictly harder to explain - two
+constants and a clamp, against one inverted equation. Worth revisiting if
+anyone reports the 0.4-0.5 band.
+
 ---
 
 ## 3. What changed
@@ -609,6 +901,23 @@ Then, for the corner over-extension in sections 1.7 and 1.8:
 | [`neon.frag`](../lib/shaders/neon.frag) | straights trimmed to the tangent points; `arcTangentSegment` added and one developed-arc segment summed per corner, behind a `uCornerRadius > 0` uniform branch; one shared centred pedestal for the four arcs |
 | [`neon-tuning.h`](../lib/include/renderer/neon-tuning.h) | `ARC_FRAME_EPSILON` added; the halo block's "runs to the SHARP corner" paragraph replaced by the developed-arc derivation, and the interior change from 1.5.2 written down beside it |
 | [`review-findings.md`](review-findings.md) | V10 |
+
+Then, for the development rate in section 1.9:
+
+| file | change |
+| ---- | ------ |
+| [`neon.frag`](../lib/shaders/neon.frag) | `arcTangentSegment` returns a `vec4` - the development rate becomes `sqrt(rho * min(rho, r))` and `.w` carries the `r/lam` measure the caller multiplies in; the shared arc pedestal is evaluated at the `lam` a fragment at `reach` would have |
+| [`neon-tuning.h`](../lib/include/renderer/neon-tuning.h) | the halo block's developed-arc paragraph gains the rate and why it is not `r`; `ARC_FRAME_EPSILON` gains the second thing it now floors |
+| [`review-findings.md`](review-findings.md) | V12 |
+
+Then, for the sampling floor in section 2.8:
+
+| file | change |
+| ---- | ------ |
+| [`neon.frag`](../lib/shaders/neon.frag) | `N` hoisted above the filament's floors; the flat sampling floor replaced by the inverted share expression, gated to `resolutionScale < 1.0` |
+| [`neon-tuning.h`](../lib/include/renderer/neon-tuning.h) | `FILAMENT_NYQUIST_HALF_WIDTH` replaced by `FILAMENT_NYQUIST_SAMPLE_PX` and `FILAMENT_NYQUIST_MIN_SHARE`, with the inversion and the crossover written out |
+| [`neon-renderer.cpp`](../lib/src/renderer/neon-renderer.cpp) | `setupGeometry` mirrors the expression and the gate, so the quad still clears what the shader draws |
+| [`review-findings.md`](review-findings.md) | V13 |
 
 Not changed, and deliberately: the tonemap stays where it is, so option C in
 section 2.4 remains available and unattempted. Scale 1.0 moves only by the

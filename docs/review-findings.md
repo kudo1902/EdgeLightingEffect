@@ -2184,12 +2184,158 @@ does not: the half-res path is band-free as well.
 
 ---
 
+## Ninth pass (re-reviewing the two neon commits)
+
+A re-review of `b2fead5` and `65c95d8`, asked for after the pair had landed.
+Both commits' own claims were re-measured and hold - the interior creases are
+gone, the half-res 1 px filament tracks its full-res reference (peak swing
+28 -> 6 over sub-pixel phase, against a reference that holds 235-244), and
+`cornerRadius` 0 is `cmp`-equal across `65c95d8`. One finding, which continues
+the visual numbering because it is a defect in V10's fix, exactly as V10 was a
+defect in V4's.
+
+### V12. The developed corner arc creases at its own centre of curvature - FIXED
+
+**Confirmed.** 400x400 at (200, 200), `cornerRadius` 200 (a circle),
+`glowRadius` 20, `hueRotationRate` 0, 1000x800 over a black clear. Visible
+without amplification; a contrast stretch over the interior's own range makes
+it unmistakable.
+
+A dark **cross** sits at the middle of the shape. On a rounded rect the same
+thing is four L-shaped seams, one per corner, each meeting at that corner
+arc's centre of curvature - `(+/-(halfW - r), +/-(halfH - r))`.
+
+`arcTangentSegment` developed each arc at its own arclength: one unit of
+tangent per unit of arc. That is only correct for a fragment ON the arc, and it
+fails two ways at once.
+
+**It under-counts at the centre of curvature.** A fragment there is at distance
+`r` from every point of the arc, so the answer is `f(r) * PI*r/2`. The nearest
+arc point is degenerate there, the fallback picks an endpoint, and the whole
+arc develops to ONE side of the foot. Both kernels peak at `t = 0`, so a
+one-sided range collects less than a straddling one: on a circle, where all
+four arc centres coincide, the sum came to **54%** of the true value.
+
+**And it creases.** Crossing `w.y = 0` the arc's endpoints slide at `-r/w.x` on
+the facing side of the `max(w, 0)` clamp and at `-1` on the clamped side. Those
+agree only at `w.x == r`. Everywhere else on the two lines through an arc
+centre there is a C1 kink, growing without bound towards the centre.
+
+The clamp itself is correct - it picks the genuinely nearest endpoint, and that
+derivation checks out. What is wrong is the rate.
+
+**Fix.** Develop at `lam = sqrt(rho * min(rho, r))` instead of `r`, with the
+arclength measure restored by scaling the segment by `r/lam`. The outer branch
+is the true linearisation of the exact distance
+`D^2 = a^2 + (2*sqrt(rho*r)*sin(dphi/2))^2`; the inner branch has to be `rho`
+for the clamp to join smoothly. They meet at `rho == r`, where the rate is `r`
+and the weight is 1, so a fragment on the tube is bit-identical to the form
+this replaces and the NORM calibration is untouched. At `rho -> 0` the segment
+collapses against an unbounded weight and the limit is the exact
+`f(r) * PI*r/2`.
+
+**Measured.** Spurious curvature (the second difference of `model - truth`,
+zero for any smooth model) along the crease ray: **19.9% -> 0.5%** of the local
+value. Rendered, the vertical second difference over 8 px walking out from the
+arc centre: `4, 3, 2, 2` -> `0, 0, 0, 0` on the circle. Worst error against a
+numerically integrated perimeter falls on every geometry tested - 16.5 -> 9.8%
+on a 600x400 r=40, 37.3 -> 26.3% on a circle - and the interior value the
+under-count was eating comes back (circle centre pixel 53 -> 66, interior mean
+62.2 -> 78.7). `cornerRadius` 0 stays `cmp`-equal to both `65c95d8` and
+`b2fead5`. Cost is 1.03x of the neon pass, including 1.026x on the sharp path
+that never executes it - register pressure, as V10's own note warned.
+
+Full derivation, tables and probes in
+[corner-crease-and-filament-nyquist.md](corner-crease-and-filament-nyquist.md)
+section 1.9.
+
+**The doc had this at the wrong altitude, which is why it shipped.** Section
+1.8.4 recorded the circle as "the residual case, at 18 to 23 levels" and left
+it. That is the right order of magnitude and the wrong shape of claim: twenty
+levels of SMOOTH error is invisible, and what was actually there was four
+levels shaped like a cross. When a residual is recorded as a magnitude, record
+whether it is structured.
+
+---
+
+## Tenth pass (the soft-falloff filament report)
+
+One finding, reported as a configuration rather than a symptom -
+"`lineWidth` 1, `filamentFalloff` 0.27" - and it turned out to be a defect in
+`b2fead5`'s half of the seventh pass, the way V10 was a defect in V4's and V12
+in V10's.
+
+### V13. The Nyquist floor is a fixed half width, so a soft falloff renders twice as wide - FIXED
+
+**Confirmed.** 600x400 at (200, 200), `lineWidth` 1, `filamentFalloff` 0.27,
+`hueRotationRate` 0, 1000x800 over a black clear. At `resolutionScale` 1.0 all
+four commits render it identically and nothing is wrong. At 0.5 the filament is
+**twice as wide**; at 0.25, about four times.
+
+`filamentFalloff` 0.27 is N = 0.54, so `reachSigmas` clamps at
+`FILAMENT_REACH_MAX_SIGMAS` and the filament's tail is 64 sigmas. `sigma` sets
+the core AND, through that factor, the whole tail - so holding it at a flat
+0.5 buffer px stretches a 31 px filament to 61 px at scale 0.5 and past 120 px
+at 0.25.
+
+The floor exists to stop the peak swinging with sub-pixel phase, and at the
+default falloff it is doing essential work: unfloored, the peak collapses to
+153 against a 235 reference, and at `filamentFalloff` 1.5 to 24. At 0.27 it
+buys five levels of peak accuracy (max per-phase error 13 -> 8) for a doubled
+filament. The reason is that a soft profile is already many buffer pixels wide:
+one buffer px out it is still at 22% of its peak, where an N = 2 profile of the
+same sigma is at 2e-8. The neighbouring texel carries the line, so the bilinear
+filter rebuilds the peak without any help.
+
+**Fix.** State the floor as what actually decides whether the blit can rebuild
+the peak - how much signal the neighbouring texel carries - and invert it for
+sigma:
+
+```
+sigma >= FILAMENT_NYQUIST_SAMPLE_PX / pow(log2(1 / FILAMENT_NYQUIST_MIN_SHARE), 1/N)
+```
+
+`SAMPLE_PX` 1.0 and `MIN_SHARE` 0.0625 are the old behaviour restated, not a
+retune: at N = 2 the expression is exactly 0.5, the constant it replaces. Gated
+to `resolutionScale < 1.0` in both the shader and `setupGeometry`, because the
+flat constant was a no-op at 1.0 only by arithmetic coincidence and this one
+would not be above N = 2.
+
+**Measured.** Tail extent at `lineWidth` 1, `glowRadius` 0, scale 0.5, against
+the 1.0 reference: `filamentFalloff` 0.27 goes 61 -> **31** (reference 31), 0.40
+goes 22 -> **12** (11), 0.50 goes 13 -> **8** (7). The default falloff is
+unchanged at 6, and `filamentFalloff` 1.5 keeps its floor. Over the 47-scene
+capture set, **34 scenes are byte-identical and all 13 that changed are at a
+reduced resolution scale with a non-default falloff** - no `resolutionScale`
+1.0 scene moves, and neither does any default-falloff scene.
+
+**Known, and deliberate.** Around `filamentFalloff` 0.4 to 0.5 the floor now
+stops engaging while the unfloored peak error is still 12 to 18 levels.
+Covering that band means lowering `MIN_SHARE`, which raises the floor at N = 2
+as well and stops the default case being bit-identical. A bounded-extent
+variant that covers both was measured and recorded in section 2.8.6 rather than
+taken, because it needs two constants and a clamp where this needs one inverted
+equation.
+
+Derivation, the full falloff sweep and the blast radius in
+[corner-crease-and-filament-nyquist.md](corner-crease-and-filament-nyquist.md)
+section 2.8.
+
+**What let this through**, in the same vein as V12's note: the floor was
+verified at the default falloff and at four `lineWidth` values, and
+`filamentFalloff` was never swept. A constant whose job depends on a shape
+parameter has to be measured across that parameter, not only across the widths
+it is expressed in.
+
+---
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
 I9, I10 and I11. I3's structural half - the last thing on this list that was
 open rather than declined - closed with the neon unification, which deleted the
-fork it followed from. The fifth pass's I15 landed with it. Five items from the
+fork it followed from. The fifth pass's I15 landed with it. The seventh through
+tenth passes are one item each and all four are fixed. Five items from the
 first pass remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -2198,6 +2344,8 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | ---- | ----- | --- |
 | V4 | fixed | the premise was wrong: `ad` never needed softening, one infinite-line term was being evaluated where four finite-segment ones belong |
 | V10 | fixed | V4's own unmodelled corner: the straights ran past the tangent point, so a phantom emitter lit the outside of every rounded corner |
+| V12 | fixed | V10's own unmodelled centre: the developed arc ran at rate `r`, which is right only on the arc, so it creased and under-counted at each arc's centre of curvature |
+| V13 | fixed | V4's other half: the sampling floor was a fixed half width, so at a soft falloff - where sigma multiplies a 64-sigma tail - it doubled the filament to buy five levels of peak |
 | V5 | residual, documented | closing it means plumbing pixel-space feathers into the pre-pass for an effect nobody has reported; read V9 alongside it, which measures the other half of the same mechanism |
 | I2 | declined | negligible measured-by-structure win against a real staleness-bug risk |
 | I5 | documented | the alternative is a breaking renderer-API change for an unmeasured cost |
