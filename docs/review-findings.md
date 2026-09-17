@@ -331,18 +331,30 @@ The kinked V at exactly 45 degrees is now a smooth basin, and what remains of
 it is genuine falloff - that point really is eight times further from the
 nearest edge than the sample beside it.
 
-Two things the fix does not do, both recorded at the call site:
+Three further things, all recorded at the call site:
 
-- The four segments run to the **sharp** corner. The quarter-arc emitter above
-  `cornerRadius` 0 has no elementary closed form and is omitted; the
-  over-extension of the straights past the tangent point roughly stands in for
-  it. Exact at `cornerRadius` 0.
+- The four segments ran to the **sharp** corner, the quarter-arc emitter above
+  `cornerRadius` 0 being omitted for want of an elementary closed form. That
+  omission turned out to be a defect of its own and is **V10** below, now
+  fixed. Exact at `cornerRadius` 0 throughout.
 - A **small rect now glows less**, which is the point of the change rather than
   a side effect of it: an edge shorter than a few multiples of `bw` subtends
   less than the infinite line the old form assumed. Measured at the default
   `glowRadius` 5, 30 px off the middle of the top edge: 20 px wide rect 62 ->
   35, 40 px 67 -> 54, 80 px 72 -> 71, 320 px and above within 2/255. The old
   behaviour gave a 20 px rect 87% of the glow of a 1200 px one.
+- **The interior fills**, and this is the largest change of the three - it was
+  reported from a render afterwards as "the halo got bigger", which is exactly
+  what it looks like. The old terms were functions of `ad` alone, so a fragment
+  120 px inside the edge was lit identically to one 120 px outside, by
+  construction. Inside, the emitter wraps around the fragment instead of
+  receding from it, so the interior now settles on a floor rather than decaying:
+  centre of the rect 162 -> 186 on the probe above, 81 -> 113 at `glowRadius`
+  30 on 800x400. The exterior mean goes slightly DOWN in the same captures.
+  Intended physics rather than a regression, and capped by `insideCutoff` or
+  `glowSide` rather than by a gain, which would dim the line too. Measured in
+  [`corner-crease-and-filament-nyquist.md`](corner-crease-and-filament-nyquist.md)
+  section 1.5.2.
 
 Full measurements and the probes in
 [`corner-crease-and-filament-nyquist.md`](corner-crease-and-filament-nyquist.md).
@@ -2009,6 +2021,78 @@ path. It is still open there.
 
 ---
 
+## Seventh pass (the corner over-extension)
+
+One finding, reported from a render the way the first pass's visual items were:
+after `b2fead5` the glow just outside each rounded corner was too bright and
+the corner read **square**. It is a defect in V4's own fix - in the one part of
+it that fix recorded as unmodelled - so it continues the visual numbering.
+
+### V10. The halo and bloom straights run past the corner tangent point - FIXED
+
+**Confirmed.** `glowRadius` 5, `cornerRadius` 40, 800x400.
+
+V4 replaced each infinite-line term with a sum of four finite segments, and
+those segments run from `-halfSize` to `+halfSize` on each axis - to the SHARP
+corner. Above `cornerRadius` 0 that is `cornerRadius` px further than the tube
+actually goes on each end, and the over-extension was written up as roughly
+standing in for the quarter arc that has no elementary closed form.
+
+It does not stand in for it. The over-extension is a phantom emitter sitting a
+few px from a fragment that is tens of px from the real tube: at the point 20 px
+outside the arc on the diagonal, 2.4 px from EACH of the two phantom straights
+against 20 px from the emitter. Measured against a numerically integrated
+rounded-rect perimeter, on the corner diagonal with `R` from the arc centre so
+the tube is at `R = 40`:
+
+| R | 30 | **40** | 45 | **50** | **60** | 80 | 120 |
+| - | -- | ------ | -- | ------ | ------ | -- | --- |
+| exact | 130 | **175** | 147 | **119** | **93** | 67 | 42 |
+| shipped | 120 | **135** | 149 | **170** | **147** | 80 | 47 |
+
+Forty levels too dark ON the tube, fifty too bright just outside it. On the
+renderer itself the same point went 98 -> 146 across `b2fead5`.
+
+**Fixed** in [`neon.frag`](../lib/shaders/neon.frag) by trimming the straights
+to their tangent points and giving each corner arc a segment of its own:
+`arcTangentSegment` **develops** the arc onto its tangent at whichever arc point
+is nearest the fragment, carrying the full arc length and split about that
+point, so the perpendicular distance is the true distance to the arc and the
+developed arc abuts the trimmed straights in arclength - no gap, no overlap.
+
+| | before | after |
+| --- | ------ | ----- |
+| worst error vs integrated truth, 800x400 r=40, gr 5 | 76 levels | **6** |
+| the same at `cornerRadius` 200 | 130 | **8** |
+| a circle (`cornerRadius == halfMin`) | 109 | **18** |
+| corner diagonal at R=60, gr 5 | 159 (exact 93) | **96** |
+| neon pass, `cornerRadius` 0 | 8.83 ms | 8.84 ms (**1.00x**) |
+| neon pass, `cornerRadius` 40 | 8.85 ms | 10.52 ms (1.19x) |
+
+A sharp-cornered rect pays nothing: `uCornerRadius` is a uniform, so the block
+branches uniformly. Nine `cornerRadius` 0 scenes - both glow sides, an outside
+cutoff, an opaque fill, `resolutionScale` 1.0 / 0.5 / 0.25, `glowRadius` 0, a
+wide glow - are byte-identical to `b2fead5`, checked with `cmp` rather than
+argued.
+
+Two things worth carrying forward, both recorded at the call site:
+
+- That 1.00x is a register-pressure result, not a structural one. With a
+  per-arc bloom pedestal the block was heavy enough to cost the SHARP path
+  1.14x for code it never runs; one shared centred pedestal for the four arcs
+  is what returned it to parity. **Re-time a `cornerRadius` 0 scene as well as
+  a rounded one** after any change here.
+- A **circle** is the residual case at 18 to 23 levels, because its perimeter
+  is four developed arcs and no straights at all. Everything between a sharp
+  rect and a circle is single digits.
+
+Full derivation, the alternatives that were measured and rejected (one, two and
+three fixed tangent stubs), and the pedestal trade in
+[`corner-crease-and-filament-nyquist.md`](corner-crease-and-filament-nyquist.md)
+sections 1.7 and 1.8.
+
+---
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
@@ -2022,6 +2106,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | item | state | why |
 | ---- | ----- | --- |
 | V4 | fixed | the premise was wrong: `ad` never needed softening, one infinite-line term was being evaluated where four finite-segment ones belong |
+| V10 | fixed | V4's own unmodelled corner: the straights ran past the tangent point, so a phantom emitter lit the outside of every rounded corner |
 | V5 | residual, documented | closing it means plumbing pixel-space feathers into the pre-pass for an effect nobody has reported; read V9 alongside it, which measures the other half of the same mechanism |
 | I2 | declined | negligible measured-by-structure win against a real staleness-bug risk |
 | I5 | documented | the alternative is a breaking renderer-API change for an unmeasured cost |

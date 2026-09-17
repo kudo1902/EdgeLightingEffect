@@ -196,6 +196,49 @@ float bloomSegmentPedestalled(float a, float t1, float t2, float k, float reach)
     return max(bloomSegment(a, t1, t2, k) - bloomSegment(reach, t1, t2, k), 0.0);
 }
 
+// --- Corner arcs, developed onto their tangent -------------------------
+// The four straights above cover the rect's flat runs. Above cornerRadius 0 the
+// emitter also turns through four quarter arcs, and a circular arc has no
+// elementary antiderivative under either kernel. This develops each arc onto a
+// straight line instead: the tangent at whichever ARC POINT IS NEAREST the
+// fragment, carrying the arc's full length PI*r/2 and split about that point.
+//
+// That choice is what makes it accurate where the naive one is not. The
+// perpendicular distance it reports is the true distance to the arc wherever
+// the fragment faces it (|length(w) - r|), and the two halves run exactly as
+// far as the real arc does in each direction, so the developed arc abuts the
+// trimmed straights in arclength and the emitter is continuous - no gap and no
+// overlap at the tangent points.
+//
+// `w` is the fragment's offset from the arc centre in that corner's own frame:
+// x along the outward normal of one incident edge, y along the other's, both
+// positive pointing away from the rect. So the arc occupies exactly the first
+// quadrant of `w`, from +x (one tangent point) to +y (the other), and clamping
+// the direction into that quadrant is max(w, 0).
+//
+// Off the ends the nearest arc point is a tangent point, and which one follows
+// from |w - (r,0)|^2 - |w - (0,r)|^2 = 2r*(w.y - w.x): the +x end when
+// w.x >= w.y. That is what the fallback picks, so it is the right clamp for the
+// whole region it covers and not only for the degenerate point that forces it.
+//
+// Returns (a, t1, t2) ready for haloSegment / bloomSegment.
+vec3 arcTangentSegment(vec2 w, float r) {
+    vec2  wq = max(w, vec2(0.0));
+    float ql = length(wq);
+    vec2  u  = (ql > ARC_FRAME_EPSILON) ? wq / ql
+                                        : ((w.x >= w.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0));
+    // Arclength from the +x tangent point to the nearest arc point. u is a unit
+    // vector in the first quadrant whenever it came from wq, so th is in
+    // [0, HALF_PI] and needs no clamp of its own.
+    float th  = atan(u.y, u.x);
+    float a   = abs(dot(w, u) - r);
+    // Offset of the fragment ALONG the tangent, zero whenever u came from wq
+    // (the foot of perpendicular is then the tangent point itself) and non-zero
+    // only on the fallback, where it correctly pushes the whole arc to one side.
+    float off = dot(w, vec2(-u.y, u.x));
+    return vec3(a, -r * th - off, r * (HALF_PI - th) - off);
+}
+
 // --- Band boundary distances -------------------------------------------
 // The band's two boundaries, expressed as signed distances: dIn >= 0 means
 // "past the inside cutoff", dOut <= 0 means "within the outside cutoff".
@@ -871,16 +914,18 @@ void main() {
 
     // --- Analytic halo + bloom --------------------------------------------
     // Closed forms of the sums this shader used to run over the perimeter
-    // samples, evaluated as a SUM OVER THE FOUR STRAIGHT EDGES - each as a
-    // FINITE segment - rather than once at the nearest-edge distance.
+    // samples, evaluated as a SUM OVER THE EMITTER'S PIECES - each a FINITE
+    // segment - rather than once at the nearest-edge distance. Four straights
+    // run between the tangent points, and above cornerRadius 0 four more carry
+    // the corner arcs, developed onto their tangents.
     //
     // Analytic rather than gathered, because a closed form cannot bead however
     // far apart the loop samples are, so it needs no sample-spacing floor and
     // glowRadius sets the width directly at any rect size. That property is
-    // untouched by the four-edge form: kh and bw still set the profile width.
+    // untouched by the segment form: kh and bw still set the profile width.
     //
-    // Four terms rather than one, because a single term at the nearest distance
-    // is the field of an INFINITE line, and it buys two things:
+    // A sum rather than one term, because a single term at the nearest distance
+    // is the field of an INFINITE line, and the sum buys two things:
     //
     //   - No interior medial-axis creases. A fragment on a corner diagonal has
     //     two edges equally near; the nearest-distance form lit it from one,
@@ -892,29 +937,36 @@ void main() {
     // the limit, so HALO_NORM_FACTOR / BLOOM_NORM_FACTOR keep the calibration
     // they were tuned to and the peak on a long edge is unmoved.
     //
-    // What DOES move is a small rect: an edge shorter than a few multiples of
-    // bw subtends less than the infinite line the old form assumed, so its
-    // bloom is now dimmer - correctly, since a short tube emits less light.
-    // Below about 100 px wide at the default glowRadius; at 320 px and up the
-    // difference is under 2/255. See docs/corner-crease-and-filament-nyquist.md.
+    // Two things DO move, both measured in
+    // docs/corner-crease-and-filament-nyquist.md:
+    //
+    //   - A small rect. An edge shorter than a few multiples of bw subtends
+    //     less than the infinite line the old form assumed, so its bloom is
+    //     dimmer - correctly, since a short tube emits less light. Below about
+    //     100 px wide at the default glowRadius; at 320 px and up the
+    //     difference is under 2/255.
+    //   - The INTERIOR, which is the larger change of the two. The old term was
+    //     a function of ad alone, so it lit a fragment 120 px inside the edge
+    //     exactly as brightly as one 120 px outside. Inside, the emitter wraps
+    //     around the fragment rather than receding from it, so the interior now
+    //     settles on a floor instead of decaying to nothing: centre of the rect
+    //     162 -> 186 on the 1000x500 / glowRadius 60 probe. Intended, and
+    //     capped by insideCutoff rather than by a gain - see neon-tuning.h.
     //
     // Per edge: the perpendicular distance is the per-axis offset, and the
     // segment runs the full extent of the opposite axis, relative to this
-    // fragment's foot of perpendicular. The corner arcs above cornerRadius 0
-    // are not modelled - see neon-tuning.h.
+    // fragment's foot of perpendicular - TRIMMED TO THE TANGENT POINTS, so a
+    // straight stops where the tube actually turns. The corner arcs are the
+    // four further segments below.
+    vec2  straight = max(halfSize - vec2(uCornerRadius), vec2(0.0));
     float aLeft  = abs(vPos.x + halfSize.x);
     float aRight = abs(vPos.x - halfSize.x);
     float aTop   = abs(vPos.y + halfSize.y);
     float aBot   = abs(vPos.y - halfSize.y);
-    float tv1    = -halfSize.y - vPos.y;
-    float tv2    =  halfSize.y - vPos.y;
-    float th1    = -halfSize.x - vPos.x;
-    float th2    =  halfSize.x - vPos.x;
-
-    float halo  = HALO_NORM_FACTOR * (haloSegment(aLeft,  tv1, tv2, kh) +
-                                      haloSegment(aRight, tv1, tv2, kh) +
-                                      haloSegment(aTop,   th1, th2, kh) +
-                                      haloSegment(aBot,   th1, th2, kh));
+    float tv1    = -straight.y - vPos.y;
+    float tv2    =  straight.y - vPos.y;
+    float th1    = -straight.x - vPos.x;
+    float th2    =  straight.x - vPos.x;
 
     // Distance at which the emission has to be gone: the CPU's uncapped
     // quad-sizing formula, recomputed here (see setupGeometry). A pure function
@@ -930,10 +982,89 @@ void main() {
                       (1.0 + uBloomStrength * uIntensity),
                       sigma * reachSigmas);
 
-    float bloom = BLOOM_NORM_FACTOR * (bloomSegmentPedestalled(aLeft,  tv1, tv2, bw, reach) +
-                                       bloomSegmentPedestalled(aRight, tv1, tv2, bw, reach) +
-                                       bloomSegmentPedestalled(aTop,   th1, th2, bw, reach) +
-                                       bloomSegmentPedestalled(aBot,   th1, th2, bw, reach));
+    float halo  = haloSegment(aLeft,  tv1, tv2, kh) +
+                  haloSegment(aRight, tv1, tv2, kh) +
+                  haloSegment(aTop,   th1, th2, kh) +
+                  haloSegment(aBot,   th1, th2, kh);
+
+    float bloom = bloomSegmentPedestalled(aLeft,  tv1, tv2, bw, reach) +
+                  bloomSegmentPedestalled(aRight, tv1, tv2, bw, reach) +
+                  bloomSegmentPedestalled(aTop,   th1, th2, bw, reach) +
+                  bloomSegmentPedestalled(aBot,   th1, th2, bw, reach);
+
+    // The four corner arcs, each developed onto its own tangent - see
+    // arcTangentSegment. Gated because at cornerRadius 0 there is nothing to
+    // model: `straight` is then halfSize, the four segments above already run
+    // corner to corner, and each arc term would contribute a zero-length
+    // segment. uCornerRadius is a UNIFORM, so this branches uniformly and the
+    // sharp-cornered case pays nothing for the four atans behind it.
+    //
+    // A fragment's offset from each arc centre, in that corner's own outward
+    // frame, is (+/-|vPos.x| - straight.x, +/-|vPos.y| - straight.y): the two
+    // axes are the incident edges' outward normals, so folding through abs()
+    // puts every corner in the same first-quadrant form arcTangentSegment
+    // expects, with the sign pair selecting which corner.
+    if (uCornerRadius > 0.0)
+    {
+        vec2 wNear = abs(vPos) - straight;
+        vec2 wFar  = -abs(vPos) - straight;
+        vec3 cNN   = arcTangentSegment(vec2(wNear.x, wNear.y), uCornerRadius);
+        vec3 cNF   = arcTangentSegment(vec2(wNear.x, wFar.y),  uCornerRadius);
+        vec3 cFN   = arcTangentSegment(vec2(wFar.x,  wNear.y), uCornerRadius);
+        vec3 cFF   = arcTangentSegment(vec2(wFar.x,  wFar.y),  uCornerRadius);
+
+        halo  += haloSegment(cNN.x, cNN.y, cNN.z, kh) +
+                 haloSegment(cNF.x, cNF.y, cNF.z, kh) +
+                 haloSegment(cFN.x, cFN.y, cFN.z, kh) +
+                 haloSegment(cFF.x, cFF.y, cFF.z, kh);
+
+        // One shared pedestal for all four arcs, and unlike the straights'
+        // it does not have to be per-piece. A pedestal is that piece's own
+        // bloom evaluated at `reach`, and an arc's LENGTH is PI*r/2 whatever
+        // the fragment does - only its offset along the tangent varies. So
+        // evaluating the same length CENTRED (t = -L/2 .. +L/2) leaves an
+        // expression in uniforms alone: exact for every fragment that faces an
+        // arc, and an over-subtraction only for ones off to its side, where
+        // the arc term is small and the clamp below takes it to zero anyway.
+        //
+        // Why the straights cannot do this, from the other direction: their
+        // half-length routinely EXCEEDS `reach`, so their pedestal swings with
+        // the fragment's position along the edge. Sharing one there is what
+        // killed the exterior tail 300 px early - section 1.5.1 of
+        // docs/corner-crease-and-filament-nyquist.md.
+        //
+        // What it costs, measured on the worst case there is - a CIRCLE
+        // (cornerRadius == halfMin), which is four arcs and no straights, so
+        // nothing else carries an exact pedestal. Against a per-arc pedestal
+        // the exterior tail ends at 506 px instead of 644 from a 200 px
+        // emitter, and the lit fraction runs 0.589 against 0.638. The whole
+        // difference sits in values of 4/255 and below, and the largest
+        // adjacent-pixel step is 1/255 either way, so the tail ends sooner
+        // rather than being chopped - which is the failure 1.5.1 was about.
+        // On a rounded RECT the straights' own pedestals dominate and the
+        // difference is 0.1% of the lit fraction.
+        //
+        // Do NOT collapse this further to bw*L/c^2 (atan(x) -> x). That is a
+        // ~7% over-subtraction at the largest arc in range, and with the clamp
+        // sitting right underneath it, 7% of the pedestal took the same circle
+        // to 0.576.
+        //
+        // Measured: one atan here instead of four more bloomSegments takes the
+        // neon pass from 12.2 ms to 10.5 ms on the rounded cases below, and -
+        // because it is the register pressure of this block that decides it -
+        // takes the SHARP cases, which never execute it, back to parity.
+        float arcLength   = HALF_PI * uCornerRadius;
+        float arcC        = sqrt(reach * reach + bw * bw);
+        float arcPedestal = bw / arcC * 2.0 * atan(arcLength / (2.0 * arcC));
+
+        bloom += max(bloomSegment(cNN.x, cNN.y, cNN.z, bw) - arcPedestal, 0.0) +
+                 max(bloomSegment(cNF.x, cNF.y, cNF.z, bw) - arcPedestal, 0.0) +
+                 max(bloomSegment(cFN.x, cFN.y, cFN.z, bw) - arcPedestal, 0.0) +
+                 max(bloomSegment(cFF.x, cFF.y, cFF.z, bw) - arcPedestal, 0.0);
+    }
+
+    halo  *= HALO_NORM_FACTOR;
+    bloom *= BLOOM_NORM_FACTOR;
 
     // The pedestal itself is applied per-edge inside the sum above - see
     // bloomSegmentPedestalled for why it cannot be one shared subtraction any

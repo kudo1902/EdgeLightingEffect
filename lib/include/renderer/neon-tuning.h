@@ -139,16 +139,61 @@
 //     and the NORM factors keep the calibration they already had. The corner
 //     sweep went from a V kinked at exactly 45 degrees (21 levels deep at
 //     r = 160) to a smooth basin of 12, which is genuine falloff rather than a
-//     crease, and mid-edge brightness moved by 2/255 as the far edges started
-//     contributing their (small) real share. Cost is ~1.06-1.10x of the neon
-//     frame; the gather loop is still the overwhelming majority of it.
+//     crease. Cost is ~1.06-1.10x of the neon frame; the gather loop is still
+//     the overwhelming majority of it.
 //
-//     The four segments run to the SHARP corner - the quarter-arc emitter above
-//     cornerRadius 0 has no elementary closed form and is omitted, with the
-//     over-extension of the straights past the tangent point roughly standing
-//     in for it. Exact at cornerRadius 0. See
-//     docs/corner-crease-and-filament-nyquist.md section 1 and
-//     docs/review-findings.md V4. ---
+//     The CREASE is what the four-segment form was adopted for. It is not the
+//     largest thing it moves. The old expressions were functions of ad and of
+//     nothing else, so the old profile was SYMMETRIC about the line - a
+//     fragment 120 px inside the edge and one 120 px outside were lit
+//     identically, by construction. Outside, the emitter recedes; inside, it
+//     wraps around you. The segment sum knows the difference, so the exterior
+//     now falls off slightly faster (mid-edge peak itself moves by 2/255) and
+//     the INTERIOR stops falling off past roughly one rect-half and settles on
+//     a floor. On the 1000x500 / glowRadius 60 probe the centre goes 162 ->
+//     186 and the interior mean 174.5 -> 188.8; at glowRadius 30 on 800x400 it
+//     is 81 -> 113. The glow reads as bigger, and the part that grew is the
+//     interior - the exterior mean goes slightly DOWN.
+//
+//     Intended, and not tunable back out: a real rectangular tube does light
+//     its own interior, and HALO_GAIN cannot be lowered to undo it without
+//     dimming the line with it. The knobs for a perimeter-hugging glow are the
+//     ones that always meant that - insideCutoff, and glowSide OUTSIDE.
+//
+//     THE CORNERS ARE A FIFTH THROUGH EIGHTH SEGMENT, not an extension of the
+//     four. The straights are trimmed to their TANGENT POINTS, and each quarter
+//     arc contributes one more segment: the arc DEVELOPED onto its own tangent
+//     at whichever arc point is nearest the fragment, carrying the arc's full
+//     length and split about that point, so it abuts the straights exactly in
+//     arclength and the emitter is continuous. See neon.frag's
+//     arcTangentSegment.
+//
+//     The straights used to run to the SHARP corner instead, on the grounds
+//     that over-extending them past the tangent point stood in for the arc that
+//     has no elementary closed form. It does not stand in for it. The
+//     over-extension is a phantom emitter a few px from a fragment that is tens
+//     of px from the real tube: on an 800x400 rect at cornerRadius 40, a point
+//     20 px outside the arc on the diagonal sits 2.4 px from EACH of the two
+//     phantoms, and rendered 98 -> 146 across the commit that introduced them.
+//     Against a numerically integrated rounded-rect perimeter it was 40 levels
+//     too dark ON the tube and 50 too bright just outside it, which is what
+//     made a rounded corner read square at a narrow glowRadius.
+//
+//     The developed arc costs one extra segment per corner - one atan and a
+//     length on top - and takes the worst error over a quadrant from 76 to 6
+//     levels at glowRadius 5, 112 to 6 at cornerRadius 120, 130 to 8 at 200.
+//     A full circle (cornerRadius == halfMin) is the residual case at 18-23,
+//     since its perimeter is then four developed arcs and no straights at all.
+//
+//     Gated on uCornerRadius > 0, which is a UNIFORM - safe branching, and the
+//     reason a sharp rect pays nothing and stays bit-identical (nine scenes
+//     cmp-equal, not argued). Rounded costs 1.19x of the neon pass, sharp
+//     1.00x - but that parity is a REGISTER-PRESSURE result, not a structural
+//     one: with a per-arc bloom pedestal the block was heavy enough to cost the
+//     sharp path 1.14x for code it never runs. Re-time a cornerRadius 0 scene
+//     as well as a rounded one after touching this. See
+//     docs/corner-crease-and-filament-nyquist.md sections 1.7 and 1.8, and
+//     docs/review-findings.md V4 and V10. ---
 #define HALO_GAIN                 0.90
 #define HALO_NORM_FACTOR          0.43
 
@@ -218,6 +263,18 @@
 // --- Lower bound on the analytic emission widths. Guards the divides only;
 //     anything this small is already multiplied out by GLOW_GATE_FADE_PX. ---
 #define EMISSION_MIN_WIDTH        1e-3
+
+// --- Degenerate guard for the corner arc's tangent frame (neon.frag,
+//     arcTangentSegment). The frame is built by normalising the fragment's
+//     offset from the arc centre, clamped into the quarter the arc occupies;
+//     that offset is the zero vector only for a fragment sitting exactly on an
+//     arc centre, where the direction is undefined and atan(0, 0) is undefined
+//     with it. Below this the frame falls back to the nearer of the two tangent
+//     points, which is the correct clamp for the whole region the guard covers.
+//
+//     Unit-free: compared against a length in the shader's own px space, and
+//     small enough that nothing but the exact degeneracy reaches it. ---
+#define ARC_FRAME_EPSILON         1e-6
 
 // --- Bloom (wide background spill). See the halo note above for the closed
 //     form; BLOOM_SPACING_FLOOR is gone with the gather. ---

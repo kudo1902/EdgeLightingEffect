@@ -9,6 +9,12 @@ and bloom; the second is a sampling-rate problem confined entirely to the
 filament. Both are measured below and both are fixed - section 3 lists what
 landed, and sections 1.6 and 2.5 are what deliberately did not.
 
+A **third** item joined them afterwards, reported the same way: the first fix
+made a rounded corner read square. It came from the one thing that fix left
+unmodelled, and sections 1.7 and 1.8 measure and close it. Section 1.5.2 is a
+fourth thing, and not a defect at all - the largest change the first fix made
+turned out to be one nobody had written down.
+
 Every number here comes from the offscreen probes described in section 4,
 rendered through `OffscreenCapture` at an explicit size (never the window
 backbuffer - see `util/capture-util.h` for why).
@@ -153,16 +159,76 @@ percent, so the two pedestals differ by a few percent of a tuning constant;
 deriving the gain from the near edge's own extents would mean branching to find
 which edge that is.
 
+### 1.5.2 The other half of the change: the interior fills
+
+The corner sweep in 1.5 is the crease, and the crease is what this fix was
+aimed at. It is not the largest thing the fix moved.
+
+Both old expressions were functions of `ad = abs(d)` and of nothing else, so
+the old profile was **symmetric about the line**: a fragment 120 px inside the
+edge and one 120 px outside it were lit identically, by construction. That
+symmetry is a fiction. Outside, the emitter is behind you and recedes; inside,
+it wraps around you, and the opposite edge and both perpendicular edges all
+contribute. A sum over four finite segments knows the difference. A
+nearest-distance profile cannot.
+
+Same probe as 1.2, reading straight in and straight out from the middle of the
+left edge:
+
+| ad (px) | 20 | 40 | 60 | 80 | 100 | 120 | 160 | 200 | 240 |
+| ------- | -- | -- | -- | -- | --- | --- | --- | --- | --- |
+| inward, before | 197 | 192 | 187 | 183 | 179 | 176 | 171 | 167 | 163 |
+| inward, after | 201 | 197 | 194 | 191 | 189 | **188** | **187** | **186** | **186** |
+| outward, before | 197 | 193 | 188 | 183 | 179 | 176 | 171 | 167 | 163 |
+| outward, after | 200 | 195 | 189 | 184 | 180 | 176 | 169 | 163 | 157 |
+
+The two "before" rows agree to within 1/255 at every distance, which is the
+symmetry showing. After the change the exterior falls off slightly FASTER than
+it used to - a finite segment carries less light than the infinite line it is
+cut from - while the interior stops falling off at all past about 120 px and
+settles onto a floor. Centre of the rect 162 -> **186**; interior mean, inset
+60 px, 174.5 -> **188.8**.
+
+Across `glowRadius`, on an 800x400 rect at `cornerRadius` 40, `bloomStrength`
+0.30, 1280x720:
+
+| glowRadius | centre, before -> after | interior mean | exterior mean |
+| ---------- | ----------------------- | ------------- | ------------- |
+| 5 | 13 -> 21 | 31.6 -> 37.0 | 38.0 -> 36.9 |
+| 15 | 52 -> 81 | 74.8 -> 94.5 | 79.7 -> 78.1 |
+| 30 | 81 -> 113 | 100.2 -> 121.6 | 105.4 -> 103.5 |
+| 60 | 105 -> 131 | 125.0 -> 141.8 | 128.6 -> 124.3 |
+
+So the glow **reads as bigger**, and the region that grew is the interior, not
+the halo outside the line: the exterior mean goes slightly DOWN in every row.
+
+Every "after" figure in this section is `b2fead5` itself, so that the table
+isolates the change this section is about. Section 1.8's corner work moves them
+again, by 1/255 or less on these probes (centre 186 -> 185, interior mean
+188.8 -> 187.9), because it takes emitter length off the straights and gives
+the same length back as arcs.
+What a viewer sees is the mitred picture frame becoming an evenly lit panel.
+
+This is the physics the four-segment form was adopted for, not a side effect to
+tune back out - a real rectangular tube does light its own interior, and
+`HALO_NORM_FACTOR` cannot be lowered to undo it without dimming the line as
+well. A caller who wants the glow to keep hugging the perimeter has the knobs
+that were always meant for it: `insideCutoff` caps how far in the emission
+reaches, and `glowSide = OUTSIDE` removes the interior half outright.
+
 ### 1.6 What the fix does not cover
 
-The four segments run to the **sharp** corner; the quarter-arc emitter above
-`cornerRadius` 0 has no elementary closed form and is omitted. The
-over-extension of the straights past the tangent point roughly compensates for
-the missing arc, which is why the equal-`ad` ratio drifts 1.021 -> 1.011 rather
-than holding. At `cornerRadius` 0 the sum is exact.
+The four segments ran to the **sharp** corner; the quarter-arc emitter above
+`cornerRadius` 0 has no elementary closed form and was omitted, on the grounds
+that the over-extension of the straights past the tangent point roughly
+compensates for the missing arc. It does not: the over-extension is a phantom
+emitter sitting a few px from a fragment that is tens of px from the real tube,
+and at a narrow `glowRadius` it is worth tens of levels. That is sections 1.7
+and 1.8, which measure it and close it. At `cornerRadius` 0 the sum was and remains
+exact.
 
-It also changes how a **small** rect glows, and that is the point of the change
-rather than a side effect of it. An edge shorter than a few multiples of `bw`
+What the fix genuinely does not cover is how a **small** rect glows, and that
+is the point of the change rather than a side effect of it. An edge shorter than a few multiples of `bw`
 subtends less than the infinite line the old form assumed, so its bloom is now
 dimmer - correctly, since a short tube emits less light. Measured 30 px off the
 middle of the top edge at the default `glowRadius` 5:
@@ -179,6 +245,193 @@ of a 1200 px one, which is the infinite-line fiction showing through.
 This also closes a second note in the same block of `neon.frag`, which recorded
 that the gather this replaced ran corners about 40% hotter because it picked up
 both incident edges. That is precisely what the segment sum restores.
+
+### 1.7 The corner over-extension, measured
+
+Reported from a render rather than from the source: at the default
+`glowRadius` 5 with `cornerRadius` 40, the glow just outside each rounded
+corner is too bright and the corner reads **square**, as though the tube were
+mitred rather than rounded.
+
+The cause is the omission 1.6 opens with. The left edge's segment runs from
+`-halfSize.y` to `+halfSize.y`, i.e. to the SHARP corner, so it continues
+`cornerRadius` px past the point where the real tube turns away. A fragment
+just outside the rounded corner sits close to BOTH over-extended straights and
+is lit as though it were almost touching a tube. On an 800x400 rect at
+`cornerRadius` 40, the point 20 px outside the arc on the diagonal is 2.4 px
+from each phantom straight and 20 px from the real emitter.
+
+Measured against a numerically integrated ground truth - the same two kernels
+summed over the true rounded-rect perimeter, four straights to the tangent
+points plus four quarter arcs, 1600 elements - on the corner diagonal, `R`
+measured from the arc centre so the tube itself is at `R = 40`:
+
+| R | 30 | **40** | 45 | **50** | **60** | 80 | 120 | 200 |
+| - | -- | ------ | -- | ------ | ------ | -- | --- | --- |
+| exact | 130 | **175** | 147 | **119** | **93** | 67 | 42 | 24 |
+| shipped | 120 | **135** | 149 | **170** | **147** | 80 | 47 | 25 |
+
+Forty levels too dark ON the tube and fifty too bright just outside it, in a
+band about one `cornerRadius` wide. The same probe run against the shipped
+renderer rather than the model agrees: the point 20 px outside the arc goes
+98 -> 146 across `b2fead5`.
+
+It shrinks as the profile widens, because a wide kernel cannot tell 2.4 px from
+20 px. Worst absolute error over a 10 px grid covering one quadrant, inside and
+out, against the integrated truth:
+
+| geometry | gr 5 | gr 15 | gr 30 | gr 60 |
+| -------- | ---- | ----- | ----- | ----- |
+| 800x400 r=40 | 76 | 36 | 17 | 9 |
+| 800x400 r=120 | 112 | 77 | 52 | 29 |
+| 800x400 r=200 | 130 | 95 | 74 | 48 |
+| 300x200 r=30 | 67 | 26 | 14 | 8 |
+| 200x200 r=100 (a circle) | 109 | 76 | 51 | 31 |
+| 1200x600 r=8 | 19 | 5 | 3 | 2 |
+
+So it is worst exactly where the corner is the visible feature: a large
+`cornerRadius` against a tight glow.
+
+---
+
+### 1.8 The fix: trim the straights, develop the arcs
+
+Two halves, both in [`neon.frag`](../lib/shaders/neon.frag).
+
+**The straights stop at the tangent points.** Their extents become
+`halfSize - cornerRadius` rather than `halfSize`, so a straight runs exactly as
+far as the flat run of tube it stands for and the phantom is gone.
+
+**Each arc becomes a fifth through eighth segment.** A circular arc has no
+elementary antiderivative under either kernel, so `arcTangentSegment` **develops
+it** onto a straight line instead: the tangent at whichever arc point is
+nearest the fragment, carrying the arc's full length `PI*r/2` and split about
+that point. Two properties fall out, and they are the whole reason this form
+was picked over a fixed tangent:
+
+- The perpendicular distance it reports is the TRUE distance to the arc,
+  `abs(length(w) - r)`, for every fragment that faces it.
+- The two halves run exactly as far as the real arc does in each direction, so
+  the developed arc abuts the trimmed straights in arclength. No gap, no
+  overlap, and the emitter is continuous all the way round.
+
+The frame costs one `atan` and one `length` per corner. `w` is the fragment's
+offset from the arc centre in that corner's own frame, x along one incident
+edge's outward normal and y along the other's, so the arc is exactly the first
+quadrant of `w` and clamping into it is `max(w, 0)`. Off the ends the nearest
+arc point is a tangent point, and which one follows from
+`|w - (r,0)|^2 - |w - (0,r)|^2 = 2r*(w.y - w.x)`; that is what the degenerate
+fallback picks, so it is the correct clamp for its whole region and not only
+for the one point (a fragment exactly on an arc centre) that forces it to
+exist.
+
+**Why not a fixed tangent, or two, or three.** A stub tangent at the arc's
+midpoint is the same cost as the developed form, minus the `atan`. It is not
+the same accuracy. Worst error in 8-bit levels against the integrated truth,
+`glowRadius` 5, sweeping along the top edge through the tangent point - the
+path where a fixed stub is furthest from the arc it stands for:
+
+| | shipped (phantom) | 1 fixed stub | 2 stubs | 3 stubs | developed |
+| --- | ----------------- | ------------ | ------- | ------- | --------- |
+| along the edge | 57 | 32 | 10 | 3 | **3** |
+| corner diagonal | 54 | 4 | 12 | 5 | **5** |
+
+One fixed stub trades the phantom for a smaller ripple at the tangent point;
+three stubs match the developed form at three times its segment count. The
+developed arc gets there with one.
+
+### 1.8.1 Measured
+
+Same grid as 1.7 - worst absolute error over a 10 px grid covering one
+quadrant, inside and out, against the numerically integrated perimeter:
+
+| geometry | gr 5 | gr 15 | gr 30 | gr 60 |
+| -------- | ---- | ----- | ----- | ----- |
+| 800x400 r=40 | 76 -> **6** | 36 -> **5** | 17 -> **6** | 9 -> **3** |
+| 800x400 r=120 | 112 -> **6** | 77 -> **6** | 52 -> **6** | 29 -> **7** |
+| 800x400 r=200 | 130 -> **8** | 95 -> **11** | 74 -> **10** | 48 -> **11** |
+| 300x200 r=30 | 67 -> **5** | 26 -> **6** | 14 -> **5** | 8 -> **2** |
+| 200x200 r=100 (a circle) | 109 -> **18** | 76 -> **20** | 51 -> **19** | 31 -> **23** |
+| 1200x600 r=8 | 19 -> **3** | 5 -> **1** | 3 -> **1** | 2 -> **1** |
+
+And on the renderer rather than the model, 800x400 at `cornerRadius` 40,
+`glowRadius` 5, the exterior corner diagonal with `R` from the arc centre:
+
+| R | 45 | 50 | 60 | 70 | 80 | 100 | 120 | 160 |
+| - | -- | -- | -- | -- | -- | --- | --- | --- |
+| before `b2fead5` | 174 | 128 | 101 | 86 | 73 | 57 | 45 | 29 |
+| `b2fead5` | 171 | **164** | **159** | 101 | 78 | 54 | 40 | 24 |
+| fixed | 173 | **126** | **96** | 80 | 65 | 47 | 36 | 22 |
+
+The bulge is gone and the corner reads round again. The interior change from
+1.5.2 is untouched by this: centre of the rect stays at 21 (`glowRadius` 5) and
+112 (`glowRadius` 30), against 13 and 81 before `b2fead5`.
+
+### 1.8.2 The arc pedestal is shared, and what that costs
+
+1.5.1 established that the bloom's pedestal has to be **per piece**. The arcs
+are the exception, and for a reason that does not apply to an edge: an arc's
+length is `PI*r/2` no matter where the fragment is, so evaluating its pedestal
+with that length CENTRED leaves an expression in uniforms alone. It is exact
+for every fragment that faces an arc, and an over-subtraction only for ones off
+to the side, where the arc term is small and the clamp takes it to zero anyway.
+An edge cannot do this because its half-length routinely exceeds `reach`, which
+is exactly the 1.5.1 failure.
+
+Measured on the worst case that exists - a circle, four arcs and no straights,
+so nothing else carries an exact pedestal. `glowRadius` 5, emitter radius 200:
+
+| | per-arc pedestal | shared centred | `bw*L/c^2` |
+| --- | ---------------- | -------------- | ---------- |
+| last lit radius, 0 deg | 494 | 476 | - |
+| last lit radius, 45 deg | 644 | 506 | - |
+| lit fraction, 1280x720 | 0.638 | 0.589 | 0.576 |
+| largest adjacent step | 1/255 | 1/255 | - |
+
+The whole difference sits in values of 4/255 and below, and the step stays at
+1/255, so the tail **ends sooner rather than being chopped** - which is the
+distinction 1.5.1 turns on. On a rounded rect, where the straights' own exact
+pedestals dominate, it is 0.1% of the lit fraction. The further collapse to
+`bw*L/c^2` is a ~7% over-subtraction and is called out at the call site so
+nobody tries it again.
+
+### 1.8.3 Cost, and what stays bit-identical
+
+Neon pass at 1280x720, `GL_TIME_ELAPSED`, median of 15, on an AMD Radeon Pro
+5300M. That machine is several times slower than whatever produced 1.5's
+1.67 / 1.88 ms, so only the ratios here are comparable:
+
+| scene | `b2fead5` | fixed | |
+| ----- | --------- | ----- | - |
+| r=0 gr=5 | 8.83 ms | 8.84 ms | **1.00x** |
+| r=0 gr=60 | 8.83 ms | 8.84 ms | **1.00x** |
+| r=40 gr=5 | 8.85 ms | 10.52 ms | 1.19x |
+| r=40 gr=60 | 8.85 ms | 10.52 ms | 1.19x |
+| r=200 gr=30 | 8.88 ms | 10.46 ms | 1.18x |
+
+A sharp-cornered rect pays **nothing**, because `uCornerRadius` is a uniform and
+the block branches uniformly. That parity is not free by construction, though -
+it is a register-pressure result. With the per-arc pedestal in place the block
+was heavy enough to cost the SHARP path 1.14x for code it never executes
+(8.83 -> 10.06 ms); shrinking the body is what returned it to parity. Anything
+added here should be re-timed on a `cornerRadius` 0 scene as well as a rounded
+one.
+
+`cornerRadius` 0 is also bit-identical, verified by capture rather than by
+argument: nine scenes covering both glow sides, an outside cutoff, an opaque
+fill, `resolutionScale` 1.0 / 0.5 / 0.25, `glowRadius` 0 and a wide glow, all
+`cmp`-equal to the same scene rendered by `b2fead5`.
+
+### 1.8.4 What is still approximate
+
+A **circle** is the residual case, at 18 to 23 levels: with
+`cornerRadius == halfMin` the perimeter is four developed arcs and no straights,
+so every fragment is served entirely by the approximation, and one of the four
+is always in the degenerate fallback (its `w` has both components negative
+wherever the fragment sits on an axis). Everything between a sharp rect and a
+circle is single digits.
+
+---
 
 ---
 
@@ -349,6 +602,14 @@ a no-op and the expression reduces to exactly what it was.
 | [`neon-renderer.cpp`](../lib/src/renderer/neon-renderer.cpp) | `setupGeometry` applies the Nyquist floor in buffer px, after the scale, so the draw quad clears the filament the shader actually draws |
 | [`review-findings.md`](review-findings.md) | V4 closed as fixed, with the reason its original premise was wrong |
 
+Then, for the corner over-extension in sections 1.7 and 1.8:
+
+| file | change |
+| ---- | ------ |
+| [`neon.frag`](../lib/shaders/neon.frag) | straights trimmed to the tangent points; `arcTangentSegment` added and one developed-arc segment summed per corner, behind a `uCornerRadius > 0` uniform branch; one shared centred pedestal for the four arcs |
+| [`neon-tuning.h`](../lib/include/renderer/neon-tuning.h) | `ARC_FRAME_EPSILON` added; the halo block's "runs to the SHARP corner" paragraph replaced by the developed-arc derivation, and the interior change from 1.5.2 written down beside it |
+| [`review-findings.md`](review-findings.md) | V10 |
+
 Not changed, and deliberately: the tonemap stays where it is, so option C in
 section 2.4 remains available and unattempted. Scale 1.0 moves only by the
 four-edge halo and bloom, which is intentional; the filament change is a no-op
@@ -380,6 +641,9 @@ the gradient and every delta is meaningless.
 | tail | exterior falloff outward from an edge, reporting where it hits zero and the largest adjacent-pixel step. This is what caught the pedestal regression | 1.5.1 |
 | size | peak at a fixed distance across rect widths | 1.6 |
 | smoke | a matrix of glow sides, cutoffs, opaque modes, degenerate sizes and falloffs, at 1.0 and 0.5, reporting mean / max / lit fraction so before and after can be diffed for blowouts and black frames | - |
+| arc | the corner work. A Python model of both kernels over the true rounded-rect perimeter (straights plus quarter arcs, 1600 elements) is the ground truth; the candidate emitter decompositions are evaluated against it on a grid and through the grade, which is what the 8-bit error tables are | 1.7, 1.8.1 |
+| sharp | nine `cornerRadius` 0 scenes captured on both sides of a change and `cmp`-ed, which is how the uniform branch's bit-identity claim is checked rather than argued | 1.8.3 |
+| timer | the neon pass under `GL_TIME_ELAPSED`, median of 15 after 5 warm-up frames, across sharp and rounded scenes - both, because the register pressure of a branch nothing takes is measurable | 1.8.3 |
 
 The smoke probe is the one to run first after any change to this shader. It is
 what showed that the small-rect dimming in section 1.6 was real behaviour rather
