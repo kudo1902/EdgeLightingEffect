@@ -448,11 +448,14 @@ namespace EdgeLighting
         // here as harmless because nothing in THIS library enables
         // GL_CULL_FACE. That was the wrong half of the question - the host owns
         // that state, and on a shared surface view so does whatever else draws
-        // into the context. buildStrips winds for the flip, and
-        // EdgeLightingEffect::Render's NoCullScope covers every cull
-        // configuration for every layer; see both for the measurement. No other
-        // handedness has to be kept in step, since the fragment stage reads no
-        // gl_FragCoord.
+        // into the context. buildStrips winds for the flip, so the strips come
+        // out front-facing under the default GL_CCW / GL_BACK configuration
+        // like every other layer, rather than being the one piece of geometry
+        // a culling host deletes; see it for the measurement. The other ways a
+        // host can cull (GL_FRONT, a GL_CW front face) are not covered anywhere
+        // in this library, so they are the caller's to settle before it calls
+        // Render. No other handedness has to be kept in step, since the
+        // fragment stage reads no gl_FragCoord.
         const glm::mat4 mvp = glm::ortho(0.0f, static_cast<float>(viewportWidth),
                                          static_cast<float>(viewportHeight), 0.0f,
                                          -1.0f, 1.0f);
@@ -757,12 +760,13 @@ namespace EdgeLighting
                 // embedded surface view sharing its context with a video
                 // pipeline or web engine that left culling behind.
                 //
-                // EdgeLightingEffect::Render's NoCullScope covers the rest of
-                // the ways a host can cull (GL_FRONT, a GL_CW front face) for
-                // every layer at once. This is the half that stops THIS
-                // geometry from being wrong in the first place, so the strips
-                // are correct on their own terms rather than only because
-                // something upstream switches culling off.
+                // This winding is what stops THIS geometry from being wrong
+                // in the first place, so the strips are correct on their own
+                // terms under the default GL_CCW / GL_BACK configuration
+                // rather than only because something upstream switched
+                // culling off. The rest of the ways a host can cull (GL_FRONT,
+                // a GL_CW front face) are not covered anywhere in the library
+                // and are the caller's to settle.
                 //
                 // Nothing about the image changes: GL's fill rule is
                 // orientation-independent, and every vertex of a lamp's strip

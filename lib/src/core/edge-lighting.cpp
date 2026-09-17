@@ -53,45 +53,6 @@ namespace EdgeLighting
 
     void EdgeLightingEffect::Render(int viewportWidth, int viewportHeight)
     {
-        // The one piece of GL state this fan-out owns, and it is here rather
-        // than in the renderers because it is a property of the whole effect:
-        // NOTHING this library draws is meant to be face-culled. Every layer is
-        // a flat screen-space quad, ring or strip with no back side to hide, so
-        // a cull state can only ever delete pixels that were meant to be there.
-        //
-        // It is not hypothetical. The GL context is not always this library's
-        // alone - on an embedded surface view (Tizen Evas_GL, Android
-        // GLSurfaceView) a video pipeline or web engine shares it and leaves
-        // its own state behind, and none of it shows up on a desktop demo where
-        // GL_CULL_FACE is off by default and nothing ever enables it. Measured
-        // offscreen at 640x360, with GL_CULL_FACE on and the host's winding
-        // order reversed to GL_CW, every layer but the debug bounding box (a
-        // GL_LINE_LOOP, which culling does not apply to) rendered 0 pixels.
-        //
-        // ONE scope for the whole frame rather than one per renderer: it is a
-        // single glIsEnabled either way, the renderers all want the same
-        // answer, and a layer added later gets the guarantee without having to
-        // know it needed one. Renderers still own their own BLEND state, which
-        // differs per layer and so cannot be hoisted the same way.
-        //
-        // The host's setting is put back as this scope unwinds - a caller that
-        // had culling on for its own geometry finds it on again afterwards.
-        GLUtils::NoCullScope noCull;
-
-        // The rest of the state this fan-out cannot draw correctly without and
-        // never sets for itself: a full colour+alpha write mask, GL_FUNC_ADD,
-        // and no depth test or depth write. Same argument as the cull scope
-        // above, same shared-context hazard, same once-per-frame placement.
-        //
-        // The alpha half is the load-bearing one. Every layer here writes a
-        // coverage alpha, and on an embedded surface that alpha is what
-        // decides whether the pixel is seen at all - the compositor or the
-        // hardware video plane finishes the frame with it. A host that left
-        // alpha writes masked off makes all of that a silent no-op: the colour
-        // lands, the alpha keeps whatever was already in the buffer, and the
-        // layer is invisible over video with nothing in the log to say why.
-        GLUtils::CompositeStateScope compositeState;
-
         float t = mClock.GetTime();
         for (auto &renderer : mRenderers)
         {
