@@ -68,6 +68,28 @@ renderer targets has no visible cone boundary anywhere, so `softness` sets how
 broad the gaussian is and there is deliberately no value that produces an edge.
 If you want a sharp-edged cone, this is not the layer for it.
 
+### The output is dithered, and it has to be
+
+That gaussian is also the flattest gradient in this library: the outer cone
+crosses one 8-bit step every 13 to 50 px at default settings. An RGBA8 target
+quantises a gradient that flat into a few very wide bands, and since a cone's
+iso-contours are near-straight rays, each band edge is a long straight line -
+so the light stops looking like a pool and starts looking like a hard-edged
+strip sitting on whatever is behind it.
+
+`spotlight.frag` therefore adds half a destination step of ordered noise
+before the framebuffer rounds, which spreads each band edge across the whole
+band. `SPOT_DITHER_STEPS` in
+[`spotlight-tuning.h`](../lib/include/renderer/spotlight-tuning.h) is the
+knob; 0.0 turns it off and restores the exact pre-dither output. Nothing about
+the falloff, the strip bound or the per-lamp cost changes with it. See **V11**
+in [`review-findings.md`](review-findings.md) for the measurements, including
+what the noise costs an eight-lamp rig.
+
+If you are chasing a straight edge in this layer, read V11 before reading
+`buildStrips`: the reported symptom points at the geometry and the cause was
+not the geometry.
+
 ---
 
 ## 2. What the default `Config()` renders

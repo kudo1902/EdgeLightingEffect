@@ -17,6 +17,11 @@
 //     SPOT_NEAR_FADE, SPOT_BLOOM_WINDOW_INNER   shader only - they shape terms
 //                                               the CPU only has to bound, and
 //                                               it bounds them conservatively.
+//     SPOT_DITHER_STEPS                         shader only - it perturbs the
+//                                               output by less than one
+//                                               destination step, which is
+//                                               below everything the CPU
+//                                               bounds.
 //     SPOT_BLOOM_SUPPORT                        CPU only - it fixes where the
 //                                               bloom window ends, and that
 //                                               number reaches the shader as a
@@ -107,6 +112,30 @@
 /// removes is a region where the shader writes zero.
 #define SPOT_STRIP_SEGMENTS       12
 
+/// Width of the ordered dither spotlight.frag adds before the framebuffer
+/// quantises its output, peak to peak, in destination steps. 1.0 is therefore
+/// a rectangular +/- HALF a step - the classic dither for an 8-bit target: it
+/// decorrelates the rounding error from the signal without adding visible
+/// noise, and its peak is exactly the rounding threshold, so it cannot round
+/// a black fragment up to 1.
+///
+/// WHY THIS LAYER NEEDS IT AND THE OTHERS MOSTLY DO NOT. A spotlight's outer
+/// falloff is the flattest gradient in this library: at default settings the
+/// cone crosses one 8-bit step every 13 to 50 px, so RGBA8 turns it into a
+/// handful of wide bands with long, almost perfectly straight edges - the
+/// cone's iso-contours are near-straight rays, so the quantisation contours
+/// are too. Straight edges are exactly what the eye finds, which is why the
+/// banding reads as a hard-edged "strip" laid over whatever is behind it
+/// rather than as a smooth pool of light. Neon and the flare quantise the
+/// same way but their gradients are steep enough that a band is a pixel or
+/// two wide.
+///
+/// Shader only: the strip solve does not read it. See SPOT_VISIBILITY_FLOOR
+/// for what the dither costs that solve.
+///
+/// 0.0 disables it and restores the exact pre-dither output.
+#define SPOT_DITHER_STEPS         1.0
+
 /// HALF an 8-bit step - the level below which a value quantises to zero,
 /// and therefore the budget the strip bound is solved against.
 ///
@@ -121,6 +150,15 @@
 /// lamps overlap: N lamps each under floor/N sum to under floor. A single-lamp
 /// rig therefore pays nothing for the sharing, and an eight-lamp rig draws the
 /// larger strips it actually needs.
+///
+/// SPOT_DITHER_STEPS softens what this bound means, and improves what it is
+/// worth. A dithered fragment carries up to half a step of noise, so a pixel
+/// just inside the strip whose signal this solve cut can round to 1 where an
+/// undithered one could not. That does not make the boundary MORE visible: the
+/// pixels that light up are a sparse scatter rather than a line, which is the
+/// same reason the dither is here. The contour the boundary used to hide
+/// behind - the last 1/255 band edge - was the visible artefact, and it is the
+/// one the dither removes.
 #define SPOT_VISIBILITY_FLOOR     (0.5 / 255.0)
 
 // clang-format on

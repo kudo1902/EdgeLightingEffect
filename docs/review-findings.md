@@ -41,6 +41,7 @@ old fork survived.
 | fourth pass | I14 | I13 |
 | fifth pass | I15 | - |
 | sixth pass | I16, I17, I19, I20 | I18 |
+| eighth pass | V11 | - |
 
 The R items come from a re-read after the V and I fixes landed - see
 [Second pass](#second-pass-after-bbdba62). V8 and V9 come from a later read of
@@ -60,6 +61,13 @@ I16 to I20 come from a read of the spotlight layer on
 visual defect, so it adds no V item: the solved strip bound the whole renderer
 rests on was verified offscreen and holds. Its design and the verification
 behind it live in `spotlight-renderer-plan.md`.
+
+V11 comes from a spotlight artefact reported from a render - see
+[Eighth pass](#eighth-pass-the-spotlight-banding-report). It is the visual item
+the sixth pass did not find, and it is worth noting WHY that pass missed it:
+the sixth pass verified the strip bound, and the strip bound was never the
+problem. The reported symptom points straight at the geometry, which is what
+makes this one interesting.
 
 ## How the visual items were reproduced
 
@@ -2090,6 +2098,89 @@ Full derivation, the alternatives that were measured and rejected (one, two and
 three fixed tangent stubs), and the pedestal trade in
 [`corner-crease-and-filament-nyquist.md`](corner-crease-and-filament-nyquist.md)
 sections 1.7 and 1.8.
+
+---
+
+## Eighth pass (the spotlight banding report)
+
+One finding, reported the way V10 was - from a render, not from a read. The
+report was that the spotlight "is not smooth blending with the layer below, it
+created strip shape", which names the strip geometry; the cause turned out to
+be somewhere else entirely, and the first half of this item is the evidence
+that cleared the geometry.
+
+### V11. The spotlight's outer falloff quantises into wide, straight-edged bands - FIXED
+
+**Confirmed.** One lamp at (640, 200), `angle` 90, `beamAngle` 90,
+`throwLength` 600, `intensity` 4, everything else default; 1280x720 over a
+black clear. Also visible at every default-ish setting - the eight-lamp fan
+below shows it plainly.
+
+**First, what it is NOT.** The strip was cleared before anything was changed,
+because the symptom - a straight edge where light meets the layer below - is
+exactly what a strip that cuts lit pixels would produce. Two independent
+checks:
+
+- **Against the shader's own falloff.** `spotlight.frag` was re-evaluated on
+  the CPU at every pixel centre and diffed against the render. Max deviation
+  **1/255**, `d >= 2` on **zero** pixels, and only **56** pixels of 921,600
+  where the reference rounds to 1 and the render is 0 - the coin-flip at the
+  boundary that `SupportAt`'s comment already predicts. The strip is not
+  clipping.
+- **Across the parameter space.** Sixteen scenes - intensity to 12, beam to
+  160 degrees, throw to 900, softness at both ends, `bloomRadius` 120, an
+  `apertureWidth` of 80, a tint of 3, `resolutionScale` 0.5 - scanned for any
+  lit pixel of value >= 2 with a zero 4-neighbour. **Zero** in every scene,
+  before and after the fix.
+
+**What it is.** The cone's outer falloff is the flattest gradient in this
+library. Measured along one row at 1280x720 with the default lamp, it crosses
+one 8-bit step every **13 to 50 px**:
+
+```
+row y=500:  [526..554]=77  [555..571]=78  [572..585]=79  [586..598]=80
+            [599..614]=81  [615..664]=82  [665..680]=81  ...
+```
+
+Those runs are the artefact. RGBA8 turns a gradient that flat into a handful
+of very wide bands, and because a cone's iso-contours are near-straight rays,
+each band edge is a long straight line - which is what reads as a hard-edged
+strip laid over the layer behind, and why the report named the geometry. The
+same picture amplified 24x shows the bands as concentric contours with a
+polygonal-looking outer silhouette; none of it is geometry.
+
+**Fixed** by dithering `spotlight.frag`'s output half a step before the
+framebuffer rounds it: `SPOT_DITHER_STEPS` in
+[`spotlight-tuning.h`](../lib/include/renderer/spotlight-tuning.h), applied
+through `spotDither`, an interleaved-gradient-noise offset added to all three
+channels and to the coverage alpha alike. It reads `vLocal` rather than
+`gl_FragCoord`, so the shader keeps its "never reads `gl_FragCoord`" property
+and the pattern travels with the lamp instead of crawling across it under an
+animation.
+
+Rectangular +/- half a step, not triangular +/- one step: `fract` returns
+strictly under 1, so the offset is strictly under the rounding threshold and a
+fragment the falloff left at zero cannot be rounded up. That matters on a pass
+whose strip is mostly dark - speckle across all of it would be worse than the
+banding.
+
+Verified after the change:
+
+| check | before | after |
+| ----- | ------ | ----- |
+| same row, run lengths | 13 to 50 px of one value | 1 to 3 px, values interleaved |
+| deviation from the undithered reference | - | max **1**, `d >= 2` on **0** px |
+| hard edges, sixteen scenes | 0 | 0 |
+| local noise, eight overlapping lamps at level 35-44 | 0.269 LSB | **0.812** LSB |
+
+The last row is the cost. Each lamp dithers its own fragment and the pass is
+additive, so the noise accumulates over the rig - and even at the
+`SPOT_MAX_LIGHTS` ceiling it stays under one destination step, which is the
+bound that matters.
+
+`resolutionScale` 0.5 was checked separately, because the blit's bilinear
+filter could in principle average the dither away and bring the bands back. It
+does not: the half-res path is band-free as well.
 
 ---
 
