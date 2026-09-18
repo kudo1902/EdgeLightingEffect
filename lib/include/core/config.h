@@ -329,10 +329,23 @@ namespace EdgeLighting
         float bloomStrength = 0.30f;
         /// Restrict the glow to one side of the line, or let it spill both ways.
         GlowSide glowSide = GlowSide::BOTH;
-        /// Softness of the one-sided cut in pixels. 0 = hard edge, 2 = subtle
-        /// feather. Ignored when glowSide == BOTH. Does NOT affect the
-        /// inside/outside cutoff boundaries - those use @c cutoffSoftness
-        /// below so the two feathers can be tuned independently.
+        /// TOTAL feather width in pixels of the one-sided cut, measured from
+        /// the rect edge INTO the lit side. 0 = a pixel-tight edge (floored to
+        /// the same 1 px analytic coverage the opaque fill uses at @c d = 0,
+        /// so the cut is antialiased rather than stair-stepped); 2 = a subtle
+        /// feather. Ignored when glowSide == BOTH.
+        ///
+        /// The feather never crosses the line, which is what keeps the glow
+        /// registered with an @c OpaqueMode fill on the same side: @c
+        /// GlowSide::OUTSIDE plus @c OpaqueMode::OUTSIDE share one edge at
+        /// @c d = 0 at any softness. NOTE this ramp used to be centred on the
+        /// line and span 2x this value, so half of it fell on the side the
+        /// fill does not cover - a value tuned before that fix now feathers
+        /// over the stated width on the lit side only, and no longer washes
+        /// over the unfilled side.
+        ///
+        /// Does NOT affect the inside/outside cutoff boundaries - those use
+        /// @c Cutoff::softness so the two feathers can be tuned independently.
         float glowSideSoftness = 0.0f;
 
         /// Inside cutoff (rect interior side). See @ref Cutoff for the fields.

@@ -573,16 +573,80 @@ void main() {
     // the far region instead of a per-fragment discard (tiler-friendly).
     // The one-sided cuts below stay as discards: they cull a useful half-band
     // the quad can't express.
-    float softEdge = max(uGlowSideSoftness, SIDE_SOFT_EPSILON);
-    if (uGlowSide == GLOW_SIDE_INSIDE  && d >  softEdge) discard;
-    if (uGlowSide == GLOW_SIDE_OUTSIDE && d < -softEdge) discard;
+    // The one-sided cut's antialiasing width: one DESTINATION pixel, expressed
+    // in this shader's units. |grad d| == 1 for an SDF, so fwidth(d) is one
+    // BUFFER pixel, and uResolutionScale converts that to the pixel the blit
+    // finally lands on - exactly the conversion the full-res px constants out
+    // of neon-tuning.h take, and a no-op at scale 1.0.
+    //
+    // Destination pixels, not buffer pixels, because the thing this edge has
+    // to register with is the opaque fill, and the fill is ALWAYS full-res on
+    // the caller's framebuffer. A buffer-pixel floor here is 1/scale times too
+    // wide: at scale 0.25 it put a 4 px ramp into the buffer, which the
+    // bilinear blit then smeared wider still. Below scale 1.0 this floor is
+    // sub-buffer-pixel and so is a step in the buffer, which is right - at a
+    // reduced scale the blit owns the edge's softness and nothing in here can
+    // sharpen it. (Contrast CUTOFF_SOFT_FLOOR_PX, which IS in buffer px on
+    // purpose - that boundary has no full-res counterpart to line up with, so
+    // quantisation is its only concern. See neon-tuning.h.)
+    //
+    // Computed HERE, above every discard in this function, because a
+    // derivative downstream of control flow the compiler cannot prove uniform
+    // is undefined, and these discards are per-fragment rather than uniform.
+    // Same rule black-rect.frag's main() documents at length. This is the only
+    // derivative in this shader - keep it at the top if a second one is ever
+    // needed.
+    float sideAA = max(fwidth(d) * uResolutionScale, 1e-6);
+
+    // TOTAL feather width of the one-sided cut, floored at that pixel. The
+    // floor is what antialiases the cut: uGlowSideSoftness 0 used to leave
+    // softEdge at SIDE_SOFT_EPSILON, which is a hard step, so the glow's edge
+    // stair-stepped along every rounded corner while the opaque fill's own
+    // d == 0 edge - box-filtered through fwidth in black-rect.frag - stayed
+    // clean right beside it.
+    float sideSoft = max(uGlowSideSoftness, sideAA);
+
+    // How far the ramp may reach back across the line, and the ONLY part of it
+    // that lands on the side an OpaqueMode fill does not cover. Half a pixel
+    // at full res, because that is exactly how far the fill's own box filter
+    // reaches back too (black-rect.frag's edgeIn / edgeOut span d in
+    // [-sideAA/2, +sideAA/2]) - so the two share one ramp and neither shows
+    // past the other.
+    //
+    // Zero on the scaled path, where that reasoning does not survive the blit.
+    // A buffer texel whose CENTRE is lit gets bilinear-smeared over 1/scale
+    // destination pixels either way, so lighting one on the dark side of the
+    // line spills onto bare backdrop the fill never reaches: at scale 0.25 a
+    // back-reach of 0.125 buffer px was enough to flip the straddling texel on
+    // and wash 4 destination px across the line. Erring the other way hides,
+    // because the pixels it gives up are inside the fill and the fill is
+    // already solid there. Same uniform-branch shape as the softFloor gate
+    // below; a uniform branch is free.
+    //
+    // The cut is ANCHORED at the line, not centred on it: the feather runs
+    // from sideBack INTO the lit side, so the glow's support is the fill's
+    // support extended forward and never reaches back past it.
+    //
+    // It used to span [-softEdge, +softEdge]: a feather centred on d == 0, so
+    // HALF of it landed on the side OpaqueMode does not fill. With
+    // glowSide = OUTSIDE and opaqueMode = OUTSIDE the glow washed
+    // uGlowSideSoftness/2 px over the bare backdrop INSIDE the rect, with no
+    // fill under it, and was still climbing out of its ramp where the fill had
+    // already gone solid - the blurred, unmatched seam that pair of settings
+    // exists to not have. Measured at softness 4 on a 200x150 rect: red glow
+    // at 232, 206, 127, 18 on the four pixels inside the edge, over a backdrop
+    // the fill never touched. GlowSide says "restrict the glow to one side of
+    // the line"; it now does.
+    float sideBack = (uResolutionScale < 1.0) ? 0.0 : 0.5 * sideAA;
+    if (uGlowSide == GLOW_SIDE_INSIDE  && d >  sideBack) discard;
+    if (uGlowSide == GLOW_SIDE_OUTSIDE && d < -sideBack) discard;
 
     // Hard geometric cutoffs. The band is [-uInsideCutoff, +uOutsideCutoff]
     // with a per-side softness feather straddling each boundary; anything
     // past the feather is culled here so bloom/halo can't leak beyond the
     // artist's stated reach even if uGlowRadius says otherwise. Softness is
     // decoupled from uGlowSideSoftness so the one-sided cut at d=0 can stay
-    // razor-sharp while the cutoff joins fade smoothly, and per-side so the
+    // pixel-tight while the cutoff joins fade smoothly, and per-side so the
     // interior and exterior can taper at different rates. Disabled sides
     // arrive with size = a huge sentinel, so these branches no-op.
     //
@@ -1226,8 +1290,13 @@ void main() {
     result      += emitGlow * bloom * uBloomStrength * glowGate;
 
     // --- One-sided cut: mask the WHOLE emission at the line ----------
-    if (uGlowSide == GLOW_SIDE_INSIDE)       result *= smoothstep( softEdge, -softEdge, d);
-    else if (uGlowSide == GLOW_SIDE_OUTSIDE) result *= smoothstep(-softEdge,  softEdge, d);
+    // Anchored at the opaque fill's own edge and feathered INTO the lit side -
+    // see the derivation of sideAA / sideSoft / sideBack at the top of main().
+    // At uGlowSideSoftness 0 and full res this ramp spans exactly the pixel
+    // black-rect.frag box-filters, so the fill and the glow share one edge
+    // instead of one being crisp while the other stair-steps.
+    if (uGlowSide == GLOW_SIDE_INSIDE)       result *= smoothstep( sideBack, sideBack - sideSoft, d);
+    else if (uGlowSide == GLOW_SIDE_OUTSIDE) result *= smoothstep(-sideBack, sideSoft - sideBack, d);
 
     // --- Hard cutoff soft masks: fade the emission over the per-side
     // softness on each side of the [-uInsideCutoff, +uOutsideCutoff] band so
