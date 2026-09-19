@@ -6,9 +6,11 @@ resolution buffer and onto the destination, and when the draw quad started
 honouring the culls that bound it.
 
 [`corner-crease-and-filament-nyquist.md`](corner-crease-and-filament-nyquist.md)
-is the analytic-emission equivalent of this document;
-[`review-findings.md`](review-findings.md) is where the four defects below were
-first written up.
+is the analytic-emission equivalent of this document: the same shape of
+argument, offscreen probes and all, applied to the halo and bloom instead of to
+the edges that bound them. The four defects below came out of a review of
+`b3c6b1e` and were fixed in the same pass, so they are recorded here rather than
+in [`review-findings.md`](review-findings.md), which tracks OPEN ones.
 
 **Result: every edge the neon layer draws is now antialiased, the reduced-
 resolution paths agree with full resolution to within a few levels instead of
@@ -91,8 +93,8 @@ edge rendered beside it as a reference:
 | +0.375 | 238 | 229 | 223 | 209 |
 | +0.250 | 236 | 202 | 191 | 179 |
 | +0.125 | 233 | 163 | 159 | 149 |
-|  0.000 | **225** | **119** | **128** | **120** |
-| -0.125 | 211 | 75 | 96 | 90 |
+|  0.000 | **225** | **120** | **128** | **120** |
+| -0.125 | 211 | 76 | 96 | 90 |
 | -0.250 | 180 | 37 | 64 | 60 |
 | -0.375 | 104 | 10 | 32 | 30 |
 
@@ -314,9 +316,9 @@ it needs two configs in sequence to appear at all.
 
 | case | scenes | result |
 | ---- | ------ | ------ |
-| `GlowSide::BOTH`, `resolutionScale 1.0` | 16 | byte-identical |
-| `GlowSide::BOTH`, scaled | 8 | byte-identical |
-| one-sided, `resolutionScale 1.0`, through the blit change | 24 | byte-identical |
+| `GlowSide::BOTH`, both scales, through the tone-map change | 16 | byte-identical |
+| every glow side at `resolutionScale 1.0`, through the blit change | 24 | byte-identical |
+| `GlowSide::BOTH` at `resolutionScale 0.5`, through the blit change | 8 | byte-identical |
 | both cutoffs disabled, through the cutoff change | 16 | byte-identical |
 
 The default `Config()` has `glowSide = BOTH` and both cutoffs disabled, so the
