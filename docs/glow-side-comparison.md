@@ -207,11 +207,15 @@ First lit pixel at softness 4:
 
 | scale | before | after |
 | ----- | ------ | ----- |
-| 1.00 | 37 | 37 |
+| 1.00 | 179 | 37 |
 | 0.50 | 129 | 37 |
-| 0.25 | 103 | 36 |
+| 0.25 | 21 | 36 |
 
-Measured at the destination the parameter is scale-invariant.
+The before column is `b3c6b1e`, like every other in this document, so its 1.00
+entry moved for section 3's reason rather than this one. Isolating THIS change -
+the cut put back in the gather with everything else held at HEAD - the same
+three read 37 / 56 / 29: one number that is scale invariant against one that
+roughly halved with every halving of the scale.
 
 ![Feather 4 at scale 0.50](images/glow-side-comparison/scaled-050-feather4.png)
 

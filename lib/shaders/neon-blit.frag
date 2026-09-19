@@ -19,7 +19,8 @@ precision highp float;
 // glowSide OUTSIDE, softness 0, with the cut made in neon.frag at d = 0: the
 // destination pixel at d = -0.5 - on the DARK side of the line, over backdrop
 // an OpaqueMode fill never covers - came back at 59/255. At scale 0.25 the
-// same wash ran four destination pixels deep.
+// same wash ran four destination pixels deep, 105 / 75 / 45 / 15 going inward
+// from the line.
 //
 // No placement inside the buffer fixes that, because the buffer does not
 // contain a destination-resolution edge to place. This pass does: it runs
@@ -40,7 +41,9 @@ precision highp float;
 // bottom range: at scale 0.25 a softness of 0, 2 and 4 rendered BYTE-IDENTICAL,
 // because 4 px is one buffer texel there and the filter is wider than that.
 // The first lit pixel now reads 37 / 37 / 36 at softness 4 across scales
-// 1.0 / 0.5 / 0.25, against 37 / 129 / 103 before.
+// 1.0 / 0.5 / 0.25, against 37 / 56 / 29 with the cut made in the gather and
+// everything else held here - one scale-invariant number against a number that
+// halved with every halving of the scale.
 
 #define GLOW_SIDE_BOTH    0
 #define GLOW_SIDE_INSIDE  1

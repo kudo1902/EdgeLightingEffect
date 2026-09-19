@@ -1435,8 +1435,17 @@ void main() {
     //
     //   d(straddle)   +0.500  +0.375  +0.250  +0.125   0.000  -0.250  -0.375
     //   cut, above       239     238     236     233     225     180     104
-    //   cut, below       239     209     179     149     120      60      30
+    //   cut, below       239     229     202     163     120      37      10
     //   opaque fill      255     223     191     159     128      64      32
+    //   1 px box filter  239     209     179     149     120      60      30
+    //
+    // The last row is the exact analytic coverage, for scale. The shipped cut
+    // is a smoothstep, so it meets the box filter at the ends and at half
+    // coverage and rides up to ~0.08 coverage away from it in the shoulders -
+    // the same difference black-rect.frag prices as "not resolvable" where it
+    // chose a linear ramp for its own d == 0 edge and a smoothstep for its
+    // wider ones. What matters is that it tracks the FILL row, which is the
+    // edge it has to register with, rather than the row above it.
     //
     // The row below the grade IS the 1 px box filter, and it tracks the fill it
     // has to register with; the row above it is four pixels of nothing followed
