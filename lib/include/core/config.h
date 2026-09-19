@@ -36,9 +36,22 @@ namespace EdgeLighting
     ///   size     - distance in pixels from the rect edge to the cutoff
     ///              boundary along this side (always positive; sign is
     ///              implicit in whether it's the inside or outside cutoff).
-    ///   softness - feather width in pixels at the cutoff boundary. 0 = hard
-    ///              edge; larger values fade the neon emission smoothly to
-    ///              zero over the boundary. Independent per side.
+    ///   softness - TOTAL feather width in pixels at the cutoff boundary,
+    ///              centred on it. 0 = a pixel-tight edge, not a hard one: the
+    ///              ramp is floored at one destination pixel so the boundary is
+    ///              antialiased, which matters wherever it curves - every
+    ///              rounded corner, and all four corners of a cornerRadius-0
+    ///              band. Larger values fade the neon out smoothly over the
+    ///              boundary. Independent per side.
+    ///
+    ///              NOTE the shader used to spread this over 2x the stated
+    ///              width, and to apply it to the linear emission ahead of the
+    ///              tone map. It is now the width it says, applied as coverage
+    ///              to the graded output - the same two corrections @c
+    ///              opaqueSoftness and @c NeonConfig::glowSideSoftness already
+    ///              carry, and the reason all three now agree at a shared
+    ///              boundary. A tuned non-zero value feathers over half the
+    ///              span it used to.
     typedef struct Cutoff
     {
         bool enable = true;
@@ -335,14 +348,25 @@ namespace EdgeLighting
         /// so the cut is antialiased rather than stair-stepped); 2 = a subtle
         /// feather. Ignored when glowSide == BOTH.
         ///
-        /// The feather never crosses the line, which is what keeps the glow
-        /// registered with an @c OpaqueMode fill on the same side: @c
-        /// GlowSide::OUTSIDE plus @c OpaqueMode::OUTSIDE share one edge at
-        /// @c d = 0 at any softness. NOTE this ramp used to be centred on the
-        /// line and span 2x this value, so half of it fell on the side the
-        /// fill does not cover - a value tuned before that fix now feathers
-        /// over the stated width on the lit side only, and no longer washes
-        /// over the unfilled side.
+        /// The feather reaches back across the line by half a pixel and no
+        /// further - exactly as far as the fill's own box filter does - which
+        /// is what keeps the glow registered with an @c OpaqueMode fill on the
+        /// same side: @c GlowSide::OUTSIDE plus @c OpaqueMode::OUTSIDE share
+        /// one edge at @c d = 0 at any softness. NOTE this ramp used to be
+        /// centred on the line and span 2x this value, so half of it fell on
+        /// the side the fill does not cover - a value tuned before that fix
+        /// now feathers over the stated width on the lit side only, and no
+        /// longer washes over the unfilled side.
+        ///
+        /// SECOND NOTE, and it moves tuned values again: the cut is COVERAGE,
+        /// and is applied to the graded output rather than to the linear
+        /// emission. Multiplied in ahead of the tone map it was largely undone
+        /// by it - a half-covered pixel came out at 94% of a full one, so the
+        /// cut stair-stepped, and a feather was not even monotonic (softness 4
+        /// read 179, 215, 212, 186 over its first four pixels: brightening for
+        /// two of them before it faded). The ramp now fades as stated, which
+        /// means a non-zero value here reads DIMMER and wider than it used to.
+        /// Retune by eye; the shape is the one the number describes now.
         ///
         /// Does NOT affect the inside/outside cutoff boundaries - those use
         /// @c Cutoff::softness so the two feathers can be tuned independently.

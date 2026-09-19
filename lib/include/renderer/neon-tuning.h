@@ -372,13 +372,28 @@
 #define SIDE_SOFT_EPSILON         1e-5
 #define WSUM_EPSILON              1e-6
 
-// --- Cutoff anti-aliasing floor, in BUFFER pixels.
+// --- Cutoff PLACEMENT floor, in BUFFER pixels. Scaled path only.
 //
 //     The odd one out in this file: every other px constant here is stated in
 //     FULL-RES px and converted with uResolutionScale at the point of use.
 //     This one is already in the space the gather rasterises into, and must
 //     NOT be converted - the whole point is to be a fixed fraction of the
 //     buffer's own pixel, whatever that pixel is worth on screen.
+//
+//     NOT the antialiasing floor, despite what this constant used to be called.
+//     That is one DESTINATION pixel and applies at every scale - neon.frag
+//     floors at sideAA on the direct path, where this constant no longer
+//     reaches. What this one buys is WHERE the boundary lands after the blit
+//     has resampled it, which is a different question with a different answer,
+//     and the table below measures exactly that and nothing else.
+//
+//     1.0, WHERE IT WAS 0.5, AND THE RAMP IS UNCHANGED. The masks it feeds were
+//     written smoothstep(-w, w, x), which spans 2w, so this constant was a HALF
+//     width pretending to be a width - and every measurement below was taken
+//     against the 1.0 buffer px of feather that produced. neon.frag now halves
+//     its total widths at the point of use, like black-rect.frag already did,
+//     so the constant is restated as the total it always effectively was. The
+//     numbers below still stand.
 //
 //     A cutoff with softness 0 is a step function. On the scaled path the
 //     gather samples it at buffer-pixel centres and the blit bilinearly
@@ -407,7 +422,41 @@
 //
 //     Applied only when uResolutionScale < 1.0 - see neon.frag's softFloor and
 //     the matching cap in NeonRenderer::setupGeometry.
-#define CUTOFF_SOFT_FLOOR_PX      0.5
+#define CUTOFF_SOFT_FLOOR_PX      1.0
+
+// --- One-sided cut guard band, in BUFFER pixels. Scaled path only.
+//
+//     The second constant in this file stated in buffer px rather than
+//     full-res px, and for the same reason as CUTOFF_SOFT_FLOOR_PX above: it
+//     describes the BUFFER's own sampling, so it must NOT be converted with
+//     uResolutionScale.
+//
+//     Below resolutionScale 1.0 the one-sided cut is not applied by neon.frag
+//     at all - neon-blit.frag applies it at DESTINATION resolution, where a
+//     pixel is a pixel and the edge can land exactly where the direct path
+//     puts it. What neon.frag still does is cull the dark side, and the bound
+//     it culls at cannot be the cut itself: the blit reconstructs each
+//     destination pixel from the 2x2 buffer texels around it, so a texel
+//     killed at the cut leaves the first LIT destination pixel rebuilt partly
+//     from black. Measured at scale 0.5, glowSide OUTSIDE: the first lit pixel
+//     came back at 178 against the 239 the direct path puts there, a dark seam
+//     hugging the inside of the glow's own edge.
+//
+//     So the cull runs this far PAST the cut, and the guard band's emission is
+//     what the blit's filter reconstructs the boundary from. One buffer texel
+//     is the filter's reach; 2.0 covers that with room for the diagonal, where
+//     fwidth of an SDF is sqrt(2) rather than 1, and for the half-texel of
+//     phase between the cut and the nearest texel centre.
+//
+//     The band costs a two-texel strip along the perimeter - nothing beside
+//     the half-plane the cull still removes - and none of it is visible: the
+//     blit's mask is zero everywhere past the cut, including at the hard step
+//     where this bound finally discards.
+//
+//     NOT used on the direct path, which owns its own cut and must stay
+//     bit-identical to the full-res renderer it replaced. See neon.frag's
+//     sideCull and the post-grade cut block. ---
+#define BLIT_SIDE_GUARD_PX        2.0
 
 // --- Glow reach (quad sizing). The draw quad is sized to
 //     rect + glowRadius * RADIUS_FACTOR * (1 + bloomStrength * intensity).
