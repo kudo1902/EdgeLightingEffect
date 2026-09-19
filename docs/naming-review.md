@@ -14,10 +14,20 @@ and then reverted by decision - see there. `demo/`, `demo-capi/` and the C ABI
 were explicitly left out of that pass, so N1, N2, N4 and N5 stand open by scope
 rather than by judgement.
 
+Both N2 and N3 briefly got wider. `add_spotlight_renderer` added three structs
+to N2 - the first violations of that rule to live in `lib/` - and reopened N3 in
+both demos' `DebugUI`. Both are now back to the state this pass left them in;
+see the notes in place. Neither was caught before the branch landed, which is
+the argument for the script in [Conformance summary](#conformance-summary)
+running on something other than a person remembering to run it.
+
 ## Conformance summary
 
 Checked by script over 47 headers and 21 translation units (`stb-image`
 excluded as vendored).
+
+Counts re-checked against `add_spotlight_renderer`, which moved two of these
+rows and has since been brought back into line.
 
 | rule | result |
 | ---- | ------ |
@@ -27,7 +37,7 @@ excluded as vendored).
 | public methods `PascalCase`, private `camelCase` | clean |
 | member `mFoo`, global `gFoo` | 2 violations (N1, `demo-capi` only) |
 | struct / enum `typedef` self-alias | 2 violations (N2, `demo-capi` only) |
-| separate `private:` sections for methods and members | 2 violations (N3) |
+| separate `private:` sections for methods and members | 2 violations (N3, fixed) |
 | C ABI: 212 `el_*` functions, 16 `_e` enums, 3 `_handle_t`, 99 `EL_*` | clean |
 
 The C ABI is worth calling out: 330 exported identifiers, zero deviations. It
@@ -68,7 +78,26 @@ fork being a fork (see I8 in [`review-findings.md`](review-findings.md)).
 Both are local helper structs, so nothing breaks; they are simply the only two
 in the tree that skip the alias `AGENTS.md` calls mandatory.
 
-### N3. `private:` sections mix methods and members - FIXED
+> **Was briefly five.** `add_spotlight_renderer` added `StripVertex`,
+> `KelvinAnchor` and `LampSolve` in
+> [`lib/src/renderer/spotlight-renderer.cpp`](../lib/src/renderer/spotlight-renderer.cpp)
+> - the first violations of this rule to live in `lib/`, which would have taken
+> the item out of "open by scope". **Fixed**: all three now carry the alias, so
+> every anonymous-namespace struct in `lib/src/renderer/` uses the same form -
+> `BandExtent` in the droplets, `GhostBlockData` in the lens flare,
+> `SegmentBlockData`, `LoopSamplesBlockData`, `ArcBlockData` and
+> `EmissionFormat` in the neon, and now these three. Found in the sixth pass of
+> [`review-findings.md`](review-findings.md).
+>
+> A sweep of `lib/` for this rule turns up `el_effect_handle_impl`,
+> `el_animation_handle_impl` and `el_modulator_handle_impl` in
+> `capi-internal.h`. Those are NOT violations and should not be "fixed": they
+> are the definitions behind the C opaque-handle idiom, whose alias is the
+> `typedef struct ... *el_*_handle_t;` in the public headers. Recorded here
+> because a script that only looks for `typedef struct X { ... } X;` will flag
+> them.
+
+### N3. `private:` sections mix methods and members - FIXED, REGRESSED, RE-FIXED
 
 `AGENTS.md` is explicit that a class gets two `private:` labels, methods first,
 then member variables.
@@ -86,6 +115,21 @@ Worth noting against myself twice over: I added `mInitialized` to the
 `EdgeLightingEffect` block during the I6 fix and propagated the violation, and
 then over-reported the scale of it here. Both are now split; `DebugUI` is the
 only remaining case and lives in `demo/`.
+
+> **Regressed in both demos, then re-fixed.** `add_spotlight_renderer` inserted
+> `int mSpotlightSelected = 0;` into the private METHOD block of
+> [`demo/src/debug-ui.h`](../demo/src/debug-ui.h) and
+> [`demo-capi/src/debug-ui.h`](../demo-capi/src/debug-ui.h), between
+> `buildDebugSection` and `buildDropletsSection` in each - four declarations
+> away from the `buildSpotlightSection` it belongs to, and in `demo-capi` a case
+> the sentence above did not cover at all. **Fixed** by moving each declaration
+> into its class's existing member block, under a `// --- Spotlights ---`
+> heading beside the other per-section state. Found in the sixth pass of
+> [`review-findings.md`](review-findings.md).
+>
+> Twice now this rule has been broken by an addition rather than by the original
+> code, which is what the note above already says about `mInitialized`. It is
+> the cheapest of the five to check mechanically and the easiest to reintroduce.
 
 ### N4. C ABI header guards drop the project prefix
 
@@ -326,9 +370,9 @@ Worth one line in `AGENTS.md`: *protected methods follow the public rule
 
 | item | state |
 | ---- | ----- |
-| N3, S3, S8, `AGENTS.md` gap | fixed |
+| N3, S3, S8, `AGENTS.md` gap | fixed - N3 regressed once via `add_spotlight_renderer` and was re-fixed |
 | S1 | declined - half-fix only while the ABI freezes the field name |
-| N1, N2, N5 | open - `demo-capi` only, out of scope for the `lib/` pass |
+| N1, N2, N5 | open - `demo-capi` only, out of scope for the `lib/` pass; N2's three `lib/` additions were fixed as they appeared |
 | N4 | open - `lib/capi/`, and the reserved-identifier half is a 47-file sweep |
 | S5 | open - the field rename reaches `lib/capi/`, so it cannot be done `lib`-only |
 | S2, S4, S6, S7 | recorded for whenever the C ABI is next revised; none worth doing alone |

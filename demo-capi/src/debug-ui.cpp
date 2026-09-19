@@ -179,6 +179,7 @@ void DebugUI::Build(el_effect_handle_t effect)
     buildDebugSection(effect);
     buildDropletsSection(effect);
     buildLensFlareSection(effect);
+    buildSpotlightSection(effect);
     buildColorPickerSection(effect);
     buildAnimationSection(effect);
     buildBackgroundSection();
@@ -841,6 +842,178 @@ void DebugUI::buildDropletsSection(el_effect_handle_t effect)
     }
 
     ImGui::TextDisabled("Side follows Neon > Glow Side / Softness");
+}
+
+// ---------------------------------------------------------------------------
+// Spotlights
+// ---------------------------------------------------------------------------
+
+void DebugUI::buildSpotlightSection(el_effect_handle_t effect)
+{
+    if (!ImGui::CollapsingHeader("Spotlights", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+
+    el_bool_t on = 0;
+    el_effect_get_spotlight_renderer_enabled(effect, &on);
+    bool en = on;
+    if (ImGui::Checkbox("Enable##Spot", &en))
+    {
+        el_effect_set_spotlight_renderer_enabled(effect, en ? 1 : 0);
+    }
+    if (!en)
+        return;
+
+    float resScale = 1.0f;
+    el_effect_get_spotlight_resolution_scale(effect, &resScale);
+    if (ImGui::SliderFloat("Res Scale##Spot", &resScale, 0.125f, 1.0f, "%.3f"))
+    {
+        el_effect_set_spotlight_resolution_scale(effect, resScale);
+    }
+
+    // The ceiling is the library's, not this demo's - and this file cannot see
+    // spotlight-tuning.h, which is the point of the fork. Kept in step by hand,
+    // and only used to grey out the Add button.
+    const int MAX_LAMPS = 8;
+
+    if (resScale < 1.0f)
+    {
+        ImGui::TextDisabled("Below 1.0 only pays above ~6 lamps.");
+    }
+
+    int count = 0;
+    el_effect_get_spotlight_count(effect, &count);
+
+    ImGui::Text("%d / %d lamps", count, MAX_LAMPS);
+    ImGui::SameLine();
+    if (ImGui::SmallButton("+ Add##Spot") && count < MAX_LAMPS)
+    {
+        float rw = 0.0f, rh = 0.0f, rx = 0.0f, ry = 0.0f, radius = 0.0f;
+        el_effect_get_geometry(effect, &rw, &rh, &rx, &ry, &radius);
+        el_effect_set_spotlight_count(effect, count + 1);
+        el_effect_set_spotlight_placement(effect, count, rx + rw * 0.5f, ry - 60.0f, 90.0f);
+        el_effect_set_spotlight_beam(effect, count, 26.0f, 215.0f, 13.0f, 0.55f);
+        el_effect_set_spotlight_look(effect, count, 1.15f, 0.4f, 20.0f, 5600.0f);
+        mSpotlightSelected = count;
+        count += 1;
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Clear##Spot"))
+    {
+        el_effect_clear_spotlights(effect);
+        mSpotlightSelected = 0;
+        count = 0;
+    }
+
+    if (count <= 0)
+    {
+        ImGui::TextDisabled("No lamps. Add one to light something.");
+        return;
+    }
+
+    if (mSpotlightSelected >= count)
+    {
+        mSpotlightSelected = count - 1;
+    }
+    if (mSpotlightSelected < 0)
+    {
+        mSpotlightSelected = 0;
+    }
+
+    for (int i = 0; i < count; i++)
+    {
+        float x = 0.0f, y = 0.0f, angle = 0.0f;
+        el_effect_get_spotlight_placement(effect, i, &x, &y, &angle);
+        char label[64];
+        std::snprintf(label, sizeof(label), "lamp %d  %.0f deg##SpotPick%d", i, angle, i);
+        if (ImGui::RadioButton(label, mSpotlightSelected == i))
+        {
+            mSpotlightSelected = i;
+        }
+    }
+
+    // No per-lamp removal here: the ABI resizes the list from the end, and
+    // erasing from the middle would need a read-shift-write loop that the C++
+    // demo gets for free from std::vector::erase. Clear and rebuild instead.
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Drop Last##Spot"))
+    {
+        el_effect_set_spotlight_count(effect, count - 1);
+        if (mSpotlightSelected >= count - 1)
+        {
+            mSpotlightSelected = count - 2;
+        }
+        return;
+    }
+
+    const int sel = mSpotlightSelected;
+
+    ImGui::Separator();
+    el_bool_t lampOn = 0;
+    el_effect_get_spotlight_enabled(effect, sel, &lampOn);
+    bool lampEn = lampOn;
+    if (ImGui::Checkbox("Lamp Enabled##Spot", &lampEn))
+    {
+        el_effect_set_spotlight_enabled(effect, sel, lampEn ? 1 : 0);
+    }
+
+    float x = 0.0f, y = 0.0f, angle = 0.0f;
+    el_effect_get_spotlight_placement(effect, sel, &x, &y, &angle);
+    bool placementDirty = false;
+    placementDirty |= ImGui::SliderFloat("Position X##Spot", &x, -200.0f, 2400.0f, "%.0f px");
+    placementDirty |= ImGui::SliderFloat("Position Y##Spot", &y, -200.0f, 1600.0f, "%.0f px");
+    placementDirty |= ImGui::SliderFloat("Direction##Spot", &angle, -180.0f, 360.0f, "%.1f deg");
+    if (placementDirty)
+    {
+        el_effect_set_spotlight_placement(effect, sel, x, y, angle);
+    }
+
+    ImGui::Separator();
+    float beamAngle = 0.0f, throwLength = 0.0f, aperture = 0.0f, softness = 0.0f;
+    el_effect_get_spotlight_beam(effect, sel, &beamAngle, &throwLength, &aperture, &softness);
+    bool beamDirty = false;
+    beamDirty |= ImGui::SliderFloat("Beam Angle##Spot", &beamAngle, 3.0f, 120.0f, "%.1f deg");
+    beamDirty |= ImGui::SliderFloat("Throw##Spot", &throwLength, 20.0f, 900.0f, "%.0f px");
+    beamDirty |= ImGui::SliderFloat("Aperture##Spot", &aperture, 2.0f, 120.0f, "%.1f px");
+    beamDirty |= ImGui::SliderFloat("Softness##Spot", &softness, 0.0f, 1.0f, "%.2f");
+    if (beamDirty)
+    {
+        el_effect_set_spotlight_beam(effect, sel, beamAngle, throwLength, aperture, softness);
+    }
+
+    ImGui::Separator();
+    float intensity = 0.0f, bloom = 0.0f, bloomRadius = 0.0f, colorTemp = 0.0f;
+    el_effect_get_spotlight_look(effect, sel, &intensity, &bloom, &bloomRadius, &colorTemp);
+    bool lookDirty = false;
+    lookDirty |= ImGui::SliderFloat("Intensity##Spot", &intensity, 0.0f, 3.0f, "%.2f");
+    lookDirty |= ImGui::SliderFloat("Bloom##Spot", &bloom, 0.0f, 3.0f, "%.2f");
+    lookDirty |= ImGui::SliderFloat("Bloom Radius##Spot", &bloomRadius, 4.0f, 160.0f, "%.0f px");
+    lookDirty |= ImGui::SliderFloat("Color Temp##Spot", &colorTemp, 1800.0f, 8000.0f, "%.0f K");
+    if (lookDirty)
+    {
+        el_effect_set_spotlight_look(effect, sel, intensity, bloom, bloomRadius, colorTemp);
+    }
+
+    // Multiplied onto the colour temperature above rather than replacing it:
+    // blackbody cannot reach a saturated green or magenta at any Kelvin.
+    // Unclamped on purpose - above 1 brightens, and the renderer's strip solve
+    // folds the brightest channel into its bound so the geometry follows.
+    float tint[3] = {1.0f, 1.0f, 1.0f};
+    el_effect_get_spotlight_tint(effect, sel, &tint[0], &tint[1], &tint[2]);
+    if (ImGui::ColorEdit3("Tint##Spot", tint,
+                          ImGuiColorEditFlags_Float | ImGuiColorEditFlags_HDR))
+    {
+        el_effect_set_spotlight_tint(effect, sel, tint[0], tint[1], tint[2]);
+    }
+    ImGui::SameLine();
+    if (ImGui::SmallButton("Reset##SpotTint"))
+    {
+        el_effect_set_spotlight_tint(effect, sel, 1.0f, 1.0f, 1.0f);
+    }
+
+    ImGui::TextDisabled("Positions are app coords (0,0 = top-left).");
+    ImGui::TextDisabled("Lamps do not follow the rect when it moves.");
 }
 
 // ---------------------------------------------------------------------------

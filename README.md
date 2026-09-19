@@ -31,26 +31,38 @@ binary at compile time, so the demo can be launched from anywhere.
 
 ## Renderers
 
-Six visual layers, independent and additive. Enable any subset via `Config`.
+Five visual layers, independent and additive. Enable any subset via `Config`.
+They composite in the order they are registered, which is the order below.
 
-- **WireframeRenderer** - 1 px `GL_LINE_LOOP` debug outline of the rect.
-- **NeonRenderer** - single-pass neon stroke. Analytic rounded-box SDF + a
-  precomputed gradient LUT (RGBA8, 256 px, REPEAT-wrapped) so each shader
-  sample is one texture lookup. Precomputes 128 sample positions on the
-  perimeter. Float textures are deliberately avoided - many edge devices
-  lack support - so the LUTs are baked to 8-bit on the CPU.
-- **NeonOptimizedRenderer** - half-resolution variant that renders to a scaled
-  FBO and bilinear-blits back to full res. Shares visual params with the
-  single-pass renderer; its own sub-config carries only perf knobs
-  (resolution scale, sample count, LUT width).
+- **NeonRenderer** - the neon stroke. Analytic rounded-box SDF plus a gather
+  loop over pre-baked perimeter samples, reading three CPU-baked RGBA8 LUTs
+  (float textures are deliberately avoided - many edge devices lack support).
+  A per-sample emission pre-pass takes the gather from `O(samples x (arcs +
+  segments))` to `O(samples)` per fragment, and is skipped entirely on frames
+  neither of its inputs moved. Also owns the opaque fill.
 - **DropletsRenderer** - rain-on-glass droplets in a band that follows the
-  perimeter. Screen-space gravity, self-lit drops, no framebuffer capture.
+  perimeter. Screen-space gravity, self-lit drops, no framebuffer capture. The
+  pass draws a band-fitted ring rather than a fullscreen quad, so it costs what
+  the perimeter costs rather than what the display costs.
 - **LensFlareRenderer** - sun + hex-aperture flare (rays, chromatic ghosts) in
-  one fullscreen pass. The sun rides the perimeter in the same parameter space
-  as neon segments and arcs, so the same modulators drive it.
-- **LensFlareOptimizedRenderer** - half-res variant of the lens flare. Don't
-  enable it alongside `LensFlareRenderer`; they draw the same flare and would
-  double it.
+  one fullscreen premultiplied pass. The sun rides the perimeter in the same
+  parameter space as neon segments and arcs, so the same modulators drive it.
+- **SpotlightRenderer** - freely placed and aimed cones of light, as one
+  additive pass. The odd one out: not a perimeter effect at all. Each lamp
+  carries its own position, direction, beam angle, throw, softness, intensity
+  and colour temperature, and gets a strip of geometry solved to hug exactly
+  the region it lights. See [`docs/spotlight-renderer.md`](docs/spotlight-renderer.md).
+- **DebugRenderer** - the debug annotations in one layer: the baked ring as a
+  LUT strip, a disc per colour stop, and a 1 px `GL_LINE_LOOP` bounding box.
+  Registered **last**, because it annotates what the layers under it drew.
+
+**There are no forked renderer pairs.** The neon, the lens flare and the
+spotlight each carry their half-res path as a `resolutionScale` on the one
+renderer: `1.0` draws straight onto the target, anything lower renders into a
+scaled buffer and blits back. One `.cpp` and one `.frag` each, and no way to
+double-draw. (Note the spotlight's scale is not automatically cheaper - its
+geometry is already bounded, so the blit is a fixed cost that only pays for a
+large rig. Its reference doc has the measurements.)
 
 ## Debug UI (ImGui)
 
@@ -58,16 +70,19 @@ Six visual layers, independent and additive. Enable any subset via `Config`.
 - **Neon** - line width, filament falloff, intensity, glow radius, bloom,
   glow side + softness, opaque mode + colour, inside/outside cutoffs, blend
   space (RGB / HSV / HSL), color stops (up to 128), hue rotation rate, segment
-  boosts (travelling brightness peaks), arc gating
-- **Optimized Neon (½-res)** - internal resolution scale, sample count, LUT
-  size, plus reuses the Neon section's visual params
+  boosts (travelling brightness peaks), arc gating, plus the cost knobs
+  (resolution scale, sample count, LUT size)
+- **Debug** - the LUT strip, colour-stop markers and bounding-box overlays
 - **Droplets (rain on glass)** - rain amount, speed, lanes, band width/offset,
   tint
 - **Lens Flare** - perimeter position/offset, size, intensity, ray density,
   rotation, and the ghost controls (spacing, size, offset, tint, centre)
+- **Spotlights** - add / remove lamps, then per lamp: position, direction, beam
+  angle, throw, aperture, softness, intensity, bloom + radius, colour
+  temperature
 - **Border Color Picker** - pick any image from `res/`, sample colors from its
   border, and apply them as neon color stops. See below.
-- **Animation** - add / remove presets from an animation group; play / pause /
+- **Animations** - add / remove presets from an animation group; play / pause /
   reset. Presets include `HueRotationReverse`, `SegmentTravel`, `SegmentBounce`,
   `OutlineTracer`, `Breathing`, etc.
 - **Background (debug)** - optional checker pattern behind the effect to
@@ -104,8 +119,10 @@ Same actions are also on the debug UI sliders.
 | `[` / `]` | dec / inc Neon glow radius |
 | `P` / `L` | inc / dec hue rotation rate |
 | `N` | toggle Neon |
+| `D` | toggle Droplets |
 | `G` | toggle wireframe outline |
 | `W` | toggle winding (CW / CCW) |
+| `Shift`+`O` | toggle Neon resolution scale (1.0 / 0.5) |
 | `SPACE` | pause / resume animation |
 | `ESC` | quit |
 
@@ -128,6 +145,10 @@ demo/
   src/image-quad.h          textured-quad backdrop
   src/background-quad.h     checker background
   src/ui-controls.h         terminal readout + hotkey list
+
+demo-capi/                  the same UI, compiled against only the C ABI
+                            (its include path excludes lib/include/, which is
+                            what proves the ABI is self-sufficient)
 
 external/                   GLFW binary, GLAD, GLM, ImGui, stb_image
 res/                        demo image assets (see res/CREDITS.md)

@@ -227,6 +227,199 @@ namespace EdgeLighting
             bool mRestore;
         };
 
+        /// Turns @c GL_CULL_FACE off for the duration of a scope and puts the
+        /// host's setting back afterwards.
+        ///
+        /// Taken ONCE per frame, by @c EdgeLightingEffect::Render, around the
+        /// whole renderer fan-out. Not tidiness and not a preference: nothing
+        /// this library draws is meant to be face-culled - every layer is a
+        /// flat screen-space quad, ring or strip with no back side to hide - so
+        /// a cull state can only ever delete pixels that were meant to be
+        /// there.
+        ///
+        /// Two measurements, offscreen at 640x360, are what put it there:
+        ///
+        ///   - With GL_CULL_FACE on and the GL defaults (GL_BACK / GL_CCW), the
+        ///     spotlight rendered 0 lit pixels while every other layer was
+        ///     unchanged to the pixel. @c SpotlightRenderer draws through a
+        ///     y-FLIPPED ortho so its VBO can hold app coordinates verbatim,
+        ///     and a negative determinant reverses winding, which made it the
+        ///     one back-facing layer here. (That is now also fixed at the
+        ///     source, in @c SpotlightRenderer::buildStrips, so the strips are
+        ///     correct on their own terms and not merely because of this
+        ///     guard.)
+        ///   - With culling on and the host's winding order reversed to GL_CW,
+        ///     EVERY layer but the debug bounding box rendered 0 pixels. The
+        ///     box survives only because it is a GL_LINE_LOOP, and culling does
+        ///     not apply to lines. Winding the geometry correctly is therefore
+        ///     not sufficient on its own: @c glCullFace and @c glFrontFace
+        ///     belong to the host as much as @c GL_CULL_FACE does.
+        ///
+        /// Why a host would have culling on at all: the GL context is not
+        /// always this library's alone. On an embedded surface view (Tizen
+        /// Evas_GL, Android GLSurfaceView) a video pipeline or web engine
+        /// shares it and leaves its own state behind, and none of this shows up
+        /// on a desktop demo where GL_CULL_FACE is off by default and nothing
+        /// ever enables it.
+        ///
+        /// Costs one @c glIsEnabled, a static-state query, and touches nothing
+        /// when the host had no culling. The cull MODE and winding order are
+        /// never written, so there is none to put back.
+        class NoCullScope
+        {
+        public:
+            /// @param active pass @c false to make the whole thing a no-op,
+            ///        matching @ref NoScissorScope's signature.
+            explicit NoCullScope(bool active = true)
+                : mRestore(active && glIsEnabled(GL_CULL_FACE))
+            {
+                if (mRestore)
+                {
+                    glDisable(GL_CULL_FACE);
+                }
+            }
+
+            ~NoCullScope() { Restore(); }
+
+            NoCullScope(const NoCullScope &) = delete;
+            NoCullScope &operator=(const NoCullScope &) = delete;
+
+            /// End the scope early. Idempotent, and the destructor calls it.
+            void Restore()
+            {
+                if (mRestore)
+                {
+                    glEnable(GL_CULL_FACE);
+                    mRestore = false;
+                }
+            }
+
+        private:
+            bool mRestore;
+        };
+
+        /// Forces the three pieces of pipeline state every layer here ASSUMES
+        /// but none of them ever sets, and puts the host's back afterwards:
+        /// a full colour+alpha write mask, a @c GL_FUNC_ADD blend equation,
+        /// and depth test and depth writes off.
+        ///
+        /// Taken ONCE per frame by @c EdgeLightingEffect::Render, alongside
+        /// @ref NoCullScope and for the same reason: on a shared surface view
+        /// (Tizen Evas_GL, Android GLSurfaceView) a video pipeline or web
+        /// engine draws into the same context and leaves its own state behind,
+        /// and none of it reproduces on a desktop demo where every one of
+        /// these is still at its GL default.
+        ///
+        /// What each one costs if it is wrong:
+        ///
+        ///   - COLOUR MASK. Every layer writes a coverage alpha, and on an
+        ///     embedded surface that alpha is what decides whether the pixel
+        ///     is seen at all - the compositor or hardware video plane
+        ///     finishes the frame with it. A host that left alpha writes
+        ///     masked off turns all of it into a silent no-op: the colour is
+        ///     there, the alpha is whatever was in the buffer, and the layer
+        ///     is invisible over video with nothing in the log. This is the
+        ///     specific failure that would defeat spotlight.frag's coverage
+        ///     alpha, so it is the reason this scope exists.
+        ///   - BLEND EQUATION. This library never calls @c glBlendEquation,
+        ///     so every @c glBlendFunc in it is written expecting
+        ///     @c GL_FUNC_ADD. A host that left @c GL_MAX or
+        ///     @c GL_FUNC_REVERSE_SUBTRACT behind silently reinterprets every
+        ///     composite in the pipeline.
+        ///   - DEPTH. Every layer is a flat screen-space quad, ring or strip
+        ///     at z = 0 with nothing to be in front of or behind, so a depth
+        ///     test can only ever delete pixels that were meant to be there -
+        ///     the same argument @ref NoCullScope makes for culling - and a
+        ///     depth WRITE would corrupt a buffer that belongs to the host.
+        ///
+        /// Costs four static-state queries per frame, once for the whole
+        /// fan-out rather than once per layer, and writes nothing back that it
+        /// did not have to change.
+        class CompositeStateScope
+        {
+        public:
+            explicit CompositeStateScope(bool active = true)
+                : mActive(active)
+            {
+                if (!mActive)
+                {
+                    return;
+                }
+
+                glGetBooleanv(GL_COLOR_WRITEMASK, mColorMask);
+                if (!mColorMask[0] || !mColorMask[1] || !mColorMask[2] || !mColorMask[3])
+                {
+                    mMaskChanged = true;
+                    glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+                }
+
+                glGetIntegerv(GL_BLEND_EQUATION_RGB, &mEquationRGB);
+                glGetIntegerv(GL_BLEND_EQUATION_ALPHA, &mEquationAlpha);
+                if (mEquationRGB != GL_FUNC_ADD || mEquationAlpha != GL_FUNC_ADD)
+                {
+                    mEquationChanged = true;
+                    glBlendEquation(GL_FUNC_ADD);
+                }
+
+                mDepthTest = (glIsEnabled(GL_DEPTH_TEST) == GL_TRUE);
+                if (mDepthTest)
+                {
+                    glDisable(GL_DEPTH_TEST);
+                }
+
+                GLboolean depthMask = GL_FALSE;
+                glGetBooleanv(GL_DEPTH_WRITEMASK, &depthMask);
+                mDepthWrite = (depthMask == GL_TRUE);
+                if (mDepthWrite)
+                {
+                    glDepthMask(GL_FALSE);
+                }
+            }
+
+            ~CompositeStateScope() { Restore(); }
+
+            CompositeStateScope(const CompositeStateScope &) = delete;
+            CompositeStateScope &operator=(const CompositeStateScope &) = delete;
+
+            /// End the scope early. Idempotent, and the destructor calls it.
+            void Restore()
+            {
+                if (!mActive)
+                {
+                    return;
+                }
+                mActive = false;
+
+                if (mMaskChanged)
+                {
+                    glColorMask(mColorMask[0], mColorMask[1], mColorMask[2], mColorMask[3]);
+                }
+                if (mEquationChanged)
+                {
+                    glBlendEquationSeparate(static_cast<GLenum>(mEquationRGB),
+                                            static_cast<GLenum>(mEquationAlpha));
+                }
+                if (mDepthTest)
+                {
+                    glEnable(GL_DEPTH_TEST);
+                }
+                if (mDepthWrite)
+                {
+                    glDepthMask(GL_TRUE);
+                }
+            }
+
+        private:
+            bool mActive;
+            bool mMaskChanged = false;
+            bool mEquationChanged = false;
+            bool mDepthTest = false;
+            bool mDepthWrite = false;
+            GLboolean mColorMask[4] = {GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
+            GLint mEquationRGB = GL_FUNC_ADD;
+            GLint mEquationAlpha = GL_FUNC_ADD;
+        };
+
     } // namespace GLUtils
 } // namespace EdgeLighting
 

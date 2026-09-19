@@ -9,6 +9,7 @@
 #include "renderer/debug-renderer.h"
 #include "renderer/droplets-renderer.h"
 #include "renderer/lens-flare-renderer.h"
+#include "renderer/spotlight-renderer.h"
 #include "animation/neon-animations.h"
 #include "animation/field-bound-animation.h"
 #include "animation/modulator.h"
@@ -73,6 +74,21 @@ static_assert(static_cast<int>(EdgeLighting::SegmentField::BOOST) == EL_SEGMENT_
 static_assert(static_cast<int>(EdgeLighting::ArcField::START) == EL_ARC_FIELD_START);
 static_assert(static_cast<int>(EdgeLighting::ArcField::LENGTH) == EL_ARC_FIELD_LENGTH);
 static_assert(static_cast<int>(EdgeLighting::ArcField::INTENSITY) == EL_ARC_FIELD_INTENSITY);
+
+static_assert(static_cast<int>(EdgeLighting::SpotlightField::POSITION_X) == EL_SPOTLIGHT_FIELD_POSITION_X);
+static_assert(static_cast<int>(EdgeLighting::SpotlightField::POSITION_Y) == EL_SPOTLIGHT_FIELD_POSITION_Y);
+static_assert(static_cast<int>(EdgeLighting::SpotlightField::ANGLE) == EL_SPOTLIGHT_FIELD_ANGLE);
+static_assert(static_cast<int>(EdgeLighting::SpotlightField::BEAM_ANGLE) == EL_SPOTLIGHT_FIELD_BEAM_ANGLE);
+static_assert(static_cast<int>(EdgeLighting::SpotlightField::THROW_LENGTH) == EL_SPOTLIGHT_FIELD_THROW_LENGTH);
+static_assert(static_cast<int>(EdgeLighting::SpotlightField::APERTURE_WIDTH) == EL_SPOTLIGHT_FIELD_APERTURE_WIDTH);
+static_assert(static_cast<int>(EdgeLighting::SpotlightField::SOFTNESS) == EL_SPOTLIGHT_FIELD_SOFTNESS);
+static_assert(static_cast<int>(EdgeLighting::SpotlightField::INTENSITY) == EL_SPOTLIGHT_FIELD_INTENSITY);
+static_assert(static_cast<int>(EdgeLighting::SpotlightField::BLOOM) == EL_SPOTLIGHT_FIELD_BLOOM);
+static_assert(static_cast<int>(EdgeLighting::SpotlightField::BLOOM_RADIUS) == EL_SPOTLIGHT_FIELD_BLOOM_RADIUS);
+static_assert(static_cast<int>(EdgeLighting::SpotlightField::COLOR_TEMP) == EL_SPOTLIGHT_FIELD_COLOR_TEMP);
+static_assert(static_cast<int>(EdgeLighting::SpotlightField::TINT_R) == EL_SPOTLIGHT_FIELD_TINT_R);
+static_assert(static_cast<int>(EdgeLighting::SpotlightField::TINT_G) == EL_SPOTLIGHT_FIELD_TINT_G);
+static_assert(static_cast<int>(EdgeLighting::SpotlightField::TINT_B) == EL_SPOTLIGHT_FIELD_TINT_B);
 
 static_assert(static_cast<int>(EdgeLighting::ColorStopField::POSITION) == EL_STOP_FIELD_POSITION);
 static_assert(static_cast<int>(EdgeLighting::ColorStopField::R) == EL_STOP_FIELD_R);

@@ -48,6 +48,7 @@ private:
     void buildDebugSection(el_effect_handle_t effect);
     void buildDropletsSection(el_effect_handle_t effect);
     void buildLensFlareSection(el_effect_handle_t effect);
+    void buildSpotlightSection(el_effect_handle_t effect);
     void buildColorPickerSection(el_effect_handle_t effect);
     void buildAnimationSection(el_effect_handle_t effect);
     void buildBackgroundSection();
@@ -61,6 +62,11 @@ private:
     ImGuiContext *mContext = nullptr;
 
     float mLastRenderTimeMs = 0.0f;
+
+    // --- Spotlights ---
+    /// Which lamp the Spotlights section is editing. Clamped to the live
+    /// count every frame, so removing a lamp cannot leave it dangling.
+    int mSpotlightSelected = 0;
 
     // --- Animation state (demo-owned vector of capi handles) ---
     // Animations are attached to the effect; the effect owns their update cycle,

@@ -778,6 +778,24 @@ extern "C"
         return EL_SUCCESS;
     }
 
+    el_result_e el_animation_add_spotlight_field(el_animation_handle_t anim,
+                                                 int32_t index, el_spotlight_field_e field,
+                                                 el_modulator_handle_t mod)
+    {
+        LOG_I("anim=%p, index=%d, field=%d, mod=%p", (void *)anim, index, (int)field, (void *)mod);
+        VALIDATE_ANIM_PTR(anim, "el_animation_add_spotlight_field");
+        VALIDATE_MOD_PTR(mod, "el_animation_add_spotlight_field");
+        auto *fb = dynamic_cast<EdgeLighting::FieldBoundAnimation *>(anim->ptr.get());
+        if (!fb)
+        {
+            LOG_E("el_animation_add_spotlight_field: animation is not a FieldBoundAnimation");
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        fb->AddSpotlightField(static_cast<size_t>(index),
+                              static_cast<EdgeLighting::SpotlightField>(field), mod->ptr);
+        return EL_SUCCESS;
+    }
+
     el_result_e el_animation_add_arc_stop_field(el_animation_handle_t anim,
                                                 int32_t arcIndex, int32_t stopIndex, el_color_stop_field_e field,
                                                 el_modulator_handle_t mod)

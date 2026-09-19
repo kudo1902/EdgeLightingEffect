@@ -5,6 +5,7 @@
 #include "renderer/debug-renderer.h"
 #include "renderer/droplets-renderer.h"
 #include "renderer/lens-flare-renderer.h"
+#include "renderer/spotlight-renderer.h"
 #include "animation/neon-animations.h"
 #include "debug-ui.h"
 #include "background-quad.h"
@@ -103,6 +104,7 @@ int main()
     gEffect = std::make_unique<EdgeLighting::EdgeLightingEffect>();
 
     auto lensFlareRenderer = std::make_shared<EdgeLighting::LensFlareRenderer>();
+    auto spotlightRenderer = std::make_shared<EdgeLighting::SpotlightRenderer>();
     auto neonRenderer = std::make_shared<EdgeLighting::NeonRenderer>();
     auto debugRenderer = std::make_shared<EdgeLighting::DebugRenderer>();
     auto dropletsRenderer = std::make_shared<EdgeLighting::DropletsRenderer>();
@@ -110,6 +112,9 @@ int main()
     gEffect->AddRenderer(neonRenderer);
     gEffect->AddRenderer(dropletsRenderer);
     gEffect->AddRenderer(lensFlareRenderer);
+    // After the neon, whose opaque fill would paint over the cones, and
+    // before the debug overlays, which annotate every layer under them.
+    gEffect->AddRenderer(spotlightRenderer);
     gEffect->AddRenderer(debugRenderer);
 
     EdgeLighting::Config config;
