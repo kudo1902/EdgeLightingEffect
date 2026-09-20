@@ -2117,7 +2117,7 @@ extern "C"
     el_result_e el_effect_capture(el_effect_handle_t effect)
     {
         LOG_I("effect=%p", (void *)effect);
-        VALIDATE_EFFECT_PTR(effect, "el_effect_capture");
+        VALIDATE_EFFECT_READY(effect, "el_effect_capture");
         try
         {
             effect->config = effect->impl->GetConfig();
@@ -2132,7 +2132,7 @@ extern "C"
 
     el_result_e el_effect_update(el_effect_handle_t effect, float deltaTime)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_update");
+        VALIDATE_EFFECT_READY(effect, "el_effect_update");
         try
         {
             effect->impl->SetConfig(effect->config);
@@ -2149,7 +2149,7 @@ extern "C"
     el_result_e el_effect_render(el_effect_handle_t effect,
                                  int32_t viewportWidth, int32_t viewportHeight)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_render");
+        VALIDATE_EFFECT_READY(effect, "el_effect_render");
         try
         {
             effect->impl->Render(viewportWidth, viewportHeight);
@@ -2164,7 +2164,7 @@ extern "C"
 
     el_result_e el_effect_clock_play(el_effect_handle_t effect)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_clock_play");
+        VALIDATE_EFFECT_READY(effect, "el_effect_clock_play");
         if (effect->impl->GetClock().IsPlaying())
         {
             return EL_SUCCESS;
@@ -2176,7 +2176,7 @@ extern "C"
 
     el_result_e el_effect_clock_pause(el_effect_handle_t effect)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_clock_pause");
+        VALIDATE_EFFECT_READY(effect, "el_effect_clock_pause");
         if (!effect->impl->GetClock().IsPlaying())
         {
             return EL_SUCCESS;
@@ -2188,7 +2188,7 @@ extern "C"
 
     el_result_e el_effect_clock_is_playing(el_effect_handle_t effect, el_bool_t *outPlaying)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_clock_is_playing");
+        VALIDATE_EFFECT_READY(effect, "el_effect_clock_is_playing");
         VALIDATE_OUT_PTR(outPlaying, "el_effect_clock_is_playing");
         *outPlaying = effect->impl->GetClock().IsPlaying() ? 1 : 0;
         LOG_D("effect=%p, playing=%d", (void *)effect, *outPlaying);
@@ -2200,7 +2200,7 @@ extern "C"
     el_result_e el_effect_attach_animation(el_effect_handle_t effect, el_animation_handle_t anim)
     {
         LOG_I("effect=%p, anim=%p", (void *)effect, (void *)anim);
-        VALIDATE_EFFECT_PTR(effect, "el_effect_attach_animation");
+        VALIDATE_EFFECT_READY(effect, "el_effect_attach_animation");
         VALIDATE_ANIM_PTR(anim, "el_effect_attach_animation");
         if (anim->ptr)
         {
@@ -2212,7 +2212,7 @@ extern "C"
     el_result_e el_effect_detach_animation(el_effect_handle_t effect, el_animation_handle_t anim)
     {
         LOG_I("effect=%p, anim=%p", (void *)effect, (void *)anim);
-        VALIDATE_EFFECT_PTR(effect, "el_effect_detach_animation");
+        VALIDATE_EFFECT_READY(effect, "el_effect_detach_animation");
         VALIDATE_ANIM_PTR(anim, "el_effect_detach_animation");
         if (anim->ptr)
         {
@@ -2224,14 +2224,14 @@ extern "C"
     el_result_e el_effect_detach_all_animations(el_effect_handle_t effect)
     {
         LOG_I("effect=%p", (void *)effect);
-        VALIDATE_EFFECT_PTR(effect, "el_effect_detach_all_animations");
+        VALIDATE_EFFECT_READY(effect, "el_effect_detach_all_animations");
         effect->impl->GetAnimationManager().DetachAll();
         return EL_SUCCESS;
     }
 
     el_result_e el_effect_get_animation_count(el_effect_handle_t effect, int32_t *outCount)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_animation_count");
+        VALIDATE_EFFECT_READY(effect, "el_effect_get_animation_count");
         VALIDATE_OUT_PTR(outCount, "el_effect_get_animation_count");
         *outCount = static_cast<int32_t>(effect->impl->GetAnimationManager().GetCount());
         LOG_D("effect=%p, count=%d", (void *)effect, *outCount);
@@ -2241,7 +2241,7 @@ extern "C"
     el_result_e el_effect_contains_animation(el_effect_handle_t effect,
                                              el_animation_handle_t anim, el_bool_t *outContains)
     {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_contains_animation");
+        VALIDATE_EFFECT_READY(effect, "el_effect_contains_animation");
         VALIDATE_ANIM_PTR(anim, "el_effect_contains_animation");
         VALIDATE_OUT_PTR(outContains, "el_effect_contains_animation");
         *outContains = (anim->ptr && effect->impl->GetAnimationManager().Contains(anim->ptr)) ? 1 : 0;

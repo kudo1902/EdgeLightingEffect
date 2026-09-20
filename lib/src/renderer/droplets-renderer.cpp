@@ -167,9 +167,26 @@ namespace EdgeLighting
         // position instead): one redundant rebuild on a move is cheaper than a
         // gate that silently stops matching if the quad ever grows a
         // dependency on it.
+        //
+        // neon.glowSide IS IN THE GATE, and it is the one input here that does
+        // not live in this renderer's own sub-config. @ref GetBandExtent
+        // branches on it - INSIDE mirrors the band to the rect's interior,
+        // OUTSIDE puts it outside, BOTH straddles the edge - so the side
+        // decides where the ring's hole goes, not just how the shader masks.
+        //
+        // Missing it did not under-draw, it drew the PREVIOUS side's ring: the
+        // shader shades the new band through geometry cut for the old one, so
+        // the drops are sliced along the stale hole's straight edges. Measured
+        // on a 300x220 rect at bandWidth 40, rendering the identical INSIDE
+        // config two ways - fresh, and after one frame at OUTSIDE - gave 5190
+        // lit pixels against 2686, with 3130 pixels differing. Same shape of
+        // mistake as adding a field to a Config struct and not to its
+        // operator==, and the same one NeonRenderer's own gate documents for
+        // glowSide and insideCutoff.
         const bool geometryDirty = config.geometry != mCurrentConfig.geometry ||
                                    config.droplets.bandWidth != mCurrentConfig.droplets.bandWidth ||
-                                   config.droplets.bandOffset != mCurrentConfig.droplets.bandOffset;
+                                   config.droplets.bandOffset != mCurrentConfig.droplets.bandOffset ||
+                                   config.neon.glowSide != mCurrentConfig.neon.glowSide;
 
         mCurrentConfig = config;
 

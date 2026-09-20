@@ -804,18 +804,40 @@ extern "C"
     /** @name Lifecycle
      *  Create, initialise, tick, render, and destroy an effect. Every call
      *  in this section must run on the thread that owns the GL context.
+     *
+     *  Everything above this point writes or reads the handle's STAGING
+     *  config and works on a handle straight out of @ref el_effect_create.
+     *  From here down - plus @ref el_effect_clock_play and the animation
+     *  calls - the effect behind the handle is what is being addressed, so
+     *  @ref el_effect_init must have run and returned @ref EL_SUCCESS first.
+     *  Called before that, or after an init that failed to allocate, these
+     *  return @ref EL_ERROR_INVALID_HANDLE rather than acting.
      *  @{ */
 
     /** @brief Allocate a new effect handle with default staging config.
      *  @returns A fresh handle on success, @c NULL on allocation failure.
      *  @note The effect has no GL resources yet - call @ref el_effect_init
-     *        once a GL context is current before calling render/update. */
+     *        once a GL context is current before calling render/update.
+     *        Staging setters work on the handle immediately; anything that
+     *        drives the effect itself returns @ref EL_ERROR_INVALID_HANDLE
+     *        until init has succeeded. */
     EL_API el_effect_handle_t el_effect_create(void);
 
     /** @brief Destroy an effect handle.
      *  @details Releases GL resources allocated by @ref el_effect_init and
-     *           any C++ owned state. Passing @c NULL returns
-     *           @ref EL_ERROR_INVALID_HANDLE. */
+     *           any C++ owned state.
+     *  @returns @ref EL_SUCCESS, always - including for @c NULL, which is a
+     *           no-op. Destroying is idempotent in the only sense a C handle
+     *           can offer it: there is nothing left to fail once the handle
+     *           has been let go, so the caller has nothing to branch on.
+     *           @c el_animation_destroy and @c el_modulator_destroy behave
+     *           identically. (This said @ref EL_ERROR_INVALID_HANDLE for
+     *           @c NULL and never did; a host branching on that never saw the
+     *           branch taken.)
+     *  @note Attach never transferred ownership, so this does not destroy the
+     *        animation handles that were attached to the effect. It drops the
+     *        effect's references to them; the caller still owns each handle
+     *        and must @c el_animation_destroy it. */
     EL_API el_result_e el_effect_destroy(el_effect_handle_t effect);
 
     /** @brief Initialise every renderer layer under the current GL context.
@@ -873,6 +895,10 @@ extern "C"
      *  The effect's shared clock feeds all attached animations. Pausing it
      *  freezes every animation simultaneously without changing their
      *  individual states.
+     *
+     *  The clock belongs to the effect, not to the handle, so every call here
+     *  needs a successful @ref el_effect_init behind it and returns
+     *  @ref EL_ERROR_INVALID_HANDLE without one.
      *  @{ */
 
     /** @brief Start the effect's clock (default state after init).
@@ -896,6 +922,17 @@ extern "C"
      *  Attach animation handles to the effect. Attach does NOT transfer
      *  ownership - the caller still owns the handle and must destroy it.
      *  Order of attach is the order of Apply per frame (later writes win).
+     *
+     *  The attach list belongs to the effect, so as with the clock these need
+     *  a successful @ref el_effect_init behind them and return
+     *  @ref EL_ERROR_INVALID_HANDLE without one.
+     *
+     *  Attaching and detaching from inside an animation's own
+     *  @c el_animation_on_completed_callback or
+     *  @c el_animation_on_state_changed_callback is supported - that is the
+     *  "chain the next animation" case the completion callback exists for. A
+     *  detach takes effect from the next @ref el_effect_update; an animation
+     *  attached from inside a callback starts ticking on the next update too.
      *  @{ */
 
     /** @brief Attach an animation. Duplicates and null handles are ignored. */

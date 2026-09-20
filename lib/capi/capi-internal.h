@@ -132,6 +132,35 @@ struct el_modulator_handle_impl
         }                                    \
     } while (0)
 
+/// Effect handle validation for the calls that reach the C++ effect behind it,
+/// rather than only the staging config in front of it.
+///
+/// @c el_effect_handle_impl::impl is created by @c el_effect_init_with_renderers
+/// and by nothing else, so a handle straight out of @c el_effect_create has a
+/// null one - as does a handle whose init threw before the make_unique landed.
+/// Every accessor in el-effect.h touches only the staging config and is fine
+/// with that; the lifecycle, clock and animation calls dereference @c impl.
+///
+/// Without this they dereferenced it unchecked, and the try/catch those calls
+/// sit in does not help - a null dereference is not an exception. Calling
+/// @c el_effect_clock_is_playing on a created-but-uninitialised handle killed
+/// the process with SIGSEGV, which is not a result this ABI is allowed to
+/// return: the whole error model is that a call comes back with an
+/// @c el_result_e. @c EL_ERROR_INVALID_HANDLE already covers "null or
+/// destroyed", so an unusable handle is exactly what it describes.
+#define VALIDATE_EFFECT_READY(effect, fn)                                \
+    do                                                                   \
+    {                                                                    \
+        VALIDATE_EFFECT_PTR(effect, fn);                                 \
+        if (!(effect)->impl)                                             \
+        {                                                                \
+            LOG_E("%s: effect is not initialised - call el_effect_init " \
+                  "first and check its result",                          \
+                  fn);                                                   \
+            return EL_ERROR_INVALID_HANDLE;                              \
+        }                                                                \
+    } while (0)
+
 #define VALIDATE_ANIM_PTR(anim, fn)         \
     do                                      \
     {                                       \

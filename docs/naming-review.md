@@ -23,8 +23,9 @@ running on something other than a person remembering to run it.
 
 ## Conformance summary
 
-Checked by script over 47 headers and 21 translation units (`stb-image`
-excluded as vendored).
+Checked by script over 45 headers and 20 translation units (`stb-image`
+excluded as vendored). Two headers and one TU came off the count with S9's
+removal; the earlier passes in this file were run at 47 and 21.
 
 Counts re-checked against `add_spotlight_renderer`, which moved two of these
 rows and has since been brought back into line.
@@ -290,7 +291,7 @@ it directly. Same ABI caveat as S6.
 
 ### S8. `GeometryUtils` did not follow the project's own `Get` rule - FIXED
 
-Surveying all six util namespaces turns up a rule nobody wrote down but almost
+Surveying all five util namespaces turns up a rule nobody wrote down but almost
 everything follows:
 
 > **`Get*` when the function derives a value from a described thing; a bare verb
@@ -298,7 +299,6 @@ everything follows:
 
 | namespace | `Get*` | other |
 | --------- | ------ | ----- |
-| `PathUtils` | `GetPathAABB`, `GetPathLength`, `GetPointOnPath` | - |
 | `GLUtils` | `GetCap`, `GetExtensions` | `CheckExtension`, `CheckGLError`, `LogCaps`, `LogExtensions`, `LogRendererInfo` |
 | `ColorUtils` | - | `SampleRing`, `SampleSpan`, `SortStops`, `BlendStops`, `RgbToHsv`, ... |
 | `SegmentUtils` | - | `AcquireSegment`, `FillEffectiveSegments`, `FindPreservedSegment`, `ReleaseSegment` |
@@ -311,7 +311,7 @@ simply never trigger it.
 
 Against that, `GeometryUtils` had exactly one violation, and it was mine:
 `EffectiveCornerRadius` derives a scalar property from a geometry description,
-which is the same shape as `GetPathLength(path)`, but carried no prefix.
+which is the same shape as `GLUtils::GetCap(cap)`, but carried no prefix.
 
 **Fixed:**
 
@@ -331,8 +331,42 @@ thing".
 Recorded because I got this backwards once already: asked whether
 `EffectiveCornerRadius` should take a `Get`, I said no, reasoning from
 `GeometryUtils` alone, where the split was 2-2 and looked arbitrary. Widening to
-all six namespaces made the rule obvious and the answer the opposite. Worth a
-line in `AGENTS.md` if it is ever formalised.
+all the namespaces made the rule obvious and the answer the opposite. (The
+survey was six namespaces at the time; `PathUtils` has since gone, see S9. It
+was the cleanest example of the rule - three functions, all `Get*`, all
+deriving a value from a described path - which is why the argument above was
+originally written around `GetPathLength`.) Worth a line in `AGENTS.md` if it
+is ever formalised.
+
+### S9. `PathUtils` and the contour tracer outlived the path system - FIXED
+
+Two util modules named mechanisms the library no longer has, which is S3 and S4's
+complaint one level up: not a badly-named thing, but a name with no thing under
+it at all.
+
+- `PathUtils` (`path-utils.h`) - `GetPathLength` / `GetPointOnPath` /
+  `GetPathAABB`, a polyline walker for the removed stroke/path system.
+  `GeometryUtils::GetPointOnRectangle` does the perimeter walk the neon layer
+  actually uses, analytically, and shares none of this code.
+- `TraceOutermostContour` (`contour-tracer.{h,cpp}`) - marching squares over an
+  image mask, which produced the point list `PathUtils` then walked.
+
+Neither had a caller anywhere in `lib/`, `demo/` or `demo-capi/` - the last ones
+went with the segment and multipass renderers. `contour-tracer.cpp` was still in
+`lib/CMakeLists.txt`, so 376 lines of it were compiled into every
+`libedge-lighting.a`.
+
+**Fixed:** all three files deleted, the source-list entry dropped, and the
+`include/util/` inventories in `README.md` and
+[`architecture-design.md`](architecture-design.md) brought back in line.
+
+The `-O0` narratives in `CMakeLists.txt`, `CLAUDE.md` and
+[`neon-perf-review.md`](neon-perf-review.md) still name "the contour tracer"
+among the CPU paths that shipped unoptimised. Those are left alone on purpose:
+they record a measurement (11.6 MB, 1.5x on the config path) taken when the
+tracer was in the build, and editing the list would misstate what was measured.
+
+---
 
 ## What is already right
 
@@ -370,7 +404,7 @@ Worth one line in `AGENTS.md`: *protected methods follow the public rule
 
 | item | state |
 | ---- | ----- |
-| N3, S3, S8, `AGENTS.md` gap | fixed - N3 regressed once via `add_spotlight_renderer` and was re-fixed |
+| N3, S3, S8, S9, `AGENTS.md` gap | fixed - N3 regressed once via `add_spotlight_renderer` and was re-fixed |
 | S1 | declined - half-fix only while the ABI freezes the field name |
 | N1, N2, N5 | open - `demo-capi` only, out of scope for the `lib/` pass; N2's three `lib/` additions were fixed as they appeared |
 | N4 | open - `lib/capi/`, and the reserved-identifier half is a 47-file sweep |

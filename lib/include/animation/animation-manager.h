@@ -80,6 +80,19 @@ namespace EdgeLighting
         ///        @ref Animation::Update).
         /// @param dt Time to advance (typically the effect clock's delta, so a
         ///           paused clock freezes every animation).
+        ///
+        /// @note REENTRANT. @ref Animation::Update fires @c OnComplete and
+        ///       @c OnStateChanged, and those callbacks may call @ref Attach,
+        ///       @ref Detach or @ref DetachAll on this manager - which is the
+        ///       whole point of @c OnComplete's "chain B after A" use. The
+        ///       list is snapshotted for the tick, so:
+        ///         - a detach during the tick still lets the already-ticked
+        ///           animations finish this call, and takes effect from the
+        ///           next one;
+        ///         - an attach during the tick is NOT ticked this call. It
+        ///           starts on the next, which is also what it would get had
+        ///           the host attached it a moment later.
+        ///       See the definition for what went wrong without the snapshot.
         void Update(float dt);
 
         /// @brief Apply every attached animation onto @p target in attach order
@@ -89,6 +102,17 @@ namespace EdgeLighting
 
     private:
         std::vector<AnimationPtr> mAnimations;
+        /// The list @ref Update is currently ticking, snapshotted from
+        /// @c mAnimations so a callback may mutate that one mid-tick. Held as
+        /// a member rather than built as a local so the per-frame path does no
+        /// heap allocation after warmup - the same trade
+        /// @c EdgeLightingEffect::mScratchConfig and
+        /// @c NeonRenderer::mEffectiveSegments make.
+        ///
+        /// Cleared at the end of each tick: the snapshot holds a strong
+        /// reference to every animation in it, and keeping those alive between
+        /// frames would make a detached animation outlive its detach.
+        std::vector<AnimationPtr> mTickList;
     };
 
 } // namespace EdgeLighting

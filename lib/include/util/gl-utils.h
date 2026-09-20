@@ -230,14 +230,28 @@ namespace EdgeLighting
         /// Turns @c GL_CULL_FACE off for the duration of a scope and puts the
         /// host's setting back afterwards.
         ///
-        /// Taken ONCE per frame, by @c EdgeLightingEffect::Render, around the
-        /// whole renderer fan-out. Not tidiness and not a preference: nothing
-        /// this library draws is meant to be face-culled - every layer is a
-        /// flat screen-space quad, ring or strip with no back side to hide - so
-        /// a cull state can only ever delete pixels that were meant to be
-        /// there.
+        /// TAKEN BY NOTHING IN THIS LIBRARY. It is offered to a host, or to a
+        /// future layer that needs it locally, and that is the whole of its
+        /// role - @c EdgeLightingEffect::Render used to wrap the renderer
+        /// fan-out in one of these and no longer forces any host-owned state
+        /// at all. So nothing here switches culling off on the caller's
+        /// behalf, and the paragraphs below describe a hazard the CALLER
+        /// settles, not one this class is quietly handling. (Read them anyway:
+        /// they are why the contract lands on the caller rather than being
+        /// left unstated.)
         ///
-        /// Two measurements, offscreen at 640x360, are what put it there:
+        /// A caller driving this library owes it @c GL_CULL_FACE off, or a
+        /// front face its layers' CCW winding survives. See the state contract
+        /// in CLAUDE.md, which lists the other three - a full colour+alpha
+        /// write mask, @c GL_FUNC_ADD, and depth test/write off - and
+        /// @ref CompositeStateScope, which offers those the same way.
+        ///
+        /// Why it matters: nothing this library draws is meant to be
+        /// face-culled - every layer is a flat screen-space quad, ring or
+        /// strip with no back side to hide - so a cull state can only ever
+        /// delete pixels that were meant to be there.
+        ///
+        /// Two measurements, offscreen at 640x360:
         ///
         ///   - With GL_CULL_FACE on and the GL defaults (GL_BACK / GL_CCW), the
         ///     spotlight rendered 0 lit pixels while every other layer was
@@ -260,11 +274,14 @@ namespace EdgeLighting
         /// Evas_GL, Android GLSurfaceView) a video pipeline or web engine
         /// shares it and leaves its own state behind, and none of this shows up
         /// on a desktop demo where GL_CULL_FACE is off by default and nothing
-        /// ever enables it.
+        /// ever enables it. Which is also why a host cannot assume the desktop
+        /// demo's clean run says anything about the embedded one.
         ///
         /// Costs one @c glIsEnabled, a static-state query, and touches nothing
         /// when the host had no culling. The cull MODE and winding order are
-        /// never written, so there is none to put back.
+        /// never written, so there is none to put back - which is the reason
+        /// this cannot be the whole answer even where it IS taken, and the
+        /// second measurement above is what that looks like.
         class NoCullScope
         {
         public:
@@ -303,12 +320,18 @@ namespace EdgeLighting
         /// a full colour+alpha write mask, a @c GL_FUNC_ADD blend equation,
         /// and depth test and depth writes off.
         ///
-        /// Taken ONCE per frame by @c EdgeLightingEffect::Render, alongside
-        /// @ref NoCullScope and for the same reason: on a shared surface view
-        /// (Tizen Evas_GL, Android GLSurfaceView) a video pipeline or web
-        /// engine draws into the same context and leaves its own state behind,
-        /// and none of it reproduces on a desktop demo where every one of
-        /// these is still at its GL default.
+        /// TAKEN BY NOTHING IN THIS LIBRARY, exactly as @ref NoCullScope is
+        /// not - @c EdgeLightingEffect::Render used to take both around the
+        /// renderer fan-out and now forces no host-owned state at all. This is
+        /// offered to a host that wants the three put right for it; the list
+        /// below is the contract a caller has to satisfy either way, not a
+        /// description of something happening on its behalf.
+        ///
+        /// Why a caller has to think about it: on a shared surface view (Tizen
+        /// Evas_GL, Android GLSurfaceView) a video pipeline or web engine draws
+        /// into the same context and leaves its own state behind, and none of
+        /// it reproduces on a desktop demo where every one of these is still at
+        /// its GL default.
         ///
         /// What each one costs if it is wrong:
         ///
@@ -332,9 +355,16 @@ namespace EdgeLighting
         ///     the same argument @ref NoCullScope makes for culling - and a
         ///     depth WRITE would corrupt a buffer that belongs to the host.
         ///
-        /// Costs four static-state queries per frame, once for the whole
-        /// fan-out rather than once per layer, and writes nothing back that it
-        /// did not have to change.
+        /// Costs four static-state queries where it is taken, and writes
+        /// nothing back that it did not have to change. A host that wants it
+        /// wants it ONCE, around its whole @c EdgeLightingEffect::Render call,
+        /// rather than per layer - which is where this used to sit before the
+        /// state became the caller's.
+        ///
+        /// A host that already guarantees the four by construction - it owns
+        /// the context outright and never sets them - needs none of this and
+        /// should skip it. The guard exists for the host that cannot make that
+        /// promise.
         class CompositeStateScope
         {
         public:
