@@ -103,7 +103,12 @@ extern "C"
      *
      *           NOTE the shader used to spread this over 2x the stated width
      *           and to apply it ahead of the tone map; a tuned non-zero value
-     *           now feathers over half the span it used to. See
+     *           now feathers over half the span it used to.
+     *
+     *           A cutoff on the side the glow side already culls does nothing
+     *           to the glow and is ignored: OUTSIDE subsumes the inside cutoff,
+     *           INSIDE subsumes the outside one. It still bounds the opaque
+     *           fill, which has no notion of a glow side. See
      *           docs/glow-side-comparison.md. */
     EL_API el_result_e el_effect_set_inside_cutoff(el_effect_handle_t effect,
                                                    el_bool_t enable, float size, float softness);

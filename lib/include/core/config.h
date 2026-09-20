@@ -52,6 +52,19 @@ namespace EdgeLighting
     ///              carry, and the reason all three now agree at a shared
     ///              boundary. A tuned non-zero value feathers over half the
     ///              span it used to.
+    ///
+    /// A cutoff on the side @c NeonConfig::glowSide ALREADY CULLS does nothing
+    /// to the glow, and is ignored rather than merely redundant:
+    /// @c GlowSide::OUTSIDE subsumes @c insideCutoff, @c INSIDE subsumes
+    /// @c outsideCutoff. The one-sided cut is the tighter bound at every
+    /// @c size, so there is no setting of the subsumed cutoff that changes the
+    /// silhouette - but leaving it applied DID change the picture, by cutting
+    /// into the band the reduced-resolution blit reconstructs the cut from. See
+    /// docs/glow-side-comparison.md.
+    ///
+    /// It still bounds the OPAQUE FILL, which is a separate layer with no
+    /// notion of a glow side: @c outsideCutoff caps an @c OpaqueMode::OUTSIDE
+    /// fill whatever the glow is doing.
     typedef struct Cutoff
     {
         bool enable = true;

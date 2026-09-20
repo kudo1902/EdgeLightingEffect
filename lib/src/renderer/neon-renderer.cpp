@@ -964,7 +964,20 @@ namespace EdgeLighting
                                      ? (static_cast<float>(BLIT_SIDE_GUARD_PX) / scale)
                                      : 1.0f;
 
-        if (config.neon.outsideCutoff.enable)
+        // Skipped under GlowSide::INSIDE, where neon.frag neutralises this
+        // cutoff as subsumed by the cut - see the band-distance block there. A
+        // cap derived from a mask the shader no longer applies would bound the
+        // quad to a region the shader still lights, and the region it would eat
+        // is the GUARD BAND: at scale 0.25 with size 0 the cap lands at 1.25
+        // buffer px against the 2.0 the guard asks for.
+        //
+        // That happens to survive, because the cap cannot go below 1 + scale
+        // buffer px (outSoft is floored at CUTOFF_SOFT_FLOOR_PX / scale, which
+        // the trailing * scale turns back into a constant) and the blit's
+        // filter reaches one texel. Surviving by 0.25 px on an accident of two
+        // unrelated constants is not a property worth keeping: change the floor
+        // or the safety term and it goes under with nothing to catch it.
+        if (config.neon.outsideCutoff.enable && config.neon.glowSide != GlowSide::INSIDE)
         {
             float outSoft = std::max(config.neon.outsideCutoff.softness, softFloor);
             float cutoffCap = (config.neon.outsideCutoff.size + outSoft + 1.0f) * scale;
@@ -980,8 +993,9 @@ namespace EdgeLighting
         // 300x200 rect at glowRadius 40, glowSide INSIDE: the glow survived to
         // 11 px inside the edge and was flat black from 13 px in, 48131 pixels
         // of interior gone. The outside-cutoff cap above has the same shape and
-        // gets away with it because the cutoff's own mask has already taken
-        // that region to zero; nothing has, here.
+        // is safe only where the cutoff's own mask HAS taken that region to
+        // zero - which is why it is now skipped on the side glowSide culls,
+        // where the shader neutralises that mask and nothing takes it to zero.
         //
         // So the two margins are separated: the shader is told what the glow
         // does, the rasteriser is told what to cover. They agree except where a
