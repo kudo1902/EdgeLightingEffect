@@ -1021,16 +1021,24 @@ namespace EdgeLighting
         // collapses the hole below and gives back the plain quad - so the
         // default config, and every config that lights its own interior, is
         // untouched.
+        // MUTUALLY EXCLUSIVE, mirroring the cutoff neutralisation in neon.frag:
+        // under GlowSide::OUTSIDE the inside cutoff is subsumed by the cut and
+        // the shader ignores it, so taking a min() with it here would be worse
+        // than pointless. It would shrink the hole to the cutoff's reach while
+        // the shader still lights out to the guard band, and the quad would
+        // clip what the blit reconstructs the cut from - the same dark seam by
+        // a second route. With insideCutoff size 0 at scale 0.25 that put the
+        // hole at 1.25 buffer px against a 2.0 px guard.
         float innerReach = CUTOFF_DISABLED_SIZE;
         if (config.neon.glowSide == GlowSide::OUTSIDE)
         {
-            innerReach = std::min(innerReach, sideCullPx);
+            innerReach = sideCullPx;
         }
-        if (config.neon.insideCutoff.enable)
+        else if (config.neon.insideCutoff.enable)
         {
             // neon.frag discards at dIn < -inHalf, i.e. d < -(size + inSoft/2).
             const float inSoft = std::max(config.neon.insideCutoff.softness, softFloor);
-            innerReach = std::min(innerReach, config.neon.insideCutoff.size + 0.5f * inSoft);
+            innerReach = config.neon.insideCutoff.size + 0.5f * inSoft;
         }
         const float innerMargin = (innerReach + GLOW_EDGE_SAFETY) * scale;
 

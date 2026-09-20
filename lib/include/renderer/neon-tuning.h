@@ -458,6 +458,19 @@
 //     sideCull and the post-grade cut block. ---
 #define BLIT_SIDE_GUARD_PX        2.0
 
+// --- Stand-in distance for a cutoff that glowSide has already subsumed.
+//
+//     neon.frag hands this to the band distance on the side the one-sided cut
+//     culls, so the discard and the mask there no-op through the arithmetic
+//     exactly as a DISABLED cutoff does - same mechanism, same sentinel shape,
+//     no extra branch downstream.
+//
+//     Matches CUTOFF_DISABLED_SIZE in neon-renderer.cpp, which is what a
+//     disabled cutoff actually arrives as. It is a distance in the shader's own
+//     px space and only has to be far enough that no realistic geometry reaches
+//     it; see the note on that constant for the same reasoning. ---
+#define CUTOFF_NEUTRALISED        1.0e6
+
 // --- Glow reach (quad sizing). The draw quad is sized to
 //     rect + glowRadius * RADIUS_FACTOR * (1 + bloomStrength * intensity).
 //
