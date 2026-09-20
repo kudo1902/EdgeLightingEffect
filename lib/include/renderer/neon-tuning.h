@@ -28,7 +28,86 @@
 
 // clang-format off
 // --- Filament (the sharp bright line) ---
+//
+//     FILAMENT_MIN_HALF_WIDTH is a STATED-width floor: it is what makes
+//     lineWidth 0 mean "no line" rather than a single bright dot, and it is
+//     paired with lineGate, which fades the filament in over the same span. It
+//     describes the width the caller asked for, so it is a FULL-RES px constant
+//     and the shader converts it with uResolutionScale like every other one.
+//
+//     The SAMPLING floor is the pair below, and the distinction from the
+//     stated floor is the whole point of having two of them. Below
+//     resolutionScale 1.0 the gather rasterises into a reduced buffer and
+//     neon-blit.frag bilinearly upsamples it, so a filament the buffer cannot
+//     sample is not reconstructed - it is resampled, and what comes out
+//     depends on where the rect edge happens to fall between buffer texel
+//     centres. That is a property of the BUFFER, so these are in BUFFER px and
+//     are NOT converted with uResolutionScale.
+//
+//     Getting that backwards is what made a 1 px line at scale 0.5 disagree
+//     with the same line at 1.0. sigma was floored only by the converted
+//     stated constant, which at scale 0.5 is 0.25 buffer px, so the line sat
+//     under the buffer's Nyquist limit and its peak swung with the rect's
+//     sub-pixel position - 217 on a texel centre, 180 half a texel off,
+//     against a 1.0 reference that holds 230-241 at every position.
+//
+//     THE FLOOR IS NOT A FIXED HALF WIDTH. It was one - a flat 0.5 buffer px -
+//     and a fixed half width asks the wrong question. What survives the blit
+//     is not decided by the profile's width at half maximum; it is decided by
+//     how much signal the NEIGHBOURING buffer texel still carries, because
+//     that is what the bilinear filter rebuilds the peak from. So the floor
+//     says exactly that: the profile must still be at
+//     FILAMENT_NYQUIST_MIN_SHARE of its peak, FILAMENT_NYQUIST_SAMPLE_PX out.
+//     Inverting the generalized Gaussian for sigma gives
+//
+//         sigma >= SAMPLE_PX / pow(log2(1 / MIN_SHARE), 1/N)
+//
+//     which neon.frag and NeonRenderer::setupGeometry both evaluate.
+//
+//     0.0625 and 1.0 are today's behaviour restated, not a retune: at the
+//     DEFAULT falloff (N = 2) the expression is exactly 0.5 buffer px, the
+//     constant it replaces, so nothing at or near the default moves.
+//
+//     The two questions diverge at a SOFT falloff, and that is what the change
+//     is for. sigma does not only set the core - it multiplies reachSigmas, so
+//     it sets the whole tail. At filamentFalloff 0.27 (N = 0.54) reachSigmas
+//     clamps at FILAMENT_REACH_MAX_SIGMAS and the tail is 64 sigmas, so a flat
+//     0.5 floor stretched a 31 px filament to 61 px at scale 0.5 and past
+//     120 px at 0.25 - to buy 5 levels of peak accuracy (max per-phase error
+//     13 -> 8) on a profile 31 px wide that the buffer was sampling perfectly
+//     well. The share form asks for 0.082 buffer px there, below what the
+//     caller already supplies, so it does not engage.
+//
+//     Where it DOES still engage it is doing the work it was added for: at the
+//     default falloff, without any floor, the peak collapses to 153 against a
+//     235 reference, and at filamentFalloff 1.5 to 24. The known cost of the
+//     share form is the band around filamentFalloff 0.4 to 0.5, where it stops
+//     engaging while the unfloored peak error is still 12 to 18 levels;
+//     tightening MIN_SHARE to cover that would stop the default case being
+//     bit-identical, so the crossover sits here deliberately. See
+//     docs/corner-crease-and-filament-nyquist.md section 2.8.
+//
+//     The line does read WIDER at a reduced scale wherever the floor engages,
+//     and that part is not a defect to tune away: a line the buffer cannot
+//     sample cannot be reconstructed from it. The floor buys a stable,
+//     correctly-bright line of the narrowest width the buffer can actually
+//     carry. Deliberately NOT paired with an amplitude compensation to
+//     conserve the line's integral - the grade at the end of neon.frag
+//     tonemaps per-fragment INSIDE the buffer and FILAMENT_GAIN puts the core
+//     deep in saturation, so scaling the linear amplitude barely moves the
+//     8-bit value while it does measurably dim the peak (error 15-23/255
+//     against 0-10 without it). See
+//     docs/corner-crease-and-filament-nyquist.md section 2.
+//
+//     GATED to the scaled path in both consumers. At scale 1.0 the gather
+//     already runs at the destination rate, there is no blit to survive, and
+//     the direct path has to stay bit-identical to the full-res renderer it
+//     replaced. The old flat constant was a no-op at 1.0 by arithmetic
+//     coincidence - it equalled the converted stated floor; this expression
+//     would not be, above N = 2, so the gate is explicit now. ---
 #define FILAMENT_MIN_HALF_WIDTH   0.5
+#define FILAMENT_NYQUIST_SAMPLE_PX 1.0
+#define FILAMENT_NYQUIST_MIN_SHARE 0.0625
 #define FILAMENT_GAIN             12.0
 
 // --- Continuous-arc filament gate feathers (neon.frag).
@@ -80,21 +159,104 @@
 //     brightness, both tracked the rect size, and glowRadius did nothing at
 //     all until it exceeded the floor (~56 px on a 1920x1080 rect, i.e. most
 //     of its usable range). An analytic profile cannot bead at any radius, so
-//     no floor is needed and glowRadius sets the width directly. ---
-//     KNOWN LIMITATION - interior medial-axis creases. Both terms are closed
-//     forms of ad = abs(SDF distance). Inside the shape the rounded-box SDF's
-//     GRADIENT is discontinuous along the medial axis (the diagonals running in
-//     from each corner, plus the central spine), so halo and bloom inherit a C1
-//     crease there and the interior glow reads as a mitred picture frame. The
-//     gather this replaced summed over perimeter samples and was smooth; a
-//     nearest-distance profile cannot be. Subtle at the default glowRadius 5,
-//     unmistakable at 30 and above.
+//     no floor is needed and glowRadius sets the width directly.
 //
-//     Accepted, not overlooked: the trade bought geometry-independent glow
-//     width, no beading at any radius, and no sample-spacing floor, which is
-//     the whole reason the analytic form exists. Softening ad near the axis
-//     would need a second distance field, and blending the two would put the
-//     rect-size dependence straight back. See docs/review-findings.md V4. ---
+//     Those two limits are of an INFINITE emitter, and evaluating one of them
+//     at ad = the nearest-edge distance is what used to produce the interior
+//     medial-axis creases - the dark wedges running in from each corner, plus
+//     the central spine. A fragment on a corner diagonal has two edges equally
+//     near and was lit by exactly one of them: measured against a fragment with
+//     a single edge at the same distance, the ratio was 1.000 at every distance
+//     tested, where physics says roughly 2.
+//
+//     neon.frag now sums the FINITE-SEGMENT form of the same two integrals over
+//     the four straight edges instead (haloSegment / bloomSegment). Integrating
+//     the same kernels from t1 to t2 along a segment at perpendicular distance
+//     a gives elementary antiderivatives, and as t1 -> -inf, t2 -> +inf each one
+//     reduces to exactly the limit above - so this is a strict generalisation
+//     and the NORM factors keep the calibration they already had. The corner
+//     sweep went from a V kinked at exactly 45 degrees (21 levels deep at
+//     r = 160) to a smooth basin of 12, which is genuine falloff rather than a
+//     crease. Cost is ~1.06-1.10x of the neon frame; the gather loop is still
+//     the overwhelming majority of it.
+//
+//     The CREASE is what the four-segment form was adopted for. It is not the
+//     largest thing it moves. The old expressions were functions of ad and of
+//     nothing else, so the old profile was SYMMETRIC about the line - a
+//     fragment 120 px inside the edge and one 120 px outside were lit
+//     identically, by construction. Outside, the emitter recedes; inside, it
+//     wraps around you. The segment sum knows the difference, so the exterior
+//     now falls off slightly faster (mid-edge peak itself moves by 2/255) and
+//     the INTERIOR stops falling off past roughly one rect-half and settles on
+//     a floor. On the 1000x500 / glowRadius 60 probe the centre goes 162 ->
+//     186 and the interior mean 174.5 -> 188.8; at glowRadius 30 on 800x400 it
+//     is 81 -> 113. The glow reads as bigger, and the part that grew is the
+//     interior - the exterior mean goes slightly DOWN.
+//
+//     Intended, and not tunable back out: a real rectangular tube does light
+//     its own interior, and HALO_GAIN cannot be lowered to undo it without
+//     dimming the line with it. The knobs for a perimeter-hugging glow are the
+//     ones that always meant that - insideCutoff, and glowSide OUTSIDE.
+//
+//     THE CORNERS ARE A FIFTH THROUGH EIGHTH SEGMENT, not an extension of the
+//     four. The straights are trimmed to their TANGENT POINTS, and each quarter
+//     arc contributes one more segment: the arc DEVELOPED onto its own tangent
+//     at whichever arc point is nearest the fragment, carrying the arc's full
+//     length and split about that point, so it abuts the straights exactly in
+//     arclength and the emitter is continuous. See neon.frag's
+//     arcTangentSegment.
+//
+//     DEVELOPED AT RATE sqrt(rho * min(rho, r)), NOT AT RATE r, with the
+//     measure put back by scaling the segment by r/rate - `rho` being the
+//     fragment's distance from the arc centre. Laying an arc out one unit of
+//     tangent per unit of arc is only right for a fragment ON it; the exact
+//     distance to the point dphi away is a^2 + (2*sqrt(rho*r)*sin(dphi/2))^2,
+//     whose slope at the foot is sqrt(rho*r). Rate r cost two things:
+//
+//       - at the CENTRE OF CURVATURE the whole arc ran off to one side of the
+//         foot, and both kernels peak at t = 0, so it under-counted - to 54%
+//         of the true value on a circle, where all four centres coincide at
+//         the middle of the shape;
+//       - and it CREASED, because the arc's endpoints slide at the tangent
+//         rate on one side of the clamp and at rate 1 on the other, which
+//         agree only where the rate is length(w). Every other point of the two
+//         lines through an arc centre carried a C1 kink: an L-shaped seam per
+//         corner, and on a circle an unmistakable dark cross. See
+//         docs/review-findings.md V12.
+//
+//     rho == r gives rate r and weight 1, so a fragment on the tube is
+//     bit-identical to the rate-r form and this calibration is untouched. The
+//     whole emitter's worst error against a numerically integrated perimeter
+//     falls on every geometry tested (16.5 -> 9.8% on a 600x400 r=40,
+//     37.3 -> 26.3% on a circle).
+//
+//     The straights used to run to the SHARP corner instead, on the grounds
+//     that over-extending them past the tangent point stood in for the arc that
+//     has no elementary closed form. It does not stand in for it. The
+//     over-extension is a phantom emitter a few px from a fragment that is tens
+//     of px from the real tube: on an 800x400 rect at cornerRadius 40, a point
+//     20 px outside the arc on the diagonal sits 2.4 px from EACH of the two
+//     phantoms, and rendered 98 -> 146 across the commit that introduced them.
+//     Against a numerically integrated rounded-rect perimeter it was 40 levels
+//     too dark ON the tube and 50 too bright just outside it, which is what
+//     made a rounded corner read square at a narrow glowRadius.
+//
+//     The developed arc costs one extra segment per corner - one atan and a
+//     length on top - and takes the worst error over a quadrant from 76 to 6
+//     levels at glowRadius 5, 112 to 6 at cornerRadius 120, 130 to 8 at 200.
+//     A full circle (cornerRadius == halfMin) is still the residual case,
+//     since its perimeter is four developed arcs and no straights at all.
+//
+//     Gated on uCornerRadius > 0, which is a UNIFORM - safe branching, and the
+//     reason a sharp rect pays nothing and stays bit-identical (nine scenes
+//     cmp-equal, not argued, and still cmp-equal after the rate fix above).
+//     Rounded costs 1.19x of the neon pass against no arcs at all, and the rate
+//     fix adds 1.03x on top - but the sharp path pays 1.026x of THAT for code
+//     it never runs, because what decides this block is REGISTER PRESSURE, not
+//     structure: with a per-arc bloom pedestal it was heavy enough to cost the
+//     sharp path 1.14x. Re-time a cornerRadius 0 scene as well as a rounded one
+//     after touching this. See docs/corner-crease-and-filament-nyquist.md
+//     sections 1.7 to 1.9, and docs/review-findings.md V4, V10 and V12. ---
 #define HALO_GAIN                 0.90
 #define HALO_NORM_FACTOR          0.43
 
@@ -164,6 +326,24 @@
 // --- Lower bound on the analytic emission widths. Guards the divides only;
 //     anything this small is already multiplied out by GLOW_GATE_FADE_PX. ---
 #define EMISSION_MIN_WIDTH        1e-3
+
+// --- Degenerate guard for the corner arc's tangent frame (neon.frag,
+//     arcTangentSegment). The frame is built by normalising the fragment's
+//     offset from the arc centre, clamped into the quarter the arc occupies;
+//     that offset is the zero vector only for a fragment sitting exactly on an
+//     arc centre, where the direction is undefined and atan(0, 0) is undefined
+//     with it. Below this the frame falls back to the nearer of the two tangent
+//     points, which is the correct clamp for the whole region the guard covers.
+//
+//     It floors `rho` in the same function, for the same fragment: the
+//     development rate divides into the segment's weight, so an exactly-zero
+//     rho would be a division by zero. The floored value is nowhere near a
+//     pixel and the limit it lands on is the exact answer anyway, so this only
+//     keeps a NaN out.
+//
+//     Unit-free: compared against a length in the shader's own px space, and
+//     small enough that nothing but the exact degeneracy reaches it. ---
+#define ARC_FRAME_EPSILON         1e-6
 
 // --- Bloom (wide background spill). See the halo note above for the closed
 //     form; BLOOM_SPACING_FLOOR is gone with the gather. ---

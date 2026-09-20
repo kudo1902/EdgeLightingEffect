@@ -254,6 +254,28 @@ extern "C"
         EL_ARC_FIELD_INTENSITY = 2 /**< Per-arc brightness multiplier. */
     } el_arc_field_e;
 
+    /** @brief Which scalar to drive inside one @c spotlight lamp.
+     *  @details Mirrors @c EdgeLighting::SpotlightField 1:1; parity is pinned
+     *           by static_asserts in capi-internal.h. Paired with a lamp index
+     *           at bind time via @ref el_animation_add_spotlight_field. */
+    typedef enum el_spotlight_field_e
+    {
+        EL_SPOTLIGHT_FIELD_POSITION_X = 0,
+        EL_SPOTLIGHT_FIELD_POSITION_Y = 1,
+        EL_SPOTLIGHT_FIELD_ANGLE = 2,
+        EL_SPOTLIGHT_FIELD_BEAM_ANGLE = 3,
+        EL_SPOTLIGHT_FIELD_THROW_LENGTH = 4,
+        EL_SPOTLIGHT_FIELD_APERTURE_WIDTH = 5,
+        EL_SPOTLIGHT_FIELD_SOFTNESS = 6,
+        EL_SPOTLIGHT_FIELD_INTENSITY = 7,
+        EL_SPOTLIGHT_FIELD_BLOOM = 8,
+        EL_SPOTLIGHT_FIELD_BLOOM_RADIUS = 9,
+        EL_SPOTLIGHT_FIELD_COLOR_TEMP = 10,
+        EL_SPOTLIGHT_FIELD_TINT_R = 11,
+        EL_SPOTLIGHT_FIELD_TINT_G = 12,
+        EL_SPOTLIGHT_FIELD_TINT_B = 13
+    } el_spotlight_field_e;
+
     /** @brief Scalar inside a single colour stop.
      *  @details Mirrors @c EdgeLighting::ColorStopField. Paired with the
      *           containing entry's index at bind time via
@@ -308,6 +330,8 @@ extern "C"
         EL_RENDERER_DROPLETS = 1 << 1,   /**< Rain-on-glass droplets. */
         EL_RENDERER_LENS_FLARE = 1 << 2, /**< Sun + hex-aperture lens flare, at any
                                           *   resolution scale. */
+        EL_RENDERER_SPOTLIGHT = 1 << 3,  /**< Freely placed and aimed cones of light.
+                                          *   Light only - no backdrop, no fixtures. */
 
         /* --- Debug layer ----------------------------------------------- */
         EL_RENDERER_DEBUG = 1 << 30, /**< Debug overlays describing the neon layer: LUT

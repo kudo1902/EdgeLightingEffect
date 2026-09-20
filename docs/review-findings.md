@@ -23,13 +23,25 @@ landed and again when the helpers they added shifted everything under them -
 and a wrong line number is worse than none, because it reads as precise. Each fixed item keeps its original
 description, so the reasoning that led to the change stays readable next to it.
 
+**A reference that is not a link names a file that no longer exists.** Keeping
+the original descriptions means keeping references to `neon-optimized.frag`,
+`neon-optimized-renderer.cpp` and `lens-flare-optimized-renderer.cpp`, all
+deleted by the unification and the lens-flare merge. Those are written as plain
+code spans rather than links, because a link to a deleted path is a 404 dressed
+up as a citation. Everything still linked still exists, so in a list that mixes
+the two - and several below do - the formatting tells you which halves of the
+old fork survived.
+
 | | fixed | open |
 | - | ----- | ---- |
-| visual | V1, V2, V3, V6, V7 | V4, V5 (both closed as documented limitations) |
+| visual | V1, V2, V3, V4, V6, V7 | V5 (closed as a documented limitation) |
 | implementation | I1, I3, I4, I6, I7 | I2 (declined), I5 (documented), I8 (audited) |
 | second pass | R1, R2, R3, R4, R5, R6 | R7 |
 | third pass | V8, I9, I10, I11, I12 (partly) | V9, I12's two stale design docs |
 | fourth pass | I14 | I13 |
+| fifth pass | I15 | - |
+| sixth pass | I16, I17, I19, I20 | I18 |
+| eighth pass | V11 | - |
 
 The R items come from a re-read after the V and I fixes landed - see
 [Second pass](#second-pass-after-bbdba62). V8 and V9 come from a later read of
@@ -42,6 +54,20 @@ I13 and I14 come from a performance review of `LensFlareRenderer` - see
 [Fourth pass](#fourth-pass-the-lens-flare-performance-review). That review's
 own measurements and reasoning live in `lens-flare-perf-review.md`; only the
 defects it turned up are recorded here.
+
+I16 to I20 come from a read of the spotlight layer on
+`add_spotlight_renderer` - see
+[Sixth pass](#sixth-pass-the-spotlight-renderer-review). That pass found no
+visual defect, so it adds no V item: the solved strip bound the whole renderer
+rests on was verified offscreen and holds. Its design and the verification
+behind it live in `spotlight-renderer-plan.md`.
+
+V11 comes from a spotlight artefact reported from a render - see
+[Eighth pass](#eighth-pass-the-spotlight-banding-report). It is the visual item
+the sixth pass did not find, and it is worth noting WHY that pass missed it:
+the sixth pass verified the strip bound, and the strip bound was never the
+problem. The reported symptom points straight at the geometry, which is what
+makes this one interesting.
 
 ## How the visual items were reproduced
 
@@ -92,7 +118,7 @@ Three of the four places that consume the radius clamp it and one does not:
 | `perimeterPosition` ([`neon.frag` perimeterPosition](../lib/shaders/neon.frag)) | yes, to `min(halfW, halfH)` |
 | `peri` (perimeter length, same shader) | yes |
 | `GeometryUtils::GetPointOnRectangle` | yes |
-| `sdRoundBox(vPos, halfSize, uCornerRadius)` ([`neon.frag` main](../lib/shaders/neon.frag), [`neon-optimized.frag` main](../lib/shaders/neon-optimized.frag), [`black-rect.frag` main](../lib/shaders/black-rect.frag)) | **no** |
+| `sdRoundBox(vPos, halfSize, uCornerRadius)` ([`neon.frag` main](../lib/shaders/neon.frag), `neon-optimized.frag` main, [`black-rect.frag` main](../lib/shaders/black-rect.frag)) | **no** |
 
 Past the half-extent the unclamped SDF stops describing a rounded box - it
 becomes a lens with cusps - while the gather samples still sit on the correctly
@@ -231,12 +257,12 @@ black quadrant there instead, which is worse.
 
 All three shaders subtract `uTime * uHueRotationRate` from `uArc`
 ([`neon.frag`](../lib/shaders/neon.frag),
-[`neon-optimized.frag`](../lib/shaders/neon-optimized.frag),
+`neon-optimized.frag`,
 [`neon-emission.frag`](../lib/shaders/neon-emission.frag)), but `uArc` is an
 **arc-local** coordinate on a head-to-tail gradient, not a cyclic perimeter
 coordinate. The arc atlas is `GL_REPEAT` on U
 ([`neon-renderer.cpp` rebuildArcLUT](../lib/src/renderer/neon-renderer.cpp),
-[`neon-optimized-renderer.cpp` rebuildArcLUT](../lib/src/renderer/neon-optimized-renderer.cpp)),
+`neon-optimized-renderer.cpp` rebuildArcLUT),
 so the scroll eventually wraps and the tail colour butts straight into the head
 colour, mid-edge, with no geometric feature to hide it.
 
@@ -264,7 +290,7 @@ Verified: the frame after 0.6 s of rotation is now bit-identical to the frame
 at t = 0 - the arc's own gradient is stationary. Base vs optimized agreement
 unchanged (mean |diff| 0.161, max 7).
 
-### V4. The interior glow has visible medial-axis creases - DOCUMENTED, NOT FIXED
+### V4. The interior glow has visible medial-axis creases - FIXED
 
 **Confirmed.** `glowRadius` 60, `bloomStrength` 1.0.
 
@@ -286,12 +312,60 @@ radius, no sample-spacing floor - is worth keeping, and softening `ad` near the
 axis would need a second distance field whose blend would reintroduce exactly
 the rect-size dependence the analytic form removed.
 
-**Left as-is, but no longer undocumented**: the halo block in
-[`neon-tuning.h`](../lib/include/renderer/neon-tuning.h) now carries a KNOWN
-LIMITATION note naming the artifact, where it happens, at what `glowRadius` it
-becomes visible, and why it is accepted. The next person to look at a creased
-interior will find the answer next to the constants rather than rediscovering
-it.
+**That last sentence is what kept this open, and it was answering the wrong
+question.** `ad` never needed softening. The defect is that ONE term was being
+evaluated where FOUR belong: both expressions are the field of an *infinite*
+line, so a fragment on a corner diagonal with two edges equally near was lit by
+exactly one of them. Measured on a flat white ring against a fragment with a
+single edge at the same distance, the ratio was **1.000 at every distance
+tested** - two edges delivering the light of one, where physics says roughly
+two. No second distance field is involved in seeing that, or in fixing it.
+
+**Fixed** in [`neon.frag`](../lib/shaders/neon.frag) by replacing each
+infinite-line term with the **finite-segment** form of the same integral,
+summed over the four straight edges (`haloSegment` / `bloomSegment`). Both have
+elementary antiderivatives and both reduce to exactly the old expressions as the
+segment goes to infinity, so this is a strict generalisation: `HALO_NORM_FACTOR`
+and `BLOOM_NORM_FACTOR` keep their calibration and the peak on a long edge does
+not move.
+
+| | before | after |
+| --- | ------ | ----- |
+| corner sweep at r=160, 0 / 45 / 90 deg | 192 / **177** / 192 | 201 / **190** / 202 |
+| equal-`ad` ratio, one edge vs two | 1.000 | 1.011 - 1.021 |
+| neon frame cost, 1280x720 | 1.67 ms | 1.88 ms (**1.13x**) |
+
+The kinked V at exactly 45 degrees is now a smooth basin, and what remains of
+it is genuine falloff - that point really is eight times further from the
+nearest edge than the sample beside it.
+
+Three further things, all recorded at the call site:
+
+- The four segments ran to the **sharp** corner, the quarter-arc emitter above
+  `cornerRadius` 0 being omitted for want of an elementary closed form. That
+  omission turned out to be a defect of its own and is **V10** below, now
+  fixed. Exact at `cornerRadius` 0 throughout.
+- A **small rect now glows less**, which is the point of the change rather than
+  a side effect of it: an edge shorter than a few multiples of `bw` subtends
+  less than the infinite line the old form assumed. Measured at the default
+  `glowRadius` 5, 30 px off the middle of the top edge: 20 px wide rect 62 ->
+  35, 40 px 67 -> 54, 80 px 72 -> 71, 320 px and above within 2/255. The old
+  behaviour gave a 20 px rect 87% of the glow of a 1200 px one.
+- **The interior fills**, and this is the largest change of the three - it was
+  reported from a render afterwards as "the halo got bigger", which is exactly
+  what it looks like. The old terms were functions of `ad` alone, so a fragment
+  120 px inside the edge was lit identically to one 120 px outside, by
+  construction. Inside, the emitter wraps around the fragment instead of
+  receding from it, so the interior now settles on a floor rather than decaying:
+  centre of the rect 162 -> 186 on the probe above, 81 -> 113 at `glowRadius`
+  30 on 800x400. The exterior mean goes slightly DOWN in the same captures.
+  Intended physics rather than a regression, and capped by `insideCutoff` or
+  `glowSide` rather than by a gain, which would dim the line too. Measured in
+  [`corner-crease-and-filament-nyquist.md`](corner-crease-and-filament-nyquist.md)
+  section 1.5.2.
+
+Full measurements and the probes in
+[`corner-crease-and-filament-nyquist.md`](corner-crease-and-filament-nyquist.md).
 
 ### V5. An arc's lit span is inset, but its colour is not - MOSTLY RESOLVED BY V2
 
@@ -326,7 +400,7 @@ Not fixed, because closing it means giving the pre-pass the pixel-space feather
 uniform-plumbing change on the hot path for an effect nobody has reported. Left
 here so the next person tuning `HEAD_FEATHER_PX` knows the two are not coupled.
 
-**Amended by [V9](#v9-an-arcs-own-gradient-quantises-to-the-gather-grid-and-the-half-res-default-makes-it-visible---open).**
+**Amended by [V9](#v9-an-arcs-own-gradient-quantises-to-the-gather-grid-and-a-reduced-sample-count-makes-it-visible---open).**
 The sentence above about "an effect nobody has reported" is weaker than it
 looked. The same sample-grid quantisation also makes the two neon renderers
 disagree by up to 100/255 at arc endpoints whenever an arc carries its own
@@ -567,8 +641,8 @@ box tracks 200x140 (678 px lit) then 400x300 (1399), and a pure
 
 Called once per frame per multi-pass renderer
 ([`NeonRenderer::renderEmissionPass`](../lib/src/renderer/neon-renderer.cpp),
-[`NeonOptimizedRenderer::Render` + `renderEmissionPass`](../lib/src/renderer/neon-optimized-renderer.cpp),
-[`LensFlareOptimizedRenderer::Render`](../lib/src/renderer/lens-flare-optimized-renderer.cpp)).
+`NeonOptimizedRenderer::Render` + `renderEmissionPass`,
+`LensFlareOptimizedRenderer::Render`).
 It is the *correct* fix for the `OffscreenCapture` case and should not be
 reverted to `BindDefault`, but a GL state query can sync the driver on a tiler.
 Threading the target through `BaseRenderer::Render` would give the same
@@ -744,8 +818,8 @@ left the two siblings alone:
 
 | site | buffer |
 | ---- | ------ |
-| [`NeonOptimizedRenderer::renderHalfResNeonPass`](../lib/src/renderer/neon-optimized-renderer.cpp) | `mHalfResBuffer` |
-| [`LensFlareOptimizedRenderer::Render`](../lib/src/renderer/lens-flare-optimized-renderer.cpp) | `mScaledBuffer` |
+| `NeonOptimizedRenderer::renderHalfResNeonPass` | `mHalfResBuffer` |
+| `LensFlareOptimizedRenderer::Render` | `mScaledBuffer` |
 
 `Resize` calls `destroy()` on its failure path, so `mFbo` is 0; `Bind()` then
 binds the *caller's* framebuffer, and the `glClear` that follows is not clipped
@@ -769,7 +843,7 @@ Not the same thing as I2, which is about the emission pre-pass, and the
 
 The gate is a whole-struct compare in both renderers
 ([`NeonRenderer::OnConfigChanged`](../lib/src/renderer/neon-renderer.cpp),
-[`NeonOptimizedRenderer::OnConfigChanged`](../lib/src/renderer/neon-optimized-renderer.cpp)):
+`NeonOptimizedRenderer::OnConfigChanged`):
 
 ```cpp
 const bool segLutDirty = mEffectiveSegments != mBakedSegments;
@@ -837,12 +911,11 @@ carried through the gather's normalisation and the tone map / gamma grade.
 ### R5. GL state left modified after a pass - FIXED
 
 - `glClearColor(0, 0, 0, 0)` is set and never restored, in
-  [`NeonOptimizedRenderer::renderHalfResNeonPass`](../lib/src/renderer/neon-optimized-renderer.cpp)
-  and [`LensFlareOptimizedRenderer::Render`](../lib/src/renderer/lens-flare-optimized-renderer.cpp).
+  `NeonOptimizedRenderer::renderHalfResNeonPass` and
+  `LensFlareOptimizedRenderer::Render`.
 - `renderBlitPass` calls raw `glBindTexture` on whatever texture unit happens
-  to be active
-  ([`NeonOptimizedRenderer::renderBlitPass`](../lib/src/renderer/neon-optimized-renderer.cpp)),
-  leaving the half-res texture bound there, and sets the texture's filter
+  to be active (`NeonOptimizedRenderer::renderBlitPass`), leaving the half-res
+  texture bound there, and sets the texture's filter
   directly - so `Framebuffer::mFilter`, the field that exists so a filter change
   forces a reallocation, no longer describes the texture. `CLAUDE.md` also asks
   renderer code to go through the RAII wrappers rather than raw GL.
@@ -1096,7 +1169,7 @@ float uArc = (sPos - arc.x) / max(arc.y, 1e-4);
 | site | what it feeds |
 | ---- | ------------- |
 | [`neon.frag` emitCover loop](../lib/shaders/neon.frag) | the arc's colour-stop ALPHA |
-| [`neon-optimized.frag` emitCover loop](../lib/shaders/neon-optimized.frag) | the same, half-res fork |
+| `neon-optimized.frag` emitCover loop | the same, half-res fork |
 | [`neon-emission.frag` main](../lib/shaders/neon-emission.frag) | the winning arc's COLOUR |
 
 Past the seam `uArc` goes negative, and the atlas is `CLAMP_TO_EDGE` on U (as
@@ -1529,19 +1602,750 @@ never set one outside `renderOpaqueFill`'s own clear.
 
 ---
 
+## Sixth pass (the spotlight renderer review)
+
+A read of `SpotlightRenderer`, `spotlight.vert`, `spotlight.frag`,
+`spotlight-tuning.h` and the config, animation, C ABI and demo surfaces that
+arrived with them, at `add_spotlight_renderer` (`8ec8ea1`).
+
+The design's central claim - that the strip bound is SOLVED rather than
+guessed, so the geometry can hug the lit region without clipping it - was
+checked offscreen rather than argued from the source, and it holds: see
+[How this pass was verified](#how-this-pass-was-verified) below, which also
+closes one of the two verification items
+[`spotlight-renderer-plan.md`](spotlight-renderer-plan.md) left unrun. Nothing
+here is a visual defect, which is why the numbering continues the
+implementation series and not the visual one.
+
+The findings are all edges around that solve: a diagnostic that was dropped on
+the way over from the neon layer, two unstated assumptions the solve rests on,
+a cost comment an order of magnitude low, and three documents that still
+describe a four-renderer library. **All but I18 have since been fixed**, and
+I18 is open because closing it is a design decision rather than a repair.
+
+Two naming regressions came out of the same read and are recorded where the
+rest of their kind live, in [`naming-review.md`](naming-review.md): the branch
+added three structs to **N2** and reopened **N3**. Both have since been fixed,
+which returns each item to the state the naming pass left it in.
+
+### I16. Lamps past `SPOT_MAX_LIGHTS` are dropped silently - FIXED
+
+`SpotlightRenderer::buildStrips` clamps the lamp list with
+
+```cpp
+const int lampCount = std::min(static_cast<int>(spotlight.lights.size()),
+                               static_cast<int>(SPOT_MAX_LIGHTS));
+```
+
+and says nothing about the entries it drops. The whole translation unit
+contains exactly one `LOG_` call, on the shader-compile failure path.
+
+This is **V7 one layer later**, and V7's own wording transfers without
+editing: *"The demo UI enforces the cap so it never bit there, but a library or
+C-ABI host got no signal at all - not a log line, not a result code."* Both
+demo UIs guard their Add button against `SPOT_MAX_LIGHTS`, so the truncation is
+unreachable from either of them. It is reachable from the C ABI, where
+`el_effect_set_spotlight_count` resizes to whatever it is handed, and from
+`SpotlightConfig::lights` directly, which `config.h` documents as accepting a
+longer list on purpose: *"Entries past `SPOT_MAX_LIGHTS` are ignored at draw
+time rather than rejected here, so a host can keep a longer list around and
+enable a subset."* That is a reasonable contract; it is the silence about which
+end of the list wins that is not.
+
+The cure already exists in this tree. `NeonRenderer`'s anonymous namespace
+carries `WarnOnOverflow`, called from `OnConfigChanged` on the TRANSITION into
+overflow so it lands once per overflow rather than once per frame, with no latch
+to store. `SpotlightRenderer::OnConfigChanged` is the same place - the only
+point at which the lamp count can change - and the helper takes the same four
+arguments.
+
+**Fixed** with `WarnOnLampOverflow` in `spotlight-renderer.cpp`'s anonymous
+namespace, called from `SpotlightRenderer::OnConfigChanged`:
+
+```
+SpotlightRenderer: 12 lamps configured but only 8 fit - the rest are ignored.
+```
+
+Two deliberate differences from the neon helper it copies. It takes **two
+arguments rather than four**, because there is one cap and one kind of entry
+here, so the `what` string and the `cap` parameter would both be constants at
+the single call site. And it counts the **whole list, not the enabled lamps**:
+`buildStrips` clamps by INDEX, so a disabled entry at slot 3 still occupies
+slot 3 and a rig of two enabled lamps at slots 8 and 9 draws nothing. Counting
+enabled lamps would stay silent on exactly that case.
+
+Placed ahead of the rebuild gate rather than behind it, so the diagnostic is
+not coupled to whether a rebuild happens. An unchanged config cannot be a
+transition, so the placement costs one `size_t` comparison on config changes
+that move nothing here.
+
+Verified across seven transitions: silent at 4 and at 8 (the cap itself),
+**one line** at 12, silent when held at 12 and when grown to 20, silent back at
+3, **one line** again at 9, and silent when `resolutionScale` moves while still
+over. The truncation behaviour is unchanged - this only says which end of the
+list wins.
+
+### I17. The strip solve bounds a different expression than the shader evaluates - FIXED
+
+`SolveConeAcross` inverts
+
+```
+intensity * exp(-a / thr) * (nearW / halfW) * exp(-lat^2 * softK) >= SPOT_VISIBILITY_FLOOR
+```
+
+and `spotlight.frag` writes
+
+```glsl
+fragColor = vec4(vColor * vP0.w * (cone + bloom), 0.0);
+```
+
+Two factors of the second expression are missing from the first. Both are
+currently harmless, and neither is stated anywhere.
+
+**The colour multiply.** The solve bounds `intensity * cone`; the shader
+multiplies by `vColor`, the blackbody colour `KelvinToRgb` bakes from
+`SpotLight::colorTemp`. It is exact only because every row of `KELVIN_TABLE`
+carries a channel at exactly 1.00 - red below 6500 K, blue from 6500 K up - and
+linear interpolation between two rows that share that property preserves it, so
+the brightest channel of any lamp is always `intensity * (cone + bloom)`
+exactly. Add an anchor whose three channels are all below 1.0, or swap the
+table for a real Planckian fit normalised any other way, and the strip starts
+cutting the brightest channel above the floor it was solved against. One line
+beside `KELVIN_TABLE` records the dependency; nothing else is needed while the
+table holds.
+
+**The sum.** `SupportAt` returns `max(coneSupport, bloomDisc)` - the UNION of
+the two terms' supports - but the shader ADDS them. Where the two boundaries
+cross, both terms can sit just below the floor while their sum is above it, so
+"exact, not conservative" in `DeriveLamp`'s comment is a shade stronger than
+what is proved. Unreachable in practice for two independent reasons: the `+
+1.0f` rasterisation margin in `SupportAt` already buys roughly a factor of two
+of headroom at the cone boundary, and where the bloom is window-limited rather
+than floor-limited its term is exactly zero at `S` rather than near the floor,
+so the two boundaries do not meet near-tangentially there. Measured over
+fourteen single-lamp scenes it costs nothing: at most five clipped channels per
+scene out of 2.76 million, every one at value 1.
+
+**Fixed, differently for each half.**
+
+The colour multiply was first closed as a **compile-time invariant**:
+`KelvinTableKeepsAFullChannel`, a `constexpr` predicate over `KELVIN_TABLE`
+asserted at namespace scope, pinning the precise condition rather than the
+obvious one - *every adjacent pair must share a channel that is exactly 1.0*.
+("each row's brightest channel is 1" would not do: the interpolation is per
+channel, so two rows peaking on different channels blend to a colour whose
+brightest channel dips below 1 in between.) All seven pairs satisfied it, and
+it was verified to bite - moving the 8000 K row's blue to 0.98 failed the build
+with a message naming the consequence.
+
+> **Superseded, by the fork in the road that assert's own comment described.**
+> `SpotLight::tint` - an arbitrary linear RGB multiplier, added so a lamp can
+> be a colour blackbody cannot reach - breaks the table invariant by
+> construction, so the alternative the comment recorded was taken instead:
+> `LampSolve` gained a `solveIntensity` carrying
+> `intensity * max(color.r, color.g, color.b)`, and everything that bounds
+> geometry reads that rather than `intensity`. The predicate and the assert are
+> gone; `KELVIN_TABLE`'s comment records what they were for.
+>
+> The fold subsumes the assert and is strictly stronger - it is exact for the
+> brightest channel whatever the colour, where the assert only held while the
+> colour came from that one table. Measured with the CPU-model harness at
+> 1280x720, over saturated, dim and boosted tints: **at most 2 clipped channels
+> per scene, all at value 1** - the same residue as an untinted lamp. Removing
+> just the fold (one line) and re-running the same scenes clips **18,236
+> channels at tint 2.5x and 157,133 at 8x, up to 4/255**, which is what the
+> assert had been standing in for. A dim tint moves the other way: the strip
+> shrinks to 51% of its untinted area, because the solve now knows the lamp is
+> dimmer than its `intensity` suggests. An A/B of the two libraries, runs
+> interleaved, put the fold's own cost at nothing measurable (29.7 us against
+> 29.5 us for a one-lamp rebuild).
+
+The sum is fixed as a **correction to what is claimed**, not to the geometry.
+`SupportAt`'s comment now says it bounds each term separately, names the thin
+region where the two boundaries cross, and gives the two reasons that covers it
+in practice along with the measurement. `DeriveLamp`'s "exact, not
+conservative" now reads "right for this TERM. Not for the fragment, which also
+carries the cone", and points at `SupportAt`.
+
+Solving each term against `floor / 2` would close it exactly and costs one
+character, and it was deliberately not taken: it widens every strip everywhere
+to buy a guarantee **I18** argues the 8-bit blend already cannot deliver. Doing
+it would be moving further in the direction I18 says is wrong. If I18 is ever
+resolved by dropping the lamp-count division, the halving becomes nearly free
+and should be revisited then.
+
+### I18. The visibility floor is divided by a lamp count the blend path cannot honour - OPEN
+
+`SPOT_VISIBILITY_FLOOR` is documented as *"HALF an 8-bit step"*, and
+`buildStrips` divides it by the number of enabled lamps before solving, so that
+*"the whole rig's clipped remainder stays inside one half step however many
+lamps overlap: N lamps each under floor/N sum to under floor."*
+
+The arithmetic is right and the guarantee is real, but it is finer than the
+render path's own precision, so nothing downstream can observe it. All lamps go
+out in one `glDrawArrays`, but they are still separate fragments: each one's
+premultiplied add is blended into the RGBA8 target and rounded to eight bits
+before the next arrives. Eight lamps that each contribute 0.4 of a step to a
+pixel therefore write zero eight times, where an exact float sum would have
+reached 3.2 steps.
+
+Measured on an eight-lamp fan at 1280x720, against a CPU evaluation of
+`spotlight.frag` that sums in float and quantises once:
+
+| rendering | channels below the model, all at value 1 | max deviation |
+| --------- | --------------------------------------- | ------------- |
+| each lamp alone, eight runs | 0, 1, 1, 1, 1, 2, 2, 5 | 1 |
+| all eight together, one run | 36,853 | 3 |
+
+The per-lamp rows are the strip bound doing its job. The 36,853 is entirely the
+eight-bit accumulation, and dividing the floor did not prevent any of it.
+
+What the division does cost is fragments. Headroom grows by `ln(N)` and the
+solved half-width goes as its square root, so at eight lamps every strip is
+about 15% wider than a shared-floor solve would make it - paid to guarantee a
+sub-half-step total that the blend then discards. Whether to drop the division,
+keep it and say what it does and does not cover, or move the whole rig into a
+higher-precision accumulation buffer is a design call, which is why this is
+recorded rather than changed. Note the third option is not free here: this layer
+composites straight onto the caller's target at `resolutionScale` 1.0, which is
+the default and the path the measurements above use.
+
+Related, and already recorded: **R7** measures the same eight-bit ceiling from
+the other side, on the neon halo and bloom.
+
+### I19. `SpotlightRenderer`'s rebuild-cost comment is an order of magnitude low - FIXED
+
+The `buildStrips` doc comment tells the next reader where to look first:
+
+> Under an animation driving any lamp scalar it therefore runs every frame:
+> that is ~100 transcendental calls and a <= 34 KB `glBufferSubData`, which is
+> the number to look at first if this layer ever shows up in a profile.
+
+The 34 KB is right - `SPOT_MAX_LIGHTS * SPOT_STRIP_SEGMENTS * 6 * 60` is 34,560
+bytes. The other number is not. Counted by replicating the solve exactly
+(`DeriveLamp`, `SolveConeReach`'s doubling and bisection, the
+`SPOT_STRIP_SEGMENTS + 1` sampling pass and the `WIDEN_SUBSAMPLES` widening
+pass) with instrumented `log` and `sqrt`:
+
+| lamps | `log` | `sqrt` | `sin`/`cos`/`tan` | total |
+| ----- | ----- | ------ | ----------------- | ----- |
+| 1 | 705 | 290 | 3 | **998** |
+| 8 | 5,688 | 2,168 | 24 | **7,880** |
+
+Ten times the stated figure for one lamp and seventy-nine times for a full rig.
+
+The comment also points at the wrong term. **Eighty-eight percent of those calls
+are the widening pass** - 208 `SupportAt` evaluations per lamp, against 13 for
+the sampling it corrects - and the loop's own comment says of it: *"Measured: it
+changed no pixel in any verification scene, so this is a guarantee being made
+true rather than a bug being fixed."* Anyone following the doc comment into a
+profile will find the cost in a loop the code has already recorded as buying
+nothing measurable.
+
+None of this is a performance problem today. Timed over 2,000 rebuilds with one
+lamp moving every call, a full `OnConfigChanged` rebuild costs **29.8 us at one
+lamp and 33.4 us at eight** - 0.2% of a 16.7 ms frame. The flatness across lamp
+counts is the tell: the transcendentals are a few microseconds of it and the
+rest is fixed overhead, of which one avoidable piece is visible in the source -
+`buildStrips` constructs a fresh `std::vector<StripVertex>` and reserves the
+ceiling on every call, so the staging buffer is reallocated per frame under
+exactly the animation the comment is warning about. Hoisting it to a member and
+calling `clear()` is free and is the same argument `ensureBuffer` already makes
+one line later for the VBO.
+
+**Fixed**, all three parts.
+
+The number is now measured rather than guessed: `buildStrips`' comment gives
+**~20 us for one lamp and ~32 us for eight** (2,000 rebuilds, best of nine
+runs) and the transcendental counts beside them, and draws the conclusion the
+old comment did not - eight lamps do eight times the arithmetic for 1.6x the
+time, so what a profile finds here is far more likely to be the driver than the
+solve.
+
+The widening pass is named in both places someone would land. Its constant's
+comment used to open "CPU-only and cheap"; it now says it is **88% of the
+method's transcendental calls** and is the first thing to lower if the solve
+ever matters, while still noting it is a few microseconds of a ~20 us rebuild.
+The loop comment keeps its original "a guarantee being made true rather than a
+bug being fixed" and adds that it is also where most of the arithmetic goes.
+
+The staging vector is hoisted to `mStripVerts`, cleared rather than
+reconstructed, so its 34 KB ceiling is allocated exactly once instead of per
+rebuild. That required moving `StripVertex` into the class as a private nested
+type so the member could be typed - which also moved the packing
+`static_assert` next to the struct it guards.
+
+**Worth saying plainly: the hoist is not where the time was.** One lamp went
+from ~30 us to ~20 us and eight barely moved, against run-to-run spread of
+several microseconds. It removes a real per-frame `malloc`/`free` and it is the
+right shape for a method that runs every frame under an animation, but the
+fixed cost this finding noticed is the GL upload and the call, not the
+allocation. The corrected comment says so, which is the part that will save
+someone the measurement.
+
+### I20. Three documents still describe a four-renderer library - FIXED
+
+`CLAUDE.md` was updated with the new layer. Nothing else was.
+
+| document | says | should say |
+| -------- | ---- | ---------- |
+| [`implementation.md`](implementation.md) | "Four renderers ship", with a four-row table | five, with `SpotlightRenderer` in it |
+| [`effect-reference.md`](effect-reference.md) | "one of four renderers", naming the four | five |
+| [`README.md`](../README.md) | "Six visual layers", listing `WireframeRenderer`, `NeonOptimizedRenderer` and `LensFlareOptimizedRenderer` | five, none of those three among them |
+
+`implementation.md` is the one that matters most, because `CLAUDE.md` sends
+every new reader there first: *"brief: how the library is put together on the
+C++ side and how a frame runs. Start here."*
+
+The `README.md` row is not this branch's doing - it has described the pre-
+unification tree since `NeonOptimizedRenderer` and `LensFlareOptimizedRenderer`
+were folded in and `WireframeRenderer` was absorbed into `DebugRenderer`
+(**I4**), and it also omits `DebugRenderer`. It is listed here because it is the
+same edit and because a reader arriving at the repository front page currently
+meets three renderers that do not exist and misses two that do.
+
+Also missing: `docs/spotlight-renderer.md`, the per-parameter reference Part 8
+of [`spotlight-renderer-plan.md`](spotlight-renderer-plan.md) calls for.
+
+**Fixed**, all four. [`spotlight-renderer.md`](spotlight-renderer.md) is
+written, in the shape `effect-reference.md` uses: what the layer is, what a
+default `SpotLight` renders, the app-coordinate convention, field-by-field, the
+animatable surface and what driving each field costs, the measured resolution-
+scale table, the C ABI surface, and an interaction cheatsheet. It is linked from
+`CLAUDE.md`'s reading list, from `effect-reference.md`'s renderer list and from
+the `README.md` bullet.
+
+Two errors turned up in the same tables while fixing them, neither of which this
+finding had noticed:
+
+- `implementation.md`'s table was **wrong about the registration order it
+  claimed to state**, not just short a row. It listed `DebugRenderer` second,
+  where the demo registers it last - which is the one position in that list that
+  is load-bearing, since the overlays have to draw above the layers they
+  annotate. The rebuilt table is in the real order and says why the last slot
+  matters.
+- `README.md`'s hotkey table was missing `D` (toggle droplets) and `Shift`+`O`
+  (toggle the neon resolution scale), and its Debug UI section still listed an
+  "Optimized Neon (1/2-res)" panel that no longer exists as its own section -
+  those knobs moved into the Neon section with the unification. It also had no
+  Debug, Spotlights or `demo-capi/` entries at all. All corrected against the
+  live `CollapsingHeader` labels and `OnKey`.
+
+### How this pass was verified
+
+A throwaway harness linked against `build/lib/libedge-lighting.a`, in the shape
+[How the implementation items were verified](#how-the-implementation-items-were-verified)
+describes: a hidden GLFW window, an `OffscreenCapture` at 1280x720, one
+`OnConfigChanged` / `Render` per case. Three things it does that the earlier
+harnesses do not:
+
+1. **A CPU model of `spotlight.frag`.** The fragment program is short, reads no
+   texture and reads no `gl_FragCoord`, so it can be reimplemented on the CPU
+   exactly - including the `SPOT_*` constants, which the harness gets by
+   including `spotlight-tuning.h`, the same file CMake injects into the shader.
+   Evaluating it at every pixel centre and comparing against the captured frame
+   measures the strip bound directly: a pixel the model lights and the capture
+   leaves at zero is a pixel the geometry clipped.
+
+   This is a different test from the plan's, and an independent one. The plan
+   renders each scene again with every strip scaled 4x and requires that no
+   pixel the larger strip lights is dark in the shipped one - a comparison
+   between two strips, both built by the same solve. The model is built from the
+   shader instead and depends on no geometry at all, so it also catches a bound
+   that is wrong in a way both strips would share.
+
+2. **GL state read back around `Render`.** Framebuffer binding, viewport,
+   `GL_BLEND` and its function, `GL_SCISSOR_TEST` and its box, captured before
+   and after, on both resolution paths.
+
+3. **A host scissor set before the call**, to check **I15**'s rule holds on the
+   new layer: the offscreen work must not be clipped by a box in the caller's
+   coordinates, and the composite must be.
+
+### Checked and found correct, for the record
+
+- **The strip bound.** Fourteen single-lamp scenes - the default lamp, a 110
+  degree beam at softness 1, a 4 degree beam on an 800 px throw, a lamp whose
+  bloom rather than whose cone sets the bound, a bloom small enough to be
+  floor-limited rather than window-limited, a degenerate lamp at beam angle 0
+  and intensity 0.001, and the eight lamps of a fan rendered one at a time -
+  clip **at most 5 channels out of 2.76 million, every one at value 1/255**.
+  That residue is the rounding coin-flip at the boundary, not missing coverage.
+  It matches the plan's own result by a different route.
+- **GL state hygiene.** Framebuffer, viewport, blend enable, blend function,
+  scissor enable and scissor box all come back exactly as handed, at
+  `resolutionScale` 1.0 and 0.5.
+- **The host scissor.** With `GL_SCISSOR_TEST` on and a box of
+  `(100, 50, 600, 400)`, both paths put **68,377 lit pixels inside the box and
+  zero outside it**. The `NoScissorScope` plus early `Restore()` before the
+  composite behaves exactly as I15 requires.
+- **Resize invariance** - verification item 4 of the plan, recorded there as
+  specified but not run. Rendering 1280x720, then 800x600, then 1280x720 again
+  returns a **byte-identical** first and third frame, and the app-space region
+  the two sizes share differs by **1 channel in 1,440,000, by one LSB**. The
+  VBO cannot be re-uploaded on a resize by construction, since `Render` never
+  calls `buildStrips` and the buffer holds app coordinates.
+- **Config change detection.** `SpotLight::operator==` and
+  `SpotlightConfig::operator==` cover every field of each, and
+  `Config::operator==` includes the new member.
+- **C ABI enum parity.** All eleven `SpotlightField` values are pinned by
+  `static_assert` in `capi-internal.h`, and `EL_RENDERER_SPOTLIGHT` takes the
+  next dense bit above `EL_RENDERER_LENS_FLARE`, leaving the debug layer's top
+  bit alone exactly as `el_renderer_flags_e` documents.
+- **Registration order.** The demo, and `el_effect_init_with_renderers`, both
+  place the spotlight after the lens flare and before `DebugRenderer`.
+- **ASCII and em-dashes.** The new shaders, tuning header, renderer and config
+  additions are ASCII-clean, and no U+2014 appears anywhere in the branch.
+- **The scaled path's projection.** It is immune, by construction, to the
+  truncation bug `NeonRenderer::Render`'s transform comment records at length.
+  The ortho there spans the exact scaled viewport because the gather has already
+  pre-scaled its coordinates; here the ortho spans the FULL app extent and only
+  the GL viewport shrinks, so the blit's round trip is the identity whatever
+  `floor(viewport * scale)` does. No compensation is needed and none is present.
+
+Not run: verification item 5 of the plan, the C-only program that builds the
+same rig through `libedge-lighting-c` and diffs its capture against the C++
+path. It is still open there.
+
+### Minor, recorded rather than itemised
+
+- `buildStrips`'s `if (a1 <= a0) { continue; }` is unreachable. `a0` is
+  `-max(2 * nearW, bloomBound)` with `nearW` floored at 1, so it is at most -2;
+  `a1` is `max(SolveConeReach(s), s.bloomBound)`, so it is at least 0.
+- A lamp whose cone and bloom are both below the floor still emits
+  `SPOT_STRIP_SEGMENTS` quads over `[-2 * nearW, 0]`, roughly two aperture
+  widths of geometry that shades nothing. `DeriveLamp` returning false when both
+  bounds come out zero would skip it.
+- `DeriveLamp`'s `float floor` parameter shadows `::floor` from `<cmath>`
+  inside that function. Legal, and the file qualifies every call as `std::`, so
+  nothing resolves wrongly; `LampSolve::floor` is a member and shadows nothing,
+  but reads the same way at every use site.
+- `buildSpotlightSection` in `demo-capi/src/debug-ui.cpp` has an unbraced
+  `if (!en) return;`, against `AGENTS.md`'s bracing rule. It matches four
+  pre-existing cases in the same file, all of which predate this branch.
+- Deleting a lamp below the selected one in either demo's lamp list shifts the
+  selection by one rather than following the lamp. Cosmetic; the index is
+  re-clamped every frame, so nothing dangles.
+
+---
+
+## Seventh pass (the corner over-extension)
+
+One finding, reported from a render the way the first pass's visual items were:
+after `b2fead5` the glow just outside each rounded corner was too bright and
+the corner read **square**. It is a defect in V4's own fix - in the one part of
+it that fix recorded as unmodelled - so it continues the visual numbering.
+
+### V10. The halo and bloom straights run past the corner tangent point - FIXED
+
+**Confirmed.** `glowRadius` 5, `cornerRadius` 40, 800x400.
+
+V4 replaced each infinite-line term with a sum of four finite segments, and
+those segments run from `-halfSize` to `+halfSize` on each axis - to the SHARP
+corner. Above `cornerRadius` 0 that is `cornerRadius` px further than the tube
+actually goes on each end, and the over-extension was written up as roughly
+standing in for the quarter arc that has no elementary closed form.
+
+It does not stand in for it. The over-extension is a phantom emitter sitting a
+few px from a fragment that is tens of px from the real tube: at the point 20 px
+outside the arc on the diagonal, 2.4 px from EACH of the two phantom straights
+against 20 px from the emitter. Measured against a numerically integrated
+rounded-rect perimeter, on the corner diagonal with `R` from the arc centre so
+the tube is at `R = 40`:
+
+| R | 30 | **40** | 45 | **50** | **60** | 80 | 120 |
+| - | -- | ------ | -- | ------ | ------ | -- | --- |
+| exact | 130 | **175** | 147 | **119** | **93** | 67 | 42 |
+| shipped | 120 | **135** | 149 | **170** | **147** | 80 | 47 |
+
+Forty levels too dark ON the tube, fifty too bright just outside it. On the
+renderer itself the same point went 98 -> 146 across `b2fead5`.
+
+**Fixed** in [`neon.frag`](../lib/shaders/neon.frag) by trimming the straights
+to their tangent points and giving each corner arc a segment of its own:
+`arcTangentSegment` **develops** the arc onto its tangent at whichever arc point
+is nearest the fragment, carrying the full arc length and split about that
+point, so the perpendicular distance is the true distance to the arc and the
+developed arc abuts the trimmed straights in arclength - no gap, no overlap.
+
+| | before | after |
+| --- | ------ | ----- |
+| worst error vs integrated truth, 800x400 r=40, gr 5 | 76 levels | **6** |
+| the same at `cornerRadius` 200 | 130 | **8** |
+| a circle (`cornerRadius == halfMin`) | 109 | **18** |
+| corner diagonal at R=60, gr 5 | 159 (exact 93) | **96** |
+| neon pass, `cornerRadius` 0 | 8.83 ms | 8.84 ms (**1.00x**) |
+| neon pass, `cornerRadius` 40 | 8.85 ms | 10.52 ms (1.19x) |
+
+A sharp-cornered rect pays nothing: `uCornerRadius` is a uniform, so the block
+branches uniformly. Nine `cornerRadius` 0 scenes - both glow sides, an outside
+cutoff, an opaque fill, `resolutionScale` 1.0 / 0.5 / 0.25, `glowRadius` 0, a
+wide glow - are byte-identical to `b2fead5`, checked with `cmp` rather than
+argued.
+
+Two things worth carrying forward, both recorded at the call site:
+
+- That 1.00x is a register-pressure result, not a structural one. With a
+  per-arc bloom pedestal the block was heavy enough to cost the SHARP path
+  1.14x for code it never runs; one shared centred pedestal for the four arcs
+  is what returned it to parity. **Re-time a `cornerRadius` 0 scene as well as
+  a rounded one** after any change here.
+- A **circle** is the residual case at 18 to 23 levels, because its perimeter
+  is four developed arcs and no straights at all. Everything between a sharp
+  rect and a circle is single digits.
+
+Full derivation, the alternatives that were measured and rejected (one, two and
+three fixed tangent stubs), and the pedestal trade in
+[`corner-crease-and-filament-nyquist.md`](corner-crease-and-filament-nyquist.md)
+sections 1.7 and 1.8.
+
+---
+
+## Eighth pass (the spotlight banding report)
+
+One finding, reported the way V10 was - from a render, not from a read. The
+report was that the spotlight "is not smooth blending with the layer below, it
+created strip shape", which names the strip geometry; the cause turned out to
+be somewhere else entirely, and the first half of this item is the evidence
+that cleared the geometry.
+
+### V11. The spotlight's outer falloff quantises into wide, straight-edged bands - FIXED
+
+**Confirmed.** One lamp at (640, 200), `angle` 90, `beamAngle` 90,
+`throwLength` 600, `intensity` 4, everything else default; 1280x720 over a
+black clear. Also visible at every default-ish setting - the eight-lamp fan
+below shows it plainly.
+
+**First, what it is NOT.** The strip was cleared before anything was changed,
+because the symptom - a straight edge where light meets the layer below - is
+exactly what a strip that cuts lit pixels would produce. Two independent
+checks:
+
+- **Against the shader's own falloff.** `spotlight.frag` was re-evaluated on
+  the CPU at every pixel centre and diffed against the render. Max deviation
+  **1/255**, `d >= 2` on **zero** pixels, and only **56** pixels of 921,600
+  where the reference rounds to 1 and the render is 0 - the coin-flip at the
+  boundary that `SupportAt`'s comment already predicts. The strip is not
+  clipping.
+- **Across the parameter space.** Sixteen scenes - intensity to 12, beam to
+  160 degrees, throw to 900, softness at both ends, `bloomRadius` 120, an
+  `apertureWidth` of 80, a tint of 3, `resolutionScale` 0.5 - scanned for any
+  lit pixel of value >= 2 with a zero 4-neighbour. **Zero** in every scene,
+  before and after the fix.
+
+**What it is.** The cone's outer falloff is the flattest gradient in this
+library. Measured along one row at 1280x720 with the default lamp, it crosses
+one 8-bit step every **13 to 50 px**:
+
+```
+row y=500:  [526..554]=77  [555..571]=78  [572..585]=79  [586..598]=80
+            [599..614]=81  [615..664]=82  [665..680]=81  ...
+```
+
+Those runs are the artefact. RGBA8 turns a gradient that flat into a handful
+of very wide bands, and because a cone's iso-contours are near-straight rays,
+each band edge is a long straight line - which is what reads as a hard-edged
+strip laid over the layer behind, and why the report named the geometry. The
+same picture amplified 24x shows the bands as concentric contours with a
+polygonal-looking outer silhouette; none of it is geometry.
+
+**Fixed** by dithering `spotlight.frag`'s output half a step before the
+framebuffer rounds it: `SPOT_DITHER_STEPS` in
+[`spotlight-tuning.h`](../lib/include/renderer/spotlight-tuning.h), applied
+through `spotDither`, an interleaved-gradient-noise offset added to all three
+channels and to the coverage alpha alike. It reads `vLocal` rather than
+`gl_FragCoord`, so the shader keeps its "never reads `gl_FragCoord`" property
+and the pattern travels with the lamp instead of crawling across it under an
+animation.
+
+Rectangular +/- half a step, not triangular +/- one step: `fract` returns
+strictly under 1, so the offset is strictly under the rounding threshold and a
+fragment the falloff left at zero cannot be rounded up. That matters on a pass
+whose strip is mostly dark - speckle across all of it would be worse than the
+banding.
+
+Verified after the change:
+
+| check | before | after |
+| ----- | ------ | ----- |
+| same row, run lengths | 13 to 50 px of one value | 1 to 3 px, values interleaved |
+| deviation from the undithered reference | - | max **1**, `d >= 2` on **0** px |
+| hard edges, sixteen scenes | 0 | 0 |
+| local noise, eight overlapping lamps at level 35-44 | 0.269 LSB | **0.812** LSB |
+
+The last row is the cost. Each lamp dithers its own fragment and the pass is
+additive, so the noise accumulates over the rig - and even at the
+`SPOT_MAX_LIGHTS` ceiling it stays under one destination step, which is the
+bound that matters.
+
+`resolutionScale` 0.5 was checked separately, because the blit's bilinear
+filter could in principle average the dither away and bring the bands back. It
+does not: the half-res path is band-free as well.
+
+---
+
+## Ninth pass (re-reviewing the two neon commits)
+
+A re-review of `b2fead5` and `65c95d8`, asked for after the pair had landed.
+Both commits' own claims were re-measured and hold - the interior creases are
+gone, the half-res 1 px filament tracks its full-res reference (peak swing
+28 -> 6 over sub-pixel phase, against a reference that holds 235-244), and
+`cornerRadius` 0 is `cmp`-equal across `65c95d8`. One finding, which continues
+the visual numbering because it is a defect in V10's fix, exactly as V10 was a
+defect in V4's.
+
+### V12. The developed corner arc creases at its own centre of curvature - FIXED
+
+**Confirmed.** 400x400 at (200, 200), `cornerRadius` 200 (a circle),
+`glowRadius` 20, `hueRotationRate` 0, 1000x800 over a black clear. Visible
+without amplification; a contrast stretch over the interior's own range makes
+it unmistakable.
+
+A dark **cross** sits at the middle of the shape. On a rounded rect the same
+thing is four L-shaped seams, one per corner, each meeting at that corner
+arc's centre of curvature - `(+/-(halfW - r), +/-(halfH - r))`.
+
+`arcTangentSegment` developed each arc at its own arclength: one unit of
+tangent per unit of arc. That is only correct for a fragment ON the arc, and it
+fails two ways at once.
+
+**It under-counts at the centre of curvature.** A fragment there is at distance
+`r` from every point of the arc, so the answer is `f(r) * PI*r/2`. The nearest
+arc point is degenerate there, the fallback picks an endpoint, and the whole
+arc develops to ONE side of the foot. Both kernels peak at `t = 0`, so a
+one-sided range collects less than a straddling one: on a circle, where all
+four arc centres coincide, the sum came to **54%** of the true value.
+
+**And it creases.** Crossing `w.y = 0` the arc's endpoints slide at `-r/w.x` on
+the facing side of the `max(w, 0)` clamp and at `-1` on the clamped side. Those
+agree only at `w.x == r`. Everywhere else on the two lines through an arc
+centre there is a C1 kink, growing without bound towards the centre.
+
+The clamp itself is correct - it picks the genuinely nearest endpoint, and that
+derivation checks out. What is wrong is the rate.
+
+**Fix.** Develop at `lam = sqrt(rho * min(rho, r))` instead of `r`, with the
+arclength measure restored by scaling the segment by `r/lam`. The outer branch
+is the true linearisation of the exact distance
+`D^2 = a^2 + (2*sqrt(rho*r)*sin(dphi/2))^2`; the inner branch has to be `rho`
+for the clamp to join smoothly. They meet at `rho == r`, where the rate is `r`
+and the weight is 1, so a fragment on the tube is bit-identical to the form
+this replaces and the NORM calibration is untouched. At `rho -> 0` the segment
+collapses against an unbounded weight and the limit is the exact
+`f(r) * PI*r/2`.
+
+**Measured.** Spurious curvature (the second difference of `model - truth`,
+zero for any smooth model) along the crease ray: **19.9% -> 0.5%** of the local
+value. Rendered, the vertical second difference over 8 px walking out from the
+arc centre: `4, 3, 2, 2` -> `0, 0, 0, 0` on the circle. Worst error against a
+numerically integrated perimeter falls on every geometry tested - 16.5 -> 9.8%
+on a 600x400 r=40, 37.3 -> 26.3% on a circle - and the interior value the
+under-count was eating comes back (circle centre pixel 53 -> 66, interior mean
+62.2 -> 78.7). `cornerRadius` 0 stays `cmp`-equal to both `65c95d8` and
+`b2fead5`. Cost is 1.03x of the neon pass, including 1.026x on the sharp path
+that never executes it - register pressure, as V10's own note warned.
+
+Full derivation, tables and probes in
+[corner-crease-and-filament-nyquist.md](corner-crease-and-filament-nyquist.md)
+section 1.9.
+
+**The doc had this at the wrong altitude, which is why it shipped.** Section
+1.8.4 recorded the circle as "the residual case, at 18 to 23 levels" and left
+it. That is the right order of magnitude and the wrong shape of claim: twenty
+levels of SMOOTH error is invisible, and what was actually there was four
+levels shaped like a cross. When a residual is recorded as a magnitude, record
+whether it is structured.
+
+---
+
+## Tenth pass (the soft-falloff filament report)
+
+One finding, reported as a configuration rather than a symptom -
+"`lineWidth` 1, `filamentFalloff` 0.27" - and it turned out to be a defect in
+`b2fead5`'s half of the seventh pass, the way V10 was a defect in V4's and V12
+in V10's.
+
+### V13. The Nyquist floor is a fixed half width, so a soft falloff renders twice as wide - FIXED
+
+**Confirmed.** 600x400 at (200, 200), `lineWidth` 1, `filamentFalloff` 0.27,
+`hueRotationRate` 0, 1000x800 over a black clear. At `resolutionScale` 1.0 all
+four commits render it identically and nothing is wrong. At 0.5 the filament is
+**twice as wide**; at 0.25, about four times.
+
+`filamentFalloff` 0.27 is N = 0.54, so `reachSigmas` clamps at
+`FILAMENT_REACH_MAX_SIGMAS` and the filament's tail is 64 sigmas. `sigma` sets
+the core AND, through that factor, the whole tail - so holding it at a flat
+0.5 buffer px stretches a 31 px filament to 61 px at scale 0.5 and past 120 px
+at 0.25.
+
+The floor exists to stop the peak swinging with sub-pixel phase, and at the
+default falloff it is doing essential work: unfloored, the peak collapses to
+153 against a 235 reference, and at `filamentFalloff` 1.5 to 24. At 0.27 it
+buys five levels of peak accuracy (max per-phase error 13 -> 8) for a doubled
+filament. The reason is that a soft profile is already many buffer pixels wide:
+one buffer px out it is still at 22% of its peak, where an N = 2 profile of the
+same sigma is at 2e-8. The neighbouring texel carries the line, so the bilinear
+filter rebuilds the peak without any help.
+
+**Fix.** State the floor as what actually decides whether the blit can rebuild
+the peak - how much signal the neighbouring texel carries - and invert it for
+sigma:
+
+```
+sigma >= FILAMENT_NYQUIST_SAMPLE_PX / pow(log2(1 / FILAMENT_NYQUIST_MIN_SHARE), 1/N)
+```
+
+`SAMPLE_PX` 1.0 and `MIN_SHARE` 0.0625 are the old behaviour restated, not a
+retune: at N = 2 the expression is exactly 0.5, the constant it replaces. Gated
+to `resolutionScale < 1.0` in both the shader and `setupGeometry`, because the
+flat constant was a no-op at 1.0 only by arithmetic coincidence and this one
+would not be above N = 2.
+
+**Measured.** Tail extent at `lineWidth` 1, `glowRadius` 0, scale 0.5, against
+the 1.0 reference: `filamentFalloff` 0.27 goes 61 -> **31** (reference 31), 0.40
+goes 22 -> **12** (11), 0.50 goes 13 -> **8** (7). The default falloff is
+unchanged at 6, and `filamentFalloff` 1.5 keeps its floor. Over the 47-scene
+capture set, **34 scenes are byte-identical and all 13 that changed are at a
+reduced resolution scale with a non-default falloff** - no `resolutionScale`
+1.0 scene moves, and neither does any default-falloff scene.
+
+**Known, and deliberate.** Around `filamentFalloff` 0.4 to 0.5 the floor now
+stops engaging while the unfloored peak error is still 12 to 18 levels.
+Covering that band means lowering `MIN_SHARE`, which raises the floor at N = 2
+as well and stops the default case being bit-identical. A bounded-extent
+variant that covers both was measured and recorded in section 2.8.6 rather than
+taken, because it needs two constants and a clamp where this needs one inverted
+equation.
+
+Derivation, the full falloff sweep and the blast radius in
+[corner-crease-and-filament-nyquist.md](corner-crease-and-filament-nyquist.md)
+section 2.8.
+
+**What let this through**, in the same vein as V12's note: the floor was
+verified at the default falloff and at four `lineWidth` values, and
+`filamentFalloff` was never swept. A constant whose job depends on a shape
+parameter has to be measured across that parameter, not only across the widths
+it is expressed in.
+
+---
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
 I9, I10 and I11. I3's structural half - the last thing on this list that was
 open rather than declined - closed with the neon unification, which deleted the
-fork it followed from. The fifth pass's I15 landed with it. Five items from the
+fork it followed from. The fifth pass's I15 landed with it. The seventh through
+tenth passes are one item each and all four are fixed. Five items from the
 first pass remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
-remainder from the third, and I13 from the fourth:
+remainder from the third, I13 from the fourth, and I18 from the sixth:
 
 | item | state | why |
 | ---- | ----- | --- |
-| V4 | documented limitation | closing it needs a second distance field, which reintroduces the rect-size dependence the analytic profile removed |
+| V4 | fixed | the premise was wrong: `ad` never needed softening, one infinite-line term was being evaluated where four finite-segment ones belong |
+| V10 | fixed | V4's own unmodelled corner: the straights ran past the tangent point, so a phantom emitter lit the outside of every rounded corner |
+| V12 | fixed | V10's own unmodelled centre: the developed arc ran at rate `r`, which is right only on the arc, so it creased and under-counted at each arc's centre of curvature |
+| V13 | fixed | V4's other half: the sampling floor was a fixed half width, so at a soft falloff - where sigma multiplies a 64-sigma tail - it doubled the filament to buy five levels of peak |
 | V5 | residual, documented | closing it means plumbing pixel-space feathers into the pre-pass for an effect nobody has reported; read V9 alongside it, which measures the other half of the same mechanism |
 | I2 | declined | negligible measured-by-structure win against a real staleness-bug risk |
 | I5 | documented | the alternative is a breaking renderer-API change for an unmeasured cost |
@@ -1550,6 +2354,7 @@ remainder from the third, and I13 from the fourth:
 | V9 | open | the honest fix is a design decision (interpolate the arc colour between adjacent samples in the consumer), not a patch; the three options are ranked in the section |
 | I12 | partly fixed | the live shader comment is corrected; `architecture-design.md` and `multiple-arcs-design.md` still name the removed LUT functions, and both are design prose rather than comments beside live code |
 | I13 | open | undefined `pow` reachable only through the C ABI; both cures change what the boundary accepts or what the term computes below `ghostSize` 0.6, so it is a behaviour decision rather than a repair |
+| I18 | open | the division guarantees something the 8-bit blend discards, and the three ways out - drop it, document its limit, or accumulate at higher precision - are a design call, not a fix |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

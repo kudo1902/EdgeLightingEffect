@@ -854,10 +854,34 @@ namespace EdgeLighting
         float filSigmas = std::clamp(
             std::pow(std::log2(float(FILAMENT_GAIN) / float(FILAMENT_CUTOFF)), 1.0f / filN),
             float(FILAMENT_REACH_MIN_SIGMAS), float(FILAMENT_REACH_MAX_SIGMAS));
-        // FILAMENT_MIN_HALF_WIDTH is a full-res constant, so the whole
-        // half-width is taken in full-res px and scaled once - the same
-        // conversion the shader does with uResolutionScale.
-        float filamentReach = std::max(config.neon.lineWidth * 0.5f, float(FILAMENT_MIN_HALF_WIDTH)) * scale * filSigmas;
+        // FILAMENT_MIN_HALF_WIDTH is a full-res constant, so the stated half
+        // width is taken in full-res px and scaled once - the same conversion
+        // the shader does with uResolutionScale.
+        //
+        // The SAMPLING floor is then applied in BUFFER px, after the scale,
+        // exactly as the shader's sigma does it and for the same reason the
+        // softFloor below is converted the other way: it is a property of the
+        // buffer, not of the width the caller asked for. Scale it here too and
+        // the quad is sized for a thinner filament than the shader draws,
+        // which clips the outside half of a thin line at a reduced scale -
+        // the same failure the lineWidth floor itself exists to prevent.
+        //
+        // It is not a fixed half width: what survives the blit depends on the
+        // profile's SHAPE as well as its width, so the floor is stated as "the
+        // profile must still be at FILAMENT_NYQUIST_MIN_SHARE of its peak
+        // FILAMENT_NYQUIST_SAMPLE_PX out" and inverted for sigma. Mirrors
+        // neon.frag exactly, gate included - at scale 1.0 there is no blit to
+        // survive and the direct path must stay bit-identical. Change one and
+        // the quad stops matching what the shader draws. See neon-tuning.h.
+        const float filamentNyquist =
+            (scale < 1.0f) ? (static_cast<float>(FILAMENT_NYQUIST_SAMPLE_PX) /
+                              std::pow(std::log2(1.0f / static_cast<float>(FILAMENT_NYQUIST_MIN_SHARE)),
+                                       1.0f / filN))
+                           : 0.0f;
+        float filamentSigma = std::max(
+            std::max(config.neon.lineWidth * 0.5f, float(FILAMENT_MIN_HALF_WIDTH)) * scale,
+            filamentNyquist);
+        float filamentReach = filamentSigma * filSigmas;
 
         float margin = std::max(glowReach, filamentReach);
 

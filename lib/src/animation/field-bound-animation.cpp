@@ -370,6 +370,103 @@ namespace EdgeLighting
             }
         }
 
+        // No auto-grow, mirroring arcSlot: nullptr when @p index is out of
+        // range, and the write helper logs and skips.
+        SpotLight *spotlightSlot(Config &cfg, size_t index)
+        {
+            if (index >= cfg.spotlight.lights.size())
+            {
+                return nullptr;
+            }
+            return &cfg.spotlight.lights[index];
+        }
+
+        void writeSpotlight(Config &cfg, size_t index, SpotlightField field, float value)
+        {
+            SpotLight *lp = spotlightSlot(cfg, index);
+            if (!lp)
+            {
+                LOG_E("writeSpotlight: index %zu out of range (size=%zu); skipping",
+                      index, cfg.spotlight.lights.size());
+                return;
+            }
+
+            SpotLight &l = *lp;
+            switch (field)
+            {
+            case SpotlightField::POSITION_X:
+            {
+                l.position.x = value;
+                break;
+            }
+            case SpotlightField::POSITION_Y:
+            {
+                l.position.y = value;
+                break;
+            }
+            case SpotlightField::ANGLE:
+            {
+                l.angle = value;
+                break;
+            }
+            case SpotlightField::BEAM_ANGLE:
+            {
+                l.beamAngle = value;
+                break;
+            }
+            case SpotlightField::THROW_LENGTH:
+            {
+                l.throwLength = value;
+                break;
+            }
+            case SpotlightField::APERTURE_WIDTH:
+            {
+                l.apertureWidth = value;
+                break;
+            }
+            case SpotlightField::SOFTNESS:
+            {
+                l.softness = value;
+                break;
+            }
+            case SpotlightField::INTENSITY:
+            {
+                l.intensity = value;
+                break;
+            }
+            case SpotlightField::BLOOM:
+            {
+                l.bloom = value;
+                break;
+            }
+            case SpotlightField::BLOOM_RADIUS:
+            {
+                l.bloomRadius = value;
+                break;
+            }
+            case SpotlightField::COLOR_TEMP:
+            {
+                l.colorTemp = value;
+                break;
+            }
+            case SpotlightField::TINT_R:
+            {
+                l.tint.r = value;
+                break;
+            }
+            case SpotlightField::TINT_G:
+            {
+                l.tint.g = value;
+                break;
+            }
+            case SpotlightField::TINT_B:
+            {
+                l.tint.b = value;
+                break;
+            }
+            }
+        }
+
         void writeArcStop(Config &cfg, size_t arcIdx, size_t stopIdx,
                           ColorStopField field, float value)
         {
@@ -430,6 +527,14 @@ namespace EdgeLighting
                           b.modulator->Evaluate(elapsed));
             }
         }
+        for (const SpotlightBinding &b : mSpotlightBindings)
+        {
+            if (b.modulator)
+            {
+                writeSpotlight(cfg, b.index, b.field, b.modulator->Evaluate(elapsed));
+            }
+        }
+
         for (const ArcBinding &b : mArcBindings)
         {
             if (b.modulator)
@@ -488,6 +593,17 @@ namespace EdgeLighting
             mSavedArcs.clear();
             mArcsCaptured = false;
         }
+
+        if (!mSpotlightBindings.empty())
+        {
+            mSavedSpotlights = cfg.spotlight.lights;
+            mSpotlightsCaptured = true;
+        }
+        else
+        {
+            mSavedSpotlights.clear();
+            mSpotlightsCaptured = false;
+        }
     }
 
     void FieldBoundAnimation::RestoreBaseline(Config &cfg) const
@@ -508,6 +624,10 @@ namespace EdgeLighting
         if (mArcsCaptured)
         {
             cfg.neon.arcs = mSavedArcs;
+        }
+        if (mSpotlightsCaptured)
+        {
+            cfg.spotlight.lights = mSavedSpotlights;
         }
     }
 

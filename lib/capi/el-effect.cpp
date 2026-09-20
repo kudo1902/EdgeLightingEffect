@@ -1095,6 +1095,309 @@ extern "C"
         return EL_SUCCESS;
     }
 
+    // --- Spotlights ---
+    //
+    // Positions are APP COORDINATES (top-left origin, +y down), the same space
+    // as el_effect_set_position. Setters are grouped by concern rather than one
+    // per scalar; all of them address a lamp by index and none of them grows
+    // the list, mirroring the arc family above.
+
+    namespace
+    {
+        /// Shared bounds check for the by-index spotlight accessors. Returns
+        /// nullptr and logs when @p index names no lamp.
+        EdgeLighting::SpotLight *SpotlightSlot(el_effect_handle_t effect, int32_t index, const char *who)
+        {
+            if (index < 0 || static_cast<size_t>(index) >= effect->config.spotlight.lights.size())
+            {
+                LOG_E("%s: index %d out of range (size=%zu)", who, index,
+                      effect->config.spotlight.lights.size());
+                return nullptr;
+            }
+            return &effect->config.spotlight.lights[static_cast<size_t>(index)];
+        }
+    }
+
+    el_result_e el_effect_set_spotlight_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_renderer_enabled");
+        const bool v = (enabled != 0);
+        if (effect->config.spotlight.enable == v)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, enabled=%d", (void *)effect, (int)enabled);
+        effect->config.spotlight.enable = v;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_spotlight_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_spotlight_renderer_enabled");
+        VALIDATE_OUT_PTR(outEnabled, "el_effect_get_spotlight_renderer_enabled");
+        *outEnabled = effect->config.spotlight.enable ? 1 : 0;
+        LOG_D("effect=%p, enabled=%d", (void *)effect, (int)*outEnabled);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_spotlight_count(el_effect_handle_t effect, int32_t count)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_count");
+        if (count < 0)
+        {
+            LOG_E("el_effect_set_spotlight_count: negative count");
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        size_t newSize = static_cast<size_t>(count);
+        if (effect->config.spotlight.lights.size() == newSize)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, count=%d", (void *)effect, count);
+        effect->config.spotlight.lights.resize(newSize);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_spotlight_count(el_effect_handle_t effect, int32_t *outCount)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_spotlight_count");
+        VALIDATE_OUT_PTR(outCount, "el_effect_get_spotlight_count");
+        *outCount = static_cast<int32_t>(effect->config.spotlight.lights.size());
+        LOG_D("effect=%p, count=%d", (void *)effect, *outCount);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_spotlight_placement(el_effect_handle_t effect, int32_t index,
+                                                  float x, float y, float angle)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_placement");
+        auto *l = SpotlightSlot(effect, index, "el_effect_set_spotlight_placement");
+        if (!l)
+        {
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        if (l->position.x == x && l->position.y == y && l->angle == angle)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, index=%d, x=%f, y=%f, angle=%f", (void *)effect, index, x, y, angle);
+        l->position.x = x;
+        l->position.y = y;
+        l->angle = angle;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_spotlight_placement(el_effect_handle_t effect, int32_t index,
+                                                  float *outX, float *outY, float *outAngle)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_spotlight_placement");
+        VALIDATE_OUT_PTR(outX, "el_effect_get_spotlight_placement");
+        VALIDATE_OUT_PTR(outY, "el_effect_get_spotlight_placement");
+        VALIDATE_OUT_PTR(outAngle, "el_effect_get_spotlight_placement");
+        auto *l = SpotlightSlot(effect, index, "el_effect_get_spotlight_placement");
+        if (!l)
+        {
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        *outX = l->position.x;
+        *outY = l->position.y;
+        *outAngle = l->angle;
+        LOG_D("effect=%p, index=%d, x=%f, y=%f, angle=%f", (void *)effect, index, *outX, *outY, *outAngle);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_spotlight_beam(el_effect_handle_t effect, int32_t index,
+                                             float beamAngle, float throwLength,
+                                             float apertureWidth, float softness)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_beam");
+        auto *l = SpotlightSlot(effect, index, "el_effect_set_spotlight_beam");
+        if (!l)
+        {
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        if (l->beamAngle == beamAngle && l->throwLength == throwLength &&
+            l->apertureWidth == apertureWidth && l->softness == softness)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, index=%d, beamAngle=%f, throwLength=%f, apertureWidth=%f, softness=%f",
+              (void *)effect, index, beamAngle, throwLength, apertureWidth, softness);
+        l->beamAngle = beamAngle;
+        l->throwLength = throwLength;
+        l->apertureWidth = apertureWidth;
+        l->softness = softness;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_spotlight_beam(el_effect_handle_t effect, int32_t index,
+                                             float *outBeamAngle, float *outThrowLength,
+                                             float *outApertureWidth, float *outSoftness)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_spotlight_beam");
+        VALIDATE_OUT_PTR(outBeamAngle, "el_effect_get_spotlight_beam");
+        VALIDATE_OUT_PTR(outThrowLength, "el_effect_get_spotlight_beam");
+        VALIDATE_OUT_PTR(outApertureWidth, "el_effect_get_spotlight_beam");
+        VALIDATE_OUT_PTR(outSoftness, "el_effect_get_spotlight_beam");
+        auto *l = SpotlightSlot(effect, index, "el_effect_get_spotlight_beam");
+        if (!l)
+        {
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        *outBeamAngle = l->beamAngle;
+        *outThrowLength = l->throwLength;
+        *outApertureWidth = l->apertureWidth;
+        *outSoftness = l->softness;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_spotlight_look(el_effect_handle_t effect, int32_t index,
+                                             float intensity, float bloom,
+                                             float bloomRadius, float colorTemp)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_look");
+        auto *l = SpotlightSlot(effect, index, "el_effect_set_spotlight_look");
+        if (!l)
+        {
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        if (l->intensity == intensity && l->bloom == bloom &&
+            l->bloomRadius == bloomRadius && l->colorTemp == colorTemp)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, index=%d, intensity=%f, bloom=%f, bloomRadius=%f, colorTemp=%f",
+              (void *)effect, index, intensity, bloom, bloomRadius, colorTemp);
+        l->intensity = intensity;
+        l->bloom = bloom;
+        l->bloomRadius = bloomRadius;
+        l->colorTemp = colorTemp;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_spotlight_look(el_effect_handle_t effect, int32_t index,
+                                             float *outIntensity, float *outBloom,
+                                             float *outBloomRadius, float *outColorTemp)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_spotlight_look");
+        VALIDATE_OUT_PTR(outIntensity, "el_effect_get_spotlight_look");
+        VALIDATE_OUT_PTR(outBloom, "el_effect_get_spotlight_look");
+        VALIDATE_OUT_PTR(outBloomRadius, "el_effect_get_spotlight_look");
+        VALIDATE_OUT_PTR(outColorTemp, "el_effect_get_spotlight_look");
+        auto *l = SpotlightSlot(effect, index, "el_effect_get_spotlight_look");
+        if (!l)
+        {
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        *outIntensity = l->intensity;
+        *outBloom = l->bloom;
+        *outBloomRadius = l->bloomRadius;
+        *outColorTemp = l->colorTemp;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_spotlight_tint(el_effect_handle_t effect, int32_t index,
+                                             float r, float g, float b)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_tint");
+        auto *l = SpotlightSlot(effect, index, "el_effect_set_spotlight_tint");
+        if (!l)
+        {
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        if (l->tint.r == r && l->tint.g == g && l->tint.b == b)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, index=%d, r=%f, g=%f, b=%f", (void *)effect, index, r, g, b);
+        l->tint.r = r;
+        l->tint.g = g;
+        l->tint.b = b;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_spotlight_tint(el_effect_handle_t effect, int32_t index,
+                                             float *outR, float *outG, float *outB)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_spotlight_tint");
+        VALIDATE_OUT_PTR(outR, "el_effect_get_spotlight_tint");
+        VALIDATE_OUT_PTR(outG, "el_effect_get_spotlight_tint");
+        VALIDATE_OUT_PTR(outB, "el_effect_get_spotlight_tint");
+        auto *l = SpotlightSlot(effect, index, "el_effect_get_spotlight_tint");
+        if (!l)
+        {
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        *outR = l->tint.r;
+        *outG = l->tint.g;
+        *outB = l->tint.b;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_spotlight_enabled(el_effect_handle_t effect, int32_t index, el_bool_t enabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_enabled");
+        auto *l = SpotlightSlot(effect, index, "el_effect_set_spotlight_enabled");
+        if (!l)
+        {
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        const bool v = (enabled != 0);
+        if (l->enable == v)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, index=%d, enabled=%d", (void *)effect, index, (int)enabled);
+        l->enable = v;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_spotlight_enabled(el_effect_handle_t effect, int32_t index, el_bool_t *outEnabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_spotlight_enabled");
+        VALIDATE_OUT_PTR(outEnabled, "el_effect_get_spotlight_enabled");
+        auto *l = SpotlightSlot(effect, index, "el_effect_get_spotlight_enabled");
+        if (!l)
+        {
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        *outEnabled = l->enable ? 1 : 0;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_spotlight_resolution_scale(el_effect_handle_t effect, float scale)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_resolution_scale");
+        if (effect->config.spotlight.resolutionScale == scale)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, scale=%f", (void *)effect, scale);
+        effect->config.spotlight.resolutionScale = scale;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_spotlight_resolution_scale(el_effect_handle_t effect, float *outScale)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_spotlight_resolution_scale");
+        VALIDATE_OUT_PTR(outScale, "el_effect_get_spotlight_resolution_scale");
+        *outScale = effect->config.spotlight.resolutionScale;
+        LOG_D("effect=%p, scale=%f", (void *)effect, *outScale);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_clear_spotlights(el_effect_handle_t effect)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_clear_spotlights");
+        if (effect->config.spotlight.lights.empty())
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p", (void *)effect);
+        effect->config.spotlight.lights.clear();
+        return EL_SUCCESS;
+    }
+
     // --- Neon arc colour stops ---
 
     el_result_e el_effect_set_arc_color_stop_count(el_effect_handle_t effect,
@@ -1783,6 +2086,11 @@ extern "C"
             {
                 LOG_I("registering LensFlareRenderer");
                 effect->impl->AddRenderer(std::make_shared<EdgeLighting::LensFlareRenderer>());
+            }
+            if (rendererMask & EL_RENDERER_SPOTLIGHT)
+            {
+                LOG_I("registering SpotlightRenderer");
+                effect->impl->AddRenderer(std::make_shared<EdgeLighting::SpotlightRenderer>());
             }
             // LAST, so the annotations sit above every layer they describe -
             // after the neon whose glow the strip and markers measure, and

@@ -89,6 +89,7 @@ private:
     void buildDebugSection(EdgeLighting::Config &cfg);
     void buildDropletsSection(EdgeLighting::Config &cfg);
     void buildLensFlareSection(EdgeLighting::Config &cfg);
+    void buildSpotlightSection(EdgeLighting::Config &cfg);
     void buildAnimationSection(EdgeLighting::Config &cfg,
                                EdgeLighting::AnimationManager &manager);
     void buildBackgroundSection();
@@ -108,6 +109,11 @@ private:
     /// window framebuffer is 2x on Retina and 1x elsewhere, so a
     /// window-sized capture is not comparable across machines.
     int mCaptureSize[2] = {1280, 720};
+
+    // --- Spotlights ---
+    /// Which lamp the Spotlights section is editing. Clamped to the live
+    /// list every frame, so removing a lamp cannot leave it dangling.
+    int mSpotlightSelected = 0;
 
     // --- Animation state ---
     // Animations are owned by the effect's AnimationManager (via

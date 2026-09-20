@@ -299,6 +299,17 @@ extern "C"
     EL_API el_result_e el_animation_add_arc_field(el_animation_handle_t anim,
                                                   int32_t index, el_arc_field_e field, el_modulator_handle_t mod);
 
+    /** @brief Add a spotlight-field binding.
+     *  @param index Lamp slot. Must already exist in @c spotlight.lights (no
+     *               auto-grow; an out-of-range index is a logged no-op).
+     *  @note  Driving a field that changes a lamp's EXTENT - position, angle,
+     *         beam angle, throw, aperture, intensity - makes the spotlight
+     *         layer rebuild its vertex buffer on every frame the value moves.
+     *         Bounded and small, but not free the way a pure shader uniform is. */
+    EL_API el_result_e el_animation_add_spotlight_field(el_animation_handle_t anim,
+                                                        int32_t index, el_spotlight_field_e field,
+                                                        el_modulator_handle_t mod);
+
     /** @brief Add a binding into one channel of one colour stop inside one arc.
      *  @param arcIndex   Arc slot.
      *  @param stopIndex  Stop slot within that arc.
