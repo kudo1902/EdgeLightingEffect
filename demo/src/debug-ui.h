@@ -3,6 +3,7 @@
 
 #include "gl/gl-header.h"
 #include "animation-presets.h"
+#include "scene-presets.h"
 #include "animation/animation.h"
 #include "border-color-picker.h"
 #include "gl/texture-2d.h"
@@ -81,6 +82,9 @@ public:
     ///@}
 
 private:
+    /// Whole-scene presets, at the top because one click here overwrites
+    /// most of what the sections below are editing.
+    void buildScenePresetSection(EdgeLighting::Config &cfg);
     void buildGeometrySection(EdgeLighting::Config &cfg);
     void buildNeonSection(EdgeLighting::Config &cfg,
                           const EdgeLighting::Config &active);

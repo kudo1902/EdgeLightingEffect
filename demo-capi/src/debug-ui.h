@@ -43,6 +43,9 @@ public:
     GLuint GetImageBackdropTextureId() const { return mColorPickerTex; }
 
 private:
+    /// Whole-scene presets, at the top because one click here overwrites
+    /// most of what the sections below are editing.
+    void buildScenePresetSection(el_effect_handle_t effect);
     void buildGeometrySection(el_effect_handle_t effect);
     void buildNeonSection(el_effect_handle_t effect);
     void buildDebugSection(el_effect_handle_t effect);

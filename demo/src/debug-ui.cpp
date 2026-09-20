@@ -469,6 +469,7 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
 
     // The active config carries every animation's current overlay values
     const EdgeLighting::Config &active = effect.GetActiveConfig();
+    buildScenePresetSection(cfg);
     buildGeometrySection(cfg);
     buildNeonSection(cfg, active);
     buildDebugSection(cfg);
@@ -558,6 +559,51 @@ void DebugUI::Render()
 // ---------------------------------------------------------------------------
 // Sections
 // ---------------------------------------------------------------------------
+
+void DebugUI::buildScenePresetSection(EdgeLighting::Config &cfg)
+{
+    if (!ImGui::CollapsingHeader("Scene Presets", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+
+    // The preset places its fixture against the VIEWPORT, so it needs the
+    // size the effect is actually rendered at. That is the main window's
+    // framebuffer, not this debug window's, and not the requested window
+    // size - on a Retina display the framebuffer is 2x, and the demo passes
+    // the framebuffer size to Render, which makes it the app-coordinate
+    // space RectGeometry::position and SpotLight::position both live in.
+    int fbW = 0;
+    int fbH = 0;
+    if (mMainWindow)
+    {
+        glfwGetFramebufferSize(mMainWindow, &fbW, &fbH);
+    }
+
+    if (fbW <= 0 || fbH <= 0)
+    {
+        ImGui::TextDisabled("No main window framebuffer yet.");
+        return;
+    }
+
+    if (ImGui::Button("Picture Light"))
+    {
+        EdgeLightingDemo::ApplyPictureLight(cfg, static_cast<float>(fbW),
+                                            static_cast<float>(fbH));
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip(
+            "Linear LED picture light: a warm bar washing down a wall.\n"
+            "Neon draws the tube, a row of %d lamps draws the wash.\n"
+            "Also turns OFF droplets, lens flare and the debug overlays.",
+            static_cast<int>(EdgeLightingDemo::PictureLight::LAMP_COUNT));
+    }
+
+    ImGui::TextDisabled("Rewrites geometry, neon and the lamp rig at once.");
+}
 
 void DebugUI::buildGeometrySection(EdgeLighting::Config &cfg)
 {

@@ -1,5 +1,6 @@
 #include "debug-ui.h"
 #include "animation-presets.h"
+#include "scene-presets.h"
 
 #include "imgui.h"
 #include "imgui_impl_glfw.h"
@@ -174,6 +175,7 @@ void DebugUI::Build(el_effect_handle_t effect)
                 io.Framerate, 1000.0f / io.Framerate, mLastRenderTimeMs);
     ImGui::Separator();
 
+    buildScenePresetSection(effect);
     buildGeometrySection(effect);
     buildNeonSection(effect);
     buildDebugSection(effect);
@@ -212,6 +214,51 @@ void DebugUI::Render()
 // ---------------------------------------------------------------------------
 // Geometry
 // ---------------------------------------------------------------------------
+
+void DebugUI::buildScenePresetSection(el_effect_handle_t effect)
+{
+    if (!ImGui::CollapsingHeader("Scene Presets", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+
+    // The preset places its fixture against the VIEWPORT, so it needs the
+    // size the effect is actually rendered at: the MAIN window's framebuffer,
+    // not this debug window's and not the requested window size. On a Retina
+    // display the framebuffer is 2x, and the demo passes the framebuffer size
+    // to el_effect_render, which makes it the app-coordinate space both
+    // el_effect_set_geometry and el_effect_set_spotlight_placement live in.
+    int fbW = 0;
+    int fbH = 0;
+    if (mMainWindow)
+    {
+        glfwGetFramebufferSize(mMainWindow, &fbW, &fbH);
+    }
+
+    if (fbW <= 0 || fbH <= 0)
+    {
+        ImGui::TextDisabled("No main window framebuffer yet.");
+        return;
+    }
+
+    if (ImGui::Button("Picture Light"))
+    {
+        EdgeLightingCapiDemo::ApplyPictureLight(effect, static_cast<float>(fbW),
+                                                static_cast<float>(fbH));
+    }
+    ImGui::SameLine();
+    ImGui::TextDisabled("(?)");
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip(
+            "Linear LED picture light: a warm bar washing down a wall.\n"
+            "Neon draws the tube, a row of %d lamps draws the wash.\n"
+            "Also turns OFF droplets, lens flare and the debug overlays.",
+            static_cast<int>(EdgeLightingCapiDemo::PictureLight::LAMP_COUNT));
+    }
+
+    ImGui::TextDisabled("Rewrites geometry, neon and the lamp rig at once.");
+}
 
 void DebugUI::buildGeometrySection(el_effect_handle_t effect)
 {
