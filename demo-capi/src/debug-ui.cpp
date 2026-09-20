@@ -283,17 +283,32 @@ namespace
         {
             el_effect_set_glow_side(effect, static_cast<el_glow_side_e>(sideIdx));
         }
-        float softness = 0.0f;
-        el_effect_get_glow_side_softness(effect, &softness);
-        char softLabel[64];
-        std::snprintf(softLabel, sizeof(softLabel), "Side Softness##%s", idSuffix);
-        if (ImGui::SliderFloat(softLabel, &softness, 0.0f, 20.0f, "%.1f"))
+        // Hidden at BOTH, where the field is ignored - matching demo/, which
+        // has always gated it. The two UIs are hand-maintained forks and this
+        // one had drifted: the slider was live here and moved nothing.
+        if (side != EL_GLOW_SIDE_BOTH)
         {
-            el_effect_set_glow_side_softness(effect, softness);
+            float softness = 0.0f;
+            el_effect_get_glow_side_softness(effect, &softness);
+            char softLabel[64];
+            std::snprintf(softLabel, sizeof(softLabel), "Side Softness##%s", idSuffix);
+            if (ImGui::SliderFloat(softLabel, &softness, 0.0f, 20.0f, "%.1f"))
+            {
+                el_effect_set_glow_side_softness(effect, softness);
+            }
         }
 
+        // A cutoff on the side glowSide culls is ignored for the GLOW, but still
+        // bounds an opaque fill on that same side. See neon.frag's band-distance
+        // block and docs/glow-side-comparison.md section 4.3.
+        el_opaque_mode_e om = EL_OPAQUE_MODE_NONE;
+        el_effect_get_opaque_mode(effect, &om);
+        const bool fillUsesInside = (om == EL_OPAQUE_MODE_INSIDE || om == EL_OPAQUE_MODE_BOTH);
+        const bool fillUsesOutside = (om == EL_OPAQUE_MODE_OUTSIDE || om == EL_OPAQUE_MODE_BOTH);
+
         auto cutoffRow = [&](const char *base,
-                             auto getFn, auto setFn)
+                             auto getFn, auto setFn,
+                             bool subsumed, bool fillUses)
         {
             el_bool_t enable = 0;
             float size = 0.0f, soft = 0.0f;
@@ -310,15 +325,30 @@ namespace
             changed |= ImGui::SliderFloat(sizeLabel, &size, 0.0f, 200.0f, "%.0f");
             changed |= ImGui::SliderFloat(softLabelInner, &soft, 0.0f, 20.0f, "%.1f");
             if (!en)
+            {
                 ImGui::EndDisabled();
+            }
+            if (en && subsumed)
+            {
+                if (fillUses)
+                {
+                    ImGui::TextDisabled("subsumed by Glow Side - bounds the fill only");
+                }
+                else
+                {
+                    ImGui::TextDisabled("subsumed by Glow Side - no effect");
+                }
+            }
             ImGui::Unindent();
             if (changed)
             {
                 setFn(effect, en ? 1 : 0, size, soft);
             }
         };
-        cutoffRow("Inside Cutoff", el_effect_get_inside_cutoff, el_effect_set_inside_cutoff);
-        cutoffRow("Outside Cutoff", el_effect_get_outside_cutoff, el_effect_set_outside_cutoff);
+        cutoffRow("Inside Cutoff", el_effect_get_inside_cutoff, el_effect_set_inside_cutoff,
+                  side == EL_GLOW_SIDE_OUTSIDE, fillUsesInside);
+        cutoffRow("Outside Cutoff", el_effect_get_outside_cutoff, el_effect_set_outside_cutoff,
+                  side == EL_GLOW_SIDE_INSIDE, fillUsesOutside);
     }
 
     // Segment boost row: reads/writes one segment through capi accessors.

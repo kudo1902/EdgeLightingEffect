@@ -728,8 +728,51 @@ void main() {
 
     // Band boundaries measured against the offset rect, so a cornerRadius-0
     // band keeps square corners instead of being rounded by the cut distance.
-    float dOut = bandOuterDistance(vPos, d, halfSize, uCornerRadius, uOutsideCutoff);
-    float dIn  = bandInnerDistance(d, uInsideCutoff);
+    //
+    // A CUTOFF ON THE SIDE glowSide ALREADY CULLS IS NEUTRALISED, by handing it
+    // the same huge distance a disabled cutoff arrives with, so every use below
+    // no-ops through the arithmetic rather than through a branch.
+    //
+    // It can never be the binding constraint there. GlowSide::OUTSIDE keeps
+    // d >= -sideBack, about half a pixel; an inside cutoff of size S keeps
+    // d >= -(S + inHalf), which is looser for every S >= 0. Mirror argument for
+    // INSIDE and the outside cutoff. So this removes a constraint that was
+    // already doing nothing to the silhouette - but it was NOT doing nothing:
+    //
+    //   - On the scaled path it ATE THE GUARD BAND. neon-blit.frag reconstructs
+    //     the cut from BLIT_SIDE_GUARD_PX of lit buffer texels past it; an
+    //     inside cutoff of size 0 discards from half a buffer pixel in, which
+    //     wipes that band out and hands the blit black to filter. Measured on a
+    //     1920x1080 rect at 3840x2160, glowSide OUTSIDE, softness 0, toggling
+    //     insideCutoff between off and {on, size 0, softness 0} - two configs
+    //     that describe the same silhouette: the first lit pixel fell from 238
+    //     to 178 at scale 0.5 and from 228 to 142 at scale 0.25, the exact
+    //     dark seam the guard band exists to prevent. Only SMALL cutoffs reach
+    //     the band (S * scale + inHalf < guard), which is what made this hide.
+    //   - At full res it applied a second coverage ramp over the first, so the
+    //     shared boundary came out squared - 8 px different, worst 6, all on
+    //     the corners.
+    //
+    // NeonRenderer::setupGeometry mirrors this: the same redundant cutoff must
+    // not shrink the quad's hole into the guard band either.
+    float dOut;
+    float dIn;
+    if (uGlowSide == GLOW_SIDE_INSIDE)
+    {
+        dOut = -CUTOFF_NEUTRALISED;
+    }
+    else
+    {
+        dOut = bandOuterDistance(vPos, d, halfSize, uCornerRadius, uOutsideCutoff);
+    }
+    if (uGlowSide == GLOW_SIDE_OUTSIDE)
+    {
+        dIn = CUTOFF_NEUTRALISED;
+    }
+    else
+    {
+        dIn = bandInnerDistance(d, uInsideCutoff);
+    }
     if (dOut >  outHalf) discard;
     if (dIn  < -inHalf ) discard;
 

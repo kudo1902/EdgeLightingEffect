@@ -42,8 +42,9 @@ precision highp float;
 // because 4 px is one buffer texel there and the filter is wider than that.
 // The first lit pixel now reads 37 / 37 / 36 at softness 4 across scales
 // 1.0 / 0.5 / 0.25, against 37 / 56 / 29 with the cut made in the gather and
-// everything else held here - one scale-invariant number against a number that
-// halved with every halving of the scale.
+// everything else held here. That sequence is the point: it tracks neither the
+// scale nor the 4 px the caller asked for, it just wanders with where the
+// boundary falls between buffer texels.
 
 #define GLOW_SIDE_BOTH    0
 #define GLOW_SIDE_INSIDE  1
