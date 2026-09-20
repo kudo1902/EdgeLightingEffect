@@ -126,8 +126,20 @@ namespace EdgeLightingDemo
         std::cout << "  bloomStrength    " << n.bloomStrength << "\n";
         std::cout << "  glowSide         " << sideItems[static_cast<int>(n.glowSide)]
                   << ", softness " << n.glowSideSoftness << " px\n";
-        std::cout << "  insideCutoff     " << Detail::CutoffStr(n.insideCutoff, buf, sizeof buf) << "\n";
-        std::cout << "  outsideCutoff    " << Detail::CutoffStr(n.outsideCutoff, buf, sizeof buf) << "\n";
+        // A cutoff on the side glowSide culls is ignored for the glow (the
+        // renderer neutralises it - see neon.frag's band-distance block), so
+        // say so here. Two dumps differing only in a subsumed cutoff describe
+        // the same picture, and without this the reader has no way to tell.
+        const char *inSub = (n.glowSide == EdgeLighting::GlowSide::OUTSIDE)
+                                ? "   [subsumed by glowSide OUTSIDE]"
+                                : "";
+        const char *outSub = (n.glowSide == EdgeLighting::GlowSide::INSIDE)
+                                 ? "   [subsumed by glowSide INSIDE]"
+                                 : "";
+        std::cout << "  insideCutoff     " << Detail::CutoffStr(n.insideCutoff, buf, sizeof buf)
+                  << (n.insideCutoff.enable ? inSub : "") << "\n";
+        std::cout << "  outsideCutoff    " << Detail::CutoffStr(n.outsideCutoff, buf, sizeof buf)
+                  << (n.outsideCutoff.enable ? outSub : "") << "\n";
         std::cout << "  hueRotationRate  " << n.hueRotationRate << " cycles/s\n";
         std::cout << "  blendSpace       " << blendItems[static_cast<int>(n.blendSpace)] << "\n";
         std::cout << "  opaqueMode       " << opaqueItems[static_cast<int>(n.opaqueMode)];
