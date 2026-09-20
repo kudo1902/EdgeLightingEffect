@@ -31,7 +31,9 @@ antialiasing floor to the one-sided cut; the staircases in section 3 are what
 shipped **with** that floor in place, because the floor was applied where the
 tone map could undo it.
 
-Four defects, in the order they were fixed:
+Six changes, in the order they were made. The first four are the defects the
+review found; the last two are a regression the second one introduced and the
+mirror of it that the first fix missed - see section 4.3.
 
 | # | defect | fix |
 | - | ------ | --- |
@@ -39,6 +41,8 @@ Four defects, in the order they were fixed:
 | 2 | below `resolutionScale 1.0` the cut was made in buffer pixels and the bilinear blit smeared it across the line | `neon-blit.frag` applies it at destination resolution; `neon.frag` culls `BLIT_SIDE_GUARD_PX` past it so the filter has lit texels to rebuild from |
 | 3 | the hard cutoff boundary had no coverage at all at full resolution, and its ramp spanned 2x the stated softness | one-destination-pixel floor at every scale, halved to the stated width, applied below the grade |
 | 4 | the draw quad ignored `glowSide` and `insideCutoff`, so a culled half-plane was rasterised and discarded | cap the margin under `INSIDE`; cut a ring for `OUTSIDE` and for an enabled `insideCutoff` |
+| 5 | a cutoff on the side `glowSide` already culls cut into change 2's guard band, so two configs describing the same silhouette rendered differently | ignore the subsumed cutoff: `neon.frag` hands that side a disabled cutoff's sentinel |
+| 6 | the same erosion via the quad's OUTER bound, which change 5 mirrored on the inner bound only | skip the subsumed cutoff in `setupGeometry`'s outer cap too |
 
 ## 2. Method
 
@@ -158,8 +162,8 @@ This is where the defects were largest, because the blit multiplies them by
 
 A buffer texel whose centre is lit is bilinear-smeared over `1 / scale`
 destination pixels **in both directions**, so wherever the cut was placed inside
-the buffer, some of it landed on the dark side. Zeroing the cut's back-reach
-held that down and only halved it. Peak values at pixel centres crossing the
+the buffer, some of it landed on the dark side. Zeroing the cut's back-reach on
+the scaled path held it down without closing it - 59/255 still crossed. Peak values at pixel centres crossing the
 right edge, `OUTSIDE`, softness 0 - the `d = -0.5` column is on the dark side of
 the line, over backdrop an `OpaqueMode::OUTSIDE` fill never covers:
 
@@ -214,12 +218,74 @@ First lit pixel at softness 4:
 The before column is `b3c6b1e`, like every other in this document, so its 1.00
 entry moved for section 3's reason rather than this one. Isolating THIS change -
 the cut put back in the gather with everything else held at HEAD - the same
-three read 37 / 56 / 29: one number that is scale invariant against one that
-roughly halved with every halving of the scale.
+three read 37 / 56 / 29. That sequence is the point: it does not track the
+scale, it does not track the 4 px the caller asked for, it just wanders with
+where the boundary happens to fall between buffer texels. The after column is
+flat.
 
 ![Feather 4 at scale 0.50](images/glow-side-comparison/scaled-050-feather4.png)
 
 144 px changed, worst 77.
+
+### 4.3 A cutoff on the culled side ate the guard band
+
+The guard band is a mechanism, and a mechanism can be defeated by something that
+never knew about it. Reported from the demo: two configs that describe the same
+silhouette, `glowSide = OUTSIDE` with `insideCutoff` off against the same with
+`insideCutoff` **enabled at size 0**, rendered differently at a reduced scale.
+
+| | first lit pixel, cutoff off -> on | frame |
+| - | - | - |
+| scale 0.25 | **228 -> 142** | 12,032 px differ, worst 89 |
+| scale 0.50 | **238 -> 178** | 6,014 px differ, worst 61 |
+| scale 1.00 | 239 -> 239 | 8 px, worst 6 |
+
+That 178 is the same number section 4.1 quotes for the cut made without a guard
+band, which is what identified the mechanism: an inside cutoff of size 0
+discards from half a buffer pixel in, wiping out the `BLIT_SIDE_GUARD_PX` of lit
+texels the blit reconstructs the cut from, and handing the filter black.
+
+**The constraint was doing nothing to the silhouette while doing that.**
+`GlowSide::OUTSIDE` keeps `d >= -sideBack`, about half a pixel; an inside cutoff
+of size S keeps `d >= -(S + inHalf)`, which is looser for every `S >= 0`. Mirror
+argument for `INSIDE` and the outside cutoff. So the fix is to ignore the
+subsumed cutoff outright: `neon.frag` hands that side the same huge distance a
+DISABLED cutoff arrives with, so every use downstream no-ops through the
+arithmetic rather than a branch.
+
+It only reached the band for SMALL cutoffs - `S * scale + inHalf < guard`, under
+about 6 px at scale 0.25 - which is why the 216-scene matrix in section 6 missed
+it entirely. That matrix used depths of off / 8 / 60. It tested zero and large,
+and the failure lives in between.
+
+The same erosion had a second route, on the CPU, and it took a further pass to
+find because the first repro was an inner case. `setupGeometry` bounds the quad
+twice, and only the inner bound was mirrored: under `INSIDE` the OUTER cap was
+still derived from the subsumed outside cutoff, putting the quad edge at 1.25
+buffer px against the 2.0 the guard asks for. It survived only because that cap
+cannot fall below `1 + scale` buffer px while the filter reaches one texel -
+safe by 0.25 px, on an accident of two constants neither of which is documented
+as load-bearing for it. Both bounds now skip the subsumed cutoff.
+
+Verified as an invariant rather than a before/after, since the requirement is
+that the subsumed cutoff be a no-op: 144 configs (both sides x 2 radii x 3
+scales x 6 sizes x 2 softnesses), each compared against the same config with
+that cutoff disabled.
+
+| | violations | worst delta |
+| - | - | - |
+| before | 68 of 144 | 139 |
+| after the shader fix | 8 of 144 | 1 |
+| after the outer-cap fix | **0 of 144** | **0** |
+
+The middle row is the outer cap: eight configs differing by a single level,
+waved through as quad-margin noise until the second pass named them.
+
+A subsumed cutoff still bounds the **opaque fill**, which is a separate layer
+with no notion of a glow side. The first version of the invariant harness missed
+that, enabled `outsideCutoff` with `opaqueMode::OUTSIDE`, and reported 72 false
+violations at delta 48 - exactly the backdrop value, because what had moved was
+the fill's extent and not the glow at all.
 
 ## 5. The hard cutoff boundary
 
@@ -326,7 +392,7 @@ it needs two configs in sequence to appear at all.
 | both cutoffs disabled, through the cutoff change | 16 | byte-identical |
 
 The default `Config()` has `glowSide = BOTH` and both cutoffs disabled, so the
-default look is untouched by all four changes.
+default look is untouched by every change in this document.
 
 Two further things measured and found free:
 
