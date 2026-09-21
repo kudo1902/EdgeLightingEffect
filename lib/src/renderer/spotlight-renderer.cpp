@@ -649,8 +649,23 @@ namespace EdgeLighting
                                        static_cast<int>(SPOT_MAX_LIGHTS));
 
         // First pass: how many lamps actually draw. Each one's strip is then
-        // solved against its share of the half-step budget, so the rig's total
-        // clipped remainder stays under one half step however they overlap.
+        // solved against its SHARE of the half-step budget, which carries every
+        // cone tail N times further out than the bare floor would.
+        //
+        // Not for the exact-arithmetic reason this comment used to give ("N
+        // lamps each under floor/N sum to under floor"). That sum is never
+        // performed: the lamps are separate fragments blended into an RGBA8
+        // target and rounded between each, so the rig's accumulated error is
+        // an eight-bit one the division cannot touch. It is here because
+        // SPOT_DITHER_STEPS lets a sub-half-step contribution round the
+        // destination up, so a tail cut at the bare floor is NOT cut below
+        // visibility - removing the division costs up to 6 steps over 9.5% of
+        // the frame at eight lamps, 94% of it dimming. It also costs 24.4% of
+        // this layer's fragments there, which is the known price. The
+        // measurements and the rejected alternative are at
+        // SPOT_VISIBILITY_FLOOR in spotlight-tuning.h; see review-findings.md
+        // I18 for the workup.
+        //
         // A lone lamp gets the whole budget and pays nothing for the sharing.
         int drawing = 0;
         for (int i = 0; i < lampCount; i++)

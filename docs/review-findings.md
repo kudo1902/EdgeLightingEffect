@@ -36,13 +36,13 @@ old fork survived.
 | - | ----- | ---- |
 | visual | V1, V2, V3, V4, V6, V7 | V5 (closed as a documented limitation) |
 | implementation | I1, I3, I4, I6, I7 | I2 (declined), I5 (documented), I8 (audited) |
-| second pass | R1, R2, R3, R4, R5, R6 | R7 |
+| second pass | R1, R2, R3, R4, R5, R6, R7 | - |
 | third pass | V8, I9, I10, I11, I12 (partly) | V9, I12's two stale design docs |
 | fourth pass | I14 | I13 |
 | fifth pass | I15 | - |
-| sixth pass | I16, I17, I19, I20 | I18 |
+| sixth pass | I16, I17, I18, I19, I20 | - |
 | eighth pass | V11 | - |
-| twelfth pass | I21, I22, I23, I24 | - |
+| twelfth pass | I21, I22, I23, I24 | I25, I26 (both measured, declined) |
 
 The R items come from a re-read after the V and I fixes landed - see
 [Second pass](#second-pass-after-bbdba62). V8 and V9 come from a later read of
@@ -62,6 +62,10 @@ I16 to I20 come from a read of the spotlight layer on
 visual defect, so it adds no V item: the solved strip bound the whole renderer
 rests on was verified offscreen and holds. Its design and the verification
 behind it live in `spotlight-renderer-plan.md`.
+
+I25 is the odd one out in that pass: not a defect but a measurement, recorded
+because the suspicion behind it is the kind that gets re-proposed. See
+[Twelfth pass](#twelfth-pass-the-memory-review).
 
 I21 to I24 come from a memory review of `NeonRenderer` - see
 [Twelfth pass](#twelfth-pass-the-memory-review). Three of the four turned out
@@ -792,7 +796,7 @@ the intended `uResolutionScale` corrections. `PackArcFlags` and
 
 What follows is what the pass turned up. R1 to R6 have since been fixed, each
 keeping its original description so the reasoning stays readable next to the
-change. R7 is open.
+change. R7 is fixed.
 
 ### R1. `Initialize()` promises a re-entry guarantee it does not implement - FIXED
 
@@ -1039,7 +1043,7 @@ resolution", so the warning would have fired on every scaled frame. `Shift+O`
 now toggles the scale between 1.0 and 0.5. The lens-flare pair still warns, and
 still needs to.
 
-### R7. The halo and bloom band into 8-bit contours - OPEN
+### R7. The halo and bloom band into 8-bit contours - FIXED
 
 Both wide layers are smooth, very low-slope gradients - the bloom falls as
 `1/D` - so over most of their reach they cross an 8-bit quantisation step only
@@ -1106,6 +1110,89 @@ implementation of exactly this existed in the working tree before the pull that
 brought `17745a9` in, as an `OUTPUT_DITHER_LSB` constant in `neon-tuning.h`
 plus the shader blocks. It is not in the tree now. Whether that was deliberate
 or lost is not something I can tell from here, so nothing has been re-applied.
+
+**FIXED.** `OUTPUT_DITHER_LSB` is back in `neon-tuning.h` - the same name the
+lost implementation used - with interleaved gradient noise applied at the
+8-bit write in `neon.frag` and `neon-blit.frag`. Set it to 0.0 and the output
+is byte-identical to the undithered build; that was verified on all five scenes
+below, both resolution paths included, and is the escape hatch the note above
+asks for when comparing captures.
+
+Re-measuring with this document's own harness, a 200x150 rect in a 1000x800
+capture, peak channel along the centre row, plateau statistics taken over the
+lit span only (the zero tail past the glow is not banding and its run swamps
+the mean):
+
+| config | mean plateau | widest | levels |
+| ------ | ------------ | ------ | ------ |
+| `glowRadius` 5 (default) | 3.30 -> **1.73 px** | 27 -> 19 | 87 -> 82 |
+| `glowRadius` 30 | 3.30 -> **1.71 px** | 20 -> **10** | 121 -> 116 |
+| `glowRadius` 60, `bloomStrength` 2 | 3.35 -> **1.88 px** | 8 -> 8 | 119 -> 115 |
+| `glowRadius` 30, scale 0.5 | 3.27 -> **1.91 px** | 20 -> **12** | 122 -> 113 |
+| `glowRadius` 30, scale 0.25 | 3.27 -> **1.86 px** | 20 -> **12** | 122 -> 117 |
+
+The absolute numbers differ from the table at the top of this finding because
+the glow itself has changed since - the gathered-coverage work landed in
+between - and because the statistics are now restricted to the lit span. The
+comparison that matters is before against after in the same tree, and every row
+roughly halves.
+
+**The severity is no longer unproven.** The original note declined to attach an
+image because a 1 LSB step does not survive a scaled document view. Contrast
+stretching does survive it: taking the dark tail 260 to 390 px outside the rect,
+where the raw levels run 13 to 23, and mapping those ten levels across the full
+range makes each 1 LSB step a ~28 level one. The undithered build shows hard
+concentric bands with visibly stepped boundaries; the dithered build shows a
+continuous gradient. That is the artefact this finding predicted, and it is
+plainly objectionable once it is visible at all.
+
+**Two things the original design note got wrong**, both corrected by
+measurement rather than argument.
+
+*Where the dither goes on the scaled path.* The note says it "belongs in
+`neon-blit.frag`, at the actual final write". Putting it there alone does
+nothing at all. Mean plateau at `glowRadius` 30 against the 3.27 baseline:
+
+| dither placement | scale 0.5 | scale 0.25 |
+| ---------------- | --------- | ---------- |
+| `neon.frag` only | 2.53 | 3.07 |
+| `neon-blit.frag` only | 3.35 | 3.27 (nothing) |
+| **both** | **1.91** | **1.86** |
+
+The rule is not "dither at the final write", it is **dither at every 8-bit
+quantisation**, and the scaled path has two. Blit-only fails because by then
+the information is gone: bilinear upsampling of an already-quantised buffer
+reproduces its plateaus as exact multiples of 1/255, and dithering an exactly
+quantised value only randomises it by +-1. Dithering in the gather is what
+preserves the sub-LSB detail as noise the filter averages back into real
+intermediate values - and that in turn cannot stop the final write re-banding
+them, which is the blit's job. The consequence is that a scaled fragment passes
+through two independent +-0.5 LSB dithers, so its worst-case excursion against
+an undithered build is 2 LSB, not 1. That is correct rather than a budget
+overrun: each quantiser wants a full LSB of its own step.
+
+*That a plain dither is safe.* It is not, and this is the part worth reading
+before touching the constants. The value being dithered is a **coverage**.
+Applied unconditionally on the default `glowRadius` 5, the noise promoted
+**18,880 pixels - 2.36% of the frame - from 0 to 1**, in a 142 px band starting
+exactly where the glow's last visible contour ended. That is dither behaving
+correctly on a sub-LSB signal and still wrong here: it turns a clean falloff
+into isolated speckle in the one place this finding identifies as perceptually
+dangerous, and on a surface a compositor blends by alpha it is the layer
+starting to occlude video across an extra 2.4% of the screen. A hard `step()`
+gate at half an LSB fixed that direction and opened the other, demoting 14,546
+pixels into black. The shipped form fades the noise in with a `smoothstep` over
+`DITHER_FADE_LO` to `DITHER_FADE_HI`, placed so the amplitude is always smaller
+than the distance to the 0/1 boundary - at alpha 1/255 the multiplier is 0.007,
+giving +-0.004 LSB against the 0.5 LSB it would need to cross. Verified: **0
+pixels change between zero and non-zero, in either direction, on every scene
+above.**
+
+One build-system note. `neon-blit.frag` now receives `@NEON_TUNING@`, which it
+did not before, so the two writes share the constants rather than duplicating
+them. That costs ~1.8 KB of embedded text and is only affordable because I21
+strips the comments out of the injected header first - before that commit the
+same injection would have cost 32 KB.
 
 ---
 
@@ -1628,8 +1715,10 @@ implementation series and not the visual one.
 The findings are all edges around that solve: a diagnostic that was dropped on
 the way over from the neon layer, two unstated assumptions the solve rests on,
 a cost comment an order of magnitude low, and three documents that still
-describe a four-renderer library. **All but I18 have since been fixed**, and
-I18 is open because closing it is a design decision rather than a repair.
+describe a four-renderer library. **All of them have since been fixed**, I18
+last - by measurement overturning its own conclusion rather than by the change
+it proposed. That measurement also turned up I26, which went the same way:
+recorded as a defect, then measured and found not to be one.
 
 Two naming regressions came out of the same read and are recorded where the
 rest of their kind live, in [`naming-review.md`](naming-review.md): the branch
@@ -1777,12 +1866,22 @@ carries the cone", and points at `SupportAt`.
 
 Solving each term against `floor / 2` would close it exactly and costs one
 character, and it was deliberately not taken: it widens every strip everywhere
-to buy a guarantee **I18** argues the 8-bit blend already cannot deliver. Doing
-it would be moving further in the direction I18 says is wrong. If I18 is ever
-resolved by dropping the lamp-count division, the halving becomes nearly free
-and should be revisited then.
+to buy a guarantee **I18** argued the 8-bit blend already cannot deliver.
 
-### I18. The visibility floor is divided by a lamp count the blend path cannot honour - OPEN
+**That reasoning has since been overturned, so this paragraph should be read
+again before it is relied on.** I18 is now fixed the other way round: the
+guarantee as stated is indeed unobservable, but the tails it carries are NOT,
+because `SPOT_DITHER_STEPS` lets a sub-half-step contribution round the
+destination up. Removing the lamp-count division costs up to 6 steps over 9.5%
+of the frame. So the direction this declined to move in is no longer clearly
+wrong - halving the per-term floor would widen strips and would also recover
+light, at a fragment cost the I18 table now quantifies. It was still not taken
+here, because the thin region it closes has not been shown to produce a visible
+artefact and the measurements for THIS term have not been made; what has
+changed is that the argument against it is now a cost argument rather than a
+"buys nothing" one.
+
+### I18. The visibility floor is divided by a lamp count the blend path cannot honour - FIXED (the rationale was wrong, the code is right)
 
 `SPOT_VISIBILITY_FLOOR` is documented as *"HALF an 8-bit step"*, and
 `buildStrips` divides it by the number of enabled lamps before solving, so that
@@ -1810,16 +1909,127 @@ eight-bit accumulation, and dividing the floor did not prevent any of it.
 
 What the division does cost is fragments. Headroom grows by `ln(N)` and the
 solved half-width goes as its square root, so at eight lamps every strip is
-about 15% wider than a shared-floor solve would make it - paid to guarantee a
-sub-half-step total that the blend then discards. Whether to drop the division,
-keep it and say what it does and does not cover, or move the whole rig into a
-higher-precision accumulation buffer is a design call, which is why this is
-recorded rather than changed. Note the third option is not free here: this layer
-composites straight onto the caller's target at `resolutionScale` 1.0, which is
-the default and the path the measurements above use.
+wider than a shared-floor solve would make it - paid, on the reading above, to
+guarantee a sub-half-step total that the blend then discards. Whether to drop
+the division, keep it and say what it does and does not cover, or move the whole
+rig into a higher-precision accumulation buffer is a design call, which is why
+this was recorded rather than changed.
 
-Related, and already recorded: **R7** measures the same eight-bit ceiling from
-the other side, on the neon halo and bloom.
+**FIXED, by taking the second option - but only after the first turned out to be
+a regression.** Everything above is correct except its conclusion. The stated
+guarantee really is unobservable, and the 36,853 channels really are eight-bit
+accumulation the division cannot touch. What does not follow is that the
+division is therefore free to remove. Rebuilt with `sharedFloor` set to the bare
+`SPOT_VISIBILITY_FLOOR`, 1280x720, fan rigs, fragments counted with an occlusion
+query:
+
+| lamps | fragments, divided | shared | saved | frame changed | max deviation |
+| ----- | ------------------ | ------ | ----- | ------------- | ------------- |
+| 1 | 203,123 | 203,123 | 0.0% | 0 px | 0 |
+| 2 | 465,913 | 406,246 | 12.8% | 2.448% | 2 |
+| 5 | 1,218,559 | 956,864 | 21.5% | 6.496% | 4 |
+| 8 | 2,007,846 | 1,518,429 | **24.4%** | **9.541%** | **6** |
+
+Six steps over a tenth of the frame, and the change is not a wash: at eight
+lamps the divided build is BRIGHTER on 292,127 of the differing channels and
+dimmer on 18,296, so this is light genuinely lost rather than redistributed.
+The differences are not confined to the dark tail either - they reach pixels at
+level 234, because a pixel deep inside one lamp's cone can sit at the edge of
+another's strip.
+
+**What the division is actually for is `SPOT_DITHER_STEPS`, and nothing in this
+finding's original reasoning accounted for it.** The undithered reading - a
+contribution under half a step rounds onto an integer destination and vanishes -
+is why the guarantee looked unobservable, and it is exactly what the dither
+breaks: a dithered fragment carries up to half a step of noise, so a sub-half-step
+contribution CAN round the destination up. A cone tail cut at the bare floor is
+therefore not cut below visibility at all. Solving each lamp against `floor/N`
+carries every tail N times further out, and that is what the table above is
+measuring the loss of. The constant's own comment gestured at this
+("`SPOT_DITHER_STEPS` softens what this bound means") without connecting it to
+the division.
+
+So the code stays and both comments are rewritten - the constant in
+`spotlight-tuning.h` and the call site in `buildStrips` - to say what the
+division buys, what it does not, and what it costs.
+
+**The third option stays rejected, now with numbers.** A higher-precision
+accumulation buffer would fix the eight-bit error AND allow the narrower strips,
+which is the only way to get both. It does not pay for itself here: it would
+save 489k fragments at eight lamps against a fullscreen resolve of ~922k, and
+this layer composites straight onto the caller's target at `resolutionScale` 1.0
+by default. That is the same arithmetic as the resolution-scale table in
+`CLAUDE.md`, and it comes out the same way.
+
+### I26. The spotlight dither is applied per lamp, so an overlap gets N of it - MEASURED, NOT A DEFECT
+
+**This item was written wrong and is corrected here rather than deleted,
+because the wrong version was committed and the correction is the useful
+part.** The mechanism it describes is real; the two arguments it rested on were
+not, and its conclusion was the opposite of what measuring showed.
+
+What it claimed: `spotlight.frag` adds its dither per fragment, every lamp is a
+separate additively-blended fragment, so a pixel inside N lamps' strips gets N
+dither samples - "peak +-4 steps at eight lamps against the +-0.5 the constant
+documents", contradicting *"its peak is exactly the rounding threshold, so it
+cannot round a black fragment up to 1."*
+
+**The growth is real.** Binning the deviation between a dithered and an
+undithered build by per-pixel overlap count, recovered by rendering each lamp
+of an eight-lamp fan alone, 1280x720:
+
+| overlap | pixels | mean deviation | max |
+| ------- | ------ | -------------- | --- |
+| 1 | 129,604 | 0.560 | 5 |
+| 2 | 254,071 | 0.845 | 7 |
+| 4 | 37,319 | 1.246 | 6 |
+| 6 | 12,390 | 1.429 | 6 |
+| 8 | 6,184 | **1.598** | 7 |
+
+Mean deviation grows 0.560 -> 1.598 from single to eightfold coverage, a factor
+of 2.85 against `sqrt(8)` = 2.83. The `sqrt(N)` law holds almost exactly.
+
+**But it is not the dither's doing, and it is not a defect.** An N-overlap
+pixel is quantised N times - each blend reads the RGBA8 destination, adds one
+fragment, and rounds - and each of those roundings carries up to half a step of
+error whether or not anything is dithered. `sqrt(N)` growth is the intrinsic
+error of N sequential eight-bit blends. What the dither changes is the
+CHARACTER of that error, not its size: it decorrelates it from the signal,
+turning bands into noise, which is precisely what `SPOT_DITHER_STEPS` exists to
+do. Removing the dither would not remove the growth, it would only make it
+correlated again.
+
+The documented property also survives, because it is stated per blend and that
+is where it applies: a fragment whose `lit` is exactly 0 gets `round(0 + d)`
+with `d` in [-0.5, +0.5], which is 0, and repeating that N times is still 0. A
+truly black pixel stays black at any overlap. The max-deviation column is the
+tell that the original reading was wrong - it sits at 5 to 7 at EVERY overlap
+including N = 1, so it is not a quantity that scales with lamp count at all.
+
+**The supporting evidence was also wrong.** The item argued from I18's
+observation that removing the lamp-count division - which only ever shrinks
+strips, and so can only remove light - made 18,296 channels brighter, and
+concluded that only a change in dither-sample count could explain it. Rebuilt
+with `SPOT_DITHER_STEPS` at 0.0 and the division removed, the anomaly is still
+there: divided is brighter on 742 channels and **dimmer on 947**, with no
+dither in the pipeline at all. The cause is that resizing a strip changes the
+interpolated `vLocal` at a given pixel by a float ulp or two, which perturbs
+`lit` itself and flips rounding decisions either way. Nothing to do with the
+dither.
+
+**The proposed cure would have made things worse**, and the table above prices
+it. Scaling each lamp's dither by `1/sqrt(N)` would restore single-coverage
+noise levels at eightfold overlap - 6,184 pixels - by under-dithering the
+129,604 pixels at single coverage, where the banding this constant exists to
+break would come back. That is a 21:1 trade in the wrong direction.
+
+One thing here IS worth knowing, and it points the other way. The 378,784
+pixels at "overlap 0" - where every lamp rendered 0 ALONE - still show
+deviations up to 6 in the dithered build. Those are lamps each contributing
+below one step, individually invisible, made visible by the dither across
+several of them. That is the dither recovering light the eight-bit path would
+otherwise lose, which is the same effect **I18** depends on, measured from the
+other side.
 
 ### I19. `SpotlightRenderer`'s rebuild-cost comment is an order of magnitude low - FIXED
 
@@ -2631,18 +2841,97 @@ its 0.3 s cross-fade:
 -7,800 bytes, net of I22's container change. The second row is worth recording
 on its own: the per-frame path was already allocation-free, and still is.
 
+**The risk this had to clear**, since it changes a buffer's lifetime: a host
+animating `colorStops` re-bakes the ring every frame, and if each of those
+bakes had to reallocate `mFrom`, trading 4 KB of residency for a per-frame
+allocation would be a bad deal. It does not, and the reason is that the two
+paths through `Bake` both avoid it - a fade that is still in flight finds
+`mFrom` already allocated from when it started, and the snap path
+(`colorTransitionDuration` 0) no longer touches `mFrom` at all. Counted over
+300 frames of a per-frame colour animation, allocations per frame:
+
+| `colorTransitionDuration` | before | after |
+| ------------------------- | ------ | ----- |
+| 0.3 (fade never lands) | 0.00 | 0.00 |
+| 0.0 (snap path) | 0.00 | 0.00 |
+| 0.016 (lands every frame) | 2.00 | 2.00 |
+
+Identical on both sides. The third row is pre-existing and unrelated to this
+change - it needs a fade duration tuned to about one frame, which nothing would
+choose deliberately.
+
+### I25. The per-frame CPU path is 0.004% of a frame - MEASURED, DECLINED
+
+The memory review closed with a suspicion worth writing down because it is
+wrong: that the update path might be worth optimising, since under any
+animation a config change costs **five full `Config` copy-assigns** - one per
+renderer's `mCurrentConfig` - plus a `setupGeometry` that recomputes `pow`,
+`log2` and two `clamp`s every frame. It sounds like a per-frame cost that
+scales with the renderer count.
+
+Measured, median of 9 runs x 500 frames, `IntensityPulse` attached so a config
+change really does land every frame:
+
+| case | us / frame | % of 16.67 ms |
+| ---- | ---------- | ------------- |
+| `Update(dt)`, 5 renderers | **0.69** | **0.004%** |
+| `Update(dt)`, 1 renderer | 0.80 | 0.005% |
+| `Update(dt)`, 5 renderers (second measurement) | 0.86 | 0.005% |
+| `SetConfig` moving `intensity` (rebuilds the quad) | 0.81 | 0.005% |
+| `SetConfig` moving `hueRotationRate` (no rebuild) | 0.47 | 0.003% |
+| `SetConfig` with nothing changed (early-out) | 0.22 | 0.001% |
+| one `Config` copy-assign, standalone | 0.052 | - |
+| one `Config` operator==, standalone | 0.105 | - |
+
+**Going from one renderer to five moves it by less than the noise floor** -
+0.80 to 0.86 us, with the five-renderer case in the first row measuring *lower*
+than the one-renderer case. That is the whole theory refuted: a `Config`
+copy-assign is 52 nanoseconds, so five of them is a quarter of a microsecond,
+and the copies are not where the time is even within this already-free path.
+They also cannot be removed without renderers holding a reference instead of a
+copy, which is exactly what every `OnConfigChanged` dirty check compares
+against.
+
+The draw side, same method, `glFinish` used to separate GPU from submission:
+
+| layer | CPU submit, 1280x720 | CPU submit, 64x64 | with `glFinish` |
+| ----- | -------------------- | ----------------- | --------------- |
+| nothing enabled (fan-out only) | 2.55 | 2.41 | 76.3 |
+| neon only | 10.59 | 10.91 | 209.2 |
+| droplets only | 4.33 | 4.22 | 86.7 |
+| lens flare only | 4.56 | 4.46 | 122.9 |
+| spotlight only, 2 lamps | 4.46 | 4.30 | 90.1 |
+| all four | 15.61 | - | 224.5 |
+
+The 64x64 column is there to prove the first column is real: shrinking the
+viewport by 225x leaves CPU submission unmoved, so those numbers are this
+library's own work rather than the driver blocking on a busy GPU. (The
+all-four cell is omitted at 64x64 because it measures *higher* than at 720p -
+verified not to be buffer churn, since the whole benchmark run triggers exactly
+one `Framebuffer::Resize`, the emission table at `Initialize`. It is most
+likely the benchmark queueing commands with no swap to pace it, and it is not a
+number about the library.)
+
+So the whole effect costs **~16 us of CPU per frame, 0.1% of a 60 fps budget**,
+against neon alone spending ~133 us on the GPU - **16:1 GPU-bound**. There is
+nothing on the CPU side of this library worth optimising, and this entry exists
+so the next person to notice the five `Config` copies can read the number
+instead of re-deriving the suspicion. Where the frame actually goes is already
+documented: `neon-perf-review.md` (the neon layer is 81% of the frame and its
+gather loop 95% of that) and `lens-flare-perf-review.md`.
+
 ---
 
 ## What is left
 
-The second pass's R1 to R6 have all landed, and so have the third pass's V8,
+The second pass's R1 to R7 have all landed, and so have the third pass's V8,
 I9, I10 and I11. I3's structural half - the last thing on this list that was
 open rather than declined - closed with the neon unification, which deleted the
 fork it followed from. The fifth pass's I15 landed with it. The seventh through
 tenth passes are one item each and all four are fixed. Five items from the
 first pass remain deliberately open, each with the reasoning recorded next to
-the code rather than only here, plus R7 from the second pass, V9 and I12's
-remainder from the third, I13 from the fourth, and I18 from the sixth:
+the code rather than only here, plus V9 and I12's remainder from the third,
+I13 from the fourth:
 
 | item | state | why |
 | ---- | ----- | --- |
@@ -2655,11 +2944,12 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I2 | declined | negligible measured-by-structure win against a real staleness-bug risk |
 | I5 | documented | the alternative is a breaking renderer-API change for an unmeasured cost |
 | I8 | audited, no UI written | the C ABI itself is complete; what is missing is `demo-capi` coverage, ranked in the section above |
-| R7 | open | a measured quantisation defect with a cheap cure, but unproven visual severity; see the note there before starting |
 | V9 | open | the honest fix is a design decision (interpolate the arc colour between adjacent samples in the consumer), not a patch; the three options are ranked in the section |
 | I12 | partly fixed | the live shader comment is corrected; `architecture-design.md` and `multiple-arcs-design.md` still name the removed LUT functions, and both are design prose rather than comments beside live code |
 | I13 | open | undefined `pow` reachable only through the C ABI; both cures change what the boundary accepts or what the term computes below `ghostSize` 0.6, so it is a behaviour decision rather than a repair |
-| I18 | open | the division guarantees something the 8-bit blend discards, and the three ways out - drop it, document its limit, or accumulate at higher precision - are a design call, not a fix |
+| I18 | fixed (documentation) | the guarantee really is unobservable, but removing the division costs 6 steps over 9.5% of the frame - it is the DITHER that makes those tails visible, which the original reasoning did not account for |
+| I26 | measured, not a defect | the `sqrt(N)` noise growth is real and is the intrinsic error of N sequential 8-bit blends, not the dither's; the proposed cure was a 21:1 trade the wrong way |
+| I25 | declined | measured at 0.004% of a frame; the whole library is 16:1 GPU-bound, so the CPU path has nothing in it worth changing |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

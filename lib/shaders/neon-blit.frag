@@ -110,7 +110,44 @@ void main() {
 
     // Applied to the premultiplied sample, so colour and coverage scale
     // together and the layer thins out as a whole rather than dimming while it
-    // keeps occluding. At BOTH this is a multiply by an exact 1.0, so that path
-    // stays bit-identical to the plain texture read this shader used to be.
-    fragColor = src * cut;
+    // keeps occluding. At BOTH this is a multiply by an exact 1.0, so the cut
+    // costs that path nothing.
+    vec4 outColor = src * cut;
+
+    // --- Output dither ------------------------------------------------
+    // The scaled path's SECOND quantisation. neon.frag dithers the first one
+    // (its write into the reduced buffer, which is what preserves the sub-LSB
+    // information this shader's bilinear fetch then averages back into real
+    // intermediate values); this is the write that would otherwise re-band
+    // those recovered values on the way to 8 bits.
+    //
+    // Both are needed, and neither alone is enough. Mean plateau in px on a
+    // glowRadius 30 scene, against an undithered baseline of 3.27:
+    //
+    //   gather only   scale 0.5 -> 2.53   scale 0.25 -> 3.07
+    //   blit only               -> 3.35              -> 3.27  (no change)
+    //   both                    -> 1.91              -> 1.86
+    //
+    // Blit-only changing nothing is the informative row: by the time this
+    // shader runs on an undithered buffer it is filtering exact multiples of
+    // 1/255, and dithering those only randomises them by +-1. See the long
+    // note at neon.frag's matching block, and OUTPUT_DITHER_LSB in
+    // neon-tuning.h. Keep the expression identical to that one - the two are
+    // the same noise field and both run on this path.
+    //
+    // Unconditional because this pass runs only on the scaled path. The
+    // smoothstep gate is the same footprint guard neon.frag uses, applied to
+    // the composited alpha so the cut cannot be undone by the noise.
+    //
+    // NOTE this means GlowSide::BOTH is no longer bit-identical to the plain
+    // texture read this shader used to be. That is intended; set
+    // OUTPUT_DITHER_LSB to 0.0 and it returns.
+    if (OUTPUT_DITHER_LSB > 0.0)
+    {
+        float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+        outColor += (ign - 0.5) * (OUTPUT_DITHER_LSB / 255.0) *
+                    smoothstep(DITHER_FADE_LO, DITHER_FADE_HI, outColor.a);
+    }
+
+    fragColor = outColor;
 }

@@ -1641,5 +1641,71 @@ void main() {
     // dark surround (alpha = 0) leaves the background untouched. Pairs with
     // glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA) in the renderer.
     float alpha = clamp(max(result.r, max(result.g, result.b)), 0.0, 1.0);
+
+    // --- Output dither ------------------------------------------------
+    // Breaks the halo's and the bloom's 8-bit contour plateaus. Both are
+    // very low-slope gradients, so without this they cross a quantisation
+    // step only every few pixels and the output is constant-value rings
+    // separated by 1 LSB. See OUTPUT_DITHER_LSB in neon-tuning.h for the
+    // measurements and for why the offset is signed and half an LSB either
+    // way rather than a plain [0,1) noise.
+    //
+    // BOTH RESOLUTION PATHS, unlike the one-sided cut above, and that is a
+    // measured correction to the design note in R7 rather than an oversight.
+    // The rule is "dither at every 8-bit quantisation", and the scaled path
+    // has TWO of them: this write into the reduced buffer, and neon-blit.frag's
+    // write to the caller's framebuffer. Each needs its own, for different
+    // reasons, and the plateau statistics on a scaled scene say so plainly
+    // (mean plateau in px, glowRadius 30, undithered baseline 3.27):
+    //
+    //   dither here only   scale 0.5 -> 2.53   scale 0.25 -> 3.07
+    //   dither in blit only          -> 3.35              -> 3.27  (nothing)
+    //   dither in both               -> 1.91              -> 1.86
+    //
+    // Blit-only does nothing because by then the damage is done: bilinear
+    // upsampling of an already-quantised buffer reproduces its plateaus as
+    // exact multiples of 1/255, and dithering an exactly-quantised value just
+    // randomises it by +-1 without recovering the sub-LSB information the
+    // first quantisation threw away. Dithering HERE is what preserves that
+    // information - as noise the filter then averages back into real
+    // intermediate values. What it cannot do is stop the FINAL write
+    // re-banding those recovered values, which is the blit's own job.
+    //
+    // The consequence to know: on the scaled path a fragment passes through
+    // two independent +-0.5 LSB dithers, so its worst-case excursion against
+    // an undithered build is 2 LSB rather than 1. That is correct and not a
+    // budget overrun - each quantiser wants a full LSB of ITS OWN step - but
+    // it is why the scaled path cannot be compared to an undithered capture at
+    // the 1 LSB precision the direct path can.
+    //
+    // Added to rgb AND alpha by the same amount, which is what keeps the
+    // premultiplied invariant: alpha is the max of the three channels, so
+    // shifting all four together preserves that relation exactly. Dither rgb
+    // alone and the layer's coverage stops matching its colour by up to an
+    // LSB, which the GL_ONE / GL_ONE_MINUS_SRC_ALPHA blend turns into a
+    // faint fringe wherever the glow is near-opaque.
+    //
+    // The smoothstep is what keeps the dither from moving the layer's EDGE:
+    // it fades the noise in above the 0/1 quantisation boundary so no fragment
+    // can be pushed across it in either direction, which matters because the
+    // value being dithered is a coverage. See DITHER_FADE_LO in neon-tuning.h
+    // for the two failures that produced it - 18,880 pixels promoted out of
+    // black without any gate, 14,546 demoted into it with a hard one.
+    //
+    // Interleaved gradient noise (Jimenez). Deliberately a pure function of
+    // gl_FragCoord with NO time term: an animated dither would make every
+    // offscreen capture non-reproducible frame to frame, which is the
+    // methodology most of docs/ rests on. Keep this expression identical to
+    // neon-blit.frag's - one dither, written twice because the scaled path
+    // runs both of them and they must be the same noise field.
+    if (OUTPUT_DITHER_LSB > 0.0)
+    {
+        float ign = fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+        float n   = (ign - 0.5) * (OUTPUT_DITHER_LSB / 255.0) *
+                    smoothstep(DITHER_FADE_LO, DITHER_FADE_HI, alpha);
+        result += n;
+        alpha  += n;
+    }
+
     fragColor = vec4(result, alpha);
 }

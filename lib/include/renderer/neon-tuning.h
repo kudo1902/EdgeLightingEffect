@@ -547,4 +547,85 @@
 #define FILAMENT_REACH_MIN_SIGMAS 2.0
 #define FILAMENT_REACH_MAX_SIGMAS 64.0
 
+// --- Output dither, in 8-bit LSBs peak-to-peak. 0.0 disables it entirely.
+//
+//     WHAT IT IS FOR. The halo and the bloom are very low-slope gradients -
+//     the bloom falls as 1/D - so over most of their reach they cross an 8-bit
+//     quantisation step only every several pixels. The output is then a series
+//     of constant-value plateaus separated by 1 LSB, which is a contour ring
+//     around the rect. Measured on a 200x150 rect, sampling the peak channel
+//     along the centre row for 398 px outward from the right edge:
+//
+//       glowRadius 5 (default)        140 levels, mean plateau 2.8 px, worst 14
+//       glowRadius 30                 115 levels, mean plateau 3.5 px, worst  9
+//       glowRadius 60, bloom 2         64 levels, mean plateau 6.2 px, worst 24
+//
+//     A 24 px band of one constant value bounded by a 1 LSB step is a contour
+//     by any definition. See docs/review-findings.md R7 for the full workup.
+//
+//     WHY 1.0 AND NOT MORE. One LSB peak-to-peak is exactly enough to break a
+//     plateau into a dither pattern that averages to the true value; anything
+//     larger is visible as noise in its own right without buying more levels.
+//
+//     WHY THE NOISE IS SIGNED AND CENTRED. The shaders add
+//     (ign - 0.5) * OUTPUT_DITHER_LSB / 255.0, so the offset lands in
+//     [-0.5, +0.5) LSB. That range is load-bearing rather than tidy: GL
+//     converts a float to UNORM8 as round(clamp(f, 0, 1) * 255), so at a
+//     fragment whose value is exactly 0 - the whole dark surround inside the
+//     draw quad - the dithered value rounds back to exactly 0 and the
+//     transparent region stays transparent. Widen the range past half an LSB,
+//     or make the noise unsigned, and half the surround quantises to 1/255
+//     instead: a faint noise haze over the entire quad, which is a worse
+//     artefact than the banding this removes.
+//
+//     WHERE IT IS APPLIED. At the FINAL write and only there, which is a
+//     different shader on each resolution path. On the direct path neon.frag
+//     writes to the caller's framebuffer, so it dithers (gated on
+//     !blitOwnsCut). Below resolutionScale 1.0 neon.frag writes to a reduced
+//     buffer that neon-blit.frag then bilinearly upsamples - noise put in
+//     there is averaged back down by the filter and the real final write would
+//     re-quantise with no dither at all - so on that path neon-blit.frag
+//     dithers instead. Exactly one of the two runs per frame.
+//
+//     SET IT TO 0.0 TO COMPARE CAPTURES BIT-FOR-BIT. The noise is a pure
+//     function of gl_FragCoord with no time term, so a dithered build is
+//     reproducible frame to frame and every offscreen capture is stable. What
+//     it is NOT is comparable against an undithered build at 1 LSB, which is
+//     the precision docs/emission-prepass-comparison.md and the two
+//     unification comparisons state their results to. Any future comparison
+//     of that kind wants this at 0.0 on both sides. ---
+#define OUTPUT_DITHER_LSB         1.0
+
+// --- Coverage band over which the dither fades in, as a fraction.
+//
+//     THE DITHER MUST NOT MOVE THE LAYER'S EDGE. Below half an LSB a value
+//     rounds to 0, so an unconditional dither promotes part of the sub-LSB
+//     tail to 1 - and a symmetric dither just above that boundary demotes part
+//     of the 1s to 0. Both change the SET OF PIXELS this layer covers, and the
+//     value in question is a COVERAGE: on a surface a compositor blends by
+//     alpha, that is the layer starting or stopping to occlude video. See the
+//     Tizen note on SpotlightRenderer in CLAUDE.md for why alpha here is never
+//     just cosmetic.
+//
+//     Measured on the default glowRadius 5 at 1000x800, against an undithered
+//     build: unconditional dither promoted 18,880 pixels (2.36% of the frame)
+//     from 0 to 1, in a 142 px band starting exactly where the glow's last
+//     visible contour ended. A hard step() gate at half an LSB fixed that
+//     direction and opened the other, demoting 14,546.
+//
+//     So the noise FADES IN over a band instead of switching on at a
+//     threshold, and the band is placed so the amplitude is always smaller
+//     than the distance to the boundary: at alpha 1/255 the multiplier is
+//     0.007, giving +-0.004 LSB against the 0.5 LSB of headroom it would need
+//     to cross. The zero set is therefore preserved exactly, with no hard
+//     transition of its own to show as a ring at level 2.
+//
+//     Nothing R7 cares about is lost. The banding is in the halo and bloom at
+//     levels 7 to 229, far above where this has fully faded in.
+//
+//     Gated on ALPHA, not per channel, so all four channels shift together and
+//     the premultiplied relation alpha = max(rgb) survives the dither. ---
+#define DITHER_FADE_LO            0.00196
+#define DITHER_FADE_HI            0.00980
+
 #endif // _EDGE_LIGHTING_NEON_TUNING_H_

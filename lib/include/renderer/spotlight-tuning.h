@@ -119,6 +119,28 @@
 /// noise, and its peak is exactly the rounding threshold, so it cannot round
 /// a black fragment up to 1.
 ///
+/// THAT LAST PROPERTY IS PER BLEND, and per blend is where it holds. This is
+/// added once per FRAGMENT, and every lamp is a separate fragment additively
+/// blended into the same target, so a pixel inside N lamps' strips is dithered
+/// and rounded N times. A fragment whose `lit` is exactly 0 still rounds to 0
+/// every time - round(0 + d) with d in [-0.5, +0.5] is 0, N times over - so a
+/// black pixel stays black at any overlap.
+///
+/// What DOES grow with overlap is the deviation from an exact float sum.
+/// Measured against an undithered build on an eight-lamp fan, binned by
+/// per-pixel overlap: mean deviation 0.560 at single coverage, 1.598 at
+/// eightfold, a factor of 2.85 against sqrt(8) = 2.83.
+///
+/// That growth is NOT this constant's doing and is not worth trying to cancel.
+/// An N-overlap pixel is quantised N times, and each of those roundings
+/// carries up to half a step of error with or without a dither; sqrt(N) is the
+/// intrinsic error of N sequential eight-bit blends. What the dither changes is
+/// the character of that error, not its size - bands become noise. Scaling
+/// each lamp's contribution by 1/sqrt(N) to flatten it would under-dither the
+/// common case badly: on that same rig, 129,604 pixels sit at single coverage
+/// against 6,184 at eightfold. See docs/review-findings.md I26, which recorded
+/// this as a defect before measuring it.
+///
 /// WHY THIS LAYER NEEDS IT AND THE OTHERS MOSTLY DO NOT. A spotlight's outer
 /// falloff is the flattest gradient in this library: at default settings the
 /// cone crosses one 8-bit step every 13 to 50 px, so RGBA8 turns it into a
@@ -145,11 +167,48 @@
 /// at 1/255 differed from an unbounded reference by exactly 1 LSB across tens
 /// of thousands of pixels in every scene of the offscreen diff.
 ///
-/// The renderer divides this by the number of ENABLED lamps before solving, so
-/// the whole rig's clipped remainder stays inside one half-step however many
-/// lamps overlap: N lamps each under floor/N sum to under floor. A single-lamp
-/// rig therefore pays nothing for the sharing, and an eight-lamp rig draws the
-/// larger strips it actually needs.
+/// The renderer divides this by the number of ENABLED lamps before solving. A
+/// single-lamp rig therefore pays nothing for the sharing, and an eight-lamp
+/// rig draws the larger strips it actually needs.
+///
+/// WHY THE DIVISION IS HERE, which is NOT the reason this comment used to
+/// give. The old rationale was an exact-arithmetic one - "N lamps each under
+/// floor/N sum to under floor, so the rig's total clipped remainder stays
+/// inside one half step" - and that guarantee is about a float sum this render
+/// path never performs. All lamps go out in one glDrawArrays, but they are
+/// still separate fragments: each one's premultiplied add is blended into the
+/// RGBA8 target and rounded to eight bits before the next arrives. See
+/// docs/review-findings.md I18, which measured the accumulation error that
+/// survives regardless (36,853 channels below an exact-float model on an
+/// eight-lamp fan) and correctly concluded that the stated guarantee buys
+/// nothing.
+///
+/// What it does buy is visible anyway, and the reason is SPOT_DITHER_STEPS
+/// directly above. A dithered fragment carries up to half a step of noise, so
+/// a contribution BELOW half a step can still round the destination up - which
+/// means a cone tail cut at `floor` is not, as the undithered reading assumed,
+/// cut below the threshold of observability. Solving each lamp against
+/// floor/N instead carries every tail eight times further out. Measured by
+/// rebuilding with the division removed, 1280x720:
+///
+///   lamps   fragments saved   frame changed   max deviation
+///   1                  0.0%            0 px               0
+///   2                 12.8%           2.4%                2
+///   5                 21.5%           6.5%                4
+///   8                 24.4%           9.5%                6
+///
+/// and the change is overwhelmingly a DIMMING - 94% of the differing channels
+/// are darker without the division - i.e. light genuinely lost, not moved. Six
+/// steps over a tenth of the frame is not something the blend discards.
+///
+/// So the cost is real and known: about a quarter of this layer's fragments at
+/// eight lamps. It is the price of not losing those six steps, and the
+/// remaining option - accumulating the rig in a higher-precision buffer, which
+/// would fix the eight-bit error AND allow narrower strips - does not pay for
+/// itself here. It would save 489k fragments at eight lamps against a
+/// fullscreen resolve of ~922k, and this layer composites straight onto the
+/// caller's target at resolutionScale 1.0 by default. See the resolution-scale
+/// table in CLAUDE.md for the same arithmetic in its original setting.
 ///
 /// SPOT_DITHER_STEPS softens what this bound means, and improves what it is
 /// worth. A dithered fragment carries up to half a step of noise, so a pixel
