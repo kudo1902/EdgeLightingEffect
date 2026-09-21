@@ -42,6 +42,7 @@ old fork survived.
 | fifth pass | I15 | - |
 | sixth pass | I16, I17, I19, I20 | I18 |
 | eighth pass | V11 | - |
+| twelfth pass | I21, I22, I23, I24 | - |
 
 The R items come from a re-read after the V and I fixes landed - see
 [Second pass](#second-pass-after-bbdba62). V8 and V9 come from a later read of
@@ -61,6 +62,13 @@ I16 to I20 come from a read of the spotlight layer on
 visual defect, so it adds no V item: the solved strip bound the whole renderer
 rests on was verified offscreen and holds. Its design and the verification
 behind it live in `spotlight-renderer-plan.md`.
+
+I21 to I24 come from a memory review of `NeonRenderer` - see
+[Twelfth pass](#twelfth-pass-the-memory-review). Three of the four turned out
+to live outside that renderer, in `lib/CMakeLists.txt` and the shared GL
+wrappers, which is the finding behind the finding: the neon layer's own GPU
+footprint is 13.7 KiB and the thing worth watching there is
+`NeonConfig::resolutionScale` and nothing else.
 
 V11 comes from a spotlight artefact reported from a render - see
 [Eighth pass](#eighth-pass-the-spotlight-banding-report). It is the visual item
@@ -2443,6 +2451,185 @@ gathered and pointwise coverages are both identically 1.0 and no amount of
 probing can tell them apart. The scene set it was measured on had no partial
 arc in it. A fix that changes how a field is built has to be re-probed against
 the gating that scales it, not only against the geometry it was built for.
+
+---
+
+## Twelfth pass (the memory review)
+
+A read of `NeonRenderer` asking one question - where does this layer's memory
+actually go - which turned out to be answered mostly outside the renderer. The
+GPU side came out clean and is recorded here as a baseline rather than a
+finding: at `resolutionScale` 1.0 the whole renderer holds **13.7 KiB** of GL
+objects (emission table 2,048 B, three LUT textures 9,216 B, three UBOs
+2,336 B, three VBOs ~430 B), and `mScaledBuffer` - the one allocation that is
+not a handful of KB - is already released by `OnConfigChanged` the moment a
+config stops wanting it.
+
+| viewport | scale 1.0 | 0.75 | 0.5 | 0.25 |
+| -------- | --------- | ---- | --- | ---- |
+| 1920x1080 | 0 | 4.45 MiB | 1.98 MiB | 506 KiB |
+| 3840x2160 | 0 | 17.8 MiB | 7.91 MiB | 1.98 MiB |
+
+That ratio is the useful fact: at 0.5 on 1080p the scaled buffer is **148x
+everything else the renderer owns on the GPU combined**. Tuning `numSamples`,
+`MAX_ARCS` or `gradientLutSize` for memory is not worth doing; `resolutionScale`
+is the only knob here that moves a megabyte.
+
+The four items below are the ones that were worth changing. None of them is a
+visual defect, so this pass adds no V item - and all four were verified
+pixel-identical on a fifteen-scene offscreen set covering both neon resolution
+paths, all three glow sides, both cutoffs, every opaque mode, the droplets,
+the flare at both scales, the spotlight and the debug overlays.
+
+Two items found and NOT changed, so nobody re-finds them as defects: the
+segment and arc atlases are always baked at full height (`MAX_SEGMENT_BOOSTS` /
+`MAX_ARCS` = 8 rows, 4 KiB each, so the default config's single arc leaves 7/8
+of both as zeros) - sizing them to the live count would break the shaders'
+`rowY = (i + 0.5) / MAX_ARCS` row addressing, which is a real trade rather than
+a free win; and `GradientRingLUT`'s vectors only ever grow, so lowering
+`gradientLutSize` from 256 to 32 shrinks the texture but not the CPU side.
+That second one is latent - nothing in the demo or the C ABI reaches it - and
+is recorded here rather than fixed.
+
+### I21. The embedded shaders were 85% comment text - FIXED
+
+`lib/CMakeLists.txt` read each shader with `file(READ ...)` and substituted it
+into `shaders.h.in` verbatim, comments and all. The sources are heavily
+commented on purpose - `neon.frag` is 1,645 lines and this document sends
+people to read it - but every one of those bytes was landing in `.rodata` of
+both libraries and both demos, and being handed to the driver's GLSL compiler
+at `Initialize`.
+
+Measured by extracting each embedded string and stripping comments from it:
+
+| symbol | embedded | GLSL only | |
+| ------ | -------- | --------- | - |
+| `NEON_FRAG_SRC` | 126,408 | 18,956 | 15% |
+| `NEON_EMISSION_FRAG_SRC` | 41,114 | 4,352 | 11% |
+| `BLACK_RECT_FRAG_SRC` | 15,061 | 2,274 | 15% |
+| `NEON_BLIT_FRAG_SRC` | 5,874 | 1,113 | 19% |
+
+`neon-renderer.cpp.o` carried a **190,693-byte `__cstring` section, 70% of the
+whole library's string data**. Most of it is one file counted twice:
+`neon-tuning.h` is 32,393 bytes carrying 1,199 bytes of `#define`, and
+`@NEON_TUNING@` injects it into both `neon.frag` and `neon-emission.frag`.
+
+**Fixed** by a `read_shader_source` function that strips `//` comments before
+`configure_file` sees the text - the files on disk are untouched, and the C++
+side still `#include`s the tuning headers as normal commented C++.
+
+| | before | after | |
+| - | ------ | ----- | - |
+| `shaders.h` | 254,719 | 44,767 | -82.4% |
+| all embedded shader strings | 253,045 | 43,093 | -83.0% |
+| `neon-renderer.cpp.o` `__cstring` | 190,693 | 30,920 | -83.8% |
+| all five renderer objects | 272,006 | 52,578 | -80.7% |
+| `libedge-lighting-c.dylib` | 2,860,152 | 2,647,160 | -213 KB |
+
+Two properties of the strip are load-bearing and are documented at the
+function. **Line count is preserved** - a stripped line goes empty rather than
+disappearing, which costs 3,065 bytes against the 210 KB and keeps every line
+number in a driver's shader error log pointing where it pointed before.
+**Only `//` is stripped**: no shader or tuning header uses `/* */` (checked,
+all eighteen files), and one that appeared would survive into the embedded copy
+- valid GLSL, costs bytes, breaks nothing - which is the safe direction to be
+wrong in, where a multi-line handler with its state wrong would eat code. Safe
+on GLSL specifically because the language has no string literals and no line
+continuations, so `//` can only ever start a comment.
+
+Verified three ways: every embedded shader is token-identical with comments and
+whitespace normalised away and every line count unchanged;
+`-DEDGE_LIGHTING_STRIP_SHADER_COMMENTS=OFF` regenerates `shaders.h` byte for
+byte; and the fifteen-scene set renders identically.
+
+### I22. Every uniform lookup built a temporary `std::string`, one character from a malloc - FIXED
+
+`ShaderProgram::getLocation` is handed a `const char *` and looked it up in a
+`std::unordered_map<std::string, GLint>`. `unordered_map` has no heterogeneous
+lookup before C++20, so each call **constructed a temporary `std::string`**
+just to hash it - and the neon pass alone sets ~22 uniforms per frame, on top
+of the emission, blit and fill passes.
+
+That cost nothing, entirely by luck. The longest uniform name in this library
+is `uOutsideCutoffSoftness` at **22 characters**, and libc++'s small-string
+capacity on this toolchain is **exactly 22** (measured: 22 inline, 23 heap). A
+single extra character on any existing uniform - or one new name longer than
+that - would have turned every lookup into a malloc/free pair on the render
+path, with nothing in the build to say so.
+
+**Fixed** by making the map `std::map<std::string, GLint, std::less<>>`.
+`std::less<>` is transparent, so `find(const char *)` builds no temporary at
+any length (verified: zero allocations looking up a 43-character name). The
+trade is a handful of short string compares instead of one hash over the whole
+name, against maps that hold under two dozen entries - not worth measuring in
+either direction. Being unable to allocate is the property bought.
+
+### I23. The glow quad was respecified every frame with bytes that had not moved - FIXED
+
+`VertexArray::SetVertexData` always called `glBufferData`, with no content
+check - unlike `UniformBuffer::SetData`, which has cached its bytes for exactly
+this reason since it was written.
+
+That matters because `setupGeometry`'s dirty set is `intensity`, `lineWidth`,
+`glowRadius`, `bloomStrength` and `filamentFalloff`, and **every one of those
+is an `AnimatableField`**. So the most ordinary animation this library offers
+rebuilds and re-uploads the quad 60 times a second - and there are two common
+configurations where the quad it produces cannot move at all:
+
+- **`GlowSide::INSIDE`**, where `setupGeometry` caps `geomMargin` to
+  `(sideCullPx + GLOW_EDGE_SAFETY) * scale`, a constant (4.0 px at scale 1.0
+  against a default `glowReach` of 312), and with no inside cutoff the hole
+  collapses so the plain six-vertex arm runs. All five inputs can sweep their
+  whole range while the six vertices never change by a bit.
+- **an enabled `outsideCutoff`**, where the margin is pinned at `cutoffCap`.
+
+Counted by swapping glad's `glBufferData` pointer for a counting wrapper, over
+120 frames of an intensity sweep:
+
+| case | before | after |
+| ---- | ------ | ----- |
+| `GlowSide::INSIDE`, quad capped to a constant | 119 calls, 5,712 B | **0, 0** |
+| `outsideCutoff` on, quad capped to the cutoff | 119 calls, 5,712 B | **0, 0** |
+| default, quad genuinely moves | 119 calls, 5,712 B | 119 calls, 5,712 B |
+
+The third row is the important one: the gate does not over-skip. **Fixed** by
+giving `VertexArray` the same memcmp cache `UniformBuffer` has, which also
+covers the fill ring, the droplet band and the debug box. Compared by memcmp on
+the produced bytes rather than by a snapshot of the values they were derived
+from - a snapshot is faster and rots, being the same hazard as a `Config`
+sub-struct whose `operator==` misses a new field, except that the symptom is
+stale geometry rather than a missed rebuild. An allocate-only call
+(`data == nullptr`, which `SpotlightRenderer::ensureBuffer` uses) always
+reaches the driver and drops the cache.
+
+### I24. `GradientRingLUT` held a dead 4 KB fade buffer for the whole run - FIXED
+
+`Bake`'s snap path did `mFrom = mTarget`, commented "so the NEXT change has a
+settled ring to fade from". It does not: the next change is the fade path, and
+that assigns `mFrom = mDisplay`. `mFrom` is read in exactly one place - `Tick`,
+which runs only while `mFading` - so **every value that store ever wrote was
+overwritten before anything could read it**. A dead store, holding
+`gradientLutSize * 16` bytes.
+
+**Fixed** by deleting it and by releasing `mFrom`'s storage (swap-with-empty,
+not `clear()`) when a fade lands. `mFrom` is now empty whenever `mFading` is
+false, and costs one allocation per colour change - a user action - instead of
+4 KB per ring for the whole run. `mDisplay` and `mTarget` stay: the first is
+what is on screen and seeds the next fade, the second is refilled in place by
+the next bake, so freeing it would only buy a reallocation.
+
+Two rings are in play, since `DebugRenderer` bakes its own. Measured end to
+end with `operator new` / `delete` overridden to track outstanding bytes, on a
+neon + debug effect driven through a colour change and out the other side of
+its 0.3 s cross-fade:
+
+| | before | after |
+| - | ------ | ----- |
+| effect live heap, post-fade | 46,822 B | **39,022 B** |
+| allocations per settled frame | 0 | 0 |
+
+-7,800 bytes, net of I22's container change. The second row is worth recording
+on its own: the per-frame path was already allocation-free, and still is.
 
 ---
 

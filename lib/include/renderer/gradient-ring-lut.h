@@ -86,18 +86,28 @@ namespace EdgeLighting
             mBakedStops = stops;
             mBakedSpace = space;
 
-            // Snap paths, all of which re-seed every buffer so the NEXT change
-            // has a settled ring to fade from:
+            // Snap paths, all of which land mDisplay directly on the new ring
+            // so the NEXT change has a settled ring to fade from:
             //   - first bake: there is nothing on screen to fade from;
             //   - no fade requested;
             //   - the width changed, so source and target have different
             //     lengths and cannot be blended element-wise.
+            //
+            // mDisplay is the only buffer a snap has to write. This used to
+            // seed mFrom here as well, "so the NEXT change has a settled ring
+            // to fade from" - but the next change reads mDisplay, not mFrom
+            // (see the fade path below), and mFrom is read in exactly one
+            // place, @ref Tick, which runs only while mFading. So the store
+            // was dead: every value it ever wrote was overwritten by
+            // `mFrom = mDisplay` before anything could read it. Dropping it
+            // means a ring that has never cross-faded never allocates mFrom
+            // at all.
             if (!HasUploaded() || sizeChanged || fadeDuration <= 0.0f)
             {
-                mFrom = mTarget;
                 mDisplay = mTarget;
                 upload(); // sets HasUploaded(), which is what the guards above read
                 mFading = false;
+                releaseFadeSource();
                 return;
             }
 
@@ -147,11 +157,33 @@ namespace EdgeLighting
             {
                 mDisplay = mTarget; // land exactly on the target
                 mFading = false;
+                releaseFadeSource();
             }
             return true;
         }
 
     private:
+        /// Give back mFrom's storage - the fade is over and nothing reads it
+        /// again until the next one starts.
+        ///
+        /// mFrom is the only buffer here whose CONTENTS die with the fade.
+        /// mDisplay is what is on screen and seeds the next fade; mTarget is
+        /// re-filled in place by the next @ref Bake, so freeing it would only
+        /// buy a reallocation. mFrom is different: the next fade assigns
+        /// `mFrom = mDisplay` outright, so holding the old storage saves
+        /// nothing but one allocation per COLOUR CHANGE - a user action - at
+        /// the price of gradientLutSize * 16 bytes held for the whole run.
+        /// At the default 256 that is 4 KB per ring, and there are two rings
+        /// in a default effect (@ref NeonRenderer and @ref DebugRenderer bake
+        /// their own), against a cross-fade whose default duration is 0.3 s.
+        ///
+        /// swap-with-empty, not clear(): clear() keeps the capacity, which is
+        /// the whole thing being given back here.
+        void releaseFadeSource()
+        {
+            std::vector<float>().swap(mFrom);
+        }
+
         /// Quantise mDisplay to RGBA8 and upload it.
         void upload()
         {
@@ -171,8 +203,14 @@ namespace EdgeLighting
         // All three are float RGBA (mSize * 4). Kept in float, not bytes, so a
         // long fade does not accumulate quantisation error step by step - only
         // the upload rounds.
-        std::vector<float> mTarget;        ///< Freshly baked destination ring.
-        std::vector<float> mFrom;          ///< Ring shown when the current fade began.
+        std::vector<float> mTarget; ///< Freshly baked destination ring.
+        /// Ring shown when the current fade began. EMPTY whenever @c mFading
+        /// is false - @ref releaseFadeSource gives its storage back the moment
+        /// a fade lands, and @ref Bake fills it again (from @c mDisplay) only
+        /// when it starts one. Read in @ref Tick and nowhere else, which is
+        /// what makes that safe; do not add a reader outside a live fade
+        /// without seeding it first.
+        std::vector<float> mFrom;
         std::vector<float> mDisplay;       ///< Currently-uploaded (blended) ring.
         std::vector<unsigned char> mBytes; ///< Reused upload scratch.
         int mSize = 0;                     ///< Ring width in texels; 0 until the first bake.

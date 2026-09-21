@@ -7,6 +7,8 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <cstdint>
 #include <cstring>
+#include <functional> // std::less<> - the transparent comparator mLocations needs
+#include <map>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -499,7 +501,28 @@ namespace EdgeLighting
         std::string mName;
 
         // Uniform-location cache: resolves each name exactly once.
-        std::unordered_map<std::string, GLint> mLocations;
+        //
+        // std::map with a TRANSPARENT comparator, not unordered_map, and the
+        // reason is allocation rather than ordering. @ref getLocation is
+        // handed a `const char *` and runs ~20 times per program per frame; an
+        // unordered_map keyed on std::string has no heterogeneous lookup
+        // before C++20, so every one of those calls CONSTRUCTED A TEMPORARY
+        // std::string just to hash it. That was free only by luck: the longest
+        // uniform name in this library is `uOutsideCutoffSoftness` at 22
+        // characters, and libc++'s small-string capacity here is exactly 22
+        // (measured), so the temporary fitted inline with nothing to spare. A
+        // 23-character name - one more character on any existing uniform -
+        // would have turned every lookup into a malloc/free pair on the render
+        // path, with nothing in the build to say so.
+        //
+        // std::less<> makes find(const char *) heterogeneous, so no temporary
+        // is built at any length (verified: zero allocations looking up a
+        // 43-character name). The cost is a handful of short string compares
+        // instead of one hash over the whole name, against maps this size -
+        // every program here resolves under two dozen uniforms - which is not
+        // a trade worth measuring in either direction. Being unable to
+        // allocate is the property being bought.
+        std::map<std::string, GLint, std::less<>> mLocations;
 
         // Last-uploaded value caches, keyed by uniform location.
         std::unordered_map<GLint, int> mCacheInt;
