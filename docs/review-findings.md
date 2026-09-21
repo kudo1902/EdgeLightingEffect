@@ -2329,6 +2329,123 @@ it is expressed in.
 
 ---
 
+## Eleventh pass (the shape-cut report)
+
+One finding, reported as a configuration dump plus a capture - "there is shape
+cut in this case" - and like V10, V12 and V13 it is a defect in an earlier
+pass's own fix. V4 made the halo and bloom a sum over the emitter's pieces so
+the FIELD had no medial-axis crease. What SCALES that field stayed a
+nearest-point read, so the crease came straight back through the magnitude
+whenever part of the perimeter was dark.
+
+### V14. The glow's magnitude is a nearest-point read, so a partly lit perimeter cuts it along the medial axis - FIXED
+
+**Confirmed, from the reported config.** 1920x1080 at (960, 540),
+`cornerRadius` 0, CW, `lineWidth` 2, `glowRadius` 11, `bloomStrength` 0.3,
+`glowSide` BOTH, both cutoffs off, **no arcs**, one segment boost at position
+0.14, length 0.17, boost 4 with its own single white stop. Captured at
+3840x2160.
+
+The interior glow is a trapezoid with hard 45-degree sides running in from the
+top corners and a flat bottom at the half-height line - exactly the Voronoi
+cell of the top edge. Down the rect's centre column the glow decays smoothly
+from 224 just inside the edge to **41 at y = 1079**, and is **8 (background) at
+y = 1081**. Left, right and bottom carry nothing at all.
+
+It is not specific to segments, and it is not specific to a ring with no arcs.
+A plain half-ring arc renders its whole glow as a hard-edged polygon, and a
+segment on a fully lit ring - the ordinary "tracer on a lit ring" case - cuts a
+pentagon out of the interior:
+
+| before | after |
+| ------ | ----- |
+| ![](images/review-findings/glow-coverage-polygon.png) | ![](images/review-findings/glow-coverage-polygon-fixed.png) |
+| ![](images/review-findings/glow-coverage-segment.png) | ![](images/review-findings/glow-coverage-segment-fixed.png) |
+
+**Mechanism.** `emitGlow` scaled the analytic halo and bloom by `emitCover` /
+`emitCoverAll`, and both are functions of `sPos = perimeterPosition(vPos)` -
+the fragment's NEAREST perimeter point. That map JUMPS across the medial axis,
+where the nearest edge changes: directly under the segment `sPos` flips from
+the top edge to the bottom edge over one pixel, and the coverage read there
+flips with it. A smooth field times a jumping scalar is a jumping field.
+
+The pointwise read is right for the FILAMENT, which lives on the perimeter and
+needs coverage exact at its own position - that is what V2's corner wedge and
+V9's tracer quantisation are about. It is wrong for the halo and bloom, which
+are integrals over the WHOLE emitter. What belongs there is the coverage
+averaged over that same integral:
+
+```
+INTEGRAL cover(s) * K(|p - P(s)|) ds  ~=  cover_mean(p) * INTEGRAL K ds
+```
+
+**Fix.** Accumulate `wsumAll = SUM g` in the colour gather - one add per
+iteration, no extra fetch - and take the two ratios the loop already has the
+numerators for:
+
+```
+emitCoverGathered = wsumLit  / wsumAll     // arc coverage x intensity
+segCoverGathered  = wsumSegW / wsumAll     // segment boost x bell
+```
+
+Each is the g-weighted mean of that coverage over the perimeter, so it is
+smooth by construction: every sample contributes at every fragment and nothing
+switches. `emitGlow` takes the gathered pair; `emitFil` keeps the pointwise
+one. Two divides rather than a shared reciprocal, so the fully lit ring lands
+on exactly 1.0.
+
+**Measured**, ten scenes, before against after:
+
+| scene | changed px | mean abs diff | max |
+| ----- | ---------- | ------------- | --- |
+| full-ring | 1 of 2,073,600 | 0.000 | 1 |
+| full-ring-rounded | 8 | 0.000 | 1 |
+| small-rect | 1 | 0.000 | 1 |
+| inside-cutoff | 5 | 0.000 | 1 |
+| scale-half | **0** | 0.000 | 0 |
+| reported-segment | 79.11% | 4.074 | 33 |
+| quarter-arc | 99.92% | 13.127 | 130 |
+| half-ring | 99.80% | 12.816 | 145 |
+| two-arcs | 99.23% | 15.168 | 146 |
+| ring-plus-segment | 99.72% | 6.193 | 72 |
+
+**Every full-ring scene is unchanged** - at most 8 pixels of 2 million move, all
+by 1/255 in one channel, which is the compiler re-associating the surrounding
+expression and not the ratio. That is the invariant the fix rests on: a fully
+lit ring carries `arcW = 1` at every sample, so `wsumLit` and `wsumAll` are the
+same sum term for term and the ratio is exactly the 1.0 the pointwise read
+returned. The two only diverge where the perimeter is partly dark.
+
+The filament is untouched (252 at the line, 246 one pixel off it, before and
+after) and the near-field halo moves by single levels (184 -> 176 forty pixels
+out). The change grows with distance, which is the point: on the reported
+config the centre column now reads 94, 33, 22, 20, 18, 18, 17, 14, 13, 12, 10,
+9 from y = 700 to the bottom edge - monotone, with no step anywhere. On the
+`ring-plus-segment` column through the segment it goes 146, 137, 125, 110, 97,
+85, 76, 69, 59 where before it sat flat at 105 to 150 and then stepped to 44.
+
+**Cost.** 6.508 -> 6.625 ms, **+1.8%**, on the rounded 960x540 / `glowRadius`
+60 / one-segment scene at 1920x1080, nine rounds of 60 frames, medians.
+
+**Known limit, deliberate.** Colour-stop ALPHA is not in the gathered pair.
+`neon-emission.frag`'s two alpha channels carry `arcW` and `bellSum` without
+it, and adding it needs a third table row and so a third `texelFetch` in the
+hottest loop in the pipeline - the same loop where the sixth pass measured a
+per-iteration branch costing as much as the fetch it skipped. The pointwise
+alpha still gates the filament exactly and still reaches the glow through the
+emission colour; what an alpha-faded stretch keeps is its share of the
+halo/bloom pedestal. An alpha ramp therefore fades the glow's magnitude less
+completely than an arc gate does. Nobody has reported it, and the cure is a
+measurable 20-30% on the layer.
+
+**What let this through**: V4 was verified on a FULLY LIT ring, where the
+gathered and pointwise coverages are both identically 1.0 and no amount of
+probing can tell them apart. The scene set it was measured on had no partial
+arc in it. A fix that changes how a field is built has to be re-probed against
+the gating that scales it, not only against the geometry it was built for.
+
+---
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
@@ -2345,6 +2462,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | V4 | fixed | the premise was wrong: `ad` never needed softening, one infinite-line term was being evaluated where four finite-segment ones belong |
 | V10 | fixed | V4's own unmodelled corner: the straights ran past the tangent point, so a phantom emitter lit the outside of every rounded corner |
 | V12 | fixed | V10's own unmodelled centre: the developed arc ran at rate `r`, which is right only on the arc, so it creased and under-counted at each arc's centre of curvature |
+| V14 | fixed | V4's third half: the halo/bloom FIELD lost its medial-axis crease, but the nearest-point coverage that SCALES it kept one, so any partly lit perimeter cut the glow to a hard-edged polygon |
 | V13 | fixed | V4's other half: the sampling floor was a fixed half width, so at a soft falloff - where sigma multiplies a 64-sigma tail - it doubled the filament to buy five levels of peak |
 | V5 | residual, documented | closing it means plumbing pixel-space feathers into the pre-pass for an effect nobody has reported; read V9 alongside it, which measures the other half of the same mechanism |
 | I2 | declined | negligible measured-by-structure win against a real staleness-bug risk |

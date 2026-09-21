@@ -923,6 +923,11 @@ void main() {
     vec3  segAcc    = vec3(0.0); // segment colour x bell x gather weight
     float wsumLit   = 0.0; // SUM ARC-GATED g     - normalises `col` (see below)
     float wsumSegW  = 0.0; // SUM SEGMENT bell*g  - normalises the segment hue
+    // SUM UNGATED g. One add per iteration, and it buys the GLOW's magnitude:
+    // wsumLit / wsumAll and wsumSegW / wsumAll are the g-weighted MEANS of the
+    // two coverages over the perimeter, which is what the halo and bloom have
+    // to be scaled by. See the glow-coverage block below the gather.
+    float wsumAll   = 0.0;
 
     // Runtime loop bound, from NeonConfig::numSamples. The UBO behind
     // uLoopSamples is always NEON_MAX_LOOP_SAMPLES long, so this only ever
@@ -1005,6 +1010,8 @@ void main() {
             // every segment, so the old inner loop collapses to one add each.
             segAcc   += e1.rgb * g;
             wsumSegW += e1.a   * g;
+
+            wsumAll  += g;
         }
     } else {
         // No segments: row 1 is all zeros, so the fetch and the two adds it
@@ -1019,6 +1026,7 @@ void main() {
 
             acc      += e0.rgb * g;
             wsumLit  += e0.a   * g;
+            wsumAll  += g;
         }
     }
 
@@ -1145,13 +1153,69 @@ void main() {
         }
         segCoverPt += seg.z * exp(-e * e) * sA;
     }
-    float emitCoverAll = max(emitCover, min(segCoverPt, 1.0));
 
     // Attach the segments' magnitude to their hue. Unclamped on purpose: boost
     // above 1 must still brighten, as it did when the gather's `bell` carried
-    // the magnitude. (emitCoverAll's min(.., 1.0) only bounds the shared
+    // the magnitude. (glowCoverAll's min(.., 1.0) below only bounds the shared
     // halo/bloom reach - it is not the segment's brightness.)
     vec3 segCol = segColHue * segCoverPt;
+
+    // --- GLOW coverage: the same two magnitudes, GATHERED ------------------
+    // The halo and bloom are integrals over the WHOLE emitter (see the block
+    // below), so what scales them has to be the emitter's coverage AVERAGED
+    // over that same integral - not the coverage at this fragment's nearest
+    // perimeter point.
+    //
+    // The pointwise pair above is a function of sPos, and sPos is a
+    // NEAREST-POINT map: it JUMPS across the medial axis, where the nearest
+    // edge changes. Scaling a smooth field by a jumping scalar hands the glow
+    // the medial axis as a visible boundary - hard 45-degree creases in from
+    // every corner and a flat cut along the half-min extent, with the glow at
+    // full strength on one side and zero on the other. Measured on a
+    // 1920x1080 rect with one boosted segment on the top edge: 41 at the
+    // half-height line, 8 (background) one pixel below it. A half-ring arc
+    // renders its glow as a hard-edged polygon for the same reason.
+    //
+    // This is V4 one level up. That fix made the halo/bloom SHAPE a sum over
+    // the emitter's pieces so the FIELD had no crease; the MAGNITUDE scaling
+    // it stayed a nearest-point read, so the crease came back through it
+    // whenever part of the perimeter was dark.
+    //
+    // ratio, not a second gather: the loop already accumulates SUM(cover * g);
+    // dividing by SUM(g) turns each into the g-weighted mean of that coverage
+    // over the perimeter, which is exactly the coverage term of
+    //
+    //     INTEGRAL cover(s) * K(|p - P(s)|) ds  ~=  cover_mean(p) * INTEGRAL K ds
+    //
+    // the closed forms below evaluate with cover == 1. Smooth by construction:
+    // every sample contributes at every fragment, so nothing switches.
+    //
+    // A FULLY LIT RING IS UNCHANGED: every sample then carries arcW = 1, so
+    // wsumLit and wsumAll are the same sum term for term and the ratio is
+    // exactly the 1.0 the pointwise read returns. The two only diverge where
+    // the perimeter is partly dark, which is the case this fixes. Measured
+    // over five full-ring scenes (sharp, rounded, small rect, inside cutoff,
+    // resolutionScale 0.5): at most 8 pixels of 2,073,600 move, all by 1/255
+    // in one channel, which is the compiler re-associating the surrounding
+    // expression rather than this ratio.
+    //
+    // Colour-stop ALPHA is NOT in this pair: neon-emission.frag's two alpha
+    // channels carry arcW and bellSum without it, and adding it would need a
+    // third row and so a third texelFetch in the hottest loop in the pipeline.
+    // The pointwise alpha still gates the filament exactly, and still gates
+    // the glow through the emission colour; what an alpha-faded stretch keeps
+    // here is its share of the halo/bloom pedestal. See
+    // docs/review-findings.md.
+    //
+    // Two divides rather than one reciprocal and two multiplies: the fully lit
+    // ring above rests on wsumLit / wsumAll being exactly 1.0 when the two
+    // sums are equal, and x * (1.0 / x) is not. Outside the loop, so it costs
+    // one extra divide per fragment, not per sample.
+    float wsumDen           = max(wsumAll, WSUM_EPSILON);
+    float emitCoverGathered = wsumLit  / wsumDen; // arc coverage x intensity
+    float segCoverGathered  = wsumSegW / wsumDen; // segment boost x bell
+    vec3  segColGlow        = segColHue * segCoverGathered;
+    float glowCoverAll      = max(emitCoverGathered, min(segCoverGathered, 1.0));
 
     // Sharp gate for the SDF-derived filament, from the same two pointwise
     // coverages. Both are exact at this fragment's perimeter position, so
@@ -1380,11 +1444,17 @@ void main() {
     vec3 arcCol = col * uIntensity;
 
     // filamentGate is the segment's SHARP gate (smoothstep 0.5..1) maxed with
-    // emitCover; emitCoverAll is the soft one. Applied to segCol only - the arc
-    // takes emitCover directly in both, since for an arc the two gates were
-    // just emitCover anyway.
-    vec3 emitFil  = arcCol * emitCover + segCol * filamentGate;
-    vec3 emitGlow = arcCol * emitCover + segCol * emitCoverAll;
+    // emitCover; glowCoverAll is the soft one. Applied to the segment term
+    // only - the arc takes its own coverage directly in both, since for an arc
+    // the two gates were just that coverage anyway.
+    //
+    // THE TWO TAKE DIFFERENT COVERAGES, and that is the point. The filament is
+    // an SDF-derived line: it lives ON the perimeter, so it wants the
+    // POINTWISE pair, exact at this fragment's own perimeter position. The
+    // halo and bloom are integrals over the whole emitter, so they want the
+    // GATHERED pair - see the glow-coverage block above the halo.
+    vec3 emitFil  = arcCol * emitCover           + segCol     * filamentGate;
+    vec3 emitGlow = arcCol * emitCoverGathered   + segColGlow * glowCoverAll;
 
     vec3 result  = emitFil  * core  * FILAMENT_GAIN  * lineGate;
     result      += emitGlow * halo  * HALO_GAIN      * glowGate;
