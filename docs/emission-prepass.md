@@ -425,7 +425,7 @@ Practical consequences:
   table has to be sample `i` in the gather; both go through
   `GetClampedNumSamples` for exactly that reason.
 - **Adding a shader means three edits** - `lib/CMakeLists.txt`
-  (`CMAKE_CONFIGURE_DEPENDS` and `file(READ ...)`) plus `shaders/shaders.h.in`.
+  (`CMAKE_CONFIGURE_DEPENDS` and `read_shader_source`) plus `shaders/shaders.h.in`.
   `neon-emission.frag` needs `@NEON_TUNING@` because it uses `MAX_ARCS`,
   `MAX_SEGMENT_BOOSTS` and `NEON_MAX_LOOP_SAMPLES`.
 

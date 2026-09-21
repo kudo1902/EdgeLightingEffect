@@ -176,17 +176,31 @@ directory to ship.
 
 - `@GLSL_VERSION@` supplies the version line (`330 core` on desktop,
   `300 es` on the mobile branches).
-- `@NEON_TUNING@` injects [`renderer/neon-tuning.h`](../lib/include/renderer/neon-tuning.h)
-  verbatim, so tuning constants are shared between shader and C++ and cannot
+- `@NEON_TUNING@` injects [`renderer/neon-tuning.h`](../lib/include/renderer/neon-tuning.h),
+  so tuning constants are shared between shader and C++ and cannot
   drift. That is why the file is `#define`-based: GLSL ES 3.00 has no
   `constexpr` and rejects the `f` literal suffix, so plain macros are the only
   form valid in both languages.
+- **`//` comments are stripped on the way in.** Every shader and tuning header
+  is read through `read_shader_source`, which removes them before
+  `configure_file` sees the text - the files on disk keep every comment, the
+  embedded copies carry none. `shaders.h` goes 254,719 -> 44,767 bytes, and
+  `neon-renderer.cpp.o`'s `__cstring` section 190,693 -> 30,920, because the
+  four neon shaders were embedding 188 KB to deliver 27 KB of GLSL and
+  `neon-tuning.h` (32,393 bytes, 1,199 of them `#define`) is injected twice.
+  Line count is preserved on purpose, so a driver's shader error log still
+  names the same line as the commented file on disk. `/* */` is left alone -
+  nothing uses it, and one that appeared would survive into the embedded copy
+  rather than risk a multi-line handler eating code.
+  `-DEDGE_LIGHTING_STRIP_SHADER_COMMENTS=OFF` regenerates the pre-strip
+  header byte for byte.
 - `CMAKE_CONFIGURE_DEPENDS` lists every shader plus `neon-tuning.h`, so editing
   any of them re-configures on the next build.
 
 **Adding a shader means updating three places**: the `CMAKE_CONFIGURE_DEPENDS`
-list and the `file(READ ...)` list in `lib/CMakeLists.txt`, and
-`lib/shaders/shaders.h.in`.
+list and the `read_shader_source` list in `lib/CMakeLists.txt`, and
+`lib/shaders/shaders.h.in`. Use `read_shader_source`, not `file(READ ...)`, or
+the new shader ships its comments.
 
 Bulk data reaches the shader three ways:
 

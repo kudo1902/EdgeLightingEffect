@@ -53,38 +53,96 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/spotlight-tuning.h"
 )
 
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/wireframe.vert" WIREFRAME_VERT_CONTENT)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/wireframe.frag" WIREFRAME_FRAG_CONTENT)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.vert" NEON_VERT_CONTENT)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.frag" NEON_FRAG_CONTENT)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-emission.frag" NEON_EMISSION_FRAG_CONTENT)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-blit.frag" NEON_BLIT_FRAG_CONTENT)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/black-rect.frag" BLACK_RECT_FRAG_CONTENT)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-lut-debug.frag" NEON_LUT_DEBUG_FRAG_CONTENT)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-stop-marker.frag" NEON_STOP_MARKER_FRAG_CONTENT)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/droplets.frag" DROPLETS_FRAG_CONTENT)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lens-flare.vert" LENS_FLARE_VERT_CONTENT)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lens-flare.frag" LENS_FLARE_FRAG_CONTENT)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight.vert" SPOTLIGHT_VERT_CONTENT)
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight.frag" SPOTLIGHT_FRAG_CONTENT)
+# ---------------------------------------------------------------------------
+# Shader embedding: read, strip comments, substitute into shaders.h.in
+# ---------------------------------------------------------------------------
+# The sources under shaders/ are heavily commented on purpose - neon.frag is
+# 1645 lines and the docs send people to read it - but every one of those bytes
+# would otherwise be embedded verbatim in shaders.h, shipped in .rodata of both
+# libraries and both demos, and handed to the driver's GLSL compiler at
+# Initialize. Measured before this strip: the four neon shaders plus the two
+# injections of neon-tuning.h came to 188,379 bytes of string data carrying
+# 26.7 KB of actual GLSL - 85% comment text. neon-renderer.cpp.o alone had a
+# 190,693-byte __cstring section, 70% of the whole library's string data.
+#
+# So the ON-DISK files keep every comment and the EMBEDDED copies get none.
+option(EDGE_LIGHTING_STRIP_SHADER_COMMENTS
+       "Strip // comments from the embedded shader sources (not from the files on disk)." ON)
+
+# Read a GLSL source (or an injected tuning header) and strip its comments.
+#
+# LINE COUNT IS PRESERVED - a stripped line becomes empty, it does not
+# disappear. That is the whole reason blank lines are not also collapsed, and
+# it costs 3,065 bytes across all eighteen files against a 179 KB saving:
+# every GLSL compile error the driver reports keeps pointing at the same line
+# it pointed at before this strip, so a shader error log still reads against
+# the commented file on disk. Collapse the blanks as well and every line
+# number in every error message shifts by an amount that depends on where in
+# the file the error is.
+#
+# Only `//` comments are stripped. Nothing here uses `/* */` - checked, all
+# eighteen files - and a block comment that did appear would simply survive
+# into the embedded copy, which is valid GLSL and costs bytes but breaks
+# nothing. That is the safe direction to be wrong in; a multi-line handler
+# that got its state wrong would eat code instead. The negated class `[^\n]*`
+# is what confines each match to its own line, since CMake's `.` does not.
+#
+# Safe on GLSL specifically because the language has no string literals and no
+# line continuations, so `//` can never be anything but the start of a comment
+# (verified: no backslash appears in any shader source).
+function(read_shader_source PATH OUT_VAR)
+    file(READ "${PATH}" _src)
+    if(EDGE_LIGHTING_STRIP_SHADER_COMMENTS)
+        string(REGEX REPLACE "//[^\n]*" "" _src "${_src}")
+        # Drop the whitespace a stripped trailing comment leaves behind, plus
+        # any that was already there. The newline itself is what stays.
+        string(REGEX REPLACE "[ \t]+\n" "\n" _src "${_src}")
+        string(REGEX REPLACE "[ \t]+$" "" _src "${_src}")
+    endif()
+    set(${OUT_VAR} "${_src}" PARENT_SCOPE)
+endfunction()
+
+read_shader_source("${CMAKE_CURRENT_SOURCE_DIR}/shaders/wireframe.vert" WIREFRAME_VERT_CONTENT)
+read_shader_source("${CMAKE_CURRENT_SOURCE_DIR}/shaders/wireframe.frag" WIREFRAME_FRAG_CONTENT)
+read_shader_source("${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.vert" NEON_VERT_CONTENT)
+read_shader_source("${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.frag" NEON_FRAG_CONTENT)
+read_shader_source("${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-emission.frag" NEON_EMISSION_FRAG_CONTENT)
+read_shader_source("${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-blit.frag" NEON_BLIT_FRAG_CONTENT)
+read_shader_source("${CMAKE_CURRENT_SOURCE_DIR}/shaders/black-rect.frag" BLACK_RECT_FRAG_CONTENT)
+read_shader_source("${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-lut-debug.frag" NEON_LUT_DEBUG_FRAG_CONTENT)
+read_shader_source("${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-stop-marker.frag" NEON_STOP_MARKER_FRAG_CONTENT)
+read_shader_source("${CMAKE_CURRENT_SOURCE_DIR}/shaders/droplets.frag" DROPLETS_FRAG_CONTENT)
+read_shader_source("${CMAKE_CURRENT_SOURCE_DIR}/shaders/lens-flare.vert" LENS_FLARE_VERT_CONTENT)
+read_shader_source("${CMAKE_CURRENT_SOURCE_DIR}/shaders/lens-flare.frag" LENS_FLARE_FRAG_CONTENT)
+read_shader_source("${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight.vert" SPOTLIGHT_VERT_CONTENT)
+read_shader_source("${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight.frag" SPOTLIGHT_FRAG_CONTENT)
+
+# The four tuning headers go through the same strip, and they are where most of
+# it is won: neon-tuning.h is 32,393 bytes carrying 1,199 bytes of #define, and
+# it is injected TWICE (neon.frag and neon-emission.frag). Stripping is also
+# what keeps the shader body's line numbers where they were - the header sits
+# above it, so its line count is the offset every line below inherits.
+#
+# The C++ side is untouched: the renderers #include these headers as normal
+# commented C++, and only the copy embedded in shaders.h is stripped.
 
 # Shared neon tuning #defines, injected into the single-pass neon shaders via
 # @NEON_TUNING@ in shaders.h.in (also #included by the C++ renderers).
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/neon-tuning.h" NEON_TUNING)
+read_shader_source("${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/neon-tuning.h" NEON_TUNING)
 
 # Shared droplet band #defines, injected into droplets.frag via
 # @DROPLETS_TUNING@ in shaders.h.in (also #included by the C++ renderer).
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/droplets-tuning.h" DROPLETS_TUNING)
+read_shader_source("${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/droplets-tuning.h" DROPLETS_TUNING)
 
 # Shared ghost-term #defines, injected into lens-flare.frag via
 # @LENS_FLARE_TUNING@ in shaders.h.in (also #included by the C++ renderer,
 # which derives the ghost support bounds from them).
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/lens-flare-tuning.h" LENS_FLARE_TUNING)
+read_shader_source("${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/lens-flare-tuning.h" LENS_FLARE_TUNING)
 
 # Shared spotlight falloff #defines, injected into spotlight.frag via
 # @SPOTLIGHT_TUNING@ in shaders.h.in (also #included by the C++ renderer,
 # which solves each lamp's support from the same falloff).
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/spotlight-tuning.h" SPOTLIGHT_TUNING)
+read_shader_source("${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/spotlight-tuning.h" SPOTLIGHT_TUNING)
 
 set(SHADER_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 configure_file(
