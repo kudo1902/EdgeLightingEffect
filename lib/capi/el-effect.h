@@ -95,9 +95,21 @@ extern "C"
      *  @details @c enable = 0 leaves the interior uncapped (natural halo/bloom
      *           decay bounds the emission). @c size is the pixel distance from
      *           the rect edge to the cutoff boundary along the interior side
-     *           (always positive). @c softness is the feather width in pixels
-     *           at the boundary (0 = hard, larger = smoother fade). Also caps
-     *           the geometric footprint of @c INSIDE / @c BOTH opaque fills. */
+     *           (always positive). @c softness is the TOTAL feather width in
+     *           pixels, centred on the boundary: 0 is a pixel-tight edge, not a
+     *           hard one, because the ramp is floored at one destination pixel
+     *           so the boundary is antialiased where it curves. Also caps the
+     *           geometric footprint of @c INSIDE / @c BOTH opaque fills.
+     *
+     *           NOTE the shader used to spread this over 2x the stated width
+     *           and to apply it ahead of the tone map; a tuned non-zero value
+     *           now feathers over half the span it used to.
+     *
+     *           A cutoff on the side the glow side already culls does nothing
+     *           to the glow and is ignored: OUTSIDE subsumes the inside cutoff,
+     *           INSIDE subsumes the outside one. It still bounds the opaque
+     *           fill, which has no notion of a glow side. See
+     *           docs/glow-side-comparison.md. */
     EL_API el_result_e el_effect_set_inside_cutoff(el_effect_handle_t effect,
                                                    el_bool_t enable, float size, float softness);
     EL_API el_result_e el_effect_get_inside_cutoff(el_effect_handle_t effect,
@@ -149,8 +161,18 @@ extern "C"
     EL_API el_result_e el_effect_set_glow_side(el_effect_handle_t effect, el_glow_side_e side);
     EL_API el_result_e el_effect_get_glow_side(el_effect_handle_t effect, el_glow_side_e *outSide);
 
-    /** @brief Set the softness of the one-sided cut in pixels.
-     *  @details Ignored when the glow side is BOTH. 0 = hard edge. */
+    /** @brief TOTAL feather width of the one-sided cut, in pixels, measured
+     *         from the rect edge into the lit side.
+     *  @details Ignored when the glow side is BOTH. 0 is a pixel-tight edge,
+     *           NOT a hard one: the ramp is floored at one destination pixel so
+     *           the cut is antialiased, which is what stops it stair-stepping
+     *           wherever the edge curves. Measured in DESTINATION pixels at
+     *           every resolution scale, so the feather is scale invariant.
+     *
+     *           The cut is coverage applied to the graded output, so a non-zero
+     *           value fades the layer rather than dimming its emission into the
+     *           tone map. A value tuned before that changed reads dimmer and
+     *           wider. See docs/glow-side-comparison.md. */
     EL_API el_result_e el_effect_set_glow_side_softness(el_effect_handle_t effect, float softness);
     EL_API el_result_e el_effect_get_glow_side_softness(el_effect_handle_t effect, float *outSoftness);
 

@@ -207,9 +207,23 @@ Which side of the perimeter line the halo + bloom are allowed to spill onto.
   like a "sign lit from behind the frame".
 
 **`neon.glowSideSoftness`** (default 0)
-Softness of the one-sided cut in pixels. `0` = hard edge along the axis;
-`~2` = a subtle feather to hide the aliased transition. Ignored when
+TOTAL feather width of the one-sided cut, in pixels, measured from the rect
+edge into the lit side. `0` = a pixel-tight edge - not a hard one: the ramp is
+floored at one destination pixel, so the cut is antialiased against the same
+`d = 0` edge the opaque fill box-filters. `~2` = a subtle feather. Ignored when
 `glowSide == BOTH`.
+
+The cut is coverage, applied to the graded output, so the feather fades the
+layer rather than dimming its emission into the tone map. A value carried over
+from before this changed reads dimmer and wider than it used to.
+
+It is measured in **destination** pixels at every `resolutionScale`. Below
+`1.0` the cut is applied by the blit rather than by the gather, for the reason
+in `neon-blit.frag`: the gather's output is upsampled, so an edge drawn in
+buffer pixels is smeared across the line as well as along the lit side. One
+consequence is that the whole parameter is now scale-invariant - the first lit
+pixel reads 37 / 37 / 36 at softness 4 across scales 1.0 / 0.5 / 0.25, where it
+used to read 37 / 129 / 103 and lose its bottom range entirely at 0.25.
 
 ### 3.5 Colour and hue rotation
 

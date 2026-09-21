@@ -25,6 +25,24 @@ namespace EdgeLighting
             return c.enable ? c.size : CUTOFF_DISABLED_SIZE;
         }
 
+        /// Slack, in full-res px, on the bounds @ref NeonRenderer::setupGeometry
+        /// derives for the glow quad's inner hole and for its outer edge under
+        /// GlowSide::INSIDE.
+        ///
+        /// These bounds say where the shader's own discards stop drawing, and
+        /// they are computed from the same expressions - but from a nominal
+        /// one-pixel `fwidth`, where the shader's is 1.0 to 1.41 depending on
+        /// which way the boundary faces. Rounding outward by a few px is free:
+        /// the extra fragments shade to coverage 0, which this pass's
+        /// premultiplied blend leaves the destination untouched by. Rounding
+        /// inward would clip the glow, so this errs outward on purpose, exactly
+        /// as FILL_EDGE_SAFETY does in @ref NeonRenderer::setupFillGeometry.
+        ///
+        /// NOT applied to the outside-cutoff cap, which keeps its own +1: that
+        /// one feeds the shader's fadeStart floor through uQuadMargin, so its
+        /// value is load-bearing beyond bounding the rasteriser.
+        constexpr float GLOW_EDGE_SAFETY = 3.0f;
+
         /// Does this config's opaque fill cover EVERY pixel at coverage 1?
         ///
         /// The question the fill passes actually need answered is not "which
@@ -569,7 +587,7 @@ namespace EdgeLighting
             prevTarget.Restore();
             if (glowReady)
             {
-                renderBlitPass();
+                renderBlitPass(viewportHeight, config);
             }
         }
 
@@ -608,12 +626,28 @@ namespace EdgeLighting
                                    // filamentFalloff sets how many sigmas the filament
                                    // reaches, so it sizes the quad too (see setupGeometry).
                                    config.neon.filamentFalloff != mCurrentConfig.neon.filamentFalloff ||
-                                   config.neon.outsideCutoff != mCurrentConfig.neon.outsideCutoff;
+                                   config.neon.outsideCutoff != mCurrentConfig.neon.outsideCutoff ||
+                                   // glowSide and insideCutoff BOUND THE QUAD NOW. They did not
+                                   // when this gate was written - the quad was rect + glow reach
+                                   // whatever the glow did with its own interior, so both of these
+                                   // moved only the shader's discards. @ref setupGeometry now caps
+                                   // the margin under GlowSide::INSIDE and cuts a hole for the
+                                   // other two, so a change to either has to rebuild it.
+                                   //
+                                   // Missing them does not under-draw, it draws the PREVIOUS
+                                   // config's bound: switching BOTH + insideCutoff 8 to INSIDE with
+                                   // no cutoff kept the ring built for the first and rendered the
+                                   // second through it, holing out 48131 px of lit interior and
+                                   // leaving a 12 px frame of glow round the inside of the edge.
+                                   // The same shape of mistake as adding a field to a Config struct
+                                   // and not to its operator== - see AGENTS.md.
+                                   config.neon.glowSide != mCurrentConfig.neon.glowSide ||
+                                   config.neon.insideCutoff != mCurrentConfig.neon.insideCutoff;
         // The fill ring is bounded by the CUTOFFS and the fill's own feather,
         // not by the glow reach, so it gets its own gate rather than riding on
-        // geometryDirty: insideCutoff, opaqueMode and opaqueSoftness move the
-        // ring but not the glow quad, and glowRadius / bloomStrength move the
-        // glow quad but not the ring.
+        // geometryDirty: opaqueMode and opaqueSoftness move the ring but not
+        // the glow quad, and glowRadius / bloomStrength move the glow quad but
+        // not the ring. The two cutoffs now move both.
         const bool fillDirty = config.geometry != mCurrentConfig.geometry ||
                                config.neon.opaqueMode != mCurrentConfig.neon.opaqueMode ||
                                config.neon.opaqueSoftness != mCurrentConfig.neon.opaqueSoftness ||
@@ -899,35 +933,194 @@ namespace EdgeLighting
         // shader fits between the cutoff boundary and uQuadMargin. Same units
         // on both sides is also what makes the shader's fadeStart floor engage
         // at the same cutoff size regardless of scale.
-        if (config.neon.outsideCutoff.enable)
+        // Mirrors neon.frag's softFloor, which is what actually decides how far
+        // past a cutoff the feather runs and therefore how much quad the shader
+        // needs. The shader floors in BUFFER px, so it is converted back to
+        // full-res here - this whole expression is full-res and scaled once,
+        // per the note above. Leave it out and the quad edge lands inside the
+        // widened feather, which is exactly the rectangular seam the +1 safety
+        // exists to prevent.
+        //
+        // The direct-path arm is a nominal ONE DESTINATION PIXEL, mirroring the
+        // shader's `sideAA` - which is fwidth(d), so it runs 1.0 to 1.41
+        // depending on which way the boundary faces and cannot be known here.
+        // Under-stating it by the diagonal factor is absorbed by the safety
+        // margins, and every bound below is an upper bound on where emission
+        // ends rather than an exact one: a cutoff ramp is centred on its
+        // boundary and so reaches only half its width past it, where the outer
+        // cap still budgets the whole of it. Conservative in the direction that
+        // keeps the quad covering the band.
+        const float softFloor = (scale < 1.0f)
+                                    ? (static_cast<float>(CUTOFF_SOFT_FLOOR_PX) / scale)
+                                    : 1.0f;
+
+        // How far past the rect edge the one-sided cut still draws, on the side
+        // it culls, in FULL-RES px. Mirrors neon.frag's `sideCull`: half a
+        // destination pixel of anti-aliasing reach on the direct path, and on
+        // the scaled path the guard band the blit reconstructs the cut from,
+        // which is stated in BUFFER px and so divides back out. 1.0 covers the
+        // direct-path case including its diagonal.
+        const float sideCullPx = (scale < 1.0f)
+                                     ? (static_cast<float>(BLIT_SIDE_GUARD_PX) / scale)
+                                     : 1.0f;
+
+        // Skipped under GlowSide::INSIDE, where neon.frag neutralises this
+        // cutoff as subsumed by the cut - see the band-distance block there. A
+        // cap derived from a mask the shader no longer applies would bound the
+        // quad to a region the shader still lights, and the region it would eat
+        // is the GUARD BAND: at scale 0.25 with size 0 the cap lands at 1.25
+        // buffer px against the 2.0 the guard asks for.
+        //
+        // That happens to survive, because the cap cannot go below 1 + scale
+        // buffer px (outSoft is floored at CUTOFF_SOFT_FLOOR_PX / scale, which
+        // the trailing * scale turns back into a constant) and the blit's
+        // filter reaches one texel. Surviving by 0.25 px on an accident of two
+        // unrelated constants is not a property worth keeping: change the floor
+        // or the safety term and it goes under with nothing to catch it.
+        if (config.neon.outsideCutoff.enable && config.neon.glowSide != GlowSide::INSIDE)
         {
-            // Mirrors neon.frag's softFloor, which is what actually decides how
-            // far past the cutoff the feather runs and therefore how much quad
-            // the shader needs. The shader floors in BUFFER px, so it is
-            // converted back to full-res here - this whole expression is
-            // full-res and scaled once, per the note above. Leave it out and
-            // the quad edge lands inside the widened feather, which is exactly
-            // the rectangular seam the +1 safety exists to prevent.
-            const float softFloor = (scale < 1.0f)
-                                        ? (static_cast<float>(CUTOFF_SOFT_FLOOR_PX) / scale)
-                                        : static_cast<float>(SIDE_SOFT_EPSILON);
             float outSoft = std::max(config.neon.outsideCutoff.softness, softFloor);
             float cutoffCap = (config.neon.outsideCutoff.size + outSoft + 1.0f) * scale;
             margin = std::min(margin, cutoffCap);
         }
+
+        // uQuadMargin KEEPS THE UNCAPPED VALUE. It is not a description of the
+        // rectangle being drawn; it is the distance the shader fades its
+        // emission out over, and neon.frag's quad-edge fade is written against
+        // the margin the GLOW needs, not the one the rasteriser gets. Feeding
+        // it a capped margin puts the fade's ramp a few px from the rect edge,
+        // where it lands on the lit interior and erases it - measured on a
+        // 300x200 rect at glowRadius 40, glowSide INSIDE: the glow survived to
+        // 11 px inside the edge and was flat black from 13 px in, 48131 pixels
+        // of interior gone. The outside-cutoff cap above has the same shape and
+        // is safe only where the cutoff's own mask HAS taken that region to
+        // zero - which is why it is now skipped on the side glowSide culls,
+        // where the shader neutralises that mask and nothing takes it to zero.
+        //
+        // So the two margins are separated: the shader is told what the glow
+        // does, the rasteriser is told what to cover. They agree except where a
+        // cull makes the second one smaller, and where they disagree the
+        // fragments that go missing are ones the shader discards anyway.
         mQuadMargin = margin;
 
         float halfW = config.geometry.width * 0.5f * scale;
         float halfH = config.geometry.height * 0.5f * scale;
-        float l = -(halfW + margin);
-        float r = halfW + margin;
-        float b = -(halfH + margin);
-        float t = halfH + margin;
 
+        // GlowSide::INSIDE discards every fragment past the rect edge, so the
+        // entire exterior margin is rasterised and thrown away - at glowRadius
+        // 20 on a 900x600 rect that is 1248 px of quad per side, shaded and
+        // discarded, for a lit region that stops at the edge.
+        //
+        // This is the same move @ref setupGeometry already makes for an outside
+        // cutoff, one step further: that one caps the margin the shader sees
+        // too, this one caps only the geometry. The comment at the discards in
+        // neon.frag used to say the one-sided cuts "cull a useful half-band the
+        // quad can't express" - true of OUTSIDE, whose lit region is an
+        // annulus, and false of INSIDE, whose lit region is exactly a quad.
+        // OUTSIDE is handled by the hole below instead.
+        float geomMargin = margin;
+        if (config.neon.glowSide == GlowSide::INSIDE)
+        {
+            geomMargin = std::min(geomMargin, (sideCullPx + GLOW_EDGE_SAFETY) * scale);
+        }
+
+        // How far INWARD the glow still reaches, in full-res px. The quad has
+        // no hole, so until now nothing that bounds the emission from the
+        // inside bought any fill rate at all - the interior was rasterised in
+        // full and discarded a fragment at a time. Two settings do bound it,
+        // they are independent discards in the shader, and a fragment has to
+        // survive both, so the reach is the NEARER of the two.
+        //
+        // A disabled bound contributes nothing and leaves the sentinel, which
+        // collapses the hole below and gives back the plain quad - so the
+        // default config, and every config that lights its own interior, is
+        // untouched.
+        // MUTUALLY EXCLUSIVE, mirroring the cutoff neutralisation in neon.frag:
+        // under GlowSide::OUTSIDE the inside cutoff is subsumed by the cut and
+        // the shader ignores it, so taking a min() with it here would be worse
+        // than pointless. It would shrink the hole to the cutoff's reach while
+        // the shader still lights out to the guard band, and the quad would
+        // clip what the blit reconstructs the cut from - the same dark seam by
+        // a second route. With insideCutoff size 0 at scale 0.25 that put the
+        // hole at 1.25 buffer px against a 2.0 px guard.
+        float innerReach = CUTOFF_DISABLED_SIZE;
+        if (config.neon.glowSide == GlowSide::OUTSIDE)
+        {
+            innerReach = sideCullPx;
+        }
+        else if (config.neon.insideCutoff.enable)
+        {
+            // neon.frag discards at dIn < -inHalf, i.e. d < -(size + inSoft/2).
+            const float inSoft = std::max(config.neon.insideCutoff.softness, softFloor);
+            innerReach = config.neon.insideCutoff.size + 0.5f * inSoft;
+        }
+        const float innerMargin = (innerReach + GLOW_EDGE_SAFETY) * scale;
+
+        const float ow = halfW + geomMargin;
+        const float oh = halfH + geomMargin;
+
+        // HOLE, by the same construction @ref setupFillGeometry uses and for
+        // the same reason: the region the glow cannot reach is the INWARD
+        // parallel curve, a rounded box shrunk by innerMargin with its radius
+        // shrunk to match, and the largest axis-aligned rectangle inside a
+        // rounded box is not the box's own half-extents - its corners have to
+        // clear the corner arc. Cutting it square would carve a wedge out of
+        // each corner of the glow.
+        //
+        // Clamped at zero throughout, which is what absorbs the sentinel: an
+        // inner bound deeper than the rect (or a disabled one) drives both
+        // half-extents to 0, the side strips come out degenerate, and the top
+        // and bottom strips meet at y = 0 to tile the whole quad.
+        constexpr float CORNER_INSET_FACTOR = 0.2928932f; // 1 - 1/sqrt(2)
+        const float radius = GeometryUtils::GetEffectiveCornerRadius(config.geometry) * scale;
+        const float holeRadius = std::max(radius - innerMargin, 0.0f);
+        const float cornerInset = holeRadius * CORNER_INSET_FACTOR;
+        const float iw = std::max(halfW - innerMargin - cornerInset, 0.0f);
+        const float ih = std::max(halfH - innerMargin - cornerInset, 0.0f);
+
+        // No hole to cut: emit the plain quad, byte for byte the geometry this
+        // method has always produced. Kept as its own arm rather than letting
+        // the ring degenerate into it so that every config without an inner
+        // bound - which includes the default - is provably unchanged by this,
+        // rather than relying on the rasteriser's fill rule to make eight
+        // triangles land exactly where two did.
+        if (iw <= 0.0f && ih <= 0.0f)
+        {
+            float l = -ow;
+            float r = ow;
+            float b = -oh;
+            float t = oh;
+
+            // clang-format off
+            float quad[] = {
+                l, t, l, b, r, b,
+                l, t, r, b, r, t,
+            };
+            // clang-format on
+            mGlowVertexArray.SetVertexData(quad, sizeof(quad), GL_DYNAMIC_DRAW);
+            mGlowVertexCount = 6;
+            return;
+        }
+
+        // Four strips that TILE the ring without overlapping - top and bottom
+        // full width, left and right only across the hole's height. Overlap
+        // would matter here exactly as it does for the fill: this pass
+        // composites premultiplied-over, so a fragment covered twice blends
+        // twice and reads denser than the shader's own coverage.
         // clang-format off
         float verts[] = {
-            l, t, l, b, r, b,
-            l, t, r, b, r, t,
+            // top band: y in [ih, oh]
+            -ow, oh,  -ow, ih,   ow, ih,
+            -ow, oh,   ow, ih,   ow, oh,
+            // bottom band: y in [-oh, -ih]
+            -ow, -ih,  -ow, -oh,   ow, -oh,
+            -ow, -ih,   ow, -oh,   ow, -ih,
+            // left band: x in [-ow, -iw], across the hole only
+            -ow, ih,  -ow, -ih,  -iw, -ih,
+            -ow, ih,  -iw, -ih,  -iw,  ih,
+            // right band: x in [iw, ow], across the hole only
+             iw, ih,   iw, -ih,   ow, -ih,
+             iw, ih,   ow, -ih,   ow,  ih,
         };
         // clang-format on
 
@@ -949,6 +1142,7 @@ namespace EdgeLighting
         // may still be reading; a SubData into that same store is what risks
         // an implicit sync. Same reasoning in @ref setupFillGeometry.
         mGlowVertexArray.SetVertexData(verts, sizeof(verts), GL_DYNAMIC_DRAW);
+        mGlowVertexCount = 24;
     }
 
     void NeonRenderer::setupFillGeometry(const Config &config)
@@ -1459,7 +1653,7 @@ namespace EdgeLighting
 
         // Tight glow quad in both modes - opaque's far region is covered by the
         // fill pass, so the gather never runs fullscreen.
-        mGlowVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        mGlowVertexArray.DrawArrays(GL_TRIANGLES, mGlowVertexCount);
         mNeonShader.Unuse();
         return true;
     }
@@ -1675,14 +1869,34 @@ namespace EdgeLighting
         mBlackRectShader.Unuse();
     }
 
-    void NeonRenderer::renderBlitPass()
+    void NeonRenderer::renderBlitPass(int viewportHeight, const Config &config)
     {
         // Bilinear upscaling of premultiplied alpha is fringe-free; the blit
-        // shader is a plain texture read that composites over whatever is on
-        // the target already (the black fill if opaque, the original
-        // background otherwise).
+        // shader composites over whatever is on the target already (the black
+        // fill if opaque, the original background otherwise).
+        //
+        // It also applies the one-sided cut, which is why it takes a config at
+        // all. The cut cannot be made in the gather: that runs at
+        // resolutionScale and the bilinear upsample smears any edge it draws
+        // across 1/scale destination pixels in both directions, which put glow
+        // on the dark side of the line. This pass is full-res, so the cut lands
+        // where the direct path puts it. See neon-blit.frag.
         mBlitShader.Use();
         mBlitShader.SetUniform("uMVP", glm::mat4(1.0f));
+
+        // FULL-RES geometry, and derived here rather than from Render's scaled
+        // transform - the same reasoning, and the same y mirror, as
+        // @ref renderFillPass, which is the other always-full-res pass.
+        // uGlowSideSoftness goes up UNSCALED for the same reason: this pass
+        // measures in destination pixels, the gather measures in buffer ones.
+        const glm::vec2 centerFull(config.geometry.position.x + config.geometry.width * 0.5f,
+                                   static_cast<float>(viewportHeight) - config.geometry.position.y -
+                                       config.geometry.height * 0.5f);
+        mBlitShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
+        mBlitShader.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry));
+        mBlitShader.SetUniform("uRectCenter", centerFull);
+        mBlitShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
+        mBlitShader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness);
 
         // Just bind it. The filter is requested through Resize in the gather
         // pass, so this pass sets no texture parameters at all.

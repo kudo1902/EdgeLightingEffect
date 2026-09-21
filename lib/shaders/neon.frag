@@ -571,45 +571,210 @@ void main() {
     // Note: the far exterior is culled on the CPU - the draw quad is
     // sized to rect + glowReach in NeonRenderer::setupGeometry, so geometry culls
     // the far region instead of a per-fragment discard (tiler-friendly).
-    // The one-sided cuts below stay as discards: they cull a useful half-band
-    // the quad can't express.
-    float softEdge = max(uGlowSideSoftness, SIDE_SOFT_EPSILON);
-    if (uGlowSide == GLOW_SIDE_INSIDE  && d >  softEdge) discard;
-    if (uGlowSide == GLOW_SIDE_OUTSIDE && d < -softEdge) discard;
+    //
+    // The cuts below are BACKED BY GEOMETRY TOO now, and the discards are what
+    // is left over rather than the whole story. setupGeometry caps the quad's
+    // margin under GlowSide::INSIDE, whose lit region is exactly a quad, and
+    // cuts a hole in it for GlowSide::OUTSIDE and for an enabled insideCutoff,
+    // whose lit regions are annuli - the same ring construction the opaque fill
+    // has always used to bound itself. These discards still have to be here:
+    // the geometry is a conservative bound rounded outward by a few px, and it
+    // is the discards that place the edge exactly.
+    //
+    // That makes glowSide and insideCutoff inputs to the QUAD, which they were
+    // not before, so both are in setupGeometry's dirty gate. Leaving them out
+    // does not under-draw, it draws the previous config's bound - see the note
+    // on geometryDirty in NeonRenderer::OnConfigChanged.
+    // The one-sided cut's antialiasing width: one DESTINATION pixel, expressed
+    // in this shader's units. |grad d| == 1 for an SDF, so fwidth(d) is one
+    // BUFFER pixel, and uResolutionScale converts that to the pixel the blit
+    // finally lands on - exactly the conversion the full-res px constants out
+    // of neon-tuning.h take, and a no-op at scale 1.0.
+    //
+    // Destination pixels, not buffer pixels, because the thing this edge has
+    // to register with is the opaque fill, and the fill is ALWAYS full-res on
+    // the caller's framebuffer. A buffer-pixel floor here is 1/scale times too
+    // wide: at scale 0.25 it put a 4 px ramp into the buffer, which the
+    // bilinear blit then smeared wider still. Below scale 1.0 this floor is
+    // sub-buffer-pixel and so is a step in the buffer, which is right - at a
+    // reduced scale the blit owns the edge's softness and nothing in here can
+    // sharpen it. (Contrast CUTOFF_SOFT_FLOOR_PX, which IS in buffer px on
+    // purpose - that boundary has no full-res counterpart to line up with, so
+    // quantisation is its only concern. See neon-tuning.h.)
+    //
+    // Computed HERE, above every discard in this function, because a
+    // derivative downstream of control flow the compiler cannot prove uniform
+    // is undefined, and these discards are per-fragment rather than uniform.
+    // Same rule black-rect.frag's main() documents at length. This is the only
+    // derivative in this shader - keep it at the top if a second one is ever
+    // needed.
+    float sideAA = max(fwidth(d) * uResolutionScale, 1e-6);
+
+    // TOTAL feather width of the one-sided cut, floored at that pixel. The
+    // floor is what antialiases the cut: uGlowSideSoftness 0 used to leave
+    // softEdge at SIDE_SOFT_EPSILON, which is a hard step, so the glow's edge
+    // stair-stepped along every rounded corner while the opaque fill's own
+    // d == 0 edge - box-filtered through fwidth in black-rect.frag - stayed
+    // clean right beside it.
+    //
+    // The floor only does that work because the ramp it sizes is applied BELOW
+    // the tone map, as coverage. Above it, a 1 px ramp on a filament core is
+    // compressed to near nothing and the cut stair-steps anyway, floor or no
+    // floor - the measurements are at the application site, after the grade.
+    float sideSoft = max(uGlowSideSoftness, sideAA);
+
+    // How far the ramp may reach back across the line, and the ONLY part of it
+    // that lands on the side an OpaqueMode fill does not cover. Half a pixel
+    // at full res, because that is exactly how far the fill's own box filter
+    // reaches back too (black-rect.frag's edgeIn / edgeOut span d in
+    // [-sideAA/2, +sideAA/2]) - so the two share one ramp and neither shows
+    // past the other.
+    //
+    // DIRECT PATH ONLY. This shader owns the cut at resolutionScale 1.0 and
+    // nowhere else, because the reasoning above does not survive the blit: a
+    // buffer texel whose CENTRE is lit gets bilinear-smeared over 1/scale
+    // destination pixels in BOTH directions, so wherever the cut is put inside
+    // the buffer, the reconstruction washes some of it across the line. Zeroing
+    // the back-reach was an attempt to hold that down and it only halved it -
+    // measured at scale 0.5, glowSide OUTSIDE, softness 0: the destination
+    // pixel at d = -0.5, on the dark side, still came back at 59/255, over
+    // backdrop an OpaqueMode fill never reaches.
+    //
+    // A buffer-resolution signal cannot carry a destination-resolution edge, so
+    // the cut moved to where the destination pixels are: neon-blit.frag applies
+    // it, with this same anchor and floor recomputed from ITS fwidth. What is
+    // left here is the CULL, which runs BLIT_SIDE_GUARD_PX past the cut so the
+    // blit has lit texels to rebuild the boundary from - see neon-tuning.h.
+    //
+    // The cut is ANCHORED at the line, not centred on it: the feather runs
+    // from sideBack INTO the lit side, so the glow's support is the fill's
+    // support extended forward and never reaches back past it.
+    //
+    // It used to span [-softEdge, +softEdge]: a feather centred on d == 0, so
+    // HALF of it landed on the side OpaqueMode does not fill. With
+    // glowSide = OUTSIDE and opaqueMode = OUTSIDE the glow washed
+    // uGlowSideSoftness/2 px over the bare backdrop INSIDE the rect, with no
+    // fill under it, and was still climbing out of its ramp where the fill had
+    // already gone solid - the blurred, unmatched seam that pair of settings
+    // exists to not have. Measured at softness 4 on a 200x150 rect: red glow
+    // at 232, 206, 127, 18 on the four pixels inside the edge, over a backdrop
+    // the fill never touched. GlowSide says "restrict the glow to one side of
+    // the line"; it now does.
+    // Uniform branch (uResolutionScale is a uniform), and below every
+    // derivative in this function, so it is free and legal both.
+    bool  blitOwnsCut = (uResolutionScale < 1.0);
+    float sideBack = 0.5 * sideAA;
+    float sideCull = blitOwnsCut ? BLIT_SIDE_GUARD_PX : sideBack;
+    if (uGlowSide == GLOW_SIDE_INSIDE  && d >  sideCull) discard;
+    if (uGlowSide == GLOW_SIDE_OUTSIDE && d < -sideCull) discard;
 
     // Hard geometric cutoffs. The band is [-uInsideCutoff, +uOutsideCutoff]
     // with a per-side softness feather straddling each boundary; anything
     // past the feather is culled here so bloom/halo can't leak beyond the
     // artist's stated reach even if uGlowRadius says otherwise. Softness is
     // decoupled from uGlowSideSoftness so the one-sided cut at d=0 can stay
-    // razor-sharp while the cutoff joins fade smoothly, and per-side so the
+    // pixel-tight while the cutoff joins fade smoothly, and per-side so the
     // interior and exterior can taper at different rates. Disabled sides
     // arrive with size = a huge sentinel, so these branches no-op.
     //
-    // The floor tightens - but does not close - a HARD cutoff's placement on
-    // the scaled path. Softness 0 leaves a step function, and this shader is
-    // rasterised at the buffer's rate before the blit upsamples it, so the
-    // boundary quantises to the buffer grid; half a buffer pixel of feather
-    // lets the sample nearest the boundary carry a fractional value instead of
-    // just 0 or 1. CUTOFF_SOFT_FLOOR_PX is in BUFFER px and so is NOT
-    // converted with uResolutionScale like the full-res constants elsewhere.
-    // See neon-tuning.h for the measured before/after and for why scale 0.50
-    // specifically is unmoved by it.
+    // THE FLOOR IS AN ANTIALIASING FLOOR, and it applies at every resolution.
+    // It used to be SIDE_SOFT_EPSILON at scale 1.0 - a hard step - on the
+    // grounds that the direct path rasterises at the destination rate and so
+    // places a hard cutoff exactly. It does place it exactly, and then draws it
+    // with no coverage at all. Walking the boundary across one pixel in 1/8 px
+    // steps, reading the pixel that straddles it, the whole sweep read
     //
-    // Gated to the scaled path. At scale 1.0 the gather already runs at the
-    // destination rate, so a hard cutoff is pixel-exact there and the floor
-    // would only soften it; the direct path also has to stay bit-identical to
-    // the full-res renderer it replaced. NeonRenderer::setupGeometry mirrors
-    // this gate when it caps the quad.
-    float softFloor = (uResolutionScale < 1.0) ? CUTOFF_SOFT_FLOOR_PX : SIDE_SOFT_EPSILON;
+    //     0, 0, 0, 0, 0, 132, 132, 132
+    //
+    // which is a binary edge: invisible on the axis-aligned straights, a
+    // staircase everywhere the boundary curves, which is every rounded corner
+    // and all four corners of a cornerRadius-0 band (bandOuterDistance makes
+    // those square, not the boundary smooth). The one-sided cut got its floor
+    // for exactly this reason; this is the same edge with the same defect.
+    // The after-and-in-between rows are at the mask itself, below the grade.
+    //
+    // One DESTINATION pixel, so it reuses sideAA rather than taking a second
+    // derivative - dIn and dOut are unit-gradient like d, so a pixel is a pixel
+    // in all three. See the note at sideAA, which asks any second derivative to
+    // be hoisted to the top of main() instead of added here.
+    //
+    // The scaled path keeps CUTOFF_SOFT_FLOOR_PX, which is in BUFFER px and so
+    // is NOT converted with uResolutionScale like the full-res constants
+    // elsewhere: there the concern is not coverage but WHERE the boundary lands
+    // once the blit has resampled it, and half a buffer pixel of feather lets
+    // the sample nearest the boundary carry a fractional value instead of just
+    // 0 or 1. See neon-tuning.h for the measured placement table, for why scale
+    // 0.50 specifically is unmoved by it, and for why its value is now 1.0
+    // where it was 0.5 - the ramp below stopped doubling, so the constant is
+    // stated as the total width it always effectively had.
+    float softFloor = (uResolutionScale < 1.0) ? CUTOFF_SOFT_FLOOR_PX : sideAA;
     float inSoft  = max(uInsideCutoffSoftness,  softFloor);
     float outSoft = max(uOutsideCutoffSoftness, softFloor);
+
+    // TOTAL widths, halved here because the ramp is centred on the boundary.
+    //
+    // smoothstep(-w, w, x) spans 2w, so a softness of S px used to feather over
+    // 2S - the identical bug black-rect.frag found in its own two ramps and
+    // documents at length, still live here afterwards. Two consequences, and
+    // they are its two as well: at the floor the ramp covered a pixel either
+    // side of the boundary, so the outermost and innermost pixel of the band
+    // were both partially lit and the band read ~1 px narrow per side; and at
+    // any stated softness the emission faded over twice the documented width,
+    // while an OpaqueMode fill sharing that boundary faded over exactly it.
+    // Those two are drawn on top of each other, which is what made the
+    // disagreement visible.
+    float inHalf  = 0.5 * inSoft;
+    float outHalf = 0.5 * outSoft;
+
     // Band boundaries measured against the offset rect, so a cornerRadius-0
     // band keeps square corners instead of being rounded by the cut distance.
-    float dOut = bandOuterDistance(vPos, d, halfSize, uCornerRadius, uOutsideCutoff);
-    float dIn  = bandInnerDistance(d, uInsideCutoff);
-    if (dOut >  outSoft) discard;
-    if (dIn  < -inSoft ) discard;
+    //
+    // A CUTOFF ON THE SIDE glowSide ALREADY CULLS IS NEUTRALISED, by handing it
+    // the same huge distance a disabled cutoff arrives with, so every use below
+    // no-ops through the arithmetic rather than through a branch.
+    //
+    // It can never be the binding constraint there. GlowSide::OUTSIDE keeps
+    // d >= -sideBack, about half a pixel; an inside cutoff of size S keeps
+    // d >= -(S + inHalf), which is looser for every S >= 0. Mirror argument for
+    // INSIDE and the outside cutoff. So this removes a constraint that was
+    // already doing nothing to the silhouette - but it was NOT doing nothing:
+    //
+    //   - On the scaled path it ATE THE GUARD BAND. neon-blit.frag reconstructs
+    //     the cut from BLIT_SIDE_GUARD_PX of lit buffer texels past it; an
+    //     inside cutoff of size 0 discards from half a buffer pixel in, which
+    //     wipes that band out and hands the blit black to filter. Measured on a
+    //     1920x1080 rect at 3840x2160, glowSide OUTSIDE, softness 0, toggling
+    //     insideCutoff between off and {on, size 0, softness 0} - two configs
+    //     that describe the same silhouette: the first lit pixel fell from 238
+    //     to 178 at scale 0.5 and from 228 to 142 at scale 0.25, the exact
+    //     dark seam the guard band exists to prevent. Only SMALL cutoffs reach
+    //     the band (S * scale + inHalf < guard), which is what made this hide.
+    //   - At full res it applied a second coverage ramp over the first, so the
+    //     shared boundary came out squared - 8 px different, worst 6, all on
+    //     the corners.
+    //
+    // NeonRenderer::setupGeometry mirrors this: the same redundant cutoff must
+    // not shrink the quad's hole into the guard band either.
+    float dOut;
+    float dIn;
+    if (uGlowSide == GLOW_SIDE_INSIDE)
+    {
+        dOut = -CUTOFF_NEUTRALISED;
+    }
+    else
+    {
+        dOut = bandOuterDistance(vPos, d, halfSize, uCornerRadius, uOutsideCutoff);
+    }
+    if (uGlowSide == GLOW_SIDE_OUTSIDE)
+    {
+        dIn = CUTOFF_NEUTRALISED;
+    }
+    else
+    {
+        dIn = bandInnerDistance(d, uInsideCutoff);
+    }
+    if (dOut >  outHalf) discard;
+    if (dIn  < -inHalf ) discard;
 
     // --- Filament -----------------------------------------------------
     // Generalized-Gaussian profile with exponentially smooth falloff:
@@ -758,6 +923,11 @@ void main() {
     vec3  segAcc    = vec3(0.0); // segment colour x bell x gather weight
     float wsumLit   = 0.0; // SUM ARC-GATED g     - normalises `col` (see below)
     float wsumSegW  = 0.0; // SUM SEGMENT bell*g  - normalises the segment hue
+    // SUM UNGATED g. One add per iteration, and it buys the GLOW's magnitude:
+    // wsumLit / wsumAll and wsumSegW / wsumAll are the g-weighted MEANS of the
+    // two coverages over the perimeter, which is what the halo and bloom have
+    // to be scaled by. See the glow-coverage block below the gather.
+    float wsumAll   = 0.0;
 
     // Runtime loop bound, from NeonConfig::numSamples. The UBO behind
     // uLoopSamples is always NEON_MAX_LOOP_SAMPLES long, so this only ever
@@ -840,6 +1010,8 @@ void main() {
             // every segment, so the old inner loop collapses to one add each.
             segAcc   += e1.rgb * g;
             wsumSegW += e1.a   * g;
+
+            wsumAll  += g;
         }
     } else {
         // No segments: row 1 is all zeros, so the fetch and the two adds it
@@ -854,6 +1026,7 @@ void main() {
 
             acc      += e0.rgb * g;
             wsumLit  += e0.a   * g;
+            wsumAll  += g;
         }
     }
 
@@ -980,13 +1153,69 @@ void main() {
         }
         segCoverPt += seg.z * exp(-e * e) * sA;
     }
-    float emitCoverAll = max(emitCover, min(segCoverPt, 1.0));
 
     // Attach the segments' magnitude to their hue. Unclamped on purpose: boost
     // above 1 must still brighten, as it did when the gather's `bell` carried
-    // the magnitude. (emitCoverAll's min(.., 1.0) only bounds the shared
+    // the magnitude. (glowCoverAll's min(.., 1.0) below only bounds the shared
     // halo/bloom reach - it is not the segment's brightness.)
     vec3 segCol = segColHue * segCoverPt;
+
+    // --- GLOW coverage: the same two magnitudes, GATHERED ------------------
+    // The halo and bloom are integrals over the WHOLE emitter (see the block
+    // below), so what scales them has to be the emitter's coverage AVERAGED
+    // over that same integral - not the coverage at this fragment's nearest
+    // perimeter point.
+    //
+    // The pointwise pair above is a function of sPos, and sPos is a
+    // NEAREST-POINT map: it JUMPS across the medial axis, where the nearest
+    // edge changes. Scaling a smooth field by a jumping scalar hands the glow
+    // the medial axis as a visible boundary - hard 45-degree creases in from
+    // every corner and a flat cut along the half-min extent, with the glow at
+    // full strength on one side and zero on the other. Measured on a
+    // 1920x1080 rect with one boosted segment on the top edge: 41 at the
+    // half-height line, 8 (background) one pixel below it. A half-ring arc
+    // renders its glow as a hard-edged polygon for the same reason.
+    //
+    // This is V4 one level up. That fix made the halo/bloom SHAPE a sum over
+    // the emitter's pieces so the FIELD had no crease; the MAGNITUDE scaling
+    // it stayed a nearest-point read, so the crease came back through it
+    // whenever part of the perimeter was dark.
+    //
+    // ratio, not a second gather: the loop already accumulates SUM(cover * g);
+    // dividing by SUM(g) turns each into the g-weighted mean of that coverage
+    // over the perimeter, which is exactly the coverage term of
+    //
+    //     INTEGRAL cover(s) * K(|p - P(s)|) ds  ~=  cover_mean(p) * INTEGRAL K ds
+    //
+    // the closed forms below evaluate with cover == 1. Smooth by construction:
+    // every sample contributes at every fragment, so nothing switches.
+    //
+    // A FULLY LIT RING IS UNCHANGED: every sample then carries arcW = 1, so
+    // wsumLit and wsumAll are the same sum term for term and the ratio is
+    // exactly the 1.0 the pointwise read returns. The two only diverge where
+    // the perimeter is partly dark, which is the case this fixes. Measured
+    // over five full-ring scenes (sharp, rounded, small rect, inside cutoff,
+    // resolutionScale 0.5): at most 8 pixels of 2,073,600 move, all by 1/255
+    // in one channel, which is the compiler re-associating the surrounding
+    // expression rather than this ratio.
+    //
+    // Colour-stop ALPHA is NOT in this pair: neon-emission.frag's two alpha
+    // channels carry arcW and bellSum without it, and adding it would need a
+    // third row and so a third texelFetch in the hottest loop in the pipeline.
+    // The pointwise alpha still gates the filament exactly, and still gates
+    // the glow through the emission colour; what an alpha-faded stretch keeps
+    // here is its share of the halo/bloom pedestal. See
+    // docs/review-findings.md.
+    //
+    // Two divides rather than one reciprocal and two multiplies: the fully lit
+    // ring above rests on wsumLit / wsumAll being exactly 1.0 when the two
+    // sums are equal, and x * (1.0 / x) is not. Outside the loop, so it costs
+    // one extra divide per fragment, not per sample.
+    float wsumDen           = max(wsumAll, WSUM_EPSILON);
+    float emitCoverGathered = wsumLit  / wsumDen; // arc coverage x intensity
+    float segCoverGathered  = wsumSegW / wsumDen; // segment boost x bell
+    vec3  segColGlow        = segColHue * segCoverGathered;
+    float glowCoverAll      = max(emitCoverGathered, min(segCoverGathered, 1.0));
 
     // Sharp gate for the SDF-derived filament, from the same two pointwise
     // coverages. Both are exact at this fragment's perimeter position, so
@@ -1215,30 +1444,27 @@ void main() {
     vec3 arcCol = col * uIntensity;
 
     // filamentGate is the segment's SHARP gate (smoothstep 0.5..1) maxed with
-    // emitCover; emitCoverAll is the soft one. Applied to segCol only - the arc
-    // takes emitCover directly in both, since for an arc the two gates were
-    // just emitCover anyway.
-    vec3 emitFil  = arcCol * emitCover + segCol * filamentGate;
-    vec3 emitGlow = arcCol * emitCover + segCol * emitCoverAll;
+    // emitCover; glowCoverAll is the soft one. Applied to the segment term
+    // only - the arc takes its own coverage directly in both, since for an arc
+    // the two gates were just that coverage anyway.
+    //
+    // THE TWO TAKE DIFFERENT COVERAGES, and that is the point. The filament is
+    // an SDF-derived line: it lives ON the perimeter, so it wants the
+    // POINTWISE pair, exact at this fragment's own perimeter position. The
+    // halo and bloom are integrals over the whole emitter, so they want the
+    // GATHERED pair - see the glow-coverage block above the halo.
+    vec3 emitFil  = arcCol * emitCover           + segCol     * filamentGate;
+    vec3 emitGlow = arcCol * emitCoverGathered   + segColGlow * glowCoverAll;
 
     vec3 result  = emitFil  * core  * FILAMENT_GAIN  * lineGate;
     result      += emitGlow * halo  * HALO_GAIN      * glowGate;
     result      += emitGlow * bloom * uBloomStrength * glowGate;
 
-    // --- One-sided cut: mask the WHOLE emission at the line ----------
-    if (uGlowSide == GLOW_SIDE_INSIDE)       result *= smoothstep( softEdge, -softEdge, d);
-    else if (uGlowSide == GLOW_SIDE_OUTSIDE) result *= smoothstep(-softEdge,  softEdge, d);
-
-    // --- Hard cutoff soft masks: fade the emission over the per-side
-    // softness on each side of the [-uInsideCutoff, +uOutsideCutoff] band so
-    // bloom/halo never punch past the stated reach. Feather is symmetric
-    // around the boundary so the mid-boundary sample sees ~50% weight.
-    // Disabled sides push their boundary to a huge sentinel, so the
-    // smoothstep naturally evaluates to a pass-through 1.0.
-    // In the band means: outside the shrunk rect (dIn >= 0) and inside the
-    // grown rect (dOut <= 0). See bandOuterDistance / bandInnerDistance.
-    result *= smoothstep(-inSoft, inSoft, dIn);
-    result *= 1.0 - smoothstep(-outSoft, outSoft, dOut);
+    // NOTE neither the one-sided cut NOR the hard cutoff masks are applied
+    // here. Both are COVERAGE, not emission, so both belong below the grade -
+    // see the block after the tone map. The quad-edge fade below stays, and is
+    // the one mask that genuinely shapes emission: it hides a clip rather than
+    // drawing an edge, and it is tens of pixels wide.
 
     // --- Quad-edge fade: the draw quad ends uQuadMargin past the rect ON EACH
     // AXIS. Fade the emission to zero over the last stretch so a strong bloom
@@ -1284,6 +1510,10 @@ void main() {
     // width below is strictly positive (an inverted smoothstep is undefined in
     // GLSL).
     float fadeFloor = uQuadMargin * QUAD_FADE_START_FRAC;
+    // An upper bound on where the band's emission ends, not the exact point:
+    // the cutoff ramp is centred on the boundary and so reaches outSoft/2 past
+    // it, where this budgets outSoft. Erring outward is the safe direction -
+    // it starts the quad fade LATER, which is what this floor exists to do.
     float cutEdge   = uOutsideCutoff + outSoft;
     float fadeStart = (cutEdge < uQuadMargin) ? max(fadeFloor, cutEdge) : fadeFloor;
     float dQuad     = sdRoundBox(vPos, halfSize + vec2(uQuadMargin), 0.0);
@@ -1298,6 +1528,111 @@ void main() {
     float mapped = peak / (peak + TONE_MAP_SHOULDER);
     result = result * (mapped / max(peak, 1e-6));
     result = pow(result, vec3(GAMMA_EXPONENT));
+
+    // --- One-sided cut: mask the WHOLE layer at the line --------------
+    // Anchored at the opaque fill's own edge and feathered INTO the lit side -
+    // see the derivation of sideAA / sideSoft / sideBack at the top of main().
+    //
+    // BELOW THE GRADE, and that placement is the whole point of this block.
+    // The cut is a COVERAGE boundary - "how much of this pixel is on the lit
+    // side" - not a dimming of the emission, so it has to scale the value that
+    // actually reaches the framebuffer. Multiplied into the linear emission
+    // ABOVE the tone map instead, it was very nearly annihilated by it: the
+    // filament core runs FILAMENT_GAIN times the Reinhard shoulder, so
+    // peak/(peak + TONE_MAP_SHOULDER) maps a HALF-covered pixel to 94% of a
+    // fully covered one and hands back most of what the mask took.
+    //
+    // Measured on the identical sub-pixel sweep - the rect edge walked across
+    // one pixel in 1/8 px steps, reading the single pixel that straddles it,
+    // with black-rect.frag's own d == 0 edge rendered beside it for reference:
+    //
+    //   d(straddle)   +0.500  +0.375  +0.250  +0.125   0.000  -0.250  -0.375
+    //   cut, above       239     238     236     233     225     180     104
+    //   cut, below       239     229     202     163     120      37      10
+    //   opaque fill      255     223     191     159     128      64      32
+    //   1 px box filter  239     209     179     149     120      60      30
+    //
+    // The last row is the exact analytic coverage, for scale. The shipped cut
+    // is a smoothstep, so it meets the box filter at the ends and at half
+    // coverage and rides up to ~0.08 coverage away from it in the shoulders -
+    // the same difference black-rect.frag prices as "not resolvable" where it
+    // chose a linear ramp for its own d == 0 edge and a smoothstep for its
+    // wider ones. What matters is that it tracks the FILL row, which is the
+    // edge it has to register with, rather than the row above it.
+    //
+    // The row below the grade IS the 1 px box filter, and it tracks the fill it
+    // has to register with; the row above it is four pixels of nothing followed
+    // by a cliff, which is the stair-step the floor was added to remove.
+    //
+    // A non-zero uGlowSideSoftness was as badly served, and less visibly. The
+    // tone map re-lifted the middle of the feather harder than its ends, so the
+    // ramp was not monotonic: OUTSIDE at softness 4 read 179, 215, 212, 186 on
+    // the first four pixels - a "feather" that brightens for two pixels before
+    // it fades. INSIDE at softness 20 (the demos' slider maximum) read 30, 65,
+    // 73, 61, 49, 46, 49, 54 going inward, a smear with a ridge in it rather
+    // than a fade. Both are monotonic below the grade.
+    //
+    // ALPHA follows for free and had the same bug: `alpha` is peak(result)
+    // taken right after this, so a half-covered pixel used to occlude the
+    // background at 0.94 instead of 0.5. That is a compositing error, not a
+    // look preference - it is exactly the premultiplied-coverage contract the
+    // note below states, and a host blending this layer over video sees it.
+    //
+    // Written as `1.0 - smoothstep(lo, hi, d)` for the INSIDE arm rather than
+    // smoothstep(hi, lo, d). The descending form has edge0 > edge1, which GLSL
+    // leaves UNDEFINED; it happens to work on desktop drivers, it was the only
+    // reversed-edge smoothstep in these shaders, and the quad fade above
+    // already documents the rule. Same curve, portably.
+    //
+    // DIRECT PATH ONLY, for the reason given at sideBack: a cut applied to
+    // buffer texels cannot survive the bilinear upsample, so below scale 1.0
+    // neon-blit.frag applies this exact expression against ITS own fwidth
+    // instead, and the cull above leaves it a guard band to work from. Keep
+    // the two in step - they are one edge, written twice because only one of
+    // them ever runs.
+    if (!blitOwnsCut)
+    {
+        if (uGlowSide == GLOW_SIDE_INSIDE)       result *= 1.0 - smoothstep(sideBack - sideSoft, sideBack, d);
+        else if (uGlowSide == GLOW_SIDE_OUTSIDE) result *= smoothstep(-sideBack, sideSoft - sideBack, d);
+    }
+
+    // --- Hard cutoff masks: close the band at its two boundaries ------
+    // The band is [-uInsideCutoff, +uOutsideCutoff]; these fade the layer out
+    // over the per-side softness at each end, so bloom and halo never punch
+    // past the artist's stated reach even if uGlowRadius says otherwise. In
+    // the band means outside the shrunk rect (dIn >= 0) and inside the grown
+    // one (dOut <= 0). Disabled sides push their boundary to a huge sentinel,
+    // so the smoothstep evaluates to a pass-through 1.0.
+    //
+    // BELOW THE GRADE for the same reason the one-sided cut above is: a cutoff
+    // boundary is a geometric limit, so the ramp across it is coverage.
+    //
+    // THE TWO HALVES OF THIS FIX ARE NOT EQUALLY IMPORTANT HERE, and the split
+    // is the opposite of the one-sided cut's. Sweeping the boundary across one
+    // pixel in 1/8 px steps, full res, softness 0, against a full-brightness
+    // 132 at that distance:
+    //
+    //   no floor, above grade    0    0    0    0    0  132  132  132
+    //   floor, above grade       0   15   41   68   91  109  122  129
+    //   floor, below grade       0    6   21   42   66   90  111  126
+    //
+    // The FLOOR is what removes the staircase; the placement then corrects a
+    // brightness bias, 69% of full at half coverage down to the 50% the last
+    // row reads. That last row is an exact smoothstep - the mask delivered as
+    // authored.
+    //
+    // The placement matters less here than it did at the filament because the
+    // tone map is only violent where peak >> TONE_MAP_SHOULDER, and a band
+    // EDGE is by construction the dim end of the glow. Which is also why the
+    // floor alone was never going to be the whole answer: the same boundary
+    // crossing a bright stretch - a tight outsideCutoff over a hot filament -
+    // sits back in the compressed region where the one-sided cut's numbers
+    // apply.
+    //
+    // Ramps span inSoft / outSoft TOTAL, centred on the boundary - hence the
+    // halves, and see where they are derived for what the doubled form cost.
+    result *= smoothstep(-inHalf, inHalf, dIn);
+    result *= 1.0 - smoothstep(-outHalf, outHalf, dOut);
 
     // Premultiplied-alpha output so the effect composites over arbitrary
     // background objects instead of only adding light. Coverage = brightest

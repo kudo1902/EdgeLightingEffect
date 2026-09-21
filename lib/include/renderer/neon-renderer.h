@@ -256,10 +256,18 @@ namespace EdgeLighting
         void renderOpaqueFill(int viewportWidth, int viewportHeight, const Config &config);
 
         /// Pass 2b: bilinear composite of the scaled buffer onto the caller's
-        /// framebuffer. Only runs when the scaled path did.
+        /// framebuffer, AND the one-sided glow cut. Only runs when the scaled
+        /// path did - on the direct path @ref renderNeonPass owns the cut,
+        /// because there the gather already runs at the destination rate.
+        ///
+        /// The cut lives here rather than in the gather because the gather's
+        /// output is upsampled: an edge drawn at resolutionScale is smeared
+        /// 1/scale destination pixels each way, across the line as well as
+        /// along the lit side. @p viewportHeight mirrors the rect centre into
+        /// gl_FragCoord's y-up space, exactly as @ref renderOpaqueFill does.
         /// @pre Premultiplied-over blending, and the caller's framebuffer and
         ///      full-resolution viewport are restored.
-        void renderBlitPass();
+        void renderBlitPass(int viewportHeight, const Config &config);
 
     private:
         Config mCurrentConfig;
@@ -274,6 +282,10 @@ namespace EdgeLighting
         /// 0 when there is no ring and the fullscreen quad is used instead.
         /// Written by @ref setupFillGeometry, read by @ref renderOpaqueFill,
         /// and doubles as the "is it built" flag so the two cannot disagree.
+        /// Vertices in @c mGlowVertexArray: 6 for the plain quad, 24 when the
+        /// glow is bounded from the inside and @ref setupGeometry cuts a hole.
+        /// See the note there for which settings do that.
+        int mGlowVertexCount = 6;
         int mFillVertexCount = 0;
 
         /// Backs neon.frag's std140 `SegmentBlock` (DALi-compatible uniform

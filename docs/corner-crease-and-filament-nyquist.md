@@ -595,6 +595,51 @@ A formulation trading the `length`, the `sqrt` and the divide for two
 `inversesqrt`s was measured and landed inside the run-to-run noise, so the
 readable form stays.
 
+### 1.10 The magnitude was still a nearest-edge read
+
+Everything above is about the SHAPE of the halo and bloom - the field they
+paint when the whole perimeter emits at full strength. Section 1.4 removed the
+medial-axis crease from that field by summing over the emitter's pieces.
+
+What SCALES the field kept one. `emitGlow` multiplied the analytic halo and
+bloom by `emitCover` / `emitCoverAll`, both functions of
+`sPos = perimeterPosition(vPos)` - the fragment's nearest perimeter point. That
+map jumps across the medial axis, so wherever part of the perimeter is dark the
+glow is cut along it: a half-ring arc renders as a hard-edged polygon, and a
+boosted segment cuts a trapezoid out of the interior with 45-degree sides in
+from the corners. The 1.4 fix could not see it, because on the fully lit ring
+it was measured against, that scalar is identically 1.0 everywhere.
+
+The cure is the same argument one level up. The halo and bloom evaluate
+
+```
+INTEGRAL K(|p - P(s)|) ds
+```
+
+over the emitter with `cover == 1`, so the term that reinstates coverage is its
+mean under that same kernel, not its value at one point:
+
+```
+INTEGRAL cover(s) * K ds  ~=  cover_mean(p) * INTEGRAL K ds
+```
+
+The colour gather already accumulates the numerators - `wsumLit` is
+`SUM(arcW * g)` and `wsumSegW` is `SUM(bell * g)`. Adding `wsumAll = SUM g`,
+one add per iteration, makes both ratios available, and they are smooth by
+construction because every sample contributes at every fragment. The filament
+keeps the pointwise pair, which is what it needs: it lives on the perimeter,
+and V2's corner wedge and V9's tracer quantisation are both about getting that
+read exact.
+
+A fully lit ring is unchanged - `arcW` is 1 at every sample, so `wsumLit` and
+`wsumAll` are the same sum term for term. Measured across five full-ring
+scenes, at most 8 pixels of 2,073,600 move and all by 1/255 in one channel.
+Cost is +1.8%. The measurements, the ten-scene table and the one deliberate
+limit (colour-stop alpha is not in the gathered pair) are in
+[review-findings.md](review-findings.md) V14.
+
+---
+
 ---
 
 ---
