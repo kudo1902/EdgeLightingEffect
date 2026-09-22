@@ -27,7 +27,9 @@ at all:
   the lamps where they are.** If a rig should travel with the frame, the caller
   moves it.
 - **Nothing occludes a cone.** It crosses the rect, the droplets and the flare
-  freely. There is no shadow model and no rect gating.
+  freely. There is no shadow model and no rect gating. The one way to stop
+  light is `spotlight.clipArea` (section 4.6) - an explicit area, opted into per
+  lamp, that cuts the light off rather than casting a shadow from anything.
 - **Light only adds.** The pass is fully additive - `glBlendFuncSeparate(GL_ONE,
   GL_ONE, GL_ONE, GL_ONE)` - in the alpha channel as well as in colour, which
   also makes the layer order-independent. The order of
@@ -290,6 +292,93 @@ expensive, look here first.
 the inverse-square core drops below a visible level, so a faint bloom with a
 large radius does not pay the full disc.)
 
+### 4.6 The clip area
+
+One rounded-rectangle region, in the same app coordinates as everything else in
+section 3, that cuts light off. Its type is **`ClipArea`** (with `ClipMode`
+beside it), a *shared* shape declared with `Cutoff` and `BlendSpace` at the top
+of [`config.h`](../lib/include/core/config.h) rather than inside
+`SpotlightConfig` - nothing about a region and which side of it to keep is
+specific to this layer, so any renderer that wants an explicit bound can take
+one. The spotlight is currently the only consumer. **The area is per layer; honouring it is per
+lamp** - which is the split that matters, because the two kinds of lamp in a rig
+want opposite answers. A lamp washing one panel should stop at its edge; a lamp
+lighting the scene around it should cross the same boundary untouched.
+
+**`spotlight.clipArea.enable`** (default `false`)
+Master switch for the whole feature. While it is false every lamp is unclipped
+whatever its own flag says. Default off because the area's default size is zero,
+and a zero-size `KEEP_INSIDE` area correctly cuts an opted-in lamp to nothing.
+
+**`SpotLight::clipped`** (default `false`)
+Whether *this* lamp is cut off. Off by default, so adding a clip area to an
+existing rig changes nothing until a lamp asks for it.
+
+**`spotlight.clipArea.position` / `.width` / `.height`** (default `(0,0)`, 0, 0)
+The area: TOP-LEFT corner plus size, app coordinates.
+
+**`spotlight.clipArea.cornerRadius`** (default 0)
+Corner rounding in px, clamped at draw time to half the shorter side. 0 is a
+sharp rectangle.
+
+**`spotlight.clipArea.edgeSoftness`** (default 1.0 px)
+Width of the fade across the cut. **0 is a hard edge, and on this layer a hard
+edge reads as an aliased one** - the cut runs through a smooth gradient, so
+there is no contrast to hide the staircase the way a cut through a sharp feature
+would. 1.0 is a single pixel of feather: enough to antialias the boundary and
+nothing more. Larger values are a look, not a fix.
+
+**Two names, one word apart, different scopes** - worth reading once:
+`spotlight.clipArea` is the *region*, `SpotLight::clipped` is a *lamp's state*.
+Both were called `clip` at first, one field apart, which made `light.clip` read
+like an area and `spotlight.clip` read like a flag. The same split runs through
+the C ABI (`..._clip_<noun>` addresses the area and takes no index;
+`..._clipped` addresses a lamp and takes one) and into the shader, where the
+per-lamp value is `aClipWeight` / `vClipWeight` - a lerp weight, named so it
+cannot be confused with the *other* clip a vertex shader already has, clip
+space.
+
+**`spotlight.clipArea.mode`** (default `KEEP_INSIDE`)
+
+| Mode | Keeps | Typical use |
+|---|---|---|
+| `KEEP_INSIDE` | light inside the area | confine a wash to one panel or region |
+| `KEEP_OUTSIDE` | light outside the area | keep spill off a video surface or a screen the rect frames |
+
+**It is a coverage multiply, not a change to the falloff.** A clipped lamp is
+the same lamp with part of it missing: moving the area cannot make the light
+that survives brighter, dimmer or differently shaped, and the coverage alpha is
+read after the cut, so removed light stops claiming the surface as well as
+stops colouring it. That last part matters on a surface something else
+composites - see the alpha note in section 1.
+
+**The area is deliberately NOT `Config::geometry`.** This renderer reads nothing
+but `Config::spotlight`, and that is what keeps a rect move off its rebuild
+path. Both demo UIs have a **Match Rect** button that copies the four numbers
+across once; there is no binding, so a later rect move does not follow. Over the
+C ABI that button is a one-liner, because `el_effect_set_spotlight_clip_rect`
+takes the same five parameters in the same order as `el_effect_set_geometry`.
+
+**Cost.** Under `KEEP_INSIDE` the solve intersects each clipped lamp's strip
+with the area's box *in that lamp's frame*, so the clip buys fragments back
+rather than only hiding them - a lamp whose beam mostly leaves the area draws a
+correspondingly shorter strip, and one that misses it entirely draws nothing at
+all. `KEEP_OUTSIDE` gets none of that: what survives there is the complement of
+a bounded region, which is unbounded, so the strip stands as solved and the cut
+is purely a fragment-stage multiply.
+
+Verified offscreen at 640x360 over six clip scenes and four structural checks
+(both modes, sharp and rounded areas, feathered and not, rotated lamps, an area
+covering the whole viewport, a tiny area the beams barely reach, a zero-size
+area, a mixed rig with one lamp clipped and one not, the area enabled with no
+lamp opted in, and `resolutionScale` 0.5):
+no lit pixel survives where the mask is zero, and with the dither disabled every
+pixel where the mask is exactly 1 is **byte-identical** to the unclipped render -
+which is the evidence that the narrowed geometry loses nothing. With the dither
+on, the same region differs on a handful of pixels by at most 2 LSB, because the
+strip's corners moved and `spotDither` reads the interpolated lamp-frame
+position.
+
 ---
 
 ## 5. Animating a lamp
@@ -380,6 +469,19 @@ one function per scalar, mirroring the arc family:
 | `el_effect_set_spotlight_look` | `intensity`, `bloom`, `bloomRadius`, `colorTemp` |
 | `el_effect_set_spotlight_tint` | `tint.r`, `tint.g`, `tint.b` |
 | `el_effect_set_spotlight_enabled` | per-lamp `enable` |
+| `el_effect_set_spotlight_clipped` | per-lamp `clipped` |
+| `el_effect_set_spotlight_clip_enabled` | `spotlight.clipArea.enable` |
+| `el_effect_set_spotlight_clip_rect` | `clipArea.width`, `.height`, `.position.x`, `.position.y`, `.cornerRadius` |
+| `el_effect_set_spotlight_clip_softness` | `clipArea.edgeSoftness` |
+| `el_effect_set_spotlight_clip_mode` | `clipArea.mode` (`el_clip_mode_e`) |
+
+`el_effect_set_spotlight_clip_rect` takes the **same five parameters in the same
+order as `el_effect_set_geometry`** - width, height, x, y, cornerRadius - so
+lining the clip up with the rect is a straight forward of one call's output into
+the other. There is still no binding between them; a later rect move does not
+follow. `edgeSoftness` is a scalar setter of its own rather than a sixth
+parameter: it is not part of the shape, and retuning it should not re-send four
+numbers that did not change.
 
 Each has a matching `el_effect_get_*`. The tint is its own call rather than two
 more parameters on `el_effect_set_spotlight_look`, which is already published
@@ -410,6 +512,10 @@ then calls only `el_effect_render` renders the previous frame's rig.
 | Warm vs cool | `colorTemp` |
 | A saturated or gelled colour | `tint` (multiplies `colorTemp`; above 1 brightens) |
 | Turn one lamp off, keep its index | `SpotLight::enable` |
+| Cut one lamp off at an area's edge | `SpotLight::clipped` + `spotlight.clipArea.*` |
+| Keep light out of a region (a video surface, say) | `clipArea.mode = KEEP_OUTSIDE` |
+| Confine light to a region | `clipArea.mode = KEEP_INSIDE` (the default) |
+| Soften or sharpen the cut | `clipArea.edgeSoftness` (0 aliases; 1.0 is one pixel) |
 | Turn the whole layer off | `spotlight.enable` |
 | Trade quality for speed (large rigs only) | `spotlight.resolutionScale` |
 

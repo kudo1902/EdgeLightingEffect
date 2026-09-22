@@ -33,8 +33,26 @@ precision highp float;
 //   and there is no finite strip to draw. See spotlight-tuning.h.
 //
 // This shader never reads gl_FragCoord: everything arrives interpolated in the
-// lamp's frame. That is why the y-flip in Render is free, and why the
-// sub-viewport caveat in BaseRenderer's doc comment does not apply here.
+// lamp's frame - or, for the clip area, in app space through vApp. That is why
+// the y-flip in Render is free, why SpotlightConfig::resolutionScale still
+// needs no uniform of its own, and why the sub-viewport caveat in
+// BaseRenderer's doc comment does not apply here.
+//
+// THE CLIP, and why it multiplies rather than reshaping anything. A lamp with
+// SpotLight::clipped set is cut off by a rounded-rectangle area in app
+// coordinates (SpotlightConfig::clipArea), on whichever side the mode names. That
+// cut is COVERAGE applied to the finished shading - `lit *= mask` - not a term
+// folded into the falloff, so a clipped beam is the same beam with part of it
+// missing: moving the area cannot make the light that survives brighter, dimmer
+// or a different shape. The alpha follows for free, because the coverage below
+// is derived from `lit` after the multiply rather than alongside it.
+//
+// The mask is applied BEFORE the dither, which is the order that matters and
+// is safe for exactly the reason the dither comment gives: the offset is
+// strictly under half a destination step, so a fragment the clip took to zero
+// still rounds to zero and the cut region stays black rather than acquiring a
+// speckle. Dithering after the mask also means the clip's own soft edge - one
+// more shallow gradient - gets the same treatment as the falloff it crosses.
 //
 // Output is premultiplied colour plus a COVERAGE ALPHA, the same
 // max-of-channels rule neon.frag and lens-flare.frag use. The renderer pairs
@@ -55,11 +73,52 @@ precision highp float;
 // SpotlightRenderer::Render.
 
 in vec2 vLocal;      ///< (along, across) px in this lamp's frame.
+in vec2 vApp;        ///< App px, top-left origin, +y down. Clip area only.
 flat in vec4 vP0;    ///< tanHalfBeam, throwLength, softK, intensity.
 flat in vec4 vP1;    ///< apertureWidth, bloom, bloomRadius, bloomSupport.
 flat in vec3 vColor; ///< Linear RGB.
+flat in float vClipWeight; ///< 1 where this lamp honours the clip area, else 0.
+
+/// The clip area, in APP coordinates: centre.xy, half extent.xy. Already
+/// collapsed from ClipArea's top-left + size on the CPU, because a
+/// rounded-box SDF wants a centred box and the conversion is the same two
+/// adds every fragment would otherwise repeat.
+uniform vec4 uClipRect;
+
+/// cornerRadius px, edgeSoftness px, and 1 for KEEP_INSIDE / 0 for
+/// KEEP_OUTSIDE. The mode is a LERP WEIGHT rather than a branch: the two
+/// answers are each other's complement, so mixing between them is one
+/// instruction and costs nothing in divergence.
+uniform vec3 uClipParams;
 
 out vec4 fragColor;
+
+/// Signed distance to a rounded box centred at the origin, negative inside.
+/// @p b is the half extent, @p r the corner radius (already clamped on the CPU
+/// to at most the shorter half extent, so the `- r` below cannot invert the
+/// box).
+float spotClipSDF(vec2 p, vec2 b, float r)
+{
+    vec2 q = abs(p) - b + r;
+    return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
+}
+
+/// Coverage the clip area leaves at @p app, in [0, 1].
+///
+/// Independent of vClipWeight on purpose - the caller mixes this against 1.0
+/// with that weight, so an unclipped lamp costs the same arithmetic instead of
+/// a branch that would diverge inside a draw call covering both kinds of lamp.
+float spotClipMask(vec2 app)
+{
+    float d = spotClipSDF(app - uClipRect.xy, uClipRect.zw, uClipParams.x);
+    // Half the feather either side of the boundary, so edgeSoftness is the
+    // full width of the fade and 0 collapses to a hard step. The floor keeps
+    // smoothstep's two edges apart at edgeSoftness 0, where equal edges are
+    // undefined rather than a step on some drivers.
+    float h = max(uClipParams.y, 1.0e-4) * 0.5;
+    float inside = 1.0 - smoothstep(-h, h, d);
+    return mix(1.0 - inside, inside, uClipParams.z);
+}
 
 /// Interleaved gradient noise, in [-0.5, 0.5]. One fract, one dot: the whole
 /// dither costs about as much as the bloom's sqrt.
@@ -70,13 +129,17 @@ out vec4 fragColor;
 /// it coarsely the "noise" degenerates into a second set of bands, which is
 /// the artefact this function exists to remove.
 ///
-/// @p p is in PIXELS. vLocal is the only pixel-valued thing this stage has,
-/// and it happens to be the right one: the lamp frame is a rotation plus a
-/// translation of the framebuffer, so a step of one fragment is a step of one
-/// unit here too, whatever the lamp's angle. That also keeps the promise
-/// below - the pattern is anchored to the lamp, so under an animation it
-/// travels WITH the beam instead of crawling across it, and gl_FragCoord
-/// still never appears in this shader.
+/// @p p is in PIXELS, and vLocal is the right pixel-valued thing to hand it:
+/// the lamp frame is a rotation plus a translation of the framebuffer, so a
+/// step of one fragment is a step of one unit here too, whatever the lamp's
+/// angle. That also keeps the promise below - the pattern is anchored to the
+/// lamp, so under an animation it travels WITH the beam instead of crawling
+/// across it, and gl_FragCoord still never appears in this shader.
+///
+/// NOT vApp, which is also in pixels but is anchored to the SCREEN: feeding it
+/// here would give every lamp the same pattern in the same place, so two
+/// overlapping beams would dither in lockstep and correlate exactly where the
+/// noise is meant to be independent.
 float spotDither(vec2 p)
 {
     return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))) - 0.5;
@@ -106,11 +169,18 @@ void main() {
 
     vec3 lit = vColor * vP0.w * (cone + bloom);
 
+    // The cut. mix rather than an `if`, so a draw call carrying both clipped
+    // and unclipped lamps shades them at the same cost - vClipWeight is flat,
+    // so this is one lerp against a value constant across the triangle.
+    lit *= mix(1.0, spotClipMask(vApp), vClipWeight);
+
     // Coverage = brightest channel, exactly as in neon.frag and
     // lens-flare.frag: a bright aperture core reads as solid to whatever
     // composites this surface, the dim spill stays as good as additive, and an
     // unlit fragment leaves the alpha it found alone (the blend adds, so 0
-    // contributes nothing).
+    // contributes nothing). Read from `lit` AFTER the clip, so a cut fragment
+    // records no coverage either - light that was removed must not go on
+    // claiming the surface it would have lit.
     float cov = clamp(max(max(lit.r, lit.g), lit.b), 0.0, 1.0);
 
     // DITHER, and the reason this layer is the one that needs it.

@@ -912,6 +912,73 @@ void DebugUI::buildSpotlightSection(el_effect_handle_t effect)
         ImGui::TextDisabled("Below 1.0 only pays above ~6 lamps.");
     }
 
+    // --- Clip area: ONE region for the layer, opted into per lamp below. ---
+    ImGui::Separator();
+    el_bool_t areaOn = 0;
+    el_effect_get_spotlight_clip_enabled(effect, &areaOn);
+    bool areaEn = areaOn;
+    if (ImGui::Checkbox("Clip Area##Spot", &areaEn))
+    {
+        el_effect_set_spotlight_clip_enabled(effect, areaEn ? 1 : 0);
+    }
+    if (areaEn)
+    {
+        ImGui::Indent();
+
+        el_clip_mode_e mode = EL_CLIP_KEEP_INSIDE;
+        el_effect_get_spotlight_clip_mode(effect, &mode);
+        const char *clipItems[] = {"Keep Inside", "Keep Outside"};
+        int modeIdx = static_cast<int>(mode);
+        if (ImGui::Combo("Mode##SpotClip", &modeIdx, clipItems, IM_ARRAYSIZE(clipItems)))
+        {
+            el_effect_set_spotlight_clip_mode(effect, static_cast<el_clip_mode_e>(modeIdx));
+        }
+
+        // Same app coordinates as the lamp positions: top-left origin, +y down.
+        // Parameter order follows el_effect_set_geometry: w, h, x, y, radius.
+        float cw = 0.0f, ch = 0.0f, cx = 0.0f, cy = 0.0f, cr = 0.0f;
+        el_effect_get_spotlight_clip_rect(effect, &cw, &ch, &cx, &cy, &cr);
+        bool rectDirty = false;
+        rectDirty |= ImGui::SliderFloat("X##SpotClip", &cx, -200.0f, 2400.0f, "%.0f px");
+        rectDirty |= ImGui::SliderFloat("Y##SpotClip", &cy, -200.0f, 1600.0f, "%.0f px");
+        rectDirty |= ImGui::SliderFloat("Width##SpotClip", &cw, 0.0f, 2400.0f, "%.0f px");
+        rectDirty |= ImGui::SliderFloat("Height##SpotClip", &ch, 0.0f, 1600.0f, "%.0f px");
+        rectDirty |= ImGui::SliderFloat("Corner Radius##SpotClip", &cr, 0.0f, 400.0f, "%.0f px");
+        if (rectDirty)
+        {
+            el_effect_set_spotlight_clip_rect(effect, cw, ch, cx, cy, cr);
+        }
+
+        float edgeSoft = 1.0f;
+        el_effect_get_spotlight_clip_softness(effect, &edgeSoft);
+        if (ImGui::SliderFloat("Edge Softness##SpotClip", &edgeSoft, 0.0f, 40.0f, "%.1f px"))
+        {
+            el_effect_set_spotlight_clip_softness(effect, edgeSoft);
+        }
+
+        // The clip is NOT bound to the effect's geometry - the spotlight layer
+        // reads nothing but its own sub-config. This button copies the rect
+        // across once, on demand; the two calls take the same five parameters
+        // in the same order, so it is a straight forward.
+        if (ImGui::SmallButton("Match Rect##SpotClip"))
+        {
+            float rw = 0.0f, rh = 0.0f, rx = 0.0f, ry = 0.0f, radius = 0.0f;
+            el_effect_get_geometry(effect, &rw, &rh, &rx, &ry, &radius);
+            el_effect_set_spotlight_clip_rect(effect, rw, rh, rx, ry, radius);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("copy once - it does not follow the rect");
+
+        if (modeIdx == static_cast<int>(EL_CLIP_KEEP_INSIDE) &&
+            (cw <= 0.0f || ch <= 0.0f))
+        {
+            ImGui::TextDisabled("Zero-size area: every clipped lamp draws nothing.");
+        }
+
+        ImGui::Unindent();
+    }
+    ImGui::Separator();
+
     int count = 0;
     el_effect_get_spotlight_count(effect, &count);
 
@@ -986,6 +1053,19 @@ void DebugUI::buildSpotlightSection(el_effect_handle_t effect)
     if (ImGui::Checkbox("Lamp Enabled##Spot", &lampEn))
     {
         el_effect_set_spotlight_enabled(effect, sel, lampEn ? 1 : 0);
+    }
+
+    el_bool_t lampClipOn = 0;
+    el_effect_get_spotlight_clipped(effect, sel, &lampClipOn);
+    bool lampClipEn = lampClipOn;
+    if (ImGui::Checkbox("Clip This Lamp##Spot", &lampClipEn))
+    {
+        el_effect_set_spotlight_clipped(effect, sel, lampClipEn ? 1 : 0);
+    }
+    if (lampClipEn && !areaEn)
+    {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(Clip Area is off)");
     }
 
     float x = 0.0f, y = 0.0f, angle = 0.0f;

@@ -100,7 +100,7 @@
 /// attributes rather than in a uniform block. Entries past it are ignored.
 ///
 /// Raising it costs one recompile and a larger (still small) buffer:
-/// SPOT_MAX_LIGHTS * SPOT_STRIP_SEGMENTS * 6 * 60 bytes.
+/// SPOT_MAX_LIGHTS * SPOT_STRIP_SEGMENTS * 6 * 64 bytes.
 #define SPOT_MAX_LIGHTS           8
 
 /// Quads per lamp along the beam. The strip approximates a curved support with

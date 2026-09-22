@@ -546,9 +546,83 @@ extern "C"
     EL_API el_result_e el_effect_set_spotlight_enabled(el_effect_handle_t effect, int32_t index, el_bool_t enabled);
     EL_API el_result_e el_effect_get_spotlight_enabled(el_effect_handle_t effect, int32_t index, el_bool_t *outEnabled);
 
+    /** @brief Whether lamp @p index is cut off by the clip area.
+     *  @details Per lamp rather than per layer, so one rig can have some lamps
+     *           stop at the area's edge and others cross it untouched.
+     *           Ignored while @ref el_effect_set_spotlight_clip_enabled is
+     *           off. Default off, so adding a clip area to an existing rig
+     *           changes nothing until a lamp asks for it. */
+    EL_API el_result_e el_effect_set_spotlight_clipped(el_effect_handle_t effect, int32_t index, el_bool_t clipped);
+    EL_API el_result_e el_effect_get_spotlight_clipped(el_effect_handle_t effect, int32_t index, el_bool_t *outClipped);
+
     /** @brief Drop every lamp. Any index-bound animation becomes a no-op until
      *         the list is re-created via @ref el_effect_set_spotlight_count. */
     EL_API el_result_e el_effect_clear_spotlights(el_effect_handle_t effect);
+
+    /*
+     * Spotlight clip area (Config::spotlight.clipArea)
+     *
+     * ONE rounded-rectangle region for the whole layer that cuts light off,
+     * opted into per lamp by el_effect_set_spotlight_clipped. The cut is
+     * coverage applied to the finished shading, not a change to the falloff:
+     * a clipped lamp is the same lamp with part of it missing, so moving the
+     * area never makes the light that survives brighter or differently shaped.
+     *
+     * Its own rectangle, deliberately not the effect's geometry - the
+     * spotlight layer reads nothing but its own sub-config. A host that wants
+     * the two to line up copies the five numbers across.
+     *
+     * NAMING, because two of these are one word apart and mean different
+     * scopes:
+     *   el_effect_*_spotlight_clip_<noun>  - the AREA. No index; one per layer.
+     *   el_effect_*_spotlight_clipped      - a LAMP's state. Takes an index.
+     * Same split as el_effect_set_spotlight_renderer_enabled (the layer)
+     * against el_effect_set_spotlight_enabled (one lamp): the indexed call is
+     * the bare one.
+     */
+
+    /** @brief Master switch for the clip area. Off (the default) leaves every
+     *         lamp unclipped whatever their per-lamp flag says. */
+    EL_API el_result_e el_effect_set_spotlight_clip_enabled(el_effect_handle_t effect, el_bool_t enabled);
+    EL_API el_result_e el_effect_get_spotlight_clip_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
+
+    /** @brief The clip rectangle, in APP coordinates: TOP-LEFT corner plus
+     *         size, the same space as @ref el_effect_set_spotlight_placement.
+     *  @details **Same five parameters in the same order as
+     *           @ref el_effect_set_geometry**, deliberately, so a host that
+     *           wants the clip to line up with the rect can forward one
+     *           call's output straight into this one. There is no binding
+     *           between them - the spotlight layer reads nothing but its own
+     *           sub-config - so a later rect move does not follow.
+     *
+     *           cornerRadius is clamped at draw time to half the shorter side;
+     *           0 is a sharp rectangle.
+     *  @note  A zero-size rectangle under EL_CLIP_KEEP_INSIDE cuts
+     *         every clipped lamp to nothing - which is why the master switch
+     *         above defaults to off. */
+    EL_API el_result_e el_effect_set_spotlight_clip_rect(el_effect_handle_t effect,
+                                                         float width, float height,
+                                                         float x, float y,
+                                                         float cornerRadius);
+    EL_API el_result_e el_effect_get_spotlight_clip_rect(el_effect_handle_t effect,
+                                                         float *outWidth, float *outHeight,
+                                                         float *outX, float *outY,
+                                                         float *outCornerRadius);
+
+    /** @brief Width of the fade across the cut, in px.
+     *  @note  0 is a hard edge, which on this layer reads as an aliased one -
+     *         the cut runs through a smooth gradient, so there is no contrast
+     *         to hide the staircase. 1.0 (the default) is a single pixel of
+     *         feather. Its own scalar setter rather than a sixth parameter on
+     *         the rectangle above: it is not part of the shape, and retuning
+     *         it should not re-send four numbers that did not change. */
+    EL_API el_result_e el_effect_set_spotlight_clip_softness(el_effect_handle_t effect, float softness);
+    EL_API el_result_e el_effect_get_spotlight_clip_softness(el_effect_handle_t effect, float *outSoftness);
+
+    /** @brief Whether a clipped lamp keeps the inside of the area or the
+     *         outside. Default EL_CLIP_KEEP_INSIDE. */
+    EL_API el_result_e el_effect_set_spotlight_clip_mode(el_effect_handle_t effect, el_clip_mode_e mode);
+    EL_API el_result_e el_effect_get_spotlight_clip_mode(el_effect_handle_t effect, el_clip_mode_e *outMode);
 
     /** @brief Fraction of the viewport the lamps render at before being
      *         bilinear-blitted back. 1.0 (default) draws direct - no offscreen

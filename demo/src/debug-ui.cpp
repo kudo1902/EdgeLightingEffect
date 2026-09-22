@@ -1124,6 +1124,54 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
         ImGui::TextDisabled("Below 1.0 costs more than it saves at this lamp count.");
     }
 
+    // --- Clip area: ONE region for the layer, opted into per lamp below. ---
+    ImGui::Separator();
+    auto &clipArea = cfg.spotlight.clipArea;
+    ImGui::Checkbox("Clip Area##Spot", &clipArea.enable);
+    if (clipArea.enable)
+    {
+        ImGui::Indent();
+
+        const char *clipItems[] = {"Keep Inside", "Keep Outside"};
+        int modeIdx = static_cast<int>(clipArea.mode);
+        if (ImGui::Combo("Mode##SpotClip", &modeIdx, clipItems, IM_ARRAYSIZE(clipItems)))
+        {
+            clipArea.mode = static_cast<EdgeLighting::ClipMode>(modeIdx);
+        }
+
+        // Same app coordinates as the lamp positions and Geometry > Position:
+        // top-left origin, +y down.
+        SliderWithInput("X##SpotClip", clipArea.position.x, -200.0f, 2400.0f, "%.0f px");
+        SliderWithInput("Y##SpotClip", clipArea.position.y, -200.0f, 1600.0f, "%.0f px");
+        SliderWithInput("Width##SpotClip", clipArea.width, 0.0f, 2400.0f, "%.0f px");
+        SliderWithInput("Height##SpotClip", clipArea.height, 0.0f, 1600.0f, "%.0f px");
+        SliderWithInput("Corner Radius##SpotClip", clipArea.cornerRadius, 0.0f, 400.0f, "%.0f px");
+        SliderWithInput("Edge Softness##SpotClip", clipArea.edgeSoftness, 0.0f, 40.0f, "%.1f px");
+
+        // The clip is NOT bound to Config::geometry - the spotlight layer
+        // reads nothing but its own sub-config, which is what keeps a rect
+        // move off this renderer's rebuild path. This button is the bridge:
+        // it copies the four numbers across once, on demand.
+        if (ImGui::SmallButton("Match Rect##SpotClip"))
+        {
+            clipArea.position = cfg.geometry.position;
+            clipArea.width = cfg.geometry.width;
+            clipArea.height = cfg.geometry.height;
+            clipArea.cornerRadius = cfg.geometry.cornerRadius;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("copy once - it does not follow the rect");
+
+        if (clipArea.mode == EdgeLighting::ClipMode::KEEP_INSIDE &&
+            (clipArea.width <= 0.0f || clipArea.height <= 0.0f))
+        {
+            ImGui::TextDisabled("Zero-size area: every clipped lamp draws nothing.");
+        }
+
+        ImGui::Unindent();
+    }
+    ImGui::Separator();
+
     auto &lights = cfg.spotlight.lights;
     const int maxLights = SPOT_MAX_LIGHTS;
 
@@ -1197,6 +1245,13 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
 
     ImGui::Separator();
     ImGui::Checkbox("Lamp Enabled##Spot", &l.enable);
+
+    ImGui::Checkbox("Clip This Lamp##Spot", &l.clipped);
+    if (l.clipped && !clipArea.enable)
+    {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(Clip Area is off)");
+    }
 
     // App coordinates, top-left origin, +y down - the same space as
     // Geometry > Position, which is why the ranges here are viewport-sized

@@ -90,6 +90,9 @@ static_assert(static_cast<int>(EdgeLighting::SpotlightField::TINT_R) == EL_SPOTL
 static_assert(static_cast<int>(EdgeLighting::SpotlightField::TINT_G) == EL_SPOTLIGHT_FIELD_TINT_G);
 static_assert(static_cast<int>(EdgeLighting::SpotlightField::TINT_B) == EL_SPOTLIGHT_FIELD_TINT_B);
 
+static_assert(static_cast<int>(EdgeLighting::ClipMode::KEEP_INSIDE) == EL_CLIP_KEEP_INSIDE);
+static_assert(static_cast<int>(EdgeLighting::ClipMode::KEEP_OUTSIDE) == EL_CLIP_KEEP_OUTSIDE);
+
 static_assert(static_cast<int>(EdgeLighting::ColorStopField::POSITION) == EL_STOP_FIELD_POSITION);
 static_assert(static_cast<int>(EdgeLighting::ColorStopField::R) == EL_STOP_FIELD_R);
 static_assert(static_cast<int>(EdgeLighting::ColorStopField::G) == EL_STOP_FIELD_G);

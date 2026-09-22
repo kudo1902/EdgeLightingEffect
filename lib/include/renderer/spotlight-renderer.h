@@ -74,8 +74,21 @@ namespace EdgeLighting
     /// @c Config::spotlight and never on the viewport: a resize costs one
     /// uniform, not a rebuild.
     ///
+    /// **Light can be cut off by an area** - @c SpotlightConfig::clipArea, a
+    /// rounded rectangle in the same app coordinates, kept on whichever side
+    /// @c ClipMode names and opted into per lamp by
+    /// @c SpotLight::clipped. It is a coverage multiply in the fragment stage,
+    /// not a change to the falloff, so a clipped lamp is the same lamp with
+    /// part of it missing. In @c ClipMode::KEEP_INSIDE the solve
+    /// ALSO tightens the strip to the area's footprint in each lamp's frame,
+    /// which is the one case where a clip makes the pass cheaper rather than
+    /// only smaller on screen; @c KEEP_OUTSIDE leaves an unbounded region lit
+    /// and so leaves the geometry alone.
+    ///
     /// Parameters come from @c Config::spotlight. Nothing else is read - not
-    /// @c Config::geometry, not @c Config::neon.
+    /// @c Config::geometry, not @c Config::neon. The clip area is part of that
+    /// sub-config rather than a reuse of @c Config::geometry for exactly this
+    /// reason.
     class SpotlightRenderer : public BaseRenderer
     {
     public:
@@ -90,9 +103,9 @@ namespace EdgeLighting
     private:
         /// One vertex of a lamp's strip. Declared here rather than in the .cpp
         /// only so @c mStripVerts below can be a member; nothing outside this
-        /// class names it. The four non-position members are constant across a
-        /// whole strip - see spotlight.vert for why they ride as attributes
-        /// instead of sitting in a uniform block.
+        /// class names it. Everything but @c pos and @c local is constant
+        /// across a whole strip - see spotlight.vert for why those ride as
+        /// attributes instead of sitting in a uniform block.
         typedef struct StripVertex
         {
             float pos[2];   ///< App px, top-left origin, +y down.
@@ -100,9 +113,20 @@ namespace EdgeLighting
             float p0[4];    ///< tanHalfBeam, throwLength, softK, intensity.
             float p1[4];    ///< apertureWidth, bloom, bloomRadius, bloomSupport.
             float color[3]; ///< Linear RGB.
+            /// How much of @c SpotlightConfig::clipArea this lamp honours:
+            /// 1 for a clipped lamp, 0 for one that crosses the area freely.
+            ///
+            /// A WEIGHT rather than a flag, and named for it, because that is
+            /// how the shader uses it - `mix(1.0, mask, w)`, never a branch
+            /// (see spotlight.frag). A float for the same reason, not because
+            /// an attribute cannot be an integer.
+            ///
+            /// Baked here, so a lamp that opted out and a clip area that is
+            /// switched off are the same thing by the time the GPU sees them.
+            float clipWeight;
         } StripVertex;
 
-        static_assert(sizeof(StripVertex) == 15 * sizeof(float),
+        static_assert(sizeof(StripVertex) == 16 * sizeof(float),
                       "StripVertex must be tightly packed - ensureBuffer's "
                       "attribute pointers use sizeof(StripVertex) as the stride.");
 
@@ -125,8 +149,10 @@ namespace EdgeLighting
         ///
         /// Measured over 2,000 rebuilds, best of nine runs: **~20 us for one
         /// lamp, ~32 us for eight**, or 0.1 - 0.2% of a 16.7 ms frame. That
-        /// includes the <= 34 KB @c glBufferSubData into the ceiling-sized
-        /// allocation @ref ensureBuffer made once.
+        /// includes the <= 37 KB @c glBufferSubData into the ceiling-sized
+        /// allocation @ref ensureBuffer made once. (Those numbers predate the
+        /// clip attribute, which added one float per vertex and no
+        /// transcendental calls at all.)
         ///
         /// The flatness across lamp counts is the useful part of that number.
         /// The arithmetic is **998 transcendental calls for one lamp and 7,880

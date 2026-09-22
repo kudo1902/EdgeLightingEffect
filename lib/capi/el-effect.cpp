@@ -1386,6 +1386,37 @@ extern "C"
         return EL_SUCCESS;
     }
 
+    el_result_e el_effect_set_spotlight_clipped(el_effect_handle_t effect, int32_t index, el_bool_t clipped)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_clipped");
+        auto *l = SpotlightSlot(effect, index, "el_effect_set_spotlight_clipped");
+        if (!l)
+        {
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        const bool v = (clipped != 0);
+        if (l->clipped == v)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, index=%d, clipped=%d", (void *)effect, index, (int)clipped);
+        l->clipped = v;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_spotlight_clipped(el_effect_handle_t effect, int32_t index, el_bool_t *outClipped)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_spotlight_clipped");
+        VALIDATE_OUT_PTR(outClipped, "el_effect_get_spotlight_clipped");
+        auto *l = SpotlightSlot(effect, index, "el_effect_get_spotlight_clipped");
+        if (!l)
+        {
+            return EL_ERROR_INVALID_PARAMETER;
+        }
+        *outClipped = l->clipped ? 1 : 0;
+        return EL_SUCCESS;
+    }
+
     el_result_e el_effect_clear_spotlights(el_effect_handle_t effect)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_clear_spotlights");
@@ -1395,6 +1426,111 @@ extern "C"
         }
         LOG_I("effect=%p", (void *)effect);
         effect->config.spotlight.lights.clear();
+        return EL_SUCCESS;
+    }
+
+    // --- Spotlight clip area ---
+
+    el_result_e el_effect_set_spotlight_clip_enabled(el_effect_handle_t effect, el_bool_t enabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_clip_enabled");
+        const bool v = (enabled != 0);
+        if (effect->config.spotlight.clipArea.enable == v)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, enabled=%d", (void *)effect, (int)enabled);
+        effect->config.spotlight.clipArea.enable = v;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_spotlight_clip_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_spotlight_clip_enabled");
+        VALIDATE_OUT_PTR(outEnabled, "el_effect_get_spotlight_clip_enabled");
+        *outEnabled = effect->config.spotlight.clipArea.enable ? 1 : 0;
+        LOG_D("effect=%p, enabled=%d", (void *)effect, (int)*outEnabled);
+        return EL_SUCCESS;
+    }
+
+    // Parameter order mirrors el_effect_set_geometry exactly - width, height,
+    // x, y, cornerRadius - so a host lining the clip up with the rect can
+    // forward one call's output into the other. See the header.
+    el_result_e el_effect_set_spotlight_clip_rect(el_effect_handle_t effect,
+                                                  float width, float height,
+                                                  float x, float y,
+                                                  float cornerRadius)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_clip_rect");
+        EdgeLighting::ClipArea &c = effect->config.spotlight.clipArea;
+        if (c.width == width && c.height == height &&
+            c.position.x == x && c.position.y == y &&
+            c.cornerRadius == cornerRadius)
+        {
+            return EL_SUCCESS;
+        }
+        LOG_I("effect=%p, width=%f, height=%f, x=%f, y=%f, cornerRadius=%f",
+              (void *)effect, width, height, x, y, cornerRadius);
+        c.width = width;
+        c.height = height;
+        c.position.x = x;
+        c.position.y = y;
+        c.cornerRadius = cornerRadius;
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_get_spotlight_clip_rect(el_effect_handle_t effect,
+                                                  float *outWidth, float *outHeight,
+                                                  float *outX, float *outY,
+                                                  float *outCornerRadius)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_spotlight_clip_rect");
+        VALIDATE_OUT_PTR(outWidth, "el_effect_get_spotlight_clip_rect");
+        VALIDATE_OUT_PTR(outHeight, "el_effect_get_spotlight_clip_rect");
+        VALIDATE_OUT_PTR(outX, "el_effect_get_spotlight_clip_rect");
+        VALIDATE_OUT_PTR(outY, "el_effect_get_spotlight_clip_rect");
+        VALIDATE_OUT_PTR(outCornerRadius, "el_effect_get_spotlight_clip_rect");
+        const EdgeLighting::ClipArea &c = effect->config.spotlight.clipArea;
+        *outWidth = c.width;
+        *outHeight = c.height;
+        *outX = c.position.x;
+        *outY = c.position.y;
+        *outCornerRadius = c.cornerRadius;
+        LOG_D("effect=%p, width=%f, height=%f, x=%f, y=%f, cornerRadius=%f",
+              (void *)effect, *outWidth, *outHeight, *outX, *outY, *outCornerRadius);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_spotlight_clip_softness(el_effect_handle_t effect, float softness)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_clip_softness");
+        SET_AND_LOG(effect->config.spotlight.clipArea.edgeSoftness, softness,
+                    "effect=%p, softness=%f", (void *)effect, softness);
+    }
+
+    el_result_e el_effect_get_spotlight_clip_softness(el_effect_handle_t effect, float *outSoftness)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_spotlight_clip_softness");
+        VALIDATE_OUT_PTR(outSoftness, "el_effect_get_spotlight_clip_softness");
+        *outSoftness = effect->config.spotlight.clipArea.edgeSoftness;
+        LOG_D("effect=%p, softness=%f", (void *)effect, *outSoftness);
+        return EL_SUCCESS;
+    }
+
+    el_result_e el_effect_set_spotlight_clip_mode(el_effect_handle_t effect, el_clip_mode_e mode)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_clip_mode");
+        SET_AND_LOG(effect->config.spotlight.clipArea.mode,
+                    static_cast<EdgeLighting::ClipMode>(mode),
+                    "effect=%p, mode=%d", (void *)effect, (int)mode);
+    }
+
+    el_result_e el_effect_get_spotlight_clip_mode(el_effect_handle_t effect, el_clip_mode_e *outMode)
+    {
+        VALIDATE_EFFECT_PTR(effect, "el_effect_get_spotlight_clip_mode");
+        VALIDATE_OUT_PTR(outMode, "el_effect_get_spotlight_clip_mode");
+        *outMode = static_cast<el_clip_mode_e>(effect->config.spotlight.clipArea.mode);
+        LOG_D("effect=%p, mode=%d", (void *)effect, (int)*outMode);
         return EL_SUCCESS;
     }
 
