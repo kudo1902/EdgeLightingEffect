@@ -38,6 +38,13 @@ precision highp float;
 // needs no uniform of its own, and why the sub-viewport caveat in
 // BaseRenderer's doc comment does not apply here.
 //
+// One caveat of its own, and the clip is the whole of it: reading app space
+// rather than gl_FragCoord keeps the mask's GEOMETRY identical at any scale,
+// but the mask is still resolved one fragment at a time, so a reduced buffer
+// resolves its boundary at that buffer's pitch. SpotlightRenderer pins the
+// scale to 1.0 while any clipped lamp is enabled rather than let that ship -
+// see GetClampedSpotScale.
+//
 // THE CLIP, and why it multiplies rather than reshaping anything. A lamp with
 // SpotLight::clipped set is cut off by a rounded-rectangle area in app
 // coordinates (SpotlightConfig::clipArea), on whichever side the mode names. That

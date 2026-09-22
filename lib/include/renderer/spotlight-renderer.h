@@ -36,6 +36,15 @@ namespace EdgeLighting
     /// blit); below 1.0 they draw into a buffer of that fraction of the
     /// viewport and are bilinear-blitted back.
     ///
+    /// **An enabled clipped lamp pins the scale to 1.0**, because the clip
+    /// mask is resolved per fragment and a reduced buffer would resolve its
+    /// boundary at that buffer's texel pitch - moving the edge, leaking light
+    /// outside a @c KEEP_INSIDE area, and flattening
+    /// @c ClipArea::edgeSoftness. The scaled path below is therefore only
+    /// ever reached with no lamp clipped. See @c GetClampedSpotScale in the
+    /// .cpp for the measurements and for why the neon's fix - moving its cut
+    /// into the blit - could not be reused here.
+    ///
     /// **Not one uniform differs between the paths** - fewer than the flare's
     /// two. The fragment stage reads only interpolated full-res lamp-local
     /// coordinates and flat per-lamp pixel values, so the scaling happens
@@ -84,6 +93,10 @@ namespace EdgeLighting
     /// which is the one case where a clip makes the pass cheaper rather than
     /// only smaller on screen; @c KEEP_OUTSIDE leaves an unbounded region lit
     /// and so leaves the geometry alone.
+    ///
+    /// Being a per-fragment mask is also what makes it incompatible with a
+    /// reduced-resolution buffer, which is why opting a lamp in costs the
+    /// resolution scale - see the note on the two paths above.
     ///
     /// Parameters come from @c Config::spotlight. Nothing else is read - not
     /// @c Config::geometry, not @c Config::neon. The clip area is part of that

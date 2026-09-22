@@ -907,15 +907,50 @@ void DebugUI::buildSpotlightSection(el_effect_handle_t effect)
     // and only used to grey out the Add button.
     const int MAX_LAMPS = 8;
 
-    if (resScale < 1.0f)
-    {
-        ImGui::TextDisabled("Below 1.0 only pays above ~6 lamps.");
-    }
-
-    // Fetched here rather than after the clip block because the zero-size
-    // hint below has to ask whether any lamp opted in.
+    // Fetched here rather than after the clip block because two hints need it:
+    // the res-scale note just below and the zero-size note after the clip
+    // block, both of which have to ask whether any lamp opted in.
     int count = 0;
     el_effect_get_spotlight_count(effect, &count);
+
+    if (resScale < 1.0f)
+    {
+        // The library holds the scale at 1.0 while a clipped lamp is enabled,
+        // because the clip edge has to be resolved at full resolution. Say so
+        // here, or the slider reads as broken: it moves and the frame does not
+        // change. Mirrors the library's own test - the lamps that DRAW, within
+        // the ceiling.
+        const int drawnLamps = count < MAX_LAMPS ? count : MAX_LAMPS;
+        bool anyClippedLamp = false;
+        for (int i = 0; i < drawnLamps; i++)
+        {
+            el_bool_t lampClipped = 0;
+            el_bool_t lampEnabled = 0;
+            el_effect_get_spotlight_clipped(effect, i, &lampClipped);
+            el_effect_get_spotlight_enabled(effect, i, &lampEnabled);
+            // Intensity arrives with the rest of the look - there is no getter
+            // for it alone, and adding one to read a hint would be the wrong
+            // way round.
+            float lampIntensity = 0.0f, ignoredBloom = 0.0f;
+            float ignoredBloomRadius = 0.0f, ignoredColorTemp = 0.0f;
+            el_effect_get_spotlight_look(effect, i, &lampIntensity, &ignoredBloom,
+                                         &ignoredBloomRadius, &ignoredColorTemp);
+            if (lampClipped && lampEnabled && lampIntensity > 0.0f)
+            {
+                anyClippedLamp = true;
+                break;
+            }
+        }
+
+        if (anyClippedLamp)
+        {
+            ImGui::TextDisabled("Held at 1.0: a clipped lamp is enabled.");
+        }
+        else
+        {
+            ImGui::TextDisabled("Below 1.0 only pays above ~6 lamps.");
+        }
+    }
 
     // --- Clip area: ONE region for the layer, opted into per lamp below. ---
     //

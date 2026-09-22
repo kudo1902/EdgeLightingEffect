@@ -1119,9 +1119,33 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
     // strips are already bounded, so the blit is a fixed full-viewport cost
     // that only pays above roughly six lamps.
     SliderWithInput("Res Scale##Spot", cfg.spotlight.resolutionScale, 0.125f, 1.0f, "%.3f");
-    if (cfg.spotlight.resolutionScale < 1.0f && cfg.spotlight.lights.size() < 6)
+    if (cfg.spotlight.resolutionScale < 1.0f)
     {
-        ImGui::TextDisabled("Below 1.0 costs more than it saves at this lamp count.");
+        // The library holds the scale at 1.0 while a clipped lamp is enabled,
+        // because the clip edge has to be resolved at full resolution. Say so
+        // here, or the slider reads as broken: it moves and the frame does not
+        // change. Mirrors SpotlightRenderer's own HasClippedLamp test - the
+        // lamps that DRAW, within the ceiling.
+        size_t drawnLamps = std::min(cfg.spotlight.lights.size(), size_t(SPOT_MAX_LIGHTS));
+        bool anyClippedLamp = false;
+        for (size_t i = 0; i < drawnLamps; i++)
+        {
+            const auto &lamp = cfg.spotlight.lights[i];
+            if (lamp.clipped && lamp.enable && lamp.intensity > 0.0f)
+            {
+                anyClippedLamp = true;
+                break;
+            }
+        }
+
+        if (anyClippedLamp)
+        {
+            ImGui::TextDisabled("Held at 1.0: a clipped lamp is enabled.");
+        }
+        else if (cfg.spotlight.lights.size() < 6)
+        {
+            ImGui::TextDisabled("Below 1.0 costs more than it saves at this lamp count.");
+        }
     }
 
     // --- Clip area: ONE region for the layer, opted into per lamp below. ---

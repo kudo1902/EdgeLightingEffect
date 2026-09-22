@@ -32,8 +32,82 @@ namespace EdgeLighting
         /// strips are already the cheap part.
         constexpr float MIN_RESOLUTION_SCALE = 0.125f;
 
+        /// Whether any lamp this pass will actually DRAW honours the clip area.
+        ///
+        /// Gates the resolution scale - see @ref GetClampedSpotScale. Counts
+        /// only lamps that draw, because a lamp that writes no fragments puts
+        /// no clip boundary in the buffer whatever its clip bit says. The test
+        /// is deliberately the same @c enable && @c intensity > 0 that
+        /// @ref SpotlightRenderer::buildStrips uses for its @c drawing count,
+        /// rather than a second copy of @ref DeriveLamp's black-tint bail: a
+        /// lamp the tint switches off would be counted here and only cost the
+        /// scale, which is the harmless direction.
+        ///
+        /// Indexed like everything else in this renderer, so entries past
+        /// @c SPOT_MAX_LIGHTS do not count - they never reach the VBO.
+        bool HasClippedLamp(const SpotlightConfig &spotlight)
+        {
+            const int lampCount = std::min(static_cast<int>(spotlight.lights.size()),
+                                           static_cast<int>(SPOT_MAX_LIGHTS));
+            for (int i = 0; i < lampCount; i++)
+            {
+                const SpotLight &light = spotlight.lights[static_cast<size_t>(i)];
+                if (light.clipped && light.enable && light.intensity > 0.0f)
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        /// @c SpotlightConfig::resolutionScale clamped to (0, 1] - and PINNED
+        /// to 1.0 while any drawn lamp is clipped.
+        ///
+        /// WHY THE CLIP DISABLES THE SCALE. spotlight.frag evaluates the clip
+        /// mask in whatever buffer it is rasterising into, so on the scaled
+        /// path the boundary is resolved at THAT buffer's texel pitch and the
+        /// blit then bilinearly smears the result back to full resolution. The
+        /// mask's geometry is in app coordinates and survives that untouched;
+        /// its EDGE does not. Measured across a KEEP_INSIDE boundary crossing
+        /// bright light, in 1/255, by destination pixel from the boundary:
+        ///
+        ///   offset   scale 1.0   scale 0.5   scale 0.25
+        ///     -1        255         255         191
+        ///      0        183         128         128
+        ///     +1          0           0          64
+        ///     +2          0          28 (*)       0
+        ///                              (*) edgeSoftness 4
+        ///
+        /// Three things wrong with the right-hand columns: the boundary moves
+        /// by up to a destination pixel, light leaks up to 64/255 OUTSIDE an
+        /// area whose whole job is to stop it, and @c ClipArea::edgeSoftness
+        /// loses its range once a feather is finer than a buffer texel - at
+        /// 0.25, softness 1 and softness 4 render identically.
+        ///
+        /// This is the failure neon-blit.frag records at length, and the neon
+        /// fixed it by moving its one-sided cut out of the reduced buffer into
+        /// the full-res blit. That fix does not transfer: @c SpotLight::clipped
+        /// is PER LAMP, while the buffer this pass blits holds every lamp's
+        /// light summed together, so a mask applied at blit time would cut the
+        /// lamps that opted out along with the ones that opted in. Separating
+        /// them means a second buffer and a second blit - and the blit is
+        /// already the fixed cost that makes this scale a marginal bargain
+        /// (see @c SpotlightConfig::resolutionScale), so paying it twice would
+        /// leave nothing to win.
+        ///
+        /// Pinning is therefore the honest trade: the scale is a performance
+        /// knob whose benefit this layer only sees on a large rig, and the clip
+        /// is a correctness statement about where light stops. A host loses
+        /// speed it was unlikely to be gaining, and keeps the edge it asked
+        /// for. @ref SpotlightRenderer::OnConfigChanged logs the transition so
+        /// the loss is never silent.
         float GetClampedSpotScale(const Config &config)
         {
+            if (HasClippedLamp(config.spotlight))
+            {
+                return 1.0f;
+            }
+
             return std::min(std::max(config.spotlight.resolutionScale, MIN_RESOLUTION_SCALE), 1.0f);
         }
 
@@ -44,6 +118,11 @@ namespace EdgeLighting
         /// whether to release the buffer. Split them and a config that stops
         /// using the buffer can leave it allocated forever, or - worse - one
         /// that still needs it can have it freed underneath.
+        ///
+        /// That it goes through @ref GetClampedSpotScale rather than reading
+        /// @c resolutionScale is what makes the clip pin free here: opting a
+        /// lamp into the clip area takes this to false and hands the buffer
+        /// back, with no second place to teach about it.
         bool UsesScaledBuffer(const Config &config)
         {
             return config.spotlight.enable && GetClampedSpotScale(config) < 1.0f;
@@ -260,9 +339,11 @@ namespace EdgeLighting
                 return false;
             }
 
-            // Clamped below 180 so the half-angle stays under 90 and tan
+            // Clamped to 170 so the half-angle stays at or under 85 and tan
             // stays finite: a lamp is a cone, and a "cone" at 180 degrees is
-            // a half-plane with no axis left to speak of.
+            // a half-plane with no axis left to speak of. The 10 degrees of
+            // headroom under that limit is what keeps tan away from the knee
+            // where it stops being a useful number rather than merely finite.
             const float beam = std::min(std::max(light.beamAngle, 0.0f), 170.0f);
             out.tanHalf = std::max(std::tan(beam * 0.5f * DEG_TO_RAD), 0.0f);
             out.thr = std::max(light.throwLength, MIN_THROW);
@@ -413,6 +494,52 @@ namespace EdgeLighting
                       now, static_cast<int>(SPOT_MAX_LIGHTS));
             }
         }
+
+        /// Say so when a clipped lamp takes @c resolutionScale out of effect,
+        /// and when it comes back. @ref GetClampedSpotScale explains why it
+        /// has to; this is what stops the host's setting being overridden in
+        /// silence, which is the one thing that would make the pin feel like a
+        /// bug rather than a trade.
+        ///
+        /// Fires on the TRANSITION in either direction, the same shape as
+        /// @ref WarnOnLampOverflow, so a rig that drags a lamp around under a
+        /// clip does not print a line per frame. Informational, not an error:
+        /// nothing is wrong and nothing is being dropped.
+        ///
+        /// Takes both sub-configs rather than two bools so the caller cannot
+        /// compute "pinned" two different ways - the predicate is
+        /// @ref GetClampedSpotScale's, applied to each of them here.
+        inline void LogOnClipPinTransition(const SpotlightConfig &prev,
+                                           const SpotlightConfig &now)
+        {
+            // A scale of 1.0 is what the pin produces anyway, so a config that
+            // never asked for less has no transition to report either way.
+            if (now.resolutionScale >= 1.0f && prev.resolutionScale >= 1.0f)
+            {
+                return;
+            }
+
+            const bool wasPinned = HasClippedLamp(prev);
+            const bool isPinned = HasClippedLamp(now);
+            if (isPinned == wasPinned)
+            {
+                return;
+            }
+
+            if (isPinned)
+            {
+                LOG_I("SpotlightRenderer: resolutionScale %.3f held at 1.0 while a "
+                      "clipped lamp is enabled - the clip edge has to be resolved at "
+                      "full resolution.",
+                      static_cast<double>(now.resolutionScale));
+            }
+            else
+            {
+                LOG_I("SpotlightRenderer: no clipped lamp left - resolutionScale %.3f "
+                      "back in effect.",
+                      static_cast<double>(now.resolutionScale));
+            }
+        }
     }
 
     bool SpotlightRenderer::Initialize()
@@ -559,9 +686,18 @@ namespace EdgeLighting
         // The clip area, in the SAME app coordinates the ortho above maps -
         // which is what keeps the sentence two comments up true. A clip is a
         // region of the app's own space, not of the buffer being rasterised
-        // into, so neither of these changes with the scale either; the
+        // into, so neither of these VALUES changes with the scale; the
         // fragment stage reaches them through vApp, a varying, rather than
         // through gl_FragCoord, which would have needed the scale.
+        //
+        // The uniforms, though - not the resulting edge. The mask is evaluated
+        // per fragment, so on a reduced buffer its boundary is resolved at
+        // that buffer's texel pitch and the blit smears it. That is why an
+        // enabled clipped lamp pins the scale to 1.0 rather than being one
+        // more scale-invariant term: see GetClampedSpotScale for the numbers
+        // and for why the neon's fix could not be reused. Past that pin, the
+        // two paths below are only ever reached with NO lamp clipped, which is
+        // what keeps "not one uniform differs" true of both of them.
         //
         // Uploaded unconditionally, including when no lamp is clipped. The
         // per-lamp opt-in is baked into the strips as a vertex attribute (see
@@ -612,6 +748,21 @@ namespace EdgeLighting
             mBlitShader.SetUniform("uMVP", glm::mat4(1.0f));
             mScaledBuffer.BindTexture(0);
             mBlitShader.SetUniform("uSource", 0);
+            // neon-blit.frag carries the neon's one-sided glow cut, which this
+            // layer has no business applying - so switch it off EXPLICITLY.
+            // Every other uniform of that cut is then unread, which is why
+            // none of them is set here.
+            //
+            // It was already off without this line, but only by luck twice
+            // over: GlowSide::BOTH happens to be the enum's zero, and GL
+            // happens to zero-initialise uniforms. Renumbering GlowSide would
+            // have redirected this blit through a rounded-box SDF built from
+            // uniforms nobody uploads - silently, and in the lens flare's blit
+            // at the same time. Naming the value makes this track a renumber
+            // instead, on the same terms neon-renderer.cpp already relies on:
+            // the enum's ordinals and neon-blit.frag's GLOW_SIDE_* defines are
+            // one numbering, kept in step by hand.
+            mBlitShader.SetUniform("uGlowSide", static_cast<int>(GlowSide::BOTH));
             mBlitQuad.DrawArrays(GL_TRIANGLES, 6);
             mBlitShader.Unuse();
         }
@@ -645,6 +796,9 @@ namespace EdgeLighting
         // a transition anyway, so the placement costs one size comparison.
         // This is the only place the lamp count can change.
         WarnOnLampOverflow(mCurrentSpotlight.lights.size(), config.spotlight.lights.size());
+        // Same placement, same reason: both halves of the transition are read
+        // from mCurrentSpotlight, and it is about to be overwritten.
+        LogOnClipPinTransition(mCurrentSpotlight, config.spotlight);
 
         if (mBuilt && config.spotlight == mCurrentSpotlight)
         {
@@ -864,19 +1018,47 @@ namespace EdgeLighting
 
             // Sample the support, then widen every sample to the MAXIMUM of
             // the support across the half-intervals it shares with its
-            // neighbours. A straight chord between two samples can then only
-            // bulge OUTSIDE the true support, never cut inside it - which is
-            // the whole correctness argument for approximating a curve with
-            // SPOT_STRIP_SEGMENTS quads.
+            // neighbours, so a straight chord between two samples bulges
+            // OUTSIDE the true support rather than cutting inside it.
             //
             // Sub-sampled rather than checking the two midpoints alone because
             // c(a) falls to zero at the far end with a near-vertical tangent
             // (it carries a sqrt of a term going to zero), so a midpoint pair
-            // does not bound the last chord. Measured: it changed no pixel in
-            // any verification scene, so this is a guarantee being made true
-            // rather than a bug being fixed - and it is also where most of
-            // this method's arithmetic goes, so read WIDEN_SUBSAMPLES before
+            // does not bound the last chord. It is also where most of this
+            // method's arithmetic goes, so read WIDEN_SUBSAMPLES before
             // deciding it is free.
+            //
+            // WHAT THIS DOES AND DOES NOT PROVE, because it is easy to read it
+            // as the whole correctness argument and it is not.
+            //
+            // Widening bounds the chord wherever the widened curve is CONVEX
+            // over the segment. It does not where that curve is concave, and
+            // there is one such place by construction: SolveConeAcross reads
+            // max(a, 0), so the support is FLAT for a < 0 and decreasing after
+            // - a corner at a = 0 that a long first segment cuts straight
+            // across. Measured against this solve, throwLength 900 cuts 1.52
+            // px inside it at a = -7.4, and intensity 50 under a 4x tint cuts
+            // 1.66 px. Neither is covered by the +1 px margin SupportAt adds.
+            //
+            // NO FRAGMENT IS LOST THERE, and the reason is the term this solve
+            // deliberately does not invert. Every cut lands at NEGATIVE a,
+            // where spotlight.frag's near-end fade is still closing:
+            // smoothstep(-nearW, SPOT_NEAR_FADE * nearW, a) is about 0.33 at
+            // a = 0 and 0.07 at a = -7.4, so over exactly the span where the
+            // chord cuts, the bound is 3x to 13x more conservative than the
+            // shader it bounds. Verified by evaluating the shader's own term
+            // stack on a 1 px grid of the lamp frame: across twelve parameter
+            // sets (throws to 4000 px, beams from 2 to 150 degrees, large
+            // apertures, large blooms, boosted tints, an eight-lamp floor) and
+            // sixteen clip scenes, ZERO fragments above the visibility floor
+            // fell outside the strip.
+            //
+            // So the guarantee holds on two legs, not one: widening plus the
+            // margin bound the strip wherever the solve is exact, which is
+            // a >= SPOT_NEAR_FADE * nearW, and the un-inverted near fade
+            // covers the corner at the start. That makes SPOT_NEAR_FADE load
+            // bearing beyond the a0 bound its own comment describes - raising
+            // it spends this slack. Re-run the grid if it moves.
             float sampleA[SPOT_STRIP_SEGMENTS + 1];
             float sampleC[SPOT_STRIP_SEGMENTS + 1];
             for (int k = 0; k <= SPOT_STRIP_SEGMENTS; k++)

@@ -46,6 +46,18 @@ precision highp float;
 // scale nor the 4 px the caller asked for, it just wanders with where the
 // boundary falls between buffer texels.
 
+// THREE RENDERERS COMPILE THIS SHADER, and only one of them wants the cut.
+// NeonRenderer owns it; SpotlightRenderer and LensFlareRenderer reuse this
+// pass as a plain premultiplied composite of their own reduced-resolution
+// buffers and have no rect to cut against. Both therefore upload
+// GLOW_SIDE_BOTH explicitly to take the branch below - see the note at each
+// call site for why relying on GL's zero-initialised uniforms was not good
+// enough. Anything added to this shader OUTSIDE that branch lands on all
+// three layers.
+//
+// These three values are the ordinals of EdgeLighting::GlowSide, which
+// neon-renderer.cpp casts straight to an int. The two numberings are one
+// numbering, kept in step by hand: renumber the enum and these follow.
 #define GLOW_SIDE_BOTH    0
 #define GLOW_SIDE_INSIDE  1
 #define GLOW_SIDE_OUTSIDE 2

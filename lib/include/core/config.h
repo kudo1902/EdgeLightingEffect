@@ -1057,6 +1057,17 @@ namespace EdgeLighting
         ///
         /// Clamped to (0, 1] at draw time. Above 1.0 is refused rather than
         /// supersampled: the point of the knob is to shade FEWER fragments.
+        ///
+        /// **Held at 1.0 while any enabled lamp has @c SpotLight::clipped
+        /// set.** The clip is a per-fragment mask, so a reduced buffer
+        /// resolves its boundary at that buffer's texel pitch and the blit
+        /// smears the result: the edge moves by up to a destination pixel,
+        /// light leaks outside a @c KEEP_INSIDE area, and
+        /// @c ClipArea::edgeSoftness stops meaning anything below one buffer
+        /// texel. Correctness wins over a saving this layer only sees on a
+        /// large rig anyway. The value is kept, not rewritten - drop the clip
+        /// and it takes effect again - and the renderer logs both transitions
+        /// so the override is never silent.
         float resolutionScale = 1.0f;
 
         bool operator==(const SpotlightConfig &o) const

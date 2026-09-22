@@ -66,9 +66,20 @@
 /// `smoothstep(-apertureWidth, SPOT_NEAR_FADE * apertureWidth, along)` - what
 /// stops the cone from painting backwards out of the lamp.
 ///
-/// The CPU does not read this: it starts the strip at
-/// -max(2 * apertureWidth, bloomBound), which covers this fade for any value
-/// at or below 2.0. Raise it past 2.0 and that bound stops being conservative.
+/// The CPU does not read this, but it depends on it TWICE and only one of the
+/// two is obvious:
+///
+///   - It starts the strip at -max(2 * apertureWidth, bloomBound), which
+///     covers this fade for any value at or below 2.0. Raise it past 2.0 and
+///     that bound stops being conservative.
+///   - The strip's FIRST CHORD cuts inside the solved support, by up to ~1.7
+///     px at a long throw or a boosted tint, because SolveConeAcross reads
+///     max(a, 0) and so puts a corner in the support at a = 0. Nothing is
+///     clipped only because this fade leaves the solve 3x to 13x conservative
+///     over exactly that span. Lowering this value spends that slack.
+///
+/// Both are verified by grid evaluation rather than by argument - see the long
+/// note on the widening pass in buildStrips, and re-run it if this moves.
 #define SPOT_NEAR_FADE            1.6
 
 /// Where the aperture bloom's window begins, as a fraction of its end.
@@ -105,11 +116,19 @@
 
 /// Quads per lamp along the beam. The strip approximates a curved support with
 /// this many straight chords; each sample is widened to cover its neighbours'
-/// midpoints so a chord can only ever bulge outward, never cut inside.
+/// midpoints so a chord bulges outward rather than cutting inside.
 ///
 /// More segments means a tighter fit and more vertices, and nothing else - the
 /// drawn image is identical at any value, because everything the strip adds or
 /// removes is a region where the shader writes zero.
+///
+/// LOWERING it is the direction that needs care. The widening does not by
+/// itself bound the chord at the corner the support carries at a = 0, and what
+/// covers the resulting cut is SPOT_NEAR_FADE's slack over a span that grows
+/// as segments get longer: at 12 the deepest cut measured is ~1.7 px against
+/// 3x to 13x of headroom. Fewer, longer chords eat into that margin from the
+/// other side. See the widening note in buildStrips for the grid evaluation,
+/// and re-run it before shipping a lower value.
 #define SPOT_STRIP_SEGMENTS       12
 
 /// Width of the ordered dither spotlight.frag adds before the framebuffer

@@ -25,9 +25,14 @@ precision highp float;
 // area is evaluated. It is a SECOND USE of aPos, not a second attribute, and
 // it is what keeps the clip out of gl_FragCoord: the projection is an ortho
 // (w is 1 everywhere), so this varying interpolates exactly and reads the same
-// app pixel whatever buffer the strips are being rasterised into. That is what
-// keeps SpotlightConfig::resolutionScale free of the clip - see the note about
-// uniforms in SpotlightRenderer::Render.
+// app pixel whatever buffer the strips are being rasterised into.
+//
+// That makes the clip's GEOMETRY scale-free; it does not make its EDGE so. The
+// mask is still evaluated once per fragment, so a reduced-resolution buffer
+// resolves the boundary at its own texel pitch and the blit smears it back.
+// SpotlightRenderer pins resolutionScale to 1.0 whenever a clipped lamp is
+// enabled for that reason - see GetClampedSpotScale for the measurements, and
+// the note about uniforms in SpotlightRenderer::Render.
 
 layout(location = 0) in vec2 aPos;   ///< App px, top-left origin, +y down.
 layout(location = 1) in vec2 aLocal; ///< (along, across) px in the lamp's frame.

@@ -168,7 +168,8 @@ Fraction of the viewport the lamps are rendered at before being bilinear-
 blitted back. `1.0` is the direct path: no offscreen buffer, no blit, nothing
 allocated. Clamped to `[0.125, 1]` at draw time; above 1.0 is refused rather
 than supersampled. **Read section 6 before lowering it** - unlike the neon and
-flare scales, this one usually costs more than it saves.
+flare scales, this one usually costs more than it saves, and it is **held at
+1.0 outright while any enabled lamp is clipped** (section 4.6).
 
 ### 4.2 Placing and aiming
 
@@ -186,9 +187,11 @@ it - but see `spotlight.lights` above for what "its slot" means.
 ### 4.3 Beam shape
 
 **`SpotLight::beamAngle`** (default 26 degrees)
-Full field angle of the cone. Clamped internally to `[0, 170]` so the half
-angle stays under 90 and its tangent stays finite - a "cone" at 180 degrees is
-a half-plane with no axis left to speak of.
+Full field angle of the cone. Clamped internally to `[0, 170]`, so the half
+angle stays at or under 85 and its tangent stays finite - a "cone" at 180
+degrees is a half-plane with no axis left to speak of, and the 10 degrees of
+headroom under that limit keeps the tangent away from the knee where it stops
+being a useful number rather than merely finite.
 
 The beam has **no hard edge at this angle**; it is the width of the gaussian,
 not a cut. Widening it does not brighten the lamp: the cone carries a factor of
@@ -311,6 +314,9 @@ carries no enable of its own, so this bit alone decides whether the clip
 touches a lamp. Off by default, so configuring a clip area changes nothing
 until a lamp asks for it.
 
+Setting it on any enabled lamp also holds `spotlight.resolutionScale` at 1.0
+for the whole layer - see the end of this section.
+
 > **Set the rectangle before setting this.** The area defaults to 0 x 0, and a
 > zero-size `KEEP_INSIDE` area correctly keeps nothing - so a lamp opted in
 > before the rect is configured goes dark, with nothing in the log. Nothing
@@ -385,6 +391,43 @@ on, the same region differs on a handful of pixels by at most 2 LSB, because the
 strip's corners moved and `spotDither` reads the interpolated lamp-frame
 position.
 
+**A clipped lamp holds `resolutionScale` at 1.0.** The mask is evaluated per
+fragment, so on the scaled path its boundary is resolved at the *reduced
+buffer's* texel pitch and the blit then smears that back to full resolution.
+The mask's geometry is in app coordinates and survives untouched; its edge does
+not. Measured across a `KEEP_INSIDE` boundary crossing bright light, in 1/255,
+by destination pixel from the boundary:
+
+| offset | scale 1.0 | scale 0.5 | scale 0.25 |
+| ------ | --------- | --------- | ---------- |
+| -1 | 255 | 255 | 191 |
+| 0 | 183 | 128 | 128 |
+| +1 | 0 | 0 | 64 |
+| +2 (softness 4) | 0 | 28 | 0 |
+
+Three things go wrong at once: the boundary moves by up to a destination pixel,
+light leaks up to 64/255 *outside* an area whose whole job is to stop it, and
+`edgeSoftness` stops meaning anything below one buffer texel - at 0.25, softness
+1 and softness 4 render identically. This is the failure
+[`neon-blit.frag`](../lib/shaders/neon-blit.frag) records at length, and the
+neon fixed it by moving its one-sided cut into the full-res blit. **That fix
+does not transfer here**, because `clipped` is per lamp while the blitted buffer
+holds every lamp's light summed together: a mask applied at blit time would cut
+the lamps that opted out along with the ones that opted in. Separating them
+costs a second buffer and a second blit, and the blit is already the fixed cost
+that makes this scale marginal (section 6) - so there would be nothing left to
+win.
+
+`GetClampedSpotScale` therefore returns 1.0 whenever a drawn lamp is clipped.
+The configured value is kept, not rewritten, so dropping the clip brings it back,
+and both transitions are logged. Verified on-device at 640x360 on a two-lamp rig
+with one lamp clipped: requesting 0.5 or 0.25 is now byte-identical to 1.0, where
+before the pin they differed by up to **65** and **101** of 255 respectively -
+against a max deviation of 11 for the same scale change with no lamp clipped,
+which is what ordinary resolution loss looks like. Both demo UIs say so beside
+the slider, since a knob that moves and changes nothing otherwise reads as
+broken.
+
 ---
 
 ## 5. Animating a lamp
@@ -425,6 +468,10 @@ the way animating a pure shader uniform is.
 flare's do - same two paths, same blit - and **not one uniform differs between
 them**, so a scaled frame is the same picture at lower resolution rather than a
 differently shaped one.
+
+One exception, and it is a hard gate rather than a caveat: **an enabled clipped
+lamp holds the scale at 1.0**, so everything in this section describes an
+unclipped rig. Section 4.6 has the measurements and the reason.
 
 **But the bargain is not the same, and that is why the default is 1.0.** Neon
 and the flare shade the whole viewport, so quartering their fragments always
