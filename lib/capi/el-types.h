@@ -282,9 +282,8 @@ extern "C"
      *           @c ClipArea is a shared shape, so any layer that gains a clip
      *           takes this same enum. Today the spotlight layer is the only
      *           consumer: see @ref el_effect_set_spotlight_clip_mode, which
-     *           applies only to lamps with @ref el_effect_set_spotlight_clipped
-     *           set and only while @ref el_effect_set_spotlight_clip_enabled
-     *           is on. */
+     *           applies to lamps with @ref el_effect_set_spotlight_clipped
+     *           set. */
     typedef enum el_clip_mode_e
     {
         EL_CLIP_KEEP_INSIDE = 0, /**< Output survives inside the area, cut off outside. */

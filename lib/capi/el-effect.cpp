@@ -1431,28 +1431,6 @@ extern "C"
 
     // --- Spotlight clip area ---
 
-    el_result_e el_effect_set_spotlight_clip_enabled(el_effect_handle_t effect, el_bool_t enabled)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_clip_enabled");
-        const bool v = (enabled != 0);
-        if (effect->config.spotlight.clipArea.enable == v)
-        {
-            return EL_SUCCESS;
-        }
-        LOG_I("effect=%p, enabled=%d", (void *)effect, (int)enabled);
-        effect->config.spotlight.clipArea.enable = v;
-        return EL_SUCCESS;
-    }
-
-    el_result_e el_effect_get_spotlight_clip_enabled(el_effect_handle_t effect, el_bool_t *outEnabled)
-    {
-        VALIDATE_EFFECT_PTR(effect, "el_effect_get_spotlight_clip_enabled");
-        VALIDATE_OUT_PTR(outEnabled, "el_effect_get_spotlight_clip_enabled");
-        *outEnabled = effect->config.spotlight.clipArea.enable ? 1 : 0;
-        LOG_D("effect=%p, enabled=%d", (void *)effect, (int)*outEnabled);
-        return EL_SUCCESS;
-    }
-
     // Parameter order mirrors el_effect_set_geometry exactly - width, height,
     // x, y, cornerRadius - so a host lining the clip up with the rect can
     // forward one call's output into the other. See the header.

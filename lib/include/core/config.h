@@ -137,24 +137,34 @@ namespace EdgeLighting
     /// rather than a rasteriser reject. A layer is free to ALSO narrow its
     /// geometry to the area where the mode makes that sound - @c KEEP_INSIDE
     /// bounds what survives, @c KEEP_OUTSIDE does not.
+    ///
+    /// **NO ENABLE FLAG.** The area is always live; whether it bites is
+    /// entirely the consumer's own opt-in (@c SpotLight::clipped for the one
+    /// consumer there is), so there is exactly one place to look when a lamp
+    /// is or is not being cut.
+    ///
+    /// That puts one sharp edge on a host, and it is worth stating plainly:
+    /// **the default area is 0 x 0, and a zero-size @c KEEP_INSIDE area
+    /// correctly cuts an opted-in consumer to nothing.** Opt a lamp in before
+    /// giving the area a size and that lamp goes dark, with nothing in the log
+    /// - see @ref ClipArea::width. The protection is that every consumer's
+    /// opt-in defaults to OFF, so this can only happen to a caller already
+    /// reaching for the clip; set the rectangle first.
     typedef struct ClipArea
     {
-        /// false leaves every consumer unclipped whatever their own per-item
-        /// opt-in says (@c SpotLight::clipped for the one consumer there is),
-        /// so the whole feature is one flag away.
-        ///
-        /// Default false, and that matters: the default size is zero, and a
-        /// zero-size @c KEEP_INSIDE area correctly cuts an opted-in consumer
-        /// to nothing. Defaulting this on would make setting a per-item flag
-        /// blank that item.
-        bool enable = false;
-
         /// TOP-LEFT corner of the area in APP coordinates - the same space as
         /// @c RectGeometry::position and @c SpotLight::position: origin at the
         /// viewport's top-left, +x right, +y DOWN.
         glm::vec2 position = glm::vec2(0.0f, 0.0f);
-        float width = 0.0f;  ///< Area width in px.
-        float height = 0.0f; ///< Area height in px.
+        /// Area size in px. **Zero is a meaningful value, not "unset":** under
+        /// @c ClipMode::KEEP_INSIDE a zero-size area keeps nothing, so every
+        /// consumer that opted in draws nothing at all. That is deliberate -
+        /// treating a degenerate area as "no clip" would light the whole
+        /// output instead, the opposite of what a caller that set width to 0
+        /// asked for - but it does mean these two default to a state that
+        /// blanks anything pointed at them. See the struct comment.
+        float width = 0.0f;
+        float height = 0.0f; ///< See @ref width.
 
         /// Corner rounding in px, clamped by the consumer to half the shorter
         /// side. 0 is a sharp rectangle.
@@ -173,8 +183,7 @@ namespace EdgeLighting
 
         bool operator==(const ClipArea &o) const
         {
-            return enable == o.enable &&
-                   position == o.position &&
+            return position == o.position &&
                    width == o.width &&
                    height == o.height &&
                    cornerRadius == o.cornerRadius &&
@@ -970,7 +979,13 @@ namespace EdgeLighting
         /// made `light.clip` read like an area and `spotlight.clip` read like
         /// a flag.
         ///
-        /// Ignored while @c ClipArea::enable is false.
+        /// **The ONLY gate.** @ref ClipArea carries no enable flag of its own,
+        /// so this bit alone decides whether the area touches this lamp - one
+        /// place to look, and nothing that can be "on but dormant". The cost
+        /// is that the area's own defaults are not a safe resting state: it is
+        /// 0 x 0, and a zero-size @c KEEP_INSIDE area keeps nothing, so
+        /// setting this before giving @c SpotlightConfig::clipArea a size
+        /// blanks the lamp. Set the rectangle first.
         bool clipped = false;
 
         bool operator==(const SpotLight &o) const
@@ -1011,8 +1026,9 @@ namespace EdgeLighting
         std::vector<SpotLight> lights;
 
         /// The region that cuts this layer's light off, and which side of it
-        /// survives. Applies only to lamps with @c SpotLight::clipped set, and
-        /// only while @c ClipArea::enable is true.
+        /// survives. Applies only to lamps with @c SpotLight::clipped set -
+        /// that bit is the whole gate, since @ref ClipArea has no enable of
+        /// its own. With no lamp opted in this is inert, whatever it holds.
         ///
         /// The shape is shared (@ref ClipArea) rather than spotlight-specific;
         /// what IS specific to this layer is the per-lamp opt-in beside it,

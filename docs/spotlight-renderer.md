@@ -305,17 +305,22 @@ lamp** - which is the split that matters, because the two kinds of lamp in a rig
 want opposite answers. A lamp washing one panel should stop at its edge; a lamp
 lighting the scene around it should cross the same boundary untouched.
 
-**`spotlight.clipArea.enable`** (default `false`)
-Master switch for the whole feature. While it is false every lamp is unclipped
-whatever its own flag says. Default off because the area's default size is zero,
-and a zero-size `KEEP_INSIDE` area correctly cuts an opted-in lamp to nothing.
-
 **`SpotLight::clipped`** (default `false`)
-Whether *this* lamp is cut off. Off by default, so adding a clip area to an
-existing rig changes nothing until a lamp asks for it.
+Whether *this* lamp is cut off, and **the only gate there is** - the area
+carries no enable of its own, so this bit alone decides whether the clip
+touches a lamp. Off by default, so configuring a clip area changes nothing
+until a lamp asks for it.
+
+> **Set the rectangle before setting this.** The area defaults to 0 x 0, and a
+> zero-size `KEEP_INSIDE` area correctly keeps nothing - so a lamp opted in
+> before the rect is configured goes dark, with nothing in the log. Nothing
+> guards against that ordering now; the only protection is that `clipped`
+> defaults off, so it can only happen to a caller already reaching for the
+> clip. Both demo UIs say so when a lamp is opted in against a zero-size area.
 
 **`spotlight.clipArea.position` / `.width` / `.height`** (default `(0,0)`, 0, 0)
-The area: TOP-LEFT corner plus size, app coordinates.
+The area: TOP-LEFT corner plus size, app coordinates. Zero size is a meaningful
+value, not "unset" - see the warning above.
 
 **`spotlight.clipArea.cornerRadius`** (default 0)
 Corner rounding in px, clamped at draw time to half the shorter side. 0 is a
@@ -329,7 +334,8 @@ would. 1.0 is a single pixel of feather: enough to antialias the boundary and
 nothing more. Larger values are a look, not a fix.
 
 **Two names, one word apart, different scopes** - worth reading once:
-`spotlight.clipArea` is the *region*, `SpotLight::clipped` is a *lamp's state*.
+`spotlight.clipArea` is the *region*, `SpotLight::clipped` is a *lamp's state*
+and the only switch.
 Both were called `clip` at first, one field apart, which made `light.clip` read
 like an area and `spotlight.clip` read like a flag. The same split runs through
 the C ABI (`..._clip_<noun>` addresses the area and takes no index;
@@ -370,7 +376,7 @@ is purely a fragment-stage multiply.
 Verified offscreen at 640x360 over six clip scenes and four structural checks
 (both modes, sharp and rounded areas, feathered and not, rotated lamps, an area
 covering the whole viewport, a tiny area the beams barely reach, a zero-size
-area, a mixed rig with one lamp clipped and one not, the area enabled with no
+area, a mixed rig with one lamp clipped and one not, a configured area with no
 lamp opted in, and `resolutionScale` 0.5):
 no lit pixel survives where the mask is zero, and with the dither disabled every
 pixel where the mask is exactly 1 is **byte-identical** to the unclipped render -
@@ -470,7 +476,6 @@ one function per scalar, mirroring the arc family:
 | `el_effect_set_spotlight_tint` | `tint.r`, `tint.g`, `tint.b` |
 | `el_effect_set_spotlight_enabled` | per-lamp `enable` |
 | `el_effect_set_spotlight_clipped` | per-lamp `clipped` |
-| `el_effect_set_spotlight_clip_enabled` | `spotlight.clipArea.enable` |
 | `el_effect_set_spotlight_clip_rect` | `clipArea.width`, `.height`, `.position.x`, `.position.y`, `.cornerRadius` |
 | `el_effect_set_spotlight_clip_softness` | `clipArea.edgeSoftness` |
 | `el_effect_set_spotlight_clip_mode` | `clipArea.mode` (`el_clip_mode_e`) |

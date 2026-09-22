@@ -912,16 +912,18 @@ void DebugUI::buildSpotlightSection(el_effect_handle_t effect)
         ImGui::TextDisabled("Below 1.0 only pays above ~6 lamps.");
     }
 
+    // Fetched here rather than after the clip block because the zero-size
+    // hint below has to ask whether any lamp opted in.
+    int count = 0;
+    el_effect_get_spotlight_count(effect, &count);
+
     // --- Clip area: ONE region for the layer, opted into per lamp below. ---
-    ImGui::Separator();
-    el_bool_t areaOn = 0;
-    el_effect_get_spotlight_clip_enabled(effect, &areaOn);
-    bool areaEn = areaOn;
-    if (ImGui::Checkbox("Clip Area##Spot", &areaEn))
-    {
-        el_effect_set_spotlight_clip_enabled(effect, areaEn ? 1 : 0);
-    }
-    if (areaEn)
+    //
+    // Always shown, never gated behind an enable: the area has none, and
+    // whether it bites is each lamp's own "Clip This Lamp". Hiding it behind a
+    // checkbox here would invent a second switch in the UI that does not exist
+    // in the ABI.
+    ImGui::SeparatorText("Clip Area");
     {
         ImGui::Indent();
 
@@ -969,7 +971,19 @@ void DebugUI::buildSpotlightSection(el_effect_handle_t effect)
         ImGui::SameLine();
         ImGui::TextDisabled("copy once - it does not follow the rect");
 
-        if (modeIdx == static_cast<int>(EL_CLIP_KEEP_INSIDE) &&
+        // The one trap left now that the area has no enable of its own: the
+        // defaults are 0 x 0, and a zero-size KEEP_INSIDE area keeps nothing.
+        // Only worth saying when a lamp has actually opted in, since otherwise
+        // the area is inert whatever it holds.
+        bool anyClipped = false;
+        for (int i = 0; i < count && !anyClipped; i++)
+        {
+            el_bool_t lampClipped = 0;
+            el_effect_get_spotlight_clipped(effect, i, &lampClipped);
+            anyClipped = (lampClipped != 0);
+        }
+        if (anyClipped &&
+            modeIdx == static_cast<int>(EL_CLIP_KEEP_INSIDE) &&
             (cw <= 0.0f || ch <= 0.0f))
         {
             ImGui::TextDisabled("Zero-size area: every clipped lamp draws nothing.");
@@ -978,9 +992,6 @@ void DebugUI::buildSpotlightSection(el_effect_handle_t effect)
         ImGui::Unindent();
     }
     ImGui::Separator();
-
-    int count = 0;
-    el_effect_get_spotlight_count(effect, &count);
 
     ImGui::Text("%d / %d lamps", count, MAX_LAMPS);
     ImGui::SameLine();
@@ -1061,11 +1072,6 @@ void DebugUI::buildSpotlightSection(el_effect_handle_t effect)
     if (ImGui::Checkbox("Clip This Lamp##Spot", &lampClipEn))
     {
         el_effect_set_spotlight_clipped(effect, sel, lampClipEn ? 1 : 0);
-    }
-    if (lampClipEn && !areaEn)
-    {
-        ImGui::SameLine();
-        ImGui::TextDisabled("(Clip Area is off)");
     }
 
     float x = 0.0f, y = 0.0f, angle = 0.0f;

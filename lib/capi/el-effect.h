@@ -548,10 +548,14 @@ extern "C"
 
     /** @brief Whether lamp @p index is cut off by the clip area.
      *  @details Per lamp rather than per layer, so one rig can have some lamps
-     *           stop at the area's edge and others cross it untouched.
-     *           Ignored while @ref el_effect_set_spotlight_clip_enabled is
-     *           off. Default off, so adding a clip area to an existing rig
-     *           changes nothing until a lamp asks for it. */
+     *           stop at the area's edge and others cross it untouched. Default
+     *           off, so configuring a clip area changes nothing until a lamp
+     *           asks for it.
+     *
+     *           **This is the only gate** - the area has no enable of its own.
+     *           So set the rectangle BEFORE setting this: the area starts
+     *           0 x 0, and a zero-size EL_CLIP_KEEP_INSIDE area keeps nothing,
+     *           which blanks the lamp with nothing in the log. */
     EL_API el_result_e el_effect_set_spotlight_clipped(el_effect_handle_t effect, int32_t index, el_bool_t clipped);
     EL_API el_result_e el_effect_get_spotlight_clipped(el_effect_handle_t effect, int32_t index, el_bool_t *outClipped);
 
@@ -572,6 +576,9 @@ extern "C"
      * spotlight layer reads nothing but its own sub-config. A host that wants
      * the two to line up copies the five numbers across.
      *
+     * There is no enable for the area. Whether a lamp is cut is decided by
+     * el_effect_set_spotlight_clipped alone, so there is one place to look.
+     *
      * NAMING, because two of these are one word apart and mean different
      * scopes:
      *   el_effect_*_spotlight_clip_<noun>  - the AREA. No index; one per layer.
@@ -580,11 +587,6 @@ extern "C"
      * against el_effect_set_spotlight_enabled (one lamp): the indexed call is
      * the bare one.
      */
-
-    /** @brief Master switch for the clip area. Off (the default) leaves every
-     *         lamp unclipped whatever their per-lamp flag says. */
-    EL_API el_result_e el_effect_set_spotlight_clip_enabled(el_effect_handle_t effect, el_bool_t enabled);
-    EL_API el_result_e el_effect_get_spotlight_clip_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
 
     /** @brief The clip rectangle, in APP coordinates: TOP-LEFT corner plus
      *         size, the same space as @ref el_effect_set_spotlight_placement.
@@ -597,9 +599,9 @@ extern "C"
      *
      *           cornerRadius is clamped at draw time to half the shorter side;
      *           0 is a sharp rectangle.
-     *  @note  A zero-size rectangle under EL_CLIP_KEEP_INSIDE cuts
-     *         every clipped lamp to nothing - which is why the master switch
-     *         above defaults to off. */
+     *  @note  A zero-size rectangle under EL_CLIP_KEEP_INSIDE cuts every
+     *         clipped lamp to nothing, and that is the DEFAULT rectangle, so
+     *         call this before el_effect_set_spotlight_clipped. */
     EL_API el_result_e el_effect_set_spotlight_clip_rect(el_effect_handle_t effect,
                                                          float width, float height,
                                                          float x, float y,

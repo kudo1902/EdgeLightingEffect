@@ -1125,10 +1125,13 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
     }
 
     // --- Clip area: ONE region for the layer, opted into per lamp below. ---
-    ImGui::Separator();
+    //
+    // Always shown, never gated behind an enable: the area has none, and
+    // whether it bites is each lamp's own "Clip This Lamp". Hiding it behind a
+    // checkbox here would invent a second switch in the UI that does not exist
+    // in the config.
+    ImGui::SeparatorText("Clip Area");
     auto &clipArea = cfg.spotlight.clipArea;
-    ImGui::Checkbox("Clip Area##Spot", &clipArea.enable);
-    if (clipArea.enable)
     {
         ImGui::Indent();
 
@@ -1162,7 +1165,21 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
         ImGui::SameLine();
         ImGui::TextDisabled("copy once - it does not follow the rect");
 
-        if (clipArea.mode == EdgeLighting::ClipMode::KEEP_INSIDE &&
+        // The one trap left now that the area has no enable of its own: the
+        // defaults are 0 x 0, and a zero-size KEEP_INSIDE area keeps nothing.
+        // Only worth saying when a lamp has actually opted in, since otherwise
+        // the area is inert whatever it holds.
+        bool anyClipped = false;
+        for (const auto &lamp : cfg.spotlight.lights)
+        {
+            if (lamp.clipped)
+            {
+                anyClipped = true;
+                break;
+            }
+        }
+        if (anyClipped &&
+            clipArea.mode == EdgeLighting::ClipMode::KEEP_INSIDE &&
             (clipArea.width <= 0.0f || clipArea.height <= 0.0f))
         {
             ImGui::TextDisabled("Zero-size area: every clipped lamp draws nothing.");
@@ -1247,11 +1264,6 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
     ImGui::Checkbox("Lamp Enabled##Spot", &l.enable);
 
     ImGui::Checkbox("Clip This Lamp##Spot", &l.clipped);
-    if (l.clipped && !clipArea.enable)
-    {
-        ImGui::SameLine();
-        ImGui::TextDisabled("(Clip Area is off)");
-    }
 
     // App coordinates, top-left origin, +y down - the same space as
     // Geometry > Position, which is why the ranges here are viewport-sized

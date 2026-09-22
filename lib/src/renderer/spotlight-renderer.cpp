@@ -342,7 +342,6 @@ namespace EdgeLighting
         /// part of the clip is @c SpotLight::clipped, which is a bit.
         typedef struct ClipSolve
         {
-            bool active;      ///< Whether any lamp can be clipped at all.
             bool keepInside;  ///< Which side of the area survives.
             glm::vec2 center; ///< App px.
             glm::vec2 half;   ///< Half extent, app px, never negative.
@@ -355,17 +354,20 @@ namespace EdgeLighting
         /// @ref SpotlightRenderer::buildStrips bounds geometry against it -
         /// for the same reason @ref UsesScaledBuffer is one predicate.
         ///
-        /// A degenerate area (zero or negative width or height) stays ACTIVE
-        /// rather than being switched off, and that is deliberate: under
-        /// KEEP_INSIDE it is the correct answer that a clipped lamp writes
-        /// nothing, and quietly treating it as "no clip" would light the whole
-        /// beam instead - the opposite of what a host that set width to 0
-        /// asked for. The half extent is floored at zero so the SDF stays
+        /// A degenerate area (zero or negative width or height) is resolved
+        /// like any other rather than being treated as "no clip", and that is
+        /// deliberate: under KEEP_INSIDE it is the correct answer that a
+        /// clipped lamp writes nothing, and quietly ignoring it would light
+        /// the whole beam instead - the opposite of what a host that set width
+        /// to 0 asked for. The half extent is floored at zero so the SDF stays
         /// well-formed either way.
+        ///
+        /// Nothing here says whether the clip APPLIES. @c SpotLight::clipped
+        /// alone decides that, per lamp; there is no area-level enable to
+        /// agree with.
         ClipSolve SolveClip(const ClipArea &area)
         {
             ClipSolve out{};
-            out.active = area.enable;
             out.keepInside = (area.mode == ClipMode::KEEP_INSIDE);
             out.half = glm::vec2(std::max(area.width, 0.0f) * 0.5f,
                                  std::max(area.height, 0.0f) * 0.5f);
@@ -377,17 +379,6 @@ namespace EdgeLighting
                                   std::min(out.half.x, out.half.y));
             out.softness = std::max(area.edgeSoftness, 0.0f);
             return out;
-        }
-
-        /// Whether @p light is cut off by @p solved.
-        ///
-        /// Both halves have to agree - the area has to be switched on AND the
-        /// lamp has to have opted in - which is exactly why this is a named
-        /// predicate rather than the expression written out at each of its
-        /// call sites.
-        bool LampIsClipped(const SpotLight &light, const ClipSolve &solved)
-        {
-            return solved.active && light.clipped;
         }
 
         /// Warn when a host hands over more lamps than one pass can draw.
@@ -576,7 +567,8 @@ namespace EdgeLighting
         // per-lamp opt-in is baked into the strips as a vertex attribute (see
         // buildStrips), so these two uniforms are inert rather than wrong when
         // nothing reads them, and skipping them would only buy a branch here
-        // in exchange for a stale value the first frame a lamp opts in.
+        // in exchange for a stale value the first frame a lamp opts in. There
+        // is no area-level enable that could gate them either.
         const ClipSolve clipSolve = SolveClip(config.spotlight.clipArea);
         mShaderProgram.SetUniform("uClipRect",
                                   glm::vec4(clipSolve.center.x, clipSolve.center.y,
@@ -756,6 +748,10 @@ namespace EdgeLighting
         // conservative rather than wrong - and it keeps that count a pure
         // function of the lamps, so moving the clip area cannot change how
         // brightly the UNCLIPPED lamps are bounded.
+        //
+        // Resolved unconditionally, including when no lamp is clipped: there
+        // is no area-level enable to test, and the derivation is a handful of
+        // min/max against a struct already in cache.
         const ClipSolve clipSolve = SolveClip(spotlight.clipArea);
 
         for (int i = 0; i < lampCount; i++)
@@ -781,7 +777,7 @@ namespace EdgeLighting
             const float ox = light.position.x;
             const float oy = light.position.y;
 
-            const bool clipped = LampIsClipped(light, clipSolve);
+            const bool clipped = light.clipped;
 
             // The strip spans [a0, a1] along the axis. a0 reaches back far
             // enough to cover spotlight.frag's near-end fade (which cannot
