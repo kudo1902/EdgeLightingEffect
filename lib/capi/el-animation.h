@@ -300,7 +300,7 @@ extern "C"
                                                   int32_t index, el_arc_field_e field, el_modulator_handle_t mod);
 
     /** @brief Add a spotlight-field binding.
-     *  @param index Lamp slot. Must already exist in @c spotlight.lights (no
+     *  @param index Lamp slot. Must already exist in @c spotlight.lamps (no
      *               auto-grow; an out-of-range index is a logged no-op).
      *  @note  Driving a field that changes a lamp's EXTENT - position, angle,
      *         beam angle, throw, aperture, intensity - makes the spotlight

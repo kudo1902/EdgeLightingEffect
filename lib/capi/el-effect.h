@@ -481,7 +481,7 @@ extern "C"
     EL_API el_result_e el_effect_get_spotlight_renderer_enabled(el_effect_handle_t effect, el_bool_t *outEnabled);
 
     /** @brief Resize the lamp list. New entries carry the C++ defaults.
-     *  @note  Entries past the renderer's SPOT_MAX_LIGHTS ceiling are ignored
+     *  @note  Entries past the renderer's SPOT_MAX_LAMPS ceiling are ignored
      *         at draw time rather than rejected here. */
     EL_API el_result_e el_effect_set_spotlight_count(el_effect_handle_t effect, int32_t count);
     EL_API el_result_e el_effect_get_spotlight_count(el_effect_handle_t effect, int32_t *outCount);

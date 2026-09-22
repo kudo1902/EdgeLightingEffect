@@ -1108,13 +1108,13 @@ extern "C"
         /// nullptr and logs when @p index names no lamp.
         EdgeLighting::SpotLight *SpotlightSlot(el_effect_handle_t effect, int32_t index, const char *who)
         {
-            if (index < 0 || static_cast<size_t>(index) >= effect->config.spotlight.lights.size())
+            if (index < 0 || static_cast<size_t>(index) >= effect->config.spotlight.lamps.size())
             {
                 LOG_E("%s: index %d out of range (size=%zu)", who, index,
-                      effect->config.spotlight.lights.size());
+                      effect->config.spotlight.lamps.size());
                 return nullptr;
             }
-            return &effect->config.spotlight.lights[static_cast<size_t>(index)];
+            return &effect->config.spotlight.lamps[static_cast<size_t>(index)];
         }
     }
 
@@ -1149,12 +1149,12 @@ extern "C"
             return EL_ERROR_INVALID_PARAMETER;
         }
         size_t newSize = static_cast<size_t>(count);
-        if (effect->config.spotlight.lights.size() == newSize)
+        if (effect->config.spotlight.lamps.size() == newSize)
         {
             return EL_SUCCESS;
         }
         LOG_I("effect=%p, count=%d", (void *)effect, count);
-        effect->config.spotlight.lights.resize(newSize);
+        effect->config.spotlight.lamps.resize(newSize);
         return EL_SUCCESS;
     }
 
@@ -1162,7 +1162,7 @@ extern "C"
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_get_spotlight_count");
         VALIDATE_OUT_PTR(outCount, "el_effect_get_spotlight_count");
-        *outCount = static_cast<int32_t>(effect->config.spotlight.lights.size());
+        *outCount = static_cast<int32_t>(effect->config.spotlight.lamps.size());
         LOG_D("effect=%p, count=%d", (void *)effect, *outCount);
         return EL_SUCCESS;
     }
@@ -1420,12 +1420,12 @@ extern "C"
     el_result_e el_effect_clear_spotlights(el_effect_handle_t effect)
     {
         VALIDATE_EFFECT_PTR(effect, "el_effect_clear_spotlights");
-        if (effect->config.spotlight.lights.empty())
+        if (effect->config.spotlight.lamps.empty())
         {
             return EL_SUCCESS;
         }
         LOG_I("effect=%p", (void *)effect);
-        effect->config.spotlight.lights.clear();
+        effect->config.spotlight.lamps.clear();
         return EL_SUCCESS;
     }
 

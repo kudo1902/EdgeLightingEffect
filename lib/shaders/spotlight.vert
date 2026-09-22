@@ -37,7 +37,7 @@ precision highp float;
 layout(location = 0) in vec2 aPos;   ///< App px, top-left origin, +y down.
 layout(location = 1) in vec2 aLocal; ///< (along, across) px in the lamp's frame.
 layout(location = 2) in vec4 aP0;    ///< tanHalfBeam, throwLength, softK, intensity.
-layout(location = 3) in vec4 aP1;    ///< apertureWidth, bloom, bloomRadius, bloomSupport.
+layout(location = 3) in vec4 aP1;    ///< apertureWidth, bloom, bloomRadius, bloomWindow.
 layout(location = 4) in vec3 aColor; ///< Linear RGB, baked from colorTemp on the CPU.
 // A WEIGHT, not a flag, and named for it: the fragment stage mixes with it
 // rather than branching on it. "Weight" also keeps it clear of the OTHER clip

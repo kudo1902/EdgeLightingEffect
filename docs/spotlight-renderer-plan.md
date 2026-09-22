@@ -8,7 +8,7 @@ offscreen verification rather than by reading the code.
 Part 8's `docs/spotlight-renderer.md` was outstanding for a while and is now
 written; see [Still open](#still-open) for what remains.
 
-Decisions taken at approval: `SPOT_MAX_LIGHTS` = 8, colour by `colorTemp`
+Decisions taken at approval: `SPOT_MAX_LAMPS` = 8, colour by `colorTemp`
 (Kelvin), and no rect gating - a cone crosses the frame freely.
 
 A new renderer that emits N independently placed and aimed cones of light and
@@ -69,7 +69,7 @@ Two things the numbers say that the plan did not anticipate:
 
 **The bloom, not the throw, is what blows the area up.** The worst scene is a
 single lamp: `bloomRadius` 90 gives the aperture glow a support of
-`90 * SPOT_BLOOM_SUPPORT` = 720 px, which fills a 1280x720 frame on its own. A
+`90 * SPOT_BLOOM_WINDOW_OUTER` = 720 px, which fills a 1280x720 frame on its own. A
 long tight beam (700 px throw, 5 degrees) costs 19%.
 
 **A `resolutionScale` makes this renderer SLOWER** at anything under about six
@@ -97,7 +97,7 @@ cone(a, c) = intensity
 
 bloom(a, c) = bloomStrength * r^2 / (a^2 + c^2 + r^2)      where r = bloomRadius
             * (1 - smoothstep(S * SPOT_BLOOM_WINDOW_INNER, S, sqrt(a^2 + c^2)))
-                                                    where S = r * SPOT_BLOOM_SUPPORT
+                                                    where S = r * SPOT_BLOOM_WINDOW_OUTER
 
 softK = SPOT_SOFT_MAX + (1 - softness) * (SPOT_SOFT_MIN_SPAN)
 ```
@@ -113,7 +113,7 @@ brighter overall than a narrow one at the same intensity. Without it, widening
 the beam adds light rather than spreading it.
 
 The bloom is inverse-square and therefore has **no natural end**. It is windowed
-off at `SPOT_BLOOM_SUPPORT` radii so its support is finite and the CPU can bound
+off at `SPOT_BLOOM_WINDOW_OUTER` radii so its support is finite and the CPU can bound
 it. This is the same problem `GetGhostBloomRadius` solves for the lens flare's
 ghosts, and it is solved the same way.
 
@@ -149,7 +149,7 @@ typedef struct SpotLight
 typedef struct SpotlightConfig
 {
     bool enable = false;
-    /// Clamped to SPOT_MAX_LIGHTS at draw time; entries past it are ignored.
+    /// Clamped to SPOT_MAX_LAMPS at draw time; entries past it are ignored.
     std::vector<SpotLight> lights;
 
     bool operator==(const SpotlightConfig &o) const
@@ -182,7 +182,7 @@ same reasoning as `neon-tuning.h`.
 
 ```
 #define SPOT_NEAR_FADE           1.6    // aperture widths the near end fades over
-#define SPOT_BLOOM_SUPPORT       8.0    // bloom radii at which the glow is windowed off
+#define SPOT_BLOOM_WINDOW_OUTER       8.0    // bloom radii at which the glow is windowed off
 #define SPOT_BLOOM_WINDOW_INNER  0.55   // where that window starts, as a fraction of it
 #define SPOT_SOFT_MAX            3.40   // gaussian exponent at softness 0
 #define SPOT_SOFT_MIN            0.85   // gaussian exponent at softness 1
@@ -200,7 +200,7 @@ so N lamps each under floor/N sum to under floor.
 
 **Be honest about what this header does and does not buy.** In droplets and the
 lens flare, the CPU reads these constants directly to derive a bound, so the two
-sides cannot disagree. Here only `SPOT_BLOOM_SUPPORT` and the two softness
+sides cannot disagree. Here only `SPOT_BLOOM_WINDOW_OUTER` and the two softness
 constants are read by both. The deeper coupling is that the CPU solver in Part 4
 inverts the *whole falloff expression* the shader evaluates, and no header can
 enforce that. The guard for it is the image diff in Verification, not this file.
@@ -212,7 +212,7 @@ uniform mat4 uMVP;
 in vec2 aPos;        // app px, top-left origin, +y down
 in vec2 aLocal;      // (along, across) px in the lamp's frame
 in vec4 aP0;         // tanHalf, throwLength, softK, intensity
-in vec4 aP1;         // apertureWidth, bloom, bloomRadius, bloomSupport
+in vec4 aP1;         // apertureWidth, bloom, bloomRadius, bloomWindow
 in vec3 aColor;      // linear RGB
 
 out vec2 vLocal;
@@ -297,7 +297,7 @@ cMax(a)  = e(a) <= 0 ? 0 : sqrt(e(a) / softK) * halfW(a)
 
 `e` is strictly decreasing in `a` for `a >= 0`, so `aMax` - the furthest the cone
 reaches - is a bisection on `e(a) = 0`. The bloom's disc of radius
-`bloomRadius * SPOT_BLOOM_SUPPORT` is unioned in, which also sets how far behind
+`bloomRadius * SPOT_BLOOM_WINDOW_OUTER` is unioned in, which also sets how far behind
 the lamp the strip has to start. Each sample is widened to the MAXIMUM of the support
 across the half-intervals its chords cover (`WIDEN_SUBSAMPLES` sub-samples per
 side), so a chord can only bulge outward, never cut inside.
@@ -331,7 +331,7 @@ mistaken for a bug later.
 
 ### Buffer lifetime
 
-Allocate once in `Initialize` at the ceiling size - `SPOT_MAX_LIGHTS *
+Allocate once in `Initialize` at the ceiling size - `SPOT_MAX_LAMPS *
 SPOT_STRIP_SEGMENTS * 6 * sizeof(Vertex)`, which is 8 * 12 * 6 * 60 = **34 KB**
 - with `GL_DYNAMIC_DRAW`, and fill with `glBufferSubData`. Never size it to the
 live lamp count: that puts a reallocation on the animation path, which is the
@@ -521,7 +521,7 @@ was checked.
 1. **App coordinates**, origin top-left. The rig does not follow the rect; a
    perimeter-anchored alternative on the same struct stays available if that
    turns out to matter.
-2. **`SPOT_MAX_LIGHTS` = 8.** Sizes the VBO ceiling only (34 KB).
+2. **`SPOT_MAX_LAMPS` = 8.** Sizes the VBO ceiling only (34 KB).
 3. **`colorTemp` in Kelvin**, baked to linear RGB on the CPU. No RGB tint, so a
    saturated non-blackbody lamp is not reachable - add a `glm::vec3 tint`
    multiplied on top if one is ever wanted.

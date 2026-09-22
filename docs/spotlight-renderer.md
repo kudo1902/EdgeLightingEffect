@@ -33,7 +33,7 @@ at all:
 - **Light only adds.** The pass is fully additive - `glBlendFuncSeparate(GL_ONE,
   GL_ONE, GL_ONE, GL_ONE)` - in the alpha channel as well as in colour, which
   also makes the layer order-independent. The order of
-  `SpotlightConfig::lights` cannot change the image.
+  `SpotlightConfig::lamps` cannot change the image.
 - **It writes a coverage alpha**, the same max-of-channels rule neon and the
   flare use. It did not always: the shader emitted a literal `0.0`, which is
   invisible on a desktop window (opaque, nobody reads the alpha back) and
@@ -96,7 +96,7 @@ not the geometry.
 
 ## 2. What the default `Config()` renders
 
-**Nothing.** `spotlight.enable` defaults to `false` and `spotlight.lights`
+**Nothing.** `spotlight.enable` defaults to `false` and `spotlight.lamps`
 defaults to empty, so the layer costs one branch per frame until a host both
 enables it and adds a lamp.
 
@@ -155,8 +155,8 @@ without a wrap discontinuity in the image.
 Master switch. Nothing renders when false, and the scaled buffer (if one was
 allocated) is released on the config change rather than held for the session.
 
-**`spotlight.lights`** (default empty)
-The lamps. **At most `SPOT_MAX_LIGHTS` (8) are drawn**, and the clamp is by
+**`spotlight.lamps`** (default empty)
+The lamps. **At most `SPOT_MAX_LAMPS` (8) are drawn**, and the clamp is by
 INDEX - entries from slot 8 on are ignored whatever their `enable` says, so a
 rig whose only enabled lamps sit at slots 8 and 9 draws nothing. A longer list
 is a legitimate thing to keep around, because indices (and any animation
@@ -182,7 +182,7 @@ Where it points (section 3).
 **`SpotLight::enable`** (default `true`)
 Skips the lamp without removing it from the list, so a host can keep indices
 stable. A disabled lamp costs nothing but its slot - no geometry is emitted for
-it - but see `spotlight.lights` above for what "its slot" means.
+it - but see `spotlight.lamps` above for what "its slot" means.
 
 ### 4.3 Beam shape
 
@@ -286,7 +286,7 @@ Size of that glow. Floored at 1 px.
 
 **This is the pathological case for cost, not `throwLength`.** An
 inverse-square term has no natural end, so the renderer windows it off at
-`bloomRadius * SPOT_BLOOM_SUPPORT` and the strip has to contain that disc. At
+`bloomRadius * SPOT_BLOOM_WINDOW_OUTER` and the strip has to contain that disc. At
 the default 20 px the window closes at 160 px; at `bloomRadius` 90 it closes at
 720 px, which fills a 1280x720 frame on its own. If one lamp is unexpectedly
 expensive, look here first.
@@ -444,7 +444,7 @@ with
 anim->AddSpotlightField(lampIndex, SpotlightField::ANGLE, modulator);
 ```
 
-No auto-grow: `spotlight.lights` must already hold `lampIndex`, and an
+No auto-grow: `spotlight.lamps` must already hold `lampIndex`, and an
 out-of-range index at apply time is a logged no-op.
 
 **One cost note.** The strip's vertices are solved on the CPU and hold app

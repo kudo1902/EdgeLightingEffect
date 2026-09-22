@@ -1020,10 +1020,10 @@ namespace EdgeLighting
     {
         bool enable = false; ///< Enable or disable the spotlight renderer
 
-        /// The lamps. Entries past @c SPOT_MAX_LIGHTS are ignored at draw
+        /// The lamps. Entries past @c SPOT_MAX_LAMPS are ignored at draw
         /// time rather than rejected here, so a host can keep a longer list
         /// around and enable a subset.
-        std::vector<SpotLight> lights;
+        std::vector<SpotLight> lamps;
 
         /// The region that cuts this layer's light off, and which side of it
         /// survives. Applies only to lamps with @c SpotLight::clipped set -
@@ -1072,7 +1072,7 @@ namespace EdgeLighting
 
         bool operator==(const SpotlightConfig &o) const
         {
-            return enable == o.enable && lights == o.lights &&
+            return enable == o.enable && lamps == o.lamps &&
                    clipArea == o.clipArea &&
                    resolutionScale == o.resolutionScale;
         }

@@ -22,16 +22,20 @@
 //                                               destination step, which is
 //                                               below everything the CPU
 //                                               bounds.
-//     SPOT_BLOOM_SUPPORT                        CPU only - it fixes where the
+//     SPOT_BLOOM_WINDOW_OUTER                   CPU only - it fixes where the
 //                                               bloom window ends, and that
 //                                               number reaches the shader as a
 //                                               per-vertex attribute rather
 //                                               than as this macro.
+//     SPOT_MIN_APERTURE / SPOT_MIN_THROW        BOTH - the only constants here
+//                                               that each side applies itself,
+//                                               which is exactly why they have
+//                                               to be shared.
 //     SPOT_SOFT_MIN / SPOT_SOFT_MAX             CPU only - the renderer maps
 //                                               softness to the gaussian
 //                                               exponent and ships the result
 //                                               as an attribute.
-//     SPOT_MAX_LIGHTS, SPOT_STRIP_SEGMENTS,
+//     SPOT_MAX_LAMPS, SPOT_STRIP_SEGMENTS,
 //     SPOT_VISIBILITY_FLOOR                     CPU only - geometry sizing.
 //
 //   They all live here anyway because they describe ONE falloff, and a
@@ -69,7 +73,7 @@
 /// The CPU does not read this, but it depends on it TWICE and only one of the
 /// two is obvious:
 ///
-///   - It starts the strip at -max(2 * apertureWidth, bloomBound), which
+///   - It starts the strip at -max(2 * apertureWidth, bloomReach), which
 ///     covers this fade for any value at or below 2.0. Raise it past 2.0 and
 ///     that bound stops being conservative.
 ///   - The strip's FIRST CHORD cuts inside the solved support, by up to ~1.7
@@ -82,19 +86,48 @@
 /// note on the widening pass in buildStrips, and re-run it if this moves.
 #define SPOT_NEAR_FADE            1.6
 
-/// Where the aperture bloom's window begins, as a fraction of its end.
-/// `1 - smoothstep(S * SPOT_BLOOM_WINDOW_INNER, S, d)` with S the per-lamp
-/// support the renderer uploads. Shader only - the CPU bounds the bloom by S
-/// itself, which is where the window reaches zero whatever this is.
-#define SPOT_BLOOM_WINDOW_INNER   0.55
-
-/// Bloom radii at which that window closes, i.e. S = bloomRadius * this.
+/// The aperture bloom's window, as the two edges of one smoothstep:
+/// `1 - smoothstep(bloomWindow * SPOT_BLOOM_WINDOW_INNER, bloomWindow, d)`,
+/// where `bloomWindow = bloomRadius * SPOT_BLOOM_WINDOW_OUTER` is the per-lamp
+/// value the renderer computes and ships as a vertex attribute.
 ///
-/// The bloom is inverse-square and so has NO natural end - without a window
-/// its support is the whole framebuffer and there is no strip to draw. Same
-/// problem, same fix, as GetGhostBloomRadius in the lens flare. Renderer only:
-/// it multiplies this out and ships S per vertex.
-#define SPOT_BLOOM_SUPPORT        8.0
+/// The bloom is inverse-square and so has NO natural end - without this window
+/// its support is the whole framebuffer and there is no finite strip to draw.
+/// Same problem, same fix, as GetGhostBloomRadius in the lens flare.
+///
+/// _INNER is shader only. _OUTER is renderer only: it multiplies this out and
+/// ships the product, so the shader never sees the factor.
+///
+/// THREE WORDS, ONE EACH, because this cluster used to share them. The value
+/// below was SPOT_BLOOM_SUPPORT while its product was `bloomWindow` in C++,
+/// `bloomSupport` in three doc comments and `sup` in the shader - four names
+/// for one float, with "support" naming both the factor and the product. Now:
+///
+///   window - the artificial cutoff, i.e. these two constants and the
+///            per-lamp `bloomWindow` px value they produce.
+///   reach  - where the bloom actually stops mattering, i.e. LampSolve's
+///            `bloomReach` = min(bloomWindow, the inverse-square core's own
+///            visibility limit). Pairs with SolveConeReach.
+///   support - reserved for the STRIP's support (SupportAt), which is a
+///            different thing: the union of cone and bloom that the geometry
+///            has to cover.
+#define SPOT_BLOOM_WINDOW_INNER   0.55
+#define SPOT_BLOOM_WINDOW_OUTER   8.0
+
+/// Floors under SpotLight::apertureWidth and SpotLight::throwLength.
+///
+/// Shared, because BOTH sides apply them and they have to agree about what a
+/// degenerate lamp means: spotlight.frag clamps the two attributes it reads,
+/// and DeriveLamp clamps the same two config fields before the solve inverts
+/// that shader. They were a matched pair of bare `1.0` literals in the shader
+/// against MIN_APERTURE / MIN_THROW in the .cpp - the one pair of shared
+/// constants in this layer that had no shared name.
+///
+/// A throwLength of 0 would divide by zero in the throw term; an apertureWidth
+/// of 0 would collapse halfW at the lamp and take `apertureWidth / halfW` to
+/// 0/0.
+#define SPOT_MIN_APERTURE         1.0
+#define SPOT_MIN_THROW            1.0
 
 /// Gaussian exponent across the beam at softness 0 and softness 1:
 /// `exp(-(across / halfWidth)^2 * softK)`, softK lerped between these.
@@ -111,8 +144,8 @@
 /// attributes rather than in a uniform block. Entries past it are ignored.
 ///
 /// Raising it costs one recompile and a larger (still small) buffer:
-/// SPOT_MAX_LIGHTS * SPOT_STRIP_SEGMENTS * 6 * 64 bytes.
-#define SPOT_MAX_LIGHTS           8
+/// SPOT_MAX_LAMPS * SPOT_STRIP_SEGMENTS * 6 * 64 bytes.
+#define SPOT_MAX_LAMPS            8
 
 /// Quads per lamp along the beam. The strip approximates a curved support with
 /// this many straight chords; each sample is widened to cover its neighbours'

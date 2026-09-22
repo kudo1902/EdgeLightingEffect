@@ -124,7 +124,7 @@ namespace EdgeLighting
             float pos[2];   ///< App px, top-left origin, +y down.
             float local[2]; ///< (along, across) px in the lamp's frame.
             float p0[4];    ///< tanHalfBeam, throwLength, softK, intensity.
-            float p1[4];    ///< apertureWidth, bloom, bloomRadius, bloomSupport.
+            float p1[4];    ///< apertureWidth, bloom, bloomRadius, bloomWindow.
             float color[3]; ///< Linear RGB.
             /// How much of @c SpotlightConfig::clipArea this lamp honours:
             /// 1 for a clipped lamp, 0 for one that crosses the area freely.

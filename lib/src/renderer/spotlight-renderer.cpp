@@ -18,14 +18,9 @@ namespace EdgeLighting
         // here.
 
         constexpr int VERTS_PER_LAMP = SPOT_STRIP_SEGMENTS * 6;
-        constexpr int MAX_VERTS = SPOT_MAX_LIGHTS * VERTS_PER_LAMP;
+        constexpr int MAX_VERTS = SPOT_MAX_LAMPS * VERTS_PER_LAMP;
         constexpr float DEG_TO_RAD = 3.14159265358979323846f / 180.0f;
 
-        /// Floors matching the ones spotlight.frag applies, so the solve below
-        /// and the shader agree about what a degenerate lamp means instead of
-        /// disagreeing near zero.
-        constexpr float MIN_APERTURE = 1.0f;
-        constexpr float MIN_THROW = 1.0f;
 
         /// Floor under SpotlightConfig::resolutionScale. Below this the blit
         /// is reading so few texels that the light turns to blocks, and the
@@ -38,21 +33,21 @@ namespace EdgeLighting
         /// only lamps that draw, because a lamp that writes no fragments puts
         /// no clip boundary in the buffer whatever its clip bit says. The test
         /// is deliberately the same @c enable && @c intensity > 0 that
-        /// @ref SpotlightRenderer::buildStrips uses for its @c drawing count,
+        /// @ref SpotlightRenderer::buildStrips uses for its @c drawnLamps count,
         /// rather than a second copy of @ref DeriveLamp's black-tint bail: a
         /// lamp the tint switches off would be counted here and only cost the
         /// scale, which is the harmless direction.
         ///
         /// Indexed like everything else in this renderer, so entries past
-        /// @c SPOT_MAX_LIGHTS do not count - they never reach the VBO.
+        /// @c SPOT_MAX_LAMPS do not count - they never reach the VBO.
         bool HasClippedLamp(const SpotlightConfig &spotlight)
         {
-            const int lampCount = std::min(static_cast<int>(spotlight.lights.size()),
-                                           static_cast<int>(SPOT_MAX_LIGHTS));
+            const int lampCount = std::min(static_cast<int>(spotlight.lamps.size()),
+                                           static_cast<int>(SPOT_MAX_LAMPS));
             for (int i = 0; i < lampCount; i++)
             {
-                const SpotLight &light = spotlight.lights[static_cast<size_t>(i)];
-                if (light.clipped && light.enable && light.intensity > 0.0f)
+                const SpotLight &lamp = spotlight.lamps[static_cast<size_t>(i)];
+                if (lamp.clipped && lamp.enable && lamp.intensity > 0.0f)
                 {
                     return true;
                 }
@@ -200,15 +195,17 @@ namespace EdgeLighting
         typedef struct LampSolve
         {
             float tanHalf; ///< tan(beamAngle / 2)
-            float thr;     ///< throwLength, floored
+            float throwLength; ///< SpotLight::throwLength, floored
             float softK;   ///< gaussian exponent across the beam
-            float nearW;   ///< apertureWidth, floored
+            float apertureWidth; ///< SpotLight::apertureWidth, floored
             float intensity;
             float bloom;
             float bloomRadius;
             float bloomWindow; ///< Where spotlight.frag's window closes.
-            float bloomBound;  ///< Where the bloom actually stops being visible.
-            float floor;       ///< This lamp's share of the half-step budget.
+            float bloomReach;  ///< Where the bloom actually stops mattering:
+                               ///< min(@ref bloomWindow, the inverse-square
+                               ///< core's own visibility limit).
+            float visibilityFloor; ///< This lamp's share of the half-step budget.
             /// @c intensity scaled by the BRIGHTEST channel of @c color.
             ///
             /// Everything that bounds geometry reads this; only the shader
@@ -225,7 +222,8 @@ namespace EdgeLighting
         ///
         /// This inverts spotlight.frag's falloff. Taking logs of
         ///
-        ///   solveIntensity * exp(-a / thr) * (nearW / halfW) * exp(-lat^2 * softK)
+        ///   solveIntensity * exp(-a / throwLength) * (apertureWidth / halfW)
+        ///       * exp(-lat^2 * softK)
         ///       >= SPOT_VISIBILITY_FLOOR
         ///
         /// and solving for lat gives the expression below. `smoothstep`'s
@@ -240,10 +238,10 @@ namespace EdgeLighting
         float SolveConeAcross(const LampSolve &s, float a)
         {
             const float alongPos = std::max(a, 0.0f);
-            const float halfW = s.nearW + alongPos * s.tanHalf;
-            const float headroom = std::log(s.solveIntensity) - std::log(s.floor) -
-                                   alongPos / s.thr -
-                                   std::log(halfW / s.nearW);
+            const float halfW = s.apertureWidth + alongPos * s.tanHalf;
+            const float headroom = std::log(s.solveIntensity) - std::log(s.visibilityFloor) -
+                                   alongPos / s.throwLength -
+                                   std::log(halfW / s.apertureWidth);
             if (headroom <= 0.0f)
             {
                 return 0.0f;
@@ -266,7 +264,7 @@ namespace EdgeLighting
                 return 0.0f;
             }
 
-            float hi = s.thr;
+            float hi = s.throwLength;
             while (hi < 1.0e5f && SolveConeAcross(s, hi) > 0.0f)
             {
                 hi *= 2.0f;
@@ -320,21 +318,21 @@ namespace EdgeLighting
         float SupportAt(const LampSolve &s, float a)
         {
             float c = SolveConeAcross(s, a);
-            if (s.bloomBound > 0.0f && std::fabs(a) < s.bloomBound)
+            if (s.bloomReach > 0.0f && std::fabs(a) < s.bloomReach)
             {
-                c = std::max(c, std::sqrt(s.bloomBound * s.bloomBound - a * a));
+                c = std::max(c, std::sqrt(s.bloomReach * s.bloomReach - a * a));
             }
             return c + 1.0f;
         }
 
         /// Build the per-lamp derived values, or report the lamp draws nothing.
         ///
-        /// @p floor is this lamp's share of the half-8-bit-step budget - see
+        /// @p visibilityFloor is this lamp's share of the half-8-bit-step budget - see
         /// SPOT_VISIBILITY_FLOOR. Everything the solve cuts is below it, so the
         /// whole rig's clipped remainder stays under one half step.
-        bool DeriveLamp(const SpotLight &light, float floor, LampSolve &out)
+        bool DeriveLamp(const SpotLight &lamp, float visibilityFloor, LampSolve &out)
         {
-            if (!light.enable || light.intensity <= 0.0f)
+            if (!lamp.enable || lamp.intensity <= 0.0f)
             {
                 return false;
             }
@@ -344,15 +342,15 @@ namespace EdgeLighting
             // a half-plane with no axis left to speak of. The 10 degrees of
             // headroom under that limit is what keeps tan away from the knee
             // where it stops being a useful number rather than merely finite.
-            const float beam = std::min(std::max(light.beamAngle, 0.0f), 170.0f);
+            const float beam = std::min(std::max(lamp.beamAngle, 0.0f), 170.0f);
             out.tanHalf = std::max(std::tan(beam * 0.5f * DEG_TO_RAD), 0.0f);
-            out.thr = std::max(light.throwLength, MIN_THROW);
-            out.nearW = std::max(light.apertureWidth, MIN_APERTURE);
-            out.intensity = light.intensity;
-            out.bloom = std::max(light.bloom, 0.0f);
-            out.bloomRadius = std::max(light.bloomRadius, 1.0f);
-            out.color = KelvinToRgb(light.colorTemp) * light.tint;
-            out.floor = floor;
+            out.throwLength = std::max(lamp.throwLength, static_cast<float>(SPOT_MIN_THROW));
+            out.apertureWidth = std::max(lamp.apertureWidth, static_cast<float>(SPOT_MIN_APERTURE));
+            out.intensity = lamp.intensity;
+            out.bloom = std::max(lamp.bloom, 0.0f);
+            out.bloomRadius = std::max(lamp.bloomRadius, 1.0f);
+            out.color = KelvinToRgb(lamp.colorTemp) * lamp.tint;
+            out.visibilityFloor = visibilityFloor;
 
             // WHY THE SOLVE GETS ITS OWN INTENSITY.
             //
@@ -384,12 +382,12 @@ namespace EdgeLighting
                 return false;
             }
 
-            const float softness = std::min(std::max(light.softness, 0.0f), 1.0f);
+            const float softness = std::min(std::max(lamp.softness, 0.0f), 1.0f);
             out.softK = static_cast<float>(SPOT_SOFT_MIN) +
                         (1.0f - softness) *
                             static_cast<float>(SPOT_SOFT_MAX - SPOT_SOFT_MIN);
 
-            out.bloomWindow = out.bloomRadius * static_cast<float>(SPOT_BLOOM_SUPPORT);
+            out.bloomWindow = out.bloomRadius * static_cast<float>(SPOT_BLOOM_WINDOW_OUTER);
 
             // The bloom's own support is the TIGHTER of two bounds: where
             // spotlight.frag's window closes, and where the inverse-square
@@ -402,13 +400,13 @@ namespace EdgeLighting
             // For the term. Not for the fragment, which also carries the cone:
             // see the note on SupportAt for where the two bounds meet and what
             // that is worth in practice.
-            out.bloomBound = 0.0f;
+            out.bloomReach = 0.0f;
             const float peak = out.solveIntensity * out.bloom;
-            if (peak > out.floor)
+            if (peak > out.visibilityFloor)
             {
-                const float ratio = peak / out.floor - 1.0f;
+                const float ratio = peak / out.visibilityFloor - 1.0f;
                 const float visible = out.bloomRadius * std::sqrt(std::max(ratio, 0.0f));
-                out.bloomBound = std::min(out.bloomWindow, visible);
+                out.bloomReach = std::min(out.bloomWindow, visible);
             }
 
             return true;
@@ -430,12 +428,12 @@ namespace EdgeLighting
             float softness;   ///< Feather width in px, never negative.
         } ClipSolve;
 
-        /// Resolve the clip area. ONE function for two callers that must not
+        /// Derive the clip area. ONE function for two callers that must not
         /// disagree - @ref SpotlightRenderer::Render uploads it, and
         /// @ref SpotlightRenderer::buildStrips bounds geometry against it -
         /// for the same reason @ref UsesScaledBuffer is one predicate.
         ///
-        /// A degenerate area (zero or negative width or height) is resolved
+        /// A degenerate area (zero or negative width or height) is derived
         /// like any other rather than being treated as "no clip", and that is
         /// deliberate: under KEEP_INSIDE it is the correct answer that a
         /// clipped lamp writes nothing, and quietly ignoring it would light
@@ -446,14 +444,14 @@ namespace EdgeLighting
         /// Nothing here says whether the clip APPLIES. @c SpotLight::clipped
         /// alone decides that, per lamp; there is no area-level enable to
         /// agree with.
-        ClipSolve SolveClip(const ClipArea &area)
+        ClipSolve DeriveClip(const ClipArea &area)
         {
             ClipSolve out{};
             out.keepInside = (area.mode == ClipMode::KEEP_INSIDE);
             out.half = glm::vec2(std::max(area.width, 0.0f) * 0.5f,
                                  std::max(area.height, 0.0f) * 0.5f);
             out.center = area.position + out.half;
-            // Clamped here rather than in the shader so spotClipSDF can take
+            // Clamped here rather than in the shader so sdRoundBox can take
             // the radius on trust: a radius past the shorter half extent turns
             // `abs(p) - b + r` inside out and the box stops being a box.
             out.radius = std::min(std::max(area.cornerRadius, 0.0f),
@@ -464,11 +462,11 @@ namespace EdgeLighting
 
         /// Warn when a host hands over more lamps than one pass can draw.
         /// @ref SpotlightRenderer::buildStrips clamps the list with
-        /// @c std::min against @c SPOT_MAX_LIGHTS and everything past it never
+        /// @c std::min against @c SPOT_MAX_LAMPS and everything past it never
         /// reaches the VBO, so without this the excess disappears with no log
         /// line and no result code. Both demo UIs cap their Add button, so
         /// neither of them can see it; a library host writing
-        /// @c SpotlightConfig::lights directly, or a C-ABI host calling
+        /// @c SpotlightConfig::lamps directly, or a C-ABI host calling
         /// @c el_effect_set_spotlight_count, can.
         ///
         /// The truncation itself is INTENDED - `config.h` documents a longer
@@ -486,12 +484,12 @@ namespace EdgeLighting
         /// there is a single cap and a single kind of entry here.
         inline void WarnOnLampOverflow(size_t prev, size_t now)
         {
-            if (static_cast<int>(now) > SPOT_MAX_LIGHTS &&
-                static_cast<int>(prev) <= SPOT_MAX_LIGHTS)
+            if (static_cast<int>(now) > SPOT_MAX_LAMPS &&
+                static_cast<int>(prev) <= SPOT_MAX_LAMPS)
             {
                 LOG_E("SpotlightRenderer: %zu lamps configured but only %d fit - "
                       "the rest are ignored.",
-                      now, static_cast<int>(SPOT_MAX_LIGHTS));
+                      now, static_cast<int>(SPOT_MAX_LAMPS));
             }
         }
 
@@ -705,7 +703,7 @@ namespace EdgeLighting
         // nothing reads them, and skipping them would only buy a branch here
         // in exchange for a stale value the first frame a lamp opts in. There
         // is no area-level enable that could gate them either.
-        const ClipSolve clipSolve = SolveClip(config.spotlight.clipArea);
+        const ClipSolve clipSolve = DeriveClip(config.spotlight.clipArea);
         mShaderProgram.SetUniform("uClipRect",
                                   glm::vec4(clipSolve.center.x, clipSolve.center.y,
                                             clipSolve.half.x, clipSolve.half.y));
@@ -795,7 +793,7 @@ namespace EdgeLighting
         // coupled to whether a rebuild happens - an unchanged config cannot be
         // a transition anyway, so the placement costs one size comparison.
         // This is the only place the lamp count can change.
-        WarnOnLampOverflow(mCurrentSpotlight.lights.size(), config.spotlight.lights.size());
+        WarnOnLampOverflow(mCurrentSpotlight.lamps.size(), config.spotlight.lamps.size());
         // Same placement, same reason: both halves of the transition are read
         // from mCurrentSpotlight, and it is about to be overwritten.
         LogOnClipPinTransition(mCurrentSpotlight, config.spotlight);
@@ -869,34 +867,34 @@ namespace EdgeLighting
         mStripVerts.clear();
         mStripVerts.reserve(static_cast<size_t>(MAX_VERTS));
 
-        const int lampCount = std::min(static_cast<int>(spotlight.lights.size()),
-                                       static_cast<int>(SPOT_MAX_LIGHTS));
+        const int lampCount = std::min(static_cast<int>(spotlight.lamps.size()),
+                                       static_cast<int>(SPOT_MAX_LAMPS));
 
         // First pass: how many lamps actually draw. Each one's strip is then
         // solved against its share of the half-step budget, so the rig's total
         // clipped remainder stays under one half step however they overlap.
         // A lone lamp gets the whole budget and pays nothing for the sharing.
-        int drawing = 0;
+        int drawnLamps = 0;
         for (int i = 0; i < lampCount; i++)
         {
-            const SpotLight &light = spotlight.lights[static_cast<size_t>(i)];
-            if (light.enable && light.intensity > 0.0f)
+            const SpotLight &lamp = spotlight.lamps[static_cast<size_t>(i)];
+            if (lamp.enable && lamp.intensity > 0.0f)
             {
-                drawing++;
+                drawnLamps++;
             }
         }
-        if (drawing == 0)
+        if (drawnLamps == 0)
         {
             mVertexCount = 0;
             return;
         }
         const float sharedFloor = static_cast<float>(SPOT_VISIBILITY_FLOOR) /
-                                  static_cast<float>(drawing);
+                                  static_cast<float>(drawnLamps);
 
         // Resolved once for the whole rig: the area is shared, and the only
         // per-lamp part of a clip is SpotLight::clipped, which is a bit.
         //
-        // Not folded into the `drawing` count above, deliberately. A lamp that
+        // Not folded into the `drawnLamps` count above, deliberately. A lamp that
         // a KEEP_INSIDE area happens to cut down to nothing still counts
         // towards the shared visibility budget, which makes the budget
         // conservative rather than wrong - and it keeps that count a pure
@@ -906,14 +904,14 @@ namespace EdgeLighting
         // Resolved unconditionally, including when no lamp is clipped: there
         // is no area-level enable to test, and the derivation is a handful of
         // min/max against a struct already in cache.
-        const ClipSolve clipSolve = SolveClip(spotlight.clipArea);
+        const ClipSolve clipSolve = DeriveClip(spotlight.clipArea);
 
         for (int i = 0; i < lampCount; i++)
         {
-            const SpotLight &light = spotlight.lights[static_cast<size_t>(i)];
+            const SpotLight &lamp = spotlight.lamps[static_cast<size_t>(i)];
 
             LampSolve s{};
-            if (!DeriveLamp(light, sharedFloor, s))
+            if (!DeriveLamp(lamp, sharedFloor, s))
             {
                 continue;
             }
@@ -925,20 +923,20 @@ namespace EdgeLighting
             //
             // Needed here, ahead of the bound solve, because the clip
             // narrowing below works in this frame.
-            const float rad = light.angle * DEG_TO_RAD;
+            const float rad = lamp.angle * DEG_TO_RAD;
             const float ca = std::cos(rad);
             const float sa = std::sin(rad);
-            const float ox = light.position.x;
-            const float oy = light.position.y;
+            const float ox = lamp.position.x;
+            const float oy = lamp.position.y;
 
-            const bool clipped = light.clipped;
+            const bool clipped = lamp.clipped;
 
             // The strip spans [a0, a1] along the axis. a0 reaches back far
             // enough to cover spotlight.frag's near-end fade (which cannot
             // extend past 2 aperture widths for any SPOT_NEAR_FADE <= 2) and
             // the bloom disc behind the lamp, whichever is further.
-            float a0 = -std::max(2.0f * s.nearW, s.bloomBound);
-            float a1 = std::max(SolveConeReach(s), s.bloomBound);
+            float a0 = -std::max(2.0f * s.apertureWidth, s.bloomReach);
+            float a1 = std::max(SolveConeReach(s), s.bloomReach);
 
             // NARROW TO THE CLIP, for KEEP_INSIDE only.
             //
@@ -970,8 +968,8 @@ namespace EdgeLighting
                 if (clipSolve.half.x <= 0.0f || clipSolve.half.y <= 0.0f)
                 {
                     // A KEEP_INSIDE area with no area keeps no light. That is
-                    // the honest answer, not a reason to fall back to drawing
-                    // the whole beam - see SolveClip.
+                    // the honest answer, not a reason to fall back to drawnLamps
+                    // the whole beam - see DeriveClip.
                     continue;
                 }
 
@@ -1043,7 +1041,7 @@ namespace EdgeLighting
             // NO FRAGMENT IS LOST THERE, and the reason is the term this solve
             // deliberately does not invert. Every cut lands at NEGATIVE a,
             // where spotlight.frag's near-end fade is still closing:
-            // smoothstep(-nearW, SPOT_NEAR_FADE * nearW, a) is about 0.33 at
+            // smoothstep(-apertureWidth, SPOT_NEAR_FADE * apertureWidth, a) is 0.33 at
             // a = 0 and 0.07 at a = -7.4, so over exactly the span where the
             // chord cuts, the bound is 3x to 13x more conservative than the
             // shader it bounds. Verified by evaluating the shader's own term
@@ -1055,7 +1053,7 @@ namespace EdgeLighting
             //
             // So the guarantee holds on two legs, not one: widening plus the
             // margin bound the strip wherever the solve is exact, which is
-            // a >= SPOT_NEAR_FADE * nearW, and the un-inverted near fade
+            // a >= SPOT_NEAR_FADE * apertureWidth, and the un-inverted near fade
             // covers the corner at the start. That makes SPOT_NEAR_FADE load
             // bearing beyond the a0 bound its own comment describes - raising
             // it spends this slack. Re-run the grid if it moves.
@@ -1137,10 +1135,10 @@ namespace EdgeLighting
                     v.local[0] = along;
                     v.local[1] = across;
                     v.p0[0] = s.tanHalf;
-                    v.p0[1] = s.thr;
+                    v.p0[1] = s.throwLength;
                     v.p0[2] = s.softK;
                     v.p0[3] = s.intensity;
-                    v.p1[0] = s.nearW;
+                    v.p1[0] = s.apertureWidth;
                     v.p1[1] = s.bloom;
                     v.p1[2] = s.bloomRadius;
                     v.p1[3] = s.bloomWindow;

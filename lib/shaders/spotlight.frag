@@ -82,7 +82,7 @@ precision highp float;
 in vec2 vLocal;      ///< (along, across) px in this lamp's frame.
 in vec2 vApp;        ///< App px, top-left origin, +y down. Clip area only.
 flat in vec4 vP0;    ///< tanHalfBeam, throwLength, softK, intensity.
-flat in vec4 vP1;    ///< apertureWidth, bloom, bloomRadius, bloomSupport.
+flat in vec4 vP1;    ///< apertureWidth, bloom, bloomRadius, bloomWindow.
 flat in vec3 vColor; ///< Linear RGB.
 flat in float vClipWeight; ///< 1 where this lamp honours the clip area, else 0.
 
@@ -104,8 +104,12 @@ out vec4 fragColor;
 /// @p b is the half extent, @p r the corner radius (already clamped on the CPU
 /// to at most the shorter half extent, so the `- r` below cannot invert the
 /// box).
-float spotClipSDF(vec2 p, vec2 b, float r)
-{
+///
+/// Byte-identical to the sdRoundBox in black-rect.frag, neon.frag,
+/// neon-blit.frag and droplets.frag, and named the same on purpose: it is a
+/// generic primitive, not a clip-specific one. spotClipMask below is the part
+/// that knows about the clip area.
+float sdRoundBox(vec2 p, vec2 b, float r) {
     vec2 q = abs(p) - b + r;
     return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
 }
@@ -115,9 +119,8 @@ float spotClipSDF(vec2 p, vec2 b, float r)
 /// Independent of vClipWeight on purpose - the caller mixes this against 1.0
 /// with that weight, so an unclipped lamp costs the same arithmetic instead of
 /// a branch that would diverge inside a draw call covering both kinds of lamp.
-float spotClipMask(vec2 app)
-{
-    float d = spotClipSDF(app - uClipRect.xy, uClipRect.zw, uClipParams.x);
+float spotClipMask(vec2 app) {
+    float d = sdRoundBox(app - uClipRect.xy, uClipRect.zw, uClipParams.x);
     // Half the feather either side of the boundary, so edgeSoftness is the
     // full width of the fade and 0 collapses to a hard step. The floor keeps
     // smoothstep's two edges apart at edgeSoftness 0, where equal edges are
@@ -147,8 +150,7 @@ float spotClipMask(vec2 app)
 /// here would give every lamp the same pattern in the same place, so two
 /// overlapping beams would dither in lockstep and correlate exactly where the
 /// noise is meant to be independent.
-float spotDither(vec2 p)
-{
+float spotDither(vec2 p) {
     return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))) - 0.5;
 }
 
@@ -156,25 +158,42 @@ void main() {
     float along = vLocal.x;
     float across = vLocal.y;
 
+    // UNPACK ALL EIGHT SLOTS, named, before any of them is used.
+    //
+    // vP0 and vP1 are packing, not meaning: the eight per-lamp scalars ride in
+    // two vec4s because that is how a vertex attribute travels. Half of them
+    // used to be read inline as raw swizzles - `exp(-lat * lat * vP0.z)` for
+    // softK, `vColor * vP0.w` for intensity - which made the term stack below
+    // impossible to check against the falloff derivation at the top of this
+    // file without counting components against a comment. Naming them here
+    // costs nothing (every one is a flat varying folded at compile time) and
+    // makes the rest of this function read like that derivation.
+    float tanHalfBeam  = vP0.x;
+    float softK        = vP0.z;
+    float intensity    = vP0.w;
+    float bloomStrength = vP1.y;
+    float bloomRadius  = vP1.z;
     // The same floors the renderer's solve applies, so the two agree about
     // what a degenerate lamp means rather than disagreeing near zero.
-    float nearW = max(vP1.x, 1.0);
-    float thr = max(vP0.y, 1.0);
-    float halfW = nearW + max(along, 0.0) * vP0.x;
+    float apertureWidth = max(vP1.x, SPOT_MIN_APERTURE);
+    float throwLength   = max(vP0.y, SPOT_MIN_THROW);
+    float bloomWindow   = max(vP1.w, 1.0);
+
+    float halfW = apertureWidth + max(along, 0.0) * tanHalfBeam;
 
     float lat = across / halfW;
-    float cone = exp(-lat * lat * vP0.z);
-    cone *= smoothstep(-nearW, SPOT_NEAR_FADE * nearW, along);
-    cone *= exp(-max(along, 0.0) / thr);
-    cone *= nearW / halfW;
+    float cone = exp(-lat * lat * softK);
+    cone *= smoothstep(-apertureWidth, SPOT_NEAR_FADE * apertureWidth, along);
+    cone *= exp(-max(along, 0.0) / throwLength);
+    cone *= apertureWidth / halfW;
 
     float d2 = along * along + across * across;
-    float r2 = vP1.z * vP1.z;
-    float sup = max(vP1.w, 1.0);
-    float bloom = vP1.y * r2 / (d2 + r2);
-    bloom *= 1.0 - smoothstep(sup * SPOT_BLOOM_WINDOW_INNER, sup, sqrt(d2));
+    float r2 = bloomRadius * bloomRadius;
+    float bloom = bloomStrength * r2 / (d2 + r2);
+    bloom *= 1.0 - smoothstep(bloomWindow * SPOT_BLOOM_WINDOW_INNER,
+                              bloomWindow, sqrt(d2));
 
-    vec3 lit = vColor * vP0.w * (cone + bloom);
+    vec3 lit = vColor * intensity * (cone + bloom);
 
     // The cut. mix rather than an `if`, so a draw call carrying both clipped
     // and unclipped lamps shades them at the same cost - vClipWeight is flat,

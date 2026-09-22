@@ -1126,11 +1126,11 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
         // here, or the slider reads as broken: it moves and the frame does not
         // change. Mirrors SpotlightRenderer's own HasClippedLamp test - the
         // lamps that DRAW, within the ceiling.
-        size_t drawnLamps = std::min(cfg.spotlight.lights.size(), size_t(SPOT_MAX_LIGHTS));
+        size_t drawnLamps = std::min(cfg.spotlight.lamps.size(), size_t(SPOT_MAX_LAMPS));
         bool anyClippedLamp = false;
         for (size_t i = 0; i < drawnLamps; i++)
         {
-            const auto &lamp = cfg.spotlight.lights[i];
+            const auto &lamp = cfg.spotlight.lamps[i];
             if (lamp.clipped && lamp.enable && lamp.intensity > 0.0f)
             {
                 anyClippedLamp = true;
@@ -1142,7 +1142,7 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
         {
             ImGui::TextDisabled("Held at 1.0: a clipped lamp is enabled.");
         }
-        else if (cfg.spotlight.lights.size() < 6)
+        else if (cfg.spotlight.lamps.size() < 6)
         {
             ImGui::TextDisabled("Below 1.0 costs more than it saves at this lamp count.");
         }
@@ -1194,7 +1194,7 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
         // Only worth saying when a lamp has actually opted in, since otherwise
         // the area is inert whatever it holds.
         bool anyClipped = false;
-        for (const auto &lamp : cfg.spotlight.lights)
+        for (const auto &lamp : cfg.spotlight.lamps)
         {
             if (lamp.clipped)
             {
@@ -1213,12 +1213,12 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
     }
     ImGui::Separator();
 
-    auto &lights = cfg.spotlight.lights;
-    const int maxLights = SPOT_MAX_LIGHTS;
+    auto &lamps = cfg.spotlight.lamps;
+    const int maxLamps = SPOT_MAX_LAMPS;
 
-    ImGui::Text("%d / %d lamps", static_cast<int>(lights.size()), maxLights);
+    ImGui::Text("%d / %d lamps", static_cast<int>(lamps.size()), maxLamps);
     ImGui::SameLine();
-    if (ImGui::SmallButton("+ Add##Spot") && static_cast<int>(lights.size()) < maxLights)
+    if (ImGui::SmallButton("+ Add##Spot") && static_cast<int>(lamps.size()) < maxLamps)
     {
         // New lamps land above the rect pointing down, which is where a
         // showcase rig starts, rather than at the origin where they would be
@@ -1227,25 +1227,25 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
         l.position = glm::vec2(cfg.geometry.position.x + cfg.geometry.width * 0.5f,
                                cfg.geometry.position.y - 60.0f);
         l.angle = 90.0f;
-        lights.push_back(l);
-        mSpotlightSelected = static_cast<int>(lights.size()) - 1;
+        lamps.push_back(l);
+        mSpotlightSelected = static_cast<int>(lamps.size()) - 1;
     }
     ImGui::SameLine();
     if (ImGui::SmallButton("Clear##Spot"))
     {
-        lights.clear();
+        lamps.clear();
         mSpotlightSelected = 0;
     }
 
-    if (lights.empty())
+    if (lamps.empty())
     {
         ImGui::TextDisabled("No lamps. Add one to light something.");
         return;
     }
 
-    if (mSpotlightSelected >= static_cast<int>(lights.size()))
+    if (mSpotlightSelected >= static_cast<int>(lamps.size()))
     {
-        mSpotlightSelected = static_cast<int>(lights.size()) - 1;
+        mSpotlightSelected = static_cast<int>(lamps.size()) - 1;
     }
     if (mSpotlightSelected < 0)
     {
@@ -1254,11 +1254,11 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
 
     // Lamp picker: one row each, so the selected index (which any animation
     // binding also addresses) is always visible.
-    for (int i = 0; i < static_cast<int>(lights.size()); i++)
+    for (int i = 0; i < static_cast<int>(lamps.size()); i++)
     {
         char label[64];
         std::snprintf(label, sizeof(label), "lamp %d  %.0f deg##SpotPick%d",
-                      i, lights[static_cast<size_t>(i)].angle, i);
+                      i, lamps[static_cast<size_t>(i)].angle, i);
         if (ImGui::RadioButton(label, mSpotlightSelected == i))
         {
             mSpotlightSelected = i;
@@ -1268,21 +1268,21 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
         std::snprintf(killLabel, sizeof(killLabel), "x##SpotKill%d", i);
         if (ImGui::SmallButton(killLabel))
         {
-            lights.erase(lights.begin() + i);
-            if (mSpotlightSelected >= static_cast<int>(lights.size()))
+            lamps.erase(lamps.begin() + i);
+            if (mSpotlightSelected >= static_cast<int>(lamps.size()))
             {
-                mSpotlightSelected = static_cast<int>(lights.size()) - 1;
+                mSpotlightSelected = static_cast<int>(lamps.size()) - 1;
             }
             return;
         }
     }
 
-    if (lights.empty())
+    if (lamps.empty())
     {
         return;
     }
 
-    EdgeLighting::SpotLight &l = lights[static_cast<size_t>(mSpotlightSelected)];
+    EdgeLighting::SpotLight &l = lamps[static_cast<size_t>(mSpotlightSelected)];
 
     ImGui::Separator();
     ImGui::Checkbox("Lamp Enabled##Spot", &l.enable);
