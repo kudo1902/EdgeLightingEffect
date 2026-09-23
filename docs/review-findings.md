@@ -70,6 +70,15 @@ the sixth pass verified the strip bound, and the strip bound was never the
 problem. The reported symptom points straight at the geometry, which is what
 makes this one interesting.
 
+V12 comes from a spotlight render like V10 and V11 - see
+[Thirteenth pass](#thirteenth-pass-the-spotlight-intensity-report). Half of what
+was reported turned out to be designed behaviour and half a real defect, and the
+first fix for the real half was worse than the defect; both are recorded there,
+the second because the failed attempt is the useful part. V12a is its open
+remainder. V12b is the follow-up report that the fix had not actually landed -
+it had, for the defect it was measured against, and the measurement was the
+wrong one; read it before trusting any "no pixels clipped" result in this layer.
+
 I21 to I24 come from a read of the spotlight CLIP AREA on
 `add_clipping_area_for_spotlight` - see
 [Twelfth pass](#twelfth-pass-the-spotlight-clip-area). The clip landed after the
@@ -2612,6 +2621,168 @@ was the degenerate case. **Fixed** in `spotlight-renderer.cpp` and in
 
 ---
 
+## Thirteenth pass (the spotlight intensity report)
+
+One finding, reported from a render like V10 and V11: *"when i increasing
+intensity, the lighting area is increased, the root of light source is
+overbrightness"*. Two symptoms, and only one of them is a defect - separating
+them is most of this item.
+
+### V12. A bright lamp's core clips per channel, so it changes HUE rather than brightness - FIXED
+
+**The half that is not a defect.** The lit area growing with `intensity` is
+designed behaviour, documented in `spotlight-renderer.md` section 4.4:
+`LampSolve::solveIntensity` is what `SolveConeAcross` inverts to find where the
+falloff drops below half an 8-bit step, so a brighter lamp reaches further
+before it becomes invisible. A lamp that got brighter without getting bigger
+would be the bug. Nothing here changes it, and the measurements below confirm
+nothing did - the lit-pixel count is identical before and after the fix at
+every intensity.
+
+**The half that is.** `spotlight.frag` wrote `vColor * intensity * (cone +
+bloom)` with nothing bounding it. At the lamp `cone` is ~1 and `bloom` is
+~`bloomStrength`, so the core peaks near `intensity * (1 + bloom)` - past full
+scale for any lamp much above 0.7 at the default `bloom` of 0.4. RGBA8 then
+clips each channel independently, and independent clipping is not a brightness
+change but a HUE change: the brightest channel pins first, the next one catches
+up, and the core walks up the ramp amber -> yellow -> white while the disc doing
+it grows with `intensity`.
+
+**Confirmed**, offscreen at 640x480 over a black clear: one lamp at (320, 100),
+`angle` 90, `colorTemp` 2700 (amber, so a per-channel clip is visible as a
+colour rather than as white-on-white), everything else default.
+
+| `intensity` | lit px | px with a channel at 255 | px at full white | core RGB |
+| ----------- | ------ | ------------------------ | ---------------- | -------- |
+| 1.15 (default) | 102,421 | 90 | 0 | (219, 155, 94) |
+| 2.0 | 108,804 | 876 | 0 | (255, 255, 164) |
+| 3.0 (slider max) | 113,015 | 1,923 | 219 | (255, 255, 245) |
+
+The core RGB column is the report in one line: an amber lamp renders a white
+core, and 219 pixels of it are *exactly* white.
+
+**The first fix was worse than the defect, and is worth recording.** Scaling
+the vector by its own peak whenever that peak exceeded 1 fixed the hue exactly
+- 0 white pixels at every intensity, core held at (255, 181, 110) - and looked
+wrong: a hard knee is a C1 discontinuity, so the core became a flat lozenge
+with a visible edge around it. That is the same artefact `SPOT_DITHER_STEPS`
+exists to remove - a straight contour in a shallow gradient - arriving by
+another route, and in a layer whose whole premise is that no beam has a visible
+edge anywhere.
+
+**Fixed** with a Reinhard shoulder on the peak channel instead, folded back
+onto the whole vector so the hue survives, starting at `SPOT_HIGHLIGHT_KNEE` in
+`spotlight-tuning.h`. It is C1 continuous at the knee - its derivative there is
+exactly 1, so it joins the untouched region with no contour - and asymptotic
+above it, so the core approaches full scale without arriving. Same scene, at the
+shipped knee of 0.30 (V12b below is why it is 0.30 and not the 0.75 this
+started at):
+
+| `intensity` | lit px | px with a channel at 255 | px at full white | core RGB |
+| ----------- | ------ | ------------------------ | ---------------- | -------- |
+| 1.15 | 102,421 | 0 | 0 | (156, 111, 67) |
+| 2.0 | 108,804 | 0 | 0 | (189, 134, 81) |
+| 3.0 | 113,015 | 0 | 0 | (208, 147, 89) |
+
+Nothing clips at any intensity, the hue holds, the core still brightens with
+`intensity`, and the lit area is unchanged to the pixel - which is the check
+that matters for the strip bound. The shoulder only ever scales a fragment DOWN
+and only above the knee, three orders of magnitude above
+`SPOT_VISIBILITY_FLOOR`, so `SolveConeAcross` stays conservative without knowing
+it exists.
+
+**What it costs a lamp that was never blowing out**: at the default 1.15, 2,479
+of 307,200 pixels differ from the old output (0.8%), peak deviation 90/255, all
+of it in and around the core. At 2.0 it is 5,646 px / 123 max, at 3.0 9,371 px /
+165 max.
+
+**It is applied BEFORE the clip mask**, which is what keeps the promise in
+`spotlight.frag`'s own header that a clipped beam is the same beam with part of
+it missing. After the mask, a half-covered fragment would sit lower on the
+shoulder and be compressed less, so moving the clip area would change the shape
+of the shading it is only meant to reveal.
+
+### V12a. Overlapping lamps still clip per channel - OPEN
+
+The shoulder is per lamp, because a fragment shader in an additive pass is the
+only place it can run. Two lamps that each stay under full scale still SUM past
+it in the framebuffer. Measured with the same scene and a second lamp stacked on
+the first:
+
+| `intensity` (each) | px with a channel at 255 | core RGB |
+| ------------------ | ------------------------ | -------- |
+| 1.15 | 1,171 | (255, 255, 182) |
+| 2.0 | 3,080 | (255, 255, 206) |
+| 3.0 | 5,530 | (255, 255, 212) |
+
+No fully white pixels at any of them, so it is milder than V12 was, but the hue
+shift is back wherever beams overlap brightly.
+
+The honest cure is not another per-fragment term: it is for the layer to
+composite into its own buffer and put the shoulder on the SUM, at blit time.
+That is a real design change - it would give the layer a mandatory offscreen
+buffer at `resolutionScale` 1.0, where it currently has none, and it interacts
+with the clip pinning in `GetClampedSpotScale`. Left open deliberately rather
+than patched, and recorded here so the next person to see a yellow-white overlap
+knows it is this and not V12 coming back.
+
+### V12b. The shoulder stopped the core going white but not the EMITTER going fat - FIXED
+
+A follow-up report on the same layer: *"raising intensity causes overbrightness
+at source emitter"* - after V12 had supposedly fixed exactly that.
+
+**Both things were true, and the measurement that cleared V12 was the wrong
+one.** V12 tracked the peak VALUE at the core, which the shoulder does hold
+(211 to 250 across a 7x intensity range, nothing clipped, nothing white). What
+it does not hold is the number of fragments ARRIVING at the top of the curve.
+Raising `intensity` multiplies the whole field, the cone's near field is already
+~1 at the lamp, so a wider and wider region lands in the shoulder's compressed
+band - and a 200 px white streak down the beam reads as "overbright emitter"
+whether or not any single pixel clipped. Measured at 1920x1080, `throwLength`
+3000, counting pixels at or above 240:
+
+| `intensity` | >=240 px | streak length |
+| ----------- | -------- | ------------- |
+| 1.15 | 0 | 0 |
+| 3 | 1,099 | 61 px |
+| 5 | 3,410 | 124 px |
+| 8 | 8,577 | 221 px |
+
+**It is the cone, not the bloom.** The obvious suspect was the aperture bloom,
+being the term that exists to glow at the lamp. Taking `bloom` to 0 entirely at
+`intensity` 5 removed only 27% of the blob (3,410 -> 2,500 px). Widening
+`apertureWidth` made it dramatically worse (30 -> 12,187 px, 60 -> 42,444 px),
+because a wider mouth keeps `apertureWidth / halfW` near 1 for longer. No
+combination of per-lamp fields reaches the look; the near field is ~`intensity`
+by construction.
+
+**Fixed** by lowering `SPOT_HIGHLIGHT_KNEE` from 0.75 to 0.30 - i.e. by
+compressing earlier rather than by changing the falloff. Same scene at
+`intensity` 8:
+
+| knee | >=240 px | streak | 400 px | 700 px | 1200 px |
+| ---- | -------- | ------ | ------ | ------ | ------- |
+| 0.75 | 8,577 | 221 px | 211 | 120 | 61 |
+| 0.50 | 1,076 | 61 px | 181 | 120 | 61 |
+| **0.30** | **29** | **18 px** | 156 | 112 | **61** |
+| 0.15 | 0 | 0 | 137 | 98 | 59 |
+
+The far field does not move at all - 1200 px out reads 61 at every knee,
+because those values are below it and pass through linearly. So the knee buys
+intensity headroom almost for free: at knee 0.30 and `intensity` 8 the emitter
+is 117x smaller than at knee 0.75 and `intensity` 5, while the beam is BRIGHTER
+at every distance (700 px: 112 vs 75; 1200 px: 61 vs 38).
+
+**What it costs**, and it is narrower than it looks: on a default lamp only the
+core's peak dims, 211 to 156. At 100 px out and beyond the two knees are
+byte-identical (70 / 25 / 6 at 100 / 200 / 400 px). The pinpoint hotspot at low
+intensity is the whole price, and raising `intensity` - now safe - buys it back.
+
+0.15 flattens the emitter completely but is where the near beam finally moves
+(100 px out goes 70 -> 66), which is why the value stops at 0.30.
+
+---
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
@@ -2640,6 +2811,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I12 | partly fixed | the live shader comment is corrected; `architecture-design.md` and `multiple-arcs-design.md` still name the removed LUT functions, and both are design prose rather than comments beside live code |
 | I13 | open | undefined `pow` reachable only through the C ABI; both cures change what the boundary accepts or what the term computes below `ghostSize` 0.6, so it is a behaviour decision rather than a repair |
 | I18 | open | the division guarantees something the 8-bit blend discards, and the three ways out - drop it, document its limit, or accumulate at higher precision - are a design call, not a fix |
+| V12a | open | per-lamp shouldering cannot bound a SUM; the cure is an offscreen composite for the whole layer, which the layer does not currently need at `resolutionScale` 1.0 |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

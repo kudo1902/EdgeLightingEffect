@@ -299,7 +299,6 @@ namespace
         return remove;
     }
 
-
     /// "Opaque Only" debug toggle, drawn in the Debug section alongside the
     /// other @c DebugConfig fields. It only does anything while
     /// @c NeonConfig::opaqueMode is set - there is no fill to keep otherwise -
@@ -1298,12 +1297,29 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
 
     ImGui::Separator();
     SliderWithInput("Beam Angle##Spot", l.beamAngle, 3.0f, 120.0f, "%.1f deg");
-    SliderWithInput("Throw##Spot", l.throwLength, 20.0f, 900.0f, "%.0f px");
+    // Up to 3000, where the old top was 900: this is the only knob that
+    // reaches further WITHOUT brightening the core (it is the only term in
+    // the falloff that varies with distance along the axis), so it is the one
+    // to reach for instead of intensity. Little point going past 3000 - by
+    // then the exponential is spent and what is left is the cone's own
+    // divergence. Note it is also what this layer's cost is made of: the strip
+    // is bounded to what the lamp lights, and at 3000 that is ~6x the pixels
+    // it is at the default 215.
+    SliderWithInput("Throw##Spot", l.throwLength, 20.0f, 3000.0f, "%.0f px");
     SliderWithInput("Aperture##Spot", l.apertureWidth, 2.0f, 120.0f, "%.1f px");
     SliderWithInput("Softness##Spot", l.softness, 0.0f, 1.0f, "%.2f");
 
     ImGui::Separator();
-    SliderWithInput("Intensity##Spot", l.intensity, 0.0f, 3.0f, "%.2f");
+    // 8.0, well past the 3.0 the other look sliders use, because the highlight
+    // shoulder changed what this control means. It used to blow the core out to
+    // white above about 0.7; now it compresses above SPOT_HIGHLIGHT_KNEE and
+    // stays linear below it, so turning it up adds light to the BEAM and
+    // almost none to the emitter - at 700 px out, 1.15 to 8 is 18 to 112 while
+    // the core moves 156 to 236, nothing clipped. Pair it with Throw above.
+    //
+    // The field itself is not clamped - the C ABI and animations can drive it
+    // past this - so this bounds the slider's feel, not the effect.
+    SliderWithInput("Intensity##Spot", l.intensity, 0.0f, 8.0f, "%.2f");
     SliderWithInput("Bloom##Spot", l.bloom, 0.0f, 3.0f, "%.2f");
     SliderWithInput("Bloom Radius##Spot", l.bloomRadius, 4.0f, 160.0f, "%.0f px");
     SliderWithInput("Color Temp##Spot", l.colorTemp, 1800.0f, 8000.0f, "%.0f K");

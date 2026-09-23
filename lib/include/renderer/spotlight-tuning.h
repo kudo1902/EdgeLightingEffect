@@ -188,6 +188,65 @@
 /// 0.0 disables it and restores the exact pre-dither output.
 #define SPOT_DITHER_STEPS         1.0
 
+/// Where the highlight shoulder in spotlight.frag starts bending, as a
+/// fraction of full scale. Below this the shading is passed through untouched;
+/// above it the whole RGB vector is scaled by a Reinhard shoulder on its
+/// BRIGHTEST channel, so it approaches 1.0 without ever reaching it.
+///
+/// WHY A SHOULDER AND NOT A CLAMP. At the lamp itself the cone is ~1 and the
+/// bloom is ~bloomStrength, so the core peaks near intensity * (1 + bloom) -
+/// past full scale for any lamp much brighter than 0.7 at the default bloom.
+/// An RGBA8 target clips each channel on its own, and independent clipping is a
+/// HUE change, not a brightness one: a 2700 K lamp at intensity 3 reaches
+/// (3.9, 2.4, 1.1) and is written as (255, 255, 245), so an amber lamp renders
+/// a white core that grows with intensity.
+///
+/// Scaling the vector by its own peak fixes the hue but not the look: a hard
+/// knee at 1.0 leaves a C1 discontinuity, and the core becomes a flat lozenge
+/// with a visible edge - the same "straight contour in a shallow gradient"
+/// artefact SPOT_DITHER_STEPS exists to remove, arriving by another route.
+/// This shoulder is C1 continuous at the knee (its derivative there is exactly
+/// 1) and asymptotic above it, so the core saturates in brightness, holds its
+/// colour, and has no edge anywhere.
+///
+/// Shader only, and safe to be: the shoulder only ever scales a fragment DOWN,
+/// and only above this fraction of full scale, which is three orders of
+/// magnitude above the SPOT_VISIBILITY_FLOOR the strip bound is solved
+/// against. SolveConeAcross therefore stays conservative without knowing this
+/// exists.
+///
+/// WHY 0.30 AND NOT 0.75, which is where this started. The shoulder's first job
+/// is the hue fix above. Its second - the reason the value is this low - is that
+/// it decides how far SpotLight::intensity can be driven before the EMITTER
+/// stops looking like an emitter.
+///
+/// Raising intensity multiplies the whole field, and the cone's near field is
+/// already ~1 at the lamp, so what grows is not the peak (the shoulder holds
+/// that) but the AREA sitting at the top of the curve: the lamp turns into a
+/// long white streak down the beam. Measured at 1920x1080, throwLength 3000,
+/// intensity 8, counting pixels at or above 240:
+///
+///   knee 0.75 -> 8577 px, streaking 221 px down the axis
+///   knee 0.50 -> 1076 px,             61 px
+///   knee 0.30 ->   29 px,             18 px
+///   knee 0.15 ->    0 px,              0 px
+///
+/// while the far field does not move at all - 1200 px out reads 61 at every one
+/// of those, because those values are below the knee and pass through
+/// unchanged. Lowering it therefore buys headroom for intensity almost for
+/// free.
+///
+/// What it costs is the pinpoint hotspot at LOW intensity: a default lamp's
+/// core reads 211 at 0.75 and 156 at 0.30. That is the whole cost - 100 px out
+/// and beyond is byte-identical between the two. The hotspot comes back by
+/// raising intensity, which is now the point.
+///
+/// 0.15 flattens the emitter completely but starts eating the near beam (100 px
+/// out moves for the first time), which is why the value stops here.
+///
+/// 1.0 disables the shoulder and restores per-channel clipping.
+#define SPOT_HIGHLIGHT_KNEE       0.30
+
 /// HALF an 8-bit step - the level below which a value quantises to zero,
 /// and therefore the budget the strip bound is solved against.
 ///

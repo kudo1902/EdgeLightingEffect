@@ -1125,7 +1125,8 @@ void DebugUI::buildSpotlightSection(el_effect_handle_t effect)
     el_effect_get_spotlight_beam(effect, sel, &beamAngle, &throwLength, &aperture, &softness);
     bool beamDirty = false;
     beamDirty |= ImGui::SliderFloat("Beam Angle##Spot", &beamAngle, 3.0f, 120.0f, "%.1f deg");
-    beamDirty |= ImGui::SliderFloat("Throw##Spot", &throwLength, 20.0f, 900.0f, "%.0f px");
+    // 3000 rather than the old 900 - see the same slider in demo/.
+    beamDirty |= ImGui::SliderFloat("Throw##Spot", &throwLength, 20.0f, 3000.0f, "%.0f px");
     beamDirty |= ImGui::SliderFloat("Aperture##Spot", &aperture, 2.0f, 120.0f, "%.1f px");
     beamDirty |= ImGui::SliderFloat("Softness##Spot", &softness, 0.0f, 1.0f, "%.2f");
     if (beamDirty)
@@ -1137,7 +1138,8 @@ void DebugUI::buildSpotlightSection(el_effect_handle_t effect)
     float intensity = 0.0f, bloom = 0.0f, bloomRadius = 0.0f, colorTemp = 0.0f;
     el_effect_get_spotlight_look(effect, sel, &intensity, &bloom, &bloomRadius, &colorTemp);
     bool lookDirty = false;
-    lookDirty |= ImGui::SliderFloat("Intensity##Spot", &intensity, 0.0f, 3.0f, "%.2f");
+    // 8.0 rather than the 3.0 beside it - see the same slider in demo/.
+    lookDirty |= ImGui::SliderFloat("Intensity##Spot", &intensity, 0.0f, 8.0f, "%.2f");
     lookDirty |= ImGui::SliderFloat("Bloom##Spot", &bloom, 0.0f, 3.0f, "%.2f");
     lookDirty |= ImGui::SliderFloat("Bloom Radius##Spot", &bloomRadius, 4.0f, 160.0f, "%.0f px");
     lookDirty |= ImGui::SliderFloat("Color Temp##Spot", &colorTemp, 1800.0f, 8000.0f, "%.0f K");

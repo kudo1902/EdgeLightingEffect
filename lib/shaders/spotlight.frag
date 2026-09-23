@@ -17,6 +17,13 @@ precision highp float;
 //   bloom = bloomStrength * r^2 / (a^2 + c^2 + r^2)    // inverse-square core
 //         * (1 - smoothstep(S * SPOT_BLOOM_WINDOW_INNER, S, d))   // windowed off
 //
+// The shading then passes through a HIGHLIGHT SHOULDER - see the block around
+// `litPeak` below, and SPOT_HIGHLIGHT_KNEE. That is the one part of this
+// program the solve in SolveConeAcross does NOT invert, and does not have to:
+// it only ever scales a fragment DOWN, and only above SPOT_HIGHLIGHT_KNEE of
+// full scale, three orders of magnitude above the half-step the strip bound is
+// solved against.
+//
 // Three of those terms are not obvious:
 //
 //   The lateral falloff is a GAUSSIAN, not a smoothstep cut. The look this
@@ -194,6 +201,36 @@ void main() {
                               bloomWindow, sqrt(d2));
 
     vec3 lit = vColor * intensity * (cone + bloom);
+
+    // HIGHLIGHT SHOULDER. Nothing above bounds `lit`, and an RGBA8 target
+    // clips each channel on its own - which is a HUE change, not a brightness
+    // one, and is what turns a bright amber lamp's core white. The reasoning,
+    // and why this is a shoulder rather than a clamp, is in
+    // spotlight-tuning.h beside SPOT_HIGHLIGHT_KNEE.
+    //
+    // Applied to the PEAK CHANNEL and folded back onto the whole vector, so
+    // the ratio between the channels - the hue - survives the compression.
+    //
+    // BEFORE the cut below, which is what keeps the clip's promise: the light
+    // that survives a clip is the unclipped lamp's light times a coverage. Were
+    // this to run after the mask, a half-covered fragment would sit lower on
+    // the shoulder and so be compressed less, and moving the clip area would
+    // change the shape of the shading it is only supposed to reveal.
+    //
+    // Reinhard above the knee: at litPeak == K this is exactly K and its
+    // derivative is exactly 1, so it joins the untouched region with no
+    // contour; as litPeak grows it approaches 1.0 and never arrives.
+    //
+    // Divergence is free here: this shader calls no derivative, which is what
+    // makes a per-fragment branch safe (the note in lens-flare.frag's ghost
+    // loop is the opposite case).
+    float litPeak = max(max(lit.r, lit.g), lit.b);
+    if (litPeak > SPOT_HIGHLIGHT_KNEE) {
+        float room = 1.0 - SPOT_HIGHLIGHT_KNEE;
+        float over = litPeak - SPOT_HIGHLIGHT_KNEE;
+        float shouldered = SPOT_HIGHLIGHT_KNEE + room * over / (over + room);
+        lit *= shouldered / litPeak;
+    }
 
     // The cut. mix rather than an `if`, so a draw call carrying both clipped
     // and unclipped lamps shades them at the same cost - vClipWeight is flat,

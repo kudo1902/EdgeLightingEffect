@@ -92,6 +92,36 @@ If you are chasing a straight edge in this layer, read V11 before reading
 `buildStrips`: the reported symptom points at the geometry and the cause was
 not the geometry.
 
+### The highlights roll off, so a hot core keeps its colour
+
+A lamp's core peaks near `intensity * (1 + bloom)`, which is past full scale
+for anything much brighter than `intensity` 0.7 at the default bloom. Written
+straight to RGBA8 that clips each channel on its own - and clipping channels
+one at a time is a **hue** change, not a brightness one, so an amber lamp's
+core would walk up to white as `intensity` rose.
+
+`spotlight.frag` therefore compresses the brightest channel through a Reinhard
+shoulder starting at `SPOT_HIGHLIGHT_KNEE` (0.30) and scales the other two with
+it, so the vector's ratios - the colour - survive. The shoulder is C1 continuous
+at the knee and asymptotic above it, which matters for the same reason the
+dither does: a hard clamp at 1.0 would put a visible contour around the core, in
+a layer whose whole premise is that nothing here has an edge. Setting the knob
+to 1.0 disables it and restores per-channel clipping.
+
+**The knee is also what decides how hard `intensity` can be driven**, and that
+is the reason it sits as low as 0.30. Raising `intensity` multiplies the whole
+field; the cone's near field is already ~1 at the lamp, so what grows is not the
+peak but the AREA at the top of the curve - the emitter stretches into a white
+streak down the beam. At `intensity` 8 and `throwLength` 3000, pixels at or
+above 240 go 8,577 at knee 0.75, 1,076 at 0.50, **29 at 0.30**, while the far
+field is unchanged at every one of them. The cost is the pinpoint hotspot at low
+intensity: a default lamp's core reads 156 rather than 211, and nothing from 100
+px out is affected.
+
+It is per LAMP, though, and the pass is additive - two beams overlapping
+brightly can still clip their sum. See **V12**, **V12a** and **V12b** in
+[`review-findings.md`](review-findings.md).
+
 ---
 
 ## 2. What the default `Config()` renders
@@ -206,6 +236,31 @@ several times this. Floored at 1 px.
 Raising it is the control for "how far down the wall does this lamp read",
 and it is also the main lever on how much geometry the lamp rasterises.
 
+**It is the only knob that lights further without lighting brighter**, and that
+is worth knowing because the obvious alternative - raising `intensity` - blows
+the core out instead. Of the five factors in the cone, this is the only one that
+is a function of distance ALONG the axis; the rest are either global brightness
+or shape. At the lamp its term is exactly `exp(0)`, so the core cannot move.
+Measured at 1920x1080, defaults otherwise, sampling brightness down the axis:
+
+| `throwLength` | core | 400 px | 700 px | 1000 px | 1800 px |
+| ------------- | ---- | ------ | ------ | ------- | ------- |
+| 215 (default) | 211 | 6 | 1 | 0 | 0 |
+| 900 | 211 | 23 | 10 | 5 | 1 |
+| 3000 | 211 | 32 | 18 | 11 | 5 |
+
+The cone's shape is untouched - `throwLength` does not appear in `halfW` - and
+the lit half-width at a fixed distance converges rather than growing: 86 px at
+200 px out for every value from 600 up, tracking the analytic cone half-width at
+a constant ratio.
+
+**It has a ceiling.** Going from 3000 to effectively infinite moves the value at
+1000 px only from 11 to 16: once the exponential is spent, the remaining decay is
+the `apertureWidth / halfW` spread term, which falls off as roughly 1/distance -
+the beam's own divergence. Beating that means narrowing `beamAngle`, which
+changes the shape. So 900 to 1500 buys most of what is there, and past 3000
+there is nothing; the demo sliders stop there for that reason.
+
 **`SpotLight::apertureWidth`** (default 13 px)
 Half-width of the beam at the lamp itself, in px. Floored at 1 px.
 
@@ -237,7 +292,37 @@ Master brightness for this lamp, multiplying the cone and the bloom together.
 `0` (or below) skips the lamp entirely: no geometry is emitted for it.
 
 It is also the term the strip solve reads to decide how far the lamp reaches,
-so raising it grows the geometry as well as the brightness.
+so raising it grows the geometry as well as the brightness. That is deliberate,
+and it is the answer to "why did the lit area get bigger when I only asked for
+more light" - a brighter lamp stays above the visibility floor further out. A
+lamp that brightened without growing would be the bug.
+
+**It no longer blows the core out.** The shading passes through a highlight
+shoulder (`SPOT_HIGHLIGHT_KNEE`) that compresses the brightest channel and
+scales the other two with it, so a hot core saturates in brightness while
+holding its colour instead of clipping channel by channel and walking up
+amber -> yellow -> white. See V12 in [`review-findings.md`](review-findings.md)
+for the before/after, V12b for why the knee then had to come down to 0.30 to
+stop the EMITTER growing as well as staying coloured, and V12a for the case
+neither covers: the shoulder is per lamp, so two beams overlapping brightly can
+still clip their sum.
+
+**So this is now the lever for a stronger beam**, which it was not before.
+Because the shoulder compresses above the knee and is exactly linear below it,
+`intensity` adds light where the beam is dim and barely moves it where the beam
+is already bright. At 700 px out, `intensity` 1.15 -> 8 gives 18 -> 112, a ratio
+of 6.2 against a nominal 7.0, while the core moves only 156 -> 236. Measured at
+1920x1080, `throwLength` 3000, at the shipped knee:
+
+| `intensity` | core | 400 px | 700 px | 1000 px | 1800 px | px at full white |
+| ----------- | ---- | ------ | ------ | ------- | ------- | ---------------- |
+| 1.15 | 156 | 32 | 18 | 11 | 5 | 0 |
+| 3 | 208 | 82 | 45 | 29 | 12 | 0 |
+| 5 | 225 | 122 | 75 | 49 | 21 | 0 |
+| 8 | 236 | 156 | 112 | 78 | 34 | 0 |
+
+Pair it with `throwLength` for distance. The field is not clamped, and the demo
+slider's top is a convenience rather than a limit.
 
 **`SpotLight::colorTemp`** (default 5600 K)
 Colour temperature, baked to linear RGB on the CPU from an eight-anchor
