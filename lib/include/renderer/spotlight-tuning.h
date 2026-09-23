@@ -46,7 +46,8 @@
 //   below one 8-bit step, and draws a strip that stops there. That solve
 //   inverts the WHOLE expression spotlight.frag evaluates - not just these
 //   constants. Change the falloff's SHAPE in the shader (swap the gaussian,
-//   drop the 1/halfW spread term, add a factor) without redoing the solve in
+//   change the exponent on the 1/halfW spread term other than through
+//   SpotLight::spreadFalloff, add a factor) without redoing the solve in
 //   SolveConeAcross, and the strip starts clipping lit pixels: the cone gets a
 //   straight edge where the geometry ends, with nothing in the log to say so.
 //
@@ -144,7 +145,7 @@
 /// attributes rather than in a uniform block. Entries past it are ignored.
 ///
 /// Raising it costs one recompile and a larger (still small) buffer:
-/// SPOT_MAX_LAMPS * SPOT_STRIP_SEGMENTS * 6 * 64 bytes.
+/// SPOT_MAX_LAMPS * SPOT_STRIP_SEGMENTS * 6 * 68 bytes.
 #define SPOT_MAX_LAMPS            8
 
 /// Quads per lamp along the beam. The strip approximates a curved support with

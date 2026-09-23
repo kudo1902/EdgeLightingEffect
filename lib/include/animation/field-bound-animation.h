@@ -99,6 +99,7 @@ namespace EdgeLighting
         TINT_R = 11,        ///< @c SpotLight::tint.r, linear
         TINT_G = 12,        ///< @c SpotLight::tint.g, linear
         TINT_B = 13,        ///< @c SpotLight::tint.b, linear
+        SPREAD_FALLOFF = 14, ///< @c SpotLight::spreadFalloff, exponent [0, 2]
     } SpotlightField;
 
     /// @brief Which scalar to drive inside a single stop of

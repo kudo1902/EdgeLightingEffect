@@ -1293,6 +1293,38 @@ el_result_e el_effect_get_spotlight_look(el_effect_handle_t effect, int32_t inde
     return EL_SUCCESS;
 }
 
+el_result_e el_effect_set_spotlight_spread_falloff(el_effect_handle_t effect, int32_t index,
+                                                   float spreadFalloff)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_spread_falloff");
+    auto *l = SpotlightSlot(effect, index, "el_effect_set_spotlight_spread_falloff");
+    if (!l)
+    {
+        return EL_ERROR_INVALID_PARAMETER;
+    }
+    if (l->spreadFalloff == spreadFalloff)
+    {
+        return EL_SUCCESS;
+    }
+    LOG_I("effect=%p, index=%d, spreadFalloff=%f", (void *)effect, index, spreadFalloff);
+    l->spreadFalloff = spreadFalloff;
+    return EL_SUCCESS;
+}
+
+el_result_e el_effect_get_spotlight_spread_falloff(el_effect_handle_t effect, int32_t index,
+                                                   float *outSpreadFalloff)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_get_spotlight_spread_falloff");
+    VALIDATE_OUT_PTR(outSpreadFalloff, "el_effect_get_spotlight_spread_falloff");
+    auto *l = SpotlightSlot(effect, index, "el_effect_get_spotlight_spread_falloff");
+    if (!l)
+    {
+        return EL_ERROR_INVALID_PARAMETER;
+    }
+    *outSpreadFalloff = l->spreadFalloff;
+    return EL_SUCCESS;
+}
+
 el_result_e el_effect_set_spotlight_tint(el_effect_handle_t effect, int32_t index,
                                          float r, float g, float b)
 {

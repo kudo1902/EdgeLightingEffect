@@ -273,7 +273,8 @@ extern "C"
         EL_SPOTLIGHT_FIELD_COLOR_TEMP = 10,
         EL_SPOTLIGHT_FIELD_TINT_R = 11,
         EL_SPOTLIGHT_FIELD_TINT_G = 12,
-        EL_SPOTLIGHT_FIELD_TINT_B = 13
+        EL_SPOTLIGHT_FIELD_TINT_B = 13,
+        EL_SPOTLIGHT_FIELD_SPREAD_FALLOFF = 14
     } el_spotlight_field_e;
 
     /** @brief Which side of a clip area survives the cut.

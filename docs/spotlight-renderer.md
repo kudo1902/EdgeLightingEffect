@@ -140,6 +140,7 @@ A default-constructed `SpotLight` is a fairly narrow, warm-white downlight:
 | `throwLength` | `215` px |
 | `apertureWidth` | `13` px |
 | `softness` | `0.55` |
+| `spreadFalloff` | `1.0` - the physical spread loss |
 | `intensity` | `1.15` |
 | `bloom` | `0.4` |
 | `bloomRadius` | `20` px |
@@ -236,12 +237,10 @@ several times this. Floored at 1 px.
 Raising it is the control for "how far down the wall does this lamp read",
 and it is also the main lever on how much geometry the lamp rasterises.
 
-**It is the only knob that lights further without lighting brighter**, and that
-is worth knowing because the obvious alternative - raising `intensity` - blows
-the core out instead. Of the five factors in the cone, this is the only one that
-is a function of distance ALONG the axis; the rest are either global brightness
-or shape. At the lamp its term is exactly `exp(0)`, so the core cannot move.
-Measured at 1920x1080, defaults otherwise, sampling brightness down the axis:
+**It lights further without lighting brighter**, which is worth knowing because
+the obvious alternative - raising `intensity` - blows the core out instead. At
+the lamp its term is exactly `exp(0)`, so the core cannot move. Measured at
+1920x1080, defaults otherwise, sampling brightness down the axis:
 
 | `throwLength` | core | 400 px | 700 px | 1000 px | 1800 px |
 | ------------- | ---- | ------ | ------ | ------- | ------- |
@@ -254,12 +253,74 @@ the lit half-width at a fixed distance converges rather than growing: 86 px at
 200 px out for every value from 600 up, tracking the analytic cone half-width at
 a constant ratio.
 
-**It has a ceiling.** Going from 3000 to effectively infinite moves the value at
-1000 px only from 11 to 16: once the exponential is spent, the remaining decay is
-the `apertureWidth / halfW` spread term, which falls off as roughly 1/distance -
-the beam's own divergence. Beating that means narrowing `beamAngle`, which
-changes the shape. So 900 to 1500 buys most of what is there, and past 3000
-there is nothing; the demo sliders stop there for that reason.
+**It has a ceiling, and it is not the one you would guess.** Going from 3000 to
+effectively infinite moves the value at 1000 px only from 11 to 16. It is NOT
+the only factor in the cone that varies with distance along the axis - an
+earlier version of this section said so, and the mistake matters, because the
+other one is what is actually dimming the beam out there. Once the exponential
+is spent the remaining decay is the `apertureWidth / halfW` spread term, which
+falls off as roughly 1/distance - the beam's own divergence. At this lamp's
+defaults, 1000 px out, the throw term at `throwLength` 3000 is still at **72%**
+while the spread term is at **5%**.
+
+So 900 to 1500 buys most of what `throwLength` has, and past 3000 there is
+nothing; the demo sliders stop there for that reason. Reaching further than
+that is `spreadFalloff`'s job.
+
+**`SpotLight::spreadFalloff`** (default 1.0, clamped to `[0, 2]`)
+The exponent on that spread term: the cone carries
+`pow(apertureWidth / halfW, spreadFalloff)`. `1.0` is the physical
+inverse-linear spread and what every lamp did before this field existed; `0.0`
+removes the spread loss entirely, leaving `throwLength` as the only thing that
+dims the beam with distance; above `1` decays faster than physical - a tighter
+pool with a dimmer surround.
+
+Nothing about the near field moves at any value: at the lamp `halfW` **is**
+`apertureWidth`, so the term is 1 whatever it is raised to. Measured at
+1920x1080 on one lamp at `throwLength` 3000, `intensity` 8, sampling the red
+channel down the axis:
+
+| `spreadFalloff` | core | 100 px | 300 px | 600 px | 1000 px | 1500 px | 2000 px |
+| --------------- | ---- | ------ | ------ | ------ | ------- | ------- | ------- |
+| 1.0 (default) | 216 | 216 | 174 | 125 | 78 | 45 | 28 |
+| 0.75 | 216 | 224 | 199 | 168 | 135 | 99 | 70 |
+| 0.5 | 217 | 230 | 217 | 201 | 183 | 160 | 139 |
+| 0.25 | 217 | 235 | 230 | 223 | 216 | 205 | 194 |
+| 0.0 | 217 | 240 | 239 | 237 | 235 | 231 | 227 |
+
+**It costs fill, and that is the light travelling further rather than a tax on
+it.** The strip is solved from this same falloff, so lowering the exponent grows
+the geometry to match. Same lamp and viewport, fragments rasterised
+(`GL_SAMPLES_PASSED`), against a 2,073,600 px viewport:
+
+| `spreadFalloff` | fragments | of the viewport |
+| --------------- | --------- | --------------- |
+| 1.0 | 1,552,089 | 75% |
+| 0.5 | 1,845,522 | 89% |
+| 0.0 | 1,993,939 | 96% |
+
+Bounded here only because the strip is already viewport-sized at this throw. In
+open space it is not: at `spreadFalloff` 0 the solved reach is
+`throwLength * log(solveIntensity / floor)`, about 25,000 px for this lamp, and
+what stops the cost is the rasteriser rather than the solve. Lower it *with*
+`throwLength`, not on top of it.
+
+**Why an exponent and not some other reshaping.** The renderer inverts the whole
+falloff in closed form to size the strip (section 6), and an exponent comes out
+of that logarithm as a plain factor - `spreadFalloff * log(halfW / apertureWidth)`
+in `SolveConeAcross`. The bound therefore stays exact at every value rather than
+becoming a conservative guess. Verified against a CPU evaluation of the shader
+over 2.07 M pixels at each of 1.0, 0.75, 0.5, 0.25 and 0.0: **zero pixels that
+the falloff lights and the strip failed to draw**.
+
+`1.0` is byte-identical to the pre-`spreadFalloff` renderer, and that took one
+deliberate line in the shader: `pow(x, 1.0)` is `exp2(1.0 * log2(x))` on a GPU
+and moved 15 channels out of 8.3 M by 1/255, so the exponent-1 case takes a
+uniform branch back to the plain divide. Measured after that: 0 channels differ.
+
+**Negative values are refused, not honoured.** A negative exponent turns the
+spread term into gain, so the cone would brighten along its own axis without
+limit and the solve would find no crossing to stop the strip at.
 
 **`SpotLight::apertureWidth`** (default 13 px)
 Half-width of the beam at the lamp itself, in px. Floored at 1 px.
@@ -522,8 +583,8 @@ Every spotlight scalar is per-lamp, so there is no spotlight block in
 ([`field-bound-animation.h`](../lib/include/animation/field-bound-animation.h))
 is the whole animatable surface: `POSITION_X`, `POSITION_Y`, `ANGLE`,
 `BEAM_ANGLE`, `THROW_LENGTH`, `APERTURE_WIDTH`, `SOFTNESS`, `INTENSITY`,
-`BLOOM`, `BLOOM_RADIUS`, `COLOR_TEMP`, `TINT_R`, `TINT_G`, `TINT_B`. Bind one
-with
+`BLOOM`, `BLOOM_RADIUS`, `COLOR_TEMP`, `TINT_R`, `TINT_G`, `TINT_B`,
+`SPREAD_FALLOFF`. Bind one with
 
 ```cpp
 anim->AddSpotlightField(lampIndex, SpotlightField::ANGLE, modulator);
@@ -536,8 +597,8 @@ out-of-range index at apply time is a logged no-op.
 coordinates, so driving *any* of these fields makes the renderer rebuild its
 vertex buffer on every frame the value moves. Most of them earn it - `POSITION_*`
 and `ANGLE` move the strip, and `BEAM_ANGLE`, `THROW_LENGTH`, `APERTURE_WIDTH`,
-`SOFTNESS`, `INTENSITY`, `BLOOM`, `BLOOM_RADIUS` and the three `TINT_*` all
-feed the solve that sizes it - the tint through the brightest-channel fold
+`SOFTNESS`, `INTENSITY`, `BLOOM`, `BLOOM_RADIUS`, `SPREAD_FALLOFF` and the three
+`TINT_*` all feed the solve that sizes it - the tint through the brightest-channel fold
 described in 4.4. `COLOR_TEMP` is the only one that can change the bound
 without obviously looking like it does, for the same reason.
 
@@ -605,6 +666,7 @@ one function per scalar, mirroring the arc family:
 | `el_effect_set_spotlight_placement` | `position.x`, `position.y`, `angle` |
 | `el_effect_set_spotlight_beam` | `beamAngle`, `throwLength`, `apertureWidth`, `softness` |
 | `el_effect_set_spotlight_look` | `intensity`, `bloom`, `bloomRadius`, `colorTemp` |
+| `el_effect_set_spotlight_spread_falloff` | `spreadFalloff` |
 | `el_effect_set_spotlight_tint` | `tint.r`, `tint.g`, `tint.b` |
 | `el_effect_set_spotlight_enabled` | per-lamp `enable` |
 | `el_effect_set_spotlight_clipped` | per-lamp `clipped` |
@@ -620,9 +682,10 @@ follow. `edgeSoftness` is a scalar setter of its own rather than a sixth
 parameter: it is not part of the shape, and retuning it should not re-send four
 numbers that did not change.
 
-Each has a matching `el_effect_get_*`. The tint is its own call rather than two
-more parameters on `el_effect_set_spotlight_look`, which is already published
-with four - this ABI parameterises rather than re-signs. None of them grows the list, so
+Each has a matching `el_effect_get_*`. The tint and `spreadFalloff` are calls of
+their own rather than extra parameters on `el_effect_set_spotlight_look` and
+`el_effect_set_spotlight_beam`, both already published with four - this ABI
+parameterises rather than re-signs. None of them grows the list, so
 `el_effect_set_spotlight_count` comes first; an out-of-range index is a logged
 `EL_ERROR_INVALID_PARAMETER`. The layer is registered by
 `EL_RENDERER_SPOTLIGHT` (and by `EL_RENDERER_ALL`, which is what
@@ -641,7 +704,8 @@ then calls only `el_effect_render` renders the previous frame's rig.
 |---|---|
 | Where the lamp is, where it points | `position`, `angle` |
 | How wide the cone opens | `beamAngle` |
-| How far down the throw it reads | `throwLength` |
+| How far down the throw it reads | `throwLength` (spent by ~3000 px) |
+| Reach further than that | `spreadFalloff` below 1 - the term that limits reach at range |
 | How tight the bright core is | `apertureWidth` (small = hot core) |
 | How soft the beam edge is | `softness` (there is no hard edge at any value) |
 | Overall brightness of one lamp | `intensity` |

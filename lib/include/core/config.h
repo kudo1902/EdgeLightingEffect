@@ -922,7 +922,54 @@ namespace EdgeLighting
         float beamAngle = 26.0f;
         /// Distance in px along the axis at which the beam falls to 1/e of its
         /// peak. Not where it ends - the renderer solves for that.
+        ///
+        /// **Not the only thing that decides reach, and at long range not even
+        /// the main one.** See @ref spreadFalloff.
         float throwLength = 215.0f;
+
+        /// How much of the beam's SPREAD loss to apply, as an exponent in
+        /// [0, 2]. 1.0 is the physical falloff and the default; 0.0 removes it
+        /// entirely.
+        ///
+        /// spotlight.frag carries `(apertureWidth / halfW)` - the beam's
+        /// energy spread as the cone widens, which is what stops a wide beam
+        /// reading as brighter than a narrow one at equal intensity. That term
+        /// decays as 1/distance, and it is the reason a lamp fades out long
+        /// before @c throwLength says it should: with the default aperture and
+        /// a 26 degree beam it is already down to 5% at 1000 px, while the
+        /// throw term at 3000 px of throw is still at 72%. **Raising
+        /// throwLength cannot fix that** - even an infinite throw leaves the
+        /// spread term in place.
+        ///
+        /// This exponent is the knob that can. The term becomes
+        /// `pow(apertureWidth / halfW, spreadFalloff)`:
+        ///
+        ///   1.0 - inverse-linear spread. Physical, and what every lamp did
+        ///         before this field existed.
+        ///   0.5 - halves the decay in log terms; a lamp that read 78/255 at
+        ///         1000 px reads 183.
+        ///   0.0 - no spread loss at all. The cone still widens geometrically,
+        ///         but brightness along the axis is then limited only by
+        ///         @c throwLength. Searchlight, not lamp.
+        ///   > 1 - decays FASTER than physical: a tighter pool of light with a
+        ///         dimmer surround.
+        ///
+        /// Nothing about the near field moves: at the lamp `halfW` is
+        /// `apertureWidth`, so the term is 1 at any exponent.
+        ///
+        /// **It costs fill.** The renderer solves where the falloff drops
+        /// under half an 8-bit step and draws a strip that stops there, so
+        /// lowering this grows the geometry to match - that is the light
+        /// travelling further, and the fragments come with it. At 0 the solve
+        /// falls back to the throw term alone, which at a long throw can be
+        /// tens of thousands of px: bounded by the viewport when it draws, but
+        /// no longer a small strip. Lower it with @c throwLength, not on top
+        /// of it.
+        ///
+        /// Clamped to [0, 2] by the renderer. Negative is refused rather than
+        /// honoured: it would make the beam BRIGHTEN with distance, which has
+        /// no finite support and therefore no strip to draw.
+        float spreadFalloff = 1.0f;
         /// Half-width of the beam at the lamp itself, in px. Also sets how
         /// tight the bright core is, since the cone's brightness carries a
         /// factor of @c apertureWidth / (width at this distance).
@@ -994,6 +1041,7 @@ namespace EdgeLighting
                    angle == o.angle &&
                    beamAngle == o.beamAngle &&
                    throwLength == o.throwLength &&
+                   spreadFalloff == o.spreadFalloff &&
                    apertureWidth == o.apertureWidth &&
                    softness == o.softness &&
                    intensity == o.intensity &&

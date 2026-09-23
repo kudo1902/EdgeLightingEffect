@@ -91,7 +91,7 @@ halfW(a) = apertureWidth + max(a, 0) * tan(beamAngle / 2)
 
 cone(a, c) = intensity
            * exp(-max(a, 0) / throwLength)          // falls off along the throw
-           * (apertureWidth / halfW(a))             // energy spreads as it widens
+           * (apertureWidth / halfW(a))^spreadFalloff  // energy spreads as it widens
            * exp(-(c / halfW(a))^2 * softK)         // soft across, no hard edge
            * smoothstep(-apertureWidth, SPOT_NEAR_FADE * apertureWidth, a)
 
@@ -111,6 +111,14 @@ can reach zero is the wrong control for this effect and is deliberately absent.
 The `apertureWidth / halfW(a)` term is what stops a wide beam from reading as
 brighter overall than a narrow one at the same intensity. Without it, widening
 the beam adds light rather than spreading it.
+
+Its exponent, `SpotLight::spreadFalloff`, was added after this plan shipped and
+defaults to 1.0 - i.e. to exactly the expression above. It exists because this
+term, not `throwLength`, is what limits a lamp's reach at range: it decays as
+1/distance, so it outruns the throw's exponential by a wide margin. The solve
+below inverts it unchanged, because an exponent leaves the logarithm as a plain
+factor. See section 4.3 of
+[`spotlight-renderer.md`](spotlight-renderer.md).
 
 The bloom is inverse-square and therefore has **no natural end**. It is windowed
 off at `SPOT_BLOOM_WINDOW_OUTER` radii so its support is finite and the CPU can bound

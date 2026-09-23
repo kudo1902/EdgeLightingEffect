@@ -1297,17 +1297,33 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
 
     ImGui::Separator();
     SliderWithInput("Beam Angle##Spot", l.beamAngle, 3.0f, 120.0f, "%.1f deg");
-    // Up to 3000, where the old top was 900: this is the only knob that
-    // reaches further WITHOUT brightening the core (it is the only term in
-    // the falloff that varies with distance along the axis), so it is the one
-    // to reach for instead of intensity. Little point going past 3000 - by
-    // then the exponential is spent and what is left is the cone's own
-    // divergence. Note it is also what this layer's cost is made of: the strip
-    // is bounded to what the lamp lights, and at 3000 that is ~6x the pixels
-    // it is at the default 215.
+    // Up to 3000, where the old top was 900. It reaches further without
+    // brightening the core, so it is the one to reach for before intensity -
+    // but it is NOT the only distance term, which an earlier version of this
+    // comment claimed. Past about 1000 px the beam's own spread
+    // (apertureWidth / halfW) is what has dimmed it, and no throw value
+    // touches that: at this lamp's defaults the throw term is still at 72% at
+    // 1000 px while the spread term is at 5%. That is what Spread Falloff
+    // below is for. Note this is also what the layer's cost is made of: the
+    // strip is bounded to what the lamp lights, and at 3000 that is ~6x the
+    // pixels it is at the default 215.
     SliderWithInput("Throw##Spot", l.throwLength, 20.0f, 3000.0f, "%.0f px");
     SliderWithInput("Aperture##Spot", l.apertureWidth, 2.0f, 120.0f, "%.1f px");
     SliderWithInput("Softness##Spot", l.softness, 0.0f, 1.0f, "%.2f");
+
+    // The exponent on that spread term, and the real reach control. 1.0 is
+    // physical and the default; 0 removes the spread loss entirely and leaves
+    // Throw as the only thing dimming the beam. Measured on one lamp at
+    // 1920x1080 (throw 3000, intensity 8), 1000 px down the axis: 78/255 at
+    // 1.0, 183 at 0.5, 235 at 0.0.
+    SliderWithInput("Spread Falloff##Spot", l.spreadFalloff, 0.0f, 2.0f, "%.2f");
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Exponent on the beam's spread loss.\n"
+                          "1.0 = physical (default), 0 = none, >1 = a tighter pool.\n"
+                          "Lowering it grows the strip the lamp draws, so it costs fill:\n"
+                          "that is the light travelling further.");
+    }
 
     ImGui::Separator();
     // 8.0, well past the 3.0 the other look sliders use, because the highlight

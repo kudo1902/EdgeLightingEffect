@@ -196,6 +196,7 @@ namespace EdgeLighting
         {
             float tanHalf; ///< tan(beamAngle / 2)
             float throwLength; ///< SpotLight::throwLength, floored
+            float spreadFalloff; ///< SpotLight::spreadFalloff, clamped to [0, 2]
             float softK;   ///< gaussian exponent across the beam
             float apertureWidth; ///< SpotLight::apertureWidth, floored
             float intensity;
@@ -222,11 +223,15 @@ namespace EdgeLighting
         ///
         /// This inverts spotlight.frag's falloff. Taking logs of
         ///
-        ///   solveIntensity * exp(-a / throwLength) * (apertureWidth / halfW)
+        ///   solveIntensity * exp(-a / throwLength)
+        ///       * (apertureWidth / halfW)^spreadFalloff
         ///       * exp(-lat^2 * softK)
         ///       >= SPOT_VISIBILITY_FLOOR
         ///
-        /// and solving for lat gives the expression below. `smoothstep`'s
+        /// and solving for lat gives the expression below - the exponent comes
+        /// out of the log as a plain factor, which is the whole reason
+        /// @c SpotLight::spreadFalloff could be an exponent rather than some
+        /// other reshaping of the term. `smoothstep`'s
         /// near-end fade is not inverted - it only ever REDUCES the term, and
         /// the strip's start is bounded separately and conservatively.
         ///
@@ -241,7 +246,7 @@ namespace EdgeLighting
             const float halfW = s.apertureWidth + alongPos * s.tanHalf;
             const float headroom = std::log(s.solveIntensity) - std::log(s.visibilityFloor) -
                                    alongPos / s.throwLength -
-                                   std::log(halfW / s.apertureWidth);
+                                   s.spreadFalloff * std::log(halfW / s.apertureWidth);
             if (headroom <= 0.0f)
             {
                 return 0.0f;
@@ -254,9 +259,21 @@ namespace EdgeLighting
         ///
         /// @ref SolveConeAcross's headroom is strictly decreasing in @c a for
         /// a >= 0 (both the throw term and the spread term only ever grow), so
-        /// the crossing is a bisection. Bracketed by doubling from the throw
-        /// length, with a hard cap: a lamp bright enough to need more than
-        /// 1e5 px has bigger problems than a loose bound.
+        /// the crossing is a bisection. Still true at any
+        /// @c SpotLight::spreadFalloff the clamp in @ref DeriveLamp allows: at
+        /// 0 the spread term drops out and the throw alone carries it down,
+        /// and NEGATIVE - the one exponent that would make headroom grow with
+        /// distance, leaving no crossing to find - is what that clamp exists
+        /// to refuse. Bracketed by doubling from the throw length, with a hard
+        /// cap: a lamp bright enough to need more than 1e5 px has bigger
+        /// problems than a loose bound.
+        ///
+        /// That cap is also the backstop for a low exponent at a long throw,
+        /// which is a legitimate config rather than a mistake: at
+        /// @c spreadFalloff 0 the reach is `throwLength * log(intensity /
+        /// floor)`, about 25,000 px for a default-ish lamp at throw 3000 and
+        /// intensity 8. The strip is then far larger than any viewport, and
+        /// the rasteriser - not this solve - is what bounds the cost.
         float SolveConeReach(const LampSolve &s)
         {
             if (SolveConeAcross(s, 0.0f) <= 0.0f)
@@ -345,6 +362,13 @@ namespace EdgeLighting
             const float beam = std::min(std::max(lamp.beamAngle, 0.0f), 170.0f);
             out.tanHalf = std::max(std::tan(beam * 0.5f * DEG_TO_RAD), 0.0f);
             out.throwLength = std::max(lamp.throwLength, static_cast<float>(SPOT_MIN_THROW));
+            // [0, 2], and the LOWER bound is the load-bearing one: a negative
+            // exponent turns the spread term into gain, so the cone would
+            // brighten without limit along its own axis and SolveConeReach
+            // would find no crossing to stop the strip at. The upper bound is
+            // just a sane ceiling on the opposite look (a tighter pool); the
+            // solve itself is exact at any non-negative value.
+            out.spreadFalloff = std::min(std::max(lamp.spreadFalloff, 0.0f), 2.0f);
             out.apertureWidth = std::max(lamp.apertureWidth, static_cast<float>(SPOT_MIN_APERTURE));
             out.intensity = lamp.intensity;
             out.bloom = std::max(lamp.bloom, 0.0f);
@@ -850,6 +874,7 @@ namespace EdgeLighting
         mVertexArray.SetAttribPointer(3, 4, GL_FLOAT, stride, offsetof(StripVertex, p1));
         mVertexArray.SetAttribPointer(4, 3, GL_FLOAT, stride, offsetof(StripVertex, color));
         mVertexArray.SetAttribPointer(5, 1, GL_FLOAT, stride, offsetof(StripVertex, clipWeight));
+        mVertexArray.SetAttribPointer(6, 1, GL_FLOAT, stride, offsetof(StripVertex, spreadFalloff));
 
         mBufferReady = true;
     }
@@ -1146,6 +1171,7 @@ namespace EdgeLighting
                     v.color[1] = s.color.g;
                     v.color[2] = s.color.b;
                     v.clipWeight = clipWeight;
+                    v.spreadFalloff = s.spreadFalloff;
                     mStripVerts.push_back(v);
                 }
             }

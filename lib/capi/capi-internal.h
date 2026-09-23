@@ -89,6 +89,7 @@ static_assert(static_cast<int>(EdgeLighting::SpotlightField::COLOR_TEMP) == EL_S
 static_assert(static_cast<int>(EdgeLighting::SpotlightField::TINT_R) == EL_SPOTLIGHT_FIELD_TINT_R);
 static_assert(static_cast<int>(EdgeLighting::SpotlightField::TINT_G) == EL_SPOTLIGHT_FIELD_TINT_G);
 static_assert(static_cast<int>(EdgeLighting::SpotlightField::TINT_B) == EL_SPOTLIGHT_FIELD_TINT_B);
+static_assert(static_cast<int>(EdgeLighting::SpotlightField::SPREAD_FALLOFF) == EL_SPOTLIGHT_FIELD_SPREAD_FALLOFF);
 
 static_assert(static_cast<int>(EdgeLighting::ClipMode::KEEP_INSIDE) == EL_CLIP_KEEP_INSIDE);
 static_assert(static_cast<int>(EdgeLighting::ClipMode::KEEP_OUTSIDE) == EL_CLIP_KEEP_OUTSIDE);

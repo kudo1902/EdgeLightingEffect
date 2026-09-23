@@ -12,7 +12,7 @@ precision highp float;
 //        * smoothstep(-apertureWidth,
 //                     SPOT_NEAR_FADE * apertureWidth, a)  // fade in at the lamp
 //        * exp(-max(a, 0) / throwLength)               // fade along the throw
-//        * (apertureWidth / halfW)                     // energy spreads as it widens
+//        * pow(apertureWidth / halfW, spreadFalloff)   // energy spreads as it widens
 //
 //   bloom = bloomStrength * r^2 / (a^2 + c^2 + r^2)    // inverse-square core
 //         * (1 - smoothstep(S * SPOT_BLOOM_WINDOW_INNER, S, d))   // windowed off
@@ -34,6 +34,15 @@ precision highp float;
 //   `apertureWidth / halfW` is what stops a wide beam reading as brighter than
 //   a narrow one at equal intensity. Drop it and beamAngle becomes a second,
 //   non-linear brightness control.
+//
+//   Its exponent, SpotLight::spreadFalloff, is there because that same term is
+//   what limits REACH. It decays as 1/distance and so outruns the throw's
+//   exponential by a wide margin: at the default aperture and a 26 degree
+//   beam it is at 5% by 1000 px, where a 3000 px throw is still at 72%. The
+//   exponent is 1.0 by default, which is exactly the expression above and the
+//   only value that conserves energy; below that the beam carries further.
+//   pow, not a branch: the exponent is flat, so this is uniform across the
+//   draw either way, and a branch would only trade one instruction for two.
 //
 //   The bloom's window has no visual job at all - the inverse-square core has
 //   no natural end, so without it the term's support is the whole framebuffer
@@ -92,6 +101,7 @@ flat in vec4 vP0;    ///< tanHalfBeam, throwLength, softK, intensity.
 flat in vec4 vP1;    ///< apertureWidth, bloom, bloomRadius, bloomWindow.
 flat in vec3 vColor; ///< Linear RGB.
 flat in float vClipWeight; ///< 1 where this lamp honours the clip area, else 0.
+flat in float vSpreadFalloff; ///< Exponent on the spread term, already clamped.
 
 /// The clip area, in APP coordinates: centre.xy, half extent.xy. Already
 /// collapsed from ClipArea's top-left + size on the CPU, because a
@@ -192,7 +202,25 @@ void main() {
     float cone = exp(-lat * lat * softK);
     cone *= smoothstep(-apertureWidth, SPOT_NEAR_FADE * apertureWidth, along);
     cone *= exp(-max(along, 0.0) / throwLength);
-    cone *= apertureWidth / halfW;
+    // Both operands are strictly positive - halfW >= apertureWidth >=
+    // SPOT_MIN_APERTURE, and the renderer clamps the exponent to [0, 2] - so
+    // pow is defined here for every lamp a host can configure.
+    //
+    // The exponent 1 case is the plain divide, not pow(x, 1.0), and that is
+    // not pedantry: pow is exp2(y * log2(x)) on every GPU this ships to, so it
+    // returns x only to within its own precision. Measured at 1920x1080 on one
+    // default lamp, pow(x, 1.0) moved 15 channels out of 8.3 million by 1/255
+    // against the divide - small, but it would make EVERY existing lamp render
+    // differently to buy a knob most of them will never set.
+    //
+    // A uniform branch, so it costs a predicted compare rather than
+    // divergence: vSpreadFalloff is flat, and the renderer writes an exact
+    // 1.0f into the attribute. Safe in this shader for the same reason the
+    // highlight shoulder's branch is - nothing here calls a derivative (the
+    // note in lens-flare.frag's ghost loop is the opposite case).
+    cone *= (vSpreadFalloff == 1.0)
+                ? apertureWidth / halfW
+                : pow(apertureWidth / halfW, vSpreadFalloff);
 
     float d2 = along * along + across * across;
     float r2 = bloomRadius * bloomRadius;

@@ -464,6 +464,11 @@ namespace EdgeLighting
                 l.tint.b = value;
                 break;
             }
+            case SpotlightField::SPREAD_FALLOFF:
+            {
+                l.spreadFalloff = value;
+                break;
+            }
             }
         }
 

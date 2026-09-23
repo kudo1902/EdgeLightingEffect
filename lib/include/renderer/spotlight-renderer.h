@@ -137,9 +137,18 @@ namespace EdgeLighting
             /// Baked here, so a lamp that opted out and a clip area that is
             /// switched off are the same thing by the time the GPU sees them.
             float clipWeight;
+            /// Exponent on the cone's spread term - @c SpotLight::spreadFalloff,
+            /// clamped by @c DeriveLamp.
+            ///
+            /// A seventeenth float rather than a fifth component of some
+            /// existing vec4, because @c p0 and @c p1 are both full and
+            /// @c color + @c clipWeight already pack into one. The odd stride
+            /// costs nothing here: these are separate attribute pointers, not
+            /// a std140 block.
+            float spreadFalloff;
         } StripVertex;
 
-        static_assert(sizeof(StripVertex) == 16 * sizeof(float),
+        static_assert(sizeof(StripVertex) == 17 * sizeof(float),
                       "StripVertex must be tightly packed - ensureBuffer's "
                       "attribute pointers use sizeof(StripVertex) as the stride.");
 

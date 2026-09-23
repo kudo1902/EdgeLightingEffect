@@ -521,6 +521,30 @@ extern "C"
                                                     float *outIntensity, float *outBloom,
                                                     float *outBloomRadius, float *outColorTemp);
 
+    /** @brief Exponent on lamp @p index's beam-spread loss, in [0, 2].
+     *  @details A separate call rather than a fifth parameter on
+     *           @ref el_effect_set_spotlight_beam, which is already published
+     *           with four.
+     *
+     *           The cone carries `(apertureWidth / halfW)` - the energy it
+     *           loses as it widens - and this is the power that term is raised
+     *           to. 1.0 is the physical falloff and the default; 0.0 removes
+     *           it, leaving the throw as the only thing that dims the beam
+     *           with distance; above 1 decays faster than physical.
+     *
+     *           This, not @c throwLength, is what limits a lamp's REACH at
+     *           long range: the spread term decays as 1/distance, so at the
+     *           default aperture and a 26 degree beam it is down to 5% by
+     *           1000 px while a 3000 px throw is still at 72%.
+     *
+     *           Clamped to [0, 2] by the renderer. Lowering it grows the
+     *           geometry the lamp draws, because the strip is solved from this
+     *           same falloff - the fill cost IS the extra reach. */
+    EL_API el_result_e el_effect_set_spotlight_spread_falloff(el_effect_handle_t effect, int32_t index,
+                                                              float spreadFalloff);
+    EL_API el_result_e el_effect_get_spotlight_spread_falloff(el_effect_handle_t effect, int32_t index,
+                                                              float *outSpreadFalloff);
+
     /** @brief Linear RGB multiplied onto the blackbody colour @c colorTemp bakes.
      *  @details A separate call rather than two more parameters on
      *           @ref el_effect_set_spotlight_look, which is already published

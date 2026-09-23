@@ -1134,6 +1134,16 @@ void DebugUI::buildSpotlightSection(el_effect_handle_t effect)
         el_effect_set_spotlight_beam(effect, sel, beamAngle, throwLength, aperture, softness);
     }
 
+    // The exponent on the beam's spread loss, and the real reach control -
+    // see the same slider in demo/. Its own ABI call rather than a fifth
+    // parameter on el_effect_set_spotlight_beam, so it sets on its own.
+    float spreadFalloff = 1.0f;
+    el_effect_get_spotlight_spread_falloff(effect, sel, &spreadFalloff);
+    if (ImGui::SliderFloat("Spread Falloff##Spot", &spreadFalloff, 0.0f, 2.0f, "%.2f"))
+    {
+        el_effect_set_spotlight_spread_falloff(effect, sel, spreadFalloff);
+    }
+
     ImGui::Separator();
     float intensity = 0.0f, bloom = 0.0f, bloomRadius = 0.0f, colorTemp = 0.0f;
     el_effect_get_spotlight_look(effect, sel, &intensity, &bloom, &bloomRadius, &colorTemp);

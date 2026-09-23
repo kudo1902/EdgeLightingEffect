@@ -44,6 +44,9 @@ layout(location = 4) in vec3 aColor; ///< Linear RGB, baked from colorTemp on th
 // in a vertex shader - gl_Position's clip space, which this has nothing to do
 // with.
 layout(location = 5) in float aClipWeight; ///< 1 where this lamp honours the clip area, else 0.
+/// Exponent on the cone's spread term - SpotLight::spreadFalloff, clamped.
+/// Its own attribute because aP0 and aP1 are full; see StripVertex.
+layout(location = 6) in float aSpreadFalloff;
 
 out vec2 vLocal;
 out vec2 vApp;
@@ -51,6 +54,7 @@ flat out vec4 vP0;
 flat out vec4 vP1;
 flat out vec3 vColor;
 flat out float vClipWeight;
+flat out float vSpreadFalloff;
 
 uniform mat4 uMVP;
 
@@ -61,5 +65,6 @@ void main() {
     vP1 = aP1;
     vColor = aColor;
     vClipWeight = aClipWeight;
+    vSpreadFalloff = aSpreadFalloff;
     gl_Position = uMVP * vec4(aPos, 0.0, 1.0);
 }
