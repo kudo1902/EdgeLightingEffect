@@ -273,8 +273,23 @@ extern "C"
         EL_SPOTLIGHT_FIELD_COLOR_TEMP = 10,
         EL_SPOTLIGHT_FIELD_TINT_R = 11,
         EL_SPOTLIGHT_FIELD_TINT_G = 12,
-        EL_SPOTLIGHT_FIELD_TINT_B = 13
+        EL_SPOTLIGHT_FIELD_TINT_B = 13,
+        EL_SPOTLIGHT_FIELD_SPREAD_FALLOFF = 14
     } el_spotlight_field_e;
+
+    /** @brief Which side of a clip area survives the cut.
+     *  @details Mirrors @c EdgeLighting::ClipMode 1:1; parity is pinned by
+     *           static_asserts in capi-internal.h. Not spotlight-specific -
+     *           @c ClipArea is a shared shape, so any layer that gains a clip
+     *           takes this same enum. Today the spotlight layer is the only
+     *           consumer: see @ref el_effect_set_spotlight_clip_mode, which
+     *           applies to lamps with @ref el_effect_set_spotlight_clipped
+     *           set. */
+    typedef enum el_clip_mode_e
+    {
+        EL_CLIP_KEEP_INSIDE = 0, /**< Output survives inside the area, cut off outside. */
+        EL_CLIP_KEEP_OUTSIDE = 1 /**< Output survives outside the area; the area is a hole. */
+    } el_clip_mode_e;
 
     /** @brief Scalar inside a single colour stop.
      *  @details Mirrors @c EdgeLighting::ColorStopField. Paired with the

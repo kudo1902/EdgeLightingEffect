@@ -336,6 +336,21 @@ namespace EdgeLighting
             mBlitShader.SetUniform("uMVP", glm::mat4(1.0f));
             mScaledBuffer.BindTexture(0);
             mBlitShader.SetUniform("uSource", 0);
+            // neon-blit.frag carries the neon's one-sided glow cut, which this
+            // layer has no business applying - so switch it off EXPLICITLY.
+            // Every other uniform of that cut is then unread, which is why
+            // none of them is set here.
+            //
+            // It was already off without this line, but only by luck twice
+            // over: GlowSide::BOTH happens to be the enum's zero, and GL
+            // happens to zero-initialise uniforms. Renumbering GlowSide would
+            // have redirected this blit through a rounded-box SDF built from
+            // uniforms nobody uploads - silently, and in the spotlight's blit
+            // at the same time. Naming the value makes this track a renumber
+            // instead, on the same terms neon-renderer.cpp already relies on:
+            // the enum's ordinals and neon-blit.frag's GLOW_SIDE_* defines are
+            // one numbering, kept in step by hand.
+            mBlitShader.SetUniform("uGlowSide", static_cast<int>(GlowSide::BOTH));
             mVertexArray.DrawArrays(GL_TRIANGLES, 6);
             mBlitShader.Unuse();
         }

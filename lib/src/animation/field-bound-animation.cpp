@@ -374,11 +374,11 @@ namespace EdgeLighting
         // range, and the write helper logs and skips.
         SpotLight *spotlightSlot(Config &cfg, size_t index)
         {
-            if (index >= cfg.spotlight.lights.size())
+            if (index >= cfg.spotlight.lamps.size())
             {
                 return nullptr;
             }
-            return &cfg.spotlight.lights[index];
+            return &cfg.spotlight.lamps[index];
         }
 
         void writeSpotlight(Config &cfg, size_t index, SpotlightField field, float value)
@@ -387,7 +387,7 @@ namespace EdgeLighting
             if (!lp)
             {
                 LOG_E("writeSpotlight: index %zu out of range (size=%zu); skipping",
-                      index, cfg.spotlight.lights.size());
+                      index, cfg.spotlight.lamps.size());
                 return;
             }
 
@@ -462,6 +462,11 @@ namespace EdgeLighting
             case SpotlightField::TINT_B:
             {
                 l.tint.b = value;
+                break;
+            }
+            case SpotlightField::SPREAD_FALLOFF:
+            {
+                l.spreadFalloff = value;
                 break;
             }
             }
@@ -596,7 +601,7 @@ namespace EdgeLighting
 
         if (!mSpotlightBindings.empty())
         {
-            mSavedSpotlights = cfg.spotlight.lights;
+            mSavedSpotlights = cfg.spotlight.lamps;
             mSpotlightsCaptured = true;
         }
         else
@@ -627,7 +632,7 @@ namespace EdgeLighting
         }
         if (mSpotlightsCaptured)
         {
-            cfg.spotlight.lights = mSavedSpotlights;
+            cfg.spotlight.lamps = mSavedSpotlights;
         }
     }
 

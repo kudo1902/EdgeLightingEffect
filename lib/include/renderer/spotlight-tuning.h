@@ -22,16 +22,20 @@
 //                                               destination step, which is
 //                                               below everything the CPU
 //                                               bounds.
-//     SPOT_BLOOM_SUPPORT                        CPU only - it fixes where the
+//     SPOT_BLOOM_WINDOW_OUTER                   CPU only - it fixes where the
 //                                               bloom window ends, and that
 //                                               number reaches the shader as a
 //                                               per-vertex attribute rather
 //                                               than as this macro.
+//     SPOT_MIN_APERTURE / SPOT_MIN_THROW        BOTH - the only constants here
+//                                               that each side applies itself,
+//                                               which is exactly why they have
+//                                               to be shared.
 //     SPOT_SOFT_MIN / SPOT_SOFT_MAX             CPU only - the renderer maps
 //                                               softness to the gaussian
 //                                               exponent and ships the result
 //                                               as an attribute.
-//     SPOT_MAX_LIGHTS, SPOT_STRIP_SEGMENTS,
+//     SPOT_MAX_LAMPS, SPOT_STRIP_SEGMENTS,
 //     SPOT_VISIBILITY_FLOOR                     CPU only - geometry sizing.
 //
 //   They all live here anyway because they describe ONE falloff, and a
@@ -42,7 +46,8 @@
 //   below one 8-bit step, and draws a strip that stops there. That solve
 //   inverts the WHOLE expression spotlight.frag evaluates - not just these
 //   constants. Change the falloff's SHAPE in the shader (swap the gaussian,
-//   drop the 1/halfW spread term, add a factor) without redoing the solve in
+//   change the exponent on the 1/halfW spread term other than through
+//   SpotLight::spreadFalloff, add a factor) without redoing the solve in
 //   SolveConeAcross, and the strip starts clipping lit pixels: the cone gets a
 //   straight edge where the geometry ends, with nothing in the log to say so.
 //
@@ -66,24 +71,64 @@
 /// `smoothstep(-apertureWidth, SPOT_NEAR_FADE * apertureWidth, along)` - what
 /// stops the cone from painting backwards out of the lamp.
 ///
-/// The CPU does not read this: it starts the strip at
-/// -max(2 * apertureWidth, bloomBound), which covers this fade for any value
-/// at or below 2.0. Raise it past 2.0 and that bound stops being conservative.
+/// The CPU does not read this, but it depends on it TWICE and only one of the
+/// two is obvious:
+///
+///   - It starts the strip at -max(2 * apertureWidth, bloomReach), which
+///     covers this fade for any value at or below 2.0. Raise it past 2.0 and
+///     that bound stops being conservative.
+///   - The strip's FIRST CHORD cuts inside the solved support, by up to ~1.7
+///     px at a long throw or a boosted tint, because SolveConeAcross reads
+///     max(a, 0) and so puts a corner in the support at a = 0. Nothing is
+///     clipped only because this fade leaves the solve 3x to 13x conservative
+///     over exactly that span. Lowering this value spends that slack.
+///
+/// Both are verified by grid evaluation rather than by argument - see the long
+/// note on the widening pass in buildStrips, and re-run it if this moves.
 #define SPOT_NEAR_FADE            1.6
 
-/// Where the aperture bloom's window begins, as a fraction of its end.
-/// `1 - smoothstep(S * SPOT_BLOOM_WINDOW_INNER, S, d)` with S the per-lamp
-/// support the renderer uploads. Shader only - the CPU bounds the bloom by S
-/// itself, which is where the window reaches zero whatever this is.
-#define SPOT_BLOOM_WINDOW_INNER   0.55
-
-/// Bloom radii at which that window closes, i.e. S = bloomRadius * this.
+/// The aperture bloom's window, as the two edges of one smoothstep:
+/// `1 - smoothstep(bloomWindow * SPOT_BLOOM_WINDOW_INNER, bloomWindow, d)`,
+/// where `bloomWindow = bloomRadius * SPOT_BLOOM_WINDOW_OUTER` is the per-lamp
+/// value the renderer computes and ships as a vertex attribute.
 ///
-/// The bloom is inverse-square and so has NO natural end - without a window
-/// its support is the whole framebuffer and there is no strip to draw. Same
-/// problem, same fix, as GetGhostBloomRadius in the lens flare. Renderer only:
-/// it multiplies this out and ships S per vertex.
-#define SPOT_BLOOM_SUPPORT        8.0
+/// The bloom is inverse-square and so has NO natural end - without this window
+/// its support is the whole framebuffer and there is no finite strip to draw.
+/// Same problem, same fix, as GetGhostBloomRadius in the lens flare.
+///
+/// _INNER is shader only. _OUTER is renderer only: it multiplies this out and
+/// ships the product, so the shader never sees the factor.
+///
+/// THREE WORDS, ONE EACH, because this cluster used to share them. The value
+/// below was SPOT_BLOOM_SUPPORT while its product was `bloomWindow` in C++,
+/// `bloomSupport` in three doc comments and `sup` in the shader - four names
+/// for one float, with "support" naming both the factor and the product. Now:
+///
+///   window - the artificial cutoff, i.e. these two constants and the
+///            per-lamp `bloomWindow` px value they produce.
+///   reach  - where the bloom actually stops mattering, i.e. LampSolve's
+///            `bloomReach` = min(bloomWindow, the inverse-square core's own
+///            visibility limit). Pairs with SolveConeReach.
+///   support - reserved for the STRIP's support (SupportAt), which is a
+///            different thing: the union of cone and bloom that the geometry
+///            has to cover.
+#define SPOT_BLOOM_WINDOW_INNER   0.55
+#define SPOT_BLOOM_WINDOW_OUTER   8.0
+
+/// Floors under SpotLight::apertureWidth and SpotLight::throwLength.
+///
+/// Shared, because BOTH sides apply them and they have to agree about what a
+/// degenerate lamp means: spotlight.frag clamps the two attributes it reads,
+/// and DeriveLamp clamps the same two config fields before the solve inverts
+/// that shader. They were a matched pair of bare `1.0` literals in the shader
+/// against MIN_APERTURE / MIN_THROW in the .cpp - the one pair of shared
+/// constants in this layer that had no shared name.
+///
+/// A throwLength of 0 would divide by zero in the throw term; an apertureWidth
+/// of 0 would collapse halfW at the lamp and take `apertureWidth / halfW` to
+/// 0/0.
+#define SPOT_MIN_APERTURE         1.0
+#define SPOT_MIN_THROW            1.0
 
 /// Gaussian exponent across the beam at softness 0 and softness 1:
 /// `exp(-(across / halfWidth)^2 * softK)`, softK lerped between these.
@@ -100,16 +145,24 @@
 /// attributes rather than in a uniform block. Entries past it are ignored.
 ///
 /// Raising it costs one recompile and a larger (still small) buffer:
-/// SPOT_MAX_LIGHTS * SPOT_STRIP_SEGMENTS * 6 * 60 bytes.
-#define SPOT_MAX_LIGHTS           8
+/// SPOT_MAX_LAMPS * SPOT_STRIP_SEGMENTS * 6 * 68 bytes.
+#define SPOT_MAX_LAMPS            8
 
 /// Quads per lamp along the beam. The strip approximates a curved support with
 /// this many straight chords; each sample is widened to cover its neighbours'
-/// midpoints so a chord can only ever bulge outward, never cut inside.
+/// midpoints so a chord bulges outward rather than cutting inside.
 ///
 /// More segments means a tighter fit and more vertices, and nothing else - the
 /// drawn image is identical at any value, because everything the strip adds or
 /// removes is a region where the shader writes zero.
+///
+/// LOWERING it is the direction that needs care. The widening does not by
+/// itself bound the chord at the corner the support carries at a = 0, and what
+/// covers the resulting cut is SPOT_NEAR_FADE's slack over a span that grows
+/// as segments get longer: at 12 the deepest cut measured is ~1.7 px against
+/// 3x to 13x of headroom. Fewer, longer chords eat into that margin from the
+/// other side. See the widening note in buildStrips for the grid evaluation,
+/// and re-run it before shipping a lower value.
 #define SPOT_STRIP_SEGMENTS       12
 
 /// Width of the ordered dither spotlight.frag adds before the framebuffer
@@ -135,6 +188,65 @@
 ///
 /// 0.0 disables it and restores the exact pre-dither output.
 #define SPOT_DITHER_STEPS         1.0
+
+/// Where the highlight shoulder in spotlight.frag starts bending, as a
+/// fraction of full scale. Below this the shading is passed through untouched;
+/// above it the whole RGB vector is scaled by a Reinhard shoulder on its
+/// BRIGHTEST channel, so it approaches 1.0 without ever reaching it.
+///
+/// WHY A SHOULDER AND NOT A CLAMP. At the lamp itself the cone is ~1 and the
+/// bloom is ~bloomStrength, so the core peaks near intensity * (1 + bloom) -
+/// past full scale for any lamp much brighter than 0.7 at the default bloom.
+/// An RGBA8 target clips each channel on its own, and independent clipping is a
+/// HUE change, not a brightness one: a 2700 K lamp at intensity 3 reaches
+/// (3.9, 2.4, 1.1) and is written as (255, 255, 245), so an amber lamp renders
+/// a white core that grows with intensity.
+///
+/// Scaling the vector by its own peak fixes the hue but not the look: a hard
+/// knee at 1.0 leaves a C1 discontinuity, and the core becomes a flat lozenge
+/// with a visible edge - the same "straight contour in a shallow gradient"
+/// artefact SPOT_DITHER_STEPS exists to remove, arriving by another route.
+/// This shoulder is C1 continuous at the knee (its derivative there is exactly
+/// 1) and asymptotic above it, so the core saturates in brightness, holds its
+/// colour, and has no edge anywhere.
+///
+/// Shader only, and safe to be: the shoulder only ever scales a fragment DOWN,
+/// and only above this fraction of full scale, which is three orders of
+/// magnitude above the SPOT_VISIBILITY_FLOOR the strip bound is solved
+/// against. SolveConeAcross therefore stays conservative without knowing this
+/// exists.
+///
+/// WHY 0.30 AND NOT 0.75, which is where this started. The shoulder's first job
+/// is the hue fix above. Its second - the reason the value is this low - is that
+/// it decides how far SpotLight::intensity can be driven before the EMITTER
+/// stops looking like an emitter.
+///
+/// Raising intensity multiplies the whole field, and the cone's near field is
+/// already ~1 at the lamp, so what grows is not the peak (the shoulder holds
+/// that) but the AREA sitting at the top of the curve: the lamp turns into a
+/// long white streak down the beam. Measured at 1920x1080, throwLength 3000,
+/// intensity 8, counting pixels at or above 240:
+///
+///   knee 0.75 -> 8577 px, streaking 221 px down the axis
+///   knee 0.50 -> 1076 px,             61 px
+///   knee 0.30 ->   29 px,             18 px
+///   knee 0.15 ->    0 px,              0 px
+///
+/// while the far field does not move at all - 1200 px out reads 61 at every one
+/// of those, because those values are below the knee and pass through
+/// unchanged. Lowering it therefore buys headroom for intensity almost for
+/// free.
+///
+/// What it costs is the pinpoint hotspot at LOW intensity: a default lamp's
+/// core reads 211 at 0.75 and 156 at 0.30. That is the whole cost - 100 px out
+/// and beyond is byte-identical between the two. The hotspot comes back by
+/// raising intensity, which is now the point.
+///
+/// 0.15 flattens the emitter completely but starts eating the near beam (100 px
+/// out moves for the first time), which is why the value stops here.
+///
+/// 1.0 disables the shoulder and restores per-channel clipping.
+#define SPOT_HIGHLIGHT_KNEE       0.30
 
 /// HALF an 8-bit step - the level below which a value quantises to zero,
 /// and therefore the budget the strip bound is solved against.

@@ -10,7 +10,10 @@ issues are where the cost actually is, because a name that describes a mechanism
 the code no longer has will send the next reader down the wrong path.
 
 **Status:** N3, S3 and S8 are fixed, along with the `AGENTS.md` gap. S1 was applied
-and then reverted by decision - see there. `demo/`, `demo-capi/` and the C ABI
+and then reverted by decision - see there. The spotlight layer had a second
+pass of its own after the clip area landed - see
+[Spotlight clip pass](#spotlight-clip-pass); everything it found is fixed except
+the `SpotLight` casing, held by decision. `demo/`, `demo-capi/` and the C ABI
 were explicitly left out of that pass, so N1, N2, N4 and N5 stand open by scope
 rather than by judgement.
 
@@ -366,6 +369,152 @@ Worth one line in `AGENTS.md`: *protected methods follow the public rule
 
 ---
 
+---
+
+## Spotlight clip pass
+
+A second read of the spotlight layer, this time including
+`SpotlightConfig::clipArea` and everything that arrived with it on
+`add_clipping_area_for_spotlight`. The clip landed after the pass above, so none
+of it had been audited.
+
+**Mechanical conformance: clean.** No `AGENTS.md` violation anywhere in the
+layer. Worth recording because the previous spotlight branch broke two rules
+here (N2's three structs, N3's `mSpotlightSelected` in both demos) - both stayed
+fixed, and the clip's own new struct `ClipSolve` carries the `typedef`
+self-alias. Header guard, two `private:` labels, `mFoo` members, `ALL_CAPS`
+constants, public `PascalCase` / private `camelCase`: all correct.
+
+Everything below is semantic, and all of it is applied. The one item deliberately
+**not** applied is the first, which is the layer's own S1.
+
+### The noun is `lamp`, and `SpotLight` is the exception - BY DECISION
+
+The layer had two words for its central noun. The implementation said "lamp"
+almost everywhere (`lampCount`, `DeriveLamp`, `LampSolve`, `HasClippedLamp`,
+`WarnOnLampOverflow`, `VERTS_PER_LAMP`) while the config said "light"
+(`SpotlightConfig::lights`, `SPOT_MAX_LIGHTS`, `SpotLight`), and the two
+collided inside single functions - `SPOT_MAX_LIGHTS` sat directly above
+`VERTS_PER_LAMP` in one `constexpr` block. Counted over
+`spotlight-renderer.{h,cpp}`: 95 uses of lamp against 49 of light.
+
+The C ABI had already resolved it the same way - "lamp" 33 times to "light" 6
+in its docs, `el_effect_set_spotlight_count` rather than a light count, and
+`spotlight` joined in all 24 exported function names.
+
+**Resolved as `lamp`:**
+
+| before | after |
+| ------ | ----- |
+| `SpotlightConfig::lights` | `SpotlightConfig::lamps` |
+| `SPOT_MAX_LIGHTS` | `SPOT_MAX_LAMPS` |
+| `DeriveLamp(const SpotLight &light, ...)` | `DeriveLamp(const SpotLight &lamp, ...)` |
+| `drawing` (an `int`, read as a bool) | `drawnLamps` |
+| demo locals `lights` / `maxLights` | `lamps` / `maxLamps` |
+
+No ABI impact: the C side reaches `lamps` through internal accessors and exports
+no name containing it. The mass noun is untouched - "cones of light", "light only
+adds", "where light was written" are all correct English and all stayed.
+
+**`SpotLight` the TYPE is left alone, and that is a decision rather than an
+oversight.** It is the only identifier in the layer that splits the word - 46
+uses against 130 that join it (`SpotlightRenderer`, `SpotlightField`,
+`SpotlightConfig`, `SpotlightSlot`, `SpotlightBinding`, every `SPOT_*` macro,
+`EL_RENDERER_SPOTLIGHT`, all 24 `el_effect_*_spotlight_*` functions). Fixing it
+is mechanical and ABI-free. It was deferred because it is a public C++ type and
+because renaming it and settling the noun are two separate calls that should not
+ride in one commit. So the layer currently reads
+`std::vector<SpotLight> lamps;`, which is the honest halfway state: **if the
+casing is ever fixed, this is the item to pick up.**
+
+### One rounded-box SDF had two names - FIXED
+
+`spotlight.frag` declared `spotClipSDF`, character-for-character identical to
+the `sdRoundBox` in `black-rect.frag`, `neon.frag`, `neon-blit.frag` and
+`droplets.frag`. The name misled twice over: it implied the function knew about
+the clip area (it does not - `spotClipMask` is the one that does), and `SDF` as
+a suffix broke the `sd*` prefix the other four share.
+
+**Fixed:** now `sdRoundBox`, with a comment saying it is the shared primitive.
+`spotlight.frag` was also the only shader mixing function brace styles - `main()`
+same-line, its three helpers next-line - so the helpers now match the
+eight-shader majority.
+
+### The bloom cluster had three words for two quantities - FIXED
+
+One float wore four names on its way to the GPU:
+
+| stage | was |
+| ----- | --- |
+| tuning constant (the FACTOR, 8.0) | `SPOT_BLOOM_SUPPORT` |
+| `LampSolve` field (the PRODUCT) | `bloomWindow` |
+| `StripVertex::p1[3]`, `aP1`, `vP1` docs | `bloomSupport` |
+| shader local | `sup` |
+
+So "support" named both the factor and its product, and the product also
+answered to "window" and "sup". Meanwhile `bloomBound` was a genuinely
+different quantity - `min(bloomWindow, the inverse-square core's own visibility
+limit)` - drawing on the same vocabulary.
+
+**Fixed** by giving each quantity one word:
+
+| word | meaning |
+| ---- | ------- |
+| **window** | the artificial cutoff: `SPOT_BLOOM_WINDOW_INNER` / `SPOT_BLOOM_WINDOW_OUTER` and the per-lamp `bloomWindow` px they produce |
+| **reach** | where the bloom stops mattering: `bloomReach`, formerly `bloomBound`. Pairs with `SolveConeReach` |
+| **support** | reserved for the STRIP's support (`SupportAt`), a different thing - the union of cone and bloom the geometry must cover |
+
+`SPOT_BLOOM_WINDOW_OUTER` now also sits next to `_INNER` as the two edges of one
+smoothstep, which is what they always were.
+
+### `SolveClip` borrowed "Solve" from another meaning - FIXED
+
+`SolveConeAcross` and `SolveConeReach` invert the shader's falloff in closed
+form; that is the sense of "solve" the whole renderer rests on. `SolveClip`
+inverts nothing - it normalises `ClipArea`'s top-left-plus-size into a centred
+box with a clamped radius - and its own doc comment opened *"Resolve the clip
+area"*, two lines below the wrong word.
+
+**Fixed:** now `DeriveClip`, matching `DeriveLamp`. Both helpers are `Derive*`
+producing a `*Solve` bundle, and "Solve" survives only as a verb for actual
+inversion.
+
+### Four of eight packed shader slots had no name - FIXED
+
+`spotlight.frag` named `nearW`, `thr` and `sup`, then read `vP0.x`
+(tanHalfBeam), `vP0.z` (softK), `vP0.w` (intensity) and `vP1.y` (bloom
+strength) as raw swizzles - so `exp(-lat * lat * vP0.z)` and
+`vColor * vP0.w * (...)` could not be checked against the falloff derivation at
+the top of the file without counting components against a comment.
+
+**Fixed:** all eight are unpacked into named locals before first use. Every one
+is a `flat` varying, so the cost is zero and the term stack now reads like the
+derivation it implements.
+
+### Smaller - ALL FIXED
+
+| was | now | why |
+| --- | --- | --- |
+| `LampSolve::floor`, `DeriveLamp`'s `floor` param | `visibilityFloor` | shadowed `::floor`, and names what it holds a share of (`SPOT_VISIBILITY_FLOOR`) |
+| `LampSolve::thr` | `throwLength` | the only three-letter field among spelled-out ones, reading like "threshold", while all three doc comments for its own slot said `throwLength` |
+| `LampSolve::nearW` | `apertureWidth` | same defect - a floored config value wearing an abbreviation. `tanHalf` and `softK` keep theirs: they are derived quantities with no config counterpart |
+| `MIN_APERTURE` / `MIN_THROW` in the .cpp, bare `1.0` in the shader | `SPOT_MIN_APERTURE` / `SPOT_MIN_THROW` in the tuning header | the one pair of constants in this layer that BOTH sides apply, and so the one pair that had to be shared - which is what the tuning header is for |
+
+### Verification
+
+Every item above is a rename. Eight offscreen scenes at 480x320 - both clip
+modes, a rotated rig, a zero-intensity lamp, a zero-size clip area, a hard-edged
+clip, a wide beam with a large bloom, and the scaled path - were captured before
+the first rename and re-captured after the last. **Byte-identical, same SHA-256
+over all eight**, which is the claim a pure-rename change has to be able to
+make. The clip-pin check from the twelfth pass of
+[`review-findings.md`](review-findings.md) was re-run unchanged.
+
+Two documents were left holding the old spellings on purpose:
+[`review-findings.md`](review-findings.md) quotes the code verbatim as evidence
+at a point in time, and `spotlight-tuning.h`'s own history note has to name
+`SPOT_BLOOM_SUPPORT` to explain what it replaced.
+
 ## What is left
 
 | item | state |
@@ -376,6 +525,7 @@ Worth one line in `AGENTS.md`: *protected methods follow the public rule
 | N4 | open - `lib/capi/`, and the reserved-identifier half is a 47-file sweep |
 | S5 | open - the field rename reaches `lib/capi/`, so it cannot be done `lib`-only |
 | S2, S4, S6, S7 | recorded for whenever the C ABI is next revised; none worth doing alone |
+| spotlight clip pass | fixed, except the `SpotLight` casing - deferred by decision, and the one item to pick up if it is ever revisited |
 
 Verified after the fixes: clean rebuild of all four artifacts, and the probe
 suite from [`review-findings.md`](review-findings.md) unchanged - base vs

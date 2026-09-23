@@ -100,6 +100,99 @@ namespace EdgeLighting
         HSL  ///< Convert to HSL, interpolate; smoother mid-tones through neutral gray.
     } BlendSpace;
 
+    /// Which side of a @ref ClipArea survives the cut.
+    typedef enum class ClipMode
+    {
+        KEEP_INSIDE, ///< Output survives INSIDE the area and is cut off outside it.
+        KEEP_OUTSIDE ///< Output survives OUTSIDE the area; the area is a hole in it.
+    } ClipMode;
+
+    /// A rounded-rectangle region that cuts a layer's output off, in APP
+    /// coordinates.
+    ///
+    /// A SHARED SHAPE, not a layer's private one - which is why it sits up
+    /// here with @ref Cutoff and @ref BlendSpace rather than inside the one
+    /// sub-config that currently holds it. Nothing about the geometry, the
+    /// mode or the feather is specific to any renderer: it describes a region
+    /// and which side of it to keep, and any layer that wants to be bounded by
+    /// an explicit area can take one. Today only
+    /// @c SpotlightConfig::clipArea does.
+    ///
+    /// **Its own rectangle, deliberately not @c Config::geometry.** Binding a
+    /// clip to the rect would put a geometry change on the rebuild path of
+    /// every layer that took one, for no other reason than that the two often
+    /// coincide. A host that wants them to line up copies the five numbers
+    /// across - the C ABI's clip setter takes them in the same order as its
+    /// geometry setter so that copy is a straight forward.
+    ///
+    /// The cut is expected to be COVERAGE applied to a layer's shaded result,
+    /// not a term folded into how that layer shades. A clipped layer is then
+    /// the same layer with part of it missing - moving the area cannot make
+    /// what survives brighter, dimmer or differently shaped - and a coverage
+    /// alpha read after the multiply stops removed output claiming the surface
+    /// as well as colouring it.
+    ///
+    /// NOT a scissor box, and not a substitute for one: this is evaluated per
+    /// fragment, it can be rounded and feathered, and it costs a multiply
+    /// rather than a rasteriser reject. A layer is free to ALSO narrow its
+    /// geometry to the area where the mode makes that sound - @c KEEP_INSIDE
+    /// bounds what survives, @c KEEP_OUTSIDE does not.
+    ///
+    /// **NO ENABLE FLAG.** The area is always live; whether it bites is
+    /// entirely the consumer's own opt-in (@c SpotLight::clipped for the one
+    /// consumer there is), so there is exactly one place to look when a lamp
+    /// is or is not being cut.
+    ///
+    /// That puts one sharp edge on a host, and it is worth stating plainly:
+    /// **the default area is 0 x 0, and a zero-size @c KEEP_INSIDE area
+    /// correctly cuts an opted-in consumer to nothing.** Opt a lamp in before
+    /// giving the area a size and that lamp goes dark, with nothing in the log
+    /// - see @ref ClipArea::width. The protection is that every consumer's
+    /// opt-in defaults to OFF, so this can only happen to a caller already
+    /// reaching for the clip; set the rectangle first.
+    typedef struct ClipArea
+    {
+        /// TOP-LEFT corner of the area in APP coordinates - the same space as
+        /// @c RectGeometry::position and @c SpotLight::position: origin at the
+        /// viewport's top-left, +x right, +y DOWN.
+        glm::vec2 position = glm::vec2(0.0f, 0.0f);
+        /// Area size in px. **Zero is a meaningful value, not "unset":** under
+        /// @c ClipMode::KEEP_INSIDE a zero-size area keeps nothing, so every
+        /// consumer that opted in draws nothing at all. That is deliberate -
+        /// treating a degenerate area as "no clip" would light the whole
+        /// output instead, the opposite of what a caller that set width to 0
+        /// asked for - but it does mean these two default to a state that
+        /// blanks anything pointed at them. See the struct comment.
+        float width = 0.0f;
+        float height = 0.0f; ///< See @ref width.
+
+        /// Corner rounding in px, clamped by the consumer to half the shorter
+        /// side. 0 is a sharp rectangle.
+        float cornerRadius = 0.0f;
+
+        /// Width of the fade across the cut, in px. 0 is a hard edge, and on a
+        /// smooth gradient a hard edge is a visibly aliased one - there is no
+        /// contrast to hide the staircase the way a cut through a sharp
+        /// feature would. 1.0 - the default - is a single pixel of feather,
+        /// enough to antialias the boundary and nothing more. Larger values
+        /// are a look, not a fix.
+        float edgeSoftness = 1.0f;
+
+        /// Whether the inside of the area survives, or the outside.
+        ClipMode mode = ClipMode::KEEP_INSIDE;
+
+        bool operator==(const ClipArea &o) const
+        {
+            return position == o.position &&
+                   width == o.width &&
+                   height == o.height &&
+                   cornerRadius == o.cornerRadius &&
+                   edgeSoftness == o.edgeSoftness &&
+                   mode == o.mode;
+        }
+        bool operator!=(const ClipArea &o) const { return !(*this == o); }
+    } ClipArea;
+
     /// A colour stop along the perimeter.
     ///
     /// @c color.a is an EMISSION SCALE at this stop, not a blend opacity: the
@@ -777,7 +870,7 @@ namespace EdgeLighting
         /// supersampled: the point of the knob is to shade FEWER fragments,
         /// and honouring 2.0 would quietly allocate four times the viewport.
         float resolutionScale = 1.0f;
-bool operator==(const LensFlareConfig &o) const
+        bool operator==(const LensFlareConfig &o) const
         {
             return enable == o.enable &&
                    perimeterPosition == o.perimeterPosition &&
@@ -829,7 +922,54 @@ bool operator==(const LensFlareConfig &o) const
         float beamAngle = 26.0f;
         /// Distance in px along the axis at which the beam falls to 1/e of its
         /// peak. Not where it ends - the renderer solves for that.
+        ///
+        /// **Not the only thing that decides reach, and at long range not even
+        /// the main one.** See @ref spreadFalloff.
         float throwLength = 215.0f;
+
+        /// How much of the beam's SPREAD loss to apply, as an exponent in
+        /// [0, 2]. 1.0 is the physical falloff and the default; 0.0 removes it
+        /// entirely.
+        ///
+        /// spotlight.frag carries `(apertureWidth / halfW)` - the beam's
+        /// energy spread as the cone widens, which is what stops a wide beam
+        /// reading as brighter than a narrow one at equal intensity. That term
+        /// decays as 1/distance, and it is the reason a lamp fades out long
+        /// before @c throwLength says it should: with the default aperture and
+        /// a 26 degree beam it is already down to 5% at 1000 px, while the
+        /// throw term at 3000 px of throw is still at 72%. **Raising
+        /// throwLength cannot fix that** - even an infinite throw leaves the
+        /// spread term in place.
+        ///
+        /// This exponent is the knob that can. The term becomes
+        /// `pow(apertureWidth / halfW, spreadFalloff)`:
+        ///
+        ///   1.0 - inverse-linear spread. Physical, and what every lamp did
+        ///         before this field existed.
+        ///   0.5 - halves the decay in log terms; a lamp that read 78/255 at
+        ///         1000 px reads 183.
+        ///   0.0 - no spread loss at all. The cone still widens geometrically,
+        ///         but brightness along the axis is then limited only by
+        ///         @c throwLength. Searchlight, not lamp.
+        ///   > 1 - decays FASTER than physical: a tighter pool of light with a
+        ///         dimmer surround.
+        ///
+        /// Nothing about the near field moves: at the lamp `halfW` is
+        /// `apertureWidth`, so the term is 1 at any exponent.
+        ///
+        /// **It costs fill.** The renderer solves where the falloff drops
+        /// under half an 8-bit step and draws a strip that stops there, so
+        /// lowering this grows the geometry to match - that is the light
+        /// travelling further, and the fragments come with it. At 0 the solve
+        /// falls back to the throw term alone, which at a long throw can be
+        /// tens of thousands of px: bounded by the viewport when it draws, but
+        /// no longer a small strip. Lower it with @c throwLength, not on top
+        /// of it.
+        ///
+        /// Clamped to [0, 2] by the renderer. Negative is refused rather than
+        /// honoured: it would make the beam BRIGHTEN with distance, which has
+        /// no finite support and therefore no strip to draw.
+        float spreadFalloff = 1.0f;
         /// Half-width of the beam at the lamp itself, in px. Also sets how
         /// tight the bright core is, since the cone's brightness carries a
         /// factor of @c apertureWidth / (width at this distance).
@@ -871,12 +1011,37 @@ bool operator==(const LensFlareConfig &o) const
         /// can keep indices (and any animation bound to them) stable.
         bool enable = true;
 
+        /// Whether @c SpotlightConfig::clipArea cuts THIS lamp off.
+        ///
+        /// Per lamp rather than per layer because the two kinds of lamp in a
+        /// rig want opposite answers: a lamp that exists to wash one panel
+        /// should stop at its edge, while a lamp lighting the scene around it
+        /// should cross the same boundary untouched. Default false, so adding
+        /// a clip area to an existing rig changes nothing until a lamp asks
+        /// for it.
+        ///
+        /// Named for the STATE it puts the lamp in, not for the thing doing
+        /// the cutting: @c clipped is a lamp property, @c clipArea is the
+        /// region. They used to both be called @c clip, one field apart, which
+        /// made `light.clip` read like an area and `spotlight.clip` read like
+        /// a flag.
+        ///
+        /// **The ONLY gate.** @ref ClipArea carries no enable flag of its own,
+        /// so this bit alone decides whether the area touches this lamp - one
+        /// place to look, and nothing that can be "on but dormant". The cost
+        /// is that the area's own defaults are not a safe resting state: it is
+        /// 0 x 0, and a zero-size @c KEEP_INSIDE area keeps nothing, so
+        /// setting this before giving @c SpotlightConfig::clipArea a size
+        /// blanks the lamp. Set the rectangle first.
+        bool clipped = false;
+
         bool operator==(const SpotLight &o) const
         {
             return position == o.position &&
                    angle == o.angle &&
                    beamAngle == o.beamAngle &&
                    throwLength == o.throwLength &&
+                   spreadFalloff == o.spreadFalloff &&
                    apertureWidth == o.apertureWidth &&
                    softness == o.softness &&
                    intensity == o.intensity &&
@@ -884,7 +1049,8 @@ bool operator==(const LensFlareConfig &o) const
                    bloomRadius == o.bloomRadius &&
                    colorTemp == o.colorTemp &&
                    tint == o.tint &&
-                   enable == o.enable;
+                   enable == o.enable &&
+                   clipped == o.clipped;
         }
         bool operator!=(const SpotLight &o) const { return !(*this == o); }
     } SpotLight;
@@ -894,14 +1060,28 @@ bool operator==(const LensFlareConfig &o) const
     /// The layer emits LIGHT ONLY - no backdrop, no fixture housings, no floor
     /// - and composites additively over whatever is behind it. Nothing is
     /// occluded by the rect: a cone crosses the frame freely.
+    ///
+    /// The one thing that DOES stop light is @c clip - an explicit area, opted
+    /// into per lamp by @c SpotLight::clipped. That is a cut, not a shadow:
+    /// nothing in the scene casts it and nothing in the scene blocks it.
     typedef struct SpotlightConfig
     {
         bool enable = false; ///< Enable or disable the spotlight renderer
 
-        /// The lamps. Entries past @c SPOT_MAX_LIGHTS are ignored at draw
+        /// The lamps. Entries past @c SPOT_MAX_LAMPS are ignored at draw
         /// time rather than rejected here, so a host can keep a longer list
         /// around and enable a subset.
-        std::vector<SpotLight> lights;
+        std::vector<SpotLight> lamps;
+
+        /// The region that cuts this layer's light off, and which side of it
+        /// survives. Applies only to lamps with @c SpotLight::clipped set -
+        /// that bit is the whole gate, since @ref ClipArea has no enable of
+        /// its own. With no lamp opted in this is inert, whatever it holds.
+        ///
+        /// The shape is shared (@ref ClipArea) rather than spotlight-specific;
+        /// what IS specific to this layer is the per-lamp opt-in beside it,
+        /// and that the @c KEEP_INSIDE case also narrows the strip geometry.
+        ClipArea clipArea;
 
         /// Fraction of the viewport the lamps are rendered at before being
         /// bilinear-blitted back to full resolution. 1.0 draws straight onto
@@ -925,11 +1105,23 @@ bool operator==(const LensFlareConfig &o) const
         ///
         /// Clamped to (0, 1] at draw time. Above 1.0 is refused rather than
         /// supersampled: the point of the knob is to shade FEWER fragments.
+        ///
+        /// **Held at 1.0 while any enabled lamp has @c SpotLight::clipped
+        /// set.** The clip is a per-fragment mask, so a reduced buffer
+        /// resolves its boundary at that buffer's texel pitch and the blit
+        /// smears the result: the edge moves by up to a destination pixel,
+        /// light leaks outside a @c KEEP_INSIDE area, and
+        /// @c ClipArea::edgeSoftness stops meaning anything below one buffer
+        /// texel. Correctness wins over a saving this layer only sees on a
+        /// large rig anyway. The value is kept, not rewritten - drop the clip
+        /// and it takes effect again - and the renderer logs both transitions
+        /// so the override is never silent.
         float resolutionScale = 1.0f;
 
         bool operator==(const SpotlightConfig &o) const
         {
-            return enable == o.enable && lights == o.lights &&
+            return enable == o.enable && lamps == o.lamps &&
+                   clipArea == o.clipArea &&
                    resolutionScale == o.resolutionScale;
         }
         bool operator!=(const SpotlightConfig &o) const { return !(*this == o); }
@@ -941,12 +1133,12 @@ bool operator==(const LensFlareConfig &o) const
     /// any subset; their visual layers composite via additive blending.
     typedef struct Config
     {
-        RectGeometry geometry;                       ///< Rectangle geometry
-        NeonConfig neon;                             ///< Neon stroke settings, including its resolution scale
-        DebugConfig debug;                           ///< LUT strip / colour-stop marker overlays
-        DropletsConfig droplets;                     ///< Rain-on-glass droplets settings
-        LensFlareConfig lensFlare;                   ///< Sun + lens flare (rays, chromatic ghosts)
-        SpotlightConfig spotlight;                   ///< Freely placed and aimed cones of light
+        RectGeometry geometry;     ///< Rectangle geometry
+        NeonConfig neon;           ///< Neon stroke settings, including its resolution scale
+        DebugConfig debug;         ///< LUT strip / colour-stop marker overlays
+        DropletsConfig droplets;   ///< Rain-on-glass droplets settings
+        LensFlareConfig lensFlare; ///< Sun + lens flare (rays, chromatic ghosts)
+        SpotlightConfig spotlight; ///< Freely placed and aimed cones of light
 
         bool operator==(const Config &o) const
         {

@@ -299,7 +299,6 @@ namespace
         return remove;
     }
 
-
     /// "Opaque Only" debug toggle, drawn in the Debug section alongside the
     /// other @c DebugConfig fields. It only does anything while
     /// @c NeonConfig::opaqueMode is set - there is no fill to keep otherwise -
@@ -1119,17 +1118,106 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
     // strips are already bounded, so the blit is a fixed full-viewport cost
     // that only pays above roughly six lamps.
     SliderWithInput("Res Scale##Spot", cfg.spotlight.resolutionScale, 0.125f, 1.0f, "%.3f");
-    if (cfg.spotlight.resolutionScale < 1.0f && cfg.spotlight.lights.size() < 6)
+    if (cfg.spotlight.resolutionScale < 1.0f)
     {
-        ImGui::TextDisabled("Below 1.0 costs more than it saves at this lamp count.");
+        // The library holds the scale at 1.0 while a clipped lamp is enabled,
+        // because the clip edge has to be resolved at full resolution. Say so
+        // here, or the slider reads as broken: it moves and the frame does not
+        // change. Mirrors SpotlightRenderer's own HasClippedLamp test - the
+        // lamps that DRAW, within the ceiling.
+        size_t drawnLamps = std::min(cfg.spotlight.lamps.size(), size_t(SPOT_MAX_LAMPS));
+        bool anyClippedLamp = false;
+        for (size_t i = 0; i < drawnLamps; i++)
+        {
+            const auto &lamp = cfg.spotlight.lamps[i];
+            if (lamp.clipped && lamp.enable && lamp.intensity > 0.0f)
+            {
+                anyClippedLamp = true;
+                break;
+            }
+        }
+
+        if (anyClippedLamp)
+        {
+            ImGui::TextDisabled("Held at 1.0: a clipped lamp is enabled.");
+        }
+        else if (cfg.spotlight.lamps.size() < 6)
+        {
+            ImGui::TextDisabled("Below 1.0 costs more than it saves at this lamp count.");
+        }
     }
 
-    auto &lights = cfg.spotlight.lights;
-    const int maxLights = SPOT_MAX_LIGHTS;
+    // --- Clip area: ONE region for the layer, opted into per lamp below. ---
+    //
+    // Always shown, never gated behind an enable: the area has none, and
+    // whether it bites is each lamp's own "Clip This Lamp". Hiding it behind a
+    // checkbox here would invent a second switch in the UI that does not exist
+    // in the config.
+    ImGui::SeparatorText("Clip Area");
+    auto &clipArea = cfg.spotlight.clipArea;
+    {
+        ImGui::Indent();
 
-    ImGui::Text("%d / %d lamps", static_cast<int>(lights.size()), maxLights);
+        const char *clipItems[] = {"Keep Inside", "Keep Outside"};
+        int modeIdx = static_cast<int>(clipArea.mode);
+        if (ImGui::Combo("Mode##SpotClip", &modeIdx, clipItems, IM_ARRAYSIZE(clipItems)))
+        {
+            clipArea.mode = static_cast<EdgeLighting::ClipMode>(modeIdx);
+        }
+
+        // Same app coordinates as the lamp positions and Geometry > Position:
+        // top-left origin, +y down.
+        SliderWithInput("X##SpotClip", clipArea.position.x, -200.0f, 2400.0f, "%.0f px");
+        SliderWithInput("Y##SpotClip", clipArea.position.y, -200.0f, 1600.0f, "%.0f px");
+        SliderWithInput("Width##SpotClip", clipArea.width, 0.0f, 2400.0f, "%.0f px");
+        SliderWithInput("Height##SpotClip", clipArea.height, 0.0f, 1600.0f, "%.0f px");
+        SliderWithInput("Corner Radius##SpotClip", clipArea.cornerRadius, 0.0f, 400.0f, "%.0f px");
+        SliderWithInput("Edge Softness##SpotClip", clipArea.edgeSoftness, 0.0f, 40.0f, "%.1f px");
+
+        // The clip is NOT bound to Config::geometry - the spotlight layer
+        // reads nothing but its own sub-config, which is what keeps a rect
+        // move off this renderer's rebuild path. This button is the bridge:
+        // it copies the four numbers across once, on demand.
+        if (ImGui::SmallButton("Match Rect##SpotClip"))
+        {
+            clipArea.position = cfg.geometry.position;
+            clipArea.width = cfg.geometry.width;
+            clipArea.height = cfg.geometry.height;
+            clipArea.cornerRadius = cfg.geometry.cornerRadius;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("copy once - it does not follow the rect");
+
+        // The one trap left now that the area has no enable of its own: the
+        // defaults are 0 x 0, and a zero-size KEEP_INSIDE area keeps nothing.
+        // Only worth saying when a lamp has actually opted in, since otherwise
+        // the area is inert whatever it holds.
+        bool anyClipped = false;
+        for (const auto &lamp : cfg.spotlight.lamps)
+        {
+            if (lamp.clipped)
+            {
+                anyClipped = true;
+                break;
+            }
+        }
+        if (anyClipped &&
+            clipArea.mode == EdgeLighting::ClipMode::KEEP_INSIDE &&
+            (clipArea.width <= 0.0f || clipArea.height <= 0.0f))
+        {
+            ImGui::TextDisabled("Zero-size area: every clipped lamp draws nothing.");
+        }
+
+        ImGui::Unindent();
+    }
+    ImGui::Separator();
+
+    auto &lamps = cfg.spotlight.lamps;
+    const int maxLamps = SPOT_MAX_LAMPS;
+
+    ImGui::Text("%d / %d lamps", static_cast<int>(lamps.size()), maxLamps);
     ImGui::SameLine();
-    if (ImGui::SmallButton("+ Add##Spot") && static_cast<int>(lights.size()) < maxLights)
+    if (ImGui::SmallButton("+ Add##Spot") && static_cast<int>(lamps.size()) < maxLamps)
     {
         // New lamps land above the rect pointing down, which is where a
         // showcase rig starts, rather than at the origin where they would be
@@ -1138,25 +1226,25 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
         l.position = glm::vec2(cfg.geometry.position.x + cfg.geometry.width * 0.5f,
                                cfg.geometry.position.y - 60.0f);
         l.angle = 90.0f;
-        lights.push_back(l);
-        mSpotlightSelected = static_cast<int>(lights.size()) - 1;
+        lamps.push_back(l);
+        mSpotlightSelected = static_cast<int>(lamps.size()) - 1;
     }
     ImGui::SameLine();
     if (ImGui::SmallButton("Clear##Spot"))
     {
-        lights.clear();
+        lamps.clear();
         mSpotlightSelected = 0;
     }
 
-    if (lights.empty())
+    if (lamps.empty())
     {
         ImGui::TextDisabled("No lamps. Add one to light something.");
         return;
     }
 
-    if (mSpotlightSelected >= static_cast<int>(lights.size()))
+    if (mSpotlightSelected >= static_cast<int>(lamps.size()))
     {
-        mSpotlightSelected = static_cast<int>(lights.size()) - 1;
+        mSpotlightSelected = static_cast<int>(lamps.size()) - 1;
     }
     if (mSpotlightSelected < 0)
     {
@@ -1165,11 +1253,11 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
 
     // Lamp picker: one row each, so the selected index (which any animation
     // binding also addresses) is always visible.
-    for (int i = 0; i < static_cast<int>(lights.size()); i++)
+    for (int i = 0; i < static_cast<int>(lamps.size()); i++)
     {
         char label[64];
         std::snprintf(label, sizeof(label), "lamp %d  %.0f deg##SpotPick%d",
-                      i, lights[static_cast<size_t>(i)].angle, i);
+                      i, lamps[static_cast<size_t>(i)].angle, i);
         if (ImGui::RadioButton(label, mSpotlightSelected == i))
         {
             mSpotlightSelected = i;
@@ -1179,24 +1267,26 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
         std::snprintf(killLabel, sizeof(killLabel), "x##SpotKill%d", i);
         if (ImGui::SmallButton(killLabel))
         {
-            lights.erase(lights.begin() + i);
-            if (mSpotlightSelected >= static_cast<int>(lights.size()))
+            lamps.erase(lamps.begin() + i);
+            if (mSpotlightSelected >= static_cast<int>(lamps.size()))
             {
-                mSpotlightSelected = static_cast<int>(lights.size()) - 1;
+                mSpotlightSelected = static_cast<int>(lamps.size()) - 1;
             }
             return;
         }
     }
 
-    if (lights.empty())
+    if (lamps.empty())
     {
         return;
     }
 
-    EdgeLighting::SpotLight &l = lights[static_cast<size_t>(mSpotlightSelected)];
+    EdgeLighting::SpotLight &l = lamps[static_cast<size_t>(mSpotlightSelected)];
 
     ImGui::Separator();
     ImGui::Checkbox("Lamp Enabled##Spot", &l.enable);
+
+    ImGui::Checkbox("Clip This Lamp##Spot", &l.clipped);
 
     // App coordinates, top-left origin, +y down - the same space as
     // Geometry > Position, which is why the ranges here are viewport-sized
@@ -1207,12 +1297,45 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
 
     ImGui::Separator();
     SliderWithInput("Beam Angle##Spot", l.beamAngle, 3.0f, 120.0f, "%.1f deg");
-    SliderWithInput("Throw##Spot", l.throwLength, 20.0f, 900.0f, "%.0f px");
+    // Up to 3000, where the old top was 900. It reaches further without
+    // brightening the core, so it is the one to reach for before intensity -
+    // but it is NOT the only distance term, which an earlier version of this
+    // comment claimed. Past about 1000 px the beam's own spread
+    // (apertureWidth / halfW) is what has dimmed it, and no throw value
+    // touches that: at this lamp's defaults the throw term is still at 72% at
+    // 1000 px while the spread term is at 5%. That is what Spread Falloff
+    // below is for. Note this is also what the layer's cost is made of: the
+    // strip is bounded to what the lamp lights, and at 3000 that is ~6x the
+    // pixels it is at the default 215.
+    SliderWithInput("Throw##Spot", l.throwLength, 20.0f, 3000.0f, "%.0f px");
     SliderWithInput("Aperture##Spot", l.apertureWidth, 2.0f, 120.0f, "%.1f px");
     SliderWithInput("Softness##Spot", l.softness, 0.0f, 1.0f, "%.2f");
 
+    // The exponent on that spread term, and the real reach control. 1.0 is
+    // physical and the default; 0 removes the spread loss entirely and leaves
+    // Throw as the only thing dimming the beam. Measured on one lamp at
+    // 1920x1080 (throw 3000, intensity 8), 1000 px down the axis: 78/255 at
+    // 1.0, 183 at 0.5, 235 at 0.0.
+    SliderWithInput("Spread Falloff##Spot", l.spreadFalloff, 0.0f, 2.0f, "%.2f");
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Exponent on the beam's spread loss.\n"
+                          "1.0 = physical (default), 0 = none, >1 = a tighter pool.\n"
+                          "Lowering it grows the strip the lamp draws, so it costs fill:\n"
+                          "that is the light travelling further.");
+    }
+
     ImGui::Separator();
-    SliderWithInput("Intensity##Spot", l.intensity, 0.0f, 3.0f, "%.2f");
+    // 8.0, well past the 3.0 the other look sliders use, because the highlight
+    // shoulder changed what this control means. It used to blow the core out to
+    // white above about 0.7; now it compresses above SPOT_HIGHLIGHT_KNEE and
+    // stays linear below it, so turning it up adds light to the BEAM and
+    // almost none to the emitter - at 700 px out, 1.15 to 8 is 18 to 112 while
+    // the core moves 156 to 236, nothing clipped. Pair it with Throw above.
+    //
+    // The field itself is not clamped - the C ABI and animations can drive it
+    // past this - so this bounds the slider's feel, not the effect.
+    SliderWithInput("Intensity##Spot", l.intensity, 0.0f, 8.0f, "%.2f");
     SliderWithInput("Bloom##Spot", l.bloom, 0.0f, 3.0f, "%.2f");
     SliderWithInput("Bloom Radius##Spot", l.bloomRadius, 4.0f, 160.0f, "%.0f px");
     SliderWithInput("Color Temp##Spot", l.colorTemp, 1800.0f, 8000.0f, "%.0f K");

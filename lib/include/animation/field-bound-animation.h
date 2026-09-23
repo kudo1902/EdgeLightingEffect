@@ -74,7 +74,7 @@ namespace EdgeLighting
         INTENSITY = 2,
     } ArcField;
 
-    /// @brief Which scalar to drive inside a @c SpotlightConfig::lights entry.
+    /// @brief Which scalar to drive inside a @c SpotlightConfig::lamps entry.
     ///
     /// Paired with an index at bind time via
     /// @ref FieldBoundAnimation::AddSpotlightField. Numerically mirrored by
@@ -99,6 +99,7 @@ namespace EdgeLighting
         TINT_R = 11,        ///< @c SpotLight::tint.r, linear
         TINT_G = 12,        ///< @c SpotLight::tint.g, linear
         TINT_B = 13,        ///< @c SpotLight::tint.b, linear
+        SPREAD_FALLOFF = 14, ///< @c SpotLight::spreadFalloff, exponent [0, 2]
     } SpotlightField;
 
     /// @brief Which scalar to drive inside a single stop of
@@ -238,7 +239,7 @@ namespace EdgeLighting
             ModulatorPtr modulator;
         } ArcStopBinding;
 
-        /// @brief A single (spotlight.lights[index].field, modulator) binding.
+        /// @brief A single (spotlight.lamps[index].field, modulator) binding.
         typedef struct SpotlightBinding
         {
             size_t index;
@@ -344,8 +345,8 @@ namespace EdgeLighting
             mArcStopBindings.push_back({arcIdx, stopIdx, field, std::move(modulator)});
         }
 
-        /// @brief Bind a scalar inside @c spotlight.lights[index] to a modulator.
-        /// @details No auto-grow: @c cfg.spotlight.lights must already hold
+        /// @brief Bind a scalar inside @c spotlight.lamps[index] to a modulator.
+        /// @details No auto-grow: @c cfg.spotlight.lamps must already hold
         ///          @p index. A binding whose @p index is out of range at apply
         ///          time is a logged no-op.
         /// @note Driving @c POSITION_X / @c POSITION_Y / @c ANGLE (or any field
@@ -475,7 +476,7 @@ namespace EdgeLighting
         std::vector<Arc> mSavedArcs;
         bool mArcsCaptured = false;
 
-        /// Snapshot of the whole @c spotlight.lights vector, for the same
+        /// Snapshot of the whole @c spotlight.lamps vector, for the same
         /// reason @c mSavedArcs snapshots the whole arc vector: one copy
         /// covers every field of every lamp without per-slot bookkeeping.
         std::vector<SpotLight> mSavedSpotlights;
