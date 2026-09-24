@@ -712,12 +712,16 @@ namespace EdgeLighting
 
     /// Rain-on-glass droplets configuration.
     ///
-    /// Droplets live in a band that follows the rounded-rect perimeter, whose
-    /// thickness is @c bandWidth and whose side comes from
-    /// @c NeonConfig::glowSide. Rain falls with screen-space gravity, so it
-    /// streaks down the vertical runs of the band and beads along the
-    /// horizontal ones. Droplet size scales with @c bandWidth, so the effect
-    /// holds up however thin the band is.
+    /// Droplets live in a region bounded by two rounded rects of their OWN -
+    /// an outer shape minus an inner one, or just the outer when @c hasInner
+    /// is false. This layer reads no geometry but its own: @c Config::geometry
+    /// and @c NeonConfig are not consulted, so moving or resizing the glow
+    /// does not move the rain, and a host that wants them to agree copies the
+    /// numbers across deliberately.
+    ///
+    /// Rain falls with screen-space gravity, so in a RING it streaks down the
+    /// vertical runs and beads along the horizontal ones; over a FILLED shape
+    /// it streaks everywhere, since an area has no run direction.
     ///
     /// Drops are self-lit (transparent body + crescent rim + specular dot);
     /// there is no framebuffer capture or refraction pass. Refraction had
@@ -733,22 +737,55 @@ namespace EdgeLighting
         float amount = 0.7f;
         /// Trickle speed multiplier. 1 = the reference pace; 0 freezes the rain.
         float speed = 1.0f;
-        /// Number of droplet lanes across the band, clamped to >= 1.
-        /// 1 = drops as wide as the band; 2 = two lanes of half-width drops,
-        /// and so on. Cell size follows from this and @c bandWidth: one lane
-        /// is @c bandWidth / @c lanes pixels wide, so drops fit the band at
-        /// any thickness.
+        /// Number of droplet lanes, clamped to >= 1. 1 = drops a full
+        /// @c dropSize across; 2 = two lanes of half-width drops, and so on.
+        /// One lane is @c dropSize divided by this, so a thin band can be made
+        /// to hold several drops across without changing its thickness.
         int lanes = 1;
 
-        /// Band thickness in pixels. This is the droplets' entire world: the
-        /// field is parameterised across it, and droplet size scales with it.
-        /// Which side of the rect edge the band occupies is taken from
-        /// @c NeonConfig::glowSide - OUTSIDE grows outward, INSIDE inward,
-        /// BOTH straddles the edge centred on it.
-        float bandWidth = 24.0f;
-        /// Gap in pixels between the rect edge and the band's inner boundary.
-        /// 0 puts the band flush against the edge.
-        float bandOffset = 0.0f;
+        /// Whether the region has a hole cut in it.
+        ///
+        /// true = a RING between the two shapes: a perimeter band when they
+        /// are concentric, an arbitrary annulus when they are not. false = a
+        /// FILLED shape, and @c inner is not read at all: rain on the whole
+        /// pane.
+        ///
+        /// This is the one flag that says "band or fill" - the distinction is
+        /// exactly "is there an inner shape", and naming it that way keeps one
+        /// concept instead of two. Defaults to false so the defaults are
+        /// coherent: a filled @c outer needs no second shape, where a ring
+        /// between two identical rects would have no width and draw nothing.
+        bool hasInner = false;
+
+        /// The region's bounding shape.
+        ///
+        /// Same space and convention as @c Config::geometry - @c position is
+        /// the TOP-LEFT corner in app coordinates (origin top-left, +y down) -
+        /// so a host that wants the rain to sit on the rect copies those four
+        /// numbers across. @c winding is not read: the droplets never traverse
+        /// a perimeter.
+        RectGeometry outer;
+
+        /// The hole, when @c hasInner. Need not be concentric with @c outer,
+        /// or even contained by it - the region is simply @c outer minus
+        /// @c inner, and an inner shape that escapes the outer one just
+        /// removes nothing where it has left.
+        ///
+        /// A perimeter band of thickness @c t is @c outer dilated by @c t from
+        /// this: same centre, @c +t on each half extent and on the corner
+        /// radius.
+        RectGeometry inner;
+
+        /// Droplet grid pitch in px, before @c lanes divides it. Floored at
+        /// 1 px.
+        ///
+        /// Drop size is a property of the RAIN, not of the region. It used to
+        /// be derived from the band's thickness, which was a constraint -
+        /// drops had to fit a thin band - dressed as a definition, and it does
+        /// not survive a region whose local width varies or whose only
+        /// boundary is its outer edge.
+        float dropSize = 24.0f;
+
         /// Drop colour multiplier (.rgb used; .a reserved). Slightly blue by
         /// default for a cold-water cast; white = untinted. Only the drop's
         /// faint body tint uses this; the rim and specular highlights stay
@@ -761,8 +798,10 @@ namespace EdgeLighting
                    amount == o.amount &&
                    speed == o.speed &&
                    lanes == o.lanes &&
-                   bandWidth == o.bandWidth &&
-                   bandOffset == o.bandOffset &&
+                   hasInner == o.hasInner &&
+                   outer == o.outer &&
+                   inner == o.inner &&
+                   dropSize == o.dropSize &&
                    tint == o.tint;
         }
         bool operator!=(const DropletsConfig &o) const { return !(*this == o); }

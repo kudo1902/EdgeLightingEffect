@@ -257,6 +257,20 @@ int main()
                            static_cast<float>(displayW) / 4.0f,
                            static_cast<float>(displayH) / 4.0f,
                            0.0f);
+
+    // The droplets carry their OWN geometry and never read the shared rect, so
+    // seed them to a 24 px band hugging it - what the layer used to do
+    // structurally, now done once, on purpose. The Droplets section's two
+    // buttons re-sync it after the rect moves.
+    {
+        float rw = 0, rh = 0, rx = 0, ry = 0, rr = 0;
+        el_effect_get_geometry(gEffect, &rw, &rh, &rx, &ry, &rr);
+        const float t = 24.0f;
+        el_effect_set_droplets_inner_geometry(gEffect, rw, rh, rx, ry, rr);
+        el_effect_set_droplets_outer_geometry(gEffect, rw + 2.0f * t, rh + 2.0f * t,
+                                              rx - t, ry - t, rr + t);
+        el_effect_set_droplets_has_inner(gEffect, 1);
+    }
     el_effect_set_neon_renderer_enabled(gEffect, 1);
     el_effect_set_debug_show_wireframe(gEffect, 1);
     el_effect_set_debug_wireframe_color(gEffect, 0.0f, 1.0f, 0.0f, 1.0f);

@@ -9,33 +9,53 @@ namespace EdgeLighting
 {
     /// Rain-on-glass droplets renderer.
     ///
-    /// Draws a band-fitted RING whose fragment shader (droplets.frag) paints
-    /// self-lit droplets into a band hugging the rounded-rect perimeter.
+    /// Paints self-lit droplets into a REGION of the rounded-rect family:
+    /// an outer rounded rect minus an inner one (@c DropletsConfig::outer,
+    /// @c inner), or just the outer when @c hasInner is false. A perimeter
+    /// band is the concentric case - @c inner on the rect, @c outer dilated by
+    /// the thickness - and a filled pane is the one-boundary case.
     ///
-    /// The geometry is four strips bounding the band itself - not the
-    /// viewport, and not the rect either. The band is thin, so a fullscreen
-    /// quad rasterised millions of fragments that computed a band coordinate
-    /// and discarded; the ring rasterises roughly what it shades. This pass's
-    /// cost is therefore a function of the PERIMETER and the band width, not
-    /// of the rect's area and not of the display it lands on.
-    /// @ref setupGeometry builds it; the transform in @ref Render places it.
-    /// Nothing drawn changes - every fragment the ring drops was discarded by
-    /// the shader anyway.
+    /// **The geometry is this layer's OWN.** It reads neither
+    /// @c Config::geometry nor @c NeonConfig::glowSide, so moving or resizing
+    /// the glow does not move the rain; a host that wants them to agree copies
+    /// the numbers across. The single read of another layer's config is
+    /// @c NeonConfig::glowSideSoftness, which feathers the region's boundary -
+    /// a look knob, not geometry.
+    ///
+    /// The draw geometry is four strips bounding the region - not the viewport,
+    /// and not the rect either. A band is thin, so a fullscreen quad rasterised
+    /// millions of fragments that computed a region coordinate and discarded;
+    /// the ring rasterises roughly what it shades. This pass's cost is
+    /// therefore a function of the REGION, which the host sets directly: a
+    /// 24 px band costs ~68k invocations where a filled 1920x1080 outer costs
+    /// ~2.1M. The four sides are independent, since the inner shape may sit
+    /// anywhere relative to the outer. @ref setupGeometry builds it; the
+    /// transform in @ref Render places it. Nothing drawn changes - every
+    /// fragment the ring drops was discarded by the shader anyway.
+    ///
+    /// **No resolution scale**, deliberately: the rims and speculars are
+    /// single-pixel features. Measured against a stand-in that keeps full-res
+    /// shading and loses only the blit, scale 0.5 takes the peak from 255 to
+    /// 166 and leaves zero pixels at or above 200. The region is the cost knob
+    /// instead.
     ///
     /// The droplet field is hashed in screen space under a single global
     /// gravity, so rain falls straight down rather than circulating around the
-    /// perimeter. What the rect geometry contributes is the band mask and the
-    /// droplet size, which is derived from @c DropletsConfig::bandWidth - that
-    /// is what lets the effect hold up in a band only a handful of pixels
-    /// thick. Layer amplitudes are weighted by how vertical the local edge is,
-    /// so rain streaks down the sides and beads along the top and bottom.
+    /// perimeter. Drop size comes from @c DropletsConfig::dropSize divided by
+    /// @c lanes - a property of the RAIN, and necessarily one GLOBAL scalar,
+    /// since every region-relative term in the shader is an amplitude and never
+    /// a position, precisely so the grid never shears. Layer amplitudes are
+    /// weighted by how vertical the local run is, so rain streaks down the
+    /// sides of a band and beads along the top and bottom; a FILLED region has
+    /// no run direction at all and streaks everywhere.
     ///
     /// Drops are self-lit: a faint tinted body plus a crescent rim and a
     /// specular dot. No framebuffer capture, no refraction - the smooth neon
-    /// gradient this band lives on has nothing worth refracting anyway.
+    /// gradient this region usually lives on has nothing worth refracting.
     ///
-    /// Parameters come from @c Config::droplets; the band's side comes from
-    /// @c Config::neon::glowSide and its geometry from @c Config::geometry.
+    /// Parameters come from @c Config::droplets. See
+    /// @c docs/droplets-region-comparison.md for the region model and the
+    /// measurements behind it.
     class DropletsRenderer : public BaseRenderer
     {
     public:
@@ -54,7 +74,7 @@ namespace EdgeLighting
     private:
         Config mCurrentConfig; ///< Last config seen; @ref setupGeometry sizes the quad from it.
         ShaderProgram mShaderProgram;
-        VertexArray mVertexArray{"DropletsRenderer"}; ///< Band ring (or one quad when the band has no hole).
+        VertexArray mVertexArray{"DropletsRenderer"}; ///< Region ring (or one quad when there is no hole to cut).
         int mVertexCount = 6;                         ///< Vertices @ref setupGeometry last built: 24 for a ring, 6 for a quad.
     };
 }

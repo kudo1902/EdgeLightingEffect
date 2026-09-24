@@ -676,20 +676,53 @@ extern "C"
 
     /** @brief Number of droplet lanes across the band (clamped to >= 1).
      *  @details 1 = drops as wide as the band, 2 = two lanes of half-width
-     *           drops. Droplet size follows @ref el_effect_set_droplets_band_width,
-     *           so drops fit the band at any thickness. */
+     *           drops. It divides the drop pitch - see
+     *           @ref el_effect_set_droplets_drop_size. */
     EL_API el_result_e el_effect_set_droplets_lanes(el_effect_handle_t effect, int lanes);
     EL_API el_result_e el_effect_get_droplets_lanes(el_effect_handle_t effect, int *outLanes);
 
-    /** @brief Band thickness in pixels - the droplets' entire world.
-     *  @details The side of the rect edge the band occupies comes from the
-     *           neon glow side, not from here. */
-    EL_API el_result_e el_effect_set_droplets_band_width(el_effect_handle_t effect, float bandWidth);
-    EL_API el_result_e el_effect_get_droplets_band_width(el_effect_handle_t effect, float *outBandWidth);
+    /** @brief Whether the region has a hole cut in it.
+     *  @details True = a RING between the two shapes (the perimeter band under
+     *           SHARED, an arbitrary annulus under OWN). False = a FILLED
+     *           shape, and the inner geometry is not read at all: rain over the
+     *           whole pane. */
+    EL_API el_result_e el_effect_set_droplets_has_inner(el_effect_handle_t effect, el_bool_t hasInner);
+    EL_API el_result_e el_effect_get_droplets_has_inner(el_effect_handle_t effect, el_bool_t *outHasInner);
 
-    /** @brief Gap in pixels between the rect edge and the band's inner boundary. */
-    EL_API el_result_e el_effect_set_droplets_band_offset(el_effect_handle_t effect, float bandOffset);
-    EL_API el_result_e el_effect_get_droplets_band_offset(el_effect_handle_t effect, float *outBandOffset);
+    /** @brief The region's bounding shape, under @c EL_DROPLETS_GEOMETRY_OWN.
+     *  @details Same convention as @ref el_effect_set_geometry - @p posX /
+     *           @p posY are the TOP-LEFT corner in app coordinates (origin
+     *           top-left, +y down) - so a host can hand both the same numbers.
+     *           Ignored under @c EL_DROPLETS_GEOMETRY_SHARED, which derives it. */
+    EL_API el_result_e el_effect_set_droplets_outer_geometry(el_effect_handle_t effect,
+                                                             float width, float height,
+                                                             float posX, float posY, float cornerRadius);
+    EL_API el_result_e el_effect_get_droplets_outer_geometry(el_effect_handle_t effect,
+                                                             float *outWidth, float *outHeight,
+                                                             float *outPosX, float *outPosY,
+                                                             float *outCornerRadius);
+
+    /** @brief The hole, under @c EL_DROPLETS_GEOMETRY_OWN with an inner shape.
+     *  @details Need not be concentric with the outer shape, or even contained
+     *           by it - the region is simply outer minus inner, and an inner
+     *           shape that escapes the outer one removes nothing where it has
+     *           left. Same coordinate convention as the outer shape. */
+    EL_API el_result_e el_effect_set_droplets_inner_geometry(el_effect_handle_t effect,
+                                                             float width, float height,
+                                                             float posX, float posY, float cornerRadius);
+    EL_API el_result_e el_effect_get_droplets_inner_geometry(el_effect_handle_t effect,
+                                                             float *outWidth, float *outHeight,
+                                                             float *outPosX, float *outPosY,
+                                                             float *outCornerRadius);
+
+    /** @brief Droplet grid pitch in pixels, before the lane count divides it.
+     *  @details <= 0 falls back to the band width, which is what the band has
+     *           always used - so leaving this at 0 renders a band exactly as
+     *           it always has. Drop size is a property of the RAIN, not of the
+     *           region, and under @c EL_DROPLETS_AREA_RECT there is no band
+     *           thickness for it to follow. */
+    EL_API el_result_e el_effect_set_droplets_drop_size(el_effect_handle_t effect, float dropSize);
+    EL_API el_result_e el_effect_get_droplets_drop_size(el_effect_handle_t effect, float *outDropSize);
 
     /** @brief Drop colour multiplier (linear RGBA in [0, 1]; only @c rgb is
      *         read today, @c a is reserved). Tints the faint drop body only -

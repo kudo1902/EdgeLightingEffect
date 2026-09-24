@@ -14,7 +14,7 @@
 // shapes a ghost - the 50.0 / 3.0 / 0.05 term magnitudes, the 5.0 hex scale,
 // the procedural palette - stays in lens-flare.frag: the renderer never
 // reasons about those, and a constant with one consumer does not need two
-// homes. Same split as droplets-tuning.h.
+// homes. Same split as neon-tuning.h.
 //
 // WHY THE RENDERER NEEDS THEM AT ALL
 //   circle() evaluates three terms per ghost per fragment, and two of them are

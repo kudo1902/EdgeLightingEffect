@@ -261,8 +261,10 @@ framebuffer capture or refraction pass.
 
 The draw is a band-fitted ring - four strips tiling the gap between the rect
 offset outward by the furthest distance the shader can write and the rect
-offset inward by the nearest, both derived from `DROPLET_BAND_GUARD` in
-`droplets-tuning.h` (shared verbatim with `droplets.frag`). A fullscreen quad
+offset inward by the nearest. (This predates the region rework: the droplets now
+carry their own outer / inner geometry, the margin those two bounds once needed
+is provably zero, and `droplets-tuning.h` is gone - see
+`droplets-region-comparison.md`.) A fullscreen quad
 rasterised millions of fragments that computed a band coordinate and
 discarded; the ring rasterises roughly what it shades, which removes this
 pass's dependence on the viewport AND on the rect's area without changing a

@@ -123,6 +123,22 @@ int main()
     config.geometry.position = glm::vec2(displayW / 4, displayH / 4);
     config.geometry.cornerRadius = 0.0f;
     config.neon.enable = true;
+
+    // The droplets carry their OWN geometry and never read config.geometry, so
+    // seed them to a 24 px band hugging the rect - what the layer used to do
+    // structurally, now done once, on purpose. The Droplets section's two
+    // buttons re-sync it after the rect moves.
+    {
+        const float t = 24.0f;
+        config.droplets.inner = config.geometry;
+        config.droplets.outer = config.geometry;
+        config.droplets.outer.width += 2.0f * t;
+        config.droplets.outer.height += 2.0f * t;
+        config.droplets.outer.position -= glm::vec2(t, t);
+        config.droplets.outer.cornerRadius += t;
+        config.droplets.hasInner = true;
+    }
+
     config.debug.showWireframe = true;
     config.debug.wireframeColor = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
 

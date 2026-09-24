@@ -842,6 +842,66 @@ void DebugUI::buildDropletsSection(el_effect_handle_t effect)
     if (!en)
         return;
 
+    // This layer's geometry is its own - the shared rect is not consulted -
+    // so the two only agree if someone makes them. These buttons are that
+    // someone, for a demo where they usually should.
+    float rw = 0.0f, rh = 0.0f, rx = 0.0f, ry = 0.0f, rr = 0.0f;
+    el_effect_get_geometry(effect, &rw, &rh, &rx, &ry, &rr);
+    if (ImGui::Button("Fit outer to rect##Drop"))
+    {
+        el_effect_set_droplets_outer_geometry(effect, rw, rh, rx, ry, rr);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Band around rect##Drop"))
+    {
+        // A 24 px band hugging the rect: inner ON the rect, outer dilated by
+        // 24 - half extents AND corner radius, which is what keeps the two
+        // boundaries a constant distance apart.
+        const float t = 24.0f;
+        el_effect_set_droplets_inner_geometry(effect, rw, rh, rx, ry, rr);
+        el_effect_set_droplets_outer_geometry(effect, rw + 2.0f * t, rh + 2.0f * t,
+                                              rx - t, ry - t, rr + t);
+        el_effect_set_droplets_has_inner(effect, 1);
+    }
+
+    el_bool_t hasInnerRaw = 0;
+    el_effect_get_droplets_has_inner(effect, &hasInnerRaw);
+    bool hasInner = hasInnerRaw != 0;
+    if (ImGui::Checkbox("Has Inner (ring, not fill)##Drop", &hasInner))
+    {
+        el_effect_set_droplets_has_inner(effect, hasInner ? 1 : 0);
+    }
+
+    float o[5] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+    el_effect_get_droplets_outer_geometry(effect, &o[0], &o[1], &o[2], &o[3], &o[4]);
+    ImGui::SeparatorText("Outer shape");
+    bool dirty = ImGui::SliderFloat("W##DropOuter", &o[0], 0.0f, 2000.0f);
+    dirty |= ImGui::SliderFloat("H##DropOuter", &o[1], 0.0f, 2000.0f);
+    dirty |= ImGui::SliderFloat("X##DropOuter", &o[2], -500.0f, 2000.0f);
+    dirty |= ImGui::SliderFloat("Y##DropOuter", &o[3], -500.0f, 2000.0f);
+    dirty |= ImGui::SliderFloat("Radius##DropOuter", &o[4], 0.0f, 400.0f);
+    if (dirty)
+    {
+        el_effect_set_droplets_outer_geometry(effect, o[0], o[1], o[2], o[3], o[4]);
+    }
+
+    if (hasInner)
+    {
+        float n[5] = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f};
+        el_effect_get_droplets_inner_geometry(effect, &n[0], &n[1], &n[2], &n[3], &n[4]);
+        ImGui::SeparatorText("Inner shape (the hole)");
+        bool innerDirty = ImGui::SliderFloat("W##DropInner", &n[0], 0.0f, 2000.0f);
+        innerDirty |= ImGui::SliderFloat("H##DropInner", &n[1], 0.0f, 2000.0f);
+        innerDirty |= ImGui::SliderFloat("X##DropInner", &n[2], -500.0f, 2000.0f);
+        innerDirty |= ImGui::SliderFloat("Y##DropInner", &n[3], -500.0f, 2000.0f);
+        innerDirty |= ImGui::SliderFloat("Radius##DropInner", &n[4], 0.0f, 400.0f);
+        if (innerDirty)
+        {
+            el_effect_set_droplets_inner_geometry(effect, n[0], n[1], n[2], n[3], n[4]);
+        }
+    }
+    ImGui::SeparatorText("Rain");
+
     float amount = 0.0f;
     el_effect_get_droplets_amount(effect, &amount);
     if (ImGui::SliderFloat("Rain Amount##Drop", &amount, 0.0f, 1.0f))
@@ -863,6 +923,13 @@ void DebugUI::buildDropletsSection(el_effect_handle_t effect)
         el_effect_set_droplets_lanes(effect, lanes);
     }
 
+    float dropSize = 0.0f;
+    el_effect_get_droplets_drop_size(effect, &dropSize);
+    if (ImGui::SliderFloat("Drop Size##Drop", &dropSize, 1.0f, 200.0f))
+    {
+        el_effect_set_droplets_drop_size(effect, dropSize);
+    }
+
     float tint[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     el_effect_get_droplets_tint(effect, &tint[0], &tint[1], &tint[2], &tint[3]);
     if (ImGui::ColorEdit4("Tint##Drop", tint,
@@ -871,7 +938,8 @@ void DebugUI::buildDropletsSection(el_effect_handle_t effect)
         el_effect_set_droplets_tint(effect, tint[0], tint[1], tint[2], tint[3]);
     }
 
-    ImGui::TextDisabled("Side follows Neon > Glow Side / Softness");
+    ImGui::TextDisabled("Own geometry - the rect and the glow side are NOT read");
+    ImGui::TextDisabled("Boundary feather follows Neon > Glow Side Softness");
 }
 
 // ---------------------------------------------------------------------------

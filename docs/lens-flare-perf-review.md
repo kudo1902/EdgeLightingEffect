@@ -84,7 +84,7 @@ finding in its own right - see section 5.
 ### Why 2 needed a tuning header
 
 The bounds are solved on the CPU from constants that live in the shader terms,
-which is exactly the coupling `droplets-tuning.h` exists to prevent. So change
+which is exactly the coupling `neon-tuning.h` exists to prevent. So change
 2 also added `lib/include/renderer/lens-flare-tuning.h`, injected into
 `lens-flare.frag` via `@LENS_FLARE_TUNING@` and `#include`d by the renderer,
 following the droplets and neon precedent. Both derivations are written out in

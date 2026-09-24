@@ -48,7 +48,6 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight.vert"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/neon-tuning.h"
-    "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/droplets-tuning.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/lens-flare-tuning.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/spotlight-tuning.h"
 )
@@ -73,8 +72,6 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight.frag" SPOTLIGHT_FRAG_CO
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/neon-tuning.h" NEON_TUNING)
 
 # Shared droplet band #defines, injected into droplets.frag via
-# @DROPLETS_TUNING@ in shaders.h.in (also #included by the C++ renderer).
-file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/droplets-tuning.h" DROPLETS_TUNING)
 
 # Shared ghost-term #defines, injected into lens-flare.frag via
 # @LENS_FLARE_TUNING@ in shaders.h.in (also #included by the C++ renderer,

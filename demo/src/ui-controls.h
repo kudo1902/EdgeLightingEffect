@@ -84,33 +84,6 @@ namespace EdgeLightingDemo
             return buf;
         }
 
-        /// The droplet band as a signed-distance span from the rect edge,
-        /// positive outward. Mirrors GetBandExtent in droplets-renderer.cpp
-        /// minus its guard: the guard is the renderer's own slack, not
-        /// something the caller set.
-        inline void GetBandSpan(const EdgeLighting::Config &config, float &lo, float &hi)
-        {
-            // The shader floors the width at 1 px and divides by it, so the
-            // band of a 0-width config is 1 px, not 0.
-            const float bw = std::max(config.droplets.bandWidth, 1.0f);
-            const float offset = config.droplets.bandOffset;
-
-            if (config.neon.glowSide == EdgeLighting::GlowSide::INSIDE)
-            {
-                lo = -(offset + bw);
-                hi = -offset;
-            }
-            else if (config.neon.glowSide == EdgeLighting::GlowSide::OUTSIDE)
-            {
-                lo = offset;
-                hi = offset + bw;
-            }
-            else
-            {
-                lo = offset - 0.5f * bw;
-                hi = offset + 0.5f * bw;
-            }
-        }
     } // namespace Detail
 
     /// Full multi-line dump of everything that shapes the current frame.
@@ -265,8 +238,6 @@ namespace EdgeLightingDemo
         // cross-config read in their head.
         // -------------------------------------------------------------------
         const auto &dr = config.droplets;
-        float bandLo = 0.0f, bandHi = 0.0f;
-        Detail::GetBandSpan(config, bandLo, bandHi);
         int lanes = std::max(1, dr.lanes);
 
         std::cout << "\nDroplets   " << (dr.enable ? "ON" : "OFF") << "\n";
@@ -276,13 +247,19 @@ namespace EdgeLightingDemo
                   << (dr.speed <= 0.0f ? "   (0 = rain frozen)" : "") << "\n";
         std::cout << "  lanes            " << lanes
                   << "   (lane width " << std::setprecision(1)
-                  << std::max(dr.bandWidth, 1.0f) / static_cast<float>(lanes) << " px)\n";
-        std::cout << "  bandWidth        " << dr.bandWidth << " px\n";
-        std::cout << "  bandOffset       " << dr.bandOffset << " px\n";
-        std::cout << "  band spans       " << bandLo << " .. " << bandHi
-                  << " px from the edge (+ outward)\n";
-        std::cout << "                   side from neon.glowSide = "
-                  << sideItems[static_cast<int>(n.glowSide)] << "\n";
+                  << std::max(dr.dropSize, 1.0f) / static_cast<float>(lanes) << " px)\n";
+        std::cout << "  dropSize         " << dr.dropSize << " px\n";
+        std::cout << "  region           " << (dr.hasInner ? "ring (outer minus inner)" : "filled outer")
+                  << "   (its OWN geometry - geometry/glowSide are not read)\n";
+        std::cout << "  outer            " << dr.outer.width << " x " << dr.outer.height
+                  << " at (" << dr.outer.position.x << ", " << dr.outer.position.y
+                  << ") r" << dr.outer.cornerRadius << "\n";
+        if (dr.hasInner)
+        {
+            std::cout << "  inner            " << dr.inner.width << " x " << dr.inner.height
+                      << " at (" << dr.inner.position.x << ", " << dr.inner.position.y
+                      << ") r" << dr.inner.cornerRadius << "\n";
+        }
         std::cout << "  tint             " << Detail::ColorStr(dr.tint, buf, sizeof buf)
                   << "   (body only; rim and specular stay white)\n";
 

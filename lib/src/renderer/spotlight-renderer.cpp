@@ -139,7 +139,7 @@ namespace EdgeLighting
 
         /// Blackbody colour anchors, linearly interpolated between. Local to
         /// this renderer because it is the only consumer - the same split
-        /// droplets-tuning.h's comment describes for one-consumer constants.
+        /// neon-tuning.h's comment describes for one-consumer constants.
         ///
         /// Free to change. It used to carry an invariant the strip solve
         /// depended on - every adjacent pair sharing a channel at exactly 1.0,

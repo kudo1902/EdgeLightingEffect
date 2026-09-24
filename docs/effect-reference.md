@@ -48,7 +48,11 @@ The neon renderer is one of five renderers that can be enabled independently in
 the same effect:
 
 - `NeonRenderer` - this document. Draws at any resolution scale; see 3.9.
-- `DropletsRenderer` - rain on glass in a band along the perimeter.
+- `DropletsRenderer` - rain on glass, in a region bounded by two rounded rects:
+  a band along the perimeter, the whole pane, or - with
+  `DropletsConfig::geometrySource` set to `OWN` - geometry of its own that reads
+  nothing from `Config::geometry` or the neon. Documented in
+  [`droplets-region-comparison.md`](droplets-region-comparison.md).
 - `LensFlareRenderer` - sun + ghosts riding the perimeter, at any resolution
   scale too.
 - `SpotlightRenderer` - freely placed and aimed cones of light. The odd one out:

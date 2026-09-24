@@ -1048,15 +1048,57 @@ void DebugUI::buildDropletsSection(EdgeLighting::Config &cfg)
         return;
     }
 
-    SliderWithInput("Band Width##Droplets", cfg.droplets.bandWidth, 4.0f, 200.0f);
-    SliderWithInput("Band Offset##Droplets", cfg.droplets.bandOffset, -50.0f, 50.0f);
+    // This layer's geometry is its own - Config::geometry is not consulted -
+    // so the rect and the rain only agree if someone makes them. These two
+    // buttons are that someone, for a demo where they usually should.
+    if (ImGui::Button("Fit outer to rect##Droplets"))
+    {
+        cfg.droplets.outer = cfg.geometry;
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Band around rect##Droplets"))
+    {
+        // A 24 px band hugging the rect: inner ON the rect, outer dilated by
+        // 24 - half extents AND corner radius, which is what keeps the two
+        // boundaries a constant distance apart.
+        const float t = 24.0f;
+        cfg.droplets.inner = cfg.geometry;
+        cfg.droplets.outer = cfg.geometry;
+        cfg.droplets.outer.width += 2.0f * t;
+        cfg.droplets.outer.height += 2.0f * t;
+        cfg.droplets.outer.position -= glm::vec2(t, t);
+        cfg.droplets.outer.cornerRadius += t;
+        cfg.droplets.hasInner = true;
+    }
+
+    ImGui::Checkbox("Has Inner (ring, not fill)##Droplets", &cfg.droplets.hasInner);
+
+    ImGui::SeparatorText("Outer shape");
+    SliderWithInput("W##DropOuter", cfg.droplets.outer.width, 0.0f, 2000.0f);
+    SliderWithInput("H##DropOuter", cfg.droplets.outer.height, 0.0f, 2000.0f);
+    SliderWithInput("X##DropOuter", cfg.droplets.outer.position.x, -500.0f, 2000.0f);
+    SliderWithInput("Y##DropOuter", cfg.droplets.outer.position.y, -500.0f, 2000.0f);
+    SliderWithInput("Radius##DropOuter", cfg.droplets.outer.cornerRadius, 0.0f, 400.0f);
+    if (cfg.droplets.hasInner)
+    {
+        ImGui::SeparatorText("Inner shape (the hole)");
+        SliderWithInput("W##DropInner", cfg.droplets.inner.width, 0.0f, 2000.0f);
+        SliderWithInput("H##DropInner", cfg.droplets.inner.height, 0.0f, 2000.0f);
+        SliderWithInput("X##DropInner", cfg.droplets.inner.position.x, -500.0f, 2000.0f);
+        SliderWithInput("Y##DropInner", cfg.droplets.inner.position.y, -500.0f, 2000.0f);
+        SliderWithInput("Radius##DropInner", cfg.droplets.inner.cornerRadius, 0.0f, 400.0f);
+    }
+    ImGui::SeparatorText("Rain");
+
     SliderWithInput("Rain Amount##Droplets", cfg.droplets.amount, 0.0f, 1.0f);
     SliderWithInput("Speed##Droplets", cfg.droplets.speed, 0.0f, 4.0f);
     SliderIntWithInput("Lanes##Droplets", cfg.droplets.lanes, 1, 6);
+    SliderWithInput("Drop Size##Droplets", cfg.droplets.dropSize, 1.0f, 200.0f);
     ImGui::ColorEdit4("Tint##Droplets", &cfg.droplets.tint.x,
                       ImGuiColorEditFlags_AlphaBar | ImGuiColorEditFlags_AlphaPreview);
 
-    ImGui::TextDisabled("Side follows Neon > Glow Side / Softness");
+    ImGui::TextDisabled("Own geometry - the rect and the glow side are NOT read");
+    ImGui::TextDisabled("Boundary feather follows Neon > Glow Side Softness");
 }
 
 void DebugUI::buildLensFlareSection(EdgeLighting::Config &cfg)

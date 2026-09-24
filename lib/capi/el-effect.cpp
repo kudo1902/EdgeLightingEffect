@@ -1777,33 +1777,96 @@ el_result_e el_effect_get_droplets_lanes(el_effect_handle_t effect, int *outLane
     LOG_D("effect=%p, lanes=%d", (void *)effect, *outLanes);
     return EL_SUCCESS;
 }
-el_result_e el_effect_set_droplets_band_width(el_effect_handle_t effect, float bandWidth)
+namespace
 {
-    VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_band_width");
-    SET_AND_LOG(effect->config.droplets.bandWidth, bandWidth, "effect=%p, bandWidth=%f", (void *)effect, bandWidth);
-}
-el_result_e el_effect_get_droplets_band_width(el_effect_handle_t effect, float *outBandWidth)
-{
-    VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_band_width");
-    VALIDATE_OUT_PTR(outBandWidth, "el_effect_get_droplets_band_width");
-    *outBandWidth = effect->config.droplets.bandWidth;
-    LOG_D("effect=%p, bandWidth=%f", (void *)effect, *outBandWidth);
-    return EL_SUCCESS;
-}
-el_result_e el_effect_set_droplets_band_offset(el_effect_handle_t effect, float bandOffset)
-{
-    VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_band_offset");
-    SET_AND_LOG(effect->config.droplets.bandOffset, bandOffset, "effect=%p, bandOffset=%f", (void *)effect, bandOffset);
-}
-el_result_e el_effect_get_droplets_band_offset(el_effect_handle_t effect, float *outBandOffset)
-{
-    VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_band_offset");
-    VALIDATE_OUT_PTR(outBandOffset, "el_effect_get_droplets_band_offset");
-    *outBandOffset = effect->config.droplets.bandOffset;
-    LOG_D("effect=%p, bandOffset=%f", (void *)effect, *outBandOffset);
-    return EL_SUCCESS;
+    /// Shared body for the droplets' two own-geometry setters. Mirrors
+    /// el_effect_set_geometry's early-out so a redundant set does not churn
+    /// the effect's change detection.
+    el_result_e SetDropletsRect(EdgeLighting::RectGeometry &g,
+                                float width, float height, float posX, float posY, float cornerRadius)
+    {
+        const glm::vec2 pos(posX, posY);
+        if (g.width == width && g.height == height && g.position == pos && g.cornerRadius == cornerRadius)
+        {
+            return EL_SUCCESS;
+        }
+        g.width = width;
+        g.height = height;
+        g.position = pos;
+        g.cornerRadius = cornerRadius;
+        return EL_SUCCESS;
+    }
+
+    el_result_e GetDropletsRect(const EdgeLighting::RectGeometry &g,
+                                float *outWidth, float *outHeight,
+                                float *outPosX, float *outPosY, float *outCornerRadius)
+    {
+        if (outWidth) { *outWidth = g.width; }
+        if (outHeight) { *outHeight = g.height; }
+        if (outPosX) { *outPosX = g.position.x; }
+        if (outPosY) { *outPosY = g.position.y; }
+        if (outCornerRadius) { *outCornerRadius = g.cornerRadius; }
+        return EL_SUCCESS;
+    }
 }
 
+el_result_e el_effect_set_droplets_has_inner(el_effect_handle_t effect, el_bool_t hasInner)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_has_inner");
+    SET_AND_LOG(effect->config.droplets.hasInner, hasInner != 0,
+                "effect=%p, hasInner=%d", (void *)effect, (int)hasInner);
+}
+el_result_e el_effect_get_droplets_has_inner(el_effect_handle_t effect, el_bool_t *outHasInner)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_has_inner");
+    VALIDATE_OUT_PTR(outHasInner, "el_effect_get_droplets_has_inner");
+    *outHasInner = effect->config.droplets.hasInner ? 1 : 0;
+    LOG_D("effect=%p, hasInner=%d", (void *)effect, (int)*outHasInner);
+    return EL_SUCCESS;
+}
+el_result_e el_effect_set_droplets_outer_geometry(el_effect_handle_t effect,
+                                                  float width, float height,
+                                                  float posX, float posY, float cornerRadius)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_outer_geometry");
+    LOG_D("effect=%p, w=%f, h=%f, x=%f, y=%f, r=%f", (void *)effect, width, height, posX, posY, cornerRadius);
+    return SetDropletsRect(effect->config.droplets.outer, width, height, posX, posY, cornerRadius);
+}
+el_result_e el_effect_get_droplets_outer_geometry(el_effect_handle_t effect,
+                                                  float *outWidth, float *outHeight,
+                                                  float *outPosX, float *outPosY, float *outCornerRadius)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_outer_geometry");
+    return GetDropletsRect(effect->config.droplets.outer, outWidth, outHeight, outPosX, outPosY, outCornerRadius);
+}
+el_result_e el_effect_set_droplets_inner_geometry(el_effect_handle_t effect,
+                                                  float width, float height,
+                                                  float posX, float posY, float cornerRadius)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_inner_geometry");
+    LOG_D("effect=%p, w=%f, h=%f, x=%f, y=%f, r=%f", (void *)effect, width, height, posX, posY, cornerRadius);
+    return SetDropletsRect(effect->config.droplets.inner, width, height, posX, posY, cornerRadius);
+}
+el_result_e el_effect_get_droplets_inner_geometry(el_effect_handle_t effect,
+                                                  float *outWidth, float *outHeight,
+                                                  float *outPosX, float *outPosY, float *outCornerRadius)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_inner_geometry");
+    return GetDropletsRect(effect->config.droplets.inner, outWidth, outHeight, outPosX, outPosY, outCornerRadius);
+}
+el_result_e el_effect_set_droplets_drop_size(el_effect_handle_t effect, float dropSize)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_drop_size");
+    SET_AND_LOG(effect->config.droplets.dropSize, dropSize, "effect=%p, dropSize=%f", (void *)effect, dropSize);
+}
+el_result_e el_effect_get_droplets_drop_size(el_effect_handle_t effect, float *outDropSize)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_get_droplets_drop_size");
+    VALIDATE_OUT_PTR(outDropSize, "el_effect_get_droplets_drop_size");
+    *outDropSize = effect->config.droplets.dropSize;
+    LOG_D("effect=%p, dropSize=%f", (void *)effect, *outDropSize);
+    return EL_SUCCESS;
+}
 el_result_e el_effect_set_droplets_tint(el_effect_handle_t effect, float r, float g, float b, float a)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_droplets_tint");

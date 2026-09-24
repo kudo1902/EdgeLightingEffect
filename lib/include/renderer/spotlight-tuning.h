@@ -11,7 +11,7 @@
 //     each lamp's support and size the strip it draws.
 //
 // WHICH SIDE READS WHAT
-//   Unlike droplets-tuning.h and lens-flare-tuning.h, the two sides here do
+//   Unlike neon-tuning.h and lens-flare-tuning.h, the two sides here do
 //   not read the same set. The split is deliberate and worth knowing:
 //
 //     SPOT_NEAR_FADE, SPOT_BLOOM_WINDOW_INNER   shader only - they shape terms

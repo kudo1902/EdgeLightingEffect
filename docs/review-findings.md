@@ -752,8 +752,8 @@ Effect surface - 67 setters, 8 with no widget driving them:
 
 | unexercised setter | note |
 | ------------------ | ---- |
-| `el_effect_set_droplets_band_width` | ABI has it, `demo-capi` has 6 of the 8 droplet controls |
-| `el_effect_set_droplets_band_offset` | same |
+| ~~`el_effect_set_droplets_band_width`~~ | GONE - the droplets carry their own outer / inner geometry, so there is no band width to set. `demo-capi` drives the replacements. |
+| ~~`el_effect_set_droplets_band_offset`~~ | GONE - same |
 | `el_effect_set_optimized_lens_flare_renderer_enabled` | whole renderer un-exposed |
 | `el_effect_set_optimized_lens_flare_resolution_scale` | same |
 | `el_effect_set_preserved_segment` | whole `PreservedSegment` feature un-exposed |
