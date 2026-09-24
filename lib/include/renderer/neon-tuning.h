@@ -368,6 +368,65 @@
 #define TONE_MAP_SHOULDER         0.6
 #define GAMMA_EXPONENT            0.85
 
+// --- Output dither, in 8-bit destination steps. Shader only.
+//
+//     Amplitude of the interleaved-gradient noise added to the layer's final
+//     write, just before the framebuffer rounds it. 1.0 is a rectangular
+//     +/- half a step; 0.0 disables it and restores the exact pre-dither
+//     output.
+//
+//     WHY THE GLOW NEEDS IT. The halo and the bloom are the two flattest
+//     gradients this shader draws - the bloom falls as 1/D - so over most of
+//     their reach they cross an 8-bit step only every several pixels. RGBA8
+//     therefore renders the outer glow as a stack of constant-value plateaus
+//     separated by 1 LSB: measured on a 200x150 rect at the default
+//     glowRadius 5, the tail steps 6 -> 5 -> 4 -> 3 -> 2 -> 1 -> 0 over runs
+//     of 18, 18, 23, 18, 14 and 17 px, and those runs follow the rect's own
+//     iso-contours, so each boundary is a long smooth curve parallel to the
+//     edge. That is a contour ring, and it is most visible exactly where it
+//     matters least numerically: 1 LSB against a value of 4 is a 25% step,
+//     against the filament's 232 it is nothing.
+//
+//     Half a step of noise decorrelates the rounding from the signal, so a
+//     pixel near a plateau boundary lands on either side of it with a
+//     probability that follows the true value and the boundary spreads across
+//     the whole plateau instead of being an edge.
+//
+//     RECTANGULAR +/- HALF A STEP, not the triangular +/- one step a
+//     convolution textbook would reach for, and for the reason
+//     SPOT_DITHER_STEPS gives: `fract` returns strictly under 1, so the offset
+//     is strictly under GL's round-to-nearest threshold and a fragment the
+//     falloff left at ZERO cannot be rounded up. The glow quad is mostly dark
+//     - it is sized to the glow's outer reach, well past where the emission
+//     dies - and speckle across all of that would be a worse artefact than the
+//     banding. Fragments that DO light up where an undithered pass rounded
+//     them away are the ones carrying real sub-step signal, which is precisely
+//     how the outermost plateau boundary stops being an edge.
+//
+//     WHERE IT IS APPLIED: at EVERY 8-bit write, which is one on the direct
+//     path and two on the scaled one. neon.frag always dithers; neon-blit.frag
+//     dithers as well, because below resolutionScale 1.0 the gather's output
+//     is rounded into an RGBA8 buffer and rounded AGAIN on its way to the
+//     destination. This is the one place the dither does not follow the
+//     one-sided cut's rule of thumb - the cut has a single correct place and
+//     blitOwnsCut picks it, while dither is a property of a rounding, so each
+//     rounding needs its own.
+//
+//     Dithering only the blit is measurably not enough, which is worth
+//     recording because it is the obvious-looking fix: the buffer's own
+//     rounding lays down the plateaus first, and two texels of one plateau
+//     bilinearly average to that same value, leaving the final dither no
+//     sub-step signal to act on. Distinct levels along the tail scanline at
+//     scale 0.5, whole line / outer half: 84 / 6 undithered, 91 / 6 blit only,
+//     134 / 36 gather only, 182 / 62 both - the direct path reads 178 / 61.
+//
+//     COST TO FRAME COMPARISONS: a dithered build and an undithered one are no
+//     longer comparable at 1 LSB, which is the precision several docs in this
+//     tree quote. The noise is a pure function of position with no time term,
+//     so captures stay reproducible frame to frame. Set this to 0.0 to take a
+//     comparison at the old precision. ---
+#define NEON_DITHER_STEPS         1.0
+
 // --- Epsilons ---
 #define SIDE_SOFT_EPSILON         1e-5
 #define WSUM_EPSILON              1e-6

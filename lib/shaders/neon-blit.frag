@@ -76,9 +76,39 @@ uniform vec2  uRectCenter;
 uniform int   uGlowSide;
 uniform float uGlowSideSoftness; // NOT pre-multiplied by the resolution scale.
 
+// Amplitude of the output dither in 8-bit destination steps, 0 = off.
+//
+// THE SECOND THING IN THIS SHADER THAT ONLY ONE OF ITS THREE RENDERERS WANTS,
+// and it is a uniform rather than a #define for exactly that reason: this file
+// takes no tuning header, and NeonRenderer uploads NEON_DITHER_STEPS here
+// while SpotlightRenderer and LensFlareRenderer upload 0 explicitly - the
+// spotlight because spotlight.frag has already dithered its own writes into
+// the buffer this pass reads, and the flare because nobody has asked it to.
+//
+// Explicitly, and not left to GL's zero-initialised uniforms, on the same
+// terms as uGlowSide above: relying on the zero means a future non-zero
+// default silently dithers all three layers at once.
+uniform float uDitherSteps;
+
 float sdRoundBox(vec2 p, vec2 b, float r) {
     vec2 q = abs(p) - b + r;
     return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
+}
+
+// Interleaved gradient noise in [-0.5, 0.5] - the same function, the same
+// constants, as neon.frag's neonDither and spotlight.frag's spotDither. See
+// NEON_DITHER_STEPS in neon-tuning.h for why the glow needs it at all.
+//
+// gl_FragCoord here, where the other two take a geometry-local coordinate:
+// this pass is a fullscreen quad with no frame of its own, and vPos is NDC
+// rather than pixels, so screen space is the only pixel-valued thing on hand.
+// The consequence is that the pattern is anchored to the SCREEN - a moving
+// rect slides under a stationary dither - which is the one property the other
+// two avoid. It is acceptable here and nowhere else: this is the final
+// composite of a layer that is already resolved, so the noise has nothing to
+// correlate with.
+float blitDither(vec2 p) {
+    return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))) - 0.5;
 }
 
 void main() {
@@ -124,5 +154,27 @@ void main() {
     // together and the layer thins out as a whole rather than dimming while it
     // keeps occluding. At BOTH this is a multiply by an exact 1.0, so that path
     // stays bit-identical to the plain texture read this shader used to be.
-    fragColor = src * cut;
+    vec4 outColor = src * cut;
+
+    // THE SCALED PATH'S SECOND DITHER. neon.frag dithered the value that went
+    // INTO the reduced buffer; this is the write the destination actually
+    // rounds, and a rounding without a dither re-quantises the gradient into
+    // plateaus however smooth the thing being sampled was. Both are needed and
+    // neither is redundant - the measurements are in neon-tuning.h under
+    // NEON_DITHER_STEPS, which also explains why the glow bands at all.
+    //
+    // Same offset on colour and coverage so the premultiplication holds, and
+    // max() against 0 so a negative offset cannot separate them. The amplitude
+    // is under half a step by construction, so a destination pixel this layer
+    // left at zero stays at zero. See NEON_DITHER_STEPS in neon-tuning.h.
+    //
+    // A uniform branch, so the two layers that upload 0 pay nothing and keep
+    // their pre-dither output bit for bit.
+    if (uDitherSteps > 0.0)
+    {
+        float dither = blitDither(gl_FragCoord.xy) * (uDitherSteps / 255.0);
+        outColor = max(outColor + dither, vec4(0.0));
+    }
+
+    fragColor = outColor;
 }

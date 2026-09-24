@@ -157,6 +157,25 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
     return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
 }
 
+// Interleaved gradient noise, in [-0.5, 0.5]. One fract, one dot - the whole
+// dither costs less than a single gather iteration.
+//
+// Deliberately NOT the fract(sin(dot(...))) hash. That one feeds sin an
+// argument in the tens of thousands, and how much of it survives is a
+// precision question every GPU answers differently - on a part that rounds it
+// coarsely the "noise" degenerates into a second set of bands, which is the
+// artefact this function exists to remove. Same function, same constants, as
+// spotlight.frag's spotDither; the two layers dither for the same reason.
+//
+// @p p is in PIXELS, and vPos is the right pixel-valued thing to hand it: it
+// is the rect frame, which is a translation of the framebuffer, so on the
+// direct path a step of one fragment is a step of one unit here. Anchoring to
+// the rect rather than to gl_FragCoord also means the pattern travels WITH the
+// geometry instead of crawling across it while the rect moves.
+float neonDither(vec2 p) {
+    return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))) - 0.5;
+}
+
 // --- Finite-segment halo / bloom ---------------------------------------
 // The halo and bloom kernels integrated along a STRAIGHT SEGMENT rather than
 // an infinite line: `a` is the perpendicular distance from the fragment to the
@@ -1640,6 +1659,46 @@ void main() {
     // reads as a solid tube; the dim halo/bloom (alpha ~ 0) stay additive; the
     // dark surround (alpha = 0) leaves the background untouched. Pairs with
     // glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA) in the renderer.
+    //
+    // DITHERED. Everything above this line is computed at full float precision
+    // and then thrown away by an 8-bit write. That is harmless for the
+    // filament, whose profile crosses several steps per pixel, and it is the
+    // whole problem for the halo and the bloom: they are the flattest
+    // gradients this shader draws, so the rounding lays the outer glow down as
+    // wide constant-value plateaus - 14 to 23 px each in the dark tail at the
+    // default glowRadius - separated by 1 LSB and following the rect's own
+    // contours. That is the banding at the end of the glow. NEON_DITHER_STEPS
+    // in neon-tuning.h carries the derivation, the amplitude, and why it is
+    // rectangular rather than triangular.
+    //
+    // Same offset on all three channels and on the coverage, so the dither
+    // moves the value and never the hue or the premultiplication. The max()
+    // against 0 is what keeps a negative offset from making colour and alpha
+    // disagree about a fragment the glow left dark.
+    //
+    // UNCONDITIONAL, unlike the one-sided cut a few lines up, and the
+    // difference is worth stating because the two look like the same question.
+    // The cut is a geometric EDGE, so it has exactly one correct place and
+    // blitOwnsCut picks it. Dither is per-QUANTISATION, and the scaled path
+    // quantises twice: this write lands in an RGBA8 buffer, and the blit
+    // rounds again on its way to the destination. Dithering only the blit
+    // leaves the first rounding to lay down plateaus the bilinear fetch then
+    // reproduces - two texels of one plateau average to that same value, so
+    // there is no sub-step signal left for the second dither to work with.
+    // Measured on the tail scanline at scale 0.5, distinct levels over 398 px
+    // and over its outer half: 84 / 6 undithered, 91 / 6 with the blit alone,
+    // 134 / 36 with this write alone, 182 / 62 with both - against 178 / 61
+    // for the direct path. Each quantisation gets its own dither.
+    //
+    // vPos raw, NOT vPos * uResolutionScale, which would put the noise on the
+    // destination's lattice instead of this buffer's. Below 1.0 the stride
+    // between neighbouring BUFFER texels is what the blit's filter averages,
+    // and the raw coordinate decorrelates them harder: same scanline, outer
+    // half, scaled lattice against raw, 36 / 62 at scale 0.5 and 27 / 42 at
+    // 0.25, with raw ahead in five of the six scaled scenes measured.
+    float dither = neonDither(vPos) * (NEON_DITHER_STEPS / 255.0);
+    result = max(result + dither, vec3(0.0));
+
     float alpha = clamp(max(result.r, max(result.g, result.b)), 0.0, 1.0);
     fragColor = vec4(result, alpha);
 }

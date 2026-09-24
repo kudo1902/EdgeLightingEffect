@@ -1898,6 +1898,12 @@ namespace EdgeLighting
         mBlitShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
         mBlitShader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness);
 
+        // The scaled path's output dither. neon.frag suppresses its own
+        // whenever this pass runs, so the glow is dithered exactly once
+        // whichever path drew it - here, at the write the destination rounds.
+        // See NEON_DITHER_STEPS in neon-tuning.h.
+        mBlitShader.SetUniform("uDitherSteps", static_cast<float>(NEON_DITHER_STEPS));
+
         // Just bind it. The filter is requested through Resize in the gather
         // pass, so this pass sets no texture parameters at all.
         mScaledBuffer.BindTexture(0);

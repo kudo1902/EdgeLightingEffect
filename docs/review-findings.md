@@ -36,7 +36,7 @@ old fork survived.
 | - | ----- | ---- |
 | visual | V1, V2, V3, V4, V6, V7 | V5 (closed as a documented limitation) |
 | implementation | I1, I3, I4, I6, I7 | I2 (declined), I5 (documented), I8 (audited) |
-| second pass | R1, R2, R3, R4, R5, R6 | R7 |
+| second pass | R1, R2, R3, R4, R5, R6, R7 | - |
 | third pass | V8, I9, I10, I11, I12 (partly) | V9, I12's two stale design docs |
 | fourth pass | I14 | I13 |
 | fifth pass | I15 | - |
@@ -1049,7 +1049,7 @@ resolution", so the warning would have fired on every scaled frame. `Shift+O`
 now toggles the scale between 1.0 and 0.5. The lens-flare pair still warns, and
 still needs to.
 
-### R7. The halo and bloom band into 8-bit contours - OPEN
+### R7. The halo and bloom band into 8-bit contours - FIXED
 
 Both wide layers are smooth, very low-slope gradients - the bloom falls as
 `1/D` - so over most of their reach they cross an 8-bit quantisation step only
@@ -1116,6 +1116,91 @@ implementation of exactly this existed in the working tree before the pull that
 brought `17745a9` in, as an `OUTPUT_DITHER_LSB` constant in `neon-tuning.h`
 plus the shader blocks. It is not in the tree now. Whether that was deliberate
 or lost is not something I can tell from here, so nothing has been re-applied.
+
+---
+
+**FIXED**, on a report from a render rather than from this document: "banding
+issue at the end of glowing". That phrasing is worth keeping, because it names
+the half of the defect the measurement above ranked as the dangerous one - not
+the wide plateaus in the bright wash, but the last few steps of the dark tail,
+where the glow ends. At the default `glowRadius` 5 the tail steps
+6 -> 5 -> 4 -> 3 -> 2 -> 1 -> 0 over runs of 18, 18, 23, 18, 14 and 17 px, and
+the final run is a 17 px band of value 1 ending in a hard step to black. The
+glow does not fade out; it stops.
+
+**Fixed** by an interleaved-gradient-noise dither of half a step, added just
+before each 8-bit write. `NEON_DITHER_STEPS` in
+[`neon-tuning.h`](../lib/include/renderer/neon-tuning.h) carries the amplitude
+and the derivation; the same rectangular +/- half a step, for the same reason,
+as `SPOT_DITHER_STEPS` in V11 - `fract` returns strictly under 1, so a fragment
+the falloff left at zero cannot be rounded up, and the glow quad is mostly dark.
+
+**The design note above is half right, and the half it gets wrong is the
+interesting part.** It says the scaled path's dither belongs in
+`neon-blit.frag` rather than in the gather, because noise put in the reduced
+buffer is averaged back down by the bilinear upsample. Both halves of that are
+true and the conclusion does not follow: the scaled path quantises **twice**,
+once into the RGBA8 buffer and once at the blit's write, and a dither belongs
+at each. Dithering only the blit leaves the buffer's own rounding to lay the
+plateaus down first, and two texels of one plateau bilinearly average to that
+same value - so the second dither has no sub-step signal left to act on. That
+is measurable, and it is why the shipped fix dithers in both shaders:
+
+| scale 0.5, tail scanline | levels / 398 px | mean plateau | far-half levels |
+| ------------------------ | --------------- | ------------ | --------------- |
+| undithered | 84 | 4.68 px | 6 |
+| `neon-blit.frag` only | 91 | 4.33 px | 6 |
+| `neon.frag` only | 134 | 2.95 px | 36 |
+| **both (shipped)** | **182** | **2.17 px** | **62** |
+| direct path, for scale | 178 | 2.22 px | 61 |
+
+The noise coordinate was settled the same way. `neon.frag` feeds the hash
+`vPos` raw rather than `vPos * uResolutionScale`, which would put the pattern
+on the destination's lattice instead of the buffer's; what the blit's filter
+averages is neighbouring BUFFER texels, and the raw coordinate decorrelates
+them harder. Far-half levels, scaled lattice against raw: 36 / 62 at scale 0.5,
+27 / 42 at 0.25, 56 / 60 at `glowRadius` 30, 65 / 92 at the same radius and
+scale 0.25. Raw is ahead in five of the six scaled scenes measured, including
+every dark-tail one.
+
+Verified after the change, on the harness this finding describes (200x150 rect
+in a 1000x800 capture, peak channel along the centre row, trailing black
+trimmed - the widest-plateau column above counted it, which is why the
+undithered numbers here read 23 px rather than 14):
+
+| check | before | after |
+| ----- | ------ | ----- |
+| `glowRadius` 5, levels / mean plateau / widest | 83 / 3.49 px / 23 px | **177 / 1.69 px / 10 px** |
+| `glowRadius` 5, far-half levels | 9 | **81** |
+| `glowRadius` 30, far-half levels | 18 | **89** |
+| `glowRadius` 60 `bloomStrength` 2, far-half levels | 31 | **99** |
+| scale 0.5 / 0.25, far-half levels at `glowRadius` 5 | 9 / 9 | **84 / 67** |
+| deviation from the undithered reference | - | max **1** LSB direct, **2** scaled (two roundings, one dither each) |
+| column mean over a 60 px strip, 20 to 310 px out | - | tracks the undithered mean within **0.4** LSB |
+| noise, same columns | - | **0.33 to 0.49** LSB, i.e. under half a step everywhere in the tail |
+| `NEON_DITHER_STEPS 0.0` | - | **byte-identical** to the pre-change build, all five scenes, both paths |
+| `spotlight_half` / `flare_half` through the shared blit | - | **byte-identical** to the original `neon-blit.frag` |
+
+The column-mean row is the one that answers "does dither just make it
+brighter": where the undithered readout is a flat integer - 5.000, 3.000, 1.000
+across a plateau - the dithered mean reads 4.617, 2.750 and 0.683, which is the
+sub-step truth the rounding had been discarding. The glow also now ends where
+it actually ends: 300 px out the undithered image is exactly 0 and the dithered
+one averages 0.217, a sparse stipple carrying a real sub-step value, instead of
+a 17 px plateau with a wall at the end of it.
+
+**`neon-blit.frag` is shared by three renderers**, so the dither there is a
+`uDitherSteps` uniform rather than a `#define`: `NeonRenderer` uploads
+`NEON_DITHER_STEPS`, `SpotlightRenderer` and `LensFlareRenderer` upload 0
+explicitly - the spotlight because `spotlight.frag` has already dithered its
+own writes into that buffer and its scaled path was measured band-free with
+that alone (V11), the flare because nothing has asked it to. Explicitly, and
+not by relying on GL's zero-initialised uniforms, on the same terms as I23.
+
+The note above about frame-diff methodology stands and is now live: a build
+with this on is no longer comparable at 1 LSB to one without. Set
+`NEON_DITHER_STEPS` to 0.0 to take such a comparison - that is verified
+byte-identical to the pre-dither renderer, which is the row above.
 
 ---
 
@@ -2785,15 +2870,15 @@ intensity is the whole price, and raising `intensity` - now safe - buys it back.
 
 ## What is left
 
-The second pass's R1 to R6 have all landed, and so have the third pass's V8,
+The second pass's R1 to R7 have all landed, and so have the third pass's V8,
 I9, I10 and I11. I3's structural half - the last thing on this list that was
 open rather than declined - closed with the neon unification, which deleted the
 fork it followed from. The fifth pass's I15 landed with it. The seventh through
 tenth passes are one item each and all four are fixed, as are the eleventh's one
 and the twelfth's four. Five items from the
 first pass remain deliberately open, each with the reasoning recorded next to
-the code rather than only here, plus R7 from the second pass, V9 and I12's
-remainder from the third, I13 from the fourth, and I18 from the sixth:
+the code rather than only here, plus V9 and I12's remainder from the third,
+I13 from the fourth, and I18 from the sixth:
 
 | item | state | why |
 | ---- | ----- | --- |
@@ -2806,7 +2891,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I2 | declined | negligible measured-by-structure win against a real staleness-bug risk |
 | I5 | documented | the alternative is a breaking renderer-API change for an unmeasured cost |
 | I8 | audited, no UI written | the C ABI itself is complete; what is missing is `demo-capi` coverage, ranked in the section above |
-| R7 | open | a measured quantisation defect with a cheap cure, but unproven visual severity; see the note there before starting |
+| R7 | fixed | the visual severity stopped being unproven the moment it was reported from a render; the cure is the cheap one, applied at BOTH of the scaled path's roundings rather than only the last |
 | V9 | open | the honest fix is a design decision (interpolate the arc colour between adjacent samples in the consumer), not a patch; the three options are ranked in the section |
 | I12 | partly fixed | the live shader comment is corrected; `architecture-design.md` and `multiple-arcs-design.md` still name the removed LUT functions, and both are design prose rather than comments beside live code |
 | I13 | open | undefined `pow` reachable only through the C ABI; both cures change what the boundary accepts or what the term computes below `ghostSize` 0.6, so it is a behaviour decision rather than a repair |

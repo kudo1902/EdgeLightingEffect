@@ -785,6 +785,16 @@ namespace EdgeLighting
             // the enum's ordinals and neon-blit.frag's GLOW_SIDE_* defines are
             // one numbering, kept in step by hand.
             mBlitShader.SetUniform("uGlowSide", static_cast<int>(GlowSide::BOTH));
+            // Off, and explicitly for the same reason. spotlight.frag has
+            // already dithered these fragments on their way into the buffer
+            // this pass reads (SPOT_DITHER_STEPS), and this layer's scaled
+            // path was measured band-free with that alone - see V11 in
+            // review-findings.md. The neon needs a dither at BOTH of its
+            // roundings and says why at NEON_DITHER_STEPS; nothing here has
+            // been measured to, so this stays off rather than quietly adding a
+            // second half-step of noise to a rig that already sums one per
+            // lamp.
+            mBlitShader.SetUniform("uDitherSteps", 0.0f);
             mBlitQuad.DrawArrays(GL_TRIANGLES, 6);
             mBlitShader.Unuse();
         }

@@ -110,6 +110,20 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   allocates. Size it to the live count instead and it goes straight back onto
   the per-frame path.
 
+  **The output is dithered**, half an 8-bit step of interleaved gradient noise
+  (`NEON_DITHER_STEPS`), because the halo and bloom are flat enough that RGBA8
+  renders the outer glow as wide constant-value plateaus - a contour ring, and
+  a hard wall where the last one meets black. It is applied at EVERY 8-bit
+  write, which is one on the direct path and **two** on the scaled one (the
+  gather's write into the reduced buffer, then the blit's): dithering only the
+  final write leaves the buffer's rounding to lay the plateaus down first, and
+  the bilinear fetch reproduces them. `neon-blit.frag` is shared, so its dither
+  is a `uDitherSteps` uniform that the spotlight and flare upload 0 to. The
+  consequence for anyone comparing frames: **a dithered build has a 1 LSB noise
+  floor** (2 below `resolutionScale` 1.0), so set `NEON_DITHER_STEPS` to 0.0
+  before taking a byte-identical measurement - that is verified to restore the
+  pre-dither output exactly. See R7 in [`docs/review-findings.md`](docs/review-findings.md).
+
   `Render` is a **pass schedule**: derive the transform,
   then one call per `render*Pass` method. `Render` owns blend state; a pass owns
   its shader and, if it retargets, restores the framebuffer / viewport / blend

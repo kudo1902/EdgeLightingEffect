@@ -351,6 +351,11 @@ namespace EdgeLighting
             // the enum's ordinals and neon-blit.frag's GLOW_SIDE_* defines are
             // one numbering, kept in step by hand.
             mBlitShader.SetUniform("uGlowSide", static_cast<int>(GlowSide::BOTH));
+            // Off for the same reason, and with the same explicitness:
+            // the neon's output dither belongs to the neon's gradients. This
+            // layer has never been measured for banding and is not being
+            // changed here.
+            mBlitShader.SetUniform("uDitherSteps", 0.0f);
             mVertexArray.DrawArrays(GL_TRIANGLES, 6);
             mBlitShader.Unuse();
         }

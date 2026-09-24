@@ -434,7 +434,7 @@
           <tbody>
             <tr><td class="mono nw">lib/shaders/neon.frag</td><td>The neon fragment program, at any resolution scale. Everything in sections 3 to 13.</td></tr>
             <tr><td class="mono nw">lib/shaders/neon.vert</td><td>Twelve lines. Passes the quad corner through as <code>vPos</code> and applies <code>uMVP</code>.</td></tr>
-                        <tr><td class="mono nw">lib/shaders/neon-blit.frag</td><td>Two statements. Bilinear composite of the scaled FBO, on the scaled path only.</td></tr>
+                        <tr><td class="mono nw">lib/shaders/neon-blit.frag</td><td>Bilinear composite of the scaled FBO, on the scaled path only. Also owns the one-sided cut and the second of that path's two output dithers.</td></tr>
             <tr><td class="mono nw">lib/shaders/black-rect.frag</td><td>The opaque fill pass (section 12).</td></tr>
             <tr><td class="mono nw">lib/shaders/droplets.frag</td><td>Section 15.</td></tr>
             <tr><td class="mono nw">lib/shaders/lens-flare.frag</td><td>Section 16.</td></tr>
@@ -1153,10 +1153,22 @@ result = result * (mapped / max(peak, 1e-6));</code></pre>
       <h3>Gamma and alpha</h3>
 
 <pre><code>result = pow(result, vec3(GAMMA_EXPONENT));
+float dither = neonDither(vPos) * (NEON_DITHER_STEPS / 255.0);
+result = max(result + dither, vec3(0.0));
 float alpha = clamp(max(result.r, max(result.g, result.b)), 0.0, 1.0);
 fragColor = vec4(result, alpha);</code></pre>
 
       <p><code>GAMMA_EXPONENT</code> at 0.85 lifts the mid-tones so the falloff reads the way the eye expects. Coverage is the brightest channel: the hot filament core reaches alpha near 1 and occludes the background like a real glass tube, the dim halo and bloom stay near 0 and remain additive, and the dark surround at alpha 0 leaves the background untouched. Pairs with <code>glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)</code>.</p>
+
+      <h3>Output dither</h3>
+
+      <p>Everything above this point is computed in float and then thrown away by an 8-bit write. That is harmless for the filament, whose profile crosses several steps per pixel, and it is the whole problem for the halo and the bloom - the flattest gradients this shader draws. At the default <code>glowRadius</code> 5 the dark tail steps 6 - 5 - 4 - 3 - 2 - 1 - 0 over runs of 18, 18, 23, 18, 14 and 17 px, each boundary following the rect's own contours: concentric rings, and a hard wall where the last one meets black. Half a step of interleaved gradient noise decorrelates the rounding from the signal, so each boundary spreads across the whole width of the plateau it used to end.</p>
+
+      <p>Rectangular +/- half a step, not triangular: <code>fract</code> returns strictly under 1, so the offset cannot round a fragment the falloff left at zero up to 1, and the glow quad is mostly dark. Same offset on all three channels and on the coverage, so the dither moves the value and never the hue or the premultiplication. <code>NEON_DITHER_STEPS</code> 0.0 disables it and is byte-identical to the pre-dither renderer.</p>
+
+      <p><strong>Both writes dither on the scaled path</strong>, which is the one place a dither does not follow the one-sided cut's rule of thumb. The cut is a geometric edge with exactly one correct place, and <code>blitOwnsCut</code> picks it; a dither is a property of a <em>rounding</em>, and below <code>resolutionScale</code> 1.0 there are two - the gather's write into the RGBA8 buffer, and the blit's write to the destination. Dithering only the blit is measurably not enough, because the buffer's own rounding lays the plateaus down first and two texels of one plateau bilinearly average to that same value. Distinct levels along the tail scanline at scale 0.5, whole line / outer half: 84 / 6 undithered, 91 / 6 blit only, 134 / 36 gather only, 182 / 62 both - the direct path reads 178 / 61. See R7 in <code>review-findings.md</code>.</p>
+
+      <p><code>neon-blit.frag</code> is shared by three renderers, so its dither is a <code>uDitherSteps</code> uniform rather than an injected constant: <code>NeonRenderer</code> uploads <code>NEON_DITHER_STEPS</code> and the spotlight and lens flare upload 0 explicitly, which keeps both of their outputs bit for bit what they were.</p>
 
       <p>Premultiplication is also what makes the half-resolution path work at all: averaging two premultiplied pixels is correct, so plain bilinear filtering suffices and the blit is two statements with no dark fringing.</p>
     </section>
@@ -1387,6 +1399,7 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
             <tr><td class="mono nw">NEON_MAX_LOOP_SAMPLES</td><td class="num">128</td><td>UBO size, both shaders, sample bake <strong>(shared)</strong></td><td>A ceiling, not a fixed cost: the optimized shader iterates <code>uNumSamples</code>.</td></tr>
             <tr><td class="mono nw">TONE_MAP_SHOULDER</td><td class="num">0.6</td><td>shaders</td><td>Reinhard shoulder.</td></tr>
             <tr><td class="mono nw">GAMMA_EXPONENT</td><td class="num">0.85</td><td>shaders</td><td>Lifts mid-tones.</td></tr>
+            <tr><td class="mono nw">NEON_DITHER_STEPS</td><td class="num">1.0</td><td>shaders (<code>neon.frag</code> directly, <code>neon-blit.frag</code> via <code>uDitherSteps</code>)</td><td>Output dither in 8-bit steps, rectangular +/- half a step. 0.0 restores the pre-dither output exactly.</td></tr>
             <tr><td class="mono nw">SIDE_SOFT_EPSILON</td><td class="num">1e-5</td><td>shaders + <code>setupGeometry</code> <strong>(shared)</strong></td><td>Floors the side and cutoff feathers.</td></tr>
             <tr><td class="mono nw">WSUM_EPSILON</td><td class="num">1e-6</td><td>shaders</td><td>Guards the gather normalisation divides.</td></tr>
             <tr><td class="mono nw">EARLY_OUT_RADIUS_FACTOR</td><td class="num">48.0</td><td>both <code>setupGeometry</code> + both shaders <strong>(shared)</strong></td><td>Quad margin and the bloom pedestal. The two must agree.</td></tr>
