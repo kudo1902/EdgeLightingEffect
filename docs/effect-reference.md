@@ -329,11 +329,11 @@ empty (the base gradient's blend space applies then).
 **`NeonConfig::MAX_ARCS_CAP`** (constant = 8)
 Hard ceiling on the number of concurrent arcs, matching the shader UBO layout.
 
-**Overlap resolution** - winner-take-all: for each perimeter sample, the arc
-with the largest effective mask (`arcInside * intensity`) owns the emission
-there. Because `arcInside` is smoothstepped one-sample-wide at each end,
-adjacent arcs of different colours crossfade smoothly at the seam without
-any special blend logic.
+**Overlap resolution** - winner-take-all: where arcs overlap, the brightest
+one's intensity holds rather than their sum, and its colour wins. Adjacent arcs
+of different colours crossfade at the seam rather than snapping: the filament
+over about 15 px where the arcs' end feathers overlap, the glow over its
+colour blend.
 
 ### 3.7 Segments (travelling additive lights)
 
@@ -436,8 +436,10 @@ above 1.0 do not supersample.
 Number of gather-loop samples per fragment, capped at `NEON_MAX_LOOP_SAMPLES`
 (128), which sizes both the UBO and the shader's array. The samples are spread
 evenly around the perimeter, so lowering this widens the gap between lit
-samples rather than truncating the walk: fewer samples is faster, but the halo
-can develop visible "beading" at low counts.
+samples rather than truncating the walk: fewer samples is faster, but the
+glow's colour blend coarsens - at single-digit counts the halo and bloom show
+the gradient in patches. The filament's colour and brightness are read at its
+own perimeter position and do not depend on this.
 
 **`neon.gradientLutSize`** (default 256)
 Width of the precomputed gradient LUT (32 - 256). At the default 256 the

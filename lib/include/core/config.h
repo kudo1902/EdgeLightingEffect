@@ -368,8 +368,10 @@ namespace EdgeLighting
         /// Number of perimeter gather samples per fragment. Capped at
         /// @c NEON_MAX_LOOP_SAMPLES - the UBO and the shader's array are both
         /// sized by it - and clamped to >= 1 at upload time. Lower is faster
-        /// and makes the halo grainier, since the gap between lit samples
-        /// grows.
+        /// and coarsens the GLOW's colour blend: the halo and bloom take their
+        /// hue from a blend over the samples, which starts to show the gradient
+        /// in patches well below 64. The filament's own colour and brightness
+        /// are read at its exact perimeter position and do not depend on this.
         int numSamples = NEON_MAX_LOOP_SAMPLES;
 
         /// Width in texels of the baked colour-ring LUT (power of two, 32-256).

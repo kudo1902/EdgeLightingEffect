@@ -141,9 +141,155 @@ namespace EdgeLighting
         static_assert(sizeof(ArcBlockData) == 16 + 16 * MAX_ARCS,
                       "ArcBlockData must match the shader's std140 layout");
 
+        /// CPU-side mirror of the std140 `PieceBlock` both neon passes read,
+        /// three vec4 per emitter piece:
+        ///   - @c pieces: (span start, span end, first sample, sample count).
+        ///     The span is in perimeter fractions; the sample fields are small
+        ///     integers, exact in a float.
+        ///   - @c lit: the piece's lit extent in its own terms (a straight's
+        ///     axis coordinate, a corner's angle), then the first sample whose
+        ///     cell reaches into it and how many do.
+        ///   - @c whole: the whole piece in the same terms, then the share of
+        ///     the lit run's first and last cells that lies inside the extent.
+        /// neon.frag documents how each is read.
+        typedef struct PieceBlockData
+        {
+            glm::vec4 pieces[NEON_EMITTER_PIECES];
+            glm::vec4 lit[NEON_EMITTER_PIECES];
+            glm::vec4 whole[NEON_EMITTER_PIECES];
+        } PieceBlockData;
+
+        static_assert(sizeof(PieceBlockData) == 3 * 16 * NEON_EMITTER_PIECES,
+                      "PieceBlockData must match the shader's std140 layout");
+
+        /// The lit hull of the perimeter span [s0, s1] under @p arcs: the
+        /// smallest interval holding every arc's overlap with it, measured the
+        /// way neon-emission.frag's arcOverlap measures one - a dark arc
+        /// covers nothing, a near-full one covers everything, and an arc that
+        /// wraps past 1 is split in two. False when no arc touches the span.
+        bool ArcHull(const std::vector<Arc> &arcs, int count, float s0, float s1, float &lo, float &hi)
+        {
+            lo = s1;
+            hi = s0;
+            for (int a = 0; a < count; ++a)
+            {
+                const Arc &arc = arcs[a];
+                if (arc.intensity <= 0.0f || arc.length <= 1e-6f)
+                {
+                    continue;
+                }
+                if (arc.length >= 1.0f - 1e-6f)
+                {
+                    lo = s0;
+                    hi = s1;
+                    return true;
+                }
+                const float a0 = arc.start - std::floor(arc.start);
+                for (float wrap : {0.0f, -1.0f})
+                {
+                    const float l = std::max(s0, a0 + wrap);
+                    const float h = std::min(s1, a0 + arc.length + wrap);
+                    if (h > l)
+                    {
+                        lo = std::min(lo, l);
+                        hi = std::max(hi, h);
+                    }
+                }
+            }
+            return hi > lo;
+        }
+
+        /// How much of sample @p i's cell the arcs light, as a share of the
+        /// cell: the cell as the pre-pass bounds it (clipped to the piece that
+        /// owns the sample), the overlap as its arcOverlap measures it, capped
+        /// at the whole cell. 1 when the cell has no length or nothing lights
+        /// it, so the division it feeds is a no-op there rather than a 0 / 0.
+        float BorrowedCellShare(const std::vector<Arc> &arcs, int count, int i,
+                                const glm::vec4 (&runs)[NEON_EMITTER_PIECES], float invN)
+        {
+            const float si = static_cast<float>(i) * invN;
+            float lo = si - 0.5f * invN;
+            float hi = si + 0.5f * invN;
+            for (const glm::vec4 &run : runs)
+            {
+                const int first = static_cast<int>(run.z + 0.5f);
+                const int last = first + static_cast<int>(std::lround(run.w)) - 1;
+                if (run.w < 0.5f || i < first || i > last)
+                {
+                    continue;
+                }
+                if (i == first)
+                {
+                    lo = run.x;
+                }
+                if (i == last)
+                {
+                    hi = run.y;
+                }
+            }
+            const float len = hi - lo;
+            if (len <= 1e-7f)
+            {
+                return 1.0f;
+            }
+            float lit = 0.0f;
+            for (int a = 0; a < count; ++a)
+            {
+                const Arc &arc = arcs[a];
+                if (arc.intensity <= 0.0f)
+                {
+                    continue;
+                }
+                float l = 0.0f;
+                float h = 0.0f;
+                if (ArcHull({arc}, 1, lo, hi, l, h))
+                {
+                    lit += h - l;
+                }
+            }
+            const float share = std::min(lit / len, 1.0f);
+            return share > 1e-3f ? share : 1.0f;
+        }
+
+        /// The perimeter stretch [lo, hi] of piece @p id, in the terms
+        /// neon.frag's pieceField narrows that piece with: for a straight the
+        /// two ends' coordinate along its own axis, in scaled px; for a corner
+        /// their angles in its own frame, from the tangent point on the
+        /// x = +-halfW side. Both ends come off the same walk the loop samples
+        /// were placed with, so they land exactly where the samples say.
+        glm::vec2 PieceLimits(int id, float lo, float hi, const RectGeometry &geom, float scale)
+        {
+            const glm::vec2 p0 = GeometryUtils::GetPointOnRectangle(lo, geom);
+            const glm::vec2 p1 = GeometryUtils::GetPointOnRectangle(hi, geom);
+            float a = 0.0f;
+            float b = 0.0f;
+            if (id < 4)
+            {
+                const bool vertical = id < 2;
+                a = (vertical ? p0.y : p0.x) * scale;
+                b = (vertical ? p1.y : p1.x) * scale;
+            }
+            else
+            {
+                const float r = GeometryUtils::GetEffectiveCornerRadius(geom);
+                const glm::vec2 straight(std::max(geom.width * 0.5f - r, 0.0f),
+                                         std::max(geom.height * 0.5f - r, 0.0f));
+                const float sx = (id < 6) ? 1.0f : -1.0f;
+                const float sy = (id == 4 || id == 6) ? 1.0f : -1.0f;
+                auto angle = [&](const glm::vec2 &p) {
+                    const glm::vec2 w(sx * p.x - straight.x, sy * p.y - straight.y);
+                    return std::clamp(std::atan2(w.y, w.x), 0.0f, 0.5f * PI);
+                };
+                a = angle(p0);
+                b = angle(p1);
+            }
+            return glm::vec2(std::min(a, b), std::max(a, b));
+        }
+
         constexpr GLuint SEGMENT_BLOCK_BINDING = 0;
         constexpr GLuint LOOP_SAMPLES_BLOCK_BINDING = 1;
         constexpr GLuint ARC_BLOCK_BINDING = 2;
+        constexpr GLuint PIECE_BLOCK_BINDING = 3;
 
         /// One candidate texture format for the emission table.
         typedef struct EmissionFormat
@@ -264,8 +410,15 @@ namespace EdgeLighting
                 // Where a's end falls within o. Covers strictly AFTER it when
                 // the end lands inside o but not exactly on o's own end - an
                 // arc finishing where this one finishes extends nothing.
+                //
+                // Wrapped to [-EPS, 1 - EPS), not [0, 1): an end a hair SHORT
+                // of o's start is the same abutment as one a hair past it, and
+                // plain [0, 1) wrapped it up to just under 1, failing the test.
+                // The tail test above already has slack on both sides; without
+                // this the head did not, and two arcs meant to tile left a
+                // half-coverage dip at the seam. See docs/review-findings.md V21.
                 float rHead = end - o.start;
-                rHead -= std::floor(rHead);
+                rHead -= std::floor(rHead + EPS);
                 if (rHead < o.length - EPS)
                 {
                     headAbuts = true;
@@ -701,14 +854,17 @@ namespace EdgeLighting
         mEmissionDirty = true;
         // The light blocks get the OPPOSITE treatment, because their inputs are
         // narrow and visible rather than wide and indirect: @ref
-        // packLightBlockData reads mEffectiveSegments and config.neon.arcs, and
-        // nothing else. mEffectiveSegments moves exactly when segmentsDirty
-        // does - it was rebuilt from that flag ten lines up - so the two
-        // together are the whole input set, and gating on them is the same
-        // enumeration samplesDirty and fillDirty above already do. Being
-        // conservative here would cost the gate its point: the common animation
-        // is an intensity or geometry sweep that touches neither list, and
-        // "any config change" would repack on every frame of it.
+        // packLightBlockData reads mEffectiveSegments, config.neon.arcs and
+        // the piece runs rebuildLoopSamples leaves in mPieceRuns (it narrows
+        // each piece to what the arcs light, in scaled px), and nothing else.
+        // mEffectiveSegments moves exactly when segmentsDirty does - it was
+        // rebuilt from that flag ten lines up - and the runs exactly when
+        // samplesDirty does, so the three together are the whole input set,
+        // and gating on them is the same enumeration samplesDirty and
+        // fillDirty above already do. Being conservative here would cost the
+        // gate its point: the common animation is an intensity or colour sweep
+        // that touches none of them, and "any config change" would repack on
+        // every frame of it.
         //
         // ACCUMULATED, not assigned, and the difference is not subtle.
         //
@@ -726,7 +882,7 @@ namespace EdgeLighting
         // compares against the arcs the first one already installed.
         // mEmissionDirty is immune to all of it only because it is
         // unconditional; a narrow gate has to hold until the pack clears it.
-        mLightBlocksDirty = mLightBlocksDirty || segmentsDirty ||
+        mLightBlocksDirty = mLightBlocksDirty || segmentsDirty || samplesDirty ||
                             config.neon.arcs != mCurrentConfig.neon.arcs;
 
         mCurrentConfig = config;
@@ -816,10 +972,13 @@ namespace EdgeLighting
         mNeonShader.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
         mNeonShader.SetUniformBlockBinding("LoopSamplesBlock", LOOP_SAMPLES_BLOCK_BINDING);
         mNeonShader.SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
-        // The pre-pass reads the same two blocks the main pass does, so they
-        // share bindings and are packed once per frame before either runs.
+        mNeonShader.SetUniformBlockBinding("PieceBlock", PIECE_BLOCK_BINDING);
+        // The pre-pass reads the same light and piece blocks the main pass
+        // does, so they share bindings and are bound once per frame before
+        // either runs.
         mEmissionShader.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
         mEmissionShader.SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
+        mEmissionShader.SetUniformBlockBinding("PieceBlock", PIECE_BLOCK_BINDING);
         return true;
     }
 
@@ -1311,13 +1470,13 @@ namespace EdgeLighting
         // Drives the additive halo/spill/colour gather in the fragment shader.
         // Uploaded directly to the std140 UBO: vec4[N] where .xy holds the
         // position in SCALED px - raw float32 through the constant cache, no
-        // decode step in the shader. (.zw stays 0 - the shader recovers a
-        // fragment's continuous perimeter position geometrically from vPos, so
-        // the per-sample phase pairs are no longer needed.)
+        // decode step in the shader. (.zw stays 0, and has to: the gather
+        // reads .xy alone, and a per-sample value there was measured costing
+        // the fully lit ring 10% - see neon.frag's LoopSamplesBlock.)
         //
         // Only the first `n` entries are written; the rest of the block stays
-        // (0,0,0,0) and is never read, because the shader's loop bound is the
-        // same `n`. The spacing is 1/n of the perimeter, so lowering the count
+        // (0,0,0,0) and is never read, because the piece runs tile exactly
+        // [0, n). The spacing is 1/n of the perimeter, so lowering the count
         // spreads the samples rather than truncating the walk partway round.
         const float scale = GetClampedResolutionScale(config);
         const int n = GetClampedNumSamples(config);
@@ -1330,6 +1489,92 @@ namespace EdgeLighting
             block.samples[i] = glm::vec4(p, 0.0f, 0.0f);
         }
         mLoopSamplesBlock.SetData(&block, sizeof(block));
+
+        // --- Which run of those samples lies on which emitter piece ---------
+        // The glow keeps one coverage per piece (V16 in
+        // docs/review-findings.md), so both passes need to know where each
+        // piece is: the pre-pass clips each sample's cell to its own piece, and
+        // the gather walks each piece's samples into that piece's own sums.
+        //
+        // The layout is the one GeometryUtils::GetPointOnRectangle walks and
+        // neon.frag's perimeterPosition inverts, span for span. Position 0 is a
+        // piece boundary in BOTH windings - the start of the top straight
+        // clockwise, the top of the x<0 straight counter-clockwise - so no
+        // piece straddles the seam and every piece's samples are ONE
+        // contiguous run of indices. The gather's per-piece loops rely on that:
+        // they have no wrap to test for.
+        //
+        // Piece ids are fixed, not in walk order: 0 x<0 side, 1 x>0 side,
+        // 2 y<0 side, 3 y>0 side, then corners (+,+), (+,-), (-,+), (-,-) in
+        // rect-local +y-up coordinates. neon.frag addresses them by id.
+        const float r = GeometryUtils::GetEffectiveCornerRadius(config.geometry);
+        const float ws = std::max(config.geometry.width - 2.0f * r, 0.0f);
+        const float hs = std::max(config.geometry.height - 2.0f * r, 0.0f);
+        const float arcLen = PI * r * 0.5f; // the walk's own expression
+        const float peri = 2.0f * (ws + hs) + 4.0f * arcLen;
+
+        constexpr int CW_ORDER[NEON_EMITTER_PIECES] = {3, 4, 1, 5, 2, 7, 0, 6};
+        constexpr int CCW_ORDER[NEON_EMITTER_PIECES] = {0, 7, 2, 5, 1, 4, 3, 6};
+        const bool cw = config.geometry.winding == Winding::CLOCKWISE;
+        const int *order = cw ? CW_ORDER : CCW_ORDER;
+
+        for (glm::vec4 &run : mPieceRuns)
+        {
+            run = glm::vec4(0.0f);
+        }
+        if (peri <= 0.0f)
+        {
+            // A zero-size rect has no pieces to speak of. Hand every sample to
+            // piece 0 so the gather still visits them all; the fields it
+            // weights are all zero-length anyway.
+            mPieceRuns[0] = glm::vec4(0.0f, 1.0f, 0.0f, static_cast<float>(n));
+        }
+        else
+        {
+            float cum = 0.0f;
+            int i = 0;
+            for (int k = 0; k < NEON_EMITTER_PIECES; ++k)
+            {
+                const int id = order[k];
+                // Straights alternate with corners in the walk, and a
+                // straight's length depends on which axis it runs along.
+                const bool corner = id >= 4;
+                const bool horizontal = id == 2 || id == 3;
+                const float len = corner ? arcLen : (horizontal ? ws : hs);
+                const float start = cum / peri;
+                cum += len;
+                // The last piece closes the ring exactly, whatever the
+                // accumulated rounding, so no sample can fall past it.
+                const float end = (k == NEON_EMITTER_PIECES - 1) ? 1.0f : cum / peri;
+                // Same t the sample walk above uses, so the split is exact.
+                const int first = i;
+                while (i < n && static_cast<float>(i) / static_cast<float>(n) < end)
+                {
+                    ++i;
+                }
+                int count = i - first;
+                int from = first;
+                // A piece with length but no sample of its own - a corner
+                // shorter than one spacing - still emits, so the gather needs
+                // SOME coverage for it. It BORROWS the sample nearest its
+                // middle, flagged by a count of -1: the gather reads that
+                // sample's coverage without adding its colour a second time,
+                // and the pre-pass does not clip any cell to it. A piece of no
+                // length at all (a sharp corner, a pill's straight) keeps a
+                // count of 0 and is skipped outright.
+                if (count == 0 && len > 0.0f)
+                {
+                    const float mid = 0.5f * (start + end);
+                    from = static_cast<int>(std::lround(mid * static_cast<float>(n))) % n;
+                    count = -1;
+                }
+                mPieceRuns[id] = glm::vec4(start, end, static_cast<float>(from),
+                                           static_cast<float>(count));
+            }
+        }
+        // Uploaded by packLightBlockData, together with the lit extents it
+        // derives from these runs and the arcs; OnConfigChanged gates that
+        // repack on samplesDirty for exactly this reason.
     }
 
     void NeonRenderer::bakeLUTs(const Config &config)
@@ -1422,6 +1667,9 @@ namespace EdgeLighting
         }
         mSegmentBlock.BindBase(SEGMENT_BLOCK_BINDING);
         mArcBlock.BindBase(ARC_BLOCK_BINDING);
+        // Packed with the loop samples rather than here - it describes the
+        // same walk - but bound here, because both passes read it.
+        mPieceBlock.BindBase(PIECE_BLOCK_BINDING);
     }
 
     void NeonRenderer::packLightBlockData(const Config &config)
@@ -1469,6 +1717,104 @@ namespace EdgeLighting
             arcBlock.arcs[i] = glm::vec4(a.start, a.length, a.intensity, flags);
         }
         mArcBlock.SetData(&arcBlock, sizeof(arcBlock));
+
+        // Each emitter piece's run, then the stretch of it the arcs light.
+        // The glow's field runs over that stretch rather than the whole piece
+        // (V22 in docs/review-findings.md): otherwise an arc that ends in the
+        // middle of a piece is drawn with the whole piece's field and only its
+        // averaged coverage to say where the light stops, which falls off far
+        // slower than the field's own end - so an arc's two ends differed
+        // whenever one of them sat on a piece boundary and the other did not.
+        //
+        // The cells are the pre-pass's own: sample i owns
+        // [si - 0.5/n, si + 0.5/n], the first and last of a piece stretched or
+        // cut to the piece's span, all in float the way the shader has them.
+        // A fully lit piece keeps its whole run, shares of 1 and the whole
+        // piece's limits, which reproduces the unnarrowed field exactly.
+        const float scale = GetClampedResolutionScale(config);
+        const int n = GetClampedNumSamples(config);
+        const float invN = 1.0f / static_cast<float>(std::max(n, 1));
+        // The whole pieces in pieceField's terms, from the same expressions
+        // the shader builds `straight` with, so they match it bit for bit.
+        const float rS = GeometryUtils::GetEffectiveCornerRadius(config.geometry) * scale;
+        const glm::vec2 straight(std::max(config.geometry.width * scale * 0.5f - rS, 0.0f),
+                                 std::max(config.geometry.height * scale * 0.5f - rS, 0.0f));
+        PieceBlockData pieces = {};
+        for (int id = 0; id < NEON_EMITTER_PIECES; ++id)
+        {
+            const glm::vec4 run = mPieceRuns[id];
+            const int first = static_cast<int>(run.z + 0.5f);
+            const int count = static_cast<int>(std::lround(run.w));
+            const glm::vec2 whole = (id < 4) ? glm::vec2(-straight[id < 2 ? 1 : 0], straight[id < 2 ? 1 : 0])
+                                             : glm::vec2(0.0f, 0.5f * PI);
+            pieces.pieces[id] = run;
+            pieces.whole[id] = glm::vec4(whole, 1.0f, 1.0f);
+            // Dark until an arc says otherwise: the whole limits (so the
+            // segments' field needs no second evaluation), no lit run.
+            pieces.lit[id] = glm::vec4(whole, run.z, 0.0f);
+            float lo = 0.0f;
+            float hi = 0.0f;
+            if (count == 0 || !ArcHull(config.neon.arcs, arcCount, run.x, run.y, lo, hi))
+            {
+                continue;
+            }
+            const bool partial = lo > run.x || hi < run.y;
+            const glm::vec2 lim = partial ? PieceLimits(id, lo, hi, config.geometry, scale) : whole;
+            if (count < 0)
+            {
+                // Borrowed: no run of its own, so only the field narrows - and
+                // the borrowed sample's weight, a mean over a cell of ANOTHER
+                // piece, is divided back by how much of that cell the arcs
+                // light (in .z), so an arc ending inside that cell does not
+                // dim this whole piece to the share it happened to cover.
+                pieces.lit[id] = glm::vec4(lim, run.z, -1.0f);
+                pieces.whole[id].z = BorrowedCellShare(config.neon.arcs, arcCount, first, mPieceRuns, invN);
+                continue;
+            }
+            if (!partial)
+            {
+                pieces.lit[id].w = run.w;
+                continue;
+            }
+            // The run of cells reaching into [lo, hi], and how much of each end
+            // cell does.
+            int litFirst = -1;
+            int litLast = -1;
+            float shareFirst = 1.0f;
+            float shareLast = 1.0f;
+            for (int i = first; i < first + count; ++i)
+            {
+                const float si = static_cast<float>(i) * invN;
+                const float cLo = (i == first) ? run.x : si - 0.5f * invN;
+                const float cHi = (i == first + count - 1) ? run.y : si + 0.5f * invN;
+                const float inside = std::min(cHi, hi) - std::max(cLo, lo);
+                if (inside <= 0.0f)
+                {
+                    continue;
+                }
+                const float share = std::min(inside / std::max(cHi - cLo, 1e-7f), 1.0f);
+                if (litFirst < 0)
+                {
+                    litFirst = i;
+                    shareFirst = share;
+                }
+                litLast = i;
+                shareLast = share;
+            }
+            if (litFirst < 0)
+            {
+                continue; // a hull thinner than float can place in any cell
+            }
+            if (litLast == litFirst)
+            {
+                shareLast = 1.0f; // one cell: its share is taken once, as the first
+            }
+            pieces.lit[id] = glm::vec4(lim, static_cast<float>(litFirst),
+                                       static_cast<float>(litLast - litFirst + 1));
+            pieces.whole[id].z = shareFirst;
+            pieces.whole[id].w = shareLast;
+        }
+        mPieceBlock.SetData(&pieces, sizeof(pieces));
     }
 
     bool NeonRenderer::isEmissionTableStale(float time, const Config &config) const
@@ -1525,10 +1871,10 @@ namespace EdgeLighting
         mEmissionShader.SetUniform("uMVP", glm::mat4(1.0f));
         mEmissionShader.SetUniform("uTime", time);
         mEmissionShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
-        // The SAME count the gather is given below - texel i here has to be
-        // sample i there, or every fragment reads emission belonging to a
-        // different perimeter position. Both go through GetClampedNumSamples
-        // for exactly that reason.
+        // The SAME count the gather's piece runs were built from - texel i
+        // here has to be sample i there, or every fragment reads emission
+        // belonging to a different perimeter position. Both go through
+        // GetClampedNumSamples for exactly that reason.
         mEmissionShader.SetUniform("uNumSamples", GetClampedNumSamples(config));
         mGradientLUT.Bind(0);
         mEmissionShader.SetUniform("uGradientLUT", 0);
@@ -1632,9 +1978,11 @@ namespace EdgeLighting
 
         // Loop sample positions come from the LoopSamplesBlock UBO (see
         // neon.frag) - raw float32 vec4[N], .xy holds the perimeter point in
-        // the same scaled space as the transform above.
+        // the same scaled space as the transform above. How many of them the
+        // gather walks is no longer a uniform: it walks each emitter piece's
+        // run out of PieceBlock (bound in packLightBlocks), and the runs are
+        // built from the same GetClampedNumSamples the pre-pass is handed.
         mLoopSamplesBlock.BindBase(LOOP_SAMPLES_BLOCK_BINDING);
-        mNeonShader.SetUniform("uNumSamples", GetClampedNumSamples(config));
 
         // The three LUT atlases are no longer read by the gather (the emission
         // pre-pass consumes them instead), but the pointwise path still samples

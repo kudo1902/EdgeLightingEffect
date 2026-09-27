@@ -26,6 +26,7 @@ Docs, in reading order. The three neon documents are tiers of the same material 
 - [`docs/spotlight-renderer-plan.md`](docs/spotlight-renderer-plan.md) - the `SpotlightRenderer` design and the offscreen verification behind it, including the solved strip bound and the one real defect that verification caught.
 - [`docs/corner-crease-and-filament-nyquist.md`](docs/corner-crease-and-filament-nyquist.md) - the analytic emission's measured defects and their fixes: the dark diagonal wedges at the corners (halo and bloom were the field of ONE infinite edge, now a sum over the emitter's pieces), the `resolutionScale` 0.5 mismatch at thin line widths (the filament's floor was in the wrong units, and then - section 2.8 - was a fixed half width when what decides the blit is the profile's SHAPE, so a soft `filamentFalloff` rendered twice as wide), and the corner over-extension the first fix introduced (the straights ran to the SHARP corner, so a phantom emitter lit the outside of every rounded corner; they now stop at the tangent points and each arc is developed onto its own tangent), and the crease THAT fix introduced (the arc was developed at rate `r`, which is right only for a fragment on the arc, so every arc's centre of curvature carried a C1 kink and an under-count - a dark cross at the middle of a circle; section 1.9). Section 1.10 is the one level up: all of that fixed the halo/bloom FIELD, while the coverage that SCALES it was still read at the fragment's NEAREST perimeter point - so any partly lit perimeter (a half-ring arc, a segment boost) cut the glow to a hard-edged polygon along the medial axis until the glow took a gathered coverage instead. Includes the per-edge bloom pedestal the first fix forced and the one shared pedestal the arcs are allowed instead, the small-rect and INTERIOR brightness changes the segment sum causes - section 1.5.2 is the one to read if someone reports "the glow got bigger" - and the offscreen probes behind every number. Read before touching the halo/bloom or filament blocks.
 - [`docs/glow-side-comparison.md`](docs/glow-side-comparison.md) - what changed when every edge the neon draws became COVERAGE applied to the graded output rather than a multiply into the linear emission, and when the one-sided cut moved off the reduced-resolution buffer into `neon-blit.frag`. Magnified before/after crops plus the sub-pixel sweeps behind them. Read it before retuning `glowSideSoftness` or `Cutoff::softness` - both changed meaning - and before assuming a mask belongs above the tone map.
+- [`docs/glow-coverage-comparison.md`](docs/glow-coverage-comparison.md) - before/after captures for the glow-coverage fix (V15 to V22 in `review-findings.md`): 15 scenes and two time strips, each as before / after / difference x8 with a magnified crop, then every neon animation preset the demo ships (48 frames each on the demo's startup scene). What a partly lit ring, an alpha fade, a moving light and a thin shape looked like before per-piece coverage, and proof that a fully lit ring changes only on the line.
 - [`docs/review-findings.md`](docs/review-findings.md) - open defects and rough edges, visual ones with offscreen repros. Check here before assuming a behaviour is intended.
 - [`docs/naming-review.md`](docs/naming-review.md) - identifier audit against `AGENTS.md`, plus the names that describe mechanisms the code no longer has. Read before renaming anything.
 
@@ -64,7 +65,7 @@ Shader sources under `lib/shaders/*.{vert,frag}` are read by `lib/CMakeLists.txt
 
 `CMAKE_CONFIGURE_DEPENDS` lists every shader file *and* all four tuning headers, so editing any of them triggers a re-configure on the next build. **If you add a new shader you must update three places**: `lib/CMakeLists.txt` (both the `CMAKE_CONFIGURE_DEPENDS` and `file(READ ...)` lists) and `lib/shaders/shaders.h.in`.
 
-**Never declare a bare uniform array** (`uniform vec4 uFoo[N]`) in a shader. The form is not available on the restricted GL targets this library ships against, and it will compile and run correctly on desktop GL, so testing will not catch it. Per-index data goes in a `layout(std140) uniform` block, uploaded through the `UniformBuffer` wrapper and bound to its own binding point - `LoopSamplesBlock`, `SegmentBlock`, `ArcBlock` (neon) and `GhostBlock` (lens flare) are the existing examples (`SpotlightRenderer` sidesteps the question entirely - see below), and their array bounds are compile-time constants from the tuning headers. `ShaderProgram`'s array `SetUniform` overloads and its `UNIFORM_ARRAY_DIRECT` fallback exist for the upload path only; neither makes a bare array declaration portable.
+**Never declare a bare uniform array** (`uniform vec4 uFoo[N]`) in a shader. The form is not available on the restricted GL targets this library ships against, and it will compile and run correctly on desktop GL, so testing will not catch it. Per-index data goes in a `layout(std140) uniform` block, uploaded through the `UniformBuffer` wrapper and bound to its own binding point - `LoopSamplesBlock`, `SegmentBlock`, `ArcBlock`, `PieceBlock` (neon) and `GhostBlock` (lens flare) are the existing examples (`SpotlightRenderer` sidesteps the question entirely - see below), and their array bounds are compile-time constants from the tuning headers. `ShaderProgram`'s array `SetUniform` overloads and its `UNIFORM_ARRAY_DIRECT` fallback exist for the upload path only; neither makes a bare array declaration portable.
 
 ## Architecture
 
@@ -92,6 +93,36 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   of `O(samples * (arcs + segments))`. The invariant to preserve: **pure
   function of `(si, uTime, config)` goes in the pre-pass; anything reading
   `vPos` stays in the main shader.**
+
+  The table's `.a` weights are also the **glow's coverage**: the gather walks
+  the emitter's eight pieces (four straights, four corner arcs - `PieceBlock`,
+  `NEON_EMITTER_PIECES`) and scales each piece's analytic halo/bloom field by
+  the mean of those weights over that piece's own samples. So anything that
+  should dim the glow at a perimeter position (colour-stop alpha) has to be in
+  them, each sample carries its coverage MEAN over its own cell of perimeter
+  (so moving lights do not tick), and cells stop at piece ends. Each piece's
+  field also runs only over its **lit extent** - the stretch of it the arcs
+  light, packed per piece by `packLightBlockData` - with the coverage averaged
+  over that stretch and its two end cells taken at the share of them inside
+  it. That is what makes an arc's end in the middle of a piece close with the
+  same analytic cap as an end on a piece boundary (V22), and it lets a dark
+  piece be skipped. `ArcHull` there measures an arc the way the pre-pass's
+  `arcOverlap` does; change one and the other has to follow. SEGMENTS also
+  take a second, tighter average and apply their reach bound after averaging -
+  a look choice restoring V14's feathered falloff (`GLOW_CORE_TO_HALO`); arcs
+  keep the single average, and every segment-less scene is unaffected by it.
+  The FILAMENT
+  instead reads its coverage and its colour pointwise at the fragment's own
+  perimeter position. Coverage kept for the whole ring rather than per piece
+  lit every unlit edge's own outline - see V15 to V17 and V22 in
+  [`docs/review-findings.md`](docs/review-findings.md). The gather's per-piece
+  loops are unrolled by hand, and that is load-bearing: rolled, the per-piece
+  walk cost the layer 1.21x. Measured against `main`, a fully lit ring runs at
+  1.02x, one with a segment at 1.15x (it pays for the second average), and a
+  partly lit ring at 0.23 to 0.64x, since its dark pieces are skipped. The
+  loops are sensitive to CODE, not just work: a per-sample read of `.z`
+  beside `.xy` cost 10%, and an unused second loop costs registers. Re-time a
+  fully lit, a partly lit and a segmented scene after touching it.
 
   That same purity is why the pass is **skipped on frames neither input moved**
   (`isEmissionTableStale`) - the buffer is allocated once and nothing else

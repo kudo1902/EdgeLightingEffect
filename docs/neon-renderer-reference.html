@@ -486,7 +486,7 @@
             <tr><td class="mono nw">uWinding</td><td class="mono">int</td><td>0 CLOCKWISE / 1 COUNTER_CLOCKWISE. Selects the segment-base table in section 4.</td></tr>
             <tr><td class="mono nw">uQuadMargin</td><td class="mono">float</td><td>Distance from the rect edge to the draw quad edge, per axis. Drives the edge fade.</td></tr>
             <tr><td class="mono nw">uResolutionScale</td><td class="mono">float</td><td>Converts baked px constants into the space every other px uniform is already in. 1.0 on the direct path, where every conversion is identity. See section 14.</td></tr>
-            <tr><td class="mono nw">uNumSamples</td><td class="mono">int</td><td>Live gather-loop bound, 1..128. The emission pre-pass is handed the same value, so texel <code>i</code> there is sample <code>i</code> here.</td></tr>
+            <tr><td class="mono nw">uNumSamples</td><td class="mono">int</td><td><strong>Emission pre-pass only</strong>, 1..128: how many samples it bakes and how wide each sample's cell is. The gather no longer takes a count - it walks the per-piece runs in <code>PieceBlock</code>, which the CPU builds from the same value, so texel <code>i</code> there is still sample <code>i</code> here.</td></tr>
           </tbody>
         </table>
       </div>
@@ -511,6 +511,11 @@
               <td class="mono nw">ArcBlock</td>
               <td class="mono">int uArcCount<br>vec4[8]</td>
               <td>Each entry is <code>(start, length, intensity, hasStops)</code>. <code>uArcCount == 0</code> makes the whole perimeter dark; the default config seeds one full-perimeter arc.</td>
+            </tr>
+            <tr>
+              <td class="mono nw">PieceBlock</td>
+              <td class="mono">3 &times; vec4[8]</td>
+              <td>Three arrays, one entry per emitter piece in each - 0 the x&lt;0 side, 1 x&gt;0, 2 y&lt;0, 3 y&gt;0, then the corners (+,+), (+,-), (-,+), (-,-). <code>uPieces</code>: <code>(span start, span end, first sample, sample count)</code>; position 0 is a piece boundary in both windings, so no run wraps, and a count of -1 marks a corner shorter than one spacing borrowing the sample nearest its middle. <code>uPieceLit</code>: the stretch of the piece the arcs light, in its own terms (a straight's axis coordinate, a corner's angle), then the run of samples whose cells reach into it - a count of 0 is a dark piece. <code>uPieceWhole</code>: the whole piece in the same terms, then the share of the lit run's first and last cell inside the stretch. Packed by <code>packLightBlockData</code>. The pre-pass reads only <code>uPieces</code>, to clip each sample's cell to its piece; the gather reads all three.</td>
             </tr>
           </tbody>
         </table>
@@ -803,6 +808,16 @@ bloom = max(bloom - bloomPed, 0.0) * (bloomPeak / max(bloomPeak - bloomPed, 1e-6
 
       <p>The halo needs no pedestal: falling as <code>1/ad&sup2;</code>, at the same distance it is about <code>2e-4</code> of peak, already invisible.</p>
 
+      <h3>What scales the field</h3>
+
+      <p>The halo and bloom above are the fields of a <strong>fully lit</strong> emitter. What scales them is per <strong>piece</strong>: each of the eight pieces' field is multiplied by that piece's own coverage - the g-weighted mean of the emission table's <code>.a</code> weights over the piece's own gather samples (section 09) - and the two sums are pairs, arc and segment, lit in their own hues at the compose. An unlit piece's samples all carry 0, so its field is gone; a lit edge is not diluted by a dark one across the shape. A fully lit ring has every mean at exactly 1.0 and draws the unscaled fields.</p>
+
+      <p><strong>Each field runs over its piece's lit extent.</strong> Where the arcs light only part of a piece, that piece's field is the field of the lit stretch - a straight's segment integral between the stretch's ends, a corner's developed arc between its angles - and its mean is taken over the stretch's own samples, the two end cells counted at the share of them inside it. A uniform arc then averages to exactly 1 up to its end, so the glow closes round an end in the middle of a piece with the same analytic cap as an end on a piece boundary. Without it, the whole piece's field ran past the end and only the mean's slow falloff said where the light stopped (V22). A piece no arc reaches is skipped when there are no segments; a segment, which can sit anywhere on a piece, still takes the whole piece's field.</p>
+
+      <p>This is the third form the scaling has had, and both earlier ones are defects in <code>review-findings.md</code>: the coverage at the fragment's nearest perimeter point jumped across the medial axis and cut the glow into polygons (V14); one mean for the whole ring lit every unlit edge's own outline, carried no colour-stop alpha, and ticked as lights moved (V15 to V17).</p>
+
+      <p><strong>Segments take a second, tighter average.</strong> A segment's glow carries a reach bound, <code>max(arc, min(segment, 1))</code>, applied after averaging. Its halo, and its bloom close to the piece's line, use a tight average - a weight falling as 1/d<sup>4</sup> - with the bound applied per piece. Its bloom far from the line uses the colour-weighted average with the bound read over the whole ring, which is what makes the dome around a segment go dark at a distance. The two are blended by <code>d&sup2; / (d&sup2; + (GLOW_CORE_TO_HALO &middot; glowRadius)&sup2;)</code>. This is a look choice - V14's feathered falloff without its outline - and its one cost is a faint streak beside an unlit stretch just past a segment's end. Arcs keep the single average. See V16 in <code>review-findings.md</code>.</p>
+
       <h3>The emission gate</h3>
 
 <pre><code>float glowGate = clamp(uGlowRadius / GLOW_GATE_FADE_PX, 0.0, 1.0);</code></pre>
@@ -822,17 +837,19 @@ bloom = max(bloom - bloomPed, 0.0) * (bloomPeak / max(bloomPeak - bloomPed, 1e-6
         <table>
           <thead><tr><th></th><th class="mono">arcInside</th><th class="mono">arcCoverContinuous</th></tr></thead>
           <tbody>
-            <tr><td>Evaluated at</td><td>each gather sample's <code>si</code></td><td>the fragment's own <code>sPos</code></td></tr>
-            <tr><td>Feeds</td><td>the hue average only</td><td>filament, halo and bloom</td></tr>
-            <tr><td>Feather direction</td><td><strong>outward</strong> from the arc ends</td><td><strong>inward</strong>, inside the arc's span</td></tr>
-            <tr><td>Feather width</td><td>1 sample (head), 0.25 sample (tail)</td><td><code>HEAD/TAIL_FEATHER_PX / peri</code></td></tr>
-            <tr><td>Wrap handling</td><td>tests <code>si</code> and <code>si + 1</code>, takes the max</td><td><code>rel -= floor(rel)</code></td></tr>
-            <tr><td>Effect on brightness</td><td><strong>none</strong> - cancels in the gated normalisation</td><td>it <em>is</em> the brightness envelope</td></tr>
+            <tr><td>Evaluated at</td><td>each gather sample's <strong>cell</strong> (half a spacing either side, cut at its piece's ends)</td><td>the fragment's own <code>sPos</code></td></tr>
+            <tr><td>Feeds</td><td>the hue average <strong>and</strong> the glow's per-piece coverage</td><td>the filament - its magnitude and, since V18, its colour</td></tr>
+            <tr><td>Feather direction</td><td>none - the exact overlap length of cell and arc (<code>arcOverlap</code>)</td><td><strong>inward</strong>, inside the arc's span</td></tr>
+            <tr><td>Feather width</td><td>-</td><td><code>HEAD/TAIL_FEATHER_PX / peri</code></td></tr>
+            <tr><td>Wrap handling</td><td>tests the arc and its copy one ring back</td><td><code>rel -= floor(rel)</code></td></tr>
+            <tr><td>Effect on brightness</td><td>the GLOW's, per piece; cancels out of the hue</td><td>the filament's brightness envelope</td></tr>
           </tbody>
         </table>
       </div>
 
       <h3>arcInside: hue crossfade only</h3>
+
+      <p class="note"><strong>Superseded.</strong> <code>arcInside</code> is gone from the pre-pass. Each sample now carries the exact overlap of its cell with the arcs, capped at the brightest covering arc's intensity, times the winner's colour-stop alpha - because those weights became the glow's coverage, where a quarter-sample tail feather made a rotating arc's glow tick. See <code>emission-prepass.md</code> section 2.1 and V17 in <code>review-findings.md</code>. The description below is kept for the history of the hue handover.</p>
 
       <p>Its feather sits <em>outside</em> the arc on each side, so a sample exactly at <code>start</code> or <code>end</code> still carries full weight in the hue average. The widths are asymmetric on purpose: one full sample on the head side, so adjacent samples' fade-in ranges are contiguous and a growing arc's leading hue hands over smoothly from one gather point to the next; a quarter sample on the tail side, near-hard, so the arc's own hue takes over immediately at its start rather than being averaged with whatever precedes it.</p>
 
@@ -902,7 +919,9 @@ vec3 emitGlow = arcCol * emitCover + segCol * emitCoverAll;</code></pre>
     <section id="s9">
       <h2 class="sec"><span class="num">09</span> The colour gather</h2>
 
-      <p class="lede">The one remaining loop, and the only place a length is expressed as a perimeter fraction rather than in pixels. It produces <strong>colour only</strong> - never brightness, coverage or reach.</p>
+      <p class="lede">The one remaining loop, and the only place a length is expressed as a perimeter fraction rather than in pixels. It produces the ring's <strong>colour</strong> and, since V16, one <strong>glow coverage per emitter piece</strong> - the mean of the table's <code>.a</code> weights over that piece's own samples.</p>
+
+      <p class="note"><strong>Shape since V16.</strong> The loop walks the eight pieces' runs from <code>PieceBlock</code> rather than <code>0..uNumSamples</code>, adds each piece's analytic field to the halo and bloom weighted by that piece's coverage in the same walk, and is unrolled by hand - four samples a step, two with segments. Without segments it walks only each piece's lit run and skips a dark piece (V22), so a partly lit ring costs a fraction of a fully lit one. The per-sample arithmetic below is unchanged. The FILAMENT no longer takes its colour from here: it reads its own perimeter position (V18).</p>
 
       <h3>Per iteration</h3>
 
@@ -1210,6 +1229,8 @@ fragColor = vec4(result, alpha);</code></pre>
       <h3>The sample count</h3>
 
       <p><code>uNumSamples</code> makes the gather loop bound dynamic, defaulting to 64 of the available 128. It changes <strong>one thing only</strong>: how many perimeter points the colour gather visits. It is safe to turn down precisely because of the section 6 rewrite - brightness, coverage and reach are all closed forms now and none of them touch the sample list. Halving the samples costs a little precision where two stops meet and nothing else: no dimming, no change in glow width, no beading.</p>
+
+      <p class="note"><strong>No longer quite one thing.</strong> <code>NeonConfig::numSamples</code> now defaults to 128, and since V16 the glow's per-piece coverage is a mean over the samples too - as cell means, so it does not bead or tick at a low count, but a piece shorter than a spacing borrows one sample rather than owning its own. The visible cost of a low count is the GLOW's colour blend, which at single digits shows the gradient in patches; the filament's colour is read pointwise since V18 and no longer depends on it. See V19 in <code>review-findings.md</code>.</p>
 
       <h3>Framebuffer discipline</h3>
 

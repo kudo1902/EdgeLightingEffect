@@ -299,12 +299,30 @@ three surprise:
 | `numSamples` | 128 = 4.86 ms, 96 = 3.77, 64 = 2.57, 48 = 1.99, 32 = 1.39 |
 | `glowRadius` | 20 = 5.20 ms, 10 = 5.67, 5 = 4.89, 2 = 2.40, 0 = 1.90 |
 
+> **The gather has changed shape since.** It now walks the emitter's eight
+> pieces separately - the glow keeps one coverage per piece, V16 in
+> `review-findings.md` - and the per-piece loops are unrolled by hand, four
+> samples a step without segments and two with. Each piece's field and average
+> also run only over the stretch of it the arcs light (V22), and a dark piece
+> is skipped. Against `main` on a 1600x900 rect: a fully lit ring 1.02x, one
+> with a segment 1.15x - it carries a second, tighter coverage average - and a
+> partly lit ring 0.23 to 0.64x. So the absolute figures above are off by that
+> much; the SHAPES - linear in `numSamples`, near-quadratic in
+> `resolutionScale` - are what the walk does not change. Rolled, the per-piece
+> walk cost 1.21x, so the unroll is load-bearing. The walk is sensitive to code
+> as well as work: V22's first form read each sample's share from
+> `uLoopSamples.z` and cost 10% on a fully lit ring for loading the whole vec4
+> where it had loaded `.xy`. V22 in `review-findings.md` lists what else was
+> tried.
+
 - **`resolutionScale` is the strongest lever and it behaves.** 0.50 is 4.0x and
   0.25 is 13.6x, close to quadratic - so the blit really is cheap, and the
   scaled path is not eating its own saving.
 - **`numSamples` is linear** and defaults to its own ceiling
   (`NEON_MAX_LOOP_SAMPLES` = 128). Halving it halves the layer. The quality
-  cost is on the books as V9 in `review-findings.md`.
+  cost is the glow's colour blend, which coarsens with the sample count - V9
+  and V19 in `review-findings.md`. Since V18 the filament's own colour is read
+  pointwise and no longer pays it.
 - **`glowRadius` saturates above about 5**, because the quad is viewport-clipped
   by then. Trimming a glow from 20 to 10 buys nothing at all; trimming 5 to 2
   buys 2x. Worth knowing before anyone tunes it for speed rather than for looks.

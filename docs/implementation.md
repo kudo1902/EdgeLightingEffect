@@ -191,7 +191,10 @@ list and the `file(READ ...)` list in `lib/CMakeLists.txt`, and
 Bulk data reaches the shader three ways:
 
 - **UBOs** (std140): `LoopSamplesBlock` (128 perimeter points),
-  `SegmentBlock`, `ArcBlock`. Per-frame values that the shader indexes.
+  `SegmentBlock`, `ArcBlock`, and `PieceBlock` (each emitter piece's perimeter
+  span and run of samples, which the glow keeps its coverage per, and the
+  stretch of it the arcs light, which its field runs over). Per-frame
+  values that the shader indexes.
   `ArcBlock`'s `.w` is a bitmask, not a bool: bit 0 is "has own colour
   stops", bits 1 and 2 record whether another arc abuts this one's tail /
   head, which is what picks each endpoint's feather direction. Packed by

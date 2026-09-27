@@ -597,6 +597,13 @@ readable form stays.
 
 ### 1.10 The magnitude was still a nearest-edge read
 
+> **The fix described here was itself superseded.** It scaled all eight
+> pieces' fields by ONE ring-wide mean coverage, which lit every unlit edge's
+> own outline, left colour-stop alpha out of the glow, and made moving lights
+> tick. The glow now keeps one coverage per emitter piece, and each piece's
+> field runs only over the stretch of it the arcs light - see V15 to V17 and
+> V22 in `review-findings.md`. The diagnosis below still stands.
+
 Everything above is about the SHAPE of the halo and bloom - the field they
 paint when the whole perimeter emits at full strength. Section 1.4 removed the
 medial-axis crease from that field by summing over the emitter's pieces.

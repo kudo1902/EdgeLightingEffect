@@ -364,6 +364,48 @@
 //     not a fixed cost. ---
 #define NEON_MAX_LOOP_SAMPLES     128
 
+// --- Emitter pieces: the unit the glow's coverage is kept per.
+//
+//     The four straights and four corner arcs the halo and bloom are summed
+//     over. Sizes PieceBlock's three arrays, which tell both neon passes each
+//     piece's perimeter span, which run of loop samples lies on it, and the
+//     stretch of it the arcs light (V22). Not a knob - a
+//     rounded rect has exactly this many pieces, and neon.frag names them
+//     (0 x<0 side, 1 x>0 side, 2 y<0 side, 3 y>0 side, then the corners
+//     (+,+), (+,-), (-,+), (-,-) in rect-local, +y-up coordinates).
+//
+//     Coverage has to be per piece because the halo is a sum of per-piece
+//     fields: scaling that sum by ONE ring-wide coverage lit every unlit
+//     piece's own outline and diluted a lit edge by the dark one across from
+//     it. See docs/review-findings.md V16. ---
+#define NEON_EMITTER_PIECES       8
+
+// --- Where a SEGMENT's bloom crosses from its tight coverage to its broad one,
+//     in halo radii.
+//
+//     A segment's coverage is averaged over each piece's gather samples twice:
+//     BROAD, with the colour weight's 1/d^2 tails, and TIGHT, with a weight
+//     flat near the line and falling as 1/d^4 (neon.frag builds it from the
+//     colour weight with multiplies only). The broad one lets the bright
+//     middle of a segment keep lifting the average near the piece's dark
+//     ends; the tight one stays local. A segment's HALO takes the tight
+//     average; its BLOOM takes the tight one close to the piece's line and
+//     the broad one - times the reach bound read ring-wide - far from it,
+//     blended by d^2 / (d^2 + (GLOW_CORE_TO_HALO * glowRadius)^2).
+//
+//     That is a LOOK choice, made against V14's segment scene: a line that
+//     ends crisply past a segment's tail, inside a dome as broad and as dark
+//     at its edges as the one V14 drew. What it costs is a faint dark streak,
+//     2 to 7 levels, beside an unlit stretch just past where a segment ends.
+//     ARCS do not take it: they have no reach bound, their single broad
+//     average already matches a numerically integrated reference to 5%, and
+//     the same split at a partial arc's end drew the streak along the unlit
+//     ring. See V16 in docs/review-findings.md.
+//
+//     At 3 a segment's bloom is 90% tight 1 halo radius from the line and 90%
+//     broad 9 out. Smaller shrinks the crisp zone; larger widens the streak. ---
+#define GLOW_CORE_TO_HALO         3.0
+
 // --- Grading ---
 #define TONE_MAP_SHOULDER         0.6
 #define GAMMA_EXPONENT            0.85

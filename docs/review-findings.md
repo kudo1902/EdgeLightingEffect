@@ -43,6 +43,7 @@ old fork survived.
 | sixth pass | I16, I17, I19, I20 | I18 |
 | eighth pass | V11 | - |
 | twelfth pass | I21, I22, I23, I24 | - |
+| fourteenth pass | V15, V16, V17, V18, V19, V21, V22 | V20 |
 
 The R items come from a re-read after the V and I fixes landed - see
 [Second pass](#second-pass-after-bbdba62). V8 and V9 come from a later read of
@@ -86,6 +87,19 @@ sixth pass, so none of it had been reviewed. All four are fixed. They add no V
 item, but I21 was a genuine visual defect rather than a rough edge - it is
 recorded as an I because it is gated on a non-default `resolutionScale`, so no
 render ever showed it.
+
+V15 to V21 come from a deep read of the neon path at `99b3b89` - see
+[Fourteenth pass](#fourteenth-pass-the-deep-neon-review). Three are V14's own
+fix seen from the scenes it was not measured on: colour-stop alpha stopped
+reaching the glow, every unlit edge glowed in its own outline, and moving
+lights made the glow tick. All three had one cure - the glow's coverage kept
+per emitter piece, from a table built for it - and with the gather unrolled to
+pay for the per-piece walk, the layer came out about 10% faster than before. Two more, the filament taking the far edge's colour on thin shapes
+and stepping below 128 samples, had a second cure. V20, streaks the tone map
+puts through a strong bloom, is left open as a look decision. V22 came after,
+from a demo capture: that cure made an arc's end exact where it fell on a piece
+boundary and left it smeared where it did not, so one arc's two ends looked
+unrelated. Each piece's field now runs over the stretch of it the arcs light.
 
 ## How the visual items were reproduced
 
@@ -2456,6 +2470,13 @@ halo/bloom pedestal. An alpha ramp therefore fades the glow's magnitude less
 completely than an arc gate does. Nobody has reported it, and the cure is a
 measurable 20-30% on the layer.
 
+> **Superseded by V15 and V16.** Both halves of this note were wrong: the glow
+> kept its FULL magnitude over an alpha-0 stretch, and alpha needed no third
+> row - it folds into the two weights this fix already reads. The ring-wide
+> mean introduced here also lit every unlit edge's own outline (V16) and made
+> moving lights tick (V17). The per-piece coverage that replaced it is
+> described under [the fourteenth pass](#fourteenth-pass-the-deep-neon-review).
+
 **What let this through**: V4 was verified on a FULLY LIT ring, where the
 gathered and pointwise coverages are both identically 1.0 and no amount of
 probing can tell them apart. The scene set it was measured on had no partial
@@ -2783,6 +2804,733 @@ intensity is the whole price, and raising `intensity` - now safe - buys it back.
 
 ---
 
+## Fourteenth pass (the deep neon review)
+
+A full read of the neon path at `99b3b89`, probed offscreen rather than argued
+from the source. Seven findings. Three of them - V15, V16 and V17 - are
+consequences of V14's own fix, and like V10, V12 and V13 before them they were
+invisible to the scenes that fix was verified on: V14's table is full rings
+plus partial arcs with **opaque stops, whole edges and wide segments**, which
+is exactly the set where none of these show. Six are fixed; V20 is left open
+with the reason recorded. An eighth, V22, came in after the fix from a capture
+of the demo, and is the fix's own: it too is fixed.
+
+Every number below is an 8-bit level from the harness at the top of this
+document (600x400 at (200, 200), `cornerRadius` 40, 1000x800 capture,
+`colorTransitionDuration` 0, `hueRotationRate` 0) unless the row says
+otherwise. "Pre-V14" is the library built at `9e0302c^`. Each finding keeps its
+original description, with what was changed and how it was verified after it.
+
+### How the fourteenth pass was fixed
+
+V15, V16 and V17 share one cure, because they share one cause: the glow's
+magnitude is read from the emission table, and the table was built for hue.
+
+- **The glow keeps one coverage per emitter piece**, not one for the ring. The
+  halo and bloom were already a sum of eight per-piece fields; each is now
+  scaled by the mean coverage over that piece's OWN gather samples. A new
+  std140 `PieceBlock` (`NEON_EMITTER_PIECES` = 8 in `neon-tuning.h`, packed in
+  `NeonRenderer::rebuildLoopSamples`) gives both passes each piece's perimeter
+  span and its run of sample indices. Position 0 is a piece boundary in both
+  windings, so no run wraps. A corner too short to own a sample borrows the one
+  nearest its middle.
+- **The emission table's weights became the glow's coverage**, so they carry
+  what coverage has to carry: colour-stop alpha (V15), and each sample's MEAN
+  over its own cell of perimeter rather than its centre's value (V17) - the
+  exact overlap length for arcs, an `erf` integral for bells. Cells are cut at,
+  and stretched to, their piece's ends, so a piece's cells tile it and a short
+  piece cannot borrow a neighbour's light.
+- **Segments take a second, tighter average, and their reach bound is applied
+  after averaging.** That part is a look decision rather than a repair, made
+  on review of V14's own scene - see
+  [The segments' feathering](#the-segments-feathering-a-look-decision) under
+  V16. Arcs keep the single average: every scene without a segment is
+  byte-identical to the version without this step.
+- **Each piece's field runs over its LIT EXTENT** (V22, added after the rest):
+  the stretch of it the arcs light, with the coverage averaged over that
+  stretch alone. Without it an arc's end in the middle of a piece was drawn by
+  the whole piece's field and the average's slow falloff, while an end on a
+  piece boundary got the field's exact cap.
+- **The gather walks the pieces**, and folds each piece's field into the halo
+  and bloom in the same walk, so only two running pairs stay live. Unrolled
+  four samples a step (two with segments), every configuration without a
+  segment came out **faster than before the fix**; one with a segment paid for
+  its second average. V22 later spent most of that margin on fully lit rings
+  and returned it several times over on partly lit ones - its own timing is
+  under [V22](#v22-an-arcs-two-ends-differ-when-only-one-is-on-a-piece-boundary---fixed).
+  Before V22, neon-only at 1920x1080 on a 1600x900 rect, medians of eight
+  interleaved runs:
+
+| scene | before | after | |
+| ----- | ------ | ----- | - |
+| default ring | 4.71 ms | **4.43 ms** | -6% |
+| half-ring arc | 4.70 | 4.42 | -6% |
+| four tiling arcs | 4.96 | 4.64 | -6% |
+| `cornerRadius` 0 | 4.28 | 3.67 | -14% |
+| `resolutionScale` 0.5 | 1.18 | 1.12 | -5% |
+| plus one segment | 6.54 | 6.89 | +5% |
+
+(Absolute figures are from a slower session than the ones quoted elsewhere in
+this pass - the same `main` build measured 4.16 to 4.21 ms earlier. The ratios
+held across sessions; compare within one run.)
+
+The route there is worth recording, because two obvious shapes are slow. With
+the eight coverages gathered first and the fields weighted afterwards, sixteen
+floats stayed live across the rest of the shader: 1.9x the layer with eight
+separate loops, 1.25x with one nested loop and a one-hot flush. Folding the
+field into the walk took it to 1.21x; the short per-piece loops were what was
+left, and the unroll is what paid for them. Four samples a step in the segment
+body too was 0.25 ms faster there and 0.2 to 0.35 ms slower everywhere else -
+both bodies share one register allocation - so it stays at two.
+
+V18 and V19 share a second, independent cure: the filament's colour is read at
+its own perimeter position, from the texels already fetched there for alpha.
+
+[`glow-coverage-comparison.md`](glow-coverage-comparison.md) shows all of it:
+before/after sheets for 15 scenes and two time strips, with the regression
+checks alongside, then all 17 of the demo's neon animation presets at 48 frames
+each on the demo's startup scene.
+
+Scenes whose ring is fully lit and has no colour-stop alpha change in exactly
+one way, and only on the line: the filament now shows the ring's own colour
+instead of a blur of it (V18). 2 to 3% of pixels, max 31, all within the
+filament band. The glow of a fully lit ring is unchanged, to 1 level on at most
+31 pixels of 800,000 from the sums' new order.
+
+### V15. Colour-stop alpha no longer fades the halo or the bloom - FIXED
+
+**Confirmed.** Half the ring authored at alpha 0 - stops `{0.00 red a1, 0.45 red
+a1, 0.50 red a0, 0.95 red a0}`, so CCW the right and top edges are transparent:
+
+| | line | 6 px out | 12 px out | 30 px out |
+| - | ---- | -------- | --------- | --------- |
+| opaque half (bottom edge) | 245 | - | 117 | 84 |
+| **alpha-0 half (top edge)** | **174** | **145** | **117** | **84** |
+| alpha-0 half, pre-V14 | 0 | 0 | 0 | 0 |
+| the same half switched off with an ARC instead | 21 | 14 | 11 | 10 |
+
+From 12 px out the transparent half is **identical** to the opaque one. Only the
+filament core goes; the 174 left on the line is the halo peak without it.
+
+![](images/review-findings/neon-alpha-glow.png)
+
+The contract is stated in two places and this breaks both: `ColorStop` in
+`config.h` and the colour-stop section of `effect-reference.md` say alpha
+"attenuates the filament, halo and bloom together" and that 0 "goes fully dark
+there and lets the background show through".
+
+**Mechanism.** V14 moved the glow's magnitude from the pointwise `emitCover` -
+which carries alpha - to `emitCoverGathered = wsumLit / wsumAll`. Both sums come
+from the emission table's `.a` channels, which are `arcW` and `SUM(bell)`, and
+neither has alpha in it. Nor does the colour: `ColorUtils` bakes the LUTs with
+STRAIGHT alpha, on purpose (the gathered hue is normalised, so alpha folded into
+RGB would divide straight back out). So nothing on the glow path sees alpha at
+all.
+
+V14 recorded this as a known limit and got both halves of the note wrong. It says
+an alpha ramp "fades the glow's magnitude less completely than an arc gate
+does" - it does not fade it at all. And it says the cure needs "a third table
+row and so a third `texelFetch`" - it does not, because both consumers of the
+`.a` weights want alpha in them. The hue is normalised by the same weight it is
+gathered with, so alpha cancels out of it; the coverage is exactly the thing
+alpha is meant to scale. The comment above `wsumDen` in `neon.frag` repeats the
+first error ("still gates the glow through the emission colour").
+
+**Fix direction.** Multiply the winner's LUT alpha into row 0's weight and each
+segment's alpha into its bell in `neon-emission.frag`. The alpha is already in
+the texel each of those reads fetches, and the pass is 256 fragments. Prototyped
+at HEAD: **byte-identical on every one of twelve scenes without alpha stops**
+(full rings sharp and rounded, small rect, inside cutoff, scale 0.5, wide glow,
+circle, a segment on a lit ring, hue rotating, a half-ring arc, two arcs with
+their own stops, a segment on a dark ring), unmeasurably different in cost, and
+it takes the alpha-0 half to 22 / 15 / 11 / 10 - the same as the arc-gated half.
+What is left there is V16.
+
+**Fix.** Exactly that, in `neon-emission.frag`: row 0's weight is
+`arcW * alpha` of the winner's texel, and each bell is multiplied by its own
+segment's alpha (a stop-less segment's is the colour it falls back to). The
+comment in `neon.frag` that claimed otherwise is gone, and the pre-pass header
+now says why alpha belongs in those weights and never in the colour.
+
+**Verified**, with V16's fix in as well:
+
+| | line | 6 px out | 12 px out | 30 px out |
+| - | ---- | -------- | --------- | --------- |
+| alpha-0 half, before | 174 | 145 | 117 | 84 |
+| **alpha-0 half, after** | **1** | **1** | **1** | **1** |
+| the same half switched off with an arc, after | 1 | 1 | 1 | 1 |
+| opaque half, before / after | 245 / 245 | - | 117 / 116 | 84 / 84 |
+
+| before | after |
+| ------ | ----- |
+| ![](images/review-findings/neon-alpha-glow.png) | ![](images/review-findings/neon-alpha-glow-fixed.png) |
+
+### V16. An unlit stretch of the perimeter glows in its own outline - FIXED
+
+**Confirmed, and it grows with the rect's aspect ratio.** One arc lighting only
+the top straight. Profiles taken ACROSS each unlit edge at its midpoint, from 24
+px outside to 24 px inside, step 4 - the middle column is the unlit line itself:
+
+| scene | edge | profile |
+| ----- | ---- | ------- |
+| 600x400 r40 | bottom | 6 6 6 6 7 9 **12** 9 7 6 5 5 5 |
+| 600x400 r40 | left | 9 9 9 10 11 16 **19** 15 11 10 10 10 10 |
+| 1200x400 r0 | bottom | 11 12 12 13 15 20 **27** 22 15 13 11 10 10 |
+| 1200x400 r0 | left | 14 15 16 17 21 29 **36** 27 21 18 17 16 16 |
+| 1200x40 r0 | bottom | 105 99 94 92 93 103 **117** 100 80 69 62 58 55 |
+
+Every unlit edge carries a ridge exactly on its own line. A genuinely dark edge
+sits in the smooth field of the lit one and has no local maximum across it. The
+thin bar makes the error unmistakable: at the same distance from the lit line,
+the glow is 73 above it and **117** on the unlit bottom edge 39 px below - that
+edge is credited with 44 levels of light it does not emit. Pre-V14 every one of
+these profiles reads 0, but that was V14's hard medial-axis cut instead.
+
+![](images/review-findings/neon-phantom-outline.png)
+
+![](images/review-findings/neon-phantom-outline-bar.png)
+
+**Mechanism.** The halo and bloom are already a sum over the emitter's eight
+pieces - four straights, four developed corner arcs (V4, V10, V12). V14 scaled
+that WHOLE sum by one scalar, the ring-wide mean coverage. So an unlit piece
+still contributes its own field, scaled by however lit the rest of the ring
+looks from here, and its field peaks on its own line. The correct factorisation
+is per piece:
+
+```
+INTEGRAL cover(s) K(p - P(s)) ds  ~=  SUM_pieces cover_mean_piece(p) * INTEGRAL_piece K
+```
+
+The same scalar also errs the other way, which the ridge partly hides: on a thin
+shape the lit edge's mean is diluted by the dark edge across from it, because
+the gather weight `g = 1 / (d^2 + kc^2)` is Euclidean and `kc` is 0.88% of the
+perimeter. On the 1200x40 bar the opposite edge carries about 29% of the weight
+at the lit line. Removing the ridge alone - weighting each piece by whether it
+is lit at all - dims the lit edge's glow 24 px out from 92 to 73.
+
+**Three prototypes, none shippable as written**, measured at 1920x1080 with the
+neon layer alone (HEAD 4.34 ms full ring):
+
+| approach | fixes | cost | breaks |
+| -------- | ----- | ---- | ------ |
+| coverage read pointwise at each piece's own foot point | V15, V16, V17 entirely | +45%; +92% with four arcs | a lit edge's glow is cut dead past its own end when the arc ends at a corner - 81 to 0 over 12 px |
+| per-piece gathered means (the loop walked piece by piece) | V15, V16 on normal rects, V17 arcs 20 -> 5 | +33% | the 2-sample short sides of the thin bar keep a ridge; narrow segments still flicker |
+| a per-piece lit/unlit factor computed on the CPU | V16 on normal rects | +6 to +9% | the thin bar's lit edge dims 20%, the dilution above |
+
+The second is the right shape, and its two defects have identifiable causes.
+The short-side ridge is the pre-pass feathers bleeding up to a sample's worth
+of coverage across a piece boundary: the 1200x40 bar's 40 px sides own two
+samples each, so one partly lit neighbour is half the side. The cost turned out
+to be what the per-piece coverages did to the rest of the shader - see
+[How the fourteenth pass was fixed](#how-the-fourteenth-pass-was-fixed).
+
+**Fix.** Per-piece coverage, as described there: the gather walks each piece's
+own run of samples and scales that piece's field by that piece's mean, and the
+pre-pass clips each sample's cell to its own piece. No other prototype's
+defect survives: the short sides own exactly their own light, the lit edge is
+no longer diluted, and a lit edge's glow still spills past its end, because
+the mean is over the piece's samples rather than read at one point.
+
+**Verified.** The same profiles:
+
+| scene | edge | before | after |
+| ----- | ---- | ------ | ----- |
+| 600x400 r40 | bottom | 6 6 6 6 7 9 **12** 9 7 6 5 5 5 | 0 0 0 0 0 0 **0** 0 0 0 0 0 0 |
+| 600x400 r40 | left | 9 9 9 10 11 16 **19** 15 11 10 10 10 10 | 5 5 5 5 5 6 **6** 6 6 6 6 6 6 |
+| 1200x400 r0 | bottom | 11 12 12 13 15 20 **27** 22 15 13 11 10 10 | 0 0 0 0 0 0 **0** 0 0 0 0 0 0 |
+| 1200x400 r0 | left | 14 15 16 17 21 29 **36** 27 21 18 17 16 16 | 6 6 7 7 7 7 **7** 7 7 7 8 8 8 |
+| 1200x40 r0 | bottom | 105 99 94 92 93 103 **117** 100 80 69 62 58 55 | 107 99 93 87 82 78 **74** 70 66 63 59 57 54 |
+
+What is left on the left edges is light from the lit top edge, not from the
+left edge: it has no ridge and runs smooth through the line. On the thin bar
+the glow at the same distance from the lit line is now 75 above it and 74 on
+the unlit edge below (it was 73 and 117), and the lit edge's own glow reads the
+same as on the 1200x400 rect - 93 99 107 117 134 at 24 to 8 px out - where
+before it was diluted.
+
+| before | after |
+| ------ | ----- |
+| ![](images/review-findings/neon-phantom-outline.png) | ![](images/review-findings/neon-phantom-outline-fixed.png) |
+| ![](images/review-findings/neon-phantom-outline-bar.png) | ![](images/review-findings/neon-phantom-outline-bar-fixed.png) |
+
+**Against ground truth.** The glow is an approximation to
+`SUM_pieces INTEGRAL cover(s) K(p - P(s)) ds`, so it can be checked against that
+integral computed numerically with the shader's own halo and bloom kernels,
+pedestals and gains, the drawn value inverted back through the grade. Mean and
+worst relative error over 45 and 52 points around each scene's lit/unlit
+boundary:
+
+| scene | before | after |
+| ----- | ------ | ----- |
+| arc on the right 240 px of the top edge, r0 (free end mid-edge, abutting an unlit side at the corner) | 10.1%, worst 122% | **5.3%, worst 17%** |
+| V14's own scene: a boost-4 white segment on a dark ring, 960x540 r0, CW | 39.7%, worst 87% | 42.4%, worst 90% - see below |
+
+The worst points on the arc were 1 to 2 levels in the far tail past its
+mid-edge free end, where the gather's Lorentzian weight falls as 1/d^2 against
+the halo's 1/d^3. Before, the worst was the phantom ridge on the unlit edge
+line. V22 removed that tail by ending the field where the arc ends: the arc row
+now reads **1.1%, worst 4.1%**.
+
+The segment row needs its reference read carefully. A segment's glow carries a
+non-linear reach bound, and "the integral" has to pick where that bound is
+applied; this reference applies it pointwise. The first version of this fix
+did the same and came within 14.2%. That version was then rejected on review
+for how it LOOKED, in favour of V14's own feathered falloff, which the
+pointwise reference scores as it scored V14 - see the next section. The arc row
+is the one that measures the per-piece coverage itself.
+
+Also checked: lighting each rounded corner alone, in both windings, lights that
+corner at 91 and reads 0 at the other three (before, 90 and 1 to 2 of ghost); a
+`cornerRadius` 4 ring, whose corners are shorter than a sample spacing and so
+borrow one, is unchanged in its glow; a pill, a circle, a 7-sample and a
+1-sample ring and a zero-size rect render with no holes; and the largest
+adjacent-pixel step anywhere more than 12 px off the line is 4 levels in five
+partly lit scenes, the same as before - no crease came back.
+
+#### The segments' feathering: a look decision
+
+The first version of this fix applied the segments' reach bound,
+`max(arc, min(segment, 1))`, per sample before averaging, which is what the
+pointwise reference above assumes. Reviewed against V14's own scene it lost
+something V14 had: V14's segment glow **feathered off** - a compact dome that
+fell away steeply past the segment's ends and went dark at a distance. The fix
+filled the frame with a grey haze and drew a thin trail of glow along the edge
+past the line's end, stopping in a dot at the corner.
+
+Two things made V14's falloff, and the fix had removed both. V14 applied the
+bound AFTER averaging, so where the local average was low - past a tail, far
+from the segment - the glow went as its square. And it averaged over the whole
+ring, so away from the segment three dark edges diluted the average further.
+The per-sample bound does nothing for a bright segment (its per-sample coverage
+is at or above 1 almost everywhere that matters). The per-piece average has no
+dilution, and its 1/d^2 weight lets the segment's bright middle keep lifting it
+near the piece's dark ends.
+
+Candidates, rendered on V14's scene (1 = `main`, 2 = everything on a tight
+1/d^4 average):
+
+![](images/review-findings/neon-segment-feathering.png)
+
+The one chosen was **B**: 2's crisp line ends inside 1's broad dome and dark
+surroundings. For segments only:
+
+- the halo, and the bloom close to the piece's line, take a TIGHT average - a
+  weight flat near the line and falling as 1/d^4, built from the colour weight
+  with multiplies only - with the reach bound applied per piece after it;
+- the bloom far from the line takes the colour-weighted average, with the
+  reach bound read from the WHOLE ring as V14 read it. That scalar cannot light
+  an unlit piece the way V14's did, because it scales each piece's own
+  average, and an unlit piece's is 0;
+- the two are blended by `d^2 / (d^2 + (GLOW_CORE_TO_HALO * glowRadius)^2)`,
+  `GLOW_CORE_TO_HALO` = 3 in `neon-tuning.h`.
+
+Glow 20 px from the edge, walking right past the segment's tail, and 120 px
+below it, every 60 px:
+
+| | past the tail, 20 px out | 120 px below |
+| - | ------------------------ | ------------ |
+| `main` | 133 82 40 17 8 7 7 | 66 42 24 10 5 4 5 |
+| first version | 130 90 57 37 32 24 19 | 69 55 43 34 27 22 17 |
+| **shipped** | 129 71 28 9 4 4 4 | 69 44 24 11 4 5 5 |
+
+**What it costs.** A crisp line end inside a broad dome means the glow drops
+close to the line past the end while staying broad further out - so across the
+line there, it dips: 16 at 70 px out, 9 at 20 px, 16 on the line, 9 below. A
+faint dark streak of 2 to 7 levels beside the unlit stretch just past where a
+segment ends. Candidate A (the tight average for the halo only) has no streak
+and a softer line end; C (A plus a squared ring-wide bound) has 2's line ends
+and no streak but a narrower, darker dome. Both remain a one-line change away
+if the streak ever shows.
+
+**Arcs do not take it.** They have no reach bound; their single average
+already matches the reference to 5%; and the same split at a partial arc's end
+drew the streak along the unlit ring of a circle. Every scene without a segment
+is byte-identical to the version before this step. Segment motion improved
+with it - a 0.005-long segment's glow swings 2 levels as it moves, where the
+first version swung 6 - because the tight average stays local to the cells
+the segment actually lights.
+
+### V17. A moving arc or a narrow segment makes its glow tick - FIXED
+
+**Confirmed.** Stepping the whole configuration through one gather-sample
+spacing in eighths and reading the glow 12 px outside the line at points fixed
+relative to the moving light:
+
+| light | point | HEAD | pre-V14 |
+| ----- | ----- | ---- | ------- |
+| arc, length 200 px, rotating | 6 px behind the tail | 58..79 (swing **21**) | 0 |
+| | at the tail | 68..87 (swing **19**) | 0 |
+| | at the head | 83..88 (swing 5) | 0..2 |
+| segment, length 0.15 | at its centre, 10 px out | swing 0 | swing 0 |
+| segment, length 0.01 | | 83..99 (swing **16**) | 186..187 |
+| segment, length 0.005 | | 6..86 (swing **80**) | 186..187 |
+
+A spinner at 0.5 rev/s crosses 64 samples a second, so the tail flickers at
+64 Hz.
+
+**Mechanism.** V14 made the glow's magnitude a function of the emission table,
+and the table is sampled at the gather spacing. Two things in it are narrower
+than that spacing and so alias. `arcInside`'s TAIL feather is a quarter of a
+spacing - close to a step - so each sample flips nearly on or off as the tail
+crosses it (the head's one-spacing feather is why the head is steadier). And a
+segment's bell is point-sampled, so one narrower than the spacing reads its peak
+or its flank depending on where it sits between two samples. Before V14 neither
+mattered: the table only carried hue, and the magnitude was pointwise.
+
+**Fix.** Each sample now carries the MEAN of its coverage over its own cell -
+the stretch of perimeter half a spacing either side of it - which is
+continuous in the light's position, so the sum over samples is too. For an arc
+that is the exact overlap length of cell and arc (`arcOverlap`), which replaced
+`arcInside` and its asymmetric feathers; for a bell it is the Gaussian's
+integral over the cell, through an `erf` (Abramowitz & Stegun 7.1.26, error
+1.5e-7 - GLSL has none). The segments' reach bound is applied after the
+per-piece averages, not per sample - see
+[The segments' feathering](#the-segments-feathering-a-look-decision) under V16;
+applied per sample from the one-cell mean, it jumped with a sub-spacing bell
+from sample to sample and put a 12-level flicker back on the shortest segment.
+
+**Verified**, same stepping:
+
+| light | point | before | after |
+| ----- | ----- | ------ | ----- |
+| arc, length 200 px, rotating | 6 px behind the tail | swing 21 | **swing 3** |
+| | at the tail | swing 19 | **swing 2** |
+| | at the head | swing 5 | swing 2 |
+| segment, length 0.15 | at its centre, 10 px out | swing 0 | swing 0 |
+| segment, length 0.01 | | swing 16 | **swing 0** |
+| segment, length 0.005 | | swing 80 | **swing 2** |
+
+What remains is the gather weight itself varying across a cell, for a light
+shorter than one spacing seen from 10 px away. The glow of such a light is also
+dimmer than before V14 (38 to 40 against 186 for the 0.005 segment), and that
+is correct: a 10 px light emits less than the 300 px one the pointwise read
+treated it as.
+
+### V18. On a long, thin shape the filament takes the opposite edge's colour - FIXED
+
+Not from V14; this is as old as the gathered hue. A two-tone ring - blue along
+the bottom, red along the top, the transitions on the short sides:
+
+| rect | top line (should be red) | bottom line (should be blue) |
+| ---- | ------------------------ | ---------------------------- |
+| 1200x40 | (241, 0, **127**) | (**127**, 0, 241) |
+| 1200x80 | (243, 0, 77) | (76, 0, 243) |
+| 600x48 | (243, 0, 67) | (66, 0, 243) |
+| 1200x400 | (245, 0, 21) | (20, 0, 245) |
+
+![](images/review-findings/neon-thin-hue.png)
+
+**Mechanism.** The FILAMENT is coloured by `col`, the Lorentzian-weighted mean
+of the emission table over every sample. The weight is Euclidean, so the
+opposite edge of a shape `h` px thick - a whole line of samples - contributes
+about `kc / sqrt(h^2 + kc^2)` of the near edge's weight, and `kc` scales with
+the perimeter while `h` does not: 29% at 1200x40. The comment at `kc` states
+the intent this breaks ("a wide glow has no business desaturating the ring").
+A search field or a progress bar is exactly this shape.
+
+For the GLOW this mixing is defensible - light from the far edge does reach a
+fragment near this one. For the filament it is not: the tube's own colour is a
+pure function of its own perimeter position, and the texel that says what it is
+is already fetched there, for alpha.
+
+**Fix.** The filament is coloured from those texels: the base gradient at
+`sPos` for an arc without stops, the arc's own row for one with them, the
+segment's row for a segment. Where arcs overlap - including across the
+overlapping feathers at a seam - the colour is their mean weighted by
+`(coverage x intensity)^4`: winner-take-all wherever the arcs differ (a
+0.3-intensity arc under a 1.0 one contributes 0.8% of the hue) and continuous
+across a seam, where a max() would switch hue in one pixel. A stop-less segment
+takes the arc colour where an arc covers and the base colour where none does,
+blended by the arc's own coverage across its free end - the pre-pass's
+fallback rule, pointwise. The glow keeps `col`. No new fetch.
+
+**Verified:**
+
+| rect | top line, before | top line, after |
+| ---- | ---------------- | --------------- |
+| 1200x40 | (241, 0, 127) | (245, 0, 13) |
+| 1200x80 | (243, 0, 77) | (245, 0, 8) |
+| 600x48 | (243, 0, 67) | (245, 0, 8) |
+| 1200x400 | (245, 0, 21) | (245, 0, 2) |
+
+What is left on the line is the halo's share of that pixel, which keeps the
+far edge's light on purpose.
+
+| before | after |
+| ------ | ----- |
+| ![](images/review-findings/neon-thin-hue.png) | ![](images/review-findings/neon-thin-hue-fixed.png) |
+
+A seam between two arcs of different colours (yellow into blue at the
+bottom-right) now crossfades over about 16 px through white, where before the
+gathered hue smeared yellow 25 px into the blue arc and held white for 10 px.
+Down the right-hand line toward the seam:
+
+```
+y       536  544  552  556  560  564  568
+before  (105,112,242) (152,156,240) (235,237,223) (238,239,174) (240,240,138) (242,240,113) (242,240, 95)
+after   (  7, 15,245) (  8, 13,245) ( 23, 25,244) (135,135,240) (231,231,236) (242,242,103) (245,244, 21)
+```
+
+On a fully lit default ring the change is confined to the filament band - 2.8%
+of pixels, max 31 - and is the line showing its gradient at full saturation:
+(21, 35, 244) before at the blue stop, (2, 4, 245) after.
+
+### V19. Below 128 gather samples the filament's gradient steps - FIXED
+
+`kc` is pinned to a perimeter fraction that makes it 1.13 sample spacings at
+`NEON_MAX_LOOP_SAMPLES` = 128, and to nothing in particular at any other count.
+At `numSamples` 32 it is 0.28 spacings, and the gathered hue snaps toward the
+nearest sample. Green channel along the default ring's top edge, every 8 px:
+
+```
+128: 56 60 64 68 72 76 80 84 87 91 95 99 103 107 110 114 118 122 125 129 ...
+ 32: 52 56 62 69 76 80 81 82 84 88 95 101 107 110 111 112 115 120 126 132 ...
+```
+
+Plateaus 60 px apart - the sample spacing - with the slope swinging about 7x
+between them. No single step is over 3 levels, so it reads as banding rather
+than as seams. It is V9's mechanism on the BASE gradient: V9 found it on arcs
+with their own stops and closed it as a design decision, but the base gradient
+is the common case. `config.h` and `effect-reference.md` both say a low count
+makes the HALO grainy, which stopped being true when the halo went analytic; it
+is the ring's colour that degrades. `neon-perf-review.md` section 8 recommends
+halving `numSamples` for speed without mentioning either.
+
+Fixing V18 by colouring the filament pointwise fixes this on the filament too.
+The glow keeps the gathered hue and so keeps a milder form of it, blurred by
+distance.
+
+**Fix.** V18's. **Verified**, the same green channel after it:
+
+```
+128: 47 51 56 60 65 69 73 77 82 86 90 94 98 102 106 110 114 118 122 126 ...
+ 32: 46 51 56 60 65 69 73 77 81 86 90 94 99 102 106 110 114 118 122 126 ...
+```
+
+32 samples now track 128 to one level along the whole edge. At 7 samples the
+filament went from visibly blotchy to the true gradient (up to 137 levels of
+change, all on the line); the halo at 7 samples is still coarse, which is what
+the doc comment on `numSamples` now says instead of "grainier halo".
+
+### V20. The tone map puts streaks through a wide, bright glow - OPEN
+
+The grade is hue-preserving Reinhard on the PEAK channel:
+`out = c * f(peak) / peak`. `max()` is not differentiable where two channels
+tie, and neither is the result: along any path where R and G cross, the output's
+slope changes by `peak * (dG - dR) / (peak + TONE_MAP_SHOULDER)^2`. At
+`glowRadius` 40, `bloomStrength` 1 the default rainbow draws visible straight
+streaks through the bloom along those tie lines. Down x = 500:
+
+```
+y   360   370   375   380   385   390   400   420
+R   154   151   150   148   145   142   136   123     slope -0.3/px -> -0.6/px
+G   143   145   147   148   148   148   148   148     slope +0.3/px ->  0
+```
+
+The kink sits exactly where R = G, and a matching one where G = B across y = 700.
+It is largest where the peak is near the shoulder, which is the body of a strong
+bloom; at the default `glowRadius` 5 / `bloomStrength` 0.3 the glow is too dim
+for it to show.
+
+**Left open, deliberately.** Every smooth replacement for the `max()` changes
+the look of glows that have no streak at all:
+
+- `0.5 * (a + b + sqrt((a - b)^2 + e^2))` is above the max at every tie, and a
+  white or grey glow is a tie everywhere, not just along a line - a white
+  segment's whole glow dims by up to ~4% at a width that smooths the streak.
+- A softmax-weighted mean of the channels is exact at a full tie but pulls the
+  peak down for mixed colours, so an orange core like (12, 6, 0) comes out 3.6%
+  brighter and every warm mix shifts.
+- A p-norm scales white by 3^(1/p).
+
+A global retune of warm and white glows for an artefact that needs
+`bloomStrength` near 1 to see is a look decision, not a repair. The mechanism
+and the measurements are here for whoever makes it.
+
+### V21. Arc abutment has no slack on one side - FIXED
+
+`PackArcFlags` decides whether another arc takes over at an arc's head with
+`rHead < o.length - EPS`, where `rHead` is the head measured forward from the
+other arc's start and wrapped to `[0, 1)`. An end that falls a hair SHORT of the
+neighbour's start wraps to just under 1 and fails the test; the tail's test has
+`EPS` slack on both sides. Measured by nudging the first of two tiling arcs:
+
+| arc 0 length | head abuts | min filament at the seam |
+| ------------ | ---------- | ------------------------ |
+| 0.5 | yes | 245 |
+| 0.5 + 3e-6 | yes | 245 |
+| 0.5 - 1e-6 | **no** | **239** |
+
+A 6-level dip, because the filament core sits deep in the tone map's shoulder -
+the same half-coverage notch V2 fixed, mostly hidden. Equal splits
+(`start = i/N`, `length = 1/N`, N up to 8) never land short in float, so no
+authored config found hits it; an animation driving an end onto a neighbour
+could.
+
+**Fix.** The head's offset is wrapped to `[-EPS, 1 - EPS)` instead of
+`[0, 1)`, so an end a hair short of the neighbour's start reads as a tiny
+negative offset and passes. **Verified:** nudges of -1e-6, -3e-6 and -8e-6 all
+read 245 at the seam, the same as an exact tiling; the positive nudges are
+unchanged.
+
+### V22. An arc's two ends differ when only one is on a piece boundary - FIXED
+
+Found after the fix above, from a capture of the demo: one arc 0.12 long from
+the top-left corner of a 1920x1080 `cornerRadius` 0 rect (3840x2160 frame,
+`lineWidth` 1, `glowRadius` 22, `bloomStrength` 0, CCW). Its tail sits on the
+corner and its glow stops there. Its head is 720 px down the left edge, and its
+glow trails on down the unlit rest of that edge to the next corner, so the two
+ends of one arc look unrelated.
+
+**Cause.** V16's fix scales each emitter piece's WHOLE field by one averaged
+coverage. Where an arc ends on a piece boundary, the lit piece's own field ends
+there too, which is the field's exact analytic cap. Where it ends in the middle
+of a piece, that piece's field keeps running at full strength past the end, and
+only the average says where the light stops. The average falls slowly: its
+Lorentzian weight has a width of 0.88% of the perimeter (53 px here) and 1/d^2
+tails, so the coverage past the end is still 7% 350 px on. `main` drew the
+mid-edge end the same way, and smeared the corner end too, round onto the top
+edge. V16 fixed the end that happened to fall on a boundary and left the other,
+which is what made the difference visible.
+
+Measured in one colour (the stops change hue along that edge, and a
+peak-channel read confuses hue with brightness), 12 px outside the edge, by
+distance past each end, against the halo integrated numerically over the lit
+720 px alone:
+
+| px past the end | -40 | 0 | 20 | 60 | 100 | 200 | 300 |
+| --------------- | --- | - | -- | -- | --- | --- | --- |
+| truth | 137 | 100 | 52 | 15 | 7 | 2 | 1 |
+| `main`, head (mid-edge) | 122 | 108 | 96 | 70 | 50 | 26 | 17 |
+| `main`, tail (corner) | 124 | 107 | 66 | 20 | 9 | 2 | 1 |
+| before V22, head | 122 | 103 | 87 | 62 | 45 | 26 | 19 |
+| before V22, tail | 137 | 101 | 54 | 15 | 7 | 2 | 1 |
+| **fixed, head** | **137** | **100** | **52** | **15** | **7** | **2** | **1** |
+| **fixed, tail** | **138** | **102** | **54** | **16** | **7** | **2** | **1** |
+
+![](images/review-findings/neon-arc-ends.png)
+
+**Fix.** Each piece's field runs over its LIT EXTENT: the hull of every arc's
+overlap with the piece, measured the way the pre-pass's `arcOverlap` measures
+it. `NeonRenderer::packLightBlockData` works it out whenever the arcs, the
+geometry, the sample count or the resolution scale move, and packs two more
+arrays into `PieceBlock`:
+
+- `uPieceLit`: the extent in the piece's own terms - a straight's coordinate
+  along its axis, a corner's angle in its frame - and the run of samples whose
+  cells reach into it.
+- `uPieceWhole`: the whole piece in the same terms, and the share of the lit
+  run's first and last cell that lies inside the extent.
+
+`pieceField` takes the stretch to evaluate. A straight's segment integral runs
+between the extent's ends. A corner's developed arc is linear in the angle, so
+its ends move by `lam` times how far their angles moved, and the shared arc
+pedestal takes the lit share. The coverage is averaged over the lit run alone,
+with the two end cells' weights taken at their shares. Each cell's emission
+weight is its mean over the WHOLE cell, so a uniform arc averages to exactly 1
+up to its end, and a sample the end sweeps into arrives with nothing and
+grows, with no step as the end crosses a cell. The field is then the analytic
+field of the stretch that emits, whichever piece boundary the end is or is not
+on.
+
+Three consequences:
+
+- **A dark piece is skipped outright** when there are no segments. That is
+  where the speed-up on partly lit rings below comes from.
+- **A segment still takes the whole piece's field**, since it can sit anywhere
+  on the piece. The field is evaluated a second time only on a narrowed piece.
+- **A borrowed corner** - one shorter than a sample spacing, reading a
+  neighbour's sample - divides that sample's weight by how much of its cell
+  the arcs light. Otherwise an arc ending inside the neighbour's cell dims the
+  whole corner to that share. Measured at 7 samples: worst 17 levels, then 7.
+
+A fully lit piece keeps its whole run, shares of 1 and the whole piece's
+limits, which are the expressions the field always had, so a fully lit ring
+draws what it drew. 14 of the 17 comparison scenes are byte-identical to before
+V22, and `default-ring` and `arc-seam` differ on one pixel each by one level,
+from the sums' order.
+
+**Verified.**
+
+- Both ends of the reported arc match the truth above to 2 levels.
+- A partial arc on shapes whose arc ends fall INSIDE corner pieces is within 1
+  to 2 levels of truth at both ends: a 400 px circle and a 600x400 rect with
+  `cornerRadius` 120, where `main` was off by 14 to 26.
+- The ground-truth arc scene above went from 5.3%, worst 17%, to 1.1%, worst
+  4.1%.
+- A moving arc does not tick: on the rotating-arc time strip in
+  `glow-coverage-comparison.md`, the largest frame-to-frame second difference
+  is 2 levels, against 3 before V22 and 17 on `main`.
+- An edge-case sweep, red, halo only, `lineWidth` 1, `glowRadius` 22, sampled
+  on rings 12 and 30 px outside and inside the perimeter every 0.5% of it. Mean
+  and worst |drawn - truth| in levels:
+
+| case | `main` | before V22 | fixed |
+| ---- | ------ | ---------- | ----- |
+| r0, arc from a corner, CCW / CW | 5.5 / 22 | 1.5-1.9 / 17 | **0.0 / 0** |
+| r40, both ends mid-edge, CCW / CW | 7.1-7.6 / 27 | 2.3-3.0 / 17 | **0.4 / 7** |
+| r40, an arc wrapping past position 0 | 6.5 / 26 | 1.7 / 13 | **0.5 / 9** |
+| r40, a dark arc beside a lit one | 6.6 / 26 | 0.3 / 8 | 0.3 / 8 |
+| r4 at 32 samples (borrowed corners) | 9.5 / 61 | 3.7 / 49 | **0.03 / 1** |
+| r40 at 7 samples | 21.7 / 124 | 12.0 / 69 | **0.4 / 7** |
+| 600x48 pill | 7.6 / 14 | 3.6 / 12 | **0.0 / 0** |
+| 400 px circle | 6.0 / 18 | 2.7 / 15 | **1.2 / 4** |
+| r40, `resolutionScale` 0.5 | 7.6 / 26 | 2.3 / 14 | **0.4 / 7** |
+| r0, two arcs with a gap on one edge | 5.3 / 24 | 1.7 / 17 | 0.7 / 18 |
+
+The remaining worst points in the rounded cases, 7 to 9 levels 30 px inside,
+are the corner development's own error: a fully lit ring reads 6 there, before
+V22 and after.
+
+**What it does not cover.** The extent is a HULL, one stretch per piece:
+
+- **Two arcs on one piece with a gap between them** light the gap with the
+  averaged coverage, as before (the last row). Splitting a piece into several
+  lit stretches would close it.
+- **An alpha fade that ends mid-piece** is still averaged rather than
+  narrowed, since alpha is part of the coverage, not of the extent.
+
+**Cost.** Neon-only at 1920x1080 on a 1600x900 rect, `cornerRadius` 40, medians
+of eight interleaved runs:
+
+| scene | `main` | fixed | |
+| ----- | ------ | ----- | - |
+| default ring | 4.26 ms | 4.35 ms | 1.02 |
+| half-ring arc (ends on piece boundaries) | 4.76 | 3.03 | 0.64 |
+| arc 0.1 to 0.55 (both ends mid-piece) | 4.70 | 2.86 | 0.61 |
+| arc 0.12 from a corner | 4.66 | 1.09 | 0.23 |
+| default ring plus one segment | 6.65 | 7.66 | 1.15 |
+| arc 0.1 to 0.55 plus one segment | 6.63 | 8.08 | 1.22 |
+| `cornerRadius` 0 | 4.32 | 3.88 | 0.90 |
+
+Against the branch just before V22, a fully lit ring costs about 1.09x and one
+with a segment 1.11x; a partly lit ring runs 1.5 to 4x faster. The fully lit
+cost is not work - those pieces compute what they did - but the extra code's
+share of the one register allocation the whole gather lives in. What was tried:
+
+- **Each sample's share in `uLoopSamples.z`** instead of per piece: 1.14x,
+  because reading the whole vec4 doubles the constant traffic of the hottest
+  loop.
+- **A second copy of the old loop behind a uniform flag**: about 1.06x - the
+  unused copy still costs registers.
+- **A second compiled variant of `neon.frag`**, the narrowing behind a
+  compile-time switch, picked per frame: 0.99x on the fully lit ring and 1.06x
+  with a segment. It was declined for the second compile of the largest shader
+  at `Initialize` (about 15 ms here, unmeasured on the TV targets) and the
+  program switch it adds. It is the route back if a fully lit ring's 9% ever
+  matters more than that.
+
+### Checked and found correct, for the record
+
+- A circle or pill whose centre lands on a pixel centre, where
+  `perimeterPosition` divides by a zero-length straight on the one row or column
+  with `vPos` exactly on the axis: no artefact on this driver, column 350 of a
+  301 px circle reads the same as its neighbours at every height.
+- The hue-contamination of V18 on the GLOW, as opposed to the filament: that is
+  light from the far edge, and it is left alone.
+
+---
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
@@ -2790,10 +3538,11 @@ I9, I10 and I11. I3's structural half - the last thing on this list that was
 open rather than declined - closed with the neon unification, which deleted the
 fork it followed from. The fifth pass's I15 landed with it. The seventh through
 tenth passes are one item each and all four are fixed, as are the eleventh's one
-and the twelfth's four. Five items from the
-first pass remain deliberately open, each with the reasoning recorded next to
-the code rather than only here, plus R7 from the second pass, V9 and I12's
-remainder from the third, I13 from the fourth, and I18 from the sixth:
+and the twelfth's four. The fourteenth pass fixed seven of its eight. Five items
+from the first pass remain deliberately open, each with the reasoning recorded
+next to the code rather than only here, plus R7 from the second pass, V9 and
+I12's remainder from the third, I13 from the fourth, I18 from the sixth and V20
+from the fourteenth:
 
 | item | state | why |
 | ---- | ----- | --- |
@@ -2802,16 +3551,21 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | V12 | fixed | V10's own unmodelled centre: the developed arc ran at rate `r`, which is right only on the arc, so it creased and under-counted at each arc's centre of curvature |
 | V14 | fixed | V4's third half: the halo/bloom FIELD lost its medial-axis crease, but the nearest-point coverage that SCALES it kept one, so any partly lit perimeter cut the glow to a hard-edged polygon |
 | V13 | fixed | V4's other half: the sampling floor was a fixed half width, so at a soft falloff - where sigma multiplies a 64-sigma tail - it doubled the filament to buy five levels of peak |
+| V15, V16, V17 | fixed | V14's own fix: one ring-wide coverage, read from a table built only for hue, scaled all eight emitter pieces' fields. Now one coverage per piece, from per-sample cell means with alpha in them |
+| V18, V19 | fixed | the filament was coloured by the gathered hue, which the far edge of a thin shape and a low sample count both corrupt; it now reads its own perimeter position |
+| V21 | fixed | arc head abutment had slack on one side only |
+| V22 | fixed | V16's own fix: a piece's whole field scaled by one averaged coverage is exact only where an arc ends on a piece boundary; each piece's field now runs over its lit extent |
 | V5 | residual, documented | closing it means plumbing pixel-space feathers into the pre-pass for an effect nobody has reported; read V9 alongside it, which measures the other half of the same mechanism |
 | I2 | declined | negligible measured-by-structure win against a real staleness-bug risk |
 | I5 | documented | the alternative is a breaking renderer-API change for an unmeasured cost |
 | I8 | audited, no UI written | the C ABI itself is complete; what is missing is `demo-capi` coverage, ranked in the section above |
 | R7 | open | a measured quantisation defect with a cheap cure, but unproven visual severity; see the note there before starting |
-| V9 | open | the honest fix is a design decision (interpolate the arc colour between adjacent samples in the consumer), not a patch; the three options are ranked in the section |
+| V9 | open, filament half fixed | the filament now reads an arc's own gradient pointwise (V18), so its quantisation is gone there; the GLOW keeps the gathered hue and so a milder, distance-blurred form of it |
 | I12 | partly fixed | the live shader comment is corrected; `architecture-design.md` and `multiple-arcs-design.md` still name the removed LUT functions, and both are design prose rather than comments beside live code |
 | I13 | open | undefined `pow` reachable only through the C ABI; both cures change what the boundary accepts or what the term computes below `ghostSize` 0.6, so it is a behaviour decision rather than a repair |
 | I18 | open | the division guarantees something the 8-bit blend discards, and the three ways out - drop it, document its limit, or accumulate at higher precision - are a design call, not a fix |
 | V12a | open | per-lamp shouldering cannot bound a SUM; the cure is an offscreen composite for the whole layer, which the layer does not currently need at `resolutionScale` 1.0 |
+| V20 | open | the peak-channel tone map creases where two channels tie; every smooth replacement shifts the look of white or warm glows that have no streak, so it is a look decision |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

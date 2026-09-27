@@ -56,7 +56,57 @@ index, `gl_FragCoord.y` picks the row:
 | 0 | `arcColour * arcW` | `arcW` |
 | 1 | `SUM(segColour * bell)` | `SUM(bell)` |
 
-where `arcW` is the winning arc's `arcInside * intensity` at that sample.
+where `arcW` is the arcs' coverage of the sample's CELL times the winner's
+colour-stop alpha, and each `bell` the segment's mean over the cell times its
+alpha. Section 2.1 is why those
+weights are no longer just "the winner's `arcInside * intensity`", which is
+what this table held when it was built.
+
+### 2.1 The weights are the glow's coverage
+
+The `.a` channels were built as hue weights. Since the glow-coverage fix (V14
+in `review-findings.md`) the gather ALSO divides each emitter piece's
+`SUM(.a * g)` by its `SUM(g)` and scales that piece's halo and bloom by the
+result - so they are coverage, and three defects followed from them not being
+built as coverage (V15 to V17 there):
+
+- **Colour-stop alpha is in them.** It cancels out of the hue, which is
+  normalised by the same weight, and it is exactly what coverage should carry.
+  Without it an alpha-0 stretch kept its whole halo and bloom. The LUTs store
+  straight alpha, so it is multiplied in here, never into the colour.
+- **Each sample carries the mean over its own cell** - the stretch of
+  perimeter half a spacing either side - not its centre's value. For arcs that
+  is the exact overlap length (`arcOverlap`, which replaced `arcInside` and its
+  quarter-spacing tail feather); for a segment it is the Gaussian's integral
+  over the cell (`bellCellMean`, through an `erf`). Point-sampled, a rotating
+  arc's glow ticked by ~20 levels a sample and a sub-spacing segment's by 80;
+  the cell mean is continuous in the light's position.
+- **No cell crosses into another emitter piece.** The first and last cell of
+  each piece are cut at, and stretched to, its ends (`PieceBlock`), so a
+  piece's cells tile it and a short side cannot borrow a neighbour's light.
+- **Cells are NOT cut at an arc's end.** An end usually falls inside a cell,
+  and that cell's weight stays its mean over the whole cell. The gather is
+  what narrows a piece to the stretch the arcs light (V22 in
+  `review-findings.md`): it takes the field over that stretch and divides the
+  end cell's weight by the share of the cell inside it, which
+  `packLightBlockData` packs per piece. Cutting the cell here instead would
+  let a sample enter the average at full weight the moment an end crossed into
+  its cell - the step V17 removed.
+- **Row 1 is linear in the bells.** The segments' reach bound,
+  `max(arc, min(segment, 1))`, is applied by `neon.frag` after it has averaged
+  these weights - per piece near the line, ring-wide far from it - because
+  that is what gives a segment's glow its feathered falloff. It was applied
+  here per sample for a while; that made the glow physically closer to its
+  pointwise integral and visibly worse. V16 in `review-findings.md`.
+
+Overlapping arcs keep winner-take-all: the cell's coverage is the SUM of the
+arcs' overlaps capped at the brightest covering arc's intensity - exact for
+arcs that tile (they never overlap, so the sum is the coverage across a seam
+inside the cell) and for arcs stacked on each other (the cap holds the
+brightest). The colour is the arc that covers the most of the cell.
+
+A fully lit ring at intensity 1 carries exactly 1.0 in every row-0 weight, so
+nothing downstream of it moves.
 
 ### Why two rows and not one
 
@@ -86,9 +136,10 @@ denominator - four floats each, so eight in total, so two texels.
 > The reference implementation on `improve_neon_by_emission_pre_pass` packs
 > this into one texel. It could, because it predates the gated normalisation:
 > there both colour terms rode the same `g`, and its `.a` carried a `cover`
-> value that fed a *gathered* halo/bloom. On this branch halo and bloom are
-> analytic closed forms driven by pointwise coverage, so no per-sample cover is
-> needed at all - `.a` carries `arcW` for the denominator instead.
+> value that fed a *gathered* halo/bloom. When this pass landed, halo and bloom
+> were analytic closed forms driven by pointwise coverage, so no per-sample
+> cover was needed - `.a` carried `arcW` for the denominator only. That stopped
+> being true with V14, and section 2.1 is what the weights carry now.
 
 `uIntensity` is deliberately **not** folded in here (the reference does fold
 it). It cancels out of the gated normalisation anyway and reaches the emission
@@ -421,9 +472,23 @@ Practical consequences:
   table, at either resolution scale, so a change to the row layout lands in one
   place. (This used to say "keep the two consumers in step" - the second
   consumer was `neon-optimized.frag`, now merged away.)
-- **Hand the pre-pass and the gather the same `uNumSamples`.** Texel `i` in the
-  table has to be sample `i` in the gather; both go through
-  `GetClampedNumSamples` for exactly that reason.
+- **Hand the pre-pass and the gather the same sample count.** Texel `i` in the
+  table has to be sample `i` in the gather. The pre-pass takes `uNumSamples`;
+  the gather walks the per-piece runs in `PieceBlock`, which
+  `rebuildLoopSamples` builds from the same `GetClampedNumSamples` and
+  `packLightBlockData` uploads.
+- **The `.a` weights are the glow's coverage** (§2.1). Anything that should
+  dim the glow at a perimeter position - alpha today - has to be in them, as a
+  mean over the sample's cell; anything that should not must stay in `.rgb`
+  where the normalisation cancels it.
+- **Cells stop at piece ends.** `PieceBlock` is the one description of where
+  the emitter pieces are, for both shaders. A change to the piece layout or
+  numbering lands in `rebuildLoopSamples`, the pre-pass's cell clip,
+  `packLightBlockData`'s lit extents (`ArcHull`, `PieceLimits`,
+  `BorrowedCellShare`) and `neon.frag`'s `pieceField` together. The lit
+  extents measure an arc the way `arcOverlap` does; if one of the two changes
+  how an arc covers the perimeter, the other has to follow, or the field will
+  end somewhere the weights do not.
 - **Adding a shader means three edits** - `lib/CMakeLists.txt`
   (`CMAKE_CONFIGURE_DEPENDS` and `file(READ ...)`) plus `shaders/shaders.h.in`.
   `neon-emission.frag` needs `@NEON_TUNING@` because it uses `MAX_ARCS`,

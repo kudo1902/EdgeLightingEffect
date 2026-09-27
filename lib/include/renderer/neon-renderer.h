@@ -110,6 +110,12 @@ namespace EdgeLighting
         /// fullscreen quad, never to a ring. Both passes ask one shared
         /// predicate so they cannot disagree; see @c FillsWholeViewport.
         void setupFillGeometry(const Config &config);
+        /// Walk the perimeter into @c mLoopSamplesBlock, and record in
+        /// @c mPieceRuns which emitter piece each run of samples lies on.
+        /// Both are pure functions of the geometry, @c numSamples and the
+        /// resolution scale. The runs reach the GPU through
+        /// @ref packLightBlockData, which narrows each piece to what the arcs
+        /// light before uploading @c mPieceBlock.
         void rebuildLoopSamples(const Config &config);
         /// Re-bake the three colour LUTs. Each wrapper self-guards, so this is
         /// called unconditionally on every config change; see the note at the
@@ -291,13 +297,25 @@ namespace EdgeLighting
         /// Backs neon.frag's std140 `SegmentBlock` (DALi-compatible uniform
         /// block holding uSegmentCount + uSegments[]).
         UniformBuffer mSegmentBlock{"NeonRenderer.SegmentBlock"};
-        /// Backs neon.frag's std140 `LoopSamplesBlock` - vec4[NUM_LOOP_SAMPLES]
+        /// Backs neon.frag's std140 `LoopSamplesBlock` - vec4[NEON_MAX_LOOP_SAMPLES]
         /// where .xy holds the perimeter point in scaled rect-local pixels.
-        /// Always allocated at full size; only the first @c uNumSamples entries
-        /// are filled, and the shader stops there.
+        /// Always allocated at full size; only the first @c numSamples entries
+        /// are filled, and the piece runs the gather walks stop there.
         UniformBuffer mLoopSamplesBlock{"NeonRenderer.LoopSamplesBlock"};
         /// Backs neon.frag's std140 `ArcBlock` (uArcCount + uArcs[MAX_ARCS]).
         UniformBuffer mArcBlock{"NeonRenderer.ArcBlock"};
+        /// Backs the std140 `PieceBlock` both neon passes read: three
+        /// vec4[NEON_EMITTER_PIECES] arrays - each piece's perimeter span and
+        /// run of loop samples (@c mPieceRuns verbatim), the stretch of it the
+        /// arcs light with that stretch's own run, and the whole piece's
+        /// limits with the lit run's end shares. Packed by
+        /// @ref packLightBlockData, since the last two move with the arcs.
+        UniformBuffer mPieceBlock{"NeonRenderer.PieceBlock"};
+        /// Each emitter piece's (span start, span end, first sample, sample
+        /// count), by piece id - the geometric half of @c mPieceBlock, kept so
+        /// an arc change can repack the block without re-walking the perimeter.
+        /// Written by @ref rebuildLoopSamples.
+        glm::vec4 mPieceRuns[NEON_EMITTER_PIECES] = {};
 
         float mQuadMargin = 0.0f; ///< Draw-quad margin (scaled px from rect edge); shader fades the bloom out by here.
 
