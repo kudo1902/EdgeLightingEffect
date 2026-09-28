@@ -27,6 +27,13 @@ uniform float uCornerRadius;
 uniform float uLineWidth;
 uniform float uFilamentFalloff; ///< Generalized-Gaussian exponent (N = value * 2); 1.0 = pure Gaussian, lower = smoother (Laplace-like), higher = flatter top.
 uniform float uIntensity;
+/// Peak magnitude the compose can reach anywhere on the perimeter: the arc
+/// term's uIntensity * max(Arc::intensity) plus the tallest point of the summed
+/// segment bells. uIntensity alone does NOT bound it - a segment's boost is an
+/// absolute brightness that bypasses uIntensity by design - so this is what
+/// sizes `reach` and the draw quad with it. Equals uIntensity for any config
+/// without segments or a boosted arc. Mirrored by NeonRenderer::computeEmissionPeak.
+uniform float uEmissionPeak;
 uniform float uTime;
 uniform float uHueRotationRate;
 uniform float uGlowRadius;
@@ -1282,7 +1289,7 @@ void main() {
 
     // Distance at which the emission has to be gone: the CPU's uncapped
     // quad-sizing formula, recomputed here (see setupGeometry). A pure function
-    // of glowRadius, bloomStrength and intensity, so the pedestal below is
+    // of glowRadius, bloomStrength and the emission peak, so the pedestal below is
     // size-invariant even where the outside cutoff clamps the actual quad
     // smaller - that path is masked by the cutoff smoothstep anyway, and
     // feeding it the clamped margin would subtract a huge pedestal and dim the
@@ -1290,8 +1297,13 @@ void main() {
     // the second term is the same filament-reach floor setupGeometry applies -
     // without it the two disagree at small glowRadius, and `reach` hits 0 at
     // glowRadius 0, making the pedestal subtract the entire bloom.
+    // uEmissionPeak, not uIntensity: the bloom this has to outrun is whatever
+    // the compose below actually produces, and a boosted segment bypasses
+    // uIntensity. Fed intensity alone, a segment at boost 60 was still at 34x
+    // display white where the quad ended and the quad-edge fade cut its halo
+    // into a rounded rectangle - the quad's own outline, drawn in light.
     float reach = max(uGlowRadius * GLOW_REACH_RADIUS_FACTOR *
-                      (1.0 + uBloomStrength * uIntensity),
+                      (1.0 + uBloomStrength * uEmissionPeak),
                       sigma * reachSigmas);
 
     float halo  = haloSegment(aLeft,  tv1, tv2, kh) +

@@ -91,6 +91,16 @@ namespace EdgeLighting
         /// viewport and the resolution scale, and never needs rebuilding.
         void setupFullscreenQuad();
         void setupGeometry(const Config &config);
+        /// Peak emission magnitude the shader's compose can reach anywhere on
+        /// the perimeter, in the same units as @c NeonConfig::intensity. Reads
+        /// @c config.neon.arcs and @c mEffectiveSegments, so it must run after
+        /// @ref OnConfigChanged has refilled the latter.
+        ///
+        /// This is what sizes the glow's reach, not @c intensity: a segment's
+        /// boost is an absolute brightness that bypasses @c intensity, so a
+        /// boosted segment out-ran a margin budgeted for @c intensity alone and
+        /// the quad-edge fade cut its halo into the shape of the quad.
+        float computeEmissionPeak(const Config &config) const;
         /// Build @c mFillVertexArray: the geometry that BOUNDS the opaque
         /// fill, as a rectangular annulus in full-resolution rect-local pixels.
         ///
@@ -300,6 +310,10 @@ namespace EdgeLighting
         UniformBuffer mArcBlock{"NeonRenderer.ArcBlock"};
 
         float mQuadMargin = 0.0f; ///< Draw-quad margin (scaled px from rect edge); shader fades the bloom out by here.
+        /// Last value from @ref computeEmissionPeak, kept so the uniform upload
+        /// sends the shader the same number @ref setupGeometry sized the quad
+        /// with - the two must agree or the fade lands off the quad edge.
+        float mEmissionPeak = 1.0f;
 
         /// Baked colour ring (@c NeonConfig::gradientLutSize x 1 RGBA8, sampled
         /// at v = 0.5). The wrapper owns the bake, the cross-fade and the guard

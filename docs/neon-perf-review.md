@@ -16,23 +16,23 @@ the caveat in section 7 about which numbers to trust.
 
 `main_v2` at `944267a` against the same tree with three changes:
 
-| # | change | area | visual effect |
-| - | ------ | ---- | ------------- |
-| 1 | the gather's segment `texelFetch` is hoisted out of the loop behind a uniform branch | `neon.frag` | byte-identical |
-| 2 | `CMAKE_BUILD_TYPE` defaults to `Release` when the caller sets none | `CMakeLists.txt` | none (CPU only) |
-| 3 | the animated config composite reuses a member scratch instead of copy-constructing a local | `edge-lighting.cpp` | none (CPU only) |
+| #   | change                                                                                     | area                | visual effect   |
+| --- | ------------------------------------------------------------------------------------------ | ------------------- | --------------- |
+| 1   | the gather's segment `texelFetch` is hoisted out of the loop behind a uniform branch       | `neon.frag`         | byte-identical  |
+| 2   | `CMAKE_BUILD_TYPE` defaults to `Release` when the caller sets none                         | `CMakeLists.txt`    | none (CPU only) |
+| 3   | the animated config composite reuses a member scratch instead of copy-constructing a local | `edge-lighting.cpp` | none (CPU only) |
 
 ## 2. The starting measurement
 
 Per-layer GPU time, default config, rect at half the viewport, `cornerRadius`
 48, layers enabled one at a time:
 
-| layer | 1920x1080 | 3840x2160 | share at 1080p |
-| ----- | --------- | --------- | -------------- |
-| **neon** | **4.26 ms** | **10.59 ms** | **81%** |
-| lens flare | 0.79 ms | 2.98 ms | 15% |
-| droplets | 0.07 ms | 0.13 ms | 1.3% |
-| all three | 5.27 ms | 14.30 ms | 100% |
+| layer      | 1920x1080   | 3840x2160    | share at 1080p |
+| ---------- | ----------- | ------------ | -------------- |
+| **neon**   | **4.26 ms** | **10.59 ms** | **81%**        |
+| lens flare | 0.79 ms     | 2.98 ms      | 15%            |
+| droplets   | 0.07 ms     | 0.13 ms      | 1.3%           |
+| all three  | 5.27 ms     | 14.30 ms     | 100%           |
 
 At 4K the three layers together already exceed a 60 Hz budget before the host
 draws anything of its own.
@@ -43,13 +43,13 @@ Variants of `neon.frag` with individual terms stubbed out, each compiled and
 timed against the same baseline in one session. 1920x1080, neon only,
 `numSamples` 128:
 
-| what was removed | ms | cost of that piece |
-| ---------------- | -- | ------------------ |
-| nothing (baseline) | 4.336 | - |
-| **the entire gather loop** | 0.206 | **4.130 ms, 95.2%** |
-| both `texelFetch`es (to constants) | 3.003 | 1.333 ms, 30.7% |
-| the row-1 `texelFetch` only | 3.575 | 0.761 ms, 17.6% |
-| the UBO sample read | 4.328 | 0.008 ms, 0.2% |
+| what was removed                   | ms    | cost of that piece  |
+| ---------------------------------- | ----- | ------------------- |
+| nothing (baseline)                 | 4.336 | -                   |
+| **the entire gather loop**         | 0.206 | **4.130 ms, 95.2%** |
+| both `texelFetch`es (to constants) | 3.003 | 1.333 ms, 30.7%     |
+| the row-1 `texelFetch` only        | 3.575 | 0.761 ms, 17.6%     |
+| the UBO sample read                | 4.328 | 0.008 ms, 0.2%      |
 
 Two things fall out of that table.
 
@@ -76,11 +76,11 @@ screen at the default `glowRadius`.
 The branch has to sit **outside** the loop. Gating the fetch per iteration was
 tried first and measured **slower** than leaving it alone:
 
-| variant | ms |
-| ------- | -- |
-| baseline (both fetches, unconditional) | 4.23 |
+| variant                                                           | ms   |
+| ----------------------------------------------------------------- | ---- |
+| baseline (both fetches, unconditional)                            | 4.23 |
 | `uSegmentCount > 0 ? texelFetch(...) : vec4(0.0)` inside the loop | 4.52 |
-| the branch hoisted, two straight-line loop bodies | 2.98 |
+| the branch hoisted, two straight-line loop bodies                 | 2.98 |
 
 The per-iteration branch costs what the fetch it skips cost. Only hoisting it
 so each body is straight-line pays.
@@ -130,11 +130,11 @@ stops, both segment pools, the arcs, and each of their own stop lists. The
 `std::move` at the end then freed the previous frame's. Measured with a global
 `operator new` counter and one animation attached:
 
-| config contents | allocations/frame | frees/frame | bytes/frame |
-| --------------- | ----------------- | ----------- | ----------- |
-| default | 3 | 3 | 168 |
-| 4 segments + 4 arcs | 11 | 11 | 784 |
-| 8 segments + 8 arcs (the caps) | 19 | 19 | 1488 |
+| config contents                | allocations/frame | frees/frame | bytes/frame |
+| ------------------------------ | ----------------- | ----------- | ----------- |
+| default                        | 3                 | 3           | 168         |
+| 4 segments + 4 arcs            | 11                | 11          | 784         |
+| 8 segments + 8 arcs (the caps) | 19                | 19          | 1488        |
 
 Copy-**assigning** into a member scratch reuses the capacity already there, and
 **swapping** with `mActiveConfig` (rather than moving) hands the scratch the
@@ -152,15 +152,15 @@ them.
 Absolute timings drift between sessions on this machine, so the two builds were
 run alternately rather than one after the other:
 
-| round | before | after | ratio |
-| ----- | ------ | ----- | ----- |
-| 1080p 1 | 4.916 | 3.280 | 1.50x |
-| 1080p 2 | 4.984 | 3.163 | 1.58x |
-| 1080p 3 | 5.171 | 3.448 | 1.50x |
-| 1080p 4 | 4.971 | 3.569 | 1.39x |
-| 1080p 5 | 4.713 | 3.400 | 1.39x |
-| 4K 1 | 12.140 | 8.377 | 1.45x |
-| 4K 2 | 11.073 | 7.737 | 1.43x |
+| round   | before | after | ratio |
+| ------- | ------ | ----- | ----- |
+| 1080p 1 | 4.916  | 3.280 | 1.50x |
+| 1080p 2 | 4.984  | 3.163 | 1.58x |
+| 1080p 3 | 5.171  | 3.448 | 1.50x |
+| 1080p 4 | 4.971  | 3.569 | 1.39x |
+| 1080p 5 | 4.713  | 3.400 | 1.39x |
+| 4K 1    | 12.140 | 8.377 | 1.45x |
+| 4K 2    | 11.073 | 7.737 | 1.43x |
 
 Median **1.46x** on the neon layer. Re-run against the landed tree after all
 three changes, same method: 4.973 / 4.320 / 4.317 ms before against 3.028 /
@@ -179,11 +179,11 @@ GPU behind every number here.
 Per-frame config path, no renderers, one `IntensityPulse` attached, at the
 segment and arc caps:
 
-| build | ms/frame | allocations/frame |
-| ----- | -------- | ----------------- |
-| before (no `-O`, copy-construct) | 0.0012 | 19 |
-| change 2 only (`-O3`, copy-construct) | 0.0008 | 19 |
-| changes 2 + 3 | **0.0002** | **0** |
+| build                                 | ms/frame   | allocations/frame |
+| ------------------------------------- | ---------- | ----------------- |
+| before (no `-O`, copy-construct)      | 0.0012     | 19                |
+| change 2 only (`-O3`, copy-construct) | 0.0008     | 19                |
+| changes 2 + 3                         | **0.0002** | **0**             |
 
 `libedge-lighting.a`: **11.6 MB -> 845 KB**.
 
@@ -199,14 +199,14 @@ machine it was measured on.
 Change 1 is byte-identical. Six scenes, captured through `OffscreenCapture` at
 1920x1080 and compared as raw RGBA8:
 
-| scene | pixels changed | max delta |
-| ----- | -------------- | --------- |
-| default, no segments | 0 / 2073600 | 0 |
-| one plain segment | 0 / 2073600 | 0 |
-| one segment with its own colour stops | 0 / 2073600 | 0 |
-| four arcs, each with colour stops | 0 / 2073600 | 0 |
-| both cutoffs enabled | 0 / 2073600 | 0 |
-| `resolutionScale` 0.5 | 0 / 2073600 | 0 |
+| scene                                 | pixels changed | max delta |
+| ------------------------------------- | -------------- | --------- |
+| default, no segments                  | 0 / 2073600    | 0         |
+| one plain segment                     | 0 / 2073600    | 0         |
+| one segment with its own colour stops | 0 / 2073600    | 0         |
+| four arcs, each with colour stops     | 0 / 2073600    | 0         |
+| both cutoffs enabled                  | 0 / 2073600    | 0         |
+| `resolutionScale` 0.5                 | 0 / 2073600    | 0         |
 
 Changes 2 and 3 touch no shader and no uniform, so there is nothing to compare.
 
@@ -219,12 +219,12 @@ The fragment's own continuous perimeter position is already recovered just
 below the loop (`perimeterPosition(vPos)`), so the walk can be centred there
 and run over a window of `+/- K` samples. It is fast, and it is not free:
 
-| window | iterations | ms | speedup | pixels changed | mean abs delta | max delta |
-| ------ | ---------- | -- | ------- | -------------- | -------------- | --------- |
-| K = 8 | 17 | 0.93 | 4.6x | 74.6% | 2.73 | 22 |
-| K = 16 | 33 | 1.51 | 2.8x | 74.3% | 2.24 | 22 |
-| K = 24 | 49 | 2.28 | 1.9x | 73.6% | 1.83 | 19 |
-| K = 32 | 65 | 2.83 | 1.5x | 71.4% | 1.57 | 16 |
+| window | iterations | ms   | speedup | pixels changed | mean abs delta | max delta |
+| ------ | ---------- | ---- | ------- | -------------- | -------------- | --------- |
+| K = 8  | 17         | 0.93 | 4.6x    | 74.6%          | 2.73           | 22        |
+| K = 16 | 33         | 1.51 | 2.8x    | 74.3%          | 2.24           | 22        |
+| K = 24 | 49         | 2.28 | 1.9x    | 73.6%          | 1.83           | 19        |
+| K = 32 | 65         | 2.83 | 1.5x    | 71.4%          | 1.57           | 16        |
 
 Against a 4.23 ms baseline in that session.
 
@@ -246,7 +246,8 @@ and diffing before anyone believes it.
 `setupGeometry` builds a solid quad covering rect + margin, and the fill and
 droplet passes both show the pattern for cutting a hole in one. It does not
 help here at the default config: the margin is
-`glowRadius * 48 * (1 + bloomStrength * intensity)` = 312 px, which is already
+`glowRadius * 48 * (1 + bloomStrength * emissionPeak)` = 312 px at the default
+config, where `emissionPeak` is `intensity` - which is already
 larger than half the rect's height on a 960x540 rect, so there is no interior
 left to cut. It only becomes worth doing for rects much larger than twice the
 glow reach, and it would need an inner fade mirroring the existing
@@ -293,11 +294,11 @@ Measured on the landed tree, neon only, 1920x1080, one variable at a time.
 Recorded here because the shape of each curve is not obvious, and two of the
 three surprise:
 
-| knob | measurements |
-| ---- | ------------ |
+| knob              | measurements                                                       |
+| ----------------- | ------------------------------------------------------------------ |
 | `resolutionScale` | 1.00 = 4.86 ms, 0.75 = 2.70, 0.50 = 1.21, 0.35 = 0.64, 0.25 = 0.36 |
-| `numSamples` | 128 = 4.86 ms, 96 = 3.77, 64 = 2.57, 48 = 1.99, 32 = 1.39 |
-| `glowRadius` | 20 = 5.20 ms, 10 = 5.67, 5 = 4.89, 2 = 2.40, 0 = 1.90 |
+| `numSamples`      | 128 = 4.86 ms, 96 = 3.77, 64 = 2.57, 48 = 1.99, 32 = 1.39          |
+| `glowRadius`      | 20 = 5.20 ms, 10 = 5.67, 5 = 4.89, 2 = 2.40, 0 = 1.90              |
 
 - **`resolutionScale` is the strongest lever and it behaves.** 0.50 is 4.0x and
   0.25 is 13.6x, close to quadratic - so the blit really is cheap, and the

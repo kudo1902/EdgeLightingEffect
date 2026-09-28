@@ -475,6 +475,7 @@
             <tr><td class="mono nw">uLineWidth</td><td class="mono">float</td><td>Filament full width. <code>sigma = max(uLineWidth * 0.5, FILAMENT_MIN_HALF_WIDTH)</code>.</td></tr>
             <tr><td class="mono nw">uFilamentFalloff</td><td class="mono">float</td><td>Generalized-Gaussian exponent driver: <code>N = 2 * max(value, 1e-3)</code>.</td></tr>
             <tr><td class="mono nw">uIntensity</td><td class="mono">float</td><td>Master multiplier on the <em>arc</em> emission only. Segments bypass it.</td></tr>
+            <tr><td class="mono nw">uEmissionPeak</td><td class="mono">float</td><td>Tallest value the compose can reach anywhere on the perimeter: the arc term's <code>uIntensity * max(Arc::intensity)</code> plus the summed segment bells at their peak. Sizes <code>reach</code>, and through it the draw quad. Equals <code>uIntensity</code> whenever nothing is boosted. Computed in <code>setupGeometry</code> and uploaded, never recomputed here. See section 11.</td></tr>
             <tr><td class="mono nw">uTime</td><td class="mono">float</td><td>Clock seconds. Only consumer is the hue sweep.</td></tr>
             <tr><td class="mono nw">uHueRotationRate</td><td class="mono">float</td><td>Revolutions per second. Enters as <code>ti = -uTime * rate</code> (negated so positive scrolls with the winding).</td></tr>
             <tr><td class="mono nw">uGlowRadius</td><td class="mono">float</td><td>Halo width <code>kh</code>; bloom width is <code>kh * BLOOM_REACH_TO_GLOW</code>.</td></tr>
@@ -799,7 +800,7 @@ float bloomPeak = BLOOM_NORM_FACTOR * PI;
 float bloomPed  = BLOOM_NORM_FACTOR * PI * bw / sqrt(reach * reach + bw * bw);
 bloom = max(bloom - bloomPed, 0.0) * (bloomPeak / max(bloomPeak - bloomPed, 1e-6));</code></pre>
 
-      <p>Two subtleties. It uses the <em>uncapped</em> reach, a pure function of <code>glowRadius</code>, <code>bloomStrength</code> and <code>intensity</code>, so the pedestal stays size-invariant even where the outside cutoff clamps the actual quad smaller; feeding it the clamped margin would subtract a huge pedestal and dim the whole band. And the second term of the <code>max</code> is the same filament-reach floor <code>setupGeometry</code> applies, without which the two disagree at small <code>glowRadius</code> and <code>reach</code> hits 0 at <code>glowRadius</code> 0, making the pedestal subtract the entire bloom.</p>
+      <p>Two subtleties. It uses the <em>uncapped</em> reach, a pure function of <code>glowRadius</code>, <code>bloomStrength</code> and <code>uEmissionPeak</code>, so the pedestal stays size-invariant even where the outside cutoff clamps the actual quad smaller; feeding it the clamped margin would subtract a huge pedestal and dim the whole band. And the second term of the <code>max</code> is the same filament-reach floor <code>setupGeometry</code> applies, without which the two disagree at small <code>glowRadius</code> and <code>reach</code> hits 0 at <code>glowRadius</code> 0, making the pedestal subtract the entire bloom.</p>
 
       <p>The halo needs no pedestal: falling as <code>1/ad&sup2;</code>, at the same distance it is about <code>2e-4</code> of peak, already invisible.</p>
 
@@ -1012,7 +1013,9 @@ vec3 segColHue = segAcc / max(wsumSegW, WSUM_EPSILON);</code></pre>
 
       <h3>The margin <span class="src">setupGeometry</span></h3>
 
-<pre><code>glowReach     = glowRadius * EARLY_OUT_RADIUS_FACTOR * (1 + bloomStrength * intensity)
+<pre><code>emissionPeak  = intensity * max(Arc::intensity)
+              + max over the gather's sample grid of SUM(segment bells)
+glowReach     = glowRadius * EARLY_OUT_RADIUS_FACTOR * (1 + bloomStrength * emissionPeak)
 filamentReach = max(lineWidth * 0.5, FILAMENT_MIN_HALF_WIDTH) * filSigmas
 margin        = max(glowReach, filamentReach)
 if (outsideCutoff.enable)
@@ -1022,11 +1025,17 @@ if (outsideCutoff.enable)
 
       <p><code>glowRadius</code> alone sizes the glow term. The old expression also carried a <code>sampleSpacing * SPACING_FACTOR</code> term, and since <code>sampleSpacing</code> is <code>perimeter / 128</code> it won on any reasonably large rect at default <code>glowRadius</code>, making both the distance the bloom got truncated at and the brightness it still had there track the rect size: the fade began at 250 px on a 200x150 rect and 1542 px on a 1920x1080 one. It also asked for a roughly 5800x4900 px quad on a 1920x1080 rect. The bloom's reach is a function of <code>glowRadius</code> and nothing else.</p>
 
+      <p><strong><code>emissionPeak</code>, not <code>intensity</code>.</strong> The reach has to clear whatever the compose actually emits, and two things reach it without passing through <code>intensity</code>: a segment's <code>boost</code> bypasses it by design, and <code>Arc::intensity</code> multiplies on top of it. Sized against <code>intensity</code> alone, a segment at <code>boost</code> 60 on a 160x120 rect was still at <strong>34x display white</strong> where the quad ended, and the quad-edge fade below had to dump all of it inside the last 20% of the margin - drawing the quad's own rounded rectangle in light around the glow. Measured on that rect at <code>glowRadius</code> 5: the lit region stopped at 302-308 px for <code>boost</code> 1, 20 and 60 alike, tracking the margin rather than the light, and raising <code>intensity</code> to 4 - which changes a segment's brightness not at all - moved it to 522 px. The peak is summed over the arc and segment terms because the compose adds them, but the segment half is the tallest point of the <em>summed bells on the sample grid</em>, not the sum of every <code>boost</code>: segments spread round the perimeter only stack where they overlap. Any config without segments and with arcs at intensity 1 gets <code>emissionPeak == intensity</code> and is byte-identical to the pre-fix renderer - verified over seven such scenes, including <code>resolutionScale</code> 0.5.</p>
+
+      <p>The cost is real and lands only on the configs that were broken: the quad grows with the peak, so the layer shades more of the frame. On that 1600x1200 probe, <code>boost</code> 20 went from lighting 28% of the frame to 100% of it. That is the honest extent of a 1/D bloom at that brightness - the pixels were always meant to be lit - but a caller who wants the old footprint back should bound it with <code>outsideCutoff</code>, which still caps the margin.</p>
+
+      <p><code>emissionPeak</code> is likewise why both segment pools and <code>arcs</code> appear in <code>geometryDirty</code>. Miss them and the quad keeps the previous config's reach while the shader draws the new one's light, so raising a boost cuts that frame's halo to the shape of the old, tighter quad - the same defect, one frame late.</p>
+
       <p>The <code>filamentReach</code> floor is why <code>lineWidth</code> and <code>filamentFalloff</code> both appear in <code>geometryDirty</code>. Without it, <code>glowRadius = 0</code> produced a zero margin: the quad landed exactly on the rect and clipped every exterior fragment, so the outside half of the filament vanished while the inside half stayed. The <code>+ 1</code> in the cutoff cap is a safety pixel so the shader's own soft mask fades to zero <em>before</em> the quad edge.</p>
 
       <div class="warn">
         <span class="tag">Keep in step</span>
-        Two places compute this expression: <code>setupGeometry</code> in <code>neon-renderer.cpp</code> and the <code>reach</code> line in both fragment shaders (for the bloom pedestal). They must agree or the pedestal lands at the wrong distance.
+        Two places compute this expression: <code>setupGeometry</code> in <code>neon-renderer.cpp</code> and the <code>reach</code> line in both fragment shaders (for the bloom pedestal). They must agree or the pedestal lands at the wrong distance. <code>emissionPeak</code> is the one term the shader does <em>not</em> recompute - <code>setupGeometry</code> stores what it used and the same number is uploaded as <code>uEmissionPeak</code>, so that half cannot drift.
       </div>
 
       <h3>The quad-edge fade</h3>
@@ -1068,7 +1077,7 @@ result *= 1.0 - smoothstep(-(uQuadMargin - fadeStart), 0.0, dQuad);</code></pre>
           <text x="574" y="290" class="dg-t2 c-p">emission ramps to zero</text>
           <text x="574" y="304" class="dg-t2">over [fadeStart, margin]</text>
 
-          <text x="360" y="336" class="dg-t2" text-anchor="middle">margin = glowRadius * 48 * (1 + bloomStrength * intensity), floored by the filament reach</text>
+          <text x="360" y="336" class="dg-t2" text-anchor="middle">margin = glowRadius * 48 * (1 + bloomStrength * emissionPeak), floored by the filament reach</text>
         </svg>
         <figcaption><b>Fig 2</b> The quad, its margin and the fade band. Pixels outside the quad never run the shader. The fade and the quad are both keyed per-axis, which is why the shaded band has square corners while everything else in the shader works on rounded contours.</figcaption>
       </figure>

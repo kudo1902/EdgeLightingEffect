@@ -391,12 +391,16 @@ namespace EdgeLighting
         mGlowVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
         mFillVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
 
+        // The atlas bakes read the merged transient+preserved view, which
+        // OnConfigChanged normally keeps current; seed it here for the first.
+        // AHEAD of setupGeometry, which reads it too now - the quad is sized
+        // against the segments' peak, so seeding it afterwards would build the
+        // first frame's quad as if the config carried no segments at all.
+        SegmentUtils::FillEffectiveSegments(mCurrentConfig.neon, mEffectiveSegments);
+
         rebuildLoopSamples(mCurrentConfig);
         setupGeometry(mCurrentConfig);
         setupFillGeometry(mCurrentConfig);
-        // The atlas bakes read the merged transient+preserved view, which
-        // OnConfigChanged normally keeps current; seed it here for the first.
-        SegmentUtils::FillEffectiveSegments(mCurrentConfig.neon, mEffectiveSegments);
         bakeLUTs(mCurrentConfig);
 
         setupFullscreenQuad();
@@ -611,6 +615,18 @@ namespace EdgeLighting
         const bool samplesDirty = config.geometry != mCurrentConfig.geometry ||
                                   config.neon.resolutionScale != mCurrentConfig.neon.resolutionScale ||
                                   config.neon.numSamples != mCurrentConfig.neon.numSamples;
+        // The merged transient+preserved view is a pure function of the two
+        // segment pools, so it gets a gate like every other rebuild here. It
+        // used to run on EVERY config change, which with an animation attached
+        // is nearly every frame - and it is not free: SegmentBoost owns a
+        // colorStops vector, so clear() + push_back frees and reallocates one
+        // heap block per stopped segment each time, to reproduce a list that
+        // in a segment-less animation never differs.
+        //
+        // Declared up here, ahead of geometryDirty, because the quad now reads
+        // the segments too - see the emission-peak term in that gate.
+        const bool segmentsDirty = config.neon.segmentBoosts != mCurrentConfig.neon.segmentBoosts ||
+                                   config.neon.preservedSegmentBoosts != mCurrentConfig.neon.preservedSegmentBoosts;
         const bool geometryDirty = samplesDirty ||
                                    config.neon.glowRadius != mCurrentConfig.neon.glowRadius ||
                                    config.neon.bloomStrength != mCurrentConfig.neon.bloomStrength ||
@@ -642,7 +658,17 @@ namespace EdgeLighting
                                    // The same shape of mistake as adding a field to a Config struct
                                    // and not to its operator== - see AGENTS.md.
                                    config.neon.glowSide != mCurrentConfig.neon.glowSide ||
-                                   config.neon.insideCutoff != mCurrentConfig.neon.insideCutoff;
+                                   config.neon.insideCutoff != mCurrentConfig.neon.insideCutoff ||
+                                   // The segments and the arcs BOUND THE QUAD NOW, through
+                                   // @ref computeEmissionPeak - a boosted segment is what its
+                                   // margin has to clear, and `intensity` says nothing about
+                                   // that. Miss them and the quad keeps the previous config's
+                                   // reach while the shader draws the new one's light: raising
+                                   // a segment's boost would leave its halo cut to the shape
+                                   // of the old, tighter quad, which is the defect the peak
+                                   // exists to fix, reintroduced one frame late.
+                                   segmentsDirty ||
+                                   config.neon.arcs != mCurrentConfig.neon.arcs;
         // The fill ring is bounded by the CUTOFFS and the fill's own feather,
         // not by the glow reach, so it gets its own gate rather than riding on
         // geometryDirty: opaqueMode and opaqueSoftness move the ring but not
@@ -653,15 +679,6 @@ namespace EdgeLighting
                                config.neon.opaqueSoftness != mCurrentConfig.neon.opaqueSoftness ||
                                config.neon.insideCutoff != mCurrentConfig.neon.insideCutoff ||
                                config.neon.outsideCutoff != mCurrentConfig.neon.outsideCutoff;
-        // The merged transient+preserved view is a pure function of the two
-        // segment pools, so it gets a gate like every other rebuild here. It
-        // used to run on EVERY config change, which with an animation attached
-        // is nearly every frame - and it is not free: SegmentBoost owns a
-        // colorStops vector, so clear() + push_back frees and reallocates one
-        // heap block per stopped segment each time, to reproduce a list that
-        // in a segment-less animation never differs.
-        const bool segmentsDirty = config.neon.segmentBoosts != mCurrentConfig.neon.segmentBoosts ||
-                                   config.neon.preservedSegmentBoosts != mCurrentConfig.neon.preservedSegmentBoosts;
         // Overflow warnings, before mCurrentConfig is overwritten below: the
         // previous counts are still in it, which is what lets these fire once
         // per overflow without a latch of their own.
@@ -845,6 +862,60 @@ namespace EdgeLighting
         mFullscreenVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
     }
 
+    float NeonRenderer::computeEmissionPeak(const Config &config) const
+    {
+        // Mirrors neon.frag's compose, which ADDS the two sources:
+        //
+        //     emitGlow = col * uIntensity * arcCoverage + segHue * segBellSum
+        //
+        // The arc term peaks at uIntensity * max(Arc::intensity), since its
+        // coverage tops out at 1 inside an arc. The segment term is the summed
+        // Gaussian bells, evaluated here on the gather's own sample grid rather
+        // than bounded by sum(boost): several segments only stack where they
+        // overlap, and summing the boosts of segments spread round the
+        // perimeter would budget a reach - and a quad - several times what any
+        // one point emits.
+        //
+        // Taking the arc's peak as if it were lit everywhere, rather than only
+        // where an arc actually covers, is the one deliberate over-estimate.
+        // It costs a wider quad on a config whose bright arc and bright segment
+        // sit on opposite sides, which is cheap (the rasteriser clips the quad
+        // to the viewport) and never wrong in the direction that clips light.
+        float arcPeak = 0.0f;
+        for (const Arc &a : config.neon.arcs)
+        {
+            arcPeak = std::max(arcPeak, a.intensity);
+        }
+        // A config with no arcs draws no arc term at all - neon.frag's gather
+        // leaves the perimeter dark when uArcCount is 0 - so the peak is the
+        // segments' alone. No floor of 1.0 here: that would size the quad for
+        // an arc that is not there.
+        arcPeak *= config.neon.intensity;
+
+        // The bell, verbatim from neon-emission.frag: boost * exp(-e*e) with
+        // e = wrap(si - position) * invSigma, invSigma as packLightBlockData
+        // computes it. Sampled at the gather's si grid, which is where the
+        // shader evaluates it too.
+        const int numSamples = GetClampedNumSamples(config);
+        float segPeak = 0.0f;
+        for (int i = 0; i < numSamples; ++i)
+        {
+            const float si = static_cast<float>(i) / static_cast<float>(numSamples);
+            float bellSum = 0.0f;
+            for (const SegmentBoost &s : mEffectiveSegments)
+            {
+                const float invSigma = 1.0f / std::max(s.length * 0.5f, 1e-3f);
+                float rel = si - s.position;
+                rel -= std::floor(rel + 0.5f); // wrap to [-0.5, 0.5]
+                const float e = rel * invSigma;
+                bellSum += s.boost * std::exp(-e * e);
+            }
+            segPeak = std::max(segPeak, bellSum);
+        }
+
+        return std::max(arcPeak + segPeak, 0.0f);
+    }
+
     void NeonRenderer::setupGeometry(const Config &config)
     {
         // Size the quad to cover the lit region: rect + glowReach, so geometry
@@ -863,18 +934,27 @@ namespace EdgeLighting
         // a ~5800x4900 px quad on a 1920x1080 rect.
         //
         // The wide bloom (1/D tail) stays visible further out as bloomStrength /
-        // intensity rise, so grow the quad with them. The shader reproduces this
-        // exact expression to place its bloom pedestal, which is what lets the
-        // margin stay this tight without the truncation showing - keep the two
-        // in step.
+        // the emission peak rise, so grow the quad with them. The shader
+        // reproduces this exact expression to place its bloom pedestal, which is
+        // what lets the margin stay this tight without the truncation showing -
+        // keep the two in step.
+        //
+        // The peak, NOT config.neon.intensity. Segments bypass intensity by
+        // design, so a boosted one emitted light this margin never budgeted for
+        // and the quad-edge fade cut its halo into the quad's own rounded
+        // rectangle. Identical to intensity for any config without segments or
+        // a boosted arc, so the default is untouched. See @ref
+        // computeEmissionPeak.
         //
         // The whole quad is built in SCALED space, matching the transform and
         // the uniforms Render uploads. At resolutionScale 1.0 the factor is
         // identity and every expression below is its full-res form.
         const float scale = GetClampedResolutionScale(config);
 
+        mEmissionPeak = computeEmissionPeak(config);
+
         float glowReach = config.neon.glowRadius * scale * float(GLOW_REACH_RADIUS_FACTOR) *
-                          (1.0f + config.neon.bloomStrength * config.neon.intensity);
+                          (1.0f + config.neon.bloomStrength * mEmissionPeak);
 
         // ...but the filament is sized by lineWidth, not glowRadius, so the quad
         // must clear it too. Without this floor, glowRadius = 0 ("filament only")
@@ -1617,6 +1697,9 @@ namespace EdgeLighting
         mNeonShader.SetUniform("uLineWidth", config.neon.lineWidth * scale);
         mNeonShader.SetUniform("uFilamentFalloff", config.neon.filamentFalloff);
         mNeonShader.SetUniform("uIntensity", config.neon.intensity);
+        // From setupGeometry, not recomputed: the shader's `reach` and the quad
+        // it is faded against have to be the same number.
+        mNeonShader.SetUniform("uEmissionPeak", mEmissionPeak);
         mNeonShader.SetUniform("uTime", time);
         mNeonShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
         mNeonShader.SetUniform("uGlowRadius", config.neon.glowRadius * scale);

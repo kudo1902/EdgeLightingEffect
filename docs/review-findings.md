@@ -32,17 +32,18 @@ up as a citation. Everything still linked still exists, so in a list that mixes
 the two - and several below do - the formatting tells you which halves of the
 old fork survived.
 
-| | fixed | open |
-| - | ----- | ---- |
-| visual | V1, V2, V3, V4, V6, V7 | V5 (closed as a documented limitation) |
-| implementation | I1, I3, I4, I6, I7 | I2 (declined), I5 (documented), I8 (audited) |
-| second pass | R1, R2, R3, R4, R5, R6 | R7 |
-| third pass | V8, I9, I10, I11, I12 (partly) | V9, I12's two stale design docs |
-| fourth pass | I14 | I13 |
-| fifth pass | I15 | - |
-| sixth pass | I16, I17, I19, I20 | I18 |
-| eighth pass | V11 | - |
-| twelfth pass | I21, I22, I23, I24 | - |
+|                 | fixed                          | open                                         |
+| --------------- | ------------------------------ | -------------------------------------------- |
+| visual          | V1, V2, V3, V4, V6, V7         | V5 (closed as a documented limitation)       |
+| implementation  | I1, I3, I4, I6, I7             | I2 (declined), I5 (documented), I8 (audited) |
+| second pass     | R1, R2, R3, R4, R5, R6         | R7                                           |
+| third pass      | V8, I9, I10, I11, I12 (partly) | V9, I12's two stale design docs              |
+| fourth pass     | I14                            | I13                                          |
+| fifth pass      | I15                            | -                                            |
+| sixth pass      | I16, I17, I19, I20             | I18                                          |
+| eighth pass     | V11                            | -                                            |
+| twelfth pass    | I21, I22, I23, I24             | -                                            |
+| fourteenth pass | V15                            | -                                            |
 
 The R items come from a re-read after the V and I fixes landed - see
 [Second pass](#second-pass-after-bbdba62). V8 and V9 come from a later read of
@@ -125,18 +126,18 @@ sub-struct, `NeonRenderer` vs `NeonOptimizedRenderer` agreement (mean
 **Was confirmed.** `cornerRadius` 260 and 500 on a 600x400 rect (valid maximum:
 200).
 
-| `cornerRadius` 260 | `cornerRadius` 500 |
-| ------------------ | ------------------ |
+| `cornerRadius` 260                                          | `cornerRadius` 500                                     |
+| ----------------------------------------------------------- | ------------------------------------------------------ |
 | ![](images/review-findings/corner-radius-overflow-mild.png) | ![](images/review-findings/corner-radius-overflow.png) |
 
 Three of the four places that consume the radius clamp it and one does not:
 
-| consumer | clamps? |
-| -------- | ------- |
-| `perimeterPosition` ([`neon.frag` perimeterPosition](../lib/shaders/neon.frag)) | yes, to `min(halfW, halfH)` |
-| `peri` (perimeter length, same shader) | yes |
-| `GeometryUtils::GetPointOnRectangle` | yes |
-| `sdRoundBox(vPos, halfSize, uCornerRadius)` ([`neon.frag` main](../lib/shaders/neon.frag), `neon-optimized.frag` main, [`black-rect.frag` main](../lib/shaders/black-rect.frag)) | **no** |
+| consumer                                                                                                                                                                         | clamps?                     |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
+| `perimeterPosition` ([`neon.frag` perimeterPosition](../lib/shaders/neon.frag))                                                                                                  | yes, to `min(halfW, halfH)` |
+| `peri` (perimeter length, same shader)                                                                                                                                           | yes                         |
+| `GeometryUtils::GetPointOnRectangle`                                                                                                                                             | yes                         |
+| `sdRoundBox(vPos, halfSize, uCornerRadius)` ([`neon.frag` main](../lib/shaders/neon.frag), `neon-optimized.frag` main, [`black-rect.frag` main](../lib/shaders/black-rect.frag)) | **no**                      |
 
 Past the half-extent the unclamped SDF stops describing a rounded box - it
 becomes a lens with cusps - while the gather samples still sit on the correctly
@@ -170,8 +171,8 @@ and an unsmeared colour ring.
 **Was confirmed.** Two arcs, `{start 0, length 0.5}` and `{start 0.5, length
 0.5}`, each with its own solid colour stops.
 
-| before | after |
-| ------ | ----- |
+| before                                         | after                                                |
+| ---------------------------------------------- | ---------------------------------------------------- |
 | ![](images/review-findings/arc-seam-notch.png) | ![](images/review-findings/arc-seam-notch-fixed.png) |
 
 `arcCoverContinuous`
@@ -218,10 +219,10 @@ called it hard-won.
 
 **Second attempt (correct): decide the feather direction per endpoint.**
 
-| endpoint | ramp | coverage at the endpoint |
-| -------- | ---- | ------------------------ |
-| free (no other arc takes over) | INWARD | 0 - nothing outside the span is ever lit |
-| abutting another arc | OUTWARD, past the endpoint | 1 - `max` hands over at full brightness |
+| endpoint                       | ramp                       | coverage at the endpoint                 |
+| ------------------------------ | -------------------------- | ---------------------------------------- |
+| free (no other arc takes over) | INWARD                     | 0 - nothing outside the span is ever lit |
+| abutting another arc           | OUTWARD, past the endpoint | 1 - `max` hands over at full brightness  |
 
 An abutting endpoint's bleed lands inside a neighbour that is already lit, so
 it cannot reach unlit geometry however degenerate the map is there. A free
@@ -241,8 +242,8 @@ Two subtleties in the abutment test, both covered by probes: arcs that merely
 neighbour to cover strictly *before* the start), and an arc ending exactly
 where this one ends does not extend past it, so it does not suppress the head.
 
-| before | after |
-| ------ | ----- |
+| before                                         | after                                                |
+| ---------------------------------------------- | ---------------------------------------------------- |
 | ![](images/review-findings/arc-seam-notch.png) | ![](images/review-findings/arc-seam-notch-fixed.png) |
 
 The corner case that the straddling attempt broke, now correct - the arc starts
@@ -269,8 +270,8 @@ black quadrant there instead, which is worse.
 **Was confirmed.** One full-perimeter arc with stops white (head) to red
 (tail), `hueRotationRate = 0.5`.
 
-| t = 0 | after ~0.6 s, before | after ~0.6 s, fixed |
-| ----- | -------------------- | ------------------- |
+| t = 0                                                | after ~0.6 s, before                              | after ~0.6 s, fixed                                     |
+| ---------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------- |
 | ![](images/review-findings/arc-lut-wrap-seam-t0.png) | ![](images/review-findings/arc-lut-wrap-seam.png) | ![](images/review-findings/arc-lut-wrap-seam-fixed.png) |
 
 All three shaders subtract `uTime * uHueRotationRate` from `uArc`
@@ -347,11 +348,11 @@ segment goes to infinity, so this is a strict generalisation: `HALO_NORM_FACTOR`
 and `BLOOM_NORM_FACTOR` keep their calibration and the peak on a long edge does
 not move.
 
-| | before | after |
-| --- | ------ | ----- |
+|                                        | before              | after               |
+| -------------------------------------- | ------------------- | ------------------- |
 | corner sweep at r=160, 0 / 45 / 90 deg | 192 / **177** / 192 | 201 / **190** / 202 |
-| equal-`ad` ratio, one edge vs two | 1.000 | 1.011 - 1.021 |
-| neon frame cost, 1280x720 | 1.67 ms | 1.88 ms (**1.13x**) |
+| equal-`ad` ratio, one edge vs two      | 1.000               | 1.011 - 1.021       |
+| neon frame cost, 1280x720              | 1.67 ms             | 1.88 ms (**1.13x**) |
 
 The kinked V at exactly 45 degrees is now a smooth basin, and what remains of
 it is genuine falloff - that point really is eight times further from the
@@ -401,12 +402,12 @@ What remains is that the two feathers scale differently. The magnitude feather
 is a fixed pixel span (14 px); the colour feather is one gather sample, which is
 `perimeter / NEON_MAX_LOOP_SAMPLES`:
 
-| geometry | perimeter | colour feather | magnitude feather |
-| -------- | --------- | -------------- | ----------------- |
-| 200x150 r20 | 666 px | 5.2 px | 14 px |
-| 600x400 r40 | 1931 px | 15.1 px | 14 px |
-| 1920x1080 r40 | 5931 px | 46.3 px | 14 px |
-| 2800x2200 r40 | 9931 px | 77.6 px | 14 px |
+| geometry      | perimeter | colour feather | magnitude feather |
+| ------------- | --------- | -------------- | ----------------- |
+| 200x150 r20   | 666 px    | 5.2 px         | 14 px             |
+| 600x400 r40   | 1931 px   | 15.1 px        | 14 px             |
+| 1920x1080 r40 | 5931 px   | 46.3 px        | 14 px             |
+| 2800x2200 r40 | 9931 px   | 77.6 px        | 14 px             |
 
 They happen to agree almost exactly at the mid-size geometry the constants were
 tuned on, and diverge either side: on a large rect an arc's colour hands over
@@ -446,10 +447,10 @@ the head colour instead of holding.
 **Fixed** in [`color-utils.h`](../lib/include/util/color-utils.h) by splitting
 the sampler in two and naming both for the data shape they describe:
 
-| function | domain | wrap behaviour | baked into |
-| -------- | ------ | -------------- | ---------- |
+| function     | domain                                        | wrap behaviour           | baked into          |
+| ------------ | --------------------------------------------- | ------------------------ | ------------------- |
 | `SampleRing` | `NeonConfig::colorStops` - genuinely circular | last stop wraps to first | `GL_REPEAT` texture |
-| `SampleSpan` | a per-arc / per-segment row, head-to-tail | holds the end colours | `CLAMP_TO_EDGE` row |
+| `SampleSpan` | a per-arc / per-segment row, head-to-tail     | holds the end colours    | `CLAMP_TO_EDGE` row |
 
 `rebuildSegmentLUT` and `rebuildArcLUT` in both renderers now call `SampleSpan`;
 the base ring keeps `SampleRing`, which is correct there and behaviourally
@@ -464,22 +465,22 @@ mismatch is visible at the call site.
 
 A white-to-red gradient authored at stops 0.2 and 0.8, sampled across the row:
 
-| t | cyclic (before) | clamped (after) |
-| - | --------------- | --------------- |
+| t    | cyclic (before)       | clamped (after)        |
+| ---- | --------------------- | ---------------------- |
 | 0.00 | 1.00 0.50 0.50 (pink) | 1.00 1.00 1.00 (white) |
-| 0.10 | 1.00 0.75 0.75 | 1.00 1.00 1.00 |
-| 0.20 | 1.00 1.00 1.00 | 1.00 1.00 1.00 |
-| 0.50 | 1.00 0.50 0.50 | 1.00 0.50 0.50 |
-| 0.80 | 1.00 0.00 0.00 (red) | 1.00 0.00 0.00 |
-| 0.90 | 1.00 0.25 0.25 | 1.00 0.00 0.00 |
-| 1.00 | 1.00 0.50 0.50 (pink) | 1.00 0.00 0.00 (red) |
+| 0.10 | 1.00 0.75 0.75        | 1.00 1.00 1.00         |
+| 0.20 | 1.00 1.00 1.00        | 1.00 1.00 1.00         |
+| 0.50 | 1.00 0.50 0.50        | 1.00 0.50 0.50         |
+| 0.80 | 1.00 0.00 0.00 (red)  | 1.00 0.00 0.00         |
+| 0.90 | 1.00 0.25 0.25        | 1.00 0.00 0.00         |
+| 1.00 | 1.00 0.50 0.50 (pink) | 1.00 0.00 0.00 (red)   |
 
 So the head and the tail both used to come out pink - the authored white and
 red only ever appeared 20% in from each end, and the gradient reversed after
 0.8.
 
-| before | after |
-| ------ | ----- |
+| before                                                   | after                                                   |
+| -------------------------------------------------------- | ------------------------------------------------------- |
 | ![](images/review-findings/arc-partial-stops-before.png) | ![](images/review-findings/arc-partial-stops-fixed.png) |
 
 Note the midpoint agrees between the two samplers, which is why this is easy to
@@ -531,12 +532,12 @@ behaviour and a host may reasonably not care. Verified against the 12-arc case
 
 ### I1. Shader sources contain non-ASCII, against the project's own rule - FIXED
 
-| file | lines with non-ASCII |
-| ---- | -------------------- |
-| `lib/shaders/neon.frag` | 11 |
-| `lib/shaders/neon-optimized.frag` | 10 |
-| `lib/shaders/neon-stop-marker.frag` | 3 |
-| `lib/shaders/shaders.h.in` | 2 |
+| file                                | lines with non-ASCII |
+| ----------------------------------- | -------------------- |
+| `lib/shaders/neon.frag`             | 11                   |
+| `lib/shaders/neon-optimized.frag`   | 10                   |
+| `lib/shaders/neon-stop-marker.frag` | 3                    |
+| `lib/shaders/shaders.h.in`          | 2                    |
 
 All in comments: U+2192 arrows, U+00D7 multiplication signs, a U+2211
 summation sign and a U+2026 ellipsis. `AGENTS.md` and `CLAUDE.md` require
@@ -750,16 +751,16 @@ calls the entry point.
 
 Effect surface - 67 setters, 8 with no widget driving them:
 
-| unexercised setter | note |
-| ------------------ | ---- |
-| `el_effect_set_droplets_band_width` | ABI has it, `demo-capi` has 6 of the 8 droplet controls |
-| `el_effect_set_droplets_band_offset` | same |
-| `el_effect_set_optimized_lens_flare_renderer_enabled` | whole renderer un-exposed |
-| `el_effect_set_optimized_lens_flare_resolution_scale` | same |
-| `el_effect_set_preserved_segment` | whole `PreservedSegment` feature un-exposed |
-| `el_effect_set_preserved_segment_blend_space` | same |
-| `el_effect_set_preserved_segment_color_stop` | same |
-| `el_effect_set_preserved_segment_color_stop_count` | same |
+| unexercised setter                                    | note                                                    |
+| ----------------------------------------------------- | ------------------------------------------------------- |
+| `el_effect_set_droplets_band_width`                   | ABI has it, `demo-capi` has 6 of the 8 droplet controls |
+| `el_effect_set_droplets_band_offset`                  | same                                                    |
+| `el_effect_set_optimized_lens_flare_renderer_enabled` | whole renderer un-exposed                               |
+| `el_effect_set_optimized_lens_flare_resolution_scale` | same                                                    |
+| `el_effect_set_preserved_segment`                     | whole `PreservedSegment` feature un-exposed             |
+| `el_effect_set_preserved_segment_blend_space`         | same                                                    |
+| `el_effect_set_preserved_segment_color_stop`          | same                                                    |
+| `el_effect_set_preserved_segment_color_stop_count`    | same                                                    |
 
 Animation and modulator surface - and this is the real hole. Of 55 declared
 functions `demo-capi` exercises **16**, all of them lifecycle
@@ -834,10 +835,10 @@ reaching for.
 I7 fixed exactly this hazard for `mEmissionBuffer` in both neon renderers and
 left the two siblings alone:
 
-| site | buffer |
-| ---- | ------ |
+| site                                           | buffer           |
+| ---------------------------------------------- | ---------------- |
 | `NeonOptimizedRenderer::renderHalfResNeonPass` | `mHalfResBuffer` |
-| `LensFlareOptimizedRenderer::Render` | `mScaledBuffer` |
+| `LensFlareOptimizedRenderer::Render`           | `mScaledBuffer`  |
 
 `Resize` calls `destroy()` on its failure path, so `mFbo` is 0; `Bind()` then
 binds the *caller's* framebuffer, and the `glClear` that follows is not clipped
@@ -887,13 +888,13 @@ Verified with a throwaway harness (same shape as the one at the top of this
 document) counting bakes, driving 120 frames of the position/length sweep
 `ArcWipe` and `OutlineTracer` perform:
 
-| | before | after |
-| - | ------ | ----- |
-| arc-atlas bakes over 120 animated frames | 120 | **0** |
-| segment-atlas bakes over 120 animated frames | 120 | **0** |
-| bakes on a `colorStops` change | 1 | 1 |
-| bakes on a `blendSpace` change | 1 | 1 |
-| bakes on swapping two arcs | 1 | 1 |
+|                                              | before | after |
+| -------------------------------------------- | ------ | ----- |
+| arc-atlas bakes over 120 animated frames     | 120    | **0** |
+| segment-atlas bakes over 120 animated frames | 120    | **0** |
+| bakes on a `colorStops` change               | 1      | 1     |
+| bakes on a `blendSpace` change               | 1      | 1     |
+| bakes on swapping two arcs                   | 1      | 1     |
 
 So every genuine invalidation still fires and the per-frame churn is gone. The
 five rendered configurations come out **byte-identical** between the old gate
@@ -1002,10 +1003,10 @@ carried through the gather's normalisation and the tone map / gamma grade.
   `Resize` see `GL_NEAREST != GL_LINEAR` and destroy and recreate the texture
   and FBO - every frame, for as long as the toggle was on:
 
-  | | before the fix | with `SetFilter` | with `Resize` owning it |
-  | - | -------------- | ---------------- | ----------------------- |
-  | `showHalfRes` off, 30 frames | 1 allocation | 1 | 1 |
-  | `showHalfRes` on, 30 frames | 1 allocation | **30** | 1 |
+  |                              | before the fix | with `SetFilter` | with `Resize` owning it |
+  | ---------------------------- | -------------- | ---------------- | ----------------------- |
+  | `showHalfRes` off, 30 frames | 1 allocation   | 1                | 1                       |
+  | `showHalfRes` on, 30 frames  | 1 allocation   | **30**           | 1                       |
 
   That is the same failure `emission-prepass.md` section 5 records for the
   RGBA16F fallback, reintroduced somewhere else. The original stale `mFilter`
@@ -1062,21 +1063,21 @@ sampling the peak channel along the rect's centre row from just outside the
 right edge outward (398 px). "Far half" is the outer 199 px, where the falloff
 is flattest and plateaus are widest.
 
-| config | levels / 398 px | mean plateau | widest plateau | far-half levels |
-| ------ | --------------- | ------------ | -------------- | --------------- |
-| `glowRadius` 5 (default) | 140 | 2.8 px | 14 px | 21 |
-| `glowRadius` 30 | 115 | 3.5 px | 9 px | 29 |
-| `glowRadius` 60, `bloomStrength` 2 | 64 | 6.2 px | **24 px** | 16 |
+| config                             | levels / 398 px | mean plateau | widest plateau | far-half levels |
+| ---------------------------------- | --------------- | ------------ | -------------- | --------------- |
+| `glowRadius` 5 (default)           | 140             | 2.8 px       | 14 px          | 21              |
+| `glowRadius` 30                    | 115             | 3.5 px       | 9 px           | 29              |
+| `glowRadius` 60, `bloomStrength` 2 | 64              | 6.2 px       | **24 px**      | 16              |
 
 A 24 px band of one constant value, bounded by a 1 LSB step, is a contour ring
 by any definition. Re-running with a temporary 1 LSB interleaved-gradient-noise
 dither added just before the write confirms both the diagnosis and the cure:
 
-| config | levels / 398 px | mean plateau | widest plateau | far-half levels |
-| ------ | --------------- | ------------ | -------------- | --------------- |
-| `glowRadius` 5 + dither | 140 -> **244** | 2.8 -> **1.6 px** | 14 -> 10 px | 21 -> **111** |
-| `glowRadius` 30 + dither | 115 -> **226** | 3.5 -> **1.8 px** | 9 -> 8 px | 29 -> **108** |
-| `glowRadius` 60 b2 + dither | 64 -> **202** | 6.2 -> **2.0 px** | 24 -> **10 px** | 16 -> **92** |
+| config                      | levels / 398 px | mean plateau      | widest plateau  | far-half levels |
+| --------------------------- | --------------- | ----------------- | --------------- | --------------- |
+| `glowRadius` 5 + dither     | 140 -> **244**  | 2.8 -> **1.6 px** | 14 -> 10 px     | 21 -> **111**   |
+| `glowRadius` 30 + dither    | 115 -> **226**  | 3.5 -> **1.8 px** | 9 -> 8 px       | 29 -> **108**   |
+| `glowRadius` 60 b2 + dither | 64 -> **202**   | 6.2 -> **2.0 px** | 24 -> **10 px** | 16 -> **92**    |
 
 **Honest limit on this finding.** The plateaus are measured, not disputed - but
 I did not confirm the rings are *objectionable* by eye at the default settings,
@@ -1163,8 +1164,8 @@ settling transient in a renderer that is in fact bit-stationary.
 The reference is the same arc at `{start 0.1, length 0.4}`, which does not
 cross the seam.
 
-| reference (no wrap) | before | after |
-| ------------------- | ------ | ----- |
+| reference (no wrap)                                         | before                                            | after                                                   |
+| ----------------------------------------------------------- | ------------------------------------------------- | ------------------------------------------------------- |
 | ![](images/review-findings/arc-wrap-gradient-reference.png) | ![](images/review-findings/arc-wrap-gradient.png) | ![](images/review-findings/arc-wrap-gradient-fixed.png) |
 
 `Arc::start` is documented as `[0, 1)` and `Arc::length` as a fraction of the
@@ -1184,11 +1185,11 @@ difference and threw the wrap away:
 float uArc = (sPos - arc.x) / max(arc.y, 1e-4);
 ```
 
-| site | what it feeds |
-| ---- | ------------- |
-| [`neon.frag` emitCover loop](../lib/shaders/neon.frag) | the arc's colour-stop ALPHA |
-| `neon-optimized.frag` emitCover loop | the same, half-res fork |
-| [`neon-emission.frag` main](../lib/shaders/neon-emission.frag) | the winning arc's COLOUR |
+| site                                                           | what it feeds               |
+| -------------------------------------------------------------- | --------------------------- |
+| [`neon.frag` emitCover loop](../lib/shaders/neon.frag)         | the arc's colour-stop ALPHA |
+| `neon-optimized.frag` emitCover loop                           | the same, half-res fork     |
+| [`neon-emission.frag` main](../lib/shaders/neon-emission.frag) | the winning arc's COLOUR    |
 
 Past the seam `uArc` goes negative, and the atlas is `CLAMP_TO_EDGE` on U (as
 V6 and V3 between them established it must be), so the entire wrapped remainder
@@ -1245,12 +1246,12 @@ harmless where the gate would have been off: `emitCover` skips an arc at
 picture rotated by 90 degrees and total luminance must therefore match across
 them. Only `start 0.80` straddles the seam at `length 0.40`:
 
-| start | colour ramp, before | colour ramp, after | alpha ramp, before | alpha ramp, after |
-| ----- | ------------------- | ------------------ | ------------------ | ----------------- |
-| 0.05 | 0.00% | 0.00% | 0.00% | 0.00% |
-| 0.30 | +0.03% | +0.03% | +0.02% | +0.02% |
-| 0.55 | +0.03% | +0.03% | +0.03% | +0.03% |
-| **0.80 (wraps)** | **+35.51%** | **+0.00%** | **+47.67%** | **+0.01%** |
+| start            | colour ramp, before | colour ramp, after | alpha ramp, before | alpha ramp, after |
+| ---------------- | ------------------- | ------------------ | ------------------ | ----------------- |
+| 0.05             | 0.00%               | 0.00%              | 0.00%              | 0.00%             |
+| 0.30             | +0.03%              | +0.03%             | +0.02%             | +0.02%            |
+| 0.55             | +0.03%              | +0.03%             | +0.03%             | +0.03%            |
+| **0.80 (wraps)** | **+35.51%**         | **+0.00%**         | **+47.67%**        | **+0.01%**        |
 
 So the straddling arc now agrees with its own rotations to within the 0.03%
 spread the non-straddling ones show among themselves. The half-res renderer
@@ -1270,13 +1271,13 @@ arcs carry their own colour stops, where they diverge by up to 100/255 in tight
 clusters at each arc's gradient endpoints. Sweeping
 `OptimizedNeonConfig::numSamples` isolates the cause exactly:
 
-| config | mean | max | px with diff >= 30 |
-| ------ | ---- | --- | ------------------ |
-| 2 arcs, own stops, `numSamples` 64 (**the default**) | 0.677 | **100** | 389 |
-| 2 arcs, own stops, `numSamples` 96 | 0.441 | 38 | 32 |
-| 2 arcs, own stops, `numSamples` 128 | 0.359 | 10 | 0 |
-| 2 arcs, no own stops, `numSamples` 64 | 0.337 | 7 | 0 |
-| 2 arcs, no own stops, `numSamples` 128 | 0.331 | 7 | 0 |
+| config                                               | mean  | max     | px with diff >= 30 |
+| ---------------------------------------------------- | ----- | ------- | ------------------ |
+| 2 arcs, own stops, `numSamples` 64 (**the default**) | 0.677 | **100** | 389                |
+| 2 arcs, own stops, `numSamples` 96                   | 0.441 | 38      | 32                 |
+| 2 arcs, own stops, `numSamples` 128                  | 0.359 | 10      | 0                  |
+| 2 arcs, no own stops, `numSamples` 64                | 0.337 | 7       | 0                  |
+| 2 arcs, no own stops, `numSamples` 128               | 0.331 | 7       | 0                  |
 
 The pre-pass evaluates the arc-local coordinate at the gather samples -
 `si = floor(gl_FragCoord.x) * invNumSamples`, then `uArc = rel / length` - so an
@@ -1353,10 +1354,10 @@ only by reading the other header.
 
 **Two claims in the class comment were false.**
 
-| claim | reality |
-| ----- | ------- |
-| RGBA8 is "asserted once, in `Upload`" | there is no assert, and nothing to assert - `Upload` is the single call site and passes the format literally, so a LUT cannot ask for anything else |
-| "no virtuals to pay for" | `Texture` has a virtual destructor, so the `Texture2D` member drags in a vptr: `sizeof(Texture2D)` is 16 for a 4-byte handle, and `std::is_polymorphic<Texture2D>` is true |
+| claim                                 | reality                                                                                                                                                                    |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| RGBA8 is "asserted once, in `Upload`" | there is no assert, and nothing to assert - `Upload` is the single call site and passes the format literally, so a LUT cannot ask for anything else                        |
+| "no virtuals to pay for"              | `Texture` has a virtual destructor, so the `Texture2D` member drags in a vptr: `sizeof(Texture2D)` is 16 for a 4-byte handle, and `std::is_polymorphic<Texture2D>` is true |
 
 **Fixed** by hoisting the flag and correcting the claims. `mUploaded` now lives
 in `BaseLUT`, set by `Upload`; `IsValid()` is `mTexture.IsValid() && mUploaded`;
@@ -1463,9 +1464,9 @@ descriptions.
 **Still open**, and not touched here because they are prose rather than code
 comments:
 
-| file | stale reference |
-| ---- | --------------- |
-| [`architecture-design.md`](architecture-design.md) | `if (lutDirty) { rebuildGradientLUT(config); }` in the `OnConfigChanged` pseudo-code |
+| file                                                 | stale reference                                                                        |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| [`architecture-design.md`](architecture-design.md)   | `if (lutDirty) { rebuildGradientLUT(config); }` in the `OnConfigChanged` pseudo-code   |
 | [`multiple-arcs-design.md`](multiple-arcs-design.md) | `mBakedArcs` and `rebuildArcLUT` in the design sketch and the file-by-file change list |
 
 `architecture-design.md` is already flagged in `CLAUDE.md` as predating the
@@ -1482,21 +1483,21 @@ harness exercises the wrapper classes directly - construct, bake, inspect GL
 state - and each check was run against both the pre-fix and post-fix headers to
 confirm it actually discriminates:
 
-| check | pre-fix | post-fix |
-| ----- | ------- | -------- |
-| fresh `GradientRingLUT`: `GetId() != 0` | pass | pass |
-| fresh `GradientRingLUT`: `IsValid() == false` | **fail** | pass |
-| after `Bake`: `IsValid() == true` | pass | pass |
-| fresh `SpanAtlasLUT`: `IsValid() == false` | **fail** | pass |
-| after `Bake`: `IsValid() == true` | pass | pass |
-| active unit unchanged across a bake | **fail** | pass |
-| unit 0's binding unchanged across a bake | **fail** | pass |
-| `width = 1` still yields a valid texture | pass | pass |
-| readback at the clamped 2 x 8 succeeds | pass | pass |
-| `width = 1` row 0 holds the HEAD colour | **fail** `(0,0,255)` | pass `(255,0,0)` |
-| `width = 0`, `maxRows = 0` survives | pass | pass |
-| guarded re-`Bake` with identical inputs is a no-op | pass | pass |
-| moving `Arc::start` does not dirty the atlas | pass | pass |
+| check                                              | pre-fix              | post-fix         |
+| -------------------------------------------------- | -------------------- | ---------------- |
+| fresh `GradientRingLUT`: `GetId() != 0`            | pass                 | pass             |
+| fresh `GradientRingLUT`: `IsValid() == false`      | **fail**             | pass             |
+| after `Bake`: `IsValid() == true`                  | pass                 | pass             |
+| fresh `SpanAtlasLUT`: `IsValid() == false`         | **fail**             | pass             |
+| after `Bake`: `IsValid() == true`                  | pass                 | pass             |
+| active unit unchanged across a bake                | **fail**             | pass             |
+| unit 0's binding unchanged across a bake           | **fail**             | pass             |
+| `width = 1` still yields a valid texture           | pass                 | pass             |
+| readback at the clamped 2 x 8 succeeds             | pass                 | pass             |
+| `width = 1` row 0 holds the HEAD colour            | **fail** `(0,0,255)` | pass `(255,0,0)` |
+| `width = 0`, `maxRows = 0` survives                | pass                 | pass             |
+| guarded re-`Bake` with identical inputs is a no-op | pass                 | pass             |
+| moving `Arc::start` does not dirty the atlas       | pass                 | pass             |
 
 Five of thirteen fail before the fixes and all pass after. The `width = 1` row is
 read back through `GetId()` and `CaptureUtil::ReadTexture2D`, which exercises
@@ -1810,10 +1811,10 @@ reached 3.2 steps.
 Measured on an eight-lamp fan at 1280x720, against a CPU evaluation of
 `spotlight.frag` that sums in float and quantises once:
 
-| rendering | channels below the model, all at value 1 | max deviation |
-| --------- | --------------------------------------- | ------------- |
-| each lamp alone, eight runs | 0, 1, 1, 1, 1, 2, 2, 5 | 1 |
-| all eight together, one run | 36,853 | 3 |
+| rendering                   | channels below the model, all at value 1 | max deviation |
+| --------------------------- | ---------------------------------------- | ------------- |
+| each lamp alone, eight runs | 0, 1, 1, 1, 1, 2, 2, 5                   | 1             |
+| all eight together, one run | 36,853                                   | 3             |
 
 The per-lamp rows are the strip bound doing its job. The 36,853 is entirely the
 eight-bit accumulation, and dividing the floor did not prevent any of it.
@@ -1845,10 +1846,10 @@ bytes. The other number is not. Counted by replicating the solve exactly
 `SPOT_STRIP_SEGMENTS + 1` sampling pass and the `WIDEN_SUBSAMPLES` widening
 pass) with instrumented `log` and `sqrt`:
 
-| lamps | `log` | `sqrt` | `sin`/`cos`/`tan` | total |
-| ----- | ----- | ------ | ----------------- | ----- |
-| 1 | 705 | 290 | 3 | **998** |
-| 8 | 5,688 | 2,168 | 24 | **7,880** |
+| lamps | `log` | `sqrt` | `sin`/`cos`/`tan` | total     |
+| ----- | ----- | ------ | ----------------- | --------- |
+| 1     | 705   | 290    | 3                 | **998**   |
+| 8     | 5,688 | 2,168  | 24                | **7,880** |
 
 Ten times the stated figure for one lamp and seventy-nine times for a full rig.
 
@@ -1905,11 +1906,11 @@ someone the measurement.
 
 `CLAUDE.md` was updated with the new layer. Nothing else was.
 
-| document | says | should say |
-| -------- | ---- | ---------- |
-| [`implementation.md`](implementation.md) | "Four renderers ship", with a four-row table | five, with `SpotlightRenderer` in it |
-| [`effect-reference.md`](effect-reference.md) | "one of four renderers", naming the four | five |
-| [`README.md`](../README.md) | "Six visual layers", listing `WireframeRenderer`, `NeonOptimizedRenderer` and `LensFlareOptimizedRenderer` | five, none of those three among them |
+| document                                     | says                                                                                                       | should say                           |
+| -------------------------------------------- | ---------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| [`implementation.md`](implementation.md)     | "Four renderers ship", with a four-row table                                                               | five, with `SpotlightRenderer` in it |
+| [`effect-reference.md`](effect-reference.md) | "one of four renderers", naming the four                                                                   | five                                 |
+| [`README.md`](../README.md)                  | "Six visual layers", listing `WireframeRenderer`, `NeonOptimizedRenderer` and `LensFlareOptimizedRenderer` | five, none of those three among them |
 
 `implementation.md` is the one that matters most, because `CLAUDE.md` sends
 every new reader there first: *"brief: how the library is put together on the
@@ -2071,10 +2072,10 @@ against 20 px from the emitter. Measured against a numerically integrated
 rounded-rect perimeter, on the corner diagonal with `R` from the arc centre so
 the tube is at `R = 40`:
 
-| R | 30 | **40** | 45 | **50** | **60** | 80 | 120 |
-| - | -- | ------ | -- | ------ | ------ | -- | --- |
-| exact | 130 | **175** | 147 | **119** | **93** | 67 | 42 |
-| shipped | 120 | **135** | 149 | **170** | **147** | 80 | 47 |
+| R       | 30  | **40**  | 45  | **50**  | **60**  | 80  | 120 |
+| ------- | --- | ------- | --- | ------- | ------- | --- | --- |
+| exact   | 130 | **175** | 147 | **119** | **93**  | 67  | 42  |
+| shipped | 120 | **135** | 149 | **170** | **147** | 80  | 47  |
 
 Forty levels too dark ON the tube, fifty too bright just outside it. On the
 renderer itself the same point went 98 -> 146 across `b2fead5`.
@@ -2086,14 +2087,14 @@ is nearest the fragment, carrying the full arc length and split about that
 point, so the perpendicular distance is the true distance to the arc and the
 developed arc abuts the trimmed straights in arclength - no gap, no overlap.
 
-| | before | after |
-| --- | ------ | ----- |
-| worst error vs integrated truth, 800x400 r=40, gr 5 | 76 levels | **6** |
-| the same at `cornerRadius` 200 | 130 | **8** |
-| a circle (`cornerRadius == halfMin`) | 109 | **18** |
-| corner diagonal at R=60, gr 5 | 159 (exact 93) | **96** |
-| neon pass, `cornerRadius` 0 | 8.83 ms | 8.84 ms (**1.00x**) |
-| neon pass, `cornerRadius` 40 | 8.85 ms | 10.52 ms (1.19x) |
+|                                                     | before         | after               |
+| --------------------------------------------------- | -------------- | ------------------- |
+| worst error vs integrated truth, 800x400 r=40, gr 5 | 76 levels      | **6**               |
+| the same at `cornerRadius` 200                      | 130            | **8**               |
+| a circle (`cornerRadius == halfMin`)                | 109            | **18**              |
+| corner diagonal at R=60, gr 5                       | 159 (exact 93) | **96**              |
+| neon pass, `cornerRadius` 0                         | 8.83 ms        | 8.84 ms (**1.00x**) |
+| neon pass, `cornerRadius` 40                        | 8.85 ms        | 10.52 ms (1.19x)    |
 
 A sharp-cornered rect pays nothing: `uCornerRadius` is a uniform, so the block
 branches uniformly. Nine `cornerRadius` 0 scenes - both glow sides, an outside
@@ -2184,12 +2185,12 @@ banding.
 
 Verified after the change:
 
-| check | before | after |
-| ----- | ------ | ----- |
-| same row, run lengths | 13 to 50 px of one value | 1 to 3 px, values interleaved |
-| deviation from the undithered reference | - | max **1**, `d >= 2` on **0** px |
-| hard edges, sixteen scenes | 0 | 0 |
-| local noise, eight overlapping lamps at level 35-44 | 0.269 LSB | **0.812** LSB |
+| check                                               | before                   | after                           |
+| --------------------------------------------------- | ------------------------ | ------------------------------- |
+| same row, run lengths                               | 13 to 50 px of one value | 1 to 3 px, values interleaved   |
+| deviation from the undithered reference             | -                        | max **1**, `d >= 2` on **0** px |
+| hard edges, sixteen scenes                          | 0                        | 0                               |
+| local noise, eight overlapping lamps at level 35-44 | 0.269 LSB                | **0.812** LSB                   |
 
 The last row is the cost. Each lamp dithers its own fragment and the pass is
 additive, so the noise accumulates over the rig - and even at the
@@ -2375,8 +2376,8 @@ A plain half-ring arc renders its whole glow as a hard-edged polygon, and a
 segment on a fully lit ring - the ordinary "tracer on a lit ring" case - cuts a
 pentagon out of the interior:
 
-| before | after |
-| ------ | ----- |
+| before                                                | after                                                       |
+| ----------------------------------------------------- | ----------------------------------------------------------- |
 | ![](images/review-findings/glow-coverage-polygon.png) | ![](images/review-findings/glow-coverage-polygon-fixed.png) |
 | ![](images/review-findings/glow-coverage-segment.png) | ![](images/review-findings/glow-coverage-segment-fixed.png) |
 
@@ -2414,18 +2415,18 @@ on exactly 1.0.
 
 **Measured**, ten scenes, before against after:
 
-| scene | changed px | mean abs diff | max |
-| ----- | ---------- | ------------- | --- |
-| full-ring | 1 of 2,073,600 | 0.000 | 1 |
-| full-ring-rounded | 8 | 0.000 | 1 |
-| small-rect | 1 | 0.000 | 1 |
-| inside-cutoff | 5 | 0.000 | 1 |
-| scale-half | **0** | 0.000 | 0 |
-| reported-segment | 79.11% | 4.074 | 33 |
-| quarter-arc | 99.92% | 13.127 | 130 |
-| half-ring | 99.80% | 12.816 | 145 |
-| two-arcs | 99.23% | 15.168 | 146 |
-| ring-plus-segment | 99.72% | 6.193 | 72 |
+| scene             | changed px     | mean abs diff | max |
+| ----------------- | -------------- | ------------- | --- |
+| full-ring         | 1 of 2,073,600 | 0.000         | 1   |
+| full-ring-rounded | 8              | 0.000         | 1   |
+| small-rect        | 1              | 0.000         | 1   |
+| inside-cutoff     | 5              | 0.000         | 1   |
+| scale-half        | **0**          | 0.000         | 0   |
+| reported-segment  | 79.11%         | 4.074         | 33  |
+| quarter-arc       | 99.92%         | 13.127        | 130 |
+| half-ring         | 99.80%         | 12.816        | 145 |
+| two-arcs          | 99.23%         | 15.168        | 146 |
+| ring-plus-segment | 99.72%         | 6.193         | 72  |
 
 **Every full-ring scene is unchanged** - at most 8 pixels of 2 million move, all
 by 1/255 in one channel, which is the compiler re-associating the surrounding
@@ -2501,12 +2502,12 @@ repeated the pattern in a layer whose comments asserted the opposite.
 Simulated across a `KEEP_INSIDE` boundary crossing bright light, in 1/255, by
 destination pixel from the boundary:
 
-| offset | scale 1.0 | scale 0.5 | scale 0.25 |
-| ------ | --------- | --------- | ---------- |
-| -1 | 255 | 255 | 191 |
-| 0 | 183 | 128 | 128 |
-| +1 | 0 | 0 | 64 |
-| +2 (softness 4) | 0 | 28 | 0 |
+| offset          | scale 1.0 | scale 0.5 | scale 0.25 |
+| --------------- | --------- | --------- | ---------- |
+| -1              | 255       | 255       | 191        |
+| 0               | 183       | 128       | 128        |
+| +1              | 0         | 0         | 64         |
+| +2 (softness 4) | 0         | 28        | 0          |
 
 Three things wrong at once: the boundary moves by up to a destination pixel,
 light leaks up to 64/255 OUTSIDE an area whose whole job is to stop it, and
@@ -2517,11 +2518,11 @@ blit comment records as *"a softness of 0, 2 and 4 rendered BYTE-IDENTICAL"*.
 Confirmed on-device at 640x360 on a two-lamp rig with one lamp clipped and one
 not, through `OffscreenCapture`:
 
-| requested scale | channels differing from 1.0 | max delta |
-| --------------- | --------------------------- | --------- |
-| 0.5, a lamp clipped | 252,887 | **65** |
-| 0.25, a lamp clipped | 232,405 | **101** |
-| 0.5, no lamp clipped | 285,954 | 11 |
+| requested scale      | channels differing from 1.0 | max delta |
+| -------------------- | --------------------------- | --------- |
+| 0.5, a lamp clipped  | 252,887                     | **65**    |
+| 0.25, a lamp clipped | 232,405                     | **101**   |
+| 0.5, no lamp clipped | 285,954                     | 11        |
 
 The last row is the control: 11 is what ordinary resolution loss costs on this
 scene. 65 and 101 are the clip edge.
@@ -2652,11 +2653,11 @@ it grows with `intensity`.
 `angle` 90, `colorTemp` 2700 (amber, so a per-channel clip is visible as a
 colour rather than as white-on-white), everything else default.
 
-| `intensity` | lit px | px with a channel at 255 | px at full white | core RGB |
-| ----------- | ------ | ------------------------ | ---------------- | -------- |
-| 1.15 (default) | 102,421 | 90 | 0 | (219, 155, 94) |
-| 2.0 | 108,804 | 876 | 0 | (255, 255, 164) |
-| 3.0 (slider max) | 113,015 | 1,923 | 219 | (255, 255, 245) |
+| `intensity`      | lit px  | px with a channel at 255 | px at full white | core RGB        |
+| ---------------- | ------- | ------------------------ | ---------------- | --------------- |
+| 1.15 (default)   | 102,421 | 90                       | 0                | (219, 155, 94)  |
+| 2.0              | 108,804 | 876                      | 0                | (255, 255, 164) |
+| 3.0 (slider max) | 113,015 | 1,923                    | 219              | (255, 255, 245) |
 
 The core RGB column is the report in one line: an amber lamp renders a white
 core, and 219 pixels of it are *exactly* white.
@@ -2678,11 +2679,11 @@ above it, so the core approaches full scale without arriving. Same scene, at the
 shipped knee of 0.30 (V12b below is why it is 0.30 and not the 0.75 this
 started at):
 
-| `intensity` | lit px | px with a channel at 255 | px at full white | core RGB |
-| ----------- | ------ | ------------------------ | ---------------- | -------- |
-| 1.15 | 102,421 | 0 | 0 | (156, 111, 67) |
-| 2.0 | 108,804 | 0 | 0 | (189, 134, 81) |
-| 3.0 | 113,015 | 0 | 0 | (208, 147, 89) |
+| `intensity` | lit px  | px with a channel at 255 | px at full white | core RGB       |
+| ----------- | ------- | ------------------------ | ---------------- | -------------- |
+| 1.15        | 102,421 | 0                        | 0                | (156, 111, 67) |
+| 2.0         | 108,804 | 0                        | 0                | (189, 134, 81) |
+| 3.0         | 113,015 | 0                        | 0                | (208, 147, 89) |
 
 Nothing clips at any intensity, the hue holds, the core still brightens with
 `intensity`, and the lit area is unchanged to the pixel - which is the check
@@ -2709,11 +2710,11 @@ only place it can run. Two lamps that each stay under full scale still SUM past
 it in the framebuffer. Measured with the same scene and a second lamp stacked on
 the first:
 
-| `intensity` (each) | px with a channel at 255 | core RGB |
-| ------------------ | ------------------------ | -------- |
-| 1.15 | 1,171 | (255, 255, 182) |
-| 2.0 | 3,080 | (255, 255, 206) |
-| 3.0 | 5,530 | (255, 255, 212) |
+| `intensity` (each) | px with a channel at 255 | core RGB        |
+| ------------------ | ------------------------ | --------------- |
+| 1.15               | 1,171                    | (255, 255, 182) |
+| 2.0                | 3,080                    | (255, 255, 206) |
+| 3.0                | 5,530                    | (255, 255, 212) |
 
 No fully white pixels at any of them, so it is milder than V12 was, but the hue
 shift is back wherever beams overlap brightly.
@@ -2743,10 +2744,10 @@ whether or not any single pixel clipped. Measured at 1920x1080, `throwLength`
 
 | `intensity` | >=240 px | streak length |
 | ----------- | -------- | ------------- |
-| 1.15 | 0 | 0 |
-| 3 | 1,099 | 61 px |
-| 5 | 3,410 | 124 px |
-| 8 | 8,577 | 221 px |
+| 1.15        | 0        | 0             |
+| 3           | 1,099    | 61 px         |
+| 5           | 3,410    | 124 px        |
+| 8           | 8,577    | 221 px        |
 
 **It is the cone, not the bloom.** The obvious suspect was the aperture bloom,
 being the term that exists to glow at the lamp. Taking `bloom` to 0 entirely at
@@ -2760,12 +2761,12 @@ by construction.
 compressing earlier rather than by changing the falloff. Same scene at
 `intensity` 8:
 
-| knee | >=240 px | streak | 400 px | 700 px | 1200 px |
-| ---- | -------- | ------ | ------ | ------ | ------- |
-| 0.75 | 8,577 | 221 px | 211 | 120 | 61 |
-| 0.50 | 1,076 | 61 px | 181 | 120 | 61 |
-| **0.30** | **29** | **18 px** | 156 | 112 | **61** |
-| 0.15 | 0 | 0 | 137 | 98 | 59 |
+| knee     | >=240 px | streak    | 400 px | 700 px | 1200 px |
+| -------- | -------- | --------- | ------ | ------ | ------- |
+| 0.75     | 8,577    | 221 px    | 211    | 120    | 61      |
+| 0.50     | 1,076    | 61 px     | 181    | 120    | 61      |
+| **0.30** | **29**   | **18 px** | 156    | 112    | **61**  |
+| 0.15     | 0        | 0         | 137    | 98     | 59      |
 
 The far field does not move at all - 1200 px out reads 61 at every knee,
 because those values are below it and pass through linearly. So the knee buys
@@ -2783,6 +2784,69 @@ intensity is the whole price, and raising `intensity` - now safe - buys it back.
 
 ---
 
+## Fourteenth pass (the boosted-segment quad report)
+
+Reported from the demo as "an abnormal shape when the neon reaches the limit of
+the vertices, e.g. a segment with high intensity".
+
+### V15. The glow's reach is sized by `intensity`, which two brighter things bypass - FIXED
+
+`setupGeometry` sized the draw quad, and `neon.frag`'s `reach` placed the bloom
+pedestal, with
+
+```
+glowRadius * GLOW_REACH_RADIUS_FACTOR * (1 + bloomStrength * intensity)
+```
+
+That expression knows only `NeonConfig::intensity`. Two sources of emission
+never pass through it: `SegmentBoost::boost` is an absolute brightness that
+bypasses `intensity` by design (so a segment can shine on a dark arc), and
+`Arc::intensity` multiplies on top of it. Either one therefore emitted light the
+margin had not budgeted for, and the quad-edge fade - a `smoothstep` over the
+last `1 - QUAD_FADE_START_FRAC` of the margin - had to take it to zero anyway.
+Bright enough, and what that draws is the quad's own outline.
+
+**Measured**, 1600x1200, a 160x120 rect centred, `cornerRadius` 20,
+`glowRadius` 5, `bloomStrength` 0.3, one segment at `length` 0.17 on the top
+edge, profile taken straight out from it:
+
+| scene                          | lit to | L at 0.79 x margin | L at 0.99 x margin |
+| ------------------------------ | ------ | ------------------ | ------------------ |
+| `boost` 1, `intensity` 1       | 302 px | 3.9                | 0.0                |
+| `boost` 20, `intensity` 1      | 305 px | 14.9               | 0.0                |
+| `boost` 60, `intensity` 1      | 308 px | 33.9               | 0.0                |
+| `boost` 20, `intensity` 4      | 522 px | 9.1                | 1.0                |
+| no segment, `Arc::intensity` 8 | 302 px | -                  | -                  |
+
+The glow stops where the margin ends (312 px) whatever the boost, and the fade
+starts on an emission of 34x display white at `boost` 60. The fourth row is the
+prediction no rival explanation makes: `intensity` does not scale a segment at
+all, yet raising it to 4 - which moves only the margin, to 528 px - carried the
+boundary out with it. The fifth row is the same defect reached through the arc.
+
+**The fix** is `NeonRenderer::computeEmissionPeak`, mirroring what the compose
+actually sums: `intensity * max(Arc::intensity)` for the arc term, plus the
+tallest point of the summed segment bells, evaluated on the gather's own sample
+grid. It feeds both the margin and, uploaded as `uEmissionPeak`, the shader's
+`reach` - uploaded rather than recomputed, so that term cannot drift between the
+two. Both segment pools and `arcs` joined `geometryDirty`, which is what keeps a
+boost change from rendering this frame's light through last frame's quad.
+
+**Verified.** Seven scenes with no segment and arcs at intensity 1 - including
+`resolutionScale` 0.5, `intensity` 3, and `glowRadius` 20 - are **byte-identical**
+to the pre-fix renderer, which is `emissionPeak == intensity` by construction.
+The four boosted scenes change, and change in one direction: at `boost` 60 the
+profile at the old boundary goes 0 -> 55.9 and runs on smoothly to the frame
+edge. Two consequences worth stating plainly. The earlier profile brightens too
+(113 against 89 at 156 px out), because a longer `reach` subtracts a smaller
+bloom pedestal - the pedestal exists only to land the profile on zero at the
+quad edge, so it moves with it. And the lit area grows: `boost` 20 went from
+28% of that frame to 100% of it. Both are the honest extent of a 1/D bloom at
+that brightness; a caller who wants the old footprint back should ask for it
+with `outsideCutoff`, which still caps the margin.
+
+---
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
@@ -2795,23 +2859,23 @@ first pass remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
 
-| item | state | why |
-| ---- | ----- | --- |
-| V4 | fixed | the premise was wrong: `ad` never needed softening, one infinite-line term was being evaluated where four finite-segment ones belong |
-| V10 | fixed | V4's own unmodelled corner: the straights ran past the tangent point, so a phantom emitter lit the outside of every rounded corner |
-| V12 | fixed | V10's own unmodelled centre: the developed arc ran at rate `r`, which is right only on the arc, so it creased and under-counted at each arc's centre of curvature |
-| V14 | fixed | V4's third half: the halo/bloom FIELD lost its medial-axis crease, but the nearest-point coverage that SCALES it kept one, so any partly lit perimeter cut the glow to a hard-edged polygon |
-| V13 | fixed | V4's other half: the sampling floor was a fixed half width, so at a soft falloff - where sigma multiplies a 64-sigma tail - it doubled the filament to buy five levels of peak |
-| V5 | residual, documented | closing it means plumbing pixel-space feathers into the pre-pass for an effect nobody has reported; read V9 alongside it, which measures the other half of the same mechanism |
-| I2 | declined | negligible measured-by-structure win against a real staleness-bug risk |
-| I5 | documented | the alternative is a breaking renderer-API change for an unmeasured cost |
-| I8 | audited, no UI written | the C ABI itself is complete; what is missing is `demo-capi` coverage, ranked in the section above |
-| R7 | open | a measured quantisation defect with a cheap cure, but unproven visual severity; see the note there before starting |
-| V9 | open | the honest fix is a design decision (interpolate the arc colour between adjacent samples in the consumer), not a patch; the three options are ranked in the section |
-| I12 | partly fixed | the live shader comment is corrected; `architecture-design.md` and `multiple-arcs-design.md` still name the removed LUT functions, and both are design prose rather than comments beside live code |
-| I13 | open | undefined `pow` reachable only through the C ABI; both cures change what the boundary accepts or what the term computes below `ghostSize` 0.6, so it is a behaviour decision rather than a repair |
-| I18 | open | the division guarantees something the 8-bit blend discards, and the three ways out - drop it, document its limit, or accumulate at higher precision - are a design call, not a fix |
-| V12a | open | per-lamp shouldering cannot bound a SUM; the cure is an offscreen composite for the whole layer, which the layer does not currently need at `resolutionScale` 1.0 |
+| item | state                  | why                                                                                                                                                                                                |
+| ---- | ---------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| V4   | fixed                  | the premise was wrong: `ad` never needed softening, one infinite-line term was being evaluated where four finite-segment ones belong                                                               |
+| V10  | fixed                  | V4's own unmodelled corner: the straights ran past the tangent point, so a phantom emitter lit the outside of every rounded corner                                                                 |
+| V12  | fixed                  | V10's own unmodelled centre: the developed arc ran at rate `r`, which is right only on the arc, so it creased and under-counted at each arc's centre of curvature                                  |
+| V14  | fixed                  | V4's third half: the halo/bloom FIELD lost its medial-axis crease, but the nearest-point coverage that SCALES it kept one, so any partly lit perimeter cut the glow to a hard-edged polygon        |
+| V13  | fixed                  | V4's other half: the sampling floor was a fixed half width, so at a soft falloff - where sigma multiplies a 64-sigma tail - it doubled the filament to buy five levels of peak                     |
+| V5   | residual, documented   | closing it means plumbing pixel-space feathers into the pre-pass for an effect nobody has reported; read V9 alongside it, which measures the other half of the same mechanism                      |
+| I2   | declined               | negligible measured-by-structure win against a real staleness-bug risk                                                                                                                             |
+| I5   | documented             | the alternative is a breaking renderer-API change for an unmeasured cost                                                                                                                           |
+| I8   | audited, no UI written | the C ABI itself is complete; what is missing is `demo-capi` coverage, ranked in the section above                                                                                                 |
+| R7   | open                   | a measured quantisation defect with a cheap cure, but unproven visual severity; see the note there before starting                                                                                 |
+| V9   | open                   | the honest fix is a design decision (interpolate the arc colour between adjacent samples in the consumer), not a patch; the three options are ranked in the section                                |
+| I12  | partly fixed           | the live shader comment is corrected; `architecture-design.md` and `multiple-arcs-design.md` still name the removed LUT functions, and both are design prose rather than comments beside live code |
+| I13  | open                   | undefined `pow` reachable only through the C ABI; both cures change what the boundary accepts or what the term computes below `ghostSize` 0.6, so it is a behaviour decision rather than a repair  |
+| I18  | open                   | the division guarantees something the 8-bit blend discards, and the three ways out - drop it, document its limit, or accumulate at higher precision - are a design call, not a fix                 |
+| V12a | open                   | per-lamp shouldering cannot bound a SUM; the cure is an offscreen composite for the whole layer, which the layer does not currently need at `resolutionScale` 1.0                                  |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch
