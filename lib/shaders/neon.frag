@@ -1460,6 +1460,18 @@ void main() {
     result      += emitGlow * halo  * HALO_GAIN      * glowGate;
     result      += emitGlow * bloom * uBloomStrength * glowGate;
 
+    // COVERAGE runs beside the emission from here down - see the output block
+    // at the end of main() for why the two cannot be the same number.
+    //
+    // The FILAMENT term only: it is the one layer that is a solid object
+    // rather than light, so it is the one layer that may occlude what is
+    // behind it. Written as the peak of `emitFil` times the same scalars the
+    // line above applies, rather than the peak of that product, so the vec3
+    // expression is left exactly as it was - every factor here is
+    // non-negative, so max() commutes with them.
+    float covLin = max(max(emitFil.r, emitFil.g), emitFil.b) *
+                   core * FILAMENT_GAIN * lineGate;
+
     // NOTE neither the one-sided cut NOR the hard cutoff masks are applied
     // here. Both are COVERAGE, not emission, so both belong below the grade -
     // see the block after the tone map. The quad-edge fade below stays, and is
@@ -1517,7 +1529,9 @@ void main() {
     float cutEdge   = uOutsideCutoff + outSoft;
     float fadeStart = (cutEdge < uQuadMargin) ? max(fadeFloor, cutEdge) : fadeFloor;
     float dQuad     = sdRoundBox(vPos, halfSize + vec2(uQuadMargin), 0.0);
-    result *= 1.0 - smoothstep(-(uQuadMargin - fadeStart), 0.0, dQuad);
+    float quadFade = 1.0 - smoothstep(-(uQuadMargin - fadeStart), 0.0, dQuad);
+    result  *= quadFade;
+    covLin  *= quadFade;
 
     // --- Grade --------------------------------------------------------
     // Hue-preserving Reinhard: tonemap the peak channel and scale the
@@ -1528,6 +1542,16 @@ void main() {
     float mapped = peak / (peak + TONE_MAP_SHOULDER);
     result = result * (mapped / max(peak, 1e-6));
     result = pow(result, vec3(GAMMA_EXPONENT));
+
+    // The coverage takes the SAME curve, evaluated on the filament's own peak.
+    // Not a second tone map of the composite: what this number has to track is
+    // the tube's own edge profile, and grading it here is what keeps the
+    // anti-aliasing of that edge - and its registration with the opaque fill -
+    // exactly where the sub-pixel sweep below the grade measured it. Where the
+    // filament dominates (the core and its shoulders) this is the old
+    // max-channel alpha to within a level; where only halo and bloom are left
+    // it goes to zero, which is the fix.
+    float cov = pow(covLin / (covLin + TONE_MAP_SHOULDER), GAMMA_EXPONENT);
 
     // --- One-sided cut: mask the WHOLE layer at the line --------------
     // Anchored at the opaque fill's own edge and feathered INTO the lit side -
@@ -1592,8 +1616,11 @@ void main() {
     // them ever runs.
     if (!blitOwnsCut)
     {
-        if (uGlowSide == GLOW_SIDE_INSIDE)       result *= 1.0 - smoothstep(sideBack - sideSoft, sideBack, d);
-        else if (uGlowSide == GLOW_SIDE_OUTSIDE) result *= smoothstep(-sideBack, sideSoft - sideBack, d);
+        float sideCut = 1.0;
+        if (uGlowSide == GLOW_SIDE_INSIDE)       { sideCut = 1.0 - smoothstep(sideBack - sideSoft, sideBack, d); }
+        else if (uGlowSide == GLOW_SIDE_OUTSIDE) { sideCut = smoothstep(-sideBack, sideSoft - sideBack, d); }
+        result *= sideCut;
+        cov    *= sideCut;
     }
 
     // --- Hard cutoff masks: close the band at its two boundaries ------
@@ -1631,15 +1658,49 @@ void main() {
     //
     // Ramps span inSoft / outSoft TOTAL, centred on the boundary - hence the
     // halves, and see where they are derived for what the doubled form cost.
-    result *= smoothstep(-inHalf, inHalf, dIn);
-    result *= 1.0 - smoothstep(-outHalf, outHalf, dOut);
+    float bandMask = smoothstep(-inHalf, inHalf, dIn) *
+                     (1.0 - smoothstep(-outHalf, outHalf, dOut));
+    result *= bandMask;
+    cov    *= bandMask;
 
     // Premultiplied-alpha output so the effect composites over arbitrary
-    // background objects instead of only adding light. Coverage = brightest
-    // channel: the hot filament core (alpha ~ 1) occludes the background and
-    // reads as a solid tube; the dim halo/bloom (alpha ~ 0) stay additive; the
-    // dark surround (alpha = 0) leaves the background untouched. Pairs with
-    // glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA) in the renderer.
-    float alpha = clamp(max(result.r, max(result.g, result.b)), 0.0, 1.0);
+    // background objects instead of only adding light. Pairs with
+    // glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA) in the renderer, so the
+    // destination keeps 1 - alpha of itself and the layer's own colour is
+    // added on top of what is left.
+    //
+    // ALPHA IS THE FILAMENT'S COVERAGE, NOT THE LAYER'S BRIGHTNESS. The two
+    // were the same number - `max` over the graded result - and the intent
+    // behind that was exactly what `cov` now computes: the hot core occludes
+    // and reads as a solid tube, the halo and bloom stay additive. What broke
+    // it is that the halo and bloom are not dim. `reach` is
+    // GLOW_REACH_RADIUS_FACTOR (48) glow radii, the bloom profile out there is
+    // bw / sqrt(ad^2 + bw^2) - a 1/distance tail, not an exponential one - and
+    // TONE_MAP_SHOULDER lifts small values by 1/0.6 before GAMMA_EXPONENT
+    // lifts them again. So a fragment carrying a few percent of the peak in
+    // LIGHT was handing back a third of its alpha in OCCLUSION.
+    //
+    // Over the demo's near-black backdrop that is invisible: 1 - alpha of
+    // nothing is nothing. Over a photograph, a video plane, or any other
+    // layer, it is a grey veil the size of the whole glow - and since a
+    // SegmentBoost multiplies that tail's amplitude while the tail falls as
+    // 1/d, a boost of B widens the veil by ~B as well as brightening it, which
+    // is how it was reported ("a transparent outer glow area over the coloured
+    // layer, with segment boost"). Measured at 1280x720, 640x360 rect,
+    // glowRadius 30, one boost-4 segment: pixels carrying alpha >= 8 went from
+    // 921,600 of 921,600 - the entire frame - to 24,178.
+    //
+    // RGB IS UNTOUCHED by the split, byte for byte, in every scene: the light
+    // the layer emits has not changed, only how much of the destination it
+    // keeps. A scene over black is bit-identical.
+    // The glow's own share of the coverage, pedestalled by
+    // GLOW_COVERAGE_FLOOR - see the header for the two failures the floor sits
+    // between. At 0.0 this max() reduces to the old max-channel alpha exactly
+    // (the filament's cov is below it everywhere, by construction), so the old
+    // behaviour is still reachable from the header.
+    float glowPeak = clamp(max(result.r, max(result.g, result.b)), 0.0, 1.0);
+    float glowCov  = clamp((glowPeak - GLOW_COVERAGE_FLOOR) /
+                           max(1.0 - GLOW_COVERAGE_FLOOR, 1e-6), 0.0, 1.0);
+    float alpha = clamp(max(cov, glowCov), 0.0, 1.0);
     fragColor = vec4(result, alpha);
 }

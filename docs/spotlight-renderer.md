@@ -34,8 +34,12 @@ at all:
   GL_ONE, GL_ONE, GL_ONE)` - in the alpha channel as well as in colour, which
   also makes the layer order-independent. The order of
   `SpotlightConfig::lamps` cannot change the image.
-- **It writes a coverage alpha**, the same max-of-channels rule neon and the
-  flare use. It did not always: the shader emitted a literal `0.0`, which is
+- **It writes a coverage alpha**, the same max-of-channels rule the flare uses.
+  (Neon no longer does: its alpha is the filament's coverage under a
+  `GLOW_COVERAGE_FLOOR`-pedestalled glow coverage, so its glow stops occluding
+  once it is dim - V15 in [review-findings.md](review-findings.md). Whether
+  this layer should follow is open, and depends on how the target surface is
+  composited.) It did not always: the shader emitted a literal `0.0`, which is
   invisible on a desktop window (opaque, nobody reads the alpha back) and
   erases the whole layer on an embedded surface a compositor or hardware video
   plane blends by alpha - `out = ui.rgb * ui.a + video * (1 - ui.a)` multiplies

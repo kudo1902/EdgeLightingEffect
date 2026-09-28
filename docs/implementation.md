@@ -147,8 +147,13 @@ pixel:
   CPU-authored positions line up with what the shader draws.
 
 Multiply the two, tone map hue-preservingly, apply gamma, emit premultiplied
-alpha (coverage = brightest channel) so the effect composites over arbitrary
-content rather than only adding light.
+alpha so the effect composites over arbitrary content rather than only adding
+light. The alpha is the FILAMENT's coverage under the glow's own coverage
+pedestalled by `GLOW_COVERAGE_FLOOR` - not the brightest channel of the
+finished pixel, which made the halo and bloom occlude what was behind them out
+to 48 glow radii. The floor is what ends the veil without desaturating the
+glow against a coloured backdrop; 0.0 restores the old behaviour exactly. See
+V15 in [review-findings.md](review-findings.md).
 
 Before that quad runs, both neon renderers execute an **emission pre-pass**.
 The gather's per-sample work - the arc winner-take-all, the segment bells, the

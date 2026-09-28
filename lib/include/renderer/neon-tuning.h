@@ -368,6 +368,34 @@
 #define TONE_MAP_SHOULDER         0.6
 #define GAMMA_EXPONENT            0.85
 
+// --- How much of the GLOW counts as coverage, i.e. how much of what is behind
+//     the layer the halo and bloom take away. The filament's own coverage is a
+//     floor under this and is not shaped by it; see the output block at the end
+//     of neon.frag.
+//
+//     This is a PEDESTAL on the glow's brightness, in the [0,1] range the
+//     graded output lives in: brightness at or below it contributes no
+//     coverage at all, and what is above is rescaled so the peak still reaches
+//     1. It sits between two failures.
+//
+//       0.0  - the glow occludes in proportion to its brightness, which is
+//              what this layer used to do. Its colour survives over any
+//              backdrop, because it suppresses the backdrop before adding to
+//              it - but the bloom's 1/distance tail runs to
+//              GLOW_REACH_RADIUS_FACTOR glow radii, so a grey veil the size of
+//              the whole glow lands on whatever is behind the layer.
+//       1.0  - the glow adds light and takes nothing away. Nothing is veiled,
+//              but a saturated glow over a complementary backdrop desaturates:
+//              pink light on green reads as a pale grey band at the tube's
+//              shoulder, where the glow is bright and its coverage is gone.
+//
+//     A pedestal rather than a power (which was measured first): it keeps MORE
+//     coverage where the glow is bright, which is where its colour has to
+//     survive, and reaches EXACTLY zero at a finite distance rather than
+//     asymptotically, which is what ends the veil. Swept in V15 of
+//     docs/review-findings.md. ---
+#define GLOW_COVERAGE_FLOOR       0.25
+
 // --- Epsilons ---
 #define SIDE_SOFT_EPSILON         1e-5
 #define WSUM_EPSILON              1e-6

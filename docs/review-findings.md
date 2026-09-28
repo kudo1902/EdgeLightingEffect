@@ -2783,14 +2783,205 @@ intensity is the whole price, and raising `intensity` - now safe - buys it back.
 
 ---
 
+## Fourteenth pass (the segment-boost veil report)
+
+One finding, reported as "there is a transparent outer glow area that overlays
+on the coloured layer, when using segment boost". It is not a segment defect
+and not a colour defect: the neon layer's ALPHA was its brightness, so every
+pixel the glow reached took that fraction of the destination away. A
+`SegmentBoost` is what made it impossible to miss.
+
+### V15. The layer's alpha is its brightness, so the glow occludes whatever is behind it - FIXED
+
+**Confirmed.** 1280x720, 640x360 rect at (320, 180), `cornerRadius` 40,
+`lineWidth` 4, one colour stop, one segment at position 0.17, length 0.10,
+`boost` 4, rendered over a `glClearColor(0, 0, 0, 0)` clear and composited onto
+a colour-bar backdrop with the renderer's own
+`glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)`:
+
+| before | after |
+| ------ | ----- |
+| ![](images/review-findings/glow-alpha-veil.png) | ![](images/review-findings/glow-alpha-veil-fixed.png) |
+
+The green bar goes olive, the yellow bar goes pink and the white bar is tinted,
+out to the edge of the frame. At `glowRadius` 30 / `bloomStrength` 0.6 every
+one of the 921,600 pixels in the frame carried alpha >= 8.
+
+**Mechanism.** `neon.frag` closed with
+
+```
+float alpha = clamp(max(result.r, max(result.g, result.b)), 0.0, 1.0);
+```
+
+and the comment above it stated the intent exactly: the hot filament core
+occludes and reads as a solid tube, the dim halo and bloom stay additive. The
+intent is right. What is wrong is the premise that the halo and bloom are dim:
+
+- `reach` is `GLOW_REACH_RADIUS_FACTOR` (**48**) glow radii, so the emission is
+  not even nominally over until 312 px out at the default `glowRadius` 5.
+- the bloom profile out there is `bw / sqrt(ad^2 + bw^2)` - a **1/distance**
+  tail, not an exponential one.
+- `TONE_MAP_SHOULDER` lifts small values by 1/0.6 and `GAMMA_EXPONENT` lifts
+  them again, so a few percent of the peak in LIGHT arrives as a third of the
+  range in ALPHA.
+
+Measured on the plain full ring at `glowRadius` 5, alpha above the top edge:
+**124 at 10 px out, 72 at 40 px, 27 at 120 px**. That is 28% of the destination
+gone at 40 px from a line whose glow radius is 5.
+
+**Why a segment boost is how it was found.** The boost multiplies that tail's
+amplitude while the tail falls as 1/d, so a boost of B widens the veil by ~B as
+well as brightening it. It is otherwise not specific to segments - a plain ring
+veils too, and over the demo's near-black backdrop none of it shows, because
+`1 - alpha` of nothing is nothing.
+
+**Fix, first attempt - and the second report that corrected it.** Carry
+COVERAGE beside the emission from the compose down, built from the FILAMENT
+term alone - the one layer that is a solid object rather than light - and grade
+it through the same Reinhard shoulder and gamma the colour takes, so the tube's
+edge profile and its registration with `black-rect.frag` are unchanged. The
+quad fade, the one-sided cut and the two hard cutoffs scale both numbers.
+
+That removed the veil completely and was reported back as "the core filament
+looks worse, it has a dim region at the boundary". Confirmed, and it is a real
+defect of that version rather than a preference: with the glow claiming no
+coverage at all its light is purely additive, and additive light desaturates
+against a complementary backdrop. Saturation of the composite down the column
+through the tube, over a (30, 170, 90) green backdrop:
+
+| | 2 px | 4 px | **6 px** | 10 px | 20 px |
+| - | ---- | ---- | -------- | ----- | ----- |
+| before | 0.82 | 0.71 | **0.43** | 0.24 | 0.02 |
+| filament only | 0.81 | 0.65 | **0.03** | 0.19 | 0.30 |
+
+0.03 is a flat grey - `(178, 172, 177)` - in a band hugging the tube, where the
+glow is still emitting `(152, 25, 99)` and pink light on green sums to grey.
+
+**What the two reports are, together.** They are the same number pulled in
+opposite directions at different distances:
+
+- the glow keeps its colour over a coloured backdrop only by SUPPRESSING that
+  backdrop, which is coverage;
+- the veil IS that suppression, several hundred pixels further out.
+
+So the cure is not to remove the glow's coverage but to END it. Both reports
+are satisfied by the same shaping, because the glow is bright where its colour
+has to survive and dim where the veil is.
+
+**Shipped.** `alpha = max(filament coverage, pedestalled glow coverage)`, the
+pedestal being `GLOW_COVERAGE_FLOOR` (0.25) subtracted from the graded peak
+with the remainder rescaled to 1. The filament's own coverage is a floor under
+it and is not shaped, so the tube is unaffected whatever the floor is.
+
+A pedestal rather than a power, which was measured first: it keeps MORE
+coverage where the glow is bright AND reaches exactly zero at a finite
+distance, where a power only decays. Against `GLOW_COVERAGE_EXPONENT` 2 on the
+same scene - saturation at 6 px **0.30 against 0.21**, alpha 40 px out
+**14 against 22**, alpha-carrying pixels **215,298 against 371,266**. Better on
+both axes at once, so the power was dropped.
+
+| floor | sat at 6 px | alpha 10 / 40 / 120 px out | alpha >= 8 px |
+| ----- | ----------- | -------------------------- | ------------- |
+| 0.00 (= the old behaviour, exactly) | 0.43 | 125 / 74 / 29 | 783,507 |
+| 0.15 | 0.37 | 102 / 42 / 0 | 364,135 |
+| **0.25 (shipped)** | **0.30** | **82 / 14 / 0** | **215,298** |
+| 0.35 | 0.23 | 55 / 0 / 0 | 124,035 |
+| filament only | 0.03 | 0 / 0 / 0 | 23,805 |
+
+**0.0 reproduces the old alpha exactly** - 783,507 pixels and 125 / 74 / 29,
+term for term - which is the reduction check on the whole construction: the
+filament's coverage is below the graded peak everywhere by construction, so the
+`max` collapses and the pedestal is the identity.
+
+| before | after |
+| ------ | ----- |
+| ![](images/review-findings/glow-alpha-veil.png) | ![](images/review-findings/glow-alpha-veil-fixed.png) |
+
+The tube over a green backdrop, magnified - today, floor 0.25, filament only:
+
+![](images/review-findings/glow-alpha-veil-tube.png)
+
+**Measured**, twelve scenes, alpha-carrying pixels (alpha >= 8), before against
+after:
+
+| scene | before | after |
+| ----- | ------ | ----- |
+| plain full ring | 751,493 | **170,158** |
+| + segment boost 4 | 783,507 | 215,298 |
+| glowSide INSIDE | 229,156 | 103,819 |
+| glowSide OUTSIDE, softness 6 | 554,475 | 111,602 |
+| both cutoffs on | 68,594 | 59,617 |
+| resolutionScale 0.5 | 783,524 | 214,580 |
+| opaqueMode INSIDE | 783,507 | 340,634 |
+| sharp corners | 801,003 | 227,375 |
+| half-ring arc | 622,699 | 112,322 |
+| colour-stop alpha 0.3 | 783,507 | 215,298 |
+| glowRadius 30, bloom 0.6 | 921,600 | 921,524 |
+| glowRadius 0 (filament only) | 7,530 | **7,530** |
+
+Two rows are the shape of the trade rather than a result. `glowRadius` 0 cannot
+move: there is no glow to stop occluding, and the scene is byte-identical.
+`glowRadius` 30 with `bloomStrength` 0.6 barely moves either, for the opposite
+reason - out there the glow is genuinely BRIGHT, well above the floor, so it
+keeps its coverage and keeps its colour. A large glow still covers what is
+behind it; raise the floor if that scene matters more than its colour does.
+
+**RGB IS BYTE-IDENTICAL**, max 0 in every channel on every scene at every floor.
+The light the layer emits has not changed; only how much of the destination
+survives under it. A scene over black - the demo's own backdrop - cannot move.
+
+**The tube is unchanged.** Cross-section through the top edge, alpha per pixel,
+`lineWidth` 4:
+
+```
+y               172  173  174  175  176  177  178  179  180
+before          134  141  152  176  209  231  242  245  245
+filament only     0    5   34  110  189  227  240  244  244
+shipped          94  103  117  149  193  227  240  244  244
+```
+
+The core loses one level, and from y = 176 inward the three agree to within a
+level. What the middle row cost - 152 -> 34 at y = 174, an emission of 152
+claiming a coverage of 34 - is the grey band; the shipped row is back within 35
+levels of the original there while still reaching zero by y = 150.
+
+**Known, and a device decision rather than a defect.** In the glow region the
+premultiplied colour now exceeds the alpha, which is what "this pixel adds
+light and hides some of what is behind it" means under
+`GL_ONE, GL_ONE_MINUS_SRC_ALPHA`. On a target that treats alpha as a
+punch-through key for a hardware video plane rather than as a blend weight -
+which is how `SpotlightRenderer`'s alpha-0 output went missing over a playing
+video, and [spotlight-renderer.md](spotlight-renderer.md) records that
+composite as `ui.rgb * ui.a + video * (1 - ui.a)`, which is NOT premultiplied -
+the glow's outer reach fades sooner there than it does here.
+`GLOW_COVERAGE_FLOOR` 0.0 restores the old behaviour exactly if that target
+needs it.
+
+**The same shape is in the other two light-only layers.** `lens-flare.frag` and
+`spotlight.frag` both derive alpha from the brightest channel of their finished
+shading, so a ghost, a ray and a cone all take the destination down in
+proportion to how bright they are. Neither is reported and neither is touched
+here.
+
+**What let this through**: every capture in this document composites the layer
+over black or reads the layer's own RGB. Nothing in the harness ever put a
+coloured surface behind the effect, so a defect that lives entirely in the
+alpha channel could not show up in any of them. The probe that found it is that
+same offscreen capture with one CPU-side `src + dst * (1 - a)` after the read -
+and the second report is what showed that reading the alpha alone is not enough
+either: the grey band is invisible in every alpha statistic and obvious in one
+composite over a saturated colour.
+
+---
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
 I9, I10 and I11. I3's structural half - the last thing on this list that was
 open rather than declined - closed with the neon unification, which deleted the
 fork it followed from. The fifth pass's I15 landed with it. The seventh through
-tenth passes are one item each and all four are fixed, as are the eleventh's one
-and the twelfth's four. Five items from the
+tenth passes are one item each and all four are fixed, as are the eleventh's one,
+the twelfth's four and the fourteenth's one. Five items from the
 first pass remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -2801,6 +2992,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | V10 | fixed | V4's own unmodelled corner: the straights ran past the tangent point, so a phantom emitter lit the outside of every rounded corner |
 | V12 | fixed | V10's own unmodelled centre: the developed arc ran at rate `r`, which is right only on the arc, so it creased and under-counted at each arc's centre of curvature |
 | V14 | fixed | V4's third half: the halo/bloom FIELD lost its medial-axis crease, but the nearest-point coverage that SCALES it kept one, so any partly lit perimeter cut the glow to a hard-edged polygon |
+| V15 | fixed | the layer's alpha was its brightness, so the glow - a 1/d tail out to 48 glow radii, lifted twice by the grade - occluded whatever was behind it; alpha is now the filament's coverage under a pedestalled glow coverage (`GLOW_COVERAGE_FLOOR`), RGB byte-identical |
 | V13 | fixed | V4's other half: the sampling floor was a fixed half width, so at a soft falloff - where sigma multiplies a 64-sigma tail - it doubled the filament to buy five levels of peak |
 | V5 | residual, documented | closing it means plumbing pixel-space feathers into the pre-pass for an effect nobody has reported; read V9 alongside it, which measures the other half of the same mechanism |
 | I2 | declined | negligible measured-by-structure win against a real staleness-bug risk |
