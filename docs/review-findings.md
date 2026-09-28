@@ -2456,6 +2456,17 @@ halo/bloom pedestal. An alpha ramp therefore fades the glow's magnitude less
 completely than an arc gate does. Nobody has reported it, and the cure is a
 measurable 20-30% on the layer.
 
+> **Corrected by the fourteenth pass, and the wording above understated it
+> twice.** "Less completely" and "its share of the pedestal" both describe a
+> partial fade. The measured fade is ZERO. Sweeping one segment's colour-stop
+> alpha from 1.0 to 0.0 at boost 1.0, on a dark ring, the glow reads 70 / 34 /
+> 16 at 30 / 60 / 100 px out at EVERY alpha, and the lit area (>= 4) is 97,194
+> px at every alpha - identical to the byte. A fully transparent segment paints
+> its complete halo and bloom. An arc behaves the same way (on-line 245 -> 169,
+> glow frozen). "Nobody has reported it" is also no longer true: it is half of
+> the report the fourteenth pass opens with, and it is the half that is still
+> open. See V16 below.
+
 **What let this through**: V4 was verified on a FULLY LIT ring, where the
 gathered and pointwise coverages are both identically 1.0 and no amount of
 probing can tell them apart. The scene set it was measured on had no partial
@@ -2783,6 +2794,164 @@ intensity is the whole price, and raising `intensity` - now safe - buys it back.
 
 ---
 
+## Fourteenth pass (the segment blur report)
+
+One report, from a render: *"I feel there is a blur shadow surround the segment
+in neon renderer"*. Three things turned out to be stacked underneath it, and
+only the first is the one that produces the described look.
+
+Before any of them: the blob's RAW SIZE is not a segment defect and is shared
+with arcs. Radially it is the bloom's designed reach - the `>= 4` extent at
+`glowRadius` 12 / `bloomStrength` 0.30 is 206 px, against 73 px with the bloom
+off and 20 px at `glowRadius` 2 with the bloom off. Tangentially it is the
+segment's own gaussian, `+/- 2 sigma`, essentially flat in `glowRadius` (133 px
+at 2, 148 px at 30). What makes that ordinary spread READ as a separate shadow
+is V15.
+
+Also ruled out, so nobody re-checks them: there is no darkening anywhere (over a
+200-level background one segment only ADDS, peak +52, 0 px darkened; over video
+it is a bright veil, not a shadow); sampling is not involved (peak 250 and glow
+46 at all nine sub-sample offsets of a travelling segment, converged at the
+default `numSamples` 128, though a `length` 0.02 segment IS under-resolved at 32
+and 64 - glow 27 and 42 against 46); and `resolutionScale` is not involved (glow
+identical at 1.0 / 0.5 / 0.25, peak 245 / 244 / 237).
+
+### V15. The filament gate is an absolute threshold, so a dim segment renders as a blur with no line in it - FIXED
+
+`filamentGate` thresholded `segCoverPt` - which is `boost * bell * stopAlpha` -
+at `smoothstep(0.5, 1.0, ...)`, while the glow beside it, `glowCoverAll`, has no
+threshold at all. So a BRIGHTNESS knob decided the segment's LENGTH, and below a
+certain brightness decided whether it had a line at all.
+
+**Proven, not inferred.** At boost 0.30, 0.50 and 0.5001 on a dark ring, the
+frame is byte-identical to the same scene rendered at `lineWidth` 0 - 0 of
+4,320,000 bytes differ. The filament is provably absent and everything on screen
+is halo and bloom. At 0.55 it is 1,242 bytes.
+
+Visible half-length against a stated half-extent of 76.6 px (`length` 0.10 on a
+1531 px perimeter), measured as the last `dx` where the on-line row still reads
+70% of its peak:
+
+| boost | before | after | rejected FIX B |
+| ----- | ------ | ----- | -------------- |
+| 0.4 | *no line* | 48 | 58 |
+| 0.5 | *no line* | 49 | 64 |
+| 0.6 | 22 | 51 | 70 |
+| 0.8 | 41 | 53 | 79 |
+| 1.0 | 54 | 54 | 86 |
+| 1.5 | 73 | 57 | 98 |
+| 3.0 | 97 | 80 | 117 |
+
+The before column is NON-MONOTONIC across 0.5 to 0.6: raising boost took the
+bright feature from a 43 px-half smudge to a 22 px-half stub while its peak
+jumped 73 to 169. The after column is flat, which is what `length` setting the
+length means.
+
+**The fix** divides `segCoverPt` by the dominant segment's own peak before
+gating, so the gate reads the bell's SHAPE rather than its absolute height. It
+is a no-op wherever the old expression was right: at boost 1 and alpha 1 the
+divisor is exactly 1.0 and the two are the same line. Deviation from the shipped
+shader, per 1,080,000 px scene:
+
+| scene | px changed | max | mean |
+| ----- | ---------- | --- | ---- |
+| stock config, no segment | **0** | 0 | 0 |
+| stock config + segment | **0** | 0 | 0 |
+| stock config + segment, `resolutionScale` 0.5 | **0** | 0 | 0 |
+| dark ring, boost 1.0 | **0** | 0 | 0 |
+| lit ring + segment | **0** | 0 | 0 |
+| partial arc, no segment | **0** | 0 | 0 |
+| arc at `intensity` 0.4 | **0** | 0 | 0 |
+| dark ring, boost 0.5 | 1,637 | 166 | 75.04 |
+| dark ring, boost 0.6 | 1,642 | 153 | 60.90 |
+| dark ring, boost 2.0 | 1,743 | 91 | 24.21 |
+| dark ring, boost 1.0, stop alpha 0.5 | 1,527 | 93 | 42.81 |
+| segment off an arc | 1,552 | 97 | 22.68 |
+| two distant segments | 1,845 | 102 | 22.40 |
+| two overlapping segments | 1,850 | 142 | 32.33 |
+| dim segment beside a bright one | 2,878 | 151 | 44.24 |
+
+Every default-config scene and every arc-only scene is untouched. The worst
+change is 0.27% of a frame.
+
+**Cost.** 6.804 / 6.809 -> 6.875 / 6.878 ms at one segment (**+1.04%**) and
+7.012 / 7.015 -> 7.108 / 7.110 ms at eight (**+1.37%**), on the rounded 960x540
+/ `glowRadius` 60 scene at 1920x1080, nine rounds of 60 frames, medians, two
+interleaved rounds.
+
+**The first form of the fix was worse than the defect, and only a render caught
+it.** Normalising by a plain `max(seg.z * sA)` over all segments reads fine and
+is one operation cheaper. But the max is global, so a bright segment anywhere on
+the ring raises the divisor for a dim one. A boost 0.6 segment sharing a ring
+with a boost 3.0 one measured **94** against the 170 the un-normalised gate gave
+it and the 238 the shipped fix gives - it deleted the line the normalisation
+exists to restore. The divisor has to belong to the segment that dominates AT
+THIS FRAGMENT, resolved winner-take-all exactly as overlapping arcs are.
+
+**The other rejected candidate**, FIX B, was `max(min(segCoverPt, 1.0),
+emitCover)` - the arc's own linear treatment, one line, no dead zone. It fixes
+the same three symptoms, but its line OVERRUNS the segment: at boost 1.0 it
+still reads 200/255 at `dx` 75 and 157 at `dx` 90, running to about 120 px
+against the stated 76.6, and its length still grows with boost (58 to 117 across
+the sweep). It also moves the boost 1.0 case, which the shipped look was tuned
+at - 3,196 px, max 136.
+
+**One consequence to know about, which is not new.** The filament saturates the
+tone map, so after the fix a boost 0.4 segment reads 230 rather than the old 54.
+That is not an anomaly introduced here: an ARC at `intensity` 0.4 already reads
+231 against 245 at 1.0. The old low-boost "brightness ramp" was the gate
+switching the line off, not the line dimming. Making boost dim the line is a
+change to `FILAMENT_GAIN` / `TONE_MAP_SHOULDER` and would affect arcs equally.
+
+**Colour-stop alpha rode the same product**, so fading a segment out dropped its
+line the moment alpha crossed 0.5 rather than fading it. On-line peak at boost
+1.0, alpha 1.00 / 0.75 / 0.50 / 0.25 / 0.00:
+
+| | 1.00 | 0.75 | 0.50 | 0.25 | 0.00 |
+| - | ---- | ---- | ---- | ---- | ---- |
+| before | 245 | 231 | **152** | **152** | **152** |
+| after | 245 | 242 | 236 | 224 | 152 |
+
+152 is the glow with no line in it. The fade is monotone now, though compressed
+by the same saturation.
+
+**What let this through**: every earlier probe of the segment path used boost
+1.0, where the divisor is exactly 1.0 and the old and new expressions are the
+same expression. This is V14's failure mode one level over - that one was
+verified on a fully lit ring, where the two coverages are both 1.0 and nothing
+can tell them apart. A gate has to be probed across the RANGE of the value it
+gates on, not at the one value the look was tuned at.
+
+### V16. The segment's glow carries its coverage twice; an arc's carries it once - OPEN
+
+`segColGlow` is `segColHue * segCoverGathered`, and it is then multiplied by
+`glowCoverAll`, which where no arc covers IS `min(segCoverGathered, 1.0)`. So the
+segment's halo and bloom ride coverage SQUARED. The arc term beside it,
+`arcCol * emitCoverGathered`, rides it once.
+
+Measured against an arc of the same length at the same on-line peak, segment /
+arc by distance out from the line:
+
+| px out | 0 | 40 | 80 | 120 | 200 |
+| ------ | - | -- | -- | --- | --- |
+| shipped | 1.00 | 0.62 | 0.44 | 0.33 | 0.27 |
+| with the duplicate removed | 1.00 | 0.90 | 0.87 | 0.85 | 0.87 |
+
+Confirmed causally, not read off the source: setting `segColGlow = segColHue`
+and rebuilding produces the second row.
+
+**Open, and note which way it cuts.** The duplicate makes the segment's glow
+TIGHTER than an arc's, so removing it makes the blob bigger, not smaller - it is
+a consistency defect, not a cure for the report this pass opens with. Whether a
+segment's glow SHOULD match an arc's at the same on-line peak is a look decision
+rather than a repair, and the one-line change needs a retune of the tail behind
+it.
+
+The third item in the report is the colour-stop alpha no-op corrected in the
+eleventh pass's note above. It is unchanged by V15, which touches only the
+filament: the glow column reads 46 at every alpha before and after. Its cure is
+still the third emission-table row priced there.
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
@@ -2790,7 +2959,8 @@ I9, I10 and I11. I3's structural half - the last thing on this list that was
 open rather than declined - closed with the neon unification, which deleted the
 fork it followed from. The fifth pass's I15 landed with it. The seventh through
 tenth passes are one item each and all four are fixed, as are the eleventh's one
-and the twelfth's four. Five items from the
+and the twelfth's four. The fourteenth pass fixed one and left one open. Five
+items from the
 first pass remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -2812,6 +2982,8 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I13 | open | undefined `pow` reachable only through the C ABI; both cures change what the boundary accepts or what the term computes below `ghostSize` 0.6, so it is a behaviour decision rather than a repair |
 | I18 | open | the division guarantees something the 8-bit blend discards, and the three ways out - drop it, document its limit, or accumulate at higher precision - are a design call, not a fix |
 | V12a | open | per-lamp shouldering cannot bound a SUM; the cure is an offscreen composite for the whole layer, which the layer does not currently need at `resolutionScale` 1.0 |
+| V15 | fixed | the filament gate thresholded `boost * bell * alpha` at an ABSOLUTE 0.5, so a brightness knob decided the segment's length and, under 0.5, whether it had a line at all; it gates on the shape now |
+| V16 | open | the segment's glow rides coverage squared where an arc's rides it once, but removing the duplicate makes the glow WIDER, so it is a look decision plus a tail retune rather than a repair |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

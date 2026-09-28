@@ -1135,6 +1135,21 @@ void main() {
     // rect. Segments emit where no arc covers, so they carry their own
     // filament/halo/bloom.
     float segCoverPt = 0.0;
+    // The PEAK the dominant segment reaches at this fragment's alpha - that is,
+    // what segCoverPt would read if this fragment sat at that segment's centre,
+    // where its bell is 1. Dividing by it below turns the sum into the
+    // emitter's SHAPE, which is what the filament gate wants; see there.
+    //
+    // WINNER-TAKE-ALL, resolved exactly as overlapping arcs are, and that is
+    // the whole reason segBest exists rather than a plain max over seg.z * sA.
+    // The peak has to belong to the segment that dominates HERE: a global max
+    // lets a bright segment elsewhere on the ring raise the divisor for a dim
+    // one, which re-creates the very defect the normalisation removes. Measured
+    // on a boost 0.6 segment sharing a ring with a boost 3.0 one, the dim one's
+    // line read 94 against 238 - dimmer than the 170 the un-normalised gate
+    // gave it. See docs/review-findings.md.
+    float segBest    = 0.0;
+    float segPeakPt  = 1.0;
     for (int s = 0; s < uSegmentCount; s++) {
         vec4  seg = uSegments[s];
         float rel = sPos - seg.x;
@@ -1151,7 +1166,12 @@ void main() {
         } else {
             sA = baseAlphaPt;
         }
-        segCoverPt += seg.z * exp(-e * e) * sA;
+        float segV  = seg.z * exp(-e * e) * sA;
+        segCoverPt += segV;
+        if (segV > segBest) {
+            segBest   = segV;
+            segPeakPt = seg.z * sA;
+        }
     }
 
     // Attach the segments' magnitude to their hue. Unclamped on purpose: boost
@@ -1222,7 +1242,38 @@ void main() {
     // neither can quantise a slow tracer's head to the gather points nor light
     // the corner preceding an arc's tail - the two bugs the old
     // circular-mean/sample-based gates had.
-    float filamentGate = max(smoothstep(0.5, 1.0, min(segCoverPt, 1.0)), emitCover);
+    //
+    // The segment arm gates on its SHAPE, not on its absolute brightness, and
+    // that distinction is the whole point of segPeakPt above. The gate asks
+    // "is this fragment inside the segment", which is a question about the
+    // bell; segCoverPt answers a different one, because it carries boost and
+    // colour-stop alpha as well. Threshold the raw sum at 0.5 and a BRIGHTNESS
+    // knob starts deciding the segment's LENGTH:
+    //
+    //   - boost <= 0.5 gated the line off entirely. Verified byte-identical to
+    //     the same scene at lineWidth 0 - 0 of 4,320,000 bytes differ at boost
+    //     0.30, 0.50 and 0.5001 - so the segment rendered as its halo and bloom
+    //     with no line in them at all. That is the "blur with nothing in it"
+    //     this block was rewritten for.
+    //   - between 0.5 and 1 the line was a stub inside a full-length glow, and
+    //     its length was NON-MONOTONIC in boost: half-length 43 px at boost 0.5
+    //     (glow only), 22 px at 0.6, back to 54 px at 1.0, on a segment whose
+    //     stated half-extent is 76.6 px. Raising boost made it look shorter.
+    //   - colour-stop alpha rides the same product, so fading a segment out
+    //     dropped its line the moment alpha crossed 0.5 rather than fading it:
+    //     245, 231, then 152, 152, 152 as alpha went 1.0 to 0.
+    //
+    // Dividing by the dominant segment's own peak removes all three, and is a
+    // no-op wherever the old expression was right: at boost 1 and alpha 1
+    // segPeakPt is exactly 1.0 and this IS the old line. Measured 0 pixels
+    // changed on every default-config scene, on a dark ring at boost 1.0, and
+    // on every arc-only scene; the changes are confined to the configs above.
+    //
+    // What this does NOT fix: the GLOW still ignores colour-stop alpha
+    // completely, so an alpha-faded segment keeps its full halo and bloom. See
+    // docs/review-findings.md - that one needs a third emission-table row.
+    float segShapePt   = segCoverPt / max(segPeakPt, 1e-4);
+    float filamentGate = max(smoothstep(0.5, 1.0, min(segShapePt, 1.0)), emitCover);
 
     // --- Analytic halo + bloom --------------------------------------------
     // Closed forms of the sums this shader used to run over the perimeter
