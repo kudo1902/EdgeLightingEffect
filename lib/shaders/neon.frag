@@ -171,20 +171,32 @@ float sdRoundBox(vec2 p, vec2 b, float r) {
 // This is what removes the interior medial-axis creases: a fragment on a
 // corner diagonal has two edges equally near, and a nearest-distance profile
 // counted one of them. See neon-tuning.h's halo block.
-float haloSegment(float a, float t1, float t2, float k) {
-    float c2 = a * a + k * k;
+//
+// Both are written against c2 = a^2 + k^2 rather than `a`, because the
+// pedestals below want to evaluate them at a perpendicular distance they only
+// ever know the SQUARE of. Taking its root here and squaring it again inside
+// would cost a sqrt per edge per kernel for nothing.
+float haloSegmentC2(float c2, float t1, float t2, float k) {
     return k * k / c2 * (t2 / sqrt(c2 + t2 * t2) - t1 / sqrt(c2 + t1 * t1));
 }
-float bloomSegment(float a, float t1, float t2, float k) {
-    float c = sqrt(a * a + k * k);
+float haloSegment(float a, float t1, float t2, float k) {
+    return haloSegmentC2(a * a + k * k, t1, t2, k);
+}
+float bloomSegmentC2(float c2, float t1, float t2, float k) {
+    float c = sqrt(c2);
     return k / c * (atan(t2 / c) - atan(t1 / c));
 }
+float bloomSegment(float a, float t1, float t2, float k) {
+    return bloomSegmentC2(a * a + k * k, t1, t2, k);
+}
 
-// The bloom's 1/a tail is heavy enough that it has to be pedestal-subtracted to
-// reach zero at the draw quad's edge (see the block that calls this). Each edge
-// carries its OWN pedestal - the same segment evaluated at `reach` - so that
-// edge's contribution lands on zero at `reach` from it, whatever the other
-// three are doing.
+// Both tails have to be pedestal-subtracted to reach zero at `reach`, or the
+// only thing that ends them is the draw quad - and the draw quad is a
+// RECTANGLE, so the glow's outer silhouette comes out shaped like the
+// rasteriser rather than like the light. Each piece of the emitter carries its
+// OWN pedestal - the same segment evaluated where it must vanish - so that
+// piece's contribution lands on zero `reach` from it, whatever the others are
+// doing.
 //
 // One shared pedestal taken from the infinite-line form does not work here,
 // which is what the nearest-edge version this replaced used. A finite segment
@@ -192,8 +204,48 @@ float bloomSegment(float a, float t1, float t2, float k) {
 // over-subtracts and clamps the sum to zero early: measured at glowRadius 5,
 // the exterior tail ended 300 px out instead of running the full 420+ to the
 // quad edge.
-float bloomSegmentPedestalled(float a, float t1, float t2, float k, float reach) {
-    return max(bloomSegment(a, t1, t2, k) - bloomSegment(reach, t1, t2, k), 0.0);
+//
+// --- WHERE THE PEDESTAL IS TAKEN. `reach` from the SEGMENT, not `reach` from
+// the segment's infinite LINE. The two agree wherever the foot of perpendicular
+// lands on the segment, and they are the whole difference at a corner.
+//
+// Evaluating at a == reach zeroes each edge on a SLAB - |a| < reach, unbounded
+// along the edge - because a is the distance to the line. Four slabs intersect
+// in a rectangle, so the emission's own zero set was the rect grown by `reach`
+// in L-infinity: SQUARE corners, reaching sqrt(2) * reach out along each
+// diagonal, the corner of the draw quad and not a contour of anything. On a
+// sharp-cornered rect that is the ghost rectangle the glow ends on; rounding
+// the geometry does not fix it, because the straights are trimmed to the
+// tangent points and their slabs run on past the corner regardless.
+//
+// The fragment's true distance to the segment is sqrt(a^2 + tOff^2), where tOff
+// is how far the foot lies OUTSIDE [t1, t2] (zero when it lies inside). So the
+// perpendicular distance at which this segment must vanish is
+// sqrt(reach^2 - tOff^2), clamped at zero - which is the pedestal below, kept
+// squared throughout. Beyond tOff == reach it collapses to a == 0, whose
+// pedestal dominates any real value and takes the term to zero.
+//
+// The zero set is then "within `reach` of the segment" - a stadium - and the
+// union over the emitter's pieces is its outward parallel curve at `reach`:
+// the rounded shape the light actually has, strictly inside the draw quad
+// everywhere including the corners. Both kernels are monotone decreasing in a,
+// so the clamp bites exactly at that contour and nowhere earlier.
+//
+// INTERIOR-INVARIANT BY CONSTRUCTION: tOff is non-zero only where the foot of
+// perpendicular falls off the end of the segment, which for the four straights
+// is outside the rect's own extent on that axis. Every interior fragment keeps
+// the pedestal it had.
+//
+// Returned SQUARED, and without the kernel width, because a pedestal is one
+// kernel evaluation and the caller shares it: a pedestal depends on the segment
+// through t1/t2 alone, and the rect's two VERTICAL edges present the same
+// t-range to any fragment, as do its two horizontal ones. So four edges need
+// only TWO pedestals per kernel. That is what pays for the halo's - the pair it
+// adds is bought back by the pair of bloom pedestals that stop being computed
+// twice, and an atan costs more than a sqrt.
+float reachPerpSq(float t1, float t2, float reach) {
+    float tOff = max(t1, 0.0) + min(t2, 0.0);
+    return max(reach * reach - tOff * tOff, 0.0);
 }
 
 // --- Corner arcs, developed onto their tangent -------------------------
@@ -1294,15 +1346,26 @@ void main() {
                       (1.0 + uBloomStrength * uIntensity),
                       sigma * reachSigmas);
 
-    float halo  = haloSegment(aLeft,  tv1, tv2, kh) +
-                  haloSegment(aRight, tv1, tv2, kh) +
-                  haloSegment(aTop,   th1, th2, kh) +
-                  haloSegment(aBot,   th1, th2, kh);
+    // Two pedestals per kernel, not four - see reachPerpSq. The left and right
+    // edges share tv1/tv2 and so share a pedestal exactly; the top and bottom
+    // share th1/th2. (The vertical pair's value is bit-identical to evaluating
+    // it twice, which is what keeps the bloom's own pedestal unchanged by this.)
+    float rpV       = reachPerpSq(tv1, tv2, reach);
+    float rpH       = reachPerpSq(th1, th2, reach);
+    float haloPedV  = haloSegmentC2(rpV + kh * kh, tv1, tv2, kh);
+    float haloPedH  = haloSegmentC2(rpH + kh * kh, th1, th2, kh);
+    float bloomPedV = bloomSegmentC2(rpV + bw * bw, tv1, tv2, bw);
+    float bloomPedH = bloomSegmentC2(rpH + bw * bw, th1, th2, bw);
 
-    float bloom = bloomSegmentPedestalled(aLeft,  tv1, tv2, bw, reach) +
-                  bloomSegmentPedestalled(aRight, tv1, tv2, bw, reach) +
-                  bloomSegmentPedestalled(aTop,   th1, th2, bw, reach) +
-                  bloomSegmentPedestalled(aBot,   th1, th2, bw, reach);
+    float halo  = max(haloSegment(aLeft,  tv1, tv2, kh) - haloPedV, 0.0) +
+                  max(haloSegment(aRight, tv1, tv2, kh) - haloPedV, 0.0) +
+                  max(haloSegment(aTop,   th1, th2, kh) - haloPedH, 0.0) +
+                  max(haloSegment(aBot,   th1, th2, kh) - haloPedH, 0.0);
+
+    float bloom = max(bloomSegment(aLeft,  tv1, tv2, bw) - bloomPedV, 0.0) +
+                  max(bloomSegment(aRight, tv1, tv2, bw) - bloomPedV, 0.0) +
+                  max(bloomSegment(aTop,   th1, th2, bw) - bloomPedH, 0.0) +
+                  max(bloomSegment(aBot,   th1, th2, bw) - bloomPedH, 0.0);
 
     // The four corner arcs, each developed onto its own tangent - see
     // arcTangentSegment. Gated because at cornerRadius 0 there is nothing to
@@ -1325,11 +1388,30 @@ void main() {
         vec4 cFN   = arcTangentSegment(vec2(wFar.x,  wNear.y), uCornerRadius);
         vec4 cFF   = arcTangentSegment(vec2(wFar.x,  wFar.y),  uCornerRadius);
 
+        // A developed arc is always split ABOUT the nearest arc point, so its
+        // t range straddles zero and reachPerpSq's tOff term is identically
+        // zero on it: the straights' stadium correction has nothing to do
+        // here, and the pedestal an arc wants is the plain `reach` one. Which
+        // is also uniform-only - see the derivation at the bloom's copy below -
+        // so both kernels take it as one shared subtraction rather than four
+        // more kernel evaluations, and the sharp-cornered path pays nothing.
+        //
+        // lam pinned to what a fragment at `reach` from the arc carries, as
+        // there; the halo's centred form collapses to k^2/c2 * 2h/sqrt(c2+h^2)
+        // with h the developed half length.
+        float arcLamPed  = sqrt((reach + uCornerRadius) * uCornerRadius);
+        float arcHalf    = arcLamPed * HALF_PI * 0.5;
+        float arcHaloC2  = reach * reach + kh * kh;
+        float arcHaloPed = uCornerRadius / arcLamPed * kh * kh / arcHaloC2 *
+                           2.0 * arcHalf / sqrt(arcHaloC2 + arcHalf * arcHalf);
+
         // .w is the measure the development rate cost - see arcTangentSegment.
-        halo  += haloSegment(cNN.x, cNN.y, cNN.z, kh) * cNN.w +
-                 haloSegment(cNF.x, cNF.y, cNF.z, kh) * cNF.w +
-                 haloSegment(cFN.x, cFN.y, cFN.z, kh) * cFN.w +
-                 haloSegment(cFF.x, cFF.y, cFF.z, kh) * cFF.w;
+        // Pedestal against the WEIGHTED value, as the bloom does, since that is
+        // what has to reach zero at `reach`.
+        halo  += max(haloSegment(cNN.x, cNN.y, cNN.z, kh) * cNN.w - arcHaloPed, 0.0) +
+                 max(haloSegment(cNF.x, cNF.y, cNF.z, kh) * cNF.w - arcHaloPed, 0.0) +
+                 max(haloSegment(cFN.x, cFN.y, cFN.z, kh) * cFN.w - arcHaloPed, 0.0) +
+                 max(haloSegment(cFF.x, cFF.y, cFF.z, kh) * cFF.w - arcHaloPed, 0.0);
 
         // One shared pedestal for all four arcs, and unlike the straights'
         // it does not have to be per-piece. A pedestal is that piece's own
@@ -1377,8 +1459,12 @@ void main() {
         // fragment sits reach + r from the arc centre, and out there lam is
         // sqrt(rho*r). That is the only place the pedestal is meant to be
         // exact, and everywhere else it was already an approximation.
+        //
+        // arcLamPed is hoisted above the halo's own pedestal, which pins lam
+        // the same way and for the same reason. The expression below is
+        // otherwise untouched - written against arcLamPed rather than the
+        // arcHalf beside it so that the bloom stays arithmetically identical.
         float arcC        = sqrt(reach * reach + bw * bw);
-        float arcLamPed   = sqrt((reach + uCornerRadius) * uCornerRadius);
         float arcPedestal = uCornerRadius / arcLamPed *
                             bw / arcC * 2.0 * atan(arcLamPed * HALF_PI / (2.0 * arcC));
 
@@ -1394,8 +1480,8 @@ void main() {
     bloom *= BLOOM_NORM_FACTOR;
 
     // The pedestal itself is applied per-edge inside the sum above - see
-    // bloomSegmentPedestalled for why it cannot be one shared subtraction any
-    // more. What is left here is the RENORMALISATION: scale the pedestalled
+    // reachPerpSq for why it cannot be one subtraction shared across all four
+    // edges. What is left here is the RENORMALISATION: scale the pedestalled
     // sum back up by peak/(peak - pedestal) so the value on the line is
     // unchanged and BLOOM_NORM_FACTOR keeps its calibration, with the tail
     // slightly compressed in exchange for going cleanly to zero.
@@ -1407,8 +1493,18 @@ void main() {
     // near edge's own extents would mean branching to find which edge that is,
     // on the one term where it would buy nothing visible.
     //
-    // The halo needs no pedestal at all: it falls as 1/a^2, so at `reach` it is
-    // ~2e-4 of peak - already invisible.
+    // THE HALO NOW CARRIES A PEDESTAL TOO, and takes no renormalisation for it.
+    // It used to carry none on the argument that its 1/a^2 tail is ~2e-4 of
+    // peak at `reach` and therefore invisible. Invisible is not the property
+    // that was needed: what the far field has to be is ZERO, or the only thing
+    // that ends the glow is the draw quad, and the quad is a rectangle. 2e-4 of
+    // peak survives the grade as a few levels out of 255 - the ghost rectangle.
+    //
+    // No renormalisation because what it subtracts is that same 2e-4: with
+    // kh == uGlowRadius and reach >= 48 * uGlowRadius, the pedestal is at most
+    // kh^2/(reach^2 + kh^2) = 4.3e-4 of the peak, so the gain that would undo it
+    // is at most 1.0004 - an order of magnitude under one 8-bit step, against a
+    // calibration constant. HALO_NORM_FACTOR is left exactly as tuned.
     float bloomPeak = BLOOM_NORM_FACTOR * PI;
     float bloomPed  = BLOOM_NORM_FACTOR * PI * bw / sqrt(reach * reach + bw * bw);
     bloom = bloom * (bloomPeak / max(bloomPeak - bloomPed, 1e-6));
@@ -1464,12 +1560,26 @@ void main() {
     // here. Both are COVERAGE, not emission, so both belong below the grade -
     // see the block after the tone map. The quad-edge fade below stays, and is
     // the one mask that genuinely shapes emission: it hides a clip rather than
-    // drawing an edge, and it is tens of pixels wide.
+    // drawing an edge. It no longer SHAPES anything, though - see below.
 
     // --- Quad-edge fade: the draw quad ends uQuadMargin past the rect ON EACH
-    // AXIS. Fade the emission to zero over the last stretch so a strong bloom
-    // never shows a hard rectangular cutoff where the quad clips it. Interior
-    // pixels sit far inside the quad, so they're unaffected.
+    // AXIS. Fade the emission to zero over the last QUAD_FADE_GUARD_PX so
+    // nothing can clip as a hard rectangle where the quad ends. Interior pixels
+    // sit far inside the quad, so they're unaffected.
+    //
+    // A FEW PIXELS, NOT A FIFTH OF THE MARGIN. This ramp used to run over the
+    // outer 20% of the margin - 62 px at the stock glowRadius - because the
+    // halo carried no pedestal and was still worth a few levels out at the quad
+    // edge, so this was the only thing ending it. That handed the outer fifth
+    // of the glow to the RASTERISER: the ramp is keyed on a sharp box, so the
+    // light terminated on a rectangle, visibly straight-edged and
+    // square-cornered in anything that lifts the far tail (an 8-bit surface
+    // composited over dark video does). The halo is pedestalled now and every
+    // term reaches zero on the emitter's own parallel curve at `reach`, which
+    // is strictly inside this quad at every angle including the diagonals, so
+    // what is left here is a guard band against the last ulp of disagreement
+    // between the CPU's margin and the shader's `reach` - never the thing the
+    // eye sees end. See neon-tuning.h.
     //
     // Measured PER-AXIS via dQuad, NOT from the Euclidean d. What this fade
     // hides is the quad, and the quad is a rectangle; keying on d put the ramp
@@ -1491,25 +1601,39 @@ void main() {
     // [-(uQuadMargin - fadeStart), 0]. On a straight edge dQuad == d -
     // uQuadMargin, so that stretch is bit-identical to the old expression.
     //
-    // fadeStart is unchanged. The ramp must not begin INSIDE the outside
-    // cutoff, or it dims the band's outer edge before the cutoff mask above
-    // ever gets there - and only on the exterior, because the interior half of
-    // a symmetric band never reaches the quad. An opaque-INSIDE vs
-    // opaque-OUTSIDE pair sharing an outer rect is what exposes it: at cutoff
-    // 12, uQuadMargin is 13, so a bare fraction of the margin started the ramp
-    // at 10.4 and left the outermost band pixel at ~0.66 of its mirrored
+    // The ramp must not begin INSIDE the outside cutoff, or it dims the band's
+    // outer edge before the cutoff mask above ever gets there - and only on the
+    // exterior, because the interior half of a symmetric band never reaches the
+    // quad. An opaque-INSIDE vs opaque-OUTSIDE pair sharing an outer rect is
+    // what exposes it: at cutoff 12 and the old 20%-of-margin start, the ramp
+    // began at 10.4 and left the outermost band pixel at ~0.66 of its mirrored
     // counterpart (15.3 vs 23.3 on the right edge, same ratio on the other
     // three). Flooring the start at the cutoff boundary hands everything up to
     // that point back to the cutoff smoothstep.
     //
+    // setupGeometry's cutoff cap budgets exactly this guard width on top of the
+    // boundary, so with the narrow ramp the floor is normally slack - it is the
+    // scaled path, where softFloor widens and the cap does not, that still
+    // needs it.
+    //
     // Only when that boundary actually falls inside the quad, though. A
-    // disabled cutoff arrives as a huge sentinel, and the whole point of this
-    // fade is the case where uQuadMargin is SMALLER than outsideCutoff - in
-    // both, flooring would push the start to or past uQuadMargin. Those keep
-    // the unfloored start, so fadeStart < uQuadMargin always holds and the ramp
-    // width below is strictly positive (an inverted smoothstep is undefined in
-    // GLSL).
-    float fadeFloor = uQuadMargin * QUAD_FADE_START_FRAC;
+    // disabled cutoff arrives as a huge sentinel, and the case this fade exists
+    // for is uQuadMargin SMALLER than outsideCutoff - in both, flooring would
+    // push the start to or past uQuadMargin. Those keep the unfloored start, so
+    // fadeStart < uQuadMargin always holds and the ramp width below is strictly
+    // positive (an inverted smoothstep is undefined in GLSL).
+    //
+    // The guard is stated in FULL-RES px and converted here, like every other
+    // px constant this shader shares with neon-tuning.h - identity at scale 1.0.
+    //
+    // Capped at half the margin as well, because the margin has no lower bound
+    // of its own worth relying on: at glowRadius 0 and a hairline lineWidth it
+    // bottoms out at FILAMENT_MIN_HALF_WIDTH * FILAMENT_REACH_MIN_SIGMAS, which
+    // is one buffer px - under the guard. Without the cap the ramp would then
+    // start INSIDE the rect and dim the filament itself, which is the one thing
+    // a guard band must never do.
+    float fadeSpan  = min(QUAD_FADE_GUARD_PX * uResolutionScale, uQuadMargin * 0.5);
+    float fadeFloor = uQuadMargin - fadeSpan;
     // An upper bound on where the band's emission ends, not the exact point:
     // the cutoff ramp is centred on the boundary and so reaches outSoft/2 past
     // it, where this budgets outSoft. Erring outward is the safe direction -

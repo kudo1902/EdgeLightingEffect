@@ -922,17 +922,27 @@ namespace EdgeLighting
         // Hard cap: when the outside cutoff is enabled the shader discards
         // emission past size + softness, so there's no point rasterising
         // further. Disabled outside cutoff leaves the natural glowRadius /
-        // bloom-driven margin untouched. Add a 1 px safety so the shader's
-        // own softmask fades to zero *before* the quad edge and no
+        // bloom-driven margin untouched. Add a QUAD_FADE_GUARD_PX safety so the
+        // shader's own softmask fades to zero *before* the quad edge and no
         // rectangular seam leaks through.
         //
+        // THE SAME CONSTANT THE SHADER'S QUAD-EDGE RAMP IS WIDE, and that is
+        // what it is for: the ramp runs back QUAD_FADE_GUARD_PX from the quad
+        // edge, so budgeting exactly that here puts its start on the cutoff
+        // boundary rather than inside the band, where it would dim the band's
+        // outer edge ahead of the cutoff mask. It was a bare 1 px while the
+        // ramp was a fifth of the margin and the shader had to floor its start
+        // at the boundary to cope; the floor is still there, but with the two
+        // in step it is slack rather than load bearing. Change one and change
+        // the other - see the fadeStart block in neon.frag.
+        //
         // The WHOLE expression is built in full-res px and scaled once, so the
-        // safety margin is 1 FULL-RES px at every resolution scale. Adding the
-        // +1 after the scale instead makes it 1 buffer px - 2 full-res px at
-        // scale 0.5 - which pushes the quad edge out and with it the ramp the
-        // shader fits between the cutoff boundary and uQuadMargin. Same units
-        // on both sides is also what makes the shader's fadeStart floor engage
-        // at the same cutoff size regardless of scale.
+        // safety margin is QUAD_FADE_GUARD_PX FULL-RES px at every resolution
+        // scale. Adding it after the scale instead makes it that many buffer px
+        // - twice as far at scale 0.5 - which pushes the quad edge out and with
+        // it the ramp the shader fits between the cutoff boundary and
+        // uQuadMargin. Same units on both sides is also what makes the shader's
+        // fadeStart floor engage at the same cutoff size regardless of scale.
         // Mirrors neon.frag's softFloor, which is what actually decides how far
         // past a cutoff the feather runs and therefore how much quad the shader
         // needs. The shader floors in BUFFER px, so it is converted back to
@@ -980,7 +990,8 @@ namespace EdgeLighting
         if (config.neon.outsideCutoff.enable && config.neon.glowSide != GlowSide::INSIDE)
         {
             float outSoft = std::max(config.neon.outsideCutoff.softness, softFloor);
-            float cutoffCap = (config.neon.outsideCutoff.size + outSoft + 1.0f) * scale;
+            float cutoffCap =
+                (config.neon.outsideCutoff.size + outSoft + float(QUAD_FADE_GUARD_PX)) * scale;
             margin = std::min(margin, cutoffCap);
         }
 

@@ -494,29 +494,36 @@
 //     stay tight without the truncation showing. Keep the two in step. ---
 #define GLOW_REACH_RADIUS_FACTOR  48.0
 
-// --- Where the shaders' quad-edge fade begins, as a FRACTION of the quad
-//     margin. The emission ramps to zero over [FRAC * margin, margin], so the
-//     bloom's 1/D tail - still ~10% of peak out at the quad edge - never clips
-//     as a hard rectangle.
+// --- Width of the shaders' quad-edge fade, in FULL-RES px, measured back from
+//     the quad's edge. The emission ramps to zero over the last
+//     QUAD_FADE_GUARD_PX so that nothing can clip as a hard rectangle at the
+//     rasteriser's boundary.
 //
-//     A fraction, not a pixel span, because the margin is proportional to
-//     glowRadius (see GLOW_REACH_RADIUS_FACTOR) and so is the bloom profile it
-//     hides. A fraction keeps the ramp at a constant proportion of the bloom's
-//     reach, so the fade reads the same at every glow radius; a fixed px ramp
-//     would vanish on a wide glow and dominate a narrow one. At the stock
-//     glowRadius 5 / bloom 0.3 / intensity 1 the margin is 312 px, giving a
-//     62 px ramp.
+//     A FEW PIXELS, AND A PIXEL SPAN RATHER THAN A FRACTION. It used to be 0.8
+//     of the margin - a 62 px ramp at the stock glowRadius 5 - because the
+//     halo carried no pedestal and so was still worth a few levels out at the
+//     quad edge, and this ramp was the only thing taking it to zero. That made
+//     the DRAW QUAD the shape of the glow's outer fifth: the ramp is keyed on
+//     sdRoundBox at radius 0, so it terminated the light on a rectangle, and
+//     the pedestal it was hiding terminated it on four slabs whose corners met
+//     square. Both are fixed where they belong - see the pedestal note at
+//     reachPerpSq - and the emission now reaches zero on its own
+//     parallel curve at `reach`, strictly inside the quad. So what is left here
+//     is a guard against the last ulp of disagreement between the CPU's margin
+//     and the shader's `reach`, not a cosmetic fade, and it wants to be as
+//     narrow as it can be while still spanning a destination pixel at every
+//     resolution scale.
 //
-//     Nothing derives 0.8 - anything leaving a ramp wide enough to hide the
-//     clip behaves the same. What it DOES assume is that the margin was set by
-//     the glow, where 20% of it is a long distance. When outsideCutoff clamps
-//     the margin instead (to size + softness + 1), 20% of ~13 px is 2.6 px and
-//     the ramp lands INSIDE the cutoff band, dimming the band's outer edge
-//     ahead of the cutoff mask - and only on the exterior, since the fade keys
-//     on positive d. Both shaders therefore floor the ramp's start at the
-//     cutoff boundary whenever that boundary falls inside the quad; see the
+//     Nothing derives 2.0; it is two full-res px, which is one buffer px at
+//     scale 0.5 and half of one at 0.25 - enough to feather a value that is
+//     already zero to within rounding.
+//
+//     setupGeometry's outside-cutoff cap carries the SAME constant as its
+//     safety term, so that this ramp always lands past the cutoff boundary
+//     rather than inside the band, where it would dim the band's outer edge
+//     ahead of the cutoff mask. Change one and change the other; see the
 //     fadeStart block in neon.frag. ---
-#define QUAD_FADE_START_FRAC      0.8
+#define QUAD_FADE_GUARD_PX        2.0
 
 // --- Filament reach for the same quad sizing, expressed in sigmas.
 //

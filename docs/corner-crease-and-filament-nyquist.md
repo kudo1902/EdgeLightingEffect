@@ -640,6 +640,99 @@ limit (colour-stop alpha is not in the gathered pair) are in
 
 ---
 
+### 1.11 Where the field ENDS was still the draw quad
+
+1.4 fixed the field's shape, 1.10 fixed the scalar on it. What neither touched
+is where the field stops - and that was decided by the rasteriser.
+
+Two things ended the glow, and neither was the light:
+
+**The bloom's pedestal zeroed each edge on a SLAB.** `bloomSegmentPedestalled`
+subtracted `bloomSegment(reach, t1, t2, k)` - the same segment evaluated at
+perpendicular distance `reach` - so the term crossed zero at `a == reach`
+whatever `t1`/`t2` were. But `a` is the distance to the edge's infinite LINE, so
+its zero set is the slab `|a| < reach`, unbounded along the edge. Four slabs
+intersect in a rectangle: the emission's own support was the rect grown by
+`reach` in L-infinity, with SQUARE corners reaching `sqrt(2) * reach` along each
+diagonal. Rounding the geometry does not help, because 1.8 trims the straights
+to the tangent points and their slabs run past the corner regardless.
+
+**The halo had no pedestal at all**, on the argument recorded beside it: its
+`1/a^2` tail is ~2e-4 of peak at `reach`, "already invisible". Invisible was the
+wrong property to check. What the far field has to be is ZERO - otherwise the
+only thing ending it is the quad-edge fade, which is keyed on `sdRoundBox` at
+radius 0 and therefore terminates the light on a rectangle too. And 2e-4 of peak
+is not invisible: through the grade it is a few levels out of 255, which is
+exactly what an 8-bit surface composited over dark video shows as a faint
+straight-edged rectangle around the whole effect.
+
+So the outer fifth of the glow - `QUAD_FADE_START_FRAC` was 0.8 - was shaped by
+the draw quad, and the isophote at the visible end of the tail was a square.
+
+**The fix is one line of geometry.** A pedestal has to vanish where the fragment
+is `reach` from the SEGMENT, not from its line. Write `tOff` for how far the
+foot of perpendicular falls outside `[t1, t2]` (zero when it falls inside); the
+true distance to the segment is `sqrt(a^2 + tOff^2)`, so the perpendicular
+distance at which it must vanish is `sqrt(reach^2 - tOff^2)`, clamped at zero:
+
+```
+float reachPerpSq(float t1, float t2, float reach) {
+    float tOff = max(t1, 0.0) + min(t2, 0.0);
+    return max(reach * reach - tOff * tOff, 0.0);
+}
+```
+
+Both kernels are monotone decreasing in `a`, so the clamp bites exactly on that
+contour. Each piece's support becomes a stadium, and the union over the
+emitter's pieces is its outward parallel curve at `reach` - the rounded shape
+the light actually has, strictly inside the quad at every angle. The same
+pedestal goes on the halo, which then ends there too.
+
+Two properties fall out, and both are worth stating because they bound the
+change:
+
+- **The interior is untouched by the geometry half of it.** `tOff` is non-zero
+  only where the foot falls off the end of a segment, which for the four
+  straights is outside the rect's own extent on that axis.
+- **It costs nothing in transcendentals.** A pedestal depends on the segment
+  only through `t1`/`t2`, and the rect's two vertical edges present the same
+  t-range to any fragment, as do its two horizontal ones - so four edges need
+  two pedestals per kernel, not four. The pair the halo adds is bought back by
+  the pair of bloom pedestals that stop being computed twice.
+
+The developed arcs need no `tOff` term: `arcTangentSegment` splits about the
+nearest arc point, so their range straddles zero. They take the shared
+uniform-only pedestal 1.8.2 derives for the bloom, with the halo's centred form
+collapsing to `k^2/c2 * 2h/sqrt(c2 + h^2)`.
+
+With the emission self-terminating, the quad-edge fade stops being a fade: it
+narrows to `QUAD_FADE_GUARD_PX`, two full-res px of guard against the last ulp
+of disagreement between `setupGeometry`'s margin and the shader's `reach`.
+`setupGeometry`'s outside-cutoff cap carries the same constant as its safety
+term, which is what keeps that ramp outside the cutoff band.
+
+**Measured.** The outermost isophote's radius along a corner diagonal, against
+the same isophote along an edge normal - `sqrt(2)` for a perfect square, 1 for a
+parallel curve:
+
+| scene | before | after |
+| ----- | ------ | ----- |
+| 400x300 r0, `glowRadius` 5 (stock) | 1.28 | **0.99** |
+| 400x300 r0, `glowRadius` 2 | 1.34 | **0.99** |
+| 400x300 r0, `glowRadius` 1, `intensity` 8 | 1.33 | **0.99** |
+| 400x300 r0, `glowRadius` 2, `bloomStrength` 0.05, `intensity` 8 | 1.34 | **0.99** |
+| the same at `resolutionScale` 0.5 | 1.32 | **0.98** |
+
+No pixel in any of seventeen scenes moves by more than 3/255, and every scene
+whose glow is already bounded by a cutoff or a one-sided cut moves by at most
+1/255. The one behaviour change worth knowing about is in the deep interior of
+a rect LARGER than `2 * reach`: the halo used to leave a floor there and now
+reaches zero like the bloom beside it, which is up to 3/255 on a halo-only
+config. Cost is 1.01x to 1.04x of the neon pass on the scenes that cost
+anything. Full tables in [review-findings.md](review-findings.md) V15.
+
+---
+
 ---
 
 ---

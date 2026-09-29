@@ -227,8 +227,11 @@ local `glowReach`, the shaders call theirs `reach` - and only the constant, plus
 the comments that echo it, still say "early out".
 
 **Fixed:** now `GLOW_REACH_RADIUS_FACTOR`, matching the `glowReach` / `reach`
-locals it feeds and the `QUAD_FADE_START_FRAC` naming beside it. One definition,
-two shader uses, two `.cpp` uses; no ABI impact, since it is a tuning constant.
+locals it feeds and the `QUAD_FADE_GUARD_PX` naming beside it (which was
+`QUAD_FADE_START_FRAC` when this was written - see V15 in
+[review-findings.md](review-findings.md) for why it stopped being a fraction).
+One definition, two shader uses, two `.cpp` uses; no ABI impact, since it is a
+tuning constant.
 
 The comments that echoed the old name went with it - ten sites where `earlyOut`
 was used as if it named a live quantity now say `glowReach`. Four uses of

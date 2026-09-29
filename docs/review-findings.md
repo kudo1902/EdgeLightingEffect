@@ -2783,14 +2783,153 @@ intensity is the whole price, and raising `intensity` - now safe - buys it back.
 
 ---
 
+## Fourteenth pass (the quad-boundary ghost report)
+
+Reported as "the glowing is limited by the VAO, it caused a ghost boundary at
+the VAO limit". Confirmed, and it is the last of the four things that decide the
+analytic emission - V4 fixed the field's SHAPE, V10 its corner EXTENT, V12 the
+arcs' RATE, V14 the SCALAR on it, and this one is where the field ENDS.
+
+### V15. The glow's outer silhouette is the draw quad, not the light - FIXED
+
+**Confirmed.** 400x300 at the centre of 1600x900, `cornerRadius` 0,
+`hueRotationRate` 0, over a black clear. Visible unamplified only as a faint
+rectangle on a dark surround; a x24 gain makes it unmistakable, and an 8-bit
+layer composited over dark video is the case where it shows in practice.
+
+At `glowRadius` 1 / `intensity` 8 the whole effect ends on a **hard-edged
+rectangle with square corners**, at `rect + 163 px` on each axis - the draw
+quad, to the pixel. The tail out there is 1-4/255, so nothing about it is a
+cliff: the largest adjacent-pixel step anywhere past 20 px out is 3. It is a
+straight-edged, square-cornered contour at a level the eye finds easily on a
+gradient, which is what "ghost boundary" names.
+
+Two mechanisms, both ending the light somewhere the light does not end.
+
+**The bloom's pedestal zeroes each edge on a SLAB.**
+`bloomSegmentPedestalled(a, t1, t2, k, reach)` subtracted that segment
+evaluated at perpendicular distance `reach`, so the term crossed zero at
+`a == reach` regardless of `t1`/`t2`. `a` is the distance to the edge's infinite
+LINE, so the zero set is the slab `|a| < reach`, unbounded along the edge. Four
+slabs intersect in a rectangle - the emission's own support was the rect grown
+by `reach` in L-infinity, reaching `sqrt(2) * reach` along every diagonal.
+`cornerRadius` does not help: V10 trims the straights to the tangent points and
+their slabs run past the corner anyway.
+
+**The halo had no pedestal at all.** The comment beside it argued its `1/a^2`
+tail is ~2e-4 of peak at `reach` and therefore "already invisible". Invisible is
+not the property that was needed - what the far field has to be is ZERO, or the
+only thing ending it is the quad-edge fade, and that fade is keyed on
+`sdRoundBox(vPos, halfSize + uQuadMargin, 0.0)`, a sharp rectangle. 2e-4 of peak
+through the grade is a few levels out of 255.
+
+So `QUAD_FADE_START_FRAC` - 0.8, a 62 px ramp at stock settings - was not a
+safety net. It was the thing that ended the glow, and it ended it on the shape
+of the rasteriser's quad.
+
+**Fix.** Take each pedestal `reach` from the SEGMENT rather than from its line.
+With `tOff` the signed distance the foot of perpendicular falls outside
+`[t1, t2]` (zero when it falls inside), the true distance to the segment is
+`sqrt(a^2 + tOff^2)`, so the perpendicular distance at which the term must
+vanish is `sqrt(reach^2 - tOff^2)`, clamped at zero and kept squared:
+
+```glsl
+float reachPerpSq(float t1, float t2, float reach) {
+    float tOff = max(t1, 0.0) + min(t2, 0.0);
+    return max(reach * reach - tOff * tOff, 0.0);
+}
+```
+
+Both kernels are monotone decreasing in `a`, so the clamp bites exactly there
+and nowhere earlier. Each piece's support becomes a stadium and the union over
+the emitter's pieces is its outward parallel curve at `reach`. The halo takes
+the same pedestal, so it ends there too - and with the emission
+self-terminating strictly inside the quad at every angle, the quad-edge ramp
+narrows from 0.8 of the margin to `QUAD_FADE_GUARD_PX`, two full-res px of guard
+against the last ulp of disagreement between `setupGeometry`'s margin and the
+shader's `reach`. `setupGeometry`'s outside-cutoff cap carries the same constant
+as its safety term so the ramp lands past the cutoff boundary rather than inside
+the band.
+
+The developed arcs need no `tOff`: `arcTangentSegment` splits about the nearest
+arc point, so their t-range straddles zero. They take the shared uniform-only
+pedestal V10's note derives for the bloom, with the halo's centred form
+collapsing to `k^2/c2 * 2h/sqrt(c2 + h^2)`.
+
+**Measured - the silhouette.** Radius of the outermost isophote along a corner
+diagonal over the same isophote along an edge normal. `sqrt(2)` = 1.414 is a
+perfect square, 1.0 is a parallel curve:
+
+| scene | normal, before -> after | diagonal, before -> after | ratio, before -> after |
+| ----- | ----------------------- | ------------------------- | ---------------------- |
+| `glowRadius` 5, bloom 0.3, `intensity` 1 (stock) | 293 -> 297 | 374 -> 293 | 1.28 -> **0.99** |
+| `glowRadius` 2 | 114 -> 120 | 153 -> 119 | 1.34 -> **0.99** |
+| `glowRadius` 1, `intensity` 8 | 152 -> 159 | 202 -> 157 | 1.33 -> **0.99** |
+| `glowRadius` 3, bloom 0, `intensity` 8 | 133 -> 123 | 176 -> 116 | 1.32 -> **0.94** |
+| `glowRadius` 2, bloom 0.05, `intensity` 8 | 125 -> 130 | 168 -> 129 | 1.34 -> **0.99** |
+| the same at `resolutionScale` 0.5 | 115 -> 121 | 152 -> 118 | 1.32 -> **0.98** |
+
+Distances in px from the rect's own edge / sharp corner. The terminus itself is
+unchanged in kind - it ended `1 -> 0` before and ends `1 -> 0` after, which is
+the smallest step 8 bits has.
+
+**Measured - what moved.** Whole-frame diff against the pre-change build, all
+four channels, seventeen scenes at 1600x900:
+
+| scene group | px moved | worst \|d\| |
+| ----------- | -------- | --------- |
+| uncapped glow (nine scenes) | 6% to 51% | **3** |
+| outside cutoff 32/4, 12/0, 12/0 at scale 0.5 | 1.2% to 1.5% | **1** |
+| inside cutoff + `OpaqueMode::INSIDE` | 0.4% | **1** |
+| `GlowSide::INSIDE` | 1.2% | **1** |
+
+No pixel anywhere moves by more than 3/255, and every configuration whose glow
+is already bounded by a cutoff or a one-sided cut moves by at most 1 - correctly,
+since those bound the glow before `reach` does and this changes nothing for
+them.
+
+**The one behaviour change worth knowing about** is in the deep interior, and it
+is the interior fill of 1.5.2 read back a little. On a rect LARGER than
+`2 * reach` the centre is further than `reach` from every edge; the bloom's
+pedestal already took it to zero there, and the halo now does too instead of
+leaving a floor. Worst case measured is 3/255, on `bloomStrength` 0 /
+`intensity` 8 where the halo is the only glow term. At the stock `glowRadius` 5
+that threshold is a rect over 624 px on the short axis.
+
+**Cost.** Best of three runs of 400 frames each at 1600x900, both builds from
+the same source tree:
+
+| scene | base ms | fixed ms | ratio |
+| ----- | ------- | -------- | ----- |
+| stock `glowRadius` 5 | 2.208 | 2.237 | 1.013 |
+| `cornerRadius` 40, `intensity` 3 | 2.955 | 2.997 | 1.014 |
+| circle, `cornerRadius` 150 | 2.404 | 2.444 | 1.017 |
+| soft filament, `glowRadius` 0 | 3.448 | 3.495 | 1.014 |
+| `glowRadius` 2 | 0.865 | 0.892 | 1.031 |
+| `resolutionScale` 0.5 | 0.412 | 0.407 | 0.988 |
+| outside cutoff 12, hard | 0.346 | 0.381 | 1.101 |
+
+1.01x to 1.04x on everything that costs anything. The two ratios above that are
+the cheapest scenes in the set - a tightly capped cutoff rasterises almost
+nothing, so 0.035 ms of extra ALU is 10% of a 0.35 ms pass. Sharing each
+pedestal between opposite edges is what holds it here: the halo's two new kernel
+evaluations are paid for by the two bloom pedestals that stop being computed
+twice, and an `atan` costs more than a `sqrt`.
+
+**Repro.** Any of the scenes above, x24 gain on the capture, and look at the
+corners. The signature is a straight edge with a square corner at exactly
+`rect + glowRadius * 48 * (1 + bloomStrength * intensity)` on each axis.
+
+---
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
 I9, I10 and I11. I3's structural half - the last thing on this list that was
 open rather than declined - closed with the neon unification, which deleted the
 fork it followed from. The fifth pass's I15 landed with it. The seventh through
-tenth passes are one item each and all four are fixed, as are the eleventh's one
-and the twelfth's four. Five items from the
+tenth passes are one item each and all four are fixed, as are the eleventh's one,
+the twelfth's four and the fourteenth's one. Five items from the
 first pass remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -2801,6 +2940,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | V10 | fixed | V4's own unmodelled corner: the straights ran past the tangent point, so a phantom emitter lit the outside of every rounded corner |
 | V12 | fixed | V10's own unmodelled centre: the developed arc ran at rate `r`, which is right only on the arc, so it creased and under-counted at each arc's centre of curvature |
 | V14 | fixed | V4's third half: the halo/bloom FIELD lost its medial-axis crease, but the nearest-point coverage that SCALES it kept one, so any partly lit perimeter cut the glow to a hard-edged polygon |
+| V15 | fixed | V4's last half: the pedestals zeroed each edge on a SLAB and the halo had none, so the emission's own support was a rectangle and the quad-edge fade finished the job on the same shape |
 | V13 | fixed | V4's other half: the sampling floor was a fixed half width, so at a soft falloff - where sigma multiplies a 64-sigma tail - it doubled the filament to buy five levels of peak |
 | V5 | residual, documented | closing it means plumbing pixel-space feathers into the pre-pass for an effect nobody has reported; read V9 alongside it, which measures the other half of the same mechanism |
 | I2 | declined | negligible measured-by-structure win against a real staleness-bug risk |
