@@ -2194,59 +2194,124 @@ el_result_e el_effect_init(el_effect_handle_t effect)
     return el_effect_init_with_renderers(effect, EL_RENDERER_ALL);
 }
 
+namespace
+{
+    /// Copies a C layer array into RendererLayers, checking only its C shape:
+    /// a non-negative count and a non-null array when the count is not zero.
+    /// The flag values are the enum's (see the static_asserts in
+    /// capi-internal.h); whether each names exactly one layer, once, is
+    /// EdgeLightingEffect::IsValidLayerList's to judge.
+    bool CopyLayerArray(const uint32_t *order, int32_t count, const char *fn,
+                        std::vector<EdgeLighting::RendererLayer> &out)
+    {
+        if (count < 0 || (count > 0 && !order))
+        {
+            LOG_E("%s: invalid layer list (order=%p, count=%d)", fn, (const void *)order, count);
+            return false;
+        }
+        out.clear();
+        for (int32_t i = 0; i < count; i++)
+        {
+            out.push_back(static_cast<EdgeLighting::RendererLayer>(order[i]));
+        }
+        return true;
+    }
+
+    /// Fresh effect, then the layers in @p order, then Initialize. A renderer
+    /// that fails is dropped by Initialize and the rest keep running.
+    /// Re-initialising a handle replaces its whole stack.
+    el_result_e InitLayers(el_effect_handle_t effect, const std::vector<EdgeLighting::RendererLayer> &order)
+    {
+        effect->impl = std::make_unique<EdgeLighting::EdgeLightingEffect>();
+        for (EdgeLighting::RendererLayer layer : order)
+        {
+            effect->impl->AddRenderer(layer);
+        }
+        if (!effect->impl->Initialize())
+        {
+            LOG_E("renderer initialisation failed - %zu of %zu layers kept",
+                  effect->impl->GetLayerOrder().size(), order.size());
+            return EL_ERROR_INIT_FAILED;
+        }
+        return EL_SUCCESS;
+    }
+
+    /// Shared entry check for the calls that reorder an initialised effect.
+    bool IsInitialised(el_effect_handle_t effect, const char *fn)
+    {
+        if (!effect->impl)
+        {
+            LOG_E("%s: effect is not initialised", fn);
+            return false;
+        }
+        return true;
+    }
+}
+
 el_result_e el_effect_init_with_renderers(el_effect_handle_t effect, uint32_t rendererMask)
 {
     LOG_I("effect=%p, rendererMask=0x%x", (void *)effect, rendererMask);
     VALIDATE_EFFECT_PTR(effect, "el_effect_init_with_renderers");
     try
     {
-        effect->impl = std::make_unique<EdgeLighting::EdgeLightingEffect>();
+        // The mask decides INCLUSION only; the order is the default one.
+        std::vector<EdgeLighting::RendererLayer> order;
+        for (EdgeLighting::RendererLayer layer : EdgeLighting::EdgeLightingEffect::GetDefaultLayerOrder())
+        {
+            if (rendererMask & static_cast<uint32_t>(layer))
+            {
+                order.push_back(layer);
+            }
+        }
+        return InitLayers(effect, order);
+    }
+    catch (const std::exception &e)
+    {
+        LOG_E("exception: %s", e.what());
+        return mapExceptionToResult(e);
+    }
+}
 
-        // ONE bit per layer: the content layers dense from 0, the debug
-        // layer on the top bit (see el_renderer_flags_e), which is what
-        // pins its value while content layers keep taking the next free
-        // low bit. The deprecated "optimized" and wireframe
-        // aliases that used to be ORed in beside these are gone: the
-        // half-res paths are a resolution scale on the neon and flare
-        // layers, and the bounding box is one of the debug layer's
-        // overlays. Nothing can double-register a layer any more, which is
-        // what the paired tests here existed to prevent.
-        //
-        // Compositing order is THIS sequence of ifs, and it matches the bit
-        // order: content layers first on the low bits, the debug layer
-        // last on the highest.
-        if (rendererMask & EL_RENDERER_NEON)
+el_result_e el_effect_init_with_renderer_order(el_effect_handle_t effect,
+                                               const uint32_t *order, int32_t count)
+{
+    LOG_I("effect=%p, count=%d", (void *)effect, count);
+    VALIDATE_EFFECT_PTR(effect, "el_effect_init_with_renderer_order");
+    try
+    {
+        // Validated BEFORE InitLayers replaces the effect, so a malformed
+        // list leaves any previous stack running.
+        std::vector<EdgeLighting::RendererLayer> layers;
+        if (!CopyLayerArray(order, count, "el_effect_init_with_renderer_order", layers) ||
+            !EdgeLighting::EdgeLightingEffect::IsValidLayerList(layers))
         {
-            LOG_I("registering NeonRenderer");
-            effect->impl->AddRenderer(std::make_shared<EdgeLighting::NeonRenderer>());
+            return EL_ERROR_INVALID_PARAMETER;
         }
-        if (rendererMask & EL_RENDERER_DROPLETS)
+        return InitLayers(effect, layers);
+    }
+    catch (const std::exception &e)
+    {
+        LOG_E("exception: %s", e.what());
+        return mapExceptionToResult(e);
+    }
+}
+
+el_result_e el_effect_set_renderer_order(el_effect_handle_t effect,
+                                         const uint32_t *order, int32_t count)
+{
+    LOG_I("effect=%p, count=%d", (void *)effect, count);
+    VALIDATE_EFFECT_PTR(effect, "el_effect_set_renderer_order");
+    if (!IsInitialised(effect, "el_effect_set_renderer_order"))
+    {
+        return EL_ERROR_INVALID_HANDLE;
+    }
+    try
+    {
+        std::vector<EdgeLighting::RendererLayer> layers;
+        if (!CopyLayerArray(order, count, "el_effect_set_renderer_order", layers) ||
+            !effect->impl->SetLayerOrder(layers))
         {
-            LOG_I("registering DropletsRenderer");
-            effect->impl->AddRenderer(std::make_shared<EdgeLighting::DropletsRenderer>());
-        }
-        if (rendererMask & EL_RENDERER_LENS_FLARE)
-        {
-            LOG_I("registering LensFlareRenderer");
-            effect->impl->AddRenderer(std::make_shared<EdgeLighting::LensFlareRenderer>());
-        }
-        if (rendererMask & EL_RENDERER_SPOTLIGHT)
-        {
-            LOG_I("registering SpotlightRenderer");
-            effect->impl->AddRenderer(std::make_shared<EdgeLighting::SpotlightRenderer>());
-        }
-        // LAST, so the annotations sit above every layer they describe -
-        // after the neon whose glow the strip and markers measure, and
-        // above the droplets and flare that would otherwise cover them.
-        if (rendererMask & EL_RENDERER_DEBUG)
-        {
-            LOG_I("registering DebugRenderer");
-            effect->impl->AddRenderer(std::make_shared<EdgeLighting::DebugRenderer>());
-        }
-        if (!effect->impl->Initialize())
-        {
-            LOG_E("el_effect_init_with_renderers: renderer initialisation failed");
-            return EL_ERROR_INIT_FAILED;
+            return EL_ERROR_INVALID_PARAMETER;
         }
         return EL_SUCCESS;
     }
@@ -2255,6 +2320,29 @@ el_result_e el_effect_init_with_renderers(el_effect_handle_t effect, uint32_t re
         LOG_E("exception: %s", e.what());
         return mapExceptionToResult(e);
     }
+}
+
+el_result_e el_effect_get_renderer_count(el_effect_handle_t effect, int32_t *outCount)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_get_renderer_count");
+    VALIDATE_OUT_PTR(outCount, "el_effect_get_renderer_count");
+    *outCount = effect->impl ? static_cast<int32_t>(effect->impl->GetLayerOrder().size()) : 0;
+    return EL_SUCCESS;
+}
+
+el_result_e el_effect_get_renderer_at(el_effect_handle_t effect, int32_t index, uint32_t *outLayer)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_get_renderer_at");
+    VALIDATE_OUT_PTR(outLayer, "el_effect_get_renderer_at");
+    const std::vector<EdgeLighting::RendererLayer> order =
+        effect->impl ? effect->impl->GetLayerOrder() : std::vector<EdgeLighting::RendererLayer>();
+    if (index < 0 || static_cast<size_t>(index) >= order.size())
+    {
+        LOG_E("el_effect_get_renderer_at: index %d out of range (size=%zu)", index, order.size());
+        return EL_ERROR_INVALID_PARAMETER;
+    }
+    *outLayer = static_cast<uint32_t>(order[static_cast<size_t>(index)]);
+    return EL_SUCCESS;
 }
 
 el_result_e el_effect_capture(el_effect_handle_t effect)

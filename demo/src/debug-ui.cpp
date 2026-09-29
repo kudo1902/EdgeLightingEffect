@@ -469,6 +469,7 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     // The active config carries every animation's current overlay values
     const EdgeLighting::Config &active = effect.GetActiveConfig();
     buildGeometrySection(cfg);
+    buildLayerOrderSection(effect);
     buildNeonSection(cfg, active);
     buildDebugSection(cfg);
     buildDropletsSection(cfg);
@@ -576,6 +577,122 @@ void DebugUI::buildGeometrySection(EdgeLighting::Config &cfg)
     if (ImGui::Combo("Winding", &windingIdx, windingItems, IM_ARRAYSIZE(windingItems)))
     {
         cfg.geometry.winding = static_cast<EdgeLighting::Winding>(windingIdx);
+    }
+}
+
+namespace
+{
+    const char *LayerName(EdgeLighting::RendererLayer layer)
+    {
+        switch (layer)
+        {
+        case EdgeLighting::RendererLayer::NEON:
+        {
+            return "Neon";
+        }
+        case EdgeLighting::RendererLayer::DROPLETS:
+        {
+            return "Droplets";
+        }
+        case EdgeLighting::RendererLayer::LENS_FLARE:
+        {
+            return "Lens flare";
+        }
+        case EdgeLighting::RendererLayer::SPOTLIGHT:
+        {
+            return "Spotlight";
+        }
+        case EdgeLighting::RendererLayer::DEBUG:
+        {
+            return "Debug overlays";
+        }
+        default:
+        {
+            return "Unknown";
+        }
+        }
+    }
+}
+
+void DebugUI::buildLayerOrderSection(EdgeLighting::EdgeLightingEffect &effect)
+{
+    if (!ImGui::CollapsingHeader("Layer order"))
+    {
+        return;
+    }
+
+    ImGui::TextDisabled("Top of the list draws last, over everything below it.");
+
+    std::vector<EdgeLighting::RendererLayer> order = effect.GetLayerOrder();
+    const int count = static_cast<int>(order.size());
+    int swapAt = -1;
+    int swapWith = -1;
+
+    // Listed TOP first, the way a layer stack reads; the effect's own order
+    // is bottom first, so row r shows index count - 1 - r.
+    for (int row = 0; row < count; row++)
+    {
+        const int i = count - 1 - row;
+        ImGui::PushID(i);
+        ImGui::BeginDisabled(i == count - 1);
+        if (ImGui::ArrowButton("##Up", ImGuiDir_Up))
+        {
+            swapAt = i;
+            swapWith = i + 1;
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(i == 0);
+        if (ImGui::ArrowButton("##Down", ImGuiDir_Down))
+        {
+            swapAt = i;
+            swapWith = i - 1;
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::Text("%d  %s%s", i, LayerName(order[static_cast<size_t>(i)]),
+                    i == 0 ? "  (bottom)" : (i == count - 1 ? "  (top)" : ""));
+        ImGui::PopID();
+    }
+
+    // Applied after the loop so the rows above all read the same order.
+    // Swapping two neighbours always leaves a valid order to hand back whole.
+    if (swapAt >= 0)
+    {
+        std::swap(order[static_cast<size_t>(swapAt)], order[static_cast<size_t>(swapWith)]);
+        effect.SetLayerOrder(order);
+    }
+
+    if (ImGui::Button("Default##LayerOrder"))
+    {
+        // The library's default order, narrowed to what is registered here.
+        std::vector<EdgeLighting::RendererLayer> defaults;
+        for (EdgeLighting::RendererLayer layer : EdgeLighting::EdgeLightingEffect::GetDefaultLayerOrder())
+        {
+            if (std::find(order.begin(), order.end(), layer) != order.end())
+            {
+                defaults.push_back(layer);
+            }
+        }
+        effect.SetLayerOrder(defaults);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Spotlight at bottom##LayerOrder"))
+    {
+        // The spotlight first, everything else in its current order. Nothing to
+        // do if the spotlight layer is not registered.
+        auto spot = std::find(order.begin(), order.end(), EdgeLighting::RendererLayer::SPOTLIGHT);
+        if (spot != order.end())
+        {
+            std::rotate(order.begin(), spot, spot + 1);
+            effect.SetLayerOrder(order);
+        }
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Draws the cones first, so the neon composites over them by its own\n"
+                          "coverage instead of the cones adding onto the neon. The neon's opaque\n"
+                          "fill, if on, then covers any cone inside the rect.");
     }
 }
 

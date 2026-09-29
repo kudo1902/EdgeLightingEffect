@@ -96,9 +96,23 @@ compositing order, since they blend onto one another in the order they draw:
 
 `DebugRenderer` being last is the one position in that list that is load-bearing
 rather than incidental, and the C ABI's `el_effect_init_with_renderers`
-registers it last too. The bit it holds in `el_renderer_flags_e` is the top one
-for the same reason: a content layer added later takes the next dense bit and
-never renumbers it.
+registers it last too. The bit `DebugRenderer` holds in `el_renderer_flags_e` is
+the top one for the same reason: a content layer added later takes the next
+dense bit and never renumbers it.
+
+That list is only the DEFAULT order, though: layers composite by blending, so a
+layer lands on whatever was drawn before it, and a host can choose differently.
+The core owns the order: every renderer names its layer
+(`BaseRenderer::GetLayer` returns a `RendererLayer`), and `EdgeLightingEffect`
+builds and reorders by layer - `AddRenderer(RendererLayer)`, `GetLayerOrder`,
+`SetLayerOrder`, `GetDefaultLayerOrder` - with `SetRendererOrder` underneath for
+a host's own `CUSTOM` renderers, which the layer calls leave in place. The C
+ABI's flag bits are the same values, so its calls only forward:
+`el_effect_init_with_renderer_order` registers the listed layers, bottom first;
+`el_effect_set_renderer_order` reorders an initialised effect with no re-init;
+`el_effect_get_renderer_count` / `el_effect_get_renderer_at` read it back. The
+motivating case is the spotlight: below the neon, the neon composites over the
+cones by its own coverage instead of the cones adding onto the neon.
 
 **There are no forked renderer pairs left.** Both layers that had one now carry
 the half-res path as a resolution scale on a single renderer: `NeonConfig::

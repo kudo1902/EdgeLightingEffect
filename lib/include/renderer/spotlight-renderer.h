@@ -112,6 +112,7 @@ namespace EdgeLighting
         virtual void Update(float deltaTime, float time, const Config &config) override;
         virtual void Render(int viewportWidth, int viewportHeight, float time, const Config &config) override;
         virtual void OnConfigChanged(const Config &config) override;
+        virtual RendererLayer GetLayer() const override { return RendererLayer::SPOTLIGHT; }
 
     private:
         /// One vertex of a lamp's strip. Declared here rather than in the .cpp

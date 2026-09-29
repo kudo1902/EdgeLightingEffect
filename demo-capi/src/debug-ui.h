@@ -44,6 +44,9 @@ public:
 
 private:
     void buildGeometrySection(el_effect_handle_t effect);
+    /// Compositing order of the registered layers, through
+    /// el_effect_get_renderer_at / el_effect_set_renderer_order.
+    void buildLayerOrderSection(el_effect_handle_t effect);
     void buildNeonSection(el_effect_handle_t effect);
     void buildDebugSection(el_effect_handle_t effect);
     void buildDropletsSection(el_effect_handle_t effect);
@@ -78,6 +81,11 @@ private:
     };
     std::vector<AnimEntry> mAnimations;
     int mAddPresetIdx = 0;
+
+    // --- Layer order ---
+    /// The order the effect was initialised in, captured the first time the
+    /// Layer order section sees it, so "Default" can put it back.
+    std::vector<uint32_t> mDefaultLayerOrder;
 
     // --- Background quad (demo-side) ---
     bool mShowBackground = false;
