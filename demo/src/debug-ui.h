@@ -82,6 +82,10 @@ public:
 
 private:
     void buildGeometrySection(EdgeLighting::Config &cfg);
+    /// Compositing order of the registered layers. Reorders through
+    /// EdgeLightingEffect::SetLayerOrder - no config write, no
+    /// re-init.
+    void buildLayerOrderSection(EdgeLighting::EdgeLightingEffect &effect);
     void buildNeonSection(EdgeLighting::Config &cfg,
                           const EdgeLighting::Config &active);
     /// Overlays drawn by DebugRenderer. Takes no `active` config: these are

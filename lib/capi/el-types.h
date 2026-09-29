@@ -307,13 +307,17 @@ extern "C"
 
     /** @brief Bitmask selecting which renderer layers @ref el_effect_init_with_renderers
      *         registers on the effect.
-     *  @details OR the flags for the layers you want. Registration always
-     *           happens in the fixed compositing order the list below is
+     *  @details OR the flags for the layers you want. With a mask, registration
+     *           happens in the default compositing order the list below is
      *           written in, regardless of how the bits are combined - the mask
-     *           decides inclusion, not order. A layer that is not included is
-     *           never constructed, so it pays no GL cost (no shader compile, no
-     *           FBO allocation); its @c el_effect_set_*_renderer_enabled flag
-     *           still writes to the staging config but has no visual effect.
+     *           decides inclusion, not order. To choose the order, pass the
+     *           flags one per entry, bottom first, to
+     *           @ref el_effect_init_with_renderer_order, or reorder an
+     *           initialised effect with @ref el_effect_set_renderer_order. A
+     *           layer that is not included is never constructed, so it pays
+     *           no GL cost (no shader compile, no FBO allocation); its
+     *           @c el_effect_set_*_renderer_enabled flag still writes to the
+     *           staging config but has no visual effect.
      *
      *           The bits run in that same order: the content layers are dense
      *           from 0, and the debug layer holds the TOP bit - bit 30, the

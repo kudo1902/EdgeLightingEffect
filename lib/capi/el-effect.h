@@ -925,8 +925,9 @@ extern "C"
 
     /** @brief Initialise every renderer layer under the current GL context.
      *  @details Convenience wrapper for @ref el_effect_init_with_renderers with
-     *           @ref EL_RENDERER_ALL - registers the full stack (neon, debug,
-     *           droplets, lens flare).
+     *           @ref EL_RENDERER_ALL - registers the full stack in the default
+     *           order, bottom first: neon, droplets, lens flare, spotlight,
+     *           debug.
      *  @returns @ref EL_ERROR_INIT_FAILED if a renderer fails to initialise
      *           (usually a shader compile / link error - see native log). */
     EL_API el_result_e el_effect_init(el_effect_handle_t effect);
@@ -938,10 +939,12 @@ extern "C"
      *                      nothing (render becomes a no-op until layers are
      *                      added C++-side); @ref EL_RENDERER_ALL is the full
      *                      stack.
-     *  @details Layers are always registered in the fixed compositing order
-     *           regardless of the mask, so droplets still refract the neon
-     *           beneath them, the lens flare still sits over both, and the
-     *           debug overlays still land on top of everything. An omitted
+     *  @details The mask decides which layers are registered, not their order:
+     *           they go in the default order (neon, droplets, lens flare,
+     *           spotlight, debug - bottom first) whatever bits are combined.
+     *           To choose the order, use @ref el_effect_init_with_renderer_order
+     *           instead, or reorder afterwards with
+     *           @ref el_effect_set_renderer_order. An omitted
      *           layer is never constructed and pays no GL cost. Prefer this
      *           over @ref el_effect_init when a host only needs some layers
      *           (e.g. neon alone) and wants to skip the others' shader compiles.
@@ -955,6 +958,66 @@ extern "C"
      *           initialise (usually a shader compile / link error - see native
      *           log). */
     EL_API el_result_e el_effect_init_with_renderers(el_effect_handle_t effect, uint32_t rendererMask);
+
+    /** @brief Initialise the named renderer layers, in the order given.
+     *  @param effect Effect handle.
+     *  @param order  Layers to register, BOTTOM FIRST: @c order[0] draws first
+     *                and every later entry composites over it. Each entry is
+     *                exactly one @ref el_renderer_flags_e layer bit, named at
+     *                most once. Combined masks and @ref EL_RENDERER_ALL are
+     *                refused, since they do not say where their layers go. May
+     *                be @c NULL when @p count is 0.
+     *  @param count  Number of entries in @p order. 0 registers nothing, like
+     *                @ref EL_RENDERER_NONE.
+     *  @details The ordered form of @ref el_effect_init_with_renderers:
+     *           registers exactly the listed layers, and only they pay any GL
+     *           cost. Order is appearance, not just bookkeeping - the layers
+     *           composite by blending, so a layer only lands on what was drawn
+     *           before it. For example, putting @ref EL_RENDERER_SPOTLIGHT
+     *           BELOW @ref EL_RENDERER_NEON stops the cones adding onto the
+     *           neon: the neon then composites over them by its own coverage.
+     *           One consequence to plan for: the neon's opaque fill, when on,
+     *           then paints over any cone inside the rect.
+     *
+     *           Any order is accepted. @ref EL_RENDERER_DEBUG is meant to go
+     *           last, since its overlays annotate the layers under them.
+     *
+     *           Calling this again on an initialised handle rebuilds the whole
+     *           stack. The staging config is kept.
+     *  @returns @ref EL_ERROR_INVALID_PARAMETER if @p order is malformed
+     *           (nothing is registered and any previous stack is left as it
+     *           was); @ref EL_ERROR_INIT_FAILED if a renderer fails to
+     *           initialise, in which case that layer is dropped, the rest keep
+     *           running, and @ref el_effect_get_renderer_count reports the
+     *           survivors. */
+    EL_API el_result_e el_effect_init_with_renderer_order(el_effect_handle_t effect,
+                                                          const uint32_t *order, int32_t count);
+
+    /** @brief Reorder the registered layers without re-initialising any of them.
+     *  @param order Every registered layer exactly once, BOTTOM FIRST - a
+     *               permutation of what @ref el_effect_get_renderer_at
+     *               reports. This only moves layers; it cannot add or drop one.
+     *  @param count Number of entries in @p order; must equal
+     *               @ref el_effect_get_renderer_count.
+     *  @details Cheap: nothing is recompiled or reallocated, and it takes
+     *           effect on the next @ref el_effect_render. Safe to call every
+     *           frame, though there is rarely a reason to.
+     *  @returns @ref EL_ERROR_INVALID_HANDLE before the effect is initialised;
+     *           @ref EL_ERROR_INVALID_PARAMETER if @p order is not a
+     *           permutation of the registered layers, in which case the current
+     *           order is kept. */
+    EL_API el_result_e el_effect_set_renderer_order(el_effect_handle_t effect,
+                                                    const uint32_t *order, int32_t count);
+
+    /** @brief Number of layers currently registered. 0 before init. */
+    EL_API el_result_e el_effect_get_renderer_count(el_effect_handle_t effect, int32_t *outCount);
+
+    /** @brief The layer at a position in the compositing order.
+     *  @param index    0 = bottom (drawn first), count - 1 = top.
+     *  @param outLayer Receives that layer's single @ref el_renderer_flags_e bit.
+     *  @returns @ref EL_ERROR_INVALID_PARAMETER if @p index is out of range. */
+    EL_API el_result_e el_effect_get_renderer_at(el_effect_handle_t effect, int32_t index,
+                                                 uint32_t *outLayer);
 
     /** @brief Pull the effect's base config back into the effect's staging config.
      *  @details Snapshots the last-authored values (what @c SetConfig

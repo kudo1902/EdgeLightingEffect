@@ -1,8 +1,14 @@
 #include "core/edge-lighting.h"
 #include "animation/animation-manager.h"
+#include "renderer/neon-renderer.h"
+#include "renderer/droplets-renderer.h"
+#include "renderer/lens-flare-renderer.h"
+#include "renderer/spotlight-renderer.h"
+#include "renderer/debug-renderer.h"
 #include "util/log-util.h"
 #include "util/gl-utils.h"
 #include <utility> // std::swap - refreshActiveConfig swaps the composite scratch
+#include <algorithm> // std::find / find_if - the renderer- and layer-order checks
 
 namespace EdgeLighting
 {
@@ -103,6 +109,192 @@ namespace EdgeLighting
         // Renderers gate their own rebuilds on shader validity, so this is also
         // safe on the pre-Initialize path where nothing is compiled yet.
         renderer->OnConfigChanged(mActiveConfig);
+    }
+
+    const std::vector<std::shared_ptr<BaseRenderer>> &EdgeLightingEffect::GetRenderers() const
+    {
+        return mRenderers;
+    }
+
+    bool EdgeLightingEffect::SetRendererOrder(const std::vector<std::shared_ptr<BaseRenderer>> &order)
+    {
+        // A permutation check by identity. Quadratic, but over a handful of
+        // layers, and only when a host asks for a new order - never per frame.
+        // Equal sizes plus "every entry is registered and appears once" is
+        // enough: n distinct members of an n-element set are all of it.
+        if (order.size() != mRenderers.size())
+        {
+            LOG_E("EdgeLightingEffect: SetRendererOrder given %zu renderers, %zu registered - "
+                  "order unchanged.",
+                  order.size(), mRenderers.size());
+            return false;
+        }
+        for (size_t i = 0; i < order.size(); i++)
+        {
+            const bool registered =
+                std::find(mRenderers.begin(), mRenderers.end(), order[i]) != mRenderers.end();
+            const bool repeated =
+                std::find(order.begin(), order.begin() + i, order[i]) != order.begin() + i;
+            if (!registered || repeated)
+            {
+                LOG_E("EdgeLightingEffect: SetRendererOrder entry %zu is %s - order unchanged.",
+                      i, registered ? "a duplicate" : "not a registered renderer");
+                return false;
+            }
+        }
+        mRenderers = order;
+        return true;
+    }
+
+    std::shared_ptr<BaseRenderer> EdgeLightingEffect::CreateRenderer(RendererLayer layer)
+    {
+        switch (layer)
+        {
+        case RendererLayer::NEON:
+        {
+            return std::make_shared<NeonRenderer>();
+        }
+        case RendererLayer::DROPLETS:
+        {
+            return std::make_shared<DropletsRenderer>();
+        }
+        case RendererLayer::LENS_FLARE:
+        {
+            return std::make_shared<LensFlareRenderer>();
+        }
+        case RendererLayer::SPOTLIGHT:
+        {
+            return std::make_shared<SpotlightRenderer>();
+        }
+        case RendererLayer::DEBUG:
+        {
+            return std::make_shared<DebugRenderer>();
+        }
+        case RendererLayer::CUSTOM:
+        default:
+        {
+            return nullptr;
+        }
+        }
+    }
+
+    const std::vector<RendererLayer> &EdgeLightingEffect::GetDefaultLayerOrder()
+    {
+        // The order the demo and the C ABI's mask-based init have always
+        // registered in. Also the list of every named layer: IsValidLayerList
+        // reads "known" off it, so a new layer is added here and in
+        // CreateRenderer - nowhere else.
+        static const std::vector<RendererLayer> ORDER = {
+            RendererLayer::NEON,
+            RendererLayer::DROPLETS,
+            RendererLayer::LENS_FLARE,
+            RendererLayer::SPOTLIGHT,
+            RendererLayer::DEBUG,
+        };
+        return ORDER;
+    }
+
+    bool EdgeLightingEffect::IsValidLayerList(const std::vector<RendererLayer> &order)
+    {
+        const std::vector<RendererLayer> &known = GetDefaultLayerOrder();
+        for (size_t i = 0; i < order.size(); i++)
+        {
+            if (std::find(known.begin(), known.end(), order[i]) == known.end())
+            {
+                LOG_E("EdgeLightingEffect: layer entry %zu (0x%x) names no layer.",
+                      i, static_cast<unsigned>(order[i]));
+                return false;
+            }
+            if (std::find(order.begin(), order.begin() + i, order[i]) != order.begin() + i)
+            {
+                LOG_E("EdgeLightingEffect: layer entry %zu (0x%x) is repeated.",
+                      i, static_cast<unsigned>(order[i]));
+                return false;
+            }
+        }
+        return true;
+    }
+
+    bool EdgeLightingEffect::AddRenderer(RendererLayer layer)
+    {
+        // One renderer per named layer, or the layer calls could not tell
+        // which of two to move.
+        for (const auto &renderer : mRenderers)
+        {
+            if (renderer->GetLayer() == layer && layer != RendererLayer::CUSTOM)
+            {
+                LOG_E("EdgeLightingEffect: layer 0x%x is already registered - not added.",
+                      static_cast<unsigned>(layer));
+                return false;
+            }
+        }
+        std::shared_ptr<BaseRenderer> renderer = CreateRenderer(layer);
+        if (!renderer)
+        {
+            LOG_E("EdgeLightingEffect: 0x%x names no renderer - not added.",
+                  static_cast<unsigned>(layer));
+            return false;
+        }
+        const size_t before = mRenderers.size();
+        AddRenderer(renderer);
+        // AddRenderer(ptr) drops a late registration that fails to initialise.
+        return mRenderers.size() > before;
+    }
+
+    std::vector<RendererLayer> EdgeLightingEffect::GetLayerOrder() const
+    {
+        std::vector<RendererLayer> order;
+        order.reserve(mRenderers.size());
+        for (const auto &renderer : mRenderers)
+        {
+            if (renderer->GetLayer() != RendererLayer::CUSTOM)
+            {
+                order.push_back(renderer->GetLayer());
+            }
+        }
+        return order;
+    }
+
+    bool EdgeLightingEffect::SetLayerOrder(const std::vector<RendererLayer> &order)
+    {
+        if (!IsValidLayerList(order))
+        {
+            return false;
+        }
+        const std::vector<RendererLayer> current = GetLayerOrder();
+        if (order.size() != current.size())
+        {
+            LOG_E("EdgeLightingEffect: SetLayerOrder given %zu layers, %zu registered - "
+                  "order unchanged.",
+                  order.size(), current.size());
+            return false;
+        }
+
+        // Refill the named slots in the new order; custom renderers keep
+        // theirs. Both lists are duplicate-free and the same size, so finding
+        // every entry of `order` makes it a permutation of `current`.
+        std::vector<std::shared_ptr<BaseRenderer>> renderers = mRenderers;
+        size_t next = 0;
+        for (auto &slot : renderers)
+        {
+            if (slot->GetLayer() == RendererLayer::CUSTOM)
+            {
+                continue;
+            }
+            const RendererLayer want = order[next++];
+            auto it = std::find_if(mRenderers.begin(), mRenderers.end(),
+                                   [want](const std::shared_ptr<BaseRenderer> &renderer) {
+                                       return renderer->GetLayer() == want;
+                                   });
+            if (it == mRenderers.end())
+            {
+                LOG_E("EdgeLightingEffect: layer 0x%x is not registered - order unchanged.",
+                      static_cast<unsigned>(want));
+                return false;
+            }
+            slot = *it;
+        }
+        return SetRendererOrder(renderers);
     }
 
     Clock &EdgeLightingEffect::GetClock() { return mClock; }

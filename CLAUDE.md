@@ -155,7 +155,7 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
 
 There are no longer any forked renderer pairs. `NeonOptimizedRenderer` / `neon-optimized.frag` were folded into `NeonRenderer` / `neon.frag` as a resolution scale (see [`docs/neon-unification-plan.md`](docs/neon-unification-plan.md)), and `LensFlareOptimizedRenderer` was folded into `LensFlareRenderer` the same way. Both merges are byte-identical at every scale tested. A change to neon or flare appearance now lands in exactly one place.
 
-To add a renderer, subclass `BaseRenderer` (`Initialize` / `Update` / `Render` / `OnConfigChanged`), add a sub-config struct to `Config` with `operator==`, register it in `demo/src/main.cpp`, and add an ImGui section in `DebugUI`.
+To add a renderer, subclass `BaseRenderer` (`Initialize` / `Update` / `Render` / `OnConfigChanged` / `GetLayer`), give it a `RendererLayer` (see the C ABI note below), add a sub-config struct to `Config` with `operator==`, register it in `demo/src/main.cpp`, and add an ImGui section in `DebugUI`.
 
 ### Animation: Clock + Modulators + Animations
 
@@ -175,6 +175,7 @@ The effect embeds the manager, so the host does **not** hand-composite animation
 - Each effect handle carries a **staging `Config`**: every `el_effect_set_*` mutates staging and nothing else; every `el_effect_get_*` reads staging back, *not* the animation-overlaid active config. Staging reaches the effect in `el_effect_update`, which is the only place that calls `SetConfig` - so a host that sets config and then calls only `el_effect_render` renders the previous frame's config. `el_effect_capture` re-syncs staging from the effect's base.
 - No C++ exception escapes the boundary; everything maps to an `el_result_e`.
 - Enum ABI parity between the C++ enums and their `el_*` mirrors is enforced by a wall of `static_assert`s at the top of `capi-internal.h`. **If you reorder or renumber a C++ enum that has an `el_*` mirror, add/adjust the assert there** - append new values at the end to stay forward-compatible.
+- **Layer order is host-selectable, and the core owns it.** Every renderer names its layer (`BaseRenderer::GetLayer`, pure virtual, returning a `RendererLayer` from `renderer/base-renderer.h`), and `EdgeLightingEffect` builds and reorders the stack by layer: `AddRenderer(RendererLayer)`, `GetLayerOrder`, `SetLayerOrder`, `GetDefaultLayerOrder` (neon, droplets, flare, spotlight, debug). `RendererLayer`'s values ARE `el_renderer_flags_e`'s bits - static_asserts in `capi-internal.h` - so the C ABI keeps no bookkeeping: `el_effect_init_with_renderers(mask)` filters the default order, `el_effect_init_with_renderer_order` takes one flag per entry, bottom first, and `el_effect_set_renderer_order` / `el_effect_get_renderer_count` / `el_effect_get_renderer_at` cast and forward. A host's own renderer returns `RendererLayer::CUSTOM`; the layer calls skip it and it keeps its slot through every reorder. A new layer is added to `RendererLayer`, `CreateRenderer` and `GetDefaultLayerOrder` in `edge-lighting.cpp`, and mirrored by an `el_renderer_flags_e` bit plus its static_assert.
 - Symbols are hidden by default (`CXX_VISIBILITY_PRESET hidden`); only `EL_API`-marked `el_*` functions are exported.
 
 ### RAII GL wrappers

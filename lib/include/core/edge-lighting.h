@@ -112,6 +112,76 @@ namespace EdgeLighting
         /// @param renderer Shared pointer to a @ref BaseRenderer subclass.
         void AddRenderer(std::shared_ptr<BaseRenderer> renderer);
 
+        /// @brief The registered renderers, in compositing order (first drawn
+        ///        first, so the last one sits on top).
+        ///
+        /// Reflects what @ref Initialize left behind: a renderer that failed to
+        /// initialise has already been dropped from this list.
+        const std::vector<std::shared_ptr<BaseRenderer>> &GetRenderers() const;
+
+        /// @brief Re-order the registered renderers without re-initialising any
+        ///        of them.
+        ///
+        /// @p order must be a PERMUTATION of @ref GetRenderers - every
+        /// registered renderer exactly once, nothing else. Anything else is
+        /// refused and leaves the current order untouched, so this can only
+        /// move layers, never add or drop one (use @ref AddRenderer for that).
+        ///
+        /// Takes effect on the next @ref Render. Nothing else depends on the
+        /// order: @ref Update and the config notifications reach every renderer
+        /// regardless, and no renderer reads another's output except through
+        /// the framebuffer, which is exactly what the order decides.
+        ///
+        /// @returns false (and changes nothing) if @p order is not a
+        ///          permutation of the registered renderers.
+        bool SetRendererOrder(const std::vector<std::shared_ptr<BaseRenderer>> &order);
+
+        /// @name Layers
+        ///
+        /// The same list addressed by @ref RendererLayer instead of by
+        /// pointer, so a host can build and reorder the stack without holding
+        /// on to the renderers. Every order here is BOTTOM FIRST.
+        ///
+        /// These calls see only the library's own layers. A renderer whose
+        /// @ref BaseRenderer::GetLayer is @ref RendererLayer::CUSTOM is left
+        /// out of @ref GetLayerOrder and keeps its position through every
+        /// reorder; the named layers move around it, within the slots they
+        /// already occupy. Use @ref SetRendererOrder to move a custom one.
+        ///@{
+
+        /// The renderer for @p layer, or nullptr for @ref RendererLayer::CUSTOM
+        /// or a value that names no layer.
+        static std::shared_ptr<BaseRenderer> CreateRenderer(RendererLayer layer);
+
+        /// The default compositing order, bottom first: neon, droplets, lens
+        /// flare, spotlight, debug. The debug overlays go last because they
+        /// annotate the layers under them.
+        static const std::vector<RendererLayer> &GetDefaultLayerOrder();
+
+        /// Whether @p order is a well-formed layer list: every entry a named
+        /// layer (not CUSTOM, not an unknown value), none repeated. Logs the
+        /// first problem.
+        static bool IsValidLayerList(const std::vector<RendererLayer> &order);
+
+        /// Creates the renderer for @p layer and registers it through
+        /// @ref AddRenderer, with the same initialise-if-late contract.
+        /// @returns false if @p layer names no renderer, is already
+        ///          registered, or failed to initialise.
+        bool AddRenderer(RendererLayer layer);
+
+        /// The named layers, bottom first. Custom renderers are skipped, and a
+        /// layer whose renderer failed to initialise is absent - this is what
+        /// @ref Render draws.
+        std::vector<RendererLayer> GetLayerOrder() const;
+
+        /// Re-orders the named layers. @p order must name every layer in
+        /// @ref GetLayerOrder exactly once and nothing else; anything else is
+        /// refused and changes nothing. Same cost and timing as
+        /// @ref SetRendererOrder.
+        bool SetLayerOrder(const std::vector<RendererLayer> &order);
+
+        ///@}
+
         /// @brief Access the shared clock for play/pause/time control.
         Clock &GetClock();
         const Clock &GetClock() const;

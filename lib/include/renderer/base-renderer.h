@@ -6,6 +6,29 @@
 namespace EdgeLighting
 {
 
+    /// Which visual layer a renderer draws - its identity in
+    /// @ref EdgeLightingEffect's layer calls (@ref EdgeLightingEffect::AddRenderer
+    /// by layer, @ref EdgeLightingEffect::SetLayerOrder, ...).
+    ///
+    /// One bit per layer, numbered exactly like the C ABI's
+    /// @c el_renderer_flags_e - a wall of static_asserts in capi-internal.h
+    /// holds the two together, so append a new layer on the next free bit
+    /// below DEBUG and mirror it there. DEBUG holds bit 30 so no content layer
+    /// ever renumbers it.
+    ///
+    /// @c CUSTOM is for a host's own @ref BaseRenderer subclass. The layer
+    /// calls cannot name one, so they leave custom renderers exactly where
+    /// they are and reorder only the layers around them.
+    typedef enum class RendererLayer : uint32_t
+    {
+        CUSTOM = 0,
+        NEON = 1 << 0,
+        DROPLETS = 1 << 1,
+        LENS_FLARE = 1 << 2,
+        SPOTLIGHT = 1 << 3,
+        DEBUG = 1 << 30
+    } RendererLayer;
+
     /// Abstract base class for all renderers in the EdgeLighting pipeline.
     ///
     /// Each renderer draws a single visual layer (stroke, wireframe, etc.)
@@ -58,6 +81,12 @@ namespace EdgeLighting
         /// Called when the configuration changes (e.g. on key press).
         /// @param config  The new configuration to adapt to.
         virtual void OnConfigChanged(const Config &config) = 0;
+
+        /// The layer this renderer draws. Pure virtual on purpose: a renderer
+        /// that forgot to say which layer it is would otherwise be silently
+        /// unreachable by every layer call. A host's own renderer returns
+        /// @ref RendererLayer::CUSTOM.
+        virtual RendererLayer GetLayer() const = 0;
     };
 
 } // namespace EdgeLighting

@@ -175,6 +175,7 @@ void DebugUI::Build(el_effect_handle_t effect)
     ImGui::Separator();
 
     buildGeometrySection(effect);
+    buildLayerOrderSection(effect);
     buildNeonSection(effect);
     buildDebugSection(effect);
     buildDropletsSection(effect);
@@ -668,6 +669,131 @@ namespace
         }
     }
 } // namespace
+
+namespace
+{
+    const char *LayerName(uint32_t layer)
+    {
+        switch (layer)
+        {
+        case EL_RENDERER_NEON:
+        {
+            return "Neon";
+        }
+        case EL_RENDERER_DROPLETS:
+        {
+            return "Droplets";
+        }
+        case EL_RENDERER_LENS_FLARE:
+        {
+            return "Lens flare";
+        }
+        case EL_RENDERER_SPOTLIGHT:
+        {
+            return "Spotlight";
+        }
+        case EL_RENDERER_DEBUG:
+        {
+            return "Debug overlays";
+        }
+        default:
+        {
+            return "Unknown";
+        }
+        }
+    }
+
+    std::vector<uint32_t> ReadLayerOrder(el_effect_handle_t effect)
+    {
+        int32_t count = 0;
+        el_effect_get_renderer_count(effect, &count);
+        std::vector<uint32_t> order(static_cast<size_t>(std::max(count, 0)));
+        for (int32_t i = 0; i < count; i++)
+        {
+            el_effect_get_renderer_at(effect, i, &order[static_cast<size_t>(i)]);
+        }
+        return order;
+    }
+}
+
+void DebugUI::buildLayerOrderSection(el_effect_handle_t effect)
+{
+    std::vector<uint32_t> order = ReadLayerOrder(effect);
+    if (mDefaultLayerOrder.empty())
+    {
+        mDefaultLayerOrder = order;
+    }
+
+    if (!ImGui::CollapsingHeader("Layer order"))
+    {
+        return;
+    }
+
+    ImGui::TextDisabled("Top of the list draws last, over everything below it.");
+
+    const int count = static_cast<int>(order.size());
+    int swapWith = -1;
+    int swapAt = -1;
+
+    // Listed TOP first, the way a layer stack reads; the ABI's order is
+    // bottom first, so row r shows index count - 1 - r.
+    for (int row = 0; row < count; row++)
+    {
+        const int i = count - 1 - row;
+        ImGui::PushID(i);
+        ImGui::BeginDisabled(i == count - 1);
+        if (ImGui::ArrowButton("##Up", ImGuiDir_Up))
+        {
+            swapAt = i;
+            swapWith = i + 1;
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(i == 0);
+        if (ImGui::ArrowButton("##Down", ImGuiDir_Down))
+        {
+            swapAt = i;
+            swapWith = i - 1;
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::Text("%d  %s%s", i, LayerName(order[static_cast<size_t>(i)]),
+                    i == 0 ? "  (bottom)" : (i == count - 1 ? "  (top)" : ""));
+        ImGui::PopID();
+    }
+
+    // Applied after the loop so the rows above all read the same order.
+    // Swapping two neighbours always leaves a valid order to hand back whole.
+    if (swapAt >= 0)
+    {
+        std::swap(order[static_cast<size_t>(swapAt)], order[static_cast<size_t>(swapWith)]);
+        el_effect_set_renderer_order(effect, order.data(), static_cast<int32_t>(order.size()));
+    }
+
+    if (ImGui::Button("Default##LayerOrder"))
+    {
+        el_effect_set_renderer_order(effect, mDefaultLayerOrder.data(),
+                                     static_cast<int32_t>(mDefaultLayerOrder.size()));
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Spotlight at bottom##LayerOrder"))
+    {
+        // The spotlight first, everything else in its current order. Nothing to
+        // do if the spotlight layer was not registered.
+        auto spot = std::find(order.begin(), order.end(), static_cast<uint32_t>(EL_RENDERER_SPOTLIGHT));
+        if (spot != order.end())
+        {
+            std::rotate(order.begin(), spot, spot + 1);
+            el_effect_set_renderer_order(effect, order.data(), static_cast<int32_t>(order.size()));
+        }
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Draws the cones first, so the neon composites over them by its own\n"
+                          "coverage instead of the cones adding onto the neon. The neon's opaque\n"
+                          "fill, if on, then covers any cone inside the rect.");
+    }
+}
 
 void DebugUI::buildNeonSection(el_effect_handle_t effect)
 {
