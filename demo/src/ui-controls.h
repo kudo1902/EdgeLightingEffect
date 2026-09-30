@@ -206,14 +206,25 @@ namespace EdgeLightingDemo
         if (n.opaqueMode != OpaqueMode::NONE)
         {
             std::cout << ", colour (" << n.opaqueColor.r << ", " << n.opaqueColor.g
-                      << ", " << n.opaqueColor.b << ", " << n.opaqueColor.a << ")"
-                      << ", softness " << n.opaqueSoftness << " px";
+                      << ", " << n.opaqueColor.b << ", " << n.opaqueColor.a << ")";
             if (config.debug.opaqueOnly)
             {
                 std::cout << ", OPAQUE ONLY (neon emission suppressed)";
             }
         }
         std::cout << "\n";
+        // The fill's own pair, printed only for the sides the mode fills - the
+        // other side is not read, so listing it would describe nothing.
+        if (n.opaqueMode == OpaqueMode::INSIDE || n.opaqueMode == OpaqueMode::BOTH)
+        {
+            std::cout << "  opaqueInsideCut  " << Detail::CutoffStr(n.opaqueInsideCutoff, buf, sizeof buf)
+                      << "\n";
+        }
+        if (n.opaqueMode == OpaqueMode::OUTSIDE || n.opaqueMode == OpaqueMode::BOTH)
+        {
+            std::cout << "  opaqueOutsideCut " << Detail::CutoffStr(n.opaqueOutsideCutoff, buf, sizeof buf)
+                      << "\n";
+        }
 
         std::cout << "\n  colorStops (" << n.colorStops.size() << ")\n";
         for (size_t i = 0; i < n.colorStops.size(); ++i)
