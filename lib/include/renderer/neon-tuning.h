@@ -510,7 +510,8 @@
 //     Nothing derives 0.8 - anything leaving a ramp wide enough to hide the
 //     clip behaves the same. What it DOES assume is that the margin was set by
 //     the glow, where 20% of it is a long distance. When outsideCutoff clamps
-//     the margin instead (to size + softness + 1), 20% of ~13 px is 2.6 px and
+//     the margin instead (to where its fade ends, size + softness, plus 1),
+//     20% of ~13 px is 2.6 px and
 //     the ramp lands INSIDE the cutoff band, dimming the band's outer edge
 //     ahead of the cutoff mask - and only on the exterior, since the fade keys
 //     on positive d. Both shaders therefore floor the ramp's start at the

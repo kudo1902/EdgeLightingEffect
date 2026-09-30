@@ -33,10 +33,10 @@ uniform float uGlowRadius;
 uniform float uBloomStrength;
 uniform int   uGlowSide;
 uniform float uGlowSideSoftness;
-uniform float uInsideCutoff;          ///< Positive px distance INSIDE the rect edge past which the emission is culled. Disabled sides collapse to a huge sentinel CPU-side so this branch no-ops.
-uniform float uInsideCutoffSoftness;  ///< Feather width in px at the inside cutoff boundary.
-uniform float uOutsideCutoff;         ///< Positive px distance OUTSIDE the rect edge past which the emission is culled. Disabled sides collapse to a huge sentinel CPU-side.
-uniform float uOutsideCutoffSoftness; ///< Feather width in px at the outside cutoff boundary.
+uniform float uInsideCutoff;          ///< Cutoff::size of the inside cutoff: positive px distance INSIDE the rect edge where its fade STARTS. Disabled sides collapse to a huge sentinel CPU-side so this branch no-ops.
+uniform float uInsideCutoffSoftness;  ///< Feather width in px, running on from uInsideCutoff toward the centre.
+uniform float uOutsideCutoff;         ///< Cutoff::size of the outside cutoff: positive px distance OUTSIDE the rect edge where its fade STARTS. Disabled sides collapse to a huge sentinel CPU-side.
+uniform float uOutsideCutoffSoftness; ///< Feather width in px, running on from uOutsideCutoff away from the rect.
 uniform int   uWinding;               ///< 0 = CLOCKWISE, 1 = COUNTER_CLOCKWISE (matches Winding enum).
 
 // Ratio between the buffer this pass is drawing into and the viewport the
@@ -668,10 +668,13 @@ void main() {
     if (uGlowSide == GLOW_SIDE_INSIDE  && d >  sideCull) discard;
     if (uGlowSide == GLOW_SIDE_OUTSIDE && d < -sideCull) discard;
 
-    // Hard geometric cutoffs. The band is [-uInsideCutoff, +uOutsideCutoff]
-    // with a per-side softness feather straddling each boundary; anything
-    // past the feather is culled here so bloom/halo can't leak beyond the
-    // artist's stated reach even if uGlowRadius says otherwise. Softness is
+    // Hard geometric cutoffs. The band is [-uInsideCutoff, +uOutsideCutoff],
+    // and each side's feather STARTS at that boundary and runs its softness
+    // beyond it - the emission is untouched inside the band and gone by
+    // cutoff + softness. Anything past the feather is culled here so
+    // bloom/halo can't leak beyond the artist's stated reach even if
+    // uGlowRadius says otherwise. Where the fade sits is worked out below,
+    // at inMid / outMid. Softness is
     // decoupled from uGlowSideSoftness so the one-sided cut at d=0 can stay
     // pixel-tight while the cutoff joins fade smoothly, and per-side so the
     // interior and exterior can taper at different rates. Disabled sides
@@ -711,7 +714,8 @@ void main() {
     float inSoft  = max(uInsideCutoffSoftness,  softFloor);
     float outSoft = max(uOutsideCutoffSoftness, softFloor);
 
-    // TOTAL widths, halved here because the ramp is centred on the boundary.
+    // TOTAL widths, halved here because each ramp is centred on the midpoint
+    // of its fade (inMid / outMid, below).
     //
     // smoothstep(-w, w, x) spans 2w, so a softness of S px used to feather over
     // 2S - the identical bug black-rect.frag found in its own two ramps and
@@ -726,6 +730,24 @@ void main() {
     float inHalf  = 0.5 * inSoft;
     float outHalf = 0.5 * outSoft;
 
+    // WHERE each fade sits: it starts at the cutoff and runs the requested
+    // softness beyond it, so its MIDPOINT is softness/2 past the cutoff. The
+    // distances below are measured from that midpoint and the ramps built
+    // symmetrically about it, over the FLOORED width. For softness at or
+    // above the floor that is exactly cutoff -> cutoff + softness. Below the
+    // floor the one-pixel antialiasing ramp stays centred on the requested
+    // fade rather than starting at the cutoff, and that is deliberate: at
+    // softness 0 the edge's 50% point is the cutoff itself at every
+    // resolution scale. Anchoring the floored ramp at the cutoff instead
+    // would put that point half a FLOOR out - 0.5 px at full res, but 2 px at
+    // scale 0.25, where the floor is one buffer pixel - so the edge would move
+    // with resolutionScale.
+    //
+    // Disabled sides arrive as the huge sentinel and a neutralised side is
+    // overridden below, so neither needs a branch here.
+    float inMid  = uInsideCutoff  + 0.5 * max(uInsideCutoffSoftness,  0.0);
+    float outMid = uOutsideCutoff + 0.5 * max(uOutsideCutoffSoftness, 0.0);
+
     // Band boundaries measured against the offset rect, so a cornerRadius-0
     // band keeps square corners instead of being rounded by the cut distance.
     //
@@ -735,7 +757,8 @@ void main() {
     //
     // It can never be the binding constraint there. GlowSide::OUTSIDE keeps
     // d >= -sideBack, about half a pixel; an inside cutoff of size S keeps
-    // d >= -(S + inHalf), which is looser for every S >= 0. Mirror argument for
+    // d >= -(S + softness/2 + inHalf), i.e. -(inMid + inHalf), which is looser
+    // for every S >= 0. Mirror argument for
     // INSIDE and the outside cutoff. So this removes a constraint that was
     // already doing nothing to the silhouette - but it was NOT doing nothing:
     //
@@ -763,7 +786,7 @@ void main() {
     }
     else
     {
-        dOut = bandOuterDistance(vPos, d, halfSize, uCornerRadius, uOutsideCutoff);
+        dOut = bandOuterDistance(vPos, d, halfSize, uCornerRadius, outMid);
     }
     if (uGlowSide == GLOW_SIDE_OUTSIDE)
     {
@@ -771,7 +794,7 @@ void main() {
     }
     else
     {
-        dIn = bandInnerDistance(d, uInsideCutoff);
+        dIn = bandInnerDistance(d, inMid);
     }
     if (dOut >  outHalf) discard;
     if (dIn  < -inHalf ) discard;
@@ -1510,11 +1533,15 @@ void main() {
     // width below is strictly positive (an inverted smoothstep is undefined in
     // GLSL).
     float fadeFloor = uQuadMargin * QUAD_FADE_START_FRAC;
-    // An upper bound on where the band's emission ends, not the exact point:
-    // the cutoff ramp is centred on the boundary and so reaches outSoft/2 past
-    // it, where this budgets outSoft. Erring outward is the safe direction -
-    // it starts the quad fade LATER, which is what this floor exists to do.
-    float cutEdge   = uOutsideCutoff + outSoft;
+    // Where the band's emission ends: the outside fade is centred on outMid
+    // and reaches outHalf past it, and the discard above culls everything
+    // beyond. NeonRenderer::setupGeometry caps uQuadMargin at the same end
+    // (GetCutoffEnd) plus 1 full-res px, so while that cap is in force
+    // cutEdge < uQuadMargin holds by that pixel, the fade starts at the end,
+    // and nothing it dims survives the discard. It used to budget a whole
+    // outSoft past outMid, against a cap that did the same; the two moved
+    // together, and only past the discard.
+    float cutEdge   = outMid + outHalf;
     float fadeStart = (cutEdge < uQuadMargin) ? max(fadeFloor, cutEdge) : fadeFloor;
     float dQuad     = sdRoundBox(vPos, halfSize + vec2(uQuadMargin), 0.0);
     result *= 1.0 - smoothstep(-(uQuadMargin - fadeStart), 0.0, dQuad);
@@ -1629,8 +1656,10 @@ void main() {
     // sits back in the compressed region where the one-sided cut's numbers
     // apply.
     //
-    // Ramps span inSoft / outSoft TOTAL, centred on the boundary - hence the
+    // Ramps span inSoft / outSoft TOTAL, centred on inMid / outMid - hence the
     // halves, and see where they are derived for what the doubled form cost.
+    // dIn / dOut are already measured from those midpoints, so each ramp
+    // starts at its cutoff and ends softness past it.
     result *= smoothstep(-inHalf, inHalf, dIn);
     result *= 1.0 - smoothstep(-outHalf, outHalf, dOut);
 
