@@ -281,13 +281,34 @@ that cutoff disabled.
 The middle row is the outer cap: eight configs differing by a single level,
 waved through as quad-margin noise until the second pass named them.
 
-A subsumed cutoff still bounds the **opaque fill**, which is a separate layer
-with no notion of a glow side. The first version of the invariant harness missed
-that, enabled `outsideCutoff` with `opaqueMode::OUTSIDE`, and reported 72 false
-violations at delta 48 - exactly the backdrop value, because what had moved was
-the fill's extent and not the glow at all.
+When this was measured, a subsumed cutoff still bounded the **opaque fill**,
+which is a separate layer with no notion of a glow side. The first version of the
+invariant harness missed that, enabled `outsideCutoff` with
+`opaqueMode::OUTSIDE`, and reported 72 false violations at delta 48 - exactly the
+backdrop value, because what had moved was the fill's extent and not the glow at
+all.
+
+**That coupling is gone.** The fill now has its own pair,
+`NeonConfig::opaqueInsideCutoff` / `opaqueOutsideCutoff`, and the glow's
+`insideCutoff` / `outsideCutoff` no longer reach it at all. A subsumed glow
+cutoff is therefore a complete no-op, for the fill as well as the glow - the
+harness above no longer needs to keep the fill out of its configs - and
+`opaqueOutsideCutoff` caps an `OpaqueMode::OUTSIDE` fill whatever `glowSide` is
+doing.
 
 ## 5. The hard cutoff boundary
+
+> **Later change - where the feather sits.** Everything in this section
+> describes a feather CENTRED on `Cutoff::size`, half of it inside the band.
+> It now starts AT `size` and runs `softness` px beyond it, for the glow and
+> the opaque fill alike. Both shaders take `size` as-is and place the fade
+> themselves - its midpoint at `size + softness/2` (`inMid` / `outMid`), the
+> floored width laid symmetrically about it - so a softness-0 edge stays on
+> `size` at every resolution scale. The measurements below were taken at softness 0,
+> where the two conventions coincide, so they still hold. A tuned non-zero
+> softness now reaches `softness/2` further out; subtract that from `size` to
+> keep an old look. Softness values under the 1 px floor are no longer
+> interchangeable either - the floor clamps the ramp's width, not its midpoint.
 
 The sibling edge, and the one left untouched by `b3c6b1e`. Same sweep, full
 resolution, `outsideCutoff` softness 0, against a full-brightness 132 at that
@@ -407,7 +428,7 @@ Two further things measured and found free:
 
 ## 8. What callers have to retune
 
-Two parameters change meaning for anyone who had tuned them:
+These parameters change meaning for anyone who had tuned them:
 
 - **`NeonConfig::glowSideSoftness`** reads dimmer and wider. The feather now
   fades the layer instead of dimming emission into the tone map, which is what
@@ -415,6 +436,15 @@ Two parameters change meaning for anyone who had tuned them:
 - **`Cutoff::softness`** feathers over half the span it used to, because the ramp
   stopped doubling. It is now the width the field says it is, matching
   `opaqueSoftness`, which was corrected the same way earlier.
+- **`Cutoff::softness`, again, later - and on the opaque fill's pair too.** The
+  feather used to be centred on `size`; it now STARTS at `size` and runs
+  `softness` px beyond it (see the note at the top of section 5). The width is
+  unchanged, but a tuned non-zero softness now reaches `softness/2` further out
+  on both the glow (`insideCutoff` / `outsideCutoff`) and the fill
+  (`opaqueInsideCutoff` / `opaqueOutsideCutoff`) - 10 px at softness 20, enough
+  to push a bare fill past the glow. Subtract `softness/2` from `size` to keep
+  the old look. Values under the 1 px floor also stop being interchangeable:
+  each moves the edge by half its value.
 
 Both are stated at their declarations in
 [`config.h`](../lib/include/core/config.h). `glowSideSoftness` had already moved

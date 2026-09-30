@@ -103,7 +103,9 @@ Config
  │                       - segments: vector<SegmentBoost> (position, length,
  │                         boost, own colorStops + blendSpace). Default empty.
  │                       - compositing: opaqueMode + opaqueColor +
- │                         opaqueSoftness, insideCutoff / outsideCutoff
+ │                         opaqueInsideCutoff / opaqueOutsideCutoff (the
+ │                         fill's own bounds; insideCutoff / outsideCutoff
+ │                         bound the glow only)
  │                       - cost: resolutionScale (1.0 = full res, direct),
  │                         numSamples, gradientLutSize
  ├── DebugConfig         everything for inspecting rather than drawing:
