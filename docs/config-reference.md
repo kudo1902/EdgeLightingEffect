@@ -28,6 +28,29 @@ Related docs:
   `SPOT_MAX_LAMPS = 8` (`spotlight-tuning.h`). Entries past the cap are
   ignored at draw time (neon logs a one-shot overflow warning).
 
+## Reading the Range column
+
+Every numeric field carries a **Range**: the span over which the value
+actually changes what is drawn. Outside it the renderer draws the same
+pixels, so a slider there is dead travel. Three notations:
+
+| Notation | Meaning |
+|---|---|
+| `[a, b]` | Hard clamp. The library rewrites anything outside; `b` and `10b` render byte-identically |
+| `>= a` | Floored at `a`. Below it (including negatives) renders exactly as `a` |
+| bold warning | Overrides the notation beside it. The value is neither clamped nor safe - see [Out-of-range values that are NOT clamped](#out-of-range-values-that-are-not-clamped) |
+| `no cap` | Keeps changing as far as was measured. Pick by look, not by limit |
+
+A clamp is applied at draw time - `Config` keeps whatever was written and
+`GetConfig` reads it back unchanged, so a clamped field does NOT round-trip
+to the clamped value.
+
+Every bound in the Range columns was verified by rendering: one offscreen
+900x640 frame per value, compared byte-for-byte. Section
+[Measured limits](#measured-limits) has the evidence, the values that have no
+ceiling at all, and the four fields where an out-of-range value is not
+clamped but breaks the output instead.
+
 ## Shared types
 
 ### Winding
@@ -56,11 +79,11 @@ Consumed by `NeonRenderer` (halo/bloom/filament coverage) and by
 
 Per-side hard geometric limit for the neon glow.
 
-| Field | Unit | Meaning |
-|---|---|---|
-| `enable` | bool | `true` = clamp at `size`; `false` = uncapped, natural halo/bloom decay bounds it |
-| `size` | px, positive | Distance from rect edge to cutoff boundary along this side |
-| `softness` | px, total width centred on boundary | Feather over the boundary. `0` = pixel-tight AA edge (floored at 1 destination px), larger = smooth fade |
+| Field | Unit | Range | Meaning |
+|---|---|---|---|
+| `enable` | bool | - | `true` = clamp at `size`; `false` = uncapped, natural halo/bloom decay bounds it |
+| `size` | px, positive | `>= 0`, no-op past the glow's own reach | Distance from rect edge to cutoff boundary along this side. Once `size` exceeds `glowRadius * 48 * (1 + bloomStrength * intensity)` px (the quad margin, `GLOW_REACH_RADIUS_FACTOR`) there is no emission left to cut - 312 px at the stock glow |
+| `softness` | px, total width centred on boundary | `>= 1` | Feather over the boundary. Floored at 1 destination px, so `0`, `0.5` and `1.0` all render the same pixel-tight AA edge; `1.01` is the first value that differs |
 
 Coverage applied to the graded output (not multiplied into linear emission
 ahead of the tone map). A cutoff on the side `glowSide` already culls is
@@ -96,23 +119,23 @@ Interpolation space between color stops.
 Shared rounded-rect mask shape. Today only `SpotlightConfig.clipArea` holds
 one, but nothing about the shape is spotlight-specific.
 
-| Field | Unit | Meaning |
-|---|---|---|
-| `position` | px, app coords | Top-left corner of the area |
-| `width, height` | px | Area size. `0 x 0 + KEEP_INSIDE` keeps nothing (deliberate, not "unset") |
-| `cornerRadius` | px | Clamped to half the shorter side. `0` = sharp |
-| `edgeSoftness` | px | Fade across the cut. `0` = hard edge, `1.0` (default) = 1 px AA |
-| `mode` | `KEEP_INSIDE / KEEP_OUTSIDE` | Which side survives |
+| Field | Unit | Range | Meaning |
+|---|---|---|---|
+| `position` | px, app coords | no cap | Top-left corner of the area |
+| `width, height` | px | `>= 0` | Area size. `0 x 0 + KEEP_INSIDE` keeps nothing (deliberate, not "unset") |
+| `cornerRadius` | px | `[0, min(w,h)/2]` | Clamped to half the shorter side - on a 500x400 area, `200`, `201` and `900` are identical. `0` = sharp |
+| `edgeSoftness` | px | `>= 0`, sub-pixel invisible | Fade across the cut. `0` = hard edge, `1.0` (default) = 1 px AA. `0` through `1.1` stay within 1/255 of each other |
+| `mode` | `KEEP_INSIDE / KEEP_OUTSIDE` | - | Which side survives |
 
 No enable flag. The consumer opt-in (`SpotLight.clipped`) is the only gate.
 Expected as coverage on shaded output, not folded into shading.
 
 ### ColorStop
 
-| Field | Unit | Meaning |
-|---|---|---|
-| `position` | `[0, 1)` | Perimeter fraction (base ring) or head-to-tail span position (arc/segment row) |
-| `color` | linear `vec4` | `.rgb` color, `.a` emission scale at this stop |
+| Field | Unit | Range | Meaning |
+|---|---|---|---|
+| `position` | `[0, 1)` | wraps | Perimeter fraction (base ring) or head-to-tail span position (arc/segment row) |
+| `color` | linear `vec4` | `.a` is `[0, 1]` | `.rgb` color, `.a` emission scale at this stop. Alpha saturates at `1` - `1.5` and `4.0` render identically to `1.0`, so it cannot overdrive |
 
 `a = 1` full brightness, `a = 0` dark with background showing through
 (attenuates filament + halo + bloom together). Interpolates linearly in every
@@ -124,13 +147,13 @@ rows are head-to-tail (`SampleSpan`, `GL_CLAMP_TO_EDGE`, holds end colors).
 Travelling additive light. Composites additively, independent of
 `NeonConfig.intensity`, so a segment shines on a dark arc.
 
-| Field | Unit | Meaning |
-|---|---|---|
-| `position` | `[0, 1)` | Centre on perimeter |
-| `length` | perimeter fraction | Visible span (~2 sigma). Default `0.15` |
-| `boost` | absolute brightness | Peak amplitude added on top of base arc. Default `0.0` |
-| `colorStops` | head-to-tail stops | Across the segment span. Empty = inherit base gradient at touched samples |
-| `blendSpace` | enum | For `colorStops`. Ignored when empty |
+| Field | Unit | Range | Meaning |
+|---|---|---|---|
+| `position` | `[0, 1)` | wraps | Centre on perimeter |
+| `length` | perimeter fraction | `>= 0`, no cap | Visible span (~2 sigma). Default `0.15`. Keeps widening past `1.0` (sigma is `length/2`, it is not a wrap) |
+| `boost` | absolute brightness | `>= 0`, no cap | Peak amplitude added on top of base arc. Default `0.0`. Negatives render as `0`; unclamped upward, so overlapping segments sum past `1` |
+| `colorStops` | head-to-tail stops | - | Across the segment span. Empty = inherit base gradient at touched samples |
+| `blendSpace` | enum | - | For `colorStops`. Ignored when empty |
 
 ### PreservedSegment
 
@@ -145,13 +168,13 @@ reusable after release. Same renderer effect as `SegmentBoost`.
 Lit slice of the perimeter. Overlap resolves winner-take-all
 (largest `mask * intensity` owns the sample).
 
-| Field | Unit | Meaning |
-|---|---|---|
-| `start` | `[0, 1)` | Arc start. Wraps over `0/1` |
-| `length` | perimeter fraction | `0` = off, `1` (default) = full ring |
-| `intensity` | multiplier | Per-arc brightness, independent of `NeonConfig.intensity` |
-| `colorStops` | head-to-tail stops | Across the arc span. Empty = inherit base gradient |
-| `blendSpace` | enum | For `colorStops`. Ignored when empty |
+| Field | Unit | Range | Meaning |
+|---|---|---|---|
+| `start` | `[0, 1)` | wraps | Arc start. Wraps over `0/1` |
+| `length` | perimeter fraction | `[0, 1]` | `0` = off, `1` (default) = full ring. Saturates at `1` - `1.5` and `2.0` are identical, they do not wrap a second lap |
+| `intensity` | multiplier | `>= 0`, no cap | Per-arc brightness, independent of `NeonConfig.intensity`. Negatives render as `0` (the slice goes dark) |
+| `colorStops` | head-to-tail stops | - | Across the arc span. Empty = inherit base gradient |
+| `blendSpace` | enum | - | For `colorStops`. Ignored when empty |
 
 Examples: `{0, 1, 1}` full ring (default `arcs = {Arc{}}`), `{0, 0.5, 1}`
 first half, `{0.8, 0.4, 1}` wraps `0.8 -> 0.2`.
@@ -160,12 +183,12 @@ first half, `{0.8, 0.4, 1}` wraps `0.8 -> 0.2`.
 
 Geometry of the target rectangle. Read by every renderer.
 
-| Field | Unit | Default | Renderer effect |
-|---|---|---|---|
-| `width, height` | px | `800 x 600` | Rect size. Sets perimeter length for arc/segment/stop walks |
-| `position` | px, app coords | `(0, 0)` | Top-left corner |
-| `cornerRadius` | px | `40` | Corner rounding. `0` = sharp. Clamped internally to `[0, min(w,h)/2]` at every consumer; `Config` value itself is never rewritten |
-| `winding` | enum | `COUNTER_CLOCKWISE` | Perimeter traversal direction |
+| Field | Unit | Default | Range | Renderer effect |
+|---|---|---|---|---|
+| `width, height` | px | `800 x 600` | `> 0`, no cap | Rect size. Sets perimeter length for arc/segment/stop walks |
+| `position` | px, app coords | `(0, 0)` | no cap | Top-left corner |
+| `cornerRadius` | px | `40` | `[0, min(w,h)/2]` | Corner rounding. `0` = sharp. Clamped internally at every consumer; `Config` value itself is never rewritten. On a 420x300 rect, `150`, `151` and `400` render identically |
+| `winding` | enum | `COUNTER_CLOCKWISE` | - | Perimeter traversal direction |
 
 ## NeonConfig -> NeonRenderer
 
@@ -173,31 +196,31 @@ Filament (bright line) + halo (sharp colored glow) + bloom (wide spill),
 summed in HDR and tone-mapped together. Also owns the opaque fill pass
 (`black-rect.frag`).
 
-| Field | Unit | Default | Effect |
-|---|---|---|---|
-| `enable` | bool | `false` | Master switch. Nothing draws when false |
-| `resolutionScale` | fraction `(0, 1]` | `1.0` | `1.0` = direct to caller framebuffer. Below = offscreen buffer at that fraction + bilinear blit (`neon-blit.frag`). Buys fragment work (glow quad dominates). Clamped at draw time |
-| `numSamples` | int | `128` (`NEON_MAX_LOOP_SAMPLES`) | Gather samples per fragment. Capped at 128, clamped `>= 1`. Lower = faster + grainier halo |
-| `gradientLutSize` | texels `32-256` | `256` | Baked ring LUT width. Size change snaps, never cross-fades |
-| `opaqueMode` | enum | `NONE` | Fill geometry (see `OpaqueMode`) |
-| `opaqueColor` | linear `vec4` | `(0,0,0,1)` | Fill color. `.rgb` used today, `.a` reserved |
-| `opaqueSoftness` | px total, centred | `0.0` | Fill feather at cutoff boundaries. `0` = 1 px AA edge. Independent of `Cutoff.softness` |
-| `lineWidth` | px | `4.0` | Filament width. Peak always `1.0`, only width changes |
-| `filamentFalloff` | shape `N = 2*falloff` | `1.0` | `0.5` Laplace / `1.0` Gaussian / `2.0` flat-top / `>3` near-rectangular. Sides only, peak fixed |
-| `intensity` | multiplier | `1.0` | Master arc emission multiplier (filament + halo + bloom). Segments bypass it |
-| `glowRadius` | px | `5.0` | Halo reach. Also seeds bloom and corner cross-fade widths. `0` = filament only (halo/bloom gated by `GLOW_GATE_FADE_PX`) |
-| `bloomStrength` | unitless | `0.30` | Wide spill on top of halo. `0` = halo only, `1+` = strong wash |
-| `glowSide` | enum | `BOTH` | Which side emits |
-| `glowSideSoftness` | px total, into lit side | `0.0` | One-sided cut feather. `0` = pixel-tight AA at `d = 0`, registered with the fill edge. Ignored when `BOTH`. Coverage on graded output |
-| `insideCutoff` | `Cutoff` | `{false, 0, 0}` | Interior cap. Also caps `INSIDE/BOTH` fills |
-| `outsideCutoff` | `Cutoff` | `{false, 0, 0}` | Exterior cap. Also caps `OUTSIDE/BOTH` fills and sizes the draw quad (far-exterior rasteriser cull) |
-| `blendSpace` | enum | `RGB` | Base-ring interpolation space |
-| `colorStops` | ring stops | R/G/B/Y at `0/.25/.5/.75` | Base gradient. 1 = solid, 2 = gradient, 3+ = multi-stop circular |
-| `hueRotationRate` | rev/sec | `0.5` | Gradient scroll around perimeter. `0` = static. `+` with winding |
-| `segmentBoosts` | transient pool | empty | Index-addressed hotspots, freely overwritten |
-| `preservedSegmentBoosts` | id pool | empty | Id-addressed hotspots, override-proof. Merged with transient via `FillEffectiveSegments`, share `MAX_SEGMENT_BOOSTS = 8` slots |
-| `arcs` | slices | `{Arc{}}` full ring | Gating. Cap `MAX_ARCS = 8` |
-| `colorTransitionDuration` | sec | `0.3` | Whole-LUT cross-fade on stop/blend change. `0` = snap. Works across count/position changes |
+| Field | Unit | Default | Range | Effect |
+|---|---|---|---|---|
+| `enable` | bool | `false` | - | Master switch. Nothing draws when false |
+| `resolutionScale` | fraction `(0, 1]` | `1.0` | `[0.001, 1.0]`, useful `0.25-1.0` | `1.0` = direct to caller framebuffer. Below = offscreen buffer at that fraction + bilinear blit (`neon-blit.frag`). Buys fragment work (glow quad dominates). Clamped at draw time; `>= 1.0` all identical, `<= 0.001` all identical (a 1 px buffer). `0.5` sits 7/255 from `1.0`, `0.25` sits 28/255 |
+| `numSamples` | int | `128` (`NEON_MAX_LOOP_SAMPLES`) | `[1, 128]`, converged `>= 96` | Gather samples per fragment. Lower = faster + grainier halo. `128`, `129` and `512` are identical; so are `0` and `1`. Against `128`: `96` is 1/255, `64` is 3/255, `32` is 12/255, `16` is 29/255 |
+| `gradientLutSize` | texels | `256` | `>= 4`, no cap; converged `>= 128` | Baked ring LUT width. Size change snaps, never cross-fades. Floored at 4 (`1` through `4` identical, `5` is the first that differs); there is NO upper clamp - the demo's `32-256` slider is a UI choice, and `512`/`4096` do render (3/255 and 5/255 past `256`) |
+| `opaqueMode` | enum | `NONE` | - | Fill geometry (see `OpaqueMode`) |
+| `opaqueColor` | linear `vec4` | `(0,0,0,1)` | `.rgb` `[0, 1]` | Fill color. `.rgb` used today, `.a` reserved |
+| `opaqueSoftness` | px total, centred | `0.0` | `>= 1` | Fill feather at cutoff boundaries. Floored at 1 destination px: `0` through `1.01` are identical, `1.05` is the first that differs. Independent of `Cutoff.softness`. Note it feathers the fill's **coverage alpha** as well as its colour, so with `opaqueColor` equal to the backdrop it is invisible on an opaque window and still the visible edge over a transparent surface |
+| `lineWidth` | px | `4.0` | `>= 0`, no cap | Filament width. Peak always `1.0`, only width changes. `0` = no line (negatives too); past `min(w,h)` the line has swallowed the rect and only its outer edge still moves |
+| `filamentFalloff` | shape `N = 2*falloff` | `1.0` | `>= 0.001`, no cap | `0.5` Laplace / `1.0` Gaussian / `2.0` flat-top / `>3` near-rectangular. Sides only, peak fixed. Floored at `1e-3` (`0`, `0.0005`, `0.001` identical); above ~4 the profile is already rectangular and only its edge keeps sharpening |
+| `intensity` | multiplier | `1.0` | `0` and up, no cap. **Negatives break the output** | Master arc emission multiplier (filament + halo + bloom). Segments bypass it. Never saturates - the tone map keeps moving the outer fringe at `4096`. Core white-out starts near `8` |
+| `glowRadius` | px | `5.0` | `>= 0`, no cap | Halo reach. Also seeds bloom and corner cross-fade widths. `0` = filament only (halo/bloom gated by `GLOW_GATE_FADE_PX`; negatives read as `0`). Sizes the draw quad as `glowRadius * 48 * (1 + bloomStrength * intensity)` px, so it also sets the distance past which a cutoff is a no-op |
+| `bloomStrength` | unitless | `0.30` | `0` and up, no cap. **Negatives break the output** | Wide spill on top of halo. `0` = halo only, `1+` = strong wash. Still changing at `1024` |
+| `glowSide` | enum | `BOTH` | - | Which side emits |
+| `glowSideSoftness` | px total, into lit side | `0.0` | `>= 1` | One-sided cut feather. Floored at 1 destination px: `0`, `0.5` and `1.0` are identical, `1.05` is the first that differs. Ignored when `BOTH`. Coverage on graded output |
+| `insideCutoff` | `Cutoff` | `{false, 0, 0}` | see `Cutoff` | Interior cap. Also caps `INSIDE/BOTH` fills. A complete no-op under `glowSide = OUTSIDE` - byte-identical at every size |
+| `outsideCutoff` | `Cutoff` | `{false, 0, 0}` | see `Cutoff` | Exterior cap. Also caps `OUTSIDE/BOTH` fills and sizes the draw quad (far-exterior rasteriser cull). No-op under `glowSide = INSIDE` |
+| `blendSpace` | enum | `RGB` | - | Base-ring interpolation space |
+| `colorStops` | ring stops | R/G/B/Y at `0/.25/.5/.75` | `>= 1` stop, no cap | Base gradient. 1 = solid, 2 = gradient, 3+ = multi-stop circular. No cap measured - 64 stops still differ from 32, bounded in practice by `gradientLutSize` texels |
+| `hueRotationRate` | rev/sec | `0.5` | no cap; sign = direction | Gradient scroll around perimeter. `0` = static (and drops `uTime` out of the emission pre-pass entirely). `+` with winding |
+| `segmentBoosts` | transient pool | empty | first 8 entries | Index-addressed hotspots, freely overwritten |
+| `preservedSegmentBoosts` | id pool | empty | shares the same 8 | Id-addressed hotspots, override-proof. Merged with transient via `FillEffectiveSegments`, share `MAX_SEGMENT_BOOSTS = 8` slots |
+| `arcs` | slices | `{Arc{}}` full ring | first 8 entries | Gating. Cap `MAX_ARCS = 8` - entries 9+ are dropped byte-for-byte, with one logged warning |
+| `colorTransitionDuration` | sec | `0.3` | `>= 0` | Whole-LUT cross-fade on stop/blend change. `0` = snap. Works across count/position changes |
 
 ### Brightness model: intensity vs arc intensity vs segment boost
 
@@ -275,15 +298,15 @@ self-lit drops (body + rim + specular), no framebuffer capture. Band-fitted
 ring draw (4 strips), premultiplied blend. No resolution scale (rims/specs are
 single-px features a blit would erase).
 
-| Field | Unit | Default | Effect |
-|---|---|---|---|
-| `enable` | bool | `false` | Master switch |
-| `amount` | `[0, 1]` | `0.7` | Density. Low = static condensation, high = +2 trickling layers with trails |
-| `speed` | multiplier | `1.0` | Trickle pace. `0` freezes |
-| `lanes` | int `>= 1` | `1` | Lanes across band. Cell width = `bandWidth / lanes` px |
-| `bandWidth` | px | `24.0` | Band thickness and drop-size scale. Side from `neon.glowSide` (`OUTSIDE` outward, `INSIDE` inward, `BOTH` straddled) |
-| `bandOffset` | px | `0.0` | Gap between rect edge and band inner boundary |
-| `tint` | linear `vec4` | `(0.85,0.90,1.0,1.0)` | Body tint multiplier (`.rgb` used, `.a` reserved). Rim/spec stay white |
+| Field | Unit | Default | Range | Effect |
+|---|---|---|---|---|
+| `enable` | bool | `false` | - | Master switch |
+| `amount` | `[0, 1]` | `0.7` | `[0, 1]` | Density. Low = static condensation, high = +2 trickling layers with trails. Saturates at `1` - `1.2`, `2.0`, `4.0` identical |
+| `speed` | multiplier | `1.0` | no cap; time only. **No effect on a still frame** | Trickle pace. `0` freezes. Purely a time multiplier: at a fixed clock every value renders the same pixels, so it changes the animation rate and nothing else |
+| `lanes` | int `>= 1` | `1` | `>= 1`, no cap | Lanes across band. Cell width = `bandWidth / lanes` px. Floored at 1 (`-4`, `0`, `1` identical). No convergence upward - each count re-tiles to a different drop layout, so `128` is as different from `96` as `2` is from `1` |
+| `bandWidth` | px | `24.0` | `>= 1`, no cap | Band thickness and drop-size scale. Floored at 1 px (`0`, `0.5`, `1.0` identical). Side from `neon.glowSide` (`OUTSIDE` outward, `INSIDE` inward, `BOTH` straddled) |
+| `bandOffset` | px | `0.0` | no cap, both signs | Gap between rect edge and band inner boundary |
+| `tint` | linear `vec4` | `(0.85,0.90,1.0,1.0)` | `.rgb` `>= 0` | Body tint multiplier (`.rgb` used, `.a` reserved). Rim/spec stay white |
 
 `droplets-tuning.h:DROPLET_BAND_GUARD = 0.25` band widths: shader/quad must
 agree or the band clips to a straight line.
@@ -295,24 +318,24 @@ premultiplied pass. Sun rides the perimeter in segment/arc parameter space.
 One renderer, two resolution paths like neon (only `uResolution`/`uSunPos`
 differ; shader is scale-invariant, low-frequency light).
 
-| Field | Unit | Default | Effect |
-|---|---|---|---|
-| `enable` | bool | `false` | Master switch |
-| `perimeterPosition` | `[0, 1)` | `0.0` | Sun pos along perimeter. `0` = top-left, follows `winding`. Via `GetPointOnRectangle` |
-| `perimeterOffset` | px signed | `0.0` | Distance from edge. `+` outward, `-` inward. Rides constant-distance offset curve at constant arc-length speed. Below `-cornerRadius` clamps corners square |
-| `size` | scale | `1.0` | Sun disc radius. Brightness separate (`intensity`; softening floor keeps peak finite). Ray extent (global envelope) and ghosts unaffected |
-| `color` | linear `vec4` | `(1,0.92,0.75,1)` | Sun + ray tint. Ghosts procedural |
-| `intensity` | multiplier | `1.0` | Master brightness |
-| `spread` | strength | `1.0` | Ghost/hex strength. `0` = suppress |
-| `ghostSpacing` | scale | `1.0` | Placement stretch along sun-to-centre axis. `>1` declumps edge-near suns |
-| `ghostSize` | exponent/size | `2.2` | Shared ghost size/falloff (ref mean). Larger = bigger/softer |
-| `ghostOffset` | axis units | `-1.5` | Cluster shift along axis (`0` = centre, `~-1` = on sun). Default toward border |
-| `ghostColor` | linear `vec3` | `(1,1,1)` | Tint target |
-| `ghostTint` | `[0, 1]` | `0.0` | `0` = procedural rainbow, `1` = all `ghostColor`. Hue only |
-| `flareCenter` | normalized y-down | `(0.5,0.5)` | Ghost pivot/axis reference. Sun rays unaffected |
-| `rayDensity` | `[0, 1]` | `0.25` | Ray angular density, quantised to slots. `0` = 1 broad ray. Per-slot random length, so slot count != visible spike count |
-| `rotationRate` | rev/sec | `0.0` | Sun/ray rotation (`+` = CCW screen). Ghosts stay on axis |
-| `resolutionScale` | fraction `(0, 1]` | `1.0` | `1.0` = direct. Below = `scale^2` fragments + blit. Clamped; `>1` refused |
+| Field | Unit | Default | Range | Effect |
+|---|---|---|---|---|
+| `enable` | bool | `false` | - | Master switch |
+| `perimeterPosition` | `[0, 1)` | `0.0` | wraps | Sun pos along perimeter. `0` = top-left, follows `winding`. Via `GetPointOnRectangle` |
+| `perimeterOffset` | px signed | `0.0` | `>= -min(w,h)/2`, no outward cap | Distance from edge. `+` outward, `-` inward. Rides constant-distance offset curve at constant arc-length speed. Below `-cornerRadius` clamps corners square; at `-min(w,h)/2` the inward curve has collapsed to the rect's centre and everything further in is identical (measured `-150` = `-400` on a 420x300 rect) |
+| `size` | scale | `1.0` | `>= 0`, no cap | Sun disc radius. Brightness separate (`intensity`; softening floor keeps peak finite). Ray extent (global envelope) and ghosts unaffected. Negatives render as `0` |
+| `color` | linear `vec4` | `(1,0.92,0.75,1)` | `.rgb` `>= 0` | Sun + ray tint. Ghosts procedural |
+| `intensity` | multiplier | `1.0` | `>= 0`, no cap | Master brightness. Never saturates (`32` still differs from `16` by half the range) |
+| `spread` | strength | `1.0` | `0` and up, no cap. **Negatives break the output** | Ghost/hex strength. `0` = suppress (and skips the loop) |
+| `ghostSpacing` | scale | `1.0` | `>= 0`, no cap | Placement stretch along sun-to-centre axis. `>1` declumps edge-near suns. Past ~6 the ghosts are leaving the frame and each step moves less |
+| `ghostSize` | exponent/size | `2.2` | `> 0`, no cap | Shared ghost size/falloff (ref mean). Larger = bigger/softer. Past ~12 the ghosts overlap into one wash that keeps brightening |
+| `ghostOffset` | axis units | `-1.5` | no cap; off-frame past ~`+4` | Cluster shift along axis (`0` = centre, `~-1` = on sun). Default toward border. The saturation point is where the cluster leaves the viewport, so it moves with `flareCenter` and frame size - not a clamp |
+| `ghostColor` | linear `vec3` | `(1,1,1)` | `>= 0` | Tint target |
+| `ghostTint` | `[0, 1]` | `0.0` | **not clamped** - see below | `0` = procedural rainbow, `1` = all `ghostColor`. Hue only. `[0, 1]` is the intended range but nothing enforces it: `-1` and `3.0` both render, differently and wrongly |
+| `flareCenter` | normalized y-down | `(0.5,0.5)` | no cap | Ghost pivot/axis reference. Sun rays unaffected |
+| `rayDensity` | `[0, 1]` | `0.25` | `[0, 1]`, 81 slots | Ray angular density, quantised to `round(density * 80)` slots, floored at 1. `0` = 1 broad ray. Saturates at `1` (`1.5`, `3`, `10` identical). Per-slot random length, so slot count != visible spike count, and a `0.0125` step is one slot |
+| `rotationRate` | rev/sec | `0.0` | no cap; sign = direction | Sun/ray rotation (`+` = CCW screen). Ghosts stay on axis |
+| `resolutionScale` | fraction `(0, 1]` | `1.0` | `[0.001, 1.0]`, useful `0.25-1.0` | `1.0` = direct. Below = `scale^2` fragments + blit. Clamped; `>= 1` all identical, `<= 0.001` all identical. Costs more than neon's does: `0.5` sits 14/255 from `1.0` |
 
 Ghost distance/color baked on CPU into std140 `GhostBlock`
 (`BakeGhostTable`, gated on `ghostOffset/ghostColor/ghostTint` only).
@@ -330,35 +353,197 @@ Per-lamp solved strips (`SPOT_STRIP_SEGMENTS = 12` quads) in one VBO, one
 
 Per lamp (`SpotLight`):
 
-| Field | Unit | Default | Effect |
-|---|---|---|---|
-| `position` | px, app coords | `(0,0)` | Lamp place. Rect moves do not move it |
-| `angle` | deg, `0` = right, clockwise | `90` | Aim. `90` = down, `180` = left, `270` = up |
-| `beamAngle` | deg full angle | `26.0` | Gaussian width, not a hard cut |
-| `throwLength` | px 1/e distance | `215.0` | Axial decay, not end point. Floor `1.0` |
-| `spreadFalloff` | exponent `[0, 2]` | `1.0` | `pow(aperture/halfW, x)`. `1` physical, `0` searchlight (throw only), `>1` tighter pool. Grows strip; pair with `throwLength` |
-| `apertureWidth` | px | `13.0` | Width at lamp + core tightness. Floor `1.0` |
-| `softness` | `[0, 1]` | `0.55` | Cross-section breadth (`0` tightest). Never a hard edge |
-| `intensity` | multiplier | `1.15` | Lamp brightness |
-| `bloom` | strength | `0.4` | Aperture spill at lamp. `0` removes term + cost |
-| `bloomRadius` | px | `20.0` | Aperture glow size. Support `= radius * 8` (`SPOT_BLOOM_WINDOW_OUTER`); large values fill the frame |
-| `colorTemp` | Kelvin | `5600` | Blackbody bake (2700 tungsten, 5600 daylight, 6500+ blue) |
-| `tint` | linear `vec3`, unclamped | `(1,1,1)` | Gel multiplier on blackbody. `>1` legal (grows strip), `0` = lamp off (no geometry) |
-| `enable` | bool | `true` | Skip without removing (stable indices/animations) |
-| `clipped` | bool | `false` | Opt into `clipArea`. Only gate (area has no enable). Set area size first (`0x0 KEEP_INSIDE` blanks the lamp) |
+| Field | Unit | Default | Range | Effect |
+|---|---|---|---|---|
+| `position` | px, app coords | `(0,0)` | no cap | Lamp place. Rect moves do not move it |
+| `angle` | deg, `0` = right, clockwise | `90` | wraps at 360 | Aim. `90` = down, `180` = left, `270` = up |
+| `beamAngle` | deg full angle | `26.0` | `[0, 170]` | Gaussian width, not a hard cut. Hard-clamped at 170 deg - `171`, `180` and `360` all render as `170` |
+| `throwLength` | px 1/e distance | `215.0` | `>= 1`, no cap | Axial decay, not end point. Floor `SPOT_MIN_THROW = 1.0` (`0`, `0.5`, `1.0` identical) |
+| `spreadFalloff` | exponent `[0, 2]` | `1.0` | `[0, 2]` | `pow(aperture/halfW, x)`. `1` physical, `0` searchlight (throw only), `>1` tighter pool. Hard-clamped - `3.0` and `4.0` render as `2.0`. Grows strip; pair with `throwLength` |
+| `apertureWidth` | px | `13.0` | `>= 1`, no cap | Width at lamp + core tightness. Floor `SPOT_MIN_APERTURE = 1.0` (`0`, `0.5`, `1.0` identical) |
+| `softness` | `[0, 1]` | `0.55` | `[0, 1]` | Cross-section breadth (`0` tightest). Never a hard edge. Clamped both ends - `-1` renders as `0`, `1.5` and `3.0` as `1` |
+| `intensity` | multiplier | `1.15` | `>= 0`, no cap | Lamp brightness. Never saturates; `40` still differs from `20` |
+| `bloom` | strength | `0.4` | `>= 0`, no cap | Aperture spill at lamp. `0` removes term + cost |
+| `bloomRadius` | px | `20.0` | `>= 1`, no cap | Aperture glow size. Floored at 1 px. Support `= radius * 8` (`SPOT_BLOOM_WINDOW_OUTER`); large values fill the frame - this, not a long throw, is the pathological case for strip area |
+| `colorTemp` | Kelvin | `5600` | `[1800, 8000]` | Blackbody bake (2700 tungsten, 5600 daylight, 6500+ blue). A table lookup clamped at both ends: `500` and `1700` render as `1800`, `8100` and `10000` render as `8000` |
+| `tint` | linear `vec3`, unclamped | `(1,1,1)` | `>= 0`, no cap | Gel multiplier on blackbody. `>1` legal (grows strip), `0` = lamp off (no geometry) |
+| `enable` | bool | `true` | - | Skip without removing (stable indices/animations) |
+| `clipped` | bool | `false` | - | Opt into `clipArea`. Only gate (area has no enable). Set area size first (`0x0 KEEP_INSIDE` blanks the lamp). Also pins `SpotlightConfig.resolutionScale` to `1.0` while any enabled lamp has it set |
 
 Layer (`SpotlightConfig`):
 
-| Field | Unit | Default | Effect |
-|---|---|---|---|
-| `enable` | bool | `false` | Master switch |
-| `lamps` | list | empty | Past `SPOT_MAX_LAMPS = 8` ignored |
-| `clipArea` | `ClipArea` | `0x0 KEEP_INSIDE` | Cut region. `KEEP_INSIDE` also narrows strips (buys fragments back); `KEEP_OUTSIDE` unbounded, cannot |
-| `resolutionScale` | fraction `(0, 1]` | `1.0` | Same two-path shape as neon/flare, no uniform differs (scale in viewport transform only). Fixed blit floor (~922k frags at 720p) so only large rigs win; default `1.0`. Held at `1.0` while any enabled lamp is `clipped` (value kept, transitions logged) |
+| Field | Unit | Default | Range | Effect |
+|---|---|---|---|---|
+| `enable` | bool | `false` | - | Master switch |
+| `lamps` | list | empty | first 8 entries | Past `SPOT_MAX_LAMPS = 8` ignored - entries 9+ dropped byte-for-byte, with one logged warning |
+| `clipArea` | `ClipArea` | `0x0 KEEP_INSIDE` | see `ClipArea` | Cut region. `KEEP_INSIDE` also narrows strips (buys fragments back); `KEEP_OUTSIDE` unbounded, cannot |
+| `resolutionScale` | fraction `(0, 1]` | `1.0` | `[0.125, 1.0]` | Same two-path shape as neon/flare, no uniform differs (scale in viewport transform only). Floor is `0.125`, not neon's `0.001` - `0.001` through `0.125` are identical and `0.126` is the first that differs. Fixed blit floor (~922k frags at 720p) so only large rigs win; default `1.0`. Held at `1.0` while any enabled lamp is `clipped` (value kept, transitions logged) |
 
 Caller owns GL state the pass assumes and never sets: cull off (or
 front-face surviving CCW strips), full color+alpha mask, `FUNC_ADD`, no
 depth test/write.
+
+## Measured limits
+
+Every Range column above was checked by rendering, not read off the source.
+One offscreen 900x640 RGBA8 frame per value, animations off and the clock
+pinned at 0, compared byte-for-byte against its neighbour and against the
+extremes of the sweep. **Identical** below means max per-channel difference
+0 over all 576,000 pixels; **1/255** means the largest single channel moved
+by one.
+
+Scene: a 420x300 rect, `cornerRadius` 40, centred, with only the layer under
+test enabled. Every boundary claim below was re-rendered in both orders and
+re-rendered again, to rule out a value looking settled only because of what
+was drawn before it; all were order-independent and repeatable to the byte.
+
+Differences are quoted **in RGB**. That distinction is load-bearing for the
+fill: the default `opaqueColor` is black, so against a black backdrop
+`opaqueSoftness` moves the coverage **alpha** and nothing else. The first
+pass measured it that way and put its floor one step too high. The numbers
+below come from a white fill, where the feather is visible in colour.
+
+### Hard clamps
+
+The library rewrites these at draw time. Two values on the same side of the
+bound render the same pixels, so the slider past it is dead.
+
+| Field | Clamp | Where it comes from | Evidence |
+|---|---|---|---|
+| `geometry.cornerRadius` | `[0, min(w,h)/2]` | every consumer | `150` = `151` = `400` on 420x300 |
+| `ClipArea.cornerRadius` | `[0, min(w,h)/2]` | `spotlight-renderer.cpp` | `200` = `201` = `900` on a 500x400 area |
+| `neon.resolutionScale` | `[0.001, 1.0]` | `MIN_RESOLUTION_SCALE` | `0.0005` = `0.001`; `1.0` = `1.5` = `4.0` |
+| `lensFlare.resolutionScale` | `[0.001, 1.0]` | `MIN_FLARE_RESOLUTION_SCALE` | same shape |
+| `spotlight.resolutionScale` | `[0.125, 1.0]` | `MIN_RESOLUTION_SCALE` | `0.001` = `0.0625` = `0.125`; `0.126` differs by 7/255 |
+| `neon.numSamples` | `[1, 128]` | `NEON_MAX_LOOP_SAMPLES` | `0` = `1`; `128` = `129` = `512` |
+| `neon.gradientLutSize` | `>= 4`, no upper | `gradient-ring-lut.h:61` | `1` = `2` = `3` = `4`; `5` differs. `512` differs from `256` by 3/255, `4096` from `1024` by 1/255 |
+| `neon.filamentFalloff` | `>= 0.001` | `neon-renderer.cpp:887` | `0` = `0.0005` = `0.001` |
+| `neon.lineWidth` | `>= 0` | shader gate | `-8` = `-1` = `0` (no filament) |
+| `neon.glowRadius` | `>= 0` | shader gate | `-20` = `-1` = `0` |
+| `Cutoff.softness` | `>= 1 px` | `CUTOFF_SOFT_FLOOR_PX` | `0` = `0.5` = `0.99` = `1.0`; `1.01` differs |
+| `neon.glowSideSoftness` | `>= 1 px` | same floor | `0` through `1.0` identical; `1.05` differs |
+| `neon.opaqueSoftness` | `>= 1 px` | same floor | `0` through `1.01` identical; `1.05` differs |
+| `ColorStop.color.a` | `[0, 1]` | LUT bake | `1.0` = `1.5` = `4.0` |
+| `Arc.length` | `[0, 1]` | perimeter walk | `1.0` = `1.5` = `2.0` |
+| `Arc.intensity` | `>= 0` | mask fold | `-4` = `-1` = `0` |
+| `SegmentBoost.boost` | `>= 0` | bell amplitude | `-4` = `-1` = `0` |
+| `droplets.amount` | `[0, 1]` | layer gates | `1.0` = `1.2` = `4.0` |
+| `droplets.lanes` | `>= 1` | `droplets-renderer.cpp:140` | `-4` = `0` = `1` |
+| `droplets.bandWidth` | `>= 1 px` | `droplets-renderer.cpp:47` | `0` = `0.5` = `1.0` |
+| `lensFlare.rayDensity` | `[0, 1]` | `lens-flare-renderer.cpp:312` | `1.0` = `1.5` = `10.0` |
+| `lensFlare.size` | `>= 0` | disc radius | `-2` = `-0.5` = `0` |
+| `SpotLight.beamAngle` | `[0, 170]` deg | `spotlight-renderer.cpp:362` | `170` = `171` = `180` = `360` |
+| `SpotLight.throwLength` | `>= 1 px` | `SPOT_MIN_THROW` | `0` = `0.5` = `1.0` |
+| `SpotLight.apertureWidth` | `>= 1 px` | `SPOT_MIN_APERTURE` | `0` = `0.5` = `1.0` |
+| `SpotLight.bloomRadius` | `>= 1 px` | `spotlight-renderer.cpp:375` | `0` = `0.5` = `1.0` |
+| `SpotLight.softness` | `[0, 1]` | `spotlight-renderer.cpp:409` | `-1` = `0`; `1.0` = `1.5` = `3.0` |
+| `SpotLight.spreadFalloff` | `[0, 2]` | `spotlight-renderer.cpp:371` | `2.0` = `3.0` = `4.0` |
+| `SpotLight.colorTemp` | `[1800, 8000]` K | `KELVIN_TABLE` ends | `500` = `1700` = `1800`; `8000` = `8100` = `10000` |
+| `arcs` / `segmentBoosts` / `lamps` | first 8 | the three `MAX_*` caps | holding the first 8 fixed, `8` = `9` = `24`, exactly |
+
+### No ceiling at all
+
+These keep changing as far as was swept. There is no "max useful value" to
+quote - the HDR sum feeds a tone map that compresses but never closes, so
+each doubling still moves the outer fringe even after the core is white.
+
+| Field | Swept to | Still moving by | Where it stops being useful |
+|---|---|---|---|
+| `neon.intensity` | `4096` | 13/255 from `1024` | Core pins white around `8`; at `128` only 2.4% of the frame is actually saturated, the rest is still fringe |
+| `neon.bloomStrength` | `1024` | 16/255 from `256` | Whole frame lit by `2`; past that it is a wash that keeps brightening |
+| `neon.glowRadius` | `8000` | 24/255 from `4000` | Frame is fully lit by `60`; above that it is only flattening the gradient |
+| `neon.lineWidth` | `2048` | 5/255 from `1024` | Line has swallowed a 420x300 rect by `256`; only the outer edge still moves |
+| `lensFlare.size` / `intensity` / `spread` / `ghostSize` | 20-256 | 30-50/255 | No saturation point; pick by look |
+| `SpotLight.intensity` / `bloom` / `tint` | 16-64 | 50-100/255 | Same |
+| `droplets.lanes` | `128` | full range | Never converges: each count re-tiles to a different drop layout, so `96` -> `128` is as big a change as `1` -> `2` |
+
+### Where reduced resolution actually costs something
+
+`resolutionScale` against the same scene at `1.0`, max per-channel difference:
+
+| Scale | Neon | Lens flare | Spotlight (no clip) |
+|---|---|---|---|
+| `0.75` | 5/255 | 14/255 | 2/255 |
+| `0.5` | 7/255 | 14/255 | 2/255 |
+| `0.25` | 28/255 | 20/255 | 4/255 |
+| `0.125` | 85/255 | 35/255 | 10/255 |
+
+The spotlight's near-immunity is why its own floor can be `0.125`, and why
+the cost table in [`spotlight-renderer.md`](spotlight-renderer.md) - not
+image quality - is what should decide that slider. With a lamp `clipped` the
+picture reverses completely; see I21 in
+[`review-findings.md`](review-findings.md).
+
+### Convergence, not clamping
+
+Two fields have a point past which more costs more and shows nothing.
+Against the maximum, max per-channel difference:
+
+| `numSamples` | vs `128` |
+|---|---|
+| `16` | 29/255 |
+| `32` | 12/255 |
+| `48` | 6/255 |
+| `64` | 3/255 |
+| `80` | 2/255 |
+| `96` | 1/255 |
+| `112` | 1/255 |
+
+| `gradientLutSize` | vs `384` |
+|---|---|
+| `16` | 74/255 |
+| `32` | 38/255 |
+| `64` | 18/255 |
+| `96` | 12/255 |
+| `128` | 8/255 |
+| `192` | 4/255 |
+| `256` | 3/255 |
+
+So `numSamples` is visually done at ~96 of its 128 ceiling, and
+`gradientLutSize` at ~128-256. Both still cost what they cost - see section 8
+of [`neon-perf-review.md`](neon-perf-review.md) for what `numSamples` buys
+back.
+
+### Bounds that depend on the scene
+
+Not clamps. These are the point where a value pushes its effect out of the
+drawn area, so they move with rect size, frame size and the other fields.
+
+* **`Cutoff.size`** is a no-op once it exceeds the glow's own reach, which is
+  the same expression that sizes the draw quad:
+  `glowRadius * GLOW_REACH_RADIUS_FACTOR * (1 + bloomStrength * intensity)`,
+  i.e. `glowRadius * 48 * (...)` px. At the stock glow (radius 5, bloom 0.30,
+  intensity 1) that is 312 px, and the sweep confirms it: `400` px and
+  "cutoff disabled" render identically.
+* **`insideCutoff` under `glowSide = OUTSIDE`** (and `outsideCutoff` under
+  `INSIDE`) is a no-op at *every* size - byte-identical from `5` px to
+  `200` px to disabled. The subsumption documented under
+  [Cutoff](#cutoff) is exact, not approximate.
+* **`lensFlare.perimeterOffset`** stops moving inward at `-min(w,h)/2`, where
+  the inward offset curve has collapsed to the rect's centre. Measured on
+  420x300: `-150`, `-160`, `-200`, `-400` all identical.
+* **`lensFlare.ghostOffset`** past ~`+4` pushed the whole cluster off a
+  900x640 frame in this scene. That number moves with `flareCenter`, the sun
+  position and the frame size.
+* **`droplets.speed`** changes nothing in a single frame at all - it is a
+  pure time multiplier. Every value from `0` to `8` rendered the same pixels
+  on a pinned clock. It sets the animation rate and only that.
+
+### Out-of-range values that are NOT clamped
+
+Four fields take a value outside their documented range and render something
+broken rather than clamping to the edge. Guard these host-side.
+
+| Field | Documented | What actually happens |
+|---|---|---|
+| `neon.intensity` | multiplier | Negative values drive the tone map out of range: at `-1` the frame came back 80% lit and 75% of it pinned to 255 |
+| `neon.bloomStrength` | unitless | Same - `-1` and `-2` both produce large pinned-white regions |
+| `lensFlare.spread` | strength | Negative values render, differently at each value, with no sensible meaning |
+| `lensFlare.ghostTint` | `[0, 1]` | The range is intent only, nothing enforces it. `-1` and `3.0` both render (and `3.0` pinned 16% of the frame) |
+
+Compare `Arc.intensity` and `SegmentBoost.boost`, which sit in the same
+brightness family and DO floor at 0 - so the inconsistency is in these four,
+not in the ones that clamp.
 
 ## Top-level Config
 
