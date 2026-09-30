@@ -132,19 +132,68 @@ el_result_e el_effect_get_opaque_color(el_effect_handle_t effect,
     return EL_SUCCESS;
 }
 
-el_result_e el_effect_set_opaque_softness(el_effect_handle_t effect, float softness)
+namespace
 {
-    VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque_softness");
-    SET_AND_LOG(effect->config.neon.opaqueSoftness, softness,
-                "effect=%p, softness=%f", (void *)effect, softness);
+    /// The opaque fill's cutoff on @p side. Returns nullptr and logs for a
+    /// value outside el_cutoff_side_e - the enum crosses the ABI as a plain
+    /// int, so an out-of-range one is a caller error, not something to clamp.
+    EdgeLighting::Cutoff *OpaqueCutoffSlot(el_effect_handle_t effect, el_cutoff_side_e side, const char *who)
+    {
+        switch (side)
+        {
+        case EL_CUTOFF_SIDE_INSIDE:
+        {
+            return &effect->config.neon.opaqueInsideCutoff;
+        }
+        case EL_CUTOFF_SIDE_OUTSIDE:
+        {
+            return &effect->config.neon.opaqueOutsideCutoff;
+        }
+        }
+        LOG_E("%s: invalid side %d", who, static_cast<int>(side));
+        return nullptr;
+    }
 }
 
-el_result_e el_effect_get_opaque_softness(el_effect_handle_t effect, float *outSoftness)
+el_result_e el_effect_set_opaque_cutoff(el_effect_handle_t effect, el_cutoff_side_e side,
+                                        el_bool_t enable, float size, float softness)
 {
-    VALIDATE_EFFECT_PTR(effect, "el_effect_get_opaque_softness");
-    VALIDATE_OUT_PTR(outSoftness, "el_effect_get_opaque_softness");
-    *outSoftness = effect->config.neon.opaqueSoftness;
-    LOG_D("effect=%p, softness=%f", (void *)effect, *outSoftness);
+    VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque_cutoff");
+    EdgeLighting::Cutoff *c = OpaqueCutoffSlot(effect, side, "el_effect_set_opaque_cutoff");
+    if (!c)
+    {
+        return EL_ERROR_INVALID_PARAMETER;
+    }
+    bool en = (enable != 0);
+    if (c->enable == en && c->size == size && c->softness == softness)
+    {
+        return EL_SUCCESS;
+    }
+    LOG_I("effect=%p, side=%d, enable=%d, size=%f, softness=%f", (void *)effect,
+          static_cast<int>(side), enable, size, softness);
+    c->enable = en;
+    c->size = size;
+    c->softness = softness;
+    return EL_SUCCESS;
+}
+
+el_result_e el_effect_get_opaque_cutoff(el_effect_handle_t effect, el_cutoff_side_e side,
+                                        el_bool_t *outEnable, float *outSize, float *outSoftness)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_get_opaque_cutoff");
+    VALIDATE_OUT_PTR(outEnable, "el_effect_get_opaque_cutoff");
+    VALIDATE_OUT_PTR(outSize, "el_effect_get_opaque_cutoff");
+    VALIDATE_OUT_PTR(outSoftness, "el_effect_get_opaque_cutoff");
+    const EdgeLighting::Cutoff *c = OpaqueCutoffSlot(effect, side, "el_effect_get_opaque_cutoff");
+    if (!c)
+    {
+        return EL_ERROR_INVALID_PARAMETER;
+    }
+    *outEnable = c->enable ? 1 : 0;
+    *outSize = c->size;
+    *outSoftness = c->softness;
+    LOG_D("effect=%p, side=%d, enable=%d, size=%f, softness=%f", (void *)effect,
+          static_cast<int>(side), *outEnable, *outSize, *outSoftness);
     return EL_SUCCESS;
 }
 

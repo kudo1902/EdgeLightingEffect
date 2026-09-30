@@ -1,7 +1,9 @@
 // Deprecated C ABI surface. Every function here forwards to its replacement in
 // el-effect.cpp and holds no state or behaviour of its own, except
 // el_effect_set/get_optimized_renderer_enabled, whose legacy enable semantics
-// have no successor and so live here.
+// have no successor and so live here. el_effect_set/get_opaque_softness
+// forward too, but onto the per-side cutoff twice, since the one value they
+// name was split into two.
 //
 // Deleting this file plus el-deprecated.h retires the whole deprecated
 // surface; see the removal checklist at the top of el-deprecated.h.
@@ -185,6 +187,55 @@ el_result_e el_effect_get_wireframe_color(el_effect_handle_t effect,
                                           float *outR, float *outG, float *outB, float *outA)
 {
     return el_effect_get_debug_wireframe_color(effect, outR, outG, outB, outA);
+}
+
+// --- Deprecated: one feather for both opaque-fill boundaries -----------
+
+el_result_e el_effect_set_opaque_softness(el_effect_handle_t effect, float softness)
+{
+    // Read-modify-write through the per-side pair, so each side keeps its own
+    // enable and size. Validation (null effect) comes from the first get.
+    for (el_cutoff_side_e side : {EL_CUTOFF_SIDE_INSIDE, EL_CUTOFF_SIDE_OUTSIDE})
+    {
+        el_bool_t enable = 0;
+        float size = 0.0f;
+        float oldSoftness = 0.0f;
+        el_result_e rc = el_effect_get_opaque_cutoff(effect, side, &enable, &size, &oldSoftness);
+        if (rc != EL_SUCCESS)
+        {
+            return rc;
+        }
+        rc = el_effect_set_opaque_cutoff(effect, side, enable, size, softness);
+        if (rc != EL_SUCCESS)
+        {
+            return rc;
+        }
+    }
+    return EL_SUCCESS;
+}
+
+el_result_e el_effect_get_opaque_softness(el_effect_handle_t effect, float *outSoftness)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_get_opaque_softness");
+    VALIDATE_OUT_PTR(outSoftness, "el_effect_get_opaque_softness");
+    el_bool_t enable = 0;
+    float size = 0.0f;
+    float inSoftness = 0.0f;
+    float outSideSoftness = 0.0f;
+    el_result_e rc = el_effect_get_opaque_cutoff(effect, EL_CUTOFF_SIDE_INSIDE, &enable, &size, &inSoftness);
+    if (rc != EL_SUCCESS)
+    {
+        return rc;
+    }
+    rc = el_effect_get_opaque_cutoff(effect, EL_CUTOFF_SIDE_OUTSIDE, &enable, &size, &outSideSoftness);
+    if (rc != EL_SUCCESS)
+    {
+        return rc;
+    }
+    // The wider of the two - equal to what the setter above wrote unless a
+    // side was since set on its own.
+    *outSoftness = std::max(inSoftness, outSideSoftness);
+    return EL_SUCCESS;
 }
 
 #if defined(__GNUC__) || defined(__clang__)
