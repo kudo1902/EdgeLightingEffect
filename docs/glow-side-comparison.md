@@ -305,10 +305,7 @@ doing.
 > themselves - its midpoint at `size + softness/2` (`inMid` / `outMid`), the
 > floored width laid symmetrically about it - so a softness-0 edge stays on
 > `size` at every resolution scale. The measurements below were taken at softness 0,
-> where the two conventions coincide, so they still hold. A tuned non-zero
-> softness now reaches `softness/2` further out; subtract that from `size` to
-> keep an old look. Softness values under the 1 px floor are no longer
-> interchangeable either - the floor clamps the ramp's width, not its midpoint.
+> where the two conventions coincide, so they still hold.
 
 The sibling edge, and the one left untouched by `b3c6b1e`. Same sweep, full
 resolution, `outsideCutoff` softness 0, against a full-brightness 132 at that
@@ -426,34 +423,7 @@ Two further things measured and found free:
   `BOTH` runs 1.255 ms branched against 1.396 ms with the SDF hoisted
   unconditionally - back to what the pass cost before it grew a cut at all.
 
-## 8. What callers have to retune
-
-These parameters change meaning for anyone who had tuned them:
-
-- **`NeonConfig::glowSideSoftness`** reads dimmer and wider. The feather now
-  fades the layer instead of dimming emission into the tone map, which is what
-  makes it monotonic.
-- **`Cutoff::softness`** feathers over half the span it used to, because the ramp
-  stopped doubling. It is now the width the field says it is, matching
-  `opaqueSoftness`, which was corrected the same way earlier.
-- **`Cutoff::softness`, again, later - and on the opaque fill's pair too.** The
-  feather used to be centred on `size`; it now STARTS at `size` and runs
-  `softness` px beyond it (see the note at the top of section 5). The width is
-  unchanged, but a tuned non-zero softness now reaches `softness/2` further out
-  on both the glow (`insideCutoff` / `outsideCutoff`) and the fill
-  (`opaqueInsideCutoff` / `opaqueOutsideCutoff`) - 10 px at softness 20, enough
-  to push a bare fill past the glow. Subtract `softness/2` from `size` to keep
-  the old look. Values under the 1 px floor also stop being interchangeable:
-  each moves the edge by half its value.
-
-Both are stated at their declarations in
-[`config.h`](../lib/include/core/config.h). `glowSideSoftness` had already moved
-once in `b3c6b1e` (centred on the line and spanning 2x, to anchored at it and
-spanning 1x); this is its second move and, with the units now tied to the
-destination pixel at every resolution scale, the one that makes the number mean
-what it says.
-
-## 9. Conclusion
+## 8. Conclusion
 
 Every edge the neon layer draws - the one-sided cut, both cutoff boundaries - is
 now coverage applied to the graded output, floored at one destination pixel, and
