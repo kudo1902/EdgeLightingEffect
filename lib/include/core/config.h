@@ -73,22 +73,9 @@ namespace EdgeLighting
     ///              @c size. It is the price of keeping a softness-0 edge's 50%
     ///              point on @c size at every scale - see inMid in neon.frag.
     ///
-    ///              NOTE this used to be centred on @c size - half the feather
-    ///              inside it, half beyond - so a tuned non-zero softness now
-    ///              renders the layer softness/2 px further out than it did.
-    ///              Subtract softness/2 from @c size to keep an old look. Both
-    ///              shaders take @c size as-is and place the fade themselves:
-    ///              midpoint at size + softness/2, the floored width laid
-    ///              symmetrically about it, which keeps a softness-0 edge on
-    ///              @c size at every resolution scale.
-    ///
-    ///              EARLIER NOTE: the glow shader used to spread this over 2x
-    ///              the stated width, and to apply it to the linear emission
-    ///              ahead of the tone map. It is now the width it says, applied
-    ///              as coverage to the graded output - the same two corrections
-    ///              the fill's feather and @c NeonConfig::glowSideSoftness
-    ///              already carried. A glow value tuned before that fix
-    ///              feathers over half the span it used to.
+    ///              On the glow the feather is coverage applied to the graded
+    ///              output, not a multiply into the linear emission ahead of
+    ///              the tone map - the same as @c NeonConfig::glowSideSoftness.
     ///
     /// A cutoff on the side @c NeonConfig::glowSide ALREADY CULLS does nothing
     /// to the glow, and is ignored rather than merely redundant:
@@ -445,16 +432,12 @@ namespace EdgeLighting
         /// @c enable = false leaves the interior uncapped: an INSIDE fill then
         /// covers the whole rect.
         ///
-        /// Independent of the glow's @c insideCutoff, which it used to share:
-        /// the fill can now be bounded where the glow is not, and the reverse.
-        /// Its @c softness replaces the old single @c opaqueSoftness, so the
-        /// fill can also feather its two sides at different rates. Neither
-        /// field touches the glow.
+        /// Independent of the glow's @c insideCutoff: the fill can be bounded
+        /// where the glow is not, and the reverse, and each of its two sides
+        /// feathers at its own rate. Neither field touches the glow.
         ///
-        /// Default off, like the glow's pair. A host that bounded its fill by
-        /// setting the GLOW cutoffs now has to set these as well - under
-        /// @c OpaqueMode::BOTH with both left off, the fill covers the whole
-        /// viewport.
+        /// Default off, like the glow's pair - so under @c OpaqueMode::BOTH
+        /// with both left off, the fill covers the whole viewport.
         Cutoff opaqueInsideCutoff = {false, 0.0f, 0.0f};
 
         /// Outside cutoff of the opaque FILL (rect exterior side). Mirror of
@@ -509,21 +492,14 @@ namespace EdgeLighting
         /// further - exactly as far as the fill's own box filter does - which
         /// is what keeps the glow registered with an @c OpaqueMode fill on the
         /// same side: @c GlowSide::OUTSIDE plus @c OpaqueMode::OUTSIDE share
-        /// one edge at @c d = 0 at any softness. NOTE this ramp used to be
-        /// centred on the line and span 2x this value, so half of it fell on
-        /// the side the fill does not cover - a value tuned before that fix
-        /// now feathers over the stated width on the lit side only, and no
-        /// longer washes over the unfilled side.
+        /// one edge at @c d = 0 at any softness.
         ///
-        /// SECOND NOTE, and it moves tuned values again: the cut is COVERAGE,
-        /// and is applied to the graded output rather than to the linear
-        /// emission. Multiplied in ahead of the tone map it was largely undone
-        /// by it - a half-covered pixel came out at 94% of a full one, so the
-        /// cut stair-stepped, and a feather was not even monotonic (softness 4
-        /// read 179, 215, 212, 186 over its first four pixels: brightening for
-        /// two of them before it faded). The ramp now fades as stated, which
-        /// means a non-zero value here reads DIMMER and wider than it used to.
-        /// Retune by eye; the shape is the one the number describes now.
+        /// The cut is COVERAGE, applied to the graded output rather than to
+        /// the linear emission. Multiplied in ahead of the tone map it would
+        /// be largely undone by it - a half-covered pixel comes out at 94% of
+        /// a full one, so the cut stair-steps, and a feather is not even
+        /// monotonic (softness 4 reads 179, 215, 212, 186 over its first four
+        /// pixels: brightening for two of them before it fades).
         ///
         /// Does NOT affect the inside/outside cutoff boundaries - those use
         /// @c Cutoff::softness so the two feathers can be tuned independently.

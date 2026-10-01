@@ -158,16 +158,11 @@ void main() {
     //     both partially covered and the fill read ~1 px narrower per side than
     //     the cutoff asked for.
     //   - At any non-zero softness the fade ran 2x wider than the documented
-    //     "feather width in pixels" (then NeonConfig::opaqueSoftness, since
-    //     split into the two cutoffs' own softness).
+    //     "feather width in pixels".
     //
     // Halving fixed both: each ramp spans exactly its width, so a pixel wholly
     // inside the band is fully covered and a softness of S px feathers over
-    // S px. NOTE this changed the look of any softness tuned before the fix -
-    // it is half as wide as it was, and is now what the config says it is.
-    // (At the time each ramp was centred on its cutoff; it has since moved to
-    // start there, centred on the fade midpoint below, which leaves the width
-    // untouched.)
+    // S px.
     float aa      = max(fwidth(d), 1e-6);
     float inHalf  = 0.5 * max(uInsideCutoffSoftness, aa);
     float outHalf = 0.5 * max(uOutsideCutoffSoftness, aa);

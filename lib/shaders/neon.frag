@@ -612,7 +612,7 @@ void main() {
 
     // TOTAL feather width of the one-sided cut, floored at that pixel. The
     // floor is what antialiases the cut: uGlowSideSoftness 0 used to leave
-    // softEdge at SIDE_SOFT_EPSILON, which is a hard step, so the glow's edge
+    // softEdge at a near-zero floor, which is a hard step, so the glow's edge
     // stair-stepped along every rounded corner while the opaque fill's own
     // d == 0 edge - box-filtered through fwidth in black-rect.frag - stayed
     // clean right beside it.
@@ -681,7 +681,7 @@ void main() {
     // arrive with size = a huge sentinel, so these branches no-op.
     //
     // THE FLOOR IS AN ANTIALIASING FLOOR, and it applies at every resolution.
-    // It used to be SIDE_SOFT_EPSILON at scale 1.0 - a hard step - on the
+    // It used to be a near-zero floor at scale 1.0 - a hard step - on the
     // grounds that the direct path rasterises at the destination rate and so
     // places a hard cutoff exactly. It does place it exactly, and then draws it
     // with no coverage at all. Walking the boundary across one pixel in 1/8 px
