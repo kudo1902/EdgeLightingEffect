@@ -99,6 +99,12 @@ extern "C"
      *           pixel-tight antialiased edge at @c size, not a stair-stepped
      *           one.
      *
+     *           "Solid up to @c size" holds for softness of 1 px or more. Below
+     *           that the fade is widened to one pixel about
+     *           @c size + @c softness/2, so it starts up to half a pixel
+     *           inside @c size (~0.7 px on a diagonal) - antialiasing, not a
+     *           visible shoulder. The fill always draws at full resolution.
+     *
      *           Both default to disabled.
      *
      *           Returns @ref EL_ERROR_INVALID_PARAMETER for a @p side outside
@@ -112,12 +118,30 @@ extern "C"
      *  @details @c enable = 0 leaves the interior uncapped (natural halo/bloom
      *           decay bounds the emission). @c size is the pixel distance from
      *           the rect edge to where the feather STARTS along the interior
-     *           side (always positive): the glow is untouched up to @c size.
+     *           side (always positive): at full resolution the glow is
+     *           untouched up to @c size (see below for the antialiasing pixel
+     *           and for the reduced-resolution path).
      *           @c softness is the feather width in pixels, running on from
      *           @c size: the glow is gone at @c size + @c softness. 0 is a
      *           pixel-tight edge at @c size, not a hard one, because the ramp
      *           is floored at one destination pixel so the boundary is
-     *           antialiased where it curves. Does NOT shape
+     *           antialiased where it curves.
+     *
+     *           That floor is laid symmetrically about @c size + @c softness/2,
+     *           so below it the antialiasing ramp starts up to half a pixel
+     *           inside @c size - which keeps a softness-0 edge's 50% point on
+     *           @c size.
+     *
+     *           At a neon resolution scale below 1 the glow is drawn into a
+     *           smaller buffer and bilinear-upscaled, which softens EVERY
+     *           cutoff edge by about one buffer pixel whatever the softness:
+     *           the last ~0.5 / scale px before @c size are dimmed. Measured at
+     *           scale 0.25, the pixel just inside @c size keeps 63% of its
+     *           brightness at softness 0, 82% at 4 and 98% at 16 (at scale
+     *           0.5: 75%, 96%, 99%; at 1.0: 100% throughout). A larger
+     *           softness shrinks it but never removes it; an edge that must
+     *           hold full strength exactly to @c size needs scale 1.0. Does
+     *           NOT shape
      *           the opaque fill, which has its own
      *           @ref el_effect_set_opaque_cutoff.
      *

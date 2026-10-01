@@ -37,16 +37,16 @@ namespace EdgeLighting
     ///
     ///   enable   - true = the layer ends at @c size, faded out over the
     ///              @c softness px beyond it. false = the side is uncapped: for
-    ///              the glow the
-    ///              emission's natural halo/bloom decay bounds it; for the fill
-    ///              nothing does - an INSIDE fill covers the whole rect and an
-    ///              OUTSIDE fill runs to the viewport edge.
+    ///              the glow the emission's natural halo/bloom decay bounds it;
+    ///              for the fill nothing does - an INSIDE fill covers the whole
+    ///              rect and an OUTSIDE fill runs to the viewport edge.
     ///   size     - distance in pixels from the rect edge to where the
     ///              feather STARTS along this side (always positive; sign is
     ///              implicit in whether it's the inside or outside cutoff).
     ///              Up to @c size the layer is untouched - the fill solid, the
     ///              glow at full strength - whenever @c softness is at or above
-    ///              the one-pixel floor below. Under it, see @c softness.
+    ///              the one-pixel floor below. Under it, and for the glow at a
+    ///              resolutionScale below 1, see @c softness.
     ///              For the glow, a size past the glow's own reach is a no-op -
     ///              there is no emission left to cut. The fill has no reach of
     ///              its own, so an OUTSIDE size always grows it; an INSIDE size
@@ -72,6 +72,16 @@ namespace EdgeLighting
     ///              @c resolutionScale 0.25 that is 2 full-res px inside
     ///              @c size. It is the price of keeping a softness-0 edge's 50%
     ///              point on @c size at every scale - see inMid in neon.frag.
+    ///
+    ///              Separately from the floor, the glow's reduced-resolution
+    ///              path blurs EVERY cutoff edge by about one buffer pixel in
+    ///              the bilinear upscale, at any softness: the last
+    ///              ~0.5 / resolutionScale px before @c size are dimmed.
+    ///              Measured at resolutionScale 0.25, the pixel just inside
+    ///              @c size keeps 63% at softness 0, 82% at 4, 98% at 16 (at
+    ///              0.5: 75%, 96%, 99%; at 1.0: 100%). More softness shrinks it
+    ///              without removing it; an exact edge needs scale 1.0. The
+    ///              fill always draws at full resolution and is unaffected.
     ///
     ///              On the glow the feather is coverage applied to the graded
     ///              output, not a multiply into the linear emission ahead of
