@@ -6,8 +6,9 @@ the reduced-resolution glow, and re-shade a thin ring around the rect edge at
 full resolution from the reduced pass's gather output. Read the proposal first
 for why. This document is only how.
 
-**Status: steps 0-3 done; steps 1 and 2 committed (`546d2b7`, `45bd1f0`),
-step 3 not yet. Step 4 is next.** Section 11 lists the decisions still open.
+**Status: steps 0-4 done; steps 1-3 committed (`546d2b7`, `45bd1f0`,
+`c155a37`), step 4 not yet. Step 5 is next.** Section 11 lists the decisions
+still open.
 
 The work is six steps, each committed and checked on its own before the next
 starts. Steps 1, 3 and 4 change no pixels at all, and step 2 changes only scenes
@@ -374,6 +375,57 @@ and should already be in range.
   `arcs` and `segments` scenes: decoded hue and coverage match the shader's
   values to within 1/255.
 - Pass 1 costs at most ~5% more on the scaled path.
+
+**Done**, with the first check amended - it was wrong as written.
+
+The final frames are byte-identical at scale 1.0 (the direct path compiles
+the unchanged source) and in 107 of the 118 captures. The other 11 are the
+reduced-scale captures of the three widest, brightest glows (`soft_wash`,
+`overdrive`, `partition`), each differing on 4 to 16 pixels by exactly 1
+level, all 60 to 326 px from the edge in smooth glow at levels 137 to 209.
+Two experiments pin the cause on the PROGRAM, not the pass:
+
+| scaled pass draws with | blending | buffer | vs step 3 |
+| ---------------------- | -------- | ------ | --------- |
+| `mNeonScaledShader` | off | 2-3 attachments | 11 differ, max 1 |
+| `mNeonScaledShader` | on | 2-3 attachments | the same 11, max 1 |
+| `mNeonShader` | off | 2-3 attachments | all 118 identical |
+
+So neither disabling the blend nor the multi-attachment buffer moves a pixel.
+The variant's extra outputs keep the four gather values live, and the compiler
+schedules the arithmetic around them differently, which lands a value sitting
+on an 8-bit rounding boundary one level over. GLSL 3.30 and ES 3.0 have no
+`precise` to pin it. Those pixels are far from the edge, so they stay on the
+reduced path after step 5 too; the step 5 quality bar is measured against 1.0,
+not against step 4, and is unaffected.
+
+The gather attachments, read back from the renderer's own buffer
+(`elcheck gathertest`):
+
+- `default`, a fully lit ring: all 227,520 written texels store coverage
+  `enc(1.0)` as 127 or 128. The 2,880 unwritten ones are exactly the 4-texel
+  strips either side that the glow quad does not reach.
+- `crisp_tube`, one stop at (1.0, 0.25, 0.55): all 198,000 written texels store
+  the hue (255, 64, 140) exactly - worst error 0.
+- `arcs`: coverage ranges 0 to 126, never reaching a full ring's 127.5.
+- `segments`: three attachments; the segment coverage peaks at 1.48 on the top
+  edge where the third segment sits, with its colour (102, 255, 230) stored
+  as (103, 254, 230).
+- `default`, `crisp_tube` and `arcs` get two attachments, `segments` three.
+
+Timing, min over interleaved runs against step 3: the reduced-scale variants
+moved -10.3% to +3.1%, so the extra outputs cost nothing measurable. One
+direct-path variant, `segments` at 1.0 and 1080p, read +9.6%; it runs the
+unchanged program, and earlier sessions measured that same code at 5.13 to
+6.03 ms, so the step-3 minimum of 4.76 ms is the outlier.
+
+**Startup cost: about +8 ms.** Constructing and initialising a neon effect
+went from 12 ms to 20 ms, which is the second compile of `neon.frag`. Step 5's
+ring variant will add about as much again. The programs are built eagerly at
+`Initialize`, the policy the blit already follows, so a host never pays a
+compile the first time a reduced scale is selected. If startup matters more
+than that first-switch hitch, the two variants could be built on first use
+instead; that is a decision, not a fix, and is left open.
 
 ## 7. Step 5: the edge ring
 

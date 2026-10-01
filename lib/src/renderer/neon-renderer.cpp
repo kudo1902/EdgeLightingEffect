@@ -10,6 +10,7 @@
 #include <cmath>
 #include <iterator>
 #include <cstdint>
+#include <string>
 
 namespace EdgeLighting
 {
@@ -384,6 +385,22 @@ namespace EdgeLighting
                       now, what, cap);
             }
         }
+
+        /// @p src with `#define @p define` spliced in after its first line.
+        ///
+        /// How one shader file yields several programs. Every embedded source
+        /// starts with the @GLSL_VERSION@ line, which must stay first, so the
+        /// define goes immediately after it - ahead of everything else, the
+        /// injected tuning header included. See @ref NeonRenderer::setupShaders
+        /// for the variants built this way.
+        inline std::string WithDefine(const char *src, const char *define)
+        {
+            std::string out(src);
+            const size_t eol = out.find('\n');
+            out.insert(eol == std::string::npos ? out.size() : eol + 1,
+                       std::string("#define ") + define + "\n");
+            return out;
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -593,12 +610,27 @@ namespace EdgeLighting
         }
 
         // --- Pass 1: the neon gather ----------------------------------------
-        // Re-assert the phase mode: pass 0 leaves blending disabled. Setting it
-        // immediately before the phase that needs it (rather than relying on
+        // Set the phase mode explicitly rather than inheriting pass 0's: setting
+        // it immediately before the phase that needs it (rather than relying on
         // the carry-over from above) is what makes the pass order safe to
         // change without silently breaking compositing.
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        //
+        // The two paths want DIFFERENT modes now. The direct path composites
+        // the glow over the target, so premultiplied-over. The scaled path
+        // writes into a buffer it has just cleared, through a quad that covers
+        // each texel exactly once, so over would add zero to the colour - and
+        // the buffer's gather attachments are data, which a blend would mix
+        // with that zero instead of storing. GLES 3.0 has no per-attachment
+        // blend to exempt them with, so the scaled pass draws unblended.
+        if (scaled)
+        {
+            glDisable(GL_BLEND);
+        }
+        else
+        {
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+        }
         // Only the SCALED path can still fail here, on its buffer allocation;
         // the emission table was secured at Initialize. A failure skips the
         // blit below with us, so the frame degrades to the opaque fill rather
@@ -619,6 +651,10 @@ namespace EdgeLighting
             prevTarget.Restore();
             if (glowReady)
             {
+                // The composite IS a blend, and pass 1 left blending off on
+                // this path.
+                glEnable(GL_BLEND);
+                glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
                 renderBlitPass(viewportHeight, config);
             }
         }
@@ -821,6 +857,16 @@ namespace EdgeLighting
         mNeonShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                     ShaderSource::NEON_FRAG_SRC,
                                     "NeonRenderer");
+        // The reduced-resolution variant: the same source with
+        // NEON_WRITES_GATHER defined, so it also fills the gather target the
+        // scaled buffer carries for a later full-resolution pass. A separate
+        // PROGRAM rather than a uniform branch, so the direct path's program is
+        // not touched at all - see the note at the outputs in neon.frag. Built
+        // unconditionally, like the blit below and for the same reason.
+        const std::string scaledSrc = WithDefine(ShaderSource::NEON_FRAG_SRC, "NEON_WRITES_GATHER");
+        mNeonScaledShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
+                                          scaledSrc.c_str(),
+                                          "NeonRenderer.Scaled");
         // Emission pre-pass. Reuses the neon vertex shader (uMVP -> vPos); the
         // fragment shader ignores vPos and keys off gl_FragCoord instead.
         mEmissionShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
@@ -839,15 +885,19 @@ namespace EdgeLighting
         mBlitShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                     ShaderSource::NEON_BLIT_FRAG_SRC,
                                     "NeonRenderer.Blit");
-        if (!mNeonShader.IsValid() || !mBlackRectShader.IsValid() ||
+        if (!mNeonShader.IsValid() || !mNeonScaledShader.IsValid() || !mBlackRectShader.IsValid() ||
             !mBlitShader.IsValid() || !mEmissionShader.IsValid())
         {
             return false;
         }
 
-        mNeonShader.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
-        mNeonShader.SetUniformBlockBinding("LoopSamplesBlock", LOOP_SAMPLES_BLOCK_BINDING);
-        mNeonShader.SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
+        // Both neon programs read the same three blocks, at the same bindings.
+        for (ShaderProgram *neon : {&mNeonShader, &mNeonScaledShader})
+        {
+            neon->SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
+            neon->SetUniformBlockBinding("LoopSamplesBlock", LOOP_SAMPLES_BLOCK_BINDING);
+            neon->SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
+        }
         // The pre-pass reads the same two blocks the main pass does, so they
         // share bindings and are packed once per frame before either runs.
         mEmissionShader.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
@@ -1595,6 +1645,57 @@ namespace EdgeLighting
         mEmissionTime = time;
     }
 
+    void NeonRenderer::uploadNeonUniforms(ShaderProgram &shader, const glm::mat4 &mvp, float scale,
+                                          float time, const Config &config)
+    {
+        // Every pixel-valued uniform below is multiplied by `scale`, which is
+        // 1.0 on the direct path - so the two paths upload literally the same
+        // numbers there, and the scaled path is the only one that moves. The
+        // shader converts neon-tuning.h's own full-res px constants with
+        // uResolutionScale to land in the same space.
+        shader.SetUniform("uMVP", mvp);
+        shader.SetUniform("uResolutionScale", scale);
+        shader.SetUniform("uRectSize", glm::vec2(config.geometry.width * scale,
+                                                 config.geometry.height * scale));
+        shader.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry) * scale);
+        shader.SetUniform("uLineWidth", config.neon.lineWidth * scale);
+        shader.SetUniform("uFilamentFalloff", config.neon.filamentFalloff);
+        shader.SetUniform("uIntensity", config.neon.intensity);
+        shader.SetUniform("uTime", time);
+        shader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
+        shader.SetUniform("uGlowRadius", config.neon.glowRadius * scale);
+        shader.SetUniform("uBloomStrength", config.neon.bloomStrength);
+        shader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
+        shader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness * scale);
+        shader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff) * scale);
+        shader.SetUniform("uInsideCutoffSoftness", config.neon.insideCutoff.softness * scale);
+        shader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff) * scale);
+        shader.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness * scale);
+
+        shader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
+
+        // Loop sample positions come from the LoopSamplesBlock UBO (see
+        // neon.frag) - raw float32 vec4[N], .xy holds the perimeter point in
+        // the same scaled space as the transform above.
+        mLoopSamplesBlock.BindBase(LOOP_SAMPLES_BLOCK_BINDING);
+        shader.SetUniform("uNumSamples", GetClampedNumSamples(config));
+
+        // The three LUT atlases are no longer read by the gather (the emission
+        // pre-pass consumes them instead), but the pointwise path still samples
+        // them for the colour-stop alpha - see the alpha reads in neon.frag.
+        mGradientLUT.Bind(0);
+        shader.SetUniform("uGradientLUT", 0);
+        mSegmentLUT.Bind(1);
+        shader.SetUniform("uSegmentLUT", 1);
+        mArcLUT.Bind(2);
+        shader.SetUniform("uArcLUT", 2);
+        // Emission table from pass 0 on unit 3; the gather texelFetches both
+        // of its rows per sample.
+        mEmissionBuffer.BindTexture(3);
+        shader.SetUniform("uEmission", 3);
+        shader.SetUniform("uQuadMargin", mQuadMargin);
+    }
+
     bool NeonRenderer::renderNeonPass(const glm::mat4 &mvp, int bufWidth, int bufHeight,
                                       bool scaled, float time, const Config &config)
     {
@@ -1634,7 +1735,17 @@ namespace EdgeLighting
             // texture, and the next frame's Resize then sees a mismatch and
             // destroys and recreates the FBO - one reallocation per frame,
             // measured.
-            if (!mScaledBuffer.Resize(bufWidth, bufHeight, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, GL_LINEAR))
+            //
+            // Attachment 0 is the composited colour, 1 the gather target, and 2
+            // the gather's segment half - only when there ARE segments. The
+            // scaled program writes location 2 regardless and GL drops the
+            // write where nothing is attached (see the outputs in neon.frag).
+            // Keyed on the segment COUNT, so an animation that moves segments
+            // never reallocates; only the first one arriving or the last one
+            // leaving does.
+            const int attachments = mEffectiveSegments.empty() ? 2 : 3;
+            if (!mScaledBuffer.Resize(bufWidth, bufHeight, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, GL_LINEAR,
+                                      attachments))
             {
                 return false;
             }
@@ -1649,58 +1760,17 @@ namespace EdgeLighting
             mScaledBuffer.ClearBuffer();
         }
 
-        // Every pixel-valued uniform below is multiplied by `scale`, which is
-        // 1.0 on the direct path - so the two paths upload literally the same
-        // numbers there, and the scaled path is the only one that moves. The
-        // shader converts neon-tuning.h's own full-res px constants with
-        // uResolutionScale to land in the same space.
-        mNeonShader.Use();
-        mNeonShader.SetUniform("uMVP", mvp);
-        mNeonShader.SetUniform("uResolutionScale", scale);
-        mNeonShader.SetUniform("uRectSize", glm::vec2(config.geometry.width * scale,
-                                                      config.geometry.height * scale));
-        mNeonShader.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry) * scale);
-        mNeonShader.SetUniform("uLineWidth", config.neon.lineWidth * scale);
-        mNeonShader.SetUniform("uFilamentFalloff", config.neon.filamentFalloff);
-        mNeonShader.SetUniform("uIntensity", config.neon.intensity);
-        mNeonShader.SetUniform("uTime", time);
-        mNeonShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
-        mNeonShader.SetUniform("uGlowRadius", config.neon.glowRadius * scale);
-        mNeonShader.SetUniform("uBloomStrength", config.neon.bloomStrength);
-        mNeonShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
-        mNeonShader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness * scale);
-        mNeonShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff) * scale);
-        mNeonShader.SetUniform("uInsideCutoffSoftness", config.neon.insideCutoff.softness * scale);
-        mNeonShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff) * scale);
-        mNeonShader.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness * scale);
-
-        mNeonShader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
-
-        // Loop sample positions come from the LoopSamplesBlock UBO (see
-        // neon.frag) - raw float32 vec4[N], .xy holds the perimeter point in
-        // the same scaled space as the transform above.
-        mLoopSamplesBlock.BindBase(LOOP_SAMPLES_BLOCK_BINDING);
-        mNeonShader.SetUniform("uNumSamples", GetClampedNumSamples(config));
-
-        // The three LUT atlases are no longer read by the gather (the emission
-        // pre-pass consumes them instead), but the pointwise path still samples
-        // them for the colour-stop alpha - see the alpha reads in neon.frag.
-        mGradientLUT.Bind(0);
-        mNeonShader.SetUniform("uGradientLUT", 0);
-        mSegmentLUT.Bind(1);
-        mNeonShader.SetUniform("uSegmentLUT", 1);
-        mArcLUT.Bind(2);
-        mNeonShader.SetUniform("uArcLUT", 2);
-        // Emission table from pass 0 on unit 3; the gather texelFetches both
-        // of its rows per sample.
-        mEmissionBuffer.BindTexture(3);
-        mNeonShader.SetUniform("uEmission", 3);
-        mNeonShader.SetUniform("uQuadMargin", mQuadMargin);
+        // The variant that also writes the gather target on the path whose
+        // buffer has one, and the plain program everywhere else. Both take
+        // exactly the same uniforms.
+        ShaderProgram &shader = scaled ? mNeonScaledShader : mNeonShader;
+        shader.Use();
+        uploadNeonUniforms(shader, mvp, scale, time, config);
 
         // Tight glow quad in both modes - opaque's far region is covered by the
         // fill pass, so the gather never runs fullscreen.
         mGlowVertexArray.DrawArrays(GL_TRIANGLES, mGlowVertexCount);
-        mNeonShader.Unuse();
+        shader.Unuse();
         return true;
     }
 

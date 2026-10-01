@@ -20,7 +20,24 @@ precision highp float;
 // ---------------------------------------------------------------------------
 
 in vec2 vPos;
+
+// NEON_WRITES_GATHER builds the reduced-resolution variant of this shader:
+// NeonRenderer::setupShaders splices the #define in after the version line,
+// and the scaled pass draws into a framebuffer with one or two extra colour
+// attachments for it to fill. See the write below the gather. The direct path
+// compiles this file WITHOUT the define, so once preprocessed its source - and
+// so its program - is exactly what it was before the variant existed.
+//
+// Every output gets an explicit location in the variant because GLSL ES 3.0
+// requires that once there is more than one; the direct path keeps the
+// unqualified declaration it always had.
+#ifdef NEON_WRITES_GATHER
+layout(location = 0) out vec4 fragColor;
+layout(location = 1) out vec4 oGather;
+layout(location = 2) out vec4 oGatherSeg;
+#else
 out vec4 fragColor;
+#endif
 
 uniform vec2  uRectSize;
 uniform float uCornerRadius;
@@ -1246,6 +1263,28 @@ void main() {
     float segCoverGathered  = wsumSegW / wsumDen; // segment boost x bell
     vec3  segColGlow        = segColHue * segCoverGathered;
     float glowCoverAll      = max(emitCoverGathered, min(segCoverGathered, 1.0));
+
+#ifdef NEON_WRITES_GATHER
+    // THE GATHER TARGET: everything the loop above produced, for a later
+    // full-resolution pass to read back instead of re-running it. These four
+    // are the loop's ONLY outputs, and all of them are smooth across the
+    // screen - Lorentzian-weighted means over the whole perimeter - which is
+    // what lets a reduced buffer carry them where it cannot carry the filament.
+    // See docs/neon-resolution-scale-proposal.md.
+    //
+    // RGBA8, so each value has to fit [0, 1]. The hues already do - they are
+    // weighted means of stop colours - and are clamped only so a stop authored
+    // above 1 cannot wrap. The coverages do not: arc intensity and segment
+    // boost both fold into them unbounded. c / (1 + c) maps [0, inf) onto
+    // [0, 1) monotonically, is exact at 0, and inverts as e / (1 - e); a fully
+    // lit ring's 1.0 stores as 0.5.
+    //
+    // Location 2 lands only when the framebuffer has a third attachment, which
+    // the renderer gives it only when there are segments. Without one the
+    // write is dropped by GL, and segColHue and segCoverGathered are 0 anyway.
+    oGather    = vec4(clamp(col,       0.0, 1.0), emitCoverGathered / (1.0 + emitCoverGathered));
+    oGatherSeg = vec4(clamp(segColHue, 0.0, 1.0), segCoverGathered  / (1.0 + segCoverGathered));
+#endif
 
     // Sharp gate for the SDF-derived filament, from the same two pointwise
     // coverages. Both are exact at this fragment's perimeter position, so

@@ -221,17 +221,29 @@ namespace EdgeLighting
         ///      report and nothing to allocate here.
         void renderEmissionPass(int viewportWidth, int viewportHeight, float time, const Config &config);
 
+        /// Every uniform the neon programs read, for @p shader at @p scale.
+        /// One copy for every program built from neon.frag, so the variants
+        /// cannot drift apart in what they are told.
+        /// @pre @p shader is in use.
+        void uploadNeonUniforms(ShaderProgram &shader, const glm::mat4 &mvp, float scale,
+                                float time, const Config &config);
+
         /// Pass 1: the neon gather on the tight glow quad. Reads the emission
         /// table produced by @ref renderEmissionPass, so it must run after it.
         ///
         /// Draws either straight onto the bound framebuffer (@p scaled false)
         /// or into @c mScaledBuffer (@p scaled true), in which case it also
         /// clears that buffer and leaves it bound - @ref Render restores the
-        /// target before pass 2b.
-        /// @pre Premultiplied-over blending. Onto the target that composites
-        ///      the glow over what is already there; into the cleared
-        ///      transparent buffer it leaves premultiplied colour + coverage
-        ///      alpha for the blit to composite instead.
+        /// target before pass 2b. The scaled path draws with
+        /// @c mNeonScaledShader, which also fills the buffer's gather
+        /// attachment(s): the loop's outputs, for a later full-resolution
+        /// pass to read instead of re-running it.
+        /// @pre On the direct path, premultiplied-over blending: the glow
+        ///      composites over what is already on the target. On the scaled
+        ///      path, blending DISABLED: the buffer was just cleared and the
+        ///      quad covers each texel once, so over would only have added
+        ///      zero to the colour - and the gather attachments are data, which
+        ///      must not be blended at all.
         /// @return false if the scaled target could not be allocated, in which
         ///         case nothing was drawn and pass 2b must be skipped too - it
         ///         would otherwise composite a stale or undefined buffer.
@@ -273,7 +285,8 @@ namespace EdgeLighting
 
     private:
         Config mCurrentConfig;
-        ShaderProgram mNeonShader;                                     ///< The neon gather (neon.frag).
+        ShaderProgram mNeonShader;                                     ///< The neon gather (neon.frag), direct path.
+        ShaderProgram mNeonScaledShader;                               ///< neon.frag + NEON_WRITES_GATHER, scaled path.
         ShaderProgram mEmissionShader;                                 ///< Perimeter emission pre-pass (neon-emission.frag).
         ShaderProgram mBlackRectShader;                                ///< Opaque-mode black background fill (black-rect.frag).
         ShaderProgram mBlitShader;                                     ///< Scaled-path upscale composite (neon-blit.frag).
