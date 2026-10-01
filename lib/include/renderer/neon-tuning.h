@@ -371,64 +371,11 @@
 // --- Epsilons ---
 #define WSUM_EPSILON              1e-6
 
-// --- Cutoff PLACEMENT floor, in BUFFER pixels. Scaled path only.
-//
-//     The odd one out in this file: every other px constant here is stated in
-//     FULL-RES px and converted with uResolutionScale at the point of use.
-//     This one is already in the space the gather rasterises into, and must
-//     NOT be converted - the whole point is to be a fixed fraction of the
-//     buffer's own pixel, whatever that pixel is worth on screen.
-//
-//     NOT the antialiasing floor, despite what this constant used to be called.
-//     That is one DESTINATION pixel and applies at every scale - neon.frag
-//     floors at sideAA on the direct path, where this constant no longer
-//     reaches. What this one buys is WHERE the boundary lands after the blit
-//     has resampled it, which is a different question with a different answer,
-//     and the table below measures exactly that and nothing else.
-//
-//     1.0, WHERE IT WAS 0.5, AND THE RAMP IS UNCHANGED. The masks it feeds were
-//     written smoothstep(-w, w, x), which spans 2w, so this constant was a HALF
-//     width pretending to be a width - and every measurement below was taken
-//     against the 1.0 buffer px of feather that produced. neon.frag now halves
-//     its total widths at the point of use, like black-rect.frag already did,
-//     so the constant is restated as the total it always effectively was. The
-//     numbers below still stand.
-//
-//     A cutoff with softness 0 is a step function. On the scaled path the
-//     gather samples it at buffer-pixel centres and the blit bilinearly
-//     upsamples, so the boundary snaps to the buffer grid and reconstructs as
-//     a 2-3 px ramp instead of the ~0.8 px one the direct path gives. Half a
-//     buffer pixel of feather lets the one sample nearest the boundary carry
-//     a fractional value, which the blit can then place sub-texel.
-//
-//     What it buys, measured on 1280x720 at cutoff 30, softness 0, as the
-//     error between the stated cutoff and where the coverage actually ends:
-//
-//       scale        0.50   0.55   0.60   0.65   0.70   0.75   0.80   0.90
-//       without    -0.06  +0.82  -0.08  -0.75  -0.09  +0.16  -0.08  -0.10
-//       with       -0.06  +0.43  -0.08  +0.33  -0.09  +0.29  -0.08  -0.10
-//
-//     Spread 1.57 px -> 0.53 px. Note scale 0.50 does not move, and that is
-//     not a defect in this constant: at exactly one half, integer geometry
-//     puts the boundary either exactly ON a buffer texel centre or exactly
-//     BETWEEN two, and a symmetric feather one texel wide or narrower gives
-//     the identical sample pattern in both cases. Widening past 1.0 does not
-//     recover it either - it only softens the edge and biases it outward
-//     (measured +0.83 at 1.25). The residual +-0.5 px there is information the
-//     half-res buffer does not contain; a cutoff that must be pixel-exact
-//     wants resolutionScale 1.0, and one that must merely LOOK clean wants a
-//     real softness, where both paths already agree to 0.08 px.
-//
-//     Applied only when uResolutionScale < 1.0 - see neon.frag's softFloor and
-//     the matching cap in NeonRenderer::setupGeometry.
-#define CUTOFF_SOFT_FLOOR_PX      1.0
-
 // --- One-sided cut guard band, in BUFFER pixels. Scaled path only.
 //
-//     The second constant in this file stated in buffer px rather than
-//     full-res px, and for the same reason as CUTOFF_SOFT_FLOOR_PX above: it
-//     describes the BUFFER's own sampling, so it must NOT be converted with
-//     uResolutionScale.
+//     One of the two constants in this file stated in buffer px rather than
+//     full-res px (BLIT_CUTOFF_GUARD_PX below is the other): it describes the
+//     BUFFER's own sampling, so it must NOT be converted with uResolutionScale.
 //
 //     Below resolutionScale 1.0 the one-sided cut is not applied by neon.frag
 //     at all - neon-blit.frag applies it at DESTINATION resolution, where a
@@ -456,6 +403,33 @@
 //     bit-identical to the full-res renderer it replaced. See neon.frag's
 //     sideCull and the post-grade cut block. ---
 #define BLIT_SIDE_GUARD_PX        2.0
+
+// --- Cutoff guard band, in BUFFER pixels. Scaled path only.
+//
+//     BLIT_SIDE_GUARD_PX's argument, applied to the inside/outside cutoffs.
+//     Below resolutionScale 1.0 neon-blit.frag applies the cutoff masks at
+//     DESTINATION resolution, and neon.frag only culls - this far past the end
+//     of each ramp, so the blit's bilinear filter rebuilds every boundary from
+//     lit texels rather than from black. Same value as the side guard, for the
+//     same reasons: one buffer texel of filter reach, plus room for the
+//     diagonal and for the phase between the boundary and the nearest texel
+//     centre.
+//
+//     It replaces CUTOFF_SOFT_FLOOR_PX, a feather in buffer px that let a mask
+//     drawn INTO the buffer place its boundary sub-texel. That was the best the
+//     buffer could do, and it still softened the boundary across a buffer
+//     texel and snapped it toward the buffer grid: on the bounded_band scene of
+//     docs/neon-resolution-scale-comparison.html it read p99 41/255 against the
+//     1.0 render at scale 0.5, and 69 at 0.25, and the band spread past its
+//     own cutoffs as the scale fell (50,703 lit px at 0.5 and 53,568 at 0.25,
+//     against 47,012 at 1.0). Drawn by the blit instead it reads p99 4 at 0.5
+//     and 12 at 0.25, with 47,012 lit px at every scale; what is left is the
+//     reduced-resolution glow inside the band, not its edges. See
+//     docs/neon-resolution-scale-plan.md, step 2.
+//
+//     NOT used on the direct path, whose masks and culls are unchanged. See
+//     neon.frag's cutGuard and NeonRenderer::setupGeometry's cutGuardPx. ---
+#define BLIT_CUTOFF_GUARD_PX      2.0
 
 // --- Stand-in distance for a cutoff that glowSide has already subsumed.
 //

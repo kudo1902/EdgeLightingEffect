@@ -598,9 +598,8 @@ void main() {
     // bilinear blit then smeared wider still. Below scale 1.0 this floor is
     // sub-buffer-pixel and so is a step in the buffer, which is right - at a
     // reduced scale the blit owns the edge's softness and nothing in here can
-    // sharpen it. (Contrast CUTOFF_SOFT_FLOOR_PX, which IS in buffer px on
-    // purpose - that boundary has no full-res counterpart to line up with, so
-    // quantisation is its only concern. See neon-tuning.h.)
+    // sharpen it. The inside/outside cutoffs floor at this same pixel too, on
+    // both paths - see softFloor below.
     //
     // Computed HERE, above every discard in this function, because a
     // derivative downstream of control flow the compiler cannot prove uniform
@@ -701,16 +700,18 @@ void main() {
     // in all three. See the note at sideAA, which asks any second derivative to
     // be hoisted to the top of main() instead of added here.
     //
-    // The scaled path keeps CUTOFF_SOFT_FLOOR_PX, which is in BUFFER px and so
-    // is NOT converted with uResolutionScale like the full-res constants
-    // elsewhere: there the concern is not coverage but WHERE the boundary lands
-    // once the blit has resampled it, and half a buffer pixel of feather lets
-    // the sample nearest the boundary carry a fractional value instead of just
-    // 0 or 1. See neon-tuning.h for the measured placement table, for why scale
-    // 0.50 specifically is unmoved by it, and for why its value is now 1.0
-    // where it was 0.5 - the ramp below stopped doubling, so the constant is
-    // stated as the total width it always effectively had.
-    float softFloor = (uResolutionScale < 1.0) ? CUTOFF_SOFT_FLOOR_PX : sideAA;
+    // ONE DESTINATION PIXEL ON BOTH PATHS. The scaled path used to floor at
+    // CUTOFF_SOFT_FLOOR_PX instead, a feather in BUFFER px that let the texel
+    // nearest a hard boundary carry a fractional value for the blit to place
+    // sub-texel. That was the best a mask drawn INTO the reduced buffer could
+    // do, and it still left the boundary softened across a buffer texel and
+    // snapped toward the buffer grid. Below scale 1.0 the masks are not drawn
+    // here any more: neon-blit.frag applies them at destination resolution,
+    // exactly as it applies the one-sided cut (see blitOwnsCut, the discards
+    // below and the masks after the grade). On that path this floor only places
+    // the discards, and they have to agree with the blit's ramp - which is
+    // floored at one destination pixel, i.e. sideAA in this shader's units.
+    float softFloor = sideAA;
     float inSoft  = max(uInsideCutoffSoftness,  softFloor);
     float outSoft = max(uOutsideCutoffSoftness, softFloor);
 
@@ -796,8 +797,14 @@ void main() {
     {
         dIn = bandInnerDistance(d, inMid);
     }
-    if (dOut >  outHalf) discard;
-    if (dIn  < -inHalf ) discard;
+    // On the scaled path the blit owns the masks as well as the cut, and
+    // rebuilds each boundary from the buffer texels around it - so the cull
+    // runs BLIT_CUTOFF_GUARD_PX past the end of the ramp rather than at it, for
+    // the reason sideCull does. The guard is an exact 0 at scale 1.0, where
+    // the direct path keeps culling exactly where its own masks end.
+    float cutGuard = blitOwnsCut ? BLIT_CUTOFF_GUARD_PX : 0.0;
+    if (dOut >  outHalf + cutGuard ) discard;
+    if (dIn  < -(inHalf + cutGuard)) discard;
 
     // --- Filament -----------------------------------------------------
     // Generalized-Gaussian profile with exponentially smooth falloff:
@@ -1535,13 +1542,15 @@ void main() {
     float fadeFloor = uQuadMargin * QUAD_FADE_START_FRAC;
     // Where the band's emission ends: the outside fade is centred on outMid
     // and reaches outHalf past it, and the discard above culls everything
-    // beyond. NeonRenderer::setupGeometry caps uQuadMargin at the same end
-    // (GetCutoffEnd) plus 1 full-res px, so while that cap is in force
-    // cutEdge < uQuadMargin holds by that pixel, the fade starts at the end,
-    // and nothing it dims survives the discard. It used to budget a whole
-    // outSoft past outMid, against a cap that did the same; the two moved
-    // together, and only past the discard.
-    float cutEdge   = outMid + outHalf;
+    // beyond - cutGuard further out on the scaled path, whose guard texels
+    // must reach the blit unfaded or its rebuilt boundary darkens.
+    // NeonRenderer::setupGeometry caps uQuadMargin at the same end
+    // (GetCutoffEnd, plus the same guard) plus 1 full-res px, so while that
+    // cap is in force cutEdge < uQuadMargin holds by that pixel, the fade
+    // starts at the end, and nothing it dims survives the discard. It used to
+    // budget a whole outSoft past outMid, against a cap that did the same; the
+    // two moved together, and only past the discard.
+    float cutEdge   = outMid + outHalf + cutGuard;
     float fadeStart = (cutEdge < uQuadMargin) ? max(fadeFloor, cutEdge) : fadeFloor;
     float dQuad     = sdRoundBox(vPos, halfSize + vec2(uQuadMargin), 0.0);
     result *= 1.0 - smoothstep(-(uQuadMargin - fadeStart), 0.0, dQuad);
@@ -1660,8 +1669,19 @@ void main() {
     // halves, and see where they are derived for what the doubled form cost.
     // dIn / dOut are already measured from those midpoints, so each ramp
     // starts at its cutoff and ends softness past it.
-    result *= smoothstep(-inHalf, inHalf, dIn);
-    result *= 1.0 - smoothstep(-outHalf, outHalf, dOut);
+    //
+    // DIRECT PATH ONLY, for the reason the one-sided cut above is: a mask
+    // applied to buffer texels is smeared across 1/scale destination pixels by
+    // the bilinear upsample, which softened a hard band edge by a buffer texel
+    // and snapped it toward the buffer grid. Below scale 1.0 neon-blit.frag
+    // applies these same two ramps at destination resolution, and the discards
+    // above leave it BLIT_CUTOFF_GUARD_PX of lit texels to work from. Keep the
+    // two in step - one edge, written twice because only one of them runs.
+    if (!blitOwnsCut)
+    {
+        result *= smoothstep(-inHalf, inHalf, dIn);
+        result *= 1.0 - smoothstep(-outHalf, outHalf, dOut);
+    }
 
     // Premultiplied-alpha output so the effect composites over arbitrary
     // background objects instead of only adding light. Coverage = brightest

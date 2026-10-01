@@ -967,23 +967,33 @@ namespace EdgeLighting
         // at the same cutoff size regardless of scale.
         // Mirrors neon.frag's softFloor, which is what actually decides how far
         // past a cutoff the feather runs and therefore how much quad the shader
-        // needs. The shader floors in BUFFER px, so it is converted back to
-        // full-res here - this whole expression is full-res and scaled once,
-        // per the note above. Leave it out and the quad edge lands inside the
-        // widened feather, which is exactly the rectangular seam the +1 safety
-        // exists to prevent.
+        // needs. Leave it out and the quad edge lands inside the feather, which
+        // is exactly the rectangular seam the +1 safety exists to prevent.
         //
-        // The direct-path arm is a nominal ONE DESTINATION PIXEL, mirroring the
-        // shader's `sideAA` - which is fwidth(d), so it runs 1.0 to 1.41
-        // depending on which way the boundary faces and cannot be known here.
-        // Under-stating it by the diagonal factor is absorbed by the safety
-        // margins: the direct-path fade can end up to ~0.2 px past what
+        // ONE DESTINATION PIXEL ON BOTH PATHS. Below scale 1.0 the blit draws
+        // the cutoff masks at destination resolution and neon.frag only places
+        // its discards to agree with it, so the floor is a destination pixel
+        // there too. (It was CUTOFF_SOFT_FLOOR_PX / scale while the masks were
+        // drawn into the buffer.)
+        //
+        // Nominal, because the shader's is `sideAA` - fwidth(d), so it runs
+        // 1.0 to 1.41 depending on which way the boundary faces and cannot be
+        // known here. Under-stating it by the diagonal factor is absorbed by
+        // the safety margins: the fade can end up to ~0.2 px past what
         // GetCutoffEnd reports on a diagonal, well inside the outer cap's
         // 1 px and GLOW_EDGE_SAFETY's 3. Conservative in the direction that
         // keeps the quad covering the band.
-        const float softFloor = (scale < 1.0f)
-                                    ? (static_cast<float>(CUTOFF_SOFT_FLOOR_PX) / scale)
-                                    : 1.0f;
+        const float softFloor = 1.0f;
+
+        // How far past the END of a cutoff's ramp neon.frag still draws, in
+        // FULL-RES px. Mirrors its `cutGuard`: nothing on the direct path,
+        // which culls where its masks end, and on the scaled path the guard
+        // band the blit rebuilds the boundary from - stated in BUFFER px, so it
+        // divides back out. The outer cap and the inner hole below both carry
+        // it; leave it off either and the quad clips the texels the blit needs.
+        const float cutGuardPx = (scale < 1.0f)
+                                     ? (static_cast<float>(BLIT_CUTOFF_GUARD_PX) / scale)
+                                     : 0.0f;
 
         // How far past the rect edge the one-sided cut still draws, on the side
         // it culls, in FULL-RES px. Mirrors neon.frag's `sideCull`: half a
@@ -998,24 +1008,19 @@ namespace EdgeLighting
         // Skipped under GlowSide::INSIDE, where neon.frag neutralises this
         // cutoff as subsumed by the cut - see the band-distance block there. A
         // cap derived from a mask the shader no longer applies would bound the
-        // quad to a region the shader still lights, and the region it would eat
-        // is the GUARD BAND: at scale 0.25 with size 0 the cap lands at 1.25
-        // buffer px against the 2.0 the guard asks for.
-        //
-        // That happens to survive, because the cap cannot go below 1 + scale
-        // buffer px (outSoft is floored at CUTOFF_SOFT_FLOOR_PX / scale, which
-        // the trailing * scale turns back into a constant) and the blit's
-        // filter reaches one texel. Surviving by 0.25 px on an accident of two
-        // unrelated constants is not a property worth keeping: change the floor
-        // or the safety term and it goes under with nothing to catch it.
+        // quad to a region the shader still lights, and on the scaled path the
+        // region it would eat is the one-sided cut's guard band
+        // (BLIT_SIDE_GUARD_PX), which the blit rebuilds that cut from. A small
+        // enough cutoff lands inside it.
         if (config.neon.outsideCutoff.enable && config.neon.glowSide != GlowSide::INSIDE)
         {
-            // Where neon.frag's outside fade ends, plus the 1 px safety. The
-            // capped margin becomes uQuadMargin, and neon.frag's fadeStart
-            // floor needs its cutEdge - that same fade end - to sit strictly
-            // inside it; the +1 is what guarantees that. Drop it and the quad
-            // fade starts at 0.8 * margin, inside the band.
-            float cutoffCap = (GetCutoffEnd(config.neon.outsideCutoff, softFloor) + 1.0f) * scale;
+            // Where neon.frag's outside fade ends, plus the scaled path's guard
+            // band, plus the 1 px safety. The capped margin becomes
+            // uQuadMargin, and neon.frag's fadeStart floor needs its cutEdge -
+            // that same end, guard included - to sit strictly inside it; the +1
+            // is what guarantees that. Drop it and the quad fade starts at
+            // 0.8 * margin, inside the band.
+            float cutoffCap = (GetCutoffEnd(config.neon.outsideCutoff, softFloor) + cutGuardPx + 1.0f) * scale;
             margin = std::min(margin, cutoffCap);
         }
 
@@ -1085,9 +1090,10 @@ namespace EdgeLighting
         }
         else if (config.neon.insideCutoff.enable)
         {
-            // neon.frag discards at dIn < -inHalf, i.e. past the end of the
-            // inside fade - the same point GetCutoffEnd computes.
-            innerReach = GetCutoffEnd(config.neon.insideCutoff, softFloor);
+            // neon.frag discards at dIn < -(inHalf + cutGuard), i.e. past the
+            // end of the inside fade - the point GetCutoffEnd computes - plus
+            // the scaled path's guard band.
+            innerReach = GetCutoffEnd(config.neon.insideCutoff, softFloor) + cutGuardPx;
         }
         const float innerMargin = (innerReach + GLOW_EDGE_SAFETY) * scale;
 
@@ -1922,12 +1928,13 @@ namespace EdgeLighting
         // shader composites over whatever is on the target already (the black
         // fill if opaque, the original background otherwise).
         //
-        // It also applies the one-sided cut, which is why it takes a config at
-        // all. The cut cannot be made in the gather: that runs at
-        // resolutionScale and the bilinear upsample smears any edge it draws
-        // across 1/scale destination pixels in both directions, which put glow
-        // on the dark side of the line. This pass is full-res, so the cut lands
-        // where the direct path puts it. See neon-blit.frag.
+        // It also applies the one-sided cut and the inside/outside cutoffs,
+        // which is why it takes a config at all. Neither can be made in the
+        // gather: that runs at resolutionScale and the bilinear upsample smears
+        // any edge it draws across 1/scale destination pixels in both
+        // directions, which put glow on the dark side of the line and softened
+        // every cutoff by a buffer texel. This pass is full-res, so both land
+        // where the direct path puts them. See neon-blit.frag.
         mBlitShader.Use();
         mBlitShader.SetUniform("uMVP", glm::mat4(1.0f));
 
@@ -1944,6 +1951,13 @@ namespace EdgeLighting
         mBlitShader.SetUniform("uRectCenter", centerFull);
         mBlitShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
         mBlitShader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness);
+        // The four values renderNeonPass gives neon.frag, without the scale. A
+        // disabled side goes up as the sentinel, and the shader works out for
+        // itself which side glowSide subsumes, exactly as neon.frag does.
+        mBlitShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
+        mBlitShader.SetUniform("uInsideCutoffSoftness", config.neon.insideCutoff.softness);
+        mBlitShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
+        mBlitShader.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness);
 
         // Just bind it. The filter is requested through Resize in the gather
         // pass, so this pass sets no texture parameters at all.

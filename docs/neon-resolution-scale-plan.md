@@ -6,8 +6,8 @@ the reduced-resolution glow, and re-shade a thin ring around the rect edge at
 full resolution from the reduced pass's gather output. Read the proposal first
 for why. This document is only how.
 
-**Status: steps 0 and 1 done, not yet committed. Step 2 is next.** Section 11
-lists the decisions still open.
+**Status: steps 0-2 done; step 1 committed (`546d2b7`), step 2 not yet. Step 3
+is next.** Section 11 lists the decisions still open.
 
 The work is six steps, each committed and checked on its own before the next
 starts. Steps 1, 3 and 4 change no pixels at all, and step 2 changes only scenes
@@ -223,6 +223,41 @@ the cutoff edges have to be drawn by the blit. Emulated, it takes the
 - Every scene at 1.0: byte-identical (the direct path is untouched).
 - The glow-side regression pair: still byte-identical to each other.
 - Neon blit timing with glow on both sides and no cutoff: unchanged.
+
+**Done.** Against the step-0 baseline, exactly the five `bounded_band`
+captures below 1.0 changed; the other 89 are byte-identical, including
+`bounded_band` at 1.0, every spotlight and flare scene, and the regression
+pair (which still agrees with itself). Quality against each scene's own 1.0
+render:
+
+| `bounded_band` | 0.75 | 0.5 | 0.35 | 0.25 | 0.125 |
+| -------------- | ---- | --- | ---- | ---- | ----- |
+| before, p99 / max | 22 / 31 | 41 / 43 | 51 / 71 | 69 / 72 | 95 / 114 |
+| after, p99 / max | 2 / 3 | **4 / 5** | 7 / 10 | **12 / 15** | 47 / 51 |
+| lit px (1.0: 47,012), before | 47,374 | 50,703 | 52,566 | 53,568 | 65,732 |
+| lit px, after | 47,012 | 47,012 | 47,012 | 47,012 | 47,014 |
+
+Both targets are met exactly as emulated, and the band no longer spreads past
+its own cutoffs. Four more cutoff scenes were added to the harness to cover
+every place the guard band changes the glow quad: glowSide OUTSIDE with an
+outside cutoff, INSIDE with an inside cutoff, a square band at `cornerRadius`
+0, and a tight band through bright glow. All four keep a constant lit-pixel
+count at every scale, so nothing clips, and their remaining error at 0.25
+(p99 10-14) sits within +/-6 px of the line, the filament zone step 5
+addresses, not at the cutoff edges.
+
+Timing, min over three interleaved runs per resolution: scenes without a
+cutoff are unchanged within noise (-1.8% to +4.1%). `bounded_band` below 1.0
+costs 2-10% more (0.004-0.017 ms): with a cutoff live, the fullscreen blit now
+evaluates the rect SDF at every pixel. That is the cost of drawing the edge at
+destination resolution, and it is the same cost a one-sided glow already pays.
+
+Docs changed with the step, because it made them stale: `config-reference.md`
+(two places that named `CUTOFF_SOFT_FLOOR_PX` as the scaled path's floor) and a
+"since superseded" note in `glow-side-comparison.md`, whose history points at
+the placement table this step removed. The step-0 baseline plus the four new
+scenes, captured after this step (118 in all), is the reference steps 3 and 4
+must reproduce byte for byte.
 
 ## 5. Step 3: `Framebuffer` gains extra colour attachments
 
@@ -448,8 +483,8 @@ tuned constants there are recorded.
   what each pass writes and one frame's draw sequence.
 - `lib/include/renderer/neon-tuning.h`: the guard and ring constants, and the
   retired `CUTOFF_SOFT_FLOOR_PX` block.
-- `docs/glow-side-comparison.md`: a note that the cutoff floor's
-  buffer-px placement (its section on `CUTOFF_SOFT_FLOOR_PX`) is superseded.
+- `docs/glow-side-comparison.md` and `docs/config-reference.md`: done in
+  step 2, which removed the constant they named.
 - `docs/review-findings.md`: a FIXED entry for the blurred cutoffs at reduced
   scale, with the before/after.
 - Step 1 needed one doc change, made with it: review finding I23. Nothing

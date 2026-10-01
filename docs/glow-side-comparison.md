@@ -338,6 +338,13 @@ width, and the placement table in
 [`neon-tuning.h`](../lib/include/renderer/neon-tuning.h) was measured against the
 1.0 buffer px it actually produced.
 
+**Since superseded.** Below scale 1.0 the cutoffs are no longer drawn into the
+reduced buffer at all: `neon-blit.frag` applies them at destination resolution,
+as it does the one-sided cut, and `neon.frag` culls `BLIT_CUTOFF_GUARD_PX` past
+each ramp. `CUTOFF_SOFT_FLOOR_PX` and its placement table are gone, and the
+floor is one destination pixel on every path. See
+[`neon-resolution-scale-plan.md`](neon-resolution-scale-plan.md) step 2.
+
 ## 6. The draw quad
 
 `glowSide` and `insideCutoff` bound the emission from one side, and the quad

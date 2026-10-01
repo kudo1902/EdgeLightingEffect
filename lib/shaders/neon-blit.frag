@@ -45,6 +45,12 @@ precision highp float;
 // everything else held here. That sequence is the point: it tracks neither the
 // scale nor the 4 px the caller asked for, it just wanders with where the
 // boundary falls between buffer texels.
+//
+// THE INSIDE AND OUTSIDE CUTOFFS ARE APPLIED HERE TOO, for the same reason and
+// in the same way. They are edges as hard as the cut - softness 0 is legal -
+// and drawn into the buffer they were softened across a buffer texel and
+// snapped toward its grid. neon.frag now culls BLIT_CUTOFF_GUARD_PX past the end
+// of each ramp and leaves the ramps themselves to this pass.
 
 // NEON ONLY. SpotlightRenderer and LensFlareRenderer used to compile this
 // shader as a plain composite of their own reduced-resolution buffers, and had
@@ -74,9 +80,26 @@ uniform vec2  uRectCenter;
 uniform int   uGlowSide;
 uniform float uGlowSideSoftness; // NOT pre-multiplied by the resolution scale.
 
+// The inside / outside cutoffs, in FULL-RES px like everything above: the same
+// four values neon.frag receives, without the scale. A disabled side arrives
+// as the CPU's CUTOFF_DISABLED_SIZE sentinel, which no realistic geometry
+// reaches - see CUTOFF_NEUTRALISED in neon-tuning.h, injected above.
+uniform float uInsideCutoff;
+uniform float uInsideCutoffSoftness;
+uniform float uOutsideCutoff;
+uniform float uOutsideCutoffSoftness;
+
 float sdRoundBox(vec2 p, vec2 b, float r) {
     vec2 q = abs(p) - b + r;
     return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
+}
+
+// neon.frag's, verbatim: Euclidean (d - cut) above cornerRadius 0, per-axis at
+// 0 so a square rect keeps a square band. See the derivation there.
+float bandOuterDistance(vec2 p, float d, vec2 halfSize, float r, float cut) {
+    if (r > 1e-4) { return d - cut; }
+    vec2 b = halfSize + vec2(cut);
+    return sdRoundBox(p, b, 0.0);
 }
 
 void main() {
@@ -97,13 +120,24 @@ void main() {
     // unconditionally, which is back to what the pass cost before it grew a cut
     // at all. One-sided is unmoved either way. Re-measure BOTH as well as a
     // one-sided scene if this block is ever restructured.
+    //
+    // The cutoffs join the same branch, on the same terms: whether a side is
+    // live is a function of uniforms alone, so control flow stays uniform and
+    // a config with neither a cut nor a cutoff - the default - still pays only
+    // the texture read. A side is live when it is enabled AND glowSide does not
+    // already cull it; neon.frag neutralises exactly that side (its band
+    // distance block), because the cut subsumes it.
+    bool cutIn  = uGlowSide != GLOW_SIDE_OUTSIDE && uInsideCutoff  < 0.5 * CUTOFF_NEUTRALISED;
+    bool cutOut = uGlowSide != GLOW_SIDE_INSIDE  && uOutsideCutoff < 0.5 * CUTOFF_NEUTRALISED;
     float cut = 1.0;
-    if (uGlowSide != GLOW_SIDE_BOTH)
+    if (uGlowSide != GLOW_SIDE_BOTH || cutIn || cutOut)
     {
-        float d    = sdRoundBox(gl_FragCoord.xy - uRectCenter, uRectSize * 0.5, uCornerRadius);
-        float aa   = max(fwidth(d), 1e-6);
-        float soft = max(uGlowSideSoftness, aa);
-        float back = 0.5 * aa;
+        vec2  p        = gl_FragCoord.xy - uRectCenter;
+        vec2  halfSize = uRectSize * 0.5;
+        float d        = sdRoundBox(p, halfSize, uCornerRadius);
+        float aa       = max(fwidth(d), 1e-6);
+        float soft     = max(uGlowSideSoftness, aa);
+        float back     = 0.5 * aa;
 
         // Same anchor, same floor, same curve as neon.frag's post-grade cut -
         // see the derivation there. Keep the two in step; they are one edge,
@@ -116,11 +150,31 @@ void main() {
         {
             cut = smoothstep(-back, soft - back, d);
         }
+
+        // Same again for the cutoffs: neon.frag's masks after the grade, with
+        // its direct-path floor - one destination pixel, which is what aa is
+        // here. Midpoints softness/2 past each cutoff, ramps centred on them
+        // and spanning the floored softness, so each starts at its cutoff and
+        // ends softness past it. A dead side gets the neutral distance and its
+        // smoothstep saturates to exactly 1.
+        if (cutIn || cutOut)
+        {
+            float inHalf  = 0.5 * max(uInsideCutoffSoftness,  aa);
+            float outHalf = 0.5 * max(uOutsideCutoffSoftness, aa);
+            float inMid   = uInsideCutoff  + 0.5 * max(uInsideCutoffSoftness,  0.0);
+            float outMid  = uOutsideCutoff + 0.5 * max(uOutsideCutoffSoftness, 0.0);
+            float dIn     = cutIn  ? d + inMid : CUTOFF_NEUTRALISED;
+            float dOut    = cutOut ? bandOuterDistance(p, d, halfSize, uCornerRadius, outMid)
+                                   : -CUTOFF_NEUTRALISED;
+            cut *= smoothstep(-inHalf, inHalf, dIn);
+            cut *= 1.0 - smoothstep(-outHalf, outHalf, dOut);
+        }
     }
 
     // Applied to the premultiplied sample, so colour and coverage scale
     // together and the layer thins out as a whole rather than dimming while it
-    // keeps occluding. At BOTH this is a multiply by an exact 1.0, so that path
-    // stays bit-identical to the plain texture read this shader used to be.
+    // keeps occluding. At BOTH with no live cutoff this is a multiply by an
+    // exact 1.0, so that path stays bit-identical to the plain texture read
+    // this shader used to be.
     fragColor = src * cut;
 }
