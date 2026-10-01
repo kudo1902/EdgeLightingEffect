@@ -56,13 +56,6 @@ namespace EdgeLighting
                             : CUTOFF_DISABLED_SIZE;
         }
 
-        /// The TOTAL feather width black-rect.frag is handed for one of the
-        /// opaque fill's cutoffs. Unscaled: the fill is always full-res.
-        inline float GetFillSoftness(const Cutoff &c)
-        {
-            return std::max(c.softness, static_cast<float>(SIDE_SOFT_EPSILON));
-        }
-
         /// Slack, in full-res px, on the bounds @ref NeonRenderer::setupGeometry
         /// derives for the glow quad's inner hole and for its outer edge under
         /// GlowSide::INSIDE.
@@ -1214,16 +1207,19 @@ namespace EdgeLighting
         }
 
         // How far the fill's coverage can run past each rect edge side: out
-        // to the END of that side's feather, size + softness (GetCutoffEnd) -
-        // solid up to size, fading to nothing by size + softness. SAFETY is on
-        // top of that, for the fwidth-based `aa` floor on the ramp's width
-        // (~1 px on a flat edge, up to ~1.4 px on a diagonal), which pushes a
-        // near-zero softness half a pixel or so past its end, plus rounding.
+        // to the END of that side's feather (GetCutoffEnd) - solid up to
+        // size, gone by size + softness at or above the floor. The floor is
+        // black-rect.frag's `aa`, fwidth(d): a nominal ONE pixel is passed,
+        // as setupGeometry does for the glow's direct path, so a near-zero
+        // softness is bounded at size + 0.5 rather than at size. SAFETY is on
+        // top of that, for the part of `aa` the CPU cannot see (up to ~1.4 px
+        // on a diagonal, so ~0.2 px more reach) plus rounding.
         // Over-covering by a couple of pixels is free - those fragments come
         // out at coverage 0, which this pass's premultiplied blend leaves the
         // destination untouched by - while under-covering would clip the
         // feather, so this rounds outward on purpose.
         constexpr float FILL_EDGE_SAFETY = 3.0f;
+        constexpr float FILL_SOFT_FLOOR_PX = 1.0f;
         const Cutoff &fillIn = config.neon.opaqueInsideCutoff;
         const Cutoff &fillOut = config.neon.opaqueOutsideCutoff;
 
@@ -1242,11 +1238,11 @@ namespace EdgeLighting
         float innerMargin = FILL_EDGE_SAFETY;
         if (mode == OpaqueMode::OUTSIDE || mode == OpaqueMode::BOTH)
         {
-            outerMargin = GetCutoffEnd(fillOut, 0.0f) + FILL_EDGE_SAFETY; // size + softness + safety
+            outerMargin = GetCutoffEnd(fillOut, FILL_SOFT_FLOOR_PX) + FILL_EDGE_SAFETY;
         }
         if (mode == OpaqueMode::INSIDE || mode == OpaqueMode::BOTH)
         {
-            innerMargin = GetCutoffEnd(fillIn, 0.0f) + FILL_EDGE_SAFETY; // size + softness + safety
+            innerMargin = GetCutoffEnd(fillIn, FILL_SOFT_FLOOR_PX) + FILL_EDGE_SAFETY;
         }
 
         // Cap on how far OUTWARD the ring is allowed to run, in full-res px.
@@ -1898,14 +1894,16 @@ namespace EdgeLighting
         // The FILL's own cutoff pair, never the glow's - see
         // NeonConfig::opaqueInsideCutoff. Same size, sentinel and softness as
         // setupFillGeometry reads, so the ring bounds exactly what this
-        // shades.
+        // shades. Softness goes up as configured, exactly as neon.frag's does:
+        // black-rect.frag treats a negative one as 0 when placing the fade and
+        // floors its width at `aa`, so a CPU-side clamp would add nothing.
         const Cutoff &fillIn = config.neon.opaqueInsideCutoff;
         const Cutoff &fillOut = config.neon.opaqueOutsideCutoff;
         mBlackRectShader.SetUniform("uOpaqueMode", static_cast<int>(config.neon.opaqueMode));
         mBlackRectShader.SetUniform("uInsideCutoff", GetCutoffSize(fillIn));
-        mBlackRectShader.SetUniform("uInsideCutoffSoftness", GetFillSoftness(fillIn));
+        mBlackRectShader.SetUniform("uInsideCutoffSoftness", fillIn.softness);
         mBlackRectShader.SetUniform("uOutsideCutoff", GetCutoffSize(fillOut));
-        mBlackRectShader.SetUniform("uOutsideCutoffSoftness", GetFillSoftness(fillOut));
+        mBlackRectShader.SetUniform("uOutsideCutoffSoftness", fillOut.softness);
         mBlackRectShader.SetUniform("uOpaqueColor", config.neon.opaqueColor);
         if (ring)
         {

@@ -45,15 +45,16 @@ namespace EdgeLighting
     ///              feather STARTS along this side (always positive; sign is
     ///              implicit in whether it's the inside or outside cutoff).
     ///              Up to @c size the layer is untouched - the fill solid, the
-    ///              glow at full strength.
+    ///              glow at full strength - whenever @c softness is at or above
+    ///              the one-pixel floor below. Under it, see @c softness.
     ///              For the glow, a size past the glow's own reach is a no-op -
-    ///              there is no emission left to cut. For the fill it never is:
-    ///              the fill has no reach of its own, so a larger size always
-    ///              grows it.
+    ///              there is no emission left to cut. The fill has no reach of
+    ///              its own, so an OUTSIDE size always grows it; an INSIDE size
+    ///              stops mattering once it reaches min(width, height)/2, where
+    ///              the fill already covers the whole interior.
     ///   softness - feather width in pixels, running OUTWARD from @c size:
     ///              the layer is at full strength at @c size, 50% at
-    ///              @c size + softness/2, and gone at @c size + softness. The
-    ///              feather never eats into the first @c size px. 0 = a
+    ///              @c size + softness/2, and gone at @c size + softness. 0 = a
     ///              pixel-tight edge at @c size, not a hard one: the ramp's
     ///              WIDTH is floored at one destination pixel so the boundary
     ///              is antialiased, which matters wherever it curves - every
@@ -62,6 +63,15 @@ namespace EdgeLighting
     ///              softness below that floor still moves the edge out by
     ///              softness/2. Independent per side, and the same meaning for
     ///              both layers.
+    ///
+    ///              Below the floor the floored ramp is laid symmetrically
+    ///              about size + softness/2, so it STARTS up to half a floor
+    ///              inside @c size: 0.5 px at softness 0 on a straight edge,
+    ///              ~0.7 px on a diagonal. On the glow's reduced-resolution
+    ///              path the floor is one BUFFER pixel, so at
+    ///              @c resolutionScale 0.25 that is 2 full-res px inside
+    ///              @c size. It is the price of keeping a softness-0 edge's 50%
+    ///              point on @c size at every scale - see inMid in neon.frag.
     ///
     ///              NOTE this used to be centred on @c size - half the feather
     ///              inside it, half beyond - so a tuned non-zero softness now
