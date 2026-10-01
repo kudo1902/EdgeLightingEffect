@@ -431,6 +431,46 @@
 //     neon.frag's cutGuard and NeonRenderer::setupGeometry's cutGuardPx. ---
 #define BLIT_CUTOFF_GUARD_PX      2.0
 
+// --- Edge ring width. Scaled path only, CPU only.
+//
+//     Below resolutionScale 1.0, NeonRenderer redraws a ring around the rect
+//     edge at FULL resolution (the NEON_RING_PASS variant of neon.frag), reading
+//     only the gather's result from the reduced buffer. The ring reaches R
+//     full-res px either side of the edge (GetRingWidth in neon-renderer.cpp):
+//
+//         R = max(reach(1.0), reach(scale)) + RING_GUARD_TEXELS / scale
+//
+//     where reach(s) is the filament's reach as neon.frag computes it at scale
+//     s, in full-res px. BOTH, because inside R the reduced pass's filament -
+//     floored to what its buffer can sample, so wider than the real one
+//     whenever the line is thin - is replaced by the real one, and R has to
+//     clear whichever reaches further. Uncapped: the reach is where a filament
+//     has fallen to FILAMENT_CUTOFF of its gain, about 2/255 after the grade,
+//     which is exactly how far its error can show. RING_GUARD_TEXELS adds the
+//     reduced buffer's bilinear footprint past that.
+//
+//     Calibrated over lineWidth {1, 2, 4, 8, 16} x filamentFalloff
+//     {0.5, 1, 2, 4} x glowRadius {0, 2, 5, 20}, each config rendered at
+//     scales 0.75, 0.5 and 0.25 and compared against its own 1.0 render
+//     (docs/neon-resolution-scale-plan.md, step 5). Worst error over all 80:
+//
+//       RING_GUARD_TEXELS    scale 0.75    scale 0.5    scale 0.25
+//              0.5               3            12            3
+//              1.0               4             2            2
+//              2.0               2             2            2
+//
+//     1.0 is the smallest that holds 2/255 at 0.5 and 0.25, the targets. 2.0
+//     also brings 0.75 within 2 (its worst at 1.0 is a 1 px flat-top line
+//     with no glow) for a ring one buffer texel wider each side.
+//
+//     The two things that made the first version of this ring fail that sweep,
+//     both now handled: R used to cover only the full-res filament (fixed by
+//     taking the reduced pass's too, above), and at a small glowRadius pass 1's
+//     quad stopped short of R, so the ring read gather texels nothing wrote
+//     (fixed in NeonRenderer::setupGeometry, which now extends the quad to
+//     cover the ring). ---
+#define RING_GUARD_TEXELS         1.0
+
 // --- Stand-in distance for a cutoff that glowSide has already subsumed.
 //
 //     neon.frag hands this to the band distance on the side the one-sided cut

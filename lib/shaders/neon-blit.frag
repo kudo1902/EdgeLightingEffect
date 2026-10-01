@@ -1,7 +1,9 @@
 precision highp float;
 
 // Pass 2b of the scaled neon path: bilinear composite of the reduced-resolution
-// neon FBO (premultiplied colour + coverage alpha) onto the backbuffer. The
+// neon FBO (premultiplied colour + coverage alpha) onto the backbuffer,
+// everywhere EXCEPT the thin edge ring that pass 2c re-shades at full
+// resolution (NeonRenderer::setupRingGeometry builds the two areas). The
 // opaque-mode silhouette is handled entirely by the black-rect fullscreen pass
 // drawn just before this blit in NeonRenderer::Render - the black quad's
 // analytic SDF anti-aliasing lands cleanly on rounded corners regardless of
@@ -71,6 +73,14 @@ out vec4 fragColor;
 
 uniform sampler2D uSource;
 
+// vPos -> uSource UV. This pass draws the EDGE RING'S COMPLEMENT (see
+// NeonRenderer::setupRingGeometry) in rect-local full-res px under a full-res
+// transform, so vPos is no longer NDC: the CPU uploads 1 / viewport and
+// rectCentre / viewport, which is exactly the mapping the fullscreen NDC quad
+// gave. The ring reads the gather target through the same map.
+uniform vec2 uUVScale;
+uniform vec2 uUVOffset;
+
 // Geometry of the cut, all in FULL-RES px - this pass is never scaled. The
 // centre is in gl_FragCoord space (y up), mirrored CPU-side out of Config's
 // y-down convention, exactly as black-rect.frag takes it.
@@ -103,7 +113,7 @@ float bandOuterDistance(vec2 p, float d, vec2 halfSize, float r, float cut) {
 }
 
 void main() {
-    vec2 uv = vPos * 0.5 + 0.5;      // NDC [-1,1] (identity MVP) -> UV
+    vec2 uv = vPos * uUVScale + uUVOffset; // rect-local full-res px -> buffer UV
     vec4 src = texture(uSource, uv); // premultiplied colour + coverage alpha
 
     // GlowSide::BOTH pays nothing, and the branch that arranges that is safe

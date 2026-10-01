@@ -6,9 +6,10 @@ the reduced-resolution glow, and re-shade a thin ring around the rect edge at
 full resolution from the reduced pass's gather output. Read the proposal first
 for why. This document is only how.
 
-**Status: steps 0-4 done; steps 1-3 committed (`546d2b7`, `45bd1f0`,
-`c155a37`), step 4 not yet. Step 5 is next.** Section 11 lists the decisions
-still open.
+**Status: steps 0-5 done; steps 1-4 committed (`546d2b7`, `45bd1f0`,
+`c155a37`, `8a50121`), step 5 not yet. Step 6, the docs, is next.** Section
+11 lists the decisions still open; step 5 went ahead on the recommendations
+(always on below 1.0, RGBA8 gather target, harness kept out of the tree).
 
 The work is six steps, each committed and checked on its own before the next
 starts. Steps 1, 3 and 4 change no pixels at all, and step 2 changes only scenes
@@ -544,6 +545,87 @@ Calibrating `R`: sweep `lineWidth` {1, 2, 4, 8, 16} x `filamentFalloff`
 `RING_MAX_SIGMAS` and `RING_GUARD_TEXELS` that keep every combination within
 the quality check, and record the table in `neon-tuning.h` the way the other
 tuned constants there are recorded.
+
+**Done**, with the ring-width rule changed by what the calibration found.
+
+**Quality.** Max error against each scene's own 1.0 render, over all 17 neon
+scenes the harness now carries (the twelve, the partition scene, and the four
+cutoff scenes step 2 added; "before" covers the thirteen that existed then):
+
+| scale | 0.75 | 0.5 | 0.35 | 0.25 | 0.125 |
+| ----- | ---- | --- | ---- | ---- | ----- |
+| worst max, before (step 0) | 70 | 77 | 89 | 93 | 126 |
+| worst max, after | **2** | **2** | **2** | **3** | 11 |
+| worst p99, after | 1 | 1 | 1 | 1 | 4 |
+
+The 0.25 worst is `small_rect` at 3, inside the target of 4; everything else
+is within 2 at every scale but 0.125, where `small_rect` reads 11 - its whole
+rect is 20 x 12 buffer texels there, and the emulation predicted exactly 11.
+The hairline went from 77 / 93 to 2 / 1 at 0.5 / 0.25, the cutoff band from
+43 / 72 to 2 / 2, the flat-top tube from 41 / 60 to 1 / 1.
+
+**Motion.** The hairline's centroid now stays within +/-0.034 px of the true
+edge at 0.5, +/-0.027 at 0.25 and +/-0.031 at 0.125, against +/-0.153, +/-0.526
+and +/-1.797 before and +/-0.018 at 1.0. 0.75 is unchanged at +/-0.064: its
+ring is only ~3 px wide, so the reduced halo still dominates the 12 px window
+the sweep measures over. Not a target; see the calibration below for the knob.
+
+**Partition.** On the bright `partition` scene the error within 1.5 px of the
+ring's edge is 2 at 0.5, 0.25 and 0.125 - no worse than inside or outside it,
+so nothing is drawn twice or skipped. Every 1.0, spotlight and flare capture
+is byte-identical to step 4, and the regression pair still agrees.
+
+**What the calibration sweep changed.** Run first with the rule as planned,
+the 80-config sweep failed 6 configs at 0.5 and 12 at 0.25 - all thin lines,
+small glowRadius - for two reasons the emulation could not have seen:
+
+1. R covered only the full-res filament. Below 1.0 pass 1 draws the filament
+   floored to what its buffer can sample, which for a thin line reaches much
+   further (a 1 px line at 0.25: 1 px real, 5.7 px as drawn), and that showed
+   just outside the ring - the hairline read 40 at 0.25. R is now the wider
+   of the two reaches (`GetRingWidth`).
+2. `RING_MAX_SIGMAS` capped soft falloffs at 4 sigma, but at falloff 0.5 the
+   filament is still at 0.75 there, after its 12x gain. The reach is already
+   defined as where the filament has fallen to about 2/255, so the cap only
+   ever cut light that shows. It is gone.
+3. Separately, at glowRadius 0 pass 1's quad stopped at the filament's reach,
+   short of R, so the ring's outer pixels filtered against gather texels
+   nothing wrote and read the hue as black: `lineWidth` 2 / `glowRadius` 0 /
+   scale 0.75 read 50 on every lit pixel. `setupGeometry` now extends pass 1's
+   quad to R plus a texel on the scaled path. The colour attachment is
+   unaffected - past `uQuadMargin` the quad-edge fade zeroes it.
+
+Rerun with all three fixed, at each candidate `RING_GUARD_TEXELS`:
+
+| `RING_GUARD_TEXELS` | 0.75 | 0.5 | 0.25 |
+| ------------------- | ---- | --- | ---- |
+| 0.5 | worst 3 | worst 12 (8 configs over 2) | worst 3 (6 over 2) |
+| **1.0** | worst 4 (3 over 2) | **worst 2** | **worst 2** |
+| 2.0 | worst 2 | worst 2 | worst 2 |
+
+1.0 is the smallest that holds the targets, so it stays. 2.0 cleans up 0.75
+as well for a ring one buffer texel wider each side - a cheap option if 0.75
+matters. The table is recorded in `neon-tuning.h` beside the constant.
+
+**Cost**, min over three interleaved runs against step 4:
+
+| default scene | 1.0 | 0.5 | 0.25 |
+| ------------- | --- | --- | ---- |
+| 1280 x 720, step 4 | 1.87 ms | 0.547 | 0.180 |
+| 1280 x 720, step 5 | 1.88 ms | 0.583 (+35 us) | 0.219 (+39 us) |
+| 1920 x 1080, step 4 | 3.50 ms | 0.935 | 0.309 |
+| 1920 x 1080, step 5 | 3.48 ms | 0.977 (+42 us) | 0.357 (+48 us) |
+
+Inside the budget (+50 us at 0.5, +60 us at 0.25) at both sizes. Against 1.0
+the default scene is now 3.2x faster at 0.5 and 8.6x at 0.25 at 720p, and
+3.6x and 9.8x at 1080p. The ring costs 27-48 us across the scenes; with the
+partition scene's ring at ~5% of the frame, most of that is the pass's fixed
+cost - a program switch, ~25 uniform uploads and five texture binds - rather
+than its fragments. `bounded_band`, whose whole quad is barely wider than the
+ring, pays the same fixed cost and so loses most of what its small scaled
+saving was: 1.2x at 0.5 and 1.6x at 0.25.
+
+**Startup:** about +6.5 ms for the third program (20 ms -> 26 ms per effect).
 
 ## 8. Step 6: docs
 

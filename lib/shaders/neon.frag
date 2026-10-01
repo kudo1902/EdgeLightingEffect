@@ -71,6 +71,7 @@ uniform int   uWinding;               ///< 0 = CLOCKWISE, 1 = COUNTER_CLOCKWISE 
 // than as a bug.
 uniform float uResolutionScale;
 
+#ifndef NEON_RING_PASS
 // Loop sample positions (perimeter points) as a std140 uniform block. Each
 // entry is packed as a vec4 (only .xy is meaningful; std140 pads vec2 to a
 // 16-byte stride anyway) so the shader reads raw float32 out of the constant
@@ -90,6 +91,7 @@ layout(std140) uniform LoopSamplesBlock
 // exactly these indices, so texel i there is sample i here. The two must agree
 // or the gather reads emission belonging to a different perimeter position.
 uniform int uNumSamples;
+#endif
 
 // Travelling segments - up to MAX_SEGMENT_BOOSTS independent coloured lights
 // on the perimeter. Each vec4 is packed as (position, invSigma, boost,
@@ -154,7 +156,35 @@ uniform sampler2D uGradientLUT;
 // Read with texelFetch at integer sample index - never filtered, since
 // neighbouring texels are unrelated perimeter samples. See the gather loop
 // and docs/emission-prepass.md.
+//
+// Neither this table nor the two declarations above exist in the edge-ring
+// variant (NEON_RING_PASS): it reads the gather's RESULT instead of running
+// it, so it has no loop to feed. Leaving them declared would only have the
+// renderer binding blocks and samplers the program does not have.
+#ifndef NEON_RING_PASS
 uniform sampler2D uEmission;
+#endif
+
+#ifdef NEON_RING_PASS
+// The edge ring: below resolutionScale 1.0, NeonRenderer redraws a thin ring
+// around the rect edge at FULL resolution with this variant, over everything
+// the reduced pass got wrong there - the filament, which the reduced buffer
+// cannot sample, and every hard edge near the line. The one input it takes
+// from the reduced pass is the gather's result, which is smooth across the
+// screen and survives a bilinear read; everything else below is computed
+// exactly as the direct path computes it, with uResolutionScale 1.0. See
+// docs/neon-resolution-scale-plan.md step 5.
+//
+// uGather / uGatherSeg are the reduced buffer's attachments 1 and 2, written
+// by the NEON_WRITES_GATHER variant. uGatherSeg is bound only when there are
+// segments, and read only then. vPos maps onto their uv with the same affine
+// map neon-blit.frag samples the colour attachment with, so a ring pixel and
+// a blit pixel at one spot read one texel neighbourhood.
+uniform sampler2D uGather;
+uniform sampler2D uGatherSeg;
+uniform vec2      uGatherUVScale;
+uniform vec2      uGatherUVOffset;
+#endif
 
 // Distance (in pixels, from the rect edge) to the draw quad's edge. The whole
 // emission is faded to zero just before this, so the bloom never shows a hard
@@ -966,6 +996,34 @@ void main() {
     //
     // See docs/emission-prepass.md for the packing and the invariant that
     // keeps the split honest.
+#ifdef NEON_RING_PASS
+    // The gather's four results, read back from the reduced pass instead of
+    // recomputed. The loop below is most of this shader's cost - about three
+    // quarters of a full-res frame on the reference scenes - and the ring's
+    // whole point is to pay for everything EXCEPT it at full resolution.
+    //
+    // textureLod at level 0, not texture(): the discards above make control
+    // flow non-uniform here, where an implicit derivative is undefined (see the
+    // rule at sideAA). The attachments have no mip levels, so level 0 is what
+    // texture() would have read anyway.
+    //
+    // The coverages are stored as e = c / (1 + c) - see the write in the
+    // NEON_WRITES_GATHER block - and decoded after the bilinear read, which is
+    // the filtering the emulation behind the plan measured. The floor keeps a
+    // saturated texel (e = 1) finite: it decodes to 254, far above any
+    // coverage a config produces.
+    vec2  gatherUV          = vPos * uGatherUVScale + uGatherUVOffset;
+    vec4  gather0           = textureLod(uGather, gatherUV, 0.0);
+    vec3  col               = gather0.rgb;
+    float emitCoverGathered = gather0.a / max(1.0 - gather0.a, 1.0 / 255.0);
+    vec3  segColHue         = vec3(0.0);
+    float segCoverGathered  = 0.0;
+    if (uSegmentCount > 0) {
+        vec4 gather1     = textureLod(uGatherSeg, gatherUV, 0.0);
+        segColHue        = gather1.rgb;
+        segCoverGathered = gather1.a / max(1.0 - gather1.a, 1.0 / 255.0);
+    }
+#else
     vec3  acc       = vec3(0.0); // base colour x arc-gated gather weight
     vec3  segAcc    = vec3(0.0); // segment colour x bell x gather weight
     float wsumLit   = 0.0; // SUM ARC-GATED g     - normalises `col` (see below)
@@ -1081,6 +1139,7 @@ void main() {
     // below from the pointwise coverages.
     vec3 col       = acc    / max(wsumLit,  WSUM_EPSILON); // base perimeter hue
     vec3 segColHue = segAcc / max(wsumSegW, WSUM_EPSILON); // segment hue
+#endif
 
     // --- Continuous coverage, read at this fragment's own position -------
     // Recover the fragment's OWN continuous perimeter position GEOMETRICALLY
@@ -1258,9 +1317,11 @@ void main() {
     // ring above rests on wsumLit / wsumAll being exactly 1.0 when the two
     // sums are equal, and x * (1.0 / x) is not. Outside the loop, so it costs
     // one extra divide per fragment, not per sample.
+#ifndef NEON_RING_PASS
     float wsumDen           = max(wsumAll, WSUM_EPSILON);
     float emitCoverGathered = wsumLit  / wsumDen; // arc coverage x intensity
     float segCoverGathered  = wsumSegW / wsumDen; // segment boost x bell
+#endif
     vec3  segColGlow        = segColHue * segCoverGathered;
     float glowCoverAll      = max(emitCoverGathered, min(segCoverGathered, 1.0));
 

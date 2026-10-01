@@ -401,6 +401,190 @@ namespace EdgeLighting
                        std::string("#define ") + define + "\n");
             return out;
         }
+
+        /// Floor, in FULL-RES px, under every glow cutoff ramp's width. Mirrors
+        /// neon.frag's softFloor, which is what actually decides how far past a
+        /// cutoff the feather runs and therefore how much quad the shader needs.
+        /// Shared by the glow quad's outer cap (@ref GetGlowMargin) and its
+        /// inner hole. Leave it out and the quad edge lands inside the feather,
+        /// which is exactly the rectangular seam the +1 safety exists to prevent.
+        ///
+        /// ONE DESTINATION PIXEL ON BOTH PATHS. Below scale 1.0 the blit draws
+        /// the cutoff masks at destination resolution and neon.frag only places
+        /// its discards to agree with it, so the floor is a destination pixel
+        /// there too. (It was CUTOFF_SOFT_FLOOR_PX / scale while the masks were
+        /// drawn into the buffer.)
+        ///
+        /// Nominal, because the shader's is `sideAA` - fwidth(d), so it runs
+        /// 1.0 to 1.41 depending on which way the boundary faces and cannot be
+        /// known here. Under-stating it by the diagonal factor is absorbed by
+        /// the safety margins: the fade can end up to ~0.2 px past what
+        /// GetCutoffEnd reports on a diagonal, well inside the outer cap's
+        /// 1 px and GLOW_EDGE_SAFETY's 3. Conservative in the direction that
+        /// keeps the quad covering the band.
+        constexpr float CUTOFF_FLOOR_PX = 1.0f;
+
+        /// How far past the END of a cutoff's ramp neon.frag still draws, in
+        /// FULL-RES px. Mirrors its `cutGuard`: nothing on the direct path,
+        /// which culls where its masks end, and on the scaled path the guard
+        /// band the blit rebuilds the boundary from - stated in BUFFER px, so it
+        /// divides back out. The outer cap and the inner hole below both carry
+        /// it; leave it off either and the quad clips the texels the blit needs.
+        inline float GetCutoffGuardPx(float scale)
+        {
+            return (scale < 1.0f) ? (static_cast<float>(BLIT_CUTOFF_GUARD_PX) / scale) : 0.0f;
+        }
+
+        /// The filament's half-width @c sigma and the distance @c reach where
+        /// it is gone, in the px space of @p scale - buffer px below 1.0, the
+        /// full-res values at 1.0 - exactly as neon.frag computes them there.
+        typedef struct FilamentExtent
+        {
+            float sigma; ///< Half-brightness radius, floored as neon.frag floors it.
+            float reach; ///< sigma times the falloff's reach in sigmas.
+        } FilamentExtent;
+
+        /// @ref FilamentExtent for @p config at @p scale. The glow quad needs
+        /// it to clear the filament (@ref GetGlowMargin), and the edge ring
+        /// sizes itself from the full-res one (@ref NeonRenderer::setupRingGeometry).
+        /// One function so the two cannot drift from each other or from
+        /// neon.frag, whose sigma / reachSigmas this mirrors.
+        inline FilamentExtent GetFilamentExtent(const Config &config, float scale)
+        {
+            // The filament is sized by lineWidth, not glowRadius, so the quad must
+            // clear it as well as the glow. Without it, glowRadius = 0 ("filament only")
+            // produced a zero margin: the quad landed exactly on the rect and clipped
+            // every exterior fragment, so the outside half of the filament
+            // disappeared while the inside half stayed. Mirrors the shader's `sigma`.
+            // Reach in sigmas depends on the falloff exponent, not a constant - a
+            // soft filament's tail runs for hundreds of sigmas. Same expression as
+            // the shaders' reachSigmas; see neon-tuning.h.
+            const float filN = 2.0f * std::max(config.neon.filamentFalloff, 1e-3f);
+            const float filSigmas = std::clamp(
+                std::pow(std::log2(float(FILAMENT_GAIN) / float(FILAMENT_CUTOFF)), 1.0f / filN),
+                float(FILAMENT_REACH_MIN_SIGMAS), float(FILAMENT_REACH_MAX_SIGMAS));
+            // FILAMENT_MIN_HALF_WIDTH is a full-res constant, so the stated half
+            // width is taken in full-res px and scaled once - the same conversion
+            // the shader does with uResolutionScale.
+            //
+            // The SAMPLING floor is then applied in BUFFER px, after the scale,
+            // exactly as the shader's sigma does it: it is a property of the
+            // buffer, not of the width the caller asked for. Scale it here too and
+            // the quad is sized for a thinner filament than the shader draws,
+            // which clips the outside half of a thin line at a reduced scale -
+            // the same failure the lineWidth floor itself exists to prevent.
+            //
+            // It is not a fixed half width: what survives the blit depends on the
+            // profile's SHAPE as well as its width, so the floor is stated as "the
+            // profile must still be at FILAMENT_NYQUIST_MIN_SHARE of its peak
+            // FILAMENT_NYQUIST_SAMPLE_PX out" and inverted for sigma. Mirrors
+            // neon.frag exactly, gate included - at scale 1.0 there is no blit to
+            // survive and the direct path must stay bit-identical. Change one and
+            // the quad stops matching what the shader draws. See neon-tuning.h.
+            const float filamentNyquist =
+                (scale < 1.0f) ? (static_cast<float>(FILAMENT_NYQUIST_SAMPLE_PX) /
+                                  std::pow(std::log2(1.0f / static_cast<float>(FILAMENT_NYQUIST_MIN_SHARE)),
+                                           1.0f / filN))
+                               : 0.0f;
+            const float filamentSigma = std::max(
+                std::max(config.neon.lineWidth * 0.5f, float(FILAMENT_MIN_HALF_WIDTH)) * scale,
+                filamentNyquist);
+            return {filamentSigma, filamentSigma * filSigmas};
+        }
+
+        /// The edge ring's half-width R, in FULL-RES px, at the scale @p scale
+        /// is drawn at: how far either side of the rect edge the scaled path
+        /// re-shades at full resolution. Meaningless at 1.0, where no ring is
+        /// drawn.
+        ///
+        /// It has to cover the filament at BOTH resolutions: the real one the
+        /// ring draws, and the one pass 1 drew into the reduced buffer, which is
+        /// floored to what that buffer can sample and so reaches further
+        /// whenever the line is thin - a 1 px line at scale 0.25 reaches 1 px at
+        /// full res but 5.7 px as pass 1 drew it, and a ring sized for the
+        /// first left the second showing just outside it. Each reach is where
+        /// that filament has fallen to FILAMENT_CUTOFF of its gain, about 2/255
+        /// after the grade, so the reach itself is the right width and nothing
+        /// is capped. RING_GUARD_TEXELS then adds the reduced buffer's bilinear
+        /// footprint. See neon-tuning.h for the calibration.
+        ///
+        /// Asked by @ref NeonRenderer::setupRingGeometry to build the ring, and
+        /// by @ref NeonRenderer::setupGeometry to make pass 1's quad cover it.
+        inline float GetRingWidth(const Config &config, float scale)
+        {
+            const float fullReach = GetFilamentExtent(config, 1.0f).reach;
+            const float reducedReach = GetFilamentExtent(config, scale).reach / scale; // buffer px -> full-res
+            return std::max(fullReach, reducedReach) + static_cast<float>(RING_GUARD_TEXELS) / scale;
+        }
+
+        /// How far past the rect edge the glow quad reaches, in the px space
+        /// of @p scale: the margin @ref NeonRenderer::setupGeometry builds the
+        /// quad with and hands neon.frag as uQuadMargin. At @p scale 1.0 it is
+        /// the direct path's margin, which the edge ring fades against.
+        ///
+        /// Size the quad to cover the lit region: rect + glowReach, so geometry
+        /// bounds the far region instead of a per-fragment discard
+        /// (tiler-friendly). Factors come from the shared neon-tuning.h.
+        ///
+        /// glowRadius ONLY - deliberately not the old
+        /// max(glowRadius * RADIUS, sampleSpacing * SPACING). sampleSpacing is
+        /// perimeter / NEON_MAX_LOOP_SAMPLES, so the spacing term won on any
+        /// reasonably large rect at default glowRadius and made the quad - and
+        /// with it the distance the bloom got truncated at, and the brightness
+        /// it still had there - track the rect size: the fade began at 250 px on
+        /// a 200x150 rect and 1542 px on a 1920x1080 one. The bloom's reach is a
+        /// function of glowRadius and nothing else, so that is all that sizes the
+        /// quad now. It also caps the worst case: the old spacing term asked for
+        /// a ~5800x4900 px quad on a 1920x1080 rect.
+        ///
+        /// The wide bloom (1/D tail) stays visible further out as bloomStrength /
+        /// intensity rise, so grow the quad with them. The shader reproduces this
+        /// exact expression to place its bloom pedestal, which is what lets the
+        /// margin stay this tight without the truncation showing - keep the two
+        /// in step.
+        inline float GetGlowMargin(const Config &config, float scale)
+        {
+            const float glowReach = config.neon.glowRadius * scale * float(GLOW_REACH_RADIUS_FACTOR) *
+                                    (1.0f + config.neon.bloomStrength * config.neon.intensity);
+
+            float margin = std::max(glowReach, GetFilamentExtent(config, scale).reach);
+
+            // Hard cap: when the outside cutoff is enabled the shader discards
+            // emission past size + softness (the feather starts at size - see
+            // GetCutoffEnd), so there's no point rasterising further. Disabled
+            // outside cutoff leaves the natural glowRadius / bloom-driven margin
+            // untouched. Add a 1 px safety so the shader's own softmask fades to
+            // zero *before* the quad edge and no rectangular seam leaks through.
+            //
+            // The WHOLE expression is built in full-res px and scaled once, so the
+            // safety margin is 1 FULL-RES px at every resolution scale. Adding the
+            // +1 after the scale instead makes it 1 buffer px - 2 full-res px at
+            // scale 0.5 - which pushes the quad edge out and with it the ramp the
+            // shader fits between the cutoff boundary and uQuadMargin. Same units
+            // on both sides is also what makes the shader's fadeStart floor engage
+            // at the same cutoff size regardless of scale.
+            //
+            // Skipped under GlowSide::INSIDE, where neon.frag neutralises this
+            // cutoff as subsumed by the cut - see the band-distance block there. A
+            // cap derived from a mask the shader no longer applies would bound the
+            // quad to a region the shader still lights, and on the scaled path the
+            // region it would eat is the one-sided cut's guard band
+            // (BLIT_SIDE_GUARD_PX), which the blit rebuilds that cut from. A small
+            // enough cutoff lands inside it.
+            if (config.neon.outsideCutoff.enable && config.neon.glowSide != GlowSide::INSIDE)
+            {
+                // Where neon.frag's outside fade ends, plus the scaled path's guard
+                // band, plus the 1 px safety. The capped margin becomes
+                // uQuadMargin, and neon.frag's fadeStart floor needs its cutEdge -
+                // that same end, guard included - to sit strictly inside it; the +1
+                // is what guarantees that. Drop it and the quad fade starts at
+                // 0.8 * margin, inside the band.
+                const float cutoffCap =
+                    (GetCutoffEnd(config.neon.outsideCutoff, CUTOFF_FLOOR_PX) + GetCutoffGuardPx(scale) + 1.0f) * scale;
+                margin = std::min(margin, cutoffCap);
+            }
+            return margin;
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -439,10 +623,13 @@ namespace EdgeLighting
         // exactly once and never returns, so there is nothing to separate.
         mGlowVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
         mFillVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+        mRingVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+        mBlitVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
 
         rebuildLoopSamples(mCurrentConfig);
         setupGeometry(mCurrentConfig);
         setupFillGeometry(mCurrentConfig);
+        setupRingGeometry(mCurrentConfig);
         // The atlas bakes read the merged transient+preserved view, which
         // OnConfigChanged normally keeps current; seed it here for the first.
         SegmentUtils::FillEffectiveSegments(mCurrentConfig.neon, mEffectiveSegments);
@@ -475,8 +662,10 @@ namespace EdgeLighting
         // retargets, its own framebuffer restore. Blend state is owned HERE.
         //
         // ONE schedule serves both resolution paths. `scaled` changes only
-        // where the gather lands and whether the blit runs - not the order,
-        // not the blend timeline, and not the guards. The fill is what makes
+        // where the gather lands, which program variant draws it, and whether
+        // the blit and the edge ring run - not the order and not the guards.
+        // The blend timeline differs in exactly one place, pass 1, and says
+        // why there. The fill is what makes
         // that possible: it draws full-res on the caller's framebuffer, which
         // is independent of the buffer the gather draws into, so fill-first is
         // correct whether the glow arrives directly (it composites over the
@@ -640,8 +829,9 @@ namespace EdgeLighting
         // --- Pass 2b: composite the scaled gather ---------------------------
         // Only the scaled path has anything to composite; on the direct path
         // pass 1 already drew onto the target. Skipped along with the gather
-        // when either allocation failed, so a failed frame degrades to the
-        // fill rather than blitting a stale buffer from an earlier frame.
+        // (and with 2c, which reads the same buffer) when either allocation
+        // failed, so a failed frame degrades to the fill rather than
+        // compositing a stale buffer from an earlier frame.
         if (scaled)
         {
             // Back to the caller's target and viewport, both at once.
@@ -655,7 +845,14 @@ namespace EdgeLighting
                 // this path.
                 glEnable(GL_BLEND);
                 glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-                renderBlitPass(viewportHeight, config);
+                renderBlitPass(viewportWidth, viewportHeight, config);
+
+                // --- Pass 2c: the edge ring ---------------------------------
+                // Same target, same blend: the ring composites into exactly
+                // the area the blit left out, so the order between the two
+                // does not matter for the result. It is one more draw on a
+                // framebuffer already bound, not another render-target switch.
+                renderRingPass(viewportWidth, viewportHeight, time, config);
             }
         }
 
@@ -717,6 +914,15 @@ namespace EdgeLighting
         // the ring but not the glow quad, and glowRadius / bloomStrength / the
         // glow cutoffs move the glow quad but not the ring. Only the geometry
         // moves both.
+        // The edge ring is sized by the filament (lineWidth, filamentFalloff)
+        // and the reduced buffer's texel (resolutionScale), and placed by the
+        // geometry - and by nothing else, so an intensity or glow animation
+        // does not rebuild it. Its quad-edge fade margin is a uniform, kept
+        // current by setupGeometry under geometryDirty instead.
+        const bool ringDirty = config.geometry != mCurrentConfig.geometry ||
+                               config.neon.resolutionScale != mCurrentConfig.neon.resolutionScale ||
+                               config.neon.lineWidth != mCurrentConfig.neon.lineWidth ||
+                               config.neon.filamentFalloff != mCurrentConfig.neon.filamentFalloff;
         const bool fillDirty = config.geometry != mCurrentConfig.geometry ||
                                config.neon.opaqueMode != mCurrentConfig.neon.opaqueMode ||
                                config.neon.opaqueInsideCutoff != mCurrentConfig.neon.opaqueInsideCutoff ||
@@ -849,6 +1055,11 @@ namespace EdgeLighting
             setupFillGeometry(config);
         }
 
+        if (ringDirty)
+        {
+            setupRingGeometry(config);
+        }
+
         bakeLUTs(config);
     }
 
@@ -867,6 +1078,12 @@ namespace EdgeLighting
         mNeonScaledShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                           scaledSrc.c_str(),
                                           "NeonRenderer.Scaled");
+        // The edge ring's variant: the same shading with the gather replaced by
+        // a read of what the scaled program above stored. See renderRingPass.
+        const std::string ringSrc = WithDefine(ShaderSource::NEON_FRAG_SRC, "NEON_RING_PASS");
+        mNeonRingShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
+                                        ringSrc.c_str(),
+                                        "NeonRenderer.Ring");
         // Emission pre-pass. Reuses the neon vertex shader (uMVP -> vPos); the
         // fragment shader ignores vPos and keys off gl_FragCoord instead.
         mEmissionShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
@@ -885,18 +1102,22 @@ namespace EdgeLighting
         mBlitShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                     ShaderSource::NEON_BLIT_FRAG_SRC,
                                     "NeonRenderer.Blit");
-        if (!mNeonShader.IsValid() || !mNeonScaledShader.IsValid() || !mBlackRectShader.IsValid() ||
-            !mBlitShader.IsValid() || !mEmissionShader.IsValid())
+        if (!mNeonShader.IsValid() || !mNeonScaledShader.IsValid() || !mNeonRingShader.IsValid() ||
+            !mBlackRectShader.IsValid() || !mBlitShader.IsValid() || !mEmissionShader.IsValid())
         {
             return false;
         }
 
-        // Both neon programs read the same three blocks, at the same bindings.
-        for (ShaderProgram *neon : {&mNeonShader, &mNeonScaledShader})
+        // Every neon program reads the segment and arc blocks, at the same
+        // bindings; only the two that run the gather have the sample block.
+        for (ShaderProgram *neon : {&mNeonShader, &mNeonScaledShader, &mNeonRingShader})
         {
             neon->SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
-            neon->SetUniformBlockBinding("LoopSamplesBlock", LOOP_SAMPLES_BLOCK_BINDING);
             neon->SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
+        }
+        for (ShaderProgram *neon : {&mNeonShader, &mNeonScaledShader})
+        {
+            neon->SetUniformBlockBinding("LoopSamplesBlock", LOOP_SAMPLES_BLOCK_BINDING);
         }
         // The pre-pass reads the same two blocks the main pass does, so they
         // share bindings and are packed once per frame before either runs.
@@ -929,121 +1150,21 @@ namespace EdgeLighting
 
     void NeonRenderer::setupGeometry(const Config &config)
     {
-        // Size the quad to cover the lit region: rect + glowReach, so geometry
-        // bounds the far region instead of a per-fragment discard
-        // (tiler-friendly). Factors come from the shared neon-tuning.h.
-        //
-        // glowRadius ONLY - deliberately not the old
-        // max(glowRadius * RADIUS, sampleSpacing * SPACING). sampleSpacing is
-        // perimeter / NEON_MAX_LOOP_SAMPLES, so the spacing term won on any
-        // reasonably large rect at default glowRadius and made the quad - and
-        // with it the distance the bloom got truncated at, and the brightness
-        // it still had there - track the rect size: the fade began at 250 px on
-        // a 200x150 rect and 1542 px on a 1920x1080 one. The bloom's reach is a
-        // function of glowRadius and nothing else, so that is all that sizes the
-        // quad now. It also caps the worst case: the old spacing term asked for
-        // a ~5800x4900 px quad on a 1920x1080 rect.
-        //
-        // The wide bloom (1/D tail) stays visible further out as bloomStrength /
-        // intensity rise, so grow the quad with them. The shader reproduces this
-        // exact expression to place its bloom pedestal, which is what lets the
-        // margin stay this tight without the truncation showing - keep the two
-        // in step.
+        // Size the quad to cover the lit region: rect + the glow's margin, so
+        // geometry bounds the far region instead of a per-fragment discard
+        // (tiler-friendly). The margin - glow reach, the filament floor under
+        // it and the outside-cutoff cap over it - is @ref GetGlowMargin, which
+        // the edge ring also asks for at scale 1.0. See there for each term.
         //
         // The whole quad is built in SCALED space, matching the transform and
         // the uniforms Render uploads. At resolutionScale 1.0 the factor is
         // identity and every expression below is its full-res form.
         const float scale = GetClampedResolutionScale(config);
+        const float margin = GetGlowMargin(config, scale);
 
-        float glowReach = config.neon.glowRadius * scale * float(GLOW_REACH_RADIUS_FACTOR) *
-                          (1.0f + config.neon.bloomStrength * config.neon.intensity);
-
-        // ...but the filament is sized by lineWidth, not glowRadius, so the quad
-        // must clear it too. Without this floor, glowRadius = 0 ("filament only")
-        // produced a zero margin: the quad landed exactly on the rect and clipped
-        // every exterior fragment, so the outside half of the filament
-        // disappeared while the inside half stayed. Mirrors the shader's `sigma`.
-        // Reach in sigmas depends on the falloff exponent, not a constant - a
-        // soft filament's tail runs for hundreds of sigmas. Same expression as
-        // the shaders' reachSigmas; see neon-tuning.h.
-        float filN = 2.0f * std::max(config.neon.filamentFalloff, 1e-3f);
-        float filSigmas = std::clamp(
-            std::pow(std::log2(float(FILAMENT_GAIN) / float(FILAMENT_CUTOFF)), 1.0f / filN),
-            float(FILAMENT_REACH_MIN_SIGMAS), float(FILAMENT_REACH_MAX_SIGMAS));
-        // FILAMENT_MIN_HALF_WIDTH is a full-res constant, so the stated half
-        // width is taken in full-res px and scaled once - the same conversion
-        // the shader does with uResolutionScale.
-        //
-        // The SAMPLING floor is then applied in BUFFER px, after the scale,
-        // exactly as the shader's sigma does it and for the same reason the
-        // softFloor below is converted the other way: it is a property of the
-        // buffer, not of the width the caller asked for. Scale it here too and
-        // the quad is sized for a thinner filament than the shader draws,
-        // which clips the outside half of a thin line at a reduced scale -
-        // the same failure the lineWidth floor itself exists to prevent.
-        //
-        // It is not a fixed half width: what survives the blit depends on the
-        // profile's SHAPE as well as its width, so the floor is stated as "the
-        // profile must still be at FILAMENT_NYQUIST_MIN_SHARE of its peak
-        // FILAMENT_NYQUIST_SAMPLE_PX out" and inverted for sigma. Mirrors
-        // neon.frag exactly, gate included - at scale 1.0 there is no blit to
-        // survive and the direct path must stay bit-identical. Change one and
-        // the quad stops matching what the shader draws. See neon-tuning.h.
-        const float filamentNyquist =
-            (scale < 1.0f) ? (static_cast<float>(FILAMENT_NYQUIST_SAMPLE_PX) /
-                              std::pow(std::log2(1.0f / static_cast<float>(FILAMENT_NYQUIST_MIN_SHARE)),
-                                       1.0f / filN))
-                           : 0.0f;
-        float filamentSigma = std::max(
-            std::max(config.neon.lineWidth * 0.5f, float(FILAMENT_MIN_HALF_WIDTH)) * scale,
-            filamentNyquist);
-        float filamentReach = filamentSigma * filSigmas;
-
-        float margin = std::max(glowReach, filamentReach);
-
-        // Hard cap: when the outside cutoff is enabled the shader discards
-        // emission past size + softness (the feather starts at size - see
-        // GetCutoffEnd), so there's no point rasterising further. Disabled
-        // outside cutoff leaves the natural glowRadius / bloom-driven margin
-        // untouched. Add a 1 px safety so the shader's own softmask fades to
-        // zero *before* the quad edge and no rectangular seam leaks through.
-        //
-        // The WHOLE expression is built in full-res px and scaled once, so the
-        // safety margin is 1 FULL-RES px at every resolution scale. Adding the
-        // +1 after the scale instead makes it 1 buffer px - 2 full-res px at
-        // scale 0.5 - which pushes the quad edge out and with it the ramp the
-        // shader fits between the cutoff boundary and uQuadMargin. Same units
-        // on both sides is also what makes the shader's fadeStart floor engage
-        // at the same cutoff size regardless of scale.
-        // Mirrors neon.frag's softFloor, which is what actually decides how far
-        // past a cutoff the feather runs and therefore how much quad the shader
-        // needs. Leave it out and the quad edge lands inside the feather, which
-        // is exactly the rectangular seam the +1 safety exists to prevent.
-        //
-        // ONE DESTINATION PIXEL ON BOTH PATHS. Below scale 1.0 the blit draws
-        // the cutoff masks at destination resolution and neon.frag only places
-        // its discards to agree with it, so the floor is a destination pixel
-        // there too. (It was CUTOFF_SOFT_FLOOR_PX / scale while the masks were
-        // drawn into the buffer.)
-        //
-        // Nominal, because the shader's is `sideAA` - fwidth(d), so it runs
-        // 1.0 to 1.41 depending on which way the boundary faces and cannot be
-        // known here. Under-stating it by the diagonal factor is absorbed by
-        // the safety margins: the fade can end up to ~0.2 px past what
-        // GetCutoffEnd reports on a diagonal, well inside the outer cap's
-        // 1 px and GLOW_EDGE_SAFETY's 3. Conservative in the direction that
-        // keeps the quad covering the band.
-        const float softFloor = 1.0f;
-
-        // How far past the END of a cutoff's ramp neon.frag still draws, in
-        // FULL-RES px. Mirrors its `cutGuard`: nothing on the direct path,
-        // which culls where its masks end, and on the scaled path the guard
-        // band the blit rebuilds the boundary from - stated in BUFFER px, so it
-        // divides back out. The outer cap and the inner hole below both carry
-        // it; leave it off either and the quad clips the texels the blit needs.
-        const float cutGuardPx = (scale < 1.0f)
-                                     ? (static_cast<float>(BLIT_CUTOFF_GUARD_PX) / scale)
-                                     : 0.0f;
+        // The scaled path's cutoff guard band, in FULL-RES px - see
+        // GetCutoffGuardPx. The inner hole below carries it like the outer cap.
+        const float cutGuardPx = GetCutoffGuardPx(scale);
 
         // How far past the rect edge the one-sided cut still draws, on the side
         // it culls, in FULL-RES px. Mirrors neon.frag's `sideCull`: half a
@@ -1055,25 +1176,6 @@ namespace EdgeLighting
                                      ? (static_cast<float>(BLIT_SIDE_GUARD_PX) / scale)
                                      : 1.0f;
 
-        // Skipped under GlowSide::INSIDE, where neon.frag neutralises this
-        // cutoff as subsumed by the cut - see the band-distance block there. A
-        // cap derived from a mask the shader no longer applies would bound the
-        // quad to a region the shader still lights, and on the scaled path the
-        // region it would eat is the one-sided cut's guard band
-        // (BLIT_SIDE_GUARD_PX), which the blit rebuilds that cut from. A small
-        // enough cutoff lands inside it.
-        if (config.neon.outsideCutoff.enable && config.neon.glowSide != GlowSide::INSIDE)
-        {
-            // Where neon.frag's outside fade ends, plus the scaled path's guard
-            // band, plus the 1 px safety. The capped margin becomes
-            // uQuadMargin, and neon.frag's fadeStart floor needs its cutEdge -
-            // that same end, guard included - to sit strictly inside it; the +1
-            // is what guarantees that. Drop it and the quad fade starts at
-            // 0.8 * margin, inside the band.
-            float cutoffCap = (GetCutoffEnd(config.neon.outsideCutoff, softFloor) + cutGuardPx + 1.0f) * scale;
-            margin = std::min(margin, cutoffCap);
-        }
-
         // uQuadMargin KEEPS THE UNCAPPED VALUE. It is not a description of the
         // rectangle being drawn; it is the distance the shader fades its
         // emission out over, and neon.frag's quad-edge fade is written against
@@ -1082,7 +1184,7 @@ namespace EdgeLighting
         // where it lands on the lit interior and erases it - measured on a
         // 300x200 rect at glowRadius 40, glowSide INSIDE: the glow survived to
         // 11 px inside the edge and was flat black from 13 px in, 48131 pixels
-        // of interior gone. The outside-cutoff cap above has the same shape and
+        // of interior gone. GetGlowMargin's outside-cutoff cap has the same shape and
         // is safe only where the cutoff's own mask HAS taken that region to
         // zero - which is why it is now skipped on the side glowSide culls,
         // where the shader neutralises that mask and nothing takes it to zero.
@@ -1092,6 +1194,12 @@ namespace EdgeLighting
         // cull makes the second one smaller, and where they disagree the
         // fragments that go missing are ones the shader discards anyway.
         mQuadMargin = margin;
+
+        // The edge ring shades at FULL resolution, so it fades against the
+        // margin the direct path would use rather than this one - which on the
+        // scaled path carries the Nyquist-widened filament and the guard band.
+        // See renderRingPass.
+        mRingQuadMargin = GetGlowMargin(config, 1.0f);
 
         float halfW = config.geometry.width * 0.5f * scale;
         float halfH = config.geometry.height * 0.5f * scale;
@@ -1112,6 +1220,24 @@ namespace EdgeLighting
         if (config.neon.glowSide == GlowSide::INSIDE)
         {
             geomMargin = std::min(geomMargin, (sideCullPx + GLOW_EDGE_SAFETY) * scale);
+        }
+        // ...but on the scaled path pass 1 also writes the GATHER TARGET, which
+        // the edge ring reads bilinearly out to its full width - so the quad
+        // must reach the ring's edge plus one texel, or the ring's outer pixels
+        // filter against texels nothing wrote and read the gather's hue as
+        // black. That bites only where the glow's own margin is narrower than
+        // the ring, which is a small glowRadius: measured at lineWidth 2,
+        // glowRadius 0, scale 0.75, the filament's outer half came back at 62
+        // against 111 one and a half pixels out.
+        //
+        // The colour attachment is unaffected: past uQuadMargin, which this
+        // does not move, neon.frag's quad-edge fade zeroes it. Under
+        // GlowSide::INSIDE the ring's outer half is masked by the cut, so the
+        // cap above stands; the guard band it keeps already covers the ring's
+        // footprint on the lit side.
+        if (scale < 1.0f && config.neon.glowSide != GlowSide::INSIDE)
+        {
+            geomMargin = std::max(geomMargin, GetRingWidth(config, scale) * scale + 1.0f + GLOW_EDGE_SAFETY * scale);
         }
 
         // How far INWARD the glow still reaches, in full-res px. The quad has
@@ -1143,7 +1269,7 @@ namespace EdgeLighting
             // neon.frag discards at dIn < -(inHalf + cutGuard), i.e. past the
             // end of the inside fade - the point GetCutoffEnd computes - plus
             // the scaled path's guard band.
-            innerReach = GetCutoffEnd(config.neon.insideCutoff, softFloor) + cutGuardPx;
+            innerReach = GetCutoffEnd(config.neon.insideCutoff, CUTOFF_FLOOR_PX) + cutGuardPx;
         }
         const float innerMargin = (innerReach + GLOW_EDGE_SAFETY) * scale;
 
@@ -1401,6 +1527,96 @@ namespace EdgeLighting
         mFillVertexCount = 24;
     }
 
+    void NeonRenderer::setupRingGeometry(const Config &config)
+    {
+        // Scale 1.0 is the direct path: neither the blit nor the ring runs, so
+        // there is nothing to partition. Keyed on the clamped scale rather than
+        // on UsesScaledBuffer, because `enable` is not in this method's dirty
+        // gate and nothing here depends on it.
+        const float scale = GetClampedResolutionScale(config);
+        if (scale >= 1.0f)
+        {
+            mRingVertexCount = 0;
+            mBlitVertexCount = 0;
+            mRingWidth = 0.0f;
+            return;
+        }
+
+        // R, in FULL-RES px - see GetRingWidth.
+        mRingWidth = GetRingWidth(config, scale);
+
+        const float halfW = config.geometry.width * 0.5f;
+        const float halfH = config.geometry.height * 0.5f;
+        const float radius = GeometryUtils::GetEffectiveCornerRadius(config.geometry);
+
+        // OUTER box. The outward parallel curve of a rounded box at distance R
+        // is a rounded box grown by R, so this is its bound exactly - the same
+        // argument as setupFillGeometry's outer edge.
+        const float ow = halfW + mRingWidth;
+        const float oh = halfH + mRingWidth;
+
+        // HOLE: the largest axis-aligned rectangle inside the INWARD parallel
+        // curve at R, by setupFillGeometry's construction - a rounded box
+        // shrunk by R, whose corners pull the rectangle in by
+        // holeRadius * (1 - 1/sqrt(2)). Everything outside the hole and inside
+        // the outer box is the ring; it over-covers |d| <= R near the corners,
+        // and those few pixels are shaded at full resolution, which is exact.
+        constexpr float CORNER_INSET_FACTOR = 0.2928932f; // 1 - 1/sqrt(2)
+        const float holeRadius = std::max(radius - mRingWidth, 0.0f);
+        const float cornerInset = holeRadius * CORNER_INSET_FACTOR;
+        const float iw = std::max(halfW - mRingWidth - cornerInset, 0.0f);
+        const float ih = std::max(halfH - mRingWidth - cornerInset, 0.0f);
+
+        // The blit area's frame runs out past any legal viewport, as the fill
+        // ring's outer edge does (FILL_MAX_OUTER_MARGIN); the rasteriser clips
+        // it. Only its INNER edges matter, and they are the ring's outer box.
+        constexpr float BLIT_FRAME_MARGIN = 65536.0f;
+        const float bx = ow + BLIT_FRAME_MARGIN;
+        const float by = oh + BLIT_FRAME_MARGIN;
+
+        // Two triangles per rectangle, wound like every other strip here.
+        auto pushRect = [](std::vector<float> &v, float l, float b, float r, float t)
+        {
+            const float quad[] = {l, t, l, b, r, b, l, t, r, b, r, t};
+            v.insert(v.end(), std::begin(quad), std::end(quad));
+        };
+
+        // THE PARTITION. Both arrays are emitted from the SAME floats: the ring's
+        // outer box is the frame's inner edge, and the ring's hole is the blit's
+        // centre quad. Axis-aligned edges at identical coordinates rasterise
+        // identically, and the fill rule hands a pixel centred exactly on one
+        // to one side only - so every pixel is drawn by exactly one of the two
+        // passes, with no per-pixel test and no float compared across programs.
+        // Both composite premultiplied-over, so a pixel drawn twice would
+        // composite twice; build these two anywhere but here, from separately
+        // computed values, and that guarantee goes.
+        std::vector<float> ring;
+        ring.reserve(48);
+        pushRect(ring, -ow, ih, ow, oh);   // top: full width
+        pushRect(ring, -ow, -oh, ow, -ih); // bottom: full width
+        pushRect(ring, -ow, -ih, -iw, ih); // left: across the hole only
+        pushRect(ring, iw, -ih, ow, ih);   // right: across the hole only
+
+        std::vector<float> blit;
+        blit.reserve(60);
+        pushRect(blit, -bx, oh, bx, by);   // above the ring
+        pushRect(blit, -bx, -by, bx, -oh); // below it
+        pushRect(blit, -bx, -oh, -ow, oh); // left of it
+        pushRect(blit, ow, -oh, bx, oh);   // right of it
+        // The hole, unless the ring has swallowed the rect: then the ring's
+        // strips meet in the middle and there is no centre to blit.
+        if (iw > 0.0f && ih > 0.0f)
+        {
+            pushRect(blit, -iw, -ih, iw, ih);
+        }
+
+        // GL_DYNAMIC_DRAW and no SetAttribPointer, as in setupGeometry.
+        mRingVertexArray.SetVertexData(ring.data(), ring.size() * sizeof(float), GL_DYNAMIC_DRAW);
+        mRingVertexCount = static_cast<int>(ring.size() / 2);
+        mBlitVertexArray.SetVertexData(blit.data(), blit.size() * sizeof(float), GL_DYNAMIC_DRAW);
+        mBlitVertexCount = static_cast<int>(blit.size() / 2);
+    }
+
     void NeonRenderer::rebuildLoopSamples(const Config &config)
     {
         // Evenly spaced points (by arc length) around the rounded-rect perimeter.
@@ -1646,7 +1862,7 @@ namespace EdgeLighting
     }
 
     void NeonRenderer::uploadNeonUniforms(ShaderProgram &shader, const glm::mat4 &mvp, float scale,
-                                          float time, const Config &config)
+                                          float time, float quadMargin, const Config &config)
     {
         // Every pixel-valued uniform below is multiplied by `scale`, which is
         // 1.0 on the direct path - so the two paths upload literally the same
@@ -1674,12 +1890,6 @@ namespace EdgeLighting
 
         shader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
 
-        // Loop sample positions come from the LoopSamplesBlock UBO (see
-        // neon.frag) - raw float32 vec4[N], .xy holds the perimeter point in
-        // the same scaled space as the transform above.
-        mLoopSamplesBlock.BindBase(LOOP_SAMPLES_BLOCK_BINDING);
-        shader.SetUniform("uNumSamples", GetClampedNumSamples(config));
-
         // The three LUT atlases are no longer read by the gather (the emission
         // pre-pass consumes them instead), but the pointwise path still samples
         // them for the colour-stop alpha - see the alpha reads in neon.frag.
@@ -1689,11 +1899,7 @@ namespace EdgeLighting
         shader.SetUniform("uSegmentLUT", 1);
         mArcLUT.Bind(2);
         shader.SetUniform("uArcLUT", 2);
-        // Emission table from pass 0 on unit 3; the gather texelFetches both
-        // of its rows per sample.
-        mEmissionBuffer.BindTexture(3);
-        shader.SetUniform("uEmission", 3);
-        shader.SetUniform("uQuadMargin", mQuadMargin);
+        shader.SetUniform("uQuadMargin", quadMargin);
     }
 
     bool NeonRenderer::renderNeonPass(const glm::mat4 &mvp, int bufWidth, int bufHeight,
@@ -1765,7 +1971,18 @@ namespace EdgeLighting
         // exactly the same uniforms.
         ShaderProgram &shader = scaled ? mNeonScaledShader : mNeonShader;
         shader.Use();
-        uploadNeonUniforms(shader, mvp, scale, time, config);
+        uploadNeonUniforms(shader, mvp, scale, time, mQuadMargin, config);
+
+        // The gather's own inputs, which the edge ring's program does not have.
+        // Loop sample positions come from the LoopSamplesBlock UBO (see
+        // neon.frag) - raw float32 vec4[N], .xy holds the perimeter point in
+        // the same scaled space as the transform above.
+        mLoopSamplesBlock.BindBase(LOOP_SAMPLES_BLOCK_BINDING);
+        shader.SetUniform("uNumSamples", GetClampedNumSamples(config));
+        // Emission table from pass 0 on unit 3; the gather texelFetches both
+        // of its rows per sample.
+        mEmissionBuffer.BindTexture(3);
+        shader.SetUniform("uEmission", 3);
 
         // Tight glow quad in both modes - opaque's far region is covered by the
         // fill pass, so the gather never runs fullscreen.
@@ -1992,7 +2209,7 @@ namespace EdgeLighting
         mBlackRectShader.Unuse();
     }
 
-    void NeonRenderer::renderBlitPass(int viewportHeight, const Config &config)
+    void NeonRenderer::renderBlitPass(int viewportWidth, int viewportHeight, const Config &config)
     {
         // Bilinear upscaling of premultiplied alpha is fringe-free; the blit
         // shader composites over whatever is on the target already (the black
@@ -2006,7 +2223,6 @@ namespace EdgeLighting
         // every cutoff by a buffer texel. This pass is full-res, so both land
         // where the direct path puts them. See neon-blit.frag.
         mBlitShader.Use();
-        mBlitShader.SetUniform("uMVP", glm::mat4(1.0f));
 
         // FULL-RES geometry, and derived here rather than from Render's scaled
         // transform - the same reasoning, and the same y mirror, as
@@ -2016,6 +2232,33 @@ namespace EdgeLighting
         const glm::vec2 centerFull(config.geometry.position.x + config.geometry.width * 0.5f,
                                    static_cast<float>(viewportHeight) - config.geometry.position.y -
                                        config.geometry.height * 0.5f);
+        const glm::vec2 viewport(static_cast<float>(viewportWidth), static_cast<float>(viewportHeight));
+
+        // The area this pass covers is everything EXCEPT the edge ring, which
+        // pass 2c re-shades at full resolution - mBlitVertexArray, in full-res
+        // rect-local px, so it goes up under the full-res transform the fill
+        // uses. vPos is then rect-local px rather than NDC, and maps onto the
+        // buffer as (centre + vPos) / viewport: exactly what the fullscreen
+        // quad's NDC gave, since the buffer covers the viewport corner to
+        // corner (see the extent note in Render). The ring reads the gather
+        // target through the same map.
+        //
+        // An empty partition - only possible if the ring was never built for
+        // this scale - falls back to the whole viewport, which is this pass as
+        // it was before the ring existed, rather than to no glow at all.
+        if (mBlitVertexCount > 0)
+        {
+            const glm::mat4 proj = glm::ortho(0.0f, viewport.x, 0.0f, viewport.y, -1.0f, 1.0f);
+            mBlitShader.SetUniform("uMVP", proj * glm::translate(glm::mat4(1.0f), glm::vec3(centerFull, 0.0f)));
+            mBlitShader.SetUniform("uUVScale", glm::vec2(1.0f) / viewport);
+            mBlitShader.SetUniform("uUVOffset", centerFull / viewport);
+        }
+        else
+        {
+            mBlitShader.SetUniform("uMVP", glm::mat4(1.0f));
+            mBlitShader.SetUniform("uUVScale", glm::vec2(0.5f));
+            mBlitShader.SetUniform("uUVOffset", glm::vec2(0.5f));
+        }
         mBlitShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
         mBlitShader.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry));
         mBlitShader.SetUniform("uRectCenter", centerFull);
@@ -2034,7 +2277,53 @@ namespace EdgeLighting
         mScaledBuffer.BindTexture(0);
         mBlitShader.SetUniform("uSource", 0);
 
-        mFullscreenVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        if (mBlitVertexCount > 0)
+        {
+            mBlitVertexArray.DrawArrays(GL_TRIANGLES, mBlitVertexCount);
+        }
+        else
+        {
+            mFullscreenVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        }
         mBlitShader.Unuse();
+    }
+
+    void NeonRenderer::renderRingPass(int viewportWidth, int viewportHeight, float time, const Config &config)
+    {
+        if (mRingVertexCount == 0)
+        {
+            return;
+        }
+
+        // FULL resolution, on the caller's framebuffer: the same full-res
+        // transform and rect-local space as the blit, so the ring lands exactly
+        // in the hole the blit area leaves.
+        const glm::vec2 centerFull(config.geometry.position.x + config.geometry.width * 0.5f,
+                                   static_cast<float>(viewportHeight) - config.geometry.position.y -
+                                       config.geometry.height * 0.5f);
+        const glm::vec2 viewport(static_cast<float>(viewportWidth), static_cast<float>(viewportHeight));
+        const glm::mat4 proj = glm::ortho(0.0f, viewport.x, 0.0f, viewport.y, -1.0f, 1.0f);
+        const glm::mat4 mvp = proj * glm::translate(glm::mat4(1.0f), glm::vec3(centerFull, 0.0f));
+
+        // Every shading uniform exactly as the DIRECT path uploads it - scale
+        // 1.0, so the Nyquist floor is off and the cut and cutoffs are applied
+        // in the shader - fading against the direct path's margin rather than
+        // the scaled one. The segment and arc blocks are still bound from
+        // packLightBlocks; the LUTs are bound by the upload.
+        mNeonRingShader.Use();
+        uploadNeonUniforms(mNeonRingShader, mvp, 1.0f, time, mRingQuadMargin, config);
+
+        // What the gather produced at the reduced scale, in place of running
+        // it here. Attachment 2 exists only with segments; without them this
+        // binds texture 0, which the shader's uSegmentCount branch never reads.
+        mScaledBuffer.BindTexture(3, 1);
+        mNeonRingShader.SetUniform("uGather", 3);
+        mScaledBuffer.BindTexture(4, 2);
+        mNeonRingShader.SetUniform("uGatherSeg", 4);
+        mNeonRingShader.SetUniform("uGatherUVScale", glm::vec2(1.0f) / viewport);
+        mNeonRingShader.SetUniform("uGatherUVOffset", centerFull / viewport);
+
+        mRingVertexArray.DrawArrays(GL_TRIANGLES, mRingVertexCount);
+        mNeonRingShader.Unuse();
     }
 }
