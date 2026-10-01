@@ -2592,7 +2592,7 @@ recorded: the widening block in `buildStrips`, and `SPOT_NEAR_FADE` and
 `SPOT_STRIP_SEGMENTS` in `spotlight-tuning.h`. No code changed; the strip is
 correct as it stands.
 
-### I23. Two blits depend on a uniform default nothing states - FIXED
+### I23. Two blits depend on a uniform default nothing states - FIXED, THEN SUPERSEDED
 
 `SpotlightRenderer` and `LensFlareRenderer` both compile `neon-blit.frag` for
 their scaled paths and set only `uMVP` and `uSource`. That shader carries the
@@ -2609,6 +2609,14 @@ sites, which tracks a renumber on the same terms `neon-renderer.cpp` already
 relies on, plus a note at the top of `neon-blit.frag` recording that three
 renderers compile it and only one wants the cut. Pre-existing, not introduced by
 the clip work.
+
+**Since superseded.** Both layers now compile `blit.frag`, a plain composite
+with no cut and no uniform beyond `uSource`, so there is nothing left to switch
+off and nothing for a default to decide. The two explicit uploads and the note
+in `neon-blit.frag` are gone; that shader is the neon's alone, and is where
+the cutoffs move next (`neon-resolution-scale-plan.md` step 2). Byte-identical:
+`blit.frag` computes exactly what `neon-blit.frag` did with its cut off, and
+every spotlight and flare capture compared equal before and after.
 
 ### I24. The beam clamp comment states the wrong limit - FIXED
 

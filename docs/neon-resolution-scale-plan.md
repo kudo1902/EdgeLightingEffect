@@ -6,7 +6,8 @@ the reduced-resolution glow, and re-shade a thin ring around the rect edge at
 full resolution from the reduced pass's gather output. Read the proposal first
 for why. This document is only how.
 
-**Status: not started.** Section 11 lists the decisions to settle first.
+**Status: steps 0 and 1 done, not yet committed. Step 2 is next.** Section 11
+lists the decisions still open.
 
 The work is six steps, each committed and checked on its own before the next
 starts. Steps 1, 3 and 4 change no pixels at all, and step 2 changes only scenes
@@ -73,6 +74,17 @@ tree:
 Save every capture as the baseline. Each step below is checked against it, as
 raw RGBA compared byte-wise, never through a PNG decoder.
 
+**Done.** 94 captures: the twelve scenes plus a bright-glow `partition` scene
+for step 5, each at six scales; the regression pair at two; two spotlight and
+two flare scenes at three. Two independent capture runs compared identical, so
+the baseline is deterministic, and the regression pair agrees. The harness
+(`elcheck`: `capture`, `compare`, `time`) lives in the session scratch
+directory for now; decision 4 is still open.
+
+On this machine the timing noise between two builds of IDENTICAL neon code is
+about -5% to +7% per variant, even with the minimum over four interleaved
+runs. Treat any single A/B difference inside that band as no change.
+
 ## 3. Step 1: the spotlight and the flare get their own blit shader
 
 `neon-blit.frag` is compiled by THREE renderers today. `SpotlightRenderer` and
@@ -138,6 +150,17 @@ It keeps `neon.vert` as its vertex stage, as both renderers do today: a plain
   and gained an unused include.
 - Spotlight and flare blit timing: equal or lower, since the one uniform branch
   is gone.
+
+**Done.** All 94 captures byte-identical to the baseline, the regression pair
+still agrees, and the log shows `SpotlightRenderer.Blit` and
+`LensFlareRenderer.Blit` linking from the new source with no compile errors.
+Timing shows no measurable change: spotlight and flare scaled variants moved
+-2.8% to +7.0% at 1080p (min over four interleaved runs), against -1.7% to +6.3%
+for the neon, whose code did not change. The composite is a texture read and
+fixed per-pass cost, so the removed branch is too small to show.
+
+Review finding I23 recorded the explicit `uGlowSide` uploads as its fix; it is
+now marked FIXED, THEN SUPERSEDED.
 
 ## 4. Step 2: the inside/outside cutoffs move into the neon's blit
 
@@ -429,7 +452,8 @@ tuned constants there are recorded.
   buffer-px placement (its section on `CUTOFF_SOFT_FLOOR_PX`) is superseded.
 - `docs/review-findings.md`: a FIXED entry for the blurred cutoffs at reduced
   scale, with the before/after.
-- Nothing else for step 1. `docs/spotlight-renderer.md` and `CLAUDE.md` cite
+- Step 1 needed one doc change, made with it: review finding I23. Nothing
+  else. `docs/spotlight-renderer.md` and `CLAUDE.md` cite
   `neon-blit.frag` only for its account of why a reduced buffer cannot carry a
   sharp mask, which stays true. `docs/lens-flare-unification-comparison.md`
   says the flare shared the neon's blit; that records what was true when it
