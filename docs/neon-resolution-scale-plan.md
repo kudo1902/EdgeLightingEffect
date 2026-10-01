@@ -6,8 +6,8 @@ the reduced-resolution glow, and re-shade a thin ring around the rect edge at
 full resolution from the reduced pass's gather output. Read the proposal first
 for why. This document is only how.
 
-**Status: steps 0-2 done; step 1 committed (`546d2b7`), step 2 not yet. Step 3
-is next.** Section 11 lists the decisions still open.
+**Status: steps 0-3 done; steps 1 and 2 committed (`546d2b7`, `45bd1f0`),
+step 3 not yet. Step 4 is next.** Section 11 lists the decisions still open.
 
 The work is six steps, each committed and checked on its own before the next
 starts. Steps 1, 3 and 4 change no pixels at all, and step 2 changes only scenes
@@ -285,6 +285,30 @@ Every existing caller keeps the default of 1: `SpotlightRenderer`,
 - At `NeonRenderer::Initialize`, check `GL_MAX_DRAW_BUFFERS >= 3` and fail
   cleanly otherwise. GL 3.3 and GLES 3.0 both guarantee 4, so this should never
   fire; it exists so a driver that lies fails at startup, not mid-frame.
+
+**Done**, with two deviations from the text above:
+
+- An attachment count outside 1-3 is REFUSED with an error, not clamped, the
+  same way `Resize` already treats an invalid size: a pass whose shader writes
+  three outputs into a two-attachment buffer has a bug worth hearing about.
+- The driver-limit check lives in `Resize` itself, on the allocation path
+  only (past the early-out, so never per frame), checking both
+  `GL_MAX_COLOR_ATTACHMENTS` and `GL_MAX_DRAW_BUFFERS`. A failure there takes
+  the path every `Resize` failure already takes: the scaled pass is skipped and
+  the frame degrades to the fill. Whether step 4 should ALSO check at
+  `Initialize` is open; nothing requests more than one attachment until then.
+
+All 118 captures are byte-identical to step 2, and every framebuffer the
+renderers create logs `attachments=1`. Pixels cannot exercise the new path
+while nothing uses it, so the harness gained a direct test (`elcheck fbtest`),
+19 checks, all passing: counts 0 and 4 refused with nothing allocated; three
+distinct textures; `ClearBuffer` reaching every attachment; a three-output
+shader landing output `i` in attachment `i`; an identical request keeping the
+same textures; a move carrying all three and emptying the source; 3 -> 2 -> 1
+reallocating; three outputs into one attachment writing only the first;
+`Release` freeing everything; and no GL error raised by any of it. Timing was
+not measured: the per-frame changes are one more integer compare in `Resize`'s
+early-out and a one-iteration loop in `ClearBuffer`.
 
 ## 6. Step 4: the reduced pass writes the gather target
 
