@@ -99,13 +99,7 @@ extern "C"
      *           pixel-tight antialiased edge at @c size, not a stair-stepped
      *           one.
      *
-     *           Both default to disabled. A host that bounded its fill through
-     *           the glow cutoffs before the two were split must now set these
-     *           as well; the glow cutoffs no longer shape the fill.
-     *
-     *           Replaces the single fill feather that
-     *           @c el_effect_set_opaque_softness set for both boundaries; that
-     *           call is deprecated (see el-deprecated.h).
+     *           Both default to disabled.
      *
      *           Returns @ref EL_ERROR_INVALID_PARAMETER for a @p side outside
      *           @ref el_cutoff_side_e. */
@@ -126,12 +120,6 @@ extern "C"
      *           antialiased where it curves. Does NOT shape
      *           the opaque fill, which has its own
      *           @ref el_effect_set_opaque_cutoff.
-     *
-     *           NOTE the feather used to be centred on @c size, half of it
-     *           inside; a tuned non-zero softness now reaches softness/2
-     *           further out. Subtract softness/2 from @c size to keep an old
-     *           look. (Earlier still, the shader spread it over 2x the stated
-     *           width and applied it ahead of the tone map.)
      *
      *           A cutoff on the side the glow side already culls does nothing
      *           to the glow and is ignored: OUTSIDE subsumes the inside cutoff,
@@ -198,8 +186,7 @@ extern "C"
      *
      *           The cut is coverage applied to the graded output, so a non-zero
      *           value fades the layer rather than dimming its emission into the
-     *           tone map. A value tuned before that changed reads dimmer and
-     *           wider. See docs/glow-side-comparison.md. */
+     *           tone map. See docs/glow-side-comparison.md. */
     EL_API el_result_e el_effect_set_glow_side_softness(el_effect_handle_t effect, float softness);
     EL_API el_result_e el_effect_get_glow_side_softness(el_effect_handle_t effect, float *outSoftness);
 

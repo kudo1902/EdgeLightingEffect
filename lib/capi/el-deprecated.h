@@ -5,9 +5,7 @@
  * Everything here still works and is still exported. Each function is a thin
  * forwarder onto its replacement in @c el-effect.h and carries no behaviour of
  * its own, with one deliberate exception noted at
- * @ref el_effect_set_optimized_renderer_enabled. The opaque-softness pair is
- * a forwarder too, but onto two calls rather than one - the per-side cutoff it
- * was split into - so it is the one place here that composes replacements.
+ * @ref el_effect_set_optimized_renderer_enabled.
  *
  * @section removal Removing this header
  *
@@ -41,13 +39,6 @@
  * debug config now carries @c debug in its name, so what a call touches is
  * legible without opening the header.
  *
- * The opaque-softness pair is deprecated for a third: the value it names no
- * longer exists. The fill used to have ONE feather for both of its
- * boundaries, and borrowed the glow's cutoffs for their positions. It now has
- * its own pair of cutoffs, each carrying its own feather, so a single
- * softness is a shorthand for writing two fields rather than a field of its
- * own.
- *
  * @section migrating Migrating
  *
  * | deprecated | replacement |
@@ -62,7 +53,6 @@
  * | @c el_effect_set_optimized_renderer_enabled   | @ref el_effect_set_neon_renderer_enabled + @ref el_effect_set_neon_resolution_scale |
  * | @c el_effect_set_optimized_lens_flare_resolution_scale | @ref el_effect_set_lens_flare_resolution_scale |
  * | @c el_effect_set_optimized_lens_flare_renderer_enabled | @ref el_effect_set_lens_flare_renderer_enabled + @ref el_effect_set_lens_flare_resolution_scale |
- * | @c el_effect_set_opaque_softness              | @ref el_effect_set_opaque_cutoff, once per @ref el_cutoff_side_e |
  *
  * Getters map the same way. Define @c EL_NO_DEPRECATION_WARNINGS to silence
  * the attribute while migrating.
@@ -201,29 +191,6 @@ extern "C"
     EL_DEPRECATED("use el_effect_get_debug_wireframe_color")
     EL_API el_result_e el_effect_get_wireframe_color(el_effect_handle_t effect,
                                                      float *outR, float *outG, float *outB, float *outA);
-
-    /** @} */
-
-    /** @name Deprecated: one feather for both opaque-fill boundaries
-     *  Each of the fill's cutoffs carries its own softness now.
-     *  @{ */
-
-    /** @brief Set the feather of BOTH opaque-fill cutoff boundaries.
-     *  @deprecated Use @ref el_effect_set_opaque_cutoff, once per side.
-     *  @details Writes @p softness into each side through
-     *           @ref el_effect_set_opaque_cutoff, keeping that side's
-     *           @c enable and @c size as they are. Returns the first error
-     *           either side reports. Note it only feathers the fill's OWN
-     *           cutoffs: under the old ABI it feathered a fill bounded by the
-     *           glow's cutoffs, and those no longer shape the fill at all. */
-    EL_DEPRECATED("use el_effect_set_opaque_cutoff per side")
-    EL_API el_result_e el_effect_set_opaque_softness(el_effect_handle_t effect, float softness);
-    /** @brief Read the opaque fill's feather as one value.
-     *  @deprecated Use @ref el_effect_get_opaque_cutoff, once per side.
-     *  @details Reports the WIDER of the two sides' softness, which is the
-     *           value both hold unless they were set apart per side. */
-    EL_DEPRECATED("use el_effect_get_opaque_cutoff per side")
-    EL_API el_result_e el_effect_get_opaque_softness(el_effect_handle_t effect, float *outSoftness);
 
     /** @} */
 
