@@ -233,7 +233,10 @@ Steps 4 and 5 each add one compile of `neon.frag` (the `NEON_WRITES_GATHER`
 and `NEON_RING_PASS` variants): +14 ms and +12 ms, **23 ms to 50 ms per effect**
 on this machine. They are built eagerly at `Initialize` so that the first
 switch to a reduced scale does not stall; building them on first use instead is
-decision 6 in the plan.
+decision 6 in the plan. Building fewer was measured too (the plan's section 7):
+folding the ring into the plain program takes this to 39.3 ms with output and
+frame time unchanged, and a single program for all three draws is not viable -
+93-624x slower below 1.0 on this GPU.
 
 The scaled buffer gains one RGBA8 gather attachment, or two when the config has
 segments, at the reduced size. Nothing is allocated at scale 1.0, before or

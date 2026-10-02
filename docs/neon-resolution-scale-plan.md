@@ -859,6 +859,79 @@ of the old build agree with each other. The partition could not be shown to
 NEED it on desktop GL, where it never failed; the qualifier is what makes it
 promised rather than observed.
 
+**Fewer programs: two is possible, one is not.** `neon.frag` is compiled three
+times because its users differ on two independent axes - how many outputs the
+program declares, and whether it runs the gather or reads its stored result -
+and each one draws in a single, fixed pipeline state:
+
+| program | outputs | gather | draws into |
+| ------- | ------- | ------ | ---------- |
+| `mNeonShader` | 1 | runs the loop | the caller's framebuffer, blended |
+| `mNeonScaledShader` (`NEON_WRITES_GATHER`) | 3 | runs the loop | `mScaledBuffer`'s 2-3 attachments, unblended |
+| `mNeonRingShader` (`NEON_RING_PASS`) | 1 | reads it back | the caller's framebuffer, blended |
+
+Scratch builds of the library as it stands at `19049b4` collapsed each axis,
+then both, on 2026-10-02 (AMD 5300M):
+
+- **A** - 1.0 draws with the gather-writing program, so `mNeonShader` is
+  compiled with `NEON_WRITES_GATHER` and the separate scaled program goes.
+- **B** - the ring folds into the plain program behind `uniform int
+  uRingPass`: the four `NEON_RING_PASS` blocks become one branch around the
+  gather, with the coverage divide moved inside its loop arm. The scaled
+  program stays.
+- **AB** - both: one program for all three draws.
+
+| build | programs | output against HEAD | frame time against HEAD | startup per effect |
+| ----- | -------- | ------------------- | ----------------------- | ------------------ |
+| HEAD | 3 | - | - | 50.0 ms |
+| A | 2 | byte-identical | -24 to +30 us | 37.7 ms |
+| B | 2 | byte-identical | -25 to +26 us | 39.3 ms |
+| AB | 1 | byte-identical | **176-198 ms per frame below 1.0**, 93-624x HEAD | 25.2 ms |
+
+"Byte-identical" is 1,182 renders per build: the 210 images
+`neon-scale-check generate --images` writes (twelve scenes at six scales, with
+heatmaps and crops), and 972 more - each scene x `glowRadius` {0, 5, 20} x
+`lineWidth` {1, 4, 16} x `filamentFalloff` {0.3, 1, 4} x scale {1.0, 0.5,
+0.25}. `check` passes on all three with HEAD's numbers. Frame time is
+`neon-scale-check time`, six rounds with the build order rotated, median per
+figure, over every scene and scale; HEAD's own round-to-round spread is 37 us
+at the median, so neither A nor B moves. (B reads about 20 us faster at 1.0 on
+all twelve scenes, inside that spread.) A soft full-screen filament - falloff
+0.3, widths 8 and 16, a ring 260-516 px wide, the case where B's ring runs the
+most fragments with the loop compiled in - stays within 24 us for both.
+Startup is the median over the 72 effects each `time` run initialises; AB's
+figures are its one completed run, since every further one took 38 minutes.
+
+**Why one program fails.** AB is the only build in which one program draws in
+two pipeline states in the same frame: pass 1 into `mScaledBuffer`'s
+attachments with blending off, then the ring onto the caller's single
+attachment with blending on. At 1.0, where it draws in one state, it is within
+69 us of HEAD. A second build, AB2, also kept every texture unit at one format
+in both passes - the gather samplers on an RGBA8 LUT's unit in pass 1, the
+gather itself on units 5-6 in the ring so the RGBA16F emission table keeps
+unit 3 - and was just as slow (213-217 ms on the soft full-screen filaments).
+That rules out texture format. Render target layout and blend state remain,
+and both are what the two passes ARE, so one program is out on this driver
+whichever it is. Not tested on the M2 Pro.
+
+**A against B.** B pairs programs with states: plain-plus-ring always draws
+onto the caller's framebuffer, blended, and the scaled program always into the
+buffer, unblended. A's program draws in both states, across the scale boundary
+rather than within a frame - fine in these runs, which hold one scale per
+effect, but it is the pattern AB shows this driver penalising. A also has the
+1.0 path declare outputs 1 and 2 on the caller's framebuffer, where they land in
+the host's draw buffers 1 and 2 if it has them enabled - a new requirement on
+the host, beside the state `EdgeLightingEffect::Render` already leaves to it -
+and on the M2 Pro this same program moved 11 reduced-scale captures by 1 level
+against the plain one (step 4), so 1.0's byte-identity under A is not
+established there. B's open risk is the device: the ring's program now carries
+the loop's register use even where the branch skips it, which cost nothing
+measurable on this desktop GPU and may on a mobile one.
+
+What merging buys is startup, about 11 ms per effect here, and slightly less
+variant code; it buys no frame time. Decision 6 weighs it against building on
+first use.
+
 ## 8. Step 6: docs
 
 **Done** (`9be1f6f`, `16b36b3`, `d9d9a1f`). Every item below has landed; the
@@ -1018,11 +1091,18 @@ The first four were posed before step 1. Three are taken, each as recommended;
    segments) fails on the first such frame, which degrades to the fill. GL 3.3
    and GLES 3.0 both guarantee more, so this is about a driver that lies. A
    check at `NeonRenderer::Initialize` would fail at startup instead.
-6. **Build the shader variants eagerly or on first use?** Open, from steps 4
-   and 5. Eager, as shipped, costs about 14.5 ms per effect at startup
-   (12 -> 26 ms). On first use moves that to a one-time hitch the first frame a
-   reduced scale is selected - the stall the blit's eager build was chosen to
-   avoid.
+6. **Build the shader variants eagerly or on first use - or build fewer?**
+   Open, from steps 4 and 5. Eager, as shipped, costs about 14.5 ms per effect
+   at startup on the M2 Pro (12 -> 26 ms) and 27 ms on the AMD 5300M
+   (23 -> 50 ms). On first use moves that to a one-time hitch the first frame
+   a reduced scale is selected - the stall the blit's eager build was chosen
+   to avoid. Fewer programs is the other lever, measured in section 7: folding
+   the ring into the plain program behind a uniform (B) is byte-identical and
+   frame-time neutral on the AMD 5300M and takes startup to 39.3 ms there,
+   while one program for all three draws runs 93-624x slower below 1.0 and is
+   out. The two combine: B plus a scaled program built on first use leaves a
+   host that stays at 1.0 compiling one `neon.frag`. B wants a measurement on
+   the device before it lands, for the loop's register use in the ring.
 7. **Cap the ring on soft filaments?** Open, from the re-verification. Uncapped,
    as shipped, holds 2/255 on every config both cap sweeps covered but V16's
    glow-free crisp hairlines, and leaves a soft filament's reduced path
