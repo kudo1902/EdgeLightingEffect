@@ -118,9 +118,9 @@ extern "C"
      *  @details @c enable = 0 leaves the interior uncapped (natural halo/bloom
      *           decay bounds the emission). @c size is the pixel distance from
      *           the rect edge to where the feather STARTS along the interior
-     *           side (always positive): at full resolution the glow is
-     *           untouched up to @c size (see below for the antialiasing pixel
-     *           and for the reduced-resolution path).
+     *           side (always positive): the glow is untouched up to @c size
+     *           (see below for the antialiasing pixel), at every neon
+     *           resolution scale.
      *           @c softness is the feather width in pixels, running on from
      *           @c size: the glow is gone at @c size + @c softness. 0 is a
      *           pixel-tight edge at @c size, not a hard one, because the ramp
@@ -132,17 +132,16 @@ extern "C"
      *           inside @c size - which keeps a softness-0 edge's 50% point on
      *           @c size.
      *
-     *           At a neon resolution scale below 1 the glow is drawn into a
-     *           smaller buffer and bilinear-upscaled, which softens EVERY
-     *           cutoff edge by about one buffer pixel whatever the softness:
-     *           the last ~0.5 / scale px before @c size are dimmed. Measured at
-     *           scale 0.25, the pixel just inside @c size keeps 63% of its
-     *           brightness at softness 0, 82% at 4 and 98% at 16 (at scale
-     *           0.5: 75%, 96%, 99%; at 1.0: 100% throughout). A larger
-     *           softness shrinks it but never removes it; an edge that must
-     *           hold full strength exactly to @c size needs scale 1.0. Does
-     *           NOT shape
-     *           the opaque fill, which has its own
+     *           A neon resolution scale below 1 does not soften the edge. The
+     *           glow is drawn into a smaller buffer, but the cutoff is applied
+     *           at full resolution afterwards, with the same one-pixel floor:
+     *           measured on a 20 px cutoff, the pixels either side of @c size
+     *           read the same at scales 0.5 and 0.25 as at 1.0, at softness 0,
+     *           4 and 16. What the scale changes is the glow inside the band.
+     *           (Older builds did blur the edge, keeping as little as 56% just
+     *           inside @c size at scale 0.25; that is fixed.)
+     *
+     *           Does NOT shape the opaque fill, which has its own
      *           @ref el_effect_set_opaque_cutoff.
      *
      *           A cutoff on the side the glow side already culls does nothing
@@ -453,8 +452,20 @@ extern "C"
      *  @details 1.0 is the full-resolution path - the gather draws straight
      *           onto the target framebuffer, with no offscreen buffer and no
      *           blit. Below 1.0 the gather renders into a buffer of that
-     *           fraction of the viewport and is bilinear-blitted back, which
-     *           costs @c scale^2 as many shaded fragments.
+     *           fraction of the viewport, which costs @c scale^2 as many
+     *           gather fragments, and is bilinear-blitted back everywhere
+     *           except a thin ring around the rect edge; the ring is re-shaded
+     *           at full resolution from the gather's stored result, so the
+     *           line and every edge near it look as they do at 1.0 (within
+     *           2/255 down to 0.125 on the scenes in
+     *           docs/neon-resolution-scale-comparison.html, but for a very
+     *           small rect).
+     *
+     *           Not a guaranteed saving: the ring and the composite are a
+     *           fixed cost, so a layer that is already cheap at 1.0 - a tight
+     *           cutoff band, a one-sided glow - can render slower below 1.0,
+     *           and a soft filament (falloff below ~0.3) widens the ring and
+     *           loses most of the gain. Measure on the target.
      *
      *           Clamped to (0, 1] at draw time: values above 1.0 do not
      *           supersample, they are refused, because the point of the knob

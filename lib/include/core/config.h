@@ -45,8 +45,7 @@ namespace EdgeLighting
     ///              implicit in whether it's the inside or outside cutoff).
     ///              Up to @c size the layer is untouched - the fill solid, the
     ///              glow at full strength - whenever @c softness is at or above
-    ///              the one-pixel floor below. Under it, and for the glow at a
-    ///              resolutionScale below 1, see @c softness.
+    ///              the one-pixel floor below. Under it, see @c softness.
     ///              For the glow, a size past the glow's own reach is a no-op -
     ///              there is no emission left to cut. The fill has no reach of
     ///              its own, so an OUTSIDE size always grows it; an INSIDE size
@@ -67,21 +66,23 @@ namespace EdgeLighting
     ///              Below the floor the floored ramp is laid symmetrically
     ///              about size + softness/2, so it STARTS up to half a floor
     ///              inside @c size: 0.5 px at softness 0 on a straight edge,
-    ///              ~0.7 px on a diagonal. On the glow's reduced-resolution
-    ///              path the floor is one BUFFER pixel, so at
-    ///              @c resolutionScale 0.25 that is 2 full-res px inside
-    ///              @c size. It is the price of keeping a softness-0 edge's 50%
-    ///              point on @c size at every scale - see inMid in neon.frag.
+    ///              ~0.7 px on a diagonal. It is the price of keeping a
+    ///              softness-0 edge's 50% point on @c size - see inMid in
+    ///              neon.frag.
     ///
-    ///              Separately from the floor, the glow's reduced-resolution
-    ///              path blurs EVERY cutoff edge by about one buffer pixel in
-    ///              the bilinear upscale, at any softness: the last
-    ///              ~0.5 / resolutionScale px before @c size are dimmed.
-    ///              Measured at resolutionScale 0.25, the pixel just inside
-    ///              @c size keeps 63% at softness 0, 82% at 4, 98% at 16 (at
-    ///              0.5: 75%, 96%, 99%; at 1.0: 100%). More softness shrinks it
-    ///              without removing it; an exact edge needs scale 1.0. The
-    ///              fill always draws at full resolution and is unaffected.
+    ///              All of this holds at every @c NeonConfig::resolutionScale.
+    ///              The glow's floor is one DESTINATION pixel on both paths, and
+    ///              below scale 1.0 the edge is still drawn at destination
+    ///              resolution - by the blit (neon-blit.frag), or by the
+    ///              full-resolution edge ring where the cutoff sits close to
+    ///              the line - never into the reduced buffer. Measured on a
+    ///              20 px cutoff, either side, the pixels just inside and just
+    ///              past @c size read the same at scales 0.5 and 0.25 as at
+    ///              1.0, at softness 0, 4 and 16. A reduced scale changes the
+    ///              glow INSIDE the band, not its edges. (It used to blur them:
+    ///              with the masks drawn into the buffer, the pixel just inside
+    ///              @c size kept only 56-63% at 0.25 and softness 0. See
+    ///              docs/neon-resolution-scale-plan.md, step 2.)
     ///
     ///              On the glow the feather is coverage applied to the graded
     ///              output, not a multiply into the linear emission ahead of
@@ -388,18 +389,34 @@ namespace EdgeLighting
         //
         // The renderer draws either straight onto the framebuffer it was handed
         // (@c resolutionScale 1.0) or into a scaled offscreen buffer that is
-        // bilinear-blitted back (below 1.0). The defaults here are the full-res
-        // path, so a config left untouched renders as it always has.
+        // bilinear-blitted back, with a full-resolution ring around the edge
+        // (below 1.0). The defaults here are the full-res path, so a config
+        // left untouched renders as it always has.
 
         /// Resolution scale for the internal neon buffer. 1.0 draws the gather
         /// directly onto the caller's framebuffer - no offscreen buffer and no
         /// blit. Below 1.0 the gather runs into a buffer of that fraction of
-        /// the viewport and is composited back with bilinear filtering
-        /// (0.5 = half-res, 0.25 = quarter). Clamped to (0, 1] at draw time.
+        /// the viewport (0.5 = half-res, 0.25 = quarter) and is composited back
+        /// with bilinear filtering everywhere except a thin ring around the
+        /// rect edge, which is re-shaded at FULL resolution from the gather's
+        /// stored result - so the filament, the one-sided cut and the cutoffs
+        /// near the line come out as the direct path draws them. Clamped to
+        /// (0, 1] at draw time.
         ///
-        /// What this buys is fragment work, which dominates the effect: the
-        /// glow quad is large and every fragment inside it walks the sample
-        /// loop.
+        /// Quality: within 2/255 of the 1.0 render at every scale down to
+        /// 0.125 on every scene in docs/neon-resolution-scale-comparison.html
+        /// except a 160 x 96 rect, which reads 4 at 0.25 and 11 at 0.125; a
+        /// moving hairline stays within +/-0.05 px of its edge at every scale.
+        ///
+        /// Cost: what this buys is the gather's fragment work, which dominates
+        /// the effect - the glow quad is large and every fragment inside it
+        /// walks the sample loop. It is NOT a guaranteed saving. The ring and
+        /// the composite are a fixed cost (on an AMD Radeon Pro 5300M at
+        /// 1280 x 720, roughly 0.35-0.5 ms at 0.125), so a scene that is
+        /// already cheap at 1.0 - a tight cutoff band, a one-sided glow - can
+        /// render SLOWER below 1.0; a soft filament (filamentFalloff below
+        /// ~0.3) widens the ring and loses most of the gain. Measure. See
+        /// docs/neon-resolution-scale-plan.md section 7.
         float resolutionScale = 1.0f;
 
         /// Number of perimeter gather samples per fragment. Capped at
