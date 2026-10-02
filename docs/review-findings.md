@@ -44,6 +44,7 @@ old fork survived.
 | eighth pass | V11 | - |
 | twelfth pass | I21, I22, I23, I24 | - |
 | fourteenth pass | V15 | I25 (documented) |
+| fifteenth pass | - | V16 |
 
 The R items come from a re-read after the V and I fixes landed - see
 [Second pass](#second-pass-after-bbdba62). V8 and V9 come from a later read of
@@ -87,6 +88,11 @@ sixth pass, so none of it had been reviewed. All four are fixed. They add no V
 item, but I21 was a genuine visual defect rather than a rough edge - it is
 recorded as an I because it is gated on a non-default `resolutionScale`, so no
 render ever showed it.
+
+V16 comes from measuring a cap on the edge ring's width - see
+[Fifteenth pass](#fifteenth-pass-the-ring-cap-comparison). The cap was rejected
+(section 7 of `neon-resolution-scale-plan.md`); V16 is what the uncapped
+baseline of that comparison turned up, in the shipped code.
 
 ## How the visual items were reproduced
 
@@ -2883,11 +2889,90 @@ ring (0.7x at 0.5), and faster on an Apple M2 Pro (1.6x), so where the crossover
 falls is a property of the GPU.
 
 **Documented, not fixed.** The ring is what holds V15's quality, and capping it
-for soft filaments was measured to cost 3-9 levels (plan section 7). The knob's
+was measured both ways: 3-9 levels as a cap in sigmas, 3-51 as a cap in buffer
+texels, with every failure on a feature of the field the blit cannot rebuild
+(plan section 7). The knob's
 docs - `NeonConfig::resolutionScale`, the C ABI setter, `config-reference.md`,
 `effect-reference.md` and the demo tooltip - now say it is not a guaranteed
 saving, as the spotlight's documentation already says of its own scale.
 Whether to cap the ring on soft filaments is decision 7 in the plan.
+
+## Fifteenth pass (the ring-cap comparison)
+
+One item, from the uncapped baseline of a comparison that tried capping the
+edge ring's width ([`neon-resolution-scale-plan.md`](neon-resolution-scale-plan.md)
+section 7 and decision 7). Every number below is offscreen at 1280 x 720, the
+neon layer alone over rgb(5, 5, 8), on the default rect - 640 x 360 at
+(320, 180), `cornerRadius` 40, the default colour stops - with
+`hueRotationRate` and `colorTransitionDuration` 0, against each config's own
+1.0 render, on an AMD Radeon Pro 5300M. That base is `BaseConfig` in
+`tools/neon-scale-check/src/scenes.h`.
+
+### V16. A crisp, thin line with no glow misses the edge ring's 2/255 bar - OPEN
+
+**Measured, in the shipped code.** At `glowRadius` 0 a crisp, thin filament
+reads more than 2 levels off its 1.0 render at every reduced scale. Max error,
+and the pixels over 2:
+
+| `filamentFalloff`, `lineWidth` | 0.75 | 0.5 | 0.35 | 0.25 | 0.125 |
+| ------------------------------ | ---- | --- | ---- | ---- | ----- |
+| 4, 1 | 6 (25 px) | 8 (25) | 6 (25) | 6 (24) | 8 (23) |
+| 4, 2 | 4 (14) | 4 (17) | 4 (19) | 5 (17) | 5 (22) |
+| 4, 4 | 3 (2) | 3 (408) | 2 | 2 | 3 (8) |
+| 2, 1 | 5 (31) | 4 (17) | 3 (10) | 4 (16) | 3 (12) |
+
+Width 8 at falloff 4, and width 2 and up at falloff 2, hold 2 everywhere. So
+does every row above at `glowRadius` 2 or 5: any glow covers it.
+
+**Two mechanisms, told apart by where the pixels are.**
+
+- **On the corner arcs, widths 1 and 2.** Every failing pixel lies on a
+  rounded corner at the filament's shoulder - |d| 0.6 px at width 1, 1.2 px
+  at width 2 - with errors of both signs. The error is about the same size at
+  0.75 as at 0.125, survives a single colour stop, is absent at `cornerRadius` 0
+  and grows with the radius (`cornerRadius` 120: 4-6 levels on 64-92 px).
+  Not confirmed, but those four point at the ring program (`NEON_RING_PASS`)
+  and the direct program computing an arc's distance very slightly
+  differently. A straight edge's distance is a subtraction and agrees exactly;
+  an arc's goes through a `length()` whose rounding scales with the radius;
+  and a falloff-4 shoulder at width 1 falls from half to nothing in 0.2 px, so
+  a few thousandths of a pixel move a pixel by several levels. The scale only
+  decides that the ring program draws those pixels, which is why the error
+  does not grow as the scale falls. It also moves with the rect's sub-pixel
+  position: shifting the rect by (+0.37, +0.61) takes width 2 from 4 to 2 at
+  0.5 and from 5 to 3 at 0.25.
+- **Along the top edge, width 4 at 0.5.** 407 of the 408 pixels are in two
+  rows on the top edge: 295 of row 177 (d = +2.5 px) and 112 of row 182
+  (d = -2.5), each 3 levels off. They vanish with a single colour stop, so
+  this half is the gathered hue the ring reads back from the reduced buffer. That hue is a distance-weighted average of the perimeter's
+  colours, and how wide the average reaches changes with distance from the
+  line, so it varies across the shoulder; a 2 px texel pitch does not rebuild
+  that exactly. At 0.35 and 0.25 this config happens to read 2.
+
+**Why the calibration missed it.** Step 5's calibration swept these configs -
+`glowRadius` 0, `filamentFalloff` 2 and 4, `lineWidth` 1-4 - and recorded a
+worst of 2 at 0.5 and 0.25. The same notes' cost numbers are an Apple M2
+Pro's, so the sweep most likely ran there. If the arc mechanism is what it
+looks like it depends on the GPU's compiler, and the
+sub-pixel dependence means another rect position could have missed it too.
+Not re-measured on the M2 Pro. Nothing routine catches it: every one of
+`neon-scale-check`'s twelve scenes has some glow (the hairline's
+`glowRadius` is 3).
+
+**Severity: low.** It needs `glowRadius` 0, and a filament crisp and thin
+enough to have a sub-pixel shoulder. At worst it is 8 levels on 25 pixels of a
+1280 x 720 frame, at the line's corners, or 3 levels along parts of two rows
+at one edge.
+
+**Not fixed.** If the arc half is a compiler difference, GLSL 3.30 and ES 3.00
+cannot forbid it - `precise` arrived in GLSL 4.00 and ES 3.20 - and routing
+both programs through one distance function narrows the chance without
+guaranteeing it. The useful next steps are cheap: re-measure on the M2 Pro,
+which decides whether there is anything GPU-independent to fix, and add a
+glow-free crisp hairline to `neon-scale-check` with a bound at today's
+numbers so the error cannot grow unnoticed. Repro: `BaseConfig()` with
+`filamentFalloff` 4, `lineWidth` 2, `glowRadius` 0, at `resolutionScale` 0.5
+against 1.0.
 
 ---
 
@@ -2899,7 +2984,7 @@ open rather than declined - closed with the neon unification, which deleted the
 fork it followed from. The fifth pass's I15 landed with it. The seventh through
 tenth passes are one item each and all four are fixed, as are the eleventh's one,
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
-fixed. Five items from the
+fixed, and the fifteenth's V16 is open. Five items from the
 first pass remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -2923,6 +3008,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | V12a | open | per-lamp shouldering cannot bound a SUM; the cure is an offscreen composite for the whole layer, which the layer does not currently need at `resolutionScale` 1.0 |
 | V15 | fixed | the reduced-resolution neon drew every edge near the line into a buffer that cannot hold one; the cutoffs moved into the blit and the line into a full-resolution edge ring |
 | I25 | documented | below 1.0 the scaled path has a fixed cost (composite, clears, edge ring), so a layer already cheap at 1.0 can render slower; capping the ring for soft filaments is decision 7 in `neon-resolution-scale-plan.md` |
+| V16 | open | a crisp, thin line with no glow reads up to 8 levels off at its corners below 1.0; most likely the ring and direct programs disagree on an arc's distance by thousandths of a pixel, which a sub-pixel shoulder magnifies - unconfirmed, possibly GPU-specific, and covered by any glow |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

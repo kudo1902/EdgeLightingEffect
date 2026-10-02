@@ -783,6 +783,73 @@ soft falloff, and at 8 sigmas they span every line width at 0.25 (`lineWidth`
 8 still reads 3), so no width-based exemption rescues a cap. The cost of the
 bar on soft filaments is decision 7.
 
+**A cap in buffer texels fails too, and where it fails says why.** A sigma cap
+scales with the line. The other natural shape is a fixed number of buffer
+texels, `R = min(reach, K / scale) + RING_GUARD_TEXELS / scale`, which never
+binds on a thin line. A second scratch build on 2026-10-02 (AMD 5300M) tried
+K = 4, 6, 8 and 12 over two layouts - a full-screen rect (1280 x 720,
+`cornerRadius` 40, `glowRadius` 20, `bloomStrength` 0.8) and the default
+640 x 360 rect with `glowRadius` 0 - x `filamentFalloff` {0.3, 0.5, 1, 2, 4}
+x `lineWidth` {2, 4, 8, 12, 16, 24, 32, 48}, 80 configs per scale:
+
+| cap | worst at 0.5 | worst at 0.25 | configs over 2, at 0.5 / 0.25 |
+| --- | ------------ | ------------- | ----------------------------- |
+| none (shipped) | 4 | 5 | 2 / 1 |
+| 12 texels | 10 | 7 | 8 / 5 |
+| 8 texels | 17 | 22 | 11 / 14 |
+| 6 texels | 25 | 33 | 15 / 17 |
+| 4 texels | 39 | 51 | 19 / 23 |
+
+The shipped rule's three are a separate defect, V16 in
+[`review-findings.md`](review-findings.md); no cap binds on them, so they are in
+every row. A finer sweep of the soft end - `filamentFalloff` 0.1 to 0.75 x
+`cornerRadius` {0, 40, 120} x `glowRadius` {0, 5, 20} x `lineWidth` {1, 2, 4,
+8, 16, 32} - holds 2 uncapped, and still fails by 3-5 levels at a 24-texel cap
+from falloff 0.2 down. Falloff 0.25-0.3 passes at every cap of 12 or more;
+that is a window in this grid, not a rule.
+
+Every failing pixel lies on one of three features of the field, and all three
+are inside the uncapped reach:
+
+1. **The shoulder of a crisp, thick line.** A flat-top profile drops steeply
+   about `lineWidth / 2` from the edge, and the reduced buffer cannot rebuild
+   a steep drop however far out it is. At falloff 4, width 32 and a 4-texel cap
+   (R 20 px at 0.25), the failing pixels are 20-24 px either side of the edge,
+   up to 51 levels.
+2. **The interior crease at a rounded corner.** The distance field kinks at
+   each corner's centre of curvature and along the diagonal running inward from
+   it. Under a cap, a soft or Gaussian line that is still visible that far in
+   is left to the blit there. The worst pixel at falloff 0.3 to 2 under an
+   8-texel cap is (360, 220) every time, the top-left centre at
+   `cornerRadius` 40; under a 12-texel cap it moves to the ring hole's corner
+   and down the diagonal (3-12 levels). Glow hides this kind: the full-screen
+   layout passed at falloff 0.3 even at 4 texels.
+3. **The end of a very soft tail.** From falloff ~0.3 down the tail is clamped
+   at `FILAMENT_REACH_MAX_SIGMAS` and pedestal-subtracted to zero there, which
+   leaves a kink at 64 sigma - one that shows from about 0.2 down, where the
+   tail is still bright at the clamp. At falloff 0.1, width 4 and a 24-texel
+   cap, 772 failing pixels lie 128-132 px inside the edge - 64 sigma.
+
+So R is not padding past the visible filament. It ends at the field's last
+non-smooth feature, and only the blit's bilinear filter is outside it. A cap
+that ignores the profile's shape cannot hold the bar; one that tracked the
+shoulder, the corner diagonals and the tail's end would be a different ring
+geometry, not a tuning of this one.
+
+What a cap would have bought, full-screen layout at 1280 x 720, median of two
+interleaved runs (1.0 is 2.69 ms):
+
+| config | uncapped (R at 0.25) | 12-texel cap | 4-texel cap |
+| ------ | -------------------- | ------------ | ----------- |
+| falloff 0.3, width 4 | 1.47 / 0.95 ms, 1.8x / 2.8x (R 132 px) | 1.10 / 0.67 ms, 2.5x / 4.0x | 1.04 / 0.55 ms, 2.6x / 4.9x |
+| falloff 0.3, width 8 | 1.89 / 1.35 ms, 1.4x / 2.0x (R 260 px) | 1.08 / 0.66 ms, 2.5x / 4.1x | 1.05 / 0.55 ms, 2.6x / 4.9x |
+| falloff 0.3, width 16 | 2.03 / 1.53 ms, 1.3x / 1.8x (R 516 px) | 1.11 / 0.66 ms, 2.4x / 4.1x | 1.06 / 0.55 ms, 2.5x / 4.9x |
+| falloff 1, width 48 | 1.33 / 0.80 ms, 2.0x / 3.4x (R 89 px) | 1.11 / 0.67 ms, 2.4x / 4.0x | 1.07 / 0.56 ms, 2.5x / 4.8x |
+
+Times are at 0.5 / 0.25. At falloff 1 and widths up to 8 no cap binds and the
+times match. From falloff 0.3, width 12, R passes the frame's half-height and
+the uncapped cost stops growing, at 2.0-2.1 / 1.53-1.55 ms.
+
 **`invariant gl_Position` added to `neon.vert`**, for the reason in the
 geometry section above. `neon.vert` is every renderer's vertex stage, so 36
 captures were checked before and after: the nine neon scenes plus a soft
@@ -917,12 +984,13 @@ The first four were posed before step 1. Three are taken, each as recommended;
 4 is still open, and 5-7 came up during the steps or after them.
 
 1. **Always on below 1.0, or opt-in?** Taken: always on. It fixes a quality
-   defect and needs no API change. The cost was estimated at about
-   +0.02-0.06 ms; it measured +0.035-0.048 ms on the M2 Pro and +0.09-0.21 ms
-   on the AMD 5300M, growing with the rect's perimeter (section 7). Opt-in
-   would mean a new `NeonConfig` field covered by `operator==`, a C ABI setter
-   and getter with its enum or flag mirrored, and a control in both demos.
-   Revisit if the device's ring cost turns out closer to the AMD figure.
+   defect and needs no API change. The cost was estimated at about +0.02-0.06
+   ms; it measured +0.035-0.048 ms on the M2 Pro and +0.09-0.21 ms on the AMD
+   5300M, growing with the rect's perimeter (section 7; every scene and scale,
+   step by step, in `neon-resolution-scale-perf-comparison.md`). Opt-in would
+   mean a new `NeonConfig` field covered by `operator==`, a C ABI setter and
+   getter with its enum or flag mirrored, and a control in both demos. Revisit
+   if the device's ring cost turns out closer to the AMD figure.
 2. **Commit steps 1 and 2 separately first?** Taken: yes. Every step landed as
    its own commit.
 3. **Gather target format.** Taken: RGBA8; the emulation showed at most 1 level
@@ -956,7 +1024,16 @@ The first four were posed before step 1. Three are taken, each as recommended;
    reduced scale is selected - the stall the blit's eager build was chosen to
    avoid.
 7. **Cap the ring on soft filaments?** Open, from the re-verification. Uncapped,
-   as shipped, holds 2/255 everywhere and leaves a soft filament's reduced path
-   only 1.25-2.2x faster than 1.0. An 8-sigma cap takes the soft configs at
-   0.25 from 1.21 ms to 0.60-0.73 ms and reads 3-9/255 on them. Nothing between
-   the two has been measured.
+   as shipped, holds 2/255 on every config both cap sweeps covered but V16's
+   glow-free crisp hairlines, and leaves a soft filament's reduced path
+   only 1.25-2.2x faster than 1.0. Both natural cap shapes were measured
+   (section 7). An 8-sigma cap takes the soft configs at 0.25 from 1.21 ms to
+   0.60-0.73 ms and reads 3-9/255 on them. A 12-buffer-texel cap takes falloff
+   0.3 from 0.95-1.53 ms to 0.66 ms at 0.25 (4.0x over 1.0) and holds 2/255 at
+   that falloff, but reads up to 11/255 elsewhere - falloff 0.1-0.2 and
+   0.35-0.75, and crisp thick lines - and a 4-texel cap up to 51/255. Every
+   failing pixel sits on a feature of the field the blit cannot rebuild - a
+   crisp line's shoulder, a corner's interior crease, a clamped tail's end -
+   so a cosmetic retune of the width rule will not close this. Accepting a cap
+   means accepting those errors; avoiding them means a ring shaped by those
+   features.
