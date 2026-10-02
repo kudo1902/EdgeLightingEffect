@@ -88,7 +88,7 @@ compositing order, since they blend onto one another in the order they draw:
 
 | # | Renderer | Layer |
 |---|---|---|
-| 1 | `NeonRenderer` | The neon stroke: an emission pre-pass, the opaque fill, the gather, and - below `resolutionScale` 1.0 - a scaled buffer plus its blit. |
+| 1 | `NeonRenderer` | The neon stroke: an emission pre-pass, the opaque fill, the gather, and - below `resolutionScale` 1.0 - a scaled buffer plus its blit, with a full-resolution ring re-shaded around the edge. |
 | 2 | `DropletsRenderer` | Rain-on-glass in a band hugging the perimeter. Screen-space gravity, self-lit, no framebuffer capture. Always full-res. |
 | 3 | `LensFlareRenderer` | Sun plus hex-aperture flare as one fullscreen premultiplied pass. The sun rides the perimeter, and - below `resolutionScale` 1.0 - a scaled buffer plus its blit. |
 | 4 | `SpotlightRenderer` | Freely placed and aimed cones of light, as one additive pass over solved per-lamp strips. The odd one out: not a perimeter effect, reads only `Config::spotlight`, and - below `resolutionScale` 1.0 - a scaled buffer plus its blit. See [`spotlight-renderer.md`](spotlight-renderer.md). |
@@ -118,9 +118,10 @@ cones by its own coverage instead of the cones adding onto the neon.
 the half-res path as a resolution scale on a single renderer: `NeonConfig::
 resolutionScale` and `LensFlareConfig::resolutionScale`, where 1.0 draws
 straight onto the target and anything lower renders into a scaled buffer and
-blits back. One `.cpp` and one `.frag` each, no pair to keep in step and no way
-to double-draw. See `docs/neon-unification-plan.md` and
-`docs/lens-flare-unification-comparison.md`.
+blits back - the neon then re-shading a thin ring around the edge at full
+resolution, from a variant of the same `neon.frag`. One `.cpp` and one `.frag`
+each, no pair to keep in step and no way to double-draw. See
+`docs/neon-unification-plan.md` and `docs/lens-flare-unification-comparison.md`.
 
 To add a renderer: subclass `BaseRenderer`, add a sub-config struct to `Config`
 with `operator==`, register it in [`demo/src/main.cpp`](../demo/src/main.cpp),
@@ -164,7 +165,7 @@ Multiply the two, tone map hue-preservingly, apply gamma, emit premultiplied
 alpha (coverage = brightest channel) so the effect composites over arbitrary
 content rather than only adding light.
 
-Before that quad runs, both neon renderers execute an **emission pre-pass**.
+Before that quad runs, the neon renderer executes an **emission pre-pass**.
 The gather's per-sample work - the arc winner-take-all, the segment bells, the
 LUT fetches - is a pure function of `(si, uTime, config)` and does not vary per
 fragment, so it is baked once per frame into an `N x 2` RGBA16F table
@@ -174,10 +175,20 @@ The invariant that keeps the split honest: **a pure function of
 `(si, uTime, config)` belongs in the pre-pass; anything that reads `vPos`
 belongs in the main shader.**
 
+Below `resolutionScale` 1.0 the same split pays twice. The gather is the only
+part of the shader that is both expensive and smooth across the screen, so it
+runs into the reduced buffer and stores its four results in extra colour
+attachments; a thin ring around the edge is then shaded at full resolution by a
+variant of `neon.frag` that reads those results back instead of looping. The
+line and every edge near it come out as the direct path draws them, while the
+loop still ran at the reduced scale. Everything outside the ring is the reduced
+buffer, bilinear-blitted.
+
 The full derivation, including the closed forms and the sampling bugs they
 replaced, is in [`neon-renderer-explained.html`](neon-renderer-explained.html);
 the pre-pass has its own design note in
-[`emission-prepass.md`](emission-prepass.md).
+[`emission-prepass.md`](emission-prepass.md), and the edge ring in
+[`neon-resolution-scale-plan.md`](neon-resolution-scale-plan.md).
 
 ## 7. Shader and C++ interop
 

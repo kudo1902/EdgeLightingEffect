@@ -43,6 +43,7 @@ old fork survived.
 | sixth pass | I16, I17, I19, I20 | I18 |
 | eighth pass | V11 | - |
 | twelfth pass | I21, I22, I23, I24 | - |
+| fourteenth pass | V15 | I25 (documented) |
 
 The R items come from a re-read after the V and I fixes landed - see
 [Second pass](#second-pass-after-bbdba62). V8 and V9 come from a later read of
@@ -2345,6 +2346,13 @@ verified at the default falloff and at four `lineWidth` values, and
 parameter has to be measured across that parameter, not only across the widths
 it is expressed in.
 
+**Since the edge ring (V15).** The floor still shapes the filament pass 1
+draws into the reduced buffer, but that filament no longer reaches the screen
+near the line: inside the ring the real one is shaded at full resolution, and
+the ring is sized to cover whichever of the two reaches further. The floor
+remains what keeps the reduced buffer's own filament sampleable where the ring
+reads its neighbourhood.
+
 ---
 
 ## Eleventh pass (the shape-cut report)
@@ -2791,14 +2799,101 @@ intensity is the whole price, and raising `intensity` - now safe - buys it back.
 
 ---
 
+## Fourteenth pass (the neon resolution scale)
+
+Two items from the edge-ring work on `improve_scale_visual`
+([`neon-resolution-scale-plan.md`](neon-resolution-scale-plan.md)). Every number
+below is from [`neon-resolution-scale-comparison.html`](neon-resolution-scale-comparison.html),
+which renders twelve scenes on both sides of the change: 1280 x 720, the neon
+layer alone over rgb(5, 5, 8), rect 640 x 360 at (320, 180) unless stated,
+`hueRotationRate` and `colorTransitionDuration` 0, AMD Radeon Pro 5300M. Each
+scene's full config is given on that page.
+
+### V15. The reduced-resolution neon blurs every edge near the line - FIXED
+
+**Confirmed, at every reduced scale, on every scene with something sharp near
+the line.** Below `resolutionScale` 1.0 the whole layer - filament, cut,
+cutoffs - was drawn into the reduced buffer and bilinear-upscaled, so anything
+narrower than a few buffer texels came back wide, soft and, as the rect moved,
+wandering against the buffer's texel grid. Against each scene's own 1.0
+render, p99 / max:
+
+| scene | config | 0.5 | 0.25 |
+| ----- | ------ | --- | ---- |
+| hairline | `lineWidth` 1, `filamentFalloff` 2, `glowRadius` 3, `bloomStrength` 0.15 | 59 / 78 | 86 / 95 |
+| crisp_tube | `lineWidth` 8, `filamentFalloff` 4, `glowRadius` 4 | 25 / 40 | 43 / 59 |
+| bounded_band | `insideCutoff` {6, 2}, `outsideCutoff` {14, 3}, `glowRadius` 20 | 41 / 43 | 69 / 72 |
+| default | defaults | 4 / 7 | 9 / 25 |
+
+The 1 px hairline rendered 9.0 px wide at 0.25 against 2.8 at 1.0, and moving
+the rect down in 1/8 px steps walked its centroid up to +/-0.53 px off the
+true edge (+/-1.76 at 0.125). The cutoff band spread past its own cutoffs as
+the scale fell (50,703 lit px at 0.5 and 53,536 at 0.25, against 47,012 at
+1.0; after the fix, 47,012 at every scale).
+
+**Fixed in two steps.** Step 2 moved the inside and outside cutoffs out of the
+gather and into `neon-blit.frag`, at destination resolution, as the one-sided
+cut already was; `neon.frag` only culls, `BLIT_CUTOFF_GUARD_PX` past each ramp,
+so the blit rebuilds the boundary from lit texels. Step 5 is the edge ring: pass
+1 stores the gather's four results in extra attachments of the reduced buffer,
+and a ring of half-width R around the edge is re-shaded at FULL resolution by a
+`neon.frag` variant that reads them back instead of running the loop. The ring
+and the blit draw complementary vertex arrays emitted from the same floats, and
+`neon.vert` declares `invariant gl_Position`, so every pixel is composited by
+exactly one of them.
+
+After, same scenes, p99 / max: 1 / 1-2 at every scale from 0.75 to 0.125 on
+all twelve, but for a 160 x 96 rect (`small_rect`), which reads 1 / 4 at 0.25
+and 4 / 11 at 0.125, where it is 20 x 12 buffer texels. The hairline keeps its
+1.0 width at every scale and stays within +/-0.05 px of its edge while moving.
+Scale 1.0 is byte-identical to before the change in every scene, and the
+pre-change build, re-measured by the same harness, reproduces the page's
+original numbers within 1 level of p99.
+
+**What let this through** was a correct argument applied one level too low.
+Every hard edge in the layer had already been moved below the tone map so it
+could be drawn as coverage, but below 1.0 "the layer" was still a buffer that
+cannot hold a destination-resolution edge. The one-sided cut found that first
+(`glow-side-comparison.md`); the cutoffs and the filament are the same defect.
+
+### I25. A reduced resolution scale can cost more than 1.0 - DOCUMENTED
+
+**Measured.** The scaled path has a fixed cost the gather savings must beat: the
+fullscreen composite, the clears, and since V15's fix the edge ring - a full-
+resolution pass of its own, about 75 us plus 30 us per 1,000 px of perimeter at
+0.5 on this GPU, and wider as the scale falls. A layer that is already cheap at
+1.0 has less to save than that:
+
+| scene | 1.0 | 0.5 | 0.25 |
+| ----- | --- | --- | ---- |
+| bounded_band | 0.19 ms | 0.46 ms (0.4x) | 0.41 ms (0.5x) |
+| glow_inside (`glowSide` INSIDE) | 0.70 ms | 0.55 ms (1.3x) | 0.46 ms (1.5x) |
+| default | 2.68 ms | 1.06 ms (2.5x) | 0.55 ms (4.9x) |
+
+A soft filament (`filamentFalloff` below about 0.3) widens the ring to 32 x
+`lineWidth` and loses most of the gain too: measured 1.5x / 2.2x at 0.5 / 0.25
+for `lineWidth` 4. The band was already slower below 1.0 on this GPU before the
+ring (0.7x at 0.5), and faster on an Apple M2 Pro (1.6x), so where the crossover
+falls is a property of the GPU.
+
+**Documented, not fixed.** The ring is what holds V15's quality, and capping it
+for soft filaments was measured to cost 3-9 levels (plan section 7). The knob's
+docs - `NeonConfig::resolutionScale`, the C ABI setter, `config-reference.md`,
+`effect-reference.md` and the demo tooltip - now say it is not a guaranteed
+saving, as the spotlight's documentation already says of its own scale.
+Whether to cap the ring on soft filaments is decision 7 in the plan.
+
+---
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
 I9, I10 and I11. I3's structural half - the last thing on this list that was
 open rather than declined - closed with the neon unification, which deleted the
 fork it followed from. The fifth pass's I15 landed with it. The seventh through
-tenth passes are one item each and all four are fixed, as are the eleventh's one
-and the twelfth's four. Five items from the
+tenth passes are one item each and all four are fixed, as are the eleventh's one,
+the twelfth's four and the fourteenth's V15; its I25 is documented rather than
+fixed. Five items from the
 first pass remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -2820,6 +2915,8 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I13 | open | undefined `pow` reachable only through the C ABI; both cures change what the boundary accepts or what the term computes below `ghostSize` 0.6, so it is a behaviour decision rather than a repair |
 | I18 | open | the division guarantees something the 8-bit blend discards, and the three ways out - drop it, document its limit, or accumulate at higher precision - are a design call, not a fix |
 | V12a | open | per-lamp shouldering cannot bound a SUM; the cure is an offscreen composite for the whole layer, which the layer does not currently need at `resolutionScale` 1.0 |
+| V15 | fixed | the reduced-resolution neon drew every edge near the line into a buffer that cannot hold one; the cutoffs moved into the blit and the line into a full-resolution edge ring |
+| I25 | documented | below 1.0 the scaled path has a fixed cost (composite, clears, edge ring), so a layer already cheap at 1.0 can render slower; capping the ring for soft filaments is decision 7 in `neon-resolution-scale-plan.md` |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

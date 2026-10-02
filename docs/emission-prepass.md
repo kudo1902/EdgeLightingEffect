@@ -102,19 +102,24 @@ is owned by `Render`; each pass owns its shader, and those that retarget the
 framebuffer restore it themselves.
 
 **`NeonRenderer::Render`** - one schedule, both resolution paths. `scaled` is
-`resolutionScale < 1.0`; it changes only where pass 1 lands and whether pass 2b
-runs, never the order or the guards.
+`resolutionScale < 1.0`; it changes only where pass 1 lands, which program
+variant draws it, and whether passes 2b and 2c run - never the order or the
+guards.
 
 | pass | method | target | draw |
 | ---- | ------ | ------ | ---- |
 | - | (inline) | - | derives proj / center / mvp, in SCALED space |
 | 2a | `renderOpaqueFill` | caller's framebuffer | black rounded-rect fill (opaque modes only), always full-res; a band ring bounds it, and a coverage-1 fill (`ALL`, or `BOTH` with both cutoffs disabled) is a scissored `glClear` with no draw unless depth / stencil testing is on |
 | - | `packLightBlocks` | - | UBO upload only; the pack is gated, the bind is not |
-| 0 | `renderEmissionPass` | `mEmissionBuffer` (N x 2, allocated at `Initialize`) | `mFullVertexArray`, identity MVP; runs only when the table is stale |
-| 1 | `renderNeonPass` | caller's framebuffer, or `mScaledBuffer` when scaled | tight glow quad, `neon.frag` |
-| 2b | `renderBlitPass` | caller's framebuffer | bilinear composite of `mScaledBuffer`; scaled path only |
+| 0 | `renderEmissionPass` | `mEmissionBuffer` (N x 2, allocated at `Initialize`) | `mFullscreenVertexArray`, identity MVP; runs only when the table is stale |
+| 1 | `renderNeonPass` | caller's framebuffer, or `mScaledBuffer` when scaled | tight glow quad; `neon.frag` direct, or its `NEON_WRITES_GATHER` variant when scaled, which also stores the gather's results in 1-2 extra attachments, drawn with blending off |
+| 2b | `renderBlitPass` | caller's framebuffer | bilinear composite of `mScaledBuffer` plus the one-sided cut and the cutoffs, over `mBlitVertexArray` - everything EXCEPT the edge ring; scaled path only |
+| 2c | `renderRingPass` | caller's framebuffer | the edge ring, `mRingVertexArray`: `neon.frag`'s `NEON_RING_PASS` variant at full resolution, reading the stored gather results instead of running the loop; scaled path only |
 
-At `resolutionScale` 1.0 the last row does not run and pass 1 IS the composite.
+At `resolutionScale` 1.0 the last two rows do not run and pass 1 IS the
+composite. 2b and 2c cover complementary areas built from the same vertices
+(`setupRingGeometry`), so each pixel is composited by exactly one of them; see
+[`neon-resolution-scale-plan.md`](neon-resolution-scale-plan.md) step 5.
 The debug overlays that used to close this table are a separate layer now -
 `DebugRenderer`, drawn after this renderer, always at full resolution.
 
@@ -207,9 +212,12 @@ noted at the declaration site so the two do not silently drift.
 State splits into two kinds, and they have opposite owners.
 
 **Modes belong to `Render`.** Blend enable and blend function are properties of
-the *phase*, not of a pass: the fill and glow composite premultiplied, the stop
-markers composite straight alpha, the LUT strip draws unblended, and the
-renderer hands the world back on straight alpha. `Render` sets the mode
+the *phase*, not of a pass: the fill, the glow, the blit and the edge ring
+composite premultiplied, except that pass 1 draws UNBLENDED into the scaled
+buffer - it was just cleared, and its gather attachments are data that GLES 3.0
+has no per-attachment blend state to exempt - the stop markers composite
+straight alpha, the LUT strip draws unblended, and the renderer hands the world
+back on straight alpha. `Render` sets the mode
 immediately before each pass that depends on one, and **no pass touches
 `GL_BLEND` at all**. Two consequences worth having:
 
@@ -261,9 +269,9 @@ excursion, which only it can undo correctly) or merely *needs the world in a
 certain state* (a mode, which the schedule owns).
 
 `renderNeonPass` is the deliberate non-excursion: on the scaled path it renders
-into `mScaledBuffer` for pass 2b to consume rather than returning, so `Render`
-performs that framebuffer transition, using the `targetFbo` and viewport box it
-captured before pass 0.
+into `mScaledBuffer` for passes 2b and 2c to consume rather than returning, so
+`Render` performs that framebuffer transition, using the `targetFbo` and
+viewport box it captured before pass 0.
 
 ## 4. The main shader
 

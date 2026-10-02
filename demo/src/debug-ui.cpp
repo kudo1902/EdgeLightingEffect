@@ -715,7 +715,9 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
         {
             ImGui::SetTooltip("1.0 draws straight onto the target at full resolution.\n"
                               "Below that the glow renders into a scaled buffer and is\n"
-                              "bilinear-blitted back - fewer fragments, softer edges.");
+                              "bilinear-blitted back, with a thin ring around the edge\n"
+                              "re-shaded at full resolution - the line stays sharp.\n"
+                              "Not always cheaper: a tight cutoff band can get slower.");
         }
         SliderIntWithInput("Samples##Neon", cfg.neon.numSamples, 8, NEON_MAX_LOOP_SAMPLES);
         SliderIntWithInput("LUT Size##Neon", cfg.neon.gradientLutSize, 32, MAX_GRADIENT_LUT_SIZE);

@@ -615,16 +615,16 @@
     <section id="s5">
       <h2 class="sec"><span class="num">05</span> Drawing at half resolution</h2>
 
-      <p>The bloom covers a large area and every pixel in it runs the whole shader, but most of that area is a smooth gradient with no fine detail. So the neon renderer can draw into an offscreen buffer at half width and half height, then scale the result up - set <code>resolutionScale</code> below 1.0 and that is the path it takes. Half in each direction is a <strong>quarter of the pixels</strong>, so the per-pixel work drops roughly fourfold at the price of one cheap fullscreen copy. At 1.0 it skips the buffer entirely and draws straight onto the target.</p>
+      <p>The bloom covers a large area and every pixel in it runs the whole shader, but most of that area is a smooth gradient with no fine detail. So the neon renderer can draw into an offscreen buffer at half width and half height, then scale the result up - set <code>resolutionScale</code> below 1.0 and that is the path it takes. Half in each direction is a <strong>quarter of the pixels</strong>, so the per-pixel work drops roughly fourfold at the price of a fullscreen copy and one thin full-size pass around the edge (below). At 1.0 it skips the buffer entirely and draws straight onto the target.</p>
 
       <p>Two facts make this nearly free:</p>
 
       <ul class="body">
-        <li><strong>Premultiplied alpha survives averaging.</strong> The shader outputs colour and coverage already scaled together, so plain bilinear filtering gives the correct answer and the copy shader is two lines long. Scaling a glow up would otherwise leave dark fringes.</li>
+        <li><strong>Premultiplied alpha survives averaging.</strong> The shader outputs colour and coverage already scaled together, so plain bilinear filtering gives the correct answer and the copy needs nothing more than that read. Scaling a glow up would otherwise leave dark fringes.</li>
         <li><strong>The maths is scale-free.</strong> Every comparison in the shader is a ratio of two lengths. Halve every input and both halve together, so the CPU can simply multiply each measurement by the scale before uploading and the shader never learns the difference.</li>
       </ul>
 
-      <p>What it costs is the filament. The wide soft layers survive the round trip essentially untouched, but a 4 px razor-sharp line drawn 2 px wide and blurred back up does not. Wide, soft configurations are nearly free to optimize; thin, bright, hard-edged ones are not.</p>
+      <p>What it used to cost was the filament. The wide soft layers survive the round trip essentially untouched, but a 4 px razor-sharp line drawn 2 px wide and blurred back up did not. So the small pass now also saves the expensive part of its answer - the colour gather, which is smooth - and a thin <strong>edge ring</strong> around the line is drawn again at full size, reading those saved results instead of recomputing them. The line and every edge near it come out as they do at 1.0, within two levels on all but a very small rectangle. What a lower scale trades now is speed, not sharpness: the ring is a fixed cost, so a scene already cheap at full size - a tight band, a one-sided glow - has little to win and can come out slower.</p>
 
       <div class="note">
         <span class="tag">Watch out</span>

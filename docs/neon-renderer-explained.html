@@ -1144,7 +1144,7 @@ const bool lutDirty      = colorStops changed || blendSpace changed;</code></pre
 
       <p class="lede">The bloom covers a large area, and every pixel in it runs the whole shader. But most of that area is a smooth gradient with no fine detail in it - exactly the kind of thing you can compute small and stretch back up without anyone noticing.</p>
 
-      <p>That is what <code>NeonConfig::resolutionScale</code> buys. Below 1.0 the renderer draws the neon into an offscreen buffer at that fraction of the width and height, then scales the result onto the screen; at 0.5, half in each direction is a <strong>quarter of the pixels</strong>, so the expensive per-pixel work drops by roughly four times, at the price of one cheap full-screen copy. At 1.0 there is no buffer and no copy - the gather draws straight onto the target.</p>
+      <p>That is what <code>NeonConfig::resolutionScale</code> buys. Below 1.0 the renderer draws the neon into an offscreen buffer at that fraction of the width and height, then scales the result onto the screen; at 0.5, half in each direction is a <strong>quarter of the pixels</strong>, so the expensive per-pixel work drops by roughly four times, at the price of a full-screen copy - and of one more pass, a thin ring around the edge drawn at full size (see <em>The edge ring</em> below). At 1.0 there is no buffer, no copy and no ring - the gather draws straight onto the target.</p>
 
       <figure>
         <svg viewBox="0 0 760 330" role="img" aria-label="The optimized renderer's two passes: the glow is drawn into a half-size offscreen buffer and stretched back onto the screen, while the optional opaque fill goes straight to the screen at full size.">
@@ -1180,10 +1180,18 @@ const bool lutDirty      = colorStops changed || blendSpace changed;</code></pre
           <text x="588" y="212" class="dg-t" text-anchor="middle">1920 &times; 1080</text>
           <text x="588" y="228" class="dg-t2" text-anchor="middle">four times the work, avoided</text>
         </svg>
-        <figcaption><b>Fig 9</b> The two passes, with an example 1080p screen. Only the glow is computed small. The optional opaque fill is drawn straight to the screen at full size, because it is a hard-edged silhouette and is the one part where a soft upscale would be visible.</figcaption>
+        <figcaption><b>Fig 9</b> The two passes, with an example 1080p screen. Only the glow is computed small. The optional opaque fill is drawn straight to the screen at full size, because it is a hard-edged silhouette where a soft upscale would be visible - and since the edge ring, so is a thin band around the line, for the same reason.</figcaption>
       </figure>
 
-      <p>Scaling a glow back up would normally leave dark fringes around it. It does not here, and the reason is a decision made back in Section 7: the shader outputs <strong>premultiplied alpha</strong>, where colour and coverage are already scaled together. Averaging two premultiplied pixels gives the correct answer, so plain bilinear filtering is enough and the copy shader is two lines long.</p>
+      <p>Scaling a glow back up would normally leave dark fringes around it. It does not here, and the reason is a decision made back in Section 7: the shader outputs <strong>premultiplied alpha</strong>, where colour and coverage are already scaled together. Averaging two premultiplied pixels gives the correct answer, so plain bilinear filtering is enough and the copy needs nothing more than that read before it applies its edges.</p>
+
+      <h3>The edge ring</h3>
+
+      <p>Stretching back up is invisible for the bloom and fatal for the line. The filament is a few pixels wide, and a buffer a quarter the size cannot hold it: at 0.25 the 1 px hairline used to come back nine pixels wide, and wander half a pixel as the rectangle moved. The same was true of every hard edge near the line - the one-sided cut, the cutoffs, the shoulders of a flat-topped tube.</p>
+
+      <p>The fix rests on where the time goes. Almost all of a pixel's cost is the colour gather, and the gather's results - a hue and a coverage - are smooth across the screen, so they survive being computed small. Everything that is sharp is cheap: the distance, the filament profile, the edges. So the small pass also <strong>saves</strong> the gather's results, in extra layers of its buffer, and a thin ring of pixels around the edge is then drawn again <strong>at full size</strong> by the same shader with the gather swapped for a read of those saved results. Inside the ring the picture is the full-resolution one; outside it, the stretched copy, which is where the glow is soft anyway. Measured on twelve scenes, all but a very small rectangle stay within two levels of the full-resolution render down to an eighth of the size (<code>neon-resolution-scale-comparison.html</code>).</p>
+
+      <p>The ring and the copy draw exactly complementary shapes, built from the same corner points, so every pixel is painted by one of them and never both. The price is speed: the ring is a full-size pass of its own, so a scene that was already cheap at full size can come out slower when scaled.</p>
 
       <h3>Why the shader is almost unchanged</h3>
 
@@ -1242,15 +1250,15 @@ const bool lutDirty      = colorStops changed || blendSpace changed;</code></pre
 
       <h3>A second knob: fewer samples</h3>
 
-      <p>The optimized renderer also exposes <code>numSamples</code>, defaulting to 64 of the available 128. This changes one thing only: how many perimeter points the <em>colour</em> gather visits.</p>
+      <p>The renderer also exposes <code>numSamples</code>, defaulting to all 128 (the old half-resolution renderer defaulted to 64). This changes one thing only: how many perimeter points the <em>colour</em> gather visits.</p>
 
       <p>It is safe to turn down precisely because of the rewrite described in Section 4. Brightness, coverage and the glow's reach are all computed from formulas now, and none of them touch the sample list. Halving the samples costs a little precision in how colours blend where two stops meet, and nothing else - no dimming, no change in glow width, no beading.</p>
 
       <h3>What it actually costs</h3>
 
       <ul class="body">
-        <li><strong>The filament is what suffers.</strong> The wide, soft layers survive the round trip essentially untouched - that is the whole premise. But the filament is a 4 px razor-sharp line; at half resolution it is drawn 2 px wide and then blurred back up. Wide, soft configurations are nearly free to optimize. Thin, bright, hard-edged ones are not.</li>
-        <li><strong>It used to be a near-fork.</strong> Two C++ files and two shader files held near-identical code, and a change to how the neon looked had to land in both copies or they quietly drifted apart. They are one renderer and one shader now: the scale multiplies the pixel uniforms on the CPU and the shader converts its own baked-in constants with <code>uResolutionScale</code>, so only the render target and the composite are actually conditional.</li>
+        <li><strong>The filament used to be what suffered.</strong> The wide, soft layers survive the round trip essentially untouched - that is the whole premise. The filament, a few pixels wide and razor sharp, did not: at half resolution it was drawn 2 px wide and blurred back up. The edge ring now draws it at full size, so what a lower scale trades away is speed rather than sharpness - and a scene that is cheap at full size, a tight band or a one-sided glow, has little speed to win.</li>
+        <li><strong>It used to be a near-fork.</strong> Two C++ files and two shader files held near-identical code, and a change to how the neon looked had to land in both copies or they quietly drifted apart. They are one renderer and one shader now: the scale multiplies the pixel uniforms on the CPU and the shader converts its own baked-in constants with <code>uResolutionScale</code>, so only the render target, the composite and the edge ring are actually conditional.</li>
         <li><strong>There is nothing to double-enable.</strong> The old pair had separate switches over one shared appearance config, and turning both on drew the effect twice on top of itself. One renderer with a scale cannot do that.</li>
       </ul>
 
@@ -1260,8 +1268,8 @@ const bool lutDirty      = colorStops changed || blendSpace changed;</code></pre
             <tr><th>Setting</th><th>Default</th><th>What it changes</th></tr>
           </thead>
           <tbody>
-            <tr><td class="mono">resolutionScale</td><td class="mono">0.5</td><td>Size of the offscreen buffer relative to the screen. 0.5 is a quarter of the pixels, 0.25 a sixteenth. Lower values blur the filament first.</td></tr>
-            <tr><td class="mono">numSamples</td><td class="mono">64</td><td>Perimeter points visited by the colour gather, out of 128. Affects colour blending only.</td></tr>
+            <tr><td class="mono">resolutionScale</td><td class="mono">1.0</td><td>Size of the offscreen buffer relative to the screen. 0.5 is a quarter of the pixels, 0.25 a sixteenth. The line itself stays full resolution, in the edge ring; lower values cost the far glow a little precision.</td></tr>
+            <tr><td class="mono">numSamples</td><td class="mono">128</td><td>Perimeter points visited by the colour gather, out of 128. Affects colour blending only.</td></tr>
             <tr><td class="mono">gradientLutSize</td><td class="mono">256</td><td>Width of the baked colour strip. Smaller saves a little memory at the cost of slightly coarser gradients.</td></tr>
           </tbody>
         </table>

@@ -434,7 +434,7 @@
           <tbody>
             <tr><td class="mono nw">lib/shaders/neon.frag</td><td>The neon fragment program, at any resolution scale. Everything in sections 3 to 13.</td></tr>
             <tr><td class="mono nw">lib/shaders/neon.vert</td><td>Twelve lines. Passes the quad corner through as <code>vPos</code> and applies <code>uMVP</code>.</td></tr>
-                        <tr><td class="mono nw">lib/shaders/neon-blit.frag</td><td>Two statements. Bilinear composite of the scaled FBO, on the scaled path only.</td></tr>
+                        <tr><td class="mono nw">lib/shaders/neon-blit.frag</td><td>The scaled path's composite: a bilinear read of the reduced buffer, with the one-sided cut and the inside / outside cutoffs applied at destination resolution, drawn over everything except the edge ring. Scaled path only; nothing else compiles it.</td></tr>
             <tr><td class="mono nw">lib/shaders/black-rect.frag</td><td>The opaque fill pass (section 12).</td></tr>
             <tr><td class="mono nw">lib/shaders/droplets.frag</td><td>Section 15.</td></tr>
             <tr><td class="mono nw">lib/shaders/lens-flare.frag</td><td>Section 16.</td></tr>
@@ -1167,7 +1167,7 @@ fragColor = vec4(result, alpha);</code></pre>
 
       <p><code>GAMMA_EXPONENT</code> at 0.85 lifts the mid-tones so the falloff reads the way the eye expects. Coverage is the brightest channel: the hot filament core reaches alpha near 1 and occludes the background like a real glass tube, the dim halo and bloom stay near 0 and remain additive, and the dark surround at alpha 0 leaves the background untouched. Pairs with <code>glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)</code>.</p>
 
-      <p>Premultiplication is also what makes the half-resolution path work at all: averaging two premultiplied pixels is correct, so plain bilinear filtering suffices and the blit is two statements with no dark fringing.</p>
+      <p>Premultiplication is also what makes the half-resolution path work at all: averaging two premultiplied pixels is correct, so plain bilinear filtering suffices and the blit needs no more than that read, before its masks, to composite with no dark fringing.</p>
     </section>
 
     <!-- ============================================================ -->
@@ -1410,7 +1410,7 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
     <section id="s18">
       <h2 class="sec"><span class="num">18</span> CPU pipeline</h2>
 
-      <p class="lede">Two charts. The first is what the CPU rebuilds and which GL object each rebuild writes; the second is the draw sequence one frame actually issues, for both the full-res and half-res renderers.</p>
+      <p class="lede">Two charts. The first is what the CPU rebuilds and which GL object each rebuild writes; the second is the draw sequence one frame actually issues, for both resolution paths.</p>
 
       <h3>What rebuilds what</h3>
 
@@ -1517,15 +1517,15 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
           <text x="20" y="450" class="dg-t2">NOT here: arc / segment positions, lengths, intensities and boosts. Those ride the UBOs and are re-uploaded every frame.</text>
           <text x="20" y="466" class="dg-t2">Animating them is therefore free - no bake, no texture upload.</text>
         </svg>
-        <figcaption><b>Fig 3</b> The five dirty-gated rebuilds. Note that <code>samplesDirty</code> feeds <code>geometryDirty</code>: a geometry change re-sizes the draw quad as well as the sample ring. The five colour-bearing fields on the left are the only ones that touch a texture, which is why dragging a brightness slider costs nothing here.</figcaption>
+        <figcaption><b>Fig 3</b> The five dirty-gated rebuilds. Note that <code>samplesDirty</code> feeds <code>geometryDirty</code>: a geometry change re-sizes the draw quad as well as the sample ring. The five colour-bearing fields on the left are the only ones that touch a texture, which is why dragging a brightness slider costs nothing here. Not drawn: <code>fillDirty</code> rebuilds the opaque fill's band ring, and <code>ringDirty</code> - geometry, <code>resolutionScale</code>, <code>lineWidth</code>, <code>filamentFalloff</code> - rebuilds the scaled path's two partition arrays, <code>mRingVertexArray</code> and <code>mBlitVertexArray</code>, in <code>setupRingGeometry</code>.</figcaption>
       </figure>
 
       <h3>One frame's draw sequence</h3>
 
-      <p>Both renderers are handed the same active config and the same bound framebuffer. What differs is where the neon lands and when the opaque fill is drawn relative to it.</p>
+      <p>Both paths are handed the same active config and the same bound framebuffer. What differs is where the gather lands, which program variant draws it, and what composites it back.</p>
 
       <figure>
-        <svg viewBox="0 0 1060 700" role="img" aria-label="Two-lane chart of one frame. Shared Update and Render calls at the top split into the full-resolution path, which draws the fill then the neon into the bound framebuffer, and the half-resolution path, which draws the neon into a scaled FBO, restores the target, draws the fill at full resolution, then blits.">
+        <svg viewBox="0 0 1060 780" role="img" aria-label="Two-lane chart of one frame. Shared Update and Render calls at the top split into the full-resolution path - fill, light blocks, emission table when stale, then the glow quad straight onto the target - and the reduced-resolution path, which saves the target, draws the fill at full resolution, draws the gather unblended into a scaled FBO that also stores its results, restores the target, and composites with two complementary draws: the blit everywhere but a ring around the edge, and the ring re-shaded at full resolution.">
           <defs>
             <marker id="fa2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M0,1 L9,5 L0,9 z" fill="var(--ink-3)"/>
@@ -1552,77 +1552,67 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
           <path d="M530,194 V214 H270 V238" class="dg-line" marker-end="url(#fa2)"/>
           <path d="M530,194 V214 H790 V238" class="dg-line" marker-end="url(#fa2)"/>
 
-          <text x="40"  y="230" class="dg-h">NeonRenderer - full resolution</text>
+          <text x="40"  y="230" class="dg-h">NeonRenderer - resolutionScale 1.0</text>
           <text x="560" y="230" class="dg-h">NeonRenderer - resolutionScale below 1.0</text>
 
           <!-- left lane -->
           <rect x="40" y="240" width="460" height="46" class="dg-box"/>
-          <text x="52" y="260" class="dg-t">pass 1: black-rect fill</text>
-          <text x="52" y="276" class="dg-t2">skipped when NONE; band ring - ALL is a glClear</text>
+          <text x="52" y="260" class="dg-t">pass 2a: opaque fill</text>
+          <text x="52" y="276" class="dg-t2">skipped when NONE; band ring; coverage 1 is a scissored glClear</text>
           <line x1="270" y1="286" x2="270" y2="300" class="dg-line" marker-end="url(#fa2)"/>
-
           <rect x="40" y="302" width="460" height="46" class="dg-box"/>
-          <text x="52" y="322" class="dg-t">bind ~20 uniforms + uMVP</text>
-          <text x="52" y="338" class="dg-t2">mvp = ortho(0,w,0,h) * translate(center_ogl)</text>
+          <text x="52" y="322" class="dg-t">packLightBlocks: SegmentBlock + ArcBlock</text>
+          <text x="52" y="338" class="dg-t2">repacked only when dirty, always bound</text>
           <line x1="270" y1="348" x2="270" y2="362" class="dg-line" marker-end="url(#fa2)"/>
-
           <rect x="40" y="364" width="460" height="46" class="dg-box"/>
-          <text x="52" y="384" class="dg-t">upload SegmentBlock + ArcBlock</text>
-          <text x="52" y="400" class="dg-t2">BindBase(); LoopSamplesBlock is already resident</text>
+          <text x="52" y="384" class="dg-t">pass 0: emission table -&gt; mEmissionBuffer</text>
+          <text x="52" y="400" class="dg-t2">only when stale; blend off for the bake</text>
           <line x1="270" y1="410" x2="270" y2="424" class="dg-line" marker-end="url(#fa2)"/>
-
           <rect x="40" y="426" width="460" height="46" class="dg-box"/>
-          <text x="52" y="446" class="dg-t">bind 3 LUTs -&gt; texture units 0, 1, 2</text>
-          <text x="52" y="462" class="dg-t2">gradient, segment atlas, arc atlas</text>
+          <text x="52" y="446" class="dg-t">bind 22 uniforms, 3 LUTs, uEmission</text>
+          <text x="52" y="462" class="dg-t2">mvp = ortho(0,w,0,h) * translate(center); blend on</text>
           <line x1="270" y1="472" x2="270" y2="486" class="dg-line" marker-end="url(#fa2)"/>
-
           <rect x="40" y="488" width="460" height="46" class="dg-box-a"/>
-          <text x="52" y="508" class="dg-t">pass 2: glDrawArrays(GL_TRIANGLES, 0, 6)</text>
-          <text x="52" y="524" class="dg-t2">the neon quad, straight into the bound FBO</text>
-          <line x1="270" y1="534" x2="270" y2="548" class="dg-line" marker-end="url(#fa2)"/>
-
-          <rect x="40" y="550" width="460" height="46" class="dg-box"/>
-          <text x="52" y="570" class="dg-t">optional debug overlays</text>
-          <text x="52" y="586" class="dg-t2">LUT strip, colour-stop markers</text>
+          <text x="52" y="508" class="dg-t">pass 1: glow quad straight onto the target</text>
+          <text x="52" y="524" class="dg-t2">neon.frag; the gather loop runs at every fragment</text>
 
           <!-- right lane -->
           <rect x="560" y="240" width="460" height="46" class="dg-box"/>
-          <text x="572" y="260" class="dg-t">targetFbo = Framebuffer::GetBoundId()</text>
-          <text x="572" y="276" class="dg-t2">never assume the window - a capture binds a real FBO</text>
+          <text x="572" y="260" class="dg-t">RenderTargetState::Capture(); pass 2a: fill</text>
+          <text x="572" y="276" class="dg-t2">save the target first; the fill is FULL res on it</text>
           <line x1="790" y1="286" x2="790" y2="300" class="dg-line" marker-end="url(#fa2)"/>
-
           <rect x="560" y="302" width="460" height="46" class="dg-box"/>
-          <text x="572" y="322" class="dg-t">mHalfResBuffer.Resize(w*s, h*s); Bind()</text>
-          <text x="572" y="338" class="dg-t2">glViewport(0, 0, w*s, h*s)</text>
+          <text x="572" y="322" class="dg-t">packLightBlocks; pass 0 when stale</text>
+          <text x="572" y="338" class="dg-t2">exactly as the direct path</text>
           <line x1="790" y1="348" x2="790" y2="362" class="dg-line" marker-end="url(#fa2)"/>
-
           <rect x="560" y="364" width="460" height="46" class="dg-box"/>
-          <text x="572" y="384" class="dg-t">same uniforms, lengths pre-multiplied by s</text>
-          <text x="572" y="400" class="dg-t2">plus uResolutionScale and uNumSamples</text>
+          <text x="572" y="384" class="dg-t">mScaledBuffer.Resize(w*s, h*s, 2-3 attachments)</text>
+          <text x="572" y="400" class="dg-t2">Bind(); ClearBuffer() clears every attachment</text>
           <line x1="790" y1="410" x2="790" y2="424" class="dg-line" marker-end="url(#fa2)"/>
-
           <rect x="560" y="426" width="460" height="46" class="dg-box-a"/>
-          <text x="572" y="446" class="dg-t">pass 1: the neon quad -&gt; mHalfResBuffer</text>
-          <text x="572" y="462" class="dg-t2">a quarter of the fragments at s = 0.5</text>
+          <text x="572" y="446" class="dg-t">pass 1, blend OFF: NEON_WRITES_GATHER</text>
+          <text x="572" y="462" class="dg-t2">colour + the gather's results in attachments 1-2</text>
           <line x1="790" y1="472" x2="790" y2="486" class="dg-line" marker-end="url(#fa2)"/>
-
           <rect x="560" y="488" width="460" height="46" class="dg-box"/>
-          <text x="572" y="508" class="dg-t">BindId(targetFbo); pass 2a: black-rect</text>
-          <text x="572" y="524" class="dg-t2">at FULL resolution - a hard edge cannot be stretched</text>
+          <text x="572" y="508" class="dg-t">restore target + viewport; blend on</text>
+          <text x="572" y="524" class="dg-t2">premultiplied over from here</text>
           <line x1="790" y1="534" x2="790" y2="548" class="dg-line" marker-end="url(#fa2)"/>
-
           <rect x="560" y="550" width="460" height="46" class="dg-box-a"/>
-          <text x="572" y="570" class="dg-t">pass 2b: blit mHalfResBuffer -&gt; target</text>
-          <text x="572" y="586" class="dg-t2">bilinear; correct because output is premultiplied</text>
+          <text x="572" y="570" class="dg-t">pass 2b: blit over mBlitVertexArray</text>
+          <text x="572" y="586" class="dg-t2">all but the ring; cut + cutoffs at full res</text>
+          <line x1="790" y1="596" x2="790" y2="610" class="dg-line" marker-end="url(#fa2)"/>
+          <rect x="560" y="612" width="460" height="46" class="dg-box-a"/>
+          <text x="572" y="632" class="dg-t">pass 2c: NEON_RING_PASS over mRingVertexArray</text>
+          <text x="572" y="648" class="dg-t2">full res, reads the stored gather; no loop</text>
 
-          <path d="M270,596 V620 H530 V644" class="dg-line" marker-end="url(#fb2)"/>
-          <path d="M790,596 V620 H530" class="dg-line"/>
+          <path d="M270,534 V680 H530 V702" class="dg-line" marker-end="url(#fb2)"/>
+          <path d="M790,658 V680 H530" class="dg-line"/>
 
-          <rect x="200" y="646" width="660" height="46" class="dg-box-a"/>
-          <text x="530" y="666" class="dg-t" text-anchor="middle">glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)</text>
-          <text x="530" y="682" class="dg-t2" text-anchor="middle">premultiplied over, into whatever framebuffer the host bound</text>
+          <rect x="200" y="704" width="660" height="46" class="dg-box-a"/>
+          <text x="530" y="724" class="dg-t" text-anchor="middle">glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)</text>
+          <text x="530" y="740" class="dg-t2" text-anchor="middle">a known blend state for the next layer; GL_BLEND left on</text>
         </svg>
-        <figcaption><b>Fig 4</b> One frame, both paths. The ordering difference is the substantive one: the full-res renderer draws the fill and then the neon into a single target, while the half-res renderer must draw the neon <em>first</em> (into its own FBO), then restore the caller's framebuffer, then draw the fill at full resolution, then composite the glow over it. Getting that restore wrong is the bug described in section 14.</figcaption>
+        <figcaption><b>Fig 4</b> One frame, both paths. The fill runs first on both: it is always full resolution on the caller's framebuffer and has to sit under the glow. Pass 0 runs only when the emission table is stale. Below 1.0 the gather draws <em>unblended</em> into its own FBO - its extra attachments are data, and GLES 3.0 cannot exempt one attachment from blending - and stores its results for the ring. The caller's target is then restored, and two complementary draws composite the frame: the blit everywhere except a thin ring around the edge, and the ring itself at full resolution from the stored gather. They share their boundary vertices, and <code>neon.vert</code> declares <code>invariant gl_Position</code>, so every pixel is composited exactly once. Getting the restore wrong is the bug described in section 14.</figcaption>
       </figure>
     </section>
 
@@ -1633,6 +1623,10 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
       <h3>The vertex shader, in full <span class="src">lib/shaders/neon.vert</span></h3>
 
 <pre><code>precision highp float;
+
+// (comment abridged) Two programs - the blit and the edge ring - partition
+// the frame along shared vertices, so they must agree on gl_Position to the bit.
+invariant gl_Position;
 
 layout(location = 0) in vec2 aPos;
 
@@ -1647,7 +1641,7 @@ void main() {
 
       <p>That is the whole thing, and its brevity is the point. <code>aPos</code> arrives already in <strong>rect-local pixels</strong> - <code>setupGeometry</code> wrote the quad corners as <code>+/-(halfSize + margin)</code> - so passing it through untouched gives every fragment its own position in exactly the space the SDF wants. No inverse transform, no screen-space reconstruction, no resolution uniform in the distance path. <code>uMVP</code> is used only to put the quad on screen.</p>
 
-      <p>The same vertex shader backs <code>black-rect.frag</code>, <code>neon-blit.frag</code> and both debug overlays. The blit binds an identity <code>uMVP</code> so <code>vPos</code> comes through as NDC. The fill binds a full-res <code>ortho * translate</code> to place its band ring, and is the one consumer that ignores <code>vPos</code> altogether - its shape comes from <code>gl_FragCoord</code>, which is what lets the ring bound it in the first place.</p>
+      <p>The same vertex shader backs <code>black-rect.frag</code>, <code>neon-blit.frag</code>, the edge ring and both debug overlays - it is every renderer's vertex stage. The blit and the ring bind the same full-res <code>ortho * translate</code>, so <code>vPos</code> is rect-local pixels in both and the blit maps it to buffer UV with <code>uUVScale</code> / <code>uUVOffset</code>. They draw complementary vertex arrays built from the same floats, which is why <code>gl_Position</code> is declared <code>invariant</code>: GLSL promises two separately compiled programs the same result only then, and a disagreement would composite a pixel twice or not at all along the ring's edge. The fill binds a full-res <code>ortho * translate</code> to place its band ring, and is the one consumer that ignores <code>vPos</code> altogether - its shape comes from <code>gl_FragCoord</code>, which is what lets the ring bound it in the first place.</p>
 
       <h3>The fragment program, as dataflow</h3>
 
