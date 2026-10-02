@@ -8,8 +8,14 @@ are `NeonConfig::resolutionScale` 0.5 and 0.25.
 is the evidence this starts from: twelve scenes at six scales, diffed against
 their own 1.0 render. This document is what to do about it, and
 [`neon-resolution-scale-plan.md`](neon-resolution-scale-plan.md) is how to
-build it, step by step. Nothing here is implemented yet. The quality numbers come from an emulation of the design
-(section 8), and the cost numbers from timing the unmodified library.
+build it, step by step. The quality numbers below come from an emulation of
+the design (section 8), and the cost numbers from timing the unmodified library.
+
+**Built since**, as steps 1-5 of the plan (`546d2b7` to `ea62200`, plus
+`db2c250` for `invariant gl_Position`). Sections 2.4, 3, 4 and 7 now carry what
+the build measured beside what this predicted. One naming change on the way:
+this document calls the blit pass 2a and the ring pass 2b; in the code the
+opaque fill already owned 2a, so the blit is 2b and the ring 2c.
 
 **Result: render the glow at the reduced scale as today, and re-shade only a
 thin ring around the rect edge at full resolution, reading the gather's output
@@ -17,6 +23,12 @@ from the reduced buffer.** Emulated on all twelve scenes, that stays within
 max 2/255 of the 1.0 render at scale 0.5 and max 4/255 at 0.25, against today's
 worst of 77 and 93. On the default scene it costs an estimated 3.1-3.3x less
 than 1.0 at scale 0.5 and 7.9-9.5x less at 0.25, against today's 3.3x and 10.4x.
+
+**Measured, built:** exactly that quality - max 2 at 0.5, and 2 at 0.25 but for
+`small_rect` at 4, as emulated. On the M2 Pro the default scene came in at 3.2x
+and 8.6x, inside the estimate. On an AMD Radeon Pro 5300M the ring costs more
+than this priced it: 2.5x and 4.9x, against 3.0x and 6.6x there before the
+ring (section 4.1).
 
 ## 1. Why the scaled path drifts
 
@@ -128,6 +140,17 @@ still to be checked against a wider `lineWidth` range, is
 That gives about 9 px at 0.5 and 11 px at 0.25 for the defaults, and 10 and
 12 px for `crisp_tube`.
 
+**As built** (`GetRingWidth`), the rule is
+`R = max(reach(1.0), reach(scale)) + RING_GUARD_TEXELS / scale`, with
+`RING_GUARD_TEXELS` 1.0. The candidate above covered only the full-resolution
+filament; a thin line's reach as pass 1 draws it, floored to what the reduced
+buffer can sample, is longer (a 1 px line at 0.25: 1 px real, 5.7 px as drawn),
+and showed just outside the ring. The plan's step 5 has the 80-config
+calibration. The reach is uncapped, so a soft filament (`filamentFalloff` below
+about 0.3, where the reach clamps at 64 sigmas) makes the ring 32 x
+`lineWidth` wide - a cost, measured in the plan's section 7, not a quality
+problem.
+
 ## 3. Quality (emulated)
 
 Error against the scene's own 1.0 render, in 8-bit levels. "Today" columns are
@@ -157,6 +180,32 @@ ceiling the ring is measured against: the ring matches it everywhere except
 The design also holds at 0.125: split-only stays within max 2 on eleven scenes
 and max 11 on `small_rect`, whose whole rect is 20 x 12 buffer texels there.
 That scale is outside this proposal's targets.
+
+### 3.1 Measured, built
+
+The same twelve scenes, rendered by the built ring
+([`neon-resolution-scale-comparison.html`](neon-resolution-scale-comparison.html),
+AMD Radeon Pro 5300M), p99 / max:
+
+| scene | emulated ring, max 0.5 / 0.25 | **built, 0.5** | **built, 0.25** |
+| ----- | ----------------------------- | -------------- | --------------- |
+| `default` | 2 / 2 | 1 / 2 | 1 / 2 |
+| `hairline` | 1 / 1 | 1 / 2 | 1 / 1 |
+| `crisp_tube` | 1 / 1 | 1 / 1 | 1 / 1 |
+| `soft_wash` | 1 / 2 | 1 / 1 | 1 / 1 |
+| `sharp_corners` | 2 / 2 | 1 / 2 | 1 / 2 |
+| `small_rect` | 2 / 4 | 1 / 2 | 1 / 4 |
+| `glow_inside` | 1 / 1 | 1 / 1 | 1 / 1 |
+| `card_outside` | 1 / 1 | 1 / 1 | 1 / 1 |
+| `bounded_band` | 2 / 2 | 1 / 2 | 1 / 2 |
+| `arcs` | 1 / 2 | 1 / 1 | 1 / 2 |
+| `segments` | 1 / 1 | 1 / 1 | 1 / 1 |
+| `overdrive` | 1 / 1 | 1 / 1 | 1 / 1 |
+
+Every scene lands where the emulation put it, `small_rect`'s 4 at 0.25
+included, and 0.125 reads max 2 on eleven scenes and 11 on `small_rect`, also as
+predicted. The motion artefact goes with it: the hairline's centroid stays
+within +/-0.05 px of its edge at every scale, against +/-0.53 at 0.25 before.
 
 ## 4. Cost
 
@@ -196,6 +245,38 @@ Neither bound includes writing the extra target in pass 1. At 0.25 that is
 `glow_inside` and `bounded_band` gain little at any scale, with or without the
 ring. Their quads are already bounded by geometry, so there is little for a
 reduced scale to save. That is not specific to this proposal.
+
+### 4.1 Measured, built
+
+**On the M2 Pro** (plan step 5, interleaved against step 4): the default scene
+at 0.583 ms at 0.5 and 0.219 at 0.25 at 720p, 3.2x and 8.6x faster than 1.0 -
+inside both estimates above, with the ring costing 35-48 us across 720p and
+1080p. Writing the extra gather target in pass 1 measured at nothing (step 4).
+
+**On an AMD Radeon Pro 5300M** the ring costs more than this priced it, and the
+proposal's own lower bound - the ring's area alone - is the wrong model there:
+the ring adds about 75 us whatever the rect, plus about 30 us per 1,000 px of
+perimeter. The same twelve scenes, ms (speed-up against each build's own 1.0):
+
+| scene | 1.0 | before 0.5 | **built 0.5** | before 0.25 | **built 0.25** |
+| ----- | --- | ---------- | ------------- | ----------- | -------------- |
+| `default` | 2.68 | 0.89 (3.0x) | **1.06 (2.5x)** | 0.40 (6.6x) | **0.54 (4.9x)** |
+| `hairline` | 1.97 | 0.67 (2.9x) | **0.86 (2.3x)** | 0.34 (5.7x) | **0.52 (3.8x)** |
+| `crisp_tube` | 2.33 | 0.80 (2.9x) | **0.99 (2.4x)** | 0.37 (6.3x) | **0.54 (4.3x)** |
+| `soft_wash` | 2.71 | 0.90 (3.0x) | **1.12 (2.4x)** | 0.39 (6.9x) | **0.61 (4.5x)** |
+| `sharp_corners` | 2.20 | 0.77 (2.9x) | **0.88 (2.5x)** | 0.34 (6.4x) | **0.45 (4.9x)** |
+| `small_rect` | 1.66 | 0.64 (2.6x) | **0.75 (2.2x)** | 0.32 (5.2x) | **0.43 (3.9x)** |
+| `glow_inside` | 0.70 | 0.41 (1.7x) | **0.55 (1.3x)** | 0.23 (3.0x) | **0.46 (1.5x)** |
+| `card_outside` | 2.17 | 0.80 (2.7x) | **0.95 (2.3x)** | 0.39 (5.5x) | **0.54 (4.0x)** |
+| `bounded_band` | 0.19 | 0.29 (0.7x) | **0.46 (0.4x)** | 0.24 (0.8x) | **0.41 (0.5x)** |
+| `arcs` | 2.79 | 0.91 (3.0x) | **1.11 (2.5x)** | 0.40 (6.9x) | **0.58 (4.8x)** |
+| `segments` | 2.78 | 0.92 (3.0x) | **1.13 (2.5x)** | 0.39 (7.1x) | **0.58 (4.8x)** |
+| `overdrive` | 2.70 | 0.90 (3.0x) | **1.09 (2.5x)** | 0.34 (7.9x) | **0.57 (4.8x)** |
+
+So the render-time constraint holds on one GPU, and on the other takes the
+default scene's speed-up at 0.25 from 6.6x to 4.9x (0.40 ms to 0.54); on this
+one `bounded_band` was already slower below 1.0 before the ring. The device
+decides which; it has not been measured.
 
 ## 5. Quick wins, independent of the ring
 
@@ -241,10 +322,13 @@ Neither matches the reference.
   the design, evaluated inside one shader (section 8). The real build adds
   culling, guard bands, partition exactness and extra attachments, each of
   which can introduce error the emulation cannot. Re-run the twelve scenes
-  against it before trusting section 3.
+  against it before trusting section 3. *Resolved: section 3.1, the build
+  lands where the emulation did.*
 - **The ring scales with the perimeter, not the area.** On a large rect at 4K
   it is a larger absolute cost, though still a thin ring. Under `GlowSide`
-  INSIDE or OUTSIDE it only needs the lit half.
+  INSIDE or OUTSIDE it only needs the lit half. *As built it draws the whole
+  ring, and the culled half discards before the expensive work. Measured
+  since: it is also a fixed cost of about 75 us on an AMD 5300M (section 4.1).*
 - **Tile-based GPUs.** Pass 2b is one more DRAW, not one more pass: it lands on
   the same framebuffer the blit just drew to, so there is no render-target
   switch and no extra tile load or store. Its cost is its fragments. The one
@@ -252,7 +336,11 @@ Neither matches the reference.
   Measure on target hardware anyway before the default scale changes.
 - **The partition must be bit-exact.** Pass 2a's skip and pass 2b's discard
   must compute `d` with the identical expression on the identical inputs.
-  Otherwise a pixel on the boundary composites twice or not at all.
+  Otherwise a pixel on the boundary composites twice or not at all. *As built
+  there is no per-pixel test: the blit and the ring draw complementary vertex
+  arrays emitted from the same floats, so the rasteriser partitions them, and
+  `neon.vert` declares `invariant gl_Position` so both programs are promised
+  the same positions. See the plan, step 5.*
 
 ## 8. Method
 
