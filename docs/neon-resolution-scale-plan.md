@@ -6,10 +6,18 @@ the reduced-resolution glow, and re-shade a thin ring around the rect edge at
 full resolution from the reduced pass's gather output. Read the proposal first
 for why. This document is only how.
 
-**Status: steps 0-5 done; steps 1-4 committed (`546d2b7`, `45bd1f0`,
-`c155a37`, `8a50121`), step 5 not yet. Step 6, the docs, is next.** Section
-11 lists the decisions still open; step 5 went ahead on the recommendations
+**Status: steps 0-5 done and committed (`546d2b7`, `45bd1f0`, `c155a37`,
+`8a50121`, `ea62200`). Step 6, the docs, is next; section 8 marks which of its
+items already landed with the code.** Step 5 went ahead on the recommendations
 (always on below 1.0, RGBA8 gather target, harness kept out of the tree).
+
+After the step 5 commit, a review rebuilt a probe and re-verified step 5
+against the committed code (section 7, "Re-verified after the commit"). The
+quality and byte-identity claims hold. The cost claims hold only on the machine
+they were measured on. The review also added one follow-up, not yet committed:
+`invariant gl_Position` in `neon.vert`, which the partition between the blit
+and the ring needs. Section 11 lists the decisions taken and the ones still
+open, three of them new.
 
 The work is six steps, each committed and checked on its own before the next
 starts. Steps 1, 3 and 4 change no pixels at all, and step 2 changes only scenes
@@ -446,9 +454,18 @@ box coordinates:
 The two share their boundary vertices bit for bit, because both are emitted
 from the same floats in the same function. Axis-aligned edges at identical
 coordinates rasterise identically, so every pixel goes to exactly one of the
-two draws. No per-pixel test is needed in either shader, and nothing depends on
-two programs computing the same float. Both passes composite premultiplied, so
-a pixel drawn twice would composite twice; this is what rules it out.
+two draws. No per-pixel test is needed in either shader. Both passes composite
+premultiplied, so a pixel drawn twice would composite twice; this is what rules
+it out.
+
+It does rest on ONE float that two programs compute: `gl_Position`, which the
+blit program and the ring program each derive from those shared vertices
+through their own compiled copy of `neon.vert`. GLSL promises that two programs
+agree on an output only when it is declared `invariant`, and the spec's own
+example of the failure is this one: geometry misaligned between the passes of
+a multi-pass algorithm. So `neon.vert` declares `invariant gl_Position`. (The
+first version of this plan said nothing depended on a float computed across
+programs; that was wrong, and the qualifier was added after step 5.)
 
 The ring is a CONSERVATIVE bound: near the corners it covers some pixels
 farther than `R` from the edge. They are shaded at full resolution and so are
@@ -460,6 +477,10 @@ only while `UsesScaledBuffer`. An intensity or glow-radius animation does not
 rebuild it.
 
 ### Ring width
+
+As planned. The calibration in the Done notes below dropped `RING_MAX_SIGMAS`
+and widened R to cover the reduced pass's filament as well; `GetRingWidth` and
+the note on `RING_GUARD_TEXELS` in `neon-tuning.h` hold the rule that shipped.
 
 ```
 R = min(filamentReach, RING_MAX_SIGMAS * sigma) + RING_GUARD_TEXELS / scale
@@ -607,7 +628,10 @@ Rerun with all three fixed, at each candidate `RING_GUARD_TEXELS`:
 as well for a ring one buffer texel wider each side - a cheap option if 0.75
 matters. The table is recorded in `neon-tuning.h` beside the constant.
 
-**Cost**, min over three interleaved runs against step 4:
+**Cost**, min over three interleaved runs against step 4. The default scene's
+1.0 time is the 1.87 ms of the proposal's Apple M2 Pro table, so these are that
+machine's numbers; the re-verification below has another machine's, which do
+not stay inside the budget.
 
 | default scene | 1.0 | 0.5 | 0.25 |
 | ------------- | --- | --- | ---- |
@@ -627,77 +651,237 @@ saving was: 1.2x at 0.5 and 1.6x at 0.25.
 
 **Startup:** about +6.5 ms for the third program (20 ms -> 26 ms per effect).
 
+**Where the code departs from the text above**, beyond the ring-width rule:
+
+- The ring fades against `GetGlowMargin(config, 1.0f)` (`mRingQuadMargin`),
+  the margin the direct path itself uses, not `mQuadMargin / scale`. The two
+  differ by exactly what the scaled margin carries and the ring does not draw:
+  the Nyquist-widened filament reach and, under an outside cutoff, the blit's
+  guard band. The direct path's margin is the one that makes the ring shade as
+  the direct path does.
+- `setupRingGeometry` builds both arrays whenever the clamped scale is below
+  1.0, not only while `UsesScaledBuffer`: `enable` is not in the ring's dirty
+  gate and nothing in the build reads it. A disabled layer leaves them undrawn.
+
+### Re-verified after the commit
+
+The step-0 harness and its baseline did not survive their session (decision
+4), so a review on 2026-10-02 wrote a new probe. It rendered nine scenes on a
+900 x 560 rect at 1280 x 720 against three builds - `542dad4` (before step 1),
+`8a50121` (step 4) and HEAD (`ea62200`). The scenes: default, hairline (width 1,
+glow 2), partition (intensity 3, glow 20), a 12 / 8 px cutoff band, glowSide
+OUTSIDE, INSIDE with an inside cutoff, two arcs, one segment, and an OUTSIDE
+opaque fill. All of it ran on an Intel i7-9750H MacBook, from the x86_64
+build.
+
+**Scale 1.0 is byte-identical** across all three builds, in every scene.
+
+**Quality reproduces.** Against each build's own 1.0 render, max / p99:
+
+| scene | 0.5: before plan -> step 4 -> HEAD | 0.25: before plan -> step 4 -> HEAD |
+| ----- | ---------------------------------- | ----------------------------------- |
+| default | 7/4 -> 7/4 -> **2/1** | 24/13 -> 24/13 -> **2/1** |
+| hairline | 62/19 -> 62/19 -> **2/1** | 86/58 -> 86/58 -> **2/1** |
+| cutoff band | 45/16 -> 7/4 -> **2/1** | 64/24 -> 24/13 -> **2/1** |
+| arcs | 7/3 -> 7/3 -> **2/1** | 28/8 -> 28/8 -> **2/1** |
+| segments | 7/4 -> 7/4 -> **2/1** | 25/12 -> 25/12 -> **2/1** |
+
+The other four scenes read 2/1 or 1/1 at both scales. A second pass measured
+the error within 1.5 px of the ring's edge on the default, hairline, partition,
+band and OUTSIDE scenes and three soft filaments: never above 1, at 0.5 or
+0.25, so nothing there is drawn twice or skipped.
+
+**Cost does not reproduce.** The ring added, over step 4 at 720p:
+
+| scenes | 0.5 | 0.25 |
+| ------ | --- | ---- |
+| full ring (default, hairline, partition, arcs, segments) | +114 to +142 us | +118 to +165 us |
+| one-sided, cutoff, opaque | +96 to +124 us | +18 to +68 us |
+
+Same-code noise was -41 to +12 us (HEAD against step 4 at 1.0). That is two to
+three times the budget. Nor is it mostly fixed cost here, as the M2 Pro
+reading suggested: every scene makes the same calls, and OUTSIDE, whose ring
+discards its inside half before the expensive work, costs +18 us at 0.25
+against the default's +165. On this machine the ring's FRAGMENTS cost. The
+reduced path still wins - the default scene runs 2.87 ms at 1.0, 1.09 at 0.5
+(2.6x) and 0.58 at 0.25 (4.9x), against step 4's 0.95 and 0.42 - but the
+budget is a property of the GPU, and the device has not been measured.
+
+**A tight cutoff band is slower below 1.0 than at it.** The 12 / 8 px band
+reads 0.34 ms at 1.0, 0.46 at 0.5 and 0.37 at 0.25. Before the plan it read
+0.37 / 0.37 / 0.29: break-even at 0.5, a win at 0.25. Its gather quad is barely
+wider than the ring, so the full-viewport blit (which evaluates the rect SDF
+everywhere once a cutoff is live, since step 2) and the ring cost more than the
+reduced gather saves. The M2 Pro's `bounded_band` still won (1.2x / 1.6x).
+Either way the knob is not a guaranteed saving, which the spotlight's
+documentation already says of its own scale.
+
+**Soft filaments make the ring wide.** R is the filament's uncapped reach, and
+from `filamentFalloff` ~0.3 down that clamps at `FILAMENT_REACH_MAX_SIGMAS` (64):
+at falloff 0.3, R is 130 px at `lineWidth` 4 and 258 px at 8. The reduced path's
+speedup over 1.0 falls from 2.6x / 4.9x to 1.5x / 2.2x at width 4 and 1.25x /
+1.8x at width 8.
+
+Whether a cap would have been safe was tested directly, since the calibration
+above dropped `RING_MAX_SIGMAS` in the same rerun as two other fixes and so
+never isolated it. A scratch build capped each reach at K sigmas, over
+`filamentFalloff` {0.2, 0.3, 0.5, 1} x `lineWidth` {1, 2, 4, 8} x `glowRadius`
+{0, 5}:
+
+| cap | worst at 0.5 | worst at 0.25 | cost at 0.5 / 0.25, mean of falloff 0.2 and 0.3 at glow 5 |
+| --- | ------------ | ------------- | ------------------------------- |
+| none (shipped) | 2 | 2 | 1.68 / 1.21 ms |
+| 16 sigmas | 4 | 9 | 1.32 / 0.85 ms |
+| 8 sigmas | 4 | 9 | 1.21 / 0.73 ms |
+| 6 sigmas | 5 | 11 | 1.20 / 0.69 ms |
+| 4 sigmas | 11 | 36 | 1.20 / 0.76 ms |
+
+So dropping the cap was right for the 2/255 bar. Every failing config is a
+soft falloff, and at 8 sigmas they span every line width at 0.25 (`lineWidth`
+8 still reads 3), so no width-based exemption rescues a cap. The cost of the
+bar on soft filaments is decision 7.
+
+**`invariant gl_Position` added to `neon.vert`**, for the reason in the
+geometry section above. `neon.vert` is every renderer's vertex stage, so 36
+captures were checked before and after: the nine neon scenes plus a soft
+filament at 1.0, 0.5 and 0.25, droplets, the flare and two spotlight lamps at
+1.0 and 0.5, and every debug overlay. All 36 are byte-identical, and two runs
+of the old build agree with each other. The partition could not be shown to
+NEED it on desktop GL, where it never failed; the qualifier is what makes it
+promised rather than observed.
+
 ## 8. Step 6: docs
 
-- `CLAUDE.md`: the `NeonRenderer` paragraph. The scaled path is no longer
-  "only the render target, the blit and the buffer allocation are
+Four items landed with the code; the rest are open. The last two items were
+not in the original list.
+
+- **Open.** `CLAUDE.md`: the `NeonRenderer` paragraph. The scaled path is no
+  longer "only the render target, the blit and the buffer allocation are
   conditional"; it now also draws a ring and writes extra attachments.
-- `lib/include/renderer/neon-renderer.h`: the class comment's resolution-scale
-  section and the pass list.
-- `lib/include/core/config.h`: the `resolutionScale` comment, with what
-  reduced scale now costs in quality.
-- `docs/emission-prepass.md`: the pass tables.
-- `docs/neon-renderer-reference.html`: sections 18 and 19, the flow charts of
-  what each pass writes and one frame's draw sequence.
-- `lib/include/renderer/neon-tuning.h`: the guard and ring constants, and the
-  retired `CUTOFF_SOFT_FLOOR_PX` block.
-- `docs/glow-side-comparison.md` and `docs/config-reference.md`: done in
-  step 2, which removed the constant they named.
-- `docs/review-findings.md`: a FIXED entry for the blurred cutoffs at reduced
-  scale, with the before/after.
-- Step 1 needed one doc change, made with it: review finding I23. Nothing
-  else. `docs/spotlight-renderer.md` and `CLAUDE.md` cite
+- **Done in step 5.** `lib/include/renderer/neon-renderer.h`: the class
+  comment's resolution-scale section and the pass list.
+- **Open.** `lib/include/core/config.h`: the `resolutionScale` comment, with
+  what reduced scale now costs in quality - and that it is not a guaranteed
+  saving: a tight cutoff band renders slower below 1.0 than at it, and a soft
+  filament's ring eats most of the gain (section 7, "Re-verified after the
+  commit").
+- **Open.** `docs/emission-prepass.md`: the pass tables, which still stop at
+  2b.
+- **Open.** `docs/neon-renderer-reference.html`: sections 18 and 19, the flow
+  charts of what each pass writes and one frame's draw sequence - including
+  that 2b and 2c partition the frame, and that `invariant gl_Position` is what
+  makes the partition exact.
+- **Done in steps 2 and 5.** `lib/include/renderer/neon-tuning.h`: the guard and
+  ring constants, and the retired `CUTOFF_SOFT_FLOOR_PX` block.
+- **Done in step 2.** `docs/glow-side-comparison.md` and
+  `docs/config-reference.md`, which named the constant step 2 removed.
+- **Open.** `docs/review-findings.md`: a FIXED entry for the blurred cutoffs at
+  reduced scale (step 2) and for the filament the reduced buffer could not
+  sample (step 5: the hairline's max error of 77 / 93 at 0.5 / 0.25, and its
+  +/-0.53 px motion wander at 0.25), with the before/after. V13's Nyquist floor still shapes
+  pass 1, but no longer reaches the screen near the line; say so there.
+- **Done in step 1.** Step 1 needed one doc change, made with it: review
+  finding I23. Nothing else. `docs/spotlight-renderer.md` and `CLAUDE.md` cite
   `neon-blit.frag` only for its account of why a reduced buffer cannot carry a
   sharp mask, which stays true. `docs/lens-flare-unification-comparison.md`
   says the flare shared the neon's blit; that records what was true when it
   was measured, so it stays as written.
-- `docs/neon-resolution-scale-proposal.md`: measured results beside the
-  emulated ones.
-- `docs/neon-resolution-scale-comparison.html`: regenerated with the new path.
+- **Open.** `docs/neon-resolution-scale-proposal.md`: measured results beside
+  the emulated ones, saying which machine each cost figure came from.
+- **Open.** `docs/neon-resolution-scale-comparison.html`: regenerated with the
+  new path. Needs a harness again; see decision 4.
+- **Open, new.** `CLAUDE.md`'s reading list: the proposal, this plan and the
+  comparison page, which every other plan and comparison pair there has.
+- **Open, new.** `CLAUDE.md`'s NeonRenderer paragraph, or the shaders section:
+  that `neon.vert` declares `invariant gl_Position`, and why removing it is not
+  a free cleanup.
 
 ## 9. What does not change
 
-- The C ABI, both demos and every `Config` struct, unless decision 1 below
-  chooses an opt-in flag.
+- The C ABI, both demos and every `Config` struct: decision 1 kept the ring
+  always on, so there is no flag to add.
 - The emission pre-pass, the opaque fill and `DebugRenderer`.
 - The spotlight's and the flare's output: step 1 moves them to `blit.frag`
   byte-identically, and nothing after it touches them.
-- The direct path's program: scale 1.0 compiles the same source it does today.
+- The direct path's fragment program: scale 1.0 compiles the same `neon.frag`
+  source it did before step 4. Its vertex stage did change after step 5:
+  `neon.vert`, which every renderer compiles, gained `invariant gl_Position`.
+  Every layer was checked byte-identical across that change.
 - The rule that `EdgeLightingEffect::Render` forces no host state: every new
   draw lands on the framebuffer and viewport the renderer was handed, under
   the same blend timeline `Render` already owns.
 
 ## 10. Risks
 
+Updated after step 5: the last three entries are new, and the old one on very
+soft filaments is replaced by the first of them.
+
 - **GLES is untested here.** Multiple fragment outputs with
-  `layout(location)`, `glDrawBuffers` and RGBA8 colour attachments are all
-  GLES 3.0 core, but only macOS builds. A device run is needed before release.
+  `layout(location)`, `glDrawBuffers`, RGBA8 colour attachments and
+  `invariant gl_Position` are all GLES 3.0 core, but only macOS builds. A device
+  run is needed before release.
 - **Memory.** One or two more RGBA8 attachments at the reduced size: 2.1 MB
   each at 1920 x 1080 and scale 0.5, 0.5 MB each at 0.25.
 - **Ring cost scales with the perimeter**, not the area: a large rect at 4K
   pays proportionally more, though it stays a thin ring.
-- **The partition rests on shared vertex values.** It holds only while both
-  arrays are emitted from the same computed floats in one function. A later
-  change that builds them separately can open a seam the byte check would
-  catch, but only if a scene puts bright glow at `R`; keep the partition scene
-  in the harness.
-- **Very soft filaments** are where `RING_MAX_SIGMAS` bites. They are smooth,
-  so the reduced pass should carry their tails, but that is a claim the
-  calibration sweep has to confirm.
+- **The partition rests on shared vertex values and on `invariant
+  gl_Position`.** It holds only while both arrays are emitted from the same
+  computed floats in one function, and while both programs are promised the
+  same `gl_Position` for them. A later change that builds the arrays
+  separately, gives either pass its own vertex shader, or drops the qualifier
+  can open a seam the byte check would catch, but only if a scene puts bright
+  glow at `R`; keep the partition scene in the harness.
+- **Soft filaments make the ring wide, and that is a cost risk, not a quality
+  one.** `RING_MAX_SIGMAS` is gone and R is the filament's full reach, so from
+  `filamentFalloff` ~0.3 down R is 32 x `lineWidth` plus the guard: 130 px at
+  width 4, 258 px at 8. Quality stays within 2/255, but the reduced path's
+  speedup falls to 1.5x / 2.2x at width 4 (0.5 / 0.25). A cap was measured and
+  costs 3-9 levels; see decision 7.
+- **The ring's cost depends on the GPU.** +35-48 us on the M2 Pro, +96-165 us
+  on an Intel i7-9750H MacBook for the same kind of scene, and fragment-bound
+  there rather than fixed. Neither number says what the device pays.
+- **Reduced scale can be slower than 1.0.** A tight cutoff band was, on the
+  Intel machine: 0.34 ms at 1.0, 0.46 at 0.5, 0.37 at 0.25. Hosts that drop the
+  scale for speed should measure, as the spotlight's documentation already
+  tells them for its own scale.
 
-## 11. Decisions to settle before step 1
+## 11. Decisions
 
-1. **Always on below 1.0, or opt-in?** Recommended: always on. It fixes a
-   quality defect at a cost of about +0.02-0.06 ms, and needs no API change.
-   Opt-in means a new `NeonConfig` field covered by `operator==`, a C ABI
-   setter and getter with its enum or flag mirrored, and a control in both
-   demos.
-2. **Commit steps 1 and 2 separately first?** Recommended: yes. Step 1 is a
-   pure cleanup and step 2 is useful even if the ring slips.
-3. **Gather target format.** Recommended: RGBA8; the emulation shows at most
-   1 level of max error from it. `RGB10_A2` is the fallback if banding ever
-   shows.
-4. **Check the harness in?** The repo keeps harnesses out of the tree, but
-   there is no test target, and this design's guarantees (byte-identical
-   paths, an exact partition, the quality bounds) have no other regression
-   check.
+The first four were posed before step 1. Three are taken, each as recommended;
+4 is still open, and 5-7 came up during the steps or after them.
+
+1. **Always on below 1.0, or opt-in?** Taken: always on. It fixes a quality
+   defect and needs no API change. The cost was estimated at about
+   +0.02-0.06 ms; it measured +0.035-0.048 ms on the M2 Pro, and on the Intel
+   machine +0.11-0.17 ms on a full ring, as little as +0.02 ms on a one-sided
+   one (section 7). Opt-in would mean a new `NeonConfig` field
+   covered by `operator==`, a C ABI setter and getter with its enum or flag
+   mirrored, and a control in both demos. Revisit if the device's ring cost
+   turns out closer to the Intel figure.
+2. **Commit steps 1 and 2 separately first?** Taken: yes. Every step landed as
+   its own commit.
+3. **Gather target format.** Taken: RGBA8; the emulation showed at most 1 level
+   of max error from it, and the shipped path is within 2/255 of 1.0 in every
+   scene measured. `RGB10_A2` is the fallback if banding ever shows.
+4. **Check the harness in?** Open, and no longer hypothetical. The repo keeps
+   harnesses out of the tree, but there is no test target, and this design's
+   guarantees (byte-identical paths, an exact partition, the quality bounds)
+   have no other regression check. The step-0 harness and its 118-capture
+   baseline did not survive their session: re-verifying step 5 meant writing a
+   probe from scratch, and step 6's comparison page needs one again.
+5. **Check the draw-buffer limits at `Initialize` too?** Open, from step 3.
+   `Framebuffer::Resize` checks them on the allocation path, so a driver short
+   of the two attachments a reduced scale asks for (three once there are
+   segments) fails on the first such frame, which degrades to the fill. GL 3.3
+   and GLES 3.0 both guarantee more, so this is about a driver that lies. A check at
+   `NeonRenderer::Initialize` would fail at startup instead.
+6. **Build the shader variants eagerly or on first use?** Open, from steps 4
+   and 5. Eager, as shipped, costs about 14.5 ms per effect at startup
+   (12 -> 26 ms). On first use moves that to a one-time hitch the first frame a
+   reduced scale is selected - the stall the blit's eager build was chosen to
+   avoid.
+7. **Cap the ring on soft filaments?** Open, from the re-verification. Uncapped,
+   as shipped, holds 2/255 everywhere and leaves a soft filament's reduced path
+   only 1.25-2.2x faster than 1.0. An 8-sigma cap takes the soft configs at
+   0.25 from 1.21 ms to 0.60-0.73 ms and reads 3-9/255 on them. Nothing between
+   the two has been measured.
