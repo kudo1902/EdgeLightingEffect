@@ -2850,6 +2850,12 @@ Scale 1.0 is byte-identical to before the change in every scene, and the
 pre-change build, re-measured by the same harness, reproduces the page's
 original numbers within 1 level of p99.
 
+**Guarded by** `tools/neon-scale-check check` (built with
+`-DEDGE_LIGHTING_BUILD_TOOLS=ON`): it fails if scale 1.0 drifts from the
+page's committed images, if any scene's reduced scale passes its error bound,
+or if the hairline's centroid wanders more than 0.1 px. Run against the
+pre-change library it fails on 54 values.
+
 **What let this through** was a correct argument applied one level too low.
 Every hard edge in the layer had already been moved below the tone map so it
 could be drawn as coverage, but below 1.0 "the layer" was still a buffer that

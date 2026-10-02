@@ -6,11 +6,13 @@ the reduced-resolution glow, and re-shade a thin ring around the rect edge at
 full resolution from the reduced pass's gather output. Read the proposal first
 for why. This document is only how.
 
-**Status: steps 0-5 done and committed (`546d2b7`, `45bd1f0`, `c155a37`,
-`8a50121`, `ea62200`), plus `db2c250`. Step 6, the docs, is done and not yet
-committed; section 8 lists what changed.** Step 5 went ahead on the
-recommendations (always on below 1.0, RGBA8 gather target, harness kept out of
-the tree).
+**Status: all seven steps done and committed - steps 0-5 (`546d2b7`, `45bd1f0`,
+`c155a37`, `8a50121`, `ea62200`), `db2c250` (`invariant gl_Position`), and
+step 6 (`9be1f6f`, `16b36b3`, `d9d9a1f`). The harness is checked in as
+`tools/neon-scale-check` (decision 4). What is left is section 11's open
+decisions and a run on the target device (section 10).** Step 5 went ahead on
+the recommendations (always on below 1.0, RGBA8 gather target, harness kept
+out of the tree - since reversed: decision 4).
 
 After the step 5 commit, a review rebuilt a probe and re-verified step 5
 against the committed code (section 7, "Re-verified after the commit"). The
@@ -21,7 +23,8 @@ the blit and the ring needs. And it found public docs - the `Cutoff` comment in
 `config.h`, its copy in the C ABI header, `config-reference.md` - still
 describing the cutoff blur step 2 fixed. Those are corrected with the rest
 of step 6. Section 11 lists the decisions
-taken and the ones still open, three of them new.
+taken and the ones still open, three of them new; decision 4 is now taken, and
+the harness is checked in as `tools/neon-scale-check`.
 
 The work is six steps, each committed and checked on its own before the next
 starts. Steps 1, 3 and 4 change no pixels at all, and step 2 changes only scenes
@@ -791,10 +794,10 @@ promised rather than observed.
 
 ## 8. Step 6: docs
 
-**Done, not yet committed.** Every item below has landed; the ones marked
-"new" were not in the original list - two came up in the review, and the rest
-are docs that still described the scaled path as it was before step 2 or step
-5, which the original list missed.
+**Done** (`9be1f6f`, `16b36b3`, `d9d9a1f`). Every item below has landed; the
+ones marked "new" were not in the original list - two came up in the review, and
+the rest are docs that still described the scaled path as it was before step 2
+or step 5, which the original list missed.
 
 - `CLAUDE.md`: the `NeonRenderer` paragraph now names the program variant and
   the ring among what is conditional, and a new paragraph covers the edge ring:
@@ -925,18 +928,22 @@ The first four were posed before step 1. Three are taken, each as recommended;
 3. **Gather target format.** Taken: RGBA8; the emulation showed at most 1 level
    of max error from it, and the shipped path is within 2/255 of 1.0 in every
    scene measured. `RGB10_A2` is the fallback if banding ever shows.
-4. **Check the harness in?** Open, and no longer hypothetical. The repo keeps
-   harnesses out of the tree, but there is no test target, and this design's
-   guarantees (byte-identical paths, an exact partition, the quality bounds)
-   have no other regression check. The step-0 harness and its 118-capture
-   baseline did not survive their session: re-verifying step 5 meant writing a
-   probe from scratch, and regenerating the comparison page in step 6 meant a
-   third harness - one that first had to recover the scenes from the old
-   page's pixels, because nothing recorded their colours. That one lives in a
-   session scratch directory too. The cheapest middle ground is to check in
-   only what was hard to recover: the twelve scene definitions (now on the
-   comparison page's method section) and the metric definitions, so the next
-   harness starts from them.
+4. **Check the harness in?** Taken: yes, the whole harness, as
+   [`tools/neon-scale-check`](../tools/neon-scale-check/README.md) behind
+   `-DEDGE_LIGHTING_BUILD_TOOLS=ON`, off by default. The repo kept harnesses
+   out of the tree, but there is no test target, and this design's guarantees
+   (byte-identical paths, the quality bounds, a line that stays on its edge)
+   had no other regression check. The step-0 harness and its 118-capture
+   baseline did not survive their session; re-verifying step 5 meant writing a
+   probe from scratch, and regenerating the comparison page meant a third
+   harness that first had to recover the scenes from the old page's pixels.
+   The checked-in tool is that third harness made permanent: its `check` is a
+   pass / fail gate (it passes on HEAD and fails on 54 values against
+   `542dad4`), its `generate` reproduces every committed image and number on
+   the comparison page byte for byte, and it builds standalone against
+   another checkout to measure a "before". Not covered: the partition scene,
+   the cutoff scenes step 2 added, the calibration sweep and the
+   `Framebuffer` tests of steps 0-5, which were in the lost `elcheck`.
 5. **Check the draw-buffer limits at `Initialize` too?** Open, from step 3.
    `Framebuffer::Resize` checks them on the allocation path, so a driver short
    of the two attachments a reduced scale asks for (three once there are

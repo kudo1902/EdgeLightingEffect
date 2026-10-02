@@ -316,4 +316,6 @@ Two rules that are easy to get wrong:
 
 Conventions (naming, bracing, the no-em-dash rule) are in
 [`AGENTS.md`](../AGENTS.md) and enforced by hand. There is no formatter config
-and no test target.
+and no test target; the nearest thing is the optional
+[`tools/neon-scale-check`](../tools/neon-scale-check/README.md), a regression
+check for the neon's resolution scale (`-DEDGE_LIGHTING_BUILD_TOOLS=ON`).

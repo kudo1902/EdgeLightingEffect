@@ -1,0 +1,317 @@
+#include "harness.h"
+
+#include "gl/gl-header.h"
+#define GLFW_INCLUDE_NONE
+#include <GLFW/glfw3.h>
+#include "util/capture-util.h"
+// stb_image and stb_image_write are compiled into libedge-lighting
+// (lib/src/util/stb-image.cpp); only the declarations are needed here.
+#include "stb/stb_image.h"
+#include "stb/stb_image_write.h"
+
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <cstdio>
+#include <cstdlib>
+
+namespace NeonScaleCheck
+{
+    namespace
+    {
+        GLFWwindow *gWindow = nullptr;
+
+        /// The page's clear colour, rgb(5, 5, 8).
+        const float CLEAR_R = 5.0f / 255.0f;
+        const float CLEAR_G = 5.0f / 255.0f;
+        const float CLEAR_B = 8.0f / 255.0f;
+        const double CLEAR_LUMA = 0.2126 * 5.0 + 0.7152 * 5.0 + 0.0722 * 8.0;
+
+        /// A pixel counts as lit when its brightest channel is more than 16
+        /// levels above the clear's brightest (8) in either image.
+        const int LIT_THRESHOLD = 24;
+
+        /// The page's error heatmap: one colour per error level 0-64,
+        /// saturating at 64, with 0 and 1 drawn black. Extracted from the first
+        /// version's own *_diff.png images against recomputed errors.
+        const unsigned char RAMP[65][3] = {
+            {0, 0, 0}, {0, 0, 0}, {6, 2, 13}, {9, 3, 20}, {13, 3, 26}, {16, 4, 33}, {19, 5, 39},
+            {22, 6, 46}, {25, 7, 53}, {28, 8, 59}, {31, 9, 66}, {34, 9, 72}, {38, 10, 79},
+            {42, 11, 84}, {49, 13, 86}, {57, 15, 88}, {64, 17, 90}, {72, 19, 91}, {79, 20, 93},
+            {87, 22, 95}, {95, 24, 96}, {102, 26, 98}, {110, 28, 100}, {117, 29, 102},
+            {125, 31, 103}, {132, 33, 105}, {140, 36, 104}, {147, 40, 100}, {154, 45, 95},
+            {161, 49, 91}, {168, 53, 86}, {175, 58, 82}, {183, 62, 78}, {190, 66, 73},
+            {197, 71, 69}, {204, 75, 64}, {211, 80, 60}, {218, 84, 55}, {225, 88, 51},
+            {229, 95, 49}, {231, 103, 48}, {232, 111, 47}, {234, 119, 46}, {236, 127, 45},
+            {238, 135, 45}, {239, 143, 44}, {241, 151, 43}, {243, 159, 42}, {245, 167, 42},
+            {246, 175, 41}, {248, 183, 40}, {250, 191, 39}, {250, 197, 47}, {250, 202, 57},
+            {250, 207, 66}, {251, 211, 76}, {251, 216, 86}, {251, 221, 96}, {251, 226, 105},
+            {251, 231, 115}, {251, 236, 125}, {252, 240, 135}, {252, 245, 144}, {252, 250, 154},
+            {252, 255, 164},
+        };
+
+        double Luma(const RGB &image, size_t pixel)
+        {
+            return 0.2126 * image[pixel * 3] + 0.7152 * image[pixel * 3 + 1] + 0.0722 * image[pixel * 3 + 2];
+        }
+    }
+
+    void InitGL()
+    {
+        if (!glfwInit())
+        {
+            std::fprintf(stderr, "neon-scale-check: glfwInit failed\n");
+            std::exit(2);
+        }
+        glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
+        glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
+        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GL_TRUE);
+        gWindow = glfwCreateWindow(64, 64, "neon-scale-check", nullptr, nullptr);
+        if (!gWindow)
+        {
+            std::fprintf(stderr, "neon-scale-check: could not create a GL 3.3 core context\n");
+            std::exit(2);
+        }
+        glfwMakeContextCurrent(gWindow);
+        if (!gladLoadGLLoader(reinterpret_cast<GLADloadproc>(glfwGetProcAddress)))
+        {
+            std::fprintf(stderr, "neon-scale-check: GLAD could not load GL\n");
+            std::exit(2);
+        }
+        std::fprintf(stderr, "GL renderer: %s\n", reinterpret_cast<const char *>(glGetString(GL_RENDERER)));
+    }
+
+    void ShutdownGL()
+    {
+        glfwTerminate();
+    }
+
+    std::string RendererName()
+    {
+        const GLubyte *name = glGetString(GL_RENDERER);
+        return name ? std::string(reinterpret_cast<const char *>(name)) : std::string("unknown");
+    }
+
+    void CreateEffect(EdgeLightingEffect &effect)
+    {
+        effect.Initialize();
+        if (!effect.AddRenderer(RendererLayer::NEON))
+        {
+            std::fprintf(stderr, "neon-scale-check: the neon renderer failed to initialise\n");
+            std::exit(2);
+        }
+    }
+
+    RGB Render(EdgeLightingEffect &effect, const Config &config)
+    {
+        effect.SetConfig(config);
+        effect.Update(0.0f);
+        OffscreenCapture capture;
+        capture.Begin(FRAME_WIDTH, FRAME_HEIGHT);
+        glClearColor(CLEAR_R, CLEAR_G, CLEAR_B, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        effect.Render(FRAME_WIDTH, FRAME_HEIGHT);
+        CaptureUtil::Image image;
+        capture.Read(image);
+        capture.End();
+
+        RGB rgb(size_t(FRAME_WIDTH) * FRAME_HEIGHT * 3);
+        for (size_t i = 0, n = size_t(FRAME_WIDTH) * FRAME_HEIGHT; i < n; ++i)
+        {
+            rgb[i * 3] = image.pixels[i * 4];
+            rgb[i * 3 + 1] = image.pixels[i * 4 + 1];
+            rgb[i * 3 + 2] = image.pixels[i * 4 + 2];
+        }
+        return rgb;
+    }
+
+    double TimeRender(const Config &config)
+    {
+        EdgeLightingEffect effect;
+        CreateEffect(effect);
+        effect.SetConfig(config);
+        effect.Update(0.0f);
+        OffscreenCapture capture;
+        capture.Begin(FRAME_WIDTH, FRAME_HEIGHT);
+        for (int i = 0; i < 5; ++i)
+        {
+            effect.Render(FRAME_WIDTH, FRAME_HEIGHT);
+        }
+        glFinish();
+        double best = 1e30;
+        for (int run = 0; run < 5; ++run)
+        {
+            glFinish();
+            const auto t0 = std::chrono::high_resolution_clock::now();
+            for (int frame = 0; frame < 40; ++frame)
+            {
+                effect.Render(FRAME_WIDTH, FRAME_HEIGHT);
+            }
+            glFinish();
+            const auto t1 = std::chrono::high_resolution_clock::now();
+            best = std::min(best, std::chrono::duration<double, std::milli>(t1 - t0).count() / 40.0);
+        }
+        capture.End();
+        return best;
+    }
+
+    Metrics Measure(const RGB &image, const RGB &reference, RGB *heatmap)
+    {
+        Metrics m{};
+        std::vector<int> lit;
+        double squared = 0.0;
+        double energyImage = 0.0;
+        double energyReference = 0.0;
+        long over8 = 0;
+        const size_t n = size_t(FRAME_WIDTH) * FRAME_HEIGHT;
+        if (heatmap)
+        {
+            heatmap->assign(n * 3, 0);
+        }
+        for (size_t i = 0; i < n; ++i)
+        {
+            int error = 0;
+            int brightImage = 0;
+            int brightReference = 0;
+            for (int k = 0; k < 3; ++k)
+            {
+                const int d = int(image[i * 3 + k]) - int(reference[i * 3 + k]);
+                squared += double(d) * d;
+                error = std::max(error, std::abs(d));
+                brightImage = std::max(brightImage, int(image[i * 3 + k]));
+                brightReference = std::max(brightReference, int(reference[i * 3 + k]));
+            }
+            m.maxDelta = std::max(m.maxDelta, error);
+            if (brightImage > LIT_THRESHOLD || brightReference > LIT_THRESHOLD)
+            {
+                lit.push_back(error);
+                if (error > 8)
+                {
+                    ++over8;
+                }
+            }
+            energyImage += Luma(image, i) - CLEAR_LUMA;
+            energyReference += Luma(reference, i) - CLEAR_LUMA;
+            if (heatmap)
+            {
+                const unsigned char *c = RAMP[std::min(error, 64)];
+                (*heatmap)[i * 3] = c[0];
+                (*heatmap)[i * 3 + 1] = c[1];
+                (*heatmap)[i * 3 + 2] = c[2];
+            }
+        }
+        m.litPx = long(lit.size());
+        double sum = 0.0;
+        for (int e : lit)
+        {
+            sum += e;
+        }
+        m.meanLit = lit.empty() ? 0.0 : sum / double(lit.size());
+        std::sort(lit.begin(), lit.end());
+        m.p99 = lit.empty() ? 0 : lit[size_t(std::floor(0.99 * double(lit.size() - 1)))];
+        m.pctOver8 = lit.empty() ? 0.0 : 100.0 * double(over8) / double(lit.size());
+        const double mse = squared / (double(n) * 3.0);
+        m.psnr = mse > 0.0 ? 10.0 * std::log10(255.0 * 255.0 / mse) : 100.0;
+        m.energyRatio = energyReference != 0.0 ? energyImage / energyReference : 1.0;
+        return m;
+    }
+
+    std::vector<int> ProfileColumn(const RGB &image, int x, int y0)
+    {
+        std::vector<int> rows;
+        for (int y = y0; y < y0 + 73; ++y)
+        {
+            rows.push_back(int(std::lround(Luma(image, size_t(y) * FRAME_WIDTH + x))));
+        }
+        return rows;
+    }
+
+    SweepStep MeasureSweep(const RGB &image, int x, double edgeY)
+    {
+        // The window's FLOOR is subtracted before the centroid and the width
+        // are taken, so rows entering and leaving the window as the rect moves
+        // do not drag either. (The first version of the page used no floor;
+        // its hairline wobble at 0.25, +/-0.53 px, still reproduces here.)
+        std::vector<std::pair<double, double>> column;
+        double peak = 0.0;
+        double floorLuma = 1e30;
+        for (int y = 0; y < FRAME_HEIGHT; ++y)
+        {
+            const double centre = y + 0.5;
+            if (std::fabs(centre - edgeY) > 12.0)
+            {
+                continue;
+            }
+            const double l = Luma(image, size_t(y) * FRAME_WIDTH + x);
+            column.push_back({centre, l});
+            peak = std::max(peak, l);
+            floorLuma = std::min(floorLuma, l);
+        }
+        double weight = 0.0;
+        double moment = 0.0;
+        for (const auto &row : column)
+        {
+            weight += row.second - floorLuma;
+            moment += (row.second - floorLuma) * row.first;
+        }
+        const double half = 0.5 * (peak + floorLuma);
+        double left = 0.0;
+        double right = 0.0;
+        bool haveLeft = false;
+        for (size_t i = 1; i < column.size(); ++i)
+        {
+            const double a = column[i - 1].second;
+            const double b = column[i].second;
+            if (!haveLeft && a < half && b >= half)
+            {
+                left = column[i - 1].first + (half - a) / (b - a);
+                haveLeft = true;
+            }
+            if (a >= half && b < half)
+            {
+                right = column[i - 1].first + (a - half) / (a - b);
+            }
+        }
+        double energy = 0.0;
+        for (size_t i = 0, n = size_t(FRAME_WIDTH) * FRAME_HEIGHT; i < n; ++i)
+        {
+            energy += Luma(image, i);
+        }
+        SweepStep step;
+        step.peak = int(std::lround(peak));
+        step.centroidErr = weight > 0.0 ? moment / weight - edgeY : 0.0;
+        step.fwhm = right - left;
+        step.energy = std::llround(energy);
+        return step;
+    }
+
+    int MaxDifference(const RGB &a, const RGB &b)
+    {
+        int m = 0;
+        for (size_t i = 0; i < a.size() && i < b.size(); ++i)
+        {
+            m = std::max(m, std::abs(int(a[i]) - int(b[i])));
+        }
+        return m;
+    }
+
+    bool LoadPNG(const std::string &path, RGB &out, int &width, int &height)
+    {
+        int channels = 0;
+        unsigned char *pixels = stbi_load(path.c_str(), &width, &height, &channels, 3);
+        if (!pixels)
+        {
+            return false;
+        }
+        out.assign(pixels, pixels + size_t(width) * height * 3);
+        stbi_image_free(pixels);
+        return true;
+    }
+
+    bool WritePNG(const std::string &path, const RGB &rgb, int width, int height)
+    {
+        return stbi_write_png(path.c_str(), width, height, 3, rgb.data(), width * 3) != 0;
+    }
+}

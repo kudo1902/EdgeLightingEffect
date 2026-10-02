@@ -115,3 +115,11 @@ set_target_properties(glfw PROPERTIES
 add_subdirectory(lib)
 add_subdirectory(demo)
 add_subdirectory(demo-capi)
+
+# Off by default: the harness behind docs/neon-resolution-scale-comparison.html
+# and a regression check for the neon's resolution scale. Not part of the
+# library or the demos. See tools/neon-scale-check/README.md.
+option(EDGE_LIGHTING_BUILD_TOOLS "Build tools/neon-scale-check" OFF)
+if(EDGE_LIGHTING_BUILD_TOOLS)
+    add_subdirectory(tools/neon-scale-check)
+endif()
