@@ -127,17 +127,23 @@ namespace NeonScaleCheck
         return rgb;
     }
 
-    double TimeRender(const Config &config)
+    double TimeRender(const Config &config, int width, int height, double *initMs)
     {
+        const auto i0 = std::chrono::high_resolution_clock::now();
         EdgeLightingEffect effect;
         CreateEffect(effect);
+        glFinish();
+        if (initMs)
+        {
+            *initMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - i0).count();
+        }
         effect.SetConfig(config);
         effect.Update(0.0f);
         OffscreenCapture capture;
-        capture.Begin(FRAME_WIDTH, FRAME_HEIGHT);
+        capture.Begin(width, height);
         for (int i = 0; i < 5; ++i)
         {
-            effect.Render(FRAME_WIDTH, FRAME_HEIGHT);
+            effect.Render(width, height);
         }
         glFinish();
         double best = 1e30;
@@ -147,7 +153,7 @@ namespace NeonScaleCheck
             const auto t0 = std::chrono::high_resolution_clock::now();
             for (int frame = 0; frame < 40; ++frame)
             {
-                effect.Render(FRAME_WIDTH, FRAME_HEIGHT);
+                effect.Render(width, height);
             }
             glFinish();
             const auto t1 = std::chrono::high_resolution_clock::now();

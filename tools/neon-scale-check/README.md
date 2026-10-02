@@ -76,6 +76,25 @@ cross-section column and the GPU time, plus the motion sweep - and with
 the timing, which is the slow part. Renders are deterministic: two runs of one
 build agree on every metric.
 
+## `time`
+
+```bash
+./build/tools/neon-scale-check/neon-scale-check time OUT.json --label head --size 1920x1080
+```
+
+Timing only: every scene at every scale, each on a freshly initialised effect
+(minimum over 5 runs of 40 frames between `glFinish` calls), plus how long each
+of those 72 effects took to construct and initialise - the shader compiles. At
+a size other than 1280 x 720 the scenes' layout scales with the frame (rect
+position, size, corner radius) while the neon's own px parameters do not, as a
+host's would not on a bigger display.
+
+For a before / after comparison, build the tool once per library (standalone
+mode, above), run `time` for every build in rounds with the build order
+rotated each round, and take the minimum per figure. That is how
+[`docs/neon-resolution-scale-perf-comparison.md`](../../docs/neon-resolution-scale-perf-comparison.md)
+was made.
+
 ## Regenerating the comparison page
 
 1. Build the tool in-tree, and once more standalone against the build the page

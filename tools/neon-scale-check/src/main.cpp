@@ -10,7 +10,11 @@
 //       page's committed images, when a reduced scale exceeds its error bound,
 //       or when a moving hairline wanders off its edge. See README.md.
 //
-//   --verbose on either passes the library's INFO log through; without it
+//   neon-scale-check time <out.json> [--label NAME] [--size WxH]
+//       Timing only, at any frame size, plus each effect's initialisation
+//       time. For before / after comparisons; see README.md.
+//
+//   --verbose on any of them passes the library's INFO log through; without it
 //   only the library's WARN and ERROR lines are shown, on stderr.
 
 #include "harness.h"
@@ -271,6 +275,85 @@ namespace
         return 0;
     }
 
+    /// Timing only, at any frame size: every scene at every scale, plus how
+    /// long each freshly initialised effect took to construct. The scenes'
+    /// LAYOUT scales with the frame - rect position, size and corner radius by
+    /// the frame's ratio to 1280 x 720 - while the neon's own px parameters
+    /// (line width, glow radius, cutoffs) stay as they are, as a host's would
+    /// on a bigger display. Interleave runs of the builds being compared and
+    /// take the minimum per figure; see README.md.
+    int Time(int argc, char **argv)
+    {
+        if (argc < 3)
+        {
+            std::fprintf(stderr, "usage: neon-scale-check time <out.json> [--label NAME] [--size WxH]\n");
+            return 2;
+        }
+        const std::string out = argv[2];
+        std::string label = "run";
+        int width = FRAME_WIDTH;
+        int height = FRAME_HEIGHT;
+        for (int i = 3; i < argc; ++i)
+        {
+            if (std::strcmp(argv[i], "--label") == 0 && i + 1 < argc)
+            {
+                label = argv[++i];
+            }
+            else if (std::strcmp(argv[i], "--size") == 0 && i + 1 < argc)
+            {
+                if (std::sscanf(argv[++i], "%dx%d", &width, &height) != 2 || width <= 0 || height <= 0)
+                {
+                    std::fprintf(stderr, "neon-scale-check: --size wants WxH, e.g. 1920x1080\n");
+                    return 2;
+                }
+            }
+        }
+        const float kx = float(width) / float(FRAME_WIDTH);
+        const float ky = float(height) / float(FRAME_HEIGHT);
+
+        InitGL();
+        FILE *js = std::fopen(out.c_str(), "w");
+        if (!js)
+        {
+            std::fprintf(stderr, "neon-scale-check: cannot write %s\n", out.c_str());
+            return 2;
+        }
+        std::fprintf(js, "{\"build\": \"%s\", \"gpu\": \"%s\", \"size\": [%d, %d], \"scenarios\": {",
+                     label.c_str(), RendererName().c_str(), width, height);
+        std::vector<double> inits;
+        bool first = true;
+        for (const Scene &scene : SCENES)
+        {
+            std::fprintf(stderr, "%s\n", scene.id);
+            std::fprintf(js, "%s\n\"%s\": {\"ms\": {", first ? "" : ",", scene.id);
+            first = false;
+            for (int s = 0; s < SCALE_COUNT; ++s)
+            {
+                Config c = SceneConfig(scene, SCALES[s]);
+                c.geometry.position.x *= kx;
+                c.geometry.position.y *= ky;
+                c.geometry.width *= kx;
+                c.geometry.height *= ky;
+                c.geometry.cornerRadius *= std::min(kx, ky);
+                double initMs = 0.0;
+                const double ms = TimeRender(c, width, height, &initMs);
+                inits.push_back(initMs);
+                std::fprintf(js, "%s\"%s\": %.4f", s ? ", " : "", SCALE_TAGS[s], ms);
+            }
+            std::fprintf(js, "}}");
+        }
+        std::fprintf(js, "},\n\"initMs\": [");
+        for (size_t i = 0; i < inits.size(); ++i)
+        {
+            std::fprintf(js, "%s%.3f", i ? ", " : "", inits[i]);
+        }
+        std::fprintf(js, "]}\n");
+        std::fclose(js);
+        ShutdownGL();
+        std::fprintf(stderr, "wrote %s\n", out.c_str());
+        return 0;
+    }
+
     /// Largest error a reduced scale may show against its own 1.0 render:
     /// what the edge ring measured on an AMD Radeon Pro 5300M, plus one level
     /// for GPU-to-GPU variance. Everything reads max 2 there except the
@@ -392,9 +475,14 @@ int main(int argc, char **argv)
     {
         return Check(argc, argv);
     }
+    if (argc >= 2 && std::strcmp(argv[1], "time") == 0)
+    {
+        return Time(argc, argv);
+    }
     std::fprintf(stderr,
                  "usage:\n"
                  "  neon-scale-check generate <outdir> [--label NAME] [--images] [--no-timing] [--verbose]\n"
-                 "  neon-scale-check check [--images-dir DIR] [--verbose]\n");
+                 "  neon-scale-check check [--images-dir DIR] [--verbose]\n"
+                 "  neon-scale-check time <out.json> [--label NAME] [--size WxH] [--verbose]\n");
     return 2;
 }

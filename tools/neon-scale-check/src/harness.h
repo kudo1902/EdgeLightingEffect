@@ -60,8 +60,12 @@ namespace NeonScaleCheck
     RGB Render(EdgeLightingEffect &effect, const Config &config);
 
     /// Minimum over 5 runs of the mean frame time of 40 Render() calls between
-    /// glFinish, after 5 warm-up frames, on a freshly initialised effect. ms.
-    double TimeRender(const Config &config);
+    /// glFinish, after 5 warm-up frames, on a freshly initialised effect, into
+    /// a @p width x @p height target. ms. @p initMs, when non-null, receives
+    /// how long constructing and initialising that effect took - the shader
+    /// compiles, which a host pays once per effect.
+    double TimeRender(const Config &config, int width = FRAME_WIDTH, int height = FRAME_HEIGHT,
+                      double *initMs = nullptr);
 
     /// Errors of @p image against @p reference. Fills @p heatmap with the
     /// page's error ramp when it is non-null.
