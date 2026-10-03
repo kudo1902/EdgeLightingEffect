@@ -21,6 +21,7 @@
 #include <string>
 
 using namespace NeonGuideFigures;
+using NeonTools::PassRecorder;
 
 namespace
 {

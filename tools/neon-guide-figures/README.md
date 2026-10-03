@@ -43,8 +43,9 @@ Three kinds of figure, one function per group in
 - **Pass captures.** What the renderer's private buffers hold between passes,
   and the triangles each pass draws - Parts 5, 6 and 8.
 
-The pass captures come from [`PassRecorder`](src/pass-recorder.h), which
-watches a frame the way a GPU debugger would, without the library knowing.
+The pass captures come from [`PassRecorder`](../common/pass-recorder.h),
+shared with `neon-scale-check partition`, which watches a frame the way a GPU
+debugger would, without the library knowing.
 GLAD reaches every GL entry point through a global function pointer, and the
 library draws only with `glDrawArrays`, so the recorder swaps
 `glad_glDrawArrays` for a wrapper. Each draw goes through unchanged; after it,

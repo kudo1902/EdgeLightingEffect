@@ -11,8 +11,11 @@ add_executable(neon-guide-figures
     src/main.cpp
     src/figures.cpp
     src/canvas.cpp
-    src/pass-recorder.cpp
+    ../common/pass-recorder.cpp
 )
+
+# The pass recorder is shared with neon-scale-check.
+target_include_directories(neon-guide-figures PRIVATE ../common)
 
 # Where the figures go by default: this checkout's docs.
 target_compile_definitions(neon-guide-figures PRIVATE

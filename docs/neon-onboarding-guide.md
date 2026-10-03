@@ -1435,8 +1435,10 @@ zeroes everything and returns. Below it, in full-res rect-local px:
    `PushAnnulus(blitOuter, ringOuter) + PushAnnulus(ringHole, blitHole)`), so
    their shared edges are bit-identical and the rasterizer gives every pixel
    on such an edge to exactly one of them. Both blend premultiplied-over, so
-   a pixel drawn twice would composite twice. This also depends on
-   `invariant gl_Position` in `neon.vert` (Part 7.1).
+   a pixel drawn twice would composite twice. This also depends on both
+   passes drawing through one full-res transform, which `Render` builds once
+   and hands to both, and on `invariant gl_Position` in `neon.vert` (Part
+   7.1). `neon-scale-check partition` (Part 9.3) tests the result.
 4. **The gather quad** (scaled px): the union of the glow quad and the ring,
    padded by the gather's bilinear footprint. Stored as `mGatherOuter`.
 5. `mScaledOuter`: the blit's outer box plus its footprint, which sizes the
@@ -2070,9 +2072,11 @@ winding.
   library: GLAD calls GL through global function pointers, so a tool linked
   against the static library can wrap `glad_glDrawArrays`, let each draw
   through, then name the pass from its program's uniforms and read back its
-  target. That is how Parts 5, 6 and 8 got their figures; see `PassRecorder`
-  in [`tools/neon-guide-figures`](../tools/neon-guide-figures/README.md). It
-  does not work through the C ABI dylib, which keeps its own copy of GLAD.
+  target. That is how Parts 5, 6 and 8 got their figures, and how
+  `neon-scale-check partition` replays the blit's and the ring's triangles;
+  see `PassRecorder` in `tools/common/` and
+  [`tools/neon-guide-figures`](../tools/neon-guide-figures/README.md). It does
+  not work through the C ABI dylib, which keeps its own copy of GLAD.
 
 ![The debug layer's overlays](images/neon-onboarding/debug-overlays.png)
 
@@ -2094,6 +2098,17 @@ bound, or if a moving hairline wanders off its edge. Run it after touching
 `neon.frag`, `neon-blit.frag`, `neon.vert` or the scaled path. It runs on a
 machine without a GPU through Mesa's llvmpipe. See
 [`tools/neon-scale-check/README.md`](../tools/neon-scale-check/README.md).
+
+```bash
+./build/tools/neon-scale-check/neon-scale-check partition
+```
+
+checks the one thing `check`'s twelve scenes cannot cover in general: that the
+blit and the edge ring tile the frame, every pixel drawn by exactly one of
+them, across a thousand random configs. A gap shows as a dark crack and an
+overlap as a bright seam (Part 8.3). Run it after touching
+`setupRingGeometry`, the blit or ring pass, or `neon.vert`, and on each GPU the
+scaled path ships to.
 
 ### 9.4 Pitfalls, in the order people hit them
 

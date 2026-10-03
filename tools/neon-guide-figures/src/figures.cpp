@@ -14,6 +14,8 @@
 
 namespace NeonGuideFigures
 {
+    using namespace NeonTools;
+
     namespace
     {
         // ---------------------------------------------------------------

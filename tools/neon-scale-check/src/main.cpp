@@ -14,10 +14,16 @@
 //       Timing only, at any frame size, plus each effect's initialisation
 //       time. For before / after comparisons; see README.md.
 //
+//   neon-scale-check partition [--configs N] [--seed S]
+//       A regression gate for the scaled path's composite: across N random
+//       configs, the blit and the edge ring must cover every pixel they reach
+//       exactly once. Exits non-zero on any overlap or seam gap. See README.md.
+//
 //   --verbose on any of them passes the library's INFO log through; without it
 //   only the library's WARN and ERROR lines are shown, on stderr.
 
 #include "harness.h"
+#include "partition.h"
 #include "scenes.h"
 
 #include <sys/stat.h>
@@ -501,10 +507,15 @@ int main(int argc, char **argv)
     {
         return Time(argc, argv);
     }
+    if (argc >= 2 && std::strcmp(argv[1], "partition") == 0)
+    {
+        return Partition(argc, argv);
+    }
     std::fprintf(stderr,
                  "usage:\n"
                  "  neon-scale-check generate <outdir> [--label NAME] [--images] [--no-timing] [--verbose]\n"
                  "  neon-scale-check check [--images-dir DIR] [--verbose]\n"
-                 "  neon-scale-check time <out.json> [--label NAME] [--size WxH] [--verbose]\n");
+                 "  neon-scale-check time <out.json> [--label NAME] [--size WxH] [--verbose]\n"
+                 "  neon-scale-check partition [--configs N] [--seed S] [--verbose]\n");
     return 2;
 }

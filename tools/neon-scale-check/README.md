@@ -35,8 +35,9 @@ cmake -S tools/neon-scale-check -B build/neon-scale-check-other -G Ninja -DEL_RO
 cmake --build build/neon-scale-check-other
 ```
 
-The tool uses only public headers (`core/`, `util/capture-util.h`), taken from
-`EL_ROOT` so they match the library; they have not changed since `542dad4`.
+The tool uses only public headers (`core/`, `util/capture-util.h`, and for
+`partition` `gl/shader-program.h` plus the generated `shaders.h`), taken from
+`EL_ROOT` and `EL_ROOT/build` so they match the library.
 
 ## `check`
 
@@ -74,6 +75,56 @@ A failure on the 1.0 column means the direct path's output changed. If that
 was intended, regenerate the page (below) so the committed images describe it.
 A failure on a reduced scale means the scaled path lost quality the edge ring
 had; `--images-dir DIR` points the 1.0 comparison elsewhere.
+
+## `partition`
+
+```bash
+./build/tools/neon-scale-check/neon-scale-check partition [--configs N] [--seed S]
+```
+
+Below scale 1.0 the frame is composited by two passes over areas that must
+tile: the blit (pass 2b) draws everything that can be lit outside a ring
+around the outline, and the edge ring (pass 2c) draws the ring. Both blend
+premultiplied-over, so a pixel drawn by both composites twice (a bright seam)
+and a pixel drawn by neither shows the background (a dark crack). `check` sees
+that only on its twelve scenes; this tests it across N random configs, 1000 by
+default.
+
+Each config draws at a random frame size (an odd one included), with a random
+rect size, fractional position (partly off screen too), corner radius and
+winding, line, glow reach, glow side, both cutoffs and resolution scale. The
+command watches the frame through `PassRecorder`
+([`tools/common/pass-recorder.h`](../common/pass-recorder.h)), replays the
+blit's and the ring's own triangles - their vertex arrays and recorded `uMVP`,
+through the library's `neon.vert` - additively into a coverage target, and
+fails on:
+
+- any pixel covered more than once;
+- any uncovered pixel with the ring within two pixels on one side and the blit
+  on the other. An uncovered strip with the ring on both sides is legitimate:
+  the ring's hole, left undrawn where nothing past an inside cutoff can be lit.
+
+It prints the first five failing configs in full and exits 1. A seed names the
+same configs on every platform (the random floats come from `mt19937`'s raw
+bits, not `std::uniform_real_distribution`), so a failure reproduces anywhere
+with the same `--seed` and `--configs`. It also fails when the ring was never
+drawn, since then nothing was tested: a library without the edge ring, or a
+shader uniform renamed under `PassRecorder`, which names passes by them.
+
+Measured on the Apple M2 Pro: seeds 1, 2 and 3 pass, 3000 configs and about a
+billion covered pixels with no overlap and no gap, about 9 s per 1000 configs.
+Against a scratch build that moved the ring's edges by 1 px, it failed 156 of
+200 configs both ways (the rest put the moved edge off screen). A ring that
+still tiles but is too narrow for the line passes here - that is a quality
+failure, and `check` catches it.
+
+What it rests on: the two vertex arrays are emitted from the same floats
+(`setupRingGeometry`), drawn through one full-res transform `Render` builds for
+both, by programs that share `neon.vert`'s `invariant gl_Position`. Every edge
+is axis-aligned and the transform has no rotation, so collinear edges agree
+exactly even where they meet at T-junctions. Run this after touching any of
+those, and on every GPU the scaled path ships to: the last of them is a
+property of the rasteriser, which only running on it can confirm.
 
 ## `generate`
 

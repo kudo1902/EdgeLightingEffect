@@ -6,18 +6,19 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <memory>
 
-namespace NeonGuideFigures
+namespace NeonTools
 {
     namespace
     {
         PFNGLDRAWARRAYSPROC gRealDrawArrays = nullptr;
         bool gRecording = false;
+        bool gReadback = true;
         GLint gCallerFramebuffer = 0;
         std::vector<DrawRecord> gDraws;
 
         /// The flat-colour program Redraw uses. neon.vert itself, so a redrawn
         /// triangle lands on exactly the pixels the pass's own did.
-        std::unique_ptr<ShaderProgram> gFlatProgram;
+        std::unique_ptr<EdgeLighting::ShaderProgram> gFlatProgram;
 
         const char *const FLAT_FRAG_SRC = R"(#version 330 core
 precision highp float;
@@ -149,7 +150,10 @@ void main() { fragColor = uColor; }
                 glGetUniformfv(GLuint(program), glGetUniformLocation(GLuint(program), "uUVOffset"),
                                glm::value_ptr(record.uvOffset));
             }
-            record.written = ReadAttachments(drawFramebuffer);
+            if (gReadback)
+            {
+                record.written = ReadAttachments(drawFramebuffer);
+            }
             gDraws.push_back(std::move(record));
         }
     }
@@ -167,6 +171,11 @@ void main() { fragColor = uColor; }
     {
         gFlatProgram.reset();
         gDraws.clear();
+    }
+
+    void PassRecorder::SetReadback(bool enabled)
+    {
+        gReadback = enabled;
     }
 
     void PassRecorder::Begin()
@@ -207,7 +216,7 @@ void main() { fragColor = uColor; }
     {
         if (!gFlatProgram)
         {
-            gFlatProgram.reset(new ShaderProgram(ShaderSource::NEON_VERT_SRC, FLAT_FRAG_SRC, "NeonGuideFigures.Flat"));
+            gFlatProgram.reset(new EdgeLighting::ShaderProgram(EdgeLighting::ShaderSource::NEON_VERT_SRC, FLAT_FRAG_SRC, "NeonTools.Flat"));
         }
         GLint prevProgram = 0;
         GLint prevVertexArray = 0;

@@ -43,7 +43,7 @@ if(NOT TARGET edge-lighting)
     add_library(edge-lighting STATIC IMPORTED)
     set_target_properties(edge-lighting PROPERTIES
         IMPORTED_LOCATION "${EL_BUILD}/lib/libedge-lighting.a"
-        INTERFACE_INCLUDE_DIRECTORIES "${EL_ROOT}/lib/include;${EL_ROOT}/external/include"
+        INTERFACE_INCLUDE_DIRECTORIES "${EL_ROOT}/lib/include;${EL_BUILD}/lib/generated;${EL_ROOT}/external/include"
         INTERFACE_LINK_LIBRARIES glad
         INTERFACE_COMPILE_DEFINITIONS PLATFORM_MACOS
     )
@@ -57,7 +57,15 @@ endif()
 add_executable(neon-scale-check
     src/main.cpp
     src/harness.cpp
+    src/partition.cpp
+    ../common/pass-recorder.cpp
 )
+
+# `partition` watches the renderer's draws through the pass recorder shared
+# with neon-guide-figures. It needs the generated shaders.h (the recorder
+# replays draws through the library's own neon.vert), which is why the
+# standalone target above carries EL_BUILD/lib/generated.
+target_include_directories(neon-scale-check PRIVATE ../common)
 
 # Where `check` finds the page's committed images by default: this checkout's
 # docs, whichever library the tool is linked against.

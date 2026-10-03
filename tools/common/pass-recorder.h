@@ -1,29 +1,30 @@
-#ifndef _NEON_GUIDE_FIGURES_PASS_RECORDER_H_
-#define _NEON_GUIDE_FIGURES_PASS_RECORDER_H_
+#ifndef _NEON_TOOLS_PASS_RECORDER_H_
+#define _NEON_TOOLS_PASS_RECORDER_H_
 
-// Watches NeonRenderer draw one frame, from the outside.
+// Watches NeonRenderer draw one frame, from the outside. Shared by the tools:
+// neon-guide-figures reads the renderer's buffers between passes for the
+// guide's figures, and neon-scale-check `partition` replays the blit's and the
+// ring's triangles to count how often each pixel is covered.
 //
-// The guide's pass figures need what the renderer's private buffers hold
-// between passes - the emission table, the gather buffer, the reduced buffer -
-// and the triangles each pass draws. None of that is public, and it should not
-// become public just so a document can show it. So this records it the way a
-// GPU debugger would: GLAD reaches every GL entry point through a global
-// function pointer, and this swaps glad_glDrawArrays (the only draw call the
-// library makes) for a wrapper. Every draw still goes through untouched; after
-// it, the wrapper names the pass from the program's uniforms and reads back
-// whatever that draw wrote.
+// Both need what the renderer keeps private - the emission table, the gather
+// buffer, the reduced buffer, and the triangles each pass draws. None of that
+// should become public for a tool's sake. So this records it the way a GPU
+// debugger would: GLAD reaches every GL entry point through a global function
+// pointer, and this swaps glad_glDrawArrays (the only draw call the library
+// makes) for a wrapper. Every draw still goes through untouched; after it, the
+// wrapper names the pass from the program's uniforms, records its vertex array
+// and transform, and - unless told not to - reads back whatever it wrote.
 //
 // That works only for a binary linked against the STATIC library with its
-// own copy of glad (the C ABI dylib carries a private one), and it costs a
-// readback per draw - a tool's trade, not a library's.
+// own copy of glad (the C ABI dylib carries a private one), and a readback per
+// draw costs time - a tool's trade, not a library's.
 
-#include "canvas.h"
 #include "gl/gl-header.h"
 
 #include <glm/glm.hpp>
 #include <vector>
 
-namespace NeonGuideFigures
+namespace NeonTools
 {
     /// Which neon pass a draw belongs to. The names are the guide's (Part 6).
     typedef enum class PassKind
@@ -62,7 +63,7 @@ namespace NeonGuideFigures
         glm::mat4 mvp{1.0f};
         glm::vec2 uvScale{0.0f};          ///< The blit's uUVScale, when kind is P2B.
         glm::vec2 uvOffset{0.0f};         ///< The blit's uUVOffset, when kind is P2B.
-        std::vector<Attachment> written;  ///< Every colour attachment of the target, after the draw.
+        std::vector<Attachment> written;  ///< Every colour attachment of the target, after the draw (empty with readback off).
     } DrawRecord;
 
     class PassRecorder
@@ -73,6 +74,12 @@ namespace NeonGuideFigures
 
         /// Delete the GL objects this owns. Call while the context is alive.
         static void Release();
+
+        /// Whether a recorded draw reads its target back into
+        /// @ref DrawRecord::written. On by default; turn it off when only the
+        /// geometry matters - a float readback of a full frame per draw is
+        /// most of what recording costs.
+        static void SetReadback(bool enabled);
 
         /// Record every draw until @ref End. The framebuffer bound for drawing
         /// at this moment is taken as the caller's, which is how a draw onto it
