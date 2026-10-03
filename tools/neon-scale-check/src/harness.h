@@ -48,6 +48,25 @@ namespace NeonScaleCheck
     void InitGL();
     void ShutdownGL();
 
+    /// InitGL for the life of a scope, ShutdownGL when it ends. Declare it
+    /// BEFORE anything in that scope that owns GL objects: locals are destroyed
+    /// in reverse order, so the context then outlives every destructor that
+    /// deletes into it, on every return path.
+    ///
+    /// The commands used to call ShutdownGL by hand while their
+    /// EdgeLightingEffect was still in scope, so the effect's destructor ran
+    /// its glDelete* calls into a terminated context. macOS let that pass;
+    /// Mesa segfaulted on it, which threw away the buffered report and turned
+    /// `check`'s exit code into 139 whatever it had found.
+    class GLSession
+    {
+    public:
+        GLSession() { InitGL(); }
+        ~GLSession() { ShutdownGL(); }
+        GLSession(const GLSession &) = delete;
+        GLSession &operator=(const GLSession &) = delete;
+    };
+
     /// GL_RENDERER of the current context - the GPU every timing belongs to.
     std::string RendererName();
 

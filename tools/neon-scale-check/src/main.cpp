@@ -20,7 +20,10 @@
 #include "harness.h"
 #include "scenes.h"
 
+#include <sys/stat.h>
+
 #include <algorithm>
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -79,6 +82,24 @@ namespace
     const int SPRITE_Y = 164;
     const int SPRITE_W = 64;
     const int SPRITE_H = 40;
+
+    /// `mkdir -p` without a shell: every component of @p path, in turn.
+    /// Existing directories are fine; anything else that fails is reported.
+    bool MakeDirs(const std::string &path)
+    {
+        for (size_t i = 1; i <= path.size(); ++i)
+        {
+            if (i == path.size() || path[i] == '/')
+            {
+                const std::string prefix = path.substr(0, i);
+                if (::mkdir(prefix.c_str(), 0755) != 0 && errno != EEXIST)
+                {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
 
     const Scene &FindScene(const char *id)
     {
@@ -164,9 +185,13 @@ namespace
             }
         }
         const std::string imageDir = out + "/images";
-        std::system(("mkdir -p '" + (images ? imageDir : out) + "'").c_str());
+        if (!MakeDirs(images ? imageDir : out))
+        {
+            std::fprintf(stderr, "neon-scale-check: cannot create %s\n", (images ? imageDir : out).c_str());
+            return 2;
+        }
 
-        InitGL();
+        const GLSession gl;
         EdgeLightingEffect effect;
         CreateEffect(effect);
         FILE *js = std::fopen((out + "/" + label + ".json").c_str(), "w");
@@ -270,7 +295,6 @@ namespace
         }
         std::fprintf(js, "}}}\n");
         std::fclose(js);
-        ShutdownGL();
         std::fprintf(stderr, "wrote %s/%s.json%s\n", out.c_str(), label.c_str(), images ? " and images/" : "");
         return 0;
     }
@@ -281,7 +305,7 @@ namespace
     /// the frame's ratio to 1280 x 720 - while the neon's own px parameters
     /// (line width, glow radius, cutoffs) stay as they are, as a host's would
     /// on a bigger display. Interleave runs of the builds being compared and
-    /// take the minimum per figure; see README.md.
+    /// take the median per figure over the rounds they share; see README.md.
     int Time(int argc, char **argv)
     {
         if (argc < 3)
@@ -311,7 +335,7 @@ namespace
         const float kx = float(width) / float(FRAME_WIDTH);
         const float ky = float(height) / float(FRAME_HEIGHT);
 
-        InitGL();
+        const GLSession gl;
         FILE *js = std::fopen(out.c_str(), "w");
         if (!js)
         {
@@ -349,7 +373,6 @@ namespace
         }
         std::fprintf(js, "]}\n");
         std::fclose(js);
-        ShutdownGL();
         std::fprintf(stderr, "wrote %s\n", out.c_str());
         return 0;
     }
@@ -389,7 +412,7 @@ namespace
                 imagesDir = argv[++i];
             }
         }
-        InitGL();
+        const GLSession gl;
         EdgeLightingEffect effect;
         CreateEffect(effect);
         int failures = 0;
@@ -443,7 +466,6 @@ namespace
             std::printf(" %s %.3f%s", SCALE_TAGS[s], worst, bad ? "!" : "");
         }
         std::printf("\n");
-        ShutdownGL();
         if (failures)
         {
             std::printf("FAIL: %d value(s) out of bounds (marked !). See tools/neon-scale-check/README.md.\n", failures);

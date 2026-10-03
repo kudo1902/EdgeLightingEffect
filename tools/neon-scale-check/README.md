@@ -55,7 +55,9 @@ Prints one row per scene and exits 1 if anything is out of bounds (marked `!`):
 
 Each bound is the measured value plus one level for GPU-to-GPU variance (the
 first version of the page was rendered on an Apple M2 Pro, and its 1.0 images
-match this machine's within 1-2 levels). Built against the pre-plan library
+match this machine's within 1-2 levels). It also passes on Mesa's llvmpipe
+software rasteriser, which is how it can run on a Linux box with no GPU: the 1.0
+column drifts at most 2 there, and every reduced scale stays inside its bound. Built against the pre-plan library
 (`542dad4`) the check fails on 54 values, with the hairline wandering
 +/-0.53 px at 0.25 - which is what it is for.
 
@@ -91,9 +93,14 @@ host's would not on a bigger display.
 
 For a before / after comparison, build the tool once per library (standalone
 mode, above), run `time` for every build in rounds with the build order
-rotated each round, and take the minimum per figure. That is how
+rotated each round, and take the MEDIAN per figure over the rounds the builds
+ran in together. Not the minimum: it was measurably biased toward whichever
+build ran first on a cooler GPU (0.770 ms against 0.806 and 0.802 for one
+figure). That is how
 [`docs/neon-resolution-scale-perf-comparison.md`](../../docs/neon-resolution-scale-perf-comparison.md)
-was made.
+was made. (The comparison page's own timings are still merged by minimum - see
+step 3 below - because they come from interleaved runs of only two builds; read
+them as the page's figures, not as a before / after measurement.)
 
 ## Regenerating the comparison page
 
