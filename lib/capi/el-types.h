@@ -108,6 +108,31 @@ extern "C"
         EL_OPAQUE_MODE_ALL = 4      /**< Fill the whole viewport. */
     } el_opaque_mode_e;
 
+    /** @brief One intermediate value of the neon's fragment shader, shown
+     *         instead of the finished glow.
+     *  @details Mirrors @c EdgeLighting::NeonStageView. A teaching and
+     *           debugging view, set with @ref el_effect_set_debug_neon_stage:
+     *           see that function for when it applies. The values follow the
+     *           shader's own order. */
+    typedef enum el_neon_stage_e
+    {
+        EL_NEON_STAGE_FINAL = 0,              /**< The normal output - no stage view. */
+        EL_NEON_STAGE_DISTANCE = 1,           /**< Signed distance to the outline: inside blue, outside orange, 20 px contours. */
+        EL_NEON_STAGE_PERIMETER = 2,          /**< Position along the outline (0..1) as a hue, ticks every 0.05. */
+        EL_NEON_STAGE_LUT_AT_POSITION = 3,    /**< The colour ring read at the pixel's own position alone (no gather). */
+        EL_NEON_STAGE_SAMPLE_COLOR = 4,       /**< The emission table's colour at the nearest perimeter sample. */
+        EL_NEON_STAGE_GATHERED_COLOR = 5,     /**< The gather's weighted-mean colour. */
+        EL_NEON_STAGE_ARC_COVERAGE = 6,       /**< Arc coverage at the pixel's own position (filament gate). */
+        EL_NEON_STAGE_GATHERED_COVERAGE = 7,  /**< Arc coverage averaged by the gather (halo/bloom gate). */
+        EL_NEON_STAGE_FILAMENT = 8,           /**< The filament profile, 0..1. */
+        EL_NEON_STAGE_HALO = 9,               /**< The halo field. */
+        EL_NEON_STAGE_BLOOM = 10,             /**< The bloom field. */
+        EL_NEON_STAGE_EMISSION = 11,          /**< The composed linear emission, clipped to 0..1 as a display would. */
+        EL_NEON_STAGE_GRADED = 12,            /**< After the tone map, before the coverage masks. */
+        EL_NEON_STAGE_MASKS = 13,             /**< What the one-sided cut and the cutoffs keep, 0..1. */
+        EL_NEON_STAGE_ALPHA = 14              /**< The coverage alpha written with the colour. */
+    } el_neon_stage_e;
+
     /** @brief Which side of the rect edge a cutoff bounds.
      *  @details Addresses one of a layer's two cutoffs in
      *           @ref el_effect_set_opaque_cutoff /

@@ -912,8 +912,8 @@ void DebugUI::buildDebugSection(el_effect_handle_t effect)
     }
 
     // Drawn by DebugRenderer, which the C ABI registers under
-    // EL_RENDERER_DEBUG (included in EL_RENDERER_ALL). There is no master
-    // enable through the ABI - the two flags are the whole surface.
+    // EL_RENDERER_DEBUG (included in EL_RENDERER_ALL). The layer's master
+    // enable (el_effect_set_debug_enabled) is left at its default here.
     el_bool_t showLut = 0;
     el_effect_get_debug_show_gradient_lut(effect, &showLut);
     bool sl = showLut;
@@ -956,6 +956,37 @@ void DebugUI::buildDebugSection(el_effect_handle_t effect)
     if (!neonOn)
     {
         ImGui::TextDisabled("Neon is off - LUT / stops have nothing to annotate.");
+    }
+
+    ImGui::Separator();
+
+    // --- Neon debug mode: a stage view of neon.frag. A mode of the NEON
+    // layer, so it works without the overlay layer. Labels in
+    // el_neon_stage_e order.
+    static const char *stageItems[] = {
+        "Final (off)", "Signed distance", "Perimeter position", "Ring at own position",
+        "Nearest sample color", "Gathered color", "Arc coverage (own)", "Arc coverage (gathered)",
+        "Filament", "Halo", "Bloom", "Emission (linear)", "Graded (tone mapped)", "Masks", "Alpha"};
+    el_neon_stage_e stage = EL_NEON_STAGE_FINAL;
+    el_effect_get_debug_neon_stage(effect, &stage);
+    int stageIdx = static_cast<int>(stage);
+    if (ImGui::Combo("Neon Stage##Debug", &stageIdx, stageItems, IM_ARRAYSIZE(stageItems)))
+    {
+        el_effect_set_debug_neon_stage(effect, static_cast<el_neon_stage_e>(stageIdx));
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Replace the glow with one intermediate value of the\n"
+                          "neon shader: distance, perimeter position, colours,\n"
+                          "each light layer, coverages, tone map, masks, alpha.\n"
+                          "docs/neon-onboarding-guide.md shows every one.\n\n"
+                          "Res Scale 1.0 only.");
+    }
+    float neonScale = 1.0f;
+    el_effect_get_neon_resolution_scale(effect, &neonScale);
+    if (stageIdx != EL_NEON_STAGE_FINAL && neonScale < 1.0f)
+    {
+        ImGui::TextDisabled("Neon Res Scale is below 1.0 - stage view ignored.");
     }
 }
 

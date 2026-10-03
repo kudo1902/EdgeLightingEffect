@@ -1050,6 +1050,14 @@ namespace EdgeLighting
         // frame degrades to the fill: no glow, nothing stale.
         bool glowReady = ensurePathPrograms(scaled);
 
+        // Debug: a stage view replaces pass 1's output with one intermediate
+        // value (DebugConfig::neonStage). Direct path only - its own program,
+        // built the first time a view is picked; if that build fails the
+        // frame draws the normal glow.
+        const bool stageView = !scaled && config.debug.neonStage != NeonStageView::FINAL &&
+                               buildNeonProgram(mNeonStageShader, "NEON_STAGE_VIEW", "NeonRenderer.Stage",
+                                                PROGRAM_STAGE, true);
+
         // The render target this renderer was handed - framebuffer AND
         // viewport, saved as a pair because the offscreen phase has to put both
         // back. The framebuffer is not always the window's: an offscreen frame
@@ -1168,7 +1176,8 @@ namespace EdgeLighting
             if (!scaled)
             {
                 // --- Pass 1 (direct): the gather, composited onto the target.
-                renderNeonPass(mvp, bufW, bufH, false, glm::vec2(0.0f), glm::vec2(0.0f), time, config);
+                renderNeonPass(mvp, bufW, bufH, false, glm::vec2(0.0f), glm::vec2(0.0f), time, config,
+                               stageView);
             }
             else
             {
@@ -2323,7 +2332,7 @@ namespace EdgeLighting
 
     bool NeonRenderer::renderNeonPass(const glm::mat4 &mvp, int bufWidth, int bufHeight, bool scaled,
                                       const glm::vec2 &gatherUVScale, const glm::vec2 &gatherUVOffset,
-                                      float time, const Config &config)
+                                      float time, const Config &config, bool stageView)
     {
         const float scale = GetClampedResolutionScale(config);
 
@@ -2382,7 +2391,7 @@ namespace EdgeLighting
         // The direct path gathers and shades in one program. The scaled path
         // shades from the gather pass's result instead of running the loop
         // here; every other uniform is the same.
-        ShaderProgram &shader = scaled ? mNeonShadeShader : mNeonShader;
+        ShaderProgram &shader = scaled ? mNeonShadeShader : (stageView ? mNeonStageShader : mNeonShader);
         shader.Use();
         uploadNeonUniforms(shader, mvp, scale, time, mQuadMargin, config);
         if (scaled)
@@ -2392,6 +2401,10 @@ namespace EdgeLighting
         else
         {
             bindGatherInputs(shader, config);
+            if (stageView)
+            {
+                shader.SetUniform("uStageView", static_cast<int>(config.debug.neonStage));
+            }
         }
 
         // Tight glow quad in both modes - opaque's far region is covered by the

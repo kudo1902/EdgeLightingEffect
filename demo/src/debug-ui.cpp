@@ -322,6 +322,39 @@ namespace
         }
     }
 
+    /// Labels for @c NeonStageView, in its ordinal order. demo-capi keeps its
+    /// own copy for @c el_neon_stage_e.
+    constexpr const char *NEON_STAGE_ITEMS[] = {
+        "Final (off)", "Signed distance", "Perimeter position", "Ring at own position",
+        "Nearest sample color", "Gathered color", "Arc coverage (own)", "Arc coverage (gathered)",
+        "Filament", "Halo", "Bloom", "Emission (linear)", "Graded (tone mapped)", "Masks", "Alpha"};
+
+    /// "Neon Stage" debug combo: replaces the glow with one intermediate value
+    /// of neon.frag (@c DebugConfig::neonStage). Like Opaque Only it is a mode
+    /// of the neon layer, so it sits outside the overlay block. It only
+    /// applies on the direct path, so the caller passes @p scaled to say why
+    /// it shows nothing below 1.0 rather than leave the user guessing.
+    inline void NeonStageCombo(const char *label, EdgeLighting::NeonStageView &stage, bool scaled)
+    {
+        int idx = static_cast<int>(stage);
+        if (ImGui::Combo(label, &idx, NEON_STAGE_ITEMS, IM_ARRAYSIZE(NEON_STAGE_ITEMS)))
+        {
+            stage = static_cast<EdgeLighting::NeonStageView>(idx);
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("Replace the glow with one intermediate value of the\n"
+                              "neon shader: distance, perimeter position, colours,\n"
+                              "each light layer, coverages, tone map, masks, alpha.\n"
+                              "docs/neon-onboarding-guide.md shows every one.\n\n"
+                              "Res Scale 1.0 only; ignored under Opaque Only.");
+        }
+        if (scaled && stage != EdgeLighting::NeonStageView::FINAL)
+        {
+            ImGui::TextDisabled("Neon Res Scale is below 1.0 - stage view ignored.");
+        }
+    }
+
     /// One row per Cutoff struct: enable checkbox on the left, size + softness
     /// sliders indented on the right. Grays out the sliders when enable is off
     /// so the "unbounded on this side" state reads at a glance. Serves both
@@ -1151,6 +1184,7 @@ void DebugUI::buildDebugSection(EdgeLighting::Config &cfg)
     // business hiding it or turning it off.
     OpaqueOnlyCheckbox("##DebugOpaqueOnly", cfg.debug.opaqueOnly,
                        cfg.neon.opaqueMode != EdgeLighting::OpaqueMode::NONE);
+    NeonStageCombo("Neon Stage##Debug", cfg.debug.neonStage, cfg.neon.resolutionScale < 1.0f);
 }
 
 void DebugUI::buildDropletsSection(EdgeLighting::Config &cfg)

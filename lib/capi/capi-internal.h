@@ -100,6 +100,22 @@ static_assert(static_cast<int>(EdgeLighting::ColorStopField::G) == EL_STOP_FIELD
 static_assert(static_cast<int>(EdgeLighting::ColorStopField::B) == EL_STOP_FIELD_B);
 static_assert(static_cast<int>(EdgeLighting::ColorStopField::A) == EL_STOP_FIELD_A);
 
+static_assert(static_cast<int>(EdgeLighting::NeonStageView::FINAL) == EL_NEON_STAGE_FINAL);
+static_assert(static_cast<int>(EdgeLighting::NeonStageView::DISTANCE) == EL_NEON_STAGE_DISTANCE);
+static_assert(static_cast<int>(EdgeLighting::NeonStageView::PERIMETER) == EL_NEON_STAGE_PERIMETER);
+static_assert(static_cast<int>(EdgeLighting::NeonStageView::LUT_AT_POSITION) == EL_NEON_STAGE_LUT_AT_POSITION);
+static_assert(static_cast<int>(EdgeLighting::NeonStageView::SAMPLE_COLOR) == EL_NEON_STAGE_SAMPLE_COLOR);
+static_assert(static_cast<int>(EdgeLighting::NeonStageView::GATHERED_COLOR) == EL_NEON_STAGE_GATHERED_COLOR);
+static_assert(static_cast<int>(EdgeLighting::NeonStageView::ARC_COVERAGE) == EL_NEON_STAGE_ARC_COVERAGE);
+static_assert(static_cast<int>(EdgeLighting::NeonStageView::GATHERED_COVERAGE) == EL_NEON_STAGE_GATHERED_COVERAGE);
+static_assert(static_cast<int>(EdgeLighting::NeonStageView::FILAMENT) == EL_NEON_STAGE_FILAMENT);
+static_assert(static_cast<int>(EdgeLighting::NeonStageView::HALO) == EL_NEON_STAGE_HALO);
+static_assert(static_cast<int>(EdgeLighting::NeonStageView::BLOOM) == EL_NEON_STAGE_BLOOM);
+static_assert(static_cast<int>(EdgeLighting::NeonStageView::EMISSION) == EL_NEON_STAGE_EMISSION);
+static_assert(static_cast<int>(EdgeLighting::NeonStageView::GRADED) == EL_NEON_STAGE_GRADED);
+static_assert(static_cast<int>(EdgeLighting::NeonStageView::MASKS) == EL_NEON_STAGE_MASKS);
+static_assert(static_cast<int>(EdgeLighting::NeonStageView::ALPHA) == EL_NEON_STAGE_ALPHA);
+
 // el_renderer_flags_e's layer bits ARE RendererLayer's values, so a flag
 // converts to a layer by a cast once it is known to name exactly one layer.
 static_assert(static_cast<uint32_t>(EdgeLighting::RendererLayer::NEON) == EL_RENDERER_NEON);

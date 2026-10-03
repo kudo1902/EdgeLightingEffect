@@ -34,6 +34,11 @@ in vec2 vPos;
 //                       four results back with a bilinear fetch. Draws pass 1
 //                       (at resolutionScale, into the reduced buffer) and the
 //                       edge ring (at full resolution, onto the target).
+//   NEON_STAGE_VIEW   - debug only, resolutionScale 1.0 only: the plain
+//                       program, but the output is replaced by one
+//                       intermediate value of main() picked by uStageView
+//                       (DebugConfig::neonStage). Built only when a stage
+//                       view is selected; see the block at the end of main().
 //
 // Both gather outputs get an explicit location because GLSL ES 3.0 requires
 // that once there is more than one. fragColor stays declared in the gather
@@ -45,6 +50,18 @@ layout(location = 1) out vec4 oGatherSeg;
 vec4 fragColor;
 #else
 out vec4 fragColor;
+#endif
+
+#ifdef NEON_STAGE_VIEW
+// NeonStageView's ordinal (config.h). 0 never reaches this program.
+uniform int uStageView;
+
+// Hue in [0, 1) to a saturated colour, for the perimeter view.
+vec3 stageHue(float h)
+{
+    vec3 k = clamp(abs(fract(h + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+    return mix(vec3(1.0), k, 0.85) * 0.95;
+}
 #endif
 
 uniform vec2  uRectSize;
@@ -1691,10 +1708,16 @@ void main() {
     // others by the same ratio. Per-channel tonemap desaturates warm mixes
     // (orange -> peach) because R saturates while G/B are still linear;
     // scaling by the peak's compression preserves the original R:G:B ratio.
+#ifdef NEON_STAGE_VIEW
+    vec3 stageEmission = result; // linear, before the grade
+#endif
     float peak = max(max(result.r, result.g), result.b);
     float mapped = peak / (peak + TONE_MAP_SHOULDER);
     result = result * (mapped / max(peak, 1e-6));
     result = pow(result, vec3(GAMMA_EXPONENT));
+#ifdef NEON_STAGE_VIEW
+    vec3 stageGraded = result; // graded, before the coverage masks
+#endif
 
     // --- One-sided cut: mask the WHOLE layer at the line --------------
     // Anchored at the opaque fill's own edge and feathered INTO the lit side -
@@ -1822,4 +1845,80 @@ void main() {
     // glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA) in the renderer.
     float alpha = clamp(max(result.r, max(result.g, result.b)), 0.0, 1.0);
     fragColor = vec4(result, alpha);
+
+#ifdef NEON_STAGE_VIEW
+    // --- Stage view (debug) ---------------------------------------------
+    // Replace the output with one intermediate value, opaque, so a reader
+    // can see each step of the pipeline on its own (DebugConfig::neonStage,
+    // docs/neon-onboarding-guide.md). Values are shown as computed; only the
+    // signed distance and the perimeter position are false-coloured.
+    vec3 stage = result;
+    if (uStageView == 1) // DISTANCE: inside blue, outside orange, 20 px contours
+    {
+        vec3 tint = (d < 0.0) ? vec3(0.25, 0.45, 1.0) : vec3(1.0, 0.55, 0.2);
+        stage = tint * (0.2 + 0.8 * exp(-ad / 120.0));
+        float contour = abs(fract(d / 20.0 + 0.5) - 0.5) * 20.0;
+        stage = mix(stage, vec3(1.0), (1.0 - smoothstep(0.0, 1.0, contour)) * 0.35);
+        stage = mix(stage, vec3(1.0), 1.0 - smoothstep(0.0, 1.5, ad));
+    }
+    else if (uStageView == 2) // PERIMETER: sPos as hue, ticks every 0.05
+    {
+        float tick = abs(fract(sPos * 20.0 + 0.5) - 0.5);
+        stage = stageHue(sPos) * mix(0.55, 1.0, smoothstep(0.0, 0.04, tick));
+    }
+    else if (uStageView == 3) // LUT_AT_POSITION: the ring read at sPos alone
+    {
+        stage = texture(uGradientLUT, vec2(sPos - uTime * uHueRotationRate, 0.5)).rgb;
+    }
+    else if (uStageView == 4) // SAMPLE_COLOR: emission table row 0, nearest sample
+    {
+        int n = max(uNumSamples, 1);
+        int i = int(floor(sPos * float(n) + 0.5)) % n;
+        vec4 e0 = texelFetch(uEmission, ivec2(i, 0), 0);
+        stage = (e0.a > 1e-4) ? e0.rgb / e0.a : vec3(0.0);
+    }
+    else if (uStageView == 5) // GATHERED_COLOR: the gather's weighted-mean hue
+    {
+        stage = col;
+    }
+    else if (uStageView == 6) // ARC_COVERAGE: pointwise
+    {
+        stage = vec3(emitCover);
+    }
+    else if (uStageView == 7) // GATHERED_COVERAGE
+    {
+        stage = vec3(emitCoverGathered);
+    }
+    else if (uStageView == 8) // FILAMENT
+    {
+        stage = vec3(core * lineGate);
+    }
+    else if (uStageView == 9) // HALO
+    {
+        stage = vec3(halo * glowGate);
+    }
+    else if (uStageView == 10) // BLOOM
+    {
+        stage = vec3(bloom * glowGate);
+    }
+    else if (uStageView == 11) // EMISSION: linear, clipped as a display would
+    {
+        stage = stageEmission;
+    }
+    else if (uStageView == 12) // GRADED: after the tone map, before the masks
+    {
+        stage = stageGraded;
+    }
+    else if (uStageView == 13) // MASKS: what the cut and the cutoffs kept
+    {
+        float before = max(max(stageGraded.r, stageGraded.g), stageGraded.b);
+        float after  = max(max(result.r, result.g), result.b);
+        stage = vec3((before > 1e-4) ? after / before : 0.0);
+    }
+    else if (uStageView == 14) // ALPHA: the coverage written with the colour
+    {
+        stage = vec3(alpha);
+    }
+    fragColor = vec4(clamp(stage, 0.0, 1.0), 1.0);
+#endif
 }

@@ -895,10 +895,11 @@ extern "C"
      *  still stored and read back, but nothing is drawn. The layer is
      *  registered after the neon and draws OVER it.
      *
-     *  @ref el_effect_set_debug_opaque_only is the odd one out: it is stored
-     *  here with the overlay flags but is a mode of the NEON layer, so it
-     *  works whether or not the debug layer was registered, and
-     *  @ref el_effect_set_debug_enabled does not gate it.
+     *  @ref el_effect_set_debug_opaque_only and
+     *  @ref el_effect_set_debug_neon_stage are the odd ones out: they are
+     *  stored here with the overlay flags but are modes of the NEON layer, so
+     *  they work whether or not the debug layer was registered, and
+     *  @ref el_effect_set_debug_enabled does not gate them.
      *  @{ */
 
     /** @brief Master switch for the debug overlay layer.
@@ -968,6 +969,28 @@ extern "C"
      *           @ref el_effect_set_debug_enabled. */
     EL_API el_result_e el_effect_set_debug_opaque_only(el_effect_handle_t effect, el_bool_t opaqueOnly);
     EL_API el_result_e el_effect_get_debug_opaque_only(el_effect_handle_t effect, el_bool_t *outOpaqueOnly);
+
+    /** @brief Show one intermediate value of the neon's fragment shader
+     *         instead of the finished glow.
+     *  @details A teaching and debugging view: the signed distance, the
+     *           position along the outline, the gathered colour, each light
+     *           layer, the coverages, the colour before and after the tone
+     *           map, the masks, the alpha. Every pixel the glow's quad covers
+     *           is written opaque. @c EL_NEON_STAGE_FINAL (the default) is the
+     *           normal output.
+     *
+     *           Like @ref el_effect_set_debug_opaque_only this is a mode of the
+     *           NEON layer, so it works without the debug layer and
+     *           @ref el_effect_set_debug_enabled does not gate it.
+     *
+     *           Applies at a neon resolution scale of 1.0 only; below that it
+     *           is stored and ignored. Picking a view compiles one extra shader
+     *           program, once, on first use. Ignored while
+     *           @ref el_effect_set_debug_opaque_only is set.
+     *  @return @ref EL_ERROR_INVALID_PARAMETER for a value outside
+     *          @ref el_neon_stage_e, with nothing stored. */
+    EL_API el_result_e el_effect_set_debug_neon_stage(el_effect_handle_t effect, el_neon_stage_e stage);
+    EL_API el_result_e el_effect_get_debug_neon_stage(el_effect_handle_t effect, el_neon_stage_e *outStage);
 
     /** @} */
 

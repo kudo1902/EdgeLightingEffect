@@ -702,6 +702,31 @@ namespace EdgeLighting
         bool operator!=(const NeonConfig &o) const { return !(*this == o); }
     } NeonConfig;
 
+    /// One intermediate value of the neon's fragment shader, shown instead of
+    /// the finished colour (@ref DebugConfig::neonStage). The values follow
+    /// the shader's order; docs/neon-onboarding-guide.md shows each one.
+    ///
+    /// Appended values only: the ordinal is the shader's @c uStageView and the
+    /// C ABI's @c el_neon_stage_e.
+    typedef enum class NeonStageView
+    {
+        FINAL,             ///< The normal output - no stage view.
+        DISTANCE,          ///< Signed distance to the outline: inside blue, outside orange, 20 px contours.
+        PERIMETER,         ///< Position along the outline (0..1) as a hue, ticks every 0.05.
+        LUT_AT_POSITION,   ///< The colour ring read at the pixel's own position alone (no gather).
+        SAMPLE_COLOR,      ///< The emission table's colour at the nearest perimeter sample.
+        GATHERED_COLOR,    ///< The gather's weighted-mean colour.
+        ARC_COVERAGE,      ///< Arc coverage at the pixel's own position (filament gate).
+        GATHERED_COVERAGE, ///< Arc coverage averaged by the gather (halo/bloom gate).
+        FILAMENT,          ///< The filament profile, 0..1.
+        HALO,              ///< The halo field.
+        BLOOM,             ///< The bloom field.
+        EMISSION,          ///< The composed linear emission, clipped to 0..1 as a display would.
+        GRADED,            ///< After the tone map, before the coverage masks.
+        MASKS,             ///< What the one-sided cut and the cutoffs keep, 0..1.
+        ALPHA              ///< The coverage alpha written with the colour.
+    } NeonStageView;
+
     /// Debug configuration - everything that exists to inspect the effect
     /// rather than to be part of it.
     ///
@@ -710,8 +735,9 @@ namespace EdgeLighting
     ///   - @c showGradientLUT / @c showColorStops / @c showWireframe are
     ///     ANNOTATIONS, drawn on top of the neon layer by @ref DebugRenderer.
     ///     Nothing in the neon renderer knows about them.
-    ///   - @c opaqueOnly is a debug MODE of the neon layer: it changes which
-    ///     of that renderer's passes run. @ref NeonRenderer reads it directly.
+    ///   - @c opaqueOnly and @c neonStage are debug MODES of the neon layer:
+    ///     they change which of that renderer's passes run, or what its
+    ///     shader writes. @ref NeonRenderer reads them directly.
     ///
     /// So the read arrows point both ways across this struct and
     /// @ref NeonConfig - the debug renderer reads neon state to know what it
@@ -780,9 +806,21 @@ namespace EdgeLighting
         ///
         /// No-ops when @c opaqueMode is NONE - there is no fill pass to keep,
         /// so nothing is drawn at all. The renderers read it at draw time and
-        /// it triggers no rebuilds, so it is safe to toggle per-frame. Not
-        /// exposed through the C API.
+        /// it triggers no rebuilds, so it is safe to toggle per-frame. C ABI:
+        /// @c el_effect_set_debug_opaque_only.
         bool opaqueOnly = false;
+
+        /// Show one intermediate value of the neon's fragment shader instead
+        /// of the finished glow - the signed distance, the perimeter position,
+        /// the gathered colour, each light layer, the coverages, the colour
+        /// before and after the tone map, the masks, the alpha. A teaching and
+        /// debugging view: every pixel the glow quad covers is written opaque.
+        ///
+        /// Applies at @c NeonConfig::resolutionScale 1.0 only (the direct
+        /// path); below 1.0 it is ignored. Selecting a view compiles one extra
+        /// program, once, on first use; @c FINAL costs nothing. Read at draw
+        /// time, so it triggers no rebuilds. Ignored while @c opaqueOnly is set.
+        NeonStageView neonStage = NeonStageView::FINAL;
 
         bool operator==(const DebugConfig &o) const
         {
@@ -791,7 +829,8 @@ namespace EdgeLighting
                    showColorStops == o.showColorStops &&
                    showWireframe == o.showWireframe &&
                    wireframeColor == o.wireframeColor &&
-                   opaqueOnly == o.opaqueOnly;
+                   opaqueOnly == o.opaqueOnly &&
+                   neonStage == o.neonStage;
         }
         bool operator!=(const DebugConfig &o) const { return !(*this == o); }
     } DebugConfig;

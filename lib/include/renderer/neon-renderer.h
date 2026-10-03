@@ -345,9 +345,12 @@ namespace EdgeLighting
         ///         case nothing was drawn and passes 2b and 2c must be skipped
         ///         too - they would otherwise composite a stale or undefined
         ///         buffer.
+        /// @param stageView Direct path only: draw with @c mNeonStageShader,
+        ///        which replaces the output with the intermediate value
+        ///        @c DebugConfig::neonStage names. The caller has built it.
         bool renderNeonPass(const glm::mat4 &mvp, int bufWidth, int bufHeight, bool scaled,
                             const glm::vec2 &gatherUVScale, const glm::vec2 &gatherUVOffset,
-                            float time, const Config &config);
+                            float time, const Config &config, bool stageView = false);
 
         /// Pass 2a: opaque-mode background fill (its band ring, or a clear), at
         /// FULL resolution on the caller's framebuffer regardless of the
@@ -406,12 +409,14 @@ namespace EdgeLighting
         static constexpr unsigned int PROGRAM_SHADE = 1u << 2;
         static constexpr unsigned int PROGRAM_BLIT = 1u << 3;
         static constexpr unsigned int PROGRAM_RING = 1u << 4;
+        static constexpr unsigned int PROGRAM_STAGE = 1u << 5;
 
         Config mCurrentConfig;
         ShaderProgram mNeonShader;                                     ///< The neon gather (neon.frag), direct path. Built on first draw.
         ShaderProgram mNeonGatherShader;                               ///< neon.frag + NEON_GATHER_ONLY: the scaled path's gather pass. Built on first draw.
         ShaderProgram mNeonShadeShader;                                ///< neon.frag + NEON_READS_GATHER: the scaled path's pass 1. Built on first draw.
         ShaderProgram mNeonRingShader;                                 ///< The same source, its own program: the scaled path's edge ring. See ensurePathPrograms.
+        ShaderProgram mNeonStageShader;                                ///< neon.frag + NEON_STAGE_VIEW: DebugConfig::neonStage, direct path. Built the first time a view is picked.
         ShaderProgram mEmissionShader;                                 ///< Perimeter emission pre-pass (neon-emission.frag).
         ShaderProgram mBlackRectShader;                                ///< Opaque-mode black background fill (black-rect.frag).
         ShaderProgram mBlitShader;                                     ///< Scaled-path upscale composite (neon-blit.frag). Built on first draw.

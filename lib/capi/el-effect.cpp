@@ -2111,9 +2111,9 @@ el_result_e el_effect_get_lens_flare_resolution_scale(el_effect_handle_t effect,
 // ==========================================================================
 // Debug overlays and diagnostics
 //
-// Order matches the declaration order in el-effect.h. `opaque_only` sits
-// last because it is the one entry here that drives the NEON layer rather
-// than the overlay layer.
+// Order matches the declaration order in el-effect.h. `opaque_only` and
+// `neon_stage` sit last because they are the entries here that drive the
+// NEON layer rather than the overlay layer.
 // ==========================================================================
 
 el_result_e el_effect_set_debug_enabled(el_effect_handle_t effect, el_bool_t enabled)
@@ -2213,6 +2213,27 @@ el_result_e el_effect_get_debug_opaque_only(el_effect_handle_t effect, el_bool_t
     VALIDATE_OUT_PTR(outOpaqueOnly, "el_effect_get_debug_opaque_only");
     *outOpaqueOnly = effect->config.debug.opaqueOnly ? 1 : 0;
     LOG_D("effect=%p, opaqueOnly=%d", (void *)effect, *outOpaqueOnly);
+    return EL_SUCCESS;
+}
+
+el_result_e el_effect_set_debug_neon_stage(el_effect_handle_t effect, el_neon_stage_e stage)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_set_debug_neon_stage");
+    if (static_cast<int>(stage) < EL_NEON_STAGE_FINAL || static_cast<int>(stage) > EL_NEON_STAGE_ALPHA)
+    {
+        LOG_E("el_effect_set_debug_neon_stage: stage %d is not an el_neon_stage_e", static_cast<int>(stage));
+        return EL_ERROR_INVALID_PARAMETER;
+    }
+    SET_AND_LOG(effect->config.debug.neonStage, static_cast<EdgeLighting::NeonStageView>(stage),
+                "effect=%p, stage=%d", (void *)effect, static_cast<int>(stage));
+}
+
+el_result_e el_effect_get_debug_neon_stage(el_effect_handle_t effect, el_neon_stage_e *outStage)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_get_debug_neon_stage");
+    VALIDATE_OUT_PTR(outStage, "el_effect_get_debug_neon_stage");
+    *outStage = static_cast<el_neon_stage_e>(effect->config.debug.neonStage);
+    LOG_D("effect=%p, stage=%d", (void *)effect, static_cast<int>(*outStage));
     return EL_SUCCESS;
 }
 
