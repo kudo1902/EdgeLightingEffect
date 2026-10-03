@@ -1533,6 +1533,8 @@ The pass figures in this part come from one frame at scale 0.5 of a scene
 with something in every buffer: an arc over `t` 0 to 0.6 on the base gradient,
 a dimmer arc (`intensity` 0.6, its own orange-to-red stops) over 0.65 to 0.95,
 dark gaps between them, and a segment at 0.3.
+[`neon-shader-outputs.html`](neon-shader-outputs.html) shows the same images
+on one page, pass by pass, with each program's target and grid.
 
 ![The emission table](images/neon-onboarding/pass-p0-emission.png)
 
@@ -1554,6 +1556,12 @@ weight: 1, then 0.6 for the dimmer arc, 0 in the gaps), row 1's colour
 | **Textures** | units 0-2 the LUTs (alpha reads), unit 3 `uEmission`. |
 | **Blocks** | `SegmentBlock` (0), `LoopSamplesBlock` (1), `ArcBlock` (2). |
 | **Output** | `fragColor`: premultiplied graded colour, alpha = brightest channel. |
+
+![P1's output at scale 1.0](images/neon-onboarding/pass-p1-direct.png)
+
+*P1's output for the same scene at scale 1.0: one draw, the loop and the
+shading together, everything at full resolution. Below 1.0 the next four
+passes rebuild this picture.*
 
 ### P1a: the gather (`renderGatherPass`, `neon-gather.frag`)
 
@@ -1645,6 +1653,13 @@ the glow can reach except the ring. The black band is where the ring will go.*
 
 *After P2c, which is the finished frame: the ring filled in at full
 resolution.*
+
+![The ring's own output](images/neon-onboarding/pass-p2c-ring-only.png)
+
+*The ring's own output, with the blit's pixels left out: a band of
+axis-aligned strips around the outline, shaded at full resolution from the
+gather buffer. It and the after-blit frame above add up to the finished frame,
+with no pixel in both.*
 
 Why P1b and P2c are two program objects compiled from the same source: each
 then draws one kind of target, in one blend state, every frame. One program

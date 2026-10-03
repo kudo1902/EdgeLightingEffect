@@ -1,0 +1,395 @@
+<title>Neon Shader Outputs</title>
+
+<style>
+  /* ------------------------------------------------------------------
+     Minimal reset, as in the other neon pages: these are read as local
+     files under docs/ as well as published, so they cannot rely on a
+     host supplying one.
+     ------------------------------------------------------------------ */
+  *, *::before, *::after { box-sizing: border-box; }
+  body, h1, h2, h3, p, ol, ul, dl, dt, dd,
+  figure, figcaption { margin: 0; }
+  ol, ul { padding: 0; }
+
+  /* Layout: the frame's passes top to bottom in the order they run - a
+     strip of grid sizes first, then one section per pass with its spec
+     beside what it wrote. Same token system as neon-renderer-overview.html,
+     neon-renderer-explained.html and neon-renderer-reference.html, so the
+     pages read as one set. :root carries the COMPLETE light palette; the two
+     blocks below redefine tokens only. */
+  :root {
+    --paper:      #eef0f5;
+    --surface:    #fbfcfd;
+    --surface-2:  #e4e8ef;
+    --ink:        #131722;
+    --ink-2:      #545c6e;
+    --ink-3:      #7c8496;
+    --rule:       #d2d8e2;
+    --rule-soft:  #e2e6ee;
+    --accent:     #5a3ce8;
+    --accent-dim: #5a3ce826;
+
+    --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+    --col: 68ch;
+    --wide: 1040px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #0b0e15;
+      --surface:    #131826;
+      --surface-2:  #1b2233;
+      --ink:        #e7eaf2;
+      --ink-2:      #9aa3b7;
+      --ink-3:      #6d7689;
+      --rule:       #262e40;
+      --rule-soft:  #1d2434;
+      --accent:     #9584ff;
+      --accent-dim: #9584ff26;
+      color-scheme: dark;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:      #0b0e15;
+    --surface:    #131826;
+    --surface-2:  #1b2233;
+    --ink:        #e7eaf2;
+    --ink-2:      #9aa3b7;
+    --ink-3:      #6d7689;
+    --rule:       #262e40;
+    --rule-soft:  #1d2434;
+    --accent:     #9584ff;
+    --accent-dim: #9584ff26;
+    color-scheme: dark;
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 17px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+    padding-inline: 24px;
+    padding-block: 0 96px;
+  }
+  @media (max-width: 480px) {
+    body { padding-inline: 16px; }
+  }
+
+  .wrap { max-width: var(--wide); margin: 0 auto; display: flex; flex-direction: column; }
+
+  .masthead {
+    padding: 64px 0 36px;
+    border-bottom: 1px solid var(--rule);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  h1 {
+    font-family: var(--font-display);
+    font-size: clamp(36px, 5.6vw, 56px);
+    line-height: 1.05;
+    font-weight: 400;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+    max-width: 18ch;
+  }
+  .standfirst {
+    font-family: var(--font-display);
+    font-size: 20px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    max-width: 58ch;
+  }
+
+  p { max-width: var(--col); }
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.84em;
+    background: var(--surface-2);
+    padding: 1px 5px;
+    border-radius: 3px;
+    overflow-wrap: anywhere;
+  }
+  a { color: var(--accent); }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+
+  /* The strip: every pass in frame order, with the grid it draws. */
+  .flow {
+    margin: 32px 0 0;
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+  .flow li { display: flex; }
+  .flow a {
+    display: inline-flex;
+    gap: 10px;
+    align-items: baseline;
+    padding: 7px 12px;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    color: var(--ink);
+    text-decoration: none;
+  }
+  .flow .id { font-family: var(--font-mono); font-size: 12px; color: var(--accent); letter-spacing: 0.06em; }
+  .flow .grid { font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+  .group {
+    max-width: none;
+    margin-top: 56px;
+    padding-top: 14px;
+    border-top: 1px solid var(--rule);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  section.pass {
+    padding-top: 40px;
+    display: grid;
+    grid-template-columns: minmax(0, 15rem) minmax(0, 1fr);
+    gap: 28px;
+    scroll-margin-top: 16px;
+  }
+  .meta { display: flex; flex-direction: column; gap: 14px; }
+  h2.sec {
+    font-family: var(--font-display);
+    font-size: clamp(24px, 3vw, 30px);
+    font-weight: 400;
+    line-height: 1.16;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  h2.sec .num { font-family: var(--font-mono); font-size: 12px; color: var(--accent); letter-spacing: 0.06em; }
+  .spec { display: flex; flex-direction: column; gap: 7px; font-size: 14px; line-height: 1.45; }
+  .spec div { display: grid; grid-template-columns: 4.8rem minmax(0, 1fr); gap: 10px; }
+  .spec dt { color: var(--ink-3); }
+  .spec dd { font-variant-numeric: tabular-nums; min-width: 0; }
+
+  .body { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .body ol { padding-left: 1.4em; display: flex; flex-direction: column; gap: 4px; color: var(--ink-2); max-width: var(--col); }
+
+  .shots { display: flex; flex-wrap: wrap; gap: 14px; }
+  figure { flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+  figure.wide { flex-basis: 100%; }
+  figure img {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    image-rendering: pixelated;
+  }
+  figcaption { font-size: 14px; line-height: 1.45; color: var(--ink-2); }
+
+  footer {
+    margin-top: 64px;
+    padding-top: 18px;
+    border-top: 1px solid var(--rule);
+    font-size: 14px;
+    color: var(--ink-2);
+  }
+
+  @media (max-width: 760px) {
+    section.pass { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="masthead">
+    <p class="eyebrow">NeonRenderer &middot; one frame, pass by pass</p>
+    <h1>What each neon shader draws</h1>
+    <p class="standfirst">One frame of a 440 &times; 220 rect in a 640 &times; 360 frame at resolution scale 0.5, read back between the renderer&rsquo;s draws: every program&rsquo;s own output, at the resolution it actually runs.</p>
+    <p>The scene has something in every buffer: an arc over <code>t</code> 0 to 0.6 on the base gradient, a dimmer arc (intensity 0.6, its own orange-to-red stops) over 0.65 to 0.95, dark gaps between them, and a segment at 0.3. The images are the ones Part 6 of <a href="neon-onboarding-guide.md">the onboarding guide</a> uses; <code>tools/neon-guide-figures</code> renders them.</p>
+  </header>
+
+  <nav aria-label="Passes in frame order">
+    <ul class="flow">
+      <li><a href="#p0"><span class="id">P0</span><span class="grid">128&times;2</span></a></li>
+      <li><a href="#p1a"><span class="id">P1a</span><span class="grid">128&times;80</span></a></li>
+      <li><a href="#p1b"><span class="id">P1b</span><span class="grid">320&times;180</span></a></li>
+      <li><a href="#p2b"><span class="id">P2b</span><span class="grid">640&times;360</span></a></li>
+      <li><a href="#p2c"><span class="id">P2c</span><span class="grid">640&times;360, ring only</span></a></li>
+    </ul>
+  </nav>
+
+  <p class="group">Below scale 1.0, in frame order</p>
+
+  <section class="pass" id="p0">
+    <div class="meta">
+      <h2 class="sec"><span class="num">P0</span>Emission table</h2>
+      <dl class="spec">
+        <div><dt>Program</dt><dd><code>mEmissionShader</code></dd></div>
+        <div><dt>Shader</dt><dd><code>neon-emission.frag</code></dd></div>
+        <div><dt>Target</dt><dd><code>mEmissionBuffer</code></dd></div>
+        <div><dt>Grid</dt><dd>128 &times; 2 texels</dd></div>
+        <div><dt>Format</dt><dd>RGBA16F</dd></div>
+      </dl>
+    </div>
+    <div class="body">
+      <p>Everything the sample loop needs that does not depend on the pixel, baked once per perimeter sample. Each sample is one column, drawn 5 px wide, with <code>t</code> = 0 at the left. Top to bottom:</p>
+      <ol>
+        <li>Row 0 colour: arc colour &times; arc weight.</li>
+        <li>Row 0 alpha: the arc weight. 1 on the first arc, 0.6 on the dimmer one, 0 in the gaps.</li>
+        <li>Row 1 colour: segment colour &times; bell.</li>
+        <li>Row 1 alpha: the bell, scaled to its peak.</li>
+      </ol>
+      <div class="shots">
+        <figure class="wide">
+          <img src="images/neon-onboarding/pass-p0-emission.png" alt="The emission table: four horizontal bands of per-sample colour and weight" width="640" height="138">
+          <figcaption>The table, in the band order above.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="pass" id="p1a">
+    <div class="meta">
+      <h2 class="sec"><span class="num">P1a</span>Gather</h2>
+      <dl class="spec">
+        <div><dt>Program</dt><dd><code>mNeonGatherShader</code></dd></div>
+        <div><dt>Shader</dt><dd><code>neon-gather.frag</code></dd></div>
+        <div><dt>Target</dt><dd><code>mGatherBuffer</code></dd></div>
+        <div><dt>Grid</dt><dd>128 &times; 80 texels, gather scale &asymp; 0.18</dd></div>
+        <div><dt>Format</dt><dd>RGBA16F, 2 attachments</dd></div>
+      </dl>
+    </div>
+    <div class="body">
+      <p>The sample loop, about 95% of the neon&rsquo;s cost, run once per texel of a coarse grid: about two texels per colour-kernel width. Its results vary slowly enough that the later passes read them back with a bilinear fetch. Shown 4&times; with nearest-neighbour scaling, so the texels stay visible.</p>
+      <div class="shots">
+        <figure>
+          <img src="images/neon-onboarding/pass-p1a-gather-hue.png" alt="Gather buffer: the gathered hue" width="512" height="320">
+          <figcaption>Attachment 0 RGB: the gathered hue.</figcaption>
+        </figure>
+        <figure>
+          <img src="images/neon-onboarding/pass-p1a-gather-cover.png" alt="Gather buffer: the arc coverage in greyscale" width="512" height="320">
+          <figcaption>Attachment 0 alpha: the arc coverage, decoded from <code>c/(1+c)</code>. Darker where the outline nearby is dim or dark.</figcaption>
+        </figure>
+        <figure>
+          <img src="images/neon-onboarding/pass-p1a-gather-segment.png" alt="Gather buffer: the segment term" width="512" height="320">
+          <figcaption>Attachment 1: the segment&rsquo;s colour scaled by its coverage.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="pass" id="p1b">
+    <div class="meta">
+      <h2 class="sec"><span class="num">P1b</span>Shade at the reduced scale</h2>
+      <dl class="spec">
+        <div><dt>Program</dt><dd><code>mNeonShadeShader</code></dd></div>
+        <div><dt>Shader</dt><dd><code>neon.frag</code> + <code>NEON_READS_GATHER</code></dd></div>
+        <div><dt>Target</dt><dd><code>mScaledBuffer</code></dd></div>
+        <div><dt>Grid</dt><dd>320 &times; 180 texels, scale 0.5</dd></div>
+        <div><dt>Format</dt><dd>RGBA8</dd></div>
+      </dl>
+    </div>
+    <div class="body">
+      <p>Everything except the loop, shaded at half resolution from the gather buffer. The glow holds up at this size; the line comes out blocky. Shown 2&times; with nearest-neighbour scaling.</p>
+      <div class="shots">
+        <figure class="wide">
+          <img src="images/neon-onboarding/pass-p1b-reduced.png" alt="The reduced buffer: the glow at half resolution with a blocky line" width="640" height="360">
+          <figcaption>The reduced buffer, composited over the background.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="pass" id="p2b">
+    <div class="meta">
+      <h2 class="sec"><span class="num">P2b</span>Blit</h2>
+      <dl class="spec">
+        <div><dt>Program</dt><dd><code>mBlitShader</code></dd></div>
+        <div><dt>Shader</dt><dd><code>neon-blit.frag</code></dd></div>
+        <div><dt>Target</dt><dd>The caller&rsquo;s framebuffer</dd></div>
+        <div><dt>Grid</dt><dd>640 &times; 360 px, full resolution</dd></div>
+        <div><dt>Covers</dt><dd>The lit area outside the ring</dd></div>
+      </dl>
+    </div>
+    <div class="body">
+      <p>The reduced buffer upsampled onto the frame, everywhere the glow can reach except a thin ring around the outline. It also draws the one-sided cut and the cutoff edges at full resolution. The black band is the ring&rsquo;s area, still empty.</p>
+      <div class="shots">
+        <figure class="wide">
+          <img src="images/neon-onboarding/pass-after-blit.png" alt="The frame after the blit, with an empty band around the outline" width="640" height="360">
+          <figcaption>The frame after the blit.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="pass" id="p2c">
+    <div class="meta">
+      <h2 class="sec"><span class="num">P2c</span>Edge ring</h2>
+      <dl class="spec">
+        <div><dt>Program</dt><dd><code>mNeonRingShader</code></dd></div>
+        <div><dt>Shader</dt><dd><code>neon.frag</code> + <code>NEON_READS_GATHER</code>, a second program object</dd></div>
+        <div><dt>Target</dt><dd>The caller&rsquo;s framebuffer</dd></div>
+        <div><dt>Grid</dt><dd>640 &times; 360 px, full resolution</dd></div>
+        <div><dt>Covers</dt><dd>The ring band only</dd></div>
+      </dl>
+    </div>
+    <div class="body">
+      <p>The same source as P1b, with its uniforms uploaded as if the scale were 1.0. It reshades the band where the line and every hard edge live, reading the gather buffer for colour and coverage. Its strips share their edges with the blit&rsquo;s, so no pixel is drawn twice.</p>
+      <div class="shots">
+        <figure>
+          <img src="images/neon-onboarding/pass-p2c-ring-only.png" alt="The ring band alone around the outline" width="640" height="360">
+          <figcaption>The ring&rsquo;s own output, with the blit&rsquo;s pixels left out.</figcaption>
+        </figure>
+        <figure>
+          <img src="images/neon-onboarding/pass-after-ring.png" alt="The finished frame at scale 0.5" width="640" height="360">
+          <figcaption>The finished frame: the blit plus the ring.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <p class="group">At scale 1.0</p>
+
+  <section class="pass" id="p1">
+    <div class="meta">
+      <h2 class="sec"><span class="num">P1</span>Direct path</h2>
+      <dl class="spec">
+        <div><dt>Program</dt><dd><code>mNeonShader</code></dd></div>
+        <div><dt>Shader</dt><dd><code>neon.frag</code></dd></div>
+        <div><dt>Target</dt><dd>The caller&rsquo;s framebuffer</dd></div>
+        <div><dt>Grid</dt><dd>640 &times; 360 px, full resolution</dd></div>
+        <div><dt>Runs</dt><dd>At scale 1.0 only</dd></div>
+      </dl>
+    </div>
+    <div class="body">
+      <p>The same scene at scale 1.0: one draw that runs the loop and the shading together on every pixel of the glow quad. Below 1.0, P1a through P2c rebuild this picture.</p>
+      <div class="shots">
+        <figure class="wide">
+          <img src="images/neon-onboarding/pass-p1-direct.png" alt="The same scene rendered by the direct path at scale 1.0" width="640" height="360">
+          <figcaption>P1&rsquo;s output at scale 1.0.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p>Captured by <code>tools/neon-guide-figures</code>, which wraps the library&rsquo;s draw call to read each pass&rsquo;s target back without changing the frame (recorded and unrecorded frames are byte-identical). Regenerate after a change to how the neon looks; see <a href="../tools/neon-guide-figures/README.md">its README</a>.</p>
+  </footer>
+</div>

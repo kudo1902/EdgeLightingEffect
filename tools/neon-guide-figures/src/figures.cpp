@@ -450,6 +450,36 @@ namespace NeonGuideFigures
             return Composite(Dim(frame, 0.45f), image);
         }
 
+        /// @p frame where @p record's triangles cover a pixel, the figure
+        /// background everywhere else: one pass's own output, cut out of a
+        /// frame that other passes also drew into. Exact when the passes tile
+        /// without overlap, as the blit and the ring do - the redraw goes
+        /// through neon.vert, so it rasterises to the same pixels.
+        Canvas OnlyWhereDrawn(const Canvas &frame, const DrawRecord &record)
+        {
+            OffscreenCapture mask;
+            mask.Begin(frame.width, frame.height);
+            glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+            glDisable(GL_BLEND);
+            PassRecorder::Redraw(record, glm::vec4(1.0f), false);
+            CaptureUtil::Image image;
+            mask.Read(image);
+            mask.End();
+            Canvas out(frame.width, frame.height, CLEAR);
+            for (int y = 0; y < frame.height; ++y)
+            {
+                for (int x = 0; x < frame.width; ++x)
+                {
+                    if (image.pixels[(size_t(y) * size_t(image.width) + size_t(x)) * 4 + 3] > 0)
+                    {
+                        out.At(x, y) = frame.At(x, y);
+                    }
+                }
+            }
+            return out;
+        }
+
         /// The magnification that takes @p width to about @p target px.
         int FitFactor(int width, int target)
         {
@@ -1096,6 +1126,22 @@ namespace NeonGuideFigures
                 SavePNG(afterRing, Path(dir, "pass-after-ring.png"));
                 SavePNG(Magnify(Crop(afterBlit, 76, 244, 104, 70), 3), Path(dir, "pass-after-blit-crop.png"));
                 SavePNG(Magnify(Crop(afterRing, 76, 244, 104, 70), 3), Path(dir, "pass-after-ring-crop.png"));
+                // The ring's own output: what it drew, with the blit's pixels
+                // left out.
+                SavePNG(OnlyWhereDrawn(afterRing, *p2c), Path(dir, "pass-p2c-ring-only.png"));
+            }
+        }
+
+        // P1 - the direct path's one pass, for the same scene at scale 1.0.
+        {
+            Config direct = c;
+            direct.neon.resolutionScale = 1.0f;
+            std::unique_ptr<EdgeLightingEffect> effect = FreshEffect();
+            Render(*effect, direct, PASS_W, PASS_H, false, true);
+            if (const DrawRecord *p1 = PassRecorder::Find(PassKind::P1))
+            {
+                SavePNG(AttachmentImage(p1->written[0], [](const glm::vec4 &v) { return glm::vec3(v); }),
+                        Path(dir, "pass-p1-direct.png"));
             }
         }
 
