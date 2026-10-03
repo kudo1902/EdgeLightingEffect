@@ -984,8 +984,8 @@ void main() {
     // Two separate kernels, and the split is the point:
     //
     //  - kc is the COLOUR gather weight, and it is the one length here that is
-    //    NOT in pixels. The blend is a 128-sample sum over the gradient LUT,
-    //    which is indexed by perimeter FRACTION, so a pixel-sized kernel spans
+    //    NOT in pixels. The blend is a uNumSamples-sample sum over colours
+    //    baked from the gradient LUT, which is indexed by perimeter FRACTION, so a pixel-sized kernel spans
     //    a different slice of the gradient on every geometry - the same stops
     //    render washed out small and crisp large. Sizing it as a fraction of
     //    the perimeter makes the gradient read identically at any size, and
@@ -1332,10 +1332,10 @@ void main() {
     // Colour-stop ALPHA is NOT in this pair: neon-emission.frag's two alpha
     // channels carry arcW and bellSum without it, and adding it would need a
     // third row and so a third texelFetch in the hottest loop in the pipeline.
-    // The pointwise alpha still gates the filament exactly, and still gates
-    // the glow through the emission colour; what an alpha-faded stretch keeps
-    // here is its share of the halo/bloom pedestal. See
-    // docs/review-findings.md.
+    // The pointwise alpha still gates the filament exactly. The glow does NOT
+    // see it at all: the emission colour is the LUT's straight RGB, so neither
+    // factor of emitGlow carries alpha, and an alpha-0 stretch keeps its full
+    // halo and bloom (measured; V18 in docs/review-findings.md).
     //
     // Two divides rather than one reciprocal and two multiplies: the fully lit
     // ring above rests on wsumLit / wsumAll being exactly 1.0 when the two
@@ -1357,7 +1357,9 @@ void main() {
     // which is what lets a coarse grid carry them where it cannot carry the
     // filament. See docs/neon-resolution-scale-proposal.md.
     //
-    // RGBA8, so each value has to fit [0, 1]. The hues already do - they are
+    // The buffer is RGBA16F where the driver renders to it and RGBA8 where
+    // not, so each value has to fit [0, 1] for the fallback. The hues already
+    // do - they are
     // weighted means of stop colours - and are clamped only so a stop authored
     // above 1 cannot wrap. The coverages do not: arc intensity and segment
     // boost both fold into them unbounded. c / (1 + c) maps [0, inf) onto

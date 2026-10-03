@@ -532,8 +532,8 @@ namespace EdgeLighting
         /// is capped. RING_GUARD_TEXELS then adds the reduced buffer's bilinear
         /// footprint. See neon-tuning.h for the calibration.
         ///
-        /// Asked by @ref NeonRenderer::setupRingGeometry to build the ring, and
-        /// by @ref NeonRenderer::setupGeometry to make pass 1's quad cover it.
+        /// Asked by @ref NeonRenderer::setupRingGeometry to build the ring (and,
+        /// through it, the gather pass's quad, which covers the ring).
         inline float GetRingWidth(const Config &config, float scale)
         {
             const float fullReach = GetFilamentExtent(config, 1.0f).reach;
@@ -1503,7 +1503,8 @@ namespace EdgeLighting
         // target with an identity MVP: the emission bake, the opaque-mode
         // black fill at OpaqueMode::ALL (whose shader derives its shape from
         // gl_FragCoord, not aPos - every narrower mode is bounded by
-        // @ref setupFillGeometry's ring instead) and the scaled path's blit.
+        // @ref setupFillGeometry's ring instead). The scaled path's blit used
+        // to share it; it now draws mBlitVertexArray.
         //
         // Unlike setupGeometry's quad this one never changes - it is in NDC,
         // so it is independent of the geometry, the viewport and the
@@ -2706,7 +2707,7 @@ namespace EdgeLighting
 
         // FULL-RES geometry, and derived here rather than from Render's scaled
         // transform - the same reasoning, and the same y mirror, as
-        // @ref renderFillPass, which is the other always-full-res pass.
+        // @ref renderOpaqueFill, which is the other always-full-res pass.
         // uGlowSideSoftness goes up UNSCALED for the same reason: this pass
         // measures in destination pixels, the gather measures in buffer ones.
         const glm::vec2 centerFull(config.geometry.position.x + config.geometry.width * 0.5f,
@@ -2738,8 +2739,8 @@ namespace EdgeLighting
         mBlitShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
         mBlitShader.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness);
 
-        // Just bind it. The filter is requested through Resize in the gather
-        // pass, so this pass sets no texture parameters at all.
+        // Just bind it. The filter is requested through Resize in pass 1b
+        // (renderNeonPass), so this pass sets no texture parameters at all.
         mScaledBuffer.BindTexture(0);
         mBlitShader.SetUniform("uSource", 0);
 

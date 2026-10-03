@@ -467,8 +467,9 @@
 //     both now handled: R used to cover only the full-res filament (fixed by
 //     taking the reduced pass's too, above), and at a small glowRadius pass 1's
 //     quad stopped short of R, so the ring read gather texels nothing wrote
-//     (fixed in NeonRenderer::setupGeometry, which now extends the quad to
-//     cover the ring). ---
+//     (fixed by covering the ring with the quad; since the gather was split
+//     out, the gather pass's own quad, built in setupRingGeometry, covers
+//     it). ---
 #define RING_GUARD_TEXELS         1.0
 
 // --- Gather resolution. Scaled path only, CPU only.

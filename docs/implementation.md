@@ -177,18 +177,21 @@ belongs in the main shader.**
 
 Below `resolutionScale` 1.0 the same split pays twice. The gather is the only
 part of the shader that is both expensive and smooth across the screen, so it
-runs into the reduced buffer and stores its four results in extra colour
-attachments; a thin ring around the edge is then shaded at full resolution by a
-variant of `neon.frag` that reads those results back instead of looping. The
-line and every edge near it come out as the direct path draws them, while the
-loop still ran at the reduced scale. Everything outside the ring is the reduced
-buffer, bilinear-blitted.
+runs alone, in a pass of its own, on a grid set by its own smoothness (about
+two texels per colour kernel - far coarser than the reduced buffer), and stores
+its four results in a small buffer. A variant of `neon.frag` that reads those
+results back instead of looping then shades the glow twice: at the reduced
+scale into the reduced buffer, and at full resolution in a thin ring around the
+edge. The line and every edge near it come out as the direct path draws them.
+Everything outside the ring is the reduced buffer, bilinear-blitted.
 
 The full derivation, including the closed forms and the sampling bugs they
 replaced, is in [`neon-renderer-explained.html`](neon-renderer-explained.html);
 the pre-pass has its own design note in
 [`emission-prepass.md`](emission-prepass.md), and the edge ring in
-[`neon-resolution-scale-plan.md`](neon-resolution-scale-plan.md).
+[`neon-resolution-scale-plan.md`](neon-resolution-scale-plan.md) (sections 7
+and 13). For the whole pipeline walked once in order, pass by pass and field
+by field, start with [`neon-onboarding-guide.md`](neon-onboarding-guide.md).
 
 ## 7. Shader and C++ interop
 

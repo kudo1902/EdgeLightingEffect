@@ -235,11 +235,12 @@ namespace EdgeLighting
     ///
     /// @c color.a is an EMISSION SCALE at this stop, not a blend opacity: the
     /// renderers bake it into their LUTs' alpha channel and the neon shaders
-    /// multiply it into the emission magnitude, so it attenuates the filament,
-    /// halo and bloom together. 1 = full brightness (default), 0 = dark at
-    /// that perimeter position with the background showing through - which is
-    /// how you fade the neon out along part of the ring without touching the
-    /// arc or segment gating. It interpolates linearly between stops in every
+    /// multiply it into the FILAMENT's emission magnitude at that perimeter
+    /// position: 1 = full brightness (default), 0 = no line there. It does NOT
+    /// reach the halo or the bloom, which scale with a gathered coverage the
+    /// emission table builds without alpha - an alpha-0 stretch keeps its full
+    /// glow (V18 in docs/review-findings.md, open). To dim the glow along part
+    /// of the ring, gate it with arcs or an arc's intensity instead. It interpolates linearly between stops in every
     /// @ref BlendSpace (the hue-space conversions apply to @c .rgb only).
     typedef struct ColorStop
     {
@@ -528,7 +529,9 @@ namespace EdgeLighting
         /// a segment can shine on a dark arc.
         float intensity = 1.0f;
         /// Halo reach in pixels - how far the coloured glow spreads from the line.
-        /// Also seeds the wider background bloom and corner colour cross-fade widths.
+        /// Also sets the wider background bloom (6x this) and how far the glow
+        /// reaches in all (the draw quad's margin). Not the colour blend: that
+        /// kernel scales with the perimeter (COLOR_BLEND_PERIM_FRAC).
         float glowRadius = 5.0f;
         /// Strength of the wide soft background spill layered on top of the halo.
         /// 0 = halo only, ~0.3 = subtle ambient bleed, 1.0+ = strong wash.

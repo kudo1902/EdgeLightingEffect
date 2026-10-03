@@ -28,7 +28,7 @@ namespace EdgeLighting
     /// run between stop sets that differ in count or position - there is no
     /// per-stop pairing to work out.
     ///
-    /// Owned by both neon renderers. Per frame:
+    /// Owned by NeonRenderer, and by DebugRenderer for its LUT strip. Per frame:
     ///
     ///     // OnConfigChanged - self-guarding, safe to call unconditionally
     ///     mGradientLUT.Bake(config.neon.colorStops, config.neon.blendSpace,

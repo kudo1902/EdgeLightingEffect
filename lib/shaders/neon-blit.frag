@@ -78,9 +78,11 @@ uniform sampler2D uSource;
 
 // vPos -> uSource UV. This pass draws the EDGE RING'S COMPLEMENT (see
 // NeonRenderer::setupRingGeometry) in rect-local full-res px under a full-res
-// transform, so vPos is no longer NDC: the CPU uploads 1 / viewport and
-// rectCentre / viewport, which is exactly the mapping the fullscreen NDC quad
-// gave. The ring reads the gather target through the same map.
+// transform, so vPos is no longer NDC: the CPU uploads the reduced buffer's
+// region map, 1 / region.size and -region.origin / region.size (see
+// GetBufferRegion). For a buffer covering the whole viewport that is
+// 1 / viewport and rectCentre / viewport, the mapping the fullscreen NDC quad
+// gave. The ring reads the gather buffer through a map of the same form.
 uniform vec2 uUVScale;
 uniform vec2 uUVOffset;
 

@@ -2464,11 +2464,10 @@ config the centre column now reads 94, 33, 22, 20, 18, 18, 17, 14, 13, 12, 10,
 it, and adding it needs a third table row and so a third `texelFetch` in the
 hottest loop in the pipeline - the same loop where the sixth pass measured a
 per-iteration branch costing as much as the fetch it skipped. The pointwise
-alpha still gates the filament exactly and still reaches the glow through the
-emission colour; what an alpha-faded stretch keeps is its share of the
-halo/bloom pedestal. An alpha ramp therefore fades the glow's magnitude less
-completely than an arc gate does. Nobody has reported it, and the cure is a
-measurable 20-30% on the layer.
+alpha still gates the filament exactly. (This paragraph used to say alpha also
+"reaches the glow through the emission colour" and fades it "less completely";
+measured, it does not reach the glow at all - see V18.) Nobody has reported
+it, and the cure is a measurable 20-30% on the layer.
 
 **What let this through**: V4 was verified on a FULLY LIT ring, where the
 gathered and pointwise coverages are both identically 1.0 and no amount of
@@ -3090,6 +3089,48 @@ about even in other runs), and `small_rect`, which gathers at
 `resolutionScale` itself, gains nothing. V17's 20 x 17 rect reads 18 / 53 / 93
 at 0.5 / 0.25 / 0.125 (17 / 53 / 93 before).
 
+## Eighteenth pass (the onboarding guide)
+
+Writing [`neon-onboarding-guide.md`](neon-onboarding-guide.md) meant tracing
+every config field to the pixels, and one documented behaviour did not
+survive a render.
+
+### V18. Colour-stop alpha does not dim the halo or the bloom - OPEN
+
+`ColorStop::color.a` was documented (in `config.h`, in the `neon.frag` comment
+on the gathered coverages, and in V14's "known limit" above) as attenuating
+the filament, halo and bloom together, or at least as reaching the glow
+"through the emission colour". It reaches only the filament. The emission
+colour is the LUT's straight RGB, and the gathered coverages
+(`emitCoverGathered`, `glowCoverAll`) are built from `arcW` and `bellSum`
+without alpha, so neither factor of `emitGlow` carries it.
+
+Measured with a 600 x 360 rect at (200, 150), one colour stop, hue rotation 0,
+`colorTransitionDuration` 0, on Mesa llvmpipe; brightest channel at x = 500:
+
+| config | alpha | on the line | 6 px out | 20 px out | 60 px out | centre |
+| ------ | ----- | ----------- | -------- | --------- | --------- | ------ |
+| filament only (`glowRadius` 0) | 1.0 | 244 | 38 | 8 | 8 | 8 |
+| | 0.5 | 234 | 25 | 8 | 8 | 8 |
+| | 0.0 | 8 | 8 | 8 | 8 | 8 |
+| glow only (`lineWidth` 0, `glowRadius` 20, bloom 1.0) | 1.0 | 203 | 201 | 192 | 175 | 169 |
+| | 0.5 | 203 | 201 | 192 | 175 | 169 |
+| | 0.0 | 203 | 201 | 192 | 175 | 169 |
+
+`main` (`1b5cf94`) gives the same table to the level, so this is not a
+regression of the resolution-scale branch: it dates from V14, which moved the
+glow onto the gathered coverage. (V14's own pass checked alpha against the
+pointwise coverage the glow then used - the "checked and found correct" list
+in the first pass - which is why that check passed.)
+
+**Documented, not fixed.** `config.h`, the shader comment and V14's note now
+say what the code does. The fix is a design call rather than a patch: either
+carry alpha into the gather (a third emission-table row, or alpha folded into
+row 0's weight, which changes what `arcW` means to the colour normalisation),
+at the cost V14 measured for a third fetch, or accept that alpha is a
+filament control and say so in the API. Until then, dim the glow along part of
+the ring with arcs or an arc's `intensity`.
+
 ---
 
 ## What is left
@@ -3101,7 +3142,8 @@ fork it followed from. The fifth pass's I15 landed with it. The seventh through
 tenth passes are one item each and all four are fixed, as are the eleventh's one,
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
-and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. Five items from the
+and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
+eighteenth opened V18. Five items from the
 first pass remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -3129,6 +3171,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I28 | documented | the opaque fill's own cutoffs (default off) and the outward `Cutoff::softness` move existing hosts' pictures without a compile error; `upgrade-notes.md` has the translation |
 | V17 | documented | small rects lose most of the reduced scale's quality (20 x 17: 53 levels at 0.25), as before the edge ring; keep them at 1.0 |
 | I31 | fixed | below 1.0 the gather loop ran at every reduced texel; it now runs once on a grid set by its own smoothness, 3.4-4.3x faster at 0.5 on most scenes |
+| V18 | open | colour-stop alpha dims only the filament; the halo and bloom ignore it (measured, `main` too); the cure is a design call (a third gather row or a redefined arc weight) |
 | I32 | fixed | the edge ring's gather attachments tripled the scaled path's memory; now 2.15 MB at 1080p and 0.5 for a full-screen rect, less for smaller ones |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s

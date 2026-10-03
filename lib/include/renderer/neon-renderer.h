@@ -349,7 +349,7 @@ namespace EdgeLighting
                             const glm::vec2 &gatherUVScale, const glm::vec2 &gatherUVOffset,
                             float time, const Config &config);
 
-        /// Pass 2a: opaque-mode background fill on a fullscreen NDC quad, at
+        /// Pass 2a: opaque-mode background fill (its band ring, or a clear), at
         /// FULL resolution on the caller's framebuffer regardless of the
         /// resolution scale - it is a flat shape from an analytic SDF, so
         /// scaling it would only cost it its clean edges. The fragment shader
