@@ -415,8 +415,9 @@ namespace EdgeLighting
         /// How one shader file yields several programs. Every embedded source
         /// starts with the @GLSL_VERSION@ line, which must stay first, so the
         /// define goes immediately after it - ahead of everything else, the
-        /// injected tuning header included. See @ref NeonRenderer::setupShaders
-        /// for the variants built this way.
+        /// injected tuning header and neon-common.glsl included. Today that is
+        /// neon.frag's NEON_READS_GATHER variant; see
+        /// @ref NeonRenderer::ensurePathPrograms.
         inline std::string WithDefine(const char *src, const char *define)
         {
             std::string out(src);
@@ -1413,8 +1414,8 @@ namespace EdgeLighting
         return true;
     }
 
-    bool NeonRenderer::buildNeonProgram(ShaderProgram &program, const char *define, const char *name,
-                                        unsigned int programBit, bool gathers)
+    bool NeonRenderer::buildNeonProgram(ShaderProgram &program, const char *fragSrc, const char *define,
+                                        const char *name, unsigned int programBit, bool gathers, bool shades)
     {
         if (program.IsValid())
         {
@@ -1428,8 +1429,7 @@ namespace EdgeLighting
             return false;
         }
 
-        const std::string source = define ? WithDefine(ShaderSource::NEON_FRAG_SRC, define)
-                                          : std::string(ShaderSource::NEON_FRAG_SRC);
+        const std::string source = define ? WithDefine(fragSrc, define) : std::string(fragSrc);
         program = ShaderProgram(ShaderSource::NEON_VERT_SRC, source.c_str(), name);
         if (!program.IsValid())
         {
@@ -1437,10 +1437,16 @@ namespace EdgeLighting
             LOG_E("NeonRenderer: %s failed to compile/link - that resolution path will draw no glow.", name);
             return false;
         }
-        // Every neon program reads the segment and arc blocks, at the same
-        // bindings; only the ones that run the gather have the sample block.
+        // Every neon program reads the segment block (neon-common.glsl), at
+        // the same binding. Only the ones that run the gather have the sample
+        // block, and only the ones that shade have the arc block - the gather
+        // pass sees arcs only through the emission table. Binding a block a
+        // program does not declare logs an error, hence the two flags.
         program.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
-        program.SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
+        if (shades)
+        {
+            program.SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
+        }
         if (gathers)
         {
             program.SetUniformBlockBinding("LoopSamplesBlock", LOOP_SAMPLES_BLOCK_BINDING);
@@ -1453,11 +1459,12 @@ namespace EdgeLighting
         // The direct path draws with neon.frag as it is, and nothing else.
         if (!scaled)
         {
-            return buildNeonProgram(mNeonShader, nullptr, "NeonRenderer", PROGRAM_PLAIN, true);
+            return buildNeonProgram(mNeonShader, ShaderSource::NEON_FRAG_SRC, nullptr, "NeonRenderer",
+                                    PROGRAM_PLAIN, true, true);
         }
 
         // The scaled path draws with four, none of them the direct path's:
-        // the gather pass (neon.frag stopped right after the gather), the
+        // the gather pass (neon-gather.frag: the same loop, alone), the
         // shading that reads it back - TWICE, one program object for pass 1 at
         // the reduced scale and another for the edge ring at full resolution -
         // and the composite. So a host that never leaves 1.0 never compiles
@@ -1472,9 +1479,12 @@ namespace EdgeLighting
         // (docs/neon-resolution-scale-plan.md section 7, build AB). A second
         // compile on the first scaled frame is the price of never finding out
         // which half of that difference the driver keys on.
-        if (!buildNeonProgram(mNeonGatherShader, "NEON_GATHER_ONLY", "NeonRenderer.Gather", PROGRAM_GATHER, true) ||
-            !buildNeonProgram(mNeonShadeShader, "NEON_READS_GATHER", "NeonRenderer.Shade", PROGRAM_SHADE, false) ||
-            !buildNeonProgram(mNeonRingShader, "NEON_READS_GATHER", "NeonRenderer.Ring", PROGRAM_RING, false))
+        if (!buildNeonProgram(mNeonGatherShader, ShaderSource::NEON_GATHER_FRAG_SRC, nullptr, "NeonRenderer.Gather",
+                              PROGRAM_GATHER, true, false) ||
+            !buildNeonProgram(mNeonShadeShader, ShaderSource::NEON_FRAG_SRC, "NEON_READS_GATHER", "NeonRenderer.Shade",
+                              PROGRAM_SHADE, false, true) ||
+            !buildNeonProgram(mNeonRingShader, ShaderSource::NEON_FRAG_SRC, "NEON_READS_GATHER", "NeonRenderer.Ring",
+                              PROGRAM_RING, false, true))
         {
             return false;
         }
@@ -2451,8 +2461,8 @@ namespace EdgeLighting
         // texel stands for.
         //
         // The shape uniforms only, not uploadNeonUniforms: everything else is
-        // shading, which this variant compiles out, and ShaderProgram logs an
-        // error for each uniform it is handed that the program does not have.
+        // shading, which neon-gather.frag does not have, and ShaderProgram
+        // logs an error for each uniform it is handed that the program lacks.
         mNeonGatherShader.Use();
         uploadShapeUniforms(mNeonGatherShader, mvp, scale, config);
         bindGatherInputs(mNeonGatherShader, config);

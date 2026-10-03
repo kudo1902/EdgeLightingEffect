@@ -3061,7 +3061,7 @@ memory. Measured on Mesa llvmpipe at 1280 x 720 and 1920 x 1080 against
 Pass 1 ran the gather loop, ~95% of `neon.frag`, at every texel of the reduced
 buffer. Its four results are smooth on the colour kernel's scale `kc`, which the
 edge ring already relied on to read them bilinearly. The loop now runs alone
-(`NEON_GATHER_ONLY`) at about 2 texels per `kc`, typically an eighth of the
+(`NEON_GATHER_ONLY` then, `neon-gather.frag` now) at about 2 texels per `kc`, typically an eighth of the
 viewport, into a buffer of its own. The reduced pass and the ring shade from
 it. The default scene is 3.85x faster at 0.5 and 1.79x at 0.25. Nine of the
 twelve check scenes gain 3.4-4.3x and 1.6-1.9x. Quality improved with it: the

@@ -1300,6 +1300,14 @@ ring variant under a new name, now drawing pass 1b as well. Its read moved from
 "the reduced buffer, corner to corner" to an affine map onto the gather
 buffer's region (13.3).
 
+> **Later: the gather pass got its own file.** `NEON_GATHER_ONLY` is gone. The
+> loop moved into a function, `gatherPerimeter`, in `lib/shaders/neon-common.glsl`,
+> which CMake injects into both `neon.frag` (the direct path calls it inline) and
+> a new `neon-gather.frag` (pass 1a: the call, the encode, no culls). In the
+> table above, pass 1a's program is now `neon-gather.frag` (`mNeonGatherShader`);
+> nothing else in this section changed. Every one of `generate --images`' 210 renders is
+> byte-identical across the move, on an Apple M2 Pro.
+
 The gather scale is `GetGatherScale`:
 
     clamp(GATHER_TEXELS_PER_KERNEL / kc, min(GATHER_MIN_SCALE, scale), scale)

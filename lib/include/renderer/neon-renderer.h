@@ -54,7 +54,7 @@ namespace EdgeLighting
     ///
     ///   1.0  - the gather draws straight onto the framebuffer it was handed.
     ///          No offscreen buffer, no blit, nothing allocated.
-    ///   <1.0 - the gather runs ALONE (NEON_GATHER_ONLY) into
+    ///   <1.0 - the gather runs ALONE (neon-gather.frag) into
     ///          @c mGatherBuffer, at a scale set by the gather's own smoothness
     ///          rather than by @c resolutionScale - about 2 texels per colour
     ///          kernel, so typically far coarser (@ref GetGatherScale). Then a
@@ -78,10 +78,14 @@ namespace EdgeLighting
     /// this class used to have as a separate fork (@c NeonOptimizedRenderer,
     /// removed).
     ///
-    /// The neon.frag programs and the blit are built per PATH, the first frame
-    /// that path renders (@ref ensurePathPrograms): one program at 1.0, four
-    /// below it (the gather, the shading twice - one object per target - and
-    /// the blit), none shared. A host that stays on one path never compiles the
+    /// The gather loop itself lives in neon-common.glsl, injected into both
+    /// neon.frag (which runs it inline at 1.0) and neon-gather.frag (which runs
+    /// it alone below 1.0), so the two paths share one copy of it.
+    ///
+    /// The neon programs and the blit are built per PATH, the first frame that
+    /// path renders (@ref ensurePathPrograms): one program at 1.0, four below
+    /// it (the gather, the shading twice - one object per target - and the
+    /// blit), none shared. A host that stays on one path never compiles the
     /// other's, and the price is a one-time compile on the first frame after a
     /// switch.
     ///
@@ -106,17 +110,20 @@ namespace EdgeLighting
         /// Build the programs both paths use - the emission pre-pass and the
         /// opaque fill. The rest are per path; see @ref ensurePathPrograms.
         bool setupShaders();
-        /// Build @p program from neon.frag with @p define spliced in (none for
-        /// @c nullptr), once. Returns true if it is ready. A failed build is
-        /// recorded in @c mFailedPrograms under @p programBit and never
-        /// retried, so a broken driver costs one compile and one log line, not
-        /// one per frame. @p gathers binds the sample block too.
-        bool buildNeonProgram(ShaderProgram &program, const char *define, const char *name,
-                              unsigned int programBit, bool gathers);
+        /// Build @p program from @p fragSrc (neon.frag or neon-gather.frag) with
+        /// @p define spliced in (none for @c nullptr), once. Returns true if it
+        /// is ready. A failed build is recorded in @c mFailedPrograms under
+        /// @p programBit and never retried, so a broken driver costs one compile
+        /// and one log line, not one per frame. Every program gets the segment
+        /// block bound; @p gathers binds the sample block too, @p shades the arc
+        /// block - each only where the source declares it.
+        bool buildNeonProgram(ShaderProgram &program, const char *fragSrc, const char *define, const char *name,
+                              unsigned int programBit, bool gathers, bool shades);
         /// Make sure every program the path @p scaled draws with is built,
         /// building any that are not. The direct path needs neon.frag alone;
-        /// the scaled path needs its gather-target and ring variants and the
-        /// blit, and not the plain program. Lazy rather than at @ref Initialize: compiling the path a host
+        /// the scaled path needs neon-gather.frag, neon.frag's
+        /// NEON_READS_GATHER variant twice (pass 1 and the ring) and the blit,
+        /// and not the plain program. Lazy rather than at @ref Initialize: compiling the path a host
         /// never uses cost a third of the startup and the memory of programs
         /// nothing draws with. The trade is a one-time compile on the first
         /// frame a host switches path. False if any of them failed, in which
@@ -286,7 +293,7 @@ namespace EdgeLighting
 
         /// The transform and the rect's shape - uMVP, uRectSize,
         /// uCornerRadius - for @p shader at @p scale: everything the gather
-        /// pass (NEON_GATHER_ONLY) reads besides its own inputs, and the first
+        /// pass (neon-gather.frag) reads besides its own inputs, and the first
         /// thing @ref uploadNeonUniforms uploads for every other program.
         /// @pre @p shader is in use.
         void uploadShapeUniforms(ShaderProgram &shader, const glm::mat4 &mvp, float scale, const Config &config);
@@ -294,9 +301,11 @@ namespace EdgeLighting
         /// Every SHADING uniform the neon programs read, for @p shader at
         /// @p scale, fading against @p quadMargin (px in the same space). One
         /// copy for every program built from neon.frag, so the variants cannot
-        /// drift apart in what they are told. The gather's own inputs - the
-        /// sample block, the count and the emission table - are not here: only
-        /// the gathering programs have them, and @ref renderNeonPass binds them.
+        /// drift apart in what they are told. Not for neon-gather.frag, which
+        /// shades nothing - it takes @ref uploadShapeUniforms alone. The
+        /// gather's own inputs - the sample block, the count and the emission
+        /// table - are not here: only the gathering programs have them, and
+        /// @ref bindGatherInputs binds them.
         /// @pre @p shader is in use.
         void uploadNeonUniforms(ShaderProgram &shader, const glm::mat4 &mvp, float scale,
                                 float time, float quadMargin, const Config &config);
@@ -408,8 +417,8 @@ namespace EdgeLighting
         static constexpr unsigned int PROGRAM_RING = 1u << 4;
 
         Config mCurrentConfig;
-        ShaderProgram mNeonShader;                                     ///< The neon gather (neon.frag), direct path. Built on first draw.
-        ShaderProgram mNeonGatherShader;                               ///< neon.frag + NEON_GATHER_ONLY: the scaled path's gather pass. Built on first draw.
+        ShaderProgram mNeonShader;                                     ///< neon.frag: gather and shade, direct path. Built on first draw.
+        ShaderProgram mNeonGatherShader;                               ///< neon-gather.frag: the scaled path's gather pass. Built on first draw.
         ShaderProgram mNeonShadeShader;                                ///< neon.frag + NEON_READS_GATHER: the scaled path's pass 1. Built on first draw.
         ShaderProgram mNeonRingShader;                                 ///< The same source, its own program: the scaled path's edge ring. See ensurePathPrograms.
         ShaderProgram mEmissionShader;                                 ///< Perimeter emission pre-pass (neon-emission.frag).

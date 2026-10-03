@@ -119,8 +119,10 @@ the half-res path as a resolution scale on a single renderer: `NeonConfig::
 resolutionScale` and `LensFlareConfig::resolutionScale`, where 1.0 draws
 straight onto the target and anything lower renders into a scaled buffer and
 blits back - the neon then re-shading a thin ring around the edge at full
-resolution, from a variant of the same `neon.frag`. One `.cpp` and one `.frag`
-each, no pair to keep in step and no way to double-draw. See
+resolution, from a variant of the same `neon.frag`. One `.cpp` each and one
+copy of every shader stage, no pair to keep in step and no way to double-draw.
+(The neon's gather pass is a `.frag` of its own, `neon-gather.frag`, but the
+loop it runs is the one `neon.frag` runs, shared through `neon-common.glsl`.) See
 `docs/neon-unification-plan.md` and `docs/lens-flare-unification-comparison.md`.
 
 To add a renderer: subclass `BaseRenderer`, add a sub-config struct to `Config`
@@ -177,9 +179,11 @@ belongs in the main shader.**
 
 Below `resolutionScale` 1.0 the same split pays twice. The gather is the only
 part of the shader that is both expensive and smooth across the screen, so it
-runs alone, in a pass of its own, on a grid set by its own smoothness (about
-two texels per colour kernel - far coarser than the reduced buffer), and stores
-its four results in a small buffer. A variant of `neon.frag` that reads those
+runs alone, in a pass of its own (`neon-gather.frag`, which calls the same
+`gatherPerimeter` from `neon-common.glsl` that `neon.frag` calls inline), on a
+grid set by its own smoothness (about two texels per colour kernel - far
+coarser than the reduced buffer), and stores its four results in a small
+buffer. A variant of `neon.frag` that reads those
 results back instead of looping then shades the glow twice: at the reduced
 scale into the reduced buffer, and at full resolution in a thin ring around the
 edge. The line and every edge near it come out as the direct path draws them.
@@ -310,7 +314,8 @@ Two rules that are easy to get wrong:
 | Goal | Touch |
 |---|---|
 | Tune neon appearance | `neon-tuning.h` and `neon.frag` - one copy, both resolution paths |
-| Change what the gather bakes | `neon-emission.frag` **and** `neon.frag` - keep the pre-pass invariant (§6) |
+| Change the gather loop | `neon-common.glsl` - both paths run it; the encode in `neon-gather.frag` and the decode in `neon.frag` change together |
+| Change what the gather bakes | `neon-emission.frag` **and** `neon-common.glsl` - keep the pre-pass invariant (§6) |
 | Add a config field | `config.h` (field **and** `operator==`), the renderer that reads it, `DebugUI`, and the C ABI mirror if exposed |
 | Add a shader | `lib/CMakeLists.txt` (two lists) and `shaders.h.in` |
 | Add a renderer | `BaseRenderer` subclass, `Config` sub-struct, `main.cpp` registration, `DebugUI` section, `el_renderer_flags_e` bit |

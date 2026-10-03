@@ -6,6 +6,9 @@
 //   macOS  -> #version 330 core
 //   Win/Linux -> #version 300 es
 // The .frag/.vert files themselves contain no #version directive.
+// neon-common.glsl is not a shader: it is the gather loop and its inputs,
+// injected below into the two neon programs that run it. (No configure
+// placeholder may appear in these comments - configure_file expands it here.)
 
 namespace EdgeLighting
 {
@@ -25,7 +28,14 @@ namespace EdgeLighting
 
                 static const char *const NEON_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
 @NEON_TUNING@
+@NEON_COMMON@
 @NEON_FRAG_CONTENT@
+)shadersrc";
+
+                static const char *const NEON_GATHER_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
+@NEON_TUNING@
+@NEON_COMMON@
+@NEON_GATHER_FRAG_CONTENT@
 )shadersrc";
 
                 static const char *const NEON_EMISSION_FRAG_SRC = R"shadersrc(@GLSL_VERSION@

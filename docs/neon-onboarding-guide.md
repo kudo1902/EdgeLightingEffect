@@ -433,29 +433,40 @@ and substitutes it into `lib/shaders/shaders.h.in` with `configure_file`,
 producing `build/lib/generated/shaders.h`. Each shader becomes a C++ raw
 string, for example `EdgeLighting::ShaderSource::NEON_FRAG_SRC`.
 
-The final source of a neon shader is assembled in this order:
+The final source of `neon.frag` is assembled in this order:
 
 ```
 #version 330 core                  <- @GLSL_VERSION@: "330 core" on macOS, "300 es" elsewhere
-[#define NEON_GATHER_ONLY]         <- only for variants, spliced in at RUNTIME by WithDefine()
+[#define NEON_READS_GATHER]        <- only for the variant, spliced in at RUNTIME by WithDefine()
 <contents of neon-tuning.h>        <- @NEON_TUNING@: shared constants, verbatim
-<contents of neon.frag>            <- starts with "precision highp float;"
+<contents of neon-common.glsl>     <- @NEON_COMMON@: starts with "precision highp float;"
+<contents of neon.frag>
 ```
+
+`neon-gather.frag` is built the same way, minus the `#define`, with its own
+contents last.
 
 - **The tuning header** (`neon-tuning.h`) is plain `#define`s, so it compiles
   identically as C++ and as GLSL. That is how the CPU and the shader share
   constants like `MAX_ARCS` or `GLOW_REACH_RADIUS_FACTOR` without drifting.
   (GLSL ES 3.00 has no `constexpr` and rejects the `f` suffix, hence macros.)
-  It is injected into `neon.frag`, `neon-emission.frag` and `neon-blit.frag`,
-  but not into `black-rect.frag` or `neon.vert`.
-- **Variants.** `neon.frag` is compiled up to three ways from one source.
-  `WithDefine` in `neon-renderer.cpp` inserts `#define NAME` right after the
-  `#version` line, which must stay first. Part 7.3 lists what each variant
-  includes.
+  It is injected into `neon.frag`, `neon-gather.frag`, `neon-emission.frag`
+  and `neon-blit.frag`, but not into `black-rect.frag` or `neon.vert`.
+- **A shared GLSL chunk.** GLSL has no `#include`, so code two shaders share
+  goes in a `.glsl` file injected the same way. `neon-common.glsl` holds the
+  gather loop (`gatherPerimeter`) and the declarations it reads; it goes into
+  `neon.frag`, which calls the loop inline at scale 1.0, and `neon-gather.frag`,
+  which calls it alone below 1.0. One copy, so the two paths cannot drift.
+- **Variants.** `neon.frag` is compiled two ways from one source.
+  `WithDefine` in `neon-renderer.cpp` inserts `#define NEON_READS_GATHER` right
+  after the `#version` line, which must stay first. Part 7.3 lists what each
+  program includes.
 - **Editing a shader or a tuning header re-runs configure automatically** on
   the next build, because `CMAKE_CONFIGURE_DEPENDS` lists them all.
 - **Adding a new shader file** means updating three places: both lists in
-  `lib/CMakeLists.txt` and `shaders.h.in`.
+  `lib/CMakeLists.txt` and `shaders.h.in`. Do not write an `@NAME@`
+  placeholder in a comment in `shaders.h.in`: `configure_file` expands it
+  there too.
 
 ### 2.2 The orchestrator and one frame
 
@@ -1063,7 +1074,7 @@ and draws.
 | `mEmissionShader` | `neon-emission.frag` | `Initialize` | P0 |
 | `mBlackRectShader` | `black-rect.frag` | `Initialize` | P2a |
 | `mNeonShader` | `neon.frag`, no define | first frame at scale 1.0 | P1 (direct) |
-| `mNeonGatherShader` | `neon.frag` + `NEON_GATHER_ONLY` | first frame below 1.0 | P1a |
+| `mNeonGatherShader` | `neon-gather.frag` | first frame below 1.0 | P1a |
 | `mNeonShadeShader` | `neon.frag` + `NEON_READS_GATHER` | first frame below 1.0 | P1b |
 | `mNeonRingShader` | the same source, a second program object | first frame below 1.0 | P2c |
 | `mBlitShader` | `neon-blit.frag` | first frame below 1.0 | P2b |
@@ -1343,7 +1354,7 @@ The data flow between them, below scale 1.0:
 | **Blocks** | `SegmentBlock` (0), `LoopSamplesBlock` (1), `ArcBlock` (2). |
 | **Output** | `fragColor`: premultiplied graded colour, alpha = brightest channel. |
 
-### P1a: the gather (`renderGatherPass`, `neon.frag` + `NEON_GATHER_ONLY`)
+### P1a: the gather (`renderGatherPass`, `neon-gather.frag`)
 
 | | |
 | - | - |
@@ -1352,7 +1363,7 @@ The data flow between them, below scale 1.0:
 | **Target** | `mGatherBuffer`: a region around the rect clipped to the viewport (`GetBufferRegion`, uncapped), at `GetGatherScale` (about 2 texels per colour kernel `kc`, never finer than `resolutionScale`). RGBA16F (RGBA8 fallback), linear filtering; 1 attachment, 2 when there are segments. Cleared to 0. |
 | **State** | Blend off (the attachments are data). Scissor off. Viewport = the buffer. |
 | **Geometry** | `mGatherVertexArray` through `RegionProjection(gatherRegion)`. |
-| **Uniforms** | only `uploadShapeUniforms`: `uMVP`, `uRectSize`, `uCornerRadius`; plus `uNumSamples`. Every other uniform is compiled out of this variant, and setting one logs an error. |
+| **Uniforms** | only `uploadShapeUniforms`: `uMVP`, `uRectSize`, `uCornerRadius`; plus `uNumSamples`. The program has no other uniform, and setting one logs an error. |
 | **Textures** | unit 3 `uEmission`. |
 | **Blocks** | `LoopSamplesBlock` (1); `SegmentBlock` (0), whose count selects the loop body. |
 | **Output** | location 0 `oGather = (colour, E/(1+E))`; location 1 `oGatherSeg = (segment colour, S/(1+S))`, where `E` and `S` are the gathered arc and segment coverages. `c/(1+c)` squeezes an unbounded coverage into [0, 1) so the RGBA8 fallback can store it; it is exact at 0 and decodes as `e/(1-e)`. |
@@ -1489,14 +1500,20 @@ Notes:
 
 ### 7.3 `neon.frag`
 
-#### Variants
+#### Programs
 
-| | plain (scale 1.0) | `NEON_GATHER_ONLY` (P1a) | `NEON_READS_GATHER` (P1b, P2c) |
+Three sources make the three neon programs. `neon-common.glsl` is the gather
+loop (`gatherPerimeter`) and what it reads, injected ahead of the other two
+(Part 2.1). `neon-gather.frag` is short enough to read whole: its `main()` is
+the call and the encoded write. Everything else in this section is `neon.frag`.
+
+| | `neon.frag` (scale 1.0) | `neon-gather.frag` (P1a) | `neon.frag` + `NEON_READS_GATHER` (P1b, P2c) |
 | - | - | - | - |
 | Gather loop, `LoopSamplesBlock`, `uNumSamples`, `uEmission` | yes | yes | no |
+| `ArcBlock`, LUTs, shading uniforms | yes | no | yes |
 | `uGather`, `uGatherSeg`, `uGatherUVScale`, `uGatherUVOffset` | no | no | yes |
 | Discards (one-sided cut, cutoffs) | yes | **no** (its texels are read at other resolutions, and a culled texel would feed a black value into their bilinear reads) | yes |
-| Shading after the gather | yes | no: writes the gather results and returns; the compiler drops the rest | yes |
+| Shading after the gather | yes | no: it writes the gather results and that is the whole file | yes |
 | Outputs | `fragColor` | `oGather` (location 0), `oGatherSeg` (location 1) | `fragColor` |
 
 The same `NEON_READS_GATHER` source behaves differently in P1b and P2c because
@@ -1525,7 +1542,7 @@ exactly like the direct path.
 | `uWinding` | int | 0/1 | `geometry.winding` |
 | `uResolutionScale` | float | | clamped scale (1.0 for the ring) |
 | `uQuadMargin` | float | scaled px | `mQuadMargin` (`mRingQuadMargin` for the ring) |
-| `uNumSamples` | int | | clamped `numSamples` (plain and gather variants) |
+| `uNumSamples` | int | | clamped `numSamples` (plain `neon.frag` and `neon-gather.frag`) |
 | `uGatherUVScale`, `uGatherUVOffset` | vec2 | | the gather region's map (reads-gather variant) |
 
 Plus the three blocks (Part 1.5), the three LUTs (units 0-2), and either
@@ -1547,33 +1564,32 @@ The stage numbers follow the source order.
 | 1 | **SDF** | `d = sdRoundBox(vPos, uRectSize/2, uCornerRadius)`, `ad = abs(d)`. |
 | 2 | **Antialias width** | `sideAA = max(fwidth(d) * uResolutionScale, 1e-6)`: one destination pixel in this pass's units. The only derivative in the shader, computed before every discard (Part 1.10). |
 | 3 | **One-sided cut parameters** | `sideSoft = max(uGlowSideSoftness, sideAA)` (feather, floored at 1 px); `blitOwnsCut = uResolutionScale < 1`; `sideBack = 0.5 * sideAA`; `sideCull` = 2 buffer px on the scaled path, else `sideBack`. |
-| 4 | **One-sided discards** | `INSIDE` and `d > sideCull`, or `OUTSIDE` and `d < -sideCull`: discard. (Not in the gather variant.) |
+| 4 | **One-sided discards** | `INSIDE` and `d > sideCull`, or `OUTSIDE` and `d < -sideCull`: discard. (`neon-gather.frag` has none.) |
 | 5 | **Cutoff ramps** | Each softness floored at `sideAA`; `inHalf`, `outHalf` = half the ramp widths; `inMid = uInsideCutoff + softness/2` and `outMid` likewise, the 50% points of fades that start at the cutoff. |
 | 6 | **Band distances** | `dIn = d + inMid`; `dOut = d - outMid` (a per-axis box distance at corner radius 0, so a square rect keeps a square band). A cutoff on a side `glowSide` already removes is neutralised with the 1e6 sentinel. |
-| 7 | **Cutoff discards** | Fragments fully past either fade, plus a 2-px guard on the scaled path, are discarded. (Not in the gather variant.) |
+| 7 | **Cutoff discards** | Fragments fully past either fade, plus a 2-px guard on the scaled path, are discarded. (`neon-gather.frag` has none.) |
 | 8 | **Filament** | `N = 2 * uFilamentFalloff`; `sigma = max(uLineWidth/2, 0.5 px floor, Nyquist floor)`; `core = exp2(-(ad/sigma)^N)`, pedestal-subtracted so it is exactly 0 at its reach; `lineGate` fades the line out as `lineWidth` goes to 0. The Nyquist floor (scaled path only) keeps a line wide enough that a reduced buffer can sample it. |
-| 9 | **Perimeter** | `peri = 2(W + H - 4r) + 2 pi r`, in this pass's px. |
-| 10 | **Kernel widths** | `kc = peri * COLOR_BLEND_PERIM_FRAC` (colour), `kh = uGlowRadius` (halo), `bw = 6 * uGlowRadius` (bloom); each floored at 0.001. |
-| 11 | **Gather** | Plain/gather variants: the loop of Part 3.3 over `uNumSamples` samples, `g = 1/(dist^2 + kc^2)`, reading the emission table with `texelFetch`, accumulating arc colour, arc weight, segment colour, segment weight and the total weight. `col` = arc colour / arc weight; `segColHue` = segment colour / segment weight. Two loop bodies under one uniform branch: the segment-free body skips one fetch per sample. Reads-gather variant: `textureLod` the gather buffer and decode `e/(1-e)` instead. |
+| 9 | **Perimeter** | `peri = rectPerimeter()` (`neon-common.glsl`) `= 2(W + H - 4r) + 2 pi r`, in this pass's px. |
+| 10 | **Kernel widths** | `kh = uGlowRadius` (halo), `bw = 6 * uGlowRadius` (bloom); and inside `gatherPerimeter`, `kc = peri * COLOR_BLEND_PERIM_FRAC` (colour); each floored at 0.001. |
+| 11 | **Gather** | Plain `neon.frag` (and `neon-gather.frag`, which does nothing else): `gatherPerimeter(vPos)` from `neon-common.glsl`, the loop of Part 3.3 over `uNumSamples` samples, `g = 1/(dist^2 + kc^2)`, reading the emission table with `texelFetch`, accumulating arc colour, arc weight, segment colour, segment weight and the total weight. `col` = arc colour / arc weight; `segColHue` = segment colour / segment weight. Two loop bodies under one uniform branch: the segment-free body skips one fetch per sample. It returns both hues and the two gathered coverages of stage 14. Reads-gather variant: `textureLod` the gather buffer and decode `e/(1-e)` instead. |
 | 12 | **Pointwise position and arc coverage** | `sPos = perimeterPosition(vPos)`; for each arc, `arcCoverContinuous` (feathered by `HEAD_FEATHER_PX`/`TAIL_FEATHER_PX`, outward where arcs abut) x intensity x stop alpha; `emitCover` = the max over arcs. |
 | 13 | **Pointwise segment coverage** | `segCoverPt = sum of boost * exp(-e^2) * alpha`; `segCol = segColHue * segCoverPt`. |
-| 14 | **Gathered coverage** | `emitCoverGathered = arcWeight / totalWeight`, `segCoverGathered = segWeight / totalWeight` (exactly 1.0 on a fully lit ring); `glowCoverAll = max(emitCoverGathered, min(segCoverGathered, 1))`. |
-| 15 | **Gather-only exit** | `NEON_GATHER_ONLY` writes `oGather`, `oGatherSeg` and returns. |
-| 16 | **Filament gate** | `filamentGate = max(smoothstep(0.5, 1, min(segCoverPt, 1)), emitCover)`: a segment on a dark stretch opens its own core only above half strength. |
-| 17 | **Halo and bloom, straights** | For each of the four edges: perpendicular distance and extent, `haloSegment` and `bloomSegmentPedestalled` (Part 3.5), summed. `reach` mirrors the CPU's quad margin. |
-| 18 | **Halo and bloom, corner arcs** | If `uCornerRadius > 0` (a uniform branch): each quarter arc is developed onto its tangent line (`arcTangentSegment`) and added with its weight; the four arcs share one bloom pedestal. |
-| 19 | **Normalisation** | `halo *= HALO_NORM_FACTOR`; `bloom *= BLOOM_NORM_FACTOR`, then renormalised so the on-line value stays and the tail reaches 0 at `reach`. |
-| 20 | **Glow gate** | `glowGate = clamp(uGlowRadius / (2 px), 0, 1)`: at radius 0 the analytic halo would be a full-height sub-pixel spike, so it fades in over the first 2 px. |
-| 21 | **Compose** | The formula of Part 3.6. |
-| 22 | **Quad-edge fade** | `result *= 1 - smoothstep(-(uQuadMargin - fadeStart), 0, dQuad)`, with `dQuad` the per-axis distance to the quad's edge: light fades to 0 before the quad ends, so its rectangle never shows. Starts no earlier than the outside cutoff's end. |
-| 23 | **Grade** | Hue-preserving Reinhard on the peak channel (`TONE_MAP_SHOULDER` 0.6), then `pow(result, 0.85)` (Part 1.9). |
-| 24 | **One-sided cut mask** | Direct path and ring only: `INSIDE` `1 - smoothstep(sideBack - sideSoft, sideBack, d)`; `OUTSIDE` `smoothstep(-sideBack, sideSoft - sideBack, d)`. After the grade, because it is coverage. |
-| 25 | **Cutoff masks** | Direct path and ring only: `smoothstep(-inHalf, inHalf, dIn) * (1 - smoothstep(-outHalf, outHalf, dOut))`. |
-| 26 | **Output** | `fragColor = vec4(result, clamp(max(r, g, b), 0, 1))`, premultiplied. |
+| 14 | **Gathered coverage** | `emitCoverGathered = arcWeight / totalWeight`, `segCoverGathered = segWeight / totalWeight` (exactly 1.0 on a fully lit ring), divided at the end of `gatherPerimeter` and arriving with stage 11; `glowCoverAll = max(emitCoverGathered, min(segCoverGathered, 1))`. |
+| 15 | **Filament gate** | `filamentGate = max(smoothstep(0.5, 1, min(segCoverPt, 1)), emitCover)`: a segment on a dark stretch opens its own core only above half strength. |
+| 16 | **Halo and bloom, straights** | For each of the four edges: perpendicular distance and extent, `haloSegment` and `bloomSegmentPedestalled` (Part 3.5), summed. `reach` mirrors the CPU's quad margin. |
+| 17 | **Halo and bloom, corner arcs** | If `uCornerRadius > 0` (a uniform branch): each quarter arc is developed onto its tangent line (`arcTangentSegment`) and added with its weight; the four arcs share one bloom pedestal. |
+| 18 | **Normalisation** | `halo *= HALO_NORM_FACTOR`; `bloom *= BLOOM_NORM_FACTOR`, then renormalised so the on-line value stays and the tail reaches 0 at `reach`. |
+| 19 | **Glow gate** | `glowGate = clamp(uGlowRadius / (2 px), 0, 1)`: at radius 0 the analytic halo would be a full-height sub-pixel spike, so it fades in over the first 2 px. |
+| 20 | **Compose** | The formula of Part 3.6. |
+| 21 | **Quad-edge fade** | `result *= 1 - smoothstep(-(uQuadMargin - fadeStart), 0, dQuad)`, with `dQuad` the per-axis distance to the quad's edge: light fades to 0 before the quad ends, so its rectangle never shows. Starts no earlier than the outside cutoff's end. |
+| 22 | **Grade** | Hue-preserving Reinhard on the peak channel (`TONE_MAP_SHOULDER` 0.6), then `pow(result, 0.85)` (Part 1.9). |
+| 23 | **One-sided cut mask** | Direct path and ring only: `INSIDE` `1 - smoothstep(sideBack - sideSoft, sideBack, d)`; `OUTSIDE` `smoothstep(-sideBack, sideSoft - sideBack, d)`. After the grade, because it is coverage. |
+| 24 | **Cutoff masks** | Direct path and ring only: `smoothstep(-inHalf, inHalf, dIn) * (1 - smoothstep(-outHalf, outHalf, dOut))`. |
+| 25 | **Output** | `fragColor = vec4(result, clamp(max(r, g, b), 0, 1))`, premultiplied. |
 
 Things the source comments flag as load-bearing:
 
-- **Pointwise vs gathered coverage** (stages 12-14, 21): the filament uses the
+- **Pointwise vs gathered coverage** (stages 12-14, 20): the filament uses the
   pointwise values, the halo and bloom the gathered ones. Swapping them
   brings back hard creases along the corner diagonals on a partly lit ring.
 - **`col` carries no brightness.** It is a weighted mean of colours. All
@@ -1613,8 +1629,8 @@ cutOut = glowSide != INSIDE  && outsideCutoff enabled
 if (glowSide != BOTH || cutIn || cutOut) {     // a branch on uniforms only
     d    = sdRoundBox(gl_FragCoord.xy - uRectCenter, halfSize, r)
     aa   = fwidth(d)                           // one destination pixel
-    cut  = one-sided cut (the same curve as neon.frag stage 24)
-    cut *= cutoff masks (the same curves as neon.frag stage 25)
+    cut  = one-sided cut (the same curve as neon.frag stage 23)
+    cut *= cutoff masks (the same curves as neon.frag stage 24)
 } else cut = 1
 fragColor = src * cut
 ```
@@ -1847,7 +1863,8 @@ machine without a GPU through Mesa's llvmpipe. See
 3. `neon.frag`: declare `uniform float uFlicker;` and use it.
 4. `uploadNeonUniforms`: `shader.SetUniform("uFlicker", value)` (times
    `scale` if it is in px). Do not add it to `uploadShapeUniforms`, unless the
-   gather needs it.
+   gather needs it - in which case it is declared in `neon-common.glsl`, not
+   `neon.frag`, so `neon-gather.frag` sees it too.
 5. `demo/src/debug-ui.cpp` and its `demo-capi/` counterpart: a widget.
 6. C ABI: a setter in `lib/capi/el-effect.h` / `.cpp`.
 7. If it should animate: an `AnimatableField` entry and its `writeScalar` case.
@@ -1856,12 +1873,14 @@ machine without a GPU through Mesa's llvmpipe. See
 
 **Add a tuning constant:** a `#define` in `neon-tuning.h` (no `f` suffix, no
 `constexpr`), with a comment saying its unit and how its value was chosen. It
-is visible to `neon.frag`, `neon-emission.frag`, `neon-blit.frag` and the C++
-code at once.
+is visible to `neon.frag`, `neon-gather.frag`, `neon-emission.frag`,
+`neon-blit.frag` and the C++ code at once.
 
 **Add a shader file:** `lib/CMakeLists.txt` (both the
 `CMAKE_CONFIGURE_DEPENDS` list and the `file(READ ...)` list) and
-`lib/shaders/shaders.h.in`.
+`lib/shaders/shaders.h.in`. If it needs code another shader has, move that
+code into a `.glsl` chunk injected into both (as `neon-common.glsl` is) rather
+than copying it.
 
 ### 9.6 Exercises
 
@@ -1879,7 +1898,7 @@ model stick.
    (Part 3.6).
 4. Add a segment with boost 0.4, then 2.0, on a dark stretch (an arc covering
    only half the ring). Below boost 0.5 it is glow only; above it, it opens a
-   core (stage 16).
+   core (stage 15).
 5. Set `glowSide` to `OUTSIDE`, then add an inside cutoff. The cutoff has no
    effect: the cut already removed that side, so it is neutralised (stage 6).
 6. Set `resolutionScale` to 0.25 and toggle it with Shift+O. The line does not

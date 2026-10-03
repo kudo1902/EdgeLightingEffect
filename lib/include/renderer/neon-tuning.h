@@ -475,7 +475,7 @@
 // --- Gather resolution. Scaled path only, CPU only.
 //
 //     Below resolutionScale 1.0 the gather - ~95% of neon.frag's cost - runs in
-//     a pass of its own (NEON_GATHER_ONLY) at its own scale, and pass 1 and the
+//     a pass of its own (neon-gather.frag) at its own scale, and pass 1 and the
 //     edge ring shade from its result (NEON_READS_GATHER). Its scale is
 //     (GetGatherScale in neon-renderer.cpp)
 //
