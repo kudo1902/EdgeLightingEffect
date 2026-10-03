@@ -11,6 +11,8 @@
 // deliberately call the replacements rather than each other.
 #include "capi-internal.h"
 
+#include <algorithm>
+
 #if defined(__GNUC__) || defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
@@ -185,6 +187,53 @@ el_result_e el_effect_get_wireframe_color(el_effect_handle_t effect,
                                           float *outR, float *outG, float *outB, float *outA)
 {
     return el_effect_get_debug_wireframe_color(effect, outR, outG, outB, outA);
+}
+
+// --- Deprecated: the single opaque-fill feather -------------------------
+//
+// Forwarders onto el_effect_get/set_opaque_cutoff, one call per side, so the
+// fill's per-side enable and size stay whatever the host last set.
+
+el_result_e el_effect_set_opaque_softness(el_effect_handle_t effect, float softness)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque_softness");
+    for (el_cutoff_side_e side : {EL_CUTOFF_SIDE_INSIDE, EL_CUTOFF_SIDE_OUTSIDE})
+    {
+        el_bool_t enable = 0;
+        float size = 0.0f;
+        float oldSoftness = 0.0f;
+        el_result_e result = el_effect_get_opaque_cutoff(effect, side, &enable, &size, &oldSoftness);
+        if (result == EL_SUCCESS)
+        {
+            result = el_effect_set_opaque_cutoff(effect, side, enable, size, softness);
+        }
+        if (result != EL_SUCCESS)
+        {
+            return result;
+        }
+    }
+    return EL_SUCCESS;
+}
+
+el_result_e el_effect_get_opaque_softness(el_effect_handle_t effect, float *outSoftness)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_get_opaque_softness");
+    VALIDATE_OUT_PTR(outSoftness, "el_effect_get_opaque_softness");
+    float widest = 0.0f;
+    for (el_cutoff_side_e side : {EL_CUTOFF_SIDE_INSIDE, EL_CUTOFF_SIDE_OUTSIDE})
+    {
+        el_bool_t enable = 0;
+        float size = 0.0f;
+        float softness = 0.0f;
+        const el_result_e result = el_effect_get_opaque_cutoff(effect, side, &enable, &size, &softness);
+        if (result != EL_SUCCESS)
+        {
+            return result;
+        }
+        widest = (side == EL_CUTOFF_SIDE_INSIDE) ? softness : std::max(widest, softness);
+    }
+    *outSoftness = widest;
+    return EL_SUCCESS;
 }
 
 #if defined(__GNUC__) || defined(__clang__)
