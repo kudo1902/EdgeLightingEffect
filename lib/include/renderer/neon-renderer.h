@@ -388,11 +388,14 @@ namespace EdgeLighting
         /// The cut lives here rather than in the gather because the gather's
         /// output is upsampled: an edge drawn at resolutionScale is smeared
         /// 1/scale destination pixels each way, across the line as well as
-        /// along the lit side. @p viewportHeight mirrors the rect centre into
-        /// gl_FragCoord's y-up space, exactly as @ref renderOpaqueFill does.
+        /// along the lit side. Draws through @p mvp, the full-res transform
+        /// @ref Render builds once for this pass and pass 2c together - the
+        /// partition depends on both using one matrix. @p centerFull is the
+        /// rect centre in gl_FragCoord's y-up space, mirrored as
+        /// @ref renderOpaqueFill mirrors it.
         /// @pre Premultiplied-over blending, and the caller's framebuffer and
         ///      full-resolution viewport are restored.
-        void renderBlitPass(int viewportWidth, int viewportHeight, const glm::vec2 &uvScale,
+        void renderBlitPass(const glm::mat4 &mvp, const glm::vec2 &centerFull, const glm::vec2 &uvScale,
                             const glm::vec2 &uvOffset, const Config &config);
 
         /// Pass 2c: the edge ring. Re-shades the ring at FULL resolution with
@@ -402,10 +405,10 @@ namespace EdgeLighting
         /// draws them, while the expensive loop ran once, coarsely. Reads it
         /// through @p gatherUVScale / @p gatherUVOffset, the gather region's
         /// map from full-res rect-local px. Draws @c mRingVertexArray, which
-        /// shares its edges with what pass 2b drew.
+        /// shares its edges with what pass 2b drew, through the same @p mvp.
         /// @pre Premultiplied-over blending; the caller's framebuffer and
         ///      full-resolution viewport are restored; pass 1 succeeded.
-        void renderRingPass(int viewportWidth, int viewportHeight, const glm::vec2 &gatherUVScale,
+        void renderRingPass(const glm::mat4 &mvp, const glm::vec2 &gatherUVScale,
                             const glm::vec2 &gatherUVOffset, float time, const Config &config);
 
     private:

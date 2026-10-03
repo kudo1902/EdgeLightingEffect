@@ -1176,8 +1176,21 @@ namespace EdgeLighting
                 // --- Pass 2b / 2c: the blit and the edge ring. They cover
                 // disjoint areas (setupRingGeometry), so their order between
                 // themselves does not matter for the result.
-                renderBlitPass(viewportWidth, viewportHeight, blitUVScale, blitUVOffset, config);
-                renderRingPass(viewportWidth, viewportHeight, gatherUVFullScale, gatherUVFullOffset, time, config);
+                //
+                // ONE full-res transform, built here and handed to both. Their
+                // partition holds only if the edges they share land on
+                // bit-identical pixel positions, which takes the same vertex
+                // floats (setupRingGeometry), the same vertex stage (neon.vert's
+                // invariant gl_Position) and the same uMVP. Two copies of one
+                // expression gave the same bits too, until someone edited one
+                // of them; a single matrix cannot drift. tools/neon-scale-check
+                // `partition` tests the result.
+                const glm::mat4 fullResMvp =
+                    glm::ortho(0.0f, static_cast<float>(viewportWidth), 0.0f, static_cast<float>(viewportHeight),
+                               -1.0f, 1.0f) *
+                    glm::translate(glm::mat4(1.0f), glm::vec3(centerFull, 0.0f));
+                renderBlitPass(fullResMvp, centerFull, blitUVScale, blitUVOffset, config);
+                renderRingPass(fullResMvp, gatherUVFullScale, gatherUVFullOffset, time, config);
             }
         }
 
@@ -2690,7 +2703,7 @@ namespace EdgeLighting
         mBlackRectShader.Unuse();
     }
 
-    void NeonRenderer::renderBlitPass(int viewportWidth, int viewportHeight, const glm::vec2 &uvScale,
+    void NeonRenderer::renderBlitPass(const glm::mat4 &mvp, const glm::vec2 &centerFull, const glm::vec2 &uvScale,
                                       const glm::vec2 &uvOffset, const Config &config)
     {
         // Bilinear upscaling of premultiplied alpha is fringe-free; the blit
@@ -2714,25 +2727,19 @@ namespace EdgeLighting
         }
         mBlitShader.Use();
 
-        // FULL-RES geometry, and derived here rather than from Render's scaled
-        // transform - the same reasoning, and the same y mirror, as
-        // @ref renderOpaqueFill, which is the other always-full-res pass.
+        // FULL-RES geometry, under the full-res transform Render built for
+        // this pass and the ring together - not Render's scaled one; the same
+        // y mirror as @ref renderOpaqueFill, the other always-full-res pass.
         // uGlowSideSoftness goes up UNSCALED for the same reason: this pass
         // measures in destination pixels, the gather measures in buffer ones.
-        const glm::vec2 centerFull(config.geometry.position.x + config.geometry.width * 0.5f,
-                                   static_cast<float>(viewportHeight) - config.geometry.position.y -
-                                       config.geometry.height * 0.5f);
-        const glm::vec2 viewport(static_cast<float>(viewportWidth), static_cast<float>(viewportHeight));
-
+        //
         // The area this pass covers is everything outside the edge ring that
         // can still be lit (setupRingGeometry) - mBlitVertexArray, in full-res
-        // rect-local px, so it goes up under the full-res transform the fill
-        // uses. vPos is then rect-local px rather than NDC, and maps onto the
-        // reduced buffer through @p uvScale / @p uvOffset - its region's map
-        // (GetBufferRegion), which Render derives with the region. The ring
-        // finds its gather texels the same way.
-        const glm::mat4 proj = glm::ortho(0.0f, viewport.x, 0.0f, viewport.y, -1.0f, 1.0f);
-        mBlitShader.SetUniform("uMVP", proj * glm::translate(glm::mat4(1.0f), glm::vec3(centerFull, 0.0f)));
+        // rect-local px. vPos is then rect-local px rather than NDC, and maps
+        // onto the reduced buffer through @p uvScale / @p uvOffset - its
+        // region's map (GetBufferRegion), which Render derives with the region.
+        // The ring finds its gather texels the same way.
+        mBlitShader.SetUniform("uMVP", mvp);
         mBlitShader.SetUniform("uUVScale", uvScale);
         mBlitShader.SetUniform("uUVOffset", uvOffset);
         mBlitShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
@@ -2757,7 +2764,7 @@ namespace EdgeLighting
         mBlitShader.Unuse();
     }
 
-    void NeonRenderer::renderRingPass(int viewportWidth, int viewportHeight, const glm::vec2 &gatherUVScale,
+    void NeonRenderer::renderRingPass(const glm::mat4 &mvp, const glm::vec2 &gatherUVScale,
                                       const glm::vec2 &gatherUVOffset, float time, const Config &config)
     {
         if (mRingVertexCount == 0)
@@ -2765,15 +2772,9 @@ namespace EdgeLighting
             return;
         }
 
-        // FULL resolution, on the caller's framebuffer: the same full-res
-        // transform and rect-local space as the blit, so the ring lands exactly
-        // in the hole the blit area leaves.
-        const glm::vec2 centerFull(config.geometry.position.x + config.geometry.width * 0.5f,
-                                   static_cast<float>(viewportHeight) - config.geometry.position.y -
-                                       config.geometry.height * 0.5f);
-        const glm::vec2 viewport(static_cast<float>(viewportWidth), static_cast<float>(viewportHeight));
-        const glm::mat4 proj = glm::ortho(0.0f, viewport.x, 0.0f, viewport.y, -1.0f, 1.0f);
-        const glm::mat4 mvp = proj * glm::translate(glm::mat4(1.0f), glm::vec3(centerFull, 0.0f));
+        // FULL resolution, on the caller's framebuffer, through the very
+        // matrix the blit drew with (@p mvp, built once in Render), so the
+        // ring lands exactly in the hole the blit area leaves.
 
         // Every shading uniform exactly as the DIRECT path uploads it - scale
         // 1.0, so the Nyquist floor is off and the cut and cutoffs are applied
