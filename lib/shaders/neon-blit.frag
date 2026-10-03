@@ -1,9 +1,12 @@
 precision highp float;
 
 // Pass 2b of the scaled neon path: bilinear composite of the reduced-resolution
-// neon FBO (premultiplied colour + coverage alpha) onto the backbuffer,
-// everywhere EXCEPT the thin edge ring that pass 2c re-shades at full
-// resolution (NeonRenderer::setupRingGeometry builds the two areas). The
+// neon FBO (premultiplied colour + coverage alpha) onto the backbuffer, over
+// the part of the frame outside the thin edge ring that pass 2c re-shades at
+// full resolution - and only where the glow can still be non-zero there: past
+// the cut, the cutoffs and the glow's own fade margin this shader would write
+// exactly 0, so NeonRenderer::setupRingGeometry, which builds both areas,
+// leaves those pixels out. The
 // opaque-mode silhouette is handled entirely by the black-rect fullscreen pass
 // drawn just before this blit in NeonRenderer::Render - the black quad's
 // analytic SDF anti-aliasing lands cleanly on rounded corners regardless of

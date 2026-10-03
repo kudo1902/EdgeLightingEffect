@@ -24,7 +24,10 @@ goes from 3.1x to 2.7x at both. Two scenes that were already marginal lose more:
 the cutoff band is now about 2x SLOWER below 1.0 than at it, and a one-sided
 glow keeps only 1.2x to 1.8x at 720p (and is slower than 1.0 at 0.75). Startup
 doubles, 23 ms to 50 ms per effect, and the scaled buffer's memory doubles
-(triples with segments).
+(triples with segments). The plan's section 12 has since recovered part of
+this: programs are built per path on first use, so a host compiles only the
+path it draws; and the composite and the ring cover only where the glow can be
+lit, which mostly helps the cutoff band and the one-sided glows.
 
 ## 1. Method
 
@@ -231,9 +234,12 @@ and after):
 
 Steps 4 and 5 each add one compile of `neon.frag` (the `NEON_WRITES_GATHER`
 and `NEON_RING_PASS` variants): +14 ms and +12 ms, **23 ms to 50 ms per effect**
-on this machine. They are built eagerly at `Initialize` so that the first
-switch to a reduced scale does not stall; building them on first use instead is
-decision 6 in the plan. Building fewer was measured too (the plan's section 7):
+on this machine. They were built eagerly at `Initialize` so that the first
+switch to a reduced scale would not stall. They are now built on first use and
+per path, which was decision 6 in the plan (taken, plan section 12.2). A host
+at 1.0 compiles one `neon.frag` and no blit; a host below 1.0 compiles the two
+variants and the blit, and not the plain program. The table above is before
+that change. Building fewer was measured too (the plan's section 7):
 folding the ring into the plain program takes this to 39.3 ms with output and
 frame time unchanged, and a single program for all three draws is not viable -
 93-624x slower below 1.0 on this GPU.
@@ -254,8 +260,9 @@ each.
 
 ## 6. What to take from it
 
-- **Scale 1.0 is unaffected.** Hosts that never lower the scale pay only the
-  startup.
+- **Scale 1.0 is unaffected.** Hosts that never lower the scale used to pay
+  the startup; since the programs are built per path on first use, they no
+  longer do.
 - **0.5 and 0.25 still pay off on any scene with a real glow** - 2.1x to 2.9x
   and 3.7x to 6.5x here - and they now look like 1.0 instead of a blurred copy
   of it.
@@ -264,7 +271,11 @@ each.
   ring is widest there and its fixed part dominates.
 - **A cheap scene can lose.** The cutoff band was already slower below 1.0 on
   this GPU before the ring (0.7x at 0.5); it is now 0.4x to 0.6x. A one-sided
-  glow is close to break-even. `NeonConfig::resolutionScale`'s documentation
+  glow is close to break-even. (Both measured before the plan's section 12,
+  which cut the cutoff band's composite by 97% of its fragments and the
+  one-sided glow's by 23-77%, and took 44% off the band's frame time and
+  11-24% off the one-sided glows' at 0.25 on llvmpipe. Not re-measured on this
+  GPU.) `NeonConfig::resolutionScale`'s documentation
   says so (review finding I25).
 - **Measure on the device.** The two GPUs measured so far price the ring 4-5x
   apart on the default scene (+35 to +48 us on the M2 Pro, +132 to +228 us

@@ -2974,6 +2974,82 @@ numbers so the error cannot grow unnoticed. Repro: `BaseConfig()` with
 `filamentFalloff` 4, `lineWidth` 2, `glowRadius` 0, at `resolutionScale` 0.5
 against 1.0.
 
+### V16, addendum: does not reproduce on Mesa llvmpipe
+
+Re-measured during the sixteenth pass on llvmpipe (Mesa 25.2), with the repro
+above and with widths 1 and 2 at falloff 4 and 2: every one reads max 2 at
+0.75, 0.5 and 0.25. The only miss was one pixel at 3 with `cornerRadius` 120
+at 0.5. So the arc half looks GPU-dependent, which fits the compiler theory.
+It stays open until the AMD 5300M or the M2 Pro is re-measured.
+
+---
+
+## Sixteenth pass (the branch review)
+
+A review of the resolution-scale branch against `main`. It was run on Linux,
+with every shader variant compiled through glslang (GLSL 3.30 and ES 3.00),
+the library and the C ABI built against GLES headers, and the harness under
+Mesa llvmpipe. Fixes and measurements are in `neon-resolution-scale-plan.md`
+section 12.
+
+### I26. `neon-scale-check` destroyed the GL context before the effect - FIXED
+
+`Check` and `Generate` held their `EdgeLightingEffect` on the stack and called
+`ShutdownGL` (`glfwTerminate`) before returning, so the effect's destructor
+deleted its GL objects into a terminated context. macOS let that pass. Mesa
+segfaulted in `~NeonRenderer`, which lost the buffered report and made
+`check` exit 139 whatever it had found. Fixed with `GLSession`, an RAII guard
+declared ahead of the effect, so the context outlives it on every return path.
+With the fix, `check` passes on llvmpipe.
+
+### I27. The C ABI dropped two exported functions - FIXED
+
+`el_effect_set_opaque_softness` / `el_effect_get_opaque_softness` were deleted
+with `NeonConfig::opaqueSoftness`. A host binding the library by name
+(P/Invoke, ctypes, cgo) fails at bind or call time, with no version macro to
+check first. Both are back as deprecated forwarders in `el-deprecated.h`. They
+set the feather on both of the fill's cutoffs and read the wider back.
+
+### I28. Two behaviour changes reached hosts silently - DOCUMENTED
+
+Neither change is a compile error. First, the opaque fill stopped reading the
+glow's cutoffs, and its own pair defaults to off, so a `BOTH` fill bounded by
+the glow's cutoffs now covers the whole viewport (up to 80/255 at 1.0 over a
+black backdrop). Second, `Cutoff::softness` now runs outward from `size`
+rather than being centred on it (`outsideCutoff {20, 8}`: up to 63/255 at
+1.0). Both were documented as reference material, and the notes that said
+"tuned values move" were deleted rather than replaced. See
+[`upgrade-notes.md`](upgrade-notes.md), which also gives the exact translation
+for each.
+
+### V17. Small rects lose most of the reduced scale's quality - DOCUMENTED
+
+A 20 x 17 rect reads 17 / 53 / 93 levels off its 1.0 render at 0.5 / 0.25 /
+0.125. `main` measures about the same (18 / 51), so this is not a regression,
+and the edge ring did fix the pixels next to the line: within 3 px of the
+edge the error is now 1-4 at 0.25, where it was up to 34. What is left is the
+halo 5-24 px out, in the blit's area, which changes faster round a small rect
+than a reduced buffer can follow. The docs had quoted the 2/255 bound as
+general "except a 160 x 96 rect". `NeonConfig::resolutionScale` and the C ABI
+setter now say that the error grows as the rect shrinks.
+
+### I29. The scaled path shaded what it then threw away - FIXED
+
+The blit composited the whole viewport minus the ring, about 870k fragments at
+720p, even where the reduced buffer is zero or the blit's own masks take it to
+zero. The ring re-shaded its full width on a one-sided glow's dark side, where
+its cut discards every pixel. Both are now bounded by the lit band and the
+glow's fade margin. That cuts the cutoff band's composite by 97% and the
+one-sided glows' by 23-77%, and runs 11-45% faster at 0.25 on those scenes.
+The change is exact.
+
+### I30. Every host compiled both resolution paths - FIXED
+
+`Initialize` built all four `neon.frag` programs plus the blit, so a host at
+1.0 paid for three programs it never drew with, and a host at 0.5 for one.
+They are now built per path on first use. This was decision 6 in the plan;
+its cost is a one-time compile on the first frame after a path switch.
+
 ---
 
 ## What is left
@@ -2984,7 +3060,8 @@ open rather than declined - closed with the neon unification, which deleted the
 fork it followed from. The fifth pass's I15 landed with it. The seventh through
 tenth passes are one item each and all four are fixed, as are the eleventh's one,
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
-fixed, and the fifteenth's V16 is open. Five items from the
+fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
+and I30, and documented I28 and V17. Five items from the
 first pass remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -3008,7 +3085,9 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | V12a | open | per-lamp shouldering cannot bound a SUM; the cure is an offscreen composite for the whole layer, which the layer does not currently need at `resolutionScale` 1.0 |
 | V15 | fixed | the reduced-resolution neon drew every edge near the line into a buffer that cannot hold one; the cutoffs moved into the blit and the line into a full-resolution edge ring |
 | I25 | documented | below 1.0 the scaled path has a fixed cost (composite, clears, edge ring), so a layer already cheap at 1.0 can render slower; capping the ring for soft filaments is decision 7 in `neon-resolution-scale-plan.md` |
-| V16 | open | a crisp, thin line with no glow reads up to 8 levels off at its corners below 1.0; most likely the ring and direct programs disagree on an arc's distance by thousandths of a pixel, which a sub-pixel shoulder magnifies - unconfirmed, possibly GPU-specific, and covered by any glow |
+| V16 | open | a crisp, thin line with no glow reads up to 8 levels off at its corners below 1.0; most likely the ring and direct programs disagree on an arc's distance by thousandths of a pixel, which a sub-pixel shoulder magnifies - unconfirmed, GPU-specific as far as measured (it does not reproduce on Mesa llvmpipe), and covered by any glow |
+| I28 | documented | the opaque fill's own cutoffs (default off) and the outward `Cutoff::softness` move existing hosts' pictures without a compile error; `upgrade-notes.md` has the translation |
+| V17 | documented | small rects lose most of the reduced scale's quality (20 x 17: 53 levels at 0.25), as before the edge ring; keep them at 1.0 |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

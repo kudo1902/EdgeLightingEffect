@@ -57,12 +57,12 @@ namespace EdgeLighting
     ///   <1.0 - the gather draws into @c mScaledBuffer at that fraction of the
     ///          viewport, with a variant that also stores the gather's result
     ///          in extra attachments. The buffer is bilinear-blitted back over
-    ///          the target EXCEPT within a thin ring around the rect edge, and
-    ///          the ring is re-shaded at full resolution by a third variant
-    ///          that reads the stored result instead of running the gather.
-    ///          Saves the gather on (1 - scale^2) of the fragments while the
-    ///          filament, the cut and the cutoffs near the line still come out
-    ///          as the direct path draws them. See
+    ///          the area that can still be lit outside a thin ring around the
+    ///          rect edge, and the ring is re-shaded at full resolution by a
+    ///          third variant that reads the stored result instead of running
+    ///          the gather. Saves the gather on (1 - scale^2) of the fragments
+    ///          while the filament, the cut and the cutoffs near the line still
+    ///          come out as the direct path draws them. See
     ///          docs/neon-resolution-scale-plan.md.
     ///
     /// The paths share one schedule: every pixel-valued uniform is multiplied
@@ -73,6 +73,12 @@ namespace EdgeLighting
     /// is what keeps that path bit-identical to the dedicated full-res renderer
     /// this class used to have as a separate fork (@c NeonOptimizedRenderer,
     /// removed).
+    ///
+    /// The neon.frag programs and the blit are built per PATH, the first frame
+    /// that path renders (@ref ensurePathPrograms): one program at 1.0, three
+    /// below it, none shared. A host that stays on one path never compiles the
+    /// other's, and the price is a one-time compile on the first frame after a
+    /// switch.
     ///
     /// Debug overlays (LUT strip, colour-stop markers) are NOT here - they are
     /// a separate layer, @ref DebugRenderer, driven by @ref DebugConfig. The
@@ -92,7 +98,25 @@ namespace EdgeLighting
         virtual RendererLayer GetLayer() const override { return RendererLayer::NEON; }
 
     private:
+        /// Build the programs both paths use - the emission pre-pass and the
+        /// opaque fill. The rest are per path; see @ref ensurePathPrograms.
         bool setupShaders();
+        /// Build @p program from neon.frag with @p define spliced in (none for
+        /// @c nullptr), once. Returns true if it is ready. A failed build is
+        /// recorded in @c mFailedPrograms under @p programBit and never
+        /// retried, so a broken driver costs one compile and one log line, not
+        /// one per frame. @p gathers binds the sample block too.
+        bool buildNeonProgram(ShaderProgram &program, const char *define, const char *name,
+                              unsigned int programBit, bool gathers);
+        /// Make sure every program the path @p scaled draws with is built,
+        /// building any that are not. The direct path needs neon.frag alone;
+        /// the scaled path needs its gather-target and ring variants and the
+        /// blit, and not the plain program. Lazy rather than at @ref Initialize: compiling the path a host
+        /// never uses cost a third of the startup and the memory of programs
+        /// nothing draws with. The trade is a one-time compile on the first
+        /// frame a host switches path. False if any of them failed, in which
+        /// case the glow is skipped and the frame degrades to the fill.
+        bool ensurePathPrograms(bool scaled);
         /// Upload the static NDC quad the fullscreen passes draw. Called once
         /// from @ref Initialize: the quad is in clip space, so unlike
         /// @ref setupGeometry's it is independent of the geometry, the
@@ -121,14 +145,18 @@ namespace EdgeLighting
         void setupFillGeometry(const Config &config);
         /// Build the scaled path's two FULL-RES partition arrays, from one set
         /// of box coordinates: @c mRingVertexArray, a rectangular annulus over
-        /// everything within @c mRingWidth of the rect edge, which pass 2c
-        /// re-shades at full resolution; and @c mBlitVertexArray, its exact
-        /// complement, which pass 2b composites the reduced buffer over.
+        /// the edge ring (GetRingWidth either side of the edge, clipped to the
+        /// band the glow can still be lit in), which pass 2c re-shades at full
+        /// resolution; and @c mBlitVertexArray, which pass 2b composites the
+        /// reduced buffer over - the ring's complement, bounded to where the
+        /// glow can be non-zero (its lit band and its fade margin), and so
+        /// possibly empty.
         ///
         /// The two share their boundary vertices bit for bit, so the rasteriser
-        /// gives every pixel to exactly one of them - both composite
+        /// gives every pixel to at most one of them - both composite
         /// premultiplied-over, and a pixel drawn by both would composite twice.
         /// Builds nothing (both counts 0) at scale 1.0, where neither pass runs.
+        /// Reads @c mQuadMargin, so it runs after @ref setupGeometry.
         void setupRingGeometry(const Config &config);
         void rebuildLoopSamples(const Config &config);
         /// Re-bake the three colour LUTs. Each wrapper self-guards, so this is
@@ -167,15 +195,14 @@ namespace EdgeLighting
         // composites the glow over it, pass 2c reads the gather target pass 1
         // wrote, and at scale 1.0 pass 1 IS the composite (it draws onto the
         // target directly and neither 2b nor 2c runs). 2b and 2c cover
-        // complementary areas, so their order between themselves is free.
+        // disjoint areas, so their order between themselves is free.
         //
-        // NOTE @ref Render calls pass 2a FIRST - the one place declaration
-        // order and call order differ. The fill depends on nothing above it
-        // and must be UNDER the glow either way, so running it first is what
-        // lets one schedule serve both resolution paths: the direct path needs
-        // it down before the gather composites over it, and hoisting it also
-        // keeps it ahead of the @c DebugConfig::opaqueOnly early-out, so
-        // fill-only mode skips a UBO upload and two draws it never samples.
+        // NOTE on the DIRECT path @ref Render calls pass 2a before pass 1 -
+        // the one place declaration order and call order differ. Pass 1 draws
+        // onto the caller's framebuffer there, and the fill has to be under
+        // it. On the scaled path the order is the numbering: every offscreen
+        // pass (0, 1) first, then everything on the caller's framebuffer
+        // (2a, 2b, 2c), so that target is drawn in one unbroken run.
 
         // STATE OWNERSHIP. `Render` owns blend state - enable and func - and
         // sets it immediately before each pass that depends on it, so no pass
@@ -257,7 +284,7 @@ namespace EdgeLighting
         /// Draws either straight onto the bound framebuffer (@p scaled false)
         /// or into @c mScaledBuffer (@p scaled true), in which case it also
         /// clears that buffer and leaves it bound - @ref Render restores the
-        /// target before pass 2b. The scaled path draws with
+        /// target before pass 2a. The scaled path draws with
         /// @c mNeonScaledShader, which also fills the buffer's gather
         /// attachment(s): the loop's outputs, for a later full-resolution
         /// pass to read instead of re-running it.
@@ -268,8 +295,9 @@ namespace EdgeLighting
         ///      zero to the colour - and the gather attachments are data, which
         ///      must not be blended at all.
         /// @return false if the scaled target could not be allocated, in which
-        ///         case nothing was drawn and pass 2b must be skipped too - it
-        ///         would otherwise composite a stale or undefined buffer.
+        ///         case nothing was drawn and passes 2b and 2c must be skipped
+        ///         too - they would otherwise composite a stale or undefined
+        ///         buffer.
         bool renderNeonPass(const glm::mat4 &mvp, int bufWidth, int bufHeight,
                             bool scaled, float time, const Config &config);
 
@@ -296,8 +324,9 @@ namespace EdgeLighting
         /// framebuffer, AND the one-sided glow cut and the inside/outside
         /// cutoffs. Only runs when the scaled path did - on the direct path
         /// @ref renderNeonPass owns the cut, because there the gather already
-        /// runs at the destination rate. Covers everything except the edge
-        /// ring (@c mBlitVertexArray), which pass 2c draws.
+        /// runs at the destination rate. Covers what can still be lit outside
+        /// the edge ring (@c mBlitVertexArray), which pass 2c draws - and
+        /// draws nothing when that is empty.
         ///
         /// The cut lives here rather than in the gather because the gather's
         /// output is upsampled: an edge drawn at resolutionScale is smeared
@@ -308,42 +337,55 @@ namespace EdgeLighting
         ///      full-resolution viewport are restored.
         void renderBlitPass(int viewportWidth, int viewportHeight, const Config &config);
 
-        /// Pass 2c: the edge ring. Re-shades everything within @c mRingWidth of
-        /// the rect edge at FULL resolution with @c mNeonRingShader, which takes
-        /// the gather's result from the scaled buffer's gather attachment(s)
-        /// instead of running the gather - so the filament, the cut and the
-        /// cutoffs near the line come out as the direct path draws them, while
-        /// the expensive loop still ran at the reduced scale. Draws
-        /// @c mRingVertexArray, the exact complement of what pass 2b drew.
+        /// Pass 2c: the edge ring. Re-shades the ring at FULL resolution with
+        /// @c mNeonRingShader, which takes the gather's result from the scaled
+        /// buffer's gather attachment(s) instead of running the gather - so the
+        /// filament, the cut and the cutoffs near the line come out as the
+        /// direct path draws them, while the expensive loop still ran at the
+        /// reduced scale. Draws @c mRingVertexArray, which shares its edges
+        /// with what pass 2b drew.
         /// @pre Premultiplied-over blending; the caller's framebuffer and
         ///      full-resolution viewport are restored; pass 1 succeeded.
         void renderRingPass(int viewportWidth, int viewportHeight, float time, const Config &config);
 
     private:
+        /// Bits of @c mFailedPrograms, one per lazily built program.
+        static constexpr unsigned int PROGRAM_PLAIN = 1u << 0;
+        static constexpr unsigned int PROGRAM_SCALED = 1u << 1;
+        static constexpr unsigned int PROGRAM_RING = 1u << 2;
+        static constexpr unsigned int PROGRAM_BLIT = 1u << 3;
+
         Config mCurrentConfig;
-        ShaderProgram mNeonShader;                                     ///< The neon gather (neon.frag), direct path.
-        ShaderProgram mNeonScaledShader;                               ///< neon.frag + NEON_WRITES_GATHER, scaled path.
-        ShaderProgram mNeonRingShader;                                 ///< neon.frag + NEON_RING_PASS, the scaled path's edge ring.
+        ShaderProgram mNeonShader;                                     ///< The neon gather (neon.frag), direct path. Built on first draw.
+        ShaderProgram mNeonScaledShader;                               ///< neon.frag + NEON_WRITES_GATHER, scaled path. Built on first draw.
+        ShaderProgram mNeonRingShader;                                 ///< neon.frag + NEON_RING_PASS, the scaled path's edge ring. Built on first draw.
         ShaderProgram mEmissionShader;                                 ///< Perimeter emission pre-pass (neon-emission.frag).
         ShaderProgram mBlackRectShader;                                ///< Opaque-mode black background fill (black-rect.frag).
-        ShaderProgram mBlitShader;                                     ///< Scaled-path upscale composite (neon-blit.frag).
+        ShaderProgram mBlitShader;                                     ///< Scaled-path upscale composite (neon-blit.frag). Built on first draw.
         VertexArray mGlowVertexArray{"NeonRenderer.Glow"};             ///< Tight glow quad (rect + glow reach), in scaled space.
-        VertexArray mFullscreenVertexArray{"NeonRenderer.Fullscreen"}; ///< NDC quad: emission bake, ALL-mode opaque fill, blit.
+        VertexArray mFullscreenVertexArray{"NeonRenderer.Fullscreen"}; ///< NDC quad: emission bake, and the ALL-mode opaque fill when a clear cannot stand in.
         VertexArray mFillVertexArray{"NeonRenderer.Fill"};             ///< Opaque-fill band ring (rect +- the fill's cutoffs), in FULL-RES rect-local px.
-        VertexArray mRingVertexArray{"NeonRenderer.Ring"};             ///< Scaled path: annulus within mRingWidth of the edge, FULL-RES rect-local px.
-        VertexArray mBlitVertexArray{"NeonRenderer.BlitArea"};         ///< Scaled path: the ring's exact complement, same space.
-        /// Vertex count in @c mFillVertexArray - 24 for a ring (8 triangles),
-        /// 0 when there is no ring and the fullscreen quad is used instead.
-        /// Written by @ref setupFillGeometry, read by @ref renderOpaqueFill,
-        /// and doubles as the "is it built" flag so the two cannot disagree.
+        VertexArray mRingVertexArray{"NeonRenderer.Ring"};             ///< Scaled path: the edge ring's annulus, FULL-RES rect-local px.
+        VertexArray mBlitVertexArray{"NeonRenderer.BlitArea"};         ///< Scaled path: the lit area outside the ring, same space.
         /// Vertices in @c mGlowVertexArray: 6 for the plain quad, 24 when the
         /// glow is bounded from the inside and @ref setupGeometry cuts a hole.
         /// See the note there for which settings do that.
         int mGlowVertexCount = 6;
+        /// Vertex count in @c mFillVertexArray - 24 for a ring (8 triangles),
+        /// 0 when there is no ring and the fullscreen quad is used instead.
+        /// Written by @ref setupFillGeometry, read by @ref renderOpaqueFill,
+        /// and doubles as the "is it built" flag so the two cannot disagree.
         int mFillVertexCount = 0;
-        int mRingVertexCount = 0; ///< 0 at scale 1.0; see setupRingGeometry.
-        int mBlitVertexCount = 0; ///< 0 at scale 1.0; see setupRingGeometry.
-        float mRingWidth = 0.0f;  ///< R, full-res px either side of the edge; see GetRingWidth.
+        int mRingVertexCount = 0;        ///< 0 at scale 1.0; see setupRingGeometry.
+        int mBlitVertexCount = 0;        ///< 0 at scale 1.0, and whenever nothing outside the ring can be lit.
+
+        /// Set at the end of @ref Initialize. Gates the rebuilds in
+        /// @ref OnConfigChanged, which can run before it; the neon.frag programs
+        /// cannot be that gate any more, since they are built on first draw.
+        bool mInitialized = false;
+        /// @c PROGRAM_* bits of the lazily built programs that failed - see
+        /// @ref buildNeonProgram.
+        unsigned int mFailedPrograms = 0;
 
         /// Backs neon.frag's std140 `SegmentBlock` (DALi-compatible uniform
         /// block holding uSegmentCount + uSegments[]).
@@ -390,9 +432,11 @@ namespace EdgeLighting
         /// here to say so.
         Framebuffer mEmissionBuffer{"NeonRenderer.Emission"};
 
-        /// The gather's target on the scaled path. Never touched at
-        /// @c resolutionScale 1.0 - not allocated, not bound, not blitted - so
-        /// the full-res path pays nothing for its existence.
+        /// The gather's target on the scaled path: the composited colour plus
+        /// the gather target (attachment 1) and, only when there are segments,
+        /// its segment half (attachment 2), all RGBA8 at the reduced size.
+        /// Never touched at @c resolutionScale 1.0 - not allocated, not bound,
+        /// not blitted - so the full-res path pays nothing for its existence.
         Framebuffer mScaledBuffer{"NeonRenderer.Scaled"};
 
         /// Everything but time that can invalidate @c mEmissionBuffer.

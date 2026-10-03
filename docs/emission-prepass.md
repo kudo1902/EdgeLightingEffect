@@ -102,24 +102,31 @@ is owned by `Render`; each pass owns its shader, and those that retarget the
 framebuffer restore it themselves.
 
 **`NeonRenderer::Render`** - one schedule, both resolution paths. `scaled` is
-`resolutionScale < 1.0`; it changes only where pass 1 lands, which program
-variant draws it, and whether passes 2b and 2c run - never the order or the
-guards.
+`resolutionScale < 1.0`; it changes where pass 1 lands, which program variant
+draws it, and whether passes 2b and 2c run. The schedule runs in TWO PHASES on
+both paths: everything that renders offscreen first, then everything on the
+caller's framebuffer, so that target is drawn in one unbroken run per frame (on
+a tile-based GPU every switch away from it and back stores and reloads its
+tiles). `debug.opaqueOnly` short-circuits all of it to the fill alone.
 
 | pass | method | target | draw |
 | ---- | ------ | ------ | ---- |
-| - | (inline) | - | derives proj / center / mvp, in SCALED space |
-| 2a | `renderOpaqueFill` | caller's framebuffer | black rounded-rect fill (opaque modes only), always full-res; a band ring bounds it, and a coverage-1 fill (`ALL`, or `BOTH` with both cutoffs disabled) is a scissored `glClear` with no draw unless depth / stencil testing is on |
+| - | (inline) | - | derives proj / center / mvp, in SCALED space; builds the path's programs on its first frame (`ensurePathPrograms`) |
 | - | `packLightBlocks` | - | UBO upload only; the pack is gated, the bind is not |
 | 0 | `renderEmissionPass` | `mEmissionBuffer` (N x 2, allocated at `Initialize`) | `mFullscreenVertexArray`, identity MVP; runs only when the table is stale |
-| 1 | `renderNeonPass` | caller's framebuffer, or `mScaledBuffer` when scaled | tight glow quad; `neon.frag` direct, or its `NEON_WRITES_GATHER` variant when scaled, which also stores the gather's results in 1-2 extra attachments, drawn with blending off |
-| 2b | `renderBlitPass` | caller's framebuffer | bilinear composite of `mScaledBuffer` plus the one-sided cut and the cutoffs, over `mBlitVertexArray` - everything EXCEPT the edge ring; scaled path only |
+| 1 | `renderNeonPass` (scaled) | `mScaledBuffer` | tight glow quad, `neon.frag`'s `NEON_WRITES_GATHER` variant, which also stores the gather's results in 1-2 extra attachments, drawn with blending off |
+| 2a | `renderOpaqueFill` | caller's framebuffer | black rounded-rect fill (opaque modes only), always full-res; a band ring bounds it, and a coverage-1 fill (`ALL`, or `BOTH` with both fill cutoffs disabled) is a scissored `glClear` with no draw unless depth / stencil testing is on |
+| 1 | `renderNeonPass` (direct) | caller's framebuffer | tight glow quad, plain `neon.frag`, composited over the fill |
+| 2b | `renderBlitPass` | caller's framebuffer | bilinear composite of `mScaledBuffer` plus the one-sided cut and the cutoffs, over `mBlitVertexArray` - the part of the frame outside the edge ring where the glow can still be non-zero, which can be empty; scaled path only |
 | 2c | `renderRingPass` | caller's framebuffer | the edge ring, `mRingVertexArray`: `neon.frag`'s `NEON_RING_PASS` variant at full resolution, reading the stored gather results instead of running the loop; scaled path only |
 
-At `resolutionScale` 1.0 the last two rows do not run and pass 1 IS the
-composite. 2b and 2c cover complementary areas built from the same vertices
-(`setupRingGeometry`), so each pixel is composited by exactly one of them; see
-[`neon-resolution-scale-plan.md`](neon-resolution-scale-plan.md) step 5.
+Pass 1 appears twice because it is the one pass whose target depends on the
+path: offscreen below 1.0, the composite itself at 1.0 - where it has to land
+after the fill, and the last two rows do not run. 2b and 2c cover disjoint
+areas built from the same vertices (`setupRingGeometry`), so no pixel is
+composited by both; a pixel neither covers is one the glow cannot reach. See
+[`neon-resolution-scale-plan.md`](neon-resolution-scale-plan.md) step 5 and
+section 12.
 The debug overlays that used to close this table are a separate layer now -
 `DebugRenderer`, drawn after this renderer, always at full resolution.
 

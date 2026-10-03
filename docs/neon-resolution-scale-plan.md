@@ -467,7 +467,9 @@ box coordinates:
   inset `(r - R) * (1 - 1/sqrt(2))`, clamped at zero.
 - `mBlitVertexArray`: the exact complement. A frame from +/-65536 px (the
   `FILL_MAX_OUTER_MARGIN` construction) in to the ring's outer box, plus the
-  ring's hole as one quad.
+  ring's hole as one quad. (Since section 12 both are bounded further - the
+  ring to the band the glow can be lit in, the blit to where it can still be
+  non-zero - which keeps them disjoint but no longer complementary.)
 
 The two share their boundary vertices bit for bit, because both are emitted
 from the same floats in the same function. Axis-aligned edges at identical
@@ -1092,6 +1094,12 @@ The first four were posed before step 1. Three are taken, each as recommended;
    and GLES 3.0 both guarantee more, so this is about a driver that lies. A
    check at `NeonRenderer::Initialize` would fail at startup instead.
 6. **Build the shader variants eagerly or on first use - or build fewer?**
+   Taken: on first use, PER PATH (section 12). The direct path builds plain
+   `neon.frag` and nothing else; the scaled path builds its gather-target and
+   ring variants and the blit, and not the plain program. Each host compiles
+   only what it draws with. The cost is a one-time hitch on the first frame
+   after a path switch, which is the stall the eager build was chosen to
+   avoid. The original notes follow.
    Open, from steps 4 and 5. Eager, as shipped, costs about 14.5 ms per effect
    at startup on the M2 Pro (12 -> 26 ms) and 27 ms on the AMD 5300M
    (23 -> 50 ms). On first use moves that to a one-time hitch the first frame
@@ -1117,3 +1125,132 @@ The first four were posed before step 1. Three are taken, each as recommended;
    so a cosmetic retune of the width rule will not close this. Accepting a cap
    means accepting those errors; avoiding them means a ring shaped by those
    features.
+
+## 12. Follow-up: paying for the scaled path only where it draws
+
+A review of the branch found that 0.5 and 0.25 paid for three things they
+never use, and that a fourth could not be had without a cost. Everything below
+was measured on Mesa's llvmpipe at 1280 x 720. llvmpipe is a CPU rasteriser:
+fragment counts are exact, timings are only relative, and it prices bandwidth
+at almost nothing, which matters for the last item. `neon-scale-check check`
+passes after every change with the numbers it gave before.
+
+### 12.1 The blit and the ring cover only where the glow can be lit
+
+The blit used to draw the whole viewport minus the ring, about 870k fragments
+whatever the glow did. The ring was always `GetRingWidth` either side of the
+edge. Two exact bounds now trim both (`setupRingGeometry`):
+
+- **The lit band** (`GetLitExtent`). Past the one-sided cut, the masks in
+  `neon.frag` and `neon-blit.frag` are exactly 0 beyond `back` (half a
+  destination pixel). Past a cutoff they are exactly 0 beyond the end of its
+  fade (`GetCutoffEnd`). The ring is clipped to that band plus
+  `LIT_EDGE_SAFETY` (2 px, covering a diagonal's wider `fwidth`), and the blit
+  covers none of it beyond that.
+- **The glow's fade.** Pass 1's quad-edge fade zeroes every texel past
+  `mQuadMargin`, so a blit pixel whose bilinear footprint lies entirely past it
+  composites 0. The blit's outer frame stops `FOOTPRINT_TEXELS` buffer texels
+  plus 1 px past the margin.
+
+The two arrays are still emitted from the same floats (`PushAnnulus`), so no
+pixel is drawn by both. The partition probe from step 5 finds 0 double-drawn
+pixels over eight geometries: fractional positions, odd viewports, an
+off-screen rect, a rect the ring swallows, and all three glow sides. Output
+against the commit before this change is byte-identical on every two-sided
+scene. The two one-sided scenes move 1/255 on about 20 pixels, because the
+blit's triangles changed shape and its interpolated UV rounds differently.
+
+Fragments at 0.5 (0.25 within a few percent of it):
+
+| scene | blit before | blit after | ring before | ring after |
+| ----- | ----------- | ---------- | ----------- | ---------- |
+| `bounded_band` | 868,572 | 22,972 (-97%) | 53,028 | 53,028 |
+| `glow_inside` | 868,572 | 195,696 (-77%) | 53,028 | 38,720 (-27%) |
+| `card_outside` | 868,572 | 672,876 (-23%) | 53,028 | 43,648 (-18%) |
+| `small_rect` | 912,672 | 562,752 (-38%) | 8,928 | 8,928 |
+| `hairline` | 882,400 | 650,164 (-26%) | 39,200 | 39,200 |
+| `default` | 868,572 | 864,252 | 53,028 | 53,028 |
+
+Frame time, median of three interleaved rounds against the commit before. The
+1.0 column, which nothing here touches per frame, moves by up to +/-8%, and
+that is the noise floor:
+
+| scene | 0.5 | 0.25 |
+| ----- | --- | ---- |
+| `bounded_band` | -44% | -45% |
+| `glow_inside` | -13% | -24% |
+| `card_outside` | -2% | -11% |
+| `hairline` | +2% | -14% |
+| everything else | within noise | within noise |
+
+Pass 1's quad still reaches the ring's outer edge, because it writes the
+gather target the ring reads. It now reaches the CLIPPED edge, so an outside
+cutoff narrower than the ring shrinks it too.
+
+### 12.2 Programs are built per path, on first use
+
+Decision 6, taken. `Initialize` builds the emission and fill programs. The
+first frame of each path builds that path's programs (`ensurePathPrograms`):
+plain `neon.frag` at 1.0; the `NEON_WRITES_GATHER` variant, the ring variant
+and the blit below it. Neither path builds anything of the other's, so a host
+at 0.5 no longer compiles the direct path's program and a host at 1.0
+compiles none of the three. Init plus the first frame (llvmpipe, median of
+nine): 0.25 from ~50 to ~40 ms, 0.5 from ~77 to ~65-75 ms.
+
+A failed build is recorded and never retried, so a broken driver costs one
+compile and one log line, not one per frame. That path then draws the fill and
+no glow. `OnConfigChanged` used the direct program's validity as its "am I
+initialised" test; it now has an explicit flag. A long-lived effect switching
+1.0 -> 0.5 -> 1.0 -> 0.25 -> fill-only -> 0.5 matches a fresh effect byte for
+byte at every step.
+
+### 12.3 Offscreen passes run before anything lands on the caller's target
+
+`Render` used to draw the opaque fill first, then leave the caller's
+framebuffer for the emission table and pass 1, then come back for the blit and
+the ring. On a tile-based GPU every switch away and back stores the target's
+tiles to memory and loads them again. Every offscreen pass now runs first
+(emission table, then pass 1 when scaled), and the caller's framebuffer is
+drawn once: fill, then the glow. No pixel changes. The benefit is reasoned, not
+measured: llvmpipe is not a tiler, and the frame-time noise above would hide
+it.
+
+### 12.4 Rejected: a strip atlas for the gather target
+
+The scaled buffer's extra attachments are full reduced-size textures, 2-3x the
+buffer's memory, though the ring reads only a band of them a few texels wide.
+The alternative was prototyped and measured. A `NEON_GATHER_ONLY` variant
+stopped `neon.frag` right after the gather and drew the ring's four strips
+(side strips transposed) as rows of a small atlas, at whole buffer texels and
+integer offsets so the ring's bilinear read was unchanged. Pass 1 went back to
+one attachment and skipped the ring's core. It was exact: `check` was
+unchanged, and output moved at most 1/255 on 42 pixels.
+
+It halved the scaled path's memory (1920 x 1080 at 0.5: 4.1 MB -> ~2.4 MB, 6.2
+-> ~2.7 MB with segments) and was SLOWER:
+
+| scene | 0.5 | 0.25 |
+| ----- | --- | ---- |
+| `default` | +1% | +3% |
+| `soft_wash` | +11% | +19% |
+| `overdrive` | +3% | +16% |
+
+(Atlas padding one texel and the core's footprint at the sqrt(2)-texel bound,
+the tightest correct values. The first cut, two texels each, was worse.)
+
+The cause is structural. The gather has to run in two places near the ring's
+boundary: pass 1 for the colour the blit reads up to ~1.4 texels inside the
+ring, and the atlas for the gather the ring reads up to 1 texel outside it.
+At 0.25 the ring is only 5-9 texels wide, so those two bands are a large share
+of it, and wider filaments (`soft_wash`) widen the ring and the duplicated
+work with it. llvmpipe cannot show the bandwidth this saves - pass 1 writing
+one RGBA8 target rather than two or three - so on a bandwidth-bound tiler the
+balance could differ. Re-measure on the device before reopening it. The memory
+it would buy is under 1 MB at 1080p and 0.25, where the buffer is already
+small.
+
+A cheaper route to the same memory, not tried: size the scaled buffer to the
+glow quad's bounding box, clipped to the viewport, rather than to the whole
+viewport. It helps exactly the configs whose glow does not fill the screen -
+bounded bands, one-sided glows, small rects - and nothing at the default
+glowRadius, whose 312 px bloom margin covers most of a 720p frame.

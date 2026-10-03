@@ -462,10 +462,22 @@ extern "C"
      *           small rect).
      *
      *           Not a guaranteed saving: the ring and the composite are a
-     *           fixed cost, so a layer that is already cheap at 1.0 - a tight
-     *           cutoff band, a one-sided glow - can render slower below 1.0,
-     *           and a soft filament (falloff below ~0.3) widens the ring and
-     *           loses most of the gain. Measure on the target.
+     *           fixed cost, so a layer that is already cheap at 1.0 can render
+     *           slower below 1.0, and a soft filament (falloff below ~0.3)
+     *           widens the ring and loses most of the gain. A one-sided glow or
+     *           a cutoff band pays less than it did: the ring and the composite
+     *           cover only where the glow can still be lit. Measure on the
+     *           target.
+     *
+     *           The error grows as the rect shrinks: a 20 x 17 rect reads
+     *           17 / 53 / 93 levels off at 0.5 / 0.25 / 0.125. Keep small rects
+     *           at 1.0.
+     *
+     *           Each path compiles its own shaders the first frame it renders,
+     *           so the first frame after switching to or from 1.0 pays a
+     *           one-time compile. Below 1.0 the layer holds an RGBA8 buffer of
+     *           the reduced size plus one attachment for the edge ring (two
+     *           with segments): 4.1 MB at 1920 x 1080 and 0.5, 1.0 MB at 0.25.
      *
      *           Clamped to (0, 1] at draw time: values above 1.0 do not
      *           supersample, they are refused, because the point of the knob

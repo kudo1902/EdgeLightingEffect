@@ -439,7 +439,10 @@ is shaded at full resolution from the gather's stored result - so the line, the
 one-sided cut and the cutoffs near it look as they do at 1.0. Within 2/255 of
 1.0 down to 0.125 on every scene of `neon-resolution-scale-comparison.html` but
 a 160 x 96 rect; before the edge ring the upscale started showing below ~0.35,
-and a thin line visibly at 0.75. Clamped to `(0, 1]` at draw time - values
+and a thin line visibly at 0.75. The error grows as the rect shrinks - a 20 x 17
+rect reads 17 / 53 / 93 levels off at 0.5 / 0.25 / 0.125 - so keep small rects
+at 1.0. Each path compiles its shaders the first frame it draws, so the first
+frame after a switch to or from 1.0 pays a one-time compile. Clamped to `(0, 1]` at draw time - values
 above 1.0 do not supersample.
 
 It is not a guaranteed saving. The ring and the blit are a fixed cost, so a

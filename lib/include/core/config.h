@@ -407,6 +407,12 @@ namespace EdgeLighting
         /// 0.125 on every scene in docs/neon-resolution-scale-comparison.html
         /// except a 160 x 96 rect, which reads 4 at 0.25 and 11 at 0.125; a
         /// moving hairline stays within +/-0.05 px of its edge at every scale.
+        /// The error GROWS as the rect shrinks, because the halo just outside
+        /// the edge ring changes faster than a reduced buffer can follow round
+        /// a small rect: a 20 x 17 rect reads 17 / 53 / 93 at 0.5 / 0.25 /
+        /// 0.125 (measured on Mesa llvmpipe; the same as before the edge ring,
+        /// which fixed the pixels next to the line). Keep small rects at 1.0 -
+        /// they are cheap there anyway.
         ///
         /// Cost: what this buys is the gather's fragment work, which dominates
         /// the effect - the glow quad is large and every fragment inside it
@@ -415,8 +421,21 @@ namespace EdgeLighting
         /// 1280 x 720, roughly 0.35-0.5 ms at 0.125), so a scene that is
         /// already cheap at 1.0 - a tight cutoff band, a one-sided glow - can
         /// render SLOWER below 1.0; a soft filament (filamentFalloff below
-        /// ~0.3) widens the ring and loses most of the gain. Measure. See
-        /// docs/neon-resolution-scale-plan.md section 7.
+        /// ~0.3) widens the ring and loses most of the gain. A one-sided glow
+        /// or a cutoff band pays less than it used to: the ring and the blit
+        /// only cover where the glow can still be lit. Measure. See
+        /// docs/neon-resolution-scale-plan.md sections 7 and 12.
+        ///
+        /// Memory: below 1.0 the renderer holds an RGBA8 buffer of the reduced
+        /// size with one extra attachment for the edge ring's gather (two with
+        /// segments) - 4.1 MB at 1920 x 1080 and 0.5 (6.2 with segments), 1.0
+        /// MB at 0.25. Nothing at 1.0, and released when the scale returns to
+        /// 1.0 or the layer is disabled.
+        ///
+        /// The two paths draw with different shader programs, built the first
+        /// frame each path renders: a host that stays on one never compiles
+        /// the other's, and switching costs a one-time compile on the first
+        /// frame after the switch.
         float resolutionScale = 1.0f;
 
         /// Number of perimeter gather samples per fragment. Capped at
