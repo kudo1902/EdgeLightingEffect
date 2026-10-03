@@ -223,8 +223,8 @@ namespace EdgeLighting
         /// allocates exactly once.
         std::vector<StripVertex> mStripVerts;
 
-        int mVertexCount = 0;       ///< Vertices @ref buildStrips last wrote.
-        bool mBufferReady = false;  ///< Whether @ref ensureBuffer has run.
+        int mVertexCount = 0;      ///< Vertices @ref buildStrips last wrote.
+        bool mBufferReady = false; ///< Whether @ref ensureBuffer has run.
         /// Whether the VBO has been filled for @c mCurrentSpotlight. Starts
         /// false so the first build is unconditional however the renderer is
         /// brought up - @ref Initialize and @ref OnConfigChanged both honour it.

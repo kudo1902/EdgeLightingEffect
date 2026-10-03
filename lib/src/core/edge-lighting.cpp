@@ -7,7 +7,7 @@
 #include "renderer/debug-renderer.h"
 #include "util/log-util.h"
 #include "util/gl-utils.h"
-#include <utility> // std::swap - refreshActiveConfig swaps the composite scratch
+#include <utility>   // std::swap - refreshActiveConfig swaps the composite scratch
 #include <algorithm> // std::find / find_if - the renderer- and layer-order checks
 
 namespace EdgeLighting
@@ -283,7 +283,8 @@ namespace EdgeLighting
             }
             const RendererLayer want = order[next++];
             auto it = std::find_if(mRenderers.begin(), mRenderers.end(),
-                                   [want](const std::shared_ptr<BaseRenderer> &renderer) {
+                                   [want](const std::shared_ptr<BaseRenderer> &renderer)
+                                   {
                                        return renderer->GetLayer() == want;
                                    });
             if (it == mRenderers.end())

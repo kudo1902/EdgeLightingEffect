@@ -21,7 +21,6 @@ namespace EdgeLighting
         constexpr int MAX_VERTS = SPOT_MAX_LAMPS * VERTS_PER_LAMP;
         constexpr float DEG_TO_RAD = 3.14159265358979323846f / 180.0f;
 
-
         /// Floor under SpotlightConfig::resolutionScale. Below this the blit
         /// is reading so few texels that the light turns to blocks, and the
         /// strips are already the cheap part.
@@ -194,18 +193,18 @@ namespace EdgeLighting
         /// Everything the solve and the upload need, derived once per lamp.
         typedef struct LampSolve
         {
-            float tanHalf; ///< tan(beamAngle / 2)
-            float throwLength; ///< SpotLight::throwLength, floored
+            float tanHalf;       ///< tan(beamAngle / 2)
+            float throwLength;   ///< SpotLight::throwLength, floored
             float spreadFalloff; ///< SpotLight::spreadFalloff, clamped to [0, 2]
-            float softK;   ///< gaussian exponent across the beam
+            float softK;         ///< gaussian exponent across the beam
             float apertureWidth; ///< SpotLight::apertureWidth, floored
             float intensity;
             float bloom;
             float bloomRadius;
-            float bloomWindow; ///< Where spotlight.frag's window closes.
-            float bloomReach;  ///< Where the bloom actually stops mattering:
-                               ///< min(@ref bloomWindow, the inverse-square
-                               ///< core's own visibility limit).
+            float bloomWindow;     ///< Where spotlight.frag's window closes.
+            float bloomReach;      ///< Where the bloom actually stops mattering:
+                                   ///< min(@ref bloomWindow, the inverse-square
+                                   ///< core's own visibility limit).
             float visibilityFloor; ///< This lamp's share of the half-step budget.
             /// @c intensity scaled by the BRIGHTEST channel of @c color.
             ///

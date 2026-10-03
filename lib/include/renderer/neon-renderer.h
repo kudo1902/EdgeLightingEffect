@@ -439,13 +439,13 @@ namespace EdgeLighting
         /// Written by @ref setupFillGeometry, read by @ref renderOpaqueFill,
         /// and doubles as the "is it built" flag so the two cannot disagree.
         int mFillVertexCount = 0;
-        int mRingVertexCount = 0;        ///< 0 at scale 1.0; see setupRingGeometry.
-        int mBlitVertexCount = 0;        ///< 0 at scale 1.0, and whenever nothing outside the ring can be lit.
-        int mGatherVertexCount = 0;      ///< 0 at scale 1.0; see setupRingGeometry.
-        glm::vec2 mGlowOuter{0.0f};      ///< Pass 1's quad, half-extents in FULL-RES px; setupGeometry.
-        glm::vec2 mGlowHole{0.0f};       ///< Its hole, the same; 0 when it has none.
-        glm::vec2 mGatherOuter{0.0f};    ///< The gather quad's half-extents, FULL-RES px; setupRingGeometry.
-        glm::vec2 mScaledOuter{0.0f};    ///< What the blit reads of mScaledBuffer, the same; setupRingGeometry.
+        int mRingVertexCount = 0;     ///< 0 at scale 1.0; see setupRingGeometry.
+        int mBlitVertexCount = 0;     ///< 0 at scale 1.0, and whenever nothing outside the ring can be lit.
+        int mGatherVertexCount = 0;   ///< 0 at scale 1.0; see setupRingGeometry.
+        glm::vec2 mGlowOuter{0.0f};   ///< Pass 1's quad, half-extents in FULL-RES px; setupGeometry.
+        glm::vec2 mGlowHole{0.0f};    ///< Its hole, the same; 0 when it has none.
+        glm::vec2 mGatherOuter{0.0f}; ///< The gather quad's half-extents, FULL-RES px; setupRingGeometry.
+        glm::vec2 mScaledOuter{0.0f}; ///< What the blit reads of mScaledBuffer, the same; setupRingGeometry.
 
         /// Set at the end of @ref Initialize. Gates the rebuilds in
         /// @ref OnConfigChanged, which can run before it; the neon.frag programs
@@ -466,7 +466,7 @@ namespace EdgeLighting
         /// Backs neon.frag's std140 `ArcBlock` (uArcCount + uArcs[MAX_ARCS]).
         UniformBuffer mArcBlock{"NeonRenderer.ArcBlock"};
 
-        float mQuadMargin = 0.0f; ///< Draw-quad margin (scaled px from rect edge); shader fades the bloom out by here.
+        float mQuadMargin = 0.0f;     ///< Draw-quad margin (scaled px from rect edge); shader fades the bloom out by here.
         float mRingQuadMargin = 0.0f; ///< The same margin at scale 1.0, in full-res px - what the edge ring fades against.
 
         /// Baked colour ring (@c NeonConfig::gradientLutSize x 1 RGBA8, sampled

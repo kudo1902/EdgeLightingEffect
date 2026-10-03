@@ -518,7 +518,6 @@ extern "C"
      *  through the pane. Mirrors @c EdgeLighting::DropletsConfig.
      *  @{ */
 
-
     /* ====================================================================
      * Spotlights (Config::spotlight)
      * ====================================================================

@@ -1381,7 +1381,6 @@ namespace EdgeLighting
             setupFillGeometry(config);
         }
 
-
         bakeLUTs(config);
     }
 
