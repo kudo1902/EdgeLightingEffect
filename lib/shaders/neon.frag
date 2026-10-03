@@ -21,20 +21,28 @@ precision highp float;
 
 in vec2 vPos;
 
-// NEON_WRITES_GATHER builds the reduced-resolution variant of this shader:
-// NeonRenderer::setupShaders splices the #define in after the version line,
-// and the scaled pass draws into a framebuffer with one or two extra colour
-// attachments for it to fill. See the write below the gather. The direct path
-// compiles this file WITHOUT the define, so once preprocessed its source - and
-// so its program - is exactly what it was before the variant existed.
+// THREE PROGRAMS FROM THIS FILE. NeonRenderer splices a #define in after the
+// version line (WithDefine) for two of them; the direct path compiles it
+// without one, so once preprocessed its source - and so its program - is
+// exactly what it was before either variant existed.
 //
-// Every output gets an explicit location in the variant because GLSL ES 3.0
-// requires that once there is more than one; the direct path keeps the
-// unqualified declaration it always had.
-#ifdef NEON_WRITES_GATHER
-layout(location = 0) out vec4 fragColor;
-layout(location = 1) out vec4 oGather;
-layout(location = 2) out vec4 oGatherSeg;
+//   (none)            - resolutionScale 1.0: gather and shade, onto the target.
+//   NEON_GATHER_ONLY  - below 1.0, the GATHER PASS: runs main() as far as the
+//                       gather, writes its four results into the gather
+//                       buffer and stops. Drawn at its own, coarser scale.
+//   NEON_READS_GATHER - below 1.0, everything EXCEPT the gather: reads those
+//                       four results back with a bilinear fetch. Draws pass 1
+//                       (at resolutionScale, into the reduced buffer) and the
+//                       edge ring (at full resolution, onto the target).
+//
+// Both gather outputs get an explicit location because GLSL ES 3.0 requires
+// that once there is more than one. fragColor stays declared in the gather
+// variant as a plain global, so the shading below its early return still
+// compiles; nothing reads it, and the compiler drops that whole tail.
+#ifdef NEON_GATHER_ONLY
+layout(location = 0) out vec4 oGather;
+layout(location = 1) out vec4 oGatherSeg;
+vec4 fragColor;
 #else
 out vec4 fragColor;
 #endif
@@ -71,7 +79,7 @@ uniform int   uWinding;               ///< 0 = CLOCKWISE, 1 = COUNTER_CLOCKWISE 
 // than as a bug.
 uniform float uResolutionScale;
 
-#ifndef NEON_RING_PASS
+#ifndef NEON_READS_GATHER
 // Loop sample positions (perimeter points) as a std140 uniform block. Each
 // entry is packed as a vec4 (only .xy is meaningful; std140 pads vec2 to a
 // 16-byte stride anyway) so the shader reads raw float32 out of the constant
@@ -157,29 +165,35 @@ uniform sampler2D uGradientLUT;
 // neighbouring texels are unrelated perimeter samples. See the gather loop
 // and docs/emission-prepass.md.
 //
-// Neither this table nor the two declarations above exist in the edge-ring
-// variant (NEON_RING_PASS): it reads the gather's RESULT instead of running
+// Neither this table nor the two declarations above exist in the
+// NEON_READS_GATHER variant: it reads the gather's RESULT instead of running
 // it, so it has no loop to feed. Leaving them declared would only have the
 // renderer binding blocks and samplers the program does not have.
-#ifndef NEON_RING_PASS
+#ifndef NEON_READS_GATHER
 uniform sampler2D uEmission;
 #endif
 
-#ifdef NEON_RING_PASS
-// The edge ring: below resolutionScale 1.0, NeonRenderer redraws a thin ring
-// around the rect edge at FULL resolution with this variant, over everything
-// the reduced pass got wrong there - the filament, which the reduced buffer
-// cannot sample, and every hard edge near the line. The one input it takes
-// from the reduced pass is the gather's result, which is smooth across the
-// screen and survives a bilinear read; everything else below is computed
-// exactly as the direct path computes it, with uResolutionScale 1.0. See
-// docs/neon-resolution-scale-plan.md step 5.
+#ifdef NEON_READS_GATHER
+// Below resolutionScale 1.0 the gather - the loop that is ~95% of this
+// shader's cost - runs ONCE, in its own pass, at its own coarse scale (the
+// NEON_GATHER_ONLY variant into the gather buffer), and this variant draws
+// everything else from its stored result: pass 1 at resolutionScale, and the
+// edge ring at FULL resolution, where it redraws everything the reduced pass
+// gets wrong near the line - the filament, which a reduced buffer cannot
+// sample, and every hard edge. The gather's four results are smooth across the
+// screen - Lorentzian-weighted means over the whole perimeter, whose kernel is
+// never narrower than kc - so they survive a bilinear read from a grid a
+// fraction of kc apart (GetGatherScale in neon-renderer.cpp). Everything else
+// below is computed exactly as the direct path computes it, at whatever
+// uResolutionScale the pass uploads. See docs/neon-resolution-scale-plan.md
+// step 5 and section 13.
 //
-// uGather / uGatherSeg are the reduced buffer's attachments 1 and 2, written
-// by the NEON_WRITES_GATHER variant. uGatherSeg is bound only when there are
-// segments, and read only then. vPos maps onto their uv with the same affine
-// map neon-blit.frag samples the colour attachment with, so a ring pixel and
-// a blit pixel at one spot read one texel neighbourhood.
+// uGather / uGatherSeg are the gather buffer's attachments 0 and 1. uGatherSeg
+// is bound only when there are segments, and read only then. The buffer covers
+// a box around the rect, clipped to the viewport (GetBufferRegion), so vPos
+// maps onto its uv through an affine map - the same form neon-blit.frag
+// samples the reduced buffer with - set for whichever space this pass's vPos
+// is in.
 uniform sampler2D uGather;
 uniform sampler2D uGatherSeg;
 uniform vec2      uGatherUVScale;
@@ -711,8 +725,16 @@ void main() {
     bool  blitOwnsCut = (uResolutionScale < 1.0);
     float sideBack = 0.5 * sideAA;
     float sideCull = blitOwnsCut ? BLIT_SIDE_GUARD_PX : sideBack;
+    // NOT in the gather pass. Its texels are read by passes at OTHER
+    // resolutions - pass 1 and the edge ring - whose own culls sit at their
+    // own guard distances, and a texel culled here would hand their bilinear
+    // read a black hue just inside a boundary they still draw. So the gather
+    // runs over its whole quad (setupRingGeometry), which pass 1's geometry
+    // already bounds, and the cut is drawn by the passes that shade.
+#ifndef NEON_GATHER_ONLY
     if (uGlowSide == GLOW_SIDE_INSIDE  && d >  sideCull) discard;
     if (uGlowSide == GLOW_SIDE_OUTSIDE && d < -sideCull) discard;
+#endif
 
     // Hard geometric cutoffs. The band is [-uInsideCutoff, +uOutsideCutoff],
     // and each side's feather STARTS at that boundary and runs its softness
@@ -850,8 +872,10 @@ void main() {
     // the reason sideCull does. The guard is an exact 0 at scale 1.0, where
     // the direct path keeps culling exactly where its own masks end.
     float cutGuard = blitOwnsCut ? BLIT_CUTOFF_GUARD_PX : 0.0;
+#ifndef NEON_GATHER_ONLY // see the one-sided cull above
     if (dOut >  outHalf + cutGuard ) discard;
     if (dIn  < -(inHalf + cutGuard)) discard;
+#endif
 
     // --- Filament -----------------------------------------------------
     // Generalized-Gaussian profile with exponentially smooth falloff:
@@ -996,7 +1020,7 @@ void main() {
     //
     // See docs/emission-prepass.md for the packing and the invariant that
     // keeps the split honest.
-#ifdef NEON_RING_PASS
+#ifdef NEON_READS_GATHER
     // The gather's four results, read back from the reduced pass instead of
     // recomputed. The loop below is most of this shader's cost - about three
     // quarters of a full-res frame on the reference scenes - and the ring's
@@ -1008,7 +1032,7 @@ void main() {
     // texture() would have read anyway.
     //
     // The coverages are stored as e = c / (1 + c) - see the write in the
-    // NEON_WRITES_GATHER block - and decoded after the bilinear read, which is
+    // NEON_GATHER_ONLY block - and decoded after the bilinear read, which is
     // the filtering the emulation behind the plan measured. The floor keeps a
     // saturated texel (e = 1) finite: it decodes to 254, far above any
     // coverage a config produces.
@@ -1317,7 +1341,7 @@ void main() {
     // ring above rests on wsumLit / wsumAll being exactly 1.0 when the two
     // sums are equal, and x * (1.0 / x) is not. Outside the loop, so it costs
     // one extra divide per fragment, not per sample.
-#ifndef NEON_RING_PASS
+#ifndef NEON_READS_GATHER
     float wsumDen           = max(wsumAll, WSUM_EPSILON);
     float emitCoverGathered = wsumLit  / wsumDen; // arc coverage x intensity
     float segCoverGathered  = wsumSegW / wsumDen; // segment boost x bell
@@ -1325,13 +1349,13 @@ void main() {
     vec3  segColGlow        = segColHue * segCoverGathered;
     float glowCoverAll      = max(emitCoverGathered, min(segCoverGathered, 1.0));
 
-#ifdef NEON_WRITES_GATHER
-    // THE GATHER TARGET: everything the loop above produced, for a later
-    // full-resolution pass to read back instead of re-running it. These four
-    // are the loop's ONLY outputs, and all of them are smooth across the
-    // screen - Lorentzian-weighted means over the whole perimeter - which is
-    // what lets a reduced buffer carry them where it cannot carry the filament.
-    // See docs/neon-resolution-scale-proposal.md.
+#ifdef NEON_GATHER_ONLY
+    // THE GATHER BUFFER: everything the loop above produced, for the passes
+    // that shade from it (NEON_READS_GATHER) to read back instead of running
+    // it. These four are the loop's ONLY outputs, and all of them are smooth
+    // across the screen - Lorentzian-weighted means over the whole perimeter -
+    // which is what lets a coarse grid carry them where it cannot carry the
+    // filament. See docs/neon-resolution-scale-proposal.md.
     //
     // RGBA8, so each value has to fit [0, 1]. The hues already do - they are
     // weighted means of stop colours - and are clamped only so a stop authored
@@ -1340,11 +1364,16 @@ void main() {
     // [0, 1) monotonically, is exact at 0, and inverts as e / (1 - e); a fully
     // lit ring's 1.0 stores as 0.5.
     //
-    // Location 2 lands only when the framebuffer has a third attachment, which
-    // the renderer gives it only when there are segments. Without one the
-    // write is dropped by GL, and segColHue and segCoverGathered are 0 anyway.
+    // Location 1 lands only when the gather buffer has a second attachment,
+    // which the renderer gives it only when there are segments. Without one
+    // the write is dropped by GL, and segColHue and segCoverGathered are 0
+    // anyway.
+    //
+    // And then STOP: this variant exists to produce exactly these. Nothing
+    // below feeds them, so the compiler drops the whole shading tail.
     oGather    = vec4(clamp(col,       0.0, 1.0), emitCoverGathered / (1.0 + emitCoverGathered));
     oGatherSeg = vec4(clamp(segColHue, 0.0, 1.0), segCoverGathered  / (1.0 + segCoverGathered));
+    return;
 #endif
 
     // Sharp gate for the SDF-derived filament, from the same two pointwise

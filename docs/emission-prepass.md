@@ -103,7 +103,7 @@ framebuffer restore it themselves.
 
 **`NeonRenderer::Render`** - one schedule, both resolution paths. `scaled` is
 `resolutionScale < 1.0`; it changes where pass 1 lands, which program variant
-draws it, and whether passes 2b and 2c run. The schedule runs in TWO PHASES on
+draws it, and whether passes 1a, 2b and 2c run. The schedule runs in TWO PHASES on
 both paths: everything that renders offscreen first, then everything on the
 caller's framebuffer, so that target is drawn in one unbroken run per frame (on
 a tile-based GPU every switch away from it and back stores and reloads its
@@ -111,14 +111,15 @@ tiles). `debug.opaqueOnly` short-circuits all of it to the fill alone.
 
 | pass | method | target | draw |
 | ---- | ------ | ------ | ---- |
-| - | (inline) | - | derives proj / center / mvp, in SCALED space; builds the path's programs on its first frame (`ensurePathPrograms`) |
+| - | (inline) | - | derives the direct path's proj / center / mvp and, below 1.0, the two buffers' regions (`GetBufferRegion`) and their projections, in SCALED space; builds the path's programs on its first frame (`ensurePathPrograms`) |
 | - | `packLightBlocks` | - | UBO upload only; the pack is gated, the bind is not |
 | 0 | `renderEmissionPass` | `mEmissionBuffer` (N x 2, allocated at `Initialize`) | `mFullscreenVertexArray`, identity MVP; runs only when the table is stale |
-| 1 | `renderNeonPass` (scaled) | `mScaledBuffer` | tight glow quad, `neon.frag`'s `NEON_WRITES_GATHER` variant, which also stores the gather's results in 1-2 extra attachments, drawn with blending off |
+| 1a | `renderGatherPass` | `mGatherBuffer` (1-2 RGBA16F attachments, at `GetGatherScale`, over the gather quad's box) | `mGatherVertexArray`, `neon.frag`'s `NEON_GATHER_ONLY` variant: the gather loop and nothing after it, storing its four results; blending off; scaled path only |
+| 1 | `renderNeonPass` (scaled) | `mScaledBuffer` (one RGBA8 attachment, over what the blit reads) | tight glow quad, `neon.frag`'s `NEON_READS_GATHER` variant (`mNeonShadeShader`), which reads the gather pass's results instead of running the loop; blending off |
 | 2a | `renderOpaqueFill` | caller's framebuffer | black rounded-rect fill (opaque modes only), always full-res; a band ring bounds it, and a coverage-1 fill (`ALL`, or `BOTH` with both fill cutoffs disabled) is a scissored `glClear` with no draw unless depth / stencil testing is on |
 | 1 | `renderNeonPass` (direct) | caller's framebuffer | tight glow quad, plain `neon.frag`, composited over the fill |
 | 2b | `renderBlitPass` | caller's framebuffer | bilinear composite of `mScaledBuffer` plus the one-sided cut and the cutoffs, over `mBlitVertexArray` - the part of the frame outside the edge ring where the glow can still be non-zero, which can be empty; scaled path only |
-| 2c | `renderRingPass` | caller's framebuffer | the edge ring, `mRingVertexArray`: `neon.frag`'s `NEON_RING_PASS` variant at full resolution, reading the stored gather results instead of running the loop; scaled path only |
+| 2c | `renderRingPass` | caller's framebuffer | the edge ring, `mRingVertexArray`: `NEON_READS_GATHER` again, compiled into its own program object (`mNeonRingShader`) so no program draws two targets in a frame, at full resolution; scaled path only |
 
 Pass 1 appears twice because it is the one pass whose target depends on the
 path: offscreen below 1.0, the composite itself at 1.0 - where it has to land
@@ -126,7 +127,8 @@ after the fill, and the last two rows do not run. 2b and 2c cover disjoint
 areas built from the same vertices (`setupRingGeometry`), so no pixel is
 composited by both; a pixel neither covers is one the glow cannot reach. See
 [`neon-resolution-scale-plan.md`](neon-resolution-scale-plan.md) step 5 and
-section 12.
+sections 12 and 13. Since section 13 the emission table is read by the
+gather pass (1a) on the scaled path, and by pass 1 only on the direct one.
 The debug overlays that used to close this table are a separate layer now -
 `DebugRenderer`, drawn after this renderer, always at full resolution.
 
@@ -220,9 +222,9 @@ State splits into two kinds, and they have opposite owners.
 
 **Modes belong to `Render`.** Blend enable and blend function are properties of
 the *phase*, not of a pass: the fill, the glow, the blit and the edge ring
-composite premultiplied, except that pass 1 draws UNBLENDED into the scaled
-buffer - it was just cleared, and its gather attachments are data that GLES 3.0
-has no per-attachment blend state to exempt - the stop markers composite
+composite premultiplied, except that the gather pass (1a) draws UNBLENDED -
+its attachments are data - and so does pass 1 into the scaled buffer, which it
+has just cleared and covers once per texel - the stop markers composite
 straight alpha, the LUT strip draws unblended, and the renderer hands the world
 back on straight alpha. `Render` sets the mode
 immediately before each pass that depends on one, and **no pass touches

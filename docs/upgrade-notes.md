@@ -80,24 +80,38 @@ c.size = std::max(c.size - 0.5f * c.softness, 0.0f);
   page's scenes the result is within 2/255 of 1.0 down to scale 0.125, and the
   cut and cutoffs no longer blur. See
   [`neon-resolution-scale-comparison.html`](neon-resolution-scale-comparison.html).
-  Small rects are the exception: a 20 x 17 rect reads 17 / 53 / 93 levels off
+  Small rects are the exception: a 20 x 17 rect reads 18 / 53 / 93 levels off
   at 0.5 / 0.25 / 0.125, no better than before the ring. Keep small rects at
   1.0.
-- **Cost.** The ring and the composite are a fixed cost, so 0.5 and 0.25 save
-  less than they used to: 0.25 runs the default scene about 5x faster than 1.0
-  rather than about 7x. A layer already cheap at 1.0 can now run slower below
-  it. See [`neon-resolution-scale-perf-comparison.md`](neon-resolution-scale-perf-comparison.md).
-- **Memory.** The reduced buffer gains one RGBA8 attachment for the ring, or two
-  with segments. At 1920 x 1080 and 0.5 that is 4.1 MB, or 6.2 MB with
-  segments, against 2.1 MB before. At 0.25 it is 1.0 MB, or 1.6 MB with
-  segments.
+- **Cost.** The gather - the sample loop, most of the cost - now runs once,
+  in its own pass, at a resolution set by how smooth its result is (typically
+  about an eighth of the viewport's), and the glow is shaded from it. On Mesa
+  llvmpipe the default scene renders about 13.5x faster at 0.5 than at 1.0 and
+  about 19x faster at 0.25; `main`'s reduced path, timed on the same machine,
+  managed 3.6x and 11.5x.
+  The ring, the composite and the extra pass are a fixed cost, so a layer
+  already cheap at 1.0 (a tight cutoff band) can run slower below it, and a
+  rect small enough to gather at the scale itself (under about 450 px of
+  perimeter at 0.5) gains nothing from the split. See
+  [`neon-resolution-scale-plan.md`](neon-resolution-scale-plan.md) section 13
+  and [`neon-resolution-scale-perf-comparison.md`](neon-resolution-scale-perf-comparison.md).
+- **Memory.** One RGBA8 buffer at the reduced scale, as on `main`, but covering
+  only the part of the frame the glow reaches (never more than the viewport at
+  that scale), plus a small RGBA16F gather buffer over the same area at the
+  gather's scale (two attachments with segments). At 1920 x 1080 and 0.5: 2.15
+  MB for a full-screen rect (`main`: 2.1 MB), 1.8 MB for a 900 x 540 one. At
+  0.25: 0.6 MB and 0.54 MB. A driver that cannot render to RGBA16F (GLES 3.0
+  without `EXT_color_buffer_half_float`) gets RGBA8 instead, logged once, and
+  reads up to 3/255 off 1.0 rather than 2.
 
 ## 4. Neon shaders are compiled on first draw, per path
 
 `Initialize` now compiles only the two programs both resolution paths share:
 the emission pre-pass and the opaque fill. The neon's own programs are built
-the first frame each path renders. That is one program at 1.0, and three below
-1.0 (the gather, the edge ring and the composite).
+the first frame each path renders. That is one program at 1.0, and four below
+1.0 (the gather, the shading twice - once for the reduced buffer and once for
+the edge ring, so no program draws two targets in a frame - and the
+composite).
 
 - A host that never changes path compiles only what it draws with, and creates
   its effect faster. On Mesa llvmpipe, init plus the first frame at 0.25 drops

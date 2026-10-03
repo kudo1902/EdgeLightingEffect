@@ -434,8 +434,8 @@
 // --- Edge ring width. Scaled path only, CPU only.
 //
 //     Below resolutionScale 1.0, NeonRenderer redraws a ring around the rect
-//     edge at FULL resolution (the NEON_RING_PASS variant of neon.frag), reading
-//     only the gather's result from the reduced buffer. The ring reaches R
+//     edge at FULL resolution (the NEON_READS_GATHER variant of neon.frag),
+//     reading only the gather's result from the gather buffer. The ring reaches R
 //     full-res px either side of the edge (GetRingWidth in neon-renderer.cpp):
 //
 //         R = max(reach(1.0), reach(scale)) + RING_GUARD_TEXELS / scale
@@ -470,6 +470,41 @@
 //     (fixed in NeonRenderer::setupGeometry, which now extends the quad to
 //     cover the ring). ---
 #define RING_GUARD_TEXELS         1.0
+
+// --- Gather resolution. Scaled path only, CPU only.
+//
+//     Below resolutionScale 1.0 the gather - ~95% of neon.frag's cost - runs in
+//     a pass of its own (NEON_GATHER_ONLY) at its own scale, and pass 1 and the
+//     edge ring shade from its result (NEON_READS_GATHER). Its scale is
+//     (GetGatherScale in neon-renderer.cpp)
+//
+//         clamp(GATHER_TEXELS_PER_KERNEL / kc, GATHER_MIN_SCALE, resolutionScale)
+//
+//     with kc the colour kernel's width in full-res px, perimeter *
+//     COLOR_BLEND_PERIM_FRAC: the gather's outputs are Lorentzian-weighted
+//     means whose kernel is never narrower than kc, so this many texels per kc
+//     carries them through a bilinear read.
+//
+//     Calibrated on Mesa llvmpipe with an RGBA16F gather buffer (worst error
+//     against 1.0 over `probe scenes`, and the default scene's frame time):
+//
+//       GATHER_TEXELS_PER_KERNEL   worst error   default 0.5   default 0.25
+//                1.0                   4              -              -
+//                1.5                   2           10.5 ms        8.0 ms
+//                2.0                  1-2          10.8 ms        7.3 ms
+//                4.0                   -           14-17 ms      11-12 ms
+//         (gather at resolutionScale)  1-2          37.5 ms       12.3 ms
+//
+//     2.0 is the knee: 1.5 saves nothing measurable (the gather is no longer
+//     the pass that costs) and 4.0 costs half as much again for no visible
+//     gain. With an RGBA8 gather buffer - the fallback - 2.0 reads 3/255.
+//     GATHER_MIN_SCALE barely matters - full-viewport rects
+//     at 720p and 1080p read 1-2 at a floor of 0 and 0.0625 alike - and is
+//     kept as a cheap guard: the gather buffer is clipped to the viewport, so
+//     at the floor it is at most 128 x 80 texels at 1080p. See
+//     docs/neon-resolution-scale-plan.md section 13. ---
+#define GATHER_TEXELS_PER_KERNEL  2.0
+#define GATHER_MIN_SCALE          0.0625
 
 // --- Stand-in distance for a cutoff that glowSide has already subsumed.
 //

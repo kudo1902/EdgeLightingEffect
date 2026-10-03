@@ -3050,6 +3050,46 @@ The change is exact.
 They are now built per path on first use. This was decision 6 in the plan;
 its cost is a one-time compile on the first frame after a path switch.
 
+## Seventeenth pass (memory and render time at 0.5 and 0.25)
+
+A follow-up asked for one thing: make 0.5 and 0.25 cheaper in both time and
+memory. Measured on Mesa llvmpipe at 1280 x 720 and 1920 x 1080 against
+`da24f9c`; the design, the calibration and every probe are in
+`neon-resolution-scale-plan.md` section 13.
+
+### I31. The scaled path ran the gather at every reduced texel - FIXED
+
+Pass 1 ran the gather loop, ~95% of `neon.frag`, at every texel of the reduced
+buffer. Its four results are smooth on the colour kernel's scale `kc`, which the
+edge ring already relied on to read them bilinearly. The loop now runs alone
+(`NEON_GATHER_ONLY`) at about 2 texels per `kc`, typically an eighth of the
+viewport, into a buffer of its own. The reduced pass and the ring shade from
+it. The default scene is 3.85x faster at 0.5 and 1.79x at 0.25. Nine of the
+twelve check scenes gain 3.4-4.3x and 1.6-1.9x. Quality improved with it: the
+gather buffer is RGBA16F (RGBA8 where a driver cannot render to that), and
+every reduced scale now reads 2/255 at most. One metric moved the other way:
+the moving hairline's worst centroid error rose from 0.026-0.039 px to
+0.035-0.061 px, inside the tool's 0.1 px bound.
+
+### I32. The edge ring tripled the scaled path's memory - FIXED
+
+Step 4 stored the gather's results in 1-2 extra full-size attachments of the
+reduced buffer: 4.15 MB at 1080p and 0.5, 6.22 MB with segments, against 2.07
+MB without the ring. Those attachments are gone. The gather buffer is small
+and at its own scale. Both buffers also cover only what their readers reach,
+the reduced one never more than the viewport-sized buffer. That gives 2.15 MB
+for a full-screen rect at 0.5, 0.60 at 0.25, and less for smaller rects
+(900 x 540 at 0.5: 1.80 MB). Region sizes are rounded to 16 texels, so a
+resizing or moving rect does not reallocate either buffer every frame.
+
+### I25 and V17, updated
+
+I25 still stands: the split adds a pass, so a layer already cheap at 1.0 pays
+for it. `bounded_band` at 0.25 reads 0.87x the commit before (2.38 -> 2.74 ms;
+about even in other runs), and `small_rect`, which gathers at
+`resolutionScale` itself, gains nothing. V17's 20 x 17 rect reads 18 / 53 / 93
+at 0.5 / 0.25 / 0.125 (17 / 53 / 93 before).
+
 ---
 
 ## What is left
@@ -3061,7 +3101,7 @@ fork it followed from. The fifth pass's I15 landed with it. The seventh through
 tenth passes are one item each and all four are fixed, as are the eleventh's one,
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
-and I30, and documented I28 and V17. Five items from the
+and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. Five items from the
 first pass remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -3088,6 +3128,8 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | V16 | open | a crisp, thin line with no glow reads up to 8 levels off at its corners below 1.0; most likely the ring and direct programs disagree on an arc's distance by thousandths of a pixel, which a sub-pixel shoulder magnifies - unconfirmed, GPU-specific as far as measured (it does not reproduce on Mesa llvmpipe), and covered by any glow |
 | I28 | documented | the opaque fill's own cutoffs (default off) and the outward `Cutoff::softness` move existing hosts' pictures without a compile error; `upgrade-notes.md` has the translation |
 | V17 | documented | small rects lose most of the reduced scale's quality (20 x 17: 53 levels at 0.25), as before the edge ring; keep them at 1.0 |
+| I31 | fixed | below 1.0 the gather loop ran at every reduced texel; it now runs once on a grid set by its own smoothness, 3.4-4.3x faster at 0.5 on most scenes |
+| I32 | fixed | the edge ring's gather attachments tripled the scaled path's memory; now 2.15 MB at 1080p and 0.5 for a full-screen rect, less for smaller ones |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

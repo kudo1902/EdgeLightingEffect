@@ -451,33 +451,37 @@ extern "C"
     /** @brief Set the neon layer's resolution scale.
      *  @details 1.0 is the full-resolution path - the gather draws straight
      *           onto the target framebuffer, with no offscreen buffer and no
-     *           blit. Below 1.0 the gather renders into a buffer of that
-     *           fraction of the viewport, which costs @c scale^2 as many
-     *           gather fragments, and is bilinear-blitted back everywhere
-     *           except a thin ring around the rect edge; the ring is re-shaded
-     *           at full resolution from the gather's stored result, so the
+     *           blit. Below 1.0 the gather - most of the cost - runs once into
+     *           a small buffer at its own, coarser resolution; the glow is
+     *           shaded from it into a buffer of that fraction of the viewport
+     *           and bilinear-blitted back everywhere except a thin ring around
+     *           the rect edge; the ring is re-shaded at full resolution from
+     *           the same gather result, so the
      *           line and every edge near it look as they do at 1.0 (within
      *           2/255 down to 0.125 on the scenes in
      *           docs/neon-resolution-scale-comparison.html, but for a very
      *           small rect).
      *
-     *           Not a guaranteed saving: the ring and the composite are a
-     *           fixed cost, so a layer that is already cheap at 1.0 can render
-     *           slower below 1.0, and a soft filament (falloff below ~0.3)
+     *           Not a guaranteed saving: the ring, the composite and the
+     *           gather pass are a fixed cost, so a layer that is already cheap
+     *           at 1.0 can render slower below 1.0, and a soft filament (falloff below ~0.3)
      *           widens the ring and loses most of the gain. A one-sided glow or
      *           a cutoff band pays less than it did: the ring and the composite
      *           cover only where the glow can still be lit. Measure on the
      *           target.
      *
      *           The error grows as the rect shrinks: a 20 x 17 rect reads
-     *           17 / 53 / 93 levels off at 0.5 / 0.25 / 0.125. Keep small rects
+     *           18 / 53 / 93 levels off at 0.5 / 0.25 / 0.125. Keep small rects
      *           at 1.0.
      *
      *           Each path compiles its own shaders the first frame it renders,
      *           so the first frame after switching to or from 1.0 pays a
-     *           one-time compile. Below 1.0 the layer holds an RGBA8 buffer of
-     *           the reduced size plus one attachment for the edge ring (two
-     *           with segments): 4.1 MB at 1920 x 1080 and 0.5, 1.0 MB at 0.25.
+     *           one-time compile. Below 1.0 the layer holds an RGBA8 buffer
+     *           at the reduced scale, never larger than the viewport at that
+     *           scale, plus a small RGBA16F gather buffer (two attachments
+     *           with segments), both covering only what the glow reaches:
+     *           2.15 MB at 1920 x 1080 and 0.5 for a full-screen rect, 0.6 MB
+     *           at 0.25, less for a smaller rect.
      *
      *           Clamped to (0, 1] at draw time: values above 1.0 do not
      *           supersample, they are refused, because the point of the knob

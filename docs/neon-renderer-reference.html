@@ -1586,12 +1586,12 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
           <text x="572" y="338" class="dg-t2">exactly as the direct path</text>
           <line x1="790" y1="348" x2="790" y2="362" class="dg-line" marker-end="url(#fa2)"/>
           <rect x="560" y="364" width="460" height="46" class="dg-box"/>
-          <text x="572" y="384" class="dg-t">mScaledBuffer.Resize(w*s, h*s, 2-3 attachments)</text>
-          <text x="572" y="400" class="dg-t2">Bind(); ClearBuffer() clears every attachment</text>
+          <text x="572" y="384" class="dg-t">GetBufferRegion x2; Resize, Bind, ClearBuffer</text>
+          <text x="572" y="400" class="dg-t2">gather: RGBA16F, 1-2 att.; colour: RGBA8, 1 att.</text>
           <line x1="790" y1="410" x2="790" y2="424" class="dg-line" marker-end="url(#fa2)"/>
           <rect x="560" y="426" width="460" height="46" class="dg-box-a"/>
-          <text x="572" y="446" class="dg-t">pass 1, blend OFF: NEON_WRITES_GATHER</text>
-          <text x="572" y="462" class="dg-t2">colour + the gather's results in attachments 1-2</text>
+          <text x="572" y="446" class="dg-t">1a NEON_GATHER_ONLY; 1b NEON_READS_GATHER</text>
+          <text x="572" y="462" class="dg-t2">blend OFF; the loop at its own scale, shading at s</text>
           <line x1="790" y1="472" x2="790" y2="486" class="dg-line" marker-end="url(#fa2)"/>
           <rect x="560" y="488" width="460" height="46" class="dg-box"/>
           <text x="572" y="508" class="dg-t">restore target + viewport; blend on</text>
@@ -1602,8 +1602,8 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
           <text x="572" y="586" class="dg-t2">all but the ring; cut + cutoffs at full res</text>
           <line x1="790" y1="596" x2="790" y2="610" class="dg-line" marker-end="url(#fa2)"/>
           <rect x="560" y="612" width="460" height="46" class="dg-box-a"/>
-          <text x="572" y="632" class="dg-t">pass 2c: NEON_RING_PASS over mRingVertexArray</text>
-          <text x="572" y="648" class="dg-t2">full res, reads the stored gather; no loop</text>
+          <text x="572" y="632" class="dg-t">pass 2c: mNeonRingShader over mRingVertexArray</text>
+          <text x="572" y="648" class="dg-t2">NEON_READS_GATHER, own object; full res, no loop</text>
 
           <path d="M270,534 V680 H530 V702" class="dg-line" marker-end="url(#fb2)"/>
           <path d="M790,658 V680 H530" class="dg-line"/>
@@ -1612,7 +1612,7 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
           <text x="530" y="724" class="dg-t" text-anchor="middle">glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)</text>
           <text x="530" y="740" class="dg-t2" text-anchor="middle">a known blend state for the next layer; GL_BLEND left on</text>
         </svg>
-        <figcaption><b>Fig 4</b> One frame, both paths. The chart predates one reordering: every offscreen pass now runs FIRST (pass 0, and below 1.0 the gather into its FBO), and only then does anything land on the caller's framebuffer - the fill, then the glow - so a tile-based GPU never stores and reloads that target mid-frame. The fill is always full resolution on the caller's framebuffer and has to sit under the glow, which it still does on both paths. Pass 0 runs only when the emission table is stale. Below 1.0 the gather draws <em>unblended</em> into its own FBO - its extra attachments are data, and GLES 3.0 cannot exempt one attachment from blending - and stores its results for the ring. The caller's target is then restored, and two disjoint draws composite the frame: the ring at full resolution from the stored gather, and the blit over whatever outside it the glow can still light (the ring is clipped to that band too; past the cut, the cutoffs and the glow's fade every mask is an exact zero, so those pixels are drawn by neither). They share their boundary vertices, and <code>neon.vert</code> declares <code>invariant gl_Position</code>, so no pixel is composited twice. Getting the restore wrong is the bug described in section 14.</figcaption>
+        <figcaption><b>Fig 4</b> One frame, both paths. Below 1.0 the gather runs alone (pass 1a, <code>NEON_GATHER_ONLY</code>, into <code>mGatherBuffer</code> at <code>GetGatherScale</code>) and pass 1b and the ring shade from its result, each with its own program object built from <code>NEON_READS_GATHER</code> - see <code>neon-resolution-scale-plan.md</code> section 13. The chart predates one reordering: every offscreen pass now runs FIRST (pass 0, and below 1.0 the gather into its FBO), and only then does anything land on the caller's framebuffer - the fill, then the glow - so a tile-based GPU never stores and reloads that target mid-frame. The fill is always full resolution on the caller's framebuffer and has to sit under the glow, which it still does on both paths. Pass 0 runs only when the emission table is stale. Below 1.0 the gather draws <em>unblended</em> into its own FBO - its extra attachments are data, and GLES 3.0 cannot exempt one attachment from blending - and stores its results for the ring. The caller's target is then restored, and two disjoint draws composite the frame: the ring at full resolution from the stored gather, and the blit over whatever outside it the glow can still light (the ring is clipped to that band too; past the cut, the cutoffs and the glow's fade every mask is an exact zero, so those pixels are drawn by neither). They share their boundary vertices, and <code>neon.vert</code> declares <code>invariant gl_Position</code>, so no pixel is composited twice. Getting the restore wrong is the bug described in section 14.</figcaption>
       </figure>
     </section>
 

@@ -395,42 +395,49 @@ namespace EdgeLighting
 
         /// Resolution scale for the internal neon buffer. 1.0 draws the gather
         /// directly onto the caller's framebuffer - no offscreen buffer and no
-        /// blit. Below 1.0 the gather runs into a buffer of that fraction of
-        /// the viewport (0.5 = half-res, 0.25 = quarter) and is composited back
-        /// with bilinear filtering everywhere except a thin ring around the
-        /// rect edge, which is re-shaded at FULL resolution from the gather's
-        /// stored result - so the filament, the one-sided cut and the cutoffs
-        /// near the line come out as the direct path draws them. Clamped to
-        /// (0, 1] at draw time.
+        /// blit. Below 1.0 the gather - the sample loop that is most of the
+        /// cost - runs once into a small buffer at its own, coarser
+        /// resolution, set by how smooth its result is rather than by this
+        /// value; the glow is shaded from that result into a buffer of this
+        /// fraction of the viewport (0.5 = half-res, 0.25 = quarter) and
+        /// composited back with bilinear filtering everywhere except a thin
+        /// ring around the rect edge, which is re-shaded at FULL resolution
+        /// from the same result - so the filament, the one-sided cut and the
+        /// cutoffs near the line come out as the direct path draws them.
+        /// Clamped to (0, 1] at draw time.
         ///
         /// Quality: within 2/255 of the 1.0 render at every scale down to
         /// 0.125 on every scene in docs/neon-resolution-scale-comparison.html
-        /// except a 160 x 96 rect, which reads 4 at 0.25 and 11 at 0.125; a
-        /// moving hairline stays within +/-0.05 px of its edge at every scale.
+        /// except a 160 x 96 rect, which reads 4 at 0.25 and 10 at 0.125; a
+        /// moving hairline stays within +/-0.07 px of its edge at every scale.
         /// The error GROWS as the rect shrinks, because the halo just outside
         /// the edge ring changes faster than a reduced buffer can follow round
-        /// a small rect: a 20 x 17 rect reads 17 / 53 / 93 at 0.5 / 0.25 /
+        /// a small rect: a 20 x 17 rect reads 18 / 53 / 93 at 0.5 / 0.25 /
         /// 0.125 (measured on Mesa llvmpipe; the same as before the edge ring,
         /// which fixed the pixels next to the line). Keep small rects at 1.0 -
         /// they are cheap there anyway.
         ///
         /// Cost: what this buys is the gather's fragment work, which dominates
         /// the effect - the glow quad is large and every fragment inside it
-        /// walks the sample loop. It is NOT a guaranteed saving. The ring and
-        /// the composite are a fixed cost (on an AMD Radeon Pro 5300M at
-        /// 1280 x 720, roughly 0.35-0.5 ms at 0.125), so a scene that is
-        /// already cheap at 1.0 - a tight cutoff band, a one-sided glow - can
-        /// render SLOWER below 1.0; a soft filament (filamentFalloff below
-        /// ~0.3) widens the ring and loses most of the gain. A one-sided glow
-        /// or a cutoff band pays less than it used to: the ring and the blit
-        /// only cover where the glow can still be lit. Measure. See
-        /// docs/neon-resolution-scale-plan.md sections 7 and 12.
+        /// walks the sample loop. Below 1.0 the loop runs on a few thousand
+        /// texels whatever this value is, so 0.5 now saves nearly as much as
+        /// 0.25 did. It is NOT a guaranteed saving. The ring, the composite
+        /// and the extra pass are a fixed cost, so a scene that is already
+        /// cheap at 1.0 - a tight cutoff band, a one-sided glow - can render
+        /// SLOWER below 1.0; a soft filament (filamentFalloff below ~0.3)
+        /// widens the ring and loses most of the gain; and a rect small enough
+        /// to gather at this value itself gains nothing from the split.
+        /// Measure. See docs/neon-resolution-scale-plan.md sections 7, 12 and
+        /// 13.
         ///
-        /// Memory: below 1.0 the renderer holds an RGBA8 buffer of the reduced
-        /// size with one extra attachment for the edge ring's gather (two with
-        /// segments) - 4.1 MB at 1920 x 1080 and 0.5 (6.2 with segments), 1.0
-        /// MB at 0.25. Nothing at 1.0, and released when the scale returns to
-        /// 1.0 or the layer is disabled.
+        /// Memory: below 1.0 the renderer holds an RGBA8 buffer at the reduced
+        /// scale over the part of the frame the glow can reach - never more
+        /// than the whole viewport at that scale - and an RGBA16F gather buffer
+        /// (two attachments with segments) over the same area at the gather's
+        /// scale. At 1920 x 1080: 2.15 MB at 0.5 and 0.6 MB at 0.25 for a
+        /// full-screen rect, 1.8 / 0.54 MB for a 900 x 540 one. Nothing at
+        /// 1.0, and released when the scale returns to 1.0 or the layer is
+        /// disabled.
         ///
         /// The two paths draw with different shader programs, built the first
         /// frame each path renders: a host that stays on one never compiles

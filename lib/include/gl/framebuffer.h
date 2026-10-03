@@ -46,10 +46,11 @@ namespace EdgeLighting
         Framebuffer(const Framebuffer &) = delete;
         Framebuffer &operator=(const Framebuffer &) = delete;
 
-        /// Largest attachment count @ref Resize accepts. Sized for the neon's
-        /// reduced pass (colour + two gather targets); GL 3.3 guarantees 8
-        /// draw buffers and GLES 3.0 guarantees 4, so this is never the
-        /// driver's limit on a conforming one.
+        /// Largest attachment count @ref Resize accepts. Sized for what the
+        /// neon's reduced pass used to write (colour + two gather targets);
+        /// its gather buffer now takes at most two. GL 3.3 guarantees 8 draw
+        /// buffers and GLES 3.0 guarantees 4, so this is never the driver's
+        /// limit on a conforming one.
         static constexpr int MAX_COLOR_ATTACHMENTS = 3;
 
         Framebuffer(Framebuffer &&other) noexcept

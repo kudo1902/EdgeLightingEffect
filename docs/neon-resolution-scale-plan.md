@@ -14,6 +14,15 @@ decisions and a run on the target device (section 10).** Step 5 went ahead on
 the recommendations (always on below 1.0, RGBA8 gather target, harness kept
 out of the tree - since reversed: decision 4).
 
+**Two follow-ups after the plan.** Section 12 bounded the blit and the ring to
+where the glow can be lit, built each path's programs on first use and moved
+every offscreen pass ahead of the caller's target. Section 13 then replaced
+step 4's design: the gather no longer runs inside the reduced pass and stores
+its result in extra attachments; it runs alone, in a buffer of its own at its
+own much coarser resolution, and both the reduced pass and the ring shade from
+that. Read section 13 before steps 4 and 5 if what you want is the code as it
+stands.
+
 After the step 5 commit, a review rebuilt a probe and re-verified step 5
 against the committed code (section 7, "Re-verified after the commit"). The
 quality and byte-identity claims hold. The cost claims hold only on the machine
@@ -1253,4 +1262,193 @@ A cheaper route to the same memory, not tried: size the scaled buffer to the
 glow quad's bounding box, clipped to the viewport, rather than to the whole
 viewport. It helps exactly the configs whose glow does not fill the screen -
 bounded bands, one-sided glows, small rects - and nothing at the default
-glowRadius, whose 312 px bloom margin covers most of a 720p frame.
+glowRadius, whose 312 px bloom margin covers most of a 720p frame. (Taken in
+section 13.3, for both buffers.)
+
+## 13. Follow-up: the gather at its own resolution
+
+After section 12, 0.5 still cost 28% of 1.0 on the default scene (38 ms
+against 135 ms on llvmpipe). Pass 1 ran the gather - the loop that is ~95% of
+`neon.frag` - at every reduced texel, although none of its four results needs
+that many. Each is a Lorentzian-weighted mean over the whole perimeter whose
+kernel is never narrower than `kc = perimeter * COLOR_BLEND_PERIM_FRAC` (16 px
+for the default rect), and the edge ring already relied on that: it read them
+with a bilinear fetch from the reduced buffer. This section runs the loop on a
+grid set by `kc` instead of by `resolutionScale`. Everything was measured on
+Mesa llvmpipe at 1280 x 720 against `da24f9c`, the commit before it; nothing
+here has run on the target GPU yet.
+
+### 13.1 The split
+
+Below 1.0 the pass schedule is now:
+
+| pass | program | target | blend |
+| ---- | ------- | ------ | ----- |
+| 0 | emission (unchanged) | emission table | off |
+| 1a | `neon.frag` + `NEON_GATHER_ONLY` (`mNeonGatherShader`) | `mGatherBuffer`, 1-2 attachments, at `GetGatherScale` | off |
+| 1b | `neon.frag` + `NEON_READS_GATHER` (`mNeonShadeShader`) | `mScaledBuffer`, one RGBA8 attachment, at `resolutionScale` | off |
+| 2a | fill (unchanged) | caller's framebuffer | over |
+| 2b | blit (unchanged) | caller's framebuffer | over |
+| 2c | `neon.frag` + `NEON_READS_GATHER` (`mNeonRingShader`) | caller's framebuffer, full resolution | over |
+
+`NEON_GATHER_ONLY` runs `main()` as far as the gather, writes its four results
+(colour, arc coverage, segment colour, segment coverage; coverages encoded
+`c / (1 + c)` as before) and returns; the compiler drops the shading. It applies
+no cut and no cutoff discards, because its texels are read by passes at other
+resolutions whose own culls sit elsewhere. `NEON_READS_GATHER` is step 5's
+ring variant under a new name, now drawing pass 1b as well. Its read moved from
+"the reduced buffer, corner to corner" to an affine map onto the gather
+buffer's region (13.3).
+
+The gather scale is `GetGatherScale`:
+
+    clamp(GATHER_TEXELS_PER_KERNEL / kc, min(GATHER_MIN_SCALE, scale), scale)
+
+Calibrated on the twelve scenes of the review probe (worst error against 1.0
+over every scene and scale) and the default scene's frame time, with the RGBA16F
+buffer of 13.2:
+
+| `GATHER_TEXELS_PER_KERNEL` | worst error | default at 0.5 | default at 0.25 |
+| -------------------------- | ----------- | -------------- | --------------- |
+| 1.0 | 4 | - | - |
+| 1.5 | 2 | 10.5 ms | 8.0 ms |
+| **2.0** | **1-2** | **10.8 ms** | **7.3 ms** |
+| 4.0 (RGBA8) | 3 | 14-17 ms | 11-12 ms |
+| gather at `resolutionScale` (RGBA8) | 2 | 37.5 ms | 12.3 ms |
+
+2.0 is the knee. 1.5 saves nothing measurable, because the gather is no longer
+the pass that costs, and 4.0 costs half as much again for no visible gain. For
+the check scenes' 640 x 360 rect the gather lands at 0.12 whatever the scale,
+about 13k texels over the glow at 720p. `GATHER_MIN_SCALE` (0.0625) changes nothing measurable on
+full-viewport rects at 720p or 1080p (1-2 with or without it). It stays as a
+cheap guard: the region of 13.3 caps its cost at 128 x 80 texels at 1080p.
+
+**Why the shading is two program objects.** `NEON_READS_GATHER` is compiled
+twice from one source, for pass 1b and for the ring. Section 7's build AB, one
+program drawing an offscreen buffer unblended and the caller's framebuffer
+blended in the same frame, measured 93-624x slower below 1.0 on the AMD 5300M.
+Sharing one program between 1b and the ring would be that shape again, even
+with the blend states matched, if the driver keys on the target's format.
+Two objects keep every program on one target per frame, the structure every
+fast build had. The price is one more compile on the first scaled frame. Init
+plus the first frame, median over the twelve scenes, still went from 80.5 to
+73.0 ms (the compiles were not timed separately). Pass 1b
+stays unblended as pass 1 was (cleared buffer, each texel drawn once).
+
+**Uniforms.** The gather program has three uniforms besides its loop inputs:
+`uMVP`, `uRectSize`, `uCornerRadius` (`uploadShapeUniforms`). Handing it the
+full `uploadNeonUniforms` set logs one ERROR per uniform it does not have, 19
+per build. The first draft did; a log check caught it.
+
+### 13.2 The gather buffer is RGBA16F
+
+At 2 texels per `kc` the gather reads interpolated values everywhere the glow is
+lit, not only in the ring, and pass 1b and the ring multiply them by intensity,
+the falloffs and the bloom before tone mapping. So 8-bit storage steps are
+amplified, not hidden. Worst error against 1.0 on the probe's scenes:
+
+| gather buffer | 2 texels per `kc` | gather at `resolutionScale` |
+| ------------- | ----------------- | --------------------------- |
+| RGBA8 | 3 | 2 |
+| RGBA16F | 1-2 | 1-2 |
+
+RGBA16F is texture-filterable in GLES 3.0 core; only rendering to it needs
+`EXT_color_buffer_half_float`. So it is a candidate list, `GATHER_FORMATS`
+(RGBA16F, then RGBA8), walked by `resizeGatherBuffer` exactly as the emission
+table walks `EMISSION_FORMATS`. One difference: the gather buffer is released
+whenever the scaled path is idle, so it cannot remember a refused format in its
+own attachment. `mGatherFormat` does, and only ever advances. A probe build that
+put a non-renderable format first logged one fallback line and drew correctly.
+The cost is nothing measurable on llvmpipe (within the noise at 0.5 and 0.25).
+
+### 13.3 Both buffers cover a region, not the viewport
+
+The gather buffer first covered the whole viewport at the gather scale. For a
+rect small enough to gather at `resolutionScale` itself, that is the whole
+reduced viewport, in RGBA16F, with two attachments under segments: up to four
+times the reduced buffer. `GetBufferRegion` now sizes each buffer to what its
+readers reach. The reduced buffer covers the blit's outer box plus its
+footprint (`mScaledOuter`). The gather buffer covers the gather quad's box
+(`mGatherOuter`). Each is clipped to the viewport plus `FOOTPRINT_TEXELS`
+texels, and each pass draws through an ortho onto its region
+(`RegionProjection`) in the same scaled rect-local space as before. Three
+details carry the correctness:
+
+- **The texel grid stays where the viewport-sized buffer put it**, at centres
+  (i + 0.5) / scale from the viewport's corner. A rect-anchored grid was tried
+  first. It moved the 20 x 17 rect, which gathers at `resolutionScale`, from 18
+  to 25 at 0.5, because the gather no longer landed on the reduced buffer's
+  texel centres. The texel count is taken from the unsnapped box plus one, so
+  a moving rect keeps the same buffer, and is rounded up to `REGION_ALLOC_STEP`
+  (16). A resize or slide-off-screen animation therefore reallocates once per
+  16 texels of change, not every frame.
+- **The reduced buffer is capped per axis at the viewport-sized one.** Where
+  the rounded region would reach `floor(viewport * scale)` texels, that axis
+  falls back to exactly the old buffer and its exact-extent mapping. A
+  full-screen rect keeps the buffer it always had, and scale 1.0 is
+  byte-identical to `da24f9c` on every dump scene.
+- **The gather buffer is never capped.** The cap ends a buffer at the
+  viewport's edge, where a bilinear read clamps to the last texel. That is
+  harmless at the reduced pitch, but a gather texel is ~9 px. An 800 x 500 rect
+  running off the bottom of the frame read 5/255 off 1.0 along the last rows,
+  holding one gather value across them. The edge probe found it; uncapped, it
+  reads 1.
+
+Memory at 1920 x 1080, from the buffers' own allocation log:
+
+| rect | 0.5 before | 0.5 after | 0.25 before | 0.25 after |
+| ---- | ---------- | --------- | ----------- | ---------- |
+| full screen | 4.15 MB | 2.15 MB | 1.04 MB | 0.60 MB |
+| full screen, segments | 6.22 MB | 2.23 MB | 1.56 MB | 0.68 MB |
+| 900 x 540 | 4.15 MB | 1.80 MB | 1.04 MB | 0.54 MB |
+| 300 x 200 | 4.15 MB | 1.23 MB | 1.04 MB | 0.63 MB |
+| 120 x 80, segments | 6.22 MB | 2.83 MB | 1.56 MB | 0.75 MB |
+
+### 13.4 Verification
+
+- `neon-scale-check check`: PASS. Every reduced scale reads max 2 / p99 1 on
+  every scene. `small_rect` reads 4 at 0.25 and 10 at 0.125, against 2-3 and
+  11 for `da24f9c` on the same machine. The moving hairline's worst centroid
+  error rose from 0.026-0.039 px to 0.035-0.061 px, inside the 0.1 px bound.
+  The ring now interpolates colour and coverage from a ~9 px grid rather than
+  a 2-4 px one.
+- Scale 1.0 byte-identical to `da24f9c` on the nine dump scenes.
+- The review probe's scenes: 1-2 everywhere but the tiny rect (18 / 53 / 93 at
+  0.5 / 0.25 / 0.125, unchanged). Full-viewport rects with arcs, short
+  segments and a thin bar at 720p and 1080p: 1-2. Rects off each edge and a
+  corner peeking in: 1-2 (5 for the corner at 0.25, 6 before). A rect sliding
+  off the right edge over 24 frames: a persistent effect matches a fresh one
+  at every step, worst 2 against 1.0.
+- A long-lived effect against a fresh one, through segment add/remove and
+  1.0 / 0.5 / 0.25 / fill-only switches: byte-identical at every step.
+- The blit / ring partition, with marker shaders: identical counts to
+  `da24f9c` on the eight geometries, nothing drawn twice.
+- `-Wall -Wextra`: nothing new. No ERROR or WARN line in a normal run.
+
+### 13.5 Cost
+
+Speed-up against `da24f9c`, median of three interleaved rounds (full table in
+[`neon-resolution-scale-perf-comparison.md`](neon-resolution-scale-perf-comparison.md)
+section 8): 3.4-4.3x at 0.5 and 1.6-1.9x at 0.25 on nine of the twelve scenes.
+`glow_inside` reads 2.4x and 1.1x, `small_rect` about even, and `bounded_band`
+1.7x at 0.5 and 0.87x at 0.25. The default scene takes 9.9 ms at 0.5 and 7.0 ms
+at 0.25 against 134 ms at 1.0. `main` on the same machine takes 36.5 ms and
+11.5 ms.
+
+The two that do not pay show the model. `small_rect`'s colour kernel is too
+narrow for a grid coarser than the reduced one, so it gathers at
+`resolutionScale` and the split only adds a pass. `bounded_band` was already
+cheap, so the extra pass's fixed cost is most of what changed. Skipping one
+pass at a time on `default` at 0.5, the shading pass at the reduced scale is
+now the largest (~40-50%), then the gather (~25-35%), the blit (~20%) and the
+ring (~15%).
+
+Open:
+
+- **Run it on the target GPU.** The split adds a render pass. On a tiler that
+  is a tile store and load of a small target, and llvmpipe cannot price that.
+  The two program objects of 13.1 are a precaution against the AMD driver,
+  not a measurement on it.
+- **The comparison page is not regenerated.** Its reduced-scale columns and
+  timings predate this section, and a note at its top says so. `check`'s
+  bounds still hold, and the 1.0 images are unchanged.

@@ -53,6 +53,15 @@ Prints one row per scene and exits 1 if anything is out of bounds (marked `!`):
 | `small_rect` at 0.25 / 0.125 (20 x 12 buffer texels at 0.125) | 5 / 12 | 4 / 11 |
 | the moving hairline's worst centroid error, every scale | 0.1 px | 0.02-0.05 |
 
+The measured column predates the split gather
+([`docs/neon-resolution-scale-plan.md`](../../docs/neon-resolution-scale-plan.md)
+section 13). After it, on Mesa llvmpipe, every reduced scale reads 2 at most,
+`small_rect` 4 / 10, and the hairline 0.035-0.061 px - against 2-3, 4 / 11 and
+0.026-0.039 for the build before it on the same machine. The hairline moved
+because the ring now reads its colour and coverage from a grid about 8 px
+apart rather than 2-4 px apart; re-measure on the GPU before tightening that
+bound.
+
 Each bound is the measured value plus one level for GPU-to-GPU variance (the
 first version of the page was rendered on an Apple M2 Pro, and its 1.0 images
 match this machine's within 1-2 levels). It also passes on Mesa's llvmpipe

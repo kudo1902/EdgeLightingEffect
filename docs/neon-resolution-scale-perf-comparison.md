@@ -258,6 +258,20 @@ after.
 The ring and the blit's partition add two vertex buffers of under 250 bytes
 each.
 
+Since the plan's section 13 the gather attachments are gone. The reduced buffer
+is one RGBA8 attachment again, now covering only what the blit reads (never more
+than the whole reduced viewport), and the gather has an RGBA16F buffer of its
+own at its own coarse scale, over the glow. Measured at 1920 x 1080 with
+section 8's harness:
+
+| rect | scale | before section 13 | after, no segments | after, segments |
+| ---- | ----- | ----------------- | ------------------ | --------------- |
+| full screen | 0.5 | 4.15 MB | 2.15 MB | 2.23 MB |
+| full screen | 0.25 | 1.04 MB | 0.60 MB | 0.68 MB |
+| 900 x 540 | 0.5 | 4.15 MB | 1.80 MB | 1.91 MB |
+| 300 x 200 | 0.5 | 4.15 MB | 1.23 MB | 1.63 MB |
+| 120 x 80 | 0.5 | 4.15 MB | 1.70 MB | 2.83 MB |
+
 ## 6. What to take from it
 
 - **Scale 1.0 is unaffected.** Hosts that never lower the scale used to pay
@@ -293,3 +307,40 @@ then run `time` for every build in rounds with the order rotated:
 
 Take the median per figure over rounds, and compare builds only over rounds
 they ran in together.
+
+## 8. After the split gather
+
+[`neon-resolution-scale-plan.md`](neon-resolution-scale-plan.md) section 13
+took the gather loop out of the reduced pass: it now runs alone, at its own
+coarse scale, and the reduced pass and the ring shade from its result. Measured
+on Mesa llvmpipe at 1280 x 720 (not the GPU above, so read ratios), median of
+three interleaved rounds against the commit before it (`da24f9c`), each scene a
+fresh effect, best of 8 runs of 4 frames:
+
+| scene | 1.0 | 0.5 | 0.25 |
+| ----- | --- | --- | ---- |
+| `default` | 1.01x | **3.85x** | **1.79x** |
+| `hairline` | 1.00x | 3.43x | 1.88x |
+| `crisp_tube` | 1.01x | 3.56x | 1.59x |
+| `soft_wash` | 0.99x | 3.41x | 1.66x |
+| `sharp_corners` | 0.99x | 4.23x | 1.73x |
+| `small_rect` | 1.00x | 1.03x | 0.98x |
+| `glow_inside` | 1.00x | 2.38x | 1.10x |
+| `card_outside` | 1.00x | 3.61x | 1.64x |
+| `bounded_band` | 0.99x | 1.68x | 0.87x |
+| `arcs` | 0.98x | 3.51x | 1.77x |
+| `segments` | 1.00x | 4.31x | 1.93x |
+| `overdrive` | 0.98x | 3.67x | 1.81x |
+
+(Speed-up: before / after. 1.0 is untouched and reads within the noise.) The
+default scene now takes 9.9 ms at 0.5 and 7.0 ms at 0.25 against 134 ms at 1.0;
+`main` on the same machine takes 36.5 ms and 11.5 ms against 133. Init plus the
+first frame, median over the twelve scenes: 80.5 ms before, 73.0 ms after.
+
+Where it does not pay: `small_rect` gathers at the reduced scale itself (its
+colour kernel is too narrow for a coarser grid), so it gains nothing; and
+`bounded_band`, already cheap, pays the extra pass's fixed cost - about even
+with the commit before at 0.25, within a 10% spread run to run. Per pass at 0.5
+on `default` (skipping one pass at a time, so approximate): the shading pass at
+the reduced scale is now the largest, ~40-50%, then the gather ~25-35%, the
+blit ~20% and the ring ~15%.
