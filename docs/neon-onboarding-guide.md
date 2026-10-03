@@ -7,6 +7,13 @@ configuration field, every GL object, every render pass with its inputs and
 outputs, and what each shader does line by line. It ends with how to change the
 code safely.
 
+![The neon layer at the library defaults](images/neon-onboarding/hero-defaults.png)
+
+*What this guide explains: the neon layer at the library's defaults, on a
+560 x 280 rect with corner radius 48 in an 800 x 450 frame, hue rotation
+frozen. The pale stretch at the top right is not a highlight: the default
+gradient blends blue into yellow in RGB, and its midpoint is grey (Part 4.6).*
+
 It is long on purpose. Read Part 1 once, skim Part 2, and keep the rest open as
 a map while you read the code. Every claim points at the file that implements
 it; when this guide and the code disagree, the code wins (see
@@ -65,6 +72,13 @@ top-left of the viewport, +y **down**. Part 1.3 explains the conversions.
 **Scale 1.0 vs below.** "The direct path" is `resolutionScale == 1.0`; "the
 scaled path" or "the reduced path" is anything below it. Part 8 is entirely
 about the second.
+
+**Figures.** Every image in this guide is rendered by the library itself,
+offscreen, by [`tools/neon-guide-figures`](../tools/neon-guide-figures/README.md):
+a fixed config, time frozen, so a rerun on the same GPU writes the same bytes.
+The pass figures in Parts 5, 6 and 8 are the renderer's real intermediate
+buffers, read back between its draws (Part 9.2 says how). When the look
+changes, regenerate them rather than editing them by hand.
 
 ---
 
@@ -314,7 +328,7 @@ opaque I am". Three reasons it is used here:
    a transparent black texel is averaged with a coloured one. The reduced path
    upsamples a premultiplied buffer, so this matters.
 2. **It composites over real content.** The neon's alpha is the brightest
-   channel of the graded colour, so the white-hot core occludes the
+   channel of the graded colour, so the bright core occludes the
    background while the faint glow is nearly additive. A host blending the
    layer over video depends on half coverage reading as alpha 0.5.
 3. **Masks are simple.** Fading the layer out at an edge is one multiply of
@@ -348,9 +362,17 @@ float sdRoundBox(vec2 p, vec2 b, float r)   // b = half size, r = corner radius
 
 Why it matters: the distance `d` of a pixel from the outline is exactly what
 decides how bright a glow is there. Every contour of constant `d` is itself a
-rounded rectangle, so corners need no special handling: a glow 40 px wide
+rounded rectangle (inside, its corner radius shrinks by the depth and reaches
+0 at `d = -r`), so corners need no special handling: a glow 40 px wide
 follows the corner curve at the right width automatically. With an SDF, "draw
 a soft line" becomes "make brightness a function of `|d|`".
+
+![The signed distance field of a rounded rectangle](images/neon-onboarding/sdf-field.png)
+
+*`sdRoundBox` for a 400 x 220 rect with radius 40: blue inside, orange outside,
+one band per 20 px of distance, white where `d = 0`. Outside, every band is a
+rounded rectangle with a growing radius; inside, the radius shrinks with depth
+and the bands turn sharp-cornered past 40 px.*
 
 ### 1.9 Tone mapping and gamma
 
@@ -368,10 +390,19 @@ result = pow(result, 0.85)                         // a mild gamma lift
 
 Scaling all three channels by the same factor keeps the hue: a saturated
 orange stays orange instead of washing out to peach, which is what a
-per-channel curve would do. A very bright pixel still approaches white,
-because its smaller channels rise toward the clamped peak: that is how the
-filament gets a white core with coloured edges, as a camera photographing a
-real neon sign would show it.
+per-channel curve would do. It also means the filament does **not** turn
+white, however far above 1.0 its gain of 12 drives it: the curve flattens its
+brightness and leaves its hue alone. Only the final `pow(..., 0.85)` lifts the
+smaller channels a little (a cyan core's red channel leaves the map at 0.14
+and the lift at 0.19, next to a green of 0.79). A line reads white only where its colour is pale
+to begin with.
+
+![The tone curve against a plain clamp](images/neon-onboarding/tone-map.svg)
+
+*The curve the grade applies to the brightest channel. A clamp (grey) throws
+away everything above 1.0; `x / (x + 0.6)` (blue) keeps squeezing it toward 1
+without reaching it, so a filament at 12 and a glow at 0.5 stay apart; the
+gamma lift (red) is the final curve.*
 
 ### 1.10 Antialiasing, derivatives, and uniform control flow
 
@@ -419,7 +450,8 @@ slowly from pixel to pixel), like a wide glow. It destroys content that is
 **sharp**, like a 2 px line, and it blurs any hard edge. The neon's reduced
 path is built around this: smooth parts at reduced or even coarser
 resolution, sharp parts at full resolution in a thin ring around the line.
-Part 8 explains the details.
+Part 8 explains the details, and Part 8.3 shows what a 2 px line looks like
+with and without that ring.
 
 ---
 
@@ -589,7 +621,7 @@ and added together:
      .------------------------------------------------.
     |   halo: tight coloured glow (like 1/distance^2)   |
     |   .----------------------------------------.      |
-    |  |  filament: the white-hot line itself      |     |
+    |  |  filament: the bright line itself          |     |
     |   '----------------------------------------'      |
      '------------------------------------------------'
    outline of the rect  <--- d = 0 (signed distance)
@@ -601,9 +633,28 @@ and added together:
 | **halo** | falls off roughly as 1/distance^2 | `glowRadius` | `HALO_GAIN` = 0.9 |
 | **bloom** | falls off roughly as 1/distance | `glowRadius` x 6 | `bloomStrength` |
 
-The filament's gain of 12 is why the core reads white: it is pushed far above
-1.0 and the tone map (Part 1.9) compresses it toward white while the edges
-keep their colour.
+The filament's gain of 12 puts the line far out on the flat end of the tone
+curve (Part 1.9), so it reads at full brightness in its own colour, while the
+much dimmer halo and bloom stay on the curve's steep part and keep their
+gradation.
+
+| filament only | halo only | halo + bloom | all three |
+| :-: | :-: | :-: | :-: |
+| ![](images/neon-onboarding/layer-filament.png) | ![](images/neon-onboarding/layer-halo.png) | ![](images/neon-onboarding/layer-halo-bloom.png) | ![](images/neon-onboarding/layer-all.png) |
+
+*The three layers, one at a time, around the top-left corner of the same rect.
+One hue so only brightness differs: `lineWidth` 4, `glowRadius` 8,
+`bloomStrength` 0.35. "Filament only" is `glowRadius` 0; "halo only" is
+`lineWidth` 0 and `bloomStrength` 0; "halo + bloom" is `lineWidth` 0.*
+
+![Brightness across the top edge, layer by layer](images/neon-onboarding/layer-cross-section.svg)
+
+*The same four renders, read down the frame's centre column across the top
+edge. The filament is a spike reaching about 7 px either side (its reach,
+Part 5.7); the halo is near the background 60 px out; the bloom's
+1/distance tail is still above 40% of its peak 140 px inside, where the four
+edges' light sums to a floor. The peak of "all three" is not the sum of the
+others: the tone map compresses it.*
 
 On top of that:
 
@@ -636,6 +687,15 @@ inside it, "how bright and what colour am I?" from two numbers:
   straight edges, four corner arcs), and convert to a fraction of the total
   length.
 
+![The perimeter position t of every pixel](images/neon-onboarding/perimeter-t-field.png)
+
+*`t` for every pixel of a 400 x 220 rect, as a hue wheel (red at 0 and 1),
+computed with `neon.frag`'s own `perimeterPosition`; the arrow marks `t = 0`
+and the default winding. Outside, the corner arcs fan out and `t` is
+continuous. Inside, it jumps along the four corner diagonals and the
+horizontal centre line, where the nearest edge changes. Anything read at a
+pixel's own `t` inherits those seams.*
+
 `t` matches the CPU's `GeometryUtils::GetPointOnRectangle` exactly, which is
 what lets an arc authored as "0.25 to 0.5" line up with what is drawn. Where
 `t = 0` is, and which way it runs, is set by `RectGeometry::winding`:
@@ -650,6 +710,13 @@ what lets an arc authored as "0.25 to 0.5" line up with what is drawn. Where
    |  |                |                       |                |
    v  '----------------'                       '----------------'
 ```
+
+| `COUNTER_CLOCKWISE` | `CLOCKWISE` |
+| :-: | :-: |
+| ![](images/neon-onboarding/winding-ccw.png) | ![](images/neon-onboarding/winding-cw.png) |
+
+*One arc from `t = 0` to 0.25 with its own stops, red at its head and yellow at
+its tail, under each winding.*
 
 ### 3.3 Colour: stops, the ring LUT, and the gather
 
@@ -684,6 +751,25 @@ the kernel width: `perimeter x COLOR_BLEND_PERIM_FRAC` (0.0088), so it scales
 with the rectangle and a gradient looks the same at any size. It is about
 one sample spacing, which prevents the samples from showing as beads.
 
+| colour read at each pixel's own `t` | colour gathered (the real render) |
+| :-: | :-: |
+| ![](images/neon-onboarding/colour-own-t.png) | ![](images/neon-onboarding/colour-gathered.png) |
+
+*Right: the library's render of three stops with a wide glow (`glowRadius` 24,
+`bloomStrength` 1). Left: the same pixels at the same brightness, recoloured
+on the CPU from the gradient at each pixel's own `t`. Every seam of the `t`
+field (Part 3.2) becomes a hard colour edge; the gather has none.*
+
+| a pixel 18 px outside the top edge | a pixel at the centre |
+| :-: | :-: |
+| ![](images/neon-onboarding/gather-weights-edge.png) | ![](images/neon-onboarding/gather-weights-centre.png) |
+
+*The gather's weights for one pixel (the white ring, filled with the colour it
+gathers). Each dot is one of the 128 samples in its own colour, its size and
+opacity scaled by `g`. With `kc` about 10 px on this rect, a pixel near the
+line averages a handful of samples beside it; at the centre every sample
+counts, the top and bottom edges (110 px away) more than the sides (200 px).*
+
 The gather is the expensive part of the whole effect: about 95% of the
 fragment shader's cost (`N` iterations per pixel). Two optimisations exist
 because of it:
@@ -710,6 +796,16 @@ colour (**winner-take-all**). A free arc end fades out over 14 px
 fades outward instead, so tiled arcs meet with no visible notch. With no arcs
 at all, nothing is lit (only segments can still shine).
 
+| one arc, two free ends | two arcs that tile, each with its own stops |
+| :-: | :-: |
+| ![](images/neon-onboarding/arc-single.png) | ![](images/neon-onboarding/arc-tiled.png) |
+
+*Left: `start` 0.1, `length` 0.35, on the base gradient; both ends feather
+inward over 14 px. Right: an arc from 0 to 0.5 (cyan to blue) and one from 0.5
+to 1 (orange to red, `intensity` 0.6); where they meet, at `t = 0` and 0.5,
+each end feathers outward and the seam shows no notch. The faint outline along
+an unlit stretch (left) is expected: Part 3.6 explains it.*
+
 **Segments** (`segmentBoosts`, plus `preservedSegmentBoosts`, 8 slots
 together) are Gaussian bright spots centred at `position` with width `length`
 and peak brightness `boost`. They are added on top of the arcs and ignore
@@ -719,6 +815,14 @@ of its own (under a lit arc the arc's core is already open). A segment
 without its own stops takes the winning arc's colour where an arc covers it,
 and the base gradient elsewhere. Animations such as `SegmentTravel` move them
 by writing `position` every frame.
+
+| `boost` 0.4 | `boost` 2.0 |
+| :-: | :-: |
+| ![](images/neon-onboarding/segment-boost-0.4.png) | ![](images/neon-onboarding/segment-boost-2.png) |
+
+*An orange segment (`length` 0.12) on the dark half of the ring; one arc lights
+`t` 0 to 0.5. Below the 0.5 gate it is glow only; above it, it opens a core of
+its own.*
 
 ### 3.5 The three light layers, as formulas
 
@@ -775,6 +879,19 @@ things:
   Using the pointwise value there made the glow stop with a hard edge along
   the corner diagonals whenever part of the ring was dark.
 
+![The end of an arc, close up](images/neon-onboarding/arc-end-closeup.png)
+
+![Brightness along the bottom edge past the arc's end](images/neon-onboarding/arc-end-profile.svg)
+
+*An arc ending in the middle of the bottom edge (lit to the left), magnified
+2x, and the brightness along that edge. On the line the filament, which reads
+pointwise coverage, falls to the glow's level within the 14 px feather (the
+two dashed lines). The glow 12 and 30 px outside reads gathered coverage, so
+it fades over about 100 px instead. The same averaging is why an unlit
+stretch next to a lit one keeps a faint trace of the outline (1-2 levels in
+Part 3.4's figures): the glow is the whole outline's light scaled by the
+coverage averaged around the pixel.*
+
 Then (in `neon.frag`, after the gather):
 
 ```
@@ -804,6 +921,15 @@ glow radius 20, bloom 1.0): the glow reads the same at alpha 1, 0.5 and 0.
 This is a known limit recorded as V18 in
 [`review-findings.md`](review-findings.md); to dim the glow along part of the
 ring, use an arc's `intensity` or gate the ring with arcs instead.
+
+| stops with alpha 0 from `t` 0.4 to 0.6 | the bottom edge where alpha falls, 3x |
+| :-: | :-: |
+| ![](images/neon-onboarding/stop-alpha.png) | ![](images/neon-onboarding/stop-alpha-closeup.png) |
+
+*One cyan colour, alpha 1 up to `t` 0.3, falling to 0 by 0.4, 0 until 0.6, back
+to 1 by 0.7. Where alpha is 0 (the bottom right, round the corner and up the
+right edge) the sharp core is gone; the softer line left there is the halo,
+which still peaks on the outline because it does not see alpha.*
 
 ---
 
@@ -873,6 +999,23 @@ sample block and the emission table are sized to that ceiling once, at
 | `glowRadius` | float, 5 | full-res px | Width of the halo; the bloom is 6x wider. 0 removes both (a `glowGate` fades them in over 0..2 px). | `uGlowRadius` x scale -> `kh`, `bw`, the reach, `glowGate`; the quad margin (`GetGlowMargin`) |
 | `bloomStrength` | float, 0.30 | multiplier | Amount of the wide soft spill. Keep it >= 0. | `uBloomStrength` -> `result += emitGlow * bloom * uBloomStrength`; the reach |
 
+| `lineWidth` 1 | `lineWidth` 4 | `lineWidth` 12 |
+| :-: | :-: | :-: |
+| ![](images/neon-onboarding/line-width-1.png) | ![](images/neon-onboarding/line-width-4.png) | ![](images/neon-onboarding/line-width-12.png) |
+| **`filamentFalloff` 0.5** | **`filamentFalloff` 1** | **`filamentFalloff` 4** |
+| ![](images/neon-onboarding/falloff-0.5.png) | ![](images/neon-onboarding/falloff-1.png) | ![](images/neon-onboarding/falloff-4.png) |
+| **`glowRadius` 3** | **`glowRadius` 10** | **`glowRadius` 30** |
+| ![](images/neon-onboarding/glow-radius-3.png) | ![](images/neon-onboarding/glow-radius-10.png) | ![](images/neon-onboarding/glow-radius-30.png) |
+| **`bloomStrength` 0** | **`bloomStrength` 0.6** | **`bloomStrength` 1.5** |
+| ![](images/neon-onboarding/bloom-0.png) | ![](images/neon-onboarding/bloom-0.6.png) | ![](images/neon-onboarding/bloom-1.5.png) |
+
+*One field at a time, around the top-left corner. The first two rows are
+magnified 3x: `lineWidth` with `glowRadius` 4 and `bloomStrength` 0.2, and
+`filamentFalloff` on a 12 px line with the glow off, from long soft tails (0.5)
+through a Gaussian (1) to a flat-topped tube (4). The last two are at 1x:
+`glowRadius` with `bloomStrength` 0.4, and `bloomStrength` with `glowRadius`
+10.*
+
 All five set `geometryDirty`: they change how far light reaches, so the quad
 must be re-sized. The quad margin is
 `glowRadius x 48 x (1 + bloomStrength x intensity)` (`GLOW_REACH_RADIUS_FACTOR`
@@ -893,6 +1036,10 @@ outside. Becomes `uGlowSide`. Fragments on the dropped side are discarded,
 the quad is shrunk (`INSIDE` caps its outer margin; `OUTSIDE` cuts a hole in
 it), and the cut edge is drawn as a mask after the tone map. Sets
 `geometryDirty`. C ABI `el_effect_set_glow_side`.
+
+| `BOTH` | `INSIDE` | `OUTSIDE` |
+| :-: | :-: | :-: |
+| ![](images/neon-onboarding/glow-side-both.png) | ![](images/neon-onboarding/glow-side-inside.png) | ![](images/neon-onboarding/glow-side-outside.png) |
 
 **`glowSideSoftness`** (float, 0, full-res px). The total width of the cut's
 feather, measured into the lit side, floored at one destination pixel. The
@@ -927,6 +1074,16 @@ side `glowSide` already removes is **neutralised** (treated as disabled).
 Both set `geometryDirty`. C ABI `el_effect_set_inside_cutoff`,
 `el_effect_set_outside_cutoff`.
 
+| `insideCutoff` {20, 12} | `outsideCutoff` {24, 16} | both |
+| :-: | :-: | :-: |
+| ![](images/neon-onboarding/cutoff-inside.png) | ![](images/neon-onboarding/cutoff-outside.png) | ![](images/neon-onboarding/cutoff-band.png) |
+
+*`{size, softness}` in px, on a wide glow (`glowRadius` 16, `bloomStrength`
+1). Inside, the cut follows a contour of `d`, whose corners sharpen with depth
+(Part 1.8): the fade here runs 20 to 32 px deep against a corner radius of 32,
+so the hole is nearly square. With both, only a band around the line is
+lit.*
+
 **`opaqueInsideCutoff` / `opaqueOutsideCutoff`** cap the **opaque fill**
 (4.5) and nothing else. They are independent of the glow's pair and of
 `glowSide`.
@@ -941,6 +1098,14 @@ it was centred on `size`; see [`upgrade-notes.md`](upgrade-notes.md).
 | `opaqueMode` | `OpaqueMode`, `NONE` | `NONE` (0) no fill; `OUTSIDE` (1) fills from the outline outward; `INSIDE` (2) fills from the outline inward; `BOTH` (3) fills across the outline in both directions; `ALL` (4) fills the whole viewport. |
 | `opaqueColor` | vec4, black | Fill colour; only `.rgb` is used (the fill is always opaque). |
 | `opaqueInsideCutoff`, `opaqueOutsideCutoff` | `Cutoff`, disabled | How far the fill reaches inward and outward. Disabled means unbounded: `INSIDE` fills the whole rect, `OUTSIDE` runs to the viewport edge, `BOTH` covers the viewport. |
+
+| `NONE` | `OUTSIDE` | `INSIDE` | `BOTH`, fill cutoffs 24 px |
+| :-: | :-: | :-: | :-: |
+| ![](images/neon-onboarding/opaque-none.png) | ![](images/neon-onboarding/opaque-outside.png) | ![](images/neon-onboarding/opaque-inside.png) | ![](images/neon-onboarding/opaque-both.png) |
+
+*Over a checkerboard, so the fill shows as the area it hides; the glow is
+drawn on top of it. Without fill cutoffs `OUTSIDE` runs to the viewport's
+edge and `INSIDE` covers the whole interior.*
 
 The fill is drawn **under** the glow, at full resolution, on the caller's
 framebuffer (P2a), with its own shader (`black-rect.frag`). When the fill
@@ -963,6 +1128,16 @@ deprecated shim. On `main` the fill was bounded by the glow's cutoffs; read
 | `blendSpace` | `BlendSpace`, `RGB` | How the gradient blends between stops: `RGB` (straight mix), `HSV` or `HSL` (shortest way round the hue circle). Alpha always blends linearly. | Bake time only; never a uniform. |
 | `hueRotationRate` | float, 0.5 | Revolutions per second the base gradient scrolls around the ring; the sign is the direction; 0 is static. Arcs and segments with their own stops do not rotate. | `uHueRotationRate`: P0 reads the ring at `t - time x rate`; `neon.frag` reads alpha the same way. A non-zero rate re-runs P0 every frame. |
 | `colorTransitionDuration` | float, 0.3 s | Cross-fade time when `colorStops` or `blendSpace` change. 0 snaps. Runs on the host's raw `dt`, so it continues while the effect clock is paused. | `GradientRingLUT::Tick`, from `NeonRenderer::Update`; each fade frame re-uploads the ring and re-runs P0. |
+
+| `RGB` | `HSV` | `HSL` |
+| :-: | :-: | :-: |
+| ![](images/neon-onboarding/blend-rgb.png) | ![](images/neon-onboarding/blend-hsv.png) | ![](images/neon-onboarding/blend-hsl.png) |
+
+*Red at 0 and green at 0.5, in each blend space, with the debug layer's ring
+strip (the baked LUT, left to right from `t = 0`) and a disc at each stop.
+`RGB` passes through a dull olive; `HSV` and `HSL` go round the hue circle
+through yellow, and for these two fully saturated stops they come out
+identical.*
 
 **`ColorStop`** is `{ position, color }`. `color.rgb` is in 0..1 (the RGBA8
 LUT clamps; it cannot over-drive). `color.a` is an emission scale for the
@@ -1236,6 +1411,14 @@ edge never shows), `mRingQuadMargin` (the same at scale 1.0, for the ring),
 and `mGlowOuter` / `mGlowHole` (full-res half extents, for the ring builder).
 With no hole it is 6 vertices; with one, 24.
 
+![The glow quad's triangles at scale 1.0](images/neon-onboarding/geometry-direct.png)
+
+*The glow quad (P1) as drawn, over the dimmed frame: both cutoffs on
+(`insideCutoff` {40, 16}, `outsideCutoff` {36, 16}), so it is a box capped
+just past the outside cutoff's fade with a hole inside the inside cutoff's -
+four strips, eight triangles, 24 vertices. Nothing outside it is shaded at
+all.*
+
 **`setupFillGeometry`: the fill band.** A rectangle with a hole, sized by the
 fill's own cutoffs plus 3 px of safety, full-res. None when the fill covers
 the whole viewport (the clear path draws it instead).
@@ -1258,6 +1441,12 @@ zeroes everything and returns. Below it, in full-res rect-local px:
    padded by the gather's bilinear footprint. Stored as `mGatherOuter`.
 5. `mScaledOuter`: the blit's outer box plus its footprint, which sizes the
    reduced buffer.
+
+![The ring and the blit area at scale 0.5](images/neon-onboarding/geometry-scaled.png)
+
+*The same scene at scale 0.5: the ring (P2c, green) and the blit area (P2b,
+blue), as drawn. The blit is two annuli, one each side of the ring, and the
+three share their edges exactly, so no pixel is drawn twice.*
 
 **`rebuildLoopSamples`: the 128 perimeter points.** For `i < n`:
 `sample[i] = GetPointOnRectangle(i / n, geometry) * scale`, packed as
@@ -1340,6 +1529,18 @@ The data flow between them, below scale 1.0:
 | **Blocks** | `SegmentBlock` (0), `ArcBlock` (2). |
 | **Output** | Texel `(i, 0)`: `rgb` = the winning arc's colour x its weight, `a` = that weight (`arcW` = arc mask x intensity). Texel `(i, 1)`: `rgb` = sum over segments of colour x bell, `a` = sum of bells. |
 
+The pass figures in this part come from one frame at scale 0.5 of a scene
+with something in every buffer: an arc over `t` 0 to 0.6 on the base gradient,
+a dimmer arc (`intensity` 0.6, its own orange-to-red stops) over 0.65 to 0.95,
+dark gaps between them, and a segment at 0.3.
+
+![The emission table](images/neon-onboarding/pass-p0-emission.png)
+
+*P0's table for that scene, one 5 px column per sample, `t` 0 at the left.
+Top to bottom: row 0's colour (arc colour x weight), row 0's alpha (the arc
+weight: 1, then 0.6 for the dimmer arc, 0 in the gaps), row 1's colour
+(segment colour x bell) and row 1's alpha (the bell, scaled to its peak).*
+
 ### P1: the glow, direct path (`renderNeonPass(scaled = false)`, `neon.frag` plain)
 
 | | |
@@ -1368,6 +1569,16 @@ The data flow between them, below scale 1.0:
 | **Blocks** | `LoopSamplesBlock` (1); `SegmentBlock` (0), whose count selects the loop body. |
 | **Output** | location 0 `oGather = (colour, E/(1+E))`; location 1 `oGatherSeg = (segment colour, S/(1+S))`, where `E` and `S` are the gathered arc and segment coverages. `c/(1+c)` squeezes an unbounded coverage into [0, 1) so the RGBA8 fallback can store it; it is exact at 0 and decodes as `e/(1-e)`. |
 
+| attachment 0: hue | attachment 0: arc coverage | attachment 1: segment |
+| :-: | :-: | :-: |
+| ![](images/neon-onboarding/pass-p1a-gather-hue.png) | ![](images/neon-onboarding/pass-p1a-gather-cover.png) | ![](images/neon-onboarding/pass-p1a-gather-segment.png) |
+
+*The gather buffer after P1a: 128 x 80 RGBA16F texels for this 640 x 360
+frame, magnified 4x. The hue (left) and the decoded arc coverage (centre: white
+is 1, darker where the outline near the texel is dim or dark) are smooth
+enough that this grid carries them; the right panel is the segment's colour
+scaled by its coverage.*
+
 ### P1b: shade at the reduced scale (`renderNeonPass(scaled = true)`, `neon.frag` + `NEON_READS_GATHER`)
 
 | | |
@@ -1380,6 +1591,11 @@ The data flow between them, below scale 1.0:
 | **Uniforms** | all of `uploadNeonUniforms` at the real scale, plus `uQuadMargin = mQuadMargin`, `uGatherUVScale` / `uGatherUVOffset` (the map from this pass's `vPos` to the gather buffer's uv). |
 | **Textures** | units 0-2 the LUTs, unit 3 `uGather`, unit 4 `uGatherSeg`. |
 | **Output** | premultiplied graded colour. The one-sided cut and the cutoffs are **not** applied here (only coarse discards with a 2-texel guard band): the blit applies them at full resolution. |
+
+![The reduced buffer after P1b](images/neon-onboarding/pass-p1b-reduced.png)
+
+*The reduced buffer after P1b, 320 x 180 at scale 0.5, magnified 2x: the
+glow is fine at this resolution, the line is visibly blocky.*
 
 ### P2a: the opaque fill (`renderOpaqueFill`, `black-rect.frag`)
 
@@ -1407,6 +1623,11 @@ The data flow between them, below scale 1.0:
 | **Textures** | unit 0 `uSource` = `mScaledBuffer`. |
 | **Output** | `texture(uSource, uv) * cut`, premultiplied. |
 
+![The caller's framebuffer after the blit](images/neon-onboarding/pass-after-blit.png)
+
+*The caller's framebuffer after P2b: the reduced buffer upsampled everywhere
+the glow can reach except the ring. The black band is where the ring will go.*
+
 ### P2c: the edge ring (`renderRingPass`, `neon.frag` + `NEON_READS_GATHER`, second object)
 
 | | |
@@ -1419,6 +1640,11 @@ The data flow between them, below scale 1.0:
 | **Uniforms** | `uploadNeonUniforms` **at scale 1.0** (so the shader behaves as the direct path: cut and cutoffs applied, no sampling floor), `uQuadMargin = mRingQuadMargin`, and the gather map from full-res `vPos`. |
 | **Textures** | units 0-2 the LUTs, units 3-4 the gather buffer. |
 | **Output** | premultiplied graded colour, like P1. |
+
+![The caller's framebuffer after the ring](images/neon-onboarding/pass-after-ring.png)
+
+*After P2c, which is the finished frame: the ring filled in at full
+resolution.*
 
 Why P1b and P2c are two program objects compiled from the same source: each
 then draws one kind of target, in one blend state, every frame. One program
@@ -1743,6 +1969,23 @@ resolution. The two areas tile without overlap (Part 5.6), which is why the
 blit area can legitimately be empty: drawing anything there would draw over
 the ring.
 
+| after the blit (P2b) | after the ring (P2c) |
+| :-: | :-: |
+| ![](images/neon-onboarding/pass-after-blit-crop.png) | ![](images/neon-onboarding/pass-after-ring-crop.png) |
+
+*The bottom-left corner of Part 6's frame, magnified 3x, before and after the
+ring. The ring's band is axis-aligned boxes, not a rounded shape: it is built
+from the same `PushAnnulus` strips as the blit area.*
+
+| the blit alone, at 0.25 | the frame at 0.25 | the frame at 1.0 |
+| :-: | :-: | :-: |
+| ![](images/neon-onboarding/scale-0.25-blit-only.png) | ![](images/neon-onboarding/scale-0.25-final.png) | ![](images/neon-onboarding/scale-1-final.png) |
+
+*Why the ring exists: a 2 px line at scale 0.25, magnified 3x. Left is what the
+blit would draw if it covered the line too, rebuilt by the figure tool from
+the real reduced buffer through the blit's own uv map: the line comes out
+nearly three times as wide. Centre is the real frame at 0.25; right is 1.0.*
+
 ### 8.4 When not to lower the scale
 
 The ring, the blit and the extra passes are a fixed cost. A layer already
@@ -1808,6 +2051,19 @@ winding.
   the first frame after a stop change still shows the old ring. Set it to 0
   for single-frame captures and A/B comparisons, and set
   `hueRotationRate = 0` so the capture does not depend on time.
+- **Watch the passes.** To see what each pass wrote, without touching the
+  library: GLAD calls GL through global function pointers, so a tool linked
+  against the static library can wrap `glad_glDrawArrays`, let each draw
+  through, then name the pass from its program's uniforms and read back its
+  target. That is how Parts 5, 6 and 8 got their figures; see `PassRecorder`
+  in [`tools/neon-guide-figures`](../tools/neon-guide-figures/README.md). It
+  does not work through the C ABI dylib, which keeps its own copy of GLAD.
+
+![The debug layer's overlays](images/neon-onboarding/debug-overlays.png)
+
+*The debug layer with all three overlays on: the baked ring as a strip (left
+to right from `t = 0`), a disc at each colour stop, and the geometry's
+bounding box.*
 
 ### 9.3 The regression check
 
