@@ -290,8 +290,9 @@ the four coverage terms:
   renderer bakes per config change - rather than by the coverage gathered
   around the pixel. It is what keeps a stretch no arc covers from showing a
   thin line along it, even at a high `intensity`, and keeps lit edges' bloom
-  from dimming where it reaches a dark one; 0 on a fully lit ring. Arcs only:
-  segments still take the gathered coverage, blended toward the foot's.
+  from dimming where it reaches a dark one; 0 on a fully lit ring. Arcs and
+  segments alike. Its one approximation (V21): the table runs the outline
+  straight through each piece's foot, so a little light spills round corners.
 * **Shared shaping after the sum:** `core / halo / bloom` kernels,
   `glowRadius / bloomStrength`, `glowSide / cutoffs`, tone map + gamma apply
   to `emitFil / emitGlow` as a whole, so overdrive saturates jointly.

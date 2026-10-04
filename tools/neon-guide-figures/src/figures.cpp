@@ -1073,25 +1073,35 @@ namespace NeonGuideFigures
                 SavePNG(out, Path(dir, "pass-p0-emission.png"));
             }
 
-            // P0b - the glow coverage table: the arcs' coverage as the halo
-            // (top band) and the bloom (bottom band) see it, perimeter position
-            // across, distance from the line down, every fourth column.
+            // P0b - the glow coverage table, unfolded: the perimeter runs across
+            // (every eighth sample, t 0 at the left) and the distance from the
+            // line down. Four strips: the arcs' coverage as the halo and the
+            // bloom see it, then the segments' the same way. The table stores
+            // the perimeter in GLOW_COVER_BANDS bands stacked vertically, each
+            // with a guard column at either end, so a sample g is column
+            // 1 + g % GLOW_COVER_SAMPLES of band g / GLOW_COVER_SAMPLES.
             if (const DrawRecord *p0b = PassRecorder::Find(PassKind::P0B))
             {
                 const Attachment &t = p0b->written[0];
-                const int step = 4;
-                const int rowPx = 2;
+                const int step = 8;
                 const int gap = 6;
-                const int columns = (t.width - 2) / step;
-                Canvas out(columns, 2 * t.height * rowPx + gap, glm::vec3(0.18f));
+                const int rows = t.height / GLOW_COVER_BANDS;
+                const int columns = GLOW_COVER_SAMPLES * GLOW_COVER_BANDS / step;
+                Canvas out(columns, 4 * rows + 3 * gap, glm::vec3(0.18f));
                 for (int i = 0; i < columns; ++i)
                 {
-                    for (int j = 0; j < t.height; ++j)
+                    const int g = i * step;
+                    const int band = g / GLOW_COVER_SAMPLES;
+                    const int column = 1 + g % GLOW_COVER_SAMPLES;
+                    for (int j = 0; j < rows; ++j)
                     {
-                        const glm::vec4 v = t.At(1 + i * step, j);
-                        FillRect(out, i, j * rowPx, 1, rowPx, glm::vec3(std::min(DecodeCoverage(v.r), 1.0f)));
-                        FillRect(out, i, t.height * rowPx + gap + j * rowPx, 1, rowPx,
-                                 glm::vec3(std::min(DecodeCoverage(v.g), 1.0f)));
+                        const glm::vec4 v = t.At(column, band * rows + j);
+                        const float channels[4] = {v.r, v.g, v.b, v.a};
+                        for (int k = 0; k < 4; ++k)
+                        {
+                            FillRect(out, i, k * (rows + gap) + j, 1, 1,
+                                     glm::vec3(std::min(DecodeCoverage(channels[k]), 1.0f)));
+                        }
                     }
                 }
                 SavePNG(out, Path(dir, "pass-p0b-glow-cover.png"));

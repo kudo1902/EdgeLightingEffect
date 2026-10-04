@@ -128,11 +128,11 @@ composite).
 
 ## 5. The glow on a partly lit ring looks different
 
-When arcs light only part of the ring, each piece of the outline's halo and
-bloom is now scaled by that piece's own arc coverage, read from a table baked
-once per config change, instead of by one coverage averaged around the pixel
-(V19 and V20 in [`review-findings.md`](review-findings.md)). Segments still
-take the averaged coverage. What a host will see:
+When arcs light only part of the ring, or segments shine on it, each piece of
+the outline's halo and bloom is now scaled by that piece's own coverage, read
+from a table baked once per config change, instead of by one coverage
+averaged around the pixel (V19 and V20 in
+[`review-findings.md`](review-findings.md)). What a host will see:
 
 - **No faint outline along an unlit stretch.** The averaged coverage let a dark
   stretch keep some of the lit part's light, a thin line at a narrow
@@ -144,11 +144,14 @@ take the averaged coverage. What a host will see:
   by the dark piece's coverage.
 - **A fully lit ring is unchanged**, bit for bit.
 
-It costs one more offscreen pass and a 1 MB RGBA16F table (RGBA8 on a driver
-that cannot render to half float), both only when the config changes - about
-0.04 ms a frame under an animation that changes it every frame - plus ~1.15x
-on a partly lit ring and ~1.07x on a fully lit one at 1.0. See V20 for the
-measurements.
+It costs one more offscreen pass and a 2 MB RGBA16F table (RGBA8 on a driver
+that cannot render to half float), plus ~1.1x on a partly lit ring and
+~1.04x on a fully lit one at 1.0 (~1.2x and ~1.08x at 0.5). The pass runs
+only when the config changes - which under an animation is every frame, and
+then it costs about 0.1 ms a frame when arcs move and 0.2-0.6 ms when
+segments do, on an M2 Pro: worth measuring on a slower GPU before shipping an
+animated segment. See V20 for the measurements, and V21 for the one
+approximation left in it.
 
 ## 6. Nothing else a host can see moved
 

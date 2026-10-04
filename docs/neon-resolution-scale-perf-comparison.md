@@ -29,6 +29,13 @@ this: programs are built per path on first use, so a host compiles only the
 path it draws; and the composite and the ring cover only where the glow can be
 lit, which mostly helps the cutoff band and the one-sided glows.
 
+**Since then** (section 10): the glow-coverage fixes V19 and V20 in
+[`review-findings.md`](review-findings.md) added a coverage table and a
+per-piece read of it, which every number above predates. On an Apple M2 Pro
+they cost about 1.04x at scale 1.0 and 1.08x at 0.5 on a fully lit ring, and
+1.1-1.2x on a partly lit one, plus a per-frame bake under animation. Section 9
+was not re-run against them.
+
 **Against `main`** (section 9, Apple M2 Pro): at scale 0.5 the branch now
 renders the neon **2.3x faster than `main` at 1280 x 720 and 2.8x at 1920 x
 1080**, and passes `neon-scale-check check` where `main`'s 0.5 is up to 77/255
@@ -469,3 +476,38 @@ cmake --build build/neon-scale-check-main
 
 then `time` both builds in alternating rounds at each size (section 7), and
 `check` each - `main`'s with `--images-dir docs/images/neon-resolution-scale`.
+
+## 10. After V19 and V20: the glow coverage table
+
+V19 and V20 in [`review-findings.md`](review-findings.md) changed what scales
+the halo and bloom on a partly lit ring: each of the outline's eight pieces
+now reads its own coverage from a table (`neon-glow-cover.frag`, pass 0b)
+baked once per config change, instead of every piece sharing the coverage
+gathered around the pixel. Every timing in sections 1-9 predates it. Measured
+on an Apple M2 Pro with `neon-scale-check time`, the build before V19 against
+the build after V20, interleaved rounds (five at 1280 x 720, three at 1920 x
+1080), median per figure, as cost after / before:
+
+| scenes | 720p, 1.0 | 720p, 0.5 | 1080p, 1.0 | 1080p, 0.5 |
+| ------ | --------- | --------- | ---------- | ---------- |
+| fully lit (10 scenes) | 1.01x-1.05x, ~1.04x | 1.00x-1.10x, ~1.08x | 1.01x-1.05x, ~1.03x | 1.04x-1.10x, ~1.08x |
+| `arcs` | 1.11x | 1.20x | 1.09x | 1.15x |
+| `segments` | 1.09x | 1.18x | 1.08x | 1.18x |
+
+A fully lit ring skips the per-piece read entirely and renders bit-identically,
+so what it pays is the code being there. The scaled path pays a little more in
+proportion because its shading passes are cheap - the gather, which dominates
+at 1.0, is untouched.
+
+`time` holds the config still, so the table bakes once per effect. **Under an
+animation that changes the config every frame it re-bakes every frame**: on a
+640 x 360 rect at 1280 x 720 with three arcs and two segments, the extra a
+frame costs over the same animation before V19 is about 0.1 ms when an arc
+animates and 0.2-0.25 ms when a segment does at scale 0.5 (a whole neon frame
+there is 0.36 ms), and 0.3-0.6 ms when a segment does at 1.0 (2.2 ms). The
+table is 2048 x 128 texels; segments are integrated numerically per texel and
+arcs in closed form, which is the difference. This is the figure to measure
+on a target GPU before shipping an animated segment.
+
+Memory: the table is 2 MB in RGBA16F (1 MB in the RGBA8 fallback), allocated
+once at `Initialize` whatever the scale.

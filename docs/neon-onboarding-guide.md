@@ -876,20 +876,23 @@ things:
   matters.
 - **Gathered coverage** (`emitCoverGathered`, `segCoverGathered`): how lit the
   outline is *on average around this pixel*, weighted like the colour. It
-  gives the halo and bloom their starting scale, and is still what the
-  segments' glow uses. Using the pointwise value there made the glow stop with
-  a hard edge along the corner diagonals whenever part of the ring was dark.
+  gives the halo and bloom their starting scale. Using the pointwise value
+  there made the glow stop with a hard edge along the corner diagonals
+  whenever part of the ring was dark.
 - **Each piece's own coverage** (`addPieceGlowFix`): the halo and bloom are a
   sum over the outline's eight pieces (four straights, four corner arcs), and
   each piece's light is scaled by how lit THAT piece is near its foot, under
-  its own kernel - read from the coverage table P0b bakes (Part 6), one fetch
-  per piece. The average around the pixel was a stand-in for it, wrong in two
+  its own kernel - arcs and segments both - read from the coverage table P0b
+  bakes (Part 6), one fetch per piece. The average around the pixel was a stand-in for it, wrong in two
   ways: its kernel is wider than the halo's along the line, so an unlit
   stretch kept enough averaged-in light to draw a thin line along it (V19 in
   [`review-findings.md`](review-findings.md)); and it is dominated by the
   nearest piece, so on a dark line it dropped and dimmed the light reaching
   there from lit edges far away (V20). On a fully lit ring every piece's
-  coverage is the average, so the correction is 0 and is skipped.
+  coverage is the average, so the correction is 0 and is skipped. One
+  approximation remains: the table follows the outline as a straight line
+  through each piece's foot, past the piece's ends, so a little light spills
+  round corners (V21).
 
 ![The end of an arc, close up](images/neon-onboarding/arc-end-closeup.png)
 
@@ -1300,7 +1303,7 @@ A program that fails to compile is logged once, recorded in
 | Member | Size | Format | When |
 | ------ | ---- | ------ | ---- |
 | `mEmissionBuffer` | 128 x 2 | RGBA16F, else RGBA8 (`EMISSION_FORMATS`) | allocated once in `Initialize` |
-| `mGlowCoverBuffer` | 2048 x 64 (`GLOW_COVER_SAMPLES` + 2 guard texels, `GLOW_COVER_ROWS`) | RGBA16F, else RGBA8 (`GLOW_COVER_FORMATS`), linear filter | allocated once in `Initialize` |
+| `mGlowCoverBuffer` | 2048 x 128: two bands (`GLOW_COVER_BANDS`) of `GLOW_COVER_ROWS` rows, each `GLOW_COVER_SAMPLES` + 2 guard texels wide | RGBA16F, else RGBA8 (`GLOW_COVER_FORMATS`), linear filter | allocated once in `Initialize` |
 | `mGatherBuffer` | a region around the rect, at the gather scale | RGBA16F, else RGBA8 (`GATHER_FORMATS`); 1 attachment, 2 with segments | scaled path; resized every frame (no-op if unchanged) |
 | `mScaledBuffer` | what the blit reads, at `resolutionScale`, never larger than the reduced viewport | RGBA8, 1 attachment | scaled path; resized every frame |
 
@@ -1576,22 +1579,24 @@ weight: 1, then 0.6 for the dimmer arc, 0 in the gaps), row 1's colour
 
 | | |
 | - | - |
-| **Purpose** | Pre-compute how lit the arcs are as the halo and the bloom see them, per perimeter position and distance from the line, so each piece of the emitter can scale its glow by its own coverage (Part 3.6). |
-| **Runs** | Both paths, only when `mGlowCoverDirty` (any config change). Never on time. |
-| **Target** | `mGlowCoverBuffer`, 2048 x 64 texels, RGBA16F (RGBA8 fallback), `GL_LINEAR`. Its own `RenderTargetState` is captured and restored. |
+| **Purpose** | Pre-compute how lit the arcs and the segments are as the halo and the bloom see them, per perimeter position and distance from the line, so each piece of the emitter can scale its glow by its own coverage (Part 3.6). |
+| **Runs** | Both paths, only when `mGlowCoverDirty` (any config change). Never on time - but every frame under an animation that changes the config, about 0.1 ms (arcs) to 0.2-0.6 ms (segments) a frame on an M2 Pro. |
+| **Target** | `mGlowCoverBuffer`, 2048 x 128 texels (2 MB), RGBA16F (RGBA8 fallback), `GL_LINEAR`. Its own `RenderTargetState` is captured and restored. |
 | **State** | Blend off. Scissor off. No clear: the quad covers every texel. |
 | **Geometry** | `mFullscreenVertexArray`, identity MVP: one fragment per texel. |
 | **Uniforms** | `uMVP` (identity), `uHeadFeather`, `uTailFeather`, `uHaloWidth`, `uBloomWidth` - all lengths as fractions of the full-res perimeter, which is what lets both resolution paths share the table. |
-| **Blocks** | `ArcBlock` (2). |
-| **Output** | Texel `(i, j)`, `i` the perimeter position (`(i - 0.5) / 2046`, one guard texel at each end so a linear fetch wraps the seam) and `j` the distance (`a = kh v / (1 - v)`, `v = (j + 0.5) / 64`): `r` = the arcs' coverage x intensity under the halo's kernel, `g` under the bloom's, each encoded `c / (1 + c)`. |
+| **Blocks** | `SegmentBlock` (0), `ArcBlock` (2). |
+| **Output** | The perimeter is folded into two bands stacked vertically. Texel `(i, j)` of band `b`: perimeter position `(b + (i - 0.5) / 2046) / 2` (one guard texel at each end of a band, so a linear fetch is continuous across bands and round the seam) and distance `a = kh v / (1 - v)`, `v = (j + 0.5) / 64`. `r` = the arcs' coverage x intensity under the halo's kernel, `g` under the bloom's (closed form); `b` and `a` the segments' boost x bell under each (integrated numerically, ~1e-3 of the boost). Each encoded `c / (1 + c)`. |
 
 ![The glow coverage table](images/neon-onboarding/pass-p0b-glow-cover.png)
 
-*P0b's table for the same scene, every fourth column, `t` 0 at the left and
-distance from the line growing downward. Top band: the halo's view - the
-first arc white, the dimmer one grey, the gaps dark, their edges softening
-with distance as the kernel widens. Bottom band: the bloom's, six times wider,
-so even on the line the gaps are only a shade darker.*
+*P0b's table for the same scene, unfolded - the two bands laid end to end,
+every eighth sample, `t` 0 at the left - with distance from the line growing
+downward. Top to bottom: the arcs as the halo sees them (the first arc white,
+the dimmer one grey, the gaps dark, their edges softening with distance as the
+kernel widens); the arcs as the bloom sees them, six times wider, so even on
+the line the gaps are only a shade darker; then the segment at `t` 0.3 the
+same two ways.*
 
 ### P1: the glow, direct path (`renderNeonPass(scaled = false)`, `neon.frag` plain)
 
@@ -1868,7 +1873,7 @@ The stage numbers follow the source order.
 | 13 | **Pointwise segment coverage** | `segCoverPt = sum of boost * exp(-e^2) * alpha`; `segCol = segColHue * segCoverPt`. |
 | 14 | **Gathered coverage** | `emitCoverGathered = arcWeight / totalWeight`, `segCoverGathered = segWeight / totalWeight` (exactly 1.0 on a fully lit ring), divided at the end of `gatherPerimeter` and arriving with stage 11; `gatheredSeg = segmentGlow(gathered) = segCoverGathered * max(emitCoverGathered, min(segCoverGathered, 1))`. |
 | 15 | **Filament gate** | `filamentGate = max(smoothstep(0.5, 1, min(segCoverPt, 1)), emitCover)`: a segment on a dark stretch opens its own core only above half strength. |
-| 16 | **Halo and bloom, straights** | For each of the four edges: perpendicular distance and extent, `haloSegment` and `bloomSegmentPedestalled` (Part 3.5), summed. `reach` mirrors the CPU's quad margin. Each edge then calls `addPieceGlowFix`, adding to `glowFix` how far its own halo and bloom move when they take that piece's own coverage instead of the gathered one. The arc halves read P0b's table (`glowCoverAt`) at the foot's perimeter position - placed by `pieceStart`, not `perimeterPosition`, which files a vertical edge's tangent point under the horizontal edge - and the piece's distance: one linear fetch, `.r` for the halo, `.g` for the bloom. The segment halves blend the gathered segment coverage toward the foot's (`segmentCoverAt`) by `sqrt((a^2 + k^2) / (a^2 + kc^2))`. Skipped - one compare - for a piece whose halo plus bloom is under `GLOW_PIECE_MIN`, and for every piece on a ring lit uniformly. |
+| 16 | **Halo and bloom, straights** | For each of the four edges: perpendicular distance and extent, `haloSegment` and `bloomSegmentPedestalled` (Part 3.5), summed. `reach` mirrors the CPU's quad margin. Each edge then calls `addPieceGlowFix`, adding to `glowFix` how far its own halo and bloom move when they take that piece's own coverage instead of the gathered one. Both halves read P0b's table (`glowCoverAt`) at the foot's perimeter position - placed by `pieceStart`, not `perimeterPosition`, which files a vertical edge's tangent point under the horizontal edge - and the piece's distance: one linear fetch inside the band that position falls in, `.r` / `.b` for the halo's arc and segment coverage, `.g` / `.a` for the bloom's. Skipped - one compare - for a piece whose halo plus bloom is under `GLOW_PIECE_MIN`, and for every piece on a ring lit uniformly. |
 | 17 | **Halo and bloom, corner arcs** | If `uCornerRadius > 0` (a uniform branch): each quarter arc is developed onto its tangent line (`arcTangentSegment`) and added with its weight; the four arcs share one bloom pedestal. Each arc's correction as in stage 16, placed by `cornerStart` and the foot's angle (`cornerFootAngle`, which sweeps continuously behind the arc's centre where the nearest point would jump ends). Near the centre of curvature the read moves to the arc's middle and widens to its whole length (`cornerLookup`, `cornerSpread`), since every point of the arc is equally far there. |
 | 18 | **Normalisation** | `halo *= HALO_NORM_FACTOR`; `bloom *= BLOOM_NORM_FACTOR`, then renormalised so the on-line value stays and the tail reaches 0 at `reach`. |
 | 19 | **Glow gate** | `glowGate = clamp(uGlowRadius / (2 px), 0, 1)`: at radius 0 the analytic halo would be a full-height sub-pixel spike, so it fades in over the first 2 px. |

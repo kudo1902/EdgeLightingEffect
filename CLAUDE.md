@@ -28,7 +28,7 @@ Docs, in reading order. The three neon documents are tiers of the same material 
 - [`docs/spotlight-renderer-plan.md`](docs/spotlight-renderer-plan.md) - the `SpotlightRenderer` design and the offscreen verification behind it, including the solved strip bound and the one real defect that verification caught.
 - [`docs/corner-crease-and-filament-nyquist.md`](docs/corner-crease-and-filament-nyquist.md) - the analytic emission's measured defects and their fixes: the dark diagonal wedges at the corners (halo and bloom were the field of ONE infinite edge, now a sum over the emitter's pieces), the `resolutionScale` 0.5 mismatch at thin line widths (the filament's floor was in the wrong units, and then - section 2.8 - was a fixed half width when what decides the blit is the profile's SHAPE, so a soft `filamentFalloff` rendered twice as wide), and the corner over-extension the first fix introduced (the straights ran to the SHARP corner, so a phantom emitter lit the outside of every rounded corner; they now stop at the tangent points and each arc is developed onto its own tangent), and the crease THAT fix introduced (the arc was developed at rate `r`, which is right only for a fragment on the arc, so every arc's centre of curvature carried a C1 kink and an under-count - a dark cross at the middle of a circle; section 1.9). Section 1.10 is the one level up: all of that fixed the halo/bloom FIELD, while the coverage that SCALES it was still read at the fragment's NEAREST perimeter point - so any partly lit perimeter (a half-ring arc, a segment boost) cut the glow to a hard-edged polygon along the medial axis until the glow took a gathered coverage instead (itself replaced since V20 by each piece's own coverage, read from a baked table). Includes the per-edge bloom pedestal the first fix forced and the one shared pedestal the arcs are allowed instead, the small-rect and INTERIOR brightness changes the segment sum causes - section 1.5.2 is the one to read if someone reports "the glow got bigger" - and the offscreen probes behind every number. Read before touching the halo/bloom or filament blocks.
 - [`docs/glow-side-comparison.md`](docs/glow-side-comparison.md) - what changed when every edge the neon draws became COVERAGE applied to the graded output rather than a multiply into the linear emission, and when the one-sided cut moved off the reduced-resolution buffer into `neon-blit.frag`. Magnified before/after crops plus the sub-pixel sweeps behind them. Read it before retuning `glowSideSoftness` or `Cutoff::softness`, and before assuming a mask belongs above the tone map.
-- [`docs/neon-resolution-scale-proposal.md`](docs/neon-resolution-scale-proposal.md), [`docs/neon-resolution-scale-plan.md`](docs/neon-resolution-scale-plan.md) and [`docs/neon-resolution-scale-comparison.html`](docs/neon-resolution-scale-comparison.html) - the edge ring: why the reduced-resolution neon re-shades a thin ring around the edge at full resolution (the proposal), how it was built in six steps and what each measured (the plan; section 7 has the re-verification and the cost caveats, section 11 the open decisions), and twelve scenes at six scales against their 1.0 renders, before and after (the comparison page). [`docs/neon-resolution-scale-perf-comparison.md`](docs/neon-resolution-scale-perf-comparison.md) is the price: frame time before and after at every scale, attributed step by step (the ring is three quarters of it), plus startup and memory - and, in section 9, the bottom line against `main` at 0.5 on an Apple M2 Pro (2.3x faster at 720p, 2.8x at 1080p, and within 2/255 of 1.0 where `main` is up to 77 off). Read the plan before touching the scaled path, the ring's width rule or the blit/ring partition.
+- [`docs/neon-resolution-scale-proposal.md`](docs/neon-resolution-scale-proposal.md), [`docs/neon-resolution-scale-plan.md`](docs/neon-resolution-scale-plan.md) and [`docs/neon-resolution-scale-comparison.html`](docs/neon-resolution-scale-comparison.html) - the edge ring: why the reduced-resolution neon re-shades a thin ring around the edge at full resolution (the proposal), how it was built in six steps and what each measured (the plan; section 7 has the re-verification and the cost caveats, section 11 the open decisions), and twelve scenes at six scales against their 1.0 renders, before and after (the comparison page). [`docs/neon-resolution-scale-perf-comparison.md`](docs/neon-resolution-scale-perf-comparison.md) is the price: frame time before and after at every scale, attributed step by step (the ring is three quarters of it), plus startup and memory - and, in section 9, the bottom line against `main` at 0.5 on an Apple M2 Pro (2.3x faster at 720p, 2.8x at 1080p, and within 2/255 of 1.0 where `main` is up to 77 off). Section 10 is what the glow-coverage table (V19/V20) added on top, which sections 1-9 predate. Read the plan before touching the scaled path, the ring's width rule or the blit/ring partition.
 - [`docs/upgrade-notes.md`](docs/upgrade-notes.md) - what a host moving from `main` has to change: the opaque fill's own cutoffs (default off - a fill that leaned on the glow's cutoffs grows to the viewport), `Cutoff::softness` running outward from `size`, the deprecated C shims for the old opaque softness, and the per-path shader compile. Read before telling anyone an upgrade is drop-in.
 - [`docs/review-findings.md`](docs/review-findings.md) - open defects and rough edges, visual ones with offscreen repros. Check here before assuming a behaviour is intended.
 - [`docs/naming-review.md`](docs/naming-review.md) - identifier audit against `AGENTS.md`, plus the names that describe mechanisms the code no longer has. Read before renaming anything.
@@ -120,19 +120,27 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
 
   A second pre-pass, **pass 0b, the glow coverage table**
   (`neon-glow-cover.frag`, `renderGlowCoverPass`), bakes per perimeter position
-  and distance from the line how lit the ARCS are as the halo (.r) and the
-  bloom (.g) see it: the arcs' coverage convolved with each layer's kernel
-  along the outline, closed form, every arc end summed. `neon.frag` scales each
+  and distance from the line how lit the outline is as the halo and the bloom
+  see it: the arcs' coverage (.r halo, .g bloom) convolved with each layer's
+  kernel along the outline in closed form, every arc end summed, and the
+  segments' bells (.b, .a) integrated numerically to ~1e-3 of their boost.
+  `neon.frag` scales each
   of the eight pieces' halo and bloom by its own read of it (`glowCoverAt` in
   `addPieceGlowFix`, one linear fetch per piece) rather than by the coverage
   gathered around the fragment, which drew a thin line along a stretch no arc
   covers and a groove along it under a strong bloom (V19 and V20 in
   [`docs/review-findings.md`](docs/review-findings.md)). Its lengths are
-  perimeter fractions, so both resolution paths share one table; it is
-  `GLOW_COVER_SAMPLES + 2` (a guard texel at each end, so a linear fetch wraps
-  the seam under clamp-to-edge) by `GLOW_COVER_ROWS`, RGBA16F with an RGBA8
-  fallback, encoded `c / (1 + c)`, allocated once in `Initialize`, and
-  re-baked on any config change (`mGlowCoverDirty`) - never on time. Two
+  perimeter fractions, so both resolution paths share one table. The perimeter
+  is folded into `GLOW_COVER_BANDS` (2) bands of `GLOW_COVER_ROWS` rows, each
+  `GLOW_COVER_SAMPLES + 2` wide (a guard texel at each end, so a linear fetch
+  is continuous across bands and round the seam under clamp-to-edge) - 2048 x
+  128, GLES 3.0's minimum maximum width; `glowCoverAt` keeps its vertical fetch
+  inside one band. RGBA16F (2 MB) with an RGBA8 fallback, encoded
+  `c / (1 + c)`, allocated once in `Initialize`, and re-baked on any config
+  change (`mGlowCoverDirty`) - never on time, but EVERY frame under an
+  animation that changes the config, which costs about 0.1 ms (arcs) to
+  0.2-0.6 ms (segments, integrated numerically) a frame on an M2 Pro: the
+  cost to watch on a slower GPU. Two
   things in `neon.frag` exist only to keep that read continuous and must stay:
   each foot's perimeter position comes from the piece table (`pieceStart` /
   `cornerStart`, checked against `perimeterPosition`) because
@@ -142,7 +150,11 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   (`cornerLookup` / `cornerSpread`), where the foot's angle swings round with
   direction. Do not evaluate the convolution in `neon.frag` instead: measured,
   2.0x / 3.3x on a partly lit ring, and every in-shader exact form tried raised
-  EVERY scene's cost, fully lit ones included.
+  EVERY scene's cost, fully lit ones included. The table's one known
+  approximation is V21: it convolves along a straight line through each foot,
+  past the piece's ends, so light spills round corners (8-15 levels off an
+  exact per-piece reference); the fix is a table per piece, designed there but
+  not built.
 
   `Render` is a **pass schedule**: derive the transform,
   then one call per `render*Pass` method, in TWO PHASES on both paths - every

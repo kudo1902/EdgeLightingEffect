@@ -3364,14 +3364,22 @@ fetch per piece (`glowCoverAt` in `neon.frag`):
   convolution is a difference of ramp-smoothed CDFs, and every arc end is
   summed, so nothing switches between ends as a fragment moves. A step between
   two abutting arcs of different intensity is simply two ends.
+- **Segments** go in the same table, in the two other channels. A Gaussian bell
+  has no closed form against these kernels, so the bake integrates it, by
+  whichever side is smooth: 8-point Gauss-Hermite over the bell when the
+  kernel is at least twice its width, and otherwise the bell's own value plus
+  a correction integral that vanishes at the kernel's peak, 8-point
+  Gauss-Legendre on each side of it. Against a brute-force integral over
+  kernel widths from 0.005 to 100 bell widths, the worst error is 1.05e-3 of
+  the segment's boost.
 - **Units** are perimeter fractions, so the reduced-scale shading and the
-  full-res ring share one table. 2046 columns plus a guard texel at each end
-  (so a linear fetch wraps the perimeter's seam under clamp-to-edge) - 2048,
-  GLES 3.0's minimum maximum texture size - by 64 distance rows, half of them within one halo width of the line. RGBA16F, RGBA8
-  fallback, encoded `c / (1 + c)`; allocated once; re-baked on any config
-  change, never on time.
-- **Segments** keep the gathered mean, blended toward the foot by the width
-  ratio: a Gaussian bell has no closed form against these kernels.
+  full-res ring share one table. The perimeter is folded into two bands of 64
+  distance rows each, so it gets 2 x 2046 = 4092 samples (under 1.5 px on a
+  1920 x 1080 rect) in a texture 2048 wide - GLES 3.0's minimum maximum - with
+  a guard texel at each end of a band, so a linear fetch is continuous across
+  bands and round the seam under clamp-to-edge. Half the rows lie within one
+  halo width of the line. 2048 x 128, RGBA16F (2 MB), RGBA8 fallback, encoded
+  `c / (1 + c)`; allocated once; re-baked on any config change, never on time.
 
 Making the read continuous took two more things, both found by the crease
 metric:
@@ -3409,31 +3417,47 @@ metric:
   scenes, and brighter by up to 17 where lit edges' bloom reaches an unlit
   region, since that bloom is no longer scaled by the dark piece's coverage;
 - **the table against the same convolution evaluated in the shader**: within
-  1/255 everywhere except a few hundred pixels at the arc ends of a 1 px halo
-  on a 6000 px perimeter (4-5/255), where a column is 2.9 px against a 14 px
-  feather. (Measured at 2048 columns; the shipped 2046 is 0.1% coarser.)
+  1/255 in every scene. With one band (2.9 px a column on a 6000 px
+  perimeter) a 1 px halo read 4-5/255 off beside an arc's end, which is what
+  the second band is for;
+- **segments**: their glow is the piece's own too now, so the segment scenes
+  move as the arc scenes did. `v14_segment`, against the build before V19, is
+  up to 34 levels darker in the segment's near halo and up to 11 brighter
+  further out; `segment_dark` moves by up to 20 against the version that
+  still blended segments. No new crease.
 
 `neon-scale-check check` passes after regenerating the comparison page's
-`arcs` and `segments` (their max at 0.25-0.75 improved from 2 to 1), and
-`partition` passes on two seeds. The onboarding guide's figures were
-regenerated, plus a new one of the table itself (`pass-p0b-glow-cover.png`);
-the partly lit ones change by up to 30-63 levels, and `winding-*.png` no
-longer traces the unlit outline.
+`arcs` and `segments` (`arcs`' max at 0.25-0.75 improved from 2 to 1;
+`segments`' at 0.25 went from 1 to 2, inside its bound), and `partition`
+passes on two seeds. The onboarding guide's figures were regenerated, plus a
+new one of the table itself (`pass-p0b-glow-cover.png`, all four channels
+unfolded); the partly lit ones change by up to 30-63 levels, and
+`winding-*.png` no longer traces the unlit outline.
 
-**Cost**, against the build before V19, Apple M2 Pro, 1280 x 720, median of
-five interleaved rounds:
+**Cost**, against the build before V19, Apple M2 Pro, median of interleaved
+rounds (five at 1280 x 720, three at 1920 x 1080):
 
-| scenes | scale 1.0 | scale 0.5 |
-| ------ | --------- | --------- |
-| fully lit (10 scenes) | 1.04x-1.11x, ~1.07x | 1.01x-1.12x, ~1.09x |
-| `arcs` | 1.15x | 1.24x |
-| `segments` | 1.16x | 1.31x |
+| scenes | 720p, 1.0 | 720p, 0.5 | 1080p, 1.0 | 1080p, 0.5 |
+| ------ | --------- | --------- | ---------- | ---------- |
+| fully lit (10 scenes) | 1.01x-1.05x, ~1.04x | 1.00x-1.10x, ~1.08x | 1.01x-1.05x, ~1.03x | 1.04x-1.10x, ~1.08x |
+| `arcs` | 1.11x | 1.20x | 1.09x | 1.15x |
+| `segments` | 1.09x | 1.18x | 1.08x | 1.18x |
 
 Cheaper than V19's second step on partly lit rings (1.21x / 1.50x on `arcs`)
-and the same on fully lit ones. The bake itself costs about 0.04 ms per frame
-at 1280 x 720 when the config changes every frame (an animated arc), measured
-on a three-arc ring at scale 0.5; on a still config it runs once. The table is
-1 MB in RGBA16F. Not measured at 1920 x 1080.
+and the same on fully lit ones; the segments got cheaper again when they
+moved into the table, since the main shader no longer loops over them per
+piece.
+
+Those figures are for a still config, where the table bakes once. **Under an
+animation that changes the config every frame it re-bakes every frame**, and
+that is not free: on a 640 x 360 rect at 1280 x 720 with three arcs and two
+segments, measured as the extra a frame costs over the same animation on the
+build before V19: at scale 0.5, about 0.1 ms when an arc animates and 0.2-0.25
+ms when a segment does, against a whole neon frame of 0.36 ms; at 1.0, 0.3-0.6
+ms when a segment does (the arc case is inside the noise of the 2.2 ms frame).
+Segments are integrated numerically and arcs in closed form, hence the
+difference. On a slower GPU this is the cost to watch: it is proportional to
+the table's texel count and to the number of segments.
 
 Rejected on the way:
 
@@ -3444,6 +3468,73 @@ Rejected on the way:
   coverage: removed the dip but creased (neighbour step 4 to 8-12), because a
   step between abutting arcs was ignored and the nearest end switches where
   two are equidistant.
+
+What is still approximate is the line the table convolves along: see V21.
+
+### V21. The coverage table runs the outline straight through each piece's foot, so light spills round corners - OPEN
+
+V20's table is a function of perimeter position and distance alone, which is
+what makes it a table: it convolves the coverage along a STRAIGHT line
+through each piece's foot, running on past the piece's ends as if the
+perimeter did not turn. The exact term is each piece's own coverage over its
+own extent - clipped at its ends, and for a corner developed onto its tangent
+as `arcTangentSegment` develops it. Past a piece's end the straight line picks
+up its neighbour's coverage, so near a corner where a lit stretch meets a dark
+one a lit piece reads a little dim and a dark one a little lit.
+
+**Measured** against an exact reference - the same coverage model (linear-ramp
+feathers, Gaussian bells) integrated numerically per piece over its true,
+clipped, developed extent, 160 samples, built in a scratch copy of `neon.frag`
+and rendered over the fourteen probe scenes:
+
+| scene | pixels off | worst |
+| ----- | ---------- | ----- |
+| fully lit rings (4) | 0 | 0 |
+| `ghost_report` (1 px halo) | 593 | 1 |
+| `corner_arc_r0_g1` | 100,686 | 4 |
+| `ghost_glow5`, `tiled_arcs` | ~0.5-0.85 M | 8 |
+| `corner_arc_r0_g5`, `corner_arc_r40_g5`, `half_ring` | ~0.87 M | 11-13 |
+| `v14_segment` | 2.0 M | 15 |
+| `segment_dark` | 0.9 M | 33 |
+
+A smooth error over most of the frame, not an artifact - no crease, no line -
+and it is the reference that is right. The difference map is the corner spill
+above: too dim beside a lit stretch that ends at a corner, too bright on the
+dark stretch round it.
+
+**Clipping only the straights is worse.** Exact straights with the table's
+corners differ from the reference by up to 23-24 levels on the rounded scenes,
+against 11-13 for the table alone: the corners' spill no longer matches the
+straights', so both have to be clipped.
+
+**The fix, not built.** A table per piece instead of one per perimeter:
+
+- **each straight**, one band of its own, indexed by where the fragment
+  PROJECTS along it - including past either end, compressed, since a
+  fragment beyond a straight's end projects off it - and by its distance. That
+  is still two variables, because for a straight the clipped extents follow
+  from the projection;
+- **each corner**, a small table indexed by the fragment's polar position
+  round the corner's centre, which determines everything `arcTangentSegment`
+  returns - outside, inside and behind the centre alike - so `cornerLookup`,
+  `cornerSpread`, `cornerFootAngle` and the feet's `pieceStart` placement
+  would all go;
+- **the bake**, clipped: an arc is still closed form (each linear piece of
+  its trapezoid against the kernel needs the CDF and the first moment,
+  `-c^2 / (2 sqrt(x^2 + c^2))` for the halo and `c ln(x^2 + c^2) / (2 PI)`
+  for the bloom), and only arcs overlapping the piece contribute; a segment
+  is the bell's value plus a correction, Gauss-Legendre on either side of
+  the kernel's peak over the bell's support within the piece - checked in
+  isolation against a brute-force integral, 16 nodes a panel, worst error
+  1.6e-3 of the boost;
+- **the size**, five bands of 64 rows at 2048 wide (four straights and one
+  for the corners) - about 5 MB in RGBA16F against today's 2, and more
+  texels to bake, which matters under an animation (V20's per-frame bake
+  cost above).
+
+`arcTangentSegment` would move into a shared GLSL chunk injected into both
+`neon.frag` and the bake, so the corner geometry has one copy.
+
 ---
 
 ## What is left
@@ -3456,7 +3547,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20. Five items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21. Five items from the
 first pass remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -3487,6 +3578,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | V18 | open | colour-stop alpha dims only the filament; the halo and bloom ignore it (measured, `main` too); the cure is a design call (a third gather row or a redefined arc weight) |
 | V19 | fixed | V14's other half: the gathered coverage was right far from the line and too wide on it, so a narrow halo drew a thin line along a stretch no arc covers (13-68 levels at `glowRadius` 1, now 0); each piece now blends toward its foot's coverage by how much of its own kernel lies past the nearest arc end |
 | V20 | fixed | V14's last limit, uncovered by V19: every piece was scaled by the coverage gathered around the FRAGMENT, which dips on a dark line, so on a small rect with strong bloom an unlit stretch read 3-6 levels darker on the line; each piece now reads its own coverage from a table baked per config change (pass 0b) |
+| V21 | open | V20's table convolves the coverage along a straight line through each piece's foot, past the piece's ends, so light spills round corners: 8-15 levels off an exact per-piece reference over most of a partly lit frame, 33 in one segment scene; the fix is a table per piece (clipped straights by projection, corners by polar position), ~5 MB |
 | I32 | fixed | the edge ring's gather attachments tripled the scaled path's memory; now 2.15 MB at 1080p and 0.5 for a full-screen rect, less for smaller ones |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
