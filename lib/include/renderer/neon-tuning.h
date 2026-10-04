@@ -364,6 +364,20 @@
 //     not a fixed cost. ---
 #define NEON_MAX_LOOP_SAMPLES     128
 
+// --- Glow coverage table (neon-glow-cover.frag, V20): per perimeter position
+//     and distance from the line, the arcs' and the segments' coverage as the
+//     halo and the bloom see them. The perimeter is folded into BANDS bands of
+//     ROWS distance rows each; a band has SAMPLES columns plus one guard texel at
+//     each end, so a linear fetch is continuous across bands and round the seam -
+//     2048 texels wide, GLES 3.0's minimum maximum texture size, which the guards
+//     must fit inside. Two bands give 4092 samples, a column under 1.5 px on a
+//     1920 x 1080 rect: at one band (2.9 px) a 1 px halo read 4-5/255 off the
+//     exact convolution beside an arc's end. 2048 x 128 RGBA16F is 2 MB.
+//     Allocated once, at this fixed size. ---
+#define GLOW_COVER_SAMPLES        2046
+#define GLOW_COVER_ROWS           64
+#define GLOW_COVER_BANDS          2
+
 // --- Grading ---
 #define TONE_MAP_SHOULDER         0.6
 #define GAMMA_EXPONENT            0.85

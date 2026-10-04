@@ -291,6 +291,22 @@ namespace EdgeLighting
         ///      report and nothing to allocate here.
         void renderEmissionPass(int viewportWidth, int viewportHeight, float time, const Config &config);
 
+        /// Size @c mGlowCoverBuffer to the coverage table's fixed dimensions,
+        /// in the best format the driver will give. The same walk, and the
+        /// same once-from-@ref Initialize contract, as
+        /// @ref resizeEmissionBuffer.
+        /// @return false only if NO candidate could be allocated.
+        bool resizeGlowCoverBuffer();
+
+        /// Pass 0b: bake the glow coverage table into @c mGlowCoverBuffer -
+        /// per perimeter position and distance from the line, the arcs' and
+        /// the segments' coverage convolved with the halo's and the bloom's
+        /// kernel along the outline (neon-glow-cover.frag, V20 in docs/review-findings.md).
+        /// Retargets the framebuffer and viewport, so it restores both before
+        /// returning, and clears @c mGlowCoverDirty on the way out.
+        /// @pre Blending disabled, and the light blocks packed this frame.
+        void renderGlowCoverPass(const Config &config);
+
         /// The transform and the rect's shape - uMVP, uRectSize,
         /// uCornerRadius - for @p shader at @p scale: everything the gather
         /// pass (neon-gather.frag) reads besides its own inputs, and the first
@@ -425,6 +441,7 @@ namespace EdgeLighting
         ShaderProgram mNeonShadeShader;                                ///< neon.frag + NEON_READS_GATHER: the scaled path's pass 1. Built on first draw.
         ShaderProgram mNeonRingShader;                                 ///< The same source, its own program: the scaled path's edge ring. See ensurePathPrograms.
         ShaderProgram mEmissionShader;                                 ///< Perimeter emission pre-pass (neon-emission.frag).
+        ShaderProgram mGlowCoverShader;                                ///< Glow coverage pre-pass (neon-glow-cover.frag).
         ShaderProgram mBlackRectShader;                                ///< Opaque-mode black background fill (black-rect.frag).
         ShaderProgram mBlitShader;                                     ///< Scaled-path upscale composite (neon-blit.frag). Built on first draw.
         VertexArray mGlowVertexArray{"NeonRenderer.Glow"};             ///< Tight glow quad (rect + glow reach), in scaled space.
@@ -503,6 +520,15 @@ namespace EdgeLighting
         /// here to say so.
         Framebuffer mEmissionBuffer{"NeonRenderer.Emission"};
 
+        /// Glow coverage table, GLOW_COVER_SAMPLES + 2 wide (a guard texel at
+        /// each end of a band) by GLOW_COVER_ROWS x GLOW_COVER_BANDS: how lit
+        /// the arcs and the segments are as each layer sees them, per perimeter
+        /// position and distance from the line - see neon-glow-cover.frag. Written by
+        /// @ref renderGlowCoverPass, read by every neon.frag program with one
+        /// filtered fetch per piece. Allocated once in @ref Initialize; its
+        /// lengths are perimeter fractions, so both resolution paths share it.
+        Framebuffer mGlowCoverBuffer{"NeonRenderer.GlowCover"};
+
         /// Pass 1's target on the scaled path: the composited colour, one RGBA8
         /// attachment at the reduced scale, covering what the blit reads
         /// (@c mScaledOuter) and never more than the whole reduced viewport -
@@ -544,6 +570,14 @@ namespace EdgeLighting
         /// while @c hueRotationRate is non-zero; at 0 the table does not
         /// depend on time and this is not consulted.
         float mEmissionTime = 0.0f;
+
+        /// Whether @c mGlowCoverBuffer has to be re-baked. Set on ANY config
+        /// change, like @c mEmissionDirty and for the same reason: the table
+        /// reads the arcs, the segments, the rect's shape and the glow radius, and a missed
+        /// field is a stale glow where a spare bake is one small pass. Unlike
+        /// the emission table it never depends on time. Starts true - the
+        /// buffer holds undefined texels until the first bake.
+        bool mGlowCoverDirty = true;
 
         /// Whether @c mSegmentBlock / @c mArcBlock still hold the current
         /// config. Cleared by @ref packLightBlocks once it has repacked.

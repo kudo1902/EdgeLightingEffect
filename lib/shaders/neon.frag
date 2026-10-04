@@ -109,6 +109,12 @@ uniform sampler2D uArcLUT;
 // GLES 3.0 does not support sampler1D, so we use a 1-row 2D texture.
 uniform sampler2D uGradientLUT;
 
+// The glow coverage table (neon-glow-cover.frag, baked once per config change):
+// per perimeter position and distance from the line, the arcs' coverage as the
+// halo (.r) and the bloom (.g) see it, encoded c / (1 + c). Read by
+// glowCoverAt, one linear fetch per piece of the emitter.
+uniform sampler2D uGlowCover;
+
 // The gather's own inputs - the sample block, uNumSamples and the emission
 // table uEmission - are in neon-common.glsl, and do not exist in the
 // NEON_READS_GATHER variant: it reads the gather's RESULT instead of running
@@ -560,6 +566,175 @@ float arcCoverContinuous(float sPos, float start, float length, float fHead, flo
                              : 1.0 - smoothstep(length - fH, length, rel);
     return tailIn * headIn;
 }
+
+// A piece whose own halo plus bloom at this fragment is below this, in linear
+// light before the grade, keeps the gathered coverage rather than its own: the
+// difference moves the output by well under one 8-bit level (the grade maps
+// 1e-3 to about 1/255). Most pieces are this faint at most fragments - the far
+// side of the rect, the bloom past `reach`.
+const float GLOW_PIECE_MIN = 1e-4;
+
+// The segment's glow magnitude from one piece's (arc, segment) coverage pair:
+// its coverage times the soft gate the segment glow has always taken, max with
+// the arc so a segment on a lit arc keeps the arc's glow reach.
+float segmentGlow(vec2 cover) {
+    return cover.y * max(cover.x, min(cover.y, 1.0));
+}
+
+// How lit the outline is as one piece's halo and bloom see it: the arcs'
+// coverage x intensity (.r halo, .g bloom) and the segments' boost x bell (.b
+// halo, .a bloom), each convolved with that layer's kernel along a line at
+// distance `a`, read from the table neon-glow-cover.frag bakes once per config
+// change. `s` is the piece's foot's perimeter position, `kh` the halo width the
+// table's rows are spaced by. The table is in perimeter fractions, so the
+// ratio a / kh is the same at every resolution scale.
+//
+// The perimeter is folded into GLOW_COVER_BANDS bands stacked vertically, so
+// the fetch picks the band `s` is in and keeps its row inside it: a linear
+// fetch past a band's first or last row would blend in the neighbouring band.
+// Across a band's ends the guard columns carry the neighbour's values.
+vec4 glowCoverAt(float s, float a, float kh) {
+    float x    = s * float(GLOW_COVER_BANDS);
+    float band = min(floor(x), float(GLOW_COVER_BANDS - 1));
+    float u    = ((x - band) * float(GLOW_COVER_SAMPLES) + 1.0) / float(GLOW_COVER_SAMPLES + 2);
+    float row  = clamp(a / (a + kh) * float(GLOW_COVER_ROWS), 0.5, float(GLOW_COVER_ROWS) - 0.5);
+    float v    = (band * float(GLOW_COVER_ROWS) + row) / float(GLOW_COVER_ROWS * GLOW_COVER_BANDS);
+    vec4  e    = textureLod(uGlowCover, vec2(u, v), 0.0);
+    return e / max(1.0 - e, vec4(1.0 / 1024.0));
+}
+
+// The angle along one corner arc of the point its coverage is read at, from
+// the arc's +x end (arcTangentSegment's frame, `w` the fragment's offset from
+// the arc centre folded into the first quadrant). Facing the arc it is the
+// nearest arc point's, as arcTangentSegment takes it. BEHIND the centre (w in
+// the third quadrant) the nearest point jumps from one end of the arc to the
+// other across the diagonal, so there it sweeps instead - from the +y end at
+// w.y = 0 through the arc's middle on the diagonal to the +x end at w.x = 0,
+// meeting the facing case continuously on both edges.
+float cornerFootAngle(vec2 w) {
+    if (w.x > 0.0 || w.y > 0.0) {
+        return atan(max(w.y, 0.0), max(w.x, 0.0));
+    }
+    return 0.25 * HALF_PI * (2.0 + 2.0 * (w.y - w.x) / max(-w.x - w.y, ARC_FRAME_EPSILON));
+}
+
+// Where one piece of the outline sits on the perimeter: (.x) the perimeter
+// position in px of the piece's t1 end - the end its `span` starts at - and
+// (.y) +1 if perimeter position grows toward its t2 end, -1 if it shrinks.
+// `cwStart` / `cwSigma` are the CLOCKWISE values; perimeterPosition lays
+// COUNTER_CLOCKWISE out over the same geometry the other way round from the
+// top-left tangent point, which is s -> peri - arcLen - s. Checked against
+// perimeterPosition for every piece, both windings, at four shapes.
+//
+// The feet's perimeter positions come from here rather than from
+// perimeterPosition, which files a vertical edge's own tangent point under the
+// horizontal edge - exactly where a straight's foot clamps, so its position
+// jumped by a corner's length there.
+vec2 pieceStart(float cwStart, float cwSigma, float peri, float arcLen) {
+    if (uWinding == 0) {
+        return vec2(cwStart, cwSigma);
+    }
+    float s = peri - arcLen - cwStart;
+    return vec2(s - peri * floor(s / peri), -cwSigma);
+}
+
+// The same for the corner arc in quadrant `signs` (+y the top edge, as
+// perimeterPosition has it). Its t1 end is the tangent point on the vertical
+// edge - arcTangentSegment's +x end.
+vec2 cornerStart(vec2 signs, float ws, float hs, float arcLen, float peri) {
+    float s = (signs.x > 0.0) ? ws + arcLen + ((signs.y > 0.0) ? 0.0 : hs)
+                              : 2.0 * ws + 3.0 * arcLen + hs + ((signs.y > 0.0) ? hs : 0.0);
+    return pieceStart(s, -signs.x * signs.y, peri, arcLen);
+}
+
+// A perimeter position as a fraction in [0, 1), from a piece's place and a
+// distance `q` px along it from its t1 end.
+float piecePosition(vec2 start, float q, float peri) {
+    float s = (start.x + start.y * q) / peri;
+    return s - floor(s);
+}
+
+// Where along a corner arc its coverage is read, and how much wider than the
+// layer's own kernel: near the arc's centre of curvature every point of the
+// arc is the same distance away, so the right coverage is the arc's average,
+// while the foot's angle swings round with direction - a pinwheel at the
+// centre. Both move toward the arc's middle and its whole length as the
+// development rate lam/r (1 / arcTangentSegment's weight) falls from 1 on the
+// arc to 0 at the centre, so the change is continuous. `q` is the foot's
+// arclength from the arc's t1 end.
+float cornerLookup(float q, float arcLen, float weight) {
+    float lamR = min(1.0 / weight, 1.0);
+    return 0.5 * arcLen + (q - 0.5 * arcLen) * lamR;
+}
+float cornerSpread(float arcLen, float weight) {
+    return 0.5 * arcLen * (1.0 - min(1.0 / weight, 1.0));
+}
+
+// V19 and V20: ONE PIECE's halo and bloom scaled by that piece's OWN coverage
+// rather than the gathered mean.
+//
+// The exact term is INTEGRAL cover(s) * K(|p - P(s)|) ds over the piece: the
+// coverage along the piece, weighted by the layer's kernel around the
+// fragment's foot of perpendicular. The gathered mean V14 scales the glow by is
+// a stand-in for it that is wrong in two ways. Its kernel is a Lorentzian of
+// width kc, where the halo's falls as 1/t^3 along the line, so a dark stretch
+// kept light from lit ones hundreds of px away and a narrow halo drew a thin
+// line along it (V19). And it is gathered around the FRAGMENT, so it is
+// dominated by whichever piece is nearest: on a dark line it drops, and the
+// lit far edges, scaled by the same mean, dropped with it - a groove along the
+// line (V20).
+//
+// So each piece reads its own: the arcs' and the segments' coverage convolved
+// with ITS kernel at ITS distance, from the table (glowCoverAt) - exact for a
+// feathered arc on a straight line, every arc end summed so nothing switches
+// as the fragment moves, and the segments' bells integrated to ~1e-3 of their
+// boost. The line is taken as straight through the foot; at a corner's centre
+// of curvature that would swing the read round with direction, which
+// cornerLookup / cornerSpread take care of by moving it to the arc's middle and
+// widening it to the whole arc.
+//
+// Per piece rather than once for the fragment, because each piece's foot moves
+// continuously with the fragment, so nothing switches at the medial axis where
+// the NEAREST piece changes - the crease V14 removed by gathering stays gone.
+//
+// Applied as a CORRECTION: the glow is first scaled by the gathered mean
+// exactly as before V19, and each piece adds only the difference its own
+// coverage makes, times its halo `h` and bloom `b`, to `fix` = (halo arc, halo
+// segment, bloom arc, bloom segment). A piece that is skipped therefore costs
+// one compare and nothing else.
+//
+// Measured against the closed form evaluated here per piece instead of read
+// from the table: the same picture, and 2.0x / 3.3x the pre-V19 cost on a
+// partly lit ring at scale 1.0 / 0.5. The four earlier attempts at an exact
+// halo in this function cost 1.2-1.7x on EVERY scene, fully lit ones included,
+// presumably through the program's register use: keep what runs here small.
+//
+// `start` places the piece on the perimeter; a straight's foot is `along` it,
+// a corner's comes from `cornerW` and `cornerWeight` (see cornerLookup), worked
+// out past the skip. `a` is the piece's distance. `haloWeight` / `bloomWeight` are the piece's
+// halo and bloom as they reach the output, for the GLOW_PIECE_MIN test; the
+// caller zeroes both on a ring lit uniformly, where every piece's coverage IS
+// the gathered one and the correction is exactly 0. `gatheredSeg` is
+// segmentGlow(gathered), the segment magnitude the plain sums are scaled by.
+void addPieceGlowFix(inout vec4 fix, vec2 start, float along, vec2 cornerW, float cornerWeight, bool corner,
+                     float a, float kh, float arcLen, float peri,
+                     vec2 gathered, float gatheredSeg, float h, float b, float haloWeight, float bloomWeight) {
+    if (haloWeight + bloomWeight <= GLOW_PIECE_MIN) {
+        return;
+    }
+    // The foot's place on the perimeter, worked out only past the skip: a
+    // straight's is `along` its piece, a corner's comes from its angle.
+    float q      = corner ? cornerLookup(uCornerRadius * cornerFootAngle(cornerW), arcLen, cornerWeight) : along;
+    float spread = corner ? cornerSpread(arcLen, cornerWeight) : 0.0;
+    float sFoot  = piecePosition(start, q, peri);
+    vec4  cover  = glowCoverAt(sFoot, sqrt(a * a + spread * spread), kh);
+    vec2  coverH = cover.rb;
+    vec2  coverB = cover.ga;
+    fix += vec4((coverH.x - gathered.x) * h, (segmentGlow(coverH) - gatheredSeg) * h,
+                (coverB.x - gathered.x) * b, (segmentGlow(coverB) - gatheredSeg) * b);
+}
+
+
 
 // ---------------------------------------------------------------------------
 
@@ -1088,7 +1263,7 @@ void main() {
 
     // Attach the segments' magnitude to their hue. Unclamped on purpose: boost
     // above 1 must still brighten, as it did when the gather's `bell` carried
-    // the magnitude. (glowCoverAll's min(.., 1.0) below only bounds the shared
+    // the magnitude. (segmentGlow's min(.., 1.0) only bounds the shared
     // halo/bloom reach - it is not the segment's brightness.)
     vec3 segCol = segColHue * segCoverPt;
 
@@ -1140,8 +1315,15 @@ void main() {
     // see it at all: the emission colour is the LUT's straight RGB, so neither
     // factor of emitGlow carries alpha, and an alpha-0 stretch keeps its full
     // halo and bloom (measured; V18 in docs/review-findings.md).
-    vec3  segColGlow        = segColHue * segCoverGathered;
-    float glowCoverAll      = max(emitCoverGathered, min(segCoverGathered, 1.0));
+    //
+    // V19, one level further: the gathered mean is right far from the line and
+    // wrong ON it. Its Lorentzian has width kc, the halo's kernel kh, and on a
+    // stretch no arc covers the mean still reaches lit perimeter hundreds of
+    // pixels away, so a narrow halo drew a thin line along the dark stretch.
+    // The pair below still scales the glow as it always did, and the halo
+    // block then corrects that, per piece, toward the coverage at the piece's
+    // foot of perpendicular - see addPieceGlowFix.
+    vec2 gatheredCover = vec2(emitCoverGathered, segCoverGathered);
 
     // Sharp gate for the SDF-derived filament, from the same two pointwise
     // coverages. Both are exact at this fragment's perimeter position, so
@@ -1220,15 +1402,65 @@ void main() {
                       (1.0 + uBloomStrength * uIntensity),
                       sigma * reachSigmas);
 
-    float halo  = haloSegment(aLeft,  tv1, tv2, kh) +
-                  haloSegment(aRight, tv1, tv2, kh) +
-                  haloSegment(aTop,   th1, th2, kh) +
-                  haloSegment(aBot,   th1, th2, kh);
+    // Each piece's own halo and bloom, and V19's correction to the coverage
+    // that scales them (addPieceGlowFix). The foot of perpendicular on a
+    // straight is the fragment's position along it, clamped to the piece. aTop
+    // measures to y = -halfSize.y and aBot to +halfSize.y.
 
-    float bloom = bloomSegmentPedestalled(aLeft,  tv1, tv2, bw, reach) +
-                  bloomSegmentPedestalled(aRight, tv1, tv2, bw, reach) +
-                  bloomSegmentPedestalled(aTop,   th1, th2, bw, reach) +
-                  bloomSegmentPedestalled(aBot,   th1, th2, bw, reach);
+    // One arc over the whole ring and no segments: the coverage is the same at
+    // every perimeter position, so every foot's equals the gathered mean and
+    // there is nothing to correct. It zeroes the weights below, so every piece
+    // takes addPieceGlowFix's first return.
+    //
+    // Do NOT turn this into an `if (!uniformCover)` around the corrections, or
+    // around a second copy of the sums. Measured on an M2 Pro, either one makes
+    // EVERY scene 10-15% slower at scale 1.0 - fully lit ones included, which
+    // never enter it - presumably because this program carries the gather loop
+    // there. Below 1.0 the same branch saves ~3%, which is not worth it.
+    bool uniformCover = uSegmentCount == 0 && uArcCount == 1 && uArcs[0].y >= 1.0 - 1e-6;
+
+    // Each piece's linear weight in the output, for the GLOW_PIECE_MIN tests.
+    // bloomGain is the renormalisation applied further down.
+    float bloomPeak = BLOOM_NORM_FACTOR * PI;
+    float bloomPed  = BLOOM_NORM_FACTOR * PI * bw / sqrt(reach * reach + bw * bw);
+    float bloomGain = bloomPeak / max(bloomPeak - bloomPed, 1e-6);
+    float haloW     = uniformCover ? 0.0 : HALO_NORM_FACTOR * HALO_GAIN;
+    float bloomW    = uniformCover ? 0.0 : BLOOM_NORM_FACTOR * bloomGain * uBloomStrength;
+
+    float hLeft  = haloSegment(aLeft,  tv1, tv2, kh);
+    float hRight = haloSegment(aRight, tv1, tv2, kh);
+    float hTop   = haloSegment(aTop,   th1, th2, kh);
+    float hBot   = haloSegment(aBot,   th1, th2, kh);
+    float bLeft  = bloomSegmentPedestalled(aLeft,  tv1, tv2, bw, reach);
+    float bRight = bloomSegmentPedestalled(aRight, tv1, tv2, bw, reach);
+    float bTop   = bloomSegmentPedestalled(aTop,   th1, th2, bw, reach);
+    float bBot   = bloomSegmentPedestalled(aBot,   th1, th2, bw, reach);
+
+    // The plain sums, as before V19, and V19's per-piece correction to them.
+    float halo  = hLeft + hRight + hTop + hBot;
+    float bloom = bLeft + bRight + bTop + bBot;
+    float gatheredSeg = segmentGlow(gatheredCover);
+    vec4  glowFix = vec4(0.0);
+    // Each foot's perimeter position: how far along its piece from the t1 end,
+    // placed by pieceStart. The perimeter's layout as perimeterPosition
+    // measures it.
+    float ws     = 2.0 * straight.x;
+    float hs     = 2.0 * straight.y;
+    float arcLen = HALF_PI * clamp(uCornerRadius, 0.0, min(halfSize.x, halfSize.y));
+    float alongX = clamp(vPos.x, -straight.x, straight.x) + straight.x;
+    float alongY = clamp(vPos.y, -straight.y, straight.y) + straight.y;
+    addPieceGlowFix(glowFix, pieceStart(2.0 * ws + 3.0 * arcLen + hs, 1.0, peri, arcLen), alongY, vec2(0.0), 1.0, false,
+                    aLeft, kh, arcLen, peri, gatheredCover,
+                    gatheredSeg, hLeft,  bLeft,  haloW * hLeft, bloomW * bLeft);
+    addPieceGlowFix(glowFix, pieceStart(ws + arcLen + hs, -1.0, peri, arcLen), alongY, vec2(0.0), 1.0, false,
+                    aRight, kh, arcLen, peri, gatheredCover,
+                    gatheredSeg, hRight, bRight, haloW * hRight, bloomW * bRight);
+    addPieceGlowFix(glowFix, pieceStart(2.0 * ws + 2.0 * arcLen + hs, -1.0, peri, arcLen), alongX, vec2(0.0), 1.0, false,
+                    aTop, kh, arcLen, peri, gatheredCover,
+                    gatheredSeg, hTop,   bTop,   haloW * hTop, bloomW * bTop);
+    addPieceGlowFix(glowFix, pieceStart(0.0, 1.0, peri, arcLen), alongX, vec2(0.0), 1.0, false,
+                    aBot, kh, arcLen, peri, gatheredCover,
+                    gatheredSeg, hBot,   bBot,   haloW * hBot, bloomW * bBot);
 
     // The four corner arcs, each developed onto its own tangent - see
     // arcTangentSegment. Gated because at cornerRadius 0 there is nothing to
@@ -1251,11 +1483,18 @@ void main() {
         vec4 cFN   = arcTangentSegment(vec2(wFar.x,  wNear.y), uCornerRadius);
         vec4 cFF   = arcTangentSegment(vec2(wFar.x,  wFar.y),  uCornerRadius);
 
+        // Each arc's foot of perpendicular, for its coverage (V19): the point
+        // on that arc nearest the fragment, clamped to its quarter, found in
+        // the same folded frame arcTangentSegment works in and unfolded by the
+        // corner's sign pair. N is the fragment's own side of an axis, F the
+        // opposite one.
+        vec2 sN    = vec2(vPos.x >= 0.0 ? 1.0 : -1.0, vPos.y >= 0.0 ? 1.0 : -1.0);
+
         // .w is the measure the development rate cost - see arcTangentSegment.
-        halo  += haloSegment(cNN.x, cNN.y, cNN.z, kh) * cNN.w +
-                 haloSegment(cNF.x, cNF.y, cNF.z, kh) * cNF.w +
-                 haloSegment(cFN.x, cFN.y, cFN.z, kh) * cFN.w +
-                 haloSegment(cFF.x, cFF.y, cFF.z, kh) * cFF.w;
+        float hNN = haloSegment(cNN.x, cNN.y, cNN.z, kh) * cNN.w;
+        float hNF = haloSegment(cNF.x, cNF.y, cNF.z, kh) * cNF.w;
+        float hFN = haloSegment(cFN.x, cFN.y, cFN.z, kh) * cFN.w;
+        float hFF = haloSegment(cFF.x, cFF.y, cFF.z, kh) * cFF.w;
 
         // One shared pedestal for all four arcs, and unlike the straights'
         // it does not have to be per-piece. A pedestal is that piece's own
@@ -1310,14 +1549,26 @@ void main() {
 
         // Pedestal against the WEIGHTED value, since that is what has to reach
         // zero at `reach`.
-        bloom += max(bloomSegment(cNN.x, cNN.y, cNN.z, bw) * cNN.w - arcPedestal, 0.0) +
-                 max(bloomSegment(cNF.x, cNF.y, cNF.z, bw) * cNF.w - arcPedestal, 0.0) +
-                 max(bloomSegment(cFN.x, cFN.y, cFN.z, bw) * cFN.w - arcPedestal, 0.0) +
-                 max(bloomSegment(cFF.x, cFF.y, cFF.z, bw) * cFF.w - arcPedestal, 0.0);
+        float bNN = max(bloomSegment(cNN.x, cNN.y, cNN.z, bw) * cNN.w - arcPedestal, 0.0);
+        float bNF = max(bloomSegment(cNF.x, cNF.y, cNF.z, bw) * cNF.w - arcPedestal, 0.0);
+        float bFN = max(bloomSegment(cFN.x, cFN.y, cFN.z, bw) * cFN.w - arcPedestal, 0.0);
+        float bFF = max(bloomSegment(cFF.x, cFF.y, cFF.z, bw) * cFF.w - arcPedestal, 0.0);
+
+        halo  += hNN + hNF + hFN + hFF;
+        bloom += bNN + bNF + bFN + bFF;
+        addPieceGlowFix(glowFix, cornerStart(vec2( sN.x,  sN.y), ws, hs, arcLen, peri), 0.0, vec2(wNear.x, wNear.y), cNN.w, true,
+                        cNN.x, kh, arcLen, peri, gatheredCover, gatheredSeg, hNN, bNN, haloW * hNN, bloomW * bNN);
+        addPieceGlowFix(glowFix, cornerStart(vec2( sN.x, -sN.y), ws, hs, arcLen, peri), 0.0, vec2(wNear.x, wFar.y), cNF.w, true,
+                        cNF.x, kh, arcLen, peri, gatheredCover, gatheredSeg, hNF, bNF, haloW * hNF, bloomW * bNF);
+        addPieceGlowFix(glowFix, cornerStart(vec2(-sN.x,  sN.y), ws, hs, arcLen, peri), 0.0, vec2(wFar.x,  wNear.y), cFN.w, true,
+                        cFN.x, kh, arcLen, peri, gatheredCover, gatheredSeg, hFN, bFN, haloW * hFN, bloomW * bFN);
+        addPieceGlowFix(glowFix, cornerStart(vec2(-sN.x, -sN.y), ws, hs, arcLen, peri), 0.0, vec2(wFar.x,  wFar.y), cFF.w, true,
+                        cFF.x, kh, arcLen, peri, gatheredCover, gatheredSeg, hFF, bFF, haloW * hFF, bloomW * bFF);
     }
 
-    halo  *= HALO_NORM_FACTOR;
-    bloom *= BLOOM_NORM_FACTOR;
+    halo    *= HALO_NORM_FACTOR;
+    bloom   *= BLOOM_NORM_FACTOR;
+    glowFix *= vec4(HALO_NORM_FACTOR, HALO_NORM_FACTOR, BLOOM_NORM_FACTOR, BLOOM_NORM_FACTOR);
 
     // The pedestal itself is applied per-edge inside the sum above - see
     // bloomSegmentPedestalled for why it cannot be one shared subtraction any
@@ -1335,9 +1586,8 @@ void main() {
     //
     // The halo needs no pedestal at all: it falls as 1/a^2, so at `reach` it is
     // ~2e-4 of peak - already invisible.
-    float bloomPeak = BLOOM_NORM_FACTOR * PI;
-    float bloomPed  = BLOOM_NORM_FACTOR * PI * bw / sqrt(reach * reach + bw * bw);
-    bloom = bloom * (bloomPeak / max(bloomPeak - bloomPed, 1e-6));
+    bloom      = bloom * bloomGain;
+    glowFix.zw = glowFix.zw * bloomGain;
 
     // glowRadius == 0 must read as "filament only", but an analytic profile at
     // radius 0 is a sub-pixel spike of FULL height rather than nothing, so
@@ -1370,7 +1620,7 @@ void main() {
     vec3 arcCol = col * uIntensity;
 
     // filamentGate is the segment's SHARP gate (smoothstep 0.5..1) maxed with
-    // emitCover; glowCoverAll is the soft one. Applied to the segment term
+    // emitCover; segmentGlow's is the soft one. Applied to the segment term
     // only - the arc takes its own coverage directly in both, since for an arc
     // the two gates were just that coverage anyway.
     //
@@ -1378,13 +1628,14 @@ void main() {
     // an SDF-derived line: it lives ON the perimeter, so it wants the
     // POINTWISE pair, exact at this fragment's own perimeter position. The
     // halo and bloom are integrals over the whole emitter, so they want the
-    // GATHERED pair - see the glow-coverage block above the halo.
+    // GATHERED pair - plus glowFix, V19's per-piece correction toward the
+    // coverage at each piece's foot, in the same arc / segment halves.
     vec3 emitFil  = arcCol * emitCover           + segCol     * filamentGate;
-    vec3 emitGlow = arcCol * emitCoverGathered   + segColGlow * glowCoverAll;
+    vec3 emitGlow = arcCol * gatheredCover.x     + segColHue  * gatheredSeg;
 
     vec3 result  = emitFil  * core  * FILAMENT_GAIN  * lineGate;
-    result      += emitGlow * halo  * HALO_GAIN      * glowGate;
-    result      += emitGlow * bloom * uBloomStrength * glowGate;
+    result      += (emitGlow * halo  + arcCol * glowFix.x + segColHue * glowFix.y) * HALO_GAIN      * glowGate;
+    result      += (emitGlow * bloom + arcCol * glowFix.z + segColHue * glowFix.w) * uBloomStrength * glowGate;
 
     // NOTE neither the one-sided cut NOR the hard cutoff masks are applied
     // here. Both are COVERAGE, not emission, so both belong below the grade -

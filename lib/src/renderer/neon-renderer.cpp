@@ -199,8 +199,9 @@ namespace EdgeLighting
         /// Adding a candidate is adding a row; @ref NeonRenderer::resizeEmissionBuffer
         /// walks whatever is here.
         ///
-        /// WHY ONLY THIS BUFFER AND GATHER_FORMATS HAVE A LIST. They are the
-        /// only two that ask for a format a conforming driver may refuse. RGBA8
+        /// WHY ONLY THIS BUFFER, GLOW_COVER_FORMATS AND GATHER_FORMATS HAVE A
+        /// LIST. They are the only ones that ask for a format a conforming
+        /// driver may refuse. RGBA8
         /// - what mScaledBuffer, LensFlareRenderer's scaled buffer and
         /// OffscreenCapture all take - is mandatory colour-renderable in both
         /// GL 3.3 core and GLES 3.0, so there is nothing for those to fall
@@ -218,6 +219,18 @@ namespace EdgeLighting
         /// ever fixed with a float target rather than a dither, this walk
         /// generalises to those buffers unchanged.)
         constexpr TargetFormat EMISSION_FORMATS[] = {
+            {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, "RGBA16F"},
+            {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, "RGBA8"},
+        };
+
+        /// Glow-coverage-table formats in PREFERENCE ORDER, best first - walked
+        /// by @ref NeonRenderer::resizeGlowCoverBuffer. Float for the same
+        /// reason as the emission table: the table stores arc coverage TIMES
+        /// Arc::intensity, which is unbounded. It is written encoded
+        /// c / (1 + c), as the gather buffer is, so the RGBA8 row loses
+        /// precision rather than clamping. Half float is texture-filterable in
+        /// GLES 3.0 core, which the consumer's linear fetch needs.
+        constexpr TargetFormat GLOW_COVER_FORMATS[] = {
             {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, "RGBA16F"},
             {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, "RGBA8"},
         };
@@ -751,6 +764,17 @@ namespace EdgeLighting
         /// rounding. Sizes the blit's outer frame past the glow's fade.
         constexpr float FOOTPRINT_TEXELS = 2.0f;
 
+        /// The rect's perimeter in full-res px, as neon-common.glsl's
+        /// rectPerimeter measures it at scale 1.
+        inline float GetPerimeter(const Config &config)
+        {
+            const float w = config.geometry.width;
+            const float h = config.geometry.height;
+            const float r = std::clamp(GeometryUtils::GetEffectiveCornerRadius(config.geometry), 0.0f,
+                                       std::min(w, h) * 0.5f);
+            return 2.0f * (w + h - 4.0f * r) + glm::two_pi<float>() * r;
+        }
+
         /// The scale the scaled path's GATHER runs at: as coarse as the
         /// gather's own smoothness allows, never finer than @p scale.
         ///
@@ -771,12 +795,7 @@ namespace EdgeLighting
         /// keeps that from reallocating the buffer every frame.
         inline float GetGatherScale(const Config &config, float scale)
         {
-            const float w = config.geometry.width;
-            const float h = config.geometry.height;
-            const float r = std::clamp(GeometryUtils::GetEffectiveCornerRadius(config.geometry), 0.0f,
-                                       std::min(w, h) * 0.5f);
-            const float perimeter = 2.0f * (w + h - 4.0f * r) + glm::two_pi<float>() * r;
-            const float kc = std::max(perimeter * static_cast<float>(COLOR_BLEND_PERIM_FRAC),
+            const float kc = std::max(GetPerimeter(config) * static_cast<float>(COLOR_BLEND_PERIM_FRAC),
                                       static_cast<float>(EMISSION_MIN_WIDTH));
             const float floorScale = std::min(static_cast<float>(GATHER_MIN_SCALE), scale);
             return std::clamp(static_cast<float>(GATHER_TEXELS_PER_KERNEL) / kc, floorScale, scale);
@@ -917,6 +936,13 @@ namespace EdgeLighting
         if (!resizeEmissionBuffer())
         {
             LOG_E("Failed to allocate the NeonRenderer emission table in any supported format.");
+            return false;
+        }
+        // The same for the glow coverage table, whose size is also a pair of
+        // compile-time constants.
+        if (!resizeGlowCoverBuffer())
+        {
+            LOG_E("Failed to allocate the NeonRenderer glow coverage table in any supported format.");
             return false;
         }
         // Vertex FORMAT for the two arrays whose contents are rebuilt at
@@ -1099,6 +1125,14 @@ namespace EdgeLighting
                 // downstream.
                 glDisable(GL_BLEND);
                 renderEmissionPass(viewportWidth, viewportHeight, time, config);
+            }
+
+            // --- Pass 0b: the glow coverage table, on a config change only. It
+            // never depends on time, and nothing else writes the buffer.
+            if (mGlowCoverDirty)
+            {
+                glDisable(GL_BLEND);
+                renderGlowCoverPass(config);
             }
 
             if (scaled)
@@ -1302,6 +1336,9 @@ namespace EdgeLighting
         // in step with the shader. A missed field would be a stale ring; a
         // spare rebuild is one small pass.
         mEmissionDirty = true;
+        // The glow coverage table likewise: it reads the arcs, the segments, the
+        // rect's shape and the glow radius.
+        mGlowCoverDirty = true;
         // The light blocks get the OPPOSITE treatment, because their inputs are
         // narrow and visible rather than wide and indirect: @ref
         // packLightBlockData reads mEffectiveSegments and config.neon.arcs, and
@@ -1408,13 +1445,18 @@ namespace EdgeLighting
         mEmissionShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                         ShaderSource::NEON_EMISSION_FRAG_SRC,
                                         "NeonRenderer.Emission");
+        // Glow coverage pre-pass. The same arrangement: the neon vertex shader
+        // over the NDC quad, the fragment shader keyed off gl_FragCoord.
+        mGlowCoverShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
+                                         ShaderSource::NEON_GLOW_COVER_FRAG_SRC,
+                                         "NeonRenderer.GlowCover");
         // Cheap fullscreen black fill, used only by opaque mode. Reuses the
         // standard neon vertex shader (uMVP) so the fill quad respects the
         // viewport.
         mBlackRectShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                          ShaderSource::BLACK_RECT_FRAG_SRC,
                                          "NeonRenderer.BlackRect");
-        if (!mBlackRectShader.IsValid() || !mEmissionShader.IsValid())
+        if (!mBlackRectShader.IsValid() || !mEmissionShader.IsValid() || !mGlowCoverShader.IsValid())
         {
             return false;
         }
@@ -1423,6 +1465,8 @@ namespace EdgeLighting
         // share bindings and are packed once per frame before either runs.
         mEmissionShader.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
         mEmissionShader.SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
+        mGlowCoverShader.SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
+        mGlowCoverShader.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
         return true;
     }
 
@@ -2295,6 +2339,63 @@ namespace EdgeLighting
         mEmissionTime = time;
     }
 
+    bool NeonRenderer::resizeGlowCoverBuffer()
+    {
+        // The emission table's walk, over GLOW_COVER_FORMATS, with a linear
+        // filter: the consumer interpolates between perimeter positions and
+        // between distances. Called once, so it always starts at the top.
+        for (size_t i = 0; i < std::size(GLOW_COVER_FORMATS); ++i)
+        {
+            const TargetFormat &f = GLOW_COVER_FORMATS[i];
+            if (mGlowCoverBuffer.Resize(GLOW_COVER_SAMPLES + 2, GLOW_COVER_ROWS * GLOW_COVER_BANDS,
+                                        f.internalFormat, f.format, f.type, GL_LINEAR))
+            {
+                return true;
+            }
+            if (i + 1 < std::size(GLOW_COVER_FORMATS))
+            {
+                LOG_E("NeonRenderer: %s glow coverage target unavailable, falling back to %s. "
+                      "The halo and bloom coverage will be stored at 8 bits.",
+                      f.name, GLOW_COVER_FORMATS[i + 1].name);
+            }
+        }
+        return false;
+    }
+
+    void NeonRenderer::renderGlowCoverPass(const Config &config)
+    {
+        // Hand back the framebuffer and viewport exactly as found, and keep a
+        // host scissor off the table's texels - both for the reasons
+        // renderEmissionPass gives.
+        const RenderTargetState prevTarget = RenderTargetState::Capture();
+        GLUtils::NoScissorScope noScissor;
+
+        // Binds the FBO and sets the viewport to the table. No clear: the NDC
+        // quad covers every texel.
+        mGlowCoverBuffer.Bind();
+
+        // Every length as a fraction of the full-res perimeter, which is what
+        // lets the reduced-scale shading and the full-res ring share the
+        // table: their px lengths all scale together. The widths are
+        // neon.frag's kh and bw at scale 1.
+        const float perimeter = std::max(GetPerimeter(config), 1e-3f);
+        const float glowRadius = config.neon.glowRadius;
+        const float haloWidth = std::max(glowRadius, static_cast<float>(EMISSION_MIN_WIDTH));
+        const float bloomWidth = std::max(glowRadius * static_cast<float>(BLOOM_REACH_TO_GLOW),
+                                          static_cast<float>(EMISSION_MIN_WIDTH));
+        mGlowCoverShader.Use();
+        mGlowCoverShader.SetUniform("uMVP", glm::mat4(1.0f));
+        mGlowCoverShader.SetUniform("uHeadFeather", static_cast<float>(HEAD_FEATHER_PX) / perimeter);
+        mGlowCoverShader.SetUniform("uTailFeather", static_cast<float>(TAIL_FEATHER_PX) / perimeter);
+        mGlowCoverShader.SetUniform("uHaloWidth", haloWidth / perimeter);
+        mGlowCoverShader.SetUniform("uBloomWidth", bloomWidth / perimeter);
+        mFullscreenVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        mGlowCoverShader.Unuse();
+
+        prevTarget.Restore();
+        mGlowCoverDirty = false;
+    }
+
     void NeonRenderer::uploadShapeUniforms(ShaderProgram &shader, const glm::mat4 &mvp, float scale,
                                            const Config &config)
     {
@@ -2340,6 +2441,10 @@ namespace EdgeLighting
         shader.SetUniform("uSegmentLUT", 1);
         mArcLUT.Bind(2);
         shader.SetUniform("uArcLUT", 2);
+        // The glow coverage table from pass 0b, on its own unit - 3 and 4 are
+        // the emission table or the gather buffer, depending on the path.
+        mGlowCoverBuffer.BindTexture(5);
+        shader.SetUniform("uGlowCover", 5);
         shader.SetUniform("uQuadMargin", quadMargin);
     }
 
