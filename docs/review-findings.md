@@ -3102,8 +3102,10 @@ on the gathered coverages, and in V14's "known limit" above) as attenuating
 the filament, halo and bloom together, or at least as reaching the glow
 "through the emission colour". It reaches only the filament. The emission
 colour is the LUT's straight RGB, and the gathered coverages
-(`emitCoverGathered`, `glowCoverAll`) are built from `arcW` and `bellSum`
-without alpha, so neither factor of `emitGlow` carries it.
+(`emitCoverGathered`, and `gatheredSeg` from `segCoverGathered`) are built
+from `arcW` and `bellSum` without alpha, so neither factor of `emitGlow`
+carries it. (V19's per-piece correction reads `coverageAt`, which leaves
+alpha out the same way, so V18 is unchanged by it.)
 
 Measured with a 600 x 360 rect at (200, 150), one colour stop, hue rotation 0,
 `colorTransitionDuration` 0, on Mesa llvmpipe; brightest channel at x = 500:
@@ -3133,6 +3135,317 @@ the ring with arcs or an arc's `intensity`.
 
 ---
 
+## Nineteenth pass (the dark-stretch glow trace)
+
+### V19. A thin glow line runs along a stretch no arc covers - FIXED
+
+Reported from the demo: a 1920 x 1080 rect at (960, 540) in a 3840 x 2160
+frame, `cornerRadius` 0, `lineWidth` 1, `filamentFalloff` 0.29, `glowRadius` 1,
+`bloomStrength` 0, one arc over `t` 0 to 0.84. The stretch the arc leaves
+dark - the left half of the top edge - still shows a thin, dim line, reddish
+by the corner and yellow by the arc's end.
+
+Measured with the library, brightest channel within 6 px of that edge, on the
+unlit stretch (background 0), from the corner (x 1000) to the arc's end
+(x 1900):
+
+| config | x 1000 | 1300 | 1500 | 1700 | 1900 | width at half peak |
+| ------ | ------ | ---- | ---- | ---- | ---- | ------------------ |
+| as reported, scale 0.12 | 59 | 15 | 13 | 18 | 67 | 2 px |
+| the same at scale 1.0 | 59 | 15 | 13 | 18 | 68 | 2 px |
+| `lineWidth` 0 | 59 | 15 | 13 | 18 | 68 | 2 px |
+| `glowRadius` 0 | 0 | 0 | 0 | 0 | 0 | - |
+| `glowRadius` 5 | 104 | 31 | 27 | 37 | 116 | 12 px |
+| `glowRadius` 15 | 106 | 31 | 27 | 37 | 117 | 36 px |
+
+So it is the HALO, on both resolution paths, and not the filament.
+
+**Mechanism.** V14 scales the whole outline's halo and bloom by a coverage
+GATHERED around the fragment - the g-weighted mean of the arc coverage with
+g = 1/(d^2 + kc^2), kc the colour kernel (0.0088 x perimeter, 53 px here):
+
+```
+INTEGRAL cover(s) * K(|p - P(s)|) ds  ~=  cover_mean(p) * INTEGRAL K ds
+```
+
+For a fragment at distance a from an edge, g weights the edge over a window
+about sqrt(a^2 + kc^2) wide, while the halo's own kernel weights it over
+sqrt(a^2 + kh^2). Far from the line the two agree, which is why V14's fix holds
+there. ON the line they do not: the mean reaches lit perimeter hundreds of
+pixels away through the Lorentzian's 1/d^2 tail, so a dark stretch keeps a few
+percent of coverage where the exact integral - with a 1 px halo, whose kernel
+falls as 1/t^3 along the line - is effectively zero. The leftover takes the
+halo's shape: a soft fade at a wide `glowRadius`, a crisp line at a narrow one.
+V14's closing note called this "a faint trace of the outline (1-2 levels)",
+which was true of the scene it measured and not in general.
+
+**What ships is V20's fix**, which replaced both steps below with each piece's
+own coverage, read from a baked table; the steps are kept as the record of how
+it got there, and the final numbers are in V20 and in this entry's tables.
+
+**Fix, in two steps.** Both work per piece of the emitter - the four
+straights and the four corner arcs the halo and bloom are already summed over -
+and blend the coverage at that piece's foot of perpendicular (exact on the
+line) with the gathered mean. Per piece rather than once for the fragment,
+because each piece's foot moves continuously with the fragment, so nothing
+switches at the medial axis - the crease V14 removed stays gone. Both are
+applied as a CORRECTION (`addPieceGlowFix` in `neon.frag`): the glow is first
+scaled by the gathered mean exactly as before, and each piece adds only
+`(cover - gathered) * its own halo or bloom` to a `glowFix` accumulator with
+the same arc and segment halves, so a piece that is skipped costs one compare.
+On a ring lit uniformly (one arc over the whole ring, no segments) every piece
+skips and the expression is the pre-V19 one.
+
+The FIRST step blended by the width of each kernel's window against the
+gather's, `w = sqrt((a^2 + k^2) / (a^2 + kc^2))`. It removed the reported line
+(13-68 levels to 0-3) but was reported again at `intensity` 3, and measuring
+why showed the model wrong for the halo. That ratio is right when both kernels
+are Lorentzians, and the bloom's is. The halo's kernel along the line is
+`k^2 / (t^2 + c^2)^1.5` and falls as 1/t^3, so past an arc's end the true halo
+dies far faster than the gathered mean, and the blend kept several times too
+much of it for hundreds of px.
+
+The SECOND step, which is what ships, blends by how much of each kernel lies
+past the nearest ARC END, D px along the outline from the foot (`coverageAt`
+returns D with the coverage; each end hard-edged, a free end at the middle of
+its inward feather and an abutting end at the end itself). For one hard end on
+a straight line the gathered mean is `foot + jump * tailG(D)` and the true
+coverage `foot + jump * tail(D)`, so the gathered share is `tail / tailG` -
+exact there for both layers, at every D:
+
+```
+C     = sqrt(a^2 + kc^2)                              // the gather's width along the line
+tailG = atan(C / D) / PI
+bloom = atan(sqrt(a^2 + bw^2) / D) / PI              // its far-D limit is the first step's w
+halo  = (1 - D / sqrt(D^2 + a^2 + kh^2)) / 2
+cover = foot + (gathered - foot) * min(tail / tailG, 1)
+```
+
+Segments keep the first step's width ratio: a Gaussian bell has no end to
+measure from. A piece skips when its halo plus bloom weight is under
+`GLOW_PIECE_MIN` (1e-4 in linear light, about a tenth of an 8-bit level after
+the grade), and the halo's arc half fades in between 5e-4 and 1e-3 of the
+piece's halo weight (`GLOW_HALO_FIX_MIN`): `1 - w` no longer bounds it, and
+below that the correction is under a third of a level. A fade rather than a
+cut, so the boundary draws no contour.
+
+**Measured**, the report's table after the first step, the second, and V20's
+table, which ships:
+
+| config | x 1000 | 1300 | 1500 | 1700 | 1900 |
+| ------ | ------ | ---- | ---- | ---- | ---- |
+| as reported, scale 0.12 | 3 -> 0 -> **0** | 1 -> 0 -> **0** | 0 -> 0 -> **0** | 1 -> 0 -> **0** | 3 -> 0 -> **0** |
+| the same at scale 1.0 | 3 -> 0 -> **0** | 1 -> 0 -> **0** | 0 -> 0 -> **0** | 1 -> 0 -> **0** | 3 -> 0 -> **0** |
+| `glowRadius` 5 | 20 -> 5 -> **4** | 4 -> 0 -> **0** | 4 -> 0 -> **0** | 5 -> 0 -> **0** | 23 -> 8 -> **6** |
+| `glowRadius` 15 | 51 -> 29 -> **24** | 11 -> 1 -> **1** | 10 -> 0 -> **0** | 14 -> 1 -> **1** | 53 -> 39 -> **29** |
+
+What is left at x 1000 and 1900 is near the lit left edge and the arc's own
+end, and is mostly their own glow.
+
+The second report: the same rect, counter-clockwise, `lineWidth` 1,
+`filamentFalloff` 0.62, `intensity` 3, `glowRadius` 5, `bloomStrength` 0.02,
+one arc over `t` 0.01 to 0.81. Brightest channel on the unlit top edge, D px
+past the arc's end, over black, scale 1.0 (0.12 matches within a level):
+
+| D | 10 | 20 | 30 | 50 | 100 | 150 | 200 | 300 | 600 |
+| - | -- | -- | -- | -- | --- | --- | --- | --- | --- |
+| before V19 | 187 | 183 | 177 | 163 | 125 | 99 | 82 | 63 | 48 |
+| first step | 64 | 60 | 56 | 46 | 28 | 20 | 15 | 11 | 8 |
+| second step | 49 | 31 | 23 | 15 | 7 | 4 | 3 | 2 | 2 |
+| **V20's table (ships)** | **40** | **22** | **16** | **10** | **5** | **3** | **3** | **2** | **1** |
+| exact (rejected, below) | 36 | 23 | 17 | 12 | 6 | 4 | 3 | 2 | 2 |
+| for scale: d px off a LIT edge | 131 | 71 | 47 | 26 | 10 | 5 | 2 | 0 | 0 |
+
+So the glow past an arc's end now falls off faster than the glow off the side
+of a lit line, as the kernel says it should, where after the first step it
+was still 2.8x brighter at 100 px. The end itself reads as a rounded glow cap
+around the tube's end.
+
+Over fourteen probe scenes, before V19 against final:
+
+- **fully lit rings** (rounded, sharp, `intensity` 0.6, scale 0.5): 0 to 2
+  pixels move, by 1/255;
+- **partly lit scenes**: tens of thousands of pixels move, almost all darker -
+  the glow past each arc end and along unlit stretches, up to 77-90 levels on
+  the `glowRadius` 1 scenes. A few thousand get brighter by up to 8, along a
+  lit edge's near halo, where the gathered mean's kernel had been reaching
+  into the dark part (`corner_arc_r0_g1`: the whole lit top edge, peaking 4 px
+  off the line by the arc's head);
+- **no new crease**: the largest neighbour step more than 8 px from the
+  outline is within 1 level of before in every scene;
+- **against the exact halo**: within 1 level from 100 px past an end on the
+  reported config, 13 brighter at 10 px, and up to 32 brighter right beside an
+  arc end that sits on a corner's tangent point, where the end is not on a
+  straight run from the foot.
+
+One side effect is new, and logged as V20: where strong bloom from lit edges
+reaches an unlit stretch on a small rect, the stretch now reads a few levels
+DARKER on the outline than either side of it.
+
+`neon-scale-check partition` passes. `check` drifted only `arcs` and
+`segments` at 1.0, with every reduced scale inside its bound; the comparison
+page's `arcs` and `segments` images and metrics were then regenerated from
+this build, after which `check` passes (both drift 0; their `p99` is unchanged
+at 1, and `arcs`' max at 0.35 to 0.75 went from 1 to 2). The onboarding
+guide's figures were regenerated too: the partly lit ones darken past each
+arc end, by up to 38-39 levels in `winding-*.png`, 30 in `arc-end-closeup.png`
+and the pass figures, 29 in `segment-boost-*.png` and 26 in `arc-single.png`;
+the full-ring figures move a handful of pixels by 1/255.
+
+**Cost of the second step**, against the build before V19, Apple M2 Pro,
+1280 x 720, median of five interleaved rounds (V20 has what ships):
+
+| scenes | scale 1.0 | scale 0.5 |
+| ------ | --------- | --------- |
+| fully lit (10 scenes) | 1.03x-1.12x, ~1.08x | 1.03x-1.08x, ~1.07x |
+| `arcs` | 1.21x | 1.50x |
+| `segments` | 1.19x | 1.39x |
+
+Not measured at 1920 x 1080. The timings on the comparison page and in
+[`neon-resolution-scale-perf-comparison.md`](neon-resolution-scale-perf-comparison.md)
+predate this fix; for `arcs` and `segments` they are now low by those factors.
+
+Four other structures were measured and rejected:
+
+- **The exact halo** of each arc's lit part - the closed-form halo over each
+  arc's lit interval on each piece, summed - matched the reported config's
+  physics and cost 1.2x-1.7x on EVERY scene at 1.0, fully lit ones included,
+  across four structures: a loop over the arcs inside each piece (1.20x fully
+  lit, 1.63x `arcs`), a running sum of the pieces' halos with each arc's
+  partial piece looked up from a local table (1.70x), the same without arrays
+  (1.74x), and with the partial piece rebuilt from the fragment position
+  (1.46x). The cost did not follow the work - skipping the arc loop entirely
+  on a fully lit ring changed nothing - so it is presumably the program's
+  register use.
+- **Each piece scaled by its own coverage** (the foot's, plus the jump at the
+  nearest free arc end times the kernel's tail past it, with no gathered mean
+  at all) removes V20 and is close to exact on the reported config (9 against
+  12 at 50 px), but creased: the neighbour-step metric went from 4 to 8-12 in
+  four scenes, as hard horizontal steps beside the rect. See V20.
+- **Blending a coverage per piece and summing those**, rather than correcting
+  the gathered sum, cost ~1.12x on fully lit scenes at 1.0 - every piece paid
+  its products and two `segmentGlow` calls whether or not it was skipped.
+- **A uniform `if (!uniformCover)`** around the corrections, or around a
+  second copy of the sums, made EVERY scene 10-15% slower at 1.0 while saving
+  ~3% below it. The shader says so beside `uniformCover`.
+
+### V20. An unlit stretch reads a few levels darker on the outline than either side - FIXED
+
+V19's side effect, and V14's limit underneath it. Measured in the onboarding
+guide's `arc-single.png` (a 336 x 168 rect, `glowRadius` 8, `bloomStrength`
+0.5, one arc over `t` 0.1 to 0.45): across the unlit top edge, the brightest
+channel 11 px out, on the line, and 11 px in reads 26, 28, 30 before V19 and
+21, 18, 24 after - a dip of 3-6 levels over about 20 px either side of the
+line, where before it rose steadily inward. `half_ring` shows the same, 2-4
+levels in green; the exact halo (rejected in V19) shows it identically, so it
+is not the blend's error. The second report's config does not show it (`bloomStrength` 0.02).
+
+**Mechanism.** Every piece's halo and bloom is scaled by the coverage
+GATHERED around the fragment, and that is a mean over the whole outline with
+weight 1/(d^2 + kc^2) - dominated by whichever piece is nearest. On an unlit
+line the nearest piece is the dark one, so the gathered mean drops there, and
+the light reaching it from the LIT far edges - scaled by that same mean - drops
+with it. Before V19 the dark piece's own halo, wrongly scaled by the same
+non-zero mean, filled the dip and the profile came out flat. V19 makes the
+dark piece's halo correct (near zero), which uncovers the dip. It is worst on a
+small rect, where kc (0.0088 x the perimeter) is a few px and the mean is very
+local, with a bloom strong enough that the far edges dominate.
+
+**Fix.** Each piece is scaled by ITS OWN coverage rather than the fragment's:
+the arcs' coverage along the outline, convolved with that piece's halo and
+bloom kernels at that piece's distance, read at its foot. Baked once per config
+change into a table (`neon-glow-cover.frag`, pass 0b) and read with one linear
+fetch per piece (`glowCoverAt` in `neon.frag`):
+
+- **The table** holds, for every perimeter position and every distance from
+  the line, the arcs' coverage x intensity under each kernel - the halo's
+  `k^2 / (t^2 + c^2)^1.5` and the bloom's Lorentzian, `c = sqrt(a^2 + k^2)`.
+  Closed form: an arc is a plateau between two linear-ramp feathers, so its
+  convolution is a difference of ramp-smoothed CDFs, and every arc end is
+  summed, so nothing switches between ends as a fragment moves. A step between
+  two abutting arcs of different intensity is simply two ends.
+- **Units** are perimeter fractions, so the reduced-scale shading and the
+  full-res ring share one table. 2046 columns plus a guard texel at each end
+  (so a linear fetch wraps the perimeter's seam under clamp-to-edge) - 2048,
+  GLES 3.0's minimum maximum texture size - by 64 distance rows, half of them within one halo width of the line. RGBA16F, RGBA8
+  fallback, encoded `c / (1 + c)`; allocated once; re-baked on any config
+  change, never on time.
+- **Segments** keep the gathered mean, blended toward the foot by the width
+  ratio: a Gaussian bell has no closed form against these kernels.
+
+Making the read continuous took two more things, both found by the crease
+metric:
+
+- **The feet's perimeter positions** come from the piece table (`pieceStart` /
+  `cornerStart`, checked against `perimeterPosition` for every piece, both
+  windings, four shapes) rather than from `perimeterPosition`, which files a
+  vertical edge's own tangent point under the horizontal edge. That is exactly
+  where a straight's foot clamps, so its position jumped by a corner's length
+  there: a hard horizontal step running from each corner's centre (neighbour
+  step 9-11).
+- **A corner's read moves to the arc's middle and widens to its whole length**
+  near its centre of curvature (`cornerLookup` / `cornerSpread`, both scaled by
+  the development rate lam/r), where every point of the arc is the same
+  distance away and the foot's angle swings round with direction. Behind the
+  centre the angle also sweeps continuously through the diagonal
+  (`cornerFootAngle`), where the nearest point used to jump from one end of the
+  arc to the other.
+
+**Measured**, before V19 against the final build:
+
+- **the dip is gone**: `arc-single.png` across the unlit top edge now reads 29
+  outside, 36 on the line and 38 inside, rising steadily inward, against 21,
+  18, 24 with the dip; `half_ring` the same way, with the green channel at 16-19
+  across the line where it read 8 at the bottom of the dip;
+- **V19's line stays gone**: 0 everywhere on the first report at `glowRadius`
+  1, and on the second, at `intensity` 3, 10 levels 50 px past the arc's end
+  and 5 at 100 px, against 26 and 10 at the same distances off a lit edge;
+- **fully lit rings are bit-identical** to before V19 - 0 pixels change in the
+  four probe scenes - since every piece skips there;
+- **no new crease**: the neighbour-step metric is within 1 level of before in
+  every scene;
+- **partly lit scenes change a lot**, and in both directions: darker past each
+  arc end and on dark stretches, by up to 75-79 levels in the narrow-halo
+  scenes, and brighter by up to 17 where lit edges' bloom reaches an unlit
+  region, since that bloom is no longer scaled by the dark piece's coverage;
+- **the table against the same convolution evaluated in the shader**: within
+  1/255 everywhere except a few hundred pixels at the arc ends of a 1 px halo
+  on a 6000 px perimeter (4-5/255), where a column is 2.9 px against a 14 px
+  feather. (Measured at 2048 columns; the shipped 2046 is 0.1% coarser.)
+
+`neon-scale-check check` passes after regenerating the comparison page's
+`arcs` and `segments` (their max at 0.25-0.75 improved from 2 to 1), and
+`partition` passes on two seeds. The onboarding guide's figures were
+regenerated, plus a new one of the table itself (`pass-p0b-glow-cover.png`);
+the partly lit ones change by up to 30-63 levels, and `winding-*.png` no
+longer traces the unlit outline.
+
+**Cost**, against the build before V19, Apple M2 Pro, 1280 x 720, median of
+five interleaved rounds:
+
+| scenes | scale 1.0 | scale 0.5 |
+| ------ | --------- | --------- |
+| fully lit (10 scenes) | 1.04x-1.11x, ~1.07x | 1.01x-1.12x, ~1.09x |
+| `arcs` | 1.15x | 1.24x |
+| `segments` | 1.16x | 1.31x |
+
+Cheaper than V19's second step on partly lit rings (1.21x / 1.50x on `arcs`)
+and the same on fully lit ones. The bake itself costs about 0.04 ms per frame
+at 1280 x 720 when the config changes every frame (an animated arc), measured
+on a three-arc ring at scale 0.5; on a still config it runs once. The table is
+1 MB in RGBA16F. Not measured at 1920 x 1080.
+
+Rejected on the way:
+
+- **The same convolution evaluated in `neon.frag`** per piece: the same
+  picture, at 2.0x / 3.3x the pre-V19 cost on `arcs` and 1.19x on fully lit
+  scenes at 1.0.
+- **The nearest free arc end only**, with the jump taken as that arc's own
+  coverage: removed the dip but creased (neighbour step 4 to 8-12), because a
+  step between abutting arcs was ignored and the nearest end switches where
+  two are equidistant.
+---
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
@@ -3143,7 +3456,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18. Five items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20. Five items from the
 first pass remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -3172,6 +3485,8 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | V17 | documented | small rects lose most of the reduced scale's quality (20 x 17: 53 levels at 0.25), as before the edge ring; keep them at 1.0 |
 | I31 | fixed | below 1.0 the gather loop ran at every reduced texel; it now runs once on a grid set by its own smoothness, 3.4-4.3x faster at 0.5 on most scenes |
 | V18 | open | colour-stop alpha dims only the filament; the halo and bloom ignore it (measured, `main` too); the cure is a design call (a third gather row or a redefined arc weight) |
+| V19 | fixed | V14's other half: the gathered coverage was right far from the line and too wide on it, so a narrow halo drew a thin line along a stretch no arc covers (13-68 levels at `glowRadius` 1, now 0); each piece now blends toward its foot's coverage by how much of its own kernel lies past the nearest arc end |
+| V20 | fixed | V14's last limit, uncovered by V19: every piece was scaled by the coverage gathered around the FRAGMENT, which dips on a dark line, so on a small rect with strong bloom an unlit stretch read 3-6 levels darker on the line; each piece now reads its own coverage from a table baked per config change (pass 0b) |
 | I32 | fixed | the edge ring's gather attachments tripled the scaled path's memory; now 2.15 MB at 1080p and 0.5 for a full-screen rect, less for smaller ones |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s

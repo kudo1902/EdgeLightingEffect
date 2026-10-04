@@ -177,6 +177,18 @@ The invariant that keeps the split honest: **a pure function of
 `(si, uTime, config)` belongs in the pre-pass; anything that reads `vPos`
 belongs in the main shader.**
 
+A second pre-pass bakes the **glow coverage table** (`neon-glow-cover.frag`):
+per perimeter position and distance from the line, how lit the arcs are as the
+halo and the bloom see them - the arcs' coverage convolved with each layer's
+kernel along the outline, closed form. The halo and bloom are a sum over the
+outline's eight pieces, and each piece's share is scaled by its own read of
+that table at its foot (one linear fetch), not by one coverage gathered around
+the fragment: the gathered one let an unlit stretch keep a faint line of light
+along it and dimmed lit edges' light reaching a dark one (V19 and V20 in
+[`review-findings.md`](review-findings.md)). The table depends on the arcs,
+the rect's shape and the glow radius only, so it is re-baked on a config
+change and never on time.
+
 Below `resolutionScale` 1.0 the same split pays twice. The gather is the only
 part of the shader that is both expensive and smooth across the screen, so it
 runs alone, in a pass of its own (`neon-gather.frag`, which calls the same

@@ -1,12 +1,14 @@
 # Upgrade notes: from `main` to the edge-ring branch
 
 What a host has to know when it moves from `main` (`1b5cf94`) to this branch.
-Four of the changes are silent - the host still compiles and links, and the
+Five of the changes are silent - the host still compiles and links, and the
 picture moves - so read the first two sections before upgrading anything that
-uses an opaque fill or a cutoff softness.
+uses an opaque fill or a cutoff softness, and section 5 before upgrading
+anything that lights only part of the ring.
 
 At `resolutionScale` 1.0, as long as no opaque fill was bounded by the glow's
-cutoffs and every cutoff softness is 0, the output is byte-identical to `main`.
+cutoffs, every cutoff softness is 0 and the ring is lit all the way round (one
+arc over the whole of it, no segments), the output is byte-identical to `main`.
 Seven scenes were compared pixel for pixel on Mesa llvmpipe: the default, both
 one-sided glows (one with a 6 px side softness), a square rect, a hairline, an
 inside cutoff at softness 0, and an outside opaque fill with no cutoffs.
@@ -106,8 +108,8 @@ c.size = std::max(c.size - 0.5f * c.softness, 0.0f);
 
 ## 4. Neon shaders are compiled on first draw, per path
 
-`Initialize` now compiles only the two programs both resolution paths share:
-the emission pre-pass and the opaque fill. The neon's own programs are built
+`Initialize` now compiles only the three programs both resolution paths share:
+the emission pre-pass, the glow coverage table (section 5) and the opaque fill. The neon's own programs are built
 the first frame each path renders. That is one program at 1.0, and four below
 1.0 (the gather, the shading twice - once for the reduced buffer and once for
 the edge ring, so no program draws two targets in a frame - and the
@@ -124,7 +126,31 @@ composite).
   the first frame of the failing path. That path then draws the opaque fill and
   no glow, and the compile is not retried.
 
-## 5. Nothing else a host can see moved
+## 5. The glow on a partly lit ring looks different
+
+When arcs light only part of the ring, each piece of the outline's halo and
+bloom is now scaled by that piece's own arc coverage, read from a table baked
+once per config change, instead of by one coverage averaged around the pixel
+(V19 and V20 in [`review-findings.md`](review-findings.md)). Segments still
+take the averaged coverage. What a host will see:
+
+- **No faint outline along an unlit stretch.** The averaged coverage let a dark
+  stretch keep some of the lit part's light, a thin line at a narrow
+  `glowRadius` and a bright one at a high `intensity`. It is gone.
+- **Darker past each arc end**, by up to 60-80 levels right beside it on a
+  narrow halo: the halo now ends with the arc, as its own falloff says.
+- **Brighter where a lit edge's bloom reaches a dark region**, by up to 17-27
+  levels on a small rect with a strong bloom: that light is no longer dimmed
+  by the dark piece's coverage.
+- **A fully lit ring is unchanged**, bit for bit.
+
+It costs one more offscreen pass and a 1 MB RGBA16F table (RGBA8 on a driver
+that cannot render to half float), both only when the config changes - about
+0.04 ms a frame under an animation that changes it every frame - plus ~1.15x
+on a partly lit ring and ~1.07x on a fully lit one at 1.0. See V20 for the
+measurements.
+
+## 6. Nothing else a host can see moved
 
 The pass schedule now runs every offscreen pass before it touches the caller's
 framebuffer. This changes no pixel, but saves a store and reload of the target

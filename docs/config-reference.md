@@ -255,7 +255,8 @@ They meet at two sums - filament (sharp line) and glow (halo + bloom):
 ```
 arcCol  = col * uIntensity
 emitFil  = arcCol * emitCover         + segCol     * filamentGate
-emitGlow = arcCol * emitCoverGathered + segColGlow * glowCoverAll
+emitGlow = arcCol * emitCoverGathered + segColHue  * gatheredSeg
+glow     = emitGlow * (halo, bloom) + per-piece correction       // V19
 ```
 
 `col / segColHue` are gated-normalised pure hues, so all brightness lives in
@@ -272,16 +273,25 @@ the four coverage terms:
   gather, not arc-gated).
 * **Arc + segment overlap: sum, each with its own gate.** `emitCover` /
   `emitCoverGathered` for arcs, `filamentGate` /
-  `glowCoverAll` for segments. A shared gate let a segment lift the arc term
+  `gatheredSeg` for segments. A shared gate let a segment lift the arc term
   on stretches no arc covers (blue half-arc + red segment rendered magenta at
   ~2x); separate gates fix it while leaving the lit-arc tracer case identical.
 * **Segment + segment: sum and stack.** Two `boost = 2` comets crossing read
   `4` at the crossing, unclamped through the tone map.
 * **Gates:** `filamentGate = max(smoothstep(0.5, 1, min(segCoverPt, 1)),
   emitCover)` is sharp and pointwise (lives on the line);
-  `glowCoverAll = max(emitCoverGathered, min(segCoverGathered, 1))` is soft
-  and gathered (integrals over the emitter). A faint segment (`cover 0.5`)
-  opens no filament gate yet still feeds `0.25` into glow: halo without a core.
+  `gatheredSeg = segCoverGathered * max(emitCoverGathered, min(segCoverGathered, 1))`
+  is soft and gathered (integrals over the emitter). A faint segment
+  (`cover 0.5`) opens no filament gate yet still feeds `0.25` into glow: halo
+  without a core.
+* **Each piece's own coverage (V19, V20):** the halo and bloom are a sum over
+  the outline's eight pieces, and each piece's light is scaled by how lit
+  THAT piece is near its foot, under its own kernel - read from a table the
+  renderer bakes per config change - rather than by the coverage gathered
+  around the pixel. It is what keeps a stretch no arc covers from showing a
+  thin line along it, even at a high `intensity`, and keeps lit edges' bloom
+  from dimming where it reaches a dark one; 0 on a fully lit ring. Arcs only:
+  segments still take the gathered coverage, blended toward the foot's.
 * **Shared shaping after the sum:** `core / halo / bloom` kernels,
   `glowRadius / bloomStrength`, `glowSide / cutoffs`, tone map + gamma apply
   to `emitFil / emitGlow` as a whole, so overdrive saturates jointly.

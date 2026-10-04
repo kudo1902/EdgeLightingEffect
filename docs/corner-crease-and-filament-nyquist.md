@@ -638,6 +638,17 @@ Cost is +1.8%. The measurements, the ten-scene table and the one deliberate
 limit (colour-stop alpha is not in the gathered pair) are in
 [review-findings.md](review-findings.md) V14.
 
+**Since superseded for the arcs.** The gathered pair was a stand-in for each
+piece's own coverage, and it was wrong in two ways that V19 and V20 in
+[review-findings.md](review-findings.md) measured: its kernel is wider than the
+halo's along the line, so an unlit stretch kept a faint line of light, and it
+is gathered around the FRAGMENT, so on a dark line it dips and dims the light
+reaching there from lit edges. Each piece's halo and bloom now take that
+piece's own arc coverage under its own kernel, read from a table baked once
+per config change (`neon-glow-cover.frag`). The per-piece foot still moves
+continuously, so the medial-axis crease this section removed stays gone. The
+gathered pair still scales the segments' glow.
+
 ---
 
 ---
