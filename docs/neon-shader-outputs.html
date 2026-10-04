@@ -385,12 +385,13 @@
       <text class="t-file" x="30" y="1200">Same picture as the frame above; no offscreen buffer but the emission table.</text>
     </svg>
     </div>
-    <figcaption>How one frame is built below scale 1.0, with what each buffer and each pass actually held, captured from this frame. Phase 1 fills three offscreen buffers, each read by the pass after it; the gather buffer is read a second time by the ring. Phase 2 composites onto the caller&rsquo;s framebuffer: the blit draws everything except a band around the outline, and the ring fills exactly that band. At scale 1.0 (bottom) one pass draws the same picture. Every pass also reads uniforms and the CPU-baked LUTs and uniform blocks, which are left out. Sizes are this page&rsquo;s 640 &times; 360 frame; the gather captures are magnified, so their texels show.</figcaption>
+    <figcaption>How one frame is built below scale 1.0, with what each buffer and each pass actually held, captured from this frame. Phase 1 fills three offscreen buffers, each read by the pass after it; the gather buffer is read a second time by the ring. Phase 2 composites onto the caller&rsquo;s framebuffer: the blit draws everything except a band around the outline, and the ring fills exactly that band. At scale 1.0 (bottom) one pass draws the same picture. Every pass also reads uniforms and the CPU-baked LUTs and uniform blocks, which are left out, and so is P0b&rsquo;s glow coverage table, which every shading pass reads (see its section below). Sizes are this page&rsquo;s 640 &times; 360 frame; the gather captures are magnified, so their texels show.</figcaption>
   </figure>
 
   <nav aria-label="Passes in frame order">
     <ul class="flow">
       <li><a href="#p0"><span class="id">P0</span><span class="grid">128&times;2</span></a></li>
+      <li><a href="#p0b"><span class="id">P0b</span><span class="grid">2048&times;64</span></a></li>
       <li><a href="#p1a"><span class="id">P1a</span><span class="grid">128&times;80</span></a></li>
       <li><a href="#p1b"><span class="id">P1b</span><span class="grid">320&times;180</span></a></li>
       <li><a href="#p2b"><span class="id">P2b</span><span class="grid">640&times;360</span></a></li>
@@ -423,6 +424,32 @@
         <figure class="wide">
           <img src="images/neon-onboarding/pass-p0-emission.png" alt="The emission table: four horizontal bands of per-sample colour and weight" width="640" height="138">
           <figcaption>The table, in the band order above.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="pass" id="p0b">
+    <div class="meta">
+      <h2 class="sec"><span class="num">P0b</span>Glow coverage table</h2>
+      <dl class="spec">
+        <div><dt>Program</dt><dd><code>mGlowCoverShader</code></dd></div>
+        <div><dt>Shader</dt><dd><code>neon-glow-cover.frag</code></dd></div>
+        <div><dt>Target</dt><dd><code>mGlowCoverBuffer</code></dd></div>
+        <div><dt>Grid</dt><dd>2048 &times; 64 texels</dd></div>
+        <div><dt>Format</dt><dd>RGBA16F</dd></div>
+      </dl>
+    </div>
+    <div class="body">
+      <p>How lit the arcs are as the halo and the bloom see them, per perimeter position (across) and distance from the line (down): the arcs&rsquo; coverage convolved with each layer&rsquo;s kernel along the outline. The halo and bloom are a sum over the outline&rsquo;s eight pieces, and every shading pass - P1b, P2c, and P1 at scale 1.0 - scales each piece&rsquo;s share by its own read of this table, one linear fetch at the piece&rsquo;s foot. Baked on a config change only; its lengths are fractions of the perimeter, so both resolution paths share it.</p>
+      <ol>
+        <li>Top band: the halo&rsquo;s view. The first arc white, the dimmer one grey, the gaps dark, their edges softening with distance as the kernel widens.</li>
+        <li>Bottom band: the bloom&rsquo;s, six times wider, so even on the line the gaps are only a shade darker.</li>
+      </ol>
+      <div class="shots">
+        <figure class="wide">
+          <img src="images/neon-onboarding/pass-p0b-glow-cover.png" alt="The glow coverage table: two bands of arc coverage, sharp at the top and softening downward" width="511" height="262">
+          <figcaption>The table, every fourth column, <code>t</code> = 0 at the left.</figcaption>
         </figure>
       </div>
     </div>
