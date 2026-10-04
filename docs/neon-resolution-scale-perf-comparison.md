@@ -8,11 +8,11 @@ startup and memory. "Before" is `542dad4`, the last commit before step 1;
 [`neon-resolution-scale-comparison.html`](neon-resolution-scale-comparison.html):
 this is the price.
 
-Every number here is from one machine - an i7-9750H MacBook Pro whose GL
+Sections 1-7 are from one machine - an i7-9750H MacBook Pro whose GL
 renderer is an **AMD Radeon Pro 5300M** (x86_64 build, macOS GL 4.1) - and the
 plan's own step timings were taken on an Apple M2 Pro, where the ring measured
-far cheaper. Read ratios, not milliseconds, and expect the target device to
-differ again.
+far cheaper. Section 8 is on Mesa llvmpipe and section 9 on an Apple M2 Pro.
+Read ratios, not milliseconds, and expect the target device to differ again.
 
 **Result.** Scale 1.0 barely moves - its output is byte-identical and its cost
 rose by +1 to +58 us (about 1% of the frame), almost all of it from step 2.
@@ -28,6 +28,12 @@ doubles, 23 ms to 50 ms per effect, and the scaled buffer's memory doubles
 this: programs are built per path on first use, so a host compiles only the
 path it draws; and the composite and the ring cover only where the glow can be
 lit, which mostly helps the cutoff band and the one-sided glows.
+
+**Against `main`** (section 9, Apple M2 Pro): at scale 0.5 the branch now
+renders the neon **2.3x faster than `main` at 1280 x 720 and 2.8x at 1920 x
+1080**, and passes `neon-scale-check check` where `main`'s 0.5 is up to 77/255
+off its own 1.0. Scale 1.0 is within run-to-run noise of `main`, with one
+exception (`segments` at 720p, about 11% faster).
 
 ## 1. Method
 
@@ -344,3 +350,122 @@ with the commit before at 0.25, within a 10% spread run to run. Per pass at 0.5
 on `default` (skipping one pass at a time, so approximate): the shading pass at
 the reduced scale is now the largest, ~40-50%, then the gather ~25-35%, the
 blit ~20% and the ring ~15%.
+
+
+## 9. Against `main` at scale 0.5
+
+Sections 1-8 measure the branch's steps against each other. This one measures
+where the branch ended up against `main` (`1b5cf94`, its merge base): the
+library at `d3b671b` against `main`'s, both Release builds, at resolution scale
+0.5, on an **Apple M2 Pro** (arm64, macOS GL 4.1).
+
+What each does at 0.5:
+
+- **`main`** shades the whole glow in one pass at half resolution - the
+  128-sample loop at every reduced pixel, the line included - and blits all of
+  it back with one bilinear upsample.
+- **The branch** runs the loop alone on a coarse grid (section 8), shades the
+  rest at 0.5, and re-shades the line and every hard edge at full resolution in
+  a thin ring (sections 1-5). Each buffer covers only the part of the frame
+  that can be lit.
+
+**Method.** As in section 1: `tools/neon-scale-check`'s `time`, built in-tree
+against the branch's library and standalone against `main`'s (`EL_ROOT`), five
+rounds per build at each size with the build order alternating, median per
+figure. Milliseconds per frame, neon layer only.
+
+| scene | 720p `main` | 720p current | speed-up | 1080p `main` | 1080p current | speed-up |
+| ----- | ----------- | ------------ | -------- | ------------ | ------------- | -------- |
+| `default` | 0.618 | 0.242 | **2.5x** | 1.171 | 0.394 | **3.0x** |
+| `hairline` | 0.523 | 0.206 | 2.5x | 0.855 | 0.294 | 2.9x |
+| `crisp_tube` | 0.599 | 0.240 | 2.5x | 1.041 | 0.350 | 3.0x |
+| `soft_wash` | 0.690 | 0.275 | 2.5x | 1.392 | 0.471 | 3.0x |
+| `sharp_corners` | 0.617 | 0.182 | 3.4x | 1.145 | 0.262 | 4.4x |
+| `small_rect` | 0.455 | 0.358 | 1.3x | 0.522 | 0.265 | 2.0x |
+| `glow_inside` | 0.275 | 0.156 | 1.8x | 0.485 | 0.204 | 2.4x |
+| `card_outside` | 0.569 | 0.219 | 2.6x | 1.187 | 0.379 | 3.1x |
+| `bounded_band` | 0.125 | 0.112 | 1.1x | 0.172 | 0.121 | 1.4x |
+| `arcs` | 0.696 | 0.267 | 2.6x | 1.253 | 0.439 | 2.9x |
+| `segments` | 0.872 | 0.300 | 2.9x | 1.622 | 0.427 | 3.8x |
+| `overdrive` | 0.695 | 0.263 | 2.6x | 1.440 | 0.457 | 3.2x |
+| geometric mean | | | **2.3x** | | | **2.8x** |
+
+(Speed-up: `main` / current.) Two checks on the numbers:
+
+- **Scale 1.0 is the control, and it holds.** The branch runs at 0.98x to 1.13x
+  of `main`'s speed at 1.0 across the twelve scenes and both sizes. For all but
+  one figure the two builds' five-round ranges overlap, so the difference is
+  noise; the exception is `segments` at 720p, about 11% faster with no overlap.
+  Either way it is far smaller than the gains at 0.5, which come from the
+  reduced-scale path, not from the machine.
+- **The noise is small.** A figure at 0.5 typically varied 3-10% across its
+  five rounds, 15% at worst. Even the smallest gain, `bounded_band` at 720p
+  (1.1x), is real: the two builds' ranges there do not overlap.
+
+Against each build's own 1.0, `main`'s 0.5 is 1.4x to 4.1x faster; the
+branch's is 1.6x to 12.0x at 720p and 1.9x to 15.9x at 1080p. `bounded_band`
+is the low end of every range.
+
+**Quality at 0.5.** `neon-scale-check check`, each build against its own 1.0
+render, max / p99 error out of 255:
+
+| scene | `main` at 0.5 | current at 0.5 |
+| ----- | ------------- | -------------- |
+| `default` | 7 / 4 | 1 / 1 |
+| `hairline` | 77 / 59 | 2 / 1 |
+| `crisp_tube` | 41 / 25 | 1 / 1 |
+| `soft_wash` | 1 / 1 | 1 / 1 |
+| `sharp_corners` | 13 / 4 | 1 / 1 |
+| `small_rect` | 11 / 8 | 1 / 1 |
+| `glow_inside` | 4 / 3 | 1 / 1 |
+| `card_outside` | 5 / 2 | 1 / 1 |
+| `bounded_band` | 42 / 21 | 1 / 1 |
+| `arcs` | 7 / 4 | 2 / 1 |
+| `segments` | 8 / 6 | 1 / 1 |
+| `overdrive` | 1 / 1 | 1 / 1 |
+
+The branch passes. `main` fails 55 values across the scales, and its moving
+hairline drifts 0.15 px at 0.5 (the bound is 0.1) and 1.75 px at 0.125,
+against 0.05 and 0.02 now. `main`'s worst scenes are the ones the edge ring was
+built for: a 1 px line (`hairline`, 77/255), a flat-topped tube (`crisp_tube`,
+41) and a hard cutoff band (`bounded_band`, 42).
+
+**Reading it.**
+
+- **The gain grows with the frame,** 2.3x at 720p and 2.8x at 1080p, where
+  `time` draws the scenes' rects larger. The branch's loop grid is sized by the
+  colour kernel, which grows with the rect, so its texel count stays about the
+  same as the rect grows; `main` runs the loop at every reduced pixel, so its
+  cost grows with the area. The ring grows only with the perimeter.
+- **The smallest gains are the cheap scenes.** `bounded_band` (1.1x, 1.4x)
+  lights only a thin band, so the passes' fixed cost dominates. `small_rect`
+  (1.3x, 2.0x) has a colour kernel of about 4 px at 720p, so its gather grid
+  comes out at scale 0.48, almost the reduced scale itself (section 8); at
+  1080p the rect is 1.5x larger, the grid drops to 0.32, and the gain to 2.0x.
+  `glow_inside` (1.8x, 2.4x) glows inside the rect only, so it is cheap even at
+  1.0 (0.6 ms against 2.3 ms for `default` at 720p) and has less to gain.
+- **`bounded_band` is not quite like for like.** `Cutoff::softness` is centred
+  on `size` on `main` and runs outward from it on the branch
+  ([`upgrade-notes.md`](upgrade-notes.md)), so the lit band itself differs a
+  little; `main`'s 1.0 render of it is 131/255 off the committed image. Read
+  that row as indicative.
+- **Startup is not compared.** `time` also records effect construction, 12-15
+  ms on `main` against 3.5 ms on the branch, but the branch builds the neon
+  programs on the first frame instead (section 6). That number shows where the
+  compile happens, not what it costs.
+- **One GPU.** The AMD GPU (sections 1-7) and llvmpipe (section 8) priced the
+  ring and the gather split differently again. Measure on the target device.
+
+To reproduce, with `main` exported and built in its own tree:
+
+```bash
+mkdir -p /tmp/el-main
+git archive main | tar -x -C /tmp/el-main
+cmake -S /tmp/el-main -B /tmp/el-main/build -G Ninja -DCMAKE_BUILD_TYPE=Release
+cmake --build /tmp/el-main/build --target edge-lighting glad
+cmake -S tools/neon-scale-check -B build/neon-scale-check-main -G Ninja -DEL_ROOT=/tmp/el-main
+cmake --build build/neon-scale-check-main
+```
+
+then `time` both builds in alternating rounds at each size (section 7), and
+`check` each - `main`'s with `--images-dir docs/images/neon-resolution-scale`.
