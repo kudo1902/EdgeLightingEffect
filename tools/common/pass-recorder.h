@@ -31,6 +31,7 @@ namespace NeonTools
     {
         OTHER,    ///< Anything else - the debug layer's overlays.
         P0,       ///< Emission table (neon-emission.frag).
+        P0B,      ///< Glow coverage table (neon-glow-cover.frag).
         P1,       ///< Direct-path glow (neon.frag, plain).
         P1A,      ///< Gather pass (neon-gather.frag).
         P1B,      ///< Reduced-scale shading (neon.frag + NEON_READS_GATHER, offscreen).

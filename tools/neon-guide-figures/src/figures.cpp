@@ -1073,6 +1073,30 @@ namespace NeonGuideFigures
                 SavePNG(out, Path(dir, "pass-p0-emission.png"));
             }
 
+            // P0b - the glow coverage table: the arcs' coverage as the halo
+            // (top band) and the bloom (bottom band) see it, perimeter position
+            // across, distance from the line down, every fourth column.
+            if (const DrawRecord *p0b = PassRecorder::Find(PassKind::P0B))
+            {
+                const Attachment &t = p0b->written[0];
+                const int step = 4;
+                const int rowPx = 2;
+                const int gap = 6;
+                const int columns = (t.width - 2) / step;
+                Canvas out(columns, 2 * t.height * rowPx + gap, glm::vec3(0.18f));
+                for (int i = 0; i < columns; ++i)
+                {
+                    for (int j = 0; j < t.height; ++j)
+                    {
+                        const glm::vec4 v = t.At(1 + i * step, j);
+                        FillRect(out, i, j * rowPx, 1, rowPx, glm::vec3(std::min(DecodeCoverage(v.r), 1.0f)));
+                        FillRect(out, i, t.height * rowPx + gap + j * rowPx, 1, rowPx,
+                                 glm::vec3(std::min(DecodeCoverage(v.g), 1.0f)));
+                    }
+                }
+                SavePNG(out, Path(dir, "pass-p0b-glow-cover.png"));
+            }
+
             // P1a - the gather buffer: hue, arc coverage, segment coverage.
             if (const DrawRecord *p1a = PassRecorder::Find(PassKind::P1A))
             {

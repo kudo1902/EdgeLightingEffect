@@ -57,6 +57,10 @@ void main() { fragColor = uColor; }
             {
                 return PassKind::P0;
             }
+            if (!ontoCaller && HasUniform(program, "uHaloWidth"))
+            {
+                return PassKind::P0B;
+            }
             return PassKind::OTHER;
         }
 
