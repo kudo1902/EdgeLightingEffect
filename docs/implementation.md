@@ -91,7 +91,7 @@ compositing order, since they blend onto one another in the order they draw:
 | 1 | `NeonRenderer` | The neon stroke: an emission pre-pass, the opaque fill, the gather, and - below `resolutionScale` 1.0 - a scaled buffer plus its blit, with a full-resolution ring re-shaded around the edge. |
 | 2 | `DropletsRenderer` | Rain-on-glass in a band hugging the perimeter. Screen-space gravity, self-lit, no framebuffer capture. Always full-res. |
 | 3 | `LensFlareRenderer` | Sun plus hex-aperture flare as one fullscreen premultiplied pass. The sun rides the perimeter, and - below `resolutionScale` 1.0 - a scaled buffer plus its blit. |
-| 4 | `SpotlightRenderer` | Freely placed and aimed cones of light, as one additive pass over solved per-lamp strips. The odd one out: not a perimeter effect, reads only `Config::spotlight`, and - below `resolutionScale` 1.0 - a scaled buffer plus its blit. See [`spotlight-renderer.md`](spotlight-renderer.md). |
+| 4 | `SpotlightRenderer` | Freely placed and aimed cones of light, as one screened pass over solved per-lamp strips. The odd one out: not a perimeter effect, reads only `Config::spotlight`, and - below `resolutionScale` 1.0 - a scaled buffer plus its blit. See [`spotlight-renderer.md`](spotlight-renderer.md). |
 | 5 | `DebugRenderer` | The LUT strip, colour-stop markers and the 1px bounding box. **Last on purpose** - it annotates what the layers under it drew, so its overlays have to sit above all of them. Always full-res. |
 
 `DebugRenderer` being last is the one position in that list that is load-bearing

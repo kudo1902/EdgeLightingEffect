@@ -1144,8 +1144,10 @@ namespace EdgeLighting
     /// Spotlight renderer configuration: a list of independently placed lamps.
     ///
     /// The layer emits LIGHT ONLY - no backdrop, no fixture housings, no floor
-    /// - and composites additively over whatever is behind it. Nothing is
-    /// occluded by the rect: a cone crosses the frame freely.
+    /// - and SCREENS over whatever is behind it, `dst + src * (1 - dst)`:
+    /// light only adds, but overlapping lamps approach full scale instead of
+    /// clipping. Nothing is occluded by the rect: a cone crosses the frame
+    /// freely.
     ///
     /// The one thing that DOES stop light is @c clip - an explicit area, opted
     /// into per lamp by @c SpotLight::clipped. That is a cut, not a shadow:

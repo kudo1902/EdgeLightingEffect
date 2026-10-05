@@ -76,8 +76,9 @@ V12 comes from a spotlight render like V10 and V11 - see
 [Thirteenth pass](#thirteenth-pass-the-spotlight-intensity-report). Half of what
 was reported turned out to be designed behaviour and half a real defect, and the
 first fix for the real half was worse than the defect; both are recorded there,
-the second because the failed attempt is the useful part. V12a is its open
-remainder. V12b is the follow-up report that the fix had not actually landed -
+the second because the failed attempt is the useful part. V12a was its
+remainder - overlapping lamps clipping their sum - and is fixed by screening the
+lamps instead of adding them. V12b is the follow-up report that the fix had not actually landed -
 it had, for the defect it was measured against, and the measurement was the
 wrong one; read it before trusting any "no pixels clipped" result in this layer.
 
@@ -2723,7 +2724,7 @@ it missing. After the mask, a half-covered fragment would sit lower on the
 shoulder and be compressed less, so moving the clip area would change the shape
 of the shading it is only meant to reveal.
 
-### V12a. Overlapping lamps still clip per channel - OPEN
+### V12a. Overlapping lamps still clip per channel - FIXED
 
 The shoulder is per lamp, because a fragment shader in an additive pass is the
 only place it can run. Two lamps that each stay under full scale still SUM past
@@ -2739,13 +2740,84 @@ the first:
 No fully white pixels at any of them, so it is milder than V12 was, but the hue
 shift is back wherever beams overlap brightly.
 
-The honest cure is not another per-fragment term: it is for the layer to
-composite into its own buffer and put the shoulder on the SUM, at blit time.
-That is a real design change - it would give the layer a mandatory offscreen
-buffer at `resolutionScale` 1.0, where it currently has none, and it interacts
-with the clip pinning in `GetClampedSpotScale`. Left open deliberately rather
-than patched, and recorded here so the next person to see a yellow-white overlap
-knows it is this and not V12 coming back.
+This entry first proposed putting the shoulder on the SUM, in an offscreen
+buffer at blit time, and left the item open because that would give the layer a
+mandatory offscreen buffer at `resolutionScale` 1.0. It came back as a report -
+two crossing white beams rendering a flat white disc with a hard rim at the
+crossing - and was closed a different way.
+
+**Fixed by SCREENING the lamps rather than adding them.** `SpotlightRenderer::Render`
+now blends `glBlendFuncSeparate(GL_ONE_MINUS_DST_COLOR, GL_ONE,
+GL_ONE_MINUS_DST_ALPHA, GL_ONE)` - `dst + src * (1 - dst)`, on colour and alpha
+alike - where it had `GL_ONE` / `GL_ONE`. The shoulder is still per lamp; the
+blend is what bounds their total, since a screened sum approaches 1.0 and never
+crosses it. The pass stays order-independent (the screen is symmetric and
+associative), and the scaled path stays the same composite as the direct one:
+lamps screened into a cleared buffer, then the buffer screened onto the target.
+
+Measured at 3840x2160 on an AMD Radeon Pro 5300M, on the reported rig - two
+26-degree lamps at `intensity` 1.15, 5600 K, from app (1920, 480) at 149.8
+degrees and (1225, 439) at 48.8 degrees, crossing ~400 and ~500 px out:
+
+| | add (before) | screen (after) |
+| - | ------------ | -------------- |
+| px with a channel at 255 | 15,503 | 0 |
+| colour at the crossing | (255, 255, 255) | (213, 209, 207) |
+| curvature across the crossing (a smooth falloff reads ~2.2) | 7.6 - the clipped rim | 2.3 |
+| the same rig at 2700 K, green / red at the crossing (one beam alone: 0.72) | 0.87 | 0.80 |
+| GPU time | 2.48 ms | 2.47 ms |
+
+A five-lamp fan sharing one origin went from 13,795 px at 255 to none. The
+curvature figure is the largest second difference, at a 6 px stride, of the
+frame box-blurred 9x9 to remove the dither, inside a box round the crossing:
+a clipped plateau's rim is a slope discontinuity and stands out of it; the
+smooth falloff does not.
+
+What the screen gives up against the add:
+
+- **Nothing over a transparent clear**, which is the Tizen surface: a lone lamp
+  is byte-identical there, colour and alpha.
+- **A lamp adds less over anything already lit** - up to 9 levels at a default
+  lamp's core over the demo's (0.03, 0.03, 0.05) clear, and more over a bright
+  neon glow (which the add clipped too).
+- **It works per CHANNEL**, so a coloured overlap drifts towards white - 0.80
+  against one beam's 0.72 in the table, where the clipped add read 0.87.
+- **It assumes a destination in [0, 1].** Every target the library owns is
+  RGBA8, but a host that hands `Render` a float framebuffer already holding
+  values above 1 turns `1 - dst` negative and the layer subtracts light there.
+
+At `resolutionScale` 0.5 the rig stays within 2 to 3 levels of 1.0, as it did
+under the add.
+
+**The cure this entry proposed was built and measured against it, and lost.**
+Built in its single-pass form, to avoid the offscreen buffer: each lamp's draw
+also evaluated every lamp whose strip quads overlapped its own (a per-quad
+bitmask from axis-aligned boxes, the lamps in a std140 block) and wrote its own
+share `own * k(total)`, where `k` is the factor the shoulder applies to the
+total - so the shares added up to the hue-preserving shoulder of the summed
+light. It matched an emulated sum-then-shoulder reference within 3 levels and
+kept an amber overlap's hue exactly (0.72). Two things sank it:
+
+- **Cost.** A k-fold overlap does k-squared lamp evaluations. On the same GPU at
+  3840x2160: 6.20 ms against 2.48 on the two-lamp rig (2.5x), 36.8 against 6.3
+  on the fan (5.8x), 107.6 against 11.6 on eight crossing lamps (9.3x) - plus
+  3.6% on a lamp that overlaps nothing, for code it never runs, and a 38 ms
+  compile on its first frame.
+- **A crease at every crossing of two DIFFERENTLY coloured beams.** The shoulder
+  is driven by the total's brightest channel, which switches from one lamp's hue
+  to the other's along the line where the two are equally bright. The
+  compression factor is continuous across that line but its slope is not, so
+  the shading bends there: curvature 3.9 on a red-and-blue crossing, against
+  ~2.2 for a smooth falloff and 7.6 for the clipped rim this replaces.
+  Same-coloured lamps never switch channel and never show it.
+
+The crease belongs to tone-mapping a SUM by its peak channel, not to the
+single-pass build: the emulated reference creases in the same place. So the
+offscreen version first proposed here - accumulate into a float buffer,
+shoulder once at blit time - would carry it too, on top of a viewport-sized
+RGBA16F buffer (66 MB at 4K) the layer does not need at 1.0 and a fixed
+full-screen pass. A smooth stand-in for the max would remove the crease, but it
+would also change the shading of every lamp on its own, overlapping or not.
 
 ### V12b. The shoulder stopped the core going white but not the EMITTER going fat - FIXED
 
@@ -3822,7 +3894,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I12 | partly fixed | the live shader comment is corrected; `architecture-design.md` and `multiple-arcs-design.md` still name the removed LUT functions, and both are design prose rather than comments beside live code |
 | I13 | open | undefined `pow` reachable only through the C ABI; both cures change what the boundary accepts or what the term computes below `ghostSize` 0.6, so it is a behaviour decision rather than a repair |
 | I18 | open | the division guarantees something the 8-bit blend discards, and the three ways out - drop it, document its limit, or accumulate at higher precision - are a design call, not a fix |
-| V12a | open | per-lamp shouldering cannot bound a SUM; the cure is an offscreen composite for the whole layer, which the layer does not currently need at `resolutionScale` 1.0 |
+| V12a | fixed | per-lamp shouldering cannot bound a SUM, so the blend does: the lamps screen instead of adding. Putting the shoulder on the sum was built and measured 2.5x to 9.3x slower, with a crease where differently coloured beams cross |
 | V15 | fixed | the reduced-resolution neon drew every edge near the line into a buffer that cannot hold one; the cutoffs moved into the blit and the line into a full-resolution edge ring |
 | I25 | documented | below 1.0 the scaled path has a fixed cost (composite, clears, edge ring), so a layer already cheap at 1.0 can render slower; capping the ring for soft filaments is decision 7 in `neon-resolution-scale-plan.md` |
 | V16 | open | a crisp, thin line with no glow reads up to 8 levels off at its corners below 1.0; most likely the ring and direct programs disagree on an arc's distance by thousandths of a pixel, which a sub-pixel shoulder magnifies - unconfirmed, GPU-specific as far as measured (it does not reproduce on Mesa llvmpipe), and covered by any glow |

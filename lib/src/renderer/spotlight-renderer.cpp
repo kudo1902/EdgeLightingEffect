@@ -656,41 +656,64 @@ namespace EdgeLighting
                                          static_cast<float>(viewportHeight), 0.0f,
                                          -1.0f, 1.0f);
 
-        // FULLY ADDITIVE, colour and alpha alike, and the only separate-alpha
-        // blend in the library. Both halves are deliberate.
+        // SCREENED, colour and alpha alike - `dst + src * (1 - dst)` - and the
+        // only separate-alpha blend in the library.
         //
-        // COLOUR is GL_ONE / GL_ONE because light only ever adds - which also
-        // makes the pass order-independent, so the lamp order in the config
-        // cannot change the image. That is unchanged behaviour: this used to
-        // be GL_ONE / GL_ONE_MINUS_SRC_ALPHA against a shader that emitted a
-        // literal alpha 0, and 1 - 0 is 1, so the destination factor was
-        // always exactly GL_ONE anyway. Writing it out is what lets
-        // spotlight.frag start emitting a real alpha without the colour
-        // channel quietly acquiring an occlusion term the other layers have
-        // and this one should not.
+        // COLOUR is GL_ONE_MINUS_DST_COLOR / GL_ONE. Light still only adds - a
+        // lamp never darkens what is under it - but the sum now APPROACHES full
+        // scale instead of crossing it. That is the whole point: spotlight.frag's
+        // highlight shoulder keeps ONE lamp under 1.0 and cannot see the
+        // others, so under the GL_ONE / GL_ONE this used to be, two beams
+        // crossing at ~0.6 each summed to ~1.2 and the RGBA8 target clipped
+        // the overlap to a flat white disc with a hard rim - V12a in
+        // docs/review-findings.md. Screened, the same pair reads ~0.84 and
+        // shades smoothly through the crossing, and the blend costs exactly
+        // what the add did.
         //
-        // ALPHA is GL_ONE / GL_ONE because the framebuffer's alpha has to end
-        // up saying "there is light here". It did not before. Every other
-        // layer writes a coverage alpha; the spotlight wrote 0 and so left the
-        // surface transparent wherever it was the only thing that drew. On a
-        // desktop window that is invisible - the window is opaque and nobody
-        // reads the alpha back. On an embedded surface it is fatal: a
-        // compositor or hardware video plane finishes the frame with
-        // `out = ui.rgb * ui.a + video * (1 - ui.a)`, and every lit spotlight
-        // pixel is multiplied by zero. That is the Tizen report - the layer
-        // missing over a playing video while neon, droplets and the flare
-        // (all of which write coverage) came through.
+        // Still ORDER-INDEPENDENT: 1 - (1 - a)(1 - b) is symmetric and
+        // associative, so the lamp order in the config cannot change the
+        // image, and the scaled path below - lamps screened into a cleared
+        // buffer, the buffer screened onto the target - makes the same
+        // composite as the direct path up to the buffer's rounding.
+        //
+        // What it gives up against the add, measured at 3840x2160:
+        //   - nothing over a transparent clear, which is the Tizen surface: a
+        //     lone lamp is byte-identical there, colour and alpha;
+        //   - a lamp adds LESS over anything already lit - up to 9 levels at a
+        //     default lamp's core over the demo's (0.03, 0.03, 0.05) clear, and
+        //     more over a bright neon glow, which the add clipped as well;
+        //   - it screens per CHANNEL, so a coloured overlap drifts towards
+        //     white: two 2700 K beams cross at green/red 0.80 against 0.72 for
+        //     one beam alone (the clipped sum read 0.87).
+        // Putting the hue-preserving shoulder on the SUM instead - every lamp
+        // evaluating the lamps it overlaps - was built and measured against
+        // this and rejected: 2.5x to 9.3x the GPU time on overlapping rigs, and
+        // a crease wherever two differently coloured beams cross. See V12a.
+        //
+        // ALPHA is GL_ONE_MINUS_DST_ALPHA / GL_ONE: the coverage composites the
+        // same way the colour does, so N overlapping lamps saturate towards 1
+        // whatever order they are in. And it has to be WRITTEN at all, which it
+        // once was not. Every other layer writes a coverage alpha; the
+        // spotlight wrote 0 and so left the surface transparent wherever it was
+        // the only thing that drew. On a desktop window that is invisible - the
+        // window is opaque and nobody reads the alpha back. On an embedded
+        // surface it is fatal: a compositor or hardware video plane finishes
+        // the frame with `out = ui.rgb * ui.a + video * (1 - ui.a)`, and every
+        // lit spotlight pixel is multiplied by zero. That is the Tizen report -
+        // the layer missing over a playing video while neon, droplets and the
+        // flare (all of which write coverage) came through.
         //
         // Measured offscreen at 640x360 over a transparent clear, before the
         // fix: one lamp lit 72,615 pixels of colour and 0 pixels of alpha, and
         // composited to nothing at all.
         //
-        // Accumulating the alpha rather than compositing it keeps the
-        // order-independence the colour has: N lamps overlapping sum their
-        // coverage and saturate at the framebuffer, whatever order they are
-        // in.
+        // One host-state assumption the add did not make: (1 - dst) is a
+        // weight only while the destination is in [0, 1]. Every target this
+        // library owns is RGBA8, but a host that hands Render a FLOAT
+        // framebuffer already holding values above 1 turns the factor negative,
+        // and the layer subtracts light there.
         glEnable(GL_BLEND);
-        glBlendFuncSeparate(GL_ONE, GL_ONE, GL_ONE, GL_ONE);
+        glBlendFuncSeparate(GL_ONE_MINUS_DST_COLOR, GL_ONE, GL_ONE_MINUS_DST_ALPHA, GL_ONE);
 
         mShaderProgram.Use();
 
@@ -748,21 +771,24 @@ namespace EdgeLighting
             noScissor.Restore();
 
             // Back to the caller's target and viewport, both at once, then
-            // composite. The buffer holds premultiplied colour and the
-            // accumulated coverage alpha, and the blend above is still in
-            // force, so this blit is a plain bilinear read ADDED onto whatever
-            // is already there - colour and alpha alike. That is what carries
-            // the coverage through to the caller's framebuffer, which is the
-            // whole point of writing it; a blit under the old
-            // GL_ONE_MINUS_SRC_ALPHA would instead have let the buffer's new
-            // alpha eat the destination it is supposed to be adding to.
+            // composite. The buffer holds the lamps' screened colour and
+            // coverage, and the blend above is still in force, so this blit is
+            // a plain bilinear read SCREENED onto whatever is already there -
+            // colour and alpha alike. That is what carries the coverage through
+            // to the caller's framebuffer, which is the whole point of writing
+            // it; a blit under the old GL_ONE_MINUS_SRC_ALPHA would instead
+            // have let the buffer's new alpha eat the destination it is
+            // supposed to be adding to.
             //
-            // One behavioural note the direct path does not have: overlapping
-            // lamps sum into an RGBA8 buffer and clamp THERE before reaching
-            // the target, whereas at 1.0 they clamp once against the target's
-            // existing content. Only reachable where several lamps already sum
-            // past white, and the same trade every accumulate-then-composite
-            // path in this library makes.
+            // Because the screen is associative, screening the lamps into a
+            // cleared buffer and then the buffer onto the target is the same
+            // composite as screening each lamp onto the target at 1.0 - the
+            // only difference is that the lamps' total is rounded to 8 bits
+            // once in between. (Under the add this used to be a real
+            // difference: overlapping lamps clamped in the buffer before the
+            // target saw them. Nothing screened reaches 1.0.) Measured on a
+            // two-beam crossing at 3840x2160, scale 0.5 stays within 2 to 3
+            // levels of 1.0, as it did under the add.
             prevTarget.Restore();
 
             mBlitShader.Use();
