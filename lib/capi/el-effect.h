@@ -67,9 +67,8 @@ extern "C"
     /** @brief Where the opaque-mode fill covers pixels.
      *  @details See @ref el_opaque_mode_e. NONE keeps the effect purely
      *           transparent; the other modes rasterise a coloured band shaped
-     *           by @ref el_effect_set_inside_cutoff /
-     *           @ref el_effect_set_outside_cutoff and filled with
-     *           @ref el_effect_set_opaque_color. To render the fill on its
+     *           by the fill's own @ref el_effect_set_opaque_cutoff and filled
+     *           with @ref el_effect_set_opaque_color. To render the fill on its
      *           own, with the emission suppressed, see
      *           @ref el_effect_set_debug_opaque_only. */
     EL_API el_result_e el_effect_set_opaque_mode(el_effect_handle_t effect, el_opaque_mode_e mode);
@@ -83,32 +82,72 @@ extern "C"
     EL_API el_result_e el_effect_get_opaque_color(el_effect_handle_t effect,
                                                   float *outR, float *outG, float *outB, float *outA);
 
-    /** @brief Feather width in pixels at the opaque fill's cutoff boundaries.
-     *  @details Applied only when @c opaqueMode != NONE. 0 = hard fill edge;
-     *           larger values soften where the fill fades to background. Kept
-     *           independent of the per-side cutoff softness so the emission
-     *           and the fill can taper at different rates. */
-    EL_API el_result_e el_effect_set_opaque_softness(el_effect_handle_t effect, float softness);
-    EL_API el_result_e el_effect_get_opaque_softness(el_effect_handle_t effect, float *outSoftness);
+    /** @brief Opaque-fill cutoff on one side of the rect edge.
+     *  @details The fill's OWN bound, independent of the glow's
+     *           @ref el_effect_set_inside_cutoff /
+     *           @ref el_effect_set_outside_cutoff: neither pair reaches the
+     *           other layer. @p side picks which cutoff; the INSIDE one caps
+     *           @c INSIDE / @c BOTH fills at d = -size, the OUTSIDE one caps
+     *           @c OUTSIDE / @c BOTH fills at d = +size - solid up to @c size,
+     *           then faded out over the next @c softness px. @c enable = 0 leaves
+     *           that side uncapped - an INSIDE fill covers the whole rect, an
+     *           OUTSIDE one runs to the viewport edge, and BOTH with both off
+     *           covers the whole viewport. @c size is a positive pixel
+     *           distance from the rect edge. @c softness is the feather width
+     *           in pixels, running OUTWARD from @c size (away from the rect
+     *           edge): full at @c size, gone at @c size + @c softness. 0 is a
+     *           pixel-tight antialiased edge at @c size, not a stair-stepped
+     *           one.
+     *
+     *           "Solid up to @c size" holds for softness of 1 px or more. Below
+     *           that the fade is widened to one pixel about
+     *           @c size + @c softness/2, so it starts up to half a pixel
+     *           inside @c size (~0.7 px on a diagonal) - antialiasing, not a
+     *           visible shoulder. The fill always draws at full resolution.
+     *
+     *           Both default to disabled.
+     *
+     *           Returns @ref EL_ERROR_INVALID_PARAMETER for a @p side outside
+     *           @ref el_cutoff_side_e. */
+    EL_API el_result_e el_effect_set_opaque_cutoff(el_effect_handle_t effect, el_cutoff_side_e side,
+                                                   el_bool_t enable, float size, float softness);
+    EL_API el_result_e el_effect_get_opaque_cutoff(el_effect_handle_t effect, el_cutoff_side_e side,
+                                                   el_bool_t *outEnable, float *outSize, float *outSoftness);
 
     /** @brief Inside cutoff (rect interior side): hard geometric limit for the neon glow.
      *  @details @c enable = 0 leaves the interior uncapped (natural halo/bloom
      *           decay bounds the emission). @c size is the pixel distance from
-     *           the rect edge to the cutoff boundary along the interior side
-     *           (always positive). @c softness is the TOTAL feather width in
-     *           pixels, centred on the boundary: 0 is a pixel-tight edge, not a
-     *           hard one, because the ramp is floored at one destination pixel
-     *           so the boundary is antialiased where it curves. Also caps the
-     *           geometric footprint of @c INSIDE / @c BOTH opaque fills.
+     *           the rect edge to where the feather STARTS along the interior
+     *           side (always positive): at full resolution the glow is
+     *           untouched up to @c size (see below for the antialiasing pixel
+     *           and for the reduced-resolution path).
+     *           @c softness is the feather width in pixels, running on from
+     *           @c size: the glow is gone at @c size + @c softness. 0 is a
+     *           pixel-tight edge at @c size, not a hard one, because the ramp
+     *           is floored at one destination pixel so the boundary is
+     *           antialiased where it curves.
      *
-     *           NOTE the shader used to spread this over 2x the stated width
-     *           and to apply it ahead of the tone map; a tuned non-zero value
-     *           now feathers over half the span it used to.
+     *           That floor is laid symmetrically about @c size + @c softness/2,
+     *           so below it the antialiasing ramp starts up to half a pixel
+     *           inside @c size - which keeps a softness-0 edge's 50% point on
+     *           @c size.
+     *
+     *           At a neon resolution scale below 1 the glow is drawn into a
+     *           smaller buffer and bilinear-upscaled, which softens EVERY
+     *           cutoff edge by about one buffer pixel whatever the softness:
+     *           the last ~0.5 / scale px before @c size are dimmed. Measured at
+     *           scale 0.25, the pixel just inside @c size keeps 63% of its
+     *           brightness at softness 0, 82% at 4 and 98% at 16 (at scale
+     *           0.5: 75%, 96%, 99%; at 1.0: 100% throughout). A larger
+     *           softness shrinks it but never removes it; an edge that must
+     *           hold full strength exactly to @c size needs scale 1.0. Does
+     *           NOT shape
+     *           the opaque fill, which has its own
+     *           @ref el_effect_set_opaque_cutoff.
      *
      *           A cutoff on the side the glow side already culls does nothing
      *           to the glow and is ignored: OUTSIDE subsumes the inside cutoff,
-     *           INSIDE subsumes the outside one. It still bounds the opaque
-     *           fill, which has no notion of a glow side. See
+     *           INSIDE subsumes the outside one. See
      *           docs/glow-side-comparison.md. */
     EL_API el_result_e el_effect_set_inside_cutoff(el_effect_handle_t effect,
                                                    el_bool_t enable, float size, float softness);
@@ -116,8 +155,8 @@ extern "C"
                                                    el_bool_t *outEnable, float *outSize, float *outSoftness);
 
     /** @brief Outside cutoff (rect exterior side). Mirror of @ref el_effect_set_inside_cutoff.
-     *  @details Also caps @c OUTSIDE / @c BOTH opaque fills and sizes the neon
-     *           draw quad so far-exterior pixels are rasteriser-culled. */
+     *  @details Also sizes the neon draw quad so far-exterior pixels are
+     *           rasteriser-culled. Does NOT shape the opaque fill. */
     EL_API el_result_e el_effect_set_outside_cutoff(el_effect_handle_t effect,
                                                     el_bool_t enable, float size, float softness);
     EL_API el_result_e el_effect_get_outside_cutoff(el_effect_handle_t effect,
@@ -171,8 +210,7 @@ extern "C"
      *
      *           The cut is coverage applied to the graded output, so a non-zero
      *           value fades the layer rather than dimming its emission into the
-     *           tone map. A value tuned before that changed reads dimmer and
-     *           wider. See docs/glow-side-comparison.md. */
+     *           tone map. See docs/glow-side-comparison.md. */
     EL_API el_result_e el_effect_set_glow_side_softness(el_effect_handle_t effect, float softness);
     EL_API el_result_e el_effect_get_glow_side_softness(el_effect_handle_t effect, float *outSoftness);
 

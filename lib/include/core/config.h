@@ -27,31 +27,65 @@ namespace EdgeLighting
         OUTSIDE ///< Glow only outside the rectangle (interior goes dark)
     } GlowSide;
 
-    /// Per-side hard geometric limit for the neon glow, packaged as a small
-    /// struct so both sides can be toggled and tuned independently.
+    /// Per-side hard geometric limit, packaged as a small struct so both sides
+    /// can be toggled and tuned independently. Two layers take a pair each, and
+    /// the fields read slightly differently for them:
     ///
-    ///   enable   - true = clamp the emission at @c size (with a @c softness
-    ///              feather); false = the side is uncapped and the emission's
-    ///              natural halo/bloom decay bounds it.
-    ///   size     - distance in pixels from the rect edge to the cutoff
-    ///              boundary along this side (always positive; sign is
+    ///   - the neon GLOW - @c NeonConfig::insideCutoff / @c outsideCutoff;
+    ///   - the opaque FILL - @c NeonConfig::opaqueInsideCutoff /
+    ///     @c opaqueOutsideCutoff.
+    ///
+    ///   enable   - true = the layer ends at @c size, faded out over the
+    ///              @c softness px beyond it. false = the side is uncapped: for
+    ///              the glow the emission's natural halo/bloom decay bounds it;
+    ///              for the fill nothing does - an INSIDE fill covers the whole
+    ///              rect and an OUTSIDE fill runs to the viewport edge.
+    ///   size     - distance in pixels from the rect edge to where the
+    ///              feather STARTS along this side (always positive; sign is
     ///              implicit in whether it's the inside or outside cutoff).
-    ///   softness - TOTAL feather width in pixels at the cutoff boundary,
-    ///              centred on it. 0 = a pixel-tight edge, not a hard one: the
-    ///              ramp is floored at one destination pixel so the boundary is
-    ///              antialiased, which matters wherever it curves - every
+    ///              Up to @c size the layer is untouched - the fill solid, the
+    ///              glow at full strength - whenever @c softness is at or above
+    ///              the one-pixel floor below. Under it, and for the glow at a
+    ///              resolutionScale below 1, see @c softness.
+    ///              For the glow, a size past the glow's own reach is a no-op -
+    ///              there is no emission left to cut. The fill has no reach of
+    ///              its own, so an OUTSIDE size always grows it; an INSIDE size
+    ///              stops mattering once it reaches min(width, height)/2, where
+    ///              the fill already covers the whole interior.
+    ///   softness - feather width in pixels, running OUTWARD from @c size:
+    ///              the layer is at full strength at @c size, 50% at
+    ///              @c size + softness/2, and gone at @c size + softness. 0 = a
+    ///              pixel-tight edge at @c size, not a hard one: the ramp's
+    ///              WIDTH is floored at one destination pixel so the boundary
+    ///              is antialiased, which matters wherever it curves - every
     ///              rounded corner, and all four corners of a cornerRadius-0
-    ///              band. Larger values fade the neon out smoothly over the
-    ///              boundary. Independent per side.
+    ///              band. Only the width is floored, not the position: a
+    ///              softness below that floor still moves the edge out by
+    ///              softness/2. Independent per side, and the same meaning for
+    ///              both layers.
     ///
-    ///              NOTE the shader used to spread this over 2x the stated
-    ///              width, and to apply it to the linear emission ahead of the
-    ///              tone map. It is now the width it says, applied as coverage
-    ///              to the graded output - the same two corrections @c
-    ///              opaqueSoftness and @c NeonConfig::glowSideSoftness already
-    ///              carry, and the reason all three now agree at a shared
-    ///              boundary. A tuned non-zero value feathers over half the
-    ///              span it used to.
+    ///              Below the floor the floored ramp is laid symmetrically
+    ///              about size + softness/2, so it STARTS up to half a floor
+    ///              inside @c size: 0.5 px at softness 0 on a straight edge,
+    ///              ~0.7 px on a diagonal. On the glow's reduced-resolution
+    ///              path the floor is one BUFFER pixel, so at
+    ///              @c resolutionScale 0.25 that is 2 full-res px inside
+    ///              @c size. It is the price of keeping a softness-0 edge's 50%
+    ///              point on @c size at every scale - see inMid in neon.frag.
+    ///
+    ///              Separately from the floor, the glow's reduced-resolution
+    ///              path blurs EVERY cutoff edge by about one buffer pixel in
+    ///              the bilinear upscale, at any softness: the last
+    ///              ~0.5 / resolutionScale px before @c size are dimmed.
+    ///              Measured at resolutionScale 0.25, the pixel just inside
+    ///              @c size keeps 63% at softness 0, 82% at 4, 98% at 16 (at
+    ///              0.5: 75%, 96%, 99%; at 1.0: 100%). More softness shrinks it
+    ///              without removing it; an exact edge needs scale 1.0. The
+    ///              fill always draws at full resolution and is unaffected.
+    ///
+    ///              On the glow the feather is coverage applied to the graded
+    ///              output, not a multiply into the linear emission ahead of
+    ///              the tone map - the same as @c NeonConfig::glowSideSoftness.
     ///
     /// A cutoff on the side @c NeonConfig::glowSide ALREADY CULLS does nothing
     /// to the glow, and is ignored rather than merely redundant:
@@ -62,9 +96,11 @@ namespace EdgeLighting
     /// into the band the reduced-resolution blit reconstructs the cut from. See
     /// docs/glow-side-comparison.md.
     ///
-    /// It still bounds the OPAQUE FILL, which is a separate layer with no
-    /// notion of a glow side: @c outsideCutoff caps an @c OpaqueMode::OUTSIDE
-    /// fill whatever the glow is doing.
+    /// Neither pair reaches the other layer: the glow's cutoffs do not shape
+    /// the fill, and the fill's never touch the glow. The fill has no notion of
+    /// a glow side, so the subsumption rule above does not apply to its pair -
+    /// @c opaqueOutsideCutoff caps an @c OpaqueMode::OUTSIDE fill whatever the
+    /// glow is doing.
     typedef struct Cutoff
     {
         bool enable = true;
@@ -80,15 +116,16 @@ namespace EdgeLighting
 
     /// Where the opaque-mode fill covers pixels. All modes fill @c
     /// NeonConfig::opaqueColor; the neon emission still composites on top of the
-    /// fill inside the glow band. Cutoff distances come from @c
-    /// NeonConfig::insideCutoff / @c outsideCutoff (both positive pixel values
-    /// measured from the rect edge along their respective sides).
+    /// fill inside the glow band. Cutoff distances come from the fill's OWN
+    /// pair, @c NeonConfig::opaqueInsideCutoff / @c opaqueOutsideCutoff (both
+    /// positive pixel values measured from the rect edge along their respective
+    /// sides) - not from the glow's @c insideCutoff / @c outsideCutoff.
     typedef enum class OpaqueMode
     {
         NONE,    ///< No opaque pass; the effect composites transparently over whatever's behind it.
-        OUTSIDE, ///< Fill only the outer half of the band: 0 <= d <= outsideCutoff.
-        INSIDE,  ///< Fill only the inner half of the band: -insideCutoff <= d <= 0.
-        BOTH,    ///< Fill the whole band: -insideCutoff <= d <= +outsideCutoff.
+        OUTSIDE, ///< Fill only the outer half of the band: 0 <= d <= opaqueOutsideCutoff.
+        INSIDE,  ///< Fill only the inner half of the band: -opaqueInsideCutoff <= d <= 0.
+        BOTH,    ///< Fill the whole band: -opaqueInsideCutoff <= d <= +opaqueOutsideCutoff.
         ALL      ///< Fill the whole viewport (matches the old opaque=true + glowSide=BOTH behaviour).
     } OpaqueMode;
 
@@ -384,9 +421,10 @@ namespace EdgeLighting
         /// Where (if anywhere) an opaque background fill is drawn behind the
         /// neon emission. NONE keeps the effect purely additive over whatever
         /// was previously in the framebuffer; the other modes rasterise a
-        /// coloured shape defined by @c insideCutoff / @c outsideCutoff (see
-        /// the @c OpaqueMode enum for exact geometry). The neon glow composites
-        /// on top of the fill inside the band.
+        /// coloured shape defined by @c opaqueInsideCutoff /
+        /// @c opaqueOutsideCutoff (see the @c OpaqueMode enum for exact
+        /// geometry). The neon glow composites on top of the fill inside the
+        /// band.
         OpaqueMode opaqueMode = OpaqueMode::NONE;
 
         /// Fill colour for the opaque-mode background pass. Applied whenever
@@ -396,21 +434,27 @@ namespace EdgeLighting
         /// shader yet. Default is black.
         glm::vec4 opaqueColor = glm::vec4(0.0f, 0.0f, 0.0f, 1.0f);
 
-        /// TOTAL feather width in pixels at the opaque-mode fill's cutoff
-        /// boundaries: the fade runs from fully covered to fully clear over
-        /// this many pixels, centred on the boundary. Used only when
-        /// @c opaqueMode != NONE. 0 = hard fill edge (floored to a 1 px
-        /// anti-aliasing ramp so it cannot stair-step); larger values soften
-        /// where the fill fades into the background. Kept independent of the
-        /// per-side @c Cutoff::softness so the emission and the fill can taper
-        /// at different rates - e.g. a wide fill fade under a tight emission
-        /// fall-off.
+        /// Inside cutoff of the opaque FILL (rect interior side). See
+        /// @ref Cutoff for the fields. Caps @c OpaqueMode::INSIDE / @c BOTH
+        /// fills: solid down to @c d = -size, then fading over the next
+        /// @c softness px toward the centre, gone at @c d = -(size + softness).
+        /// The ramp is floored to 1 px so a 0 cannot stair-step.
+        /// @c enable = false leaves the interior uncapped: an INSIDE fill then
+        /// covers the whole rect.
         ///
-        /// NOTE the shader used to spread this over 2x the stated width, so
-        /// values tuned before that fix render half as wide now (and finally
-        /// match this doc). @c Cutoff::softness still carries the old 2x
-        /// convention in the neon shaders - the two are not comparable.
-        float opaqueSoftness = 0.0f;
+        /// Independent of the glow's @c insideCutoff: the fill can be bounded
+        /// where the glow is not, and the reverse, and each of its two sides
+        /// feathers at its own rate. Neither field touches the glow.
+        ///
+        /// Default off, like the glow's pair - so under @c OpaqueMode::BOTH
+        /// with both left off, the fill covers the whole viewport.
+        Cutoff opaqueInsideCutoff = {false, 0.0f, 0.0f};
+
+        /// Outside cutoff of the opaque FILL (rect exterior side). Mirror of
+        /// @c opaqueInsideCutoff: caps @c OpaqueMode::OUTSIDE / @c BOTH fills -
+        /// solid out to @c d = +size, gone at @c d = +(size + softness).
+        /// @c enable = false lets an OUTSIDE fill run to the viewport edge.
+        Cutoff opaqueOutsideCutoff = {false, 0.0f, 0.0f};
 
         // --- Filament (the bright line itself) ---
 
@@ -458,38 +502,33 @@ namespace EdgeLighting
         /// further - exactly as far as the fill's own box filter does - which
         /// is what keeps the glow registered with an @c OpaqueMode fill on the
         /// same side: @c GlowSide::OUTSIDE plus @c OpaqueMode::OUTSIDE share
-        /// one edge at @c d = 0 at any softness. NOTE this ramp used to be
-        /// centred on the line and span 2x this value, so half of it fell on
-        /// the side the fill does not cover - a value tuned before that fix
-        /// now feathers over the stated width on the lit side only, and no
-        /// longer washes over the unfilled side.
+        /// one edge at @c d = 0 at any softness.
         ///
-        /// SECOND NOTE, and it moves tuned values again: the cut is COVERAGE,
-        /// and is applied to the graded output rather than to the linear
-        /// emission. Multiplied in ahead of the tone map it was largely undone
-        /// by it - a half-covered pixel came out at 94% of a full one, so the
-        /// cut stair-stepped, and a feather was not even monotonic (softness 4
-        /// read 179, 215, 212, 186 over its first four pixels: brightening for
-        /// two of them before it faded). The ramp now fades as stated, which
-        /// means a non-zero value here reads DIMMER and wider than it used to.
-        /// Retune by eye; the shape is the one the number describes now.
+        /// The cut is COVERAGE, applied to the graded output rather than to
+        /// the linear emission. Multiplied in ahead of the tone map it would
+        /// be largely undone by it - a half-covered pixel comes out at 94% of
+        /// a full one, so the cut stair-steps, and a feather is not even
+        /// monotonic (softness 4 reads 179, 215, 212, 186 over its first four
+        /// pixels: brightening for two of them before it fades).
         ///
         /// Does NOT affect the inside/outside cutoff boundaries - those use
         /// @c Cutoff::softness so the two feathers can be tuned independently.
         float glowSideSoftness = 0.0f;
 
-        /// Inside cutoff (rect interior side). See @ref Cutoff for the fields.
-        /// The emission fades to zero over @c insideCutoff.softness at
-        /// @c d = -insideCutoff.size and is culled past it. Also caps the
-        /// geometric footprint of @c OpaqueMode::INSIDE / @c BOTH fills.
-        /// @c insideCutoff.enable = false leaves the interior uncapped.
+        /// Inside cutoff of the GLOW (rect interior side). See @ref Cutoff for
+        /// the fields. The emission is untouched down to
+        /// @c d = -insideCutoff.size, fades to zero over the next
+        /// @c insideCutoff.softness px, and is culled past that.
+        /// @c insideCutoff.enable = false leaves the interior uncapped. Does
+        /// NOT shape the opaque fill - that is @c opaqueInsideCutoff.
         Cutoff insideCutoff = {false, 0.0f, 0.0f};
 
-        /// Outside cutoff (rect exterior side). Mirror of @c insideCutoff.
-        /// Also caps @c OpaqueMode::OUTSIDE / @c BOTH fills and sizes the
-        /// neon draw quad so far-exterior pixels are rasteriser-culled.
-        /// @c outsideCutoff.enable = false leaves the exterior uncapped
-        /// (natural halo / bloom decay bounds the emission instead).
+        /// Outside cutoff of the GLOW (rect exterior side). Mirror of
+        /// @c insideCutoff. Also sizes the neon draw quad so far-exterior
+        /// pixels are rasteriser-culled. @c outsideCutoff.enable = false leaves
+        /// the exterior uncapped (natural halo / bloom decay bounds the
+        /// emission instead). Does NOT shape the opaque fill - that is
+        /// @c opaqueOutsideCutoff.
         Cutoff outsideCutoff = {false, 0.0f, 0.0f};
 
         // --- Color ---
@@ -595,6 +634,8 @@ namespace EdgeLighting
                    gradientLutSize == o.gradientLutSize &&
                    opaqueMode == o.opaqueMode &&
                    opaqueColor == o.opaqueColor &&
+                   opaqueInsideCutoff == o.opaqueInsideCutoff &&
+                   opaqueOutsideCutoff == o.opaqueOutsideCutoff &&
                    lineWidth == o.lineWidth &&
                    filamentFalloff == o.filamentFalloff &&
                    intensity == o.intensity &&
@@ -604,7 +645,6 @@ namespace EdgeLighting
                    glowSideSoftness == o.glowSideSoftness &&
                    insideCutoff == o.insideCutoff &&
                    outsideCutoff == o.outsideCutoff &&
-                   opaqueSoftness == o.opaqueSoftness &&
                    blendSpace == o.blendSpace &&
                    colorStops == o.colorStops &&
                    hueRotationRate == o.hueRotationRate &&

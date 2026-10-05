@@ -77,32 +77,42 @@ Consumed by `NeonRenderer` (halo/bloom/filament coverage) and by
 
 ### Cutoff
 
-Per-side hard geometric limit for the neon glow.
+Per-side hard geometric limit. Two layers take a pair each: the neon glow
+(`NeonConfig.insideCutoff / outsideCutoff`) and the opaque fill
+(`NeonConfig.opaqueInsideCutoff / opaqueOutsideCutoff`). Where a field reads
+differently for the two, the row says so.
 
 | Field | Unit | Range | Meaning |
 |---|---|---|---|
-| `enable` | bool | - | `true` = clamp at `size`; `false` = uncapped, natural halo/bloom decay bounds it |
-| `size` | px, positive | `>= 0`, no-op past the glow's own reach | Distance from rect edge to cutoff boundary along this side. Once `size` exceeds `glowRadius * 48 * (1 + bloomStrength * intensity)` px (the quad margin, `GLOW_REACH_RADIUS_FACTOR`) there is no emission left to cut - 312 px at the stock glow |
-| `softness` | px, total width centred on boundary | `>= 1` | Feather over the boundary. Floored at 1 destination px, so `0`, `0.5` and `1.0` all render the same pixel-tight AA edge; `1.01` is the first value that differs |
+| `enable` | bool | - | `true` = the layer ends at `size`, faded out over the next `softness` px. `false` = uncapped: for the glow, natural halo/bloom decay bounds it; for the fill nothing does - an `INSIDE` fill covers the whole rect, an `OUTSIDE` fill runs to the viewport edge, and `BOTH` with both off covers the viewport |
+| `size` | px, positive | `>= 0`; glow: no-op past the glow's own reach; fill: outside never a no-op, inside a no-op past `min(width, height) / 2` | Distance from rect edge to where the feather STARTS along this side; the layer is untouched up to here whenever `softness` is at or above the 1 px floor (below it, and for the glow at `resolutionScale` < 1, see `softness`). For the glow, once `size` exceeds `glowRadius * 48 * (1 + bloomStrength * intensity)` px (the quad margin, `GLOW_REACH_RADIUS_FACTOR`) there is no emission left to cut - 312 px at the stock glow. The fill has no reach of its own, so a larger outside `size` always grows it; an inside `size` stops mattering once it reaches `min(width, height) / 2`, where the fill already covers the whole interior |
+| `softness` | px, running outward from `size` | `>= 0`; width floored at 1 px | Feather width, same meaning for both layers: full strength at `size`, 50% at `size + softness/2`, gone at `size + softness`. At or above the floor it never eats into the first `size` px; below it the floored ramp is laid symmetrically about `size + softness/2` and so starts up to half a floor inside `size` - 0.5 px at softness 0 on a straight edge, ~0.7 px on a diagonal, and on the glow's reduced-resolution path half a BUFFER px (2 full-res px at `resolutionScale` 0.25). Separately, that path's bilinear upscale softens EVERY glow cutoff edge by about one buffer px at any softness, dimming the last ~`0.5 / resolutionScale` px before `size`: at 0.25 the pixel just inside keeps 63% at softness 0, 82% at 4, 98% at 16 (0.5: 75% / 96% / 99%; 1.0: 100%). More softness shrinks it without removing it; an exact edge needs scale 1.0, and the fill is always full-res. The WIDTH is floored at 1 destination px so `0` is a pixel-tight AA edge at `size`, but the POSITION is not floored: every softness moves the edge out by `softness/2`, so small values are not interchangeable (glow, 420x300 rect, cutoff 12: `0` vs `0.1` differ by up to 8/255, `0.5` vs `1.0` by 39/255, while `1.0` vs `1.01` differ by 1/255). |
 
 Coverage applied to the graded output (not multiplied into linear emission
 ahead of the tone map). A cutoff on the side `glowSide` already culls is
 ignored (subsumed): `OUTSIDE` subsumes `insideCutoff`, `INSIDE` subsumes
-`outsideCutoff`. Still bounds the opaque fill, which has no glow-side notion.
+`outsideCutoff`. The glow's pair never touches the opaque fill: the fill has
+its own pair, `NeonConfig.opaqueInsideCutoff / opaqueOutsideCutoff`, which
+reads `softness` the same way and to which the subsumption rule does not
+apply (the fill has no glow-side notion).
 
 ### OpaqueMode
 
 Where the opaque fill covers. All modes fill `NeonConfig.opaqueColor`;
 neon emission composites on top inside the glow band. Cutoff distances come
-from `NeonConfig.insideCutoff / outsideCutoff`.
+from the fill's own `NeonConfig.opaqueInsideCutoff / opaqueOutsideCutoff`,
+not from the glow's `insideCutoff / outsideCutoff`.
 
 * `NONE` (default): no fill, transparent composite.
-* `OUTSIDE`: `0 <= d <= outsideCutoff`.
-* `INSIDE`: `-insideCutoff <= d <= 0`.
-* `BOTH`: `-insideCutoff <= d <= +outsideCutoff`.
+* `OUTSIDE`: `0 <= d <= opaqueOutsideCutoff`.
+* `INSIDE`: `-opaqueInsideCutoff <= d <= 0`.
+* `BOTH`: `-opaqueInsideCutoff <= d <= +opaqueOutsideCutoff`. With both
+  disabled (their default) this covers the whole viewport.
 * `ALL`: whole viewport (old `opaque = true + glowSide = BOTH` behaviour).
 
-Here `d` is signed SDF distance to the edge in px (negative inside).
+Here `d` is signed SDF distance to the edge in px (negative inside), each
+cutoff stands for its `size`, and each range is where the fill is SOLID: a
+non-zero `softness` adds a fade of that many px beyond it, never inside it.
 
 ### BlendSpace
 
@@ -204,7 +214,8 @@ summed in HDR and tone-mapped together. Also owns the opaque fill pass
 | `gradientLutSize` | texels | `256` | `>= 4`, no cap; converged `>= 128` | Baked ring LUT width. Size change snaps, never cross-fades. Floored at 4 (`1` through `4` identical, `5` is the first that differs); there is NO upper clamp - the demo's `32-256` slider is a UI choice, and `512`/`4096` do render (3/255 and 5/255 past `256`) |
 | `opaqueMode` | enum | `NONE` | - | Fill geometry (see `OpaqueMode`) |
 | `opaqueColor` | linear `vec4` | `(0,0,0,1)` | `.rgb` `[0, 1]` | Fill color. `.rgb` used today, `.a` reserved |
-| `opaqueSoftness` | px total, centred | `0.0` | `>= 1` | Fill feather at cutoff boundaries. Floored at 1 destination px: `0` through `1.01` are identical, `1.05` is the first that differs. Independent of `Cutoff.softness`. Note it feathers the fill's **coverage alpha** as well as its colour, so with `opaqueColor` equal to the backdrop it is invisible on an opaque window and still the visible edge over a transparent surface |
+| `opaqueInsideCutoff` | `Cutoff` | `{false, 0, 0}` | see `Cutoff` | The FILL's interior cap: `INSIDE/BOTH` fills are solid down to `d = -size` and gone at `d = -(size + softness)`. Independent of the glow's `insideCutoff`. `enable = false` lets an `INSIDE` fill cover the whole rect. `softness` is the fill feather on this side, width floored at 1 destination px. It feathers the fill's **coverage alpha** as well as its colour, so with `opaqueColor` equal to the backdrop it is invisible on an opaque window and still the visible edge over a transparent surface |
+| `opaqueOutsideCutoff` | `Cutoff` | `{false, 0, 0}` | see `Cutoff` | The FILL's exterior cap: `OUTSIDE/BOTH` fills are solid out to `d = +size` and gone at `d = +(size + softness)`. Independent of the glow's `outsideCutoff`. `enable = false` lets an `OUTSIDE` fill run to the viewport edge. `softness` as on `opaqueInsideCutoff`, set per side |
 | `lineWidth` | px | `4.0` | `>= 0`, no cap | Filament width. Peak always `1.0`, only width changes. `0` = no line (negatives too); past `min(w,h)` the line has swallowed the rect and only its outer edge still moves |
 | `filamentFalloff` | shape `N = 2*falloff` | `1.0` | `>= 0.001`, no cap | `0.5` Laplace / `1.0` Gaussian / `2.0` flat-top / `>3` near-rectangular. Sides only, peak fixed. Floored at `1e-3` (`0`, `0.0005`, `0.001` identical); above ~4 the profile is already rectangular and only its edge keeps sharpening |
 | `intensity` | multiplier | `1.0` | `0` and up, no cap. **Negatives break the output** | Master arc emission multiplier (filament + halo + bloom). Segments bypass it. Never saturates - the tone map keeps moving the outer fringe at `4096`. Core white-out starts near `8` |
@@ -212,8 +223,8 @@ summed in HDR and tone-mapped together. Also owns the opaque fill pass
 | `bloomStrength` | unitless | `0.30` | `0` and up, no cap. **Negatives break the output** | Wide spill on top of halo. `0` = halo only, `1+` = strong wash. Still changing at `1024` |
 | `glowSide` | enum | `BOTH` | - | Which side emits |
 | `glowSideSoftness` | px total, into lit side | `0.0` | `>= 1` | One-sided cut feather. Floored at 1 destination px: `0`, `0.5` and `1.0` are identical, `1.05` is the first that differs. Ignored when `BOTH`. Coverage on graded output |
-| `insideCutoff` | `Cutoff` | `{false, 0, 0}` | see `Cutoff` | Interior cap. Also caps `INSIDE/BOTH` fills. A complete no-op under `glowSide = OUTSIDE` - byte-identical at every size |
-| `outsideCutoff` | `Cutoff` | `{false, 0, 0}` | see `Cutoff` | Exterior cap. Also caps `OUTSIDE/BOTH` fills and sizes the draw quad (far-exterior rasteriser cull). No-op under `glowSide = INSIDE` |
+| `insideCutoff` | `Cutoff` | `{false, 0, 0}` | see `Cutoff` | Glow interior cap. Does not shape the fill (see `opaqueInsideCutoff`). A complete no-op under `glowSide = OUTSIDE` - byte-identical at every size |
+| `outsideCutoff` | `Cutoff` | `{false, 0, 0}` | see `Cutoff` | Glow exterior cap. Also sizes the draw quad (far-exterior rasteriser cull). Does not shape the fill (see `opaqueOutsideCutoff`). No-op under `glowSide = INSIDE` |
 | `blendSpace` | enum | `RGB` | - | Base-ring interpolation space |
 | `colorStops` | ring stops | R/G/B/Y at `0/.25/.5/.75` | `>= 1` stop, no cap | Base gradient. 1 = solid, 2 = gradient, 3+ = multi-stop circular. No cap measured - 64 stops still differ from 32, bounded in practice by `gradientLutSize` texels |
 | `hueRotationRate` | rev/sec | `0.5` | no cap; sign = direction | Gradient scroll around perimeter. `0` = static (and drops `uTime` out of the emission pre-pass entirely). `+` with winding |
@@ -399,7 +410,7 @@ was drawn before it; all were order-independent and repeatable to the byte.
 
 Differences are quoted **in RGB**. That distinction is load-bearing for the
 fill: the default `opaqueColor` is black, so against a black backdrop
-`opaqueSoftness` moves the coverage **alpha** and nothing else. The first
+the fill cutoffs' `softness` moves the coverage **alpha** and nothing else. The first
 pass measured it that way and put its floor one step too high. The numbers
 below come from a white fill, where the feather is visible in colour.
 
@@ -420,9 +431,7 @@ bound render the same pixels, so the slider past it is dead.
 | `neon.filamentFalloff` | `>= 0.001` | `neon-renderer.cpp:887` | `0` = `0.0005` = `0.001` |
 | `neon.lineWidth` | `>= 0` | shader gate | `-8` = `-1` = `0` (no filament) |
 | `neon.glowRadius` | `>= 0` | shader gate | `-20` = `-1` = `0` |
-| `Cutoff.softness` | `>= 1 px` | `CUTOFF_SOFT_FLOOR_PX` | `0` = `0.5` = `0.99` = `1.0`; `1.01` differs |
-| `neon.glowSideSoftness` | `>= 1 px` | same floor | `0` through `1.0` identical; `1.05` differs |
-| `neon.opaqueSoftness` | `>= 1 px` | same floor | `0` through `1.01` identical; `1.05` differs |
+| `neon.glowSideSoftness` | `>= 1 px` | `CUTOFF_SOFT_FLOOR_PX` / one destination px | `0` through `1.0` identical; `1.05` differs |
 | `ColorStop.color.a` | `[0, 1]` | LUT bake | `1.0` = `1.5` = `4.0` |
 | `Arc.length` | `[0, 1]` | perimeter walk | `1.0` = `1.5` = `2.0` |
 | `Arc.intensity` | `>= 0` | mask fold | `-4` = `-1` = `0` |
@@ -440,6 +449,25 @@ bound render the same pixels, so the slider past it is dead.
 | `SpotLight.spreadFalloff` | `[0, 2]` | `spotlight-renderer.cpp:371` | `2.0` = `3.0` = `4.0` |
 | `SpotLight.colorTemp` | `[1800, 8000]` K | `KELVIN_TABLE` ends | `500` = `1700` = `1800`; `8000` = `8100` = `10000` |
 | `arcs` / `segmentBoosts` / `lamps` | first 8 | the three `MAX_*` caps | holding the first 8 fixed, `8` = `9` = `24`, exactly |
+
+### Clamped width, unclamped position
+
+`Cutoff.softness` - the glow's `insideCutoff` / `outsideCutoff` and the fill's
+`opaqueInsideCutoff` / `opaqueOutsideCutoff` alike - looks like a `>= 1 px`
+clamp and is NOT one, which is why it is not in the table above. Only the
+feather's WIDTH is floored at one destination pixel (`CUTOFF_SOFT_FLOOR_PX` on
+the glow's scaled path, the shader's `fwidth` floor elsewhere). Its POSITION is
+not: the fade's midpoint is always `size + softness/2`, and the floored width is
+laid symmetrically about it. At or above the floor the fade therefore runs
+exactly `size` to `size + softness`; below it, the one-pixel ramp straddles that
+midpoint, so a softness-0 edge's 50% point is `size` at every resolution scale,
+and every softness moves the edge out by half its value. Values under 1 px are
+therefore not a dead zone - each one renders differently.
+
+| Field | Evidence (420x300 rect, cutoff 12) |
+|---|---|
+| `Cutoff.softness` (glow) | `0` vs `0.1`: up to 8/255; `0.5` vs `1.0`: 39/255; `1.0` vs `1.01`: 1/255 |
+| `opaqueInsideCutoff.softness`, `opaqueOutsideCutoff.softness` | `0` vs `0.1`: 17/255; `0.5` vs `1.0`: 89/255; `1.0` vs `1.01`: 2/255 |
 
 ### No ceiling at all
 

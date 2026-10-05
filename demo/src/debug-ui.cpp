@@ -324,22 +324,22 @@ namespace
 
     /// One row per Cutoff struct: enable checkbox on the left, size + softness
     /// sliders indented on the right. Grays out the sliders when enable is off
-    /// so the "unbounded on this side" state reads at a glance.
+    /// so the "unbounded on this side" state reads at a glance. Serves both
+    /// the glow's pair and the opaque fill's own pair.
     /// @p subsumed - glowSide already culls this side, so the renderer ignores
-    ///               this cutoff for the GLOW (see neon.frag's band-distance
-    ///               block). @p fillUses - the current opaqueMode still bounds
-    ///               its fill with it, which is a separate layer with no notion
-    ///               of a glow side.
+    ///               this GLOW cutoff (see neon.frag's band-distance block).
+    ///               Always false for a fill cutoff, which has no notion of a
+    ///               glow side.
     ///
     /// Without the note the sliders look live and move nothing, which is
     /// exactly the confusion that produced the report behind
-    /// docs/glow-side-comparison.md section 4.3. Deliberately a note and not a
-    /// BeginDisabled: a subsumed cutoff is still doing real work whenever the
-    /// fill uses it, and greying it out would be a lie in that case.
+    /// docs/glow-side-comparison.md section 4.3. A note rather than a
+    /// BeginDisabled so the value can still be staged ahead of switching the
+    /// glow side back.
     inline void CutoffRow(const char *label, const char *idSuffix,
                           EdgeLighting::Cutoff &cutoff,
                           const EdgeLighting::Cutoff &activeCutoff,
-                          bool subsumed, bool fillUses)
+                          bool subsumed)
     {
         ImGui::PushID(idSuffix);
         char enableLabel[64];
@@ -362,14 +362,7 @@ namespace
         }
         if (cutoff.enable && subsumed)
         {
-            if (fillUses)
-            {
-                ImGui::TextDisabled("subsumed by Glow Side - bounds the fill only");
-            }
-            else
-            {
-                ImGui::TextDisabled("subsumed by Glow Side - no effect");
-            }
+            ImGui::TextDisabled("subsumed by Glow Side - no effect");
         }
         ImGui::Unindent();
         ImGui::PopID();
@@ -740,7 +733,19 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
         ImGui::SameLine();
         ImGui::ColorEdit4("Opaque Color##Neon", &cfg.neon.opaqueColor.x,
                           ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
-        SliderWithInput("Opaque Softness##Neon", cfg.neon.opaqueSoftness, 0.0f, 20.0f, "%.1f");
+        // The fill's OWN cutoffs, independent of the glow's below. Only the
+        // sides the current mode fills are shown - ALL has neither.
+        const EdgeLighting::OpaqueMode om = cfg.neon.opaqueMode;
+        if (om == EdgeLighting::OpaqueMode::INSIDE || om == EdgeLighting::OpaqueMode::BOTH)
+        {
+            CutoffRow("Fill Inside Cutoff", "FillInside", cfg.neon.opaqueInsideCutoff,
+                      active.neon.opaqueInsideCutoff, false);
+        }
+        if (om == EdgeLighting::OpaqueMode::OUTSIDE || om == EdgeLighting::OpaqueMode::BOTH)
+        {
+            CutoffRow("Fill Outside Cutoff", "FillOutside", cfg.neon.opaqueOutsideCutoff,
+                      active.neon.opaqueOutsideCutoff, false);
+        }
     }
     AnimatedSlider("Line Width##Neon", cfg.neon.lineWidth, active.neon.lineWidth, 0.0f, 20.0f, "%.0f");
     AnimatedSlider("Filament Falloff##Neon", cfg.neon.filamentFalloff, active.neon.filamentFalloff, 0.0f, 5.0f);
@@ -760,18 +765,12 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
         SliderWithInput("Side Softness##Neon", cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
     }
 
-    // A cutoff on the side glowSide culls is ignored for the glow, but still
-    // bounds an opaque fill on that same side - insideCutoff caps INSIDE / BOTH
-    // fills, outsideCutoff caps OUTSIDE / BOTH.
-    const EdgeLighting::OpaqueMode om = cfg.neon.opaqueMode;
-    const bool fillUsesInside = (om == EdgeLighting::OpaqueMode::INSIDE ||
-                                 om == EdgeLighting::OpaqueMode::BOTH);
-    const bool fillUsesOutside = (om == EdgeLighting::OpaqueMode::OUTSIDE ||
-                                  om == EdgeLighting::OpaqueMode::BOTH);
+    // The GLOW's cutoffs. One on the side glowSide culls is ignored; neither
+    // reaches the opaque fill, which has its own pair above.
     CutoffRow("Inside Cutoff", "NeonInside", cfg.neon.insideCutoff, active.neon.insideCutoff,
-              cfg.neon.glowSide == EdgeLighting::GlowSide::OUTSIDE, fillUsesInside);
+              cfg.neon.glowSide == EdgeLighting::GlowSide::OUTSIDE);
     CutoffRow("Outside Cutoff", "NeonOutside", cfg.neon.outsideCutoff, active.neon.outsideCutoff,
-              cfg.neon.glowSide == EdgeLighting::GlowSide::INSIDE, fillUsesOutside);
+              cfg.neon.glowSide == EdgeLighting::GlowSide::INSIDE);
 
     // --- Travelling segments (independent additive lights on the perimeter) ---
     ImGui::TextDisabled("Segment Lights (%zu / %d) - additive, independent of intensity",

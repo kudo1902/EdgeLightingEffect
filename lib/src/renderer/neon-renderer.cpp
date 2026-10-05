@@ -15,7 +15,12 @@ namespace EdgeLighting
 {
     namespace
     {
-        /// Pixel distance the shader should treat as the cutoff boundary.
+        /// Pixel distance the shaders should treat as a cutoff's boundary -
+        /// @c Cutoff::size, where its fade STARTS - as uInsideCutoff /
+        /// uOutsideCutoff, for the glow and the fill alike. The shaders place
+        /// the fade from there themselves (see inMid / outMid in neon.frag and
+        /// black-rect.frag): solid up to @c size, gone by @c size + @c softness.
+        ///
         /// Disabled cutoffs collapse to a huge sentinel so the shader's
         /// smoothstep / discard math naturally no-ops on realistic geometry;
         /// only the CPU knows this number, shaders see it as a plain uniform.
@@ -23,6 +28,32 @@ namespace EdgeLighting
         inline float GetCutoffSize(const Cutoff &c)
         {
             return c.enable ? c.size : CUTOFF_DISABLED_SIZE;
+        }
+
+        /// Pixel distance where a cutoff's fade ENDS and the layer is gone,
+        /// for a shader that floors the fade's width at @p floorPx. Every CPU
+        /// bound derived from a cutoff - the glow quad's outer cap and inner
+        /// hole, the fill ring - asks this, so the geometry follows the rule
+        /// the shaders use to place the fade and cannot drift from it.
+        ///
+        /// That rule, mirrored: the fade's midpoint is @c size + softness/2,
+        /// and the floored width is laid symmetrically about it. So the end is
+        ///
+        ///     size + softness/2 + max(softness, floorPx)/2
+        ///
+        /// which is exactly @c size + @c softness at or above the floor, and
+        /// half a floor past the midpoint below it. A negative softness is
+        /// treated as 0, as the shaders do. The same sentinel when disabled.
+        ///
+        /// @p floorPx is the caller's best statement of the shader's floor in
+        /// the same units as @c size. It cannot always be exact - the direct
+        /// paths floor at fwidth(d), 1 px on a straight edge and up to 1.41 on
+        /// a diagonal, which only the GPU sees - so callers carry slack on top.
+        inline float GetCutoffEnd(const Cutoff &c, float floorPx)
+        {
+            const float softness = std::max(c.softness, 0.0f);
+            return c.enable ? c.size + 0.5f * softness + 0.5f * std::max(softness, floorPx)
+                            : CUTOFF_DISABLED_SIZE;
         }
 
         /// Slack, in full-res px, on the bounds @ref NeonRenderer::setupGeometry
@@ -49,9 +80,10 @@ namespace EdgeLighting
         /// OpaqueMode did the host pick" but "is the coverage uniformly 1",
         /// because that is what decides between a scissored glClear and a
         /// shaded draw. ALL says so by definition. BOTH says so too whenever
-        /// NEITHER cutoff is enabled - and since both cutoffs default to
-        /// disabled (@ref NeonConfig::insideCutoff / outsideCutoff), that is
-        /// the state a host lands in by simply selecting BOTH.
+        /// NEITHER of the fill's cutoffs is enabled - and since both default to
+        /// disabled (@ref NeonConfig::opaqueInsideCutoff / opaqueOutsideCutoff),
+        /// that is the state a host lands in by simply selecting BOTH. The
+        /// glow's own cutoffs play no part: they no longer shape the fill.
         ///
         /// Trace it: a disabled cutoff arrives as CUTOFF_DISABLED_SIZE, so in
         /// black-rect.frag dIn = d + 1e6 is hugely positive and dOut = d - 1e6
@@ -77,7 +109,7 @@ namespace EdgeLighting
         {
             return neon.opaqueMode == OpaqueMode::ALL ||
                    (neon.opaqueMode == OpaqueMode::BOTH &&
-                    !neon.insideCutoff.enable && !neon.outsideCutoff.enable);
+                    !neon.opaqueInsideCutoff.enable && !neon.opaqueOutsideCutoff.enable);
         }
 
         /// Would a glClear land on the same pixels a coverage-1 fullscreen
@@ -643,16 +675,16 @@ namespace EdgeLighting
                                    // and not to its operator== - see AGENTS.md.
                                    config.neon.glowSide != mCurrentConfig.neon.glowSide ||
                                    config.neon.insideCutoff != mCurrentConfig.neon.insideCutoff;
-        // The fill ring is bounded by the CUTOFFS and the fill's own feather,
-        // not by the glow reach, so it gets its own gate rather than riding on
-        // geometryDirty: opaqueMode and opaqueSoftness move the ring but not
-        // the glow quad, and glowRadius / bloomStrength move the glow quad but
-        // not the ring. The two cutoffs now move both.
+        // The fill ring is bounded by the FILL's own cutoff pair (sizes and
+        // feathers), not by the glow reach, so it gets its own gate rather
+        // than riding on geometryDirty: opaqueMode and the fill cutoffs move
+        // the ring but not the glow quad, and glowRadius / bloomStrength / the
+        // glow cutoffs move the glow quad but not the ring. Only the geometry
+        // moves both.
         const bool fillDirty = config.geometry != mCurrentConfig.geometry ||
                                config.neon.opaqueMode != mCurrentConfig.neon.opaqueMode ||
-                               config.neon.opaqueSoftness != mCurrentConfig.neon.opaqueSoftness ||
-                               config.neon.insideCutoff != mCurrentConfig.neon.insideCutoff ||
-                               config.neon.outsideCutoff != mCurrentConfig.neon.outsideCutoff;
+                               config.neon.opaqueInsideCutoff != mCurrentConfig.neon.opaqueInsideCutoff ||
+                               config.neon.opaqueOutsideCutoff != mCurrentConfig.neon.opaqueOutsideCutoff;
         // The merged transient+preserved view is a pure function of the two
         // segment pools, so it gets a gate like every other rebuild here. It
         // used to run on EVERY config change, which with an animation attached
@@ -920,11 +952,11 @@ namespace EdgeLighting
         float margin = std::max(glowReach, filamentReach);
 
         // Hard cap: when the outside cutoff is enabled the shader discards
-        // emission past size + softness, so there's no point rasterising
-        // further. Disabled outside cutoff leaves the natural glowRadius /
-        // bloom-driven margin untouched. Add a 1 px safety so the shader's
-        // own softmask fades to zero *before* the quad edge and no
-        // rectangular seam leaks through.
+        // emission past size + softness (the feather starts at size - see
+        // GetCutoffEnd), so there's no point rasterising further. Disabled
+        // outside cutoff leaves the natural glowRadius / bloom-driven margin
+        // untouched. Add a 1 px safety so the shader's own softmask fades to
+        // zero *before* the quad edge and no rectangular seam leaks through.
         //
         // The WHOLE expression is built in full-res px and scaled once, so the
         // safety margin is 1 FULL-RES px at every resolution scale. Adding the
@@ -945,10 +977,9 @@ namespace EdgeLighting
         // shader's `sideAA` - which is fwidth(d), so it runs 1.0 to 1.41
         // depending on which way the boundary faces and cannot be known here.
         // Under-stating it by the diagonal factor is absorbed by the safety
-        // margins, and every bound below is an upper bound on where emission
-        // ends rather than an exact one: a cutoff ramp is centred on its
-        // boundary and so reaches only half its width past it, where the outer
-        // cap still budgets the whole of it. Conservative in the direction that
+        // margins: the direct-path fade can end up to ~0.2 px past what
+        // GetCutoffEnd reports on a diagonal, well inside the outer cap's
+        // 1 px and GLOW_EDGE_SAFETY's 3. Conservative in the direction that
         // keeps the quad covering the band.
         const float softFloor = (scale < 1.0f)
                                     ? (static_cast<float>(CUTOFF_SOFT_FLOOR_PX) / scale)
@@ -979,8 +1010,12 @@ namespace EdgeLighting
         // or the safety term and it goes under with nothing to catch it.
         if (config.neon.outsideCutoff.enable && config.neon.glowSide != GlowSide::INSIDE)
         {
-            float outSoft = std::max(config.neon.outsideCutoff.softness, softFloor);
-            float cutoffCap = (config.neon.outsideCutoff.size + outSoft + 1.0f) * scale;
+            // Where neon.frag's outside fade ends, plus the 1 px safety. The
+            // capped margin becomes uQuadMargin, and neon.frag's fadeStart
+            // floor needs its cutEdge - that same fade end - to sit strictly
+            // inside it; the +1 is what guarantees that. Drop it and the quad
+            // fade starts at 0.8 * margin, inside the band.
+            float cutoffCap = (GetCutoffEnd(config.neon.outsideCutoff, softFloor) + 1.0f) * scale;
             margin = std::min(margin, cutoffCap);
         }
 
@@ -1050,9 +1085,9 @@ namespace EdgeLighting
         }
         else if (config.neon.insideCutoff.enable)
         {
-            // neon.frag discards at dIn < -inHalf, i.e. d < -(size + inSoft/2).
-            const float inSoft = std::max(config.neon.insideCutoff.softness, softFloor);
-            innerReach = config.neon.insideCutoff.size + 0.5f * inSoft;
+            // neon.frag discards at dIn < -inHalf, i.e. past the end of the
+            // inside fade - the same point GetCutoffEnd computes.
+            innerReach = GetCutoffEnd(config.neon.insideCutoff, softFloor);
         }
         const float innerMargin = (innerReach + GLOW_EDGE_SAFETY) * scale;
 
@@ -1171,17 +1206,22 @@ namespace EdgeLighting
             return;
         }
 
-        // How far the fill's coverage can run past each boundary. The shader
-        // centres a ramp of width `softW` on the boundary, so it reaches
-        // softW/2 beyond it; SAFETY absorbs that rounding plus the fwidth-based
-        // `aa` floor, which is ~1 px on a flat edge and up to ~1.4 px on a
-        // diagonal one. Over-covering by a couple of pixels is free - those
-        // fragments come out at coverage 0, which this pass's premultiplied
-        // blend leaves the destination untouched by - while under-covering
-        // would clip the feather, so this rounds outward on purpose.
+        // How far the fill's coverage can run past each rect edge side: out
+        // to the END of that side's feather (GetCutoffEnd) - solid up to
+        // size, gone by size + softness at or above the floor. The floor is
+        // black-rect.frag's `aa`, fwidth(d): a nominal ONE pixel is passed,
+        // as setupGeometry does for the glow's direct path, so a near-zero
+        // softness is bounded at size + 0.5 rather than at size. SAFETY is on
+        // top of that, for the part of `aa` the CPU cannot see (up to ~1.4 px
+        // on a diagonal, so ~0.2 px more reach) plus rounding.
+        // Over-covering by a couple of pixels is free - those fragments come
+        // out at coverage 0, which this pass's premultiplied blend leaves the
+        // destination untouched by - while under-covering would clip the
+        // feather, so this rounds outward on purpose.
         constexpr float FILL_EDGE_SAFETY = 3.0f;
-        const float softHalf = 0.5f * std::max(config.neon.opaqueSoftness,
-                                               static_cast<float>(SIDE_SOFT_EPSILON));
+        constexpr float FILL_SOFT_FLOOR_PX = 1.0f;
+        const Cutoff &fillIn = config.neon.opaqueInsideCutoff;
+        const Cutoff &fillOut = config.neon.opaqueOutsideCutoff;
 
         // Per mode, how far the band extends either side of the rect edge.
         // A side the mode does not fill still gets FILL_EDGE_SAFETY, because
@@ -1198,11 +1238,11 @@ namespace EdgeLighting
         float innerMargin = FILL_EDGE_SAFETY;
         if (mode == OpaqueMode::OUTSIDE || mode == OpaqueMode::BOTH)
         {
-            outerMargin = GetCutoffSize(config.neon.outsideCutoff) + softHalf + FILL_EDGE_SAFETY;
+            outerMargin = GetCutoffEnd(fillOut, FILL_SOFT_FLOOR_PX) + FILL_EDGE_SAFETY;
         }
         if (mode == OpaqueMode::INSIDE || mode == OpaqueMode::BOTH)
         {
-            innerMargin = GetCutoffSize(config.neon.insideCutoff) + softHalf + FILL_EDGE_SAFETY;
+            innerMargin = GetCutoffEnd(fillIn, FILL_SOFT_FLOOR_PX) + FILL_EDGE_SAFETY;
         }
 
         // Cap on how far OUTWARD the ring is allowed to run, in full-res px.
@@ -1296,8 +1336,8 @@ namespace EdgeLighting
 
         // GL_DYNAMIC_DRAW and no SetAttribPointer, for the reasons spelled out
         // at the end of @ref setupGeometry. Latent here rather than live: the
-        // ring's dirty set (geometry, opaqueMode, opaqueSoftness, the two
-        // cutoffs) contains no AnimatableField today, so this fires on host
+        // ring's dirty set (geometry, opaqueMode, the fill's two cutoffs)
+        // contains no AnimatableField today, so this fires on host
         // edits and not per frame. It is hinted correctly anyway, because the
         // day a cutoff or the geometry becomes animatable is not the day
         // anyone will think to come back and look at a usage flag.
@@ -1851,12 +1891,19 @@ namespace EdgeLighting
         mBlackRectShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
         mBlackRectShader.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry));
         mBlackRectShader.SetUniform("uRectCenter", centerFull);
-        float opaqueSoft = std::max(config.neon.opaqueSoftness,
-                                    static_cast<float>(SIDE_SOFT_EPSILON));
+        // The FILL's own cutoff pair, never the glow's - see
+        // NeonConfig::opaqueInsideCutoff. Same size, sentinel and softness as
+        // setupFillGeometry reads, so the ring bounds exactly what this
+        // shades. Softness goes up as configured, exactly as neon.frag's does:
+        // black-rect.frag treats a negative one as 0 when placing the fade and
+        // floors its width at `aa`, so a CPU-side clamp would add nothing.
+        const Cutoff &fillIn = config.neon.opaqueInsideCutoff;
+        const Cutoff &fillOut = config.neon.opaqueOutsideCutoff;
         mBlackRectShader.SetUniform("uOpaqueMode", static_cast<int>(config.neon.opaqueMode));
-        mBlackRectShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
-        mBlackRectShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
-        mBlackRectShader.SetUniform("uOpaqueSoftness", opaqueSoft);
+        mBlackRectShader.SetUniform("uInsideCutoff", GetCutoffSize(fillIn));
+        mBlackRectShader.SetUniform("uInsideCutoffSoftness", fillIn.softness);
+        mBlackRectShader.SetUniform("uOutsideCutoff", GetCutoffSize(fillOut));
+        mBlackRectShader.SetUniform("uOutsideCutoffSoftness", fillOut.softness);
         mBlackRectShader.SetUniform("uOpaqueColor", config.neon.opaqueColor);
         if (ring)
         {

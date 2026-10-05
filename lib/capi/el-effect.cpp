@@ -132,19 +132,94 @@ el_result_e el_effect_get_opaque_color(el_effect_handle_t effect,
     return EL_SUCCESS;
 }
 
-el_result_e el_effect_set_opaque_softness(el_effect_handle_t effect, float softness)
+namespace
 {
-    VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque_softness");
-    SET_AND_LOG(effect->config.neon.opaqueSoftness, softness,
-                "effect=%p, softness=%f", (void *)effect, softness);
+    /// The opaque fill's cutoff on @p side. Returns nullptr and logs for a
+    /// value outside el_cutoff_side_e - the enum crosses the ABI as a plain
+    /// int, so an out-of-range one is a caller error, not something to clamp.
+    ///
+    /// Switched on as an int, not as the enum. C++ gives an unscoped enum
+    /// whose enumerators are 0 and 1 the value range [0, 1], so a switch on
+    /// the enum itself lets an optimiser assume nothing else arrives - and
+    /// the rejection below is exactly the path it would be free to drop.
+    EdgeLighting::Cutoff *OpaqueCutoffSlot(el_effect_handle_t effect, el_cutoff_side_e side, const char *who)
+    {
+        switch (static_cast<int>(side))
+        {
+        case EL_CUTOFF_SIDE_INSIDE:
+        {
+            return &effect->config.neon.opaqueInsideCutoff;
+        }
+        case EL_CUTOFF_SIDE_OUTSIDE:
+        {
+            return &effect->config.neon.opaqueOutsideCutoff;
+        }
+        default:
+        {
+            break;
+        }
+        }
+        LOG_E("%s: invalid side %d", who, static_cast<int>(side));
+        return nullptr;
+    }
+
+    /// Writes the ABI's (enable, size, softness) triple into @p c and reports
+    /// whether anything moved. The shared body of every cutoff setter, glow
+    /// and fill alike; logging stays with the caller so each line is
+    /// attributed to the entry point that made the change.
+    bool AssignCutoff(EdgeLighting::Cutoff &c, el_bool_t enable, float size, float softness)
+    {
+        const EdgeLighting::Cutoff next = {enable != 0, size, softness};
+        if (c == next)
+        {
+            return false;
+        }
+        c = next;
+        return true;
+    }
+
+    /// The getter-side mirror of @ref AssignCutoff. The out pointers are
+    /// validated by the caller, which owns the name the error is logged under.
+    void ReadCutoff(const EdgeLighting::Cutoff &c, el_bool_t *outEnable, float *outSize, float *outSoftness)
+    {
+        *outEnable = c.enable ? 1 : 0;
+        *outSize = c.size;
+        *outSoftness = c.softness;
+    }
 }
 
-el_result_e el_effect_get_opaque_softness(el_effect_handle_t effect, float *outSoftness)
+el_result_e el_effect_set_opaque_cutoff(el_effect_handle_t effect, el_cutoff_side_e side,
+                                        el_bool_t enable, float size, float softness)
 {
-    VALIDATE_EFFECT_PTR(effect, "el_effect_get_opaque_softness");
-    VALIDATE_OUT_PTR(outSoftness, "el_effect_get_opaque_softness");
-    *outSoftness = effect->config.neon.opaqueSoftness;
-    LOG_D("effect=%p, softness=%f", (void *)effect, *outSoftness);
+    VALIDATE_EFFECT_PTR(effect, "el_effect_set_opaque_cutoff");
+    EdgeLighting::Cutoff *c = OpaqueCutoffSlot(effect, side, "el_effect_set_opaque_cutoff");
+    if (!c)
+    {
+        return EL_ERROR_INVALID_PARAMETER;
+    }
+    if (AssignCutoff(*c, enable, size, softness))
+    {
+        LOG_I("effect=%p, side=%d, enable=%d, size=%f, softness=%f", (void *)effect,
+              static_cast<int>(side), enable, size, softness);
+    }
+    return EL_SUCCESS;
+}
+
+el_result_e el_effect_get_opaque_cutoff(el_effect_handle_t effect, el_cutoff_side_e side,
+                                        el_bool_t *outEnable, float *outSize, float *outSoftness)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_get_opaque_cutoff");
+    VALIDATE_OUT_PTR(outEnable, "el_effect_get_opaque_cutoff");
+    VALIDATE_OUT_PTR(outSize, "el_effect_get_opaque_cutoff");
+    VALIDATE_OUT_PTR(outSoftness, "el_effect_get_opaque_cutoff");
+    const EdgeLighting::Cutoff *c = OpaqueCutoffSlot(effect, side, "el_effect_get_opaque_cutoff");
+    if (!c)
+    {
+        return EL_ERROR_INVALID_PARAMETER;
+    }
+    ReadCutoff(*c, outEnable, outSize, outSoftness);
+    LOG_D("effect=%p, side=%d, enable=%d, size=%f, softness=%f", (void *)effect,
+          static_cast<int>(side), *outEnable, *outSize, *outSoftness);
     return EL_SUCCESS;
 }
 
@@ -152,16 +227,10 @@ el_result_e el_effect_set_inside_cutoff(el_effect_handle_t effect,
                                         el_bool_t enable, float size, float softness)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_inside_cutoff");
-    auto &c = effect->config.neon.insideCutoff;
-    bool en = (enable != 0);
-    if (c.enable == en && c.size == size && c.softness == softness)
+    if (AssignCutoff(effect->config.neon.insideCutoff, enable, size, softness))
     {
-        return EL_SUCCESS;
+        LOG_I("effect=%p, enable=%d, size=%f, softness=%f", (void *)effect, enable, size, softness);
     }
-    LOG_I("effect=%p, enable=%d, size=%f, softness=%f", (void *)effect, enable, size, softness);
-    c.enable = en;
-    c.size = size;
-    c.softness = softness;
     return EL_SUCCESS;
 }
 
@@ -172,10 +241,7 @@ el_result_e el_effect_get_inside_cutoff(el_effect_handle_t effect,
     VALIDATE_OUT_PTR(outEnable, "el_effect_get_inside_cutoff");
     VALIDATE_OUT_PTR(outSize, "el_effect_get_inside_cutoff");
     VALIDATE_OUT_PTR(outSoftness, "el_effect_get_inside_cutoff");
-    const auto &c = effect->config.neon.insideCutoff;
-    *outEnable = c.enable ? 1 : 0;
-    *outSize = c.size;
-    *outSoftness = c.softness;
+    ReadCutoff(effect->config.neon.insideCutoff, outEnable, outSize, outSoftness);
     LOG_D("effect=%p, enable=%d, size=%f, softness=%f", (void *)effect, *outEnable, *outSize, *outSoftness);
     return EL_SUCCESS;
 }
@@ -184,16 +250,10 @@ el_result_e el_effect_set_outside_cutoff(el_effect_handle_t effect,
                                          el_bool_t enable, float size, float softness)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_outside_cutoff");
-    auto &c = effect->config.neon.outsideCutoff;
-    bool en = (enable != 0);
-    if (c.enable == en && c.size == size && c.softness == softness)
+    if (AssignCutoff(effect->config.neon.outsideCutoff, enable, size, softness))
     {
-        return EL_SUCCESS;
+        LOG_I("effect=%p, enable=%d, size=%f, softness=%f", (void *)effect, enable, size, softness);
     }
-    LOG_I("effect=%p, enable=%d, size=%f, softness=%f", (void *)effect, enable, size, softness);
-    c.enable = en;
-    c.size = size;
-    c.softness = softness;
     return EL_SUCCESS;
 }
 
@@ -204,10 +264,7 @@ el_result_e el_effect_get_outside_cutoff(el_effect_handle_t effect,
     VALIDATE_OUT_PTR(outEnable, "el_effect_get_outside_cutoff");
     VALIDATE_OUT_PTR(outSize, "el_effect_get_outside_cutoff");
     VALIDATE_OUT_PTR(outSoftness, "el_effect_get_outside_cutoff");
-    const auto &c = effect->config.neon.outsideCutoff;
-    *outEnable = c.enable ? 1 : 0;
-    *outSize = c.size;
-    *outSoftness = c.softness;
+    ReadCutoff(effect->config.neon.outsideCutoff, outEnable, outSize, outSoftness);
     LOG_D("effect=%p, enable=%d, size=%f, softness=%f", (void *)effect, *outEnable, *outSize, *outSoftness);
     return EL_SUCCESS;
 }

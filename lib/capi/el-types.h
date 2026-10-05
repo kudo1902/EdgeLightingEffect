@@ -94,17 +94,34 @@ extern "C"
 
     /** @brief Where the opaque-mode fill covers pixels.
      *  @details Mirrors @c EdgeLighting::OpaqueMode. The fill is a rounded
-     *           band sized by @ref el_effect_set_inside_cutoff /
-     *           @ref el_effect_set_outside_cutoff; the neon emission still
+     *           band sized by its OWN cutoffs, set with
+     *           @ref el_effect_set_opaque_cutoff - not by the glow's
+     *           @ref el_effect_set_inside_cutoff /
+     *           @ref el_effect_set_outside_cutoff. The neon emission still
      *           composites on top inside the glow band. */
     typedef enum el_opaque_mode_e
     {
         EL_OPAQUE_MODE_NONE = 0,    /**< No opaque pass; effect composites transparently. */
-        EL_OPAQUE_MODE_OUTSIDE = 1, /**< Fill outer half of the band: 0 <= d <= outsideCutoff. */
-        EL_OPAQUE_MODE_INSIDE = 2,  /**< Fill inner half of the band: -insideCutoff <= d <= 0. */
-        EL_OPAQUE_MODE_BOTH = 3,    /**< Fill the whole band: -insideCutoff <= d <= +outsideCutoff. */
+        EL_OPAQUE_MODE_OUTSIDE = 1, /**< Fill outer half of the band: 0 <= d <= fill outside cutoff. */
+        EL_OPAQUE_MODE_INSIDE = 2,  /**< Fill inner half of the band: -fill inside cutoff <= d <= 0. */
+        EL_OPAQUE_MODE_BOTH = 3,    /**< Fill the whole band: -fill inside cutoff <= d <= +fill outside cutoff. */
         EL_OPAQUE_MODE_ALL = 4      /**< Fill the whole viewport. */
     } el_opaque_mode_e;
+
+    /** @brief Which side of the rect edge a cutoff bounds.
+     *  @details Addresses one of a layer's two cutoffs in
+     *           @ref el_effect_set_opaque_cutoff /
+     *           @ref el_effect_get_opaque_cutoff. Unlike the enums around it
+     *           this has no C++ enum to mirror - on that side the two cutoffs
+     *           are separate fields (@c NeonConfig::opaqueInsideCutoff /
+     *           @c opaqueOutsideCutoff) - so there is no parity assert to keep
+     *           in step. Any other value is rejected with
+     *           @ref EL_ERROR_INVALID_PARAMETER. */
+    typedef enum el_cutoff_side_e
+    {
+        EL_CUTOFF_SIDE_INSIDE = 0, /**< Rect interior side: boundary at d = -size. */
+        EL_CUTOFF_SIDE_OUTSIDE = 1 /**< Rect exterior side: boundary at d = +size. */
+    } el_cutoff_side_e;
 
     /** @brief Colour space used when interpolating between colour stops.
      *  @details Mirrors @c EdgeLighting::BlendSpace. HSV/HSL avoid the muddy

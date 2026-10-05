@@ -14,12 +14,19 @@ precision highp float;
 // vertex(highp)->fragment(mediump) varying mismatch can even fail to link.
 //
 // Cutoffs are positive pixel distances measured from the rect edge along
-// their respective sides (see NeonConfig::insideCutoff / outsideCutoff).
+// their respective sides. They are the FILL's own pair (NeonConfig::
+// opaqueInsideCutoff / opaqueOutsideCutoff), not the glow's - the two layers
+// are bounded independently.
+//
+// uInsideCutoff / uOutsideCutoff are each Cutoff::size, where the fill's
+// fade STARTS: solid up to size, gone by size + softness. The ranges in the
+// table below are where the fill is solid; main() places the fade beyond
+// them (inMid / outMid).
 //
 //   NONE    - never dispatched; the CPU skips the pass entirely.
 //   OUTSIDE - fill 0 <= d <= outsideCutoff.
 //   INSIDE  - fill -insideCutoff <= d <= 0.
-//   BOTH    - fill -insideCutoff <= d <= outsideCutoff (the whole glow band).
+//   BOTH    - fill -insideCutoff <= d <= outsideCutoff (the whole band).
 //   ALL     - rarely dispatched: coverage is 1 at every pixel, so the CPU
 //             normally expresses it as a scissored glClear and no shader runs.
 //
@@ -36,7 +43,8 @@ precision highp float;
 // arms - keep them correct.
 //
 // The d == 0 rect edge gets exact 1 px box-filter coverage from fwidth(d);
-// the cutoff boundaries get a uOpaqueSoftness feather. See main().
+// each cutoff boundary gets its own side's feather (uInsideCutoffSoftness /
+// uOutsideCutoffSoftness). See main().
 
 #define OPAQUE_MODE_NONE    0
 #define OPAQUE_MODE_OUTSIDE 1
@@ -50,10 +58,11 @@ uniform vec2  uRectSize;
 uniform float uCornerRadius;
 uniform vec2  uRectCenter;     // rect centre in window pixels (gl_FragCoord space, y-up)
 uniform int   uOpaqueMode;
-uniform float uInsideCutoff;   // positive distance INSIDE the edge (d = -uInsideCutoff at boundary). Disabled sides collapse to a huge sentinel CPU-side.
-uniform float uOutsideCutoff;  // positive distance OUTSIDE the edge (d = +uOutsideCutoff at boundary). Disabled sides collapse to a huge sentinel CPU-side.
-uniform float uOpaqueSoftness; // feather width in px at the fill's cutoff boundaries (NeonConfig::opaqueSoftness).
-uniform vec4  uOpaqueColor;    // fill colour; only .rgb used today, .a reserved for a later partial-fill pass
+uniform float uInsideCutoff;          // Cutoff::size: positive distance INSIDE the edge where the inside fade starts. Disabled sides collapse to a huge sentinel CPU-side.
+uniform float uInsideCutoffSoftness;  // feather width in px, running on from uInsideCutoff toward the centre (NeonConfig::opaqueInsideCutoff.softness).
+uniform float uOutsideCutoff;         // Cutoff::size: positive distance OUTSIDE the edge where the outside fade starts. Disabled sides collapse to a huge sentinel CPU-side.
+uniform float uOutsideCutoffSoftness; // feather width in px, running on from uOutsideCutoff away from the rect (NeonConfig::opaqueOutsideCutoff.softness).
+uniform vec4  uOpaqueColor;           // fill colour; only .rgb used today, .a reserved for a later partial-fill pass
 
 float sdRoundBox(vec2 p, vec2 b, float r) {
     vec2 q = abs(p) - b + r;
@@ -118,38 +127,58 @@ void main() {
     vec2  halfSize = uRectSize * 0.5;
     float d        = sdRoundBox(localPos, halfSize, uCornerRadius);
 
-    // Feather widths. BOTH are TOTAL widths in px, and both are floored at one
-    // pixel so nothing here can stair-step.
+    // Feather widths. Every width here is a TOTAL width in px, floored at one
+    // pixel so nothing can stair-step; the two cutoff ramps are then stored as
+    // HALF of that, because smoothstep takes the ramp's extent either side of
+    // its CENTRE - which is the fade's midpoint (inMid / outMid, below),
+    // softness/2 past the cutoff, not the cutoff itself.
     //   aa    = pixel-crisp AA at boundaries where no soft join is required
     //           (the geometric d=0 rect edge under OUTSIDE/INSIDE modes: the
     //           neon emission is at its brightest there and fully occludes the
     //           fill, so a wider feather would only bleed the fill sideways for
-    //           no visual gain).
-    //   softW = the fill's own cutoff feather (uOpaqueSoftness, independent of
-    //           the neon shader's cutoffSoftness so fill and emission can taper
-    //           at different rates). Applied at each -insideCutoff /
-    //           +outsideCutoff boundary so the fill fades off gently instead of
-    //           stamping a hard rectangle.
+    //           no visual gain). A total width.
+    //   inHalf / outHalf
+    //         = HALF of each side's cutoff feather: the TOTAL width is the
+    //           side's uInsideCutoffSoftness / uOutsideCutoffSoftness floored
+    //           at aa, and the ramp runs over [-half, +half] around that
+    //           side's fade midpoint - so, at or above the floor, from the
+    //           cutoff to cutoff + softness. The fill's own Cutoff pair,
+    //           independent of the glow's so fill and emission can taper at
+    //           different rates - and independent of each other, so each side
+    //           feathers on its own. Applied beyond the -insideCutoff and
+    //           +outsideCutoff boundaries respectively so the fill fades off
+    //           gently instead of stamping a hard rectangle.
     //
     // Both ramps used to be written as smoothstep(-w, w, x), which spans 2w -
     // TWICE the width being asked for. Two consequences, and they are the same
     // root cause as the d == 0 bug documented below:
     //
-    //   - At uOpaqueSoftness 0 the fallback to aa gave a 2 px ramp centred on
+    //   - At softness 0 the fallback to aa gave a 2 px ramp centred on
     //     each cutoff, so the outermost and innermost pixel of the band were
     //     both partially covered and the fill read ~1 px narrower per side than
     //     the cutoff asked for.
     //   - At any non-zero softness the fade ran 2x wider than the documented
-    //     "feather width in pixels" (NeonConfig::opaqueSoftness).
+    //     "feather width in pixels".
     //
-    // Halving fixes both: the ramp now spans exactly softW, centred on the
-    // boundary, so a pixel wholly inside the band is fully covered and a
-    // softness of S px feathers over S px. NOTE this changes the look of any
-    // already-tuned non-zero opaqueSoftness - it is half as wide as before, and
-    // is now what the config says it is.
-    float aa       = max(fwidth(d), 1e-6);
-    float softW    = max(uOpaqueSoftness, aa);
-    float softHalf = 0.5 * softW;
+    // Halving fixed both: each ramp spans exactly its width, so a pixel wholly
+    // inside the band is fully covered and a softness of S px feathers over
+    // S px.
+    float aa      = max(fwidth(d), 1e-6);
+    float inHalf  = 0.5 * max(uInsideCutoffSoftness, aa);
+    float outHalf = 0.5 * max(uOutsideCutoffSoftness, aa);
+
+    // WHERE each fade sits: it starts at the cutoff and runs the requested
+    // softness beyond it, so its MIDPOINT is softness/2 past the cutoff. The
+    // band distances in the arms below are measured from that midpoint and
+    // the ramps built symmetrically about it over the floored width - exactly
+    // cutoff -> cutoff + softness at or above the aa floor. Below the floor
+    // the one-pixel ramp stays centred on the requested fade rather than
+    // starting at the cutoff, so a softness-0 edge's 50% point is the cutoff
+    // itself - the same rule neon.frag follows, where anchoring the floored
+    // ramp at the cutoff would move the edge with resolutionScale. Plain ALU,
+    // so it may sit up here with the other widths.
+    float inMid  = uInsideCutoff  + 0.5 * max(uInsideCutoffSoftness,  0.0);
+    float outMid = uOutsideCutoff + 0.5 * max(uOutsideCutoffSoftness, 0.0);
 
     // The d == 0 edge is covered by an EXACT box filter, not a smoothstep.
     //
@@ -174,7 +203,7 @@ void main() {
     // it matches the "pixel-crisp" intent stated above. The cutoff boundaries
     // keep their smoothstep even though they are now the same width, because
     // there the ramp is an artistic feather that can run tens of px wide
-    // (uOpaqueSoftness), and a linear alpha ramp that wide shows Mach banding
+    // (the cutoffs' softness), and a linear alpha ramp that wide shows Mach banding
     // at its ends. At the aa floor the two shapes differ by at most ~0.09
     // coverage on the single boundary pixel, which is not resolvable.
     float edgeIn  = clamp(0.5 - d / aa, 0.0, 1.0); // 1 inside the rect, 0 outside
@@ -204,7 +233,7 @@ void main() {
     // main(), which is why the guards below are arms rather than early
     // returns. Being explicit is free; assuming was not.
     //
-    // Note what did NOT move: `aa`, `softW`, `softHalf`, `edgeIn` and
+    // Note what did NOT move: `aa`, `inHalf`, `outHalf`, `edgeIn` and
     // `edgeOut` all stay above the chain, because `aa` comes from fwidth(d).
     // A derivative must not end up downstream of control flow the compiler
     // cannot prove uniform - that IS the 35% mistake documented at the top.
@@ -220,24 +249,24 @@ void main() {
         coverage = 1.0;
     } else if (uOpaqueMode == OPAQUE_MODE_OUTSIDE) {
         // 0 <= d <= outsideCutoff. No inner boundary here.
-        float dOut = bandOuterDistance(localPos, d, halfSize, uCornerRadius, uOutsideCutoff);
+        float dOut = bandOuterDistance(localPos, d, halfSize, uCornerRadius, outMid);
         float rise = edgeOut;
-        float fall = 1.0 - smoothstep(-softHalf, softHalf, dOut);
+        float fall = 1.0 - smoothstep(-outHalf, outHalf, dOut);
         coverage   = rise * fall;
     } else if (uOpaqueMode == OPAQUE_MODE_INSIDE) {
         // -insideCutoff <= d <= 0. No outer boundary here - this is the arm
         // that was paying for a second sdRoundBox it never read.
-        float dIn  = bandInnerDistance(d, uInsideCutoff);
-        float rise = smoothstep(-softHalf, softHalf, dIn);
+        float dIn  = bandInnerDistance(d, inMid);
+        float rise = smoothstep(-inHalf, inHalf, dIn);
         float fall = edgeIn;
         coverage   = rise * fall;
     } else if (uOpaqueMode == OPAQUE_MODE_BOTH) {
         // -insideCutoff <= d <= +outsideCutoff (the full glow band). The one
         // arm that genuinely needs both boundaries.
-        float dIn  = bandInnerDistance(d, uInsideCutoff);
-        float dOut = bandOuterDistance(localPos, d, halfSize, uCornerRadius, uOutsideCutoff);
-        float rise = smoothstep(-softHalf, softHalf, dIn);
-        float fall = 1.0 - smoothstep(-softHalf, softHalf, dOut);
+        float dIn  = bandInnerDistance(d, inMid);
+        float dOut = bandOuterDistance(localPos, d, halfSize, uCornerRadius, outMid);
+        float rise = smoothstep(-inHalf, inHalf, dIn);
+        float fall = 1.0 - smoothstep(-outHalf, outHalf, dOut);
         coverage   = rise * fall;
     }
 
