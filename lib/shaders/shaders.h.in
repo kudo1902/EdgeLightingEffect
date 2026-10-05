@@ -7,7 +7,9 @@
 //   Win/Linux -> #version 300 es
 // The .frag/.vert files themselves contain no #version directive.
 // neon-common.glsl is not a shader: it is the gather loop and its inputs,
-// injected below into the two neon programs that run it. (No configure
+// injected below into the two neon programs that run it. neon-pieces.glsl is
+// not one either: the corner development and the glow coverage table's layout,
+// injected into neon.frag and the bake that writes that table. (No configure
 // placeholder may appear in these comments - configure_file expands it here.)
 
 namespace EdgeLighting
@@ -29,6 +31,7 @@ namespace EdgeLighting
                 static const char *const NEON_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
 @NEON_TUNING@
 @NEON_COMMON@
+@NEON_PIECES@
 @NEON_FRAG_CONTENT@
 )shadersrc";
 
@@ -45,6 +48,8 @@ namespace EdgeLighting
 
                 static const char *const NEON_GLOW_COVER_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
 @NEON_TUNING@
+#define NEON_GLOW_COVER_BAKE
+@NEON_PIECES@
 @NEON_GLOW_COVER_FRAG_CONTENT@
 )shadersrc";
 

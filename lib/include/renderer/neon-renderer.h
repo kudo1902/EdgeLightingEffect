@@ -108,8 +108,16 @@ namespace EdgeLighting
 
     private:
         /// Build the programs both paths use - the emission pre-pass and the
-        /// opaque fill. The rest are per path; see @ref ensurePathPrograms.
+        /// opaque fill. The rest are per path; see @ref ensurePathPrograms -
+        /// and the glow coverage bake is built when first needed; see
+        /// @ref ensureGlowCoverProgram.
         bool setupShaders();
+        /// Make sure the glow coverage bake (neon-glow-cover.frag) is built,
+        /// building it if not. Called only on a frame that will bake the
+        /// table, so a host whose ring is lit uniformly never compiles it. A
+        /// failed build is recorded in @c mFailedPrograms and never retried,
+        /// and the frame draws the fill alone, as for a path program.
+        bool ensureGlowCoverProgram();
         /// Build @p program from @p fragSrc (neon.frag or neon-gather.frag) with
         /// @p define spliced in (none for @c nullptr), once. Returns true if it
         /// is ready. A failed build is recorded in @c mFailedPrograms under
@@ -299,9 +307,10 @@ namespace EdgeLighting
         bool resizeGlowCoverBuffer();
 
         /// Pass 0b: bake the glow coverage table into @c mGlowCoverBuffer -
-        /// per perimeter position and distance from the line, the arcs' and
-        /// the segments' coverage convolved with the halo's and the bloom's
-        /// kernel along the outline (neon-glow-cover.frag, V20 in docs/review-findings.md).
+        /// for each piece of the emitter, the arcs' and the segments' coverage
+        /// over that piece's own extent, weighted by the halo's and the bloom's
+        /// kernel about a fragment's foot on it (neon-glow-cover.frag, V20 and
+        /// V21 in docs/review-findings.md).
         /// Retargets the framebuffer and viewport, so it restores both before
         /// returning, and clears @c mGlowCoverDirty on the way out.
         /// @pre Blending disabled, and the light blocks packed this frame.
@@ -434,6 +443,7 @@ namespace EdgeLighting
         static constexpr unsigned int PROGRAM_SHADE = 1u << 2;
         static constexpr unsigned int PROGRAM_BLIT = 1u << 3;
         static constexpr unsigned int PROGRAM_RING = 1u << 4;
+        static constexpr unsigned int PROGRAM_GLOW_COVER = 1u << 5;
 
         Config mCurrentConfig;
         ShaderProgram mNeonShader;                                     ///< neon.frag: gather and shade, direct path. Built on first draw.
@@ -520,13 +530,15 @@ namespace EdgeLighting
         /// here to say so.
         Framebuffer mEmissionBuffer{"NeonRenderer.Emission"};
 
-        /// Glow coverage table, GLOW_COVER_SAMPLES + 2 wide (a guard texel at
-        /// each end of a band) by GLOW_COVER_ROWS x GLOW_COVER_BANDS: how lit
-        /// the arcs and the segments are as each layer sees them, per perimeter
-        /// position and distance from the line - see neon-glow-cover.frag. Written by
-        /// @ref renderGlowCoverPass, read by every neon.frag program with one
-        /// filtered fetch per piece. Allocated once in @ref Initialize; its
-        /// lengths are perimeter fractions, so both resolution paths share it.
+        /// Glow coverage table, GLOW_COVER_WIDTH wide by four bands of
+        /// GLOW_COVER_ROWS, each holding one straight and one corner, which
+        /// share its columns in proportion to their lengths (GetGlowCoverSplit):
+        /// for each piece of the emitter and each fragment position round it,
+        /// how lit the arcs and the segments make that piece as each layer sees
+        /// it - see neon-glow-cover.frag, laid out in neon-pieces.glsl. Written by @ref renderGlowCoverPass, read by every
+        /// neon.frag program with one filtered fetch per piece. Allocated once
+        /// in @ref Initialize; its lengths are ratios that scale together, so
+        /// both resolution paths share it.
         Framebuffer mGlowCoverBuffer{"NeonRenderer.GlowCover"};
 
         /// Pass 1's target on the scaled path: the composited colour, one RGBA8

@@ -764,15 +764,69 @@ namespace EdgeLighting
         /// rounding. Sizes the blit's outer frame past the glow's fade.
         constexpr float FOOTPRINT_TEXELS = 2.0f;
 
+        /// The corner radius the shaders draw, in full-res px: the effective
+        /// radius, clamped to half the shorter side as neon-common.glsl's
+        /// rectPerimeter clamps it.
+        inline float GetDrawnCornerRadius(const Config &config)
+        {
+            return std::clamp(GeometryUtils::GetEffectiveCornerRadius(config.geometry), 0.0f,
+                              std::min(config.geometry.width, config.geometry.height) * 0.5f);
+        }
+
         /// The rect's perimeter in full-res px, as neon-common.glsl's
         /// rectPerimeter measures it at scale 1.
         inline float GetPerimeter(const Config &config)
         {
-            const float w = config.geometry.width;
-            const float h = config.geometry.height;
-            const float r = std::clamp(GeometryUtils::GetEffectiveCornerRadius(config.geometry), 0.0f,
-                                       std::min(w, h) * 0.5f);
-            return 2.0f * (w + h - 4.0f * r) + glm::two_pi<float>() * r;
+            const float r = GetDrawnCornerRadius(config);
+            return 2.0f * (config.geometry.width + config.geometry.height - 4.0f * r) + glm::two_pi<float>() * r;
+        }
+
+        /// Whether no neon.frag program will read the glow coverage table this
+        /// frame: one arc over the whole ring and no segments, neon.frag's
+        /// `uniformCover`, where every piece's coverage IS the gathered one and
+        /// every read is skipped. The bake is then skipped too - under an
+        /// animation of anything but the arcs and segments (intensity, colour,
+        /// geometry, glow), that is every frame's bake.
+        ///
+        /// It must never claim this where the shader does not: the shader
+        /// would then read a stale table. So it reads the same inputs
+        /// packLightBlockData packs - the effective segments, the arcs, capped
+        /// at the blocks' sizes - and tests the arc's length against a
+        /// threshold a little ABOVE the shader's 1.0 - 1e-6, so a length that
+        /// rounds either way between the two compilers counts as partial here.
+        inline bool IsGlowCoverUnread(const std::vector<SegmentBoost> &effectiveSegments, const Config &config)
+        {
+            return effectiveSegments.empty() && config.neon.arcs.size() == 1 &&
+                   config.neon.arcs[0].length >= 1.0f - 5e-7f;
+        }
+
+        static_assert(GLOW_COVER_SHARED >= 2 * GLOW_COVER_MIN_INTERIOR,
+                      "a band of the glow coverage table must leave columns for both its pieces");
+
+        /// How many of each band's GLOW_COVER_SHARED columns go to its
+        /// straight, the rest going to its corner (neon-pieces.glsl,
+        /// glowCoverInner): .x for the two vertical straights' bands, .y for
+        /// the two horizontal ones'. In proportion to the straight's and the
+        /// quarter arc's lengths, so every piece gets columns in proportion to
+        /// its length - a circle's corners take what its straights do not
+        /// need - and each keeps GLOW_COVER_MIN_INTERIOR. Whole columns, and
+        /// computed HERE once for the bake and every neon.frag program alike:
+        /// the two shaders work in different units, and a split each rounded
+        /// for itself could land a column apart and read the whole band from
+        /// the wrong texels. A function of the geometry alone.
+        inline glm::vec2 GetGlowCoverSplit(const Config &config)
+        {
+            const float r = GetDrawnCornerRadius(config);
+            const float arc = glm::half_pi<float>() * r;
+            const float shared = float(GLOW_COVER_SHARED);
+            const float minInner = float(GLOW_COVER_MIN_INTERIOR);
+            auto split = [&](float straight) {
+                const float total = straight + arc;
+                const float inner = (total > 0.0f) ? std::round(shared * straight / total) : std::round(shared * 0.5f);
+                return std::clamp(inner, minInner, shared - minInner);
+            };
+            return glm::vec2(split(std::max(config.geometry.height - 2.0f * r, 0.0f)),
+                             split(std::max(config.geometry.width - 2.0f * r, 0.0f)));
         }
 
         /// The scale the scaled path's GATHER runs at: as coarse as the
@@ -1075,7 +1129,8 @@ namespace EdgeLighting
         // The programs this path draws with, compiled the first frame it
         // runs - see ensurePathPrograms. A failure is logged once and the
         // frame degrades to the fill: no glow, nothing stale.
-        bool glowReady = ensurePathPrograms(scaled);
+        bool glowReady = ensurePathPrograms(scaled) &&
+                         (IsGlowCoverUnread(mEffectiveSegments, config) || ensureGlowCoverProgram());
 
         // The render target this renderer was handed - framebuffer AND
         // viewport, saved as a pair because the offscreen phase has to put both
@@ -1128,8 +1183,10 @@ namespace EdgeLighting
             }
 
             // --- Pass 0b: the glow coverage table, on a config change only. It
-            // never depends on time, and nothing else writes the buffer.
-            if (mGlowCoverDirty)
+            // never depends on time, and nothing else writes the buffer. Nor on
+            // a ring lit uniformly, which never reads it: the flag stays set,
+            // so the first change that breaks the uniformity bakes it.
+            if (mGlowCoverDirty && !IsGlowCoverUnread(mEffectiveSegments, config))
             {
                 glDisable(GL_BLEND);
                 renderGlowCoverPass(config);
@@ -1438,25 +1495,21 @@ namespace EdgeLighting
     {
         // Only the two programs both resolution paths draw with. The neon.frag
         // programs and the blit are per PATH and are built the first time that
-        // path renders - see ensurePathPrograms.
+        // path renders - see ensurePathPrograms - and the glow coverage bake
+        // the first time a table is needed - see ensureGlowCoverProgram.
         //
         // Emission pre-pass. Reuses the neon vertex shader (uMVP -> vPos); the
         // fragment shader ignores vPos and keys off gl_FragCoord instead.
         mEmissionShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                         ShaderSource::NEON_EMISSION_FRAG_SRC,
                                         "NeonRenderer.Emission");
-        // Glow coverage pre-pass. The same arrangement: the neon vertex shader
-        // over the NDC quad, the fragment shader keyed off gl_FragCoord.
-        mGlowCoverShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
-                                         ShaderSource::NEON_GLOW_COVER_FRAG_SRC,
-                                         "NeonRenderer.GlowCover");
         // Cheap fullscreen black fill, used only by opaque mode. Reuses the
         // standard neon vertex shader (uMVP) so the fill quad respects the
         // viewport.
         mBlackRectShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
                                          ShaderSource::BLACK_RECT_FRAG_SRC,
                                          "NeonRenderer.BlackRect");
-        if (!mBlackRectShader.IsValid() || !mEmissionShader.IsValid() || !mGlowCoverShader.IsValid())
+        if (!mBlackRectShader.IsValid() || !mEmissionShader.IsValid())
         {
             return false;
         }
@@ -1465,6 +1518,39 @@ namespace EdgeLighting
         // share bindings and are packed once per frame before either runs.
         mEmissionShader.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
         mEmissionShader.SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
+        return true;
+    }
+
+    bool NeonRenderer::ensureGlowCoverProgram()
+    {
+        // Built on first use rather than in Initialize, and for a reason with
+        // a number on it: it is the largest program the renderer compiles
+        // before a frame, ~10 ms on an AMD Radeon Pro 5300M - the compiler
+        // there builds every function in a source whether main() reaches it
+        // or not - and a host whose ring is lit uniformly never bakes the
+        // table at all (IsGlowCoverUnread), so never needs it. Initialize
+        // drops from 8.8 ms (V20's bake, built there) to ~6 ms; a host with a
+        // partly lit ring pays the compile on its first such frame, where
+        // ensurePathPrograms already builds the path's own programs.
+        if (mGlowCoverShader.IsValid())
+        {
+            return true;
+        }
+        if ((mFailedPrograms & PROGRAM_GLOW_COVER) != 0)
+        {
+            return false;
+        }
+        // The neon vertex shader over the NDC quad, the fragment shader keyed
+        // off gl_FragCoord - the emission pre-pass's arrangement.
+        mGlowCoverShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
+                                         ShaderSource::NEON_GLOW_COVER_FRAG_SRC,
+                                         "NeonRenderer.GlowCover");
+        if (!mGlowCoverShader.IsValid())
+        {
+            mFailedPrograms |= PROGRAM_GLOW_COVER;
+            LOG_E("NeonRenderer: the glow coverage bake failed to compile/link - a partly lit ring will draw no glow.");
+            return false;
+        }
         mGlowCoverShader.SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
         mGlowCoverShader.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
         return true;
@@ -2342,12 +2428,12 @@ namespace EdgeLighting
     bool NeonRenderer::resizeGlowCoverBuffer()
     {
         // The emission table's walk, over GLOW_COVER_FORMATS, with a linear
-        // filter: the consumer interpolates between perimeter positions and
-        // between distances. Called once, so it always starts at the top.
+        // filter: the consumer interpolates between neighbouring positions round
+        // each piece. Called once, so it always starts at the top.
         for (size_t i = 0; i < std::size(GLOW_COVER_FORMATS); ++i)
         {
             const TargetFormat &f = GLOW_COVER_FORMATS[i];
-            if (mGlowCoverBuffer.Resize(GLOW_COVER_SAMPLES + 2, GLOW_COVER_ROWS * GLOW_COVER_BANDS,
+            if (mGlowCoverBuffer.Resize(GLOW_COVER_WIDTH, GLOW_COVER_HEIGHT,
                                         f.internalFormat, f.format, f.type, GL_LINEAR))
             {
                 return true;
@@ -2377,18 +2463,25 @@ namespace EdgeLighting
         // Every length as a fraction of the full-res perimeter, which is what
         // lets the reduced-scale shading and the full-res ring share the
         // table: their px lengths all scale together. The widths are
-        // neon.frag's kh and bw at scale 1.
+        // neon.frag's kh and bw at scale 1, the straights its 2 * straight.
         const float perimeter = std::max(GetPerimeter(config), 1e-3f);
         const float glowRadius = config.neon.glowRadius;
         const float haloWidth = std::max(glowRadius, static_cast<float>(EMISSION_MIN_WIDTH));
         const float bloomWidth = std::max(glowRadius * static_cast<float>(BLOOM_REACH_TO_GLOW),
                                           static_cast<float>(EMISSION_MIN_WIDTH));
+        const float radius = GetDrawnCornerRadius(config);
+        const glm::vec2 straights(std::max(config.geometry.width - 2.0f * radius, 0.0f),
+                                  std::max(config.geometry.height - 2.0f * radius, 0.0f));
         mGlowCoverShader.Use();
         mGlowCoverShader.SetUniform("uMVP", glm::mat4(1.0f));
         mGlowCoverShader.SetUniform("uHeadFeather", static_cast<float>(HEAD_FEATHER_PX) / perimeter);
         mGlowCoverShader.SetUniform("uTailFeather", static_cast<float>(TAIL_FEATHER_PX) / perimeter);
         mGlowCoverShader.SetUniform("uHaloWidth", haloWidth / perimeter);
         mGlowCoverShader.SetUniform("uBloomWidth", bloomWidth / perimeter);
+        mGlowCoverShader.SetUniform("uStraightSize", straights / perimeter);
+        mGlowCoverShader.SetUniform("uRadius", radius / perimeter);
+        mGlowCoverShader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
+        mGlowCoverShader.SetUniform("uGlowCoverSplit", GetGlowCoverSplit(config));
         mFullscreenVertexArray.DrawArrays(GL_TRIANGLES, 6);
         mGlowCoverShader.Unuse();
 
@@ -2445,6 +2538,7 @@ namespace EdgeLighting
         // the emission table or the gather buffer, depending on the path.
         mGlowCoverBuffer.BindTexture(5);
         shader.SetUniform("uGlowCover", 5);
+        shader.SetUniform("uGlowCoverSplit", GetGlowCoverSplit(config));
         shader.SetUniform("uQuadMargin", quadMargin);
     }
 

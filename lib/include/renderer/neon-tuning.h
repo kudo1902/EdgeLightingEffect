@@ -364,19 +364,27 @@
 //     not a fixed cost. ---
 #define NEON_MAX_LOOP_SAMPLES     128
 
-// --- Glow coverage table (neon-glow-cover.frag, V20): per perimeter position
-//     and distance from the line, the arcs' and the segments' coverage as the
-//     halo and the bloom see them. The perimeter is folded into BANDS bands of
-//     ROWS distance rows each; a band has SAMPLES columns plus one guard texel at
-//     each end, so a linear fetch is continuous across bands and round the seam -
-//     2048 texels wide, GLES 3.0's minimum maximum texture size, which the guards
-//     must fit inside. Two bands give 4092 samples, a column under 1.5 px on a
-//     1920 x 1080 rect: at one band (2.9 px) a 1 px halo read 4-5/255 off the
-//     exact convolution beside an arc's end. 2048 x 128 RGBA16F is 2 MB.
-//     Allocated once, at this fixed size. ---
-#define GLOW_COVER_SAMPLES        2046
-#define GLOW_COVER_ROWS           64
-#define GLOW_COVER_BANDS          2
+// --- Glow coverage table (neon-glow-cover.frag, V20 and V21): for each piece
+//     of the emitter and each fragment position round it, the arcs' and the
+//     segments' coverage of that piece as the halo and the bloom see it. Laid
+//     out in neon-pieces.glsl: four bands of ROWS rows, each holding one
+//     straight at its left and one corner at its right. A band's columns are
+//     shared between the two in proportion to their lengths (uGlowCoverSplit,
+//     NeonRenderer::GetGlowCoverSplit), so a circle's corners get the columns
+//     its straights do not need and a long rect's straights get its corners':
+//     the straight has OVERHANG columns past each end, the corner
+//     CORNER_OVERHANG on each side of its arc and a guard texel at each end of
+//     its block, and the SHARED columns left over are split between the two
+//     interiors, each keeping at least MIN_INTERIOR. 1024 x 192 RGBA16F is
+//     1.5 MB - less than V20's single table per perimeter. Allocated once, at
+//     this fixed size. ---
+#define GLOW_COVER_WIDTH          1024
+#define GLOW_COVER_ROWS           48
+#define GLOW_COVER_OVERHANG       64
+#define GLOW_COVER_CORNER_OVERHANG 32
+#define GLOW_COVER_MIN_INTERIOR   16
+#define GLOW_COVER_SHARED         (GLOW_COVER_WIDTH - 2 - 2 * GLOW_COVER_OVERHANG - 2 * GLOW_COVER_CORNER_OVERHANG)
+#define GLOW_COVER_HEIGHT         (4 * GLOW_COVER_ROWS)
 
 // --- Grading ---
 #define TONE_MAP_SHOULDER         0.6
