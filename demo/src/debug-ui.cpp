@@ -1,6 +1,5 @@
 #include "debug-ui.h"
 #include "renderer/spotlight-tuning.h"
-#include <cstdio>
 #include "animation/animation-manager.h"
 #include "core/config.h"
 #include "core/edge-lighting.h"
@@ -119,6 +118,18 @@ namespace
         return changed;
     }
 
+    /// Slider whose knob follows the currently-animated (active) value each
+    /// frame so the user sees what the shader is actually drawing. Dragging
+    /// still edits the BASE (authored) value: while the user is actively
+    /// dragging THIS slider, the display is pinned to the base to avoid a
+    /// tug-of-war between the drag and the per-frame animation overlay.
+    ///
+    /// Whether this slider is being dragged is the previous frame's
+    /// @c ImGui::IsItemActive(), kept in ImGui's state storage under the
+    /// slider's ID, since nothing can be asked about the item before it is
+    /// drawn. The base is written whenever the widget reports a change; the
+    /// animation on the next @c EdgeLightingEffect::Update then overlays on
+    /// top of the new base.
     inline bool AnimatedSlider(const char *label, float &baseVal, float activeVal,
                                float minVal, float maxVal, const char *fmt = "%.2f")
     {
@@ -153,17 +164,6 @@ namespace
         return changed;
     }
 
-    /// Slider whose knob follows the currently-animated (active) value each
-    /// frame so the user sees what the shader is actually drawing. Dragging
-    /// still edits the BASE (authored) value: while the user is actively
-    /// dragging THIS slider, the display is pinned to the base to avoid a
-    /// tug-of-war between the drag and the per-frame animation overlay.
-    ///
-    /// Detected via @c ImGui::GetActiveID() - we compute the slider's ID
-    /// before drawing so we know whether to seed the shown value from base
-    /// (dragging) or active (idle / animating). The base is written whenever
-    /// the widget reports a change; the animation on the next @c
-    /// EdgeLightingEffect::Update then overlays on top of the new base.
     /// Draw one segment-lights row (Pos/Len/Boost + collapsible per-segment
     /// stops editor). Caller wraps in @c PushID so repeated rows can share the
     /// same widget IDs without colliding.
@@ -366,6 +366,246 @@ namespace
         }
         ImGui::Unindent();
         ImGui::PopID();
+    }
+
+    const char *LayerName(EdgeLighting::RendererLayer layer)
+    {
+        switch (layer)
+        {
+        case EdgeLighting::RendererLayer::NEON:
+        {
+            return "Neon";
+        }
+        case EdgeLighting::RendererLayer::DROPLETS:
+        {
+            return "Droplets";
+        }
+        case EdgeLighting::RendererLayer::LENS_FLARE:
+        {
+            return "Lens flare";
+        }
+        case EdgeLighting::RendererLayer::SPOTLIGHT:
+        {
+            return "Spotlight";
+        }
+        case EdgeLighting::RendererLayer::DEBUG:
+        {
+            return "Debug overlays";
+        }
+        default:
+        {
+            return "Unknown";
+        }
+        }
+    }
+
+    // Colour-coded label for an animation's current state.
+    void DrawStateBadge(EdgeLighting::AnimationState s)
+    {
+        ImVec4 col;
+        const char *label = "?";
+        switch (s)
+        {
+        case EdgeLighting::AnimationState::PLAYING:
+            col = ImVec4(0.30f, 0.85f, 0.35f, 1.0f);
+            label = "PLAYING";
+            break;
+        case EdgeLighting::AnimationState::PAUSED:
+            col = ImVec4(0.95f, 0.75f, 0.15f, 1.0f);
+            label = "PAUSED";
+            break;
+        case EdgeLighting::AnimationState::STOPPED:
+            col = ImVec4(0.55f, 0.55f, 0.60f, 1.0f);
+            label = "STOPPED";
+            break;
+        }
+        ImGui::TextColored(col, "%-7s", label);
+    }
+
+    // Render one row of controls for @p anim. Returns true if the user hit
+    // the Remove button (caller is responsible for the actual detach).
+    // @p allowRemove hides the Remove button for pinned rows (currently
+    // there are no pinned rows, but the flag is kept for future use).
+    bool DrawAnimationRow(const char *label,
+                          EdgeLighting::Animation &anim,
+                          EdgeLighting::Config &cfg,
+                          bool allowRemove)
+    {
+        ImGui::PushID(label);
+        DrawStateBadge(anim.GetState());
+        ImGui::SameLine();
+        ImGui::Text("%s", label);
+
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Play"))
+        {
+            anim.Play();
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Pause"))
+        {
+            anim.Pause();
+        }
+        ImGui::SameLine();
+        if (ImGui::SmallButton("Stop"))
+        {
+            anim.Stop();
+        }
+        ImGui::SameLine();
+        // Reset rewinds elapsed to 0 AND writes the modulator@t=0 baseline
+        // into cfg - leaves state unchanged (Playing keeps playing from the
+        // top; Stopped stays Stopped but the config field is restored).
+        if (ImGui::SmallButton("Reset"))
+        {
+            anim.Reset(cfg);
+        }
+
+        bool wantRemove = false;
+        if (allowRemove)
+        {
+            ImGui::SameLine();
+            if (ImGui::SmallButton("Remove"))
+            {
+                wantRemove = true;
+            }
+        }
+
+        // --- Per-animation params ---
+        // These are the pieces of state Animation's base class exposes to
+        // every subclass. Editing them here is a "live tweak" of the added
+        // instance; subclass-specific ctor arguments (baseRate, easing,
+        // segment length, …) are still baked in at Add-time via the preset
+        // - those would need a per-subclass params panel to expose here.
+
+        // Speed multiplier - 0 acts as "pause at the value level".
+        float speed = anim.GetSpeed();
+        ImGui::SetNextItemWidth(160.0f);
+        if (SliderWithInput("Speed", speed, 0.0f, 4.0f, "%.2fx"))
+        {
+            anim.SetSpeed(speed);
+        }
+
+        // Playback mode - LOOP wraps elapsed at duration; ONE_SHOT completes
+        // after one cycle. Toggling is live: switching a Playing looper to
+        // ONE_SHOT will complete on the next Update if elapsed already >= dur.
+        int modeIdx = (anim.GetPlaybackMode() == EdgeLighting::PlaybackMode::LOOP)
+                          ? 0
+                          : 1;
+        const char *modeItems[] = {"Loop", "One-shot"};
+        ImGui::SetNextItemWidth(160.0f);
+        if (ImGui::Combo("Mode", &modeIdx, modeItems, IM_ARRAYSIZE(modeItems)))
+        {
+            anim.SetPlaybackMode(modeIdx == 0
+                                     ? EdgeLighting::PlaybackMode::LOOP
+                                     : EdgeLighting::PlaybackMode::ONE_SHOT);
+        }
+
+        // End action - what STOPPED-Apply writes to the target field:
+        //   Hold current : field settles at wherever elapsed was when stopped. (Default.)
+        //   Hold end     : field settles at ApplyAt(cfg, duration).
+        //   Hold start   : field settles at ApplyAt(cfg, 0).
+        //   Restore      : field settles at the pre-play value (subclass hook).
+        // Only meaningful once the animation has played at least once; a
+        // freshly-added Stopped animation is a no-op regardless. If you want
+        // the base config to show through after Stop, detach the animation.
+        const char *endActionItems[] = {
+            "Hold current",
+            "Hold end",
+            "Hold start",
+            "Restore",
+        };
+        int endActionIdx = static_cast<int>(anim.GetEndAction());
+        ImGui::SetNextItemWidth(160.0f);
+        if (ImGui::Combo("End action", &endActionIdx,
+                         endActionItems, IM_ARRAYSIZE(endActionItems)))
+        {
+            anim.SetEndAction(static_cast<EdgeLighting::EndAction>(endActionIdx));
+        }
+
+        // Duration - cycle length in seconds. Subclasses with internal
+        // modulators (FadeIn/FadeOut/OutlineTracer) rebuild them via
+        // OnDurationChanged so the visual matches the completion latch.
+        // 0 means "modulator owns its own periodicity" (oscillator-based
+        // subclasses), so we disable the slider in that case rather than
+        // silently clamping.
+        float dur = anim.GetDuration();
+        ImGui::SetNextItemWidth(160.0f);
+        if (dur > 0.0f)
+        {
+            float editable = dur;
+            if (SliderWithInput("Duration", editable, 0.05f, 10.0f, "%.2fs"))
+            {
+                anim.SetDuration(editable);
+            }
+        }
+        else
+        {
+            ImGui::BeginDisabled();
+            float placeholder = 0.0f;
+            ImGui::SliderFloat("Duration", &placeholder, 0.0f, 1.0f,
+                               "modulator-owned");
+            ImGui::EndDisabled();
+        }
+
+        // --- Elapsed status line ---
+        float elapsed = anim.GetElapsed();
+        if (anim.GetPlaybackMode() == EdgeLighting::PlaybackMode::LOOP)
+        {
+            if (dur > 0.0f)
+            {
+                ImGui::TextDisabled("t=%.2fs / cycle=%.2fs (looping)", elapsed, dur);
+            }
+            else
+            {
+                ImGui::TextDisabled("t=%.2fs (looping)", elapsed);
+            }
+        }
+        else
+        {
+            const char *status = anim.IsPlaying() ? "running" : "stopped";
+            ImGui::TextDisabled("t=%.2fs / dur=%.2fs (%s)", elapsed, dur, status);
+        }
+
+        ImGui::PopID();
+        return wantRemove;
+    }
+
+    // Recursively render an AnimationGroup's children as indented sub-rows.
+    // Each child gets a full row (state badge, control buttons, Speed / Mode /
+    // Duration sliders) so per-child parameters like SegmentTravel's revolution
+    // time or IntensityPulse's period are reachable even when the outer group
+    // is what the user added. Nested groups keep nesting.
+    //
+    // Removing a sub-row detaches from the innermost group, leaving siblings
+    // intact. The outer preset row keeps its own Remove button for the whole
+    // composite.
+    void DrawGroupChildren(EdgeLighting::AnimationGroup &group,
+                           EdgeLighting::Config &cfg)
+    {
+        // Iterate a snapshot so an inline Remove from within a child row
+        // doesn't invalidate our loop over the group's children vector.
+        const auto children = group.GetChildren();
+        if (children.empty())
+            return;
+
+        ImGui::Indent(18.0f);
+        for (size_t i = 0; i < children.size(); ++i)
+        {
+            char childLabel[48];
+            std::snprintf(childLabel, sizeof(childLabel), "Child #%zu", i + 1);
+            if (DrawAnimationRow(childLabel, *children[i], cfg,
+                                 /*allowRemove=*/true))
+            {
+                group.Remove(children[i]);
+            }
+            // Recurse for nested groups.
+            if (auto sub = std::dynamic_pointer_cast<EdgeLighting::AnimationGroup>(
+                    children[i]))
+            {
+                DrawGroupChildren(*sub, cfg);
+            }
+        }
+        ImGui::Unindent(18.0f);
     }
 }
 
@@ -570,40 +810,6 @@ void DebugUI::buildGeometrySection(EdgeLighting::Config &cfg)
     if (ImGui::Combo("Winding", &windingIdx, windingItems, IM_ARRAYSIZE(windingItems)))
     {
         cfg.geometry.winding = static_cast<EdgeLighting::Winding>(windingIdx);
-    }
-}
-
-namespace
-{
-    const char *LayerName(EdgeLighting::RendererLayer layer)
-    {
-        switch (layer)
-        {
-        case EdgeLighting::RendererLayer::NEON:
-        {
-            return "Neon";
-        }
-        case EdgeLighting::RendererLayer::DROPLETS:
-        {
-            return "Droplets";
-        }
-        case EdgeLighting::RendererLayer::LENS_FLARE:
-        {
-            return "Lens flare";
-        }
-        case EdgeLighting::RendererLayer::SPOTLIGHT:
-        {
-            return "Spotlight";
-        }
-        case EdgeLighting::RendererLayer::DEBUG:
-        {
-            return "Debug overlays";
-        }
-        default:
-        {
-            return "Unknown";
-        }
-        }
     }
 }
 
@@ -865,218 +1071,6 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
             cfg.neon.colorStops.push_back(
                 {std::min(1.0f, lastPos + 0.1f), glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)});
         }
-    }
-}
-
-namespace
-{
-    // Colour-coded label for an animation's current state.
-    void DrawStateBadge(EdgeLighting::AnimationState s)
-    {
-        ImVec4 col;
-        const char *label = "?";
-        switch (s)
-        {
-        case EdgeLighting::AnimationState::PLAYING:
-            col = ImVec4(0.30f, 0.85f, 0.35f, 1.0f);
-            label = "PLAYING";
-            break;
-        case EdgeLighting::AnimationState::PAUSED:
-            col = ImVec4(0.95f, 0.75f, 0.15f, 1.0f);
-            label = "PAUSED";
-            break;
-        case EdgeLighting::AnimationState::STOPPED:
-            col = ImVec4(0.55f, 0.55f, 0.60f, 1.0f);
-            label = "STOPPED";
-            break;
-        }
-        ImGui::TextColored(col, "%-7s", label);
-    }
-
-    // Render one row of controls for @p anim. Returns true if the user hit
-    // the Remove button (caller is responsible for the actual detach).
-    // @p allowRemove hides the Remove button for pinned rows (currently
-    // there are no pinned rows, but the flag is kept for future use).
-    bool DrawAnimationRow(const char *label,
-                          EdgeLighting::Animation &anim,
-                          EdgeLighting::Config &cfg,
-                          bool allowRemove)
-    {
-        ImGui::PushID(label);
-        DrawStateBadge(anim.GetState());
-        ImGui::SameLine();
-        ImGui::Text("%s", label);
-
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Play"))
-        {
-            anim.Play();
-        }
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Pause"))
-        {
-            anim.Pause();
-        }
-        ImGui::SameLine();
-        if (ImGui::SmallButton("Stop"))
-        {
-            anim.Stop();
-        }
-        ImGui::SameLine();
-        // Reset rewinds elapsed to 0 AND writes the modulator@t=0 baseline
-        // into cfg - leaves state unchanged (Playing keeps playing from the
-        // top; Stopped stays Stopped but the config field is restored).
-        if (ImGui::SmallButton("Reset"))
-        {
-            anim.Reset(cfg);
-        }
-
-        bool wantRemove = false;
-        if (allowRemove)
-        {
-            ImGui::SameLine();
-            if (ImGui::SmallButton("Remove"))
-            {
-                wantRemove = true;
-            }
-        }
-
-        // --- Per-animation params ---
-        // These are the pieces of state Animation's base class exposes to
-        // every subclass. Editing them here is a "live tweak" of the added
-        // instance; subclass-specific ctor arguments (baseRate, easing,
-        // segment length, …) are still baked in at Add-time via the preset
-        // - those would need a per-subclass params panel to expose here.
-
-        // Speed multiplier - 0 acts as "pause at the value level".
-        float speed = anim.GetSpeed();
-        ImGui::SetNextItemWidth(160.0f);
-        if (SliderWithInput("Speed", speed, 0.0f, 4.0f, "%.2fx"))
-        {
-            anim.SetSpeed(speed);
-        }
-
-        // Playback mode - LOOP wraps elapsed at duration; ONE_SHOT completes
-        // after one cycle. Toggling is live: switching a Playing looper to
-        // ONE_SHOT will complete on the next Update if elapsed already >= dur.
-        int modeIdx = (anim.GetPlaybackMode() == EdgeLighting::PlaybackMode::LOOP)
-                          ? 0
-                          : 1;
-        const char *modeItems[] = {"Loop", "One-shot"};
-        ImGui::SetNextItemWidth(160.0f);
-        if (ImGui::Combo("Mode", &modeIdx, modeItems, IM_ARRAYSIZE(modeItems)))
-        {
-            anim.SetPlaybackMode(modeIdx == 0
-                                     ? EdgeLighting::PlaybackMode::LOOP
-                                     : EdgeLighting::PlaybackMode::ONE_SHOT);
-        }
-
-        // End action - what STOPPED-Apply writes to the target field:
-        //   Hold current : field settles at wherever elapsed was when stopped. (Default.)
-        //   Hold end     : field settles at ApplyAt(cfg, duration).
-        //   Hold start   : field settles at ApplyAt(cfg, 0).
-        //   Restore      : field settles at the pre-play value (subclass hook).
-        // Only meaningful once the animation has played at least once; a
-        // freshly-added Stopped animation is a no-op regardless. If you want
-        // the base config to show through after Stop, detach the animation.
-        const char *endActionItems[] = {
-            "Hold current",
-            "Hold end",
-            "Hold start",
-            "Restore",
-        };
-        int endActionIdx = static_cast<int>(anim.GetEndAction());
-        ImGui::SetNextItemWidth(160.0f);
-        if (ImGui::Combo("End action", &endActionIdx,
-                         endActionItems, IM_ARRAYSIZE(endActionItems)))
-        {
-            anim.SetEndAction(static_cast<EdgeLighting::EndAction>(endActionIdx));
-        }
-
-        // Duration - cycle length in seconds. Subclasses with internal
-        // modulators (FadeIn/FadeOut/OutlineTracer) rebuild them via
-        // OnDurationChanged so the visual matches the completion latch.
-        // 0 means "modulator owns its own periodicity" (oscillator-based
-        // subclasses), so we disable the slider in that case rather than
-        // silently clamping.
-        float dur = anim.GetDuration();
-        ImGui::SetNextItemWidth(160.0f);
-        if (dur > 0.0f)
-        {
-            float editable = dur;
-            if (SliderWithInput("Duration", editable, 0.05f, 10.0f, "%.2fs"))
-            {
-                anim.SetDuration(editable);
-            }
-        }
-        else
-        {
-            ImGui::BeginDisabled();
-            float placeholder = 0.0f;
-            ImGui::SliderFloat("Duration", &placeholder, 0.0f, 1.0f,
-                               "modulator-owned");
-            ImGui::EndDisabled();
-        }
-
-        // --- Elapsed status line ---
-        float elapsed = anim.GetElapsed();
-        if (anim.GetPlaybackMode() == EdgeLighting::PlaybackMode::LOOP)
-        {
-            if (dur > 0.0f)
-            {
-                ImGui::TextDisabled("t=%.2fs / cycle=%.2fs (looping)", elapsed, dur);
-            }
-            else
-            {
-                ImGui::TextDisabled("t=%.2fs (looping)", elapsed);
-            }
-        }
-        else
-        {
-            const char *status = anim.IsPlaying() ? "running" : "stopped";
-            ImGui::TextDisabled("t=%.2fs / dur=%.2fs (%s)", elapsed, dur, status);
-        }
-
-        ImGui::PopID();
-        return wantRemove;
-    }
-
-    // Recursively render an AnimationGroup's children as indented sub-rows.
-    // Each child gets a full row (state badge, control buttons, Speed / Mode /
-    // Duration sliders) so per-child parameters like SegmentTravel's revolution
-    // time or IntensityPulse's period are reachable even when the outer group
-    // is what the user added. Nested groups keep nesting.
-    //
-    // Removing a sub-row detaches from the innermost group, leaving siblings
-    // intact. The outer preset row keeps its own Remove button for the whole
-    // composite.
-    void DrawGroupChildren(EdgeLighting::AnimationGroup &group,
-                           EdgeLighting::Config &cfg)
-    {
-        // Iterate a snapshot so an inline Remove from within a child row
-        // doesn't invalidate our loop over the group's children vector.
-        const auto children = group.GetChildren();
-        if (children.empty())
-            return;
-
-        ImGui::Indent(18.0f);
-        for (size_t i = 0; i < children.size(); ++i)
-        {
-            char childLabel[48];
-            std::snprintf(childLabel, sizeof(childLabel), "Child #%zu", i + 1);
-            if (DrawAnimationRow(childLabel, *children[i], cfg,
-                                 /*allowRemove=*/true))
-            {
-                group.Remove(children[i]);
-            }
-            // Recurse for nested groups.
-            if (auto sub = std::dynamic_pointer_cast<EdgeLighting::AnimationGroup>(
-                    children[i]))
-            {
-                DrawGroupChildren(*sub, cfg);
-            }
-        }
-        ImGui::Unindent(18.0f);
     }
 }
 

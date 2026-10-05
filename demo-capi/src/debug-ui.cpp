@@ -82,174 +82,7 @@ namespace
         }
         }
     }
-} // namespace
 
-// ---------------------------------------------------------------------------
-// Lifecycle
-// ---------------------------------------------------------------------------
-
-DebugUI::~DebugUI()
-{
-    Shutdown();
-}
-
-bool DebugUI::Init(GLFWwindow *mainWindow, int mainW, int /*mainH*/)
-{
-    int dbgW = 420, dbgH = 700;
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-    glfwWindowHint(GLFW_FOCUSED, GLFW_FALSE);
-    mWindow = glfwCreateWindow(dbgW, dbgH, "Debug Controls", nullptr, mainWindow);
-    if (!mWindow)
-    {
-        std::fprintf(stderr, "Failed to create debug window\n");
-        return false;
-    }
-    glfwSetWindowPos(mWindow, mainW + 20, 40);
-    glfwSetWindowAttrib(mWindow, GLFW_FLOATING, GLFW_TRUE);
-
-    mMainWindow = mainWindow;
-    glfwMakeContextCurrent(mainWindow);
-
-    IMGUI_CHECKVERSION();
-    mContext = ImGui::CreateContext();
-    ImGui::SetCurrentContext(mContext);
-    ImGuiIO &io = ImGui::GetIO();
-    io.IniFilename = nullptr;
-    ImGui::StyleColorsDark();
-    ImGui_ImplGlfw_InitForOpenGL(mWindow, true);
-    ImGui_ImplOpenGL3_Init(GLSL_VERSION);
-    return true;
-}
-
-void DebugUI::Shutdown()
-{
-    for (auto &e : mAnimations)
-    {
-        if (e.handle)
-        {
-            el_animation_destroy(e.handle);
-        }
-    }
-    mAnimations.clear();
-
-    if (mColorPickerTex)
-    {
-        glDeleteTextures(1, &mColorPickerTex);
-        mColorPickerTex = 0;
-    }
-
-    if (mContext)
-    {
-        ImGui::SetCurrentContext(mContext);
-        ImGui_ImplOpenGL3_Shutdown();
-        ImGui_ImplGlfw_Shutdown();
-        ImGui::DestroyContext(mContext);
-        mContext = nullptr;
-    }
-    if (mWindow)
-    {
-        glfwDestroyWindow(mWindow);
-        mWindow = nullptr;
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Per-frame
-// ---------------------------------------------------------------------------
-
-void DebugUI::Build(el_effect_handle_t effect)
-{
-    ImGui::SetCurrentContext(mContext);
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    el_bool_t playing = 0;
-    el_effect_clock_is_playing(effect, &playing);
-
-    ImGui::Begin("Debug Controls");
-
-    const ImGuiIO &io = ImGui::GetIO();
-    ImGui::Text("FPS: %.1f  |  %.2f ms (frame)  |  %.2f ms (render)",
-                io.Framerate, 1000.0f / io.Framerate, mLastRenderTimeMs);
-    ImGui::Separator();
-
-    buildGeometrySection(effect);
-    buildLayerOrderSection(effect);
-    buildNeonSection(effect);
-    buildDebugSection(effect);
-    buildDropletsSection(effect);
-    buildLensFlareSection(effect);
-    buildSpotlightSection(effect);
-    buildColorPickerSection(effect);
-    buildAnimationSection(effect);
-    buildBackgroundSection();
-
-    ImGui::Separator();
-    ImGui::Text("Clock: %s", playing ? "PLAYING" : "PAUSED");
-    if (ImGui::Button(playing ? "Pause" : "Play"))
-    {
-        if (playing)
-            el_effect_clock_pause(effect);
-        else
-            el_effect_clock_play(effect);
-    }
-    ImGui::End();
-}
-
-void DebugUI::Render()
-{
-    ImGui::Render();
-    glfwMakeContextCurrent(mWindow);
-    int fbW = 0, fbH = 0;
-    glfwGetFramebufferSize(mWindow, &fbW, &fbH);
-    glViewport(0, 0, fbW, fbH);
-    glClearColor(0.12f, 0.12f, 0.14f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-    glfwSwapBuffers(mWindow);
-}
-
-// ---------------------------------------------------------------------------
-// Geometry
-// ---------------------------------------------------------------------------
-
-void DebugUI::buildGeometrySection(el_effect_handle_t effect)
-{
-    if (!ImGui::CollapsingHeader("Geometry", ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        return;
-    }
-
-    float w = 0, h = 0, x = 0, y = 0, r = 0;
-    el_effect_get_geometry(effect, &w, &h, &x, &y, &r);
-    bool changed = false;
-    changed |= ImGui::SliderFloat("Width", &w, 100.0f, 1600.0f, "%.0f");
-    changed |= ImGui::SliderFloat("Height", &h, 100.0f, 1200.0f, "%.0f");
-    changed |= ImGui::SliderFloat("Pos X", &x, 0.0f, 1600.0f, "%.0f");
-    changed |= ImGui::SliderFloat("Pos Y", &y, 0.0f, 1200.0f, "%.0f");
-    changed |= ImGui::SliderFloat("Corner Radius", &r, 0.0f, 200.0f, "%.0f");
-    if (changed)
-    {
-        el_effect_set_geometry(effect, w, h, x, y, r);
-    }
-
-    el_winding_e winding = EL_WINDING_CLOCKWISE;
-    el_effect_get_winding(effect, &winding);
-    const char *items[] = {"CW", "CCW"};
-    int idx = static_cast<int>(winding);
-    if (ImGui::Combo("Winding", &idx, items, IM_ARRAYSIZE(items)))
-    {
-        el_effect_set_winding(effect, static_cast<el_winding_e>(idx));
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Neon
-// ---------------------------------------------------------------------------
-
-namespace
-{
     // One row per cutoff: enable checkbox, then size + softness sliders
     // indented under it and greyed out while it is off. Serves both the glow's
     // pair and the opaque fill's own pair - getFn / setFn take the
@@ -667,10 +500,7 @@ namespace
                                      1.0f, 1.0f, 1.0f, 1.0f);
         }
     }
-} // namespace
 
-namespace
-{
     const char *LayerName(uint32_t layer)
     {
         switch (layer)
@@ -713,7 +543,171 @@ namespace
         }
         return order;
     }
+} // namespace
+
+// ---------------------------------------------------------------------------
+// Lifecycle
+// ---------------------------------------------------------------------------
+
+DebugUI::~DebugUI()
+{
+    Shutdown();
 }
+
+bool DebugUI::Init(GLFWwindow *mainWindow, int mainW, int /*mainH*/)
+{
+    int dbgW = 420, dbgH = 700;
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+    glfwWindowHint(GLFW_FOCUSED, GLFW_FALSE);
+    mWindow = glfwCreateWindow(dbgW, dbgH, "Debug Controls", nullptr, mainWindow);
+    if (!mWindow)
+    {
+        std::fprintf(stderr, "Failed to create debug window\n");
+        return false;
+    }
+    glfwSetWindowPos(mWindow, mainW + 20, 40);
+    glfwSetWindowAttrib(mWindow, GLFW_FLOATING, GLFW_TRUE);
+
+    mMainWindow = mainWindow;
+    glfwMakeContextCurrent(mainWindow);
+
+    IMGUI_CHECKVERSION();
+    mContext = ImGui::CreateContext();
+    ImGui::SetCurrentContext(mContext);
+    ImGuiIO &io = ImGui::GetIO();
+    io.IniFilename = nullptr;
+    ImGui::StyleColorsDark();
+    ImGui_ImplGlfw_InitForOpenGL(mWindow, true);
+    ImGui_ImplOpenGL3_Init(GLSL_VERSION);
+    return true;
+}
+
+void DebugUI::Shutdown()
+{
+    for (auto &e : mAnimations)
+    {
+        if (e.handle)
+        {
+            el_animation_destroy(e.handle);
+        }
+    }
+    mAnimations.clear();
+
+    if (mColorPickerTex)
+    {
+        glDeleteTextures(1, &mColorPickerTex);
+        mColorPickerTex = 0;
+    }
+
+    if (mContext)
+    {
+        ImGui::SetCurrentContext(mContext);
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext(mContext);
+        mContext = nullptr;
+    }
+    if (mWindow)
+    {
+        glfwDestroyWindow(mWindow);
+        mWindow = nullptr;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame
+// ---------------------------------------------------------------------------
+
+void DebugUI::Build(el_effect_handle_t effect)
+{
+    ImGui::SetCurrentContext(mContext);
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+
+    el_bool_t playing = 0;
+    el_effect_clock_is_playing(effect, &playing);
+
+    ImGui::Begin("Debug Controls");
+
+    const ImGuiIO &io = ImGui::GetIO();
+    ImGui::Text("FPS: %.1f  |  %.2f ms (frame)  |  %.2f ms (render)",
+                io.Framerate, 1000.0f / io.Framerate, mLastRenderTimeMs);
+    ImGui::Separator();
+
+    buildGeometrySection(effect);
+    buildLayerOrderSection(effect);
+    buildNeonSection(effect);
+    buildDebugSection(effect);
+    buildDropletsSection(effect);
+    buildLensFlareSection(effect);
+    buildSpotlightSection(effect);
+    buildColorPickerSection(effect);
+    buildAnimationSection(effect);
+    buildBackgroundSection();
+
+    ImGui::Separator();
+    ImGui::Text("Clock: %s", playing ? "PLAYING" : "PAUSED");
+    if (ImGui::Button(playing ? "Pause" : "Play"))
+    {
+        if (playing)
+            el_effect_clock_pause(effect);
+        else
+            el_effect_clock_play(effect);
+    }
+    ImGui::End();
+}
+
+void DebugUI::Render()
+{
+    ImGui::Render();
+    glfwMakeContextCurrent(mWindow);
+    int fbW = 0, fbH = 0;
+    glfwGetFramebufferSize(mWindow, &fbW, &fbH);
+    glViewport(0, 0, fbW, fbH);
+    glClearColor(0.12f, 0.12f, 0.14f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    glfwSwapBuffers(mWindow);
+}
+
+// ---------------------------------------------------------------------------
+// Geometry
+// ---------------------------------------------------------------------------
+
+void DebugUI::buildGeometrySection(el_effect_handle_t effect)
+{
+    if (!ImGui::CollapsingHeader("Geometry", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+
+    float w = 0, h = 0, x = 0, y = 0, r = 0;
+    el_effect_get_geometry(effect, &w, &h, &x, &y, &r);
+    bool changed = false;
+    changed |= ImGui::SliderFloat("Width", &w, 100.0f, 1600.0f, "%.0f");
+    changed |= ImGui::SliderFloat("Height", &h, 100.0f, 1200.0f, "%.0f");
+    changed |= ImGui::SliderFloat("Pos X", &x, 0.0f, 1600.0f, "%.0f");
+    changed |= ImGui::SliderFloat("Pos Y", &y, 0.0f, 1200.0f, "%.0f");
+    changed |= ImGui::SliderFloat("Corner Radius", &r, 0.0f, 200.0f, "%.0f");
+    if (changed)
+    {
+        el_effect_set_geometry(effect, w, h, x, y, r);
+    }
+
+    el_winding_e winding = EL_WINDING_CLOCKWISE;
+    el_effect_get_winding(effect, &winding);
+    const char *items[] = {"CW", "CCW"};
+    int idx = static_cast<int>(winding);
+    if (ImGui::Combo("Winding", &idx, items, IM_ARRAYSIZE(items)))
+    {
+        el_effect_set_winding(effect, static_cast<el_winding_e>(idx));
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Layer order
+// ---------------------------------------------------------------------------
 
 void DebugUI::buildLayerOrderSection(el_effect_handle_t effect)
 {
@@ -793,6 +787,10 @@ void DebugUI::buildLayerOrderSection(el_effect_handle_t effect)
                           "fill, if on, then covers any cone inside the rect.");
     }
 }
+
+// ---------------------------------------------------------------------------
+// Neon
+// ---------------------------------------------------------------------------
 
 void DebugUI::buildNeonSection(el_effect_handle_t effect)
 {
@@ -958,7 +956,6 @@ void DebugUI::buildDebugSection(el_effect_handle_t effect)
         ImGui::TextDisabled("Neon is off - LUT / stops have nothing to annotate.");
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Droplets
