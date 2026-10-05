@@ -195,12 +195,6 @@ vec2 kernelMoments(float t0, float t1, float c, bool halo) {
     return vec2(atan(c * (t1 - t0), c * c + t0 * t1), 0.5 * c * logRatio(t0, t1, c));
 }
 
-// One kernel's density at offset t, in the same units.
-float kernelDensity(float t, float c, bool halo) {
-    float d = t * t + c * c;
-    return halo ? c * c * inversesqrt(d) / d : c / d;
-}
-
 // Both kernels at once - halo (.x, width cH) and bloom (.y, width cB) - over
 // the same span, so each integral below has one copy in the program. Every
 // copy is inlined, and the program's compile time follows how many there are:

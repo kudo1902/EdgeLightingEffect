@@ -375,11 +375,16 @@
 //     the straight has OVERHANG columns past each end, the corner
 //     CORNER_OVERHANG on each side of its arc and a guard texel at each end of
 //     its block, and the SHARED columns left over are split between the two
-//     interiors, each keeping at least MIN_INTERIOR. 1024 x 192 RGBA16F is
-//     1.5 MB - less than V20's single table per perimeter. Allocated once, at
-//     this fixed size. ---
+//     interiors, each keeping at least MIN_INTERIOR. ROWS 32 is half of them
+//     within one halo width of a straight, and 16 inside and 16 outside a
+//     corner's arc. 1024 x 128 RGBA16F is 1.0 MB - half V20's single table per
+//     perimeter. Sizing it, against an exact per-piece reference (V21 in
+//     docs/review-findings.md): 48 rows (1.5 MB) read at most 2 levels off where
+//     32 reads 3 on a few pixels of a segment scene, for 1.3x the bake's cost
+//     under animation; 768 columns read 6 levels off a 1 px halo on a 4K-sized
+//     rect. Allocated once, at this fixed size. ---
 #define GLOW_COVER_WIDTH          1024
-#define GLOW_COVER_ROWS           48
+#define GLOW_COVER_ROWS           32
 #define GLOW_COVER_OVERHANG       64
 #define GLOW_COVER_CORNER_OVERHANG 32
 #define GLOW_COVER_MIN_INTERIOR   16
