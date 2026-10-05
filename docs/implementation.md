@@ -178,17 +178,20 @@ The invariant that keeps the split honest: **a pure function of
 belongs in the main shader.**
 
 A second pre-pass bakes the **glow coverage table** (`neon-glow-cover.frag`):
-per perimeter position and distance from the line, how lit the arcs and the
-segments are as the halo and the bloom see them - their coverage convolved
-with each layer's kernel along the outline, in closed form for the arcs and
-numerically for the segments' bells. The halo and bloom are a sum over the
-outline's eight pieces, and each piece's share is scaled by its own read of
-that table at its foot (one linear fetch), not by one coverage gathered around
-the fragment: the gathered one let an unlit stretch keep a faint line of light
+for each of the outline's eight pieces - four straights, four corner arcs -
+how lit that piece is as the halo and the bloom see it from a fragment, its own
+coverage over its own extent weighted by each layer's kernel, in closed form
+for the arcs and numerically for the segments' bells. The halo and bloom are a
+sum over those pieces, and each piece's share is scaled by its own read of
+that table (one linear fetch), not by one coverage gathered around the
+fragment: the gathered one let an unlit stretch keep a faint line of light
 along it and dimmed lit edges' light reaching a dark one (V19 and V20 in
-[`review-findings.md`](review-findings.md)). The table depends on the arcs,
-the segments, the rect's shape and the glow radius only, so it is re-baked on
-a config change and never on time.
+[`review-findings.md`](review-findings.md)), and a table per perimeter rather
+than per piece spilled light round each corner (V21). Where each piece's
+coverage sits in the table is in `neon-pieces.glsl`, which both the bake and
+`neon.frag` include. The table depends on the arcs, the segments, the rect's
+shape and the glow radius only, so it is re-baked on a config change and never
+on time.
 
 Below `resolutionScale` 1.0 the same split pays twice. The gather is the only
 part of the shader that is both expensive and smooth across the screen, so it

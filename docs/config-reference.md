@@ -291,8 +291,8 @@ the four coverage terms:
   around the pixel. It is what keeps a stretch no arc covers from showing a
   thin line along it, even at a high `intensity`, and keeps lit edges' bloom
   from dimming where it reaches a dark one; 0 on a fully lit ring. Arcs and
-  segments alike. Its one approximation (V21): the table runs the outline
-  straight through each piece's foot, so a little light spills round corners.
+  segments alike. Each piece's coverage stops at its own ends and follows its
+  own corner (V21), so no light spills round a corner from the next piece.
 * **Shared shaping after the sum:** `core / halo / bloom` kernels,
   `glowRadius / bloomStrength`, `glowSide / cutoffs`, tone map + gamma apply
   to `emitFil / emitGlow` as a whole, so overdrive saturates jointly.

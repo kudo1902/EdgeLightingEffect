@@ -3469,9 +3469,9 @@ Rejected on the way:
   step between abutting arcs was ignored and the nearest end switches where
   two are equidistant.
 
-What is still approximate is the line the table convolves along: see V21.
+What is still approximate is the line the table convolves along: see V21 (since fixed, with a table per piece).
 
-### V21. The coverage table runs the outline straight through each piece's foot, so light spills round corners - OPEN
+### V21. The coverage table runs the outline straight through each piece's foot, so light spills round corners - FIXED
 
 V20's table is a function of perimeter position and distance alone, which is
 what makes it a table: it convolves the coverage along a STRAIGHT line
@@ -3507,7 +3507,8 @@ corners differ from the reference by up to 23-24 levels on the rounded scenes,
 against 11-13 for the table alone: the corners' spill no longer matches the
 straights', so both have to be clipped.
 
-**The fix, not built.** A table per piece instead of one per perimeter:
+**The fix, as designed** (before it was built - what was built, and where it
+departs from this, follows). A table per piece instead of one per perimeter:
 
 - **each straight**, one band of its own, indexed by where the fragment
   PROJECTS along it - including past either end, compressed, since a
@@ -3535,6 +3536,239 @@ straights', so both have to be clipped.
 `arcTangentSegment` would move into a shared GLSL chunk injected into both
 `neon.frag` and the bake, so the corner geometry has one copy.
 
+**What was built.** The design, with five departures, each forced by a
+measurement - the last two by this library's targets, memory and render time,
+which the first build missed on both counts:
+
+- **The layout lives in a shared chunk**, [`neon-pieces.glsl`](../lib/shaders/neon-pieces.glsl),
+  injected into `neon.frag` and the bake (`neon-glow-cover.frag`): `arcTangentSegment`,
+  as designed, and next to it the table's forward maps (`glowCoverStraightUV`
+  / `glowCoverCornerUV`, which `neon.frag` reads with) and their inverses
+  (`glowCoverStraightAt` / `glowCoverCornerAt`, which the bake fills with), so
+  the two cannot drift apart. `neon.frag` no longer places anything on the
+  perimeter: `pieceStart`, `cornerStart`, `piecePosition`, `cornerFootAngle`,
+  `cornerLookup` and `cornerSpread` are gone from it, and the placement lives
+  in the bake alone.
+- **Behind a corner's centre the bake blends two developments.** Polar
+  position does determine everything `arcTangentSegment` returns there, as the
+  design said - but `arcTangentSegment` develops the arc about whichever END is
+  nearer, and that flips across the diagonal behind the centre. The halo and
+  bloom are symmetric across the flip; the coverage is not, because the foot
+  jumps from one end of the arc to the other. So in that quadrant the bake
+  takes both developments (`arcTangentSegmentAbout`, the old function split so
+  it can be forced either way) and sweeps between them exactly as
+  `cornerFootAngle` used to - all of one on each edge of the quadrant, half
+  each on the diagonal. Read straight off a per-corner table, the flip would be
+  a crease along every corner's inner diagonal.
+- **Every map the read takes is a division.** The first build indexed a
+  corner by its true angle (an `atan`), spaced the overhangs logarithmically,
+  and spaced the inside of an arc by two more `log`s. It measured 1.16x of the
+  build before it on a FULLY LIT ring at scale 1.0 - a ring that skips every
+  read - and 1.163x on a sharp-cornered one, which never enters the corner block
+  at all. Stubbing the corner coordinates out took it to 1.04x. So the corner's
+  direction is a "diamond angle" (`w.x / (|w.x| + |w.y|)`, one division,
+  continuous and monotone all the way round), the overhangs are rational, and
+  the inside of the arc is a ratio of square roots, finely spaced both beside
+  the arc and at the centre; the bake inverts them in closed form. That alone
+  took it to ~1.08x, and **the corner block running one arc at a time**
+  (`addCornerPiece`) did the rest. That last ~8% did not follow the read's
+  arithmetic at all: on the AMD GPU below, a read stripped to a constant
+  direction and one division per row, a read with no fetch, and one with a
+  trivial fetch coordinate all cost the same 1.07-1.10x, while the old V20 read
+  - MORE arithmetic, feeding the same fetch - cost 0.94x. What moved it was
+  what is live at the block's peak: the block used to develop all four arcs
+  first (sixteen floats), then take four halos, four blooms and four reads. One
+  arc at a time, the halo and bloom sums kept in their old order so a fully lit
+  ring is unchanged bit for bit. Both `neon.frag` and `neon-pieces.glsl` say so
+  beside the code: re-time a fully lit ring at scale 1.0 before putting an
+  `atan` or a `log` back in the forward maps, or the four arcs back side by
+  side.
+- **Each band is shared by a straight and a corner, in proportion to their
+  lengths.** The first build gave every piece a fixed share - 2048 x 320, a band
+  of 64 rows per straight and one for all four corners, 5.2 MB in RGBA16F
+  against V20's 2 MB. Swept against the brute-force reference below (worst
+  level over every partly lit scene):
+
+  | layout | RGBA16F | worst | where |
+  | ------ | ------- | ----- | ----- |
+  | 2048 x 320, fixed shares (the first build) | 5.2 MB | 4 | the 4K circle; 1 everywhere else |
+  | 2048 x 160, fixed, 32 rows | 2.6 MB | 4 | the 4K circle; `v14_segment` 3 |
+  | 1024 x 320, fixed | 2.6 MB | 12 | the 4K circle; 3 on the 600 px one |
+  | 1024 x 160, fixed, 32 rows | 1.3 MB | 12 | the 4K circle; `v14_segment` 3 |
+  | **1024 x 192, shared bands, 48 rows (ships)** | **1.5 MB** | **2** | **three scenes; 1 everywhere else** |
+
+  Every fixed layout fails the same way - the corners starve on a large radius
+  while the straights' bands sit idle, and on a circle the straights are empty
+  altogether. So each of four bands now holds one straight at its left and one
+  corner at its right, and the columns between their overhangs go to the two
+  in proportion to the straight's and the quarter arc's lengths, each keeping
+  `GLOW_COVER_MIN_INTERIOR`. The split is whole columns computed once on the CPU
+  (`GetGlowCoverSplit`, the uniform `uGlowCoverSplit`) and handed to the bake
+  and every `neon.frag` program alike: the two shaders work in different units,
+  and a split each rounded for itself could land a column apart and read a
+  whole band from the wrong texels.
+- **The bake compiles on first use, and small.** The first build's bake added
+  ~10 ms to every host's `Initialize` on the AMD, and that understated it: the
+  driver defers part of the work to the first draw, where it showed as ~110 ms
+  on the first partly lit frame. This compiler builds every function in a
+  source whether `main()` reaches it or not, and every inlined copy, so three
+  things cut it: the chunk is guarded (`NEON_GLOW_COVER_BAKE`) so `neon.frag`
+  compiles only the forward maps and the bake only the inverses (the inverses
+  had cost `neon.frag` ~3 ms unused); every integral is called from ONE place,
+  inside a loop whose bound comes from the data so it is not unrolled back
+  (the trapezoid's three spans, the 16 quadrature nodes, the two kernels, the
+  one or two developments of a corner); and the program is built the first time
+  a bake is needed (`ensureGlowCoverProgram`) rather than in `Initialize` - a
+  ring lit uniformly never bakes, so never compiles it. A failed build is
+  recorded and never retried, and the frame draws the fill alone, as for a
+  path program.
+
+Three numerical points in the bake, all found by the references below. An
+arc's integral is a sum of the kernel's mass and first moment over each
+straight piece of its trapezoid, each written so a span far off to one side
+keeps its precision - the bloom's in the angle `theta = atan(t / c)`, the
+halo's algebraically (`t / sqrt(t^2 + c^2)`, each term taken as its distance
+from +-1 where both are near it). The bloom's first moment, as the plain log of
+`(t1^2 + c^2) / (t0^2 + c^2)`, lost three digits at a circle's centre, where the
+developed kernel is ~10^5 px wide and that ratio is within 10^-5 of 1 - 4 levels
+on two pixels, the only pixels on any scene where the closed form left the brute
+force by more than 1; it is now a series in `atanh` there and the plain log
+elsewhere (`logRatio`). And segments are integrated by one 16-point
+Gauss-Legendre rule in theta for every width of kernel, which resolves both a
+kernel far narrower than the bell and one far wider.
+
+**Measured** on an AMD Radeon Pro 5300M against TWO references, built in
+scratch copies of `neon.frag` that replace the table read: the bake's own
+closed forms evaluated at each fragment's exact coordinates (no table, no
+interpolation), and a brute force - the midpoint rule in theta, 160 samples a
+kernel, each sample placed on the TRUE piece and its perimeter position taken
+from `perimeterPosition`, so it shares no placement code with the bake at all.
+The two references agree within 1 level on every scene below, both windings,
+both resolution paths, which is what validates the closed forms, the piece
+placement and the blend behind the centre. The table against the brute force,
+with the V20 table's numbers for scale (pixels off by 1 or more / worst, and
+the crease metric, the largest neighbour step more than 8 px from the outline,
+before -> after):
+
+| scene | V20 table | per-piece table | crease |
+| ----- | --------- | --------------- | ------ |
+| four fully lit rings (rounded, sharp, `intensity` 0.6, scale 0.5) | 0 / 0 | 0 / 0 | unchanged |
+| `ghost_report` (V19's report, 1 px halo, 3840 x 2160) | 512 / 1 | 189 / 2 | 84 -> 84 |
+| `ghost_glow5` | 34,839 / 8 | 12,136 / 1 | 62 -> 61 |
+| `second_report` (V19's second, CCW) | 640,082 / 2 | 67,804 / 1 | 12 -> 12 |
+| `corner_arc_r0_g1` (an arc over the top straight, sharp corners) | 58,090 / 4 | 5,866 / 1 | 4 -> 4 |
+| `corner_arc_r0_g5` | 664,137 / 8 | 36,107 / 1 | 7 -> 6 |
+| `corner_arc_r40_g5` | 665,850 / 9 | 30,161 / 1 | 7 -> 7 |
+| `corner_arc_r40_g12` (bloom 0.6) | 838,598 / 14 | 41,506 / 1 | 4 -> 4 |
+| `tiled_arcs` (three abutting arcs) | 879,471 / 9 | 82,279 / 1 | 5 -> 5 |
+| `half_ring` | 878,152 / 11 | 10,423 / 1 | 5 -> 5 |
+| `arc_single` (the guide's 336 x 168) | 117,261 / 12 | 3,437 / 1 | 5 -> 5 |
+| `v14_segment` (V14's report, 3840 x 2160) | 3,964,923 / 18 | 445,511 / 1 | 4 -> 4 |
+| `segment_dark` | 903,520 / 33 | 85,793 / 1 | 5 -> 5 |
+| `guide_seg2` (the guide's `segment-boost-2.png`, 336 x 168) | 127,490 / 42 | 18,810 / 1 | 6 -> 5 |
+| `segment_corner` (a segment centred on a corner) | 803,140 / 11 | 51,736 / 1 | 6 -> 5 |
+| `stadium` (radius half the height) | 857,417 / 7 | 49,174 / 1 | 6 -> 6 |
+| `circle_g1` (600 x 600 circle, 1 px halo) | 54,732 / 2 | 7,181 / 1 | 4 -> 4 |
+| `circle_g10` | 831,483 / 10 | 125,982 / 1 | 4 -> 4 |
+| `small_rect` (120 x 80) | 227,817 / 18 | 3,249 / 1 | 6 -> 5 |
+| `ccw_arcs_s05` (CCW, scale 0.5) | 769,145 / 8 | 42,414 / 1 | 5 -> 5 |
+| `big_r_4k_g1` (3600 x 2000, radius 400, 1 px halo) | 169,422 / 5 | 41,681 / 2 | 6 -> 6 |
+| `circle_4k_g1` (2000 x 2000 circle, 1 px halo) | 100,711 / 3 | 30,658 / 2 | 4 -> 4 |
+
+Within 2 levels everywhere, and no pixel of any scene 3 or more off; the 2s
+are a 1 px halo on the largest shapes, where a column of the table is widest.
+
+Two notes for whoever re-measures. Run every variant on ONE GPU: this machine
+switches between an Intel UHD 630 and the AMD between processes, and the two
+differ by 1 level on ~18,000 pixels of a fully lit ring. And exclude a pixel
+centre that falls exactly on a sharp corner's inside diagonal: there
+`perimeterPosition` breaks an exact tie between the two edges, the filament
+takes one side's value or the other's, and which one goes with the compile -
+up to 83 levels on single pixels, with every neighbour agreeing. That is
+older than V21 and unrelated to it (it is the sharp corner's degenerate
+inverse-SDF map that `arcCoverContinuous`'s notes describe).
+
+`neon-scale-check check` drifted only `arcs` and `segments` at 1.0, with every
+reduced scale inside its bound; the comparison page's `arcs` and `segments`
+images and metrics were regenerated from this build (on the AMD - the ten
+fully lit scenes and the motion sweep render byte-identically before and
+after), after which `check` passes. Against the build before V21 on the same
+GPU, `arcs`' max at 0.25 went from 1 to 2 and `segments`' at 0.125 from 2 to 1;
+every p99 stays 1. `partition` passes, seeds 1 and 2, 1000 configs each.
+
+The onboarding guide's figures were regenerated. Against the build before V21
+on the same GPU only the partly lit ones move: `segment-boost-2.png` by up to
+42 levels (the worst case anywhere - mean error 12.5 over its lit pixels
+against the brute force before, 0.15 after), `arc-single.png` and
+`segment-boost-0.4.png` 14, `winding-*.png` 11-13, the pass figures and
+`arc-tiled.png` 10, `arc-end-closeup.png` 8, the scale figures 3; every other
+figure renders byte-identically and was left as committed. `pass-p0b-glow-cover.png`
+is redrawn for the new layout.
+
+**Cost**, against the build before V21, all on the AMD Radeon Pro 5300M.
+
+Still frames, `neon-scale-check time`, median of four interleaved rounds with
+the order alternating (the same build against itself spreads up to 1.06x
+between rounds at 720p, 1.03x at 1080p), as cost after / before:
+
+| scenes | 1.0 | 0.75 | 0.5 | 0.35 | 0.25 | 0.125 |
+| ------ | --- | ---- | --- | ---- | ---- | ----- |
+| 720p, fully lit (10 scenes, median) | 1.01x | 0.94x | 0.94x | 0.93x | 0.94x | 0.94x |
+| 720p, `arcs` | 1.01x | 0.96x | 0.94x | 0.96x | 0.94x | 0.94x |
+| 720p, `segments` | 1.00x | 0.95x | 0.94x | 0.93x | 0.93x | 0.94x |
+| 1080p, fully lit (10 scenes, median) | 1.00x | 0.95x | 0.95x | 0.96x | 0.95x | 0.97x |
+| 1080p, `arcs` | 1.01x | 0.96x | 0.96x | 0.98x | 0.95x | 0.95x |
+| 1080p, `segments` | 1.00x | 0.96x | 0.98x | 0.99x | 0.93x | 0.98x |
+
+Parity at 1.0, and 4-7% faster below it - the scaled path's shading programs
+read the same table more cheaply than V20's did (no perimeter placement, one
+arc at a time). The first build was 1.11x-1.15x on fully lit scenes at 1.0, in
+the same measurement, before the read was reworked.
+
+Memory: **1.5 MB** in RGBA16F (0.75 MB in the RGBA8 fallback), against V20's
+2 MB - the first build's 5.2 MB is what the shared bands bought back.
+
+Startup, a fresh effect's `Initialize`, and its first frame with the programs
+that frame builds (median of 25 and of 15 fresh effects, two rounds):
+
+| | before V21 | after |
+| - | ---------- | ----- |
+| `Initialize` | 8.3-9.1 ms | 4.4-4.5 ms |
+| first frame, a fully lit ring (never bakes) | 238-295 ms | 171-174 ms |
+| first frame, three arcs (compiles the bake) | 238-269 ms | 243-247 ms |
+| first frame at scale 0.5, two arcs (four path programs and the bake) | 373-388 ms | 379-381 ms |
+
+`Initialize` no longer compiles the bake. A fully lit ring's first frame drops
+by 70-120 ms - it never builds the bake at all, where V20 built one and the
+driver deferred most of that work to the first draw - and a partly lit one
+pays the bake's ~70 ms there instead and comes out level.
+
+Under an animation that changes the config every frame the table re-bakes
+every frame. Measured with a config nudged back and forth each frame against
+the same config held still, 1280 x 720, median of three rounds, the extra a
+frame costs (everything a config change costs - the LUT and light-block
+rebuilds and the emission table too - so the difference between the builds is
+pass 0b's), before -> after:
+
+| animated | scale 1.0 | scale 0.5 |
+| -------- | --------- | --------- |
+| one arc, over half the ring | 0.17 -> 0.16 ms | - |
+| three arcs | 0.29 -> 0.22 ms | - |
+| one arc and one segment | 0.31 -> 0.26 ms | - |
+| three arcs and two segments (a still frame: 3.6 ms / 0.9 ms) | 0.57 -> 0.34 ms | 0.53 -> 0.32 ms |
+| `intensity`, on a fully lit ring | 0.10 -> 0.04 ms | - |
+
+Cheaper in every case, though the table clips every arc and segment to every
+piece: 1.5x fewer texels than V20's, each arc integrated as its clipped
+trapezoid (one or two spans where an arc only reaches a piece with one end),
+the halo's mass and moment algebraic where they were three atans a span, and -
+the last row - no bake at all on a ring lit uniformly (`IsGlowCoverUnread`, on
+the shader's own `uniformCover` test made a hair stricter, so the table can
+never be read stale), so an animation of anything but the arcs and segments
+there pays nothing for pass 0b. The first build cost 0.34 / 0.81 ms in the
+first and fourth rows. On a slower GPU an animated segment is still the figure
+to measure.
+
 ---
 
 ## What is left
@@ -3547,7 +3781,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21. Five items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. Five items from the
 first pass remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -3578,7 +3812,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | V18 | open | colour-stop alpha dims only the filament; the halo and bloom ignore it (measured, `main` too); the cure is a design call (a third gather row or a redefined arc weight) |
 | V19 | fixed | V14's other half: the gathered coverage was right far from the line and too wide on it, so a narrow halo drew a thin line along a stretch no arc covers (13-68 levels at `glowRadius` 1, now 0); each piece now blends toward its foot's coverage by how much of its own kernel lies past the nearest arc end |
 | V20 | fixed | V14's last limit, uncovered by V19: every piece was scaled by the coverage gathered around the FRAGMENT, which dips on a dark line, so on a small rect with strong bloom an unlit stretch read 3-6 levels darker on the line; each piece now reads its own coverage from a table baked per config change (pass 0b) |
-| V21 | open | V20's table convolves the coverage along a straight line through each piece's foot, past the piece's ends, so light spills round corners: 8-15 levels off an exact per-piece reference over most of a partly lit frame, 33 in one segment scene; the fix is a table per piece (clipped straights by projection, corners by polar position), ~5 MB |
+| V21 | fixed | V20's table convolved the coverage along a straight line through each piece's foot, past the piece's ends, so light spilled round corners (2-42 levels off an exact per-piece reference); now a table per piece - each straight by projection, each corner by polar position, behind the centre a blend of both developments, each band shared by a straight and a corner in proportion to their lengths - within 2 levels of a brute-force reference on every scene. 1.5 MB against V20's 2, a cheaper animated bake, and a faster `Initialize`; the bake is compiled on the first frame that needs it, and the corner block runs one arc at a time, which is what kept a fully lit ring's cost from rising |
 | I32 | fixed | the edge ring's gather attachments tripled the scaled path's memory; now 2.15 MB at 1080p and 0.5 for a full-screen rect, less for smaller ones |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s

@@ -29,12 +29,13 @@ this: programs are built per path on first use, so a host compiles only the
 path it draws; and the composite and the ring cover only where the glow can be
 lit, which mostly helps the cutoff band and the one-sided glows.
 
-**Since then** (section 10): the glow-coverage fixes V19 and V20 in
+**Since then** (section 10): the glow-coverage fixes V19, V20 and V21 in
 [`review-findings.md`](review-findings.md) added a coverage table and a
 per-piece read of it, which every number above predates. On an Apple M2 Pro
-they cost about 1.04x at scale 1.0 and 1.08x at 0.5 on a fully lit ring, and
-1.1-1.2x on a partly lit one, plus a per-frame bake under animation. Section 9
-was not re-run against them.
+V19 and V20 cost about 1.04x at scale 1.0 and 1.08x at 0.5 on a fully lit
+ring, and 1.1-1.2x on a partly lit one; V21, on an AMD Radeon Pro 5300M, is
+1.00-1.01x of that at 1.0 and 4-7% faster below it; plus a per-frame bake
+under animation. Section 9 was not re-run against them.
 
 **Against `main`** (section 9, Apple M2 Pro): at scale 0.5 the branch now
 renders the neon **2.3x faster than `main` at 1280 x 720 and 2.8x at 1920 x
@@ -477,7 +478,7 @@ cmake --build build/neon-scale-check-main
 then `time` both builds in alternating rounds at each size (section 7), and
 `check` each - `main`'s with `--images-dir docs/images/neon-resolution-scale`.
 
-## 10. After V19 and V20: the glow coverage table
+## 10. After V19, V20 and V21: the glow coverage table
 
 V19 and V20 in [`review-findings.md`](review-findings.md) changed what scales
 the halo and bloom on a partly lit ring: each of the outline's eight pieces
@@ -511,3 +512,28 @@ on a target GPU before shipping an animated segment.
 
 Memory: the table is 2 MB in RGBA16F (1 MB in the RGBA8 fallback), allocated
 once at `Initialize` whatever the scale.
+
+**V21** replaced that table with one per piece of the outline, so no piece's
+coverage runs on past its own ends: 1024 x 192, each band shared by a straight
+and a corner in proportion to their lengths, 1.5 MB in RGBA16F (0.75 MB in
+RGBA8) - less than the table it replaced. Measured on an AMD Radeon Pro 5300M -
+not the M2 above, so read the two tables as ratios, never against each other -
+the build after V21 against the build before it, four interleaved rounds with
+the order alternating, median per figure, as cost after / before:
+
+| scenes | 720p, 1.0 | 720p, 0.5 | 1080p, 1.0 | 1080p, 0.5 |
+| ------ | --------- | --------- | ---------- | ---------- |
+| fully lit (10 scenes) | 0.99x-1.01x, ~1.01x | 0.90x-0.99x, ~0.94x | 1.00x-1.01x, ~1.00x | 0.86x-1.01x, ~0.95x |
+| `arcs` | 1.01x | 0.94x | 1.01x | 0.96x |
+| `segments` | 1.00x | 0.94x | 1.00x | 0.98x |
+
+The table's read is laid out so it costs a fully lit ring nothing; the first
+build, whose read took an atan and logs and developed all four corners before
+reading any, was 1.11x-1.15x on fully lit scenes at 1.0 (V21 has the
+attribution). Under animation, on the AMD at 1280 x 720, a frame whose config
+changes costs 0.16 ms in all with one arc animating (0.17 before V21) and
+0.34 ms with three arcs and two segments (0.57) at 1.0, 0.32 ms (0.53) at 0.5;
+on a ring lit uniformly the pass no longer runs at all, so an intensity
+animation there costs 0.04 ms against 0.10. `Initialize` no longer compiles
+the bake - it is built on the first frame that needs one - and drops from
+~8.7 ms to ~4.5 ms.

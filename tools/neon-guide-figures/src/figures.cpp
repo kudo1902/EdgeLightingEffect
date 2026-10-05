@@ -1073,33 +1073,37 @@ namespace NeonGuideFigures
                 SavePNG(out, Path(dir, "pass-p0-emission.png"));
             }
 
-            // P0b - the glow coverage table, unfolded: the perimeter runs across
-            // (every eighth sample, t 0 at the left) and the distance from the
-            // line down. Four strips: the arcs' coverage as the halo and the
-            // bloom see it, then the segments' the same way. The table stores
-            // the perimeter in GLOW_COVER_BANDS bands stacked vertically, each
-            // with a guard column at either end, so a sample g is column
-            // 1 + g % GLOW_COVER_SAMPLES of band g / GLOW_COVER_SAMPLES.
+            // P0b - the glow coverage table, as stored: one panel per channel -
+            // the arcs' coverage as the halo and the bloom see it (top row),
+            // then the segments' the same way (bottom row) - each the whole
+            // table, every fourth column, a gap between bands. Each of the four
+            // bands holds a straight at its left (the projection along it
+            // across, past each end at its sides; the distance from the line
+            // down) and a corner at its right (the direction from the arc's
+            // centre across, the radius down, the arc itself halfway down),
+            // sharing the band's width in proportion to their lengths. See
+            // neon-pieces.glsl.
             if (const DrawRecord *p0b = PassRecorder::Find(PassKind::P0B))
             {
                 const Attachment &t = p0b->written[0];
-                const int step = 8;
+                const int step = 4;
                 const int gap = 6;
-                const int rows = t.height / GLOW_COVER_BANDS;
-                const int columns = GLOW_COVER_SAMPLES * GLOW_COVER_BANDS / step;
-                Canvas out(columns, 4 * rows + 3 * gap, glm::vec3(0.18f));
-                for (int i = 0; i < columns; ++i)
+                const int bandGap = 2;
+                const int columns = t.width / step;
+                const int panelH = GLOW_COVER_HEIGHT + 3 * bandGap;
+                Canvas out(2 * columns + gap, 2 * panelH + gap, glm::vec3(0.18f));
+                for (int k = 0; k < 4; ++k)
                 {
-                    const int g = i * step;
-                    const int band = g / GLOW_COVER_SAMPLES;
-                    const int column = 1 + g % GLOW_COVER_SAMPLES;
-                    for (int j = 0; j < rows; ++j)
+                    const int x0 = (k % 2) * (columns + gap);
+                    const int y0 = (k / 2) * (panelH + gap);
+                    for (int j = 0; j < t.height; ++j)
                     {
-                        const glm::vec4 v = t.At(column, band * rows + j);
-                        const float channels[4] = {v.r, v.g, v.b, v.a};
-                        for (int k = 0; k < 4; ++k)
+                        const int band = std::min(j / GLOW_COVER_ROWS, 3);
+                        for (int i = 0; i < columns; ++i)
                         {
-                            FillRect(out, i, k * (rows + gap) + j, 1, 1,
+                            const glm::vec4 v = t.At(i * step + step / 2, j);
+                            const float channels[4] = {v.r, v.g, v.b, v.a};
+                            FillRect(out, x0 + i, y0 + j + band * bandGap, 1, 1,
                                      glm::vec3(std::min(DecodeCoverage(channels[k]), 1.0f)));
                         }
                     }

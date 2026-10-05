@@ -66,9 +66,9 @@ The root `CMakeLists.txt` has `PLATFORM_WINDOWS` / `PLATFORM_LINUX` branches tha
 
 ## Shaders are embedded at configure time
 
-Shader sources under `lib/shaders/*.{vert,frag}` are read by `lib/CMakeLists.txt` and substituted into `shaders.h.in` via `configure_file()`, producing `build/lib/generated/shaders.h` with each shader as a `const char* const` raw string literal in `EdgeLighting::ShaderSource::*`. There is no runtime file I/O for shaders. `@GLSL_VERSION@` supplies the version line and three tuning headers are injected verbatim so their constants are shared between the shaders and the C++ renderers: `@NEON_TUNING@` injects `lib/include/renderer/neon-tuning.h` into the neon shaders (`neon-glow-cover.frag` included - it reads `GLOW_COVER_SAMPLES` / `GLOW_COVER_ROWS`, `MAX_ARCS` and `ARC_FEATHER_MAX_SHARE` from there), `@DROPLETS_TUNING@` injects `lib/include/renderer/droplets-tuning.h` into `droplets.frag`, and `@LENS_FLARE_TUNING@` injects `lib/include/renderer/lens-flare-tuning.h` into `lens-flare.frag`, and `@SPOTLIGHT_TUNING@` injects `lib/include/renderer/spotlight-tuning.h` into `spotlight.frag`. One GLSL chunk is injected the same way: `@NEON_COMMON@` puts `lib/shaders/neon-common.glsl` - the neon's perimeter gather loop and everything it reads - into `neon.frag` and `neon-gather.frag`, after the tuning header, so the loop has one copy for both resolution paths. It is not a shader (no `main()`), and its loop half is `#ifndef NEON_READS_GATHER`. GLSL has no `#include`; this is the substitute, so a chunk shared by several shaders goes in a `.glsl` file injected through `shaders.h.in`, not copied. Never write an `@NAME@` placeholder in a comment in `shaders.h.in` itself - `configure_file` expands it there and the generated header stops compiling (placeholders inside the shader FILES are safe: substituted values are not re-scanned).
+Shader sources under `lib/shaders/*.{vert,frag}` are read by `lib/CMakeLists.txt` and substituted into `shaders.h.in` via `configure_file()`, producing `build/lib/generated/shaders.h` with each shader as a `const char* const` raw string literal in `EdgeLighting::ShaderSource::*`. There is no runtime file I/O for shaders. `@GLSL_VERSION@` supplies the version line and three tuning headers are injected verbatim so their constants are shared between the shaders and the C++ renderers: `@NEON_TUNING@` injects `lib/include/renderer/neon-tuning.h` into the neon shaders (`neon-glow-cover.frag` included - it reads the `GLOW_COVER_*` layout constants, `MAX_ARCS` and `ARC_FEATHER_MAX_SHARE` from there), `@DROPLETS_TUNING@` injects `lib/include/renderer/droplets-tuning.h` into `droplets.frag`, and `@LENS_FLARE_TUNING@` injects `lib/include/renderer/lens-flare-tuning.h` into `lens-flare.frag`, and `@SPOTLIGHT_TUNING@` injects `lib/include/renderer/spotlight-tuning.h` into `spotlight.frag`. Two GLSL chunks are injected the same way. `@NEON_COMMON@` puts `lib/shaders/neon-common.glsl` - the neon's perimeter gather loop and everything it reads - into `neon.frag` and `neon-gather.frag`, after the tuning header, so the loop has one copy for both resolution paths; its loop half is `#ifndef NEON_READS_GATHER`. `@NEON_PIECES@` puts `lib/shaders/neon-pieces.glsl` - `arcTangentSegment` and the glow coverage table's layout - into `neon.frag` (after `@NEON_COMMON@`) and `neon-glow-cover.frag` (after the tuning header), so the table's read and its bake agree to the texel. Neither is a shader (no `main()`), and the second names its own `PIECES_PI` / `PIECES_HALF_PI`, since only one of the two programs it goes into has `neon-common.glsl`'s. GLSL has no `#include`; this is the substitute, so a chunk shared by several shaders goes in a `.glsl` file injected through `shaders.h.in`, not copied. Never write an `@NAME@` placeholder in a comment in `shaders.h.in` itself - `configure_file` expands it there and the generated header stops compiling (placeholders inside the shader FILES are safe: substituted values are not re-scanned).
 
-`CMAKE_CONFIGURE_DEPENDS` lists every shader file, `neon-common.glsl` *and* all four tuning headers, so editing any of them triggers a re-configure on the next build. **If you add a new shader you must update three places**: `lib/CMakeLists.txt` (both the `CMAKE_CONFIGURE_DEPENDS` and `file(READ ...)` lists) and `lib/shaders/shaders.h.in`.
+`CMAKE_CONFIGURE_DEPENDS` lists every shader file, both `.glsl` chunks *and* all four tuning headers, so editing any of them triggers a re-configure on the next build. **If you add a new shader you must update three places**: `lib/CMakeLists.txt` (both the `CMAKE_CONFIGURE_DEPENDS` and `file(READ ...)` lists) and `lib/shaders/shaders.h.in`.
 
 **Never declare a bare uniform array** (`uniform vec4 uFoo[N]`) in a shader. The form is not available on the restricted GL targets this library ships against, and it will compile and run correctly on desktop GL, so testing will not catch it. Per-index data goes in a `layout(std140) uniform` block, uploaded through the `UniformBuffer` wrapper and bound to its own binding point - `LoopSamplesBlock`, `SegmentBlock`, `ArcBlock` (neon) and `GhostBlock` (lens flare) are the existing examples (`SpotlightRenderer` sidesteps the question entirely - see below), and their array bounds are compile-time constants from the tuning headers. `ShaderProgram`'s array `SetUniform` overloads and its `UNIFORM_ARRAY_DIRECT` fallback exist for the upload path only; neither makes a bare array declaration portable.
 
@@ -119,42 +119,69 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   the per-frame path.
 
   A second pre-pass, **pass 0b, the glow coverage table**
-  (`neon-glow-cover.frag`, `renderGlowCoverPass`), bakes per perimeter position
-  and distance from the line how lit the outline is as the halo and the bloom
-  see it: the arcs' coverage (.r halo, .g bloom) convolved with each layer's
-  kernel along the outline in closed form, every arc end summed, and the
-  segments' bells (.b, .a) integrated numerically to ~1e-3 of their boost.
-  `neon.frag` scales each
-  of the eight pieces' halo and bloom by its own read of it (`glowCoverAt` in
-  `addPieceGlowFix`, one linear fetch per piece) rather than by the coverage
-  gathered around the fragment, which drew a thin line along a stretch no arc
-  covers and a groove along it under a strong bloom (V19 and V20 in
-  [`docs/review-findings.md`](docs/review-findings.md)). Its lengths are
-  perimeter fractions, so both resolution paths share one table. The perimeter
-  is folded into `GLOW_COVER_BANDS` (2) bands of `GLOW_COVER_ROWS` rows, each
-  `GLOW_COVER_SAMPLES + 2` wide (a guard texel at each end, so a linear fetch
-  is continuous across bands and round the seam under clamp-to-edge) - 2048 x
-  128, GLES 3.0's minimum maximum width; `glowCoverAt` keeps its vertical fetch
-  inside one band. RGBA16F (2 MB) with an RGBA8 fallback, encoded
-  `c / (1 + c)`, allocated once in `Initialize`, and re-baked on any config
-  change (`mGlowCoverDirty`) - never on time, but EVERY frame under an
-  animation that changes the config, which costs about 0.1 ms (arcs) to
-  0.2-0.6 ms (segments, integrated numerically) a frame on an M2 Pro: the
-  cost to watch on a slower GPU. Two
-  things in `neon.frag` exist only to keep that read continuous and must stay:
-  each foot's perimeter position comes from the piece table (`pieceStart` /
-  `cornerStart`, checked against `perimeterPosition`) because
-  `perimeterPosition` files a vertical edge's tangent point under the
-  horizontal edge, exactly where a straight's foot clamps; and a corner's read
-  moves to the arc's middle and widens near its centre of curvature
-  (`cornerLookup` / `cornerSpread`), where the foot's angle swings round with
-  direction. Do not evaluate the convolution in `neon.frag` instead: measured,
-  2.0x / 3.3x on a partly lit ring, and every in-shader exact form tried raised
-  EVERY scene's cost, fully lit ones included. The table's one known
-  approximation is V21: it convolves along a straight line through each foot,
-  past the piece's ends, so light spills round corners (8-15 levels off an
-  exact per-piece reference); the fix is a table per piece, designed there but
-  not built.
+  (`neon-glow-cover.frag`, `renderGlowCoverPass`), bakes for each PIECE of the
+  emitter - the four straights and four corner arcs the halo and bloom are
+  summed over - how lit that piece is as each layer sees it from a fragment:
+  its own arc coverage (.r halo, .g bloom) and segment bells (.b, .a) over its
+  own extent, weighted by the layer's kernel about the fragment's foot, as a
+  ratio to the kernel's mass over the piece. Arcs in closed form (a feathered
+  arc's trapezoid against the kernel's mass and first moment, written so
+  nothing cancels; `logRatio` for the bloom's moment, which lost three digits
+  at a circle's centre as a plain log), segments by 16-point Gauss-Legendre in
+  `theta = atan(t / c)`. `neon.frag` scales each piece's halo and bloom by one
+  linear fetch of its own table (`addStraightGlowFix` / `addCornerGlowFix`)
+  rather than by the coverage gathered around the fragment, which drew a thin
+  line along a stretch no arc covers and a groove along it under a strong bloom
+  (V19 and V20 in [`docs/review-findings.md`](docs/review-findings.md)), and
+  rather than by V20's one table per PERIMETER, which ran the outline straight
+  on past each piece's ends and spilled light round corners (V21). The layout
+  is in `lib/shaders/neon-pieces.glsl`, injected into both the bake and
+  `neon.frag` with `arcTangentSegment`: four bands of `GLOW_COVER_ROWS` rows,
+  each holding one straight at its left - the fragment's projection along it
+  across, its distance down - and one corner at its right - a diamond angle
+  round the arc's centre across, the radius down, the arc itself halfway, a
+  guard texel at each end where the diagonal behind the centre joins the two
+  sides. The two share the band's columns in proportion to the straight's and
+  the quarter arc's lengths: `GetGlowCoverSplit`, whole columns computed ONCE
+  on the CPU and passed to the bake and every neon program as
+  `uGlowCoverSplit`, because the two shaders work in different units and a
+  split each rounded for itself could read a band from the wrong texels. A
+  fixed share starved a large radius's corners (12 levels off on a 4K circle)
+  and wasted a circle's straights. The forward maps (`glowCoverStraightUV` /
+  `glowCoverCornerUV`, the read) and their inverses (`glowCoverStraightAt` /
+  `glowCoverCornerAt`, the bake) sit side by side there and must stay exact
+  inverses; `NEON_GLOW_COVER_BAKE` (defined in `shaders.h.in` for the bake
+  only) keeps each program to its own half, since this compiler builds every
+  function in a source whether `main()` reaches it or not. Lengths enter only as
+  ratios, so both resolution paths share one table. 1024 x 192
+  (`GLOW_COVER_WIDTH` x `GLOW_COVER_HEIGHT`), RGBA16F (1.5 MB, less than V20's 2)
+  with an RGBA8 fallback, encoded `c / (1 + c)`, allocated once in
+  `Initialize`, and re-baked on any config change (`mGlowCoverDirty`) - never on
+  time, but EVERY frame under an animation that changes the config, which
+  costs 0.16-0.34 ms a frame on an AMD Radeon Pro 5300M - less than V20's table
+  did (0.17-0.57 ms) - everything a config change costs included: the cost to
+  watch on a slower GPU. A ring lit
+  uniformly (one full arc, no segments) never reads the table, so it is neither
+  baked (`IsGlowCoverUnread`, the shader's `uniformCover` made a hair stricter
+  so a stale table is never read - change the two together) nor its program
+  compiled: `ensureGlowCoverProgram` builds the bake on the first frame that
+  needs it. Things there that are load-bearing and must stay: behind a
+  corner's centre `arcTangentSegment` flips which end it develops about across
+  the diagonal, so the bake blends both developments there
+  (`arcTangentSegmentAbout`), or a corner's table creases along its inner
+  diagonal; the forward maps are divisions only - with an `atan` and `log`s in
+  them a fully lit ring, which skips every read, rendered 1.16x slower at scale
+  1.0 on the AMD GPU, the program carrying the gather loop there; `neon.frag`'s
+  corner block runs one arc at a time (`addCornerPiece`) - developing all four
+  first left sixteen floats live at the block's peak and cost another ~8% on
+  every scene at 1.0, sharp-cornered ones included; and every integral in the
+  bake is called from ONE place, in a loop whose bound comes from the data so
+  it is not unrolled back, because each inlined copy is compile time on that
+  first frame (the bake went from ~110 ms to ~70 ms on the AMD). Do not evaluate
+  the integrals in `neon.frag` instead: measured, 2.0x / 3.3x on a partly lit
+  ring. Verified within 2 levels of a brute-force per-fragment reference
+  (samples placed by `perimeterPosition`, sharing no code with the bake) on 25
+  scenes, the 2s a 1 px halo on the largest shapes.
 
   `Render` is a **pass schedule**: derive the transform,
   then one call per `render*Pass` method, in TWO PHASES on both paths - every
@@ -167,7 +194,7 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   .cpp definition order and the pass numbering all agree; the one deliberate
   exception is documented at the declaration.
 
-  **Shader programs are built per path, on first use** (`ensurePathPrograms`): `Initialize` builds only the emission, coverage-table and fill programs; the first frame at 1.0 builds plain `neon.frag`, the first frame below it builds `neon-gather.frag`, the `NEON_READS_GATHER` variant twice (pass 1b, ring) and the blit - neither path builds the other's. So a `neon.frag` that fails to compile no longer fails `Initialize`: it is logged once, recorded in `mFailedPrograms` and never retried, and that path draws the fill only. `OnConfigChanged` gates its rebuilds on `mInitialized`, NOT on a program's validity - do not go back to the old `mNeonShader.IsValid()` test, it is false on a host that never draws at 1.0. See
+  **Shader programs are built per path, on first use** (`ensurePathPrograms`): `Initialize` builds only the emission and fill programs; the first frame at 1.0 builds plain `neon.frag`, the first frame below it builds `neon-gather.frag`, the `NEON_READS_GATHER` variant twice (pass 1b, ring) and the blit - neither path builds the other's - and the first frame that bakes the glow coverage table builds its bake (`ensureGlowCoverProgram`; a ring lit uniformly never does). So a `neon.frag` that fails to compile no longer fails `Initialize`: it is logged once, recorded in `mFailedPrograms` and never retried, and that path draws the fill only. `OnConfigChanged` gates its rebuilds on `mInitialized`, NOT on a program's validity - do not go back to the old `mNeonShader.IsValid()` test, it is false on a host that never draws at 1.0. See
   [`docs/emission-prepass.md`](docs/emission-prepass.md) for the pass tables and
   [`docs/emission-prepass-comparison.md`](docs/emission-prepass-comparison.md)
   for the measured before/after of the pre-pass commit alone.

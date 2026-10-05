@@ -644,10 +644,11 @@ piece's own coverage, and it was wrong in two ways that V19 and V20 in
 halo's along the line, so an unlit stretch kept a faint line of light, and it
 is gathered around the FRAGMENT, so on a dark line it dips and dims the light
 reaching there from lit edges. Each piece's halo and bloom now take that
-piece's own arc and segment coverage under its own kernel, read from a table
-baked once per config change (`neon-glow-cover.frag`). The per-piece foot
-still moves continuously, so the medial-axis crease this section removed stays
-gone. The gathered pair remains the starting scale the correction is added
+piece's own arc and segment coverage under its own kernel, over that piece's
+own extent, read from a table baked once per config change
+(`neon-glow-cover.frag`; one table per piece since V21). Each piece's read
+still moves continuously with the fragment, so the medial-axis crease this
+section removed stays gone. The gathered pair remains the starting scale the correction is added
 to, and the glow's colour.
 
 ---
