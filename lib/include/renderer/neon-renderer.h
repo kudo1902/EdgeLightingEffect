@@ -69,6 +69,13 @@ namespace EdgeLighting
     ///          part of the frame their readers reach (@ref GetBufferRegion).
     ///          See docs/neon-resolution-scale-plan.md sections 12 and 13.
     ///
+    /// At 1.0 with @c NeonConfig::decoupledGather, the 1.0 path borrows the
+    /// first half of that: the gather runs alone into @c mGatherBuffer, and
+    /// pass 1 is the glow quad at full resolution shaded from it by the edge
+    /// ring's program (@ref renderDecoupledNeonPass) - no reduced buffer, no
+    /// blit, no ring. Within 1-2/255 of the exact 1.0 render and 2-5x
+    /// faster; off by default because it gives up that exactness.
+    ///
     /// The paths share one schedule: every pixel-valued uniform is multiplied
     /// by the scale unconditionally (a no-op at 1.0) and the shader converts
     /// its own full-res px constants with @c uResolutionScale. Only the render
@@ -83,11 +90,11 @@ namespace EdgeLighting
     /// it alone below 1.0), so the two paths share one copy of it.
     ///
     /// The neon programs and the blit are built per PATH, the first frame that
-    /// path renders (@ref ensurePathPrograms): one program at 1.0, four below
-    /// it (the gather, the shading twice - one object per target - and the
-    /// blit), none shared. A host that stays on one path never compiles the
-    /// other's, and the price is a one-time compile on the first frame after a
-    /// switch.
+    /// path renders (@ref ensurePathPrograms): one program at 1.0, two at 1.0
+    /// decoupled (the gather and the full-resolution shading), four below it
+    /// (those two, the reduced shading - one object per target - and the
+    /// blit). A host that stays on one path never compiles the others', and
+    /// the price is a one-time compile on the first frame after a switch.
     ///
     /// Debug overlays (LUT strip, colour-stop markers) are NOT here - they are
     /// a separate layer, @ref DebugRenderer, driven by @ref DebugConfig. The
@@ -127,16 +134,19 @@ namespace EdgeLighting
         /// block - each only where the source declares it.
         bool buildNeonProgram(ShaderProgram &program, const char *fragSrc, const char *define, const char *name,
                               unsigned int programBit, bool gathers, bool shades);
-        /// Make sure every program the path @p scaled draws with is built,
-        /// building any that are not. The direct path needs neon.frag alone;
-        /// the scaled path needs neon-gather.frag, neon.frag's
-        /// NEON_READS_GATHER variant twice (pass 1 and the ring) and the blit,
-        /// and not the plain program. Lazy rather than at @ref Initialize: compiling the path a host
+        /// Make sure every program the path draws with is built, building any
+        /// that are not. @p decoupled: the gather runs as its own pass (every
+        /// scaled frame, and 1.0 under NeonConfig::decoupledGather);
+        /// @p scaled: below 1.0. The plain direct path needs neon.frag alone; a
+        /// decoupled one needs neon-gather.frag and neon.frag's
+        /// NEON_READS_GATHER variant for the full-resolution shading (the ring
+        /// below 1.0, pass 1 at 1.0); a scaled one adds that variant again for
+        /// pass 1b and the blit - and none of them the plain program. Lazy rather than at @ref Initialize: compiling the path a host
         /// never uses cost a third of the startup and the memory of programs
         /// nothing draws with. The trade is a one-time compile on the first
         /// frame a host switches path. False if any of them failed, in which
         /// case the glow is skipped and the frame degrades to the fill.
-        bool ensurePathPrograms(bool scaled);
+        bool ensurePathPrograms(bool decoupled, bool scaled);
         /// Upload the static NDC quad the fullscreen passes draw. Called once
         /// from @ref Initialize: the quad is in clip space, so unlike
         /// @ref setupGeometry's it is independent of the geometry, the
@@ -175,9 +185,19 @@ namespace EdgeLighting
         /// The two share their boundary vertices bit for bit, so the rasteriser
         /// gives every pixel to at most one of them - both composite
         /// premultiplied-over, and a pixel drawn by both would composite twice.
-        /// Builds nothing (both counts 0) at scale 1.0, where neither pass runs.
-        /// Reads @c mQuadMargin, so it runs after @ref setupGeometry.
+        /// Builds neither (both counts 0) at scale 1.0, where neither pass runs.
+        /// Also builds the gather pass's quad, through @ref setupGatherGeometry:
+        /// below 1.0 over pass 1's quad and the ring, at 1.0 under
+        /// NeonConfig::decoupledGather over pass 1's quad alone, otherwise
+        /// nothing. Reads @c mQuadMargin and @c mGlowOuter / @c mGlowHole, so it
+        /// runs after @ref setupGeometry.
         void setupRingGeometry(const Config &config);
+        /// Build @c mGatherVertexArray and @c mGatherOuter: the box
+        /// @p readOuter less the hole @p readHole (half-extents, full-res px)
+        /// that the shading passes read the gather at, each edge moved out by
+        /// the gather's bilinear footprint, in the SCALED space of @p scale.
+        void setupGatherGeometry(const glm::vec2 &readOuter, const glm::vec2 &readHole, float scale,
+                                 const Config &config);
         void rebuildLoopSamples(const Config &config);
         /// Re-bake the three colour LUTs. Each wrapper self-guards, so this is
         /// called unconditionally on every config change; see the note at the
@@ -209,11 +229,11 @@ namespace EdgeLighting
 
         /// Size @c mGatherBuffer to @p width x @p height with @p attachments
         /// colour attachments, in the best format the driver will give -
-        /// RGBA16F, then RGBA8. Called every scaled frame from
+        /// RGBA16F, then RGBA8. Called every frame that gathers apart from
         /// @ref renderGatherPass; @c Framebuffer::Resize early-outs when
         /// nothing changed. The format reached is recorded in
         /// @c mGatherFormat, not in the buffer, because the buffer is released
-        /// whenever the scaled path is idle.
+        /// whenever no frame gathers apart.
         /// @return false only if no candidate could be allocated.
         bool resizeGatherBuffer(int width, int height, int attachments);
 
@@ -225,7 +245,9 @@ namespace EdgeLighting
         // pass 2c shade from, pass 2a's fill must land before pass 2b
         // composites the glow over it, and at scale 1.0 pass 1 IS the
         // composite (it gathers itself, draws onto the target directly, and
-        // neither 1a, 2b nor 2c runs). 2b and 2c cover
+        // neither 1a, 2b nor 2c runs - or, under NeonConfig::decoupledGather,
+        // 1a runs and pass 1 reads it: @ref renderDecoupledNeonPass in place of
+        // @ref renderNeonPass, still after the fill). 2b and 2c cover
         // disjoint areas, so their order between themselves is free.
         //
         // NOTE on the DIRECT path @ref Render calls pass 2a before pass 1 -
@@ -392,6 +414,17 @@ namespace EdgeLighting
                             const glm::vec2 &gatherUVScale, const glm::vec2 &gatherUVOffset,
                             float time, const Config &config);
 
+        /// Pass 1 at 1.0 under NeonConfig::decoupledGather: the glow quad, at
+        /// full resolution on the caller's framebuffer through the direct
+        /// path's @p mvp, shaded by @c mNeonRingShader from pass 1a's gather
+        /// (read through @p gatherUVScale / @p gatherUVOffset, the gather
+        /// region's map from full-res rect-local px) instead of walking the
+        /// loop per fragment. In place of @ref renderNeonPass, never with it.
+        /// @pre Premultiplied-over blending; pass 1a succeeded and the
+        ///      caller's target is restored.
+        void renderDecoupledNeonPass(const glm::mat4 &mvp, const glm::vec2 &gatherUVScale,
+                                     const glm::vec2 &gatherUVOffset, float time, const Config &config);
+
         /// Pass 2a: opaque-mode background fill (its band ring, or a clear), at
         /// FULL resolution on the caller's framebuffer regardless of the
         /// resolution scale - it is a flat shape from an analytic SDF, so
@@ -458,7 +491,7 @@ namespace EdgeLighting
         ShaderProgram mNeonShader;                                     ///< neon.frag: gather and shade, direct path. Built on first draw.
         ShaderProgram mNeonGatherShader;                               ///< neon-gather.frag: the scaled path's gather pass. Built on first draw.
         ShaderProgram mNeonShadeShader;                                ///< neon.frag + NEON_READS_GATHER: the scaled path's pass 1. Built on first draw.
-        ShaderProgram mNeonRingShader;                                 ///< The same source, its own program: the scaled path's edge ring. See ensurePathPrograms.
+        ShaderProgram mNeonRingShader;                                 ///< The same source, its own program: full-res shading from the gather - the edge ring below 1.0, pass 1 at 1.0 decoupled. See ensurePathPrograms.
         ShaderProgram mEmissionShader;                                 ///< Perimeter emission pre-pass (neon-emission.frag).
         ShaderProgram mGlowCoverShader;                                ///< Glow coverage pre-pass (neon-glow-cover.frag).
         ShaderProgram mBlackRectShader;                                ///< Opaque-mode black background fill (black-rect.frag).
@@ -468,7 +501,7 @@ namespace EdgeLighting
         VertexArray mFillVertexArray{"NeonRenderer.Fill"};             ///< Opaque-fill band ring (rect +- the fill's cutoffs), in FULL-RES rect-local px.
         VertexArray mRingVertexArray{"NeonRenderer.Ring"};             ///< Scaled path: the edge ring's annulus, FULL-RES rect-local px.
         VertexArray mBlitVertexArray{"NeonRenderer.BlitArea"};         ///< Scaled path: the lit area outside the ring, same space.
-        VertexArray mGatherVertexArray{"NeonRenderer.GatherArea"};     ///< Scaled path: the gather pass's quad - pass 1's and the ring's, padded - in SCALED rect-local px.
+        VertexArray mGatherVertexArray{"NeonRenderer.GatherArea"};     ///< The gather pass's quad - pass 1's and the ring's, padded - in SCALED rect-local px. Below 1.0, and at 1.0 decoupled.
         /// Vertices in @c mGlowVertexArray: 6 for the plain quad, 24 when the
         /// glow is bounded from the inside and @ref setupGeometry cuts a hole.
         /// See the note there for which settings do that.
@@ -480,7 +513,7 @@ namespace EdgeLighting
         int mFillVertexCount = 0;
         int mRingVertexCount = 0;     ///< 0 at scale 1.0; see setupRingGeometry.
         int mBlitVertexCount = 0;     ///< 0 at scale 1.0, and whenever nothing outside the ring can be lit.
-        int mGatherVertexCount = 0;   ///< 0 at scale 1.0; see setupRingGeometry.
+        int mGatherVertexCount = 0;   ///< 0 at scale 1.0 unless decoupledGather; see setupRingGeometry.
         glm::vec2 mGlowOuter{0.0f};   ///< Pass 1's quad, half-extents in FULL-RES px; setupGeometry.
         glm::vec2 mGlowHole{0.0f};    ///< Its hole, the same; 0 when it has none.
         glm::vec2 mGatherOuter{0.0f}; ///< The gather quad's half-extents, FULL-RES px; setupRingGeometry.
@@ -565,13 +598,14 @@ namespace EdgeLighting
         /// nothing for its existence.
         Framebuffer mScaledBuffer{"NeonRenderer.Scaled"};
 
-        /// The gather pass's target on the scaled path, at GetGatherScale -
-        /// coarser than @c mScaledBuffer for any rect much bigger than a
-        /// thumbnail - over the gather quad's box (@c mGatherOuter) clipped
-        /// to the viewport: the gathered colour and arc coverage, plus a
-        /// second attachment for the segments' only when there are segments,
-        /// RGBA16F where the driver renders to it and RGBA8 where not. Read by
-        /// pass 1 and the edge ring; released with @c mScaledBuffer.
+        /// The gather pass's target - on the scaled path, and at 1.0 under
+        /// NeonConfig::decoupledGather - at GetGatherScale, coarser than
+        /// @c mScaledBuffer for any rect much bigger than a thumbnail, over the
+        /// gather quad's box (@c mGatherOuter) clipped to the viewport: the
+        /// gathered colour and arc coverage, plus a second attachment for the
+        /// segments' only when there are segments, RGBA16F where the driver
+        /// renders to it and RGBA8 where not. Read by pass 1 and the edge ring;
+        /// released whenever no frame gathers apart (UsesGatherBuffer).
         Framebuffer mGatherBuffer{"NeonRenderer.Gather"};
 
         /// Index into the gather buffer's format list of the best format the

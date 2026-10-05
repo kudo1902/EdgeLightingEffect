@@ -1789,6 +1789,22 @@ el_result_e el_effect_get_neon_resolution_scale(el_effect_handle_t effect, float
     return EL_SUCCESS;
 }
 
+el_result_e el_effect_set_neon_decoupled_gather(el_effect_handle_t effect, el_bool_t decoupled)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_set_neon_decoupled_gather");
+    SET_AND_LOG(effect->config.neon.decoupledGather, decoupled != 0,
+                "effect=%p, decoupled=%d", (void *)effect, decoupled);
+}
+
+el_result_e el_effect_get_neon_decoupled_gather(el_effect_handle_t effect, el_bool_t *outDecoupled)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_get_neon_decoupled_gather");
+    VALIDATE_OUT_PTR(outDecoupled, "el_effect_get_neon_decoupled_gather");
+    *outDecoupled = effect->config.neon.decoupledGather ? 1 : 0;
+    LOG_D("effect=%p, decoupled=%d", (void *)effect, *outDecoupled);
+    return EL_SUCCESS;
+}
+
 el_result_e el_effect_set_neon_num_samples(el_effect_handle_t effect, int32_t samples)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_neon_num_samples");

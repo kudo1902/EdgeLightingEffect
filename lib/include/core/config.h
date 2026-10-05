@@ -446,6 +446,38 @@ namespace EdgeLighting
         /// frame after the switch.
         float resolutionScale = 1.0f;
 
+        /// At @c resolutionScale 1.0, run the perimeter gather as a pass of its
+        /// own, on the coarse grid the reduced scales already use, and shade
+        /// every pixel of the glow at full resolution from its result - instead
+        /// of walking the gather loop at every pixel. Below 1.0 the gather is
+        /// always run that way, so there this changes nothing.
+        ///
+        /// Off by default, because it gives up 1.0's exactness: the gather's
+        /// four results are bilinear reads of a grid ~2 texels per colour
+        /// kernel, not per-pixel sums. Measured on an Apple M2 Pro against the
+        /// exact 1.0 render: max 1/255 (p99 1) on every scene of
+        /// docs/neon-resolution-scale-comparison.html, and on a 24 x 18 rect;
+        /// a partly lit ring with cutoffs reads 2 on a few dozen pixels of the
+        /// few hundred thousand it lights.
+        /// Everything near the line - filament, one-sided cut, cutoffs - is
+        /// shaded per pixel as before, which is why it holds where the reduced
+        /// scales lose detail.
+        ///
+        /// Cost: the loop is ~3/4 of the 1.0 frame, and this runs it on a few
+        /// thousand texels, so the neon renders 2-5x faster - 3.6x over the
+        /// comparison scenes, 4.6 -> 1.1 ms for a full-screen rect at
+        /// 1920 x 1080 on the M2 Pro. It adds one small offscreen pass and an
+        /// RGBA16F gather buffer (two attachments with segments) over the glow's
+        /// area at the gather's scale: 0.08 MB for that full-screen rect (0.16
+        /// with segments), more for a small rect whose grid is finer - 1.0 MB
+        /// for a 160 x 96 one. Released when this is cleared, the scale drops
+        /// below 1.0 (which has its own), or the layer is disabled. A rect so
+        /// small that its gather grid would be the pixel grid has nothing to
+        /// decouple and takes the exact path regardless - a 24 x 18 rect gained
+        /// 1.09x for a 3.4 MB buffer. The first frame with it set compiles the
+        /// gather and the full-resolution shading program.
+        bool decoupledGather = false;
+
         /// Number of perimeter gather samples per fragment. Capped at
         /// @c NEON_MAX_LOOP_SAMPLES - the UBO and the shader's array are both
         /// sized by it - and clamped to >= 1 at upload time. Lower is faster
@@ -457,7 +489,10 @@ namespace EdgeLighting
         /// 256 resolves any gradient the eye can; a smaller ring bakes faster
         /// and costs less texture memory. A change to this SNAPS rather than
         /// cross-fading - two rings of different length cannot be blended
-        /// element-wise (see @ref GradientRingLUT).
+        /// element-wise (see @ref GradientRingLUT). Clamped when baked to
+        /// [GradientRingLUT::MIN_SIZE, GradientRingLUT::MAX_SIZE] (4-4096), and
+        /// to the driver's GL_MAX_TEXTURE_SIZE where that is lower; the value
+        /// stored here is left as set, so the getters read it back unchanged.
         int gradientLutSize = 256;
 
         // --- Compositing ---
@@ -676,6 +711,7 @@ namespace EdgeLighting
         {
             return enable == o.enable &&
                    resolutionScale == o.resolutionScale &&
+                   decoupledGather == o.decoupledGather &&
                    numSamples == o.numSamples &&
                    gradientLutSize == o.gradientLutSize &&
                    opaqueMode == o.opaqueMode &&

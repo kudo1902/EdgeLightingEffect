@@ -491,6 +491,29 @@ extern "C"
     EL_API el_result_e el_effect_set_neon_resolution_scale(el_effect_handle_t effect, float scale);
     EL_API el_result_e el_effect_get_neon_resolution_scale(el_effect_handle_t effect, float *outScale);
 
+    /** @brief At resolution scale 1.0, gather on a coarse grid and shade every
+     *         pixel at full resolution from it (default off).
+     *  @details The perimeter gather is about three quarters of the neon's cost
+     *           at 1.0, and below 1.0 it already runs once on a grid set by how
+     *           smooth its result is. This runs it that way at 1.0 too, then
+     *           shades the glow at full resolution from the result, so the
+     *           line, the one-sided cut and the cutoffs are drawn per pixel as
+     *           before. Measured on an Apple M2 Pro: 2-5x faster (4.6 ms ->
+     *           1.1 ms for a full-screen rect at 1920 x 1080), within 1/255
+     *           of the exact 1.0 render on the comparison scenes and 2/255 on a
+     *           few dozen pixels of a partly lit ring. Off by default because
+     *           it gives up that exactness.
+     *
+     *           Holds a small RGBA16F gather buffer while set (two attachments
+     *           with segments): 0.08 MB for a full-screen rect at 1080p, up to
+     *           about 1 MB for a small rect whose gather grid is fine. Compiles
+     *           two programs the first frame it is used. A rect so small that
+     *           its gather grid would be the pixel grid is drawn exactly
+     *           regardless, since it has nothing to gain. Has no effect below
+     *           1.0, where the gather is always run this way. */
+    EL_API el_result_e el_effect_set_neon_decoupled_gather(el_effect_handle_t effect, el_bool_t decoupled);
+    EL_API el_result_e el_effect_get_neon_decoupled_gather(el_effect_handle_t effect, el_bool_t *outDecoupled);
+
     /** @brief Set the per-fragment gather sample count.
      *  @details Clamped to [1, the shader's compile-time maximum]. Lower is
      *           faster and roughly linear in cost: halving this from the
@@ -504,7 +527,14 @@ extern "C"
 
     /** @brief Set the baked gradient LUT's width in texels (power-of-two,
      *         32-256). Larger resolves closely-spaced colour stops more
-     *         finely; it does not affect per-fragment cost. */
+     *         finely; it does not affect per-fragment cost.
+     *  @details Stored as given, and read back unchanged by the getter, but
+     *           clamped when the ring is baked to 4-4096 texels, and to the
+     *           driver's GL_MAX_TEXTURE_SIZE where that is lower, with one
+     *           warning per oversized value. Unclamped, the CPU-side ring cost
+     *           52 bytes a texel and a pass per frame of every colour fade, and
+     *           a width past the texture limit drew the glow from an incomplete
+     *           texture. */
     EL_API el_result_e el_effect_set_neon_gradient_lut_size(el_effect_handle_t effect, int32_t size);
     EL_API el_result_e el_effect_get_neon_gradient_lut_size(el_effect_handle_t effect, int32_t *outSize);
 

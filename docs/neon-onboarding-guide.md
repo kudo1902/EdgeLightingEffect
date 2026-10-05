@@ -1010,8 +1010,9 @@ cache.
 | ----- | ------------- | ----- | ------------ | ---------- | ----- | ----- |
 | `enable` | bool, `false` | | Draws nothing while false. | `Render` returns at once; `UsesScaledBuffer` releases the reduced buffers | buffer release | `el_effect_set_neon_renderer_enabled` |
 | `resolutionScale` | float, 1.0 | clamped to [0.001, 1.0] (`GetClampedResolutionScale`) | 1.0 draws at full resolution; below it the glow is shaded smaller and upscaled, except a full-res ring at the edge (Part 8). | `uResolutionScale`; multiplies every px uniform and the loop samples; picks the pass set and programs | `samplesDirty` (and so `geometryDirty`); buffer release | `el_effect_set_neon_resolution_scale` |
+| `decoupledGather` | bool, false | at 1.0 only, and only where the gather grid is coarser than the pixel grid (`DecouplesAtFullScale`) | At 1.0, run the gather as its own pass (P1a, as below 1.0) and shade the glow quad at full resolution from it - 2-5x faster, within 1-2/255 of the exact render. | picks the program set (`ensurePathPrograms`) and pass 1's form (`renderDecoupledNeonPass`) | `geometryDirty` (the gather quad); gather buffer release | `el_effect_set_neon_decoupled_gather` |
 | `numSamples` | int, 128 | clamped to [1, 128] (`GetClampedNumSamples`) | Number of perimeter samples the gather averages. Fewer is cheaper and coarser: against 128, 96 differs by 1/255, 64 by 3/255, 32 by 12/255 (measured, `config-reference.md`). | `uNumSamples` (P0, the gather); `LoopSamplesBlock` | `samplesDirty` | `el_effect_set_neon_num_samples` |
-| `gradientLutSize` | int, 256 | floored at 4 | Width of the colour ring texture. A change snaps (no cross-fade). | `uGradientLUT` width | ring LUT re-bake | `el_effect_set_neon_gradient_lut_size` |
+| `gradientLutSize` | int, 256 | clamped to 4-4096 (and `GL_MAX_TEXTURE_SIZE`) when baked | Width of the colour ring texture. A change snaps (no cross-fade). | `uGradientLUT` width | ring LUT re-bake | `el_effect_set_neon_gradient_lut_size` |
 
 `numSamples` can never exceed `NEON_MAX_LOOP_SAMPLES` (128), because the
 sample block and the emission table are sized to that ceiling once, at

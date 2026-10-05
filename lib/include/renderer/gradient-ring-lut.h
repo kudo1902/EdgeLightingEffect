@@ -4,6 +4,7 @@
 #include "core/config.h"
 #include "renderer/base-lut.h"
 #include "util/color-utils.h"
+#include "util/log-util.h"
 #include <algorithm>
 #include <vector>
 
@@ -40,6 +41,25 @@ namespace EdgeLighting
     class GradientRingLUT : public BaseLUT
     {
     public:
+        /// Narrowest ring @ref Bake will build: only a guard against a
+        /// nonsense width reaching glTexImage2D.
+        static constexpr int MIN_SIZE = 4;
+        /// Widest ring @ref Bake will build - lowered further to the driver's
+        /// GL_MAX_TEXTURE_SIZE where that is smaller (GLES 3.0 guarantees only
+        /// 2048). 16x the default, which already resolves any gradient the eye
+        /// can.
+        ///
+        /// The width arrives straight from @c NeonConfig::gradientLutSize, which
+        /// nothing else bounds - the C setter stores whatever it is handed - and
+        /// both costs of a ring scale with it: three float copies plus the byte
+        /// scratch on the CPU (52 bytes a texel, held for the LUT's life) and a
+        /// full pass over them on every frame of a colour fade. Measured
+        /// unclamped at 4M texels: +208 MB and 18.6 ms per Update during a fade.
+        /// Past GL_MAX_TEXTURE_SIZE the upload also failed outright
+        /// (GL_INVALID_VALUE, nothing logged) and the glow drew from an
+        /// incomplete texture.
+        static constexpr int MAX_SIZE = 4096;
+
         GradientRingLUT() = default;
 
         /// Bake @p stops into the target ring and start - or immediately land -
@@ -52,13 +72,17 @@ namespace EdgeLighting
         /// always arrives with the gradient inputs untouched.
         ///
         /// @param size          ring width in texels. The documented range is
-        ///                      32-256; the floor here is only a guard against a
-        ///                      nonsense value reaching glTexImage2D.
+        ///                      32-256; anything outside [MIN_SIZE, MAX_SIZE],
+        ///                      or past the driver's GL_MAX_TEXTURE_SIZE, is
+        ///                      clamped here, with a warning when it is too wide.
         /// @param fadeDuration  seconds; <= 0 snaps straight to the new ring.
         void Bake(const std::vector<ColorStop> &stops, BlendSpace space,
                   int size, float fadeDuration)
         {
-            size = std::max(size, 4);
+            // Before the guard below, so an oversized request that keeps
+            // arriving compares equal to the ring it was clamped to and bakes
+            // nothing.
+            size = clampSize(size);
             if (HasUploaded() && size == mSize && space == mBakedSpace && stops == mBakedStops)
             {
                 return;
@@ -152,6 +176,32 @@ namespace EdgeLighting
         }
 
     private:
+        /// @p requested clamped to [MIN_SIZE, the widest ring this LUT will
+        /// build]. That ceiling is MAX_SIZE, or the driver's GL_MAX_TEXTURE_SIZE
+        /// if lower, queried on the first call - a GL context is current
+        /// whenever Bake runs, since Bake uploads - and cached, so the
+        /// per-config-change calls cost no query.
+        ///
+        /// Warns once per oversized request, not once per call: Bake runs on
+        /// every config change, which under an animation is every frame, and
+        /// an oversized width is a host setting that stays put.
+        int clampSize(int requested)
+        {
+            if (mMaxSize == 0)
+            {
+                GLint maxTexture = 0;
+                glGetIntegerv(GL_MAX_TEXTURE_SIZE, &maxTexture);
+                mMaxSize = (maxTexture > 0) ? std::min(MAX_SIZE, static_cast<int>(maxTexture)) : MAX_SIZE;
+            }
+            if (requested > mMaxSize && requested != mRejectedSize)
+            {
+                LOG_W("GradientRingLUT: a %d-texel ring was requested; building %d, the widest this LUT allows.",
+                      requested, mMaxSize);
+            }
+            mRejectedSize = (requested > mMaxSize) ? requested : 0;
+            return std::clamp(requested, MIN_SIZE, mMaxSize);
+        }
+
         /// Quantise mDisplay to RGBA8 and upload it.
         void upload()
         {
@@ -176,6 +226,8 @@ namespace EdgeLighting
         std::vector<float> mDisplay;       ///< Currently-uploaded (blended) ring.
         std::vector<unsigned char> mBytes; ///< Reused upload scratch.
         int mSize = 0;                     ///< Ring width in texels; 0 until the first bake.
+        int mMaxSize = 0;                  ///< Widest ring allowed; 0 until clampSize first queries the driver.
+        int mRejectedSize = 0;             ///< The oversized width last warned about; 0 when none is pending.
         bool mFading = false;              ///< True while a cross-fade is in flight.
         float mElapsed = 0.0f;             ///< Seconds into the current fade.
         float mDuration = 0.0f;            ///< Snapshot of the duration for this fade.

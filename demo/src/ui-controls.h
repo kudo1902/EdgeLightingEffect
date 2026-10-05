@@ -264,7 +264,9 @@ namespace EdgeLightingDemo
         }
 
         std::cout << "\nResolution " << std::setprecision(2) << n.resolutionScale
-                  << (n.resolutionScale < 1.0f ? " (scaled buffer + blit)" : " (full res, direct)")
+                  << (n.resolutionScale < 1.0f ? " (scaled buffer + blit)"
+                                               : (n.decoupledGather ? " (full res, decoupled gather)"
+                                                                    : " (full res, direct)"))
                   << "   numSamples " << n.numSamples
                   << ", gradientLutSize " << n.gradientLutSize << "\n";
 

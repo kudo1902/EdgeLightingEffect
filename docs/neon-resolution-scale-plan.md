@@ -1460,3 +1460,70 @@ Open:
 - **The comparison page is not regenerated.** Its reduced-scale columns and
   timings predate this section, and a note at its top says so. `check`'s
   bounds still hold, and the 1.0 images are unchanged.
+
+## 14. Follow-up: the split gather at 1.0, behind a flag
+
+Section 13 made the reduced scales cheap by running the gather once, on a grid
+set by its own smoothness. Scale 1.0 kept walking the loop at every pixel of a
+quad that reaches 312 px past the rect by default, and that loop is ~3/4 of the
+1.0 frame (measured on an Apple M2 Pro: 4.3 ms with 128 samples against 1.0 ms
+with 1, full-screen rect at 1080p). `NeonConfig::decoupledGather` lets 1.0 use
+the same split. Off by default, because it gives up 1.0's exactness.
+
+### 14.1 The design
+
+At 1.0 with the flag set, pass 1a runs exactly as below 1.0 - `neon-gather.frag`
+into `mGatherBuffer` at `GetGatherScale(config, 1.0)` over its region - and
+pass 1 becomes `renderDecoupledNeonPass`: the direct path's glow quad, transform
+and uniforms, drawn by `mNeonRingShader`, which reads the gather instead of
+walking it. Nothing else of the scaled path runs: no reduced buffer, no blit, no
+ring. The ring's program is the right one to reuse rather than a third
+`NEON_READS_GATHER` object, because it draws the caller's framebuffer, blended,
+in either job, so the one-target-per-program rule of 13.1 holds.
+
+Path choice and the gather buffer's release share one predicate,
+`UsesGatherBuffer`, as `UsesScaledBuffer` does for the reduced buffer. At 1.0 it
+goes through `DecouplesAtFullScale`, which also refuses a rect whose gather grid
+would be the pixel grid: there is nothing to decouple there, and the first
+build gathered a 24 x 18 rect at full resolution over its ~650 px glow quad, a
+656 x 656 RGBA16F buffer (3.4 MB) for 1.09x. `setupRingGeometry` builds the 1.0
+gather quad (the glow quad plus the gather's footprint, its hole included) off
+the same predicate; the flag joins `geometryDirty` so a toggle rebuilds it.
+
+### 14.2 Measured (Apple M2 Pro, Release)
+
+| | exact 1.0 | decoupled | |
+| - | --------- | --------- | - |
+| twelve comparison scenes, 720p, total | 19.1 ms | 5.3 ms | 3.6x (2.0-5.4x each) |
+| full-screen rect, 1080p | 4.6 ms | 1.1 ms | 4.2x |
+| the same with a segment | 6.7 ms | 1.3 ms | 5.3x |
+| 24 x 18 rect | 1.0 ms | 1.0 ms | exact path (`DecouplesAtFullScale`) |
+
+Against the exact 1.0 render: max 1/255, p99 1 on every comparison scene and
+on the hairline sweep (0.020 px against 0.021). A partly lit ring with cutoffs,
+segments or a one-sided glow reads 2 on 1-26 pixels of 100k-500k lit. Gather
+buffer: 0.08 MB for the 1080p full-screen rect (0.16 MB with segments), 0.12 MB
+for the 640 x 360 scenes, 1.0 MB for the 160 x 96 one.
+
+### 14.3 Verification
+
+- Flag off: all 36 frames of the twelve scenes at 1.0, 1.0 with one sample and
+  0.5 byte-identical to the build before (the gather quad's construction moved
+  into `setupGatherGeometry`, shared by both paths). `partition`: identical
+  counts, 0 overlapping, 0 gap.
+- `neon-scale-check check` gained a `dg1000` column - the flag at 1.0 against
+  the exact render, bound 2 - and a `dg1000` hairline sweep entry. Both PASS.
+  The tool still builds standalone against a library from before the flag
+  (the column reads `n/a`).
+- A long-lived effect through 21 changes - flag on and off, 1.0 to 0.5 and
+  back with it set, a partly lit ring, segments (two attachments), each
+  `glowSide` (OUTSIDE cuts a hole in the gather quad), both cutoffs, an opaque
+  fill, a rect running off the frame, disable and re-enable, a tiny rect -
+  byte-identical to a fresh effect at every step. Below 1.0 the flag changes
+  nothing (0 against the same frame without it). No ERROR or WARN line.
+- C ABI: `el_effect_set/get_neon_decoupled_gather` round-trip through the
+  dylib; clearing the flag releases the gather buffer.
+
+Open: measure it on the AMD 5300M (the driver the one-target rule comes from)
+and on a tile-based GPU, where pass 1a adds a small render pass to a 1.0 frame
+that had none.

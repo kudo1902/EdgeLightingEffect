@@ -53,6 +53,10 @@ Prints one row per scene and exits 1 if anything is out of bounds (marked `!`):
 | each reduced scale against its own 1.0 render, max error | 3 | 1-2 |
 | `small_rect` at 0.25 / 0.125 (20 x 12 buffer texels at 0.125) | 5 / 12 | 4 / 11 |
 | the moving hairline's worst centroid error, every scale | 0.1 px | 0.02-0.05 |
+| `dg1000`: 1.0 with `NeonConfig::decoupledGather` against the exact 1.0 render, and its hairline | 2, 0.1 px | 1 (Apple M2 Pro; not yet measured on the AMD) |
+
+The `dg1000` column and hairline entry read `n/a` / are skipped when the tool is
+built standalone against a library from before that flag existed.
 
 The measured column predates the split gather
 ([`docs/neon-resolution-scale-plan.md`](../../docs/neon-resolution-scale-plan.md)

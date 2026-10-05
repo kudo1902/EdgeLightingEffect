@@ -185,9 +185,27 @@ float haloSegment(float a, float t1, float t2, float k) {
     float c2 = a * a + k * k;
     return k * k / c2 * (t2 / sqrt(c2 + t2 * t2) - t1 / sqrt(c2 + t1 * t1));
 }
+// The integral is k/c * (atan(t2/c) - atan(t1/c)); this evaluates it as ONE
+// two-argument atan. For t2 >= t1 the difference of the two angles lies in
+// [0, pi], and atan(c * (t2 - t1), c^2 + t1 * t2) is exactly that angle,
+// quadrant included - the denominator goes negative when the segment spans
+// more than a right angle as seen from the fragment, which the two-argument
+// form resolves and the one-argument form could not. Every caller guarantees
+// t2 >= t1: a straight's ends are -/+ its half length about the fragment's
+// foot, and arcTangentSegment's are lam * HALF_PI apart. Zero length (a
+// circle's straights) gives atan(0, positive) = 0, as the difference did.
+//
+// There is no hardware atan, and this runs about a dozen times per fragment -
+// each straight, the two shared pedestals, each corner - so halving the atans
+// is worth having: measured on an Apple M2 Pro over five interleaved rounds,
+// ~5% off the shading on the twelve neon-scale-check scenes (numSamples 1, so
+// the gather drops out) and ~3% off scale 0.5; nothing measurable at 1.0, where
+// the gather is the cost. Both forms are within ~1e-6 of a double reference
+// over every argument range the callers produce; 123 of 33M pixels moved by
+// one level across those scenes at 1.0, 1.0 with one sample, and 0.5.
 float bloomSegment(float a, float t1, float t2, float k) {
     float c = sqrt(a * a + k * k);
-    return k / c * (atan(t2 / c) - atan(t1 / c));
+    return k / c * atan(c * (t2 - t1), c * c + t1 * t2);
 }
 
 // The bloom's 1/a tail is heavy enough that it has to be pedestal-subtracted to

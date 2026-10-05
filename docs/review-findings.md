@@ -3848,6 +3848,54 @@ byte-identical to a fresh effect at every step, and byte-identical to the
 library before both changes at every step. `neon-scale-check check` and
 `partition` pass; no new log line in either.
 
+
+## Twenty-first pass (the shading half and host-sized buffers)
+
+A second pass of the same review, on what the twentieth did not reach: the
+shading half of `neon.frag`, the other shaders, the GL wrappers, the embedded
+sources and the C ABI's inputs. Apple M2 Pro, Release.
+
+### I35. `gradientLutSize` had no upper bound - FIXED
+
+`GradientRingLUT::Bake` floored the width at 4 and nothing capped it - not the
+config, not the C setter. Past `GL_MAX_TEXTURE_SIZE` (16384 here) the upload
+failed with `GL_INVALID_VALUE`, nothing was logged (only `CaptureUtil`'s
+pending-error drain noticed), and the glow drew from an incomplete texture: the
+frame's brightness moved from 48.1M to 54.9M. Below that limit the cost still
+scaled without bound: the ring holds three float copies and a byte scratch, 52
+bytes a texel for the LUT's life, and walks them every frame of a colour fade -
+at 4M texels, +208 MB and 18.4 ms per `Update` during a fade.
+
+`Bake` now clamps to `[MIN_SIZE, MAX_SIZE]` (4-4096), and to the driver's
+`GL_MAX_TEXTURE_SIZE` where lower - queried once per LUT, not per bake - with
+one warning per oversized value. The config keeps what the host set, so the C
+getter round-trips it. 256 is byte-identical; 16384, 32768 and 4M now build
+4096 and draw within a few levels' worth of brightness of 256, at +0.3-0.6 MB
+and 0.023 ms per fade frame. 4096 is 16x the default, which already resolves any
+gradient the eye can.
+
+### I36. `bloomSegment` evaluated two atans where one gives the same value - FIXED
+
+`k/c * (atan(t2/c) - atan(t1/c))` runs about a dozen times per fragment (each
+straight, the two shared pedestals, each corner), and there is no hardware
+atan. For `t2 >= t1`, which every caller guarantees, the difference is exactly
+`atan(c * (t2 - t1), c * c + t1 * t2)`, the two-argument form resolving the
+quadrant when the segment spans more than a right angle from the fragment.
+Over five interleaved rounds on the twelve check scenes: ~5% off the shading
+(`numSamples` 1, so the gather drops out) and ~3% off scale 0.5, nothing
+measurable at 1.0 where the gather dominates. A first two-round measurement
+read twice that, so the shader comment quotes the five-round figure. Both forms
+are within ~1e-6 of a double reference over the callers' argument ranges; 123 of
+33M pixels moved by one level across the scenes at 1.0, 1.0 with one sample
+and 0.5, and 0-9 pixels by one level on a circle, a stadium, a 9600 px bloom
+and a 24 x 18 rect. `check` and `partition` pass with the same table.
+
+Measured and NOT done in the same pass: precomputing the uniform-only terms
+(the filament's reach and pedestal, the bloom and corner pedestals) on the CPU.
+Replacing them with constants made the shading 4-7% slower, not faster - Apple's
+compiler already evaluates uniform-only expressions once per draw. Unmeasured
+on Mali or Adreno.
+
 ---
 
 ## What is left
@@ -3860,7 +3908,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34. Five items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, and the twenty-first I35 and I36. Five items from the
 first pass remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -3895,6 +3943,8 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I32 | fixed | the edge ring's gather attachments tripled the scaled path's memory; now 2.15 MB at 1080p and 0.5 for a full-screen rect, less for smaller ones |
 | I33 | fixed | the 1 MB glow coverage table was allocated in `Initialize` although a uniformly lit ring - the default - and a disabled layer never read it; it is now allocated on the first frame that bakes it and released with the layer |
 | I34 | fixed | the glow coverage table re-baked on every config change, so an intensity, colour or other-layer animation paid pass 0b every frame; it is now gated on its own inputs (light blocks, width, height, corner radius, winding, glow radius) |
+| I35 | fixed | `gradientLutSize` was unbounded above: past `GL_MAX_TEXTURE_SIZE` the ring upload failed silently and the glow drew from an incomplete texture, and below it the ring cost 52 bytes a texel and a pass per fade frame (4M texels: +208 MB, 18 ms); now clamped to 4-4096 and the driver limit, with one warning |
+| I36 | fixed | `bloomSegment` took two atans where one two-argument atan is exactly equal; ~5% off the shading, ~3% off scale 0.5, 123 of 33M pixels by one level |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

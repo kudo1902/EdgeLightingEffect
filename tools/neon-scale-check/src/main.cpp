@@ -37,6 +37,7 @@
 #include <iostream>
 #include <streambuf>
 #include <string>
+#include <utility>
 #include <vector>
 
 #ifndef DOCS_DIR
@@ -120,11 +121,38 @@ namespace
         std::exit(2);
     }
 
-    Config SceneConfig(const Scene &scene, float scale)
+    /// Whether the library this was built against has
+    /// NeonConfig::decoupledGather. The tool also builds standalone against
+    /// another checkout's library to measure "before" numbers (README.md), and
+    /// one from before the flag must still compile: there the decoupled column
+    /// reads n/a and is not checked.
+    template <typename T, typename = void>
+    struct HasDecoupledGather
+    {
+        static constexpr bool value = false;
+    };
+    template <typename T>
+    struct HasDecoupledGather<T, decltype(void(std::declval<T &>().decoupledGather = true))>
+    {
+        static constexpr bool value = true;
+    };
+    constexpr bool HAS_DECOUPLED_GATHER = HasDecoupledGather<NeonConfig>::value;
+
+    template <typename T>
+    void SetDecoupledGather(T &neon, bool decoupled)
+    {
+        if constexpr (HasDecoupledGather<T>::value)
+        {
+            neon.decoupledGather = decoupled;
+        }
+    }
+
+    Config SceneConfig(const Scene &scene, float scale, bool decoupled = false)
     {
         Config c = BaseConfig();
         scene.apply(c);
         c.neon.resolutionScale = scale;
+        SetDecoupledGather(c.neon, decoupled);
         return c;
     }
 
@@ -138,7 +166,8 @@ namespace
         return frames;
     }
 
-    std::vector<SweepStep> RunSweep(EdgeLightingEffect &effect, const Scene &scene, float scale, RGB *sprite)
+    std::vector<SweepStep> RunSweep(EdgeLightingEffect &effect, const Scene &scene, float scale, RGB *sprite,
+                                    bool decoupled = false)
     {
         std::vector<SweepStep> steps;
         if (sprite)
@@ -147,7 +176,7 @@ namespace
         }
         for (int k = 0; k < SWEEP_STEPS; ++k)
         {
-            Config c = SceneConfig(scene, scale);
+            Config c = SceneConfig(scene, scale, decoupled);
             c.geometry.position.y += float(k * SWEEP_STEP_PX);
             const RGB frame = Render(effect, c);
             const int column = int(c.geometry.position.x + c.geometry.width * 0.5f);
@@ -404,6 +433,10 @@ namespace
     }
     /// Scale 1.0 against the page's committed image: GPU-to-GPU variance only.
     const int REFERENCE_DRIFT_BOUND = 2;
+    /// Scale 1.0 with NeonConfig::decoupledGather against the exact 1.0
+    /// render: measured max 1 on every scene on an Apple M2 Pro, plus one level
+    /// for GPU-to-GPU variance.
+    const int DECOUPLED_ERROR_BOUND = 2;
     /// The moving hairline's centroid error, any scale (measured: 0.05 below
     /// 1.0, 0.02 at 1.0; 0.53 at 0.25 before the edge ring).
     const double SWEEP_BOUND_PX = 0.1;
@@ -427,7 +460,9 @@ namespace
         {
             std::printf(" %9s", SCALE_TAGS[s]);
         }
-        std::printf("   (1.0: drift from the committed image; others: max / p99 against 1.0)\n");
+        std::printf(" %9s", "dg1000");
+        std::printf("   (1.0: drift from the committed image; others: max / p99 against 1.0;"
+                    " dg1000: 1.0 with decoupledGather)\n");
         for (const Scene &scene : SCENES)
         {
             const std::vector<RGB> frames = RenderAllScales(effect, scene);
@@ -456,6 +491,17 @@ namespace
                 failures += bad;
                 std::printf(" %4d/%-3d%s", m.maxDelta, m.p99, bad ? "!" : " ");
             }
+            if (HAS_DECOUPLED_GATHER)
+            {
+                const Metrics m = Measure(Render(effect, SceneConfig(scene, 1.0f, true)), frames[0], nullptr);
+                const bool bad = m.maxDelta > DECOUPLED_ERROR_BOUND;
+                failures += bad;
+                std::printf(" %4d/%-3d%s", m.maxDelta, m.p99, bad ? "!" : " ");
+            }
+            else
+            {
+                std::printf(" %9s", "n/a");
+            }
             std::printf("\n");
         }
         const Scene &hairline = FindScene("hairline");
@@ -470,6 +516,17 @@ namespace
             const bool bad = worst > SWEEP_BOUND_PX;
             failures += bad;
             std::printf(" %s %.3f%s", SCALE_TAGS[s], worst, bad ? "!" : "");
+        }
+        if (HAS_DECOUPLED_GATHER)
+        {
+            double worst = 0.0;
+            for (const SweepStep &step : RunSweep(effect, hairline, 1.0f, nullptr, true))
+            {
+                worst = std::max(worst, std::fabs(step.centroidErr));
+            }
+            const bool bad = worst > SWEEP_BOUND_PX;
+            failures += bad;
+            std::printf(" dg1000 %.3f%s", worst, bad ? "!" : "");
         }
         std::printf("\n");
         if (failures)

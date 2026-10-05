@@ -825,6 +825,24 @@ void DebugUI::buildNeonSection(el_effect_handle_t effect)
             el_effect_set_neon_resolution_scale(effect, scale);
         }
 
+        // Only means anything at 1.0: below it the gather is always decoupled.
+        el_bool_t decoupledFlag = 0;
+        el_effect_get_neon_decoupled_gather(effect, &decoupledFlag);
+        bool decoupled = decoupledFlag != 0;
+        ImGui::BeginDisabled(scale < 1.0f);
+        if (ImGui::Checkbox("Decoupled Gather##Neon", &decoupled))
+        {
+            el_effect_set_neon_decoupled_gather(effect, decoupled ? 1 : 0);
+        }
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        {
+            ImGui::SetTooltip("At Res Scale 1.0: run the perimeter gather on a coarse grid\n"
+                              "and shade every pixel at full resolution from it.\n"
+                              "2-5x faster, within 1-2/255 of the exact render.\n"
+                              "Below 1.0 the gather always runs this way.");
+        }
+
         int32_t samples = 0;
         el_effect_get_neon_num_samples(effect, &samples);
         if (ImGui::SliderInt("Samples##Neon", &samples, 8, MAX_LOOP_SAMPLES))

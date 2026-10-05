@@ -925,6 +925,17 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
                               "re-shaded at full resolution - the line stays sharp.\n"
                               "Not always cheaper: a tight cutoff band can get slower.");
         }
+        // Only means anything at 1.0: below it the gather is always decoupled.
+        ImGui::BeginDisabled(cfg.neon.resolutionScale < 1.0f);
+        ImGui::Checkbox("Decoupled Gather##Neon", &cfg.neon.decoupledGather);
+        ImGui::EndDisabled();
+        if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        {
+            ImGui::SetTooltip("At Res Scale 1.0: run the perimeter gather on a coarse grid\n"
+                              "and shade every pixel at full resolution from it.\n"
+                              "2-5x faster, within 1-2/255 of the exact render.\n"
+                              "Below 1.0 the gather always runs this way.");
+        }
         SliderIntWithInput("Samples##Neon", cfg.neon.numSamples, 8, NEON_MAX_LOOP_SAMPLES);
         SliderIntWithInput("LUT Size##Neon", cfg.neon.gradientLutSize, 32, MAX_GRADIENT_LUT_SIZE);
         ImGui::TreePop();
