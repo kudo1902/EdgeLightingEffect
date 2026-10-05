@@ -8,6 +8,123 @@ namespace
     /// ColorStop::color.a is an emission scale rather than a blend opacity,
     /// that renders as "dark here" instead of as a merely unset colour.
     const EdgeLighting::ColorStop DEFAULT_COLOR_STOP{0.0f, glm::vec4(1.0f)};
+
+    /// The opaque fill's cutoff on @p side. Returns nullptr and logs for a
+    /// value outside el_cutoff_side_e - the enum crosses the ABI as a plain
+    /// int, so an out-of-range one is a caller error, not something to clamp.
+    ///
+    /// Switched on as an int, not as the enum. C++ gives an unscoped enum
+    /// whose enumerators are 0 and 1 the value range [0, 1], so a switch on
+    /// the enum itself lets an optimiser assume nothing else arrives - and
+    /// the rejection below is exactly the path it would be free to drop.
+    EdgeLighting::Cutoff *OpaqueCutoffSlot(el_effect_handle_t effect, el_cutoff_side_e side, const char *who)
+    {
+        switch (static_cast<int>(side))
+        {
+        case EL_CUTOFF_SIDE_INSIDE:
+        {
+            return &effect->config.neon.opaqueInsideCutoff;
+        }
+        case EL_CUTOFF_SIDE_OUTSIDE:
+        {
+            return &effect->config.neon.opaqueOutsideCutoff;
+        }
+        default:
+        {
+            break;
+        }
+        }
+        LOG_E("%s: invalid side %d", who, static_cast<int>(side));
+        return nullptr;
+    }
+
+    /// Writes the ABI's (enable, size, softness) triple into @p c and reports
+    /// whether anything moved. The shared body of every cutoff setter, glow
+    /// and fill alike; logging stays with the caller so each line is
+    /// attributed to the entry point that made the change.
+    bool AssignCutoff(EdgeLighting::Cutoff &c, el_bool_t enable, float size, float softness)
+    {
+        const EdgeLighting::Cutoff next = {enable != 0, size, softness};
+        if (c == next)
+        {
+            return false;
+        }
+        c = next;
+        return true;
+    }
+
+    /// The getter-side mirror of @ref AssignCutoff. The out pointers are
+    /// validated by the caller, which owns the name the error is logged under.
+    void ReadCutoff(const EdgeLighting::Cutoff &c, el_bool_t *outEnable, float *outSize, float *outSoftness)
+    {
+        *outEnable = c.enable ? 1 : 0;
+        *outSize = c.size;
+        *outSoftness = c.softness;
+    }
+
+    /// Shared bounds check for the by-index spotlight accessors. Returns
+    /// nullptr and logs when @p index names no lamp.
+    EdgeLighting::SpotLight *SpotlightSlot(el_effect_handle_t effect, int32_t index, const char *who)
+    {
+        if (index < 0 || static_cast<size_t>(index) >= effect->config.spotlight.lamps.size())
+        {
+            LOG_E("%s: index %d out of range (size=%zu)", who, index,
+                  effect->config.spotlight.lamps.size());
+            return nullptr;
+        }
+        return &effect->config.spotlight.lamps[static_cast<size_t>(index)];
+    }
+
+    /// Copies a C layer array into RendererLayers, checking only its C shape:
+    /// a non-negative count and a non-null array when the count is not zero.
+    /// The flag values are the enum's (see the static_asserts in
+    /// capi-internal.h); whether each names exactly one layer, once, is
+    /// EdgeLightingEffect::IsValidLayerList's to judge.
+    bool CopyLayerArray(const uint32_t *order, int32_t count, const char *fn,
+                        std::vector<EdgeLighting::RendererLayer> &out)
+    {
+        if (count < 0 || (count > 0 && !order))
+        {
+            LOG_E("%s: invalid layer list (order=%p, count=%d)", fn, (const void *)order, count);
+            return false;
+        }
+        out.clear();
+        for (int32_t i = 0; i < count; i++)
+        {
+            out.push_back(static_cast<EdgeLighting::RendererLayer>(order[i]));
+        }
+        return true;
+    }
+
+    /// Fresh effect, then the layers in @p order, then Initialize. A renderer
+    /// that fails is dropped by Initialize and the rest keep running.
+    /// Re-initialising a handle replaces its whole stack.
+    el_result_e InitLayers(el_effect_handle_t effect, const std::vector<EdgeLighting::RendererLayer> &order)
+    {
+        effect->impl = std::make_unique<EdgeLighting::EdgeLightingEffect>();
+        for (EdgeLighting::RendererLayer layer : order)
+        {
+            effect->impl->AddRenderer(layer);
+        }
+        if (!effect->impl->Initialize())
+        {
+            LOG_E("renderer initialisation failed - %zu of %zu layers kept",
+                  effect->impl->GetLayerOrder().size(), order.size());
+            return EL_ERROR_INIT_FAILED;
+        }
+        return EL_SUCCESS;
+    }
+
+    /// Shared entry check for the calls that reorder an initialised effect.
+    bool IsInitialised(el_effect_handle_t effect, const char *fn)
+    {
+        if (!effect->impl)
+        {
+            LOG_E("%s: effect is not initialised", fn);
+            return false;
+        }
+        return true;
+    }
 }
 
 // ==========================================================================
@@ -104,10 +221,6 @@ el_result_e el_effect_get_opaque_mode(el_effect_handle_t effect, el_opaque_mode_
     return EL_SUCCESS;
 }
 
-// Lives in DebugConfig with the overlay flags, but it selects which of the
-// NEON renderer's passes run - so it is declared and implemented here with
-// the rest of the opaque group rather than with the overlays.
-
 el_result_e el_effect_set_opaque_color(el_effect_handle_t effect,
                                        float r, float g, float b, float a)
 {
@@ -130,62 +243,6 @@ el_result_e el_effect_get_opaque_color(el_effect_handle_t effect,
     *outA = effect->config.neon.opaqueColor.a;
     LOG_D("effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, *outR, *outG, *outB, *outA);
     return EL_SUCCESS;
-}
-
-namespace
-{
-    /// The opaque fill's cutoff on @p side. Returns nullptr and logs for a
-    /// value outside el_cutoff_side_e - the enum crosses the ABI as a plain
-    /// int, so an out-of-range one is a caller error, not something to clamp.
-    ///
-    /// Switched on as an int, not as the enum. C++ gives an unscoped enum
-    /// whose enumerators are 0 and 1 the value range [0, 1], so a switch on
-    /// the enum itself lets an optimiser assume nothing else arrives - and
-    /// the rejection below is exactly the path it would be free to drop.
-    EdgeLighting::Cutoff *OpaqueCutoffSlot(el_effect_handle_t effect, el_cutoff_side_e side, const char *who)
-    {
-        switch (static_cast<int>(side))
-        {
-        case EL_CUTOFF_SIDE_INSIDE:
-        {
-            return &effect->config.neon.opaqueInsideCutoff;
-        }
-        case EL_CUTOFF_SIDE_OUTSIDE:
-        {
-            return &effect->config.neon.opaqueOutsideCutoff;
-        }
-        default:
-        {
-            break;
-        }
-        }
-        LOG_E("%s: invalid side %d", who, static_cast<int>(side));
-        return nullptr;
-    }
-
-    /// Writes the ABI's (enable, size, softness) triple into @p c and reports
-    /// whether anything moved. The shared body of every cutoff setter, glow
-    /// and fill alike; logging stays with the caller so each line is
-    /// attributed to the entry point that made the change.
-    bool AssignCutoff(EdgeLighting::Cutoff &c, el_bool_t enable, float size, float softness)
-    {
-        const EdgeLighting::Cutoff next = {enable != 0, size, softness};
-        if (c == next)
-        {
-            return false;
-        }
-        c = next;
-        return true;
-    }
-
-    /// The getter-side mirror of @ref AssignCutoff. The out pointers are
-    /// validated by the caller, which owns the name the error is logged under.
-    void ReadCutoff(const EdgeLighting::Cutoff &c, el_bool_t *outEnable, float *outSize, float *outSoftness)
-    {
-        *outEnable = c.enable ? 1 : 0;
-        *outSize = c.size;
-        *outSoftness = c.softness;
-    }
 }
 
 el_result_e el_effect_set_opaque_cutoff(el_effect_handle_t effect, el_cutoff_side_e side,
@@ -1155,22 +1212,6 @@ el_result_e el_effect_clear_arcs(el_effect_handle_t effect)
 // as el_effect_set_position. Setters are grouped by concern rather than one
 // per scalar; all of them address a lamp by index and none of them grows
 // the list, mirroring the arc family above.
-
-namespace
-{
-    /// Shared bounds check for the by-index spotlight accessors. Returns
-    /// nullptr and logs when @p index names no lamp.
-    EdgeLighting::SpotLight *SpotlightSlot(el_effect_handle_t effect, int32_t index, const char *who)
-    {
-        if (index < 0 || static_cast<size_t>(index) >= effect->config.spotlight.lamps.size())
-        {
-            LOG_E("%s: index %d out of range (size=%zu)", who, index,
-                  effect->config.spotlight.lamps.size());
-            return nullptr;
-        }
-        return &effect->config.spotlight.lamps[static_cast<size_t>(index)];
-    }
-}
 
 el_result_e el_effect_set_spotlight_renderer_enabled(el_effect_handle_t effect, el_bool_t enabled)
 {
@@ -2200,6 +2241,9 @@ el_result_e el_effect_get_debug_wireframe_color(el_effect_handle_t effect, float
     return EL_SUCCESS;
 }
 
+// Lives in DebugConfig with the overlay flags, but it selects which of the
+// NEON renderer's passes run rather than drawing an overlay - which is why
+// it sits last in this group.
 el_result_e el_effect_set_debug_opaque_only(el_effect_handle_t effect, el_bool_t opaqueOnly)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_set_debug_opaque_only");
@@ -2249,60 +2293,6 @@ el_result_e el_effect_destroy(el_effect_handle_t effect)
 el_result_e el_effect_init(el_effect_handle_t effect)
 {
     return el_effect_init_with_renderers(effect, EL_RENDERER_ALL);
-}
-
-namespace
-{
-    /// Copies a C layer array into RendererLayers, checking only its C shape:
-    /// a non-negative count and a non-null array when the count is not zero.
-    /// The flag values are the enum's (see the static_asserts in
-    /// capi-internal.h); whether each names exactly one layer, once, is
-    /// EdgeLightingEffect::IsValidLayerList's to judge.
-    bool CopyLayerArray(const uint32_t *order, int32_t count, const char *fn,
-                        std::vector<EdgeLighting::RendererLayer> &out)
-    {
-        if (count < 0 || (count > 0 && !order))
-        {
-            LOG_E("%s: invalid layer list (order=%p, count=%d)", fn, (const void *)order, count);
-            return false;
-        }
-        out.clear();
-        for (int32_t i = 0; i < count; i++)
-        {
-            out.push_back(static_cast<EdgeLighting::RendererLayer>(order[i]));
-        }
-        return true;
-    }
-
-    /// Fresh effect, then the layers in @p order, then Initialize. A renderer
-    /// that fails is dropped by Initialize and the rest keep running.
-    /// Re-initialising a handle replaces its whole stack.
-    el_result_e InitLayers(el_effect_handle_t effect, const std::vector<EdgeLighting::RendererLayer> &order)
-    {
-        effect->impl = std::make_unique<EdgeLighting::EdgeLightingEffect>();
-        for (EdgeLighting::RendererLayer layer : order)
-        {
-            effect->impl->AddRenderer(layer);
-        }
-        if (!effect->impl->Initialize())
-        {
-            LOG_E("renderer initialisation failed - %zu of %zu layers kept",
-                  effect->impl->GetLayerOrder().size(), order.size());
-            return EL_ERROR_INIT_FAILED;
-        }
-        return EL_SUCCESS;
-    }
-
-    /// Shared entry check for the calls that reorder an initialised effect.
-    bool IsInitialised(el_effect_handle_t effect, const char *fn)
-    {
-        if (!effect->impl)
-        {
-            LOG_E("%s: effect is not initialised", fn);
-            return false;
-        }
-        return true;
-    }
 }
 
 el_result_e el_effect_init_with_renderers(el_effect_handle_t effect, uint32_t rendererMask)
