@@ -3789,6 +3789,65 @@ there pays nothing for pass 0b. The first build cost 0.34 / 0.81 ms in the
 first and fourth rows. On a slower GPU an animated segment is still the figure
 to measure.
 
+## Twentieth pass (memory and render time at the default scale)
+
+A review of the whole renderer stack for memory and render time, measured on an
+Apple M2 Pro with a Release build. Two items were fixed; the rest of what it
+found are design calls and were not taken here.
+
+### I33. The glow coverage table was allocated whether or not anything read it - FIXED
+
+`Initialize` allocated the 1024 x 128 RGBA16F table (1.0 MB) unconditionally,
+while its bake program was already built lazily. A ring lit uniformly - one full
+arc and no segments, the default - never reads it (`IsGlowCoverUnread`), and a
+registered but disabled neon never reads anything, so both held the renderer's
+largest fixed allocation for nothing. The allocation log showed it in every run,
+neon enabled or not.
+
+It is now allocated beside the program, on the first frame that bakes it
+(`ensureGlowCoverBuffer`), and released in `OnConfigChanged` when the layer is
+disabled, as the scaled-path buffers are. It is NOT released when the ring turns
+uniform: an arc animation reaching length 1 does that once per loop, and would
+reallocate on the way back. A fresh allocation sets `mGlowCoverDirty`, and the
+format walk resumes from `mGlowCoverFormat` the way `resizeGatherBuffer`'s does,
+since a released buffer cannot remember a refused format.
+
+One side effect had to be handled. With no table, unit 5 would hold texture 0,
+and Apple's driver logs a sampler bound to an unloadable texture at draw time
+whether or not it is read - a line the direct path had never printed. The
+gradient ring is bound there instead: complete, already bound for the same
+program, never a render target. Under `uniformCover` the fetch is never reached
+(`haloWeight + bloomWeight` is 0).
+
+A failure to allocate no longer fails `Initialize`: like a failed bake program,
+it costs the glow on frames whose ring reads the table, and the fill still
+draws.
+
+### I34. The glow coverage table re-baked on every config change - FIXED
+
+`OnConfigChanged` set `mGlowCoverDirty` on any change, as it does
+`mEmissionDirty`. The emission table is cheap; this bake is not (0.14-0.27 ms a
+frame on the AMD 5300M, ~0.05 ms here). Its inputs are narrow and visible -
+the two light blocks, the rect's width, height, corner radius and winding, and
+`glowRadius`; every uniform `renderGlowCoverPass` sets comes from those - yet an
+intensity pulse, a colour animation or an animation of ANOTHER layer's fields re-ran
+it every frame on a partly lit ring. A lens-flare field changed per frame, with
+the flare not even registered, cost +0.035-0.053 ms a frame at scale 0.5 on a
+partly lit ring (about +16% of the neon there).
+
+The flag is now gated on exactly those inputs (`glowCoverDirty`, sharing
+`arcsDirty` with `mLightBlocksDirty`) and accumulated, so a change made while the
+bake is skipped on a uniform ring is still pending when the ring turns partly lit
+again. The same churn now measures within noise.
+
+Verified: a persistent effect walked through 26 config changes - every input
+above, five that are not inputs (intensity, a flare field, colour stops, bloom,
+moving the rect), a uniform stretch with shape and glow changes made inside it
+followed by a partly lit ring again, disable and re-enable, scale 0.5 - is
+byte-identical to a fresh effect at every step, and byte-identical to the
+library before both changes at every step. `neon-scale-check check` and
+`partition` pass; no new log line in either.
+
 ---
 
 ## What is left
@@ -3801,7 +3860,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. Five items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34. Five items from the
 first pass remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -3834,6 +3893,8 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | V20 | fixed | V14's last limit, uncovered by V19: every piece was scaled by the coverage gathered around the FRAGMENT, which dips on a dark line, so on a small rect with strong bloom an unlit stretch read 3-6 levels darker on the line; each piece now reads its own coverage from a table baked per config change (pass 0b) |
 | V21 | fixed | V20's table convolved the coverage along a straight line through each piece's foot, past the piece's ends, so light spilled round corners (2-42 levels off an exact per-piece reference); now a table per piece - each straight by projection, each corner by polar position, behind the centre a blend of both developments, each band shared by a straight and a corner in proportion to their lengths - within 2 levels of a brute-force reference on every scene but 62 pixels of one (3). 1.0 MB against V20's 2, an animated bake half as costly, and a faster `Initialize`; the bake is compiled on the first frame that needs it, and the corner block runs one arc at a time, which is what kept a fully lit ring's cost from rising |
 | I32 | fixed | the edge ring's gather attachments tripled the scaled path's memory; now 2.15 MB at 1080p and 0.5 for a full-screen rect, less for smaller ones |
+| I33 | fixed | the 1 MB glow coverage table was allocated in `Initialize` although a uniformly lit ring - the default - and a disabled layer never read it; it is now allocated on the first frame that bakes it and released with the layer |
+| I34 | fixed | the glow coverage table re-baked on every config change, so an intensity, colour or other-layer animation paid pass 0b every frame; it is now gated on its own inputs (light blocks, width, height, corner radius, winding, glow radius) |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

@@ -155,17 +155,23 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   function in a source whether `main()` reaches it or not. Lengths enter only as
   ratios, so both resolution paths share one table. 1024 x 128
   (`GLOW_COVER_WIDTH` x `GLOW_COVER_HEIGHT`), RGBA16F (1.0 MB, half V20's 2)
-  with an RGBA8 fallback, encoded `c / (1 + c)`, allocated once in
-  `Initialize`, and re-baked on any config change (`mGlowCoverDirty`) - never on
-  time, but EVERY frame under an animation that changes the config, which
-  costs 0.14-0.27 ms a frame on an AMD Radeon Pro 5300M - about half what V20's
-  table did (0.17-0.55 ms) - everything a config change costs included: the cost to
-  watch on a slower GPU. A ring lit
+  with an RGBA8 fallback, encoded `c / (1 + c)`, and re-baked only when one of
+  its inputs moves (`mGlowCoverDirty`, gated in `OnConfigChanged` on the arcs,
+  the effective segments, width, height, cornerRadius, winding and glowRadius -
+  NOT any config change, I34): never on time, and not under an intensity,
+  colour or other-layer animation, but EVERY frame under an animation of the
+  arcs, segments, shape or glow radius, which costs 0.14-0.27 ms a frame on an
+  AMD Radeon Pro 5300M - about half what V20's table did (0.17-0.55 ms) -
+  everything a config change costs included: the cost to watch on a slower GPU.
+  Add a uniform to `renderGlowCoverPass` and its field joins that gate. A ring lit
   uniformly (one full arc, no segments) never reads the table, so it is neither
   baked (`IsGlowCoverUnread`, the shader's `uniformCover` made a hair stricter
-  so a stale table is never read - change the two together) nor its program
-  compiled: `ensureGlowCoverProgram` builds the bake on the first frame that
-  needs it. Things there that are load-bearing and must stay: behind a
+  so a stale table is never read - change the two together), nor its program
+  compiled, nor the table allocated: `ensureGlowCoverProgram` and
+  `ensureGlowCoverBuffer` build both on the first frame that needs them, and the
+  table is released when the layer is disabled (I33). Until then unit 5 holds the
+  gradient ring as a stand-in - never read, but a texture-0 sampler draws a
+  warning from Apple's driver. Things there that are load-bearing and must stay: behind a
   corner's centre `arcTangentSegment` flips which end it develops about across
   the diagonal, so the bake blends both developments there
   (`arcTangentSegmentAbout`), or a corner's table creases along its inner

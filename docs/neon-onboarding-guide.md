@@ -1312,12 +1312,13 @@ compiles it. A program that fails to compile is logged once, recorded in
 | Member | Size | Format | When |
 | ------ | ---- | ------ | ---- |
 | `mEmissionBuffer` | 128 x 2 | RGBA16F, else RGBA8 (`EMISSION_FORMATS`) | allocated once in `Initialize` |
-| `mGlowCoverBuffer` | 1024 x 128 (`GLOW_COVER_WIDTH` x `GLOW_COVER_HEIGHT`): four bands of `GLOW_COVER_ROWS` rows, each a straight and a corner sharing its columns in proportion to their lengths (`uGlowCoverSplit`) | RGBA16F, else RGBA8 (`GLOW_COVER_FORMATS`), linear filter | allocated once in `Initialize` |
+| `mGlowCoverBuffer` | 1024 x 128 (`GLOW_COVER_WIDTH` x `GLOW_COVER_HEIGHT`): four bands of `GLOW_COVER_ROWS` rows, each a straight and a corner sharing its columns in proportion to their lengths (`uGlowCoverSplit`) | RGBA16F, else RGBA8 (`GLOW_COVER_FORMATS`), linear filter | allocated on the first frame that bakes it (`ensureGlowCoverBuffer`); never on a ring lit uniformly |
 | `mGatherBuffer` | a region around the rect, at the gather scale | RGBA16F, else RGBA8 (`GATHER_FORMATS`); 1 attachment, 2 with segments | scaled path; resized every frame (no-op if unchanged) |
 | `mScaledBuffer` | what the blit reads, at `resolutionScale`, never larger than the reduced viewport | RGBA8, 1 attachment | scaled path; resized every frame |
 
 The two scaled-path buffers are released in `OnConfigChanged` when the layer
-is disabled or the scale returns to 1.0.
+is disabled or the scale returns to 1.0, and the coverage table when the layer
+is disabled.
 
 Note: `VertexArray`, `UniformBuffer` and the LUT textures create their GL
 names in their constructors, so a GL context must be current when a
@@ -1327,8 +1328,9 @@ names in their constructors, so a GL context must be current when a
 
 1. `setupShaders()`: build `mEmissionShader` and `mBlackRectShader`.
 2. `resizeEmissionBuffer()`: allocate the 128x2 emission table, RGBA16F or
-   RGBA8. Fails `Initialize` only if neither format allocates.
-   `resizeGlowCoverBuffer()` does the same for the 1024x128 coverage table.
+   RGBA8. Fails `Initialize` only if neither format allocates. The 1024x128
+   coverage table is NOT allocated here: at 1 MB it is most of what the
+   renderer holds, and the default ring never reads it.
 3. Declare the vertex format (attribute 0, two floats) on the five rebuildable
    vertex arrays, once.
 4. `rebuildLoopSamples`, `setupGeometry`, `setupFillGeometry`,
@@ -1339,7 +1341,7 @@ names in their constructors, so a GL context must be current when a
 5. `mInitialized = true`.
 
 It compiles no `neon.frag` program and no coverage bake, and allocates no
-scaled-path buffer.
+scaled-path buffer and no coverage table.
 
 ### 5.3 `OnConfigChanged(config)`: dirty flags
 
@@ -1354,7 +1356,7 @@ field, before overwriting it, and computes:
 | `segmentsDirty` | `segmentBoosts`, `preservedSegmentBoosts` | `FillEffectiveSegments` |
 | `mLightBlocksDirty` | `segmentsDirty`, or `arcs` (accumulated, never cleared here) | `packLightBlockData` on the next `Render` |
 | `mEmissionDirty` | **always** | P0 on the next `Render` |
-| `mGlowCoverDirty` | **always** | P0b on the next `Render` - skipped, flag left set, while the ring is lit uniformly |
+| `mGlowCoverDirty` | `segmentsDirty`, `arcs`, geometry `width` / `height` / `cornerRadius` / `winding`, `glowRadius` (accumulated, never cleared here) | P0b on the next `Render` - skipped, flag left set, while the ring is lit uniformly |
 
 Then, in order: overflow warnings for more than 8 arcs or segments, the
 segment merge, the flags above, `mCurrentConfig = config`, release of the
@@ -1386,7 +1388,8 @@ Render
  |- direct-path transform: mvp = ortho(0, w*scale, 0, h*scale) * translate(centerFull*scale)
  |- if debug.opaqueOnly: [blend over] fill (P2a); restore blend; return
  |- glowReady = ensurePathPrograms(scaled)          // compile on first use
- |      && (IsGlowCoverUnread() || ensureGlowCoverProgram())
+ |      && (IsGlowCoverUnread()
+ |          || (ensureGlowCoverProgram() && ensureGlowCoverBuffer()))
  |- if scaled: prevTarget = RenderTargetState::Capture()
  |
  |  ===== phase 1: offscreen =====
@@ -1597,7 +1600,7 @@ weight: 1, then 0.6 for the dimmer arc, 0 in the gaps), row 1's colour
 | | |
 | - | - |
 | **Purpose** | Pre-compute, for each of the eight pieces of the emitter, how lit that piece is as the halo and the bloom see it from any fragment position round it, so each piece can scale its glow by its own coverage (Part 3.6). |
-| **Runs** | Both paths, only when `mGlowCoverDirty` (any config change). Never on time - but every frame under an animation that changes the config (0.14-0.27 ms a frame in all on an AMD Radeon Pro 5300M, one arc to three arcs and two segments - about half what V20's table cost). Skipped on a ring lit uniformly - one full arc, no segments - which never reads it (`IsGlowCoverUnread`); its program is built on the first frame that bakes (`ensureGlowCoverProgram`), not in `Initialize`. |
+| **Runs** | Both paths, only when `mGlowCoverDirty` (a change to the arcs, the segments, the rect's width, height, corner radius or winding, or `glowRadius`). Never on time, nor under an intensity, colour or other-layer animation - but every frame under an animation of one of those inputs (0.14-0.27 ms a frame in all on an AMD Radeon Pro 5300M, one arc to three arcs and two segments - about half what V20's table cost). Skipped on a ring lit uniformly - one full arc, no segments - which never reads it (`IsGlowCoverUnread`); its program and its buffer are built on the first frame that bakes (`ensureGlowCoverProgram`, `ensureGlowCoverBuffer`), not in `Initialize`, and the buffer is released when the layer is disabled. |
 | **Target** | `mGlowCoverBuffer`, 1024 x 128 texels (1.0 MB), RGBA16F (RGBA8 fallback), `GL_LINEAR`. Its own `RenderTargetState` is captured and restored. |
 | **State** | Blend off. Scissor off. No clear: the quad covers every texel. |
 | **Geometry** | `mFullscreenVertexArray`, identity MVP: one fragment per texel. |
@@ -1949,8 +1952,9 @@ Notes:
   compiled on the first frame that bakes (`ensureGlowCoverProgram`), not in
   `Initialize`: ~70 ms on that frame on the AMD, which a ring lit uniformly
   never pays.
-- **When it runs.** Only on a config change (`mGlowCoverDirty`), never on
-  time - and not at all on a ring lit uniformly (one full arc, no segments),
+- **When it runs.** Only when one of its inputs changes (`mGlowCoverDirty`:
+  the arcs, the segments, the rect's width, height, corner radius or winding,
+  `glowRadius`), never on time - and not at all on a ring lit uniformly (one full arc, no segments),
   which never reads it (`IsGlowCoverUnread`, the shader's own `uniformCover`
   test made a hair stricter so the table can never be read stale). Under an
   animation of the arcs or segments it runs every frame: 0.14-0.27 ms on the

@@ -224,7 +224,7 @@ namespace EdgeLighting
         };
 
         /// Glow-coverage-table formats in PREFERENCE ORDER, best first - walked
-        /// by @ref NeonRenderer::resizeGlowCoverBuffer. Float for the same
+        /// by @ref NeonRenderer::ensureGlowCoverBuffer. Float for the same
         /// reason as the emission table: the table stores arc coverage TIMES
         /// Arc::intensity, which is unbounded. It is written encoded
         /// c / (1 + c), as the gather buffer is, so the RGBA8 row loses
@@ -992,13 +992,12 @@ namespace EdgeLighting
             LOG_E("Failed to allocate the NeonRenderer emission table in any supported format.");
             return false;
         }
-        // The same for the glow coverage table, whose size is also a pair of
-        // compile-time constants.
-        if (!resizeGlowCoverBuffer())
-        {
-            LOG_E("Failed to allocate the NeonRenderer glow coverage table in any supported format.");
-            return false;
-        }
+        // NOT the glow coverage table, although its size is also a pair of
+        // compile-time constants: at 1 MB it is most of what this renderer
+        // allocates, and a ring lit uniformly - the default - never reads it.
+        // It is allocated on the first frame that bakes it; see
+        // ensureGlowCoverBuffer.
+        //
         // Vertex FORMAT for the two arrays whose contents are rebuilt at
         // runtime, declared once here rather than on every rebuild.
         //
@@ -1128,9 +1127,12 @@ namespace EdgeLighting
 
         // The programs this path draws with, compiled the first frame it
         // runs - see ensurePathPrograms. A failure is logged once and the
-        // frame degrades to the fill: no glow, nothing stale.
+        // frame degrades to the fill: no glow, nothing stale. The glow
+        // coverage table's program and buffer likewise, but only on a ring
+        // that reads the table.
         bool glowReady = ensurePathPrograms(scaled) &&
-                         (IsGlowCoverUnread(mEffectiveSegments, config) || ensureGlowCoverProgram());
+                         (IsGlowCoverUnread(mEffectiveSegments, config) ||
+                          (ensureGlowCoverProgram() && ensureGlowCoverBuffer()));
 
         // The render target this renderer was handed - framebuffer AND
         // viewport, saved as a pair because the offscreen phase has to put both
@@ -1356,6 +1358,20 @@ namespace EdgeLighting
         // in a segment-less animation never differs.
         const bool segmentsDirty = config.neon.segmentBoosts != mCurrentConfig.neon.segmentBoosts ||
                                    config.neon.preservedSegmentBoosts != mCurrentConfig.neon.preservedSegmentBoosts;
+        const bool arcsDirty = config.neon.arcs != mCurrentConfig.neon.arcs;
+        // The glow coverage table's inputs, exactly: the two light blocks
+        // (segmentsDirty and arcsDirty, as for mLightBlocksDirty below) and
+        // what renderGlowCoverPass reads off the config - the perimeter, the
+        // drawn corner radius and the straights, all from width, height and
+        // cornerRadius; the winding; and the glow radius. Not the rect's
+        // POSITION: the table is in perimeter units, so a moving rect bakes
+        // nothing. Add a uniform to that pass and it belongs here.
+        const bool glowCoverDirty = segmentsDirty || arcsDirty ||
+                                    config.geometry.width != mCurrentConfig.geometry.width ||
+                                    config.geometry.height != mCurrentConfig.geometry.height ||
+                                    config.geometry.cornerRadius != mCurrentConfig.geometry.cornerRadius ||
+                                    config.geometry.winding != mCurrentConfig.geometry.winding ||
+                                    config.neon.glowRadius != mCurrentConfig.neon.glowRadius;
         // Overflow warnings, before mCurrentConfig is overwritten below: the
         // previous counts are still in it, which is what lets these fire once
         // per overflow without a latch of their own.
@@ -1393,9 +1409,13 @@ namespace EdgeLighting
         // in step with the shader. A missed field would be a stale ring; a
         // spare rebuild is one small pass.
         mEmissionDirty = true;
-        // The glow coverage table likewise: it reads the arcs, the segments, the
-        // rect's shape and the glow radius.
-        mGlowCoverDirty = true;
+        // The glow coverage table does NOT get that treatment, although it is
+        // the costlier bake of the two: its inputs are the narrow, visible set
+        // in glowCoverDirty above. Gated wide, it re-ran every frame under any
+        // animation at all - intensity, colour, or a field of another layer
+        // entirely - for a table none of those move. Accumulated, for the
+        // reasons given for mLightBlocksDirty just below.
+        mGlowCoverDirty = mGlowCoverDirty || glowCoverDirty;
         // The light blocks get the OPPOSITE treatment, because their inputs are
         // narrow and visible rather than wide and indirect: @ref
         // packLightBlockData reads mEffectiveSegments and config.neon.arcs, and
@@ -1423,15 +1443,15 @@ namespace EdgeLighting
         // compares against the arcs the first one already installed.
         // mEmissionDirty is immune to all of it only because it is
         // unconditional; a narrow gate has to hold until the pack clears it.
-        mLightBlocksDirty = mLightBlocksDirty || segmentsDirty ||
-                            config.neon.arcs != mCurrentConfig.neon.arcs;
+        mLightBlocksDirty = mLightBlocksDirty || segmentsDirty || arcsDirty;
 
         mCurrentConfig = config;
 
-        // Give the scaled buffer back the moment this config stops wanting it -
-        // the layer switched off, or the scale returned to 1.0. It is the only
-        // allocation in this renderer that is not a handful of KB: at 1920x1080
-        // and scale 0.5 it is 2.1 MB of colour attachment, and nothing else
+        // Give the scaled buffers back the moment this config stops wanting
+        // them - the layer switched off, or the scale returned to 1.0. With the
+        // glow coverage table below they are the only allocations in this
+        // renderer that are not a handful of KB: at 1920x1080 and scale 0.5
+        // the reduced buffer is 2.1 MB of colour attachment, and nothing else
         // here freed it, so a host that enabled the neon at a reduced scale
         // during setup and then turned it off held that for the life of the
         // effect. Everything else the renderer owns - the three atlases, the
@@ -1457,6 +1477,16 @@ namespace EdgeLighting
         {
             mScaledBuffer.Release();
             mGatherBuffer.Release();
+        }
+        // The glow coverage table, 1 MB at RGBA16F, is given back only when the
+        // layer is switched off - not when the ring turns uniform and stops
+        // reading it, which an arc animation reaching length 1 does once per
+        // loop, and which would then reallocate it on the way back. Released
+        // or never allocated, ensureGlowCoverBuffer reallocates it, and marks
+        // it for a bake, on the next frame that reads it.
+        if (!config.neon.enable)
+        {
+            mGlowCoverBuffer.Release();
         }
 
         // Rebuilds need the GL objects Initialize creates. The neon.frag
@@ -2425,26 +2455,44 @@ namespace EdgeLighting
         mEmissionTime = time;
     }
 
-    bool NeonRenderer::resizeGlowCoverBuffer()
+    bool NeonRenderer::ensureGlowCoverBuffer()
     {
-        // The emission table's walk, over GLOW_COVER_FORMATS, with a linear
-        // filter: the consumer interpolates between neighbouring positions round
-        // each piece. Called once, so it always starts at the top.
-        for (size_t i = 0; i < std::size(GLOW_COVER_FORMATS); ++i)
+        // Allocated is enough: the table's size is fixed, so a live buffer has
+        // nothing to resize to, and this runs every frame a partly lit ring
+        // draws.
+        if (mGlowCoverBuffer.IsValid())
         {
-            const TargetFormat &f = GLOW_COVER_FORMATS[i];
+            return true;
+        }
+
+        // The gather buffer's walk, over GLOW_COVER_FORMATS, with a linear
+        // filter: the consumer interpolates between neighbouring positions round
+        // each piece. Resumed from mGlowCoverFormat, because this buffer is
+        // released with the layer and cannot record a refused format in its own
+        // attachment - so a driver that refused RGBA16F once is not asked again
+        // on every re-enable, and logs once.
+        for (; mGlowCoverFormat < std::size(GLOW_COVER_FORMATS); ++mGlowCoverFormat)
+        {
+            const TargetFormat &f = GLOW_COVER_FORMATS[mGlowCoverFormat];
             if (mGlowCoverBuffer.Resize(GLOW_COVER_WIDTH, GLOW_COVER_HEIGHT,
                                         f.internalFormat, f.format, f.type, GL_LINEAR))
             {
+                // Undefined texels until a bake writes them - whatever the
+                // flag said about the buffer this one replaces.
+                mGlowCoverDirty = true;
                 return true;
             }
-            if (i + 1 < std::size(GLOW_COVER_FORMATS))
+            if (mGlowCoverFormat + 1 < std::size(GLOW_COVER_FORMATS))
             {
                 LOG_E("NeonRenderer: %s glow coverage target unavailable, falling back to %s. "
                       "The halo and bloom coverage will be stored at 8 bits.",
-                      f.name, GLOW_COVER_FORMATS[i + 1].name);
+                      f.name, GLOW_COVER_FORMATS[mGlowCoverFormat + 1].name);
             }
         }
+        // Every candidate refused: leave the index on the last one, so the next
+        // frame that needs the table retries the format most likely to
+        // allocate, as resizeGatherBuffer does.
+        mGlowCoverFormat = std::size(GLOW_COVER_FORMATS) - 1;
         return false;
     }
 
@@ -2536,7 +2584,24 @@ namespace EdgeLighting
         shader.SetUniform("uArcLUT", 2);
         // The glow coverage table from pass 0b, on its own unit - 3 and 4 are
         // the emission table or the gather buffer, depending on the path.
-        mGlowCoverBuffer.BindTexture(5);
+        //
+        // On a ring lit uniformly it may never have been allocated, and the
+        // shader's uniformCover branch then never reads it - IsGlowCoverUnread,
+        // which skips the allocation, is the stricter of the two tests. The
+        // unit still gets a COMPLETE texture rather than 0: Apple's driver logs
+        // a sampler bound to an unloadable texture at draw time whether or not
+        // it is read, and the direct path drew without that line before the
+        // table became lazy. The gradient ring stands in - already bound on
+        // unit 0 for this same program, so baked, and never a render target,
+        // so no feedback loop with any pass. Never sampled through this unit.
+        if (mGlowCoverBuffer.IsValid())
+        {
+            mGlowCoverBuffer.BindTexture(5);
+        }
+        else
+        {
+            mGradientLUT.Bind(5);
+        }
         shader.SetUniform("uGlowCover", 5);
         shader.SetUniform("uGlowCoverSplit", GetGlowCoverSplit(config));
         shader.SetUniform("uQuadMargin", quadMargin);
