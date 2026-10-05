@@ -249,13 +249,13 @@
 
   <figure class="diagram">
     <div class="diagram-scroll">
-    <svg class="dg" viewBox="0 0 1080 1264" role="img" aria-label="How one frame is built below scale 1.0, with the real contents of every buffer. The emission, gather and shade passes each write an offscreen buffer the next pass reads; the gather buffer is read again by the ring. Then the fill, the blit and the ring composite onto the caller's framebuffer, the blit and the ring covering disjoint areas, giving the finished frame. At scale 1.0 one pass reads the emission table and draws the same picture straight onto the framebuffer.">
+    <svg class="dg" viewBox="0 0 1080 1616" role="img" aria-label="How one frame is built below scale 1.0, with the real contents of every buffer. The emission, gather and shade passes each write an offscreen buffer the next pass reads; the gather buffer is read again by the ring. The glow coverage pass writes a table of how lit each of the outline's eight pieces is, read by the shade pass and the ring. Then the fill, the blit and the ring composite onto the caller's framebuffer, the blit and the ring covering disjoint areas, giving the finished frame. At scale 1.0 one pass reads the emission table and the glow coverage table and draws the same picture straight onto the framebuffer.">
       <defs>
         <marker id="dg-ah" viewBox="0 0 10 10" refX="10" refY="5" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" orient="auto">
           <path class="ah" d="M0,0 L10,5 L0,10 z"/>
         </marker>
       </defs>
-      <rect class="lane" x="14" y="24" width="1052" height="364" rx="6"/>
+      <rect class="lane" x="14" y="24" width="1052" height="680" rx="6"/>
       <text class="t-lane" x="30" y="48">PHASE 1 &#183; OFFSCREEN BUFFERS &#183; BLENDING OFF</text>
       <line class="w" x1="640" y1="44" x2="672" y2="44" marker-end="url(#dg-ah)"/>
       <text class="t-file" x="680" y="48">writes</text>
@@ -266,126 +266,179 @@
       <rect class="fbo" x="914" y="36" width="22" height="14" rx="1"/>
       <text class="t-file" x="944" y="48">framebuffer</text>
       <rect class="shader" x="30" y="64" width="310" height="56" rx="8"/>
-      <text class="t-id" x="44" y="86">P0</text>
-      <text x="86" y="86">mEmissionShader</text>
-      <text class="t-file" x="44" y="106">neon-emission.frag &#183; runs when stale</text>
-      <rect class="shader" x="385" y="64" width="310" height="56" rx="8"/>
-      <text class="t-id" x="399" y="86">P1a</text>
-      <text x="441" y="86">mNeonGatherShader</text>
-      <text class="t-file" x="399" y="106">neon-gather.frag &#183; the sample loop</text>
-      <rect class="shader" x="740" y="64" width="310" height="56" rx="8"/>
-      <text class="t-id" x="754" y="86">P1b</text>
-      <text x="796" y="86">mNeonShadeShader</text>
-      <text class="t-file" x="754" y="106">neon.frag + NEON_READS_GATHER</text>
-      <line class="w" x1="185" y1="120" x2="185" y2="151" marker-end="url(#dg-ah)"/>
-      <line class="w" x1="540" y1="120" x2="540" y2="151" marker-end="url(#dg-ah)"/>
-      <line class="w" x1="895" y1="120" x2="895" y2="151" marker-end="url(#dg-ah)"/>
-      <rect class="fbo" x="30" y="152" width="310" height="220" rx="1"/>
-      <text class="t-dim" x="44" y="172">FBO</text>
-      <text x="86" y="172">mEmissionBuffer</text>
-      <text class="t-file" x="44" y="190">128 &#215; 2 &#183; RGBA16F</text>
-      <text class="t-dim" x="326" y="190" text-anchor="end">read: texelFetch</text>
-      <image href="images/neon-onboarding/pass-p0-emission.png" x="42" y="226" width="286" height="62" preserveAspectRatio="xMidYMid meet"/>
-      <rect class="frame" x="42" y="226" width="286" height="62"/>
-      <text class="t-file" x="44" y="312">one column per perimeter sample;</text>
-      <text class="t-file" x="44" y="328">bands: arc colour, arc weight,</text>
-      <text class="t-file" x="44" y="344">segment colour, segment bell</text>
-      <rect class="fbo" x="385" y="152" width="310" height="220" rx="1"/>
-      <text class="t-dim" x="399" y="172">FBO</text>
-      <text x="441" y="172">mGatherBuffer</text>
-      <text class="t-file" x="399" y="190">128 &#215; 80 &#183; RGBA16F &#215; 2</text>
-      <text class="t-dim" x="681" y="190" text-anchor="end">read: bilinear</text>
-      <image href="images/neon-onboarding/pass-p1a-gather-hue.png" x="397" y="212" width="137" height="86" preserveAspectRatio="xMidYMid meet"/>
-      <rect class="frame" x="397" y="212" width="137" height="86"/>
-      <image href="images/neon-onboarding/pass-p1a-gather-cover.png" x="546" y="212" width="137" height="86" preserveAspectRatio="xMidYMid meet"/>
-      <rect class="frame" x="546" y="212" width="137" height="86"/>
-      <text class="t-file" x="397" y="316">hue</text>
-      <text class="t-file" x="546" y="316">arc coverage</text>
-      <text class="t-file" x="399" y="344">a coarse grid: ~2 texels per colour kernel</text>
-      <rect class="fbo" x="740" y="152" width="310" height="220" rx="1"/>
-      <text class="t-dim" x="754" y="172">FBO</text>
-      <text x="796" y="172">mScaledBuffer</text>
-      <text class="t-file" x="754" y="190">320 &#215; 180 RGBA8, scale 0.5</text>
-      <text class="t-dim" x="1036" y="190" text-anchor="end">read: bilinear</text>
-      <image href="images/neon-onboarding/pass-p1b-reduced.png" x="752" y="202" width="286" height="161" preserveAspectRatio="xMidYMid meet"/>
-      <rect class="frame" x="752" y="202" width="286" height="161"/>
-      <path class="r" d="M340,262 H362 V92 H384" marker-end="url(#dg-ah)"/>
-      <path class="r" d="M695,262 H717 V92 H739" marker-end="url(#dg-ah)"/>
-      <rect class="lane" x="14" y="400" width="1052" height="360" rx="6"/>
-      <text class="t-lane" x="30" y="424">PHASE 2 &#183; CALLER&#8217;S FRAMEBUFFER &#183; PREMULTIPLIED OVER</text>
-      <rect class="shader" x="30" y="440" width="310" height="56" rx="8"/>
-      <text class="t-id" x="44" y="462">P2a</text>
-      <text x="86" y="462">mBlackRectShader</text>
-      <text class="t-file" x="44" y="482">black-rect.frag &#183; only with a fill</text>
-      <rect class="shader" x="385" y="440" width="310" height="56" rx="8"/>
-      <text class="t-id" x="399" y="462">P2c</text>
-      <text x="441" y="462">mNeonRingShader</text>
-      <text class="t-file" x="399" y="482">neon.frag + NEON_READS_GATHER</text>
-      <rect class="shader" x="740" y="440" width="310" height="56" rx="8"/>
-      <text class="t-id" x="754" y="462">P2b</text>
-      <text x="796" y="462">mBlitShader</text>
-      <text class="t-file" x="754" y="482">neon-blit.frag &#183; upsamples</text>
-      <line class="r" x1="540" y1="372" x2="540" y2="439" marker-end="url(#dg-ah)"/>
-      <line class="r" x1="895" y1="372" x2="895" y2="439" marker-end="url(#dg-ah)"/>
-      <line class="w" x1="185" y1="496" x2="185" y2="523" marker-end="url(#dg-ah)"/>
-      <line class="w" x1="540" y1="496" x2="540" y2="523" marker-end="url(#dg-ah)"/>
-      <line class="w" x1="895" y1="496" x2="895" y2="523" marker-end="url(#dg-ah)"/>
-      <rect class="out" x="30" y="524" width="310" height="220" rx="2"/>
-      <text class="t-dim" x="44" y="546">drew</text>
-      <text x="86" y="546">nothing in this frame</text>
-      <text class="t-file" x="44" y="584">This scene sets no opaque fill.</text>
-      <text class="t-file" x="44" y="604">With one, this pass paints a solid</text>
-      <text class="t-file" x="44" y="620">band under the glow, full resolution.</text>
-      <rect class="out" x="385" y="524" width="310" height="220" rx="2"/>
-      <text class="t-dim" x="399" y="546">drew</text>
-      <text x="441" y="546">the ring band, full resolution</text>
-      <image href="images/neon-onboarding/pass-p2c-ring-only.png" x="397" y="564" width="286" height="161" preserveAspectRatio="xMidYMid meet"/>
-      <rect class="frame" x="397" y="564" width="286" height="161"/>
-      <rect class="out" x="740" y="524" width="310" height="220" rx="2"/>
-      <text class="t-dim" x="754" y="546">drew</text>
-      <text x="796" y="546">the lit area outside the ring</text>
-      <image href="images/neon-onboarding/pass-after-blit.png" x="752" y="564" width="286" height="161" preserveAspectRatio="xMidYMid meet"/>
-      <rect class="frame" x="752" y="564" width="286" height="161"/>
-      <line class="w" x1="185" y1="744" x2="185" y2="787" marker-end="url(#dg-ah)"/>
-      <text class="t-file" x="193" y="770">1st</text>
-      <line class="w" x1="540" y1="744" x2="540" y2="787" marker-end="url(#dg-ah)"/>
-      <text class="t-file" x="548" y="770">3rd</text>
-      <line class="w" x1="895" y1="744" x2="895" y2="787" marker-end="url(#dg-ah)"/>
-      <text class="t-file" x="903" y="770">2nd</text>
-      <rect class="final" x="30" y="788" width="1020" height="220" rx="2"/>
-      <text class="t-title" x="48" y="822">Caller&#8217;s framebuffer: the finished frame</text>
-      <text class="t-file" x="48" y="848">640 &#215; 360, full resolution, premultiplied over.</text>
-      <text class="t-file" x="48" y="868">Drawn in order: the fill, the blit, the ring.</text>
-      <text class="t-file" x="48" y="896">The blit and the ring cover disjoint areas,</text>
-      <text class="t-file" x="48" y="912">so no pixel is composited twice: the ring</text>
-      <text class="t-file" x="48" y="928">fills exactly the band the blit left empty.</text>
-      <image href="images/neon-onboarding/pass-after-ring.png" x="684" y="799" width="352" height="198" preserveAspectRatio="xMidYMid meet"/>
-      <rect class="frame" x="684" y="799" width="352" height="198"/>
-      <rect class="lane" x="14" y="1028" width="1052" height="220" rx="6"/>
-      <text class="t-lane" x="30" y="1052">AT SCALE 1.0 &#183; DIRECT PATH &#183; NO GATHER OR REDUCED BUFFER</text>
-      <rect class="shader" x="30" y="1068" width="200" height="56" rx="8"/>
-      <text class="t-id" x="44" y="1090">P0</text>
-      <text x="80" y="1090">mEmissionShader</text>
-      <rect class="fbo" x="260" y="1068" width="200" height="56" rx="1"/>
-      <text x="274" y="1090">mEmissionBuffer</text>
-      <text class="t-file" x="274" y="1110">128 &#215; 2 &#183; RGBA16F</text>
-      <rect class="shader" x="490" y="1068" width="200" height="56" rx="8"/>
-      <text class="t-id" x="504" y="1090">P1</text>
-      <text x="540" y="1090">mNeonShader</text>
-      <text class="t-file" x="504" y="1110">neon.frag</text>
-      <line class="w" x1="230" y1="1096" x2="259" y2="1096" marker-end="url(#dg-ah)"/>
-      <line class="r" x1="460" y1="1096" x2="489" y2="1096" marker-end="url(#dg-ah)"/>
-      <line class="w" x1="690" y1="1096" x2="719" y2="1096" marker-end="url(#dg-ah)"/>
-      <rect class="final" x="720" y="1068" width="330" height="172" rx="2"/>
-      <text class="t-title" x="734" y="1092">Caller&#8217;s framebuffer</text>
-      <image href="images/neon-onboarding/pass-p1-direct.png" x="734" y="1100" width="240" height="135" preserveAspectRatio="xMidYMid meet"/>
-      <rect class="frame" x="734" y="1100" width="240" height="135"/>
-      <text class="t-file" x="30" y="1160">The fill first if there is one, then P1: the sample loop and the</text>
-      <text class="t-file" x="30" y="1176">shading in one draw, on every pixel of the glow quad at full resolution.</text>
-      <text class="t-file" x="30" y="1200">Same picture as the frame above; no offscreen buffer but the emission table.</text>
+      <text class="t-id" x="44" y="86">P0b</text>
+      <text x="86" y="86">mGlowCoverShader</text>
+      <text class="t-file" x="44" y="106">neon-glow-cover.frag &#183; config change</text>
+      <line class="w" x1="340" y1="92" x2="384" y2="92" marker-end="url(#dg-ah)"/>
+      <text class="t-file" x="44" y="148">Runs after P0, and only when the</text>
+      <text class="t-file" x="44" y="164">config changed; skipped while the</text>
+      <text class="t-file" x="44" y="180">ring is lit uniformly.</text>
+      <text class="t-file" x="44" y="212">Each texel: how lit ONE piece of the</text>
+      <text class="t-file" x="44" y="228">outline is - one of 4 straights or</text>
+      <text class="t-file" x="44" y="244">4 corner arcs - seen from one</text>
+      <text class="t-file" x="44" y="260">fragment position round it: its own</text>
+      <text class="t-file" x="44" y="276">coverage under the layer&#8217;s kernel,</text>
+      <text class="t-file" x="44" y="292">over its own extent only.</text>
+      <text class="t-file" x="44" y="324">Read by P1b and P2c (P1 at 1.0):</text>
+      <text class="t-file" x="44" y="340">one linear fetch per piece.</text>
+      <rect class="fbo" x="385" y="64" width="665" height="284" rx="1"/>
+      <text class="t-dim" x="399" y="84">FBO</text>
+      <text x="441" y="84">mGlowCoverBuffer</text>
+      <text class="t-file" x="399" y="102">1024 &#215; 128 &#183; RGBA16F &#183; 1.0 MB</text>
+      <text class="t-dim" x="1036" y="102" text-anchor="end">read: linear</text>
+      <image href="images/neon-onboarding/pass-p0b-glow-cover.png" x="397" y="116" width="414" height="219" preserveAspectRatio="xMidYMid meet"/>
+      <rect class="frame" x="397" y="116" width="414" height="219"/>
+      <text class="t-dim" x="827" y="130">panels, as laid out:</text>
+      <text class="t-file" x="827" y="146">r arcs, halo</text>
+      <text class="t-file" x="937" y="146">g arcs, bloom</text>
+      <text class="t-file" x="827" y="162">b segs, halo</text>
+      <text class="t-file" x="937" y="162">a segs, bloom</text>
+      <text class="t-dim" x="827" y="190">4 bands of 32 rows:</text>
+      <text class="t-dim" x="827" y="206">straight</text>
+      <text class="t-dim" x="937" y="206">+ corner</text>
+      <text class="t-file" x="827" y="222">0 left edge</text>
+      <text class="t-file" x="937" y="222">bottom-left</text>
+      <text class="t-file" x="827" y="238">1 right edge</text>
+      <text class="t-file" x="937" y="238">bottom-right</text>
+      <text class="t-file" x="827" y="254">2 bottom edge</text>
+      <text class="t-file" x="937" y="254">top-left</text>
+      <text class="t-file" x="827" y="270">3 top edge</text>
+      <text class="t-file" x="937" y="270">top-right</text>
+      <text class="t-file" x="827" y="294">across: along the straight,</text>
+      <text class="t-file" x="827" y="310">or direction round the corner</text>
+      <text class="t-file" x="827" y="326">down: distance from the line,</text>
+      <text class="t-file" x="827" y="342">or from the corner&#8217;s centre</text>
+      <path class="r" d="M1000,348 V379" marker-end="url(#dg-ah)"/>
+      <path class="r" d="M1050,206 H1058 V746 H640 V755" marker-end="url(#dg-ah)"/>
+      <rect class="shader" x="30" y="380" width="310" height="56" rx="8"/>
+      <text class="t-id" x="44" y="402">P0</text>
+      <text x="86" y="402">mEmissionShader</text>
+      <text class="t-file" x="44" y="422">neon-emission.frag &#183; runs when stale</text>
+      <rect class="shader" x="385" y="380" width="310" height="56" rx="8"/>
+      <text class="t-id" x="399" y="402">P1a</text>
+      <text x="441" y="402">mNeonGatherShader</text>
+      <text class="t-file" x="399" y="422">neon-gather.frag &#183; the sample loop</text>
+      <rect class="shader" x="740" y="380" width="310" height="56" rx="8"/>
+      <text class="t-id" x="754" y="402">P1b</text>
+      <text x="796" y="402">mNeonShadeShader</text>
+      <text class="t-file" x="754" y="422">neon.frag + NEON_READS_GATHER</text>
+      <line class="w" x1="185" y1="436" x2="185" y2="467" marker-end="url(#dg-ah)"/>
+      <line class="w" x1="540" y1="436" x2="540" y2="467" marker-end="url(#dg-ah)"/>
+      <line class="w" x1="895" y1="436" x2="895" y2="467" marker-end="url(#dg-ah)"/>
+      <rect class="fbo" x="30" y="468" width="310" height="220" rx="1"/>
+      <text class="t-dim" x="44" y="488">FBO</text>
+      <text x="86" y="488">mEmissionBuffer</text>
+      <text class="t-file" x="44" y="506">128 &#215; 2 &#183; RGBA16F</text>
+      <text class="t-dim" x="326" y="506" text-anchor="end">read: texelFetch</text>
+      <image href="images/neon-onboarding/pass-p0-emission.png" x="42" y="542" width="286" height="62" preserveAspectRatio="xMidYMid meet"/>
+      <rect class="frame" x="42" y="542" width="286" height="62"/>
+      <text class="t-file" x="44" y="628">one column per perimeter sample;</text>
+      <text class="t-file" x="44" y="644">bands: arc colour, arc weight,</text>
+      <text class="t-file" x="44" y="660">segment colour, segment bell</text>
+      <rect class="fbo" x="385" y="468" width="310" height="220" rx="1"/>
+      <text class="t-dim" x="399" y="488">FBO</text>
+      <text x="441" y="488">mGatherBuffer</text>
+      <text class="t-file" x="399" y="506">128 &#215; 80 &#183; RGBA16F &#215; 2</text>
+      <text class="t-dim" x="681" y="506" text-anchor="end">read: bilinear</text>
+      <image href="images/neon-onboarding/pass-p1a-gather-hue.png" x="397" y="528" width="137" height="86" preserveAspectRatio="xMidYMid meet"/>
+      <rect class="frame" x="397" y="528" width="137" height="86"/>
+      <image href="images/neon-onboarding/pass-p1a-gather-cover.png" x="546" y="528" width="137" height="86" preserveAspectRatio="xMidYMid meet"/>
+      <rect class="frame" x="546" y="528" width="137" height="86"/>
+      <text class="t-file" x="397" y="632">hue</text>
+      <text class="t-file" x="546" y="632">arc coverage</text>
+      <text class="t-file" x="399" y="660">a coarse grid: ~2 texels per colour kernel</text>
+      <rect class="fbo" x="740" y="468" width="310" height="220" rx="1"/>
+      <text class="t-dim" x="754" y="488">FBO</text>
+      <text x="796" y="488">mScaledBuffer</text>
+      <text class="t-file" x="754" y="506">320 &#215; 180 RGBA8, scale 0.5</text>
+      <text class="t-dim" x="1036" y="506" text-anchor="end">read: bilinear</text>
+      <image href="images/neon-onboarding/pass-p1b-reduced.png" x="752" y="518" width="286" height="161" preserveAspectRatio="xMidYMid meet"/>
+      <rect class="frame" x="752" y="518" width="286" height="161"/>
+      <path class="r" d="M340,578 H362 V408 H384" marker-end="url(#dg-ah)"/>
+      <path class="r" d="M695,578 H717 V408 H739" marker-end="url(#dg-ah)"/>
+      <rect class="lane" x="14" y="716" width="1052" height="360" rx="6"/>
+      <text class="t-lane" x="30" y="740">PHASE 2 &#183; CALLER&#8217;S FRAMEBUFFER &#183; PREMULTIPLIED OVER</text>
+      <rect class="shader" x="30" y="756" width="310" height="56" rx="8"/>
+      <text class="t-id" x="44" y="778">P2a</text>
+      <text x="86" y="778">mBlackRectShader</text>
+      <text class="t-file" x="44" y="798">black-rect.frag &#183; only with a fill</text>
+      <rect class="shader" x="385" y="756" width="310" height="56" rx="8"/>
+      <text class="t-id" x="399" y="778">P2c</text>
+      <text x="441" y="778">mNeonRingShader</text>
+      <text class="t-file" x="399" y="798">neon.frag + NEON_READS_GATHER</text>
+      <rect class="shader" x="740" y="756" width="310" height="56" rx="8"/>
+      <text class="t-id" x="754" y="778">P2b</text>
+      <text x="796" y="778">mBlitShader</text>
+      <text class="t-file" x="754" y="798">neon-blit.frag &#183; upsamples</text>
+      <line class="r" x1="540" y1="688" x2="540" y2="755" marker-end="url(#dg-ah)"/>
+      <line class="r" x1="895" y1="688" x2="895" y2="755" marker-end="url(#dg-ah)"/>
+      <line class="w" x1="185" y1="812" x2="185" y2="839" marker-end="url(#dg-ah)"/>
+      <line class="w" x1="540" y1="812" x2="540" y2="839" marker-end="url(#dg-ah)"/>
+      <line class="w" x1="895" y1="812" x2="895" y2="839" marker-end="url(#dg-ah)"/>
+      <rect class="out" x="30" y="840" width="310" height="220" rx="2"/>
+      <text class="t-dim" x="44" y="862">drew</text>
+      <text x="86" y="862">nothing in this frame</text>
+      <text class="t-file" x="44" y="900">This scene sets no opaque fill.</text>
+      <text class="t-file" x="44" y="920">With one, this pass paints a solid</text>
+      <text class="t-file" x="44" y="936">band under the glow, full resolution.</text>
+      <rect class="out" x="385" y="840" width="310" height="220" rx="2"/>
+      <text class="t-dim" x="399" y="862">drew</text>
+      <text x="441" y="862">the ring band, full resolution</text>
+      <image href="images/neon-onboarding/pass-p2c-ring-only.png" x="397" y="880" width="286" height="161" preserveAspectRatio="xMidYMid meet"/>
+      <rect class="frame" x="397" y="880" width="286" height="161"/>
+      <rect class="out" x="740" y="840" width="310" height="220" rx="2"/>
+      <text class="t-dim" x="754" y="862">drew</text>
+      <text x="796" y="862">the lit area outside the ring</text>
+      <image href="images/neon-onboarding/pass-after-blit.png" x="752" y="880" width="286" height="161" preserveAspectRatio="xMidYMid meet"/>
+      <rect class="frame" x="752" y="880" width="286" height="161"/>
+      <line class="w" x1="185" y1="1060" x2="185" y2="1103" marker-end="url(#dg-ah)"/>
+      <text class="t-file" x="193" y="1086">1st</text>
+      <line class="w" x1="540" y1="1060" x2="540" y2="1103" marker-end="url(#dg-ah)"/>
+      <text class="t-file" x="548" y="1086">3rd</text>
+      <line class="w" x1="895" y1="1060" x2="895" y2="1103" marker-end="url(#dg-ah)"/>
+      <text class="t-file" x="903" y="1086">2nd</text>
+      <rect class="final" x="30" y="1104" width="1020" height="220" rx="2"/>
+      <text class="t-title" x="48" y="1138">Caller&#8217;s framebuffer: the finished frame</text>
+      <text class="t-file" x="48" y="1164">640 &#215; 360, full resolution, premultiplied over.</text>
+      <text class="t-file" x="48" y="1184">Drawn in order: the fill, the blit, the ring.</text>
+      <text class="t-file" x="48" y="1212">The blit and the ring cover disjoint areas,</text>
+      <text class="t-file" x="48" y="1228">so no pixel is composited twice: the ring</text>
+      <text class="t-file" x="48" y="1244">fills exactly the band the blit left empty.</text>
+      <image href="images/neon-onboarding/pass-after-ring.png" x="684" y="1115" width="352" height="198" preserveAspectRatio="xMidYMid meet"/>
+      <rect class="frame" x="684" y="1115" width="352" height="198"/>
+      <rect class="lane" x="14" y="1344" width="1052" height="256" rx="6"/>
+      <text class="t-lane" x="30" y="1368">AT SCALE 1.0 &#183; DIRECT PATH &#183; NO GATHER OR REDUCED BUFFER</text>
+      <rect class="shader" x="30" y="1384" width="200" height="56" rx="8"/>
+      <text class="t-id" x="44" y="1406">P0</text>
+      <text x="80" y="1406">mEmissionShader</text>
+      <rect class="fbo" x="260" y="1384" width="200" height="56" rx="1"/>
+      <text x="274" y="1406">mEmissionBuffer</text>
+      <text class="t-file" x="274" y="1426">128 &#215; 2 &#183; RGBA16F</text>
+      <rect class="shader" x="490" y="1384" width="200" height="56" rx="8"/>
+      <text class="t-id" x="504" y="1406">P1</text>
+      <text x="540" y="1406">mNeonShader</text>
+      <text class="t-file" x="504" y="1426">neon.frag</text>
+      <line class="w" x1="230" y1="1412" x2="259" y2="1412" marker-end="url(#dg-ah)"/>
+      <line class="r" x1="460" y1="1412" x2="489" y2="1412" marker-end="url(#dg-ah)"/>
+      <line class="w" x1="690" y1="1412" x2="719" y2="1412" marker-end="url(#dg-ah)"/>
+      <rect class="final" x="720" y="1384" width="330" height="172" rx="2"/>
+      <text class="t-title" x="734" y="1408">Caller&#8217;s framebuffer</text>
+      <image href="images/neon-onboarding/pass-p1-direct.png" x="734" y="1416" width="240" height="135" preserveAspectRatio="xMidYMid meet"/>
+      <rect class="frame" x="734" y="1416" width="240" height="135"/>
+      <rect class="shader" x="30" y="1456" width="200" height="56" rx="8"/>
+      <text class="t-id" x="44" y="1478">P0b</text>
+      <text x="80" y="1478">mGlowCoverShader</text>
+      <rect class="fbo" x="260" y="1456" width="200" height="56" rx="1"/>
+      <text x="274" y="1478">mGlowCoverBuffer</text>
+      <text class="t-file" x="274" y="1498">1024 &#215; 128 &#183; RGBA16F</text>
+      <line class="w" x1="230" y1="1484" x2="259" y2="1484" marker-end="url(#dg-ah)"/>
+      <path class="r" d="M460,1484 H590 V1441" marker-end="url(#dg-ah)"/>
+      <text class="t-file" x="30" y="1540">The fill first if there is one, then P1: the sample loop and the</text>
+      <text class="t-file" x="30" y="1556">shading in one draw, on every pixel of the glow quad at full resolution.</text>
+      <text class="t-file" x="30" y="1580">Same picture as the frame above; no offscreen buffer but the two tables.</text>
     </svg>
     </div>
-    <figcaption>How one frame is built below scale 1.0, with what each buffer and each pass actually held, captured from this frame. Phase 1 fills three offscreen buffers, each read by the pass after it; the gather buffer is read a second time by the ring. Phase 2 composites onto the caller&rsquo;s framebuffer: the blit draws everything except a band around the outline, and the ring fills exactly that band. At scale 1.0 (bottom) one pass draws the same picture. Every pass also reads uniforms and the CPU-baked LUTs and uniform blocks, which are left out, and so is P0b&rsquo;s glow coverage table, which every shading pass reads (see its section below). Sizes are this page&rsquo;s 640 &times; 360 frame; the gather captures are magnified, so their texels show.</figcaption>
+    <figcaption>How one frame is built below scale 1.0, with what each buffer and each pass actually held, captured from this frame. Phase 1 fills four offscreen buffers. P0b&rsquo;s glow coverage table (top) is read by both shading passes, P1b and the ring; of the other three, each is read by the pass after it, and the gather buffer a second time by the ring. Phase 2 composites onto the caller&rsquo;s framebuffer: the blit draws everything except a band around the outline, and the ring fills exactly that band. At scale 1.0 (bottom) one pass draws the same picture. Every pass also reads uniforms and the CPU-baked LUTs and uniform blocks, which are left out. P0b runs after P0 in the frame; it is drawn on top here only because its table feeds passes in both phases. Sizes are this page&rsquo;s 640 &times; 360 frame; the gather captures are magnified, so their texels show.</figcaption>
   </figure>
 
   <nav aria-label="Passes in frame order">
