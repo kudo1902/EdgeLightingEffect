@@ -144,7 +144,7 @@ averaged around the pixel (V19 and V20 in
   by the dark piece's coverage.
 - **A fully lit ring is unchanged**, bit for bit.
 
-It costs one more offscreen pass and a 1.5 MB RGBA16F table (0.75 MB in RGBA8
+It costs one more offscreen pass and a 1.0 MB RGBA16F table (0.5 MB in RGBA8
 on a driver that cannot render to half float). V20's version of it - one
 table per perimeter, 2 MB - cost ~1.1x on a partly lit ring and ~1.04x on a
 fully lit one at 1.0 (~1.2x and ~1.08x at 0.5) on an M2 Pro; V21's, one table
@@ -153,9 +153,9 @@ AMD Radeon Pro 5300M. The pass runs only when the config changes, and not at
 all on a ring lit uniformly (one full arc, no segments), which never reads it;
 its program is compiled on the first frame that needs it rather than in
 `Initialize`, which on the AMD drops from ~8.7 ms to ~4.5 ms. Under an
-animation of the arcs or segments it runs every frame: on the AMD, 0.16 ms a
-frame in all with one arc animating and 0.34 ms with three arcs and two
-segments (0.17 and 0.57 ms before V21), everything a config change costs
+animation of the arcs or segments it runs every frame: on the AMD, 0.14 ms a
+frame in all with one arc animating and 0.27 ms with three arcs and two
+segments (0.17 and 0.55 ms before V21), everything a config change costs
 included - still worth measuring on a slower GPU before shipping an animated
 segment. See V20 and V21 for the measurements.
 

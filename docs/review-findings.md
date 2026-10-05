@@ -3595,7 +3595,10 @@ which the first build missed on both counts:
   | 2048 x 160, fixed, 32 rows | 2.6 MB | 4 | the 4K circle; `v14_segment` 3 |
   | 1024 x 320, fixed | 2.6 MB | 12 | the 4K circle; 3 on the 600 px one |
   | 1024 x 160, fixed, 32 rows | 1.3 MB | 12 | the 4K circle; `v14_segment` 3 |
-  | **1024 x 192, shared bands, 48 rows (ships)** | **1.5 MB** | **2** | **three scenes; 1 everywhere else** |
+  | 1024 x 192, shared bands, 48 rows | 1.5 MB | 2 | three scenes; 1 everywhere else |
+  | **1024 x 128, shared bands, 32 rows (ships)** | **1.0 MB** | **3** | **62 px of `v14_segment`; 2 on five scenes, 1 elsewhere** |
+  | 768 x 128, shared bands, 32 rows | 0.75 MB | 6 | a 1 px halo on the 4K-sized rect |
+  | 512 x 128, shared bands, 32 rows | 0.5 MB | 9 | the same |
 
   Every fixed layout fails the same way - the corners starve on a large radius
   while the straights' bands sit idle, and on a circle the straights are empty
@@ -3606,7 +3609,14 @@ which the first build missed on both counts:
   (`GetGlowCoverSplit`, the uniform `uGlowCoverSplit`) and handed to the bake
   and every `neon.frag` program alike: the two shaders work in different units,
   and a split each rounded for itself could land a column apart and read a
-  whole band from the wrong texels.
+  whole band from the wrong texels. Of the shared layouts, 32 rows ships:
+  against 48 it saves 0.5 MB and a quarter of the bake's cost under animation
+  (0.27 against 0.35 ms, three arcs and two segments), and the two differ from
+  each other by at most 2 levels - 1 over most of the glow, where the two round
+  to 8 bits in slightly different places, and 2 in small patches near a
+  segment's bell, the one place the coarser distance sampling shows. Width is
+  the knob not to cut: 768 columns read 6 levels off a 1 px halo on a 4K-sized
+  rect, exactly the shape of a TV panel with a thin line.
 - **The bake compiles on first use, and small.** The first build's bake added
   ~10 ms to every host's `Initialize` on the AMD, and that understated it: the
   driver defers part of the work to the first draw, where it showed as ~110 ms
@@ -3653,30 +3663,33 @@ before -> after):
 | scene | V20 table | per-piece table | crease |
 | ----- | --------- | --------------- | ------ |
 | four fully lit rings (rounded, sharp, `intensity` 0.6, scale 0.5) | 0 / 0 | 0 / 0 | unchanged |
-| `ghost_report` (V19's report, 1 px halo, 3840 x 2160) | 512 / 1 | 189 / 2 | 84 -> 84 |
-| `ghost_glow5` | 34,839 / 8 | 12,136 / 1 | 62 -> 61 |
-| `second_report` (V19's second, CCW) | 640,082 / 2 | 67,804 / 1 | 12 -> 12 |
-| `corner_arc_r0_g1` (an arc over the top straight, sharp corners) | 58,090 / 4 | 5,866 / 1 | 4 -> 4 |
-| `corner_arc_r0_g5` | 664,137 / 8 | 36,107 / 1 | 7 -> 6 |
-| `corner_arc_r40_g5` | 665,850 / 9 | 30,161 / 1 | 7 -> 7 |
-| `corner_arc_r40_g12` (bloom 0.6) | 838,598 / 14 | 41,506 / 1 | 4 -> 4 |
-| `tiled_arcs` (three abutting arcs) | 879,471 / 9 | 82,279 / 1 | 5 -> 5 |
-| `half_ring` | 878,152 / 11 | 10,423 / 1 | 5 -> 5 |
-| `arc_single` (the guide's 336 x 168) | 117,261 / 12 | 3,437 / 1 | 5 -> 5 |
-| `v14_segment` (V14's report, 3840 x 2160) | 3,964,923 / 18 | 445,511 / 1 | 4 -> 4 |
-| `segment_dark` | 903,520 / 33 | 85,793 / 1 | 5 -> 5 |
-| `guide_seg2` (the guide's `segment-boost-2.png`, 336 x 168) | 127,490 / 42 | 18,810 / 1 | 6 -> 5 |
-| `segment_corner` (a segment centred on a corner) | 803,140 / 11 | 51,736 / 1 | 6 -> 5 |
-| `stadium` (radius half the height) | 857,417 / 7 | 49,174 / 1 | 6 -> 6 |
-| `circle_g1` (600 x 600 circle, 1 px halo) | 54,732 / 2 | 7,181 / 1 | 4 -> 4 |
-| `circle_g10` | 831,483 / 10 | 125,982 / 1 | 4 -> 4 |
-| `small_rect` (120 x 80) | 227,817 / 18 | 3,249 / 1 | 6 -> 5 |
-| `ccw_arcs_s05` (CCW, scale 0.5) | 769,145 / 8 | 42,414 / 1 | 5 -> 5 |
-| `big_r_4k_g1` (3600 x 2000, radius 400, 1 px halo) | 169,422 / 5 | 41,681 / 2 | 6 -> 6 |
-| `circle_4k_g1` (2000 x 2000 circle, 1 px halo) | 100,711 / 3 | 30,658 / 2 | 4 -> 4 |
+| `ghost_report` (V19's report, 1 px halo, 3840 x 2160) | 512 / 1 | 257 / 2 | 84 -> 84 |
+| `ghost_glow5` | 34,839 / 8 | 14,391 / 1 | 62 -> 61 |
+| `second_report` (V19's second, CCW) | 640,082 / 2 | 104,465 / 1 | 12 -> 12 |
+| `corner_arc_r0_g1` (an arc over the top straight, sharp corners) | 58,090 / 4 | 8,427 / 1 | 4 -> 4 |
+| `corner_arc_r0_g5` | 664,137 / 8 | 75,342 / 1 | 7 -> 6 |
+| `corner_arc_r40_g5` | 665,850 / 9 | 63,706 / 1 | 7 -> 7 |
+| `corner_arc_r40_g12` (bloom 0.6) | 838,598 / 14 | 82,900 / 1 | 4 -> 3 |
+| `tiled_arcs` (three abutting arcs) | 879,471 / 9 | 100,449 / 1 | 5 -> 5 |
+| `half_ring` | 878,152 / 11 | 12,059 / 1 | 5 -> 5 |
+| `arc_single` (the guide's 336 x 168) | 117,261 / 12 | 3,431 / 1 | 5 -> 5 |
+| `v14_segment` (V14's report, 3840 x 2160) | 3,964,923 / 18 | 883,354 / 3 | 4 -> 3 |
+| `segment_dark` | 903,520 / 33 | 145,381 / 2 | 5 -> 5 |
+| `guide_seg2` (the guide's `segment-boost-2.png`, 336 x 168) | 127,490 / 42 | 22,762 / 1 | 6 -> 5 |
+| `segment_corner` (a segment centred on a corner) | 803,140 / 11 | 97,504 / 1 | 6 -> 5 |
+| `stadium` (radius half the height) | 857,417 / 7 | 91,913 / 1 | 6 -> 6 |
+| `circle_g1` (600 x 600 circle, 1 px halo) | 54,732 / 2 | 10,009 / 1 | 4 -> 4 |
+| `circle_g10` | 831,483 / 10 | 197,400 / 2 | 4 -> 4 |
+| `small_rect` (120 x 80) | 227,817 / 18 | 3,733 / 1 | 6 -> 5 |
+| `ccw_arcs_s05` (CCW, scale 0.5) | 769,145 / 8 | 70,538 / 1 | 5 -> 5 |
+| `big_r_4k_g1` (3600 x 2000, radius 400, 1 px halo) | 169,422 / 5 | 56,230 / 2 | 6 -> 6 |
+| `circle_4k_g1` (2000 x 2000 circle, 1 px halo) | 100,711 / 3 | 37,525 / 2 | 4 -> 4 |
 
-Within 2 levels everywhere, and no pixel of any scene 3 or more off; the 2s
-are a 1 px halo on the largest shapes, where a column of the table is widest.
+Within 2 levels everywhere but 62 pixels of `v14_segment`, which read 3. The
+2s and the 3 come from two places: a 1 px halo on the largest shapes, where a
+column of the table is widest, and a segment's bell under a strong bloom,
+where its 32 rows are. With 48 rows every scene reads within 2 and no pixel
+3 or more - the trade described above.
 
 Two notes for whoever re-measures. Run every variant on ONE GPU: this machine
 switches between an Intel UHD 630 and the AMD between processes, and the two
@@ -3699,7 +3712,7 @@ every p99 stays 1. `partition` passes, seeds 1 and 2, 1000 configs each.
 The onboarding guide's figures were regenerated. Against the build before V21
 on the same GPU only the partly lit ones move: `segment-boost-2.png` by up to
 42 levels (the worst case anywhere - mean error 12.5 over its lit pixels
-against the brute force before, 0.15 after), `arc-single.png` and
+against the brute force before, 0.18 after), `arc-single.png` and
 `segment-boost-0.4.png` 14, `winding-*.png` 11-13, the pass figures and
 `arc-tiled.png` 10, `arc-end-closeup.png` 8, the scale figures 3; every other
 figure renders byte-identically and was left as committed. `pass-p0b-glow-cover.png`
@@ -3722,21 +3735,28 @@ between rounds at 720p, 1.03x at 1080p), as cost after / before:
 
 Parity at 1.0, and 4-7% faster below it - the scaled path's shading programs
 read the same table more cheaply than V20's did (no perimeter placement, one
-arc at a time). The first build was 1.11x-1.15x on fully lit scenes at 1.0, in
+arc at a time). Measured with 48 rows; 32 rows changes only the table's
+constants, and an eight-round interleaved check of both against the build
+before V21 put them level with each other on every scene (fully lit 1.00-1.01x,
+partly lit 1.00-1.015x at 1.0). The first build was 1.11x-1.15x on fully lit scenes at 1.0, in
 the same measurement, before the read was reworked.
 
-Memory: **1.5 MB** in RGBA16F (0.75 MB in the RGBA8 fallback), against V20's
-2 MB - the first build's 5.2 MB is what the shared bands bought back.
+Memory: **1.0 MB** in RGBA16F (0.5 MB in the RGBA8 fallback), against V20's
+2 MB - the first build's 5.2 MB is what the shared bands and 32 rows bought
+back.
 
 Startup, a fresh effect's `Initialize`, and its first frame with the programs
 that frame builds (median of 25 and of 15 fresh effects, two rounds):
 
 | | before V21 | after |
 | - | ---------- | ----- |
-| `Initialize` | 8.3-9.1 ms | 4.4-4.5 ms |
-| first frame, a fully lit ring (never bakes) | 238-295 ms | 171-174 ms |
-| first frame, three arcs (compiles the bake) | 238-269 ms | 243-247 ms |
+| `Initialize` | 8.3-9.1 ms | 4.4-5.3 ms |
+| first frame, a fully lit ring (never bakes) | 238-295 ms | 171-192 ms |
+| first frame, three arcs (compiles the bake) | 238-272 ms | 243-282 ms |
 | first frame at scale 0.5, two arcs (four path programs and the bake) | 373-388 ms | 379-381 ms |
+
+(Ranges span two sessions; the first-frame figures on this machine move by
+~30 ms between them, so read each row's before against its after.)
 
 `Initialize` no longer compiles the bake. A fully lit ring's first frame drops
 by 70-120 ms - it never builds the bake at all, where V20 built one and the
@@ -3752,14 +3772,14 @@ pass 0b's), before -> after:
 
 | animated | scale 1.0 | scale 0.5 |
 | -------- | --------- | --------- |
-| one arc, over half the ring | 0.17 -> 0.16 ms | - |
-| three arcs | 0.29 -> 0.22 ms | - |
-| one arc and one segment | 0.31 -> 0.26 ms | - |
-| three arcs and two segments (a still frame: 3.6 ms / 0.9 ms) | 0.57 -> 0.34 ms | 0.53 -> 0.32 ms |
+| one arc, over half the ring | 0.17 -> 0.14 ms | - |
+| three arcs | 0.29 -> 0.17 ms | - |
+| one arc and one segment | 0.31 -> 0.21 ms | - |
+| three arcs and two segments (a still frame: 3.6 ms / 0.9 ms) | 0.55 -> 0.27 ms | 0.52 -> 0.23 ms |
 | `intensity`, on a fully lit ring | 0.10 -> 0.04 ms | - |
 
 Cheaper in every case, though the table clips every arc and segment to every
-piece: 1.5x fewer texels than V20's, each arc integrated as its clipped
+piece: half V20's texels, each arc integrated as its clipped
 trapezoid (one or two spans where an arc only reaches a piece with one end),
 the halo's mass and moment algebraic where they were three atans a span, and -
 the last row - no bake at all on a ring lit uniformly (`IsGlowCoverUnread`, on
@@ -3812,7 +3832,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | V18 | open | colour-stop alpha dims only the filament; the halo and bloom ignore it (measured, `main` too); the cure is a design call (a third gather row or a redefined arc weight) |
 | V19 | fixed | V14's other half: the gathered coverage was right far from the line and too wide on it, so a narrow halo drew a thin line along a stretch no arc covers (13-68 levels at `glowRadius` 1, now 0); each piece now blends toward its foot's coverage by how much of its own kernel lies past the nearest arc end |
 | V20 | fixed | V14's last limit, uncovered by V19: every piece was scaled by the coverage gathered around the FRAGMENT, which dips on a dark line, so on a small rect with strong bloom an unlit stretch read 3-6 levels darker on the line; each piece now reads its own coverage from a table baked per config change (pass 0b) |
-| V21 | fixed | V20's table convolved the coverage along a straight line through each piece's foot, past the piece's ends, so light spilled round corners (2-42 levels off an exact per-piece reference); now a table per piece - each straight by projection, each corner by polar position, behind the centre a blend of both developments, each band shared by a straight and a corner in proportion to their lengths - within 2 levels of a brute-force reference on every scene. 1.5 MB against V20's 2, a cheaper animated bake, and a faster `Initialize`; the bake is compiled on the first frame that needs it, and the corner block runs one arc at a time, which is what kept a fully lit ring's cost from rising |
+| V21 | fixed | V20's table convolved the coverage along a straight line through each piece's foot, past the piece's ends, so light spilled round corners (2-42 levels off an exact per-piece reference); now a table per piece - each straight by projection, each corner by polar position, behind the centre a blend of both developments, each band shared by a straight and a corner in proportion to their lengths - within 2 levels of a brute-force reference on every scene but 62 pixels of one (3). 1.0 MB against V20's 2, an animated bake half as costly, and a faster `Initialize`; the bake is compiled on the first frame that needs it, and the corner block runs one arc at a time, which is what kept a fully lit ring's cost from rising |
 | I32 | fixed | the edge ring's gather attachments tripled the scaled path's memory; now 2.15 MB at 1080p and 0.5 for a full-screen rect, less for smaller ones |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s

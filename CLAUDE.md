@@ -153,13 +153,13 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   inverses; `NEON_GLOW_COVER_BAKE` (defined in `shaders.h.in` for the bake
   only) keeps each program to its own half, since this compiler builds every
   function in a source whether `main()` reaches it or not. Lengths enter only as
-  ratios, so both resolution paths share one table. 1024 x 192
-  (`GLOW_COVER_WIDTH` x `GLOW_COVER_HEIGHT`), RGBA16F (1.5 MB, less than V20's 2)
+  ratios, so both resolution paths share one table. 1024 x 128
+  (`GLOW_COVER_WIDTH` x `GLOW_COVER_HEIGHT`), RGBA16F (1.0 MB, half V20's 2)
   with an RGBA8 fallback, encoded `c / (1 + c)`, allocated once in
   `Initialize`, and re-baked on any config change (`mGlowCoverDirty`) - never on
   time, but EVERY frame under an animation that changes the config, which
-  costs 0.16-0.34 ms a frame on an AMD Radeon Pro 5300M - less than V20's table
-  did (0.17-0.57 ms) - everything a config change costs included: the cost to
+  costs 0.14-0.27 ms a frame on an AMD Radeon Pro 5300M - about half what V20's
+  table did (0.17-0.55 ms) - everything a config change costs included: the cost to
   watch on a slower GPU. A ring lit
   uniformly (one full arc, no segments) never reads the table, so it is neither
   baked (`IsGlowCoverUnread`, the shader's `uniformCover` made a hair stricter
@@ -181,7 +181,11 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   the integrals in `neon.frag` instead: measured, 2.0x / 3.3x on a partly lit
   ring. Verified within 2 levels of a brute-force per-fragment reference
   (samples placed by `perimeterPosition`, sharing no code with the bake) on 25
-  scenes, the 2s a 1 px halo on the largest shapes.
+  scenes, but for 62 pixels of one segment scene at 3: the 2s are a 1 px halo on
+  the largest shapes (columns) and a segment's bell (rows). `GLOW_COVER_ROWS` is
+  32; 48 reads within 2 everywhere for 0.5 MB more and 1.3x the animated bake,
+  and the width is the knob not to cut (768 read 6 off a thin line on a 4K
+  rect).
 
   `Render` is a **pass schedule**: derive the transform,
   then one call per `render*Pass` method, in TWO PHASES on both paths - every
