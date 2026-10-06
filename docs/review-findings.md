@@ -35,7 +35,7 @@ old fork survived.
 | | fixed | open |
 | - | ----- | ---- |
 | visual | V1, V2, V3, V4, V6, V7 | V5 (closed as a documented limitation) |
-| implementation | I1, I3, I4, I6, I7 | I2 (declined), I5 (documented), I8 (audited) |
+| implementation | I1, I2 (by I39), I3, I4, I6, I7 | I5 (documented), I8 (audited) |
 | second pass | R1, R2, R3, R4, R5, R6 | R7 |
 | third pass | V8, I9, I10, I11, I12 (partly) | V9, I12's two stale design docs |
 | fourth pass | I14 | I13 |
@@ -570,7 +570,7 @@ character rather than on whoever next builds for a GLES target. Verified by
 appending a U+2192 to `neon-blit.frag` and confirming the configure fails with
 the file named.
 
-### I2. The emission pre-pass re-bakes unconditionally every frame - DECLINED FOR NOW
+### I2. The emission pre-pass re-bakes unconditionally every frame - DECLINED, THEN FIXED BY I39
 
 The table is a pure function of `(si, uTime, config)` - the pass's own stated
 invariant. When `hueRotationRate` is 0 and no animation is attached, `uTime`
@@ -597,6 +597,11 @@ attribute later.
 Worth revisiting if a profile ever puts the pass on the critical path - the
 invalidation inputs are all already tracked by the existing dirty flags, so it
 is a contained change when there is evidence for it.
+
+**Since fixed, as I39.** The skip itself landed earlier (`isEmissionTableStale`,
+with a flag set on every config change); I39 removed that last wide term
+without the risk recorded above, by keying the table on version numbers of the
+GL objects the pass binds rather than on config fields.
 
 ### I3. Registering both neon renderers doubles the CPU-side work - FIXED
 
@@ -3920,6 +3925,83 @@ byte-identical to a fresh effect at every step, and byte-identical to the
 library before both changes at every step. `neon-scale-check check` and
 `partition` pass; no new log line in either.
 
+## Twenty-first pass (the perf plan's first items)
+
+Items 4, 6 and 7 of [`neon-perf-plan.md`](neon-perf-plan.md), measured on an
+Apple M2 Pro with `neon-scale-check time` and its new `--mode` (item 2 of the
+plan): three interleaved rounds per mode, five for `hue` and `segment-travel`,
+1920 x 1080, median. Numbered from I39 because I35-I38 are already taken, for
+other findings, on the `improve_scale_visual2` and `design_threaded_model`
+branches.
+
+Verified for all three together: a long-lived effect walked through 212 frames
+- holds, every kind of input change, a colour cross-fade in flight, the hue
+with the clock running and stopped, scales 1.0, 0.5 and 0.25, a viewport
+resize, disable and re-enable - byte-identical to the library before them at
+every frame; `neon-scale-check check` unchanged and passing; `partition`
+passing on seeds 1 and 2; a full build (library, C ABI, both demos, both tools)
+with no new warning.
+
+### I39. The emission table re-baked on every config change - FIXED
+
+`OnConfigChanged` set `mEmissionDirty` unconditionally, so an intensity, bloom,
+glow, geometry or other-layer animation re-ran pass 0 every frame for a table
+none of those move. I2 had declined gating it on the config fields the shader
+reads, because such a list drifts from the shader and a missed field is a
+silently stale ring.
+
+The table is now keyed on what its pass BINDS (`EmissionInputs`,
+`currentEmissionInputs`): `uHueRotationRate` and the clamped `uNumSamples` by
+value, the three LUTs by `BaseLUT::GetUploadCount` and the two light blocks by
+`UniformBuffer::GetUploadCount` - new counters, moved by every LUT upload and
+by every block upload that changed the bytes. No config field is named, so
+none can be missed; a cross-fade frame moves the ring's count like a re-bake,
+which retired the `Update`-side flag too. `mEmissionDirty` is gone
+(`mEmissionBaked` covers the first frame). `Render` now packs the light blocks
+before asking, since their counts are part of the key.
+
+Under `--mode intensity` the cutoff band, the one check scene that keeps its
+gather inline at 1.0 (so the re-bake was its only offscreen pass), reads 1.12x
+/ 1.15x / 1.18x at 1.0 / 0.5 / 0.25 (0.266 -> 0.237 ms at 1.0); every other
+scene 1.00x-1.05x. On the AMD Radeon Pro 5300M, whose first offscreen pass of a
+frame costs ~0.15 ms, the band should gain more - not measured.
+
+### I40. The offscreen passes re-ran on frames where nothing moved - FIXED
+
+The gather (pass 1a) and, below 1.0, the reduced-scale shading (pass 1b) ran
+every frame, although both are pure functions of the config, the viewport, the
+two tables they read and - through the hue - the time, and both buffers
+persist. `mOffscreenCurrent` now skips both when nothing moved: cleared by
+`OnConfigChanged` on any change, honoured only when the emission table is
+current, the glow coverage table needs no bake and the viewport matches
+`mOffscreenViewport`. Such a frame takes no `RenderTargetState` capture and
+never leaves the caller's framebuffer.
+
+`--mode still`, before -> after:
+
+| scale | geometric mean | range over the twelve scenes |
+| ----- | -------------: | ---------------------------: |
+| 1.0 | 1.15x | 1.03x (`bounded_band`) - 1.47x (`small_rect`) |
+| 0.5 | 3.84x | 2.20x (`bounded_band`) - 6.63x (`small_rect`) |
+| 0.25 | 2.54x | 1.93x (`bounded_band`) - 4.41x (`small_rect`) |
+
+(`default` at 0.5: 0.295 -> 0.073 ms.) Moving frames cannot reuse and do not
+pay: `hue` 0.999x-1.002x and `segment-travel` 1.000x-1.001x geometric mean over
+five rounds, no cell outside 0.97x-1.02x. A three-round run had shown `hue` at
+0.94x on `segments`; five rounds put it at noise. The split's area gate
+(`FULL_RES_SPLIT_MIN_AREA_PX`) is unchanged: an animated frame still leaves the
+caller's target.
+
+### I41. The gather's segment sampler was bound to texture 0 - FIXED
+
+Without segments the gather buffer has one attachment, and `bindGatherBuffer`
+bound "attachment 1" - texture 0 - to `uGatherSeg` on unit 4. The shader never
+reads it then, but Apple's driver logged `unit 1 GLD_TEXTURE_INDEX_2D is
+unloadable ... using zero texture` on every split or scaled run with no
+segment, in `check`, `partition` and every probe of that kind. Attachment 0 is
+bound in its place, as I33 did for unit 5. The log line is gone from `check`,
+`partition` and the 212-frame walk, whose frames are unchanged.
+
 ---
 
 ## What is left
@@ -3932,8 +4014,8 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34. Five items from the
-first pass remain deliberately open, each with the reasoning recorded next to
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, and the twenty-first I39, I40 and I41 (I39 closing I2). Three items from the
+first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
 
@@ -3945,7 +4027,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | V14 | fixed | V4's third half: the halo/bloom FIELD lost its medial-axis crease, but the nearest-point coverage that SCALES it kept one, so any partly lit perimeter cut the glow to a hard-edged polygon |
 | V13 | fixed | V4's other half: the sampling floor was a fixed half width, so at a soft falloff - where sigma multiplies a 64-sigma tail - it doubled the filament to buy five levels of peak |
 | V5 | residual, documented | closing it means plumbing pixel-space feathers into the pre-pass for an effect nobody has reported; read V9 alongside it, which measures the other half of the same mechanism |
-| I2 | declined | negligible measured-by-structure win against a real staleness-bug risk |
+| I2 | fixed by I39 | declined first for its staleness risk; I39 keys the table on what its pass binds, which needs no list of config fields |
 | I5 | documented | the alternative is a breaking renderer-API change for an unmeasured cost |
 | I8 | audited, no UI written | the C ABI itself is complete; what is missing is `demo-capi` coverage, ranked in the section above |
 | R7 | open | a measured quantisation defect with a cheap cure, but unproven visual severity; see the note there before starting |
@@ -3967,6 +4049,9 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I32 | fixed | the edge ring's gather attachments tripled the scaled path's memory; now 2.15 MB at 1080p and 0.5 for a full-screen rect, less for smaller ones |
 | I33 | fixed | the 1 MB glow coverage table was allocated in `Initialize` although a uniformly lit ring - the default - and a disabled layer never read it; it is now allocated on the first frame that bakes it and released with the layer |
 | I34 | fixed | the glow coverage table re-baked on every config change, so an intensity, colour or other-layer animation paid pass 0b every frame; it is now gated on its own inputs (light blocks, width, height, corner radius, winding, glow radius) |
+| I39 | fixed | the emission table re-baked on every config change; it is now keyed on what its pass binds - two uniforms by value, three LUTs and two light blocks by upload count - so no config field list can drift from the shader |
+| I40 | fixed | the gather and the reduced-scale shading re-ran on frames where nothing moved; skipped then (`mOffscreenCurrent`), byte-identical, 3.84x geometric mean on still frames at 0.5 on an M2 Pro, moving frames unchanged |
+| I41 | fixed | without segments `uGatherSeg` was bound to texture 0, and Apple's driver logged it on every split or scaled run; attachment 0 stands in, as for I33 |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

@@ -48,7 +48,8 @@ buffer for a 24 px frame of light while rendering slower than at 1.0.
 - **The timing tool only times still frames.** `neon-scale-check time` calls
   `Render` repeatedly with nothing changing between calls, so it cannot see the
   glow coverage bake, the emission table re-bake, or any cache that skips work
-  on unchanged frames. Three of the items below are invisible to it.
+  on unchanged frames. Three of the items below are invisible to it. (Since
+  fixed: `--mode`, item 2.)
 
 ## 2. Method
 
@@ -259,7 +260,7 @@ move some by 1/255 and wait on item 1.
 Until then `check` has no headroom on the M2 (section 1), so nothing that moves
 a pixel at 1.0 can be verified.
 
-**2. Teach `neon-scale-check time` animated modes.** Hue rotating, an
+**2. Teach `neon-scale-check time` animated modes.** *Done - section 9.* Hue rotating, an
 intensity pulse, an arc wipe and a travelling segment, as in section 2 - a
 `--mode` option, `SetConfig` + `Update` inside the timed loop. Items 4, 5 and
 6 are invisible to the tool as it stands, and every one of them should land
@@ -270,7 +271,8 @@ measured so far disagree by 25x on the one constant the split's gate rests on.
 
 ### 5.2 Render time, exact
 
-**4. Skip the offscreen passes on frames where nothing moved.**
+**4. Skip the offscreen passes on frames where nothing moved.** *Step 1
+done - section 9, I40.*
 
 The gather (pass 1a) is a pure function of the emission table, the loop
 samples and its region; pass 1b (the reduced-resolution shading) of those plus
@@ -304,7 +306,8 @@ being "not a guaranteed saving" (I25) on any still frame.
 `demo` at 1.0 does not move, although its gather is 51 us (section 3.2). The
 likeliest reading is that the M2 already overlaps that gather with the previous
 frame's shading, so throughput hides it; it is not established. Do not
-extrapolate that row to another GPU.
+extrapolate that row to another GPU. (The landed version reads 1.12x on the
+same 960 x 540 rect - section 9 - so the row is suspect either way.)
 
 Steps:
 
@@ -383,7 +386,8 @@ segment changes, read the table back (`CaptureUtil::ReadTexture2D`) and compare
 it with a full bake of the same config. They should agree texel for texel.
 
 **6. Re-bake the emission table only when its inputs move.** I2, revisited
-with a measurement behind it.
+with a measurement behind it. *Done, keyed on upload counts rather than on
+config fields - section 9, I39.*
 
 `neon-emission.frag` reads `uTime`, `uHueRotationRate`, `uNumSamples`, the
 three LUTs and the two light blocks, and nothing else. Today `OnConfigChanged`
@@ -403,7 +407,8 @@ the gate, and the I34 walk extended to every field the shader does NOT read
 (byte-identical to a fresh effect at each step) and every one it does (the
 table re-baked).
 
-**7. A complete texture on the segment-gather sampler.** Without segments
+**7. A complete texture on the segment-gather sampler.** *Done - section 9,
+I41.* Without segments
 `bindGatherBuffer` binds attachment 1, which does not exist, so unit 4 gets
 texture 0. Apple's driver logs "unit 1 GLD_TEXTURE_INDEX_2D is unloadable ...
 using zero texture" on every split or scaled run with no segment (seen in
@@ -528,9 +533,9 @@ Measure on the target's CPU first. On the M2 neither is visible.
 - **The partial-bake figures are a proxy.** They bake one band of four whatever
   moved, which is close to a segment in the middle of a straight and an
   overestimate of the gain when it crosses a corner.
-- **`demo` at 1.0 under item 4** reads 1.00x for a reason this document guesses
-  at rather than establishes (section 5.2). The same scene on a GPU that does
-  not overlap the passes should gain what its gather costs.
+- **`demo` at 1.0 under item 4** read 1.00x in the prototype for a reason this
+  document guesses at rather than establishes (section 5.2), and the landed
+  version reads 1.12x on the same rect (section 9). Trust the landed figure.
 - **Drift.** Back-to-back rounds of an unchanged code path moved by up to 4%
   in this session, so single-digit ratios here (items 6, 8, the attribution's
   1.06x-1.09x) are indicative; the 1.5x-6x ones are not in doubt.
@@ -542,3 +547,51 @@ Measure on the target's CPU first. On the M2 neither is visible.
   which is time-invariant but would hold full-resolution half-float channels -
   ~8 MB per pair at 1080p, and the shading combines six - against the memory
   goal.
+
+## 9. Status
+
+| item | state |
+| ---- | ----- |
+| 1. Regenerate the comparison page's 1.0 images | open - waits on which GPU owns the reference images (the page's are the AMD's) |
+| 2. `time --mode` | **done**: `still`, `hue`, `intensity`, `arc-wipe`, `segment-travel` |
+| 3. Target-device run | open |
+| 4. Skip the offscreen passes when nothing moved | **step 1 done** (I40); step 2, the keyed gather, open |
+| 5. Per-piece glow coverage bake | open |
+| 6. Emission table keyed on its inputs | **done** (I39) |
+| 7. Complete texture on `uGatherSeg` | **done** (I41) |
+| 8-13 | open |
+
+What 4, 6 and 7 measured together on the Apple M2 Pro, `neon-scale-check time`
+at 1920 x 1080, before -> after, geometric mean over the twelve scenes (three
+interleaved rounds; five for `hue` and `segment-travel`):
+
+| mode | 1.0 | 0.5 | 0.25 |
+| ---- | --: | --: | ---: |
+| `still` | **1.15x** (1.03-1.47x) | **3.84x** (2.20-6.63x) | **2.54x** (1.93-4.41x) |
+| `hue` | 1.00x | 1.00x | 1.00x |
+| `intensity` | 1.01x (`bounded_band` 1.12x) | 1.03x (`bounded_band` 1.15x) | 1.03x (`bounded_band` 1.18x) |
+| `arc-wipe` | 1.00x | 1.00x | 1.00x |
+| `segment-travel` | 1.00x | 1.00x | 1.00x |
+
+`default` still at 0.5 went from 0.295 to 0.073 ms. Two things in that table
+were predictable and one was not:
+
+- **Moving frames are untouched**, as they should be: a frame whose config or
+  hue moved can reuse nothing. That is also where most of what is left lives -
+  `arc-wipe` and `segment-travel` are the glow coverage bake (item 5).
+- **`intensity` only moves the inline path.** Item 6 removes the emission
+  re-bake from a frame whose config changed without touching the table's
+  inputs, and on the split path that frame still runs the gather, so it
+  leaves the caller's target either way. The cutoff band keeps its loop
+  inline, so the re-bake was its only offscreen pass - and on the M2 that pass
+  cost 0.03 ms there, not the 6-8 us section 3.2 measured for the split.
+- **The gain at 1.0 is larger than item 4's prototype measured.** At 1920 x
+  1080 the check suite's `default` scene is the same 960 x 540 rect as
+  section 3's `demo` (corner radius 60 rather than 40), and it reads 1.12x
+  (0.617 -> 0.552 ms) where the prototype read 1.00x. Why the prototype missed
+  it is not established; section 8 was right not to extrapolate that row.
+
+Verification is recorded with the findings (I39-I41): 212 frames of a
+long-lived effect byte-identical to the library before, `check` unchanged,
+`partition` passing on two seeds.
+

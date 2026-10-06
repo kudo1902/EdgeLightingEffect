@@ -14,6 +14,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 namespace NeonScaleCheck
 {
@@ -127,7 +128,97 @@ namespace NeonScaleCheck
         return rgb;
     }
 
-    double TimeRender(const Config &config, int width, int height, double *initMs)
+    bool ParseTimeMode(const char *name, TimeMode &mode)
+    {
+        static const TimeMode MODES[] = {TimeMode::STILL, TimeMode::HUE, TimeMode::INTENSITY, TimeMode::ARC_WIPE,
+                                         TimeMode::SEGMENT_TRAVEL};
+        for (TimeMode m : MODES)
+        {
+            if (std::strcmp(name, TimeModeName(m)) == 0)
+            {
+                mode = m;
+                return true;
+            }
+        }
+        return false;
+    }
+
+    const char *TimeModeName(TimeMode mode)
+    {
+        switch (mode)
+        {
+        case TimeMode::STILL:
+        {
+            return "still";
+        }
+        case TimeMode::HUE:
+        {
+            return "hue";
+        }
+        case TimeMode::INTENSITY:
+        {
+            return "intensity";
+        }
+        case TimeMode::ARC_WIPE:
+        {
+            return "arc-wipe";
+        }
+        case TimeMode::SEGMENT_TRAVEL:
+        {
+            return "segment-travel";
+        }
+        }
+        return "still";
+    }
+
+    namespace
+    {
+        /// @p config as @p mode starts it: the hue rotating, or a segment to
+        /// move when the scene has none. The other modes start from the scene
+        /// as it is.
+        Config TimeModeStart(const Config &config, TimeMode mode)
+        {
+            Config c = config;
+            if (mode == TimeMode::HUE)
+            {
+                c.neon.hueRotationRate = 0.5f;
+            }
+            if (mode == TimeMode::SEGMENT_TRAVEL && c.neon.segmentBoosts.empty())
+            {
+                SegmentBoost segment;
+                segment.position = 0.1f;
+                segment.length = 0.1f;
+                segment.boost = 1.0f;
+                c.neon.segmentBoosts.push_back(segment);
+            }
+            return c;
+        }
+
+        /// @p start with @p mode's change for frame @p frame written into it.
+        /// Every frame differs from the one before, so each SetConfig is a
+        /// real config change. Not called for STILL or HUE: the hue moves with
+        /// the clock, not the config.
+        Config TimeModeFrame(const Config &start, TimeMode mode, int frame)
+        {
+            Config c = start;
+            const float f = static_cast<float>(frame);
+            if (mode == TimeMode::INTENSITY)
+            {
+                c.neon.intensity = start.neon.intensity * (1.0f + 0.1f * std::sin(0.1f * f));
+            }
+            else if (mode == TimeMode::ARC_WIPE && !c.neon.arcs.empty())
+            {
+                c.neon.arcs[0].length = 0.3f + 0.6f * (0.5f + 0.5f * std::sin(0.05f * f));
+            }
+            else if (mode == TimeMode::SEGMENT_TRAVEL)
+            {
+                c.neon.segmentBoosts[0].position = std::fmod(start.neon.segmentBoosts[0].position + 0.003f * f, 1.0f);
+            }
+            return c;
+        }
+    }
+
+    double TimeRender(const Config &config, int width, int height, double *initMs, TimeMode mode)
     {
         const auto i0 = std::chrono::high_resolution_clock::now();
         EdgeLightingEffect effect;
@@ -137,13 +228,29 @@ namespace NeonScaleCheck
         {
             *initMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - i0).count();
         }
-        effect.SetConfig(config);
+        const Config start = TimeModeStart(config, mode);
+        effect.SetConfig(start);
         effect.Update(0.0f);
         OffscreenCapture capture;
         capture.Begin(width, height);
+        // One frame as the mode draws it. The frame count runs on through the
+        // warm-up and every run, so no two frames of an animated mode repeat.
+        int frameIndex = 0;
+        auto frame = [&]() {
+            if (mode != TimeMode::STILL)
+            {
+                if (mode != TimeMode::HUE)
+                {
+                    effect.SetConfig(TimeModeFrame(start, mode, frameIndex));
+                }
+                effect.Update(1.0f / 60.0f);
+            }
+            effect.Render(width, height);
+            ++frameIndex;
+        };
         for (int i = 0; i < 5; ++i)
         {
-            effect.Render(width, height);
+            frame();
         }
         glFinish();
         double best = 1e30;
@@ -151,9 +258,9 @@ namespace NeonScaleCheck
         {
             glFinish();
             const auto t0 = std::chrono::high_resolution_clock::now();
-            for (int frame = 0; frame < 40; ++frame)
+            for (int n = 0; n < 40; ++n)
             {
-                effect.Render(width, height);
+                frame();
             }
             glFinish();
             const auto t1 = std::chrono::high_resolution_clock::now();

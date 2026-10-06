@@ -1400,12 +1400,11 @@ namespace EdgeLighting
     void NeonRenderer::Update(float deltaTime, float, const Config &)
     {
         // A fade frame re-uploads the ring the emission table is baked FROM,
-        // and does it without any config change for OnConfigChanged to catch -
-        // so the table has to be invalidated from here or it would hold the
-        // ring's colours from the frame the fade began for the whole fade.
-        // |=, not =: a config change earlier in this same frame must not be
-        // cleared by a settled ring reporting false.
-        mEmissionDirty = mGradientLUT.Tick(deltaTime) || mEmissionDirty;
+        // without any config change to announce it. Nothing here has to say
+        // so: the upload moves the ring's upload count, which is part of the
+        // table's key (isEmissionTableStale), and so does anything else that
+        // writes it.
+        mGradientLUT.Tick(deltaTime);
     }
 
     void NeonRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
@@ -1527,7 +1526,32 @@ namespace EdgeLighting
         glm::vec2 gatherUVFullOffset(0.0f);
         glm::vec2 blitUVScale(0.0f);
         glm::vec2 blitUVOffset(0.0f);
-        if (scaled || splitGather)
+
+        // What the offscreen phase has to draw this frame. The light blocks
+        // are packed first, because the emission table's staleness reads
+        // their upload counts - the pack touches no framebuffer state, so the
+        // target is still the caller's for the capture below.
+        if (glowReady)
+        {
+            packLightBlocks(config);
+        }
+        // Pass 0 only when something it reads has actually moved - see
+        // isEmissionTableStale. A still ring therefore costs one FBO bind,
+        // eight uniform sets, three texture binds and a draw on the frame its
+        // inputs change, and nothing on the frames after.
+        const bool emissionStale = glowReady && isEmissionTableStale(time, config);
+        // Pass 0b on a change to its inputs only. It never depends on time,
+        // and nothing else writes the buffer. Nor on a ring lit uniformly,
+        // which never reads it: the flag stays set, so the first change that
+        // breaks the uniformity bakes it.
+        const bool glowCoverStale = glowReady && mGlowCoverDirty && !IsGlowCoverUnread(mEffectiveSegments, config);
+        // Passes 1a and 1b not at all when what their buffers already hold is
+        // what they would draw - see mOffscreenCurrent. Then the frame never
+        // leaves the caller's framebuffer, so there is no target to capture
+        // either.
+        const bool reuseOffscreen = glowReady && (scaled || splitGather) && mOffscreenCurrent && !emissionStale &&
+                                    !glowCoverStale && mOffscreenViewport == glm::ivec2(viewportWidth, viewportHeight);
+        if ((scaled || splitGather) && !reuseOffscreen)
         {
             prevTarget = RenderTargetState::Capture();
         }
@@ -1536,15 +1560,7 @@ namespace EdgeLighting
         if (glowReady)
         {
             // --- Pass 0: per-sample emission table --------------------------
-            packLightBlocks(config);
-            // ...and only re-bake the table when something it reads has
-            // actually moved. The buffer is allocated once and nothing else
-            // writes it, so a frame that changes neither the config nor (at a
-            // non-zero hue rate) the time reads the same texels the last bake
-            // left. A still ring therefore costs one FBO bind, eight uniform
-            // sets, three texture binds and a draw on the frame it changes, and
-            // nothing on the frames after.
-            if (isEmissionTableStale(time, config))
+            if (emissionStale)
             {
                 // A table write is not a composite: blending would mix this
                 // frame's emission into last frame's. Every later pass sets its
@@ -1554,11 +1570,8 @@ namespace EdgeLighting
                 renderEmissionPass(viewportWidth, viewportHeight, time, config);
             }
 
-            // --- Pass 0b: the glow coverage table, on a config change only. It
-            // never depends on time, and nothing else writes the buffer. Nor on
-            // a ring lit uniformly, which never reads it: the flag stays set,
-            // so the first change that breaks the uniformity bakes it.
-            if (mGlowCoverDirty && !IsGlowCoverUnread(mEffectiveSegments, config))
+            // --- Pass 0b: the glow coverage table, when glowCoverStale says.
+            if (glowCoverStale)
             {
                 glDisable(GL_BLEND);
                 renderGlowCoverPass(config);
@@ -1582,9 +1595,14 @@ namespace EdgeLighting
                 gatherUVScale = glm::vec2(1.0f) / (gatherRegion.size * scale);
                 gatherUVFullScale = glm::vec2(1.0f) / gatherRegion.size;
                 gatherUVFullOffset = gatherUVOffset;
-                glDisable(GL_BLEND);
-                glowReady = renderGatherPass(RegionProjection(gatherRegion, scale), gatherRegion.texels.x,
-                                             gatherRegion.texels.y, scale, config);
+                // The region and its maps are computed either way: the passes
+                // on the caller's framebuffer read through them.
+                if (!reuseOffscreen)
+                {
+                    glDisable(GL_BLEND);
+                    glowReady = renderGatherPass(RegionProjection(gatherRegion, scale), gatherRegion.texels.x,
+                                                 gatherRegion.texels.y, scale, config);
+                }
             }
 
             if (scaled)
@@ -1603,13 +1621,16 @@ namespace EdgeLighting
                         GetBufferRegion(mScaledOuter, centerFull, viewportWidth, viewportHeight, scale, true);
                     blitUVScale = glm::vec2(1.0f) / scaledRegion.size;
                     blitUVOffset = -scaledRegion.origin / scaledRegion.size;
-                    glowReady = renderNeonPass(RegionProjection(scaledRegion, scale), scaledRegion.texels.x,
-                                               scaledRegion.texels.y, true, true, gatherUVScale, gatherUVOffset,
-                                               time, config);
+                    if (!reuseOffscreen)
+                    {
+                        glowReady = renderNeonPass(RegionProjection(scaledRegion, scale), scaledRegion.texels.x,
+                                                   scaledRegion.texels.y, true, true, gatherUVScale,
+                                                   gatherUVOffset, time, config);
+                    }
                 }
             }
 
-            if (scaled || splitGather)
+            if ((scaled || splitGather) && !reuseOffscreen)
             {
                 // Back to the caller's target and viewport, both at once.
                 // Unconditional: the pass may have bound its target before
@@ -1618,6 +1639,10 @@ namespace EdgeLighting
                 prevTarget.Restore();
             }
         }
+        // What the offscreen buffers hold from here on: this frame's passes 1a
+        // and 1b, drawn or reused - unless a pass failed or the path has none.
+        mOffscreenCurrent = glowReady && (scaled || splitGather);
+        mOffscreenViewport = glm::ivec2(viewportWidth, viewportHeight);
 
         // ===== Caller's framebuffer ==========================================
         // Premultiplied-alpha "over": final = src.rgb + dst * (1 - src.a), for
@@ -1675,6 +1700,12 @@ namespace EdgeLighting
 
     void NeonRenderer::OnConfigChanged(const Config &config)
     {
+        // The offscreen buffers were drawn from the config this replaces - and
+        // this call only comes when the composited config actually changed.
+        // Wide, unlike the gates below: pass 1b reads most of the config, and
+        // re-drawing them costs one frame's offscreen phase.
+        mOffscreenCurrent = false;
+
         // Snapshot dirtiness before we overwrite mCurrentConfig. Each rebuild
         // is gated on the exact set of fields it reads (see the corresponding
         // methods below) - dragging a slider like `bloomStrength` used to
@@ -1793,18 +1824,17 @@ namespace EdgeLighting
         // boost raised under a hole cut for a dimmer glow clips its halo.
         const bool emissionDirty = GetGlowEmissionBound(config, mEffectiveSegments) != mGlowEmission;
 
-        // The emission table reads a wide slice of this config - the hue rate,
-        // the sample count, all three LUTs and both light UBOs - so it is
-        // invalidated on any change rather than on a gate that has to be kept
-        // in step with the shader. A missed field would be a stale ring; a
-        // spare rebuild is one small pass.
-        mEmissionDirty = true;
-        // The glow coverage table does NOT get that treatment, although it is
-        // the costlier bake of the two: its inputs are the narrow, visible set
-        // in glowCoverDirty above. Gated wide, it re-ran every frame under any
-        // animation at all - intensity, colour, or a field of another layer
-        // entirely - for a table none of those move. Accumulated, for the
-        // reasons given for mLightBlocksDirty just below.
+        // The emission table needs nothing from here. It is keyed on what its
+        // pass binds - two uniforms by value, three LUTs and two light blocks
+        // by upload count (isEmissionTableStale) - so a change that moves one
+        // of those re-bakes it through that count, and a change that moves
+        // none (intensity, bloom, the glow, the rect) re-bakes nothing.
+        //
+        // The glow coverage table is gated here instead, on the narrow,
+        // visible set of inputs in glowCoverDirty above. Gated wide, it re-ran
+        // every frame under any animation at all - intensity, colour, or a
+        // field of another layer entirely - for a table none of those move.
+        // Accumulated, for the reasons given for mLightBlocksDirty just below.
         mGlowCoverDirty = mGlowCoverDirty || glowCoverDirty;
         // The light blocks get the OPPOSITE treatment, because their inputs are
         // narrow and visible rather than wide and indirect: @ref
@@ -1830,9 +1860,8 @@ namespace EdgeLighting
         //
         // The same hazard returns later in a milder form: a host that calls
         // SetConfig twice before Update gets two of these, and the second
-        // compares against the arcs the first one already installed.
-        // mEmissionDirty is immune to all of it only because it is
-        // unconditional; a narrow gate has to hold until the pack clears it.
+        // compares against the arcs the first one already installed. A
+        // narrow gate has to hold until the pack clears it.
         mLightBlocksDirty = mLightBlocksDirty || segmentsDirty || arcsDirty;
 
         mCurrentConfig = config;
@@ -2844,9 +2873,25 @@ namespace EdgeLighting
         mArcBlock.SetData(&arcBlock, sizeof(arcBlock));
     }
 
+    NeonRenderer::EmissionInputs NeonRenderer::currentEmissionInputs(const Config &config) const
+    {
+        // Exactly what renderEmissionPass uploads and binds, besides uTime.
+        // Add an input to that pass and it belongs here, or the table goes
+        // stale whenever that input alone moves.
+        EmissionInputs inputs;
+        inputs.hueRotationRate = config.neon.hueRotationRate;
+        inputs.numSamples = GetClampedNumSamples(config);
+        inputs.gradientUploads = mGradientLUT.GetUploadCount();
+        inputs.segmentAtlasUploads = mSegmentLUT.GetUploadCount();
+        inputs.arcAtlasUploads = mArcLUT.GetUploadCount();
+        inputs.segmentBlockUploads = mSegmentBlock.GetUploadCount();
+        inputs.arcBlockUploads = mArcBlock.GetUploadCount();
+        return inputs;
+    }
+
     bool NeonRenderer::isEmissionTableStale(float time, const Config &config) const
     {
-        if (mEmissionDirty)
+        if (!mEmissionBaked || currentEmissionInputs(config) != mEmissionInputs)
         {
             return true;
         }
@@ -2918,7 +2963,8 @@ namespace EdgeLighting
 
         // What the buffer now holds. Recorded by the only writer of it, so the
         // staleness test upstream can never describe a bake that did not run.
-        mEmissionDirty = false;
+        mEmissionInputs = currentEmissionInputs(config);
+        mEmissionBaked = true;
         mEmissionTime = time;
     }
 
@@ -3173,11 +3219,16 @@ namespace EdgeLighting
 
     void NeonRenderer::bindGatherBuffer(ShaderProgram &shader, const glm::vec2 &uvScale, const glm::vec2 &uvOffset)
     {
-        // Attachment 1 exists only with segments; without them this binds
-        // texture 0, which the shader's uSegmentCount branch never reads.
+        // Attachment 1 exists only with segments. Without them the shader's
+        // uSegmentCount branch never reads uGatherSeg, but the unit still gets
+        // a COMPLETE texture - attachment 0 again - rather than texture 0:
+        // Apple's driver logs a sampler bound to an unloadable texture at draw
+        // time whether or not it is read (the I33 stand-in, for unit 5, has
+        // the same reason). Attachment 0 is this same frame's input, never a
+        // target of the pass that reads it, so there is no feedback loop.
         mGatherBuffer.BindTexture(3, 0);
         shader.SetUniform("uGather", 3);
-        mGatherBuffer.BindTexture(4, 1);
+        mGatherBuffer.BindTexture(4, mGatherBuffer.GetAttachmentCount() > 1 ? 1 : 0);
         shader.SetUniform("uGatherSeg", 4);
         shader.SetUniform("uGatherUVScale", uvScale);
         shader.SetUniform("uGatherUVOffset", uvOffset);

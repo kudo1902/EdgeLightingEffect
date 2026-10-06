@@ -365,6 +365,12 @@ barely moves the scaled path. Both rows describe 1.0 as they stand.
   count. Worth one measurement on target hardware before the item stays
   declined; it is a flag, not a finding.
 
+  > **Later:** done, without the staleness risk I2 declined it for -
+  > [`neon-perf-plan.md`](neon-perf-plan.md) item 6. The table is keyed on
+  > what its pass binds (two uniforms by value, three LUTs and two light
+  > blocks by upload count), not on config fields, so an animation that
+  > moves none of those re-bakes nothing.
+
 ## 10. Scale 1.0 again: the gather split out, and the shading pass
 
 Sections 1-9 left scale 1.0 as one program running the 128-sample gather loop
@@ -581,6 +587,10 @@ Verification, all on the AMD:
   skipped when neither moved. That would remove the fixed cost of 10.1 in a
   still scene - the case the area gate exists for - at the price of one more
   staleness gate.
+
+  > **Later:** done, with the reduced-scale shading pass alongside it -
+  > [`neon-perf-plan.md`](neon-perf-plan.md) item 4 (`mOffscreenCurrent`).
+  > The area gate stays: an animated frame still leaves the caller's target.
 - **A rect small enough to keep the loop inline** (gather scale above 0.5)
   pays the full loop, as before; the two-level gather of section 6 is still
   the move there.

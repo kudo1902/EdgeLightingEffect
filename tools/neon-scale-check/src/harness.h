@@ -78,13 +78,40 @@ namespace NeonScaleCheck
     /// offscreen FRAME_WIDTH x FRAME_HEIGHT target over rgb(5, 5, 8).
     RGB Render(EdgeLightingEffect &effect, const Config &config);
 
-    /// Minimum over 5 runs of the mean frame time of 40 Render() calls between
+    /// What changes between the frames @ref TimeRender times.
+    ///
+    /// STILL is what every figure before these modes measured: one config,
+    /// Render() after Render() with nothing in between - so the work a frame
+    /// does only when something MOVED (the emission table's re-bake, the glow
+    /// coverage table's, anything a renderer skips on an unchanged frame) is
+    /// never in it. The other modes put that work back, the way a host's frame
+    /// loop does: each frame writes the mode's change through SetConfig and
+    /// then calls Update(1/60) - both inside the timed region, so the figure
+    /// includes the library's CPU path too. See docs/neon-perf-plan.md.
+    typedef enum class TimeMode
+    {
+        STILL,          ///< Nothing changes; Render() only.
+        HUE,            ///< hueRotationRate 0.5 and the clock advancing - the library's default.
+        INTENSITY,      ///< intensity pulsing by +/-10% - moves the glow's reach, not its colours.
+        ARC_WIPE,       ///< arcs[0].length sweeping 0.3-0.9 - re-bakes the glow coverage table.
+        SEGMENT_TRAVEL, ///< segmentBoosts[0] (one is added if the scene has none) moving round the ring.
+    } TimeMode;
+
+    /// The mode named @p name (still, hue, intensity, arc-wipe,
+    /// segment-travel). False if there is none.
+    bool ParseTimeMode(const char *name, TimeMode &mode);
+    /// @p mode's name, as ParseTimeMode takes it.
+    const char *TimeModeName(TimeMode mode);
+
+    /// Minimum over 5 runs of the mean frame time of 40 frames between
     /// glFinish, after 5 warm-up frames, on a freshly initialised effect, into
-    /// a @p width x @p height target. ms. @p initMs, when non-null, receives
-    /// how long constructing and initialising that effect took - the shader
-    /// compiles, which a host pays once per effect.
+    /// a @p width x @p height target. ms. A frame is one Render() under
+    /// TimeMode::STILL, and the mode's SetConfig + Update(1/60) + Render()
+    /// under any other. @p initMs, when non-null, receives how long
+    /// constructing and initialising that effect took - the shader compiles,
+    /// which a host pays once per effect.
     double TimeRender(const Config &config, int width = FRAME_WIDTH, int height = FRAME_HEIGHT,
-                      double *initMs = nullptr);
+                      double *initMs = nullptr, TimeMode mode = TimeMode::STILL);
 
     /// Errors of @p image against @p reference. Fills @p heatmap with the
     /// page's error ramp when it is non-null.

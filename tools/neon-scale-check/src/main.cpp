@@ -10,9 +10,11 @@
 //       page's committed images, when a reduced scale exceeds its error bound,
 //       or when a moving hairline wanders off its edge. See README.md.
 //
-//   neon-scale-check time <out.json> [--label NAME] [--size WxH]
+//   neon-scale-check time <out.json> [--label NAME] [--size WxH] [--mode MODE]
 //       Timing only, at any frame size, plus each effect's initialisation
-//       time. For before / after comparisons; see README.md.
+//       time. For before / after comparisons; see README.md. MODE is what
+//       changes between the timed frames: still (the default), hue,
+//       intensity, arc-wipe or segment-travel.
 //
 //   neon-scale-check partition [--configs N] [--seed S]
 //       A regression gate for the scaled path's composite: across N random
@@ -312,22 +314,38 @@ namespace
     /// (line width, glow radius, cutoffs) stay as they are, as a host's would
     /// on a bigger display. Interleave runs of the builds being compared and
     /// take the median per figure over the rounds they share; see README.md.
+    ///
+    /// --mode picks what changes between the timed frames (TimeMode). The
+    /// default, still, is what every earlier figure measured; the animated
+    /// modes are the frames a host draws while something moves, and the only
+    /// ones that see the work the neon does on a changed frame alone.
     int Time(int argc, char **argv)
     {
         if (argc < 3)
         {
-            std::fprintf(stderr, "usage: neon-scale-check time <out.json> [--label NAME] [--size WxH]\n");
+            std::fprintf(stderr,
+                         "usage: neon-scale-check time <out.json> [--label NAME] [--size WxH] [--mode MODE]\n");
             return 2;
         }
         const std::string out = argv[2];
         std::string label = "run";
         int width = FRAME_WIDTH;
         int height = FRAME_HEIGHT;
+        TimeMode mode = TimeMode::STILL;
         for (int i = 3; i < argc; ++i)
         {
             if (std::strcmp(argv[i], "--label") == 0 && i + 1 < argc)
             {
                 label = argv[++i];
+            }
+            else if (std::strcmp(argv[i], "--mode") == 0 && i + 1 < argc)
+            {
+                if (!ParseTimeMode(argv[++i], mode))
+                {
+                    std::fprintf(stderr, "neon-scale-check: --mode wants still, hue, intensity, arc-wipe or "
+                                         "segment-travel\n");
+                    return 2;
+                }
             }
             else if (std::strcmp(argv[i], "--size") == 0 && i + 1 < argc)
             {
@@ -348,8 +366,10 @@ namespace
             std::fprintf(stderr, "neon-scale-check: cannot write %s\n", out.c_str());
             return 2;
         }
-        std::fprintf(js, "{\"build\": \"%s\", \"gpu\": \"%s\", \"size\": [%d, %d], \"scenarios\": {",
-                     label.c_str(), RendererName().c_str(), width, height);
+        std::fprintf(js,
+                     "{\"build\": \"%s\", \"gpu\": \"%s\", \"size\": [%d, %d], \"mode\": \"%s\", "
+                     "\"scenarios\": {",
+                     label.c_str(), RendererName().c_str(), width, height, TimeModeName(mode));
         std::vector<double> inits;
         bool first = true;
         for (const Scene &scene : SCENES)
@@ -366,7 +386,7 @@ namespace
                 c.geometry.height *= ky;
                 c.geometry.cornerRadius *= std::min(kx, ky);
                 double initMs = 0.0;
-                const double ms = TimeRender(c, width, height, &initMs);
+                const double ms = TimeRender(c, width, height, &initMs, mode);
                 inits.push_back(initMs);
                 std::fprintf(js, "%s\"%s\": %.4f", s ? ", " : "", SCALE_TAGS[s], ms);
             }
@@ -515,7 +535,7 @@ int main(int argc, char **argv)
                  "usage:\n"
                  "  neon-scale-check generate <outdir> [--label NAME] [--images] [--no-timing] [--verbose]\n"
                  "  neon-scale-check check [--images-dir DIR] [--verbose]\n"
-                 "  neon-scale-check time <out.json> [--label NAME] [--size WxH] [--verbose]\n"
+                 "  neon-scale-check time <out.json> [--label NAME] [--size WxH] [--mode MODE] [--verbose]\n"
                  "  neon-scale-check partition [--configs N] [--seed S] [--verbose]\n");
     return 2;
 }

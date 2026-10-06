@@ -1205,7 +1205,8 @@ has its own stops; bit 1: another arc abuts its start; bit 2: another abuts
 its end); and `uArcLUT` (unit 2), one 128-texel row per arc. Read by P0
 (winner-take-all colour), the gather (via the table) and pointwise in
 `neon.frag` (coverage and alpha). Dirty: `mLightBlocksDirty`, the arc atlas's
-own guard, `mEmissionDirty`.
+own guard; P0 re-bakes when either moves (the block's or the atlas's upload
+count is part of its key).
 
 C ABI: `el_effect_set_arc_count`, `el_effect_set_arc(index, start, length,
 intensity, blendSpace)`, `el_effect_set_arc_color_stop_count` /
@@ -1232,7 +1233,8 @@ Travels to: `SegmentBlock` (binding 0) as `vec4(position, 1/(length/2), boost,
 hasStops)`; `uSegmentLUT` (unit 1). P0 writes their colour and bell sum into
 row 1 of the emission table. Having any segment selects the longer gather loop
 and adds a second gather attachment below scale 1.0. Dirty: `segmentsDirty`
-(which sets `mLightBlocksDirty`), the segment atlas's guard, `mEmissionDirty`.
+(which sets `mLightBlocksDirty`), the segment atlas's guard; P0 re-bakes when
+either moves (upload counts, as for the arcs).
 
 C ABI: `el_effect_set_segment_boost_count`, `el_effect_set_segment_boost`,
 the `..._segment_color_stop` family, and the preserved family
@@ -1359,7 +1361,8 @@ field, before overwriting it, and computes:
 | `fillDirty` | geometry, `opaqueMode`, `opaqueInsideCutoff`, `opaqueOutsideCutoff` | `setupFillGeometry` |
 | `segmentsDirty` | `segmentBoosts`, `preservedSegmentBoosts` | `FillEffectiveSegments` |
 | `mLightBlocksDirty` | `segmentsDirty`, or `arcs` (accumulated, never cleared here) | `packLightBlockData` on the next `Render` |
-| `mEmissionDirty` | **always** | P0 on the next `Render` |
+| (none for P0) | - | P0 is keyed on what it binds, not on config fields: see `isEmissionTableStale` below |
+| `mOffscreenCurrent` | cleared on **any** change | P1a and P1b on the next `Render` - see below |
 | `mGlowCoverDirty` | `segmentsDirty`, `arcs`, geometry `width` / `height` / `cornerRadius` / `winding`, `glowRadius` (accumulated, never cleared here) | P0b on the next `Render` - skipped, flag left set, while the ring is lit uniformly |
 
 Then, in order: overflow warnings for more than 8 arcs or segments, the
@@ -1379,9 +1382,10 @@ Two subtleties worth knowing before you touch this function:
 
 ### 5.4 `Update(dt, time, config)`
 
-One line: `mEmissionDirty = mGradientLUT.Tick(dt) || mEmissionDirty;`. A
-running colour cross-fade re-uploads the ring texture without any config
-change, and P0 bakes from that texture, so the table must be refreshed.
+One line: `mGradientLUT.Tick(dt);`. A running colour cross-fade re-uploads the
+ring texture without any config change, and P0 bakes from that texture; the
+upload moves the ring's upload count, which is part of P0's key, so the next
+`Render` re-bakes the table with nothing set here.
 
 ### 5.5 `Render(w, h, time, config)`: the pass schedule
 
@@ -1422,9 +1426,21 @@ Every offscreen pass runs before anything touches the caller's framebuffer,
 so that target is drawn in one unbroken run (Part 1.11). `Render` owns the
 blend state; each pass owns its program and restores any target it changes.
 
-`isEmissionTableStale` is true when `mEmissionDirty` is set, or when
-`hueRotationRate != 0` and the time changed since the last bake. A still ring
-(rate 0, no config change) never re-runs P0.
+`isEmissionTableStale` is true before the first bake, when any input P0 binds
+has moved since the last one - `hueRotationRate` and the clamped `numSamples`
+by value, the three LUTs and the two light blocks by upload count
+(`EmissionInputs`) - or when `hueRotationRate != 0` and the time changed. A
+still ring never re-runs P0, and neither does a config change that moves none
+of those: an intensity, bloom, glow or geometry animation. (Until
+`docs/neon-perf-plan.md` item 6 it was any config change.)
+
+P1a and P1b - the gather and, below 1.0, the reduced-scale shading - are
+skipped the same way, as a pair: when `mOffscreenCurrent` is set (no config
+change since they last drew), P0 is not stale, P0b need not bake and the
+viewport is the one they drew for, their buffers already hold what they would
+draw, and the frame never leaves the caller's framebuffer (no
+`RenderTargetState` capture either). The schedule above shows them
+unconditionally; read each as "unless reused".
 
 ### 5.6 Geometry builders and the math behind them
 
@@ -1576,7 +1592,7 @@ Part 7.3 walks through it.
 | | |
 | - | - |
 | **Purpose** | Pre-compute, once per sample, everything the gather needs that does not depend on the pixel. |
-| **Runs** | Both paths, only when `isEmissionTableStale` (config changed, cross-fade running, or the hue rotating). |
+| **Runs** | Both paths, only when `isEmissionTableStale`: an input it binds moved (a uniform, a LUT re-bake or cross-fade frame, a light-block repack), or the hue is rotating. |
 | **Target** | `mEmissionBuffer`, 128 x 2 texels, RGBA16F (RGBA8 fallback), `GL_NEAREST`. Its own `RenderTargetState` is captured and restored. |
 | **State** | Blend off. Scissor off (`NoScissorScope`: the host's scissor box is in window coordinates). No clear: the quad covers every texel. |
 | **Geometry** | `mFullscreenVertexArray`, identity MVP: one fragment per texel. |

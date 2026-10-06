@@ -121,8 +121,9 @@ namespace EdgeLighting
         ///         a fade moves the texture with no config change to announce
         ///         it, so a consumer gating on OnConfigChanged alone would hold
         ///         a stale derivative for the length of the fade. The neon
-        ///         emission table is that consumer; see
-        ///         @c NeonRenderer::isEmissionTableStale.
+        ///         emission table is that consumer, and catches it through
+        ///         @ref GetUploadCount, which this upload moves like any other;
+        ///         see @c NeonRenderer::isEmissionTableStale.
         bool Tick(float deltaTime)
         {
             if (!mFading)

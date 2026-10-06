@@ -151,6 +151,26 @@ a size other than 1280 x 720 the scenes' layout scales with the frame (rect
 position, size, corner radius) while the neon's own px parameters do not, as a
 host's would not on a bigger display.
 
+`--mode MODE` picks what changes between the timed frames:
+
+| mode | each frame |
+| ---- | ---------- |
+| `still` (default) | nothing: `Render()` after `Render()` |
+| `hue` | `hueRotationRate` 0.5 (the library's default) and `Update(1/60)` |
+| `intensity` | `intensity` pulsing by +/-10% through `SetConfig`, then `Update(1/60)` |
+| `arc-wipe` | `arcs[0].length` sweeping 0.3-0.9, the same way |
+| `segment-travel` | `segmentBoosts[0]` moving 0.003 of the perimeter a frame (one is added where a scene has none), the same way |
+
+`still` is what every figure before the option measured, and it cannot see any
+work the neon does only on a frame where something moved - re-baking the
+emission table or the glow coverage table, or anything a renderer skips on an
+unchanged frame. The animated modes put that back, as a host's frame loop
+does, with `SetConfig` and `Update` inside the timed region, so their figures
+include the library's CPU path. A change that saves work on unchanged frames
+should be measured with `still` AND the animated modes, to show both what it
+saves and that it costs the moving frames nothing. The JSON records the mode.
+See [`docs/neon-perf-plan.md`](../../docs/neon-perf-plan.md).
+
 For a before / after comparison, build the tool once per library (standalone
 mode, above), run `time` for every build in rounds with the build order
 rotated each round, and take the MEDIAN per figure over the rounds the builds

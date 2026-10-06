@@ -146,17 +146,20 @@ for the renderer's lifetime and written by nothing else, so a frame that moves
 neither input can read the texels the last bake left. `isEmissionTableStale`
 is that test, and it has exactly two terms.
 
-- **`mEmissionDirty`**, set by `OnConfigChanged` on **any** config change.
-  Deliberately not a narrow gate: the table reads a wide and indirect slice of
-  the config - `hueRotationRate`, `numSamples`, all three LUT textures and both
-  light UBOs - so a missed field would be a silently stale ring, while a spare
-  rebuild is one small pass. It is also set from `NeonRenderer::Update` when
-  `GradientRingLUT::Tick` reports a re-upload: a cross-fade moves the ring
-  texture with no config change to announce it, so `Tick` returns whether it
-  uploaded and the flag accumulates (`|=`, never `=`, or a settled ring would
-  clear a change made earlier in the same frame). It starts `true`, because the
-  buffer holds undefined texels until the first bake and no config change is
-  guaranteed before the first frame.
+- **What the pass binds**, compared against what the last bake bound
+  (`EmissionInputs`, built by `currentEmissionInputs`): `uHueRotationRate` and
+  `uNumSamples` (clamped) by value, and the three LUT textures and the two
+  light blocks by **upload count** - `BaseLUT::GetUploadCount`, which every
+  `Upload` moves, and `UniformBuffer::GetUploadCount`, which only an upload
+  that changed the bytes moves. Version numbers on the GL objects, not a list
+  of config fields: an intensity, bloom, glow or geometry animation moves none
+  of them and re-bakes nothing; a colour, arc or segment change moves one and
+  re-bakes; and a cross-fade frame, which moves the ring texture with no config
+  change at all, moves the ring's count like any re-bake. Plus "never baked"
+  (`mEmissionBaked`), because the buffer holds undefined texels until the
+  first bake and its stored key means nothing until then. The light blocks'
+  counts are only current once `packLightBlocks` has run, so `Render` packs
+  before it asks.
 - **`uTime`**, which reaches `neon-emission.frag` in exactly one place:
   `float ti = si - uTime * uHueRotationRate`. At a rate of 0 the product is
   exactly zero, so time drops out of the table altogether and a still ring
@@ -164,9 +167,22 @@ is that test, and it has exactly two terms.
   `time != mEmissionTime`, exact rather than tolerant, because `time` is fed
   straight back from the last bake rather than recomputed.
 
-`renderEmissionPass` records both (`mEmissionDirty`, `mEmissionTime`) on its
-way out, so the staleness test always reads a snapshot written by the only
-thing that ever writes the buffer.
+The first term used to be `mEmissionDirty`, set by `OnConfigChanged` on **any**
+config change and from `Update` whenever `GradientRingLUT::Tick` re-uploaded.
+That was deliberately wide: a gate on the config fields the shader reads would
+have to be kept in step with a shader in another language, and a missed field
+is a silently stale ring. The upload counts keep that safety without the field
+list - they track the objects the pass actually binds, whatever config field
+moved them - and drop the cost the wide flag carried: under an intensity or
+geometry animation it re-ran pass 0 every frame. On the AMD Radeon Pro 5300M,
+where the first offscreen pass of a frame costs ~0.15 ms whatever it draws,
+that was the only thing taking an inline-path frame off the caller's
+framebuffer (inferred from `neon-perf-review.md` section 10.1, not measured;
+`neon-perf-plan.md`, item 6).
+
+`renderEmissionPass` records all three (`mEmissionInputs`, `mEmissionBaked`,
+`mEmissionTime`) on its way out, so the staleness test always reads a snapshot
+written by the only thing that ever writes the buffer.
 
 Two consequences worth keeping in mind when changing this:
 
@@ -469,19 +485,21 @@ Rules for the pass structure itself (§3):
 
 Rules for the frame-level gate (§3, *When pass 0 runs*):
 
-- **A new input to the emission table must invalidate it.** Anything reaching
-  `neon-emission.frag` from the config is already covered, because
-  `mEmissionDirty` is set on *any* config change. Anything reaching it from
-  somewhere else is not: a second time-varying uniform would need a term
-  alongside the `uTime` one, and a second texture that moves without a config
-  change would need what `GradientRingLUT::Tick` got - a return value saying it
-  re-uploaded, accumulated into `mEmissionDirty` from `Update`.
-- **Do not narrow `mEmissionDirty`.** The temptation is to gate it on the
-  handful of fields the shader reads. The failure mode is a silently stale
-  ring, which is far worse than the one small pass a spare rebuild costs, and
-  the field list would have to be kept in step with a shader in another
-  language. The narrow gate next door (`mLightBlocksDirty`) earns its narrowness
-  by having two visible inputs in the same file.
+- **A new input to the emission table must join its key.** Every uniform,
+  texture and block `renderEmissionPass` hands the shader belongs in
+  `EmissionInputs`, filled by `currentEmissionInputs` - a value uniform by
+  value, a texture or block by a version number that every write to it moves.
+  That list sits beside the pass in the same file, which is what makes it safe
+  where a list of config fields was not. A second time-varying uniform needs a
+  term alongside the `uTime` one.
+- **Do not key it on config fields.** The temptation is to compare the handful
+  of `NeonConfig` fields the shader reads. That list would have to follow the
+  shader through every LUT and block between the two, and a missed field is a
+  silently stale ring. The upload counts follow the GPU objects themselves.
+- **Do not make an upload count skip writes.** `UniformBuffer::SetData`
+  skipping an identical upload is fine - the contents did not change - but a
+  write path that changes a LUT's texels without going through `Upload` would
+  leave the count, and so the table, behind.
 
 ## 9. Not done
 
