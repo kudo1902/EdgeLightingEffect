@@ -341,6 +341,11 @@ barely moves the scaled path. Both rows describe 1.0 as they stand.
 
 ## 9. What is left open
 
+> **Later:** the first item is answered for most configs by section 10 - at
+> 1.0 the loop now runs on the gather grid too, and the shading pass is the
+> cost. The two-level gather is still unbuilt, and still the move for a rect
+> small enough to keep the loop inline.
+
 - **The gather loop is still 95% of the layer at 1.0.** Change 1 removed a
   fetch from it; it did not change its shape. The two-level gather in section 6
   is the next real move there, and it is unbuilt. Below 1.0 the loop is no
@@ -359,3 +364,223 @@ barely moves the scaled path. Both rows describe 1.0 as they stand.
   extra render pass costs a tile flush and restore regardless of fragment
   count. Worth one measurement on target hardware before the item stays
   declined; it is a flag, not a finding.
+
+## 10. Scale 1.0 again: the gather split out, and the shading pass
+
+Sections 1-9 left scale 1.0 as one program running the 128-sample gather loop
+in every fragment of the glow quad, while below 1.0 the loop had already moved
+onto a coarse grid of its own (`neon-resolution-scale-plan.md` section 13).
+This round brings that to 1.0, then works on what is left: the shading.
+
+Everything here was measured on an **AMD Radeon Pro 5300M** (i7-9750H MacBook
+Pro, x86_64 Release build), against `80d71a7`, builds interleaved and the
+median taken - read ratios, not milliseconds. Timings come from
+`neon-scale-check time` (the twelve check scenes, their layout scaled to the
+frame) plus a throwaway probe for the attribution and the extra scenes; the
+probe patched shader source at run time through a `glShaderSource` hook, so
+every variant in a table ran in one process on one GPU.
+
+### 10.1 The gather at 1.0 (`SplitsGatherAtFullRes`)
+
+`GetGatherScale` is a property of the rect, not of the resolution scale: the
+gather's outputs are Lorentzian means whose kernel is never narrower than
+`kc = perimeter * COLOR_BLEND_PERIM_FRAC`, so two texels per `kc` carry them
+through a bilinear read at ANY scale - 0.11 for a 640 x 360 rect. At 1.0 the
+renderer now runs pass 1a (`neon-gather.frag`) onto that grid and shades the
+whole glow quad from it with the edge ring's program (`mNeonRingShader`,
+`NEON_READS_GATHER`), at full resolution, on the caller's framebuffer. Reusing
+the ring's program keeps the plan's rule of one target and one blend state per
+program per frame: at 1.0 the ring never draws.
+
+Quality: `neon-scale-check check` reads scale 1.0 at most **1/255** off the
+committed images on all twelve scenes (0 before), and every reduced scale
+unchanged against it. The ring has always read this same gather at full
+resolution, so nothing about the read is new.
+
+It is not free, and the gate is what the measurements below set:
+
+| gather scale (rect) | split / inline |
+| ------------------- | -------------- |
+| 1.00 (60 x 36) | 0.98x |
+| 0.94 (80 x 48) | 1.05x |
+| 0.75 (100 x 60) | 1.27x |
+| 0.54 (140 x 84) | 1.53x |
+| 0.19 (400 x 240) | 1.96x |
+
+Split only at a gather scale of 0.5 or below (`FULL_RES_SPLIT_GATHER_MAX_SCALE`):
+the gain above it is small, and the bound keeps the gather buffer no larger
+than the scaled path's at 0.5 already is.
+
+The second condition is the surprise. On this GPU the FIRST offscreen pass of
+a frame costs ~0.15 ms whatever it draws, and a second one in the same phase
+almost nothing, so a split that is the frame's only offscreen pass has to earn
+that back. Thin cutoff bands (`bounded_band`'s glow), split against inline,
+both with the shading of 10.3-10.4:
+
+| quad area | still | hue rotating |
+| --------- | ----: | -----------: |
+| 16k px (160 x 96 rect) | 0.27x | 1.00x |
+| 66k px (640 x 360) | 0.67x | 1.22x |
+| 109k px (960 x 540) | 0.86x | 1.37x |
+| 187k px (1600 x 900) | 1.17x | 1.59x |
+
+With the hue rotating - the default, 0.5 - the emission table re-bakes every
+frame, the frame leaves the caller's target anyway, and the split never loses.
+Still, it loses below ~137k px (a fit of the still column: 1.07 ns of loop per
+quad pixel at 128 samples against 0.15 ms fixed). So the direct path splits
+when the hue rotates OR the quad's area, times `numSamples / 128`, is at least
+`FULL_RES_SPLIT_MIN_AREA_PX` (140k). With the gate the still bands above read
+1.00x / 1.01x and the 1600 x 900 one 1.25x. Both inputs are stable from frame
+to frame, which matters: choosing per frame from whether the emission table
+happened to re-bake would alternate the two paths in a still scene, and they
+differ by 1/255.
+
+The constants are this GPU's. The fixed cost is the driver's and the
+rasteriser's, and a tiler's will differ - re-measure both on target hardware.
+
+### 10.2 What the shading costs
+
+With the loop gone from the quad, the shading is the pass. Terms stubbed one
+at a time in the split program, 1920 x 1080:
+
+| what was removed | default | sharp_corners | arcs | screen-edge band |
+| ---------------- | ------: | ------------: | ---: | ---------------: |
+| nothing | 2.29 ms | 1.37 | 2.77 | 0.373 |
+| the four corner pieces | 1.66x | 1.00x | 1.61x | 1.41x |
+| the straights' bloom | 1.36x | 1.86x | 1.24x | 1.24x |
+| the straights' halo | 1.03x | 1.05x | 0.96x | 1.03x |
+| `perimeterPosition` | 1.03x | 1.06x | 1.03x | 1.03x |
+| the filament | 1.00x | 1.01x | 1.00x | 1.01x |
+| everything after the gather read | 6.70x | 4.09x | 5.34x | 2.94x |
+
+(The screen-edge band is a 1840 x 1000 rect, `GlowSide::OUTSIDE`, outside
+cutoff 20 px - the production target.) The corner pieces and the straights'
+bloom are most of it, and both are `atan`s: the straights evaluate
+`bloomSegment` twelve times (four lines, each against its own pedestal), the
+corners another eight times with a development `atan` each.
+
+### 10.3 One `atan` per bloom segment
+
+`atan(t2/c) - atan(t1/c)` is the angle the segment subtends, and
+`atan(c * (t2 - t1), c^2 + t1 * t2)` is the same angle as one two-argument
+`atan`: exact, since c > 0 and t2 >= t1 put it in [0, PI]. 1.13-1.26x on the
+shading pass; 0-16 pixels a frame move by 1/255 from the rounding.
+
+### 10.4 Skipping pieces that add nothing
+
+- **A straight's bloom past `reach`.** `bloomSegment` falls monotonically with
+  the distance `a` from its line, so at `a >= reach` the segment is no
+  brighter than its own pedestal and the clamp makes it 0. Skipping it there
+  changes no pixel (measured byte-identical on fifteen scenes). The form
+  matters: a ternary on the old call cost `soft_wash` - whose reach covers
+  the frame, so nothing skips - 5%; computing each pair's shared pedestal once
+  and skipping only the segment costs it nothing, for 1.04-1.19x elsewhere.
+- **A corner arc, whole, far from its circle** (`uCornerSkip`,
+  `GetCornerSkip`). Every point of an arc's development is at least
+  `length(w) - r` from the fragment, so the closed forms `GetGlowInnerReach`
+  already bounds the interior with - halo `pi r kh^2 / (2 c^3)`, bloom
+  `pi r bw / (2 c^2)` less the shared pedestal - bound what the arc adds
+  there. `uCornerSkip` is where that falls under a quarter of half an 8-bit
+  level, so four skipped arcs add less than half a level, and since the tone
+  map is concave no pixel moves by more than the rounding of the one it lands
+  on: measured 0-7628 pixels per frame at 1/255, never 2. The bloom's own zero
+  is what places it (320 px at the defaults, `reach` 312); a stricter budget
+  runs into the halo's 1/c^3 tail and moves it out fast (355 px at 1/16, 563
+  at 1/64), so a quarter it is. 1.22-1.47x on the shading pass where it
+  engages.
+
+The two bounds share one CPU mirror of the shader's halo and bloom terms
+(`GlowBoundTerms`, `GetCornerArcBound`), so changing those terms has one place
+to follow it. A straight cannot be skipped whole the same way: its halo's
+1/a^2 tail needs ~2x `reach` to fall under the budget, and the halo is cheap.
+
+### 10.5 Result
+
+`neon-scale-check time`, AMD Radeon Pro 5300M, `80d71a7` against this
+change, interleaved rounds, median. The check scenes freeze the hue (rate 0),
+so these are the split's least favourable case - the gate of 10.1 decides on
+area alone.
+
+1920 x 1080, ms (before -> after):
+
+| scene | 1.0 | 0.5 | 0.25 |
+| ----- | --: | --: | ---: |
+| default | 4.97 -> 1.23 (4.03x) | 1.03 -> 0.68 (1.51x) | 0.65 -> 0.47 (1.40x) |
+| hairline | 3.27 -> 0.77 (4.23x) | 0.80 -> 0.53 (1.52x) | 0.56 -> 0.40 (1.39x) |
+| crisp_tube | 4.12 -> 0.99 (4.18x) | 0.92 -> 0.61 (1.51x) | 0.60 -> 0.42 (1.41x) |
+| soft_wash | 6.01 -> 2.31 (2.61x) | 1.24 -> 1.07 (1.16x) | 0.76 -> 0.67 (1.14x) |
+| sharp_corners | 4.17 -> 0.95 (4.40x) | 0.68 -> 0.55 (1.24x) | 0.46 -> 0.40 (1.16x) |
+| small_rect | 1.94 -> 0.75 (2.60x) | 0.64 -> 0.49 (1.30x) | 0.48 -> 0.37 (1.31x) |
+| glow_inside | 1.55 -> 0.67 (2.30x) | 0.56 -> 0.47 (1.20x) | 0.48 -> 0.38 (1.27x) |
+| card_outside | 4.69 -> 1.51 (3.11x) | 1.03 -> 0.77 (1.33x) | 0.62 -> 0.51 (1.23x) |
+| bounded_band | 0.28 -> 0.23 (1.18x) | 0.47 -> 0.44 (1.08x) | 0.41 -> 0.36 (1.14x) |
+| arcs | 5.44 -> 1.64 (3.32x) | 1.15 -> 0.83 (1.40x) | 0.70 -> 0.51 (1.36x) |
+| segments | 5.45 -> 1.46 (3.74x) | 1.13 -> 0.78 (1.46x) | 0.69 -> 0.52 (1.33x) |
+| overdrive | 6.01 -> 2.28 (2.63x) | 1.21 -> 1.05 (1.15x) | 0.70 -> 0.64 (1.10x) |
+
+1280 x 720, ms (before -> after):
+
+| scene | 1.0 | 0.5 | 0.25 |
+| ----- | --: | --: | ---: |
+| default | 2.68 -> 0.80 (3.36x) | 0.69 -> 0.49 (1.42x) | 0.49 -> 0.37 (1.33x) |
+| hairline | 2.01 -> 0.55 (3.66x) | 0.58 -> 0.40 (1.46x) | 0.43 -> 0.33 (1.34x) |
+| crisp_tube | 2.33 -> 0.66 (3.51x) | 0.63 -> 0.44 (1.43x) | 0.46 -> 0.34 (1.36x) |
+| soft_wash | 2.71 -> 1.09 (2.49x) | 0.71 -> 0.62 (1.15x) | 0.52 -> 0.47 (1.10x) |
+| sharp_corners | 2.27 -> 0.59 (3.88x) | 0.47 -> 0.41 (1.14x) | 0.34 -> 0.32 (1.07x) |
+| small_rect | 1.66 -> 0.78 (2.13x) | 0.65 -> 0.57 (1.13x) | 0.40 -> 0.36 (1.11x) |
+| glow_inside | 0.70 -> 0.40 (1.75x) | 0.44 -> 0.36 (1.21x) | 0.41 -> 0.33 (1.23x) |
+| card_outside | 2.15 -> 0.84 (2.57x) | 0.62 -> 0.53 (1.17x) | 0.45 -> 0.41 (1.09x) |
+| bounded_band | 0.18 -> 0.16 (1.17x) | 0.35 -> 0.34 (1.01x) | 0.36 -> 0.31 (1.15x) |
+| arcs | 2.98 -> 1.06 (2.82x) | 0.77 -> 0.56 (1.37x) | 0.53 -> 0.41 (1.30x) |
+| segments | 2.99 -> 0.93 (3.20x) | 0.72 -> 0.55 (1.32x) | 0.50 -> 0.40 (1.27x) |
+| overdrive | 2.69 -> 1.10 (2.43x) | 0.71 -> 0.62 (1.15x) | 0.50 -> 0.42 (1.18x) |
+
+Below 1.0 the gain is 10.3-10.4 alone: pass 1b and the edge ring run the same
+shading. The screen-edge band of 10.2 went 0.506 -> 0.239 ms (2.1x) at 1.0.
+Construction and initialisation are unchanged (7.4 -> 7.3 ms median); a frame
+that splits compiles two programs on first use where the inline path compiled
+one, as the scaled path always has. The gather buffer at 1.0 is small - 144 x
+96 RGBA16F, 110 KB, for the default scene at 1080p - and never larger than the
+scaled path's at 0.5.
+
+Verification, all on the AMD:
+
+- `neon-scale-check check`: PASS; 1.0 at most 1/255 off the committed images,
+  every reduced scale within its bound, the hairline sweep unchanged
+  (0.021-0.050 px).
+- `neon-scale-check partition --seed 1`: PASS, 1000 configs, no overlap, no
+  gap (the partition is untouched, but `setupRingGeometry` changed).
+- Each change isolated against the build without it, fifteen scenes: the
+  straight skip byte-identical everywhere; the corner skip and the single
+  `atan` at most 1/255; the whole change against `80d71a7` at most 1/255.
+- A long-lived effect against a fresh one through twelve steps - split, inline,
+  hue on and off, 0.5, 0.25, disabled and re-enabled, segments, a small rect -
+  byte-identical at every step, at 1080p and 720p. No WARN or ERROR line.
+
+### 10.6 What is left open
+
+- **One GPU.** Every number here is the AMD 5300M's. The split's gate rests on
+  a fixed cost (~0.15 ms for the first offscreen pass of a frame) that is the
+  driver's and the rasteriser's; on a tiler it is a tile store and load of a
+  small target, and `FULL_RES_SPLIT_MIN_AREA_PX` should be re-measured there
+  and on the Apple M2 Pro before it is trusted. The attribution in 10.2 is the
+  part most likely to reorder on another GPU.
+- **The shading is the cost now.** At the defaults, 1080p, about 0.34 ms of
+  the 1.23 is the floor (rasterising the quad, the gather read, the SDF, the
+  masks and the blend), and most of the rest is the corner development's
+  `atan` and the straights' remaining bloom near the line. Below 1.0 the same
+  shading is pass 1b and the ring.
+- **The gather pass re-runs on still frames.** Like the emission table, its
+  output is a pure function of the config and the time, so it could be
+  skipped when neither moved. That would remove the fixed cost of 10.1 in a
+  still scene - the case the area gate exists for - at the price of one more
+  staleness gate.
+- **A rect small enough to keep the loop inline** (gather scale above 0.5)
+  pays the full loop, as before; the two-level gather of section 6 is still
+  the move there.
+- **Docs that describe 1.0 as one inline pass**:
+  `docs/neon-onboarding-guide.md`, `docs/neon-shader-outputs.html` and the
+  comparison page's 1.0 images (1/255 off, inside `check`'s bound).
+  `tools/neon-guide-figures` keys its direct-path figures on the inline
+  program (`PassKind::P1`), so where its scene splits it now skips
+  `pass-p1-direct.png` and draws `geometry-direct.png` with no overlay.

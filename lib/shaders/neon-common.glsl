@@ -10,7 +10,8 @@
 // It is the perimeter GATHER - the colour loop that is ~95% of the neon's cost
 // - and exactly what that loop reads. Two programs run it: neon.frag's direct
 // path, inline, at resolutionScale 1.0; and neon-gather.frag, alone, into the
-// gather buffer below it. ONE copy, so the two cannot drift: a change to the
+// gather buffer below it - and at 1.0 too, whenever the renderer splits the
+// gather out. ONE copy, so the two cannot drift: a change to the
 // loop lands on both paths by construction, and tools/neon-scale-check is what
 // says whether they still agree.
 //

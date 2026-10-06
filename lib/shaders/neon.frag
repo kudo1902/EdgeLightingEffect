@@ -25,13 +25,17 @@
 // version line (WithDefine) for one of them; the direct path compiles it
 // without.
 //
-//   (none)            - resolutionScale 1.0: gather and shade, onto the target.
-//   NEON_READS_GATHER - below 1.0, everything EXCEPT the gather: reads the
-//                       four results neon-gather.frag stored back with a
-//                       bilinear fetch. Built into TWO program objects, one
-//                       per target: pass 1 (at resolutionScale, into the
-//                       reduced buffer) and the edge ring (at full resolution,
-//                       onto the target) - see NeonRenderer::ensurePathPrograms.
+//   (none)            - resolutionScale 1.0 with the gather inline: gather
+//                       and shade, onto the target.
+//   NEON_READS_GATHER - everything EXCEPT the gather: reads the four results
+//                       neon-gather.frag stored back with a bilinear fetch.
+//                       Built into TWO program objects, one per target: pass 1
+//                       below 1.0 (at resolutionScale, into the reduced
+//                       buffer), and the edge ring (at full resolution, onto
+//                       the target) - which at 1.0, when the renderer splits
+//                       the gather out (SplitsGatherAtFullRes), shades the
+//                       whole glow quad instead. See
+//                       NeonRenderer::ensurePathPrograms.
 //
 // The scaled path's third program, the gather pass, is neon-gather.frag: the
 // same gatherPerimeter, alone, into the gather buffer.
@@ -125,13 +129,14 @@ uniform vec2 uGlowCoverSplit;
 // it, so it has no loop to feed.
 
 #ifdef NEON_READS_GATHER
-// Below resolutionScale 1.0 the gather - the loop that is ~95% of this
-// shader's cost - runs ONCE, in its own pass, at its own coarse scale
-// (neon-gather.frag, into the gather buffer), and this variant draws
-// everything else from its stored result: pass 1 at resolutionScale, and the
-// edge ring at FULL resolution, where it redraws everything the reduced pass
-// gets wrong near the line - the filament, which a reduced buffer cannot
-// sample, and every hard edge. The gather's four results are smooth across the
+// Below resolutionScale 1.0 - and at 1.0 when the renderer splits it out -
+// the gather, the loop that is ~95% of the inline shader's cost, runs ONCE,
+// in its own pass, at its own coarse scale (neon-gather.frag, into the gather
+// buffer), and this variant draws everything else from its stored result:
+// pass 1 at resolutionScale, and the edge ring at FULL resolution, where it
+// redraws everything the reduced pass gets wrong near the line - the
+// filament, which a reduced buffer cannot sample, and every hard edge. At 1.0
+// the ring's program draws the whole glow quad. The gather's four results are smooth across the
 // screen - Lorentzian-weighted means over the whole perimeter, whose kernel is
 // never narrower than kc - so they survive a bilinear read from a grid a
 // fraction of kc apart (GetGatherScale in neon-renderer.cpp). Everything else
@@ -155,6 +160,11 @@ uniform vec2      uGatherUVOffset;
 // emission is faded to zero just before this, so the bloom never shows a hard
 // rectangular cutoff where the quad clips it - independent of bloom strength.
 uniform float uQuadMargin;
+
+// Distance (in pixels, from a corner arc's circle, outward) past which that
+// arc's halo and bloom are skipped: provably under a quarter of half an 8-bit
+// level each. See addCornerPiece and NeonRenderer::GetCornerSkip.
+uniform float uCornerSkip;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -185,9 +195,17 @@ float haloSegment(float a, float t1, float t2, float k) {
     float c2 = a * a + k * k;
     return k * k / c2 * (t2 / sqrt(c2 + t2 * t2) - t1 / sqrt(c2 + t1 * t1));
 }
+// ONE atan, not the difference of two: atan(t2/c) - atan(t1/c) is the angle
+// the segment subtends, and atan(c * (t2 - t1), c^2 + t1 * t2) is that same
+// angle as a single two-argument atan - exact, since c > 0 and t2 >= t1 put
+// it in [0, PI], the range atan(y, x) returns for y >= 0. This is the
+// costliest term in the shader (the straights call it twelve times, the
+// corners four), and the identity halves its atans and drops both divides:
+// 1.13-1.26x on the whole shading pass at 1920 x 1080 (AMD Radeon Pro 5300M),
+// for 0-16 pixels a frame moving by 1/255 from the rounding.
 float bloomSegment(float a, float t1, float t2, float k) {
     float c = sqrt(a * a + k * k);
-    return k / c * (atan(t2 / c) - atan(t1 / c));
+    return k / c * atan(c * (t2 - t1), c * c + t1 * t2);
 }
 
 // The bloom's 1/a tail is heavy enough that it has to be pedestal-subtracted to
@@ -202,8 +220,21 @@ float bloomSegment(float a, float t1, float t2, float k) {
 // over-subtracts and clamps the sum to zero early: measured at glowRadius 5,
 // the exterior tail ended 300 px out instead of running the full 420+ to the
 // quad edge.
-float bloomSegmentPedestalled(float a, float t1, float t2, float k, float reach) {
-    return max(bloomSegment(a, t1, t2, k) - bloomSegment(reach, t1, t2, k), 0.0);
+//
+// The pedestal is passed in rather than evaluated here: the two edges of a
+// pair (left and right, top and bottom) span the same t1 / t2, so they share
+// it, and main() computes it once per pair.
+//
+// And it is SKIPPED past `reach`, where it is exactly zero: bloomSegment falls
+// monotonically with `a` for fixed t1 / t2, so at a >= reach the segment is no
+// brighter than its own pedestal and the max() clamps it to 0. Most of a large
+// quad is further than `reach` from at least two of the four lines, so the
+// skip is most of the straights' bloom: 1.04-1.19x on the shading pass where
+// it engages, and nothing measurable where it does not (soft_wash, whose reach
+// covers the frame). Zero in exact arithmetic, and measured byte-identical on
+// fifteen scenes.
+float bloomSegmentPedestalled(float a, float t1, float t2, float k, float reach, float pedestal) {
+    return (a < reach) ? max(bloomSegment(a, t1, t2, k) - pedestal, 0.0) : 0.0;
 }
 
 // --- Corner arcs, developed onto their tangent -------------------------
@@ -604,8 +635,25 @@ void addCornerGlowFix(inout vec4 fix, vec2 signs, vec2 w, float kh, vec2 gathere
 // the read's arithmetic was trimmed; one arc at a time, 0.95x on the same
 // scenes and 1.00x across neon-scale-check's ten fully lit ones. Keep the four
 // calls whole.
+//
+// SKIPPED, whole, past uCornerSkip from the arc's circle. Every point of the
+// developed segment is at least length(w) - r from the fragment (on the facing
+// side that is its distance to the arc; past either end, to the tangent point
+// it is developed from), so the halo and bloom are bounded there by the two
+// closed forms GetGlowInnerReach already uses, and uCornerSkip is where they
+// put this arc's bloom at exactly 0 and its halo under a quarter of half an
+// 8-bit level - so four skipped arcs together stay under half a level, the
+// same budget as the quad's interior hole (NeonRenderer::GetCornerSkip). A
+// fragment far from a corner was paying for an atan, a length, a sqrt and the
+// four corner kernels to add nothing; most of a large quad is far from three of
+// the four. 1.22-1.47x on the shading pass where it engages (AMD Radeon Pro
+// 5300M, 1920 x 1080), nothing measurable where the glow reaches everything.
+// The concave side, where length(w) < r, is never skipped.
 void addCornerPiece(inout vec2 sum, inout vec4 fix, vec2 signs, vec2 w, float kh, float bw, float pedestal,
                     vec2 gathered, float gatheredSeg, float haloW, float bloomW) {
+    if (length(w) - uCornerRadius >= uCornerSkip) {
+        return;
+    }
     vec4  c = arcTangentSegment(w, uCornerRadius);
     float h = haloSegment(c.x, c.y, c.z, kh) * c.w;
     float b = max(bloomSegment(c.x, c.y, c.z, bw) * c.w - pedestal, 0.0);
@@ -933,9 +981,9 @@ void main() {
     // engage at all. See docs/corner-crease-and-filament-nyquist.md section 2.8.
     //
     // Gated to the scaled path, like softFloor above and for the same reason:
-    // at scale 1.0 the gather already runs at the destination rate, there is
-    // no blit to survive, and the direct path has to stay bit-identical to the
-    // full-res renderer it replaced. The old constant was a no-op at 1.0 by
+    // at scale 1.0 this shader runs at the destination rate, there is no blit
+    // to survive, and the direct path's filament has to stay exactly the
+    // width it was asked for. The old constant was a no-op at 1.0 by
     // arithmetic coincidence; this one would not be above N = 2, so it is a
     // gate now rather than a coincidence. NeonRenderer::setupGeometry mirrors
     // both the expression and the gate when it sizes the quad.
@@ -1316,10 +1364,12 @@ void main() {
     float hRight = haloSegment(aRight, tv1, tv2, kh);
     float hTop   = haloSegment(aTop,   th1, th2, kh);
     float hBot   = haloSegment(aBot,   th1, th2, kh);
-    float bLeft  = bloomSegmentPedestalled(aLeft,  tv1, tv2, bw, reach);
-    float bRight = bloomSegmentPedestalled(aRight, tv1, tv2, bw, reach);
-    float bTop   = bloomSegmentPedestalled(aTop,   th1, th2, bw, reach);
-    float bBot   = bloomSegmentPedestalled(aBot,   th1, th2, bw, reach);
+    float pedV   = bloomSegment(reach, tv1, tv2, bw);
+    float pedH   = bloomSegment(reach, th1, th2, bw);
+    float bLeft  = bloomSegmentPedestalled(aLeft,  tv1, tv2, bw, reach, pedV);
+    float bRight = bloomSegmentPedestalled(aRight, tv1, tv2, bw, reach, pedV);
+    float bTop   = bloomSegmentPedestalled(aTop,   th1, th2, bw, reach, pedH);
+    float bBot   = bloomSegmentPedestalled(aBot,   th1, th2, bw, reach, pedH);
 
     // The plain sums, as before V19, and V19's per-piece correction to them.
     float halo  = hLeft + hRight + hTop + hBot;

@@ -1,14 +1,17 @@
 // ---------------------------------------------------------------------------
-// The scaled path's gather pass (pass 1a)
+// The gather pass (pass 1a)
 // ---------------------------------------------------------------------------
 //
 // Below NeonConfig::resolutionScale 1.0 the perimeter gather - the loop that
-// is ~95% of the neon's cost - runs ONCE, alone, into NeonRenderer's gather
-// buffer, at its own coarse scale (GetGatherScale in neon-renderer.cpp). The
-// NEON_READS_GATHER variant of neon.frag then shades everything else from what
-// this writes: pass 1 at resolutionScale, and the edge ring at full
-// resolution. At 1.0 this program is never built - neon.frag runs the same
-// gatherPerimeter inline. See docs/neon-resolution-scale-plan.md section 13.
+// is ~95% of the inline neon's cost - runs ONCE, alone, into NeonRenderer's
+// gather buffer, at its own coarse scale (GetGatherScale in neon-renderer.cpp).
+// The NEON_READS_GATHER variant of neon.frag then shades everything else from
+// what this writes: pass 1 at resolutionScale, and the edge ring at full
+// resolution. At 1.0 the same happens whenever the renderer splits the gather
+// out (SplitsGatherAtFullRes), with the ring's program shading the whole quad;
+// otherwise this program is never built and neon.frag runs the same
+// gatherPerimeter inline. See docs/neon-resolution-scale-plan.md section 13
+// and docs/neon-perf-review.md section 10.
 //
 // precision, vPos, the shape uniforms, the segment block and the loop itself
 // are in neon-common.glsl, which is injected ahead of this file. What is here

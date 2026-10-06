@@ -534,6 +534,41 @@
 #define GATHER_TEXELS_PER_KERNEL  2.0
 #define GATHER_MIN_SCALE          0.0625
 
+// --- The gather split at resolutionScale 1.0. CPU only.
+//
+//     The direct path runs the gather as a pass of its own too, onto the same
+//     grid, when GetGatherScale at 1.0 is at most FULL_RES_SPLIT_GATHER_MAX_SCALE
+//     - the grid then has at least 4x fewer texels than the quad has pixels,
+//     and the gather buffer is never bigger than the scaled path's at 0.5 -
+//     AND the split pays for leaving the caller's framebuffer: either the hue
+//     rotates (the emission table re-bakes every frame, so the frame leaves it
+//     anyway) or the glow quad covers at least FULL_RES_SPLIT_MIN_AREA_PX
+//     (scaled by numSamples / NEON_MAX_LOOP_SAMPLES), where the loop it moves
+//     off the quad outweighs that switch on its own.
+//
+//     Measured on an AMD Radeon Pro 5300M at 1920 x 1080, split against
+//     inline, both with the same shading:
+//
+//       gather scale (rect)        split / inline
+//       1.00 (60 x 36)                 0.98x       loop on as many texels
+//       0.94 (80 x 48)                 1.05x
+//       0.75 (100 x 60)                1.27x
+//       0.54 (140 x 84)                1.53x
+//       0.19 (400 x 240)               1.96x
+//
+//       still cutoff band, quad area   split / inline   hue rotating
+//         16k px (160 x 96)            0.27x            1.00x
+//         66k px (640 x 360)           0.67x            1.22x
+//        109k px (960 x 540)           0.86x            1.37x
+//        187k px (1600 x 900)          1.17x            1.59x
+//
+//     The still column fits 1.07 ns of loop per quad pixel against 0.15 ms
+//     fixed, which breaks even at ~137k px. The fixed cost is the GPU's and
+//     the driver's, so re-measure both constants on a new target. See
+//     SplitsGatherAtFullRes in neon-renderer.cpp. ---
+#define FULL_RES_SPLIT_GATHER_MAX_SCALE 0.5
+#define FULL_RES_SPLIT_MIN_AREA_PX      140000.0
+
 // --- Stand-in distance for a cutoff that glowSide has already subsumed.
 //
 //     neon.frag hands this to the band distance on the side the one-sided cut
