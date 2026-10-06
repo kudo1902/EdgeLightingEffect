@@ -245,7 +245,14 @@
 /// 0.15 flattens the emitter completely but starts eating the near beam (100 px
 /// out moves for the first time), which is why the value stops here.
 ///
-/// 1.0 disables the shoulder and restores per-channel clipping.
+/// PER LAMP. The shoulder sees one lamp's light and cannot see the others, so
+/// it bounds each lamp, not their sum: two crossing beams each held near 0.6
+/// would still add past full scale. What stops that is the renderer's blend,
+/// which SCREENS the lamps rather than adding them - see
+/// SpotlightRenderer::Render, and V12a in docs/review-findings.md for why the
+/// shoulder was not moved onto the sum instead.
+///
+/// 1.0 disables the shoulder and restores per-channel clipping of a lone lamp.
 #define SPOT_HIGHLIGHT_KNEE       0.30
 
 /// HALF an 8-bit step - the level below which a value quantises to zero,

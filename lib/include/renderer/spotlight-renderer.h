@@ -10,7 +10,7 @@
 
 namespace EdgeLighting
 {
-    /// Freely placed and aimed cones of light, drawn as ONE additive pass.
+    /// Freely placed and aimed cones of light, drawn as ONE screened pass.
     ///
     /// The odd one out in this library: every other renderer parameterises its
     /// look by position along the rect's perimeter, and this one does not
@@ -23,12 +23,14 @@ namespace EdgeLighting
     /// spotlight.frag, evaluated over the smallest geometry that can contain
     /// it.
     ///
-    /// Light only, but NOT alpha-free: the pass is additive in the alpha
-    /// channel as well as in colour, so the framebuffer ends up recording
-    /// where light was written. It used to emit a literal alpha 0, which costs
-    /// nothing on an opaque desktop window and erases the entire layer on an
-    /// embedded surface a compositor or hardware video plane blends by alpha.
-    /// See @ref Render for the blend and the measurement.
+    /// Light only, but NOT alpha-free: the pass SCREENS - `dst + src * (1 -
+    /// dst)` - in the alpha channel as well as in colour, so the framebuffer
+    /// ends up recording where light was written. It used to emit a literal
+    /// alpha 0, which costs nothing on an opaque desktop window and erases the
+    /// entire layer on an embedded surface a compositor or hardware video
+    /// plane blends by alpha. A screen rather than an add so that overlapping
+    /// lamps approach full scale instead of clipping. See @ref Render for the
+    /// blend and the measurements.
     ///
     /// **One renderer, two resolution paths**, selected by
     /// @c SpotlightConfig::resolutionScale: at 1.0 the strips draw straight
