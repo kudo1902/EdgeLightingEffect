@@ -631,7 +631,10 @@ void main() {
     // margin under GlowSide::INSIDE, whose lit region is exactly a quad, and
     // cuts a hole in it for GlowSide::OUTSIDE and for an enabled insideCutoff,
     // whose lit regions are annuli - the same ring construction the opaque fill
-    // has always used to bound itself. These discards still have to be here:
+    // has always used to bound itself. It also cuts one, with no setting, past
+    // the depth where this shader's output is provably under half a level
+    // (GetGlowInnerReach), which no discard here mirrors because there is
+    // nothing left there to discard. These discards still have to be here:
     // the geometry is a conservative bound rounded outward by a few px, and it
     // is the discards that place the edge exactly.
     //

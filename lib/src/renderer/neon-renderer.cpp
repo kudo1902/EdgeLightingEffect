@@ -555,6 +555,18 @@ namespace EdgeLighting
             return std::max(fullReach, reducedReach) + static_cast<float>(RING_GUARD_TEXELS) / scale;
         }
 
+        /// The glow's own reach, in the px space of @p scale: @ref GetGlowMargin
+        /// before its outside-cutoff cap, and the value neon.frag recomputes as
+        /// `reach` to place its pedestals. Past it the filament and every
+        /// straight's bloom are exactly 0 by construction; the halo and the
+        /// corner arcs' bloom are not quite - see @ref GetGlowInnerReach.
+        inline float GetGlowReach(const Config &config, float scale)
+        {
+            const float glowReach = config.neon.glowRadius * scale * float(GLOW_REACH_RADIUS_FACTOR) *
+                                    (1.0f + config.neon.bloomStrength * config.neon.intensity);
+            return std::max(glowReach, GetFilamentExtent(config, scale).reach);
+        }
+
         /// How far past the rect edge the glow quad reaches, in the px space
         /// of @p scale: the margin @ref NeonRenderer::setupGeometry builds the
         /// quad with and hands neon.frag as uQuadMargin. At @p scale 1.0 it is
@@ -582,10 +594,7 @@ namespace EdgeLighting
         /// in step.
         inline float GetGlowMargin(const Config &config, float scale)
         {
-            const float glowReach = config.neon.glowRadius * scale * float(GLOW_REACH_RADIUS_FACTOR) *
-                                    (1.0f + config.neon.bloomStrength * config.neon.intensity);
-
-            float margin = std::max(glowReach, GetFilamentExtent(config, scale).reach);
+            float margin = GetGlowReach(config, scale);
 
             // Hard cap: when the outside cutoff is enabled the shader discards
             // emission past size + softness (the feather starts at size - see
@@ -622,6 +631,188 @@ namespace EdgeLighting
                 margin = std::min(margin, cutoffCap);
             }
             return margin;
+        }
+
+        /// An upper bound, per colour channel, on what neon.frag multiplies its
+        /// summed halo and bloom by - emitGlow plus the per-piece corrections
+        /// in glowFix, which together come to each piece's own coverage times
+        /// that piece's term. Both hues are unit magnitude (at most 1 in every
+        /// channel), an arc's coverage is at most the brightest arc's
+        /// intensity A and a segment's at most the summed boosts S, so the
+        /// multiplier is at most
+        ///
+        ///     intensity * A + S * max(A, min(S, 1))
+        ///
+        /// the second term being segmentGlow at those two maxima. Takes the
+        /// arcs as the shader is handed them (the first MAX_ARCS) and the EFFECTIVE
+        /// segments, already capped. A dark arc or a negative boost can only
+        /// lower what the shader computes, so counting one high is safe.
+        inline float GetGlowEmissionBound(const Config &config, const std::vector<SegmentBoost> &effectiveSegments)
+        {
+            float arcPeak = 0.0f;
+            const size_t arcCount = std::min(config.neon.arcs.size(), static_cast<size_t>(MAX_ARCS));
+            for (size_t i = 0; i < arcCount; ++i)
+            {
+                arcPeak = std::max(arcPeak, config.neon.arcs[i].intensity);
+            }
+            float boostSum = 0.0f;
+            for (const SegmentBoost &segment : effectiveSegments)
+            {
+                boostSum += std::max(segment.boost, 0.0f);
+            }
+            return std::max(config.neon.intensity, 0.0f) * arcPeak +
+                   boostSum * std::max(arcPeak, std::min(boostSum, 1.0f));
+        }
+
+        /// The linear value under which neon.frag's grade writes less than half
+        /// an 8-bit level - so an RGBA8 target stores 0, and a blend leaves the
+        /// destination exactly as it was. The inverse of
+        /// `(x / (x + TONE_MAP_SHOULDER))^GAMMA_EXPONENT` at 0.5 / 255, about
+        /// 3.9e-4. The shader's alpha is its brightest channel, so it rounds to
+        /// 0 with them.
+        inline float GetGlowInvisibleLevel()
+        {
+            const float q = std::pow(0.5f / 255.0f, 1.0f / static_cast<float>(GAMMA_EXPONENT));
+            return static_cast<float>(TONE_MAP_SHOULDER) * q / (1.0f - q);
+        }
+
+        /// How deep inside the rect edge, in FULL-RES px, the glow can still
+        /// write a non-zero pixel, for a glow whose emission is at most
+        /// @p emission (@ref GetGlowEmissionBound): the interior counterpart
+        /// of the quad's margin. CUTOFF_DISABLED_SIZE when that is the middle.
+        ///
+        /// WHY THE INTERIOR NEEDS THIS. With no inside cutoff, every fragment
+        /// inside the rect used to run the full shader - the gather loop
+        /// included - whatever the glow did there. On a screen-sized rect most
+        /// of the frame is interior, and nearly all of it is further from the
+        /// edge than the glow reaches: measured at 1920 x 1080, a 1840 x 1000
+        /// rect at glowRadius 2 shaded the whole interior to write zeros, and
+        /// an inside cutoff placed past where anything was lit - changing no
+        /// pixel - took the frame from 6.0 ms to 2.8 ms (AMD Radeon Pro 5300M).
+        /// docs/neon-perf-review.md section 6 had set this aside because the
+        /// demo's rect is smaller than twice the glow reach.
+        ///
+        /// WHY NOT SIMPLY `reach`. Past neon.frag's `reach` the filament and
+        /// every straight's bloom are exact zeros (the pedestals; bloomSegment
+        /// falls monotonically with distance from its line). Two terms are not:
+        ///
+        ///   - the halo, which has no pedestal. Its 1/a^2 tail is invisible at
+        ///     `reach` at intensity 1, but not at intensity 3 with bloom 0,
+        ///     where `reach` stops growing with the brightness: measured lit to
+        ///     1.9x `reach` inside the rect, up to 2/255.
+        ///   - the corner arcs' bloom. Their ONE shared pedestal is exact for a
+        ///     fragment outside an arc and too small on its concave side, where
+        ///     arcTangentSegment develops the arc at the fragment's own radius:
+        ///     measured lit to 1.3x `reach` inside a circle, up to 6/255.
+        ///
+        /// The outside does not see either - the quad-edge fade takes every
+        /// term to 0 at the margin. The inside has no such fade, and adding one
+        /// would change pixels, so the hole is cut where the glow is ALREADY
+        /// below half a level instead: the smallest depth D at or past `reach`
+        /// at which an upper bound on both terms falls under
+        /// @ref GetGlowInvisibleLevel. Every bound holds for any fragment at
+        /// least D inside the edge, which is every fragment the hole can hold:
+        ///
+        ///   - each straight is no brighter than its whole line,
+        ///     2 kh^2 / (a^2 + kh^2), and every line is at least D away; the
+        ///     two facing each other sum highest where one is as near as it can
+        ///     be, so the pair is at most the near one at D and the far one at
+        ///     the rect's width (height) less D;
+        ///   - each corner arc is weighted r / lam over a span lam * HALF_PI
+        ///     (arcTangentSegment), so lam cancels and its halo is at most
+        ///     pi r kh^2 / (2 c^3), its bloom pi r bw / (2 c^2), c measured from
+        ///     the arc - at least D away - and the bloom less the shader's
+        ///     shared pedestal.
+        ///
+        /// The bound is loose by design - all four arcs at D, two lines at D -
+        /// and lands ~20% past `reach` at the defaults on a 1840 x 1000 rect
+        /// (368 px against 312, with the last lit pixel at 311). Never tighter
+        /// than `reach`, which keeps the exact zeros above exact. Lengths
+        /// enter as ratios, so one full-res solve serves every resolution
+        /// scale; @p scale only places `reach` (the filament's Nyquist floor
+        /// widens it below 1.0).
+        ///
+        /// A function of the geometry, the glow's shape and @p emission, all of
+        /// which rebuild the quad - the first two through geometryDirty, the
+        /// third through mGlowEmission (see @ref NeonRenderer::OnConfigChanged).
+        inline float GetGlowInnerReach(const Config &config, float scale, float emission)
+        {
+            const NeonConfig &neon = config.neon;
+            const float reach = GetGlowReach(config, scale) / scale; // neon.frag's `reach`, full-res px
+            const float width = config.geometry.width;
+            const float height = config.geometry.height;
+            const float halfMin = std::min(width, height) * 0.5f;
+            // No interior past the reach - nothing to bound, and the far lines
+            // below assume a depth no larger than this.
+            if (reach >= halfMin)
+            {
+                return reach;
+            }
+
+            const float pi = glm::pi<float>();
+            const float kh = std::max(neon.glowRadius, static_cast<float>(EMISSION_MIN_WIDTH));
+            const float bw = std::max(neon.glowRadius * static_cast<float>(BLOOM_REACH_TO_GLOW),
+                                      static_cast<float>(EMISSION_MIN_WIDTH));
+            const float r = GeometryUtils::GetEffectiveCornerRadius(config.geometry);
+
+            // The bloom's renormalisation and the arcs' shared pedestal, exactly
+            // as neon.frag derives them from `reach`.
+            const float bloomPeak = static_cast<float>(BLOOM_NORM_FACTOR) * pi;
+            const float bloomPed = bloomPeak * bw / std::sqrt(reach * reach + bw * bw);
+            const float bloomGain = bloomPeak / std::max(bloomPeak - bloomPed, 1e-6f);
+            const float arcC = std::sqrt(reach * reach + bw * bw);
+            const float arcLamPed = std::sqrt((reach + r) * r);
+            const float arcPedestal =
+                (r > 0.0f) ? r / arcLamPed * bw / arcC * 2.0f * std::atan(arcLamPed * glm::half_pi<float>() / (2.0f * arcC))
+                           : 0.0f;
+
+            // glowGate, and the gains each sum is scaled by on its way out.
+            const float gate = std::clamp(neon.glowRadius / static_cast<float>(GLOW_GATE_FADE_PX), 0.0f, 1.0f);
+            const float haloScale = emission * gate * static_cast<float>(HALO_NORM_FACTOR * HALO_GAIN);
+            const float bloomScale =
+                emission * gate * static_cast<float>(BLOOM_NORM_FACTOR) * bloomGain * std::max(neon.bloomStrength, 0.0f);
+
+            auto bound = [&](float depth) {
+                const float ch2 = depth * depth + kh * kh;
+                const float farW = width - depth;
+                const float farH = height - depth;
+                float halo = 2.0f * kh * kh * (2.0f / ch2 + 1.0f / (farW * farW + kh * kh) + 1.0f / (farH * farH + kh * kh));
+                float bloom = 0.0f;
+                if (r > 0.0f)
+                {
+                    halo += 4.0f * pi * r * kh * kh / (2.0f * ch2 * std::sqrt(ch2));
+                    bloom = 4.0f * std::max(pi * r * bw / (2.0f * (depth * depth + bw * bw)) - arcPedestal, 0.0f);
+                }
+                return haloScale * halo + bloomScale * bloom;
+            };
+
+            // Each term falls with depth over [reach, halfMin] - the far lines
+            // rise, but never faster than their near partners fall - so the
+            // bound is monotone and a bisection finds the crossing.
+            const float level = GetGlowInvisibleLevel();
+            if (bound(reach) <= level)
+            {
+                return reach;
+            }
+            if (bound(halfMin) > level)
+            {
+                return CUTOFF_DISABLED_SIZE;
+            }
+            float lo = reach;
+            float hi = halfMin;
+            while (hi - lo > 0.25f)
+            {
+                const float mid = 0.5f * (lo + hi);
+                if (bound(mid) <= level)
+                {
+                    hi = mid;
+                }
+                else
+                {
+                    lo = mid;
+                }
+            }
+            return hi;
         }
 
         /// 1 - 1/sqrt(2): how far a rounded box's corner arc pulls the largest
@@ -1019,15 +1210,16 @@ namespace EdgeLighting
         mBlitVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
         mGatherVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
 
+        // The atlas bakes and the glow quad's interior hole read the merged
+        // transient+preserved view, which OnConfigChanged normally keeps
+        // current; seed it here for the first, before either.
+        SegmentUtils::FillEffectiveSegments(mCurrentConfig.neon, mEffectiveSegments);
         rebuildLoopSamples(mCurrentConfig);
         setupGeometry(mCurrentConfig);
         setupFillGeometry(mCurrentConfig);
         // After setupGeometry: the blit's outer frame reads the glow margin it
         // computes.
         setupRingGeometry(mCurrentConfig);
-        // The atlas bakes read the merged transient+preserved view, which
-        // OnConfigChanged normally keeps current; seed it here for the first.
-        SegmentUtils::FillEffectiveSegments(mCurrentConfig.neon, mEffectiveSegments);
         bakeLUTs(mCurrentConfig);
 
         setupFullscreenQuad();
@@ -1403,6 +1595,15 @@ namespace EdgeLighting
             SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
         }
 
+        // The quad's interior hole is sized for the brightest emission the
+        // glow can carry (GetGlowInnerReach), which moves with the arcs'
+        // intensities and the segments' boosts - inputs geometryDirty does not
+        // otherwise have. Gated on that one number, after the refill above,
+        // rather than on the two lists: a segment travelling round the ring
+        // changes its list every frame and the number never. Miss it and a
+        // boost raised under a hole cut for a dimmer glow clips its halo.
+        const bool emissionDirty = GetGlowEmissionBound(config, mEffectiveSegments) != mGlowEmission;
+
         // The emission table reads a wide slice of this config - the hue rate,
         // the sample count, all three LUTs and both light UBOs - so it is
         // invalidated on any change rather than on a gate that has to be kept
@@ -1502,7 +1703,7 @@ namespace EdgeLighting
             rebuildLoopSamples(config);
         }
 
-        if (geometryDirty)
+        if (geometryDirty || emissionDirty)
         {
             setupGeometry(config);
             // The blit / ring partition, after setupGeometry because the blit's
@@ -1789,9 +1990,8 @@ namespace EdgeLighting
         // survive both, so the reach is the NEARER of the two.
         //
         // A disabled bound contributes nothing and leaves the sentinel, which
-        // collapses the hole below and gives back the plain quad - so the
-        // default config, and every config that lights its own interior, is
-        // untouched.
+        // collapses the hole below and gives back the plain quad - so every
+        // config that lights its own interior is untouched.
         // MUTUALLY EXCLUSIVE, mirroring the cutoff neutralisation in neon.frag:
         // under GlowSide::OUTSIDE the inside cutoff is subsumed by the cut and
         // the shader ignores it, so taking a min() with it here would be worse
@@ -1800,17 +2000,36 @@ namespace EdgeLighting
         // clip what the blit reconstructs the cut from - the same dark seam by
         // a second route. With insideCutoff size 0 at scale 0.25 that put the
         // hole at 1.25 buffer px against a 2.0 px guard.
+        //
+        // A THIRD bound, which needs no setting at all: the glow's own reach.
+        // Deeper than GetGlowInnerReach the glow writes 0 whatever the
+        // cutoffs say, so a rect larger than twice that has an interior the
+        // quad never needed - on a screen-sized rect, most of the frame. It
+        // ANDs with the inside cutoff like the two discards do, so it is a
+        // min() with it; under OUTSIDE the cut is nearer than either. No
+        // guard band on this one, unlike the cutoff's: the blit only needs
+        // lit texels past a boundary it applies a mask at, and the texels in
+        // this hole are 0 in truth as well as in the cleared buffer. The
+        // default 800 x 600 rect, and the demo's half-viewport one, are
+        // smaller than twice it at the default glow, so both still draw the
+        // plain quad.
+        mGlowEmission = GetGlowEmissionBound(config, mEffectiveSegments);
+        mGlowInnerReach = GetGlowInnerReach(config, scale, mGlowEmission);
         float innerReach = CUTOFF_DISABLED_SIZE;
         if (config.neon.glowSide == GlowSide::OUTSIDE)
         {
             innerReach = sideCullPx;
         }
-        else if (config.neon.insideCutoff.enable)
+        else
         {
-            // neon.frag discards at dIn < -(inHalf + cutGuard), i.e. past the
-            // end of the inside fade - the point GetCutoffEnd computes - plus
-            // the scaled path's guard band.
-            innerReach = GetCutoffEnd(config.neon.insideCutoff, CUTOFF_FLOOR_PX) + cutGuardPx;
+            if (config.neon.insideCutoff.enable)
+            {
+                // neon.frag discards at dIn < -(inHalf + cutGuard), i.e. past the
+                // end of the inside fade - the point GetCutoffEnd computes - plus
+                // the scaled path's guard band.
+                innerReach = GetCutoffEnd(config.neon.insideCutoff, CUTOFF_FLOOR_PX) + cutGuardPx;
+            }
+            innerReach = std::min(innerReach, mGlowInnerReach);
         }
         const float innerMargin = (innerReach + GLOW_EDGE_SAFETY) * scale;
 
@@ -1827,8 +2046,9 @@ namespace EdgeLighting
         //
         // Clamped at zero throughout, which is what absorbs the sentinel: an
         // inner bound deeper than the rect (or a disabled one) drives both
-        // half-extents to 0, the side strips come out degenerate, and the top
-        // and bottom strips meet at y = 0 to tile the whole quad.
+        // half-extents to 0. One past only the SHORTER half-extent drives that
+        // one alone to 0, which is a hole of no area just the same - see the
+        // test below.
         const float radius = GeometryUtils::GetEffectiveCornerRadius(config.geometry) * scale;
         const float holeRadius = std::max(radius - innerMargin, 0.0f);
         const float cornerInset = holeRadius * CORNER_INSET_FACTOR;
@@ -1846,7 +2066,15 @@ namespace EdgeLighting
         // bound - which includes the default - is provably unchanged by this,
         // rather than relying on the rasteriser's fill rule to make eight
         // triangles land exactly where two did.
-        if (iw <= 0.0f && ih <= 0.0f)
+        //
+        // EITHER extent at 0, not both: a hole with no height is no hole, and
+        // the glow's own reach routinely lands between the two half-extents -
+        // at the defaults it is 312 px, past the default rect's 300 px
+        // half-height and short of its 400 px half-width. Tested with `&&`, that
+        // sent the default config through the eight-triangle ring - two strips
+        // meeting at y = 0 - for no fill saved, and moved the pixels the
+        // interpolation across the new diagonals rounds differently.
+        if (iw <= 0.0f || ih <= 0.0f)
         {
             float l = -ow;
             float r = ow;
@@ -2117,13 +2345,16 @@ namespace EdgeLighting
         //     mQuadMargin to exactly 0 (and texels past the quad are the clear
         //     colour), so a destination pixel whose bilinear footprint lies
         //     entirely out there composites 0. FOOTPRINT_TEXELS buffer texels
-        //     plus a pixel past the margin is that footprint.
+        //     plus a pixel past the margin is that footprint. The same holds
+        //     INWARD past mGlowInnerReach, where every texel is under half a
+        //     level - stored as 0 - drawn by pass 1 or not.
         //
         // Never inside the ring's own boxes, so the two arrays still tile.
         const EdgeExtent lit = GetLitExtent(config);
         const float glowBound = (mQuadMargin + FOOTPRINT_TEXELS) / scale + 1.0f;
+        const float glowInnerBound = mGlowInnerReach + FOOTPRINT_TEXELS / scale + 1.0f;
         const float blitOut = std::max(ring.out, std::min(glowBound, lit.out + LIT_EDGE_SAFETY));
-        const float blitIn = std::max(ring.in, lit.in + LIT_EDGE_SAFETY);
+        const float blitIn = std::max(ring.in, std::min(glowInnerBound, lit.in + LIT_EDGE_SAFETY));
         const glm::vec2 blitOuter = CircumscribedBox(halfW, halfH, blitOut);
         const glm::vec2 blitHole = InscribedBox(halfW, halfH, radius, -blitIn);
 
