@@ -218,12 +218,15 @@ layer rather than dimming its emission into the tone map. A value carried over
 from before this changed reads dimmer and wider than it used to.
 
 It is measured in **destination** pixels at every `resolutionScale`. Below
-`1.0` the cut is applied by the blit rather than by the gather, for the reason
-in `neon-blit.frag`: the gather's output is upsampled, so an edge drawn in
-buffer pixels is smeared across the line as well as along the lit side. One
-consequence is that the whole parameter is now scale-invariant - the first lit
-pixel reads 37 / 37 / 36 at softness 4 across scales 1.0 / 0.5 / 0.25, where it
-used to read 37 / 129 / 103 and lose its bottom range entirely at 0.25.
+`1.0` the cut is never drawn by the gather, for the reason in
+`neon-blit.frag`: the gather's output is upsampled, so an edge drawn in buffer
+pixels is smeared across the line as well as along the lit side. Near the line
+the full-resolution edge ring applies it, exactly as the direct path does, and
+further out (a feather wider than the ring) the blit applies the same
+expression. One consequence is that the whole parameter is scale-invariant -
+the first lit pixel reads 37 / 37 / 36 at softness 4 across scales 1.0 / 0.5 /
+0.25 (measured when the blit drew the whole cut), where it used to read 37 /
+129 / 103 and lose its bottom range entirely at 0.25.
 
 ### 3.5 Colour and hue rotation
 
@@ -418,8 +421,10 @@ All are demo-time debug aids; leave off in production.
 ### 3.9 Resolution and cost
 
 `NeonRenderer` draws either straight onto the framebuffer it was handed or into
-a downscaled buffer that is bilinear-blitted back. It is one renderer either
-way - these three fields shape its cost and nothing else about how it looks.
+a downscaled buffer that is bilinear-blitted back, with a thin ring around the
+edge re-shaded at full resolution. It is one renderer either way - these three
+fields shape its cost, and the scale shapes how it looks only within a couple
+of levels.
 
 (Before the unification these lived on a second renderer, `NeonOptimizedRenderer`,
 under `Config::optimizedNeon`. The C ABI's `el_effect_*_optimized_*` functions
@@ -428,9 +433,22 @@ still exist and now write these fields; see `el-effect.h`.)
 **`neon.resolutionScale`** (default 1.0)
 Fraction of the framebuffer resolution the gather runs at. `1.0` is the direct
 path: no offscreen buffer, no blit, nothing allocated. `0.5` halves each axis
-(quarter the fragment work); `0.25` quarters each axis. Below ~0.35 the
-bilinear upscale starts showing. Clamped to `(0, 1]` at draw time - values
+(quarter the gather work); `0.25` quarters each axis. Below `1.0` the reduced
+buffer is bilinear-blitted back everywhere except a ring around the edge, which
+is shaded at full resolution from the gather's stored result - so the line, the
+one-sided cut and the cutoffs near it look as they do at 1.0. Within 2/255 of
+1.0 down to 0.125 on every scene of `neon-resolution-scale-comparison.html` but
+a 160 x 96 rect; before the edge ring the upscale started showing below ~0.35,
+and a thin line visibly at 0.75. The error grows as the rect shrinks - a 20 x 17
+rect reads 17 / 53 / 93 levels off at 0.5 / 0.25 / 0.125 - so keep small rects
+at 1.0. Each path compiles its shaders the first frame it draws, so the first
+frame after a switch to or from 1.0 pays a one-time compile. Clamped to `(0, 1]` at draw time - values
 above 1.0 do not supersample.
+
+It is not a guaranteed saving. The ring and the blit are a fixed cost, so a
+layer that is already cheap at 1.0 - a tight cutoff band, a one-sided glow -
+can render slower below 1.0, and a soft filament (`filamentFalloff` below
+~0.3) makes the ring wide. Measure on the target before lowering it.
 
 **`neon.numSamples`** (default 128)
 Number of gather-loop samples per fragment, capped at `NEON_MAX_LOOP_SAMPLES`

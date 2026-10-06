@@ -8,11 +8,14 @@
 
 namespace EdgeLighting
 {
-    /// RAII wrapper around a GL framebuffer + a single colour attachment.
+    /// RAII wrapper around a GL framebuffer + its colour attachment(s).
     ///
     /// The attachment defaults to RGBA8 / LINEAR; @ref Resize takes explicit
     /// format and filter parameters for callers that need otherwise (the
-    /// emission pre-pass asks for RGBA16F / NEAREST).
+    /// emission pre-pass asks for RGBA16F / NEAREST). It also takes a count:
+    /// one attachment by default, up to @ref MAX_COLOR_ATTACHMENTS for a pass
+    /// that writes several outputs from one draw. All attachments of one
+    /// framebuffer share its size, format and filter.
     ///
     /// Typical use is "render to texture, then sample it in a later pass".
     /// Save the caller's target rather than assuming the default framebuffer -
@@ -43,17 +46,29 @@ namespace EdgeLighting
         Framebuffer(const Framebuffer &) = delete;
         Framebuffer &operator=(const Framebuffer &) = delete;
 
+        /// Largest attachment count @ref Resize accepts. Sized for what the
+        /// neon's reduced pass used to write (colour + two gather targets);
+        /// its gather buffer now takes at most two. GL 3.3 guarantees 8 draw
+        /// buffers and GLES 3.0 guarantees 4, so this is never the driver's
+        /// limit on a conforming one.
+        static constexpr int MAX_COLOR_ATTACHMENTS = 3;
+
         Framebuffer(Framebuffer &&other) noexcept
             : mFbo(other.mFbo),
-              mTexture(other.mTexture),
+              mAttachmentCount(other.mAttachmentCount),
               mWidth(other.mWidth),
               mHeight(other.mHeight),
               mInternalFormat(other.mInternalFormat),
               mFilter(other.mFilter),
               mName(std::move(other.mName))
         {
+            for (int i = 0; i < MAX_COLOR_ATTACHMENTS; ++i)
+            {
+                mTextures[i] = other.mTextures[i];
+                other.mTextures[i] = 0;
+            }
             other.mFbo = 0;
-            other.mTexture = 0;
+            other.mAttachmentCount = 1;
             other.mWidth = 0;
             other.mHeight = 0;
         }
@@ -64,23 +79,29 @@ namespace EdgeLighting
             {
                 destroy();
                 mFbo = other.mFbo;
-                mTexture = other.mTexture;
+                for (int i = 0; i < MAX_COLOR_ATTACHMENTS; ++i)
+                {
+                    mTextures[i] = other.mTextures[i];
+                    other.mTextures[i] = 0;
+                }
+                mAttachmentCount = other.mAttachmentCount;
                 mWidth = other.mWidth;
                 mHeight = other.mHeight;
                 mInternalFormat = other.mInternalFormat;
                 mFilter = other.mFilter;
                 mName = std::move(other.mName);
                 other.mFbo = 0;
-                other.mTexture = 0;
+                other.mAttachmentCount = 1;
                 other.mWidth = 0;
                 other.mHeight = 0;
             }
             return *this;
         }
 
-        /// Allocates or resizes the colour attachment to @p width × @p height.
+        /// Allocates or resizes the colour attachment(s) to @p width × @p height.
         /// No-op when the FBO already exists at the requested size **and** the
-        /// same format / filter - safe to call every frame from the render loop.
+        /// same format / filter / attachment count - safe to call every frame
+        /// from the render loop.
         /// Logs a warning with the FBO's name if the framebuffer ends up
         /// incomplete.
         ///
@@ -91,9 +112,27 @@ namespace EdgeLighting
         /// filtered read across sample boundaries would blend neighbouring
         /// perimeter samples together).
         ///
-        /// @note Format and filter are tracked alongside the size, so a caller
-        ///       that changes format on an existing FBO forces a reallocation
-        ///       instead of silently keeping the old one.
+        /// @p colorAttachments is how many colour attachments to give the FBO,
+        /// 1 to @ref MAX_COLOR_ATTACHMENTS, attached at
+        /// @c GL_COLOR_ATTACHMENT0 + i and written by fragment output location
+        /// i. Above 1, @c glDrawBuffers is set once here, at creation - draw
+        /// buffers are framebuffer state, so they persist with the FBO and
+        /// cost nothing per frame. At 1 it is not called at all and the FBO is
+        /// exactly the one this class has always built. Outside that range the
+        /// call is refused, like an invalid size, rather than clamped: a pass
+        /// whose shader writes three outputs into a two-attachment buffer has a
+        /// bug worth hearing about. So is a driver that reports fewer draw
+        /// buffers than asked for, which is checked on the allocation path only.
+        ///
+        /// @warning Every attachment is blended by the one blend state - GLES 3.0
+        ///          has no per-attachment blend. A pass that writes DATA rather
+        ///          than colour to an extra attachment must disable blending
+        ///          for that draw, or premultiplied-over will mix it with
+        ///          whatever the attachment held.
+        ///
+        /// @note Format, filter and attachment count are tracked alongside the
+        ///       size, so a caller that changes any of them on an existing FBO
+        ///       forces a reallocation instead of silently keeping the old one.
         /// @note Leaves the draw framebuffer binding exactly as it found it,
         ///       including on the failure path. It binds this FBO internally to
         ///       attach and validate, then puts the caller's target back - it
@@ -104,18 +143,47 @@ namespace EdgeLighting
         /// @return @c true on success (or no-op); @c false on failure.
         bool Resize(int width, int height,
                     GLint internalFormat = GL_RGBA8, GLenum format = GL_RGBA,
-                    GLenum type = GL_UNSIGNED_BYTE, GLint filter = GL_LINEAR)
+                    GLenum type = GL_UNSIGNED_BYTE, GLint filter = GL_LINEAR,
+                    int colorAttachments = 1)
         {
             if (width <= 0 || height <= 0)
             {
                 LOG_E("Framebuffer[%s]: invalid size %dx%d requested.", mName.c_str(), width, height);
                 return false;
             }
+            if (colorAttachments < 1 || colorAttachments > MAX_COLOR_ATTACHMENTS)
+            {
+                LOG_E("Framebuffer[%s]: invalid attachment count %d requested (1-%d).",
+                      mName.c_str(), colorAttachments, MAX_COLOR_ATTACHMENTS);
+                return false;
+            }
 
             if (mFbo != 0 && width == mWidth && height == mHeight &&
-                internalFormat == mInternalFormat && filter == mFilter)
+                internalFormat == mInternalFormat && filter == mFilter &&
+                colorAttachments == mAttachmentCount)
             {
                 return true;
+            }
+
+            // Past the early-out, so this is the allocation path and never a
+            // per-frame query. Both limits matter: attachments beyond
+            // GL_MAX_COLOR_ATTACHMENTS cannot be attached, and draw buffers
+            // beyond GL_MAX_DRAW_BUFFERS cannot be written. A conforming driver
+            // passes trivially (see MAX_COLOR_ATTACHMENTS); this is for one
+            // that does not, which should fail here, visibly, rather than
+            // render with outputs silently dropped.
+            if (colorAttachments > 1)
+            {
+                GLint maxAttachments = 0;
+                GLint maxDrawBuffers = 0;
+                glGetIntegerv(GL_MAX_COLOR_ATTACHMENTS, &maxAttachments);
+                glGetIntegerv(GL_MAX_DRAW_BUFFERS, &maxDrawBuffers);
+                if (colorAttachments > maxAttachments || colorAttachments > maxDrawBuffers)
+                {
+                    LOG_E("Framebuffer[%s]: %d attachments requested, driver allows %d attachments / %d draw buffers.",
+                          mName.c_str(), colorAttachments, maxAttachments, maxDrawBuffers);
+                    return false;
+                }
             }
 
             // Saved before the first bind below and restored on every exit -
@@ -134,17 +202,33 @@ namespace EdgeLighting
 
             destroy();
 
-            glGenTextures(1, &mTexture);
-            glBindTexture(GL_TEXTURE_2D, mTexture);
-            glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, nullptr);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            glGenTextures(colorAttachments, mTextures);
+            for (int i = 0; i < colorAttachments; ++i)
+            {
+                glBindTexture(GL_TEXTURE_2D, mTextures[i]);
+                glTexImage2D(GL_TEXTURE_2D, 0, internalFormat, width, height, 0, format, type, nullptr);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, filter);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, filter);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+                glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+            }
 
             glGenFramebuffers(1, &mFbo);
             glBindFramebuffer(GL_FRAMEBUFFER, mFbo);
-            glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, mTexture, 0);
+            for (int i = 0; i < colorAttachments; ++i)
+            {
+                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0 + i, GL_TEXTURE_2D, mTextures[i], 0);
+            }
+            // One attachment keeps GL's default draw buffer (attachment 0), so
+            // that FBO is byte for byte the one this class always built.
+            if (colorAttachments > 1)
+            {
+                static_assert(MAX_COLOR_ATTACHMENTS == 3,
+                              "list one GL_COLOR_ATTACHMENTn per attachment below");
+                const GLenum drawBuffers[MAX_COLOR_ATTACHMENTS] = {
+                    GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2};
+                glDrawBuffers(colorAttachments, drawBuffers);
+            }
 
             GLenum status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
             glBindFramebuffer(GL_FRAMEBUFFER, static_cast<GLuint>(prevFbo));
@@ -161,12 +245,13 @@ namespace EdgeLighting
             mHeight = height;
             mInternalFormat = internalFormat;
             mFilter = filter;
-            LOG_I("Framebuffer[%s] sized to %dx%d (id=%u, tex=%u).",
-                  mName.c_str(), mWidth, mHeight, mFbo, mTexture);
+            mAttachmentCount = colorAttachments;
+            LOG_I("Framebuffer[%s] sized to %dx%d (id=%u, tex=%u, attachments=%d).",
+                  mName.c_str(), mWidth, mHeight, mFbo, mTextures[0], mAttachmentCount);
             return true;
         }
 
-        /// Free the FBO and its colour attachment, returning the object to the
+        /// Free the FBO and its colour attachment(s), returning the object to the
         /// state a fresh construction leaves it in. A no-op when nothing is
         /// allocated, so it is safe to call every time the owner's gate says
         /// the buffer is not wanted rather than only on the transition.
@@ -193,12 +278,12 @@ namespace EdgeLighting
         ///       into. Call it outside a pass, not in the middle of one.
         void Release()
         {
-            if (mFbo == 0 && mTexture == 0)
+            if (mFbo == 0 && mTextures[0] == 0)
             {
                 return;
             }
-            LOG_I("Framebuffer[%s] released (id=%u, tex=%u, was %dx%d).",
-                  mName.c_str(), mFbo, mTexture, mWidth, mHeight);
+            LOG_I("Framebuffer[%s] released (id=%u, tex=%u, was %dx%d, attachments=%d).",
+                  mName.c_str(), mFbo, mTextures[0], mWidth, mHeight, mAttachmentCount);
             destroy();
         }
 
@@ -219,8 +304,9 @@ namespace EdgeLighting
             glViewport(0, 0, mWidth, mHeight);
         }
 
-        /// Clear the colour attachment - transparent black by default, which
-        /// is what a premultiplied-alpha layer wants under it.
+        /// Clear every colour attachment - transparent black by default, which
+        /// is what a premultiplied-alpha layer wants under it, and what an
+        /// extra data attachment wants where its pass draws nothing.
         ///
         /// @c glClearBufferfv, not @c glClearColor + @c glClear: the colour is
         /// an ARGUMENT, so no global clear-colour state is saved, overwritten
@@ -249,8 +335,13 @@ namespace EdgeLighting
                 return;
             }
 
+            // Draw buffer i is attachment i - see Resize - so this reaches each
+            // of them. One attachment is the one call this always made.
             const GLfloat rgba[4] = {r, g, b, a};
-            glClearBufferfv(GL_COLOR, 0, rgba);
+            for (int i = 0; i < mAttachmentCount; ++i)
+            {
+                glClearBufferfv(GL_COLOR, i, rgba);
+            }
         }
 
         /// Restores the default framebuffer. Does NOT touch the viewport - the
@@ -302,12 +393,14 @@ namespace EdgeLighting
             glBindFramebuffer(GL_FRAMEBUFFER, id);
         }
 
-        /// Binds the colour attachment texture to texture unit @p unit
-        /// (defaults to GL_TEXTURE0) for sampling in a subsequent pass.
-        void BindTexture(GLuint unit = 0) const
+        /// Binds colour attachment @p attachment (default 0) to texture unit
+        /// @p unit (default GL_TEXTURE0) for sampling in a subsequent pass. An
+        /// attachment this framebuffer does not have binds texture 0, so a
+        /// bad index samples black rather than another attachment.
+        void BindTexture(GLuint unit = 0, int attachment = 0) const
         {
             glActiveTexture(GL_TEXTURE0 + unit);
-            glBindTexture(GL_TEXTURE_2D, mTexture);
+            glBindTexture(GL_TEXTURE_2D, GetTextureId(attachment));
         }
 
         bool IsValid() const { return mFbo != 0; }
@@ -323,7 +416,15 @@ namespace EdgeLighting
         /// because @ref Resize treats a format change as a reallocation and
         /// @c destroy resets this to the default on the failure path.
         GLint GetInternalFormat() const { return mInternalFormat; }
-        GLuint GetTextureId() const { return mTexture; }
+        /// Texture name of colour attachment @p attachment, or 0 if this
+        /// framebuffer has no such attachment.
+        GLuint GetTextureId(int attachment = 0) const
+        {
+            return (attachment >= 0 && attachment < mAttachmentCount) ? mTextures[attachment] : 0;
+        }
+        /// How many colour attachments the current allocation has: 1 unless a
+        /// @ref Resize asked for more, and 1 again after @ref Release.
+        int GetAttachmentCount() const { return mAttachmentCount; }
         const char *GetName() const { return mName.c_str(); }
         void SetName(const char *name) { mName = name ? name : "unnamed"; }
 
@@ -335,11 +436,15 @@ namespace EdgeLighting
                 glDeleteFramebuffers(1, &mFbo);
                 mFbo = 0;
             }
-            if (mTexture != 0)
+            for (int i = 0; i < MAX_COLOR_ATTACHMENTS; ++i)
             {
-                glDeleteTextures(1, &mTexture);
-                mTexture = 0;
+                if (mTextures[i] != 0)
+                {
+                    glDeleteTextures(1, &mTextures[i]);
+                    mTextures[i] = 0;
+                }
             }
+            mAttachmentCount = 1;
             mWidth = 0;
             mHeight = 0;
             mInternalFormat = GL_RGBA8;
@@ -348,7 +453,8 @@ namespace EdgeLighting
 
     private:
         GLuint mFbo = 0;
-        GLuint mTexture = 0;
+        GLuint mTextures[MAX_COLOR_ATTACHMENTS] = {0, 0, 0}; ///< Attachment i at GL_COLOR_ATTACHMENT0 + i.
+        int mAttachmentCount = 1;                            ///< Tracked so a count change forces a realloc.
         int mWidth = 0;
         int mHeight = 0;
         GLint mInternalFormat = GL_RGBA8; ///< Tracked so a format change forces a realloc.

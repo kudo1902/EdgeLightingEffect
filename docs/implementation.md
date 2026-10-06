@@ -88,10 +88,10 @@ compositing order, since they blend onto one another in the order they draw:
 
 | # | Renderer | Layer |
 |---|---|---|
-| 1 | `NeonRenderer` | The neon stroke: an emission pre-pass, the opaque fill, the gather, and - below `resolutionScale` 1.0 - a scaled buffer plus its blit. |
+| 1 | `NeonRenderer` | The neon stroke: an emission pre-pass, the opaque fill, the gather, and - below `resolutionScale` 1.0 - a scaled buffer plus its blit, with a full-resolution ring re-shaded around the edge. |
 | 2 | `DropletsRenderer` | Rain-on-glass in a band hugging the perimeter. Screen-space gravity, self-lit, no framebuffer capture. Always full-res. |
 | 3 | `LensFlareRenderer` | Sun plus hex-aperture flare as one fullscreen premultiplied pass. The sun rides the perimeter, and - below `resolutionScale` 1.0 - a scaled buffer plus its blit. |
-| 4 | `SpotlightRenderer` | Freely placed and aimed cones of light, as one additive pass over solved per-lamp strips. The odd one out: not a perimeter effect, reads only `Config::spotlight`, and - below `resolutionScale` 1.0 - a scaled buffer plus its blit. See [`spotlight-renderer.md`](spotlight-renderer.md). |
+| 4 | `SpotlightRenderer` | Freely placed and aimed cones of light, as one screened pass over solved per-lamp strips. The odd one out: not a perimeter effect, reads only `Config::spotlight`, and - below `resolutionScale` 1.0 - a scaled buffer plus its blit. See [`spotlight-renderer.md`](spotlight-renderer.md). |
 | 5 | `DebugRenderer` | The LUT strip, colour-stop markers and the 1px bounding box. **Last on purpose** - it annotates what the layers under it drew, so its overlays have to sit above all of them. Always full-res. |
 
 `DebugRenderer` being last is the one position in that list that is load-bearing
@@ -118,9 +118,12 @@ cones by its own coverage instead of the cones adding onto the neon.
 the half-res path as a resolution scale on a single renderer: `NeonConfig::
 resolutionScale` and `LensFlareConfig::resolutionScale`, where 1.0 draws
 straight onto the target and anything lower renders into a scaled buffer and
-blits back. One `.cpp` and one `.frag` each, no pair to keep in step and no way
-to double-draw. See `docs/neon-unification-plan.md` and
-`docs/lens-flare-unification-comparison.md`.
+blits back - the neon then re-shading a thin ring around the edge at full
+resolution, from a variant of the same `neon.frag`. One `.cpp` each and one
+copy of every shader stage, no pair to keep in step and no way to double-draw.
+(The neon's gather pass is a `.frag` of its own, `neon-gather.frag`, but the
+loop it runs is the one `neon.frag` runs, shared through `neon-common.glsl`.) See
+`docs/neon-unification-plan.md` and `docs/lens-flare-unification-comparison.md`.
 
 To add a renderer: subclass `BaseRenderer`, add a sub-config struct to `Config`
 with `operator==`, register it in [`demo/src/main.cpp`](../demo/src/main.cpp),
@@ -164,7 +167,7 @@ Multiply the two, tone map hue-preservingly, apply gamma, emit premultiplied
 alpha (coverage = brightest channel) so the effect composites over arbitrary
 content rather than only adding light.
 
-Before that quad runs, both neon renderers execute an **emission pre-pass**.
+Before that quad runs, the neon renderer executes an **emission pre-pass**.
 The gather's per-sample work - the arc winner-take-all, the segment bells, the
 LUT fetches - is a pure function of `(si, uTime, config)` and does not vary per
 fragment, so it is baked once per frame into an `N x 2` RGBA16F table
@@ -174,10 +177,41 @@ The invariant that keeps the split honest: **a pure function of
 `(si, uTime, config)` belongs in the pre-pass; anything that reads `vPos`
 belongs in the main shader.**
 
+A second pre-pass bakes the **glow coverage table** (`neon-glow-cover.frag`):
+for each of the outline's eight pieces - four straights, four corner arcs -
+how lit that piece is as the halo and the bloom see it from a fragment, its own
+coverage over its own extent weighted by each layer's kernel, in closed form
+for the arcs and numerically for the segments' bells. The halo and bloom are a
+sum over those pieces, and each piece's share is scaled by its own read of
+that table (one linear fetch), not by one coverage gathered around the
+fragment: the gathered one let an unlit stretch keep a faint line of light
+along it and dimmed lit edges' light reaching a dark one (V19 and V20 in
+[`review-findings.md`](review-findings.md)), and a table per perimeter rather
+than per piece spilled light round each corner (V21). Where each piece's
+coverage sits in the table is in `neon-pieces.glsl`, which both the bake and
+`neon.frag` include. The table depends on the arcs, the segments, the rect's
+shape and the glow radius only, so it is re-baked on a config change and never
+on time.
+
+Below `resolutionScale` 1.0 the same split pays twice. The gather is the only
+part of the shader that is both expensive and smooth across the screen, so it
+runs alone, in a pass of its own (`neon-gather.frag`, which calls the same
+`gatherPerimeter` from `neon-common.glsl` that `neon.frag` calls inline), on a
+grid set by its own smoothness (about two texels per colour kernel - far
+coarser than the reduced buffer), and stores its four results in a small
+buffer. A variant of `neon.frag` that reads those
+results back instead of looping then shades the glow twice: at the reduced
+scale into the reduced buffer, and at full resolution in a thin ring around the
+edge. The line and every edge near it come out as the direct path draws them.
+Everything outside the ring is the reduced buffer, bilinear-blitted.
+
 The full derivation, including the closed forms and the sampling bugs they
 replaced, is in [`neon-renderer-explained.html`](neon-renderer-explained.html);
 the pre-pass has its own design note in
-[`emission-prepass.md`](emission-prepass.md).
+[`emission-prepass.md`](emission-prepass.md), and the edge ring in
+[`neon-resolution-scale-plan.md`](neon-resolution-scale-plan.md) (sections 7
+and 13). For the whole pipeline walked once in order, pass by pass and field
+by field, start with [`neon-onboarding-guide.md`](neon-onboarding-guide.md).
 
 ## 7. Shader and C++ interop
 
@@ -296,7 +330,8 @@ Two rules that are easy to get wrong:
 | Goal | Touch |
 |---|---|
 | Tune neon appearance | `neon-tuning.h` and `neon.frag` - one copy, both resolution paths |
-| Change what the gather bakes | `neon-emission.frag` **and** `neon.frag` - keep the pre-pass invariant (§6) |
+| Change the gather loop | `neon-common.glsl` - both paths run it; the encode in `neon-gather.frag` and the decode in `neon.frag` change together |
+| Change what the gather bakes | `neon-emission.frag` **and** `neon-common.glsl` - keep the pre-pass invariant (§6) |
 | Add a config field | `config.h` (field **and** `operator==`), the renderer that reads it, `DebugUI`, and the C ABI mirror if exposed |
 | Add a shader | `lib/CMakeLists.txt` (two lists) and `shaders.h.in` |
 | Add a renderer | `BaseRenderer` subclass, `Config` sub-struct, `main.cpp` registration, `DebugUI` section, `el_renderer_flags_e` bit |
@@ -305,4 +340,6 @@ Two rules that are easy to get wrong:
 
 Conventions (naming, bracing, the no-em-dash rule) are in
 [`AGENTS.md`](../AGENTS.md) and enforced by hand. There is no formatter config
-and no test target.
+and no test target; the nearest thing is the optional
+[`tools/neon-scale-check`](../tools/neon-scale-check/README.md), a regression
+check for the neon's resolution scale (`-DEDGE_LIGHTING_BUILD_TOOLS=ON`).

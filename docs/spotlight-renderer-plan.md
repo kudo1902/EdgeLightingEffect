@@ -263,6 +263,12 @@ Premultiplied colour plus a coverage alpha, under a fully additive
 and the alpha accumulates rather than compositing, so the pass stays
 order-independent in both channels.
 
+**Since replaced by a screen**, `glBlendFuncSeparate(GL_ONE_MINUS_DST_COLOR,
+GL_ONE, GL_ONE_MINUS_DST_ALPHA, GL_ONE)`: added, two lamps that each sat under
+full scale summed past it and clipped where they crossed. The screen is still
+order-independent. See V12a in `docs/review-findings.md`; the rest of this plan
+describes the additive pass it was verified with.
+
 The alpha was originally a literal `0.0` and the blend a plain
 `GL_ONE / GL_ONE_MINUS_SRC_ALPHA`. Algebraically the same for colour - `1 - 0`
 is `1` - but it left the framebuffer's alpha untouched wherever the spotlight

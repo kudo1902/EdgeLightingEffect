@@ -79,10 +79,12 @@ precision highp float;
 //
 // Output is premultiplied colour plus a COVERAGE ALPHA, the same
 // max-of-channels rule neon.frag and lens-flare.frag use. The renderer pairs
-// it with a separate-alpha blend (GL_ONE / GL_ONE on both channels), so the
-// colour is still pure addition - light only adds, and lamp order still cannot
-// change the image - while the alpha channel accumulates a record of where
-// light was written.
+// it with a separate-alpha SCREEN (GL_ONE_MINUS_DST_COLOR / GL_ONE, and the
+// same on alpha): light only adds, lamp order still cannot change the image,
+// and the alpha channel accumulates a record of where light was written - but
+// overlapping lamps approach full scale instead of summing past it. The
+// highlight shoulder below keeps ONE lamp under 1.0; it cannot see the others,
+// and the screen is what stops two of them clipping where they cross.
 //
 // That alpha is NOT decoration and this shader is the reason the whole layer
 // once vanished on a device. Every other layer here writes a coverage alpha;
@@ -268,8 +270,8 @@ void main() {
     // Coverage = brightest channel, exactly as in neon.frag and
     // lens-flare.frag: a bright aperture core reads as solid to whatever
     // composites this surface, the dim spill stays as good as additive, and an
-    // unlit fragment leaves the alpha it found alone (the blend adds, so 0
-    // contributes nothing). Read from `lit` AFTER the clip, so a cut fragment
+    // unlit fragment leaves the alpha it found alone (0 screened onto
+    // anything leaves it unchanged). Read from `lit` AFTER the clip, so a cut fragment
     // records no coverage either - light that was removed must not go on
     // claiming the surface it would have lit.
     float cov = clamp(max(max(lit.r, lit.g), lit.b), 0.0, 1.0);

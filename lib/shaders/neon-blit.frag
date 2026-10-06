@@ -1,7 +1,12 @@
 precision highp float;
 
 // Pass 2b of the scaled neon path: bilinear composite of the reduced-resolution
-// neon FBO (premultiplied colour + coverage alpha) onto the backbuffer. The
+// neon FBO (premultiplied colour + coverage alpha) onto the backbuffer, over
+// the part of the frame outside the thin edge ring that pass 2c re-shades at
+// full resolution - and only where the glow can still be non-zero there: past
+// the cut, the cutoffs and the glow's own fade margin this shader would write
+// exactly 0, so NeonRenderer::setupRingGeometry, which builds both areas,
+// leaves those pixels out. The
 // opaque-mode silhouette is handled entirely by the black-rect fullscreen pass
 // drawn just before this blit in NeonRenderer::Render - the black quad's
 // analytic SDF anti-aliasing lands cleanly on rounded corners regardless of
@@ -45,15 +50,19 @@ precision highp float;
 // everything else held here. That sequence is the point: it tracks neither the
 // scale nor the 4 px the caller asked for, it just wanders with where the
 // boundary falls between buffer texels.
+//
+// THE INSIDE AND OUTSIDE CUTOFFS ARE APPLIED HERE TOO, for the same reason and
+// in the same way. They are edges as hard as the cut - softness 0 is legal -
+// and drawn into the buffer they were softened across a buffer texel and
+// snapped toward its grid. neon.frag now culls BLIT_CUTOFF_GUARD_PX past the end
+// of each ramp and leaves the ramps themselves to this pass.
 
-// THREE RENDERERS COMPILE THIS SHADER, and only one of them wants the cut.
-// NeonRenderer owns it; SpotlightRenderer and LensFlareRenderer reuse this
-// pass as a plain premultiplied composite of their own reduced-resolution
-// buffers and have no rect to cut against. Both therefore upload
-// GLOW_SIDE_BOTH explicitly to take the branch below - see the note at each
-// call site for why relying on GL's zero-initialised uniforms was not good
-// enough. Anything added to this shader OUTSIDE that branch lands on all
-// three layers.
+// NEON ONLY. SpotlightRenderer and LensFlareRenderer used to compile this
+// shader as a plain composite of their own reduced-resolution buffers, and had
+// to upload GLOW_SIDE_BOTH to switch off a cut they have no rect for. They use
+// blit.frag now, so anything added here lands on the neon alone - which is
+// also why the neon's tuning header is injected into this shader (see
+// shaders.h.in) and not into that one.
 //
 // These three values are the ordinals of EdgeLighting::GlowSide, which
 // neon-renderer.cpp casts straight to an int. The two numberings are one
@@ -67,6 +76,16 @@ out vec4 fragColor;
 
 uniform sampler2D uSource;
 
+// vPos -> uSource UV. This pass draws the EDGE RING'S COMPLEMENT (see
+// NeonRenderer::setupRingGeometry) in rect-local full-res px under a full-res
+// transform, so vPos is no longer NDC: the CPU uploads the reduced buffer's
+// region map, 1 / region.size and -region.origin / region.size (see
+// GetBufferRegion). For a buffer covering the whole viewport that is
+// 1 / viewport and rectCentre / viewport, the mapping the fullscreen NDC quad
+// gave. The ring reads the gather buffer through a map of the same form.
+uniform vec2 uUVScale;
+uniform vec2 uUVOffset;
+
 // Geometry of the cut, all in FULL-RES px - this pass is never scaled. The
 // centre is in gl_FragCoord space (y up), mirrored CPU-side out of Config's
 // y-down convention, exactly as black-rect.frag takes it.
@@ -76,13 +95,30 @@ uniform vec2  uRectCenter;
 uniform int   uGlowSide;
 uniform float uGlowSideSoftness; // NOT pre-multiplied by the resolution scale.
 
+// The inside / outside cutoffs, in FULL-RES px like everything above: the same
+// four values neon.frag receives, without the scale. A disabled side arrives
+// as the CPU's CUTOFF_DISABLED_SIZE sentinel, which no realistic geometry
+// reaches - see CUTOFF_NEUTRALISED in neon-tuning.h, injected above.
+uniform float uInsideCutoff;
+uniform float uInsideCutoffSoftness;
+uniform float uOutsideCutoff;
+uniform float uOutsideCutoffSoftness;
+
 float sdRoundBox(vec2 p, vec2 b, float r) {
     vec2 q = abs(p) - b + r;
     return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
 }
 
+// neon.frag's, verbatim: Euclidean (d - cut) above cornerRadius 0, per-axis at
+// 0 so a square rect keeps a square band. See the derivation there.
+float bandOuterDistance(vec2 p, float d, vec2 halfSize, float r, float cut) {
+    if (r > 1e-4) { return d - cut; }
+    vec2 b = halfSize + vec2(cut);
+    return sdRoundBox(p, b, 0.0);
+}
+
 void main() {
-    vec2 uv = vPos * 0.5 + 0.5;      // NDC [-1,1] (identity MVP) -> UV
+    vec2 uv = vPos * uUVScale + uUVOffset; // rect-local full-res px -> buffer UV
     vec4 src = texture(uSource, uv); // premultiplied colour + coverage alpha
 
     // GlowSide::BOTH pays nothing, and the branch that arranges that is safe
@@ -99,13 +135,24 @@ void main() {
     // unconditionally, which is back to what the pass cost before it grew a cut
     // at all. One-sided is unmoved either way. Re-measure BOTH as well as a
     // one-sided scene if this block is ever restructured.
+    //
+    // The cutoffs join the same branch, on the same terms: whether a side is
+    // live is a function of uniforms alone, so control flow stays uniform and
+    // a config with neither a cut nor a cutoff - the default - still pays only
+    // the texture read. A side is live when it is enabled AND glowSide does not
+    // already cull it; neon.frag neutralises exactly that side (its band
+    // distance block), because the cut subsumes it.
+    bool cutIn  = uGlowSide != GLOW_SIDE_OUTSIDE && uInsideCutoff  < 0.5 * CUTOFF_NEUTRALISED;
+    bool cutOut = uGlowSide != GLOW_SIDE_INSIDE  && uOutsideCutoff < 0.5 * CUTOFF_NEUTRALISED;
     float cut = 1.0;
-    if (uGlowSide != GLOW_SIDE_BOTH)
+    if (uGlowSide != GLOW_SIDE_BOTH || cutIn || cutOut)
     {
-        float d    = sdRoundBox(gl_FragCoord.xy - uRectCenter, uRectSize * 0.5, uCornerRadius);
-        float aa   = max(fwidth(d), 1e-6);
-        float soft = max(uGlowSideSoftness, aa);
-        float back = 0.5 * aa;
+        vec2  p        = gl_FragCoord.xy - uRectCenter;
+        vec2  halfSize = uRectSize * 0.5;
+        float d        = sdRoundBox(p, halfSize, uCornerRadius);
+        float aa       = max(fwidth(d), 1e-6);
+        float soft     = max(uGlowSideSoftness, aa);
+        float back     = 0.5 * aa;
 
         // Same anchor, same floor, same curve as neon.frag's post-grade cut -
         // see the derivation there. Keep the two in step; they are one edge,
@@ -118,11 +165,31 @@ void main() {
         {
             cut = smoothstep(-back, soft - back, d);
         }
+
+        // Same again for the cutoffs: neon.frag's masks after the grade, with
+        // its direct-path floor - one destination pixel, which is what aa is
+        // here. Midpoints softness/2 past each cutoff, ramps centred on them
+        // and spanning the floored softness, so each starts at its cutoff and
+        // ends softness past it. A dead side gets the neutral distance and its
+        // smoothstep saturates to exactly 1.
+        if (cutIn || cutOut)
+        {
+            float inHalf  = 0.5 * max(uInsideCutoffSoftness,  aa);
+            float outHalf = 0.5 * max(uOutsideCutoffSoftness, aa);
+            float inMid   = uInsideCutoff  + 0.5 * max(uInsideCutoffSoftness,  0.0);
+            float outMid  = uOutsideCutoff + 0.5 * max(uOutsideCutoffSoftness, 0.0);
+            float dIn     = cutIn  ? d + inMid : CUTOFF_NEUTRALISED;
+            float dOut    = cutOut ? bandOuterDistance(p, d, halfSize, uCornerRadius, outMid)
+                                   : -CUTOFF_NEUTRALISED;
+            cut *= smoothstep(-inHalf, inHalf, dIn);
+            cut *= 1.0 - smoothstep(-outHalf, outHalf, dOut);
+        }
     }
 
     // Applied to the premultiplied sample, so colour and coverage scale
     // together and the layer thins out as a whole rather than dimming while it
-    // keeps occluding. At BOTH this is a multiply by an exact 1.0, so that path
-    // stays bit-identical to the plain texture read this shader used to be.
+    // keeps occluding. At BOTH with no live cutoff this is a multiply by an
+    // exact 1.0, so that path stays bit-identical to the plain texture read
+    // this shader used to be.
     fragColor = src * cut;
 }

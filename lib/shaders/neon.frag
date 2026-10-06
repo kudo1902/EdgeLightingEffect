@@ -1,4 +1,6 @@
-precision highp float;
+// precision, vPos, uRectSize / uCornerRadius, the segment block, PI and the
+// perimeter gather itself (gatherPerimeter) are in neon-common.glsl, which is
+// injected ahead of this file - neon-gather.frag runs the same loop.
 
 // ---------------------------------------------------------------------------
 // Tuning constants
@@ -19,11 +21,22 @@ precision highp float;
 // Uniforms
 // ---------------------------------------------------------------------------
 
-in vec2 vPos;
+// TWO VARIANTS OF THIS FILE. NeonRenderer splices a #define in after the
+// version line (WithDefine) for one of them; the direct path compiles it
+// without.
+//
+//   (none)            - resolutionScale 1.0: gather and shade, onto the target.
+//   NEON_READS_GATHER - below 1.0, everything EXCEPT the gather: reads the
+//                       four results neon-gather.frag stored back with a
+//                       bilinear fetch. Built into TWO program objects, one
+//                       per target: pass 1 (at resolutionScale, into the
+//                       reduced buffer) and the edge ring (at full resolution,
+//                       onto the target) - see NeonRenderer::ensurePathPrograms.
+//
+// The scaled path's third program, the gather pass, is neon-gather.frag: the
+// same gatherPerimeter, alone, into the gather buffer.
 out vec4 fragColor;
 
-uniform vec2  uRectSize;
-uniform float uCornerRadius;
 uniform float uLineWidth;
 uniform float uFilamentFalloff; ///< Generalized-Gaussian exponent (N = value * 2); 1.0 = pure Gaussian, lower = smoother (Laplace-like), higher = flatter top.
 uniform float uIntensity;
@@ -54,42 +67,8 @@ uniform int   uWinding;               ///< 0 = CLOCKWISE, 1 = COUNTER_CLOCKWISE 
 // than as a bug.
 uniform float uResolutionScale;
 
-// Loop sample positions (perimeter points) as a std140 uniform block. Each
-// entry is packed as a vec4 (only .xy is meaningful; std140 pads vec2 to a
-// 16-byte stride anyway) so the shader reads raw float32 out of the constant
-// cache in the gather loop. Fixed size at compile time - see the shared
-// NEON_MAX_LOOP_SAMPLES tuning constant.
-layout(std140) uniform LoopSamplesBlock
-{
-    vec4 uLoopSamples[NEON_MAX_LOOP_SAMPLES];
-};
-
-// How many of the block's entries are actually in use this frame, from
-// NeonConfig::numSamples (clamped to 1..NEON_MAX_LOOP_SAMPLES CPU-side). The
-// block is always allocated at full size; entries past this are (0,0,0,0) and
-// never read, because the gather stops here.
-//
-// The emission pre-pass is handed the SAME count and bakes its table over
-// exactly these indices, so texel i there is sample i here. The two must agree
-// or the gather reads emission belonging to a different perimeter position.
-uniform int uNumSamples;
-
-// Travelling segments - up to MAX_SEGMENT_BOOSTS independent coloured lights
-// on the perimeter. Each vec4 is packed as (position, invSigma, boost,
-// hasStops): when .w > 0.5 the segment's colour comes from row `s` of
-// uSegmentLUT (its own head-to-tail gradient); when .w == 0 it inherits the
-// current base gradient sample. When uSegmentCount == 0 the whole feature is
-// skipped in the gather loop.
-//
-// Declared in a std140 uniform block (the DALi PunctualLightBlock pattern):
-// DALi writes one element per registered property ("uSegments[0]", ...) into
-// the block's UBO at the reflected std140 array stride. On desktop GL the
-// block is fed from a UBO in neon-renderer.cpp.
-layout(std140) uniform SegmentBlock
-{
-    int  uSegmentCount;
-    vec4 uSegments[MAX_SEGMENT_BOOSTS];
-};
+// The segment block (uSegmentCount, uSegments) is in neon-common.glsl - the
+// gather branches on it too.
 
 // Per-segment gradient atlas (RGBA8, CLAMP-wrapped both axes). One row per
 // segment, laid out head-to-tail across the segment's visible span. Sampled
@@ -130,14 +109,47 @@ uniform sampler2D uArcLUT;
 // GLES 3.0 does not support sampler1D, so we use a 1-row 2D texture.
 uniform sampler2D uGradientLUT;
 
-// Perimeter emission table from neon-emission.frag: NEON_MAX_LOOP_SAMPLES
-// wide, 2 tall, RGBA16F (RGBA8 where the driver refuses float rendering).
-//   row 0: .rgb = arcColour * arcW, .a = arcW
-//   row 1: .rgb = SUM(segColour * bell), .a = SUM(bell)
-// Read with texelFetch at integer sample index - never filtered, since
-// neighbouring texels are unrelated perimeter samples. See the gather loop
-// and docs/emission-prepass.md.
-uniform sampler2D uEmission;
+// The glow coverage table (neon-glow-cover.frag, baked once per config change):
+// for each piece of the emitter and each fragment position round it, how lit
+// that piece is as the halo and the bloom see it, encoded c / (1 + c). Read by
+// glowCoverAt, one linear fetch per piece; laid out in neon-pieces.glsl.
+uniform sampler2D uGlowCover;
+
+// How each band of that table shares its columns between its straight and its
+// corner - the same numbers the bake was given. See glowCoverInner.
+uniform vec2 uGlowCoverSplit;
+
+// The gather's own inputs - the sample block, uNumSamples and the emission
+// table uEmission - are in neon-common.glsl, and do not exist in the
+// NEON_READS_GATHER variant: it reads the gather's RESULT instead of running
+// it, so it has no loop to feed.
+
+#ifdef NEON_READS_GATHER
+// Below resolutionScale 1.0 the gather - the loop that is ~95% of this
+// shader's cost - runs ONCE, in its own pass, at its own coarse scale
+// (neon-gather.frag, into the gather buffer), and this variant draws
+// everything else from its stored result: pass 1 at resolutionScale, and the
+// edge ring at FULL resolution, where it redraws everything the reduced pass
+// gets wrong near the line - the filament, which a reduced buffer cannot
+// sample, and every hard edge. The gather's four results are smooth across the
+// screen - Lorentzian-weighted means over the whole perimeter, whose kernel is
+// never narrower than kc - so they survive a bilinear read from a grid a
+// fraction of kc apart (GetGatherScale in neon-renderer.cpp). Everything else
+// below is computed exactly as the direct path computes it, at whatever
+// uResolutionScale the pass uploads. See docs/neon-resolution-scale-plan.md
+// step 5 and section 13.
+//
+// uGather / uGatherSeg are the gather buffer's attachments 0 and 1. uGatherSeg
+// is bound only when there are segments, and read only then. The buffer covers
+// a box around the rect, clipped to the viewport (GetBufferRegion), so vPos
+// maps onto its uv through an affine map - the same form neon-blit.frag
+// samples the reduced buffer with - set for whichever space this pass's vPos
+// is in.
+uniform sampler2D uGather;
+uniform sampler2D uGatherSeg;
+uniform vec2      uGatherUVScale;
+uniform vec2      uGatherUVOffset;
+#endif
 
 // Distance (in pixels, from the rect edge) to the draw quad's edge. The whole
 // emission is faded to zero just before this, so the bloom never shows a hard
@@ -148,9 +160,7 @@ uniform float uQuadMargin;
 // Helpers
 // ---------------------------------------------------------------------------
 
-const float PI      = 3.141592653589793;
-const float TWO_PI  = 6.283185307179586;
-const float HALF_PI = 1.5707963267948966;
+// PI, TWO_PI and HALF_PI are in neon-common.glsl.
 
 float sdRoundBox(vec2 p, vec2 b, float r) {
     vec2 q = abs(p) - b + r;
@@ -197,102 +207,11 @@ float bloomSegmentPedestalled(float a, float t1, float t2, float k, float reach)
 }
 
 // --- Corner arcs, developed onto their tangent -------------------------
-// The four straights above cover the rect's flat runs. Above cornerRadius 0 the
-// emitter also turns through four quarter arcs, and a circular arc has no
-// elementary antiderivative under either kernel. This develops each arc onto a
-// straight line instead: the tangent at whichever ARC POINT IS NEAREST the
-// fragment, carrying the arc's full length PI*r/2 and split about that point.
-//
-// That choice is what makes it accurate where the naive one is not. The
-// perpendicular distance it reports is the true distance to the arc wherever
-// the fragment faces it (|length(w) - r|), and the two halves run exactly as
-// far as the real arc does in each direction, so the developed arc abuts the
-// trimmed straights in arclength and the emitter is continuous - no gap and no
-// overlap at the tangent points.
-//
-// `w` is the fragment's offset from the arc centre in that corner's own frame:
-// x along the outward normal of one incident edge, y along the other's, both
-// positive pointing away from the rect. So the arc occupies exactly the first
-// quadrant of `w`, from +x (one tangent point) to +y (the other), and clamping
-// the direction into that quadrant is max(w, 0).
-//
-// Off the ends the nearest arc point is a tangent point, and which one follows
-// from |w - (r,0)|^2 - |w - (0,r)|^2 = 2r*(w.y - w.x): the +x end when
-// w.x >= w.y. That is what the fallback picks, so it is the right clamp for the
-// whole region it covers and not only for the degenerate point that forces it.
-//
-// --- THE DEVELOPMENT RATE IS NOT r. ------------------------------------
-// Laying the arc out at its own arclength - one unit of tangent per unit of
-// arc - is only right for a fragment ON the arc. The exact distance to the
-// point at angle dphi from the nearest one is
-//
-//     D^2 = a^2 + (2*sqrt(rho*r)*sin(dphi/2))^2,   rho = length(w)
-//
-// so the tangent coordinate the kernels actually want is t = 2*sqrt(rho*r)*
-// sin(dphi/2), whose slope at the foot is sqrt(rho*r), not r. Develop at rate
-// `lam` instead of r and the emitter comes out short or long, so the measure
-// is put back by scaling the whole segment by r/lam - `w` of the returned
-// vec4. Rate x weight is r either way, so the arc always carries its full
-// PI*r/2 of emitter.
-//
-// Two things follow, and they are the whole reason for the change:
-//
-//   - AT THE CENTRE OF CURVATURE IT IS NOW EXACT. rho -> 0 collapses the
-//     segment to zero length against an infinite weight, and the limit is
-//     f(r) * PI*r/2: every point of the arc at distance r, which is what a
-//     fragment at the centre actually sees. At rate r the arc ran off to one
-//     side of the foot instead, and since both kernels peak at t = 0 that
-//     UNDER-counted - on a circle, where all four arc centres coincide at the
-//     middle of the shape, to 54% of the true value.
-//   - THE CLAMP STOPS CREASING. Crossing w.y = 0 the arc's endpoints slide at
-//     -lam * d(th) on the facing side and at -d(off) on the clamped side; the
-//     first is -lam/w.x and the second -1, and they agree only where lam is
-//     length(w). At rate r they agreed only at w.x == r, so every other point
-//     of the lines through the arc centre carried a C1 crease - a dark cross
-//     at the centre of curvature, unmistakable on a circle. Measured as the
-//     spurious curvature of (model - numerically integrated truth): 19.9% of
-//     the local value at rate r, 0.5% here.
-//
-// lam is min(rho, sqrt(rho*r)), i.e. sqrt(rho * min(rho, r)). The inner
-// branch's rate has to be rho for the clamp to join smoothly; outside the arc
-// the linearisation above wants sqrt(rho*r), and the two meet at rho == r,
-// where lam is r and the weight is 1 - so a fragment on the arc is bit-
-// identical to the rate-r form this replaces, and the calibration the NORM
-// factors carry is untouched. Against a numerically integrated perimeter the
-// whole emitter's worst error drops as well, on every geometry tested: 16.5 ->
-// 9.8% on a 600x400 r=40, 37.3 -> 26.3% on a circle.
-//
-// Cost is 1.03x of the neon pass at 1280x720, and - as the arc pedestal's note
-// below warns - that includes the cornerRadius 0 path, which never executes a
-// line of this and still pays 1.026x for the register pressure. Re-time both
-// after touching it. An inversesqrt formulation that trades the sqrt and the
-// divide for two inversesqrts was measured and came out inside the noise, so
-// the readable form stays.
-//
-// Returns (a, t1, t2, weight) for haloSegment / bloomSegment; the caller
-// multiplies the segment by .w.
-vec4 arcTangentSegment(vec2 w, float r) {
-    vec2  wq = max(w, vec2(0.0));
-    float ql = length(wq);
-    vec2  u  = (ql > ARC_FRAME_EPSILON) ? wq / ql
-                                        : ((w.x >= w.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0));
-    // Arclength from the +x tangent point to the nearest arc point. u is a unit
-    // vector in the first quadrant whenever it came from wq, so th is in
-    // [0, HALF_PI] and needs no clamp of its own.
-    float th  = atan(u.y, u.x);
-    float a   = abs(dot(w, u) - r);
-    // Offset of the fragment ALONG the tangent, zero whenever u came from wq
-    // (the foot of perpendicular is then the tangent point itself) and non-zero
-    // only on the fallback, where it correctly pushes the whole arc to one side.
-    // A LENGTH, not an arclength, so it is not scaled by the rate below.
-    float off = dot(w, vec2(-u.y, u.x));
-    // Floored so the exact centre of curvature cannot divide by zero. The
-    // floor is far below one px, and the limit it lands on is the exact value
-    // anyway - see above.
-    float rho = max(length(w), ARC_FRAME_EPSILON);
-    float lam = sqrt(rho * min(rho, r));
-    return vec4(a, -lam * th - off, lam * (HALF_PI - th) - off, r / lam);
-}
+// arcTangentSegment is in neon-pieces.glsl, injected ahead of this file: the
+// glow coverage bake (neon-glow-cover.frag) lays each corner's coverage along
+// the same line this file integrates the corner's halo and bloom along, so the
+// two share one copy.
+
 // --- Band boundary distances -------------------------------------------
 // The band's two boundaries, expressed as signed distances: dIn >= 0 means
 // "past the inside cutoff", dOut <= 0 means "within the outside cutoff".
@@ -561,6 +480,141 @@ float arcCoverContinuous(float sPos, float start, float length, float fHead, flo
     return tailIn * headIn;
 }
 
+// A piece whose own halo plus bloom at this fragment is below this, in linear
+// light before the grade, keeps the gathered coverage rather than its own: the
+// difference moves the output by well under one 8-bit level (the grade maps
+// 1e-3 to about 1/255). Most pieces are this faint at most fragments - the far
+// side of the rect, the bloom past `reach`.
+const float GLOW_PIECE_MIN = 1e-4;
+
+// The segment's glow magnitude from one piece's (arc, segment) coverage pair:
+// its coverage times the soft gate the segment glow has always taken, max with
+// the arc so a segment on a lit arc keeps the arc's glow reach.
+float segmentGlow(vec2 cover) {
+    return cover.y * max(cover.x, min(cover.y, 1.0));
+}
+
+// How lit one piece of the outline is as its own halo and bloom see it: the
+// arcs' coverage x intensity (.r halo, .g bloom) and the segments' boost x bell
+// (.b halo, .a bloom) over that piece's own extent, each weighted by the
+// layer's kernel at the fragment - one filtered fetch of the table
+// neon-glow-cover.frag bakes once per config change, at the texture coordinate
+// glowCoverStraightUV / glowCoverCornerUV (neon-pieces.glsl) give for the
+// piece.
+vec4 glowCoverAt(vec2 uv) {
+    vec4 e = textureLod(uGlowCover, uv, 0.0);
+    return e / max(1.0 - e, vec4(1.0 / 1024.0));
+}
+
+// V19, V20 and V21: ONE PIECE's halo and bloom scaled by that piece's OWN
+// coverage rather than the gathered mean.
+//
+// The exact term is INTEGRAL cover(s) * K(|p - P(s)|) ds over the piece: the
+// coverage along the piece, weighted by the layer's kernel around the
+// fragment's foot of perpendicular. The gathered mean V14 scales the glow by is
+// a stand-in for it that is wrong in two ways. Its kernel is a Lorentzian of
+// width kc, where the halo's falls as 1/t^3 along the line, so a dark stretch
+// kept light from lit ones hundreds of px away and a narrow halo drew a thin
+// line along it (V19). And it is gathered around the FRAGMENT, so it is
+// dominated by whichever piece is nearest: on a dark line it drops, and the
+// lit far edges, scaled by the same mean, dropped with it - a groove along the
+// line (V20).
+//
+// So each piece reads its own, from the table (glowCoverAt): the ratio of
+// INTEGRAL cover * K to INTEGRAL K over the piece, which times the piece's own
+// halo or bloom - that piece's INTEGRAL K - is the exact term. Exact for
+// feathered arcs on every piece, every arc end summed so nothing switches as
+// the fragment moves, and the segments' bells integrated to ~1e-3 of their
+// boost. V20's table convolved along a straight line through the foot, past
+// the piece's ends, so light spilled round each corner (V21); each piece's
+// table now stops at its own ends, and a corner's runs along the line
+// arcTangentSegment develops it onto.
+//
+// Per piece rather than once for the fragment, because each piece's table is
+// continuous in the fragment's position, so nothing switches at the medial axis
+// where the NEAREST piece changes - the crease V14 removed by gathering stays
+// gone.
+//
+// Applied as a CORRECTION: the glow is first scaled by the gathered mean
+// exactly as before V19, and each piece adds only the difference its own
+// coverage makes, times its halo `h` and bloom `b`, to `fix` = (halo arc, halo
+// segment, bloom arc, bloom segment). A piece that is skipped therefore costs
+// one compare and nothing else - and the table's coordinates, which take a log
+// and for a corner an atan, are worked out only past it.
+//
+// Measured against the closed form evaluated here per piece instead of read
+// from the table: the same picture, and 2.0x / 3.3x the pre-V19 cost on a
+// partly lit ring at scale 1.0 / 0.5. The four earlier attempts at an exact
+// halo in this function cost 1.2-1.7x on EVERY scene, fully lit ones included,
+// presumably through the program's register use: keep what runs here small.
+//
+// `haloWeight` / `bloomWeight` are the piece's halo and bloom as they reach the
+// output, for the GLOW_PIECE_MIN test; the caller zeroes both on a ring lit
+// uniformly, where every piece's coverage IS the gathered one and the
+// correction is exactly 0. `gatheredSeg` is segmentGlow(gathered), the segment
+// magnitude the plain sums are scaled by.
+void addPieceGlowFix(inout vec4 fix, vec2 uv, vec2 gathered, float gatheredSeg, float h, float b) {
+    vec4 cover  = glowCoverAt(uv);
+    vec2 coverH = cover.rb;
+    vec2 coverB = cover.ga;
+    fix += vec4((coverH.x - gathered.x) * h, (segmentGlow(coverH) - gatheredSeg) * h,
+                (coverB.x - gathered.x) * b, (segmentGlow(coverB) - gatheredSeg) * b);
+}
+
+// A straight: `band` which one (GLOW_COVER_BAND_*), `x` the fragment's
+// projection along it from its t1 end, unclamped, `len` its length, `a` its
+// distance from the line.
+void addStraightGlowFix(inout vec4 fix, int band, float x, float len, float a, float kh,
+                        vec2 gathered, float gatheredSeg, float h, float b, float haloWeight, float bloomWeight) {
+    if (haloWeight + bloomWeight <= GLOW_PIECE_MIN) {
+        return;
+    }
+    addPieceGlowFix(fix, glowCoverStraightUV(band, x, len, a, kh, glowCoverInner(band, uGlowCoverSplit)),
+                    gathered, gatheredSeg, h, b);
+}
+
+// A corner: `signs` its quadrant in vPos, `w` the fragment's offset from its
+// centre in arcTangentSegment's frame.
+void addCornerGlowFix(inout vec4 fix, vec2 signs, vec2 w, float kh, vec2 gathered, float gatheredSeg,
+                      float h, float b, float haloWeight, float bloomWeight) {
+    if (haloWeight + bloomWeight <= GLOW_PIECE_MIN) {
+        return;
+    }
+    int block = glowCoverCornerBlock(signs);
+    addPieceGlowFix(fix, glowCoverCornerUV(block, w, uCornerRadius, kh, glowCoverInner(block, uGlowCoverSplit)),
+                    gathered, gatheredSeg, h, b);
+}
+
+// One corner arc, start to finish: developed onto its tangent
+// (arcTangentSegment, whose .w is the measure the development rate cost), its
+// halo and its bloom - the bloom against the arcs' shared `pedestal`, WEIGHTED,
+// since that is what has to reach zero at `reach` - added to `sum` (halo,
+// bloom), and its correction from its own coverage (addCornerGlowFix).
+//
+// ONE ARC AT A TIME, AND THAT IS LOAD-BEARING. This block used to develop all
+// four arcs first, then take four halos, four blooms and four coverage reads,
+// so sixteen floats of developed segment were live at once alongside
+// everything the rest of the shader still holds - and at scale 1.0 this
+// program also carries the gather loop, whose speed follows the register
+// count of the whole program, code a frame never runs included. Measured on
+// an AMD Radeon Pro 5300M at 1280 x 720 and scale 1.0, against the build
+// before V21: in that order, the per-piece coverage read V21 added made the
+// whole neon pass 1.07-1.13x slower - on fully lit rings, which skip every
+// read, and on a SHARP-cornered one, which never enters this block - however
+// the read's arithmetic was trimmed; one arc at a time, 0.95x on the same
+// scenes and 1.00x across neon-scale-check's ten fully lit ones. Keep the four
+// calls whole.
+void addCornerPiece(inout vec2 sum, inout vec4 fix, vec2 signs, vec2 w, float kh, float bw, float pedestal,
+                    vec2 gathered, float gatheredSeg, float haloW, float bloomW) {
+    vec4  c = arcTangentSegment(w, uCornerRadius);
+    float h = haloSegment(c.x, c.y, c.z, kh) * c.w;
+    float b = max(bloomSegment(c.x, c.y, c.z, bw) * c.w - pedestal, 0.0);
+    sum += vec2(h, b);
+    addCornerGlowFix(fix, signs, w, kh, gathered, gatheredSeg, h, b, haloW * h, bloomW * b);
+}
+
+
+
 // ---------------------------------------------------------------------------
 
 void main() {
@@ -598,9 +652,8 @@ void main() {
     // bilinear blit then smeared wider still. Below scale 1.0 this floor is
     // sub-buffer-pixel and so is a step in the buffer, which is right - at a
     // reduced scale the blit owns the edge's softness and nothing in here can
-    // sharpen it. (Contrast CUTOFF_SOFT_FLOOR_PX, which IS in buffer px on
-    // purpose - that boundary has no full-res counterpart to line up with, so
-    // quantisation is its only concern. See neon-tuning.h.)
+    // sharpen it. The inside/outside cutoffs floor at this same pixel too, on
+    // both paths - see softFloor below.
     //
     // Computed HERE, above every discard in this function, because a
     // derivative downstream of control flow the compiler cannot prove uniform
@@ -665,6 +718,7 @@ void main() {
     bool  blitOwnsCut = (uResolutionScale < 1.0);
     float sideBack = 0.5 * sideAA;
     float sideCull = blitOwnsCut ? BLIT_SIDE_GUARD_PX : sideBack;
+    // Deliberately NOT mirrored in neon-gather.frag - see the note at its top.
     if (uGlowSide == GLOW_SIDE_INSIDE  && d >  sideCull) discard;
     if (uGlowSide == GLOW_SIDE_OUTSIDE && d < -sideCull) discard;
 
@@ -701,16 +755,18 @@ void main() {
     // in all three. See the note at sideAA, which asks any second derivative to
     // be hoisted to the top of main() instead of added here.
     //
-    // The scaled path keeps CUTOFF_SOFT_FLOOR_PX, which is in BUFFER px and so
-    // is NOT converted with uResolutionScale like the full-res constants
-    // elsewhere: there the concern is not coverage but WHERE the boundary lands
-    // once the blit has resampled it, and half a buffer pixel of feather lets
-    // the sample nearest the boundary carry a fractional value instead of just
-    // 0 or 1. See neon-tuning.h for the measured placement table, for why scale
-    // 0.50 specifically is unmoved by it, and for why its value is now 1.0
-    // where it was 0.5 - the ramp below stopped doubling, so the constant is
-    // stated as the total width it always effectively had.
-    float softFloor = (uResolutionScale < 1.0) ? CUTOFF_SOFT_FLOOR_PX : sideAA;
+    // ONE DESTINATION PIXEL ON BOTH PATHS. The scaled path used to floor at
+    // CUTOFF_SOFT_FLOOR_PX instead, a feather in BUFFER px that let the texel
+    // nearest a hard boundary carry a fractional value for the blit to place
+    // sub-texel. That was the best a mask drawn INTO the reduced buffer could
+    // do, and it still left the boundary softened across a buffer texel and
+    // snapped toward the buffer grid. Below scale 1.0 the masks are not drawn
+    // here any more: neon-blit.frag applies them at destination resolution,
+    // exactly as it applies the one-sided cut (see blitOwnsCut, the discards
+    // below and the masks after the grade). On that path this floor only places
+    // the discards, and they have to agree with the blit's ramp - which is
+    // floored at one destination pixel, i.e. sideAA in this shader's units.
+    float softFloor = sideAA;
     float inSoft  = max(uInsideCutoffSoftness,  softFloor);
     float outSoft = max(uOutsideCutoffSoftness, softFloor);
 
@@ -796,8 +852,14 @@ void main() {
     {
         dIn = bandInnerDistance(d, inMid);
     }
-    if (dOut >  outHalf) discard;
-    if (dIn  < -inHalf ) discard;
+    // On the scaled path the blit owns the masks as well as the cut, and
+    // rebuilds each boundary from the buffer texels around it - so the cull
+    // runs BLIT_CUTOFF_GUARD_PX past the end of the ramp rather than at it, for
+    // the reason sideCull does. The guard is an exact 0 at scale 1.0, where
+    // the direct path keeps culling exactly where its own masks end.
+    float cutGuard = blitOwnsCut ? BLIT_CUTOFF_GUARD_PX : 0.0;
+    if (dOut >  outHalf + cutGuard ) discard;
+    if (dIn  < -(inHalf + cutGuard)) discard;
 
     // --- Filament -----------------------------------------------------
     // Generalized-Gaussian profile with exponentially smooth falloff:
@@ -896,167 +958,68 @@ void main() {
     core            = max(core - corePed, 0.0) / max(1.0 - corePed, 1e-6);
     float lineGate  = clamp(uLineWidth / max(minHalf * 2.0, 1e-3), 0.0, 1.0);
 
-    // Perimeter of the rounded rect, in px. Used twice below: to size the
-    // colour-gather kernel, and to convert the arc feathers from px to
-    // perimeter fractions.
-    float r    = clamp(uCornerRadius, 0.0, min(uRectSize.x, uRectSize.y) * 0.5);
-    float peri = 2.0 * (uRectSize.x + uRectSize.y - 4.0 * r) + TWO_PI * r;
+    // Perimeter of the rounded rect, in px - converts the arc feathers below
+    // from px to perimeter fractions. The gather sizes its colour kernel from
+    // the same function.
+    float peri = rectPerimeter();
 
     // --- Kernel widths ------------------------------------------------
     // Two separate kernels, and the split is the point:
     //
-    //  - kc is the COLOUR gather weight, and it is the one length here that is
-    //    NOT in pixels. The blend is a 128-sample sum over the gradient LUT,
-    //    which is indexed by perimeter FRACTION, so a pixel-sized kernel spans
-    //    a different slice of the gradient on every geometry - the same stops
-    //    render washed out small and crisp large. Sizing it as a fraction of
-    //    the perimeter makes the gradient read identically at any size, and
-    //    pins the kernel at a constant 1.13 sample spacings so it cannot bead
-    //    at any size either. Not coupled to glowRadius: the gather is colour
-    //    only, so a wide glow has no business desaturating the ring. See
-    //    neon-tuning.h for the measurements behind this.
+    //  - kc is the COLOUR gather weight, sized inside gatherPerimeter
+    //    (neon-common.glsl) as a fraction of the PERIMETER rather than in
+    //    pixels, so the gradient reads identically at any size and cannot
+    //    bead. Not coupled to glowRadius: the gather is colour only, so a wide
+    //    glow has no business desaturating the ring.
     //
     //  - kh / bw are the EMISSION widths: raw glowRadius, no floor. The halo
     //    and bloom are evaluated analytically from the SDF distance further
     //    down, and a closed form cannot bead however far apart the gather
     //    samples are, so glowRadius is proportional across its entire range.
-    float kc  = max(peri * COLOR_BLEND_PERIM_FRAC, EMISSION_MIN_WIDTH);
-    float kc2 = kc * kc;
     float kh  = max(uGlowRadius,                       EMISSION_MIN_WIDTH);
     float bw  = max(uGlowRadius * BLOOM_REACH_TO_GLOW, EMISSION_MIN_WIDTH);
 
     // --- Colour gather -----------------------------------------------------
-    // This loop gathers COLOUR ONLY - the halo and bloom intensities are
-    // computed in closed form after it, and every per-sample colour / mask
-    // term is precomputed by neon-emission.frag into uEmission.
+    // The gather's four results: the base and segment hues, each of unit
+    // magnitude, and the two g-weighted mean coverages that scale the glow
+    // (see the glow-coverage block below). The direct path runs the loop here;
+    // the NEON_READS_GATHER variant reads back what neon-gather.frag stored.
+    // Either way it is COLOUR ONLY - the halo and bloom intensities are
+    // computed in closed form after it.
+#ifdef NEON_READS_GATHER
+    // The gather's four results, read back from the reduced pass instead of
+    // recomputed. The loop is most of this shader's cost - about three
+    // quarters of a full-res frame on the reference scenes - and the ring's
+    // whole point is to pay for everything EXCEPT it at full resolution.
     //
-    // Per iteration: 1 UBO read for the sample position, 1 sub, 1 dot, 1
-    // reciprocal, and 2 texelFetches - 1 where the config has no segments and
-    // the branch below takes the shorter body. What used to live here - the arc
-    // winner-take-all scan over uArcCount, the segment loop over
-    // uSegmentCount, and one to two FILTERED LUT fetches - was a pure function
-    // of (si, uTime, config), so it did not belong in a loop that runs once
-    // per fragment. Hoisting it also removed two dynamic inner loops (which
-    // blocked unrolling), a serial reduction (`if (mask > bestMask)`), and the
-    // loop-carried `si += dti` chain.
+    // textureLod at level 0, not texture(): the discards above make control
+    // flow non-uniform here, where an implicit derivative is undefined (see the
+    // rule at sideAA). The attachments have no mip levels, so level 0 is what
+    // texture() would have read anyway.
     //
-    // See docs/emission-prepass.md for the packing and the invariant that
-    // keeps the split honest.
-    vec3  acc       = vec3(0.0); // base colour x arc-gated gather weight
-    vec3  segAcc    = vec3(0.0); // segment colour x bell x gather weight
-    float wsumLit   = 0.0; // SUM ARC-GATED g     - normalises `col` (see below)
-    float wsumSegW  = 0.0; // SUM SEGMENT bell*g  - normalises the segment hue
-    // SUM UNGATED g. One add per iteration, and it buys the GLOW's magnitude:
-    // wsumLit / wsumAll and wsumSegW / wsumAll are the g-weighted MEANS of the
-    // two coverages over the perimeter, which is what the halo and bloom have
-    // to be scaled by. See the glow-coverage block below the gather.
-    float wsumAll   = 0.0;
-
-    // Runtime loop bound, from NeonConfig::numSamples. The UBO behind
-    // uLoopSamples is always NEON_MAX_LOOP_SAMPLES long, so this only ever
-    // stops the walk EARLY - it can never run off the end. Hoisted into a
-    // local because a uniform in the condition is re-read per iteration on
-    // some drivers.
-    int n = uNumSamples;
-
-    // TWO LOOP BODIES, ONE UNIFORM BRANCH, and the duplication is deliberate.
-    //
-    // Row 1 of the emission table is the segment term, and neon-emission.frag
-    // writes it as vec4(segSum, bellSum) over a loop bounded by uSegmentCount.
-    // At uSegmentCount == 0 that loop does not execute, so the row is exactly
-    // vec4(0.0) at every texel - and the two accumulations it feeds here are
-    // provably no-ops. A config with no segments was therefore issuing one
-    // texture read per sample per fragment to add zero: 128 of them, over a
-    // quad that covers most of the viewport at the default glowRadius.
-    //
-    // The branch has to be OUTSIDE the loop, not inside it. Gating the fetch
-    // per iteration (`uSegmentCount > 0 ? texelFetch(...) : vec4(0.0)`) was
-    // measured SLOWER than leaving the fetch alone - 4.52 ms against a 4.23 ms
-    // baseline at 1920x1080 - because the per-iteration branch costs what the
-    // fetch it skips cost. Hoisting it so each body is straight-line is what
-    // actually pays: 1.46x on the whole neon layer, measured as an interleaved
-    // A/B over seven rounds at two resolutions.
-    //
-    // The uSegmentCount > 0 body below is the original loop VERBATIM, which is
-    // what makes a segmented config byte-identical by construction rather than
-    // by measurement. The segment-less body drops exactly the two dead
-    // accumulations and the fetch that fed them; segAcc and wsumSegW keep the
-    // vec3(0.0) / 0.0 they were initialised with, which is what the deleted
-    // adds would have left them holding. Verified 0 of 2073600 pixels changed
-    // across six scenes - no segments, a plain segment, a segment with its own
-    // stops, four arcs with stops, both cutoffs enabled, and resolutionScale
-    // 0.5.
-    //
-    // Branching on a uniform is safe here for the same reason the lens flare's
-    // uSpread guard is (see lens-flare.frag): the condition is uniform across
-    // the draw, so control flow stays uniform. Nothing in either body takes a
-    // derivative in any case - texelFetch has no LOD to compute.
+    // The coverages are stored as e = c / (1 + c) - see the write in
+    // neon-gather.frag - and decoded after the bilinear read, which is the
+    // filtering the emulation behind the plan measured. The floor keeps a
+    // saturated texel (e = 1) finite: it decodes to 254, far above any
+    // coverage a config produces.
+    vec2  gatherUV          = vPos * uGatherUVScale + uGatherUVOffset;
+    vec4  gather0           = textureLod(uGather, gatherUV, 0.0);
+    vec3  col               = gather0.rgb;
+    float emitCoverGathered = gather0.a / max(1.0 - gather0.a, 1.0 / 255.0);
+    vec3  segColHue         = vec3(0.0);
+    float segCoverGathered  = 0.0;
     if (uSegmentCount > 0) {
-        for (int i = 0; i < n; i++) {
-            vec2  dv  = vPos - uLoopSamples[i].xy;
-            float dd  = dot(dv, dv);
-
-            float g   = 1.0 / (dd + kc2);
-
-            // Both rows of the emission table for this sample. Row 0 carries
-            // the arc term already premultiplied by its own gather weight
-            // arcW, plus arcW itself for the denominator; row 1 does the same
-            // for the summed segment term. texelFetch (not texture): integer
-            // sample index, no filtering, no wrap math, no LOD derivatives.
-            vec4 e0 = texelFetch(uEmission, ivec2(i, 0), 0);
-            vec4 e1 = texelFetch(uEmission, ivec2(i, 1), 0);
-
-            // GATED normalisation, and it is the point. Dividing by the same
-            // weight the numerator was gathered with makes `col` a pure hue of
-            // unit magnitude: it carries no coverage and no per-arc intensity,
-            // both of which cancel. Those reach the emission solely through
-            // emitCover / filamentGate below, which are px-based and
-            // size-invariant. segAcc / wsumSegW does the identical thing for
-            // the segment hue.
-            //
-            // Both used to divide by an UNGATED sum over every sample, so an
-            // unlit far side of the ring dragged the lit colour toward black by
-            // roughly kc / rectHeight. With kc pinned to a fixed px span that
-            // ratio grew as the rect shrank: a quarter-perimeter arc measured
-            // 0.79 of full brightness at 200x150 against 0.97 at 1920x1080.
-            // Gated normalisation is exactly 1.0 at every size.
-            //
-            // e0.rgb is baseColI * arcW and e0.a is arcW, so these two lines
-            // are exactly the old `acc += baseColI * lg` / `wsumLit += lg` with
-            // lg = g * arcW.
-            acc      += e0.rgb * g;
-            wsumLit  += e0.a   * g;
-
-            // Segments are gathered with the raw proximity weight g, NOT the
-            // arc-gated one, so a segment lights even on perimeter stretches no
-            // arc covers. e1 holds SUM(segColour * bell) and SUM(bell) over
-            // every segment, so the old inner loop collapses to one add each.
-            segAcc   += e1.rgb * g;
-            wsumSegW += e1.a   * g;
-
-            wsumAll  += g;
-        }
-    } else {
-        // No segments: row 1 is all zeros, so the fetch and the two adds it
-        // feeds are dropped. Everything else is the body above, line for line.
-        for (int i = 0; i < n; i++) {
-            vec2  dv  = vPos - uLoopSamples[i].xy;
-            float dd  = dot(dv, dv);
-
-            float g   = 1.0 / (dd + kc2);
-
-            vec4 e0 = texelFetch(uEmission, ivec2(i, 0), 0);
-
-            acc      += e0.rgb * g;
-            wsumLit  += e0.a   * g;
-            wsumAll  += g;
-        }
+        vec4 gather1     = textureLod(uGatherSeg, gatherUV, 0.0);
+        segColHue        = gather1.rgb;
+        segCoverGathered = gather1.a / max(1.0 - gather1.a, 1.0 / 255.0);
     }
-
-    // Both are pure hues of unit magnitude now; the magnitudes are attached
-    // below from the pointwise coverages.
-    vec3 col       = acc    / max(wsumLit,  WSUM_EPSILON); // base perimeter hue
-    vec3 segColHue = segAcc / max(wsumSegW, WSUM_EPSILON); // segment hue
+#else
+    PerimeterGather gather  = gatherPerimeter(vPos);
+    vec3  col               = gather.hue;      // base perimeter hue
+    float emitCoverGathered = gather.arcCover; // arc coverage x intensity
+    vec3  segColHue         = gather.segHue;   // segment hue
+    float segCoverGathered  = gather.segCover; // segment boost x bell
+#endif
 
     // --- Continuous coverage, read at this fragment's own position -------
     // Recover the fragment's OWN continuous perimeter position GEOMETRICALLY
@@ -1179,7 +1142,7 @@ void main() {
 
     // Attach the segments' magnitude to their hue. Unclamped on purpose: boost
     // above 1 must still brighten, as it did when the gather's `bell` carried
-    // the magnitude. (glowCoverAll's min(.., 1.0) below only bounds the shared
+    // the magnitude. (segmentGlow's min(.., 1.0) only bounds the shared
     // halo/bloom reach - it is not the segment's brightness.)
     vec3 segCol = segColHue * segCoverPt;
 
@@ -1205,8 +1168,10 @@ void main() {
     // whenever part of the perimeter was dark.
     //
     // ratio, not a second gather: the loop already accumulates SUM(cover * g);
-    // dividing by SUM(g) turns each into the g-weighted mean of that coverage
-    // over the perimeter, which is exactly the coverage term of
+    // dividing by SUM(g) - which gatherPerimeter does, so the pair arrives
+    // above as emitCoverGathered / segCoverGathered on both paths - turns each
+    // into the g-weighted mean of that coverage over the perimeter, which is
+    // exactly the coverage term of
     //
     //     INTEGRAL cover(s) * K(|p - P(s)|) ds  ~=  cover_mean(p) * INTEGRAL K ds
     //
@@ -1225,20 +1190,19 @@ void main() {
     // Colour-stop ALPHA is NOT in this pair: neon-emission.frag's two alpha
     // channels carry arcW and bellSum without it, and adding it would need a
     // third row and so a third texelFetch in the hottest loop in the pipeline.
-    // The pointwise alpha still gates the filament exactly, and still gates
-    // the glow through the emission colour; what an alpha-faded stretch keeps
-    // here is its share of the halo/bloom pedestal. See
-    // docs/review-findings.md.
+    // The pointwise alpha still gates the filament exactly. The glow does NOT
+    // see it at all: the emission colour is the LUT's straight RGB, so neither
+    // factor of emitGlow carries alpha, and an alpha-0 stretch keeps its full
+    // halo and bloom (measured; V18 in docs/review-findings.md).
     //
-    // Two divides rather than one reciprocal and two multiplies: the fully lit
-    // ring above rests on wsumLit / wsumAll being exactly 1.0 when the two
-    // sums are equal, and x * (1.0 / x) is not. Outside the loop, so it costs
-    // one extra divide per fragment, not per sample.
-    float wsumDen           = max(wsumAll, WSUM_EPSILON);
-    float emitCoverGathered = wsumLit  / wsumDen; // arc coverage x intensity
-    float segCoverGathered  = wsumSegW / wsumDen; // segment boost x bell
-    vec3  segColGlow        = segColHue * segCoverGathered;
-    float glowCoverAll      = max(emitCoverGathered, min(segCoverGathered, 1.0));
+    // V19, one level further: the gathered mean is right far from the line and
+    // wrong ON it. Its Lorentzian has width kc, the halo's kernel kh, and on a
+    // stretch no arc covers the mean still reaches lit perimeter hundreds of
+    // pixels away, so a narrow halo drew a thin line along the dark stretch.
+    // The pair below still scales the glow as it always did, and the halo
+    // block then corrects that, per piece, toward the coverage at the piece's
+    // foot of perpendicular - see addPieceGlowFix.
+    vec2 gatheredCover = vec2(emitCoverGathered, segCoverGathered);
 
     // Sharp gate for the SDF-derived filament, from the same two pointwise
     // coverages. Both are exact at this fragment's perimeter position, so
@@ -1317,15 +1281,63 @@ void main() {
                       (1.0 + uBloomStrength * uIntensity),
                       sigma * reachSigmas);
 
-    float halo  = haloSegment(aLeft,  tv1, tv2, kh) +
-                  haloSegment(aRight, tv1, tv2, kh) +
-                  haloSegment(aTop,   th1, th2, kh) +
-                  haloSegment(aBot,   th1, th2, kh);
+    // Each piece's own halo and bloom, and V19's correction to the coverage
+    // that scales them (addPieceGlowFix). aTop measures to y = -halfSize.y and
+    // aBot to +halfSize.y.
 
-    float bloom = bloomSegmentPedestalled(aLeft,  tv1, tv2, bw, reach) +
-                  bloomSegmentPedestalled(aRight, tv1, tv2, bw, reach) +
-                  bloomSegmentPedestalled(aTop,   th1, th2, bw, reach) +
-                  bloomSegmentPedestalled(aBot,   th1, th2, bw, reach);
+    // One arc over the whole ring and no segments: the coverage is the same at
+    // every perimeter position, so every piece's own equals the gathered mean
+    // and there is nothing to correct. It zeroes the weights below, so every
+    // piece takes addStraightGlowFix's / addCornerGlowFix's first return.
+    //
+    // Do NOT turn this into an `if (!uniformCover)` around the corrections, or
+    // around a second copy of the sums. Measured on an M2 Pro, either one makes
+    // EVERY scene 10-15% slower at scale 1.0 - fully lit ones included, which
+    // never enter it - presumably because this program carries the gather loop
+    // there. Below 1.0 the same branch saves ~3%, which is not worth it.
+    //
+    // NeonRenderer skips baking the coverage table on this same test
+    // (IsGlowCoverUnread, deliberately a hair stricter), so the table can be
+    // stale whenever it holds - change the two together.
+    bool uniformCover = uSegmentCount == 0 && uArcCount == 1 && uArcs[0].y >= 1.0 - 1e-6;
+
+    // Each piece's linear weight in the output, for the GLOW_PIECE_MIN tests.
+    // bloomGain is the renormalisation applied further down.
+    float bloomPeak = BLOOM_NORM_FACTOR * PI;
+    float bloomPed  = BLOOM_NORM_FACTOR * PI * bw / sqrt(reach * reach + bw * bw);
+    float bloomGain = bloomPeak / max(bloomPeak - bloomPed, 1e-6);
+    float haloW     = uniformCover ? 0.0 : HALO_NORM_FACTOR * HALO_GAIN;
+    float bloomW    = uniformCover ? 0.0 : BLOOM_NORM_FACTOR * bloomGain * uBloomStrength;
+
+    float hLeft  = haloSegment(aLeft,  tv1, tv2, kh);
+    float hRight = haloSegment(aRight, tv1, tv2, kh);
+    float hTop   = haloSegment(aTop,   th1, th2, kh);
+    float hBot   = haloSegment(aBot,   th1, th2, kh);
+    float bLeft  = bloomSegmentPedestalled(aLeft,  tv1, tv2, bw, reach);
+    float bRight = bloomSegmentPedestalled(aRight, tv1, tv2, bw, reach);
+    float bTop   = bloomSegmentPedestalled(aTop,   th1, th2, bw, reach);
+    float bBot   = bloomSegmentPedestalled(aBot,   th1, th2, bw, reach);
+
+    // The plain sums, as before V19, and V19's per-piece correction to them.
+    float halo  = hLeft + hRight + hTop + hBot;
+    float bloom = bLeft + bRight + bTop + bBot;
+    float gatheredSeg = segmentGlow(gatheredCover);
+    vec4  glowFix = vec4(0.0);
+    // Each straight's table is read at the fragment's projection along it
+    // from its t1 end - unclamped, since past an end its coverage still
+    // changes - and its distance from the line.
+    float ws       = 2.0 * straight.x;
+    float hs       = 2.0 * straight.y;
+    float alongX   = vPos.x + straight.x;
+    float alongY   = vPos.y + straight.y;
+    addStraightGlowFix(glowFix, GLOW_COVER_BAND_NEG_X, alongY, hs, aLeft, kh, gatheredCover,
+                       gatheredSeg, hLeft, bLeft, haloW * hLeft, bloomW * bLeft);
+    addStraightGlowFix(glowFix, GLOW_COVER_BAND_POS_X, alongY, hs, aRight, kh, gatheredCover,
+                       gatheredSeg, hRight, bRight, haloW * hRight, bloomW * bRight);
+    addStraightGlowFix(glowFix, GLOW_COVER_BAND_NEG_Y, alongX, ws, aTop, kh, gatheredCover,
+                       gatheredSeg, hTop, bTop, haloW * hTop, bloomW * bTop);
+    addStraightGlowFix(glowFix, GLOW_COVER_BAND_POS_Y, alongX, ws, aBot, kh, gatheredCover,
+                       gatheredSeg, hBot, bBot, haloW * hBot, bloomW * bBot);
 
     // The four corner arcs, each developed onto its own tangent - see
     // arcTangentSegment. Gated because at cornerRadius 0 there is nothing to
@@ -1343,16 +1355,11 @@ void main() {
     {
         vec2 wNear = abs(vPos) - straight;
         vec2 wFar  = -abs(vPos) - straight;
-        vec4 cNN   = arcTangentSegment(vec2(wNear.x, wNear.y), uCornerRadius);
-        vec4 cNF   = arcTangentSegment(vec2(wNear.x, wFar.y),  uCornerRadius);
-        vec4 cFN   = arcTangentSegment(vec2(wFar.x,  wNear.y), uCornerRadius);
-        vec4 cFF   = arcTangentSegment(vec2(wFar.x,  wFar.y),  uCornerRadius);
 
-        // .w is the measure the development rate cost - see arcTangentSegment.
-        halo  += haloSegment(cNN.x, cNN.y, cNN.z, kh) * cNN.w +
-                 haloSegment(cNF.x, cNF.y, cNF.z, kh) * cNF.w +
-                 haloSegment(cFN.x, cFN.y, cFN.z, kh) * cFN.w +
-                 haloSegment(cFF.x, cFF.y, cFF.z, kh) * cFF.w;
+        // Which corner each arc is, for its coverage table: the folded frames
+        // above unfolded by the corner's sign pair. N is the fragment's own
+        // side of an axis, F the opposite one.
+        vec2 sN    = vec2(vPos.x >= 0.0 ? 1.0 : -1.0, vPos.y >= 0.0 ? 1.0 : -1.0);
 
         // One shared pedestal for all four arcs, and unlike the straights'
         // it does not have to be per-piece. A pedestal is that piece's own
@@ -1405,16 +1412,26 @@ void main() {
         float arcPedestal = uCornerRadius / arcLamPed *
                             bw / arcC * 2.0 * atan(arcLamPed * HALF_PI / (2.0 * arcC));
 
-        // Pedestal against the WEIGHTED value, since that is what has to reach
-        // zero at `reach`.
-        bloom += max(bloomSegment(cNN.x, cNN.y, cNN.z, bw) * cNN.w - arcPedestal, 0.0) +
-                 max(bloomSegment(cNF.x, cNF.y, cNF.z, bw) * cNF.w - arcPedestal, 0.0) +
-                 max(bloomSegment(cFN.x, cFN.y, cFN.z, bw) * cFN.w - arcPedestal, 0.0) +
-                 max(bloomSegment(cFF.x, cFF.y, cFF.z, bw) * cFF.w - arcPedestal, 0.0);
+        // Each arc in turn - developed, its halo and bloom, its coverage read -
+        // see addCornerPiece. The two sums run in the order the four-term
+        // expressions they replaced did, so a fully lit ring is unchanged bit
+        // for bit.
+        vec2 cornerGlow = vec2(0.0);
+        addCornerPiece(cornerGlow, glowFix, vec2( sN.x,  sN.y), vec2(wNear.x, wNear.y), kh, bw, arcPedestal,
+                       gatheredCover, gatheredSeg, haloW, bloomW);
+        addCornerPiece(cornerGlow, glowFix, vec2( sN.x, -sN.y), vec2(wNear.x, wFar.y),  kh, bw, arcPedestal,
+                       gatheredCover, gatheredSeg, haloW, bloomW);
+        addCornerPiece(cornerGlow, glowFix, vec2(-sN.x,  sN.y), vec2(wFar.x,  wNear.y), kh, bw, arcPedestal,
+                       gatheredCover, gatheredSeg, haloW, bloomW);
+        addCornerPiece(cornerGlow, glowFix, vec2(-sN.x, -sN.y), vec2(wFar.x,  wFar.y),  kh, bw, arcPedestal,
+                       gatheredCover, gatheredSeg, haloW, bloomW);
+        halo  += cornerGlow.x;
+        bloom += cornerGlow.y;
     }
 
-    halo  *= HALO_NORM_FACTOR;
-    bloom *= BLOOM_NORM_FACTOR;
+    halo    *= HALO_NORM_FACTOR;
+    bloom   *= BLOOM_NORM_FACTOR;
+    glowFix *= vec4(HALO_NORM_FACTOR, HALO_NORM_FACTOR, BLOOM_NORM_FACTOR, BLOOM_NORM_FACTOR);
 
     // The pedestal itself is applied per-edge inside the sum above - see
     // bloomSegmentPedestalled for why it cannot be one shared subtraction any
@@ -1432,9 +1449,8 @@ void main() {
     //
     // The halo needs no pedestal at all: it falls as 1/a^2, so at `reach` it is
     // ~2e-4 of peak - already invisible.
-    float bloomPeak = BLOOM_NORM_FACTOR * PI;
-    float bloomPed  = BLOOM_NORM_FACTOR * PI * bw / sqrt(reach * reach + bw * bw);
-    bloom = bloom * (bloomPeak / max(bloomPeak - bloomPed, 1e-6));
+    bloom      = bloom * bloomGain;
+    glowFix.zw = glowFix.zw * bloomGain;
 
     // glowRadius == 0 must read as "filament only", but an analytic profile at
     // radius 0 is a sub-pixel spike of FULL height rather than nothing, so
@@ -1467,7 +1483,7 @@ void main() {
     vec3 arcCol = col * uIntensity;
 
     // filamentGate is the segment's SHARP gate (smoothstep 0.5..1) maxed with
-    // emitCover; glowCoverAll is the soft one. Applied to the segment term
+    // emitCover; segmentGlow's is the soft one. Applied to the segment term
     // only - the arc takes its own coverage directly in both, since for an arc
     // the two gates were just that coverage anyway.
     //
@@ -1475,13 +1491,14 @@ void main() {
     // an SDF-derived line: it lives ON the perimeter, so it wants the
     // POINTWISE pair, exact at this fragment's own perimeter position. The
     // halo and bloom are integrals over the whole emitter, so they want the
-    // GATHERED pair - see the glow-coverage block above the halo.
+    // GATHERED pair - plus glowFix, V19's per-piece correction toward the
+    // coverage at each piece's foot, in the same arc / segment halves.
     vec3 emitFil  = arcCol * emitCover           + segCol     * filamentGate;
-    vec3 emitGlow = arcCol * emitCoverGathered   + segColGlow * glowCoverAll;
+    vec3 emitGlow = arcCol * gatheredCover.x     + segColHue  * gatheredSeg;
 
     vec3 result  = emitFil  * core  * FILAMENT_GAIN  * lineGate;
-    result      += emitGlow * halo  * HALO_GAIN      * glowGate;
-    result      += emitGlow * bloom * uBloomStrength * glowGate;
+    result      += (emitGlow * halo  + arcCol * glowFix.x + segColHue * glowFix.y) * HALO_GAIN      * glowGate;
+    result      += (emitGlow * bloom + arcCol * glowFix.z + segColHue * glowFix.w) * uBloomStrength * glowGate;
 
     // NOTE neither the one-sided cut NOR the hard cutoff masks are applied
     // here. Both are COVERAGE, not emission, so both belong below the grade -
@@ -1535,13 +1552,15 @@ void main() {
     float fadeFloor = uQuadMargin * QUAD_FADE_START_FRAC;
     // Where the band's emission ends: the outside fade is centred on outMid
     // and reaches outHalf past it, and the discard above culls everything
-    // beyond. NeonRenderer::setupGeometry caps uQuadMargin at the same end
-    // (GetCutoffEnd) plus 1 full-res px, so while that cap is in force
-    // cutEdge < uQuadMargin holds by that pixel, the fade starts at the end,
-    // and nothing it dims survives the discard. It used to budget a whole
-    // outSoft past outMid, against a cap that did the same; the two moved
-    // together, and only past the discard.
-    float cutEdge   = outMid + outHalf;
+    // beyond - cutGuard further out on the scaled path, whose guard texels
+    // must reach the blit unfaded or its rebuilt boundary darkens.
+    // NeonRenderer::setupGeometry caps uQuadMargin at the same end
+    // (GetCutoffEnd, plus the same guard) plus 1 full-res px, so while that
+    // cap is in force cutEdge < uQuadMargin holds by that pixel, the fade
+    // starts at the end, and nothing it dims survives the discard. It used to
+    // budget a whole outSoft past outMid, against a cap that did the same; the
+    // two moved together, and only past the discard.
+    float cutEdge   = outMid + outHalf + cutGuard;
     float fadeStart = (cutEdge < uQuadMargin) ? max(fadeFloor, cutEdge) : fadeFloor;
     float dQuad     = sdRoundBox(vPos, halfSize + vec2(uQuadMargin), 0.0);
     result *= 1.0 - smoothstep(-(uQuadMargin - fadeStart), 0.0, dQuad);
@@ -1660,8 +1679,19 @@ void main() {
     // halves, and see where they are derived for what the doubled form cost.
     // dIn / dOut are already measured from those midpoints, so each ramp
     // starts at its cutoff and ends softness past it.
-    result *= smoothstep(-inHalf, inHalf, dIn);
-    result *= 1.0 - smoothstep(-outHalf, outHalf, dOut);
+    //
+    // DIRECT PATH ONLY, for the reason the one-sided cut above is: a mask
+    // applied to buffer texels is smeared across 1/scale destination pixels by
+    // the bilinear upsample, which softened a hard band edge by a buffer texel
+    // and snapped it toward the buffer grid. Below scale 1.0 neon-blit.frag
+    // applies these same two ramps at destination resolution, and the discards
+    // above leave it BLIT_CUTOFF_GUARD_PX of lit texels to work from. Keep the
+    // two in step - one edge, written twice because only one of them runs.
+    if (!blitOwnsCut)
+    {
+        result *= smoothstep(-inHalf, inHalf, dIn);
+        result *= 1.0 - smoothstep(-outHalf, outHalf, dOut);
+    }
 
     // Premultiplied-alpha output so the effect composites over arbitrary
     // background objects instead of only adding light. Coverage = brightest

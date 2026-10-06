@@ -1,0 +1,640 @@
+<title>Neon Shader Outputs</title>
+
+<style>
+  /* ------------------------------------------------------------------
+     Minimal reset, as in the other neon pages: these are read as local
+     files under docs/ as well as published, so they cannot rely on a
+     host supplying one.
+     ------------------------------------------------------------------ */
+  *, *::before, *::after { box-sizing: border-box; }
+  body, h1, h2, h3, p, ol, ul, dl, dt, dd,
+  figure, figcaption { margin: 0; }
+  ol, ul { padding: 0; }
+
+  /* Layout: the frame's passes top to bottom in the order they run - a
+     strip of grid sizes first, then one section per pass with its spec
+     beside what it wrote. Same token system as neon-renderer-overview.html,
+     neon-renderer-explained.html and neon-renderer-reference.html, so the
+     pages read as one set. :root carries the COMPLETE light palette; the two
+     blocks below redefine tokens only. */
+  :root {
+    --paper:      #eef0f5;
+    --surface:    #fbfcfd;
+    --surface-2:  #e4e8ef;
+    --ink:        #131722;
+    --ink-2:      #545c6e;
+    --ink-3:      #7c8496;
+    --rule:       #d2d8e2;
+    --rule-soft:  #e2e6ee;
+    --accent:     #5a3ce8;
+    --accent-dim: #5a3ce826;
+
+    --font-display: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --font-body: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+
+    --col: 68ch;
+    --wide: 1040px;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper:      #0b0e15;
+      --surface:    #131826;
+      --surface-2:  #1b2233;
+      --ink:        #e7eaf2;
+      --ink-2:      #9aa3b7;
+      --ink-3:      #6d7689;
+      --rule:       #262e40;
+      --rule-soft:  #1d2434;
+      --accent:     #9584ff;
+      --accent-dim: #9584ff26;
+      color-scheme: dark;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper:      #0b0e15;
+    --surface:    #131826;
+    --surface-2:  #1b2233;
+    --ink:        #e7eaf2;
+    --ink-2:      #9aa3b7;
+    --ink-3:      #6d7689;
+    --rule:       #262e40;
+    --rule-soft:  #1d2434;
+    --accent:     #9584ff;
+    --accent-dim: #9584ff26;
+    color-scheme: dark;
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 17px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+    padding-inline: 24px;
+    padding-block: 0 96px;
+  }
+  @media (max-width: 480px) {
+    body { padding-inline: 16px; }
+  }
+
+  .wrap { max-width: var(--wide); margin: 0 auto; display: flex; flex-direction: column; }
+
+  .masthead {
+    padding: 64px 0 36px;
+    border-bottom: 1px solid var(--rule);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  h1 {
+    font-family: var(--font-display);
+    font-size: clamp(36px, 5.6vw, 56px);
+    line-height: 1.05;
+    font-weight: 400;
+    letter-spacing: -0.015em;
+    text-wrap: balance;
+    max-width: 18ch;
+  }
+  .standfirst {
+    font-family: var(--font-display);
+    font-size: 20px;
+    line-height: 1.5;
+    color: var(--ink-2);
+    max-width: 58ch;
+  }
+
+  p { max-width: var(--col); }
+  code {
+    font-family: var(--font-mono);
+    font-size: 0.84em;
+    background: var(--surface-2);
+    padding: 1px 5px;
+    border-radius: 3px;
+    overflow-wrap: anywhere;
+  }
+  a { color: var(--accent); }
+  a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 3px; }
+
+  /* The strip: every pass in frame order, with the grid it draws. */
+  .flow {
+    margin: 32px 0 0;
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+  .flow li { display: flex; }
+  .flow a {
+    display: inline-flex;
+    gap: 10px;
+    align-items: baseline;
+    padding: 7px 12px;
+    background: var(--surface);
+    border: 1px solid var(--rule);
+    border-radius: 4px;
+    color: var(--ink);
+    text-decoration: none;
+  }
+  .flow .id { font-family: var(--font-mono); font-size: 12px; color: var(--accent); letter-spacing: 0.06em; }
+  .flow .grid { font-family: var(--font-mono); font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+
+  .group {
+    max-width: none;
+    margin-top: 56px;
+    padding-top: 14px;
+    border-top: 1px solid var(--rule);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--ink-3);
+  }
+
+  section.pass {
+    padding-top: 40px;
+    display: grid;
+    grid-template-columns: minmax(0, 15rem) minmax(0, 1fr);
+    gap: 28px;
+    scroll-margin-top: 16px;
+  }
+  .meta { display: flex; flex-direction: column; gap: 14px; }
+  h2.sec {
+    font-family: var(--font-display);
+    font-size: clamp(24px, 3vw, 30px);
+    font-weight: 400;
+    line-height: 1.16;
+    letter-spacing: -0.01em;
+    text-wrap: balance;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  h2.sec .num { font-family: var(--font-mono); font-size: 12px; color: var(--accent); letter-spacing: 0.06em; }
+  .spec { display: flex; flex-direction: column; gap: 7px; font-size: 14px; line-height: 1.45; }
+  .spec div { display: grid; grid-template-columns: 4.8rem minmax(0, 1fr); gap: 10px; }
+  .spec dt { color: var(--ink-3); }
+  .spec dd { font-variant-numeric: tabular-nums; min-width: 0; }
+
+  .body { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .body ol { padding-left: 1.4em; display: flex; flex-direction: column; gap: 4px; color: var(--ink-2); max-width: var(--col); }
+
+  .shots { display: flex; flex-wrap: wrap; gap: 14px; }
+  figure { flex: 1 1 240px; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+  figure.wide { flex-basis: 100%; }
+  figure img {
+    display: block;
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    border: 1px solid var(--rule);
+    border-radius: 3px;
+    image-rendering: pixelated;
+  }
+  figcaption { font-size: 14px; line-height: 1.45; color: var(--ink-2); }
+
+  footer {
+    margin-top: 64px;
+    padding-top: 18px;
+    border-top: 1px solid var(--rule);
+    font-size: 14px;
+    color: var(--ink-2);
+  }
+
+  /* The dataflow figure. Drawn in the page's tokens, so it follows the
+     theme; wider than a phone, so it scrolls in its own box instead of
+     shrinking its text below legibility. */
+  .diagram { margin: 40px 0 0; display: flex; flex-direction: column; gap: 10px; }
+  .diagram-scroll { overflow-x: auto; }
+  .diagram svg { display: block; width: 100%; min-width: 900px; height: auto; }
+  .dg text { fill: var(--ink); font-family: var(--font-mono); font-size: 12px; }
+  .dg .t-id { fill: var(--accent); font-weight: 600; }
+  .dg .t-file { fill: var(--ink-2); font-size: 11px; }
+  .dg .t-dim { fill: var(--ink-3); font-size: 11px; }
+  .dg .t-lane { fill: var(--ink-3); font-size: 11px; letter-spacing: 0.14em; }
+  .dg .t-title { font-family: var(--font-body); font-size: 15px; }
+  .dg .lane { fill: none; stroke: var(--rule); stroke-dasharray: 2 4; }
+  .dg .shader { fill: var(--surface); stroke: var(--ink-2); stroke-width: 1.2; }
+  .dg .fbo { fill: var(--surface-2); stroke: var(--ink-3); stroke-width: 1.2; }
+  .dg .final { fill: var(--accent-dim); stroke: var(--accent); stroke-width: 1.5; }
+  .dg .w { stroke: var(--ink-2); stroke-width: 1.5; fill: none; }
+  .dg .r { stroke: var(--ink-2); stroke-width: 1.5; fill: none; stroke-dasharray: 5 4; }
+  .dg .ah { fill: var(--ink-2); }
+  .dg .out { fill: var(--surface); stroke: var(--rule); stroke-width: 1.2; }
+  .dg .frame { fill: none; stroke: var(--rule); stroke-width: 1; }
+
+  @media (max-width: 760px) {
+    section.pass { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="masthead">
+    <p class="eyebrow">NeonRenderer &middot; one frame, pass by pass</p>
+    <h1>What each neon shader draws</h1>
+    <p class="standfirst">One frame of a 440 &times; 220 rect in a 640 &times; 360 frame at resolution scale 0.5, read back between the renderer&rsquo;s draws: every program&rsquo;s own output, at the resolution it actually runs.</p>
+    <p>The scene has something in every buffer: an arc over <code>t</code> 0 to 0.6 on the base gradient, a dimmer arc (intensity 0.6, its own orange-to-red stops) over 0.65 to 0.95, dark gaps between them, and a segment at 0.3. The images are the ones Part 6 of <a href="neon-onboarding-guide.md">the onboarding guide</a> uses; <code>tools/neon-guide-figures</code> renders them.</p>
+  </header>
+
+  <figure class="diagram">
+    <div class="diagram-scroll">
+    <svg class="dg" viewBox="0 0 1080 1616" role="img" aria-label="How one frame is built below scale 1.0, with the real contents of every buffer. The emission, gather and shade passes each write an offscreen buffer the next pass reads; the gather buffer is read again by the ring. The glow coverage pass writes a table of how lit each of the outline's eight pieces is, read by the shade pass and the ring. Then the fill, the blit and the ring composite onto the caller's framebuffer, the blit and the ring covering disjoint areas, giving the finished frame. At scale 1.0 one pass reads the emission table and the glow coverage table and draws the same picture straight onto the framebuffer.">
+      <defs>
+        <marker id="dg-ah" viewBox="0 0 10 10" refX="10" refY="5" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" orient="auto">
+          <path class="ah" d="M0,0 L10,5 L0,10 z"/>
+        </marker>
+      </defs>
+      <rect class="lane" x="14" y="24" width="1052" height="680" rx="6"/>
+      <text class="t-lane" x="30" y="48">PHASE 1 &#183; OFFSCREEN BUFFERS &#183; BLENDING OFF</text>
+      <line class="w" x1="640" y1="44" x2="672" y2="44" marker-end="url(#dg-ah)"/>
+      <text class="t-file" x="680" y="48">writes</text>
+      <line class="r" x1="732" y1="44" x2="764" y2="44" marker-end="url(#dg-ah)"/>
+      <text class="t-file" x="772" y="48">reads</text>
+      <rect class="shader" x="822" y="36" width="22" height="14" rx="4"/>
+      <text class="t-file" x="852" y="48">shader</text>
+      <rect class="fbo" x="914" y="36" width="22" height="14" rx="1"/>
+      <text class="t-file" x="944" y="48">framebuffer</text>
+      <rect class="shader" x="30" y="64" width="310" height="56" rx="8"/>
+      <text class="t-id" x="44" y="86">P0b</text>
+      <text x="86" y="86">mGlowCoverShader</text>
+      <text class="t-file" x="44" y="106">neon-glow-cover.frag &#183; config change</text>
+      <line class="w" x1="340" y1="92" x2="384" y2="92" marker-end="url(#dg-ah)"/>
+      <text class="t-file" x="44" y="148">Runs after P0, and only when the</text>
+      <text class="t-file" x="44" y="164">config changed; skipped while the</text>
+      <text class="t-file" x="44" y="180">ring is lit uniformly.</text>
+      <text class="t-file" x="44" y="212">Each texel: how lit ONE piece of the</text>
+      <text class="t-file" x="44" y="228">outline is - one of 4 straights or</text>
+      <text class="t-file" x="44" y="244">4 corner arcs - seen from one</text>
+      <text class="t-file" x="44" y="260">fragment position round it: its own</text>
+      <text class="t-file" x="44" y="276">coverage under the layer&#8217;s kernel,</text>
+      <text class="t-file" x="44" y="292">over its own extent only.</text>
+      <text class="t-file" x="44" y="324">Read by P1b and P2c (P1 at 1.0):</text>
+      <text class="t-file" x="44" y="340">one linear fetch per piece.</text>
+      <rect class="fbo" x="385" y="64" width="665" height="284" rx="1"/>
+      <text class="t-dim" x="399" y="84">FBO</text>
+      <text x="441" y="84">mGlowCoverBuffer</text>
+      <text class="t-file" x="399" y="102">1024 &#215; 128 &#183; RGBA16F &#183; 1.0 MB</text>
+      <text class="t-dim" x="1036" y="102" text-anchor="end">read: linear</text>
+      <image href="images/neon-onboarding/pass-p0b-glow-cover.png" x="397" y="116" width="414" height="219" preserveAspectRatio="xMidYMid meet"/>
+      <rect class="frame" x="397" y="116" width="414" height="219"/>
+      <text class="t-dim" x="827" y="130">panels, as laid out:</text>
+      <text class="t-file" x="827" y="146">r arcs, halo</text>
+      <text class="t-file" x="937" y="146">g arcs, bloom</text>
+      <text class="t-file" x="827" y="162">b segs, halo</text>
+      <text class="t-file" x="937" y="162">a segs, bloom</text>
+      <text class="t-dim" x="827" y="190">4 bands of 32 rows:</text>
+      <text class="t-dim" x="827" y="206">straight</text>
+      <text class="t-dim" x="937" y="206">+ corner</text>
+      <text class="t-file" x="827" y="222">0 left edge</text>
+      <text class="t-file" x="937" y="222">bottom-left</text>
+      <text class="t-file" x="827" y="238">1 right edge</text>
+      <text class="t-file" x="937" y="238">bottom-right</text>
+      <text class="t-file" x="827" y="254">2 bottom edge</text>
+      <text class="t-file" x="937" y="254">top-left</text>
+      <text class="t-file" x="827" y="270">3 top edge</text>
+      <text class="t-file" x="937" y="270">top-right</text>
+      <text class="t-file" x="827" y="294">across: along the straight,</text>
+      <text class="t-file" x="827" y="310">or direction round the corner</text>
+      <text class="t-file" x="827" y="326">down: distance from the line,</text>
+      <text class="t-file" x="827" y="342">or from the corner&#8217;s centre</text>
+      <path class="r" d="M1000,348 V379" marker-end="url(#dg-ah)"/>
+      <path class="r" d="M1050,206 H1058 V746 H640 V755" marker-end="url(#dg-ah)"/>
+      <rect class="shader" x="30" y="380" width="310" height="56" rx="8"/>
+      <text class="t-id" x="44" y="402">P0</text>
+      <text x="86" y="402">mEmissionShader</text>
+      <text class="t-file" x="44" y="422">neon-emission.frag &#183; runs when stale</text>
+      <rect class="shader" x="385" y="380" width="310" height="56" rx="8"/>
+      <text class="t-id" x="399" y="402">P1a</text>
+      <text x="441" y="402">mNeonGatherShader</text>
+      <text class="t-file" x="399" y="422">neon-gather.frag &#183; the sample loop</text>
+      <rect class="shader" x="740" y="380" width="310" height="56" rx="8"/>
+      <text class="t-id" x="754" y="402">P1b</text>
+      <text x="796" y="402">mNeonShadeShader</text>
+      <text class="t-file" x="754" y="422">neon.frag + NEON_READS_GATHER</text>
+      <line class="w" x1="185" y1="436" x2="185" y2="467" marker-end="url(#dg-ah)"/>
+      <line class="w" x1="540" y1="436" x2="540" y2="467" marker-end="url(#dg-ah)"/>
+      <line class="w" x1="895" y1="436" x2="895" y2="467" marker-end="url(#dg-ah)"/>
+      <rect class="fbo" x="30" y="468" width="310" height="220" rx="1"/>
+      <text class="t-dim" x="44" y="488">FBO</text>
+      <text x="86" y="488">mEmissionBuffer</text>
+      <text class="t-file" x="44" y="506">128 &#215; 2 &#183; RGBA16F</text>
+      <text class="t-dim" x="326" y="506" text-anchor="end">read: texelFetch</text>
+      <image href="images/neon-onboarding/pass-p0-emission.png" x="42" y="542" width="286" height="62" preserveAspectRatio="xMidYMid meet"/>
+      <rect class="frame" x="42" y="542" width="286" height="62"/>
+      <text class="t-file" x="44" y="628">one column per perimeter sample;</text>
+      <text class="t-file" x="44" y="644">bands: arc colour, arc weight,</text>
+      <text class="t-file" x="44" y="660">segment colour, segment bell</text>
+      <rect class="fbo" x="385" y="468" width="310" height="220" rx="1"/>
+      <text class="t-dim" x="399" y="488">FBO</text>
+      <text x="441" y="488">mGatherBuffer</text>
+      <text class="t-file" x="399" y="506">128 &#215; 80 &#183; RGBA16F &#215; 2</text>
+      <text class="t-dim" x="681" y="506" text-anchor="end">read: bilinear</text>
+      <image href="images/neon-onboarding/pass-p1a-gather-hue.png" x="397" y="528" width="137" height="86" preserveAspectRatio="xMidYMid meet"/>
+      <rect class="frame" x="397" y="528" width="137" height="86"/>
+      <image href="images/neon-onboarding/pass-p1a-gather-cover.png" x="546" y="528" width="137" height="86" preserveAspectRatio="xMidYMid meet"/>
+      <rect class="frame" x="546" y="528" width="137" height="86"/>
+      <text class="t-file" x="397" y="632">hue</text>
+      <text class="t-file" x="546" y="632">arc coverage</text>
+      <text class="t-file" x="399" y="660">a coarse grid: ~2 texels per colour kernel</text>
+      <rect class="fbo" x="740" y="468" width="310" height="220" rx="1"/>
+      <text class="t-dim" x="754" y="488">FBO</text>
+      <text x="796" y="488">mScaledBuffer</text>
+      <text class="t-file" x="754" y="506">320 &#215; 180 RGBA8, scale 0.5</text>
+      <text class="t-dim" x="1036" y="506" text-anchor="end">read: bilinear</text>
+      <image href="images/neon-onboarding/pass-p1b-reduced.png" x="752" y="518" width="286" height="161" preserveAspectRatio="xMidYMid meet"/>
+      <rect class="frame" x="752" y="518" width="286" height="161"/>
+      <path class="r" d="M340,578 H362 V408 H384" marker-end="url(#dg-ah)"/>
+      <path class="r" d="M695,578 H717 V408 H739" marker-end="url(#dg-ah)"/>
+      <rect class="lane" x="14" y="716" width="1052" height="360" rx="6"/>
+      <text class="t-lane" x="30" y="740">PHASE 2 &#183; CALLER&#8217;S FRAMEBUFFER &#183; PREMULTIPLIED OVER</text>
+      <rect class="shader" x="30" y="756" width="310" height="56" rx="8"/>
+      <text class="t-id" x="44" y="778">P2a</text>
+      <text x="86" y="778">mBlackRectShader</text>
+      <text class="t-file" x="44" y="798">black-rect.frag &#183; only with a fill</text>
+      <rect class="shader" x="385" y="756" width="310" height="56" rx="8"/>
+      <text class="t-id" x="399" y="778">P2c</text>
+      <text x="441" y="778">mNeonRingShader</text>
+      <text class="t-file" x="399" y="798">neon.frag + NEON_READS_GATHER</text>
+      <rect class="shader" x="740" y="756" width="310" height="56" rx="8"/>
+      <text class="t-id" x="754" y="778">P2b</text>
+      <text x="796" y="778">mBlitShader</text>
+      <text class="t-file" x="754" y="798">neon-blit.frag &#183; upsamples</text>
+      <line class="r" x1="540" y1="688" x2="540" y2="755" marker-end="url(#dg-ah)"/>
+      <line class="r" x1="895" y1="688" x2="895" y2="755" marker-end="url(#dg-ah)"/>
+      <line class="w" x1="185" y1="812" x2="185" y2="839" marker-end="url(#dg-ah)"/>
+      <line class="w" x1="540" y1="812" x2="540" y2="839" marker-end="url(#dg-ah)"/>
+      <line class="w" x1="895" y1="812" x2="895" y2="839" marker-end="url(#dg-ah)"/>
+      <rect class="out" x="30" y="840" width="310" height="220" rx="2"/>
+      <text class="t-dim" x="44" y="862">drew</text>
+      <text x="86" y="862">nothing in this frame</text>
+      <text class="t-file" x="44" y="900">This scene sets no opaque fill.</text>
+      <text class="t-file" x="44" y="920">With one, this pass paints a solid</text>
+      <text class="t-file" x="44" y="936">band under the glow, full resolution.</text>
+      <rect class="out" x="385" y="840" width="310" height="220" rx="2"/>
+      <text class="t-dim" x="399" y="862">drew</text>
+      <text x="441" y="862">the ring band, full resolution</text>
+      <image href="images/neon-onboarding/pass-p2c-ring-only.png" x="397" y="880" width="286" height="161" preserveAspectRatio="xMidYMid meet"/>
+      <rect class="frame" x="397" y="880" width="286" height="161"/>
+      <rect class="out" x="740" y="840" width="310" height="220" rx="2"/>
+      <text class="t-dim" x="754" y="862">drew</text>
+      <text x="796" y="862">the lit area outside the ring</text>
+      <image href="images/neon-onboarding/pass-after-blit.png" x="752" y="880" width="286" height="161" preserveAspectRatio="xMidYMid meet"/>
+      <rect class="frame" x="752" y="880" width="286" height="161"/>
+      <line class="w" x1="185" y1="1060" x2="185" y2="1103" marker-end="url(#dg-ah)"/>
+      <text class="t-file" x="193" y="1086">1st</text>
+      <line class="w" x1="540" y1="1060" x2="540" y2="1103" marker-end="url(#dg-ah)"/>
+      <text class="t-file" x="548" y="1086">3rd</text>
+      <line class="w" x1="895" y1="1060" x2="895" y2="1103" marker-end="url(#dg-ah)"/>
+      <text class="t-file" x="903" y="1086">2nd</text>
+      <rect class="final" x="30" y="1104" width="1020" height="220" rx="2"/>
+      <text class="t-title" x="48" y="1138">Caller&#8217;s framebuffer: the finished frame</text>
+      <text class="t-file" x="48" y="1164">640 &#215; 360, full resolution, premultiplied over.</text>
+      <text class="t-file" x="48" y="1184">Drawn in order: the fill, the blit, the ring.</text>
+      <text class="t-file" x="48" y="1212">The blit and the ring cover disjoint areas,</text>
+      <text class="t-file" x="48" y="1228">so no pixel is composited twice: the ring</text>
+      <text class="t-file" x="48" y="1244">fills exactly the band the blit left empty.</text>
+      <image href="images/neon-onboarding/pass-after-ring.png" x="684" y="1115" width="352" height="198" preserveAspectRatio="xMidYMid meet"/>
+      <rect class="frame" x="684" y="1115" width="352" height="198"/>
+      <rect class="lane" x="14" y="1344" width="1052" height="256" rx="6"/>
+      <text class="t-lane" x="30" y="1368">AT SCALE 1.0 &#183; DIRECT PATH &#183; NO GATHER OR REDUCED BUFFER</text>
+      <rect class="shader" x="30" y="1384" width="200" height="56" rx="8"/>
+      <text class="t-id" x="44" y="1406">P0</text>
+      <text x="80" y="1406">mEmissionShader</text>
+      <rect class="fbo" x="260" y="1384" width="200" height="56" rx="1"/>
+      <text x="274" y="1406">mEmissionBuffer</text>
+      <text class="t-file" x="274" y="1426">128 &#215; 2 &#183; RGBA16F</text>
+      <rect class="shader" x="490" y="1384" width="200" height="56" rx="8"/>
+      <text class="t-id" x="504" y="1406">P1</text>
+      <text x="540" y="1406">mNeonShader</text>
+      <text class="t-file" x="504" y="1426">neon.frag</text>
+      <line class="w" x1="230" y1="1412" x2="259" y2="1412" marker-end="url(#dg-ah)"/>
+      <line class="r" x1="460" y1="1412" x2="489" y2="1412" marker-end="url(#dg-ah)"/>
+      <line class="w" x1="690" y1="1412" x2="719" y2="1412" marker-end="url(#dg-ah)"/>
+      <rect class="final" x="720" y="1384" width="330" height="172" rx="2"/>
+      <text class="t-title" x="734" y="1408">Caller&#8217;s framebuffer</text>
+      <image href="images/neon-onboarding/pass-p1-direct.png" x="734" y="1416" width="240" height="135" preserveAspectRatio="xMidYMid meet"/>
+      <rect class="frame" x="734" y="1416" width="240" height="135"/>
+      <rect class="shader" x="30" y="1456" width="200" height="56" rx="8"/>
+      <text class="t-id" x="44" y="1478">P0b</text>
+      <text x="80" y="1478">mGlowCoverShader</text>
+      <rect class="fbo" x="260" y="1456" width="200" height="56" rx="1"/>
+      <text x="274" y="1478">mGlowCoverBuffer</text>
+      <text class="t-file" x="274" y="1498">1024 &#215; 128 &#183; RGBA16F</text>
+      <line class="w" x1="230" y1="1484" x2="259" y2="1484" marker-end="url(#dg-ah)"/>
+      <path class="r" d="M460,1484 H590 V1441" marker-end="url(#dg-ah)"/>
+      <text class="t-file" x="30" y="1540">The fill first if there is one, then P1: the sample loop and the</text>
+      <text class="t-file" x="30" y="1556">shading in one draw, on every pixel of the glow quad at full resolution.</text>
+      <text class="t-file" x="30" y="1580">Same picture as the frame above; no offscreen buffer but the two tables.</text>
+    </svg>
+    </div>
+    <figcaption>How one frame is built below scale 1.0, with what each buffer and each pass actually held, captured from this frame. Phase 1 fills four offscreen buffers. P0b&rsquo;s glow coverage table (top) is read by both shading passes, P1b and the ring; of the other three, each is read by the pass after it, and the gather buffer a second time by the ring. Phase 2 composites onto the caller&rsquo;s framebuffer: the blit draws everything except a band around the outline, and the ring fills exactly that band. At scale 1.0 (bottom) one pass draws the same picture. Every pass also reads uniforms and the CPU-baked LUTs and uniform blocks, which are left out. P0b runs after P0 in the frame; it is drawn on top here only because its table feeds passes in both phases. Sizes are this page&rsquo;s 640 &times; 360 frame; the gather captures are magnified, so their texels show.</figcaption>
+  </figure>
+
+  <nav aria-label="Passes in frame order">
+    <ul class="flow">
+      <li><a href="#p0"><span class="id">P0</span><span class="grid">128&times;2</span></a></li>
+      <li><a href="#p0b"><span class="id">P0b</span><span class="grid">1024&times;128</span></a></li>
+      <li><a href="#p1a"><span class="id">P1a</span><span class="grid">128&times;80</span></a></li>
+      <li><a href="#p1b"><span class="id">P1b</span><span class="grid">320&times;180</span></a></li>
+      <li><a href="#p2b"><span class="id">P2b</span><span class="grid">640&times;360</span></a></li>
+      <li><a href="#p2c"><span class="id">P2c</span><span class="grid">640&times;360, ring only</span></a></li>
+    </ul>
+  </nav>
+
+  <p class="group">Below scale 1.0, in frame order</p>
+
+  <section class="pass" id="p0">
+    <div class="meta">
+      <h2 class="sec"><span class="num">P0</span>Emission table</h2>
+      <dl class="spec">
+        <div><dt>Program</dt><dd><code>mEmissionShader</code></dd></div>
+        <div><dt>Shader</dt><dd><code>neon-emission.frag</code></dd></div>
+        <div><dt>Target</dt><dd><code>mEmissionBuffer</code></dd></div>
+        <div><dt>Grid</dt><dd>128 &times; 2 texels</dd></div>
+        <div><dt>Format</dt><dd>RGBA16F</dd></div>
+      </dl>
+    </div>
+    <div class="body">
+      <p>Everything the sample loop needs that does not depend on the pixel, baked once per perimeter sample. Each sample is one column, drawn 5 px wide, with <code>t</code> = 0 at the left. Top to bottom:</p>
+      <ol>
+        <li>Row 0 colour: arc colour &times; arc weight.</li>
+        <li>Row 0 alpha: the arc weight. 1 on the first arc, 0.6 on the dimmer one, 0 in the gaps.</li>
+        <li>Row 1 colour: segment colour &times; bell.</li>
+        <li>Row 1 alpha: the bell, scaled to its peak.</li>
+      </ol>
+      <div class="shots">
+        <figure class="wide">
+          <img src="images/neon-onboarding/pass-p0-emission.png" alt="The emission table: four horizontal bands of per-sample colour and weight" width="640" height="138">
+          <figcaption>The table, in the band order above.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="pass" id="p0b">
+    <div class="meta">
+      <h2 class="sec"><span class="num">P0b</span>Glow coverage table</h2>
+      <dl class="spec">
+        <div><dt>Program</dt><dd><code>mGlowCoverShader</code></dd></div>
+        <div><dt>Shader</dt><dd><code>neon-glow-cover.frag</code></dd></div>
+        <div><dt>Target</dt><dd><code>mGlowCoverBuffer</code></dd></div>
+        <div><dt>Grid</dt><dd>1024 &times; 128 texels</dd></div>
+        <div><dt>Format</dt><dd>RGBA16F</dd></div>
+      </dl>
+    </div>
+    <div class="body">
+      <p>For each of the outline&rsquo;s eight pieces, how lit that piece is as the halo and the bloom see it from any fragment position round it: the piece&rsquo;s own coverage over its own extent, weighted by each layer&rsquo;s kernel - in closed form for the arcs, integrated numerically for the segments&rsquo; bells. Each of four bands holds a straight at its left (the projection along it across, past both ends at the sides; the distance from the line down) and a corner at its right (the direction from the arc&rsquo;s centre across, the distance from it down, the arc itself halfway), the two sharing the band&rsquo;s columns in proportion to their lengths. The halo and bloom are a sum over those pieces, and every shading pass - P1b, P2c, and P1 at scale 1.0 - scales each piece&rsquo;s share by its own read of this table, one linear fetch per piece. Baked on a config change only; its lengths enter only as ratios, so both resolution paths share it.</p>
+      <ol>
+        <li>The arcs as the halo sees them: each straight&rsquo;s own stretch of the arcs sharp at the top of its band, softening down it as the kernel widens; beside it, a corner.</li>
+        <li>The arcs as the bloom sees them, six times wider, so even on the line the gaps are only a shade darker.</li>
+        <li>The segment at <code>t</code> = 0.3 as the halo sees it - only on the pieces it reaches.</li>
+        <li>The same segment as the bloom sees it.</li>
+      </ol>
+      <div class="shots">
+        <figure class="wide">
+          <img src="images/neon-onboarding/pass-p0b-glow-cover.png" alt="The glow coverage table: four panels, one per channel, each four bands of a straight beside a corner" width="518" height="274">
+          <figcaption>The table as stored, every fourth column, one panel per channel: four bands, each a straight then a corner.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="pass" id="p1a">
+    <div class="meta">
+      <h2 class="sec"><span class="num">P1a</span>Gather</h2>
+      <dl class="spec">
+        <div><dt>Program</dt><dd><code>mNeonGatherShader</code></dd></div>
+        <div><dt>Shader</dt><dd><code>neon-gather.frag</code></dd></div>
+        <div><dt>Target</dt><dd><code>mGatherBuffer</code></dd></div>
+        <div><dt>Grid</dt><dd>128 &times; 80 texels, gather scale &asymp; 0.18</dd></div>
+        <div><dt>Format</dt><dd>RGBA16F, 2 attachments</dd></div>
+      </dl>
+    </div>
+    <div class="body">
+      <p>The sample loop, about 95% of the neon&rsquo;s cost, run once per texel of a coarse grid: about two texels per colour-kernel width. Its results vary slowly enough that the later passes read them back with a bilinear fetch. Shown 4&times; with nearest-neighbour scaling, so the texels stay visible.</p>
+      <div class="shots">
+        <figure>
+          <img src="images/neon-onboarding/pass-p1a-gather-hue.png" alt="Gather buffer: the gathered hue" width="512" height="320">
+          <figcaption>Attachment 0 RGB: the gathered hue.</figcaption>
+        </figure>
+        <figure>
+          <img src="images/neon-onboarding/pass-p1a-gather-cover.png" alt="Gather buffer: the arc coverage in greyscale" width="512" height="320">
+          <figcaption>Attachment 0 alpha: the arc coverage, decoded from <code>c/(1+c)</code>. Darker where the outline nearby is dim or dark.</figcaption>
+        </figure>
+        <figure>
+          <img src="images/neon-onboarding/pass-p1a-gather-segment.png" alt="Gather buffer: the segment term" width="512" height="320">
+          <figcaption>Attachment 1: the segment&rsquo;s colour scaled by its coverage.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="pass" id="p1b">
+    <div class="meta">
+      <h2 class="sec"><span class="num">P1b</span>Shade at the reduced scale</h2>
+      <dl class="spec">
+        <div><dt>Program</dt><dd><code>mNeonShadeShader</code></dd></div>
+        <div><dt>Shader</dt><dd><code>neon.frag</code> + <code>NEON_READS_GATHER</code></dd></div>
+        <div><dt>Target</dt><dd><code>mScaledBuffer</code></dd></div>
+        <div><dt>Grid</dt><dd>320 &times; 180 texels, scale 0.5</dd></div>
+        <div><dt>Format</dt><dd>RGBA8</dd></div>
+      </dl>
+    </div>
+    <div class="body">
+      <p>Everything except the loop, shaded at half resolution from the gather buffer. The glow holds up at this size; the line comes out blocky. Shown 2&times; with nearest-neighbour scaling.</p>
+      <div class="shots">
+        <figure class="wide">
+          <img src="images/neon-onboarding/pass-p1b-reduced.png" alt="The reduced buffer: the glow at half resolution with a blocky line" width="640" height="360">
+          <figcaption>The reduced buffer, composited over the background.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="pass" id="p2b">
+    <div class="meta">
+      <h2 class="sec"><span class="num">P2b</span>Blit</h2>
+      <dl class="spec">
+        <div><dt>Program</dt><dd><code>mBlitShader</code></dd></div>
+        <div><dt>Shader</dt><dd><code>neon-blit.frag</code></dd></div>
+        <div><dt>Target</dt><dd>The caller&rsquo;s framebuffer</dd></div>
+        <div><dt>Grid</dt><dd>640 &times; 360 px, full resolution</dd></div>
+        <div><dt>Covers</dt><dd>The lit area outside the ring</dd></div>
+      </dl>
+    </div>
+    <div class="body">
+      <p>The reduced buffer upsampled onto the frame, everywhere the glow can reach except a thin ring around the outline. It also draws the one-sided cut and the cutoff edges at full resolution. The black band is the ring&rsquo;s area, still empty.</p>
+      <div class="shots">
+        <figure class="wide">
+          <img src="images/neon-onboarding/pass-after-blit.png" alt="The frame after the blit, with an empty band around the outline" width="640" height="360">
+          <figcaption>The frame after the blit.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="pass" id="p2c">
+    <div class="meta">
+      <h2 class="sec"><span class="num">P2c</span>Edge ring</h2>
+      <dl class="spec">
+        <div><dt>Program</dt><dd><code>mNeonRingShader</code></dd></div>
+        <div><dt>Shader</dt><dd><code>neon.frag</code> + <code>NEON_READS_GATHER</code>, a second program object</dd></div>
+        <div><dt>Target</dt><dd>The caller&rsquo;s framebuffer</dd></div>
+        <div><dt>Grid</dt><dd>640 &times; 360 px, full resolution</dd></div>
+        <div><dt>Covers</dt><dd>The ring band only</dd></div>
+      </dl>
+    </div>
+    <div class="body">
+      <p>The same source as P1b, with its uniforms uploaded as if the scale were 1.0. It reshades the band where the line and every hard edge live, reading the gather buffer for colour and coverage. Its strips share their edges with the blit&rsquo;s, so no pixel is drawn twice.</p>
+      <div class="shots">
+        <figure>
+          <img src="images/neon-onboarding/pass-p2c-ring-only.png" alt="The ring band alone around the outline" width="640" height="360">
+          <figcaption>The ring&rsquo;s own output, with the blit&rsquo;s pixels left out.</figcaption>
+        </figure>
+        <figure>
+          <img src="images/neon-onboarding/pass-after-ring.png" alt="The finished frame at scale 0.5" width="640" height="360">
+          <figcaption>The finished frame: the blit plus the ring.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <p class="group">At scale 1.0</p>
+
+  <section class="pass" id="p1">
+    <div class="meta">
+      <h2 class="sec"><span class="num">P1</span>Direct path</h2>
+      <dl class="spec">
+        <div><dt>Program</dt><dd><code>mNeonShader</code></dd></div>
+        <div><dt>Shader</dt><dd><code>neon.frag</code></dd></div>
+        <div><dt>Target</dt><dd>The caller&rsquo;s framebuffer</dd></div>
+        <div><dt>Grid</dt><dd>640 &times; 360 px, full resolution</dd></div>
+        <div><dt>Runs</dt><dd>At scale 1.0 only</dd></div>
+      </dl>
+    </div>
+    <div class="body">
+      <p>The same scene at scale 1.0: one draw that runs the loop and the shading together on every pixel of the glow quad. Below 1.0, P1a through P2c rebuild this picture.</p>
+      <div class="shots">
+        <figure class="wide">
+          <img src="images/neon-onboarding/pass-p1-direct.png" alt="The same scene rendered by the direct path at scale 1.0" width="640" height="360">
+          <figcaption>P1&rsquo;s output at scale 1.0.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <footer>
+    <p>Captured by <code>tools/neon-guide-figures</code>, which wraps the library&rsquo;s draw call to read each pass&rsquo;s target back without changing the frame (recorded and unrecorded frames are byte-identical). Regenerate after a change to how the neon looks; see <a href="../tools/neon-guide-figures/README.md">its README</a>.</p>
+  </footer>
+</div>

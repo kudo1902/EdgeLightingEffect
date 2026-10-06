@@ -45,8 +45,7 @@ namespace EdgeLighting
     ///              implicit in whether it's the inside or outside cutoff).
     ///              Up to @c size the layer is untouched - the fill solid, the
     ///              glow at full strength - whenever @c softness is at or above
-    ///              the one-pixel floor below. Under it, and for the glow at a
-    ///              resolutionScale below 1, see @c softness.
+    ///              the one-pixel floor below. Under it, see @c softness.
     ///              For the glow, a size past the glow's own reach is a no-op -
     ///              there is no emission left to cut. The fill has no reach of
     ///              its own, so an OUTSIDE size always grows it; an INSIDE size
@@ -67,21 +66,23 @@ namespace EdgeLighting
     ///              Below the floor the floored ramp is laid symmetrically
     ///              about size + softness/2, so it STARTS up to half a floor
     ///              inside @c size: 0.5 px at softness 0 on a straight edge,
-    ///              ~0.7 px on a diagonal. On the glow's reduced-resolution
-    ///              path the floor is one BUFFER pixel, so at
-    ///              @c resolutionScale 0.25 that is 2 full-res px inside
-    ///              @c size. It is the price of keeping a softness-0 edge's 50%
-    ///              point on @c size at every scale - see inMid in neon.frag.
+    ///              ~0.7 px on a diagonal. It is the price of keeping a
+    ///              softness-0 edge's 50% point on @c size - see inMid in
+    ///              neon.frag.
     ///
-    ///              Separately from the floor, the glow's reduced-resolution
-    ///              path blurs EVERY cutoff edge by about one buffer pixel in
-    ///              the bilinear upscale, at any softness: the last
-    ///              ~0.5 / resolutionScale px before @c size are dimmed.
-    ///              Measured at resolutionScale 0.25, the pixel just inside
-    ///              @c size keeps 63% at softness 0, 82% at 4, 98% at 16 (at
-    ///              0.5: 75%, 96%, 99%; at 1.0: 100%). More softness shrinks it
-    ///              without removing it; an exact edge needs scale 1.0. The
-    ///              fill always draws at full resolution and is unaffected.
+    ///              All of this holds at every @c NeonConfig::resolutionScale.
+    ///              The glow's floor is one DESTINATION pixel on both paths, and
+    ///              below scale 1.0 the edge is still drawn at destination
+    ///              resolution - by the blit (neon-blit.frag), or by the
+    ///              full-resolution edge ring where the cutoff sits close to
+    ///              the line - never into the reduced buffer. Measured on a
+    ///              20 px cutoff, either side, the pixels just inside and just
+    ///              past @c size read the same at scales 0.5 and 0.25 as at
+    ///              1.0, at softness 0, 4 and 16. A reduced scale changes the
+    ///              glow INSIDE the band, not its edges. (It used to blur them:
+    ///              with the masks drawn into the buffer, the pixel just inside
+    ///              @c size kept only 56-63% at 0.25 and softness 0. See
+    ///              docs/neon-resolution-scale-plan.md, step 2.)
     ///
     ///              On the glow the feather is coverage applied to the graded
     ///              output, not a multiply into the linear emission ahead of
@@ -234,11 +235,12 @@ namespace EdgeLighting
     ///
     /// @c color.a is an EMISSION SCALE at this stop, not a blend opacity: the
     /// renderers bake it into their LUTs' alpha channel and the neon shaders
-    /// multiply it into the emission magnitude, so it attenuates the filament,
-    /// halo and bloom together. 1 = full brightness (default), 0 = dark at
-    /// that perimeter position with the background showing through - which is
-    /// how you fade the neon out along part of the ring without touching the
-    /// arc or segment gating. It interpolates linearly between stops in every
+    /// multiply it into the FILAMENT's emission magnitude at that perimeter
+    /// position: 1 = full brightness (default), 0 = no line there. It does NOT
+    /// reach the halo or the bloom, which scale with a gathered coverage the
+    /// emission table builds without alpha - an alpha-0 stretch keeps its full
+    /// glow (V18 in docs/review-findings.md, open). To dim the glow along part
+    /// of the ring, gate it with arcs or an arc's intensity instead. It interpolates linearly between stops in every
     /// @ref BlendSpace (the hue-space conversions apply to @c .rgb only).
     typedef struct ColorStop
     {
@@ -388,18 +390,60 @@ namespace EdgeLighting
         //
         // The renderer draws either straight onto the framebuffer it was handed
         // (@c resolutionScale 1.0) or into a scaled offscreen buffer that is
-        // bilinear-blitted back (below 1.0). The defaults here are the full-res
-        // path, so a config left untouched renders as it always has.
+        // bilinear-blitted back, with a full-resolution ring around the edge
+        // (below 1.0). The defaults here are the full-res path, so a config
+        // left untouched renders as it always has.
 
         /// Resolution scale for the internal neon buffer. 1.0 draws the gather
         /// directly onto the caller's framebuffer - no offscreen buffer and no
-        /// blit. Below 1.0 the gather runs into a buffer of that fraction of
-        /// the viewport and is composited back with bilinear filtering
-        /// (0.5 = half-res, 0.25 = quarter). Clamped to (0, 1] at draw time.
+        /// blit. Below 1.0 the gather - the sample loop that is most of the
+        /// cost - runs once into a small buffer at its own, coarser
+        /// resolution, set by how smooth its result is rather than by this
+        /// value; the glow is shaded from that result into a buffer of this
+        /// fraction of the viewport (0.5 = half-res, 0.25 = quarter) and
+        /// composited back with bilinear filtering everywhere except a thin
+        /// ring around the rect edge, which is re-shaded at FULL resolution
+        /// from the same result - so the filament, the one-sided cut and the
+        /// cutoffs near the line come out as the direct path draws them.
+        /// Clamped to (0, 1] at draw time.
         ///
-        /// What this buys is fragment work, which dominates the effect: the
-        /// glow quad is large and every fragment inside it walks the sample
-        /// loop.
+        /// Quality: within 2/255 of the 1.0 render at every scale down to
+        /// 0.125 on every scene in docs/neon-resolution-scale-comparison.html
+        /// except a 160 x 96 rect, which reads 4 at 0.25 and 10 at 0.125; a
+        /// moving hairline stays within +/-0.07 px of its edge at every scale.
+        /// The error GROWS as the rect shrinks, because the halo just outside
+        /// the edge ring changes faster than a reduced buffer can follow round
+        /// a small rect: a 20 x 17 rect reads 18 / 53 / 93 at 0.5 / 0.25 /
+        /// 0.125 (measured on Mesa llvmpipe; the same as before the edge ring,
+        /// which fixed the pixels next to the line). Keep small rects at 1.0 -
+        /// they are cheap there anyway.
+        ///
+        /// Cost: what this buys is the gather's fragment work, which dominates
+        /// the effect - the glow quad is large and every fragment inside it
+        /// walks the sample loop. Below 1.0 the loop runs on a few thousand
+        /// texels whatever this value is, so 0.5 now saves nearly as much as
+        /// 0.25 did. It is NOT a guaranteed saving. The ring, the composite
+        /// and the extra pass are a fixed cost, so a scene that is already
+        /// cheap at 1.0 - a tight cutoff band, a one-sided glow - can render
+        /// SLOWER below 1.0; a soft filament (filamentFalloff below ~0.3)
+        /// widens the ring and loses most of the gain; and a rect small enough
+        /// to gather at this value itself gains nothing from the split.
+        /// Measure. See docs/neon-resolution-scale-plan.md sections 7, 12 and
+        /// 13.
+        ///
+        /// Memory: below 1.0 the renderer holds an RGBA8 buffer at the reduced
+        /// scale over the part of the frame the glow can reach - never more
+        /// than the whole viewport at that scale - and an RGBA16F gather buffer
+        /// (two attachments with segments) over the same area at the gather's
+        /// scale. At 1920 x 1080: 2.15 MB at 0.5 and 0.6 MB at 0.25 for a
+        /// full-screen rect, 1.8 / 0.54 MB for a 900 x 540 one. Nothing at
+        /// 1.0, and released when the scale returns to 1.0 or the layer is
+        /// disabled.
+        ///
+        /// The two paths draw with different shader programs, built the first
+        /// frame each path renders: a host that stays on one never compiles
+        /// the other's, and switching costs a one-time compile on the first
+        /// frame after the switch.
         float resolutionScale = 1.0f;
 
         /// Number of perimeter gather samples per fragment. Capped at
@@ -485,7 +529,9 @@ namespace EdgeLighting
         /// a segment can shine on a dark arc.
         float intensity = 1.0f;
         /// Halo reach in pixels - how far the coloured glow spreads from the line.
-        /// Also seeds the wider background bloom and corner colour cross-fade widths.
+        /// Also sets the wider background bloom (6x this) and how far the glow
+        /// reaches in all (the draw quad's margin). Not the colour blend: that
+        /// kernel scales with the perimeter (COLOR_BLEND_PERIM_FRAC).
         float glowRadius = 5.0f;
         /// Strength of the wide soft background spill layered on top of the halo.
         /// 0 = halo only, ~0.3 = subtle ambient bleed, 1.0+ = strong wash.
@@ -1098,8 +1144,10 @@ namespace EdgeLighting
     /// Spotlight renderer configuration: a list of independently placed lamps.
     ///
     /// The layer emits LIGHT ONLY - no backdrop, no fixture housings, no floor
-    /// - and composites additively over whatever is behind it. Nothing is
-    /// occluded by the rect: a cone crosses the frame freely.
+    /// - and SCREENS over whatever is behind it, `dst + src * (1 - dst)`:
+    /// light only adds, but overlapping lamps approach full scale instead of
+    /// clipping. Nothing is occluded by the rect: a cone crosses the frame
+    /// freely.
     ///
     /// The one thing that DOES stop light is @c clip - an explicit area, opted
     /// into per lamp by @c SpotLight::clipped. That is a cut, not a shadow:

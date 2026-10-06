@@ -309,11 +309,23 @@ three surprise:
   by then. Trimming a glow from 20 to 10 buys nothing at all; trimming 5 to 2
   buys 2x. Worth knowing before anyone tunes it for speed rather than for looks.
 
+**The `resolutionScale` row predates two changes, and its shape no longer
+holds.** The edge ring (`neon-resolution-scale-plan.md` step 5) added a fixed
+cost below 1.0. Then section 13 of that plan split the gather out: below 1.0
+the loop runs once, alone, at its own coarse scale (about 2 texels per colour
+kernel, typically an eighth of the viewport), and the reduced pass only shades.
+So below 1.0 the cost is no longer close to quadratic in the scale - 0.5 is
+nearly as cheap as 0.25 (llvmpipe, default scene: 13.5x and 19x faster than
+1.0) - and `numSamples` is paid only on the gather's few thousand texels, so it
+barely moves the scaled path. Both rows describe 1.0 as they stand.
+
 ## 9. What is left open
 
-- **The gather loop is still 95% of the layer.** Change 1 removed a fetch from
-  it; it did not change its shape. The two-level gather in section 6 is the next
-  real move, and it is unbuilt.
+- **The gather loop is still 95% of the layer at 1.0.** Change 1 removed a
+  fetch from it; it did not change its shape. The two-level gather in section 6
+  is the next real move there, and it is unbuilt. Below 1.0 the loop is no
+  longer per texel: `neon-resolution-scale-plan.md` section 13 runs it once on
+  a coarse grid, and the reduced pass's shading is now the largest pass.
 - **Gating the lens flare's hex sprite**, worth about 1.7x on that layer, is
   still open exactly as `lens-flare-perf-review.md` section 7 left it. It was
   written when the flare was the expensive layer; it is now second, so the item

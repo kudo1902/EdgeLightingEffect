@@ -85,8 +85,8 @@ differently for the two, the row says so.
 | Field | Unit | Range | Meaning |
 |---|---|---|---|
 | `enable` | bool | - | `true` = the layer ends at `size`, faded out over the next `softness` px. `false` = uncapped: for the glow, natural halo/bloom decay bounds it; for the fill nothing does - an `INSIDE` fill covers the whole rect, an `OUTSIDE` fill runs to the viewport edge, and `BOTH` with both off covers the viewport |
-| `size` | px, positive | `>= 0`; glow: no-op past the glow's own reach; fill: outside never a no-op, inside a no-op past `min(width, height) / 2` | Distance from rect edge to where the feather STARTS along this side; the layer is untouched up to here whenever `softness` is at or above the 1 px floor (below it, and for the glow at `resolutionScale` < 1, see `softness`). For the glow, once `size` exceeds `glowRadius * 48 * (1 + bloomStrength * intensity)` px (the quad margin, `GLOW_REACH_RADIUS_FACTOR`) there is no emission left to cut - 312 px at the stock glow. The fill has no reach of its own, so a larger outside `size` always grows it; an inside `size` stops mattering once it reaches `min(width, height) / 2`, where the fill already covers the whole interior |
-| `softness` | px, running outward from `size` | `>= 0`; width floored at 1 px | Feather width, same meaning for both layers: full strength at `size`, 50% at `size + softness/2`, gone at `size + softness`. At or above the floor it never eats into the first `size` px; below it the floored ramp is laid symmetrically about `size + softness/2` and so starts up to half a floor inside `size` - 0.5 px at softness 0 on a straight edge, ~0.7 px on a diagonal, and on the glow's reduced-resolution path half a BUFFER px (2 full-res px at `resolutionScale` 0.25). Separately, that path's bilinear upscale softens EVERY glow cutoff edge by about one buffer px at any softness, dimming the last ~`0.5 / resolutionScale` px before `size`: at 0.25 the pixel just inside keeps 63% at softness 0, 82% at 4, 98% at 16 (0.5: 75% / 96% / 99%; 1.0: 100%). More softness shrinks it without removing it; an exact edge needs scale 1.0, and the fill is always full-res. The WIDTH is floored at 1 destination px so `0` is a pixel-tight AA edge at `size`, but the POSITION is not floored: every softness moves the edge out by `softness/2`, so small values are not interchangeable (glow, 420x300 rect, cutoff 12: `0` vs `0.1` differ by up to 8/255, `0.5` vs `1.0` by 39/255, while `1.0` vs `1.01` differ by 1/255). |
+| `size` | px, positive | `>= 0`; glow: no-op past the glow's own reach; fill: outside never a no-op, inside a no-op past `min(width, height) / 2` | Distance from rect edge to where the feather STARTS along this side; the layer is untouched up to here whenever `softness` is at or above the 1 px floor (below it, see `softness`). For the glow, once `size` exceeds `glowRadius * 48 * (1 + bloomStrength * intensity)` px (the quad margin, `GLOW_REACH_RADIUS_FACTOR`) there is no emission left to cut - 312 px at the stock glow. The fill has no reach of its own, so a larger outside `size` always grows it; an inside `size` stops mattering once it reaches `min(width, height) / 2`, where the fill already covers the whole interior |
+| `softness` | px, running outward from `size` | `>= 0`; width floored at 1 px | Feather width, same meaning for both layers: full strength at `size`, 50% at `size + softness/2`, gone at `size + softness`. At or above the floor it never eats into the first `size` px; below it the floored ramp is laid symmetrically about `size + softness/2` and so starts up to half a floor inside `size` - 0.5 px at softness 0 on a straight edge, ~0.7 px on a diagonal. All of it holds at every `resolutionScale`: the glow's floor is 1 destination px on both paths, and below `1.0` the edge is still drawn at destination resolution (by the blit, or by the full-res edge ring near the line), never into the reduced buffer - the pixels either side of `size` read the same at 0.5 and 0.25 as at 1.0 (20 px cutoff, either side, softness 0 / 4 / 16). A reduced scale changes the glow inside the band, not its edges; it used to blur them (56-63% just inside `size` at 0.25, softness 0) until `neon-resolution-scale-plan.md` step 2. The WIDTH is floored at 1 destination px so `0` is a pixel-tight AA edge at `size`, but the POSITION is not floored: every softness moves the edge out by `softness/2`, so small values are not interchangeable (glow, 420x300 rect, cutoff 12: `0` vs `0.1` differ by up to 8/255, `0.5` vs `1.0` by 39/255, while `1.0` vs `1.01` differ by 1/255). |
 
 Coverage applied to the graded output (not multiplied into linear emission
 ahead of the tone map). A cutoff on the side `glowSide` already culls is
@@ -209,7 +209,7 @@ summed in HDR and tone-mapped together. Also owns the opaque fill pass
 | Field | Unit | Default | Range | Effect |
 |---|---|---|---|---|
 | `enable` | bool | `false` | - | Master switch. Nothing draws when false |
-| `resolutionScale` | fraction `(0, 1]` | `1.0` | `[0.001, 1.0]`, useful `0.25-1.0` | `1.0` = direct to caller framebuffer. Below = offscreen buffer at that fraction + bilinear blit (`neon-blit.frag`). Buys fragment work (glow quad dominates). Clamped at draw time; `>= 1.0` all identical, `<= 0.001` all identical (a 1 px buffer). `0.5` sits 7/255 from `1.0`, `0.25` sits 28/255 |
+| `resolutionScale` | fraction `(0, 1]` | `1.0` | `[0.001, 1.0]`, useful `0.25-1.0` | `1.0` = direct to caller framebuffer. Below = the gather runs alone into a small buffer at its own coarse scale (about 2 texels per colour kernel, `GetGatherScale`), the glow is shaded from it into an offscreen buffer at that fraction, then bilinear-blitted (`neon-blit.frag`) everywhere except a thin ring around the edge, which is re-shaded at full res from the same gather result (`neon.frag` built with `NEON_READS_GATHER`). Buys the gather loop (~95% of the cost) almost entirely, and the rest of the shading on (1 - scale^2) of the glow. Clamped at draw time; `>= 1.0` all identical, `<= 0.001` all identical (a 1 px buffer). Within 2/255 of `1.0` down to `0.125` on the comparison page's scenes, except a 160 x 96 rect (4 at `0.25`, 10 at `0.125`) - the error grows as the rect shrinks (20 x 17: 18 / 53 / 93 at `0.5` / `0.25` / `0.125`), so keep small rects at `1.0`; before the edge ring the defaults sat 7/255 away at `0.5` and 25 at `0.25`. NOT a guaranteed saving: the ring and the blit are a fixed cost, so a tight cutoff band rendered ~2x SLOWER below `1.0` on an AMD 5300M (before the ring and blit were bounded to the lit band, which took 44% off that scene at `0.25` on llvmpipe), and a soft filament (`filamentFalloff` < ~0.3) widens the ring. Memory below `1.0`: an RGBA8 buffer over what the blit reads, never more than the whole viewport at that fraction, plus an RGBA16F gather buffer (two attachments with segments) over the glow - at 1920 x 1080 and `0.5`, 2.15 MB for a full-screen rect, 1.8 MB for a 900 x 540 one, against 4.1 MB before `neon-resolution-scale-plan.md` section 13. See `neon-resolution-scale-comparison.html` |
 | `numSamples` | int | `128` (`NEON_MAX_LOOP_SAMPLES`) | `[1, 128]`, converged `>= 96` | Gather samples per fragment. Lower = faster + grainier halo. `128`, `129` and `512` are identical; so are `0` and `1`. Against `128`: `96` is 1/255, `64` is 3/255, `32` is 12/255, `16` is 29/255 |
 | `gradientLutSize` | texels | `256` | `>= 4`, no cap; converged `>= 128` | Baked ring LUT width. Size change snaps, never cross-fades. Floored at 4 (`1` through `4` identical, `5` is the first that differs); there is NO upper clamp - the demo's `32-256` slider is a UI choice, and `512`/`4096` do render (3/255 and 5/255 past `256`) |
 | `opaqueMode` | enum | `NONE` | - | Fill geometry (see `OpaqueMode`) |
@@ -255,7 +255,8 @@ They meet at two sums - filament (sharp line) and glow (halo + bloom):
 ```
 arcCol  = col * uIntensity
 emitFil  = arcCol * emitCover         + segCol     * filamentGate
-emitGlow = arcCol * emitCoverGathered + segColGlow * glowCoverAll
+emitGlow = arcCol * emitCoverGathered + segColHue  * gatheredSeg
+glow     = emitGlow * (halo, bloom) + per-piece correction       // V19
 ```
 
 `col / segColHue` are gated-normalised pure hues, so all brightness lives in
@@ -272,16 +273,26 @@ the four coverage terms:
   gather, not arc-gated).
 * **Arc + segment overlap: sum, each with its own gate.** `emitCover` /
   `emitCoverGathered` for arcs, `filamentGate` /
-  `glowCoverAll` for segments. A shared gate let a segment lift the arc term
+  `gatheredSeg` for segments. A shared gate let a segment lift the arc term
   on stretches no arc covers (blue half-arc + red segment rendered magenta at
   ~2x); separate gates fix it while leaving the lit-arc tracer case identical.
 * **Segment + segment: sum and stack.** Two `boost = 2` comets crossing read
   `4` at the crossing, unclamped through the tone map.
 * **Gates:** `filamentGate = max(smoothstep(0.5, 1, min(segCoverPt, 1)),
   emitCover)` is sharp and pointwise (lives on the line);
-  `glowCoverAll = max(emitCoverGathered, min(segCoverGathered, 1))` is soft
-  and gathered (integrals over the emitter). A faint segment (`cover 0.5`)
-  opens no filament gate yet still feeds `0.25` into glow: halo without a core.
+  `gatheredSeg = segCoverGathered * max(emitCoverGathered, min(segCoverGathered, 1))`
+  is soft and gathered (integrals over the emitter). A faint segment
+  (`cover 0.5`) opens no filament gate yet still feeds `0.25` into glow: halo
+  without a core.
+* **Each piece's own coverage (V19, V20):** the halo and bloom are a sum over
+  the outline's eight pieces, and each piece's light is scaled by how lit
+  THAT piece is near its foot, under its own kernel - read from a table the
+  renderer bakes per config change - rather than by the coverage gathered
+  around the pixel. It is what keeps a stretch no arc covers from showing a
+  thin line along it, even at a high `intensity`, and keeps lit edges' bloom
+  from dimming where it reaches a dark one; 0 on a fully lit ring. Arcs and
+  segments alike. Each piece's coverage stops at its own ends and follows its
+  own corner (V21), so no light spills round a corner from the next piece.
 * **Shared shaping after the sum:** `core / halo / bloom` kernels,
   `glowRadius / bloomStrength`, `glowSide / cutoffs`, tone map + gamma apply
   to `emitFil / emitGlow` as a whole, so overdrive saturates jointly.
@@ -431,7 +442,7 @@ bound render the same pixels, so the slider past it is dead.
 | `neon.filamentFalloff` | `>= 0.001` | `neon-renderer.cpp:887` | `0` = `0.0005` = `0.001` |
 | `neon.lineWidth` | `>= 0` | shader gate | `-8` = `-1` = `0` (no filament) |
 | `neon.glowRadius` | `>= 0` | shader gate | `-20` = `-1` = `0` |
-| `neon.glowSideSoftness` | `>= 1 px` | `CUTOFF_SOFT_FLOOR_PX` / one destination px | `0` through `1.0` identical; `1.05` differs |
+| `neon.glowSideSoftness` | `>= 1 px` | one destination px (`fwidth` floor, in `neon.frag` or `neon-blit.frag`) | `0` through `1.0` identical; `1.05` differs |
 | `ColorStop.color.a` | `[0, 1]` | LUT bake | `1.0` = `1.5` = `4.0` |
 | `Arc.length` | `[0, 1]` | perimeter walk | `1.0` = `1.5` = `2.0` |
 | `Arc.intensity` | `>= 0` | mask fold | `-4` = `-1` = `0` |
@@ -455,8 +466,9 @@ bound render the same pixels, so the slider past it is dead.
 `Cutoff.softness` - the glow's `insideCutoff` / `outsideCutoff` and the fill's
 `opaqueInsideCutoff` / `opaqueOutsideCutoff` alike - looks like a `>= 1 px`
 clamp and is NOT one, which is why it is not in the table above. Only the
-feather's WIDTH is floored at one destination pixel (`CUTOFF_SOFT_FLOOR_PX` on
-the glow's scaled path, the shader's `fwidth` floor elsewhere). Its POSITION is
+feather's WIDTH is floored at one destination pixel, by the shader's `fwidth`
+floor on every path (below `resolutionScale` 1.0 the glow's cutoffs are drawn
+by `neon-blit.frag`, at destination resolution). Its POSITION is
 not: the fade's midpoint is always `size + softness/2`, and the floored width is
 laid symmetrically about it. At or above the floor the fade therefore runs
 exactly `size` to `size + softness`; below it, the one-pixel ramp straddles that

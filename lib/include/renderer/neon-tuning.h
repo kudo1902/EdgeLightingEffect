@@ -364,6 +364,33 @@
 //     not a fixed cost. ---
 #define NEON_MAX_LOOP_SAMPLES     128
 
+// --- Glow coverage table (neon-glow-cover.frag, V20 and V21): for each piece
+//     of the emitter and each fragment position round it, the arcs' and the
+//     segments' coverage of that piece as the halo and the bloom see it. Laid
+//     out in neon-pieces.glsl: four bands of ROWS rows, each holding one
+//     straight at its left and one corner at its right. A band's columns are
+//     shared between the two in proportion to their lengths (uGlowCoverSplit,
+//     NeonRenderer::GetGlowCoverSplit), so a circle's corners get the columns
+//     its straights do not need and a long rect's straights get its corners':
+//     the straight has OVERHANG columns past each end, the corner
+//     CORNER_OVERHANG on each side of its arc and a guard texel at each end of
+//     its block, and the SHARED columns left over are split between the two
+//     interiors, each keeping at least MIN_INTERIOR. ROWS 32 is half of them
+//     within one halo width of a straight, and 16 inside and 16 outside a
+//     corner's arc. 1024 x 128 RGBA16F is 1.0 MB - half V20's single table per
+//     perimeter. Sizing it, against an exact per-piece reference (V21 in
+//     docs/review-findings.md): 48 rows (1.5 MB) read at most 2 levels off where
+//     32 reads 3 on a few pixels of a segment scene, for 1.3x the bake's cost
+//     under animation; 768 columns read 6 levels off a 1 px halo on a 4K-sized
+//     rect. Allocated once, at this fixed size. ---
+#define GLOW_COVER_WIDTH          1024
+#define GLOW_COVER_ROWS           32
+#define GLOW_COVER_OVERHANG       64
+#define GLOW_COVER_CORNER_OVERHANG 32
+#define GLOW_COVER_MIN_INTERIOR   16
+#define GLOW_COVER_SHARED         (GLOW_COVER_WIDTH - 2 - 2 * GLOW_COVER_OVERHANG - 2 * GLOW_COVER_CORNER_OVERHANG)
+#define GLOW_COVER_HEIGHT         (4 * GLOW_COVER_ROWS)
+
 // --- Grading ---
 #define TONE_MAP_SHOULDER         0.6
 #define GAMMA_EXPONENT            0.85
@@ -371,64 +398,11 @@
 // --- Epsilons ---
 #define WSUM_EPSILON              1e-6
 
-// --- Cutoff PLACEMENT floor, in BUFFER pixels. Scaled path only.
-//
-//     The odd one out in this file: every other px constant here is stated in
-//     FULL-RES px and converted with uResolutionScale at the point of use.
-//     This one is already in the space the gather rasterises into, and must
-//     NOT be converted - the whole point is to be a fixed fraction of the
-//     buffer's own pixel, whatever that pixel is worth on screen.
-//
-//     NOT the antialiasing floor, despite what this constant used to be called.
-//     That is one DESTINATION pixel and applies at every scale - neon.frag
-//     floors at sideAA on the direct path, where this constant no longer
-//     reaches. What this one buys is WHERE the boundary lands after the blit
-//     has resampled it, which is a different question with a different answer,
-//     and the table below measures exactly that and nothing else.
-//
-//     1.0, WHERE IT WAS 0.5, AND THE RAMP IS UNCHANGED. The masks it feeds were
-//     written smoothstep(-w, w, x), which spans 2w, so this constant was a HALF
-//     width pretending to be a width - and every measurement below was taken
-//     against the 1.0 buffer px of feather that produced. neon.frag now halves
-//     its total widths at the point of use, like black-rect.frag already did,
-//     so the constant is restated as the total it always effectively was. The
-//     numbers below still stand.
-//
-//     A cutoff with softness 0 is a step function. On the scaled path the
-//     gather samples it at buffer-pixel centres and the blit bilinearly
-//     upsamples, so the boundary snaps to the buffer grid and reconstructs as
-//     a 2-3 px ramp instead of the ~0.8 px one the direct path gives. Half a
-//     buffer pixel of feather lets the one sample nearest the boundary carry
-//     a fractional value, which the blit can then place sub-texel.
-//
-//     What it buys, measured on 1280x720 at cutoff 30, softness 0, as the
-//     error between the stated cutoff and where the coverage actually ends:
-//
-//       scale        0.50   0.55   0.60   0.65   0.70   0.75   0.80   0.90
-//       without    -0.06  +0.82  -0.08  -0.75  -0.09  +0.16  -0.08  -0.10
-//       with       -0.06  +0.43  -0.08  +0.33  -0.09  +0.29  -0.08  -0.10
-//
-//     Spread 1.57 px -> 0.53 px. Note scale 0.50 does not move, and that is
-//     not a defect in this constant: at exactly one half, integer geometry
-//     puts the boundary either exactly ON a buffer texel centre or exactly
-//     BETWEEN two, and a symmetric feather one texel wide or narrower gives
-//     the identical sample pattern in both cases. Widening past 1.0 does not
-//     recover it either - it only softens the edge and biases it outward
-//     (measured +0.83 at 1.25). The residual +-0.5 px there is information the
-//     half-res buffer does not contain; a cutoff that must be pixel-exact
-//     wants resolutionScale 1.0, and one that must merely LOOK clean wants a
-//     real softness, where both paths already agree to 0.08 px.
-//
-//     Applied only when uResolutionScale < 1.0 - see neon.frag's softFloor and
-//     the matching cap in NeonRenderer::setupGeometry.
-#define CUTOFF_SOFT_FLOOR_PX      1.0
-
 // --- One-sided cut guard band, in BUFFER pixels. Scaled path only.
 //
-//     The second constant in this file stated in buffer px rather than
-//     full-res px, and for the same reason as CUTOFF_SOFT_FLOOR_PX above: it
-//     describes the BUFFER's own sampling, so it must NOT be converted with
-//     uResolutionScale.
+//     One of the two constants in this file stated in buffer px rather than
+//     full-res px (BLIT_CUTOFF_GUARD_PX below is the other): it describes the
+//     BUFFER's own sampling, so it must NOT be converted with uResolutionScale.
 //
 //     Below resolutionScale 1.0 the one-sided cut is not applied by neon.frag
 //     at all - neon-blit.frag applies it at DESTINATION resolution, where a
@@ -456,6 +430,109 @@
 //     bit-identical to the full-res renderer it replaced. See neon.frag's
 //     sideCull and the post-grade cut block. ---
 #define BLIT_SIDE_GUARD_PX        2.0
+
+// --- Cutoff guard band, in BUFFER pixels. Scaled path only.
+//
+//     BLIT_SIDE_GUARD_PX's argument, applied to the inside/outside cutoffs.
+//     Below resolutionScale 1.0 neon-blit.frag applies the cutoff masks at
+//     DESTINATION resolution, and neon.frag only culls - this far past the end
+//     of each ramp, so the blit's bilinear filter rebuilds every boundary from
+//     lit texels rather than from black. Same value as the side guard, for the
+//     same reasons: one buffer texel of filter reach, plus room for the
+//     diagonal and for the phase between the boundary and the nearest texel
+//     centre.
+//
+//     It replaces CUTOFF_SOFT_FLOOR_PX, a feather in buffer px that let a mask
+//     drawn INTO the buffer place its boundary sub-texel. That was the best the
+//     buffer could do, and it still softened the boundary across a buffer
+//     texel and snapped it toward the buffer grid: on the bounded_band scene of
+//     docs/neon-resolution-scale-comparison.html it read p99 41/255 against the
+//     1.0 render at scale 0.5, and 69 at 0.25, and the band spread past its
+//     own cutoffs as the scale fell (50,703 lit px at 0.5 and 53,568 at 0.25,
+//     against 47,012 at 1.0). Drawn by the blit instead it reads p99 4 at 0.5
+//     and 12 at 0.25, with 47,012 lit px at every scale; what is left is the
+//     reduced-resolution glow inside the band, not its edges. See
+//     docs/neon-resolution-scale-plan.md, step 2.
+//
+//     NOT used on the direct path, whose masks and culls are unchanged. See
+//     neon.frag's cutGuard and NeonRenderer::setupGeometry's cutGuardPx. ---
+#define BLIT_CUTOFF_GUARD_PX      2.0
+
+// --- Edge ring width. Scaled path only, CPU only.
+//
+//     Below resolutionScale 1.0, NeonRenderer redraws a ring around the rect
+//     edge at FULL resolution (the NEON_READS_GATHER variant of neon.frag),
+//     reading only the gather's result from the gather buffer. The ring reaches R
+//     full-res px either side of the edge (GetRingWidth in neon-renderer.cpp):
+//
+//         R = max(reach(1.0), reach(scale)) + RING_GUARD_TEXELS / scale
+//
+//     where reach(s) is the filament's reach as neon.frag computes it at scale
+//     s, in full-res px. BOTH, because inside R the reduced pass's filament -
+//     floored to what its buffer can sample, so wider than the real one
+//     whenever the line is thin - is replaced by the real one, and R has to
+//     clear whichever reaches further. Uncapped: the reach is where a filament
+//     has fallen to FILAMENT_CUTOFF of its gain, about 2/255 after the grade,
+//     which is exactly how far its error can show. RING_GUARD_TEXELS adds the
+//     reduced buffer's bilinear footprint past that.
+//
+//     Calibrated over lineWidth {1, 2, 4, 8, 16} x filamentFalloff
+//     {0.5, 1, 2, 4} x glowRadius {0, 2, 5, 20}, each config rendered at
+//     scales 0.75, 0.5 and 0.25 and compared against its own 1.0 render
+//     (docs/neon-resolution-scale-plan.md, step 5). Worst error over all 80:
+//
+//       RING_GUARD_TEXELS    scale 0.75    scale 0.5    scale 0.25
+//              0.5               3            12            3
+//              1.0               4             2            2
+//              2.0               2             2            2
+//
+//     1.0 is the smallest that holds 2/255 at 0.5 and 0.25, the targets. 2.0
+//     also brings 0.75 within 2 (its worst at 1.0 is a 1 px flat-top line
+//     with no glow) for a ring one buffer texel wider each side.
+//
+//     The two things that made the first version of this ring fail that sweep,
+//     both now handled: R used to cover only the full-res filament (fixed by
+//     taking the reduced pass's too, above), and at a small glowRadius pass 1's
+//     quad stopped short of R, so the ring read gather texels nothing wrote
+//     (fixed by covering the ring with the quad; since the gather was split
+//     out, the gather pass's own quad, built in setupRingGeometry, covers
+//     it). ---
+#define RING_GUARD_TEXELS         1.0
+
+// --- Gather resolution. Scaled path only, CPU only.
+//
+//     Below resolutionScale 1.0 the gather - ~95% of neon.frag's cost - runs in
+//     a pass of its own (neon-gather.frag) at its own scale, and pass 1 and the
+//     edge ring shade from its result (NEON_READS_GATHER). Its scale is
+//     (GetGatherScale in neon-renderer.cpp)
+//
+//         clamp(GATHER_TEXELS_PER_KERNEL / kc, GATHER_MIN_SCALE, resolutionScale)
+//
+//     with kc the colour kernel's width in full-res px, perimeter *
+//     COLOR_BLEND_PERIM_FRAC: the gather's outputs are Lorentzian-weighted
+//     means whose kernel is never narrower than kc, so this many texels per kc
+//     carries them through a bilinear read.
+//
+//     Calibrated on Mesa llvmpipe with an RGBA16F gather buffer (worst error
+//     against 1.0 over `probe scenes`, and the default scene's frame time):
+//
+//       GATHER_TEXELS_PER_KERNEL   worst error   default 0.5   default 0.25
+//                1.0                   4              -              -
+//                1.5                   2           10.5 ms        8.0 ms
+//                2.0                  1-2          10.8 ms        7.3 ms
+//                4.0                   -           14-17 ms      11-12 ms
+//         (gather at resolutionScale)  1-2          37.5 ms       12.3 ms
+//
+//     2.0 is the knee: 1.5 saves nothing measurable (the gather is no longer
+//     the pass that costs) and 4.0 costs half as much again for no visible
+//     gain. With an RGBA8 gather buffer - the fallback - 2.0 reads 3/255.
+//     GATHER_MIN_SCALE barely matters - full-viewport rects
+//     at 720p and 1080p read 1-2 at a floor of 0 and 0.0625 alike - and is
+//     kept as a cheap guard: the gather buffer is clipped to the viewport, so
+//     at the floor it is at most 128 x 80 texels at 1080p. See
+//     docs/neon-resolution-scale-plan.md section 13. ---
+#define GATHER_TEXELS_PER_KERNEL  2.0
+#define GATHER_MIN_SCALE          0.0625
 
 // --- Stand-in distance for a cutoff that glowSide has already subsumed.
 //

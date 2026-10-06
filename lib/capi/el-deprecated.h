@@ -53,6 +53,7 @@
  * | @c el_effect_set_optimized_renderer_enabled   | @ref el_effect_set_neon_renderer_enabled + @ref el_effect_set_neon_resolution_scale |
  * | @c el_effect_set_optimized_lens_flare_resolution_scale | @ref el_effect_set_lens_flare_resolution_scale |
  * | @c el_effect_set_optimized_lens_flare_renderer_enabled | @ref el_effect_set_lens_flare_renderer_enabled + @ref el_effect_set_lens_flare_resolution_scale |
+ * | @c el_effect_set_opaque_softness              | @ref el_effect_set_opaque_cutoff, once per side |
  *
  * Getters map the same way. Define @c EL_NO_DEPRECATION_WARNINGS to silence
  * the attribute while migrating.
@@ -191,6 +192,43 @@ extern "C"
     EL_DEPRECATED("use el_effect_get_debug_wireframe_color")
     EL_API el_result_e el_effect_get_wireframe_color(el_effect_handle_t effect,
                                                      float *outR, float *outG, float *outB, float *outA);
+
+    /** @} */
+
+    /** @name Deprecated: the single opaque-fill feather
+     *  The opaque fill used to be bounded by the GLOW's cutoffs, with one
+     *  feather of its own for both sides. It now has its own cutoff pair,
+     *  each side with its own softness - see @ref el_effect_set_opaque_cutoff.
+     *  @{ */
+
+    /** @brief Set the feather of BOTH of the opaque fill's cutoffs.
+     *  @deprecated Use @ref el_effect_set_opaque_cutoff, once per side.
+     *  @details Writes @p softness into the inside and the outside fill cutoff
+     *           and leaves their @c enable and @c size alone, so it restores
+     *           the old call's effect on the feather only.
+     *
+     *           It does NOT restore what used to bound the fill. Before the
+     *           fill had a cutoff pair of its own it was bounded by the glow's
+     *           (@ref el_effect_set_inside_cutoff /
+     *           @ref el_effect_set_outside_cutoff); now those no longer reach
+     *           it, and the fill's own pair defaults to DISABLED - so a host
+     *           that relied on the glow's cutoffs to bound an @c INSIDE,
+     *           @c OUTSIDE or @c BOTH fill sees it grow to the whole rect, the
+     *           viewport edge, or the whole viewport, until it also calls
+     *           @ref el_effect_set_opaque_cutoff. See docs/upgrade-notes.md.
+     *
+     *           The meaning of the width moved as well: the feather now starts
+     *           at the cutoff and runs @p softness px past it, where it used
+     *           to be centred on it. */
+    EL_DEPRECATED("use el_effect_set_opaque_cutoff for each side")
+    EL_API el_result_e el_effect_set_opaque_softness(el_effect_handle_t effect, float softness);
+    /** @brief The larger of the two fill cutoffs' softness.
+     *  @deprecated Use @ref el_effect_get_opaque_cutoff, once per side.
+     *  @details The old single value is the two sides' common one whenever
+     *           they were set through @ref el_effect_set_opaque_softness;
+     *           after per-side calls it reports the wider of the two. */
+    EL_DEPRECATED("use el_effect_get_opaque_cutoff for each side")
+    EL_API el_result_e el_effect_get_opaque_softness(el_effect_handle_t effect, float *outSoftness);
 
     /** @} */
 

@@ -1,6 +1,5 @@
 #include "debug-ui.h"
 #include "renderer/spotlight-tuning.h"
-#include <cstdio>
 #include "animation/animation-manager.h"
 #include "core/config.h"
 #include "core/edge-lighting.h"
@@ -119,6 +118,18 @@ namespace
         return changed;
     }
 
+    /// Slider whose knob follows the currently-animated (active) value each
+    /// frame so the user sees what the shader is actually drawing. Dragging
+    /// still edits the BASE (authored) value: while the user is actively
+    /// dragging THIS slider, the display is pinned to the base to avoid a
+    /// tug-of-war between the drag and the per-frame animation overlay.
+    ///
+    /// Whether this slider is being dragged is the previous frame's
+    /// @c ImGui::IsItemActive(), kept in ImGui's state storage under the
+    /// slider's ID, since nothing can be asked about the item before it is
+    /// drawn. The base is written whenever the widget reports a change; the
+    /// animation on the next @c EdgeLightingEffect::Update then overlays on
+    /// top of the new base.
     inline bool AnimatedSlider(const char *label, float &baseVal, float activeVal,
                                float minVal, float maxVal, const char *fmt = "%.2f")
     {
@@ -153,17 +164,6 @@ namespace
         return changed;
     }
 
-    /// Slider whose knob follows the currently-animated (active) value each
-    /// frame so the user sees what the shader is actually drawing. Dragging
-    /// still edits the BASE (authored) value: while the user is actively
-    /// dragging THIS slider, the display is pinned to the base to avoid a
-    /// tug-of-war between the drag and the per-frame animation overlay.
-    ///
-    /// Detected via @c ImGui::GetActiveID() - we compute the slider's ID
-    /// before drawing so we know whether to seed the shown value from base
-    /// (dragging) or active (idle / animating). The base is written whenever
-    /// the widget reports a change; the animation on the next @c
-    /// EdgeLightingEffect::Update then overlays on top of the new base.
     /// Draw one segment-lights row (Pos/Len/Boost + collapsible per-segment
     /// stops editor). Caller wraps in @c PushID so repeated rows can share the
     /// same widget IDs without colliding.
@@ -367,214 +367,7 @@ namespace
         ImGui::Unindent();
         ImGui::PopID();
     }
-}
 
-// ---------------------------------------------------------------------------
-// Lifecycle
-// ---------------------------------------------------------------------------
-
-DebugUI::~DebugUI()
-{
-    Shutdown();
-}
-
-bool DebugUI::Init(GLFWwindow *mainWindow, int mainW, int mainH)
-{
-    int dbgW = 420, dbgH = 700;
-    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
-    glfwWindowHint(GLFW_FOCUSED, GLFW_FALSE);
-    mWindow = glfwCreateWindow(dbgW, dbgH, "Debug Controls", nullptr, mainWindow);
-    if (!mWindow)
-    {
-        LOG_E("Failed to create debug window");
-        return false;
-    }
-    glfwSetWindowPos(mWindow, mainW + 20, 40);
-    glfwSetWindowAttrib(mWindow, GLFW_FLOATING, GLFW_TRUE);
-
-    mMainWindow = mainWindow;
-
-    // Seed the capture size from the main window's FRAMEBUFFER size, not its
-    // logical size: Config::geometry is in framebuffer pixels, so a capture
-    // that is half the framebuffer (as it would be on a 2x display) shows only
-    // the top-left quadrant of the scene. This is a starting value the user can
-    // edit, not a live binding - the capture itself never reads the drawable,
-    // which is what keeps it reproducible on a machine with a different scale.
-    int mainFbW = mainW, mainFbH = mainH;
-    glfwGetFramebufferSize(mainWindow, &mainFbW, &mainFbH);
-    mCaptureSize[0] = mainFbW;
-    mCaptureSize[1] = mainFbH;
-
-    // Keep main context current after window creation (shared context)
-    glfwMakeContextCurrent(mainWindow);
-
-    // Second ImGui context for the debug window
-    IMGUI_CHECKVERSION();
-    mContext = ImGui::CreateContext();
-    ImGui::SetCurrentContext(mContext);
-    ImGuiIO &io = ImGui::GetIO();
-    io.IniFilename = nullptr;
-    ImGui::StyleColorsDark();
-    ImGui_ImplGlfw_InitForOpenGL(mWindow, true);
-    ImGui_ImplOpenGL3_Init(GLSL_VERSION);
-
-    return true;
-}
-
-void DebugUI::Shutdown()
-{
-    if (mContext)
-    {
-        ImGui::SetCurrentContext(mContext);
-        ImGui_ImplOpenGL3_Shutdown();
-        ImGui_ImplGlfw_Shutdown();
-        ImGui::DestroyContext(mContext);
-        mContext = nullptr;
-    }
-    if (mWindow)
-    {
-        glfwDestroyWindow(mWindow);
-        mWindow = nullptr;
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Per-frame
-// ---------------------------------------------------------------------------
-
-void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect &effect)
-{
-    ImGui::SetCurrentContext(mContext);
-    ImGui_ImplOpenGL3_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    bool playing = effect.GetClock().IsPlaying();
-
-    ImGui::Begin("Debug Controls");
-
-    // --- Perf readout (always visible, sticky at the top) ---
-    const ImGuiIO &io = ImGui::GetIO();
-    ImGui::Text("FPS: %.1f  |  %.2f ms (frame)  |  %.2f ms (render)",
-                io.Framerate, 1000.0f / io.Framerate, mLastRenderTimeMs);
-    ImGui::Separator();
-
-    // The active config carries every animation's current overlay values
-    const EdgeLighting::Config &active = effect.GetActiveConfig();
-    buildGeometrySection(cfg);
-    buildLayerOrderSection(effect);
-    buildNeonSection(cfg, active);
-    buildDebugSection(cfg);
-    buildDropletsSection(cfg);
-    buildLensFlareSection(cfg);
-    buildSpotlightSection(cfg);
-    buildColorPickerSection(cfg);
-    buildAnimationSection(cfg, effect.GetAnimationManager());
-    buildBackgroundSection();
-
-    ImGui::Separator();
-    ImGui::Text("Animation: %s", playing ? "PLAYING" : "PAUSED");
-    if (ImGui::Button(playing ? "Pause" : "Play"))
-    {
-        if (playing)
-        {
-            effect.GetClock().Pause();
-        }
-        else
-        {
-            effect.GetClock().Play();
-        }
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Stop"))
-    {
-        effect.GetClock().Stop();
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Capture"))
-    {
-        // Deferred to the render loop - see ConsumeCaptureRequest.
-        mCaptureRequested = true;
-    }
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip("Renders one frame into an offscreen RGBA8 framebuffer at the size below\n"
-                          "and writes it to RES_DIR as a PNG. Independent of the window and of the\n"
-                          "display's DPI scale, so the same config gives the same pixels anywhere.\n"
-                          "Geometry is in framebuffer pixels, so the capture size also decides\n"
-                          "the framing - shrink it and you crop rather than zoom out.");
-    }
-    ImGui::SameLine();
-    ImGui::SetNextItemWidth(120.0f);
-    ImGui::InputInt2("Capture size", mCaptureSize);
-    ImGui::SameLine();
-    if (ImGui::Button("Dump Config"))
-    {
-        EdgeLightingDemo::PrintFullConfig(effect.GetConfig(), effect.GetClock().IsPlaying());
-    }
-    ImGui::End();
-}
-
-bool DebugUI::ConsumeCaptureRequest(int &outWidth, int &outHeight)
-{
-    if (!mCaptureRequested)
-    {
-        return false;
-    }
-    mCaptureRequested = false;
-
-    if (mCaptureSize[0] <= 0 || mCaptureSize[1] <= 0)
-    {
-        LOG_W("Capture size %dx%d is invalid; ignoring the request.", mCaptureSize[0], mCaptureSize[1]);
-        return false;
-    }
-
-    outWidth = mCaptureSize[0];
-    outHeight = mCaptureSize[1];
-    return true;
-}
-
-void DebugUI::Render()
-{
-    ImGui::Render();
-
-    glfwMakeContextCurrent(mWindow);
-    int fbDW, fbDH;
-    glfwGetFramebufferSize(mWindow, &fbDW, &fbDH);
-    glViewport(0, 0, fbDW, fbDH);
-    glClearColor(0.12f, 0.12f, 0.14f, 1.0f);
-    glClear(GL_COLOR_BUFFER_BIT);
-    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
-    glfwSwapBuffers(mWindow);
-}
-
-// ---------------------------------------------------------------------------
-// Sections
-// ---------------------------------------------------------------------------
-
-void DebugUI::buildGeometrySection(EdgeLighting::Config &cfg)
-{
-    if (!ImGui::CollapsingHeader("Geometry", ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        return;
-    }
-
-    SliderWithInput("Width", cfg.geometry.width, 100.0f, 1920.0f * 2, "%.0f");
-    SliderWithInput("Height", cfg.geometry.height, 100.0f, 1080.0f * 2, "%.0f");
-    SliderWithInput("Pos X", cfg.geometry.position.x, 0.0f, 1600.0f, "%.0f");
-    SliderWithInput("Pos Y", cfg.geometry.position.y, 0.0f, 1200.0f, "%.0f");
-    SliderWithInput("Corner Radius", cfg.geometry.cornerRadius, 0.0f, 1080.0f, "%.0f");
-
-    const char *windingItems[] = {"CW", "CCW"};
-    int windingIdx = static_cast<int>(cfg.geometry.winding);
-    if (ImGui::Combo("Winding", &windingIdx, windingItems, IM_ARRAYSIZE(windingItems)))
-    {
-        cfg.geometry.winding = static_cast<EdgeLighting::Winding>(windingIdx);
-    }
-}
-
-namespace
-{
     const char *LayerName(EdgeLighting::RendererLayer layer)
     {
         switch (layer)
@@ -605,269 +398,7 @@ namespace
         }
         }
     }
-}
 
-void DebugUI::buildLayerOrderSection(EdgeLighting::EdgeLightingEffect &effect)
-{
-    if (!ImGui::CollapsingHeader("Layer order"))
-    {
-        return;
-    }
-
-    ImGui::TextDisabled("Top of the list draws last, over everything below it.");
-
-    std::vector<EdgeLighting::RendererLayer> order = effect.GetLayerOrder();
-    const int count = static_cast<int>(order.size());
-    int swapAt = -1;
-    int swapWith = -1;
-
-    // Listed TOP first, the way a layer stack reads; the effect's own order
-    // is bottom first, so row r shows index count - 1 - r.
-    for (int row = 0; row < count; row++)
-    {
-        const int i = count - 1 - row;
-        ImGui::PushID(i);
-        ImGui::BeginDisabled(i == count - 1);
-        if (ImGui::ArrowButton("##Up", ImGuiDir_Up))
-        {
-            swapAt = i;
-            swapWith = i + 1;
-        }
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        ImGui::BeginDisabled(i == 0);
-        if (ImGui::ArrowButton("##Down", ImGuiDir_Down))
-        {
-            swapAt = i;
-            swapWith = i - 1;
-        }
-        ImGui::EndDisabled();
-        ImGui::SameLine();
-        ImGui::Text("%d  %s%s", i, LayerName(order[static_cast<size_t>(i)]),
-                    i == 0 ? "  (bottom)" : (i == count - 1 ? "  (top)" : ""));
-        ImGui::PopID();
-    }
-
-    // Applied after the loop so the rows above all read the same order.
-    // Swapping two neighbours always leaves a valid order to hand back whole.
-    if (swapAt >= 0)
-    {
-        std::swap(order[static_cast<size_t>(swapAt)], order[static_cast<size_t>(swapWith)]);
-        effect.SetLayerOrder(order);
-    }
-
-    if (ImGui::Button("Default##LayerOrder"))
-    {
-        // The library's default order, narrowed to what is registered here.
-        std::vector<EdgeLighting::RendererLayer> defaults;
-        for (EdgeLighting::RendererLayer layer : EdgeLighting::EdgeLightingEffect::GetDefaultLayerOrder())
-        {
-            if (std::find(order.begin(), order.end(), layer) != order.end())
-            {
-                defaults.push_back(layer);
-            }
-        }
-        effect.SetLayerOrder(defaults);
-    }
-    ImGui::SameLine();
-    if (ImGui::Button("Spotlight at bottom##LayerOrder"))
-    {
-        // The spotlight first, everything else in its current order. Nothing to
-        // do if the spotlight layer is not registered.
-        auto spot = std::find(order.begin(), order.end(), EdgeLighting::RendererLayer::SPOTLIGHT);
-        if (spot != order.end())
-        {
-            std::rotate(order.begin(), spot, spot + 1);
-            effect.SetLayerOrder(order);
-        }
-    }
-    if (ImGui::IsItemHovered())
-    {
-        ImGui::SetTooltip("Draws the cones first, so the neon composites over them by its own\n"
-                          "coverage instead of the cones adding onto the neon. The neon's opaque\n"
-                          "fill, if on, then covers any cone inside the rect.");
-    }
-}
-
-void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
-                               const EdgeLighting::Config &active)
-{
-    if (!ImGui::CollapsingHeader("Neon", ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        return;
-    }
-
-    ImGui::Checkbox("Enable##Neon", &cfg.neon.enable);
-    if (!cfg.neon.enable)
-    {
-        return;
-    }
-
-    // --- Performance ------------------------------------------------------
-    // Was its own "Optimized Neon" section back when the half-res path was a
-    // second renderer. It is one renderer now, so these are just knobs on it:
-    // Res Scale 1.0 is the full-resolution path (no offscreen buffer, no
-    // blit), anything lower renders scaled and composites back.
-    if (ImGui::TreeNodeEx("Performance##Neon", ImGuiTreeNodeFlags_DefaultOpen))
-    {
-        SliderWithInput("Res Scale##Neon", cfg.neon.resolutionScale, 0.125f, 1.0f, "%.3f");
-        if (ImGui::IsItemHovered())
-        {
-            ImGui::SetTooltip("1.0 draws straight onto the target at full resolution.\n"
-                              "Below that the glow renders into a scaled buffer and is\n"
-                              "bilinear-blitted back - fewer fragments, softer edges.");
-        }
-        SliderIntWithInput("Samples##Neon", cfg.neon.numSamples, 8, NEON_MAX_LOOP_SAMPLES);
-        SliderIntWithInput("LUT Size##Neon", cfg.neon.gradientLutSize, 32, MAX_GRADIENT_LUT_SIZE);
-        ImGui::TreePop();
-    }
-
-    const char *opaqueItems[] = {"None", "Outside", "Inside", "Both", "All"};
-    int opaqueIdx = static_cast<int>(cfg.neon.opaqueMode);
-    if (ImGui::Combo("Opaque##Neon", &opaqueIdx, opaqueItems, IM_ARRAYSIZE(opaqueItems)))
-    {
-        cfg.neon.opaqueMode = static_cast<EdgeLighting::OpaqueMode>(opaqueIdx);
-    }
-    if (cfg.neon.opaqueMode != EdgeLighting::OpaqueMode::NONE)
-    {
-        ImGui::SameLine();
-        ImGui::ColorEdit4("Opaque Color##Neon", &cfg.neon.opaqueColor.x,
-                          ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
-        // The fill's OWN cutoffs, independent of the glow's below. Only the
-        // sides the current mode fills are shown - ALL has neither.
-        const EdgeLighting::OpaqueMode om = cfg.neon.opaqueMode;
-        if (om == EdgeLighting::OpaqueMode::INSIDE || om == EdgeLighting::OpaqueMode::BOTH)
-        {
-            CutoffRow("Fill Inside Cutoff", "FillInside", cfg.neon.opaqueInsideCutoff,
-                      active.neon.opaqueInsideCutoff, false);
-        }
-        if (om == EdgeLighting::OpaqueMode::OUTSIDE || om == EdgeLighting::OpaqueMode::BOTH)
-        {
-            CutoffRow("Fill Outside Cutoff", "FillOutside", cfg.neon.opaqueOutsideCutoff,
-                      active.neon.opaqueOutsideCutoff, false);
-        }
-    }
-    AnimatedSlider("Line Width##Neon", cfg.neon.lineWidth, active.neon.lineWidth, 0.0f, 20.0f, "%.0f");
-    AnimatedSlider("Filament Falloff##Neon", cfg.neon.filamentFalloff, active.neon.filamentFalloff, 0.0f, 5.0f);
-    AnimatedSlider("Intensity##Neon", cfg.neon.intensity, active.neon.intensity, 0.0f, 3.0f);
-    AnimatedSlider("Glow Radius##Neon", cfg.neon.glowRadius, active.neon.glowRadius, 0.0f, 80.0f, "%.0f");
-    AnimatedSlider("Bloom Strength##Neon", cfg.neon.bloomStrength, active.neon.bloomStrength, 0.0f, 2.0f);
-    AnimatedSlider("Hue Rotation Rate##Neon", cfg.neon.hueRotationRate, active.neon.hueRotationRate, 0.0f, 2.0f);
-
-    const char *sideItems[] = {"Both", "Inside", "Outside"};
-    int sideIdx = static_cast<int>(cfg.neon.glowSide);
-    if (ImGui::Combo("Glow Side##Neon", &sideIdx, sideItems, IM_ARRAYSIZE(sideItems)))
-    {
-        cfg.neon.glowSide = static_cast<EdgeLighting::GlowSide>(sideIdx);
-    }
-    if (cfg.neon.glowSide != EdgeLighting::GlowSide::BOTH)
-    {
-        SliderWithInput("Side Softness##Neon", cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
-    }
-
-    // The GLOW's cutoffs. One on the side glowSide culls is ignored; neither
-    // reaches the opaque fill, which has its own pair above.
-    CutoffRow("Inside Cutoff", "NeonInside", cfg.neon.insideCutoff, active.neon.insideCutoff,
-              cfg.neon.glowSide == EdgeLighting::GlowSide::OUTSIDE);
-    CutoffRow("Outside Cutoff", "NeonOutside", cfg.neon.outsideCutoff, active.neon.outsideCutoff,
-              cfg.neon.glowSide == EdgeLighting::GlowSide::INSIDE);
-
-    // --- Travelling segments (independent additive lights on the perimeter) ---
-    ImGui::TextDisabled("Segment Lights (%zu / %d) - additive, independent of intensity",
-                        cfg.neon.segmentBoosts.size(),
-                        EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP);
-    for (size_t i = 0; i < cfg.neon.segmentBoosts.size(); ++i)
-    {
-        ImGui::PushID(static_cast<int>(300 + i));
-        bool remove = DrawSegmentRow(cfg.neon.segmentBoosts[i], i);
-        ImGui::PopID();
-        if (remove)
-        {
-            cfg.neon.segmentBoosts.erase(cfg.neon.segmentBoosts.begin() +
-                                         static_cast<ptrdiff_t>(i));
-            break;
-        }
-    }
-    if (static_cast<int>(cfg.neon.segmentBoosts.size()) <
-        EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP)
-    {
-        if (ImGui::Button("+ Add Segment##Neon"))
-        {
-            cfg.neon.segmentBoosts.push_back({0.0f, 0.15f, 4.0f});
-        }
-    }
-
-    // --- Arcs (multiple lit slices; winner-take-all in overlap regions) ---
-    ImGui::TextDisabled("Arcs (%zu / %d) - overlap resolves winner-take-all",
-                        cfg.neon.arcs.size(),
-                        EdgeLighting::NeonConfig::MAX_ARCS_CAP);
-    for (size_t i = 0; i < cfg.neon.arcs.size(); ++i)
-    {
-        ImGui::PushID(static_cast<int>(500 + i));
-        bool remove = DrawArcRow(cfg.neon.arcs[i], i);
-        ImGui::PopID();
-        if (remove)
-        {
-            cfg.neon.arcs.erase(cfg.neon.arcs.begin() +
-                                static_cast<ptrdiff_t>(i));
-            break;
-        }
-    }
-    if (static_cast<int>(cfg.neon.arcs.size()) <
-        EdgeLighting::NeonConfig::MAX_ARCS_CAP)
-    {
-        if (ImGui::Button("+ Add Arc##Neon"))
-        {
-            cfg.neon.arcs.push_back(EdgeLighting::Arc{});
-        }
-    }
-
-    const char *blendItems[] = {"RGB", "HSV", "HSL"};
-    int blendIdx = static_cast<int>(cfg.neon.blendSpace);
-    if (ImGui::Combo("Blend Space##Neon", &blendIdx, blendItems, IM_ARRAYSIZE(blendItems)))
-    {
-        cfg.neon.blendSpace = static_cast<EdgeLighting::BlendSpace>(blendIdx);
-    }
-
-    // Cross-fade time when the stop set / blend space changes (0 = instant).
-    SliderWithInput("Color Transition (s)##Neon", cfg.neon.colorTransitionDuration,
-                    0.0f, 2.0f, "%.2f");
-
-    for (size_t i = 0; i < cfg.neon.colorStops.size(); ++i)
-    {
-        ImGui::PushID(static_cast<int>(i));
-        float p = cfg.neon.colorStops[i].position;
-        if (SliderWithInput("Pos##Neon", p, 0.0f, 1.0f, "%.2f"))
-        {
-            cfg.neon.colorStops[i].position = p;
-        }
-        ImGui::SameLine();
-        glm::vec4 c = cfg.neon.colorStops[i].color;
-        if (ImGui::ColorEdit4("Col##Neon", &c.x, ImGuiColorEditFlags_NoInputs))
-        {
-            cfg.neon.colorStops[i].color = c;
-        }
-        ImGui::SameLine();
-        if (cfg.neon.colorStops.size() > 1 && ImGui::SmallButton("X"))
-        {
-            cfg.neon.colorStops.erase(cfg.neon.colorStops.begin() + static_cast<ptrdiff_t>(i));
-        }
-        ImGui::PopID();
-    }
-
-    if (cfg.neon.colorStops.size() < MAX_COLOR_STOPS)
-    {
-        if (ImGui::Button("+ Add Stop##Neon"))
-        {
-            float lastPos = cfg.neon.colorStops.empty() ? 0.0f : cfg.neon.colorStops.back().position;
-            cfg.neon.colorStops.push_back(
-                {std::min(1.0f, lastPos + 0.1f), glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)});
-        }
-    }
-}
-
-namespace
-{
     // Colour-coded label for an animation's current state.
     void DrawStateBadge(EdgeLighting::AnimationState s)
     {
@@ -1075,6 +606,471 @@ namespace
             }
         }
         ImGui::Unindent(18.0f);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Lifecycle
+// ---------------------------------------------------------------------------
+
+DebugUI::~DebugUI()
+{
+    Shutdown();
+}
+
+bool DebugUI::Init(GLFWwindow *mainWindow, int mainW, int mainH)
+{
+    int dbgW = 420, dbgH = 700;
+    glfwWindowHint(GLFW_RESIZABLE, GLFW_TRUE);
+    glfwWindowHint(GLFW_FOCUSED, GLFW_FALSE);
+    mWindow = glfwCreateWindow(dbgW, dbgH, "Debug Controls", nullptr, mainWindow);
+    if (!mWindow)
+    {
+        LOG_E("Failed to create debug window");
+        return false;
+    }
+    glfwSetWindowPos(mWindow, mainW + 20, 40);
+    glfwSetWindowAttrib(mWindow, GLFW_FLOATING, GLFW_TRUE);
+
+    mMainWindow = mainWindow;
+
+    // Seed the capture size from the main window's FRAMEBUFFER size, not its
+    // logical size: Config::geometry is in framebuffer pixels, so a capture
+    // that is half the framebuffer (as it would be on a 2x display) shows only
+    // the top-left quadrant of the scene. This is a starting value the user can
+    // edit, not a live binding - the capture itself never reads the drawable,
+    // which is what keeps it reproducible on a machine with a different scale.
+    int mainFbW = mainW, mainFbH = mainH;
+    glfwGetFramebufferSize(mainWindow, &mainFbW, &mainFbH);
+    mCaptureSize[0] = mainFbW;
+    mCaptureSize[1] = mainFbH;
+
+    // Keep main context current after window creation (shared context)
+    glfwMakeContextCurrent(mainWindow);
+
+    // Second ImGui context for the debug window
+    IMGUI_CHECKVERSION();
+    mContext = ImGui::CreateContext();
+    ImGui::SetCurrentContext(mContext);
+    ImGuiIO &io = ImGui::GetIO();
+    io.IniFilename = nullptr;
+    ImGui::StyleColorsDark();
+    ImGui_ImplGlfw_InitForOpenGL(mWindow, true);
+    ImGui_ImplOpenGL3_Init(GLSL_VERSION);
+
+    return true;
+}
+
+void DebugUI::Shutdown()
+{
+    if (mContext)
+    {
+        ImGui::SetCurrentContext(mContext);
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        ImGui::DestroyContext(mContext);
+        mContext = nullptr;
+    }
+    if (mWindow)
+    {
+        glfwDestroyWindow(mWindow);
+        mWindow = nullptr;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Per-frame
+// ---------------------------------------------------------------------------
+
+void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect &effect)
+{
+    ImGui::SetCurrentContext(mContext);
+    ImGui_ImplOpenGL3_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+
+    bool playing = effect.GetClock().IsPlaying();
+
+    ImGui::Begin("Debug Controls");
+
+    // --- Perf readout (always visible, sticky at the top) ---
+    const ImGuiIO &io = ImGui::GetIO();
+    ImGui::Text("FPS: %.1f  |  %.2f ms (frame)  |  %.2f ms (render)",
+                io.Framerate, 1000.0f / io.Framerate, mLastRenderTimeMs);
+    ImGui::Separator();
+
+    // The active config carries every animation's current overlay values
+    const EdgeLighting::Config &active = effect.GetActiveConfig();
+    buildGeometrySection(cfg);
+    buildLayerOrderSection(effect);
+    buildNeonSection(cfg, active);
+    buildDebugSection(cfg);
+    buildDropletsSection(cfg);
+    buildLensFlareSection(cfg);
+    buildSpotlightSection(cfg);
+    buildColorPickerSection(cfg);
+    buildAnimationSection(cfg, effect.GetAnimationManager());
+    buildBackgroundSection();
+
+    ImGui::Separator();
+    ImGui::Text("Animation: %s", playing ? "PLAYING" : "PAUSED");
+    if (ImGui::Button(playing ? "Pause" : "Play"))
+    {
+        if (playing)
+        {
+            effect.GetClock().Pause();
+        }
+        else
+        {
+            effect.GetClock().Play();
+        }
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Stop"))
+    {
+        effect.GetClock().Stop();
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Capture"))
+    {
+        // Deferred to the render loop - see ConsumeCaptureRequest.
+        mCaptureRequested = true;
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Renders one frame into an offscreen RGBA8 framebuffer at the size below\n"
+                          "and writes it to RES_DIR as a PNG. Independent of the window and of the\n"
+                          "display's DPI scale, so the same config gives the same pixels anywhere.\n"
+                          "Geometry is in framebuffer pixels, so the capture size also decides\n"
+                          "the framing - shrink it and you crop rather than zoom out.");
+    }
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(120.0f);
+    ImGui::InputInt2("Capture size", mCaptureSize);
+    ImGui::SameLine();
+    if (ImGui::Button("Dump Config"))
+    {
+        EdgeLightingDemo::PrintFullConfig(effect.GetConfig(), effect.GetClock().IsPlaying());
+    }
+    ImGui::End();
+}
+
+bool DebugUI::ConsumeCaptureRequest(int &outWidth, int &outHeight)
+{
+    if (!mCaptureRequested)
+    {
+        return false;
+    }
+    mCaptureRequested = false;
+
+    if (mCaptureSize[0] <= 0 || mCaptureSize[1] <= 0)
+    {
+        LOG_W("Capture size %dx%d is invalid; ignoring the request.", mCaptureSize[0], mCaptureSize[1]);
+        return false;
+    }
+
+    outWidth = mCaptureSize[0];
+    outHeight = mCaptureSize[1];
+    return true;
+}
+
+void DebugUI::Render()
+{
+    ImGui::Render();
+
+    glfwMakeContextCurrent(mWindow);
+    int fbDW, fbDH;
+    glfwGetFramebufferSize(mWindow, &fbDW, &fbDH);
+    glViewport(0, 0, fbDW, fbDH);
+    glClearColor(0.12f, 0.12f, 0.14f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+    ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    glfwSwapBuffers(mWindow);
+}
+
+// ---------------------------------------------------------------------------
+// Sections
+// ---------------------------------------------------------------------------
+
+void DebugUI::buildGeometrySection(EdgeLighting::Config &cfg)
+{
+    if (!ImGui::CollapsingHeader("Geometry", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+
+    SliderWithInput("Width", cfg.geometry.width, 100.0f, 1920.0f * 2, "%.0f");
+    SliderWithInput("Height", cfg.geometry.height, 100.0f, 1080.0f * 2, "%.0f");
+    SliderWithInput("Pos X", cfg.geometry.position.x, 0.0f, 1600.0f, "%.0f");
+    SliderWithInput("Pos Y", cfg.geometry.position.y, 0.0f, 1200.0f, "%.0f");
+    SliderWithInput("Corner Radius", cfg.geometry.cornerRadius, 0.0f, 1080.0f, "%.0f");
+
+    const char *windingItems[] = {"CW", "CCW"};
+    int windingIdx = static_cast<int>(cfg.geometry.winding);
+    if (ImGui::Combo("Winding", &windingIdx, windingItems, IM_ARRAYSIZE(windingItems)))
+    {
+        cfg.geometry.winding = static_cast<EdgeLighting::Winding>(windingIdx);
+    }
+}
+
+void DebugUI::buildLayerOrderSection(EdgeLighting::EdgeLightingEffect &effect)
+{
+    if (!ImGui::CollapsingHeader("Layer order"))
+    {
+        return;
+    }
+
+    ImGui::TextDisabled("Top of the list draws last, over everything below it.");
+
+    std::vector<EdgeLighting::RendererLayer> order = effect.GetLayerOrder();
+    const int count = static_cast<int>(order.size());
+    int swapAt = -1;
+    int swapWith = -1;
+
+    // Listed TOP first, the way a layer stack reads; the effect's own order
+    // is bottom first, so row r shows index count - 1 - r.
+    for (int row = 0; row < count; row++)
+    {
+        const int i = count - 1 - row;
+        ImGui::PushID(i);
+        ImGui::BeginDisabled(i == count - 1);
+        if (ImGui::ArrowButton("##Up", ImGuiDir_Up))
+        {
+            swapAt = i;
+            swapWith = i + 1;
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::BeginDisabled(i == 0);
+        if (ImGui::ArrowButton("##Down", ImGuiDir_Down))
+        {
+            swapAt = i;
+            swapWith = i - 1;
+        }
+        ImGui::EndDisabled();
+        ImGui::SameLine();
+        ImGui::Text("%d  %s%s", i, LayerName(order[static_cast<size_t>(i)]),
+                    i == 0 ? "  (bottom)" : (i == count - 1 ? "  (top)" : ""));
+        ImGui::PopID();
+    }
+
+    // Applied after the loop so the rows above all read the same order.
+    // Swapping two neighbours always leaves a valid order to hand back whole.
+    if (swapAt >= 0)
+    {
+        std::swap(order[static_cast<size_t>(swapAt)], order[static_cast<size_t>(swapWith)]);
+        effect.SetLayerOrder(order);
+    }
+
+    if (ImGui::Button("Default##LayerOrder"))
+    {
+        // The library's default order, narrowed to what is registered here.
+        std::vector<EdgeLighting::RendererLayer> defaults;
+        for (EdgeLighting::RendererLayer layer : EdgeLighting::EdgeLightingEffect::GetDefaultLayerOrder())
+        {
+            if (std::find(order.begin(), order.end(), layer) != order.end())
+            {
+                defaults.push_back(layer);
+            }
+        }
+        effect.SetLayerOrder(defaults);
+    }
+    ImGui::SameLine();
+    if (ImGui::Button("Spotlight at bottom##LayerOrder"))
+    {
+        // The spotlight first, everything else in its current order. Nothing to
+        // do if the spotlight layer is not registered.
+        auto spot = std::find(order.begin(), order.end(), EdgeLighting::RendererLayer::SPOTLIGHT);
+        if (spot != order.end())
+        {
+            std::rotate(order.begin(), spot, spot + 1);
+            effect.SetLayerOrder(order);
+        }
+    }
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip("Draws the cones first, so the neon composites over them by its own\n"
+                          "coverage instead of the cones adding onto the neon. The neon's opaque\n"
+                          "fill, if on, then covers any cone inside the rect.");
+    }
+}
+
+void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
+                               const EdgeLighting::Config &active)
+{
+    if (!ImGui::CollapsingHeader("Neon", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        return;
+    }
+
+    ImGui::Checkbox("Enable##Neon", &cfg.neon.enable);
+    if (!cfg.neon.enable)
+    {
+        return;
+    }
+
+    // --- Performance ------------------------------------------------------
+    // Was its own "Optimized Neon" section back when the half-res path was a
+    // second renderer. It is one renderer now, so these are just knobs on it:
+    // Res Scale 1.0 is the full-resolution path (no offscreen buffer, no
+    // blit), anything lower renders scaled and composites back.
+    if (ImGui::TreeNodeEx("Performance##Neon", ImGuiTreeNodeFlags_DefaultOpen))
+    {
+        SliderWithInput("Res Scale##Neon", cfg.neon.resolutionScale, 0.125f, 1.0f, "%.3f");
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("1.0 draws straight onto the target at full resolution.\n"
+                              "Below that the glow renders into a scaled buffer and is\n"
+                              "bilinear-blitted back, with a thin ring around the edge\n"
+                              "re-shaded at full resolution - the line stays sharp.\n"
+                              "Not always cheaper: a tight cutoff band can get slower.");
+        }
+        SliderIntWithInput("Samples##Neon", cfg.neon.numSamples, 8, NEON_MAX_LOOP_SAMPLES);
+        SliderIntWithInput("LUT Size##Neon", cfg.neon.gradientLutSize, 32, MAX_GRADIENT_LUT_SIZE);
+        ImGui::TreePop();
+    }
+
+    const char *opaqueItems[] = {"None", "Outside", "Inside", "Both", "All"};
+    int opaqueIdx = static_cast<int>(cfg.neon.opaqueMode);
+    if (ImGui::Combo("Opaque##Neon", &opaqueIdx, opaqueItems, IM_ARRAYSIZE(opaqueItems)))
+    {
+        cfg.neon.opaqueMode = static_cast<EdgeLighting::OpaqueMode>(opaqueIdx);
+    }
+    if (cfg.neon.opaqueMode != EdgeLighting::OpaqueMode::NONE)
+    {
+        ImGui::SameLine();
+        ImGui::ColorEdit4("Opaque Color##Neon", &cfg.neon.opaqueColor.x,
+                          ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
+        // The fill's OWN cutoffs, independent of the glow's below. Only the
+        // sides the current mode fills are shown - ALL has neither.
+        const EdgeLighting::OpaqueMode om = cfg.neon.opaqueMode;
+        if (om == EdgeLighting::OpaqueMode::INSIDE || om == EdgeLighting::OpaqueMode::BOTH)
+        {
+            CutoffRow("Fill Inside Cutoff", "FillInside", cfg.neon.opaqueInsideCutoff,
+                      active.neon.opaqueInsideCutoff, false);
+        }
+        if (om == EdgeLighting::OpaqueMode::OUTSIDE || om == EdgeLighting::OpaqueMode::BOTH)
+        {
+            CutoffRow("Fill Outside Cutoff", "FillOutside", cfg.neon.opaqueOutsideCutoff,
+                      active.neon.opaqueOutsideCutoff, false);
+        }
+    }
+    AnimatedSlider("Line Width##Neon", cfg.neon.lineWidth, active.neon.lineWidth, 0.0f, 20.0f, "%.0f");
+    AnimatedSlider("Filament Falloff##Neon", cfg.neon.filamentFalloff, active.neon.filamentFalloff, 0.0f, 5.0f);
+    AnimatedSlider("Intensity##Neon", cfg.neon.intensity, active.neon.intensity, 0.0f, 3.0f);
+    AnimatedSlider("Glow Radius##Neon", cfg.neon.glowRadius, active.neon.glowRadius, 0.0f, 80.0f, "%.0f");
+    AnimatedSlider("Bloom Strength##Neon", cfg.neon.bloomStrength, active.neon.bloomStrength, 0.0f, 2.0f);
+    AnimatedSlider("Hue Rotation Rate##Neon", cfg.neon.hueRotationRate, active.neon.hueRotationRate, 0.0f, 2.0f);
+
+    const char *sideItems[] = {"Both", "Inside", "Outside"};
+    int sideIdx = static_cast<int>(cfg.neon.glowSide);
+    if (ImGui::Combo("Glow Side##Neon", &sideIdx, sideItems, IM_ARRAYSIZE(sideItems)))
+    {
+        cfg.neon.glowSide = static_cast<EdgeLighting::GlowSide>(sideIdx);
+    }
+    if (cfg.neon.glowSide != EdgeLighting::GlowSide::BOTH)
+    {
+        SliderWithInput("Side Softness##Neon", cfg.neon.glowSideSoftness, 0.0f, 20.0f, "%.1f");
+    }
+
+    // The GLOW's cutoffs. One on the side glowSide culls is ignored; neither
+    // reaches the opaque fill, which has its own pair above.
+    CutoffRow("Inside Cutoff", "NeonInside", cfg.neon.insideCutoff, active.neon.insideCutoff,
+              cfg.neon.glowSide == EdgeLighting::GlowSide::OUTSIDE);
+    CutoffRow("Outside Cutoff", "NeonOutside", cfg.neon.outsideCutoff, active.neon.outsideCutoff,
+              cfg.neon.glowSide == EdgeLighting::GlowSide::INSIDE);
+
+    // --- Travelling segments (independent additive lights on the perimeter) ---
+    ImGui::TextDisabled("Segment Lights (%zu / %d) - additive, independent of intensity",
+                        cfg.neon.segmentBoosts.size(),
+                        EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP);
+    for (size_t i = 0; i < cfg.neon.segmentBoosts.size(); ++i)
+    {
+        ImGui::PushID(static_cast<int>(300 + i));
+        bool remove = DrawSegmentRow(cfg.neon.segmentBoosts[i], i);
+        ImGui::PopID();
+        if (remove)
+        {
+            cfg.neon.segmentBoosts.erase(cfg.neon.segmentBoosts.begin() +
+                                         static_cast<ptrdiff_t>(i));
+            break;
+        }
+    }
+    if (static_cast<int>(cfg.neon.segmentBoosts.size()) <
+        EdgeLighting::NeonConfig::MAX_SEGMENT_BOOSTS_CAP)
+    {
+        if (ImGui::Button("+ Add Segment##Neon"))
+        {
+            cfg.neon.segmentBoosts.push_back({0.0f, 0.15f, 4.0f});
+        }
+    }
+
+    // --- Arcs (multiple lit slices; winner-take-all in overlap regions) ---
+    ImGui::TextDisabled("Arcs (%zu / %d) - overlap resolves winner-take-all",
+                        cfg.neon.arcs.size(),
+                        EdgeLighting::NeonConfig::MAX_ARCS_CAP);
+    for (size_t i = 0; i < cfg.neon.arcs.size(); ++i)
+    {
+        ImGui::PushID(static_cast<int>(500 + i));
+        bool remove = DrawArcRow(cfg.neon.arcs[i], i);
+        ImGui::PopID();
+        if (remove)
+        {
+            cfg.neon.arcs.erase(cfg.neon.arcs.begin() +
+                                static_cast<ptrdiff_t>(i));
+            break;
+        }
+    }
+    if (static_cast<int>(cfg.neon.arcs.size()) <
+        EdgeLighting::NeonConfig::MAX_ARCS_CAP)
+    {
+        if (ImGui::Button("+ Add Arc##Neon"))
+        {
+            cfg.neon.arcs.push_back(EdgeLighting::Arc{});
+        }
+    }
+
+    const char *blendItems[] = {"RGB", "HSV", "HSL"};
+    int blendIdx = static_cast<int>(cfg.neon.blendSpace);
+    if (ImGui::Combo("Blend Space##Neon", &blendIdx, blendItems, IM_ARRAYSIZE(blendItems)))
+    {
+        cfg.neon.blendSpace = static_cast<EdgeLighting::BlendSpace>(blendIdx);
+    }
+
+    // Cross-fade time when the stop set / blend space changes (0 = instant).
+    SliderWithInput("Color Transition (s)##Neon", cfg.neon.colorTransitionDuration,
+                    0.0f, 2.0f, "%.2f");
+
+    for (size_t i = 0; i < cfg.neon.colorStops.size(); ++i)
+    {
+        ImGui::PushID(static_cast<int>(i));
+        float p = cfg.neon.colorStops[i].position;
+        if (SliderWithInput("Pos##Neon", p, 0.0f, 1.0f, "%.2f"))
+        {
+            cfg.neon.colorStops[i].position = p;
+        }
+        ImGui::SameLine();
+        glm::vec4 c = cfg.neon.colorStops[i].color;
+        if (ImGui::ColorEdit4("Col##Neon", &c.x, ImGuiColorEditFlags_NoInputs))
+        {
+            cfg.neon.colorStops[i].color = c;
+        }
+        ImGui::SameLine();
+        if (cfg.neon.colorStops.size() > 1 && ImGui::SmallButton("X"))
+        {
+            cfg.neon.colorStops.erase(cfg.neon.colorStops.begin() + static_cast<ptrdiff_t>(i));
+        }
+        ImGui::PopID();
+    }
+
+    if (cfg.neon.colorStops.size() < MAX_COLOR_STOPS)
+    {
+        if (ImGui::Button("+ Add Stop##Neon"))
+        {
+            float lastPos = cfg.neon.colorStops.empty() ? 0.0f : cfg.neon.colorStops.back().position;
+            cfg.neon.colorStops.push_back(
+                {std::min(1.0f, lastPos + 0.1f), glm::vec4(1.0f, 1.0f, 1.0f, 1.0f)});
+        }
     }
 }
 

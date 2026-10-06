@@ -1,0 +1,760 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Neon Resolution Scale</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@75..100,500..800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap">
+<style>
+/* Layout: a darkroom light table. A contact sheet of every scene at every
+   scale, one inspection stage below it, then motion and method. Deliberately
+   single-theme dark: every image on the page is neon on near-black. */
+:root {
+  color-scheme: dark;
+  --bg: #0b0d10;
+  --panel: #12151a;
+  --panel-2: #181c22;
+  --rule: #262b33;
+  --ink: #e8eaee;
+  --ink-2: #aab1bc;
+  --ink-3: #7c8490;
+  --brass: #d9b36c;
+  --brass-ink: #1a1408;
+
+  /* one-hue ordinal ramp, 1.0 lightest (validated on --panel) */
+  --s1000: #cde2fb;
+  --s750: #9ec5f4;
+  --s500: #6da7ec;
+  --s350: #3987e5;
+  --s250: #256abf;
+  --s125: #184f95;
+
+  /* status (grades) */
+  --good: #0ca30c;
+  --warn: #fab219;
+  --serious: #ec835a;
+  --critical: #d03b3b;
+
+  --display: "Archivo", "Helvetica Neue", Arial, sans-serif;
+  --body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+
+  --step--1: 0.8125rem;
+  --step-0: 0.9375rem;
+  --step-1: 1.125rem;
+  --step-2: 1.5rem;
+  --step-3: clamp(2rem, 4.5vw, 3.25rem);
+}
+
+* { box-sizing: border-box; }
+html { background: var(--bg); }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font: 400 var(--step-0)/1.55 var(--body);
+  padding-inline: 16px;
+  padding-block: 0 64px;
+}
+.wrap { max-width: 1120px; margin-inline: auto; display: flex; flex-direction: column; gap: 56px; }
+h1, h2, h3 { font-family: var(--display); font-stretch: 82%; text-wrap: balance; margin: 0; letter-spacing: -0.01em; }
+h1 { font-size: var(--step-3); font-weight: 800; line-height: 1.02; }
+h2 { font-size: var(--step-2); font-weight: 700; line-height: 1.15; }
+h3 { font-size: var(--step-1); font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+code, .mono { font-family: var(--mono); font-size: 0.92em; }
+code { color: var(--ink); background: var(--panel-2); padding: 0.05em 0.35em; border-radius: 3px; }
+a { color: var(--brass); }
+.eyebrow { font: 500 var(--step--1)/1.3 var(--mono); color: var(--ink-3); letter-spacing: 0.04em; text-transform: uppercase; }
+.muted { color: var(--ink-2); }
+.small { font-size: var(--step--1); }
+section { display: flex; flex-direction: column; gap: 20px; }
+.sec-head { display: flex; flex-direction: column; gap: 8px; }
+:focus-visible { outline: 2px solid var(--brass); outline-offset: 2px; }
+
+/* ---------- masthead ---------- */
+.mast { padding-top: 48px; display: grid; gap: 28px; }
+.mast-top { display: grid; gap: 14px; }
+.lede { font-size: var(--step-1); color: var(--ink-2); max-width: 62ch; }
+.findings { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+.finding { background: var(--bg); padding: 16px 18px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.finding .k { font: 700 1.6rem/1 var(--display); font-stretch: 78%; color: var(--ink); font-variant-numeric: tabular-nums; }
+.finding .k small { font-size: 0.55em; color: var(--ink-3); font-weight: 600; margin-left: 4px; }
+.finding p { color: var(--ink-2); font-size: var(--step--1); }
+
+/* ---------- grade chips ---------- */
+.chip { display: inline-flex; align-items: center; gap: 5px; font: 500 0.75rem/1 var(--mono); color: var(--ink); white-space: nowrap; }
+.chip i { width: 9px; height: 9px; display: inline-block; flex: none; }
+.chip[data-g="match"] i { background: var(--good); border-radius: 50%; }
+.chip[data-g="minor"] i { background: var(--warn); border-radius: 2px; transform: rotate(45deg) scale(0.85); }
+.chip[data-g="visible"] i { background: var(--serious); clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+.chip[data-g="severe"] i { background: var(--critical); clip-path: polygon(20% 0, 50% 30%, 80% 0, 100% 20%, 70% 50%, 100% 80%, 80% 100%, 50% 70%, 20% 100%, 0 80%, 30% 50%, 0 20%); }
+.chip[data-g="ref"] i { background: transparent; border: 1.5px solid var(--ink-2); border-radius: 50%; }
+.legend-row { display: flex; flex-wrap: wrap; gap: 8px 20px; align-items: center; }
+.legend-row .rule-note { color: var(--ink-3); font-size: var(--step--1); }
+
+/* ---------- contact sheet ---------- */
+.sheet-scroll { overflow-x: auto; border: 1px solid var(--rule); background: var(--panel); }
+.sheet { display: grid; grid-template-columns: 176px repeat(6, minmax(112px, 1fr)) 128px; min-width: 1040px; }
+.sheet > div { border-bottom: 1px solid var(--rule); }
+.sheet .hd { font: 500 0.75rem/1.2 var(--mono); color: var(--ink-3); padding: 10px 8px; display: flex; align-items: flex-end; gap: 6px; position: sticky; top: 0; background: var(--panel); z-index: 1; }
+.sheet .hd .sw { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+.sheet .rowname { padding: 10px 12px; display: flex; flex-direction: column; gap: 3px; justify-content: center; }
+.sheet .rowname b { font: 600 0.9rem/1.2 var(--body); }
+.sheet .rowname span { font: 400 0.72rem/1.3 var(--mono); color: var(--ink-3); }
+.cell { padding: 6px; display: flex; flex-direction: column; gap: 5px; }
+.cell button { all: unset; cursor: pointer; display: flex; flex-direction: column; gap: 5px; border-radius: 3px; padding: 3px; outline: 1px solid transparent; }
+.cell button:hover { outline-color: var(--ink-3); }
+.cell button:focus-visible { outline: 2px solid var(--brass); }
+.cell button[aria-pressed="true"] { outline: 2px solid var(--brass); }
+.cell img { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; display: block; image-rendering: pixelated; background: #050608; }
+.cell .meta { display: flex; justify-content: space-between; gap: 4px; align-items: center; font: 400 0.7rem/1.2 var(--mono); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.cell .meta { flex-wrap: wrap; row-gap: 2px; }
+.cell .meta > span { white-space: nowrap; }
+.cell .chip { font-size: 0.7rem; }
+.lowest { padding: 10px; display: flex; flex-direction: column; justify-content: center; gap: 2px; }
+.lowest b { font: 700 1.25rem/1 var(--display); font-stretch: 80%; font-variant-numeric: tabular-nums; }
+.lowest span { font: 400 0.72rem/1.3 var(--mono); color: var(--ink-2); }
+
+/* ---------- controls ---------- */
+.controls { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: flex-end; }
+.ctl { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ctl label, .ctl .lbl { font: 500 0.72rem/1 var(--mono); color: var(--ink-3); letter-spacing: 0.04em; text-transform: uppercase; }
+select { font: 500 var(--step-0) var(--body); color: var(--ink); background: var(--panel-2); border: 1px solid var(--rule); border-radius: 4px; padding: 7px 30px 7px 10px; appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--ink-2) 50%), linear-gradient(135deg, var(--ink-2) 50%, transparent 50%); background-position: calc(100% - 15px) 52%, calc(100% - 10px) 52%; background-size: 5px 5px; background-repeat: no-repeat; max-width: 100%; }
+.seg { display: inline-flex; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; flex-wrap: wrap; }
+.seg button { all: unset; cursor: pointer; font: 500 0.82rem/1 var(--mono); color: var(--ink-2); padding: 8px 11px; background: var(--panel-2); border-right: 1px solid var(--rule); display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
+.seg button:last-child { border-right: 0; }
+.seg button:hover { color: var(--ink); }
+.seg button:focus-visible { outline: 2px solid var(--brass); outline-offset: -2px; }
+.seg button[aria-pressed="true"] { background: var(--brass); color: var(--brass-ink); }
+.seg .sw { width: 8px; height: 8px; border-radius: 2px; }
+.btn { all: unset; cursor: pointer; font: 500 0.82rem/1 var(--mono); color: var(--ink); padding: 8px 12px; border: 1px solid var(--rule); border-radius: 4px; background: var(--panel-2); }
+.btn:hover { border-color: var(--ink-3); }
+.btn:focus-visible { outline: 2px solid var(--brass); }
+
+/* ---------- inspector ---------- */
+.scene-note { display: grid; gap: 6px; padding: 14px 16px; background: var(--panel); border: 1px solid var(--rule); }
+.scene-note .blurb { color: var(--ink-3); font-size: var(--step--1); font-family: var(--mono); }
+.stage-wrap { display: flex; flex-direction: column; gap: 8px; }
+.stage { position: relative; width: 100%; aspect-ratio: 16 / 9; background: #050608; overflow: hidden; border: 1px solid var(--rule); touch-action: pan-y; }
+.stage img { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.stage .top { clip-path: inset(0 50% 0 0); }
+.stage .handle { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--brass); left: 50%; transform: translateX(-1px); pointer-events: none; }
+.stage .handle::after { content: ""; position: absolute; top: 50%; left: 50%; width: 22px; height: 22px; transform: translate(-50%, -50%); border-radius: 50%; background: var(--brass); box-shadow: 0 0 0 3px rgba(11, 13, 16, 0.7); }
+.stage .tag { position: absolute; top: 10px; font: 500 0.75rem/1 var(--mono); padding: 5px 7px; background: rgba(11, 13, 16, 0.78); color: var(--ink); border-radius: 3px; pointer-events: none; }
+.stage .tag.l { left: 10px; }
+.stage .tag.r { right: 10px; }
+.stage .cropbox { position: absolute; border: 1px dashed var(--brass); pointer-events: none; }
+.stage input[type="range"] { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: ew-resize; margin: 0; }
+.stage.side { aspect-ratio: auto; display: grid; grid-template-columns: 1fr 1fr; gap: 2px; background: var(--rule); }
+.stage.side .pane { position: relative; aspect-ratio: 16 / 9; background: #050608; }
+.stage-cap { display: flex; flex-wrap: wrap; gap: 6px 18px; font: 400 var(--step--1)/1.4 var(--mono); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.stage-cap b { color: var(--ink); font-weight: 500; }
+.heat-legend { display: flex; align-items: center; gap: 10px; font: 400 0.72rem/1 var(--mono); color: var(--ink-3); }
+.heat-legend .bar { height: 10px; width: 220px; max-width: 50vw; background: linear-gradient(90deg, #000 0%, #280b54 20%, #892269 40%, #e45a31 60%, #fac127 80%, #fcffa4 100%); border: 1px solid var(--rule); }
+
+.loupes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.loupe { all: unset; cursor: pointer; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.loupe .px { width: 100%; image-rendering: pixelated; display: block; background: #050608; outline: 1px solid var(--rule); }
+.loupe[aria-pressed="true"] .px { outline: 2px solid var(--brass); }
+.loupe:focus-visible .px { outline: 2px solid var(--brass); outline-offset: 2px; }
+.loupe .cap { display: flex; justify-content: space-between; align-items: center; gap: 6px; font: 400 0.75rem/1.2 var(--mono); color: var(--ink-2); font-variant-numeric: tabular-nums; flex-wrap: wrap; }
+.loupe .cap b { color: var(--ink); font-weight: 500; display: inline-flex; align-items: center; gap: 6px; }
+.loupe .cap .sw { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
+
+.two { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 20px; }
+.fig { background: var(--panel); border: 1px solid var(--rule); padding: 14px 14px 10px; display: flex; flex-direction: column; gap: 10px; min-width: 0; position: relative; }
+.fig h3 { font-size: 1rem; }
+.fig .sub { font-size: var(--step--1); color: var(--ink-3); }
+.fig svg { width: 100%; height: auto; display: block; overflow: visible; }
+.fig svg text { fill: var(--ink-3); font: 400 10px var(--mono); font-variant-numeric: tabular-nums; }
+.fig svg .grid { stroke: var(--rule); stroke-width: 1; }
+.fig svg .axis { stroke: #3a404a; stroke-width: 1; }
+.key { display: flex; flex-wrap: wrap; gap: 4px 12px; font: 400 0.72rem/1.2 var(--mono); color: var(--ink-2); }
+.key span { display: inline-flex; align-items: center; gap: 5px; }
+.key .ln { width: 14px; height: 2px; display: inline-block; }
+.key .dash { width: 14px; height: 0; border-top: 2px dashed var(--brass); display: inline-block; }
+.tip { position: absolute; pointer-events: none; background: #1f242c; border: 1px solid #343a44; border-radius: 4px; padding: 7px 9px; font: 400 0.72rem/1.45 var(--mono); color: var(--ink); white-space: nowrap; z-index: 5; font-variant-numeric: tabular-nums; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45); }
+.tip .r { display: flex; align-items: center; gap: 6px; }
+.tip .sw { width: 8px; height: 8px; border-radius: 2px; }
+.tip .h { color: var(--ink-3); margin-bottom: 2px; }
+
+.table-scroll { overflow-x: auto; border: 1px solid var(--rule); }
+table { border-collapse: collapse; width: 100%; min-width: 760px; font: 400 0.8rem/1.3 var(--mono); font-variant-numeric: tabular-nums; }
+th, td { padding: 8px 10px; text-align: right; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+th { color: var(--ink-3); font-weight: 500; font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.03em; background: var(--panel); }
+td:first-child, th:first-child { text-align: left; }
+td:nth-child(4), th:nth-child(4) { text-align: left; }
+tr.sel td { background: rgba(217, 179, 108, 0.09); }
+tbody tr { cursor: pointer; }
+tbody tr:hover td { background: var(--panel-2); }
+td .sw { width: 8px; height: 8px; border-radius: 2px; display: inline-block; margin-right: 6px; }
+
+/* ---------- motion ---------- */
+.sprites { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
+.sprite-cell { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.sprite { width: 100%; aspect-ratio: 64 / 40; background-size: 100% auto; background-repeat: no-repeat; image-rendering: pixelated; outline: 1px solid var(--rule); background-color: #050608; position: relative; }
+.sprite::after { content: ""; position: absolute; left: 0; right: 0; height: 1px; top: var(--edge, 40%); border-top: 1px dashed rgba(217, 179, 108, 0.75); }
+.sprite-cell .cap { font: 400 0.72rem/1.35 var(--mono); color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.sprite-cell .cap b { color: var(--ink); font-weight: 500; display: inline-flex; align-items: center; gap: 6px; }
+.scrub { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.scrub input[type="range"] { flex: 1 1 220px; accent-color: var(--brass); min-width: 0; }
+.scrub output { font: 500 0.82rem/1 var(--mono); color: var(--ink); min-width: 9ch; font-variant-numeric: tabular-nums; }
+
+.method { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px 32px; }
+.method div { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.method p { color: var(--ink-2); font-size: var(--step--1); }
+footer { color: var(--ink-3); font-size: var(--step--1); border-top: 1px solid var(--rule); padding-top: 16px; }
+
+@media (max-width: 860px) {
+  .two { grid-template-columns: 1fr; }
+  .sprites { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .loupes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .stage.side { grid-template-columns: 1fr; }
+  .sprites { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (prefers-reduced-motion: reduce) {
+  * { scroll-behavior: auto !important; }
+}
+.was { color: var(--ink-3); font-size: 0.92em; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="mast">
+    <div class="mast-top">
+      <div class="eyebrow">EdgeLightingEffect / NeonRenderer / <span id="gpuName"></span></div>
+      <h1>What <code style="font-size:0.62em;vertical-align:0.12em">resolutionScale</code> does to the neon</h1>
+      <p class="lede">Twelve scenes, each rendered at six values of <code>NeonConfig::resolutionScale</code> and compared pixel by pixel against its own 1.0 render. Every image here is a real 1280&nbsp;x&nbsp;720 frame from the library, captured offscreen. Below 1.0 the gather runs into a reduced buffer and a thin ring around the edge is re-shaded at full resolution (the edge ring, <code>docs/neon-resolution-scale-plan.md</code> step 5); every measurement is shown next to what the same scene read before that ring existed.</p>
+      <p class="lede"><b>Not regenerated since the gather was split out</b> (<code>docs/neon-resolution-scale-plan.md</code> section 13): below 1.0 the gather now runs alone, at its own much coarser resolution, and the reduced pass and the ring both shade from its result. The 1.0 images are unchanged byte for byte. At the reduced scales <code>neon-scale-check check</code> now reads 2/255 at most on every scene except <code>small_rect</code> (4 at 0.25, 10 at 0.125), where the figures below read up to 3 (and 11). The moving hairline's worst centroid error rose from 0.03-0.04 px to 0.04-0.06 px, still inside the tool's 0.1 px bound. Those figures are on Mesa llvmpipe. Every timing below predates a 3.4-4.3x speed-up at 0.5 on most scenes (also llvmpipe), so read the timing columns as history.</p>
+    </div>
+    <div class="findings" id="findings"></div>
+  </header>
+
+  <section id="sheet">
+    <div class="sec-head">
+      <h2>Every scene at every scale</h2>
+      <p class="muted">Each tile is the scene's inspection crop, unscaled pixels enlarged. The grade comes from the 99th-percentile per-pixel error over visibly lit pixels, in 8-bit levels against the 1.0 render. Pick a tile to open it below.</p>
+    </div>
+    <div class="legend-row" id="gradeLegend"></div>
+    <div class="sheet-scroll"><div class="sheet" id="sheetGrid" role="region" aria-label="Scenes by resolution scale"></div></div>
+  </section>
+
+  <section id="inspect">
+    <div class="sec-head">
+      <h2>Inspect a scene</h2>
+    </div>
+    <div class="controls">
+      <div class="ctl"><label for="sceneSel">Scene</label><select id="sceneSel"></select></div>
+      <div class="ctl"><span class="lbl" id="scaleLbl">Compare 1.0 against</span><div class="seg" id="scaleSeg" role="group" aria-labelledby="scaleLbl"></div></div>
+      <div class="ctl"><span class="lbl" id="viewLbl">View</span><div class="seg" id="viewSeg" role="group" aria-labelledby="viewLbl"></div></div>
+    </div>
+    <div class="scene-note" id="sceneNote"></div>
+    <div class="stage-wrap">
+      <div id="stageHost"></div>
+      <div class="stage-cap" id="stageCap"></div>
+    </div>
+    <div class="sec-head"><h3>The crop, pixel for pixel</h3><p class="muted small">Same crop from every scale, nearest-neighbour enlarged. Pick one to compare it on the stage.</p></div>
+    <div class="loupes" id="loupes"></div>
+    <div class="two">
+      <div class="fig" id="profileFig">
+        <h3>Cross-section through the top edge</h3>
+        <div class="sub" id="profileSub"></div>
+        <div class="key" id="profileKey"></div>
+        <svg id="profileSvg" viewBox="0 0 560 270" role="img" aria-label="Luma cross-section per scale"></svg>
+      </div>
+      <div class="fig" id="costFig">
+        <h3>GPU time per frame</h3>
+        <div class="sub">Neon layer alone, 1280 x 720, Render() between glFinish calls, min of 5 runs of 40 frames.</div>
+        <div class="key"><span><span class="dash"></span>1.0 time x scale&sup2;</span></div>
+        <svg id="costSvg" viewBox="0 0 420 270" role="img" aria-label="GPU time per scale"></svg>
+      </div>
+    </div>
+    <div class="table-scroll"><table id="metricsTable"></table></div>
+  </section>
+
+  <section id="motion">
+    <div class="sec-head">
+      <h2>When the rect moves</h2>
+      <p class="muted">A still frame hides one artefact. The reduced buffer's texel grid is fixed to the viewport, so as the rect slides the filament falls at different points between texels. Here the hairline scene's rect moves down 1/8 px per step and the dashed line is the true edge. Before the edge ring, low scales drifted off it and snapped back, and the line grew wider as the scale fell. The ring draws the filament at full resolution, so every scale now tracks the edge as 1.0 does; the grey figures under each strip are the old ones.</p>
+    </div>
+    <div class="scrub">
+      <button class="btn" id="playBtn" type="button">Play</button>
+      <input type="range" id="stepRange" min="0" max="31" value="0" aria-label="Sub-pixel offset step">
+      <output id="stepOut" for="stepRange">+0.000 px</output>
+    </div>
+    <div class="sprites" id="sprites"></div>
+    <div class="fig">
+      <div class="controls" style="justify-content:space-between">
+        <div style="display:flex;flex-direction:column;gap:4px;min-width:0">
+          <h3>Where the line lands vs where it should</h3>
+          <div class="sub">Centroid of the filament on the top-edge column minus the true edge, over 8 px of travel in 1/8 px steps. Before the edge ring the worst was &plusmn;0.53 px at 0.25 on the hairline.</div>
+        </div>
+        <div class="seg" id="sweepSeg" role="group" aria-label="Sweep scene"></div>
+      </div>
+      <div class="key" id="sweepKey"></div>
+      <svg id="sweepSvg" viewBox="0 0 900 260" role="img" aria-label="Centroid tracking error per scale"></svg>
+    </div>
+  </section>
+
+  <section id="method">
+    <div class="sec-head"><h2>How this was measured</h2></div>
+    <div class="method">
+      <div><h3>Capture</h3><p><code>tools/neon-scale-check</code> (see its README), linked against <code>libedge-lighting.a</code> twice: at <span class="mono">db2c250</span> (the edge ring, with <code>invariant gl_Position</code>) for every image and headline number, and at <span class="mono">542dad4</span>, the last commit before <code>docs/neon-resolution-scale-plan.md</code> step 1, for every "before" figure. Hidden GLFW window for a GL 3.3 core context, the neon layer alone, drawn through <code>OffscreenCapture</code> at an explicit 1280 x 720 over a clear of rgb(5, 5, 8). Rect 640 x 360 at (320, 180) unless the scene says otherwise. <code>hueRotationRate</code> and <code>colorTransitionDuration</code> are 0 and the clock is ticked once, so every render is deterministic: three runs of each build agreed on every metric.</p></div>
+      <div><h3>Scenes</h3><p>The scenes are the ones the first version of this page used, on an Apple M2 Pro. Its harness was not kept, and its blurbs omitted every colour (and the overdrive's glow radius and the card's fill and glow), so each definition above was recovered by rendering it at 1.0 and matching that page's stored image: all twelve land within 1 level (2 on eight values), which is the variance between the two GPUs. Re-run on the pre-plan build, this harness reproduces that page's p99 within 1 level and its max within 2 in every scene at every scale. The definitions are <code>tools/neon-scale-check/src/scenes.h</code>.</p></div>
+      <div><h3>Metrics</h3><p>Per-pixel error is the largest of the three channel differences against the 1.0 render. Means and percentiles count only visibly lit pixels, meaning the brightest channel is more than 16 levels above the clear in either image, so the far bloom tail does not dilute them. PSNR is over the whole frame. "Light vs 1.0" is total Rec. 709 luma above the clear, as a ratio. The same definitions as the first version, checked by recomputing its numbers from its own images.</p></div>
+      <div><h3>Grades</h3><p>From p99 error: <b>match</b> 4 or less, <b>minor</b> 12 or less, <b>visible</b> 32 or less, <b>severe</b> above. The lowest-scale column is the lowest scale graded minor or better. The heatmap maps error 0 to 64+ levels onto its ramp, with differences of 1 level drawn black.</p></div>
+      <div><h3>Timing and motion</h3><p>GPU time is one machine (<span id="gpuName2"></span>), so read ratios, not milliseconds, and expect another GPU to price the scaled path's fixed cost differently: the first version measured the hard-bounded band 1.6x faster at 0.5 on an M2 Pro, where this one is slower. Each scale gets a freshly initialised effect; each figure is the minimum over three interleaved runs of both builds. The timings predate the glow-coverage table (V19, V20 and V21 in <code>review-findings.md</code>) - about 4% at 1.0 and 8% at 0.5 on a fully lit ring and 10-20% on <code>arcs</code> and <code>segments</code> with V20's table on an M2 Pro; V21's per-piece table, on the AMD Radeon Pro 5300M, is 1.00-1.01x of V20's at 1.0 and 4-7% faster below it - and the images and error metrics of <code>arcs</code> and <code>segments</code> were regenerated with it (last for V21, on the AMD Radeon Pro 5300M); every other scene renders the same. See section 10 of <code>neon-resolution-scale-perf-comparison.md</code>. The motion sweep moves <code>geometry.position.y</code> by 1/8 px for 64 steps. On the top edge's centre column it takes every row within 12 px of the true edge, subtracts that window's lowest luma, and reports the centroid of what is left minus the true edge, and the width at half its height. (The first version used no floor, which these numbers are not directly comparable with; its hairline wobble at 0.25, &plusmn;0.53 px, reproduces as &plusmn;0.53 here.)</p></div>
+    </div>
+  </section>
+
+  <footer>Generated by <code>tools/neon-scale-check</code>: <code>generate</code> per build, then <code>update-page.py</code>. Scenes and numbers regenerate from one run per build; only the notes and prose are written by hand.</footer>
+</div>
+
+<script>
+const DATA = {"width":1280,"height":720,"gpu":"AMD Radeon Pro 5300M","scales":[{"value":1,"tag":"s1000"},{"value":0.75,"tag":"s750"},{"value":0.5,"tag":"s500"},{"value":0.35,"tag":"s350"},{"value":0.25,"tag":"s250"},{"value":0.125,"tag":"s125"}],"scenarios":[{"id":"default","title":"Library defaults","blurb":"Untouched NeonConfig: 4-stop rainbow, lineWidth 4, glowRadius 5, bloom 0.3.","crop":[272,132,128,96],"profile":{"x":640,"y0":144,"edgeY":180,"rows":{"s1000":[59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,75,76,77,79,80,82,83,85,87,90,92,95,98,102,107,115,133,158,176,183,186,186,183,176,158,133,115,107,102,98,95,92,90,87,85,83,82,80,79,77,76,75,73,72,71,70,69,68,67,66,65,64,63,62,61,60,59,59],"s750":[59,60,61,62,63,64,65,66,67,68,69,69,71,72,73,74,76,77,79,80,82,83,85,87,89,92,95,98,102,107,115,133,158,176,183,186,186,183,176,158,133,116,107,102,99,95,92,90,88,86,84,82,80,79,77,76,74,73,72,71,70,69,68,67,66,65,64,63,62,61,60,59,59],"s500":[59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,76,77,78,80,82,83,85,87,89,92,95,99,102,107,115,133,158,175,183,186,186,183,175,158,133,115,107,102,98,95,92,90,88,86,84,82,80,79,77,76,75,73,72,71,70,69,68,67,66,65,64,63,62,61,60,59,59],"s350":[59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,76,77,79,80,81,83,85,87,90,92,95,99,102,107,115,133,158,176,183,186,186,183,176,158,133,115,107,102,98,95,92,90,87,85,83,82,80,79,77,76,74,73,72,71,70,69,68,67,66,65,64,63,62,61,60,59,59],"s250":[59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,75,76,77,79,80,82,84,86,88,90,92,95,99,102,107,115,133,158,176,183,186,186,183,176,158,133,115,107,102,99,95,92,90,87,85,83,82,80,79,77,76,75,73,72,71,70,69,68,67,66,65,64,63,62,61,60,59,58],"s125":[59,60,61,62,63,64,65,66,67,68,69,70,71,72,74,75,76,77,79,80,82,84,85,88,90,92,95,99,102,107,115,133,158,176,183,186,186,183,176,158,133,115,107,102,98,95,92,90,87,85,83,82,80,78,77,76,74,73,72,71,70,69,68,67,66,65,64,63,62,61,60,59,58]}},"metrics":{"s750":{"maxDelta":2,"meanLit":0.511,"psnr":55.46,"p99":1,"pctOver8":0.0,"energyRatio":1.003,"litPx":466708},"s500":{"maxDelta":2,"meanLit":0.481,"psnr":55.85,"p99":1,"pctOver8":0.0,"energyRatio":1.00271,"litPx":465707},"s350":{"maxDelta":2,"meanLit":0.473,"psnr":55.98,"p99":1,"pctOver8":0.0,"energyRatio":1.00294,"litPx":465611},"s250":{"maxDelta":2,"meanLit":0.463,"psnr":56.12,"p99":1,"pctOver8":0.0,"energyRatio":1.00255,"litPx":465045},"s125":{"maxDelta":2,"meanLit":0.45,"psnr":56.22,"p99":1,"pctOver8":0.0,"energyRatio":1.00222,"litPx":464779}},"ms":{"s1000":2.6779,"s750":1.9526,"s500":1.0637,"s350":0.7178,"s250":0.5449,"s125":0.4744},"before":{"metrics":{"s750":{"p99":3,"maxDelta":5},"s500":{"p99":4,"maxDelta":7},"s350":{"p99":12,"maxDelta":16},"s250":{"p99":9,"maxDelta":25},"s125":{"p99":60,"maxDelta":86}},"ms":{"s1000":2.6493,"s750":1.7776,"s500":0.8915,"s350":0.5519,"s250":0.4014,"s125":0.2546}}},{"id":"hairline","title":"Hairline filament","blurb":"lineWidth 1, filamentFalloff 2, glowRadius 3, bloom 0.15. Stops (0.2, 0.9, 1.0) at 0 and (1.0, 0.3, 0.9) at 0.5. A sub-texel line at every reduced scale.","crop":[272,132,128,96],"profile":{"x":640,"y0":144,"edgeY":180,"rows":{"s1000":[29,30,30,31,32,32,33,33,34,35,36,37,37,38,39,40,42,43,44,45,47,49,50,52,54,57,59,63,67,71,77,84,93,104,113,172,172,113,104,93,84,77,71,67,63,59,57,54,52,50,48,47,45,44,43,41,40,39,38,38,37,36,35,34,33,33,32,32,31,30,30,29,28],"s750":[29,30,31,31,31,32,33,33,34,35,36,37,38,39,39,40,42,43,44,45,47,49,50,52,54,57,60,63,67,71,77,84,93,104,114,172,172,114,104,94,85,77,71,67,63,59,57,55,52,50,49,47,45,44,43,42,40,39,39,38,37,36,35,34,33,33,32,31,31,30,30,29,28],"s500":[29,30,30,31,32,32,33,33,34,35,36,37,38,39,40,40,41,43,44,46,47,49,50,52,54,57,60,63,67,71,77,84,93,103,114,172,172,114,104,94,84,77,71,67,63,60,57,55,52,50,48,47,46,44,43,42,40,40,39,38,37,36,35,34,33,33,32,32,31,30,30,29,29],"s350":[29,30,30,31,31,32,33,33,34,35,36,37,38,38,39,40,42,43,44,46,47,49,51,52,55,57,60,63,67,71,77,84,93,104,114,172,172,113,104,94,84,77,71,67,63,60,57,54,52,50,48,47,45,44,43,42,40,39,38,38,37,36,35,34,33,33,32,31,31,30,29,29,28],"s250":[29,30,31,31,32,32,33,33,34,35,36,37,38,39,40,41,42,43,44,46,47,49,51,53,55,57,60,63,67,71,77,84,93,103,113,172,172,114,104,94,84,77,71,67,63,60,57,55,52,50,49,47,45,44,43,42,40,40,39,38,37,36,35,34,33,33,32,32,31,31,30,29,28],"s125":[29,30,30,31,32,32,33,33,34,35,36,37,38,39,40,41,42,43,44,46,47,49,50,52,55,57,60,63,67,71,77,84,94,104,114,172,172,114,104,94,84,77,71,67,63,59,57,54,52,50,49,47,46,44,43,42,40,39,38,38,37,36,35,34,33,33,32,32,31,30,30,29,29]}},"metrics":{"s750":{"maxDelta":1,"meanLit":0.492,"psnr":57.89,"p99":1,"pctOver8":0.0,"energyRatio":1.00538,"litPx":248437},"s500":{"maxDelta":2,"meanLit":0.472,"psnr":58.23,"p99":1,"pctOver8":0.0,"energyRatio":1.00572,"litPx":248965},"s350":{"maxDelta":2,"meanLit":0.45,"psnr":58.4,"p99":1,"pctOver8":0.0,"energyRatio":1.00421,"litPx":249374},"s250":{"maxDelta":1,"meanLit":0.464,"psnr":58.07,"p99":1,"pctOver8":0.0,"energyRatio":1.00406,"litPx":249485},"s125":{"maxDelta":2,"meanLit":0.484,"psnr":57.25,"p99":1,"pctOver8":0.0,"energyRatio":1.0036,"litPx":250348}},"ms":{"s1000":1.9735,"s750":1.5281,"s500":0.8635,"s350":0.6377,"s250":0.5161,"s125":0.42},"before":{"metrics":{"s750":{"p99":28,"maxDelta":71},"s500":{"p99":59,"maxDelta":78},"s350":{"p99":82,"maxDelta":89},"s250":{"p99":86,"maxDelta":95},"s125":{"p99":111,"maxDelta":126}},"ms":{"s1000":1.9579,"s750":1.3838,"s500":0.6669,"s350":0.429,"s250":0.3411,"s125":0.2212}}},{"id":"crisp_tube","title":"Crisp flat-top tube","blurb":"lineWidth 8, filamentFalloff 4 (near-rectangular plateau), glowRadius 4, bloom 0.2. One stop, (1.0, 0.25, 0.55).","crop":[272,132,128,96],"profile":{"x":640,"y0":144,"edgeY":180,"rows":{"s1000":[29,29,30,30,31,32,32,32,33,34,35,35,36,37,37,38,39,40,40,41,43,43,45,46,48,49,51,53,56,59,62,103,116,117,117,117,117,117,117,116,103,62,59,56,53,51,49,48,46,45,43,43,41,40,40,39,38,37,37,36,35,35,34,33,32,32,32,31,30,30,29,29,29],"s750":[29,30,30,30,32,32,32,33,34,34,35,35,36,37,37,38,39,40,40,41,42,43,45,45,48,49,51,54,56,59,63,103,116,117,117,117,117,117,117,116,103,63,59,56,54,51,49,48,46,45,43,43,41,40,40,39,38,37,37,36,35,35,34,34,33,32,32,32,30,30,30,29,29],"s500":[29,29,30,30,31,32,32,32,33,34,34,35,36,37,37,38,39,40,40,41,42,43,45,46,48,49,51,53,56,59,63,103,116,117,117,117,117,117,117,116,103,63,59,56,53,51,49,48,46,45,43,43,41,40,40,39,38,37,37,36,35,34,34,33,32,32,32,31,30,30,29,29,29],"s350":[29,29,30,30,31,32,32,32,33,34,34,35,36,37,38,38,39,40,40,41,43,43,45,46,48,49,51,54,56,59,63,103,116,117,117,117,117,117,117,116,103,62,59,56,54,51,49,48,46,45,43,43,41,40,40,39,38,38,37,36,35,34,34,33,32,32,32,31,30,30,29,29,29],"s250":[29,30,30,30,31,32,32,33,33,34,35,35,35,37,37,38,39,40,41,41,43,43,45,46,48,49,51,54,56,59,63,103,116,117,117,117,117,117,117,116,103,63,59,56,53,51,49,48,46,45,43,43,41,40,40,39,38,37,37,35,35,35,34,33,33,32,32,31,30,30,30,29,29],"s125":[29,29,30,30,31,31,32,32,33,34,34,35,36,37,37,38,39,40,40,41,43,43,45,46,48,49,51,53,56,59,63,103,116,117,117,117,117,117,117,116,103,63,59,56,53,51,49,48,46,45,43,43,41,40,40,39,38,37,37,36,35,35,34,33,32,32,31,31,30,30,29,29,29]}},"metrics":{"s750":{"maxDelta":1,"meanLit":0.477,"psnr":56.27,"p99":1,"pctOver8":0.0,"energyRatio":1.00546,"litPx":362685},"s500":{"maxDelta":1,"meanLit":0.461,"psnr":56.59,"p99":1,"pctOver8":0.0,"energyRatio":1.00516,"litPx":361682},"s350":{"maxDelta":1,"meanLit":0.45,"psnr":56.7,"p99":1,"pctOver8":0.0,"energyRatio":1.00484,"litPx":361875},"s250":{"maxDelta":1,"meanLit":0.459,"psnr":56.79,"p99":1,"pctOver8":0.0,"energyRatio":1.00465,"litPx":360584},"s125":{"maxDelta":2,"meanLit":0.431,"psnr":56.81,"p99":1,"pctOver8":0.0,"energyRatio":1.00562,"litPx":361176}},"ms":{"s1000":2.3343,"s750":1.7729,"s500":0.9899,"s350":0.5998,"s250":0.5382,"s125":0.4756},"before":{"metrics":{"s750":{"p99":18,"maxDelta":29},"s500":{"p99":25,"maxDelta":40},"s350":{"p99":36,"maxDelta":54},"s250":{"p99":43,"maxDelta":59},"s125":{"p99":71,"maxDelta":117}},"ms":{"s1000":2.3127,"s750":1.5473,"s500":0.7995,"s350":0.4686,"s250":0.3696,"s125":0.2322}}},{"id":"soft_wash","title":"Wide soft wash","blurb":"lineWidth 10, glowRadius 30, bloom 1.2, intensity 1.5. Stops (0.1, 0.5, 1.0) at 0 and (0.6, 0.1, 1.0) at 0.5. Almost all low-frequency light.","crop":[240,100,192,144],"profile":{"x":640,"y0":144,"edgeY":180,"rows":{"s1000":[93,93,93,93,94,94,94,94,94,94,94,95,95,95,95,95,95,96,96,96,96,96,97,97,98,99,101,103,105,106,108,108,109,109,110,110,110,110,109,109,108,108,106,105,103,101,99,98,97,97,96,96,96,96,96,96,96,95,95,95,95,95,95,94,94,94,94,94,94,94,94,94,94],"s750":[93,93,93,93,94,94,94,94,94,94,95,95,95,95,95,95,96,95,96,96,97,97,97,98,99,100,101,103,104,107,107,109,109,109,110,110,110,110,109,109,109,107,107,104,103,101,100,99,98,97,96,96,96,96,96,96,95,95,95,95,95,95,95,95,95,95,94,94,94,94,94,94,94],"s500":[93,93,93,93,94,94,94,94,94,94,95,95,95,95,95,95,95,95,96,96,96,97,97,98,99,100,101,103,104,107,107,109,109,109,110,110,110,110,109,109,109,107,107,104,103,101,100,99,97,97,96,96,96,96,96,96,96,96,95,95,95,95,95,95,95,95,95,94,94,94,94,94,94],"s350":[93,93,93,93,93,94,94,94,94,94,94,95,95,95,95,95,95,96,96,96,96,96,97,98,98,100,101,103,104,107,107,109,109,109,110,110,110,110,109,109,109,107,107,104,103,101,100,98,97,97,96,96,96,96,96,96,96,96,95,95,95,95,95,95,94,94,94,94,94,94,94,94,94],"s250":[93,93,93,93,93,94,94,94,94,94,94,94,95,95,95,95,95,96,96,96,96,96,97,97,98,100,101,103,104,107,107,109,109,109,110,110,110,110,109,109,109,107,107,105,103,101,99,98,97,97,96,96,96,96,96,96,96,96,95,95,95,95,95,94,94,94,94,94,94,94,94,94,94],"s125":[93,93,93,93,93,94,94,94,94,94,95,95,95,95,95,95,95,96,96,96,96,96,97,97,98,99,101,103,105,106,107,108,109,109,109,109,109,109,109,109,108,107,106,105,103,101,99,98,97,97,96,96,96,96,96,96,96,96,95,95,95,95,95,94,94,94,94,94,94,94,94,94,94]}},"metrics":{"s750":{"maxDelta":1,"meanLit":0.442,"psnr":55.6,"p99":1,"pctOver8":0.0,"energyRatio":0.99953,"litPx":921600},"s500":{"maxDelta":1,"meanLit":0.416,"psnr":55.98,"p99":1,"pctOver8":0.0,"energyRatio":0.99956,"litPx":921600},"s350":{"maxDelta":1,"meanLit":0.413,"psnr":56.03,"p99":1,"pctOver8":0.0,"energyRatio":0.99953,"litPx":921600},"s250":{"maxDelta":1,"meanLit":0.412,"psnr":56.05,"p99":1,"pctOver8":0.0,"energyRatio":0.99954,"litPx":921600},"s125":{"maxDelta":2,"meanLit":0.415,"psnr":55.96,"p99":1,"pctOver8":0.0,"energyRatio":0.99968,"litPx":921600}},"ms":{"s1000":2.7054,"s750":2.0212,"s500":1.1192,"s350":0.7657,"s250":0.6051,"s125":0.4754},"before":{"metrics":{"s750":{"p99":1,"maxDelta":1},"s500":{"p99":1,"maxDelta":1},"s350":{"p99":1,"maxDelta":2},"s250":{"p99":1,"maxDelta":2},"s125":{"p99":4,"maxDelta":6}},"ms":{"s1000":2.6825,"s750":1.7557,"s500":0.895,"s350":0.5626,"s250":0.3877,"s125":0.2721}}},{"id":"sharp_corners","title":"Sharp corners","blurb":"cornerRadius 0, otherwise defaults. The mitre is the highest-curvature feature the SDF can make.","crop":[272,132,128,96],"profile":{"x":640,"y0":144,"edgeY":180,"rows":{"s1000":[57,57,58,59,60,61,62,63,64,64,66,67,67,69,70,71,73,74,75,76,78,79,81,83,85,87,90,93,96,101,109,126,149,166,173,176,176,173,166,149,126,109,101,96,93,90,87,85,83,81,79,78,76,75,73,72,71,70,68,67,66,65,65,63,63,62,61,60,59,58,58,57,56],"s750":[57,57,58,59,60,61,62,63,64,65,66,67,67,69,70,71,73,73,75,76,78,79,81,83,85,87,90,93,97,101,109,126,149,166,173,176,176,173,166,150,126,109,101,96,93,90,87,85,83,81,79,78,76,75,73,73,71,70,68,67,67,66,65,63,63,62,61,60,60,58,57,56,56],"s500":[57,58,58,59,60,61,62,63,64,64,66,67,67,69,70,71,72,74,75,76,78,79,81,83,85,87,90,93,97,101,109,126,149,166,173,176,176,173,166,149,126,109,101,96,93,90,88,85,83,81,79,78,76,75,73,72,71,70,68,67,67,66,65,64,63,62,61,60,59,58,58,57,56],"s350":[57,57,59,59,60,61,61,62,64,64,66,67,67,69,70,71,72,73,75,76,78,80,81,83,85,87,90,93,97,101,109,126,149,166,173,175,175,173,166,149,126,109,101,96,93,90,88,85,83,81,80,78,76,75,73,73,71,70,68,67,66,65,65,64,63,62,61,60,59,58,57,57,56],"s250":[57,58,58,59,60,61,62,63,63,64,65,67,67,69,70,71,73,73,75,76,78,80,81,83,85,87,90,93,96,101,109,126,149,166,173,175,175,173,166,149,126,108,100,96,93,90,87,85,83,81,80,78,76,75,73,72,71,70,68,67,67,65,64,63,63,62,61,60,59,59,58,57,56],"s125":[57,57,59,59,60,61,62,63,64,64,65,67,67,69,70,72,73,74,75,77,78,80,81,83,85,88,90,93,97,101,109,126,149,166,173,175,176,173,166,149,126,109,101,96,93,90,87,85,83,81,80,78,76,75,73,72,71,70,69,67,67,66,65,64,63,62,61,60,60,59,58,57,56]}},"metrics":{"s750":{"maxDelta":2,"meanLit":0.5,"psnr":55.42,"p99":1,"pctOver8":0.0,"energyRatio":1.00268,"litPx":485897},"s500":{"maxDelta":2,"meanLit":0.47,"psnr":55.8,"p99":1,"pctOver8":0.0,"energyRatio":1.00247,"litPx":484869},"s350":{"maxDelta":2,"meanLit":0.464,"psnr":55.92,"p99":1,"pctOver8":0.0,"energyRatio":1.00269,"litPx":484904},"s250":{"maxDelta":2,"meanLit":0.452,"psnr":56.08,"p99":1,"pctOver8":0.0,"energyRatio":1.00235,"litPx":484200},"s125":{"maxDelta":2,"meanLit":0.443,"psnr":56.1,"p99":1,"pctOver8":0.0,"energyRatio":1.00238,"litPx":483746}},"ms":{"s1000":2.2042,"s750":1.6236,"s500":0.8771,"s350":0.5702,"s250":0.4485,"s125":0.3881},"before":{"metrics":{"s750":{"p99":3,"maxDelta":6},"s500":{"p99":4,"maxDelta":13},"s350":{"p99":12,"maxDelta":19},"s250":{"p99":8,"maxDelta":29},"s125":{"p99":60,"maxDelta":84}},"ms":{"s1000":2.2046,"s750":1.5003,"s500":0.771,"s350":0.4811,"s250":0.3448,"s125":0.2251}}},{"id":"small_rect","title":"Small rect","blurb":"160 x 96 rect at (560, 312), cornerRadius 20, lineWidth 3. The whole shape is a few dozen buffer texels at 0.25.","crop":[536,288,208,144],"profile":{"x":640,"y0":276,"edgeY":312,"rows":{"s1000":[58,59,60,61,62,64,65,66,67,68,70,71,72,73,75,76,78,79,81,83,84,87,89,91,94,97,100,103,107,112,117,124,140,170,189,194,194,189,170,140,124,118,113,109,105,102,99,97,94,92,90,89,87,86,85,84,82,81,80,79,79,77,77,75,75,74,73,73,73,72,72,71,71],"s750":[58,59,60,62,62,64,65,66,67,69,70,71,72,73,75,76,78,79,81,82,84,87,89,91,94,97,100,103,107,112,117,124,140,170,189,194,194,189,171,141,125,118,113,109,105,102,99,97,94,92,91,89,87,86,85,84,82,81,80,79,78,77,77,75,74,74,73,73,73,72,72,71,70],"s500":[58,59,60,61,63,64,65,66,67,68,69,71,72,73,75,76,77,79,81,83,85,87,89,91,94,97,100,103,108,112,117,124,140,170,189,194,194,189,171,141,125,118,113,109,105,102,99,97,95,93,90,89,87,86,85,83,82,81,80,79,78,77,76,75,75,74,73,73,72,72,72,71,70],"s350":[58,59,60,61,62,63,65,66,67,68,69,71,72,73,75,76,77,79,81,82,84,87,89,92,94,97,100,104,108,112,117,124,140,170,189,194,194,189,171,141,125,118,113,108,105,102,99,97,95,92,91,89,88,86,85,83,82,81,80,79,78,77,76,75,75,74,73,73,72,72,72,71,71],"s250":[58,59,60,61,62,64,65,66,67,68,70,71,72,73,75,76,77,79,81,82,85,87,89,92,94,97,100,103,107,111,117,124,140,170,189,194,194,189,171,140,124,118,113,108,104,102,99,97,95,92,91,89,88,86,85,84,82,81,80,79,79,77,77,76,75,74,74,73,73,72,72,71,71],"s125":[58,59,61,62,63,64,65,66,67,69,70,71,73,73,75,76,78,79,81,83,85,87,89,91,94,97,100,103,108,112,117,124,140,170,189,195,195,189,170,140,125,118,113,109,105,102,99,97,95,92,91,89,88,86,85,84,83,82,80,80,79,78,77,76,75,74,74,73,73,72,72,71,70]}},"metrics":{"s750":{"maxDelta":2,"meanLit":0.444,"psnr":60.55,"p99":1,"pctOver8":0.0,"energyRatio":1.00635,"litPx":83028},"s500":{"maxDelta":2,"meanLit":0.423,"psnr":60.83,"p99":1,"pctOver8":0.0,"energyRatio":1.00598,"litPx":82751},"s350":{"maxDelta":2,"meanLit":0.436,"psnr":61.0,"p99":1,"pctOver8":0.0,"energyRatio":1.0052,"litPx":82850},"s250":{"maxDelta":4,"meanLit":0.439,"psnr":60.99,"p99":1,"pctOver8":0.0,"energyRatio":1.00479,"litPx":82796},"s125":{"maxDelta":11,"meanLit":0.554,"psnr":59.41,"p99":4,"pctOver8":0.059,"energyRatio":1.00436,"litPx":82743}},"ms":{"s1000":1.6648,"s750":1.2748,"s500":0.7475,"s350":0.5298,"s250":0.4252,"s125":0.3459},"before":{"metrics":{"s750":{"p99":4,"maxDelta":7},"s500":{"p99":8,"maxDelta":11},"s350":{"p99":12,"maxDelta":20},"s250":{"p99":30,"maxDelta":47},"s125":{"p99":79,"maxDelta":97}},"ms":{"s1000":1.6527,"s750":1.1588,"s500":0.6444,"s350":0.3954,"s250":0.3178,"s125":0.2308}}},{"id":"glow_inside","title":"One-sided: inside","blurb":"glowSide INSIDE, softness 0, glowRadius 12, bloom 0.6. Stops (1.0, 0.55, 0.1) at 0 and (1.0, 0.1, 0.35) at 0.5.","crop":[272,132,128,96],"profile":{"x":640,"y0":144,"edgeY":180,"rows":{"s1000":[5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,134,133,128,119,109,104,101,101,100,99,97,96,96,95,94,93,92,91,91,90,90,89,89,88,88,87,86,86,85,85,85,84,84,84,83,83,83],"s750":[5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,134,133,128,119,109,104,102,101,100,99,98,97,96,95,94,93,93,91,90,90,90,89,88,88,88,87,86,86,85,85,85,84,84,83,83,83,83],"s500":[5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,134,133,128,119,109,104,102,101,100,99,97,97,96,95,94,93,93,91,91,90,90,89,89,88,87,87,86,86,85,85,84,84,84,84,83,83,83],"s350":[5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,134,133,128,119,109,104,102,101,100,99,97,97,96,95,94,93,93,91,91,90,89,89,88,88,88,87,86,86,85,85,85,84,84,84,83,83,83],"s250":[5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,134,133,128,119,109,104,101,101,100,99,97,96,96,95,94,93,93,91,91,90,90,89,89,88,87,86,86,86,85,85,85,84,84,84,83,83,83],"s125":[5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,134,132,128,119,109,104,101,100,100,99,97,96,96,95,94,93,93,91,91,90,90,89,89,88,88,87,86,86,85,85,85,84,84,84,83,83,83]}},"metrics":{"s750":{"maxDelta":1,"meanLit":0.515,"psnr":60.88,"p99":1,"pctOver8":0.0,"energyRatio":1.00001,"litPx":229116},"s500":{"maxDelta":1,"meanLit":0.478,"psnr":61.3,"p99":1,"pctOver8":0.0,"energyRatio":0.99999,"litPx":229116},"s350":{"maxDelta":1,"meanLit":0.452,"psnr":61.57,"p99":1,"pctOver8":0.0,"energyRatio":1.00011,"litPx":229116},"s250":{"maxDelta":1,"meanLit":0.435,"psnr":61.77,"p99":1,"pctOver8":0.0,"energyRatio":1.00026,"litPx":229116},"s125":{"maxDelta":1,"meanLit":0.415,"psnr":62.01,"p99":1,"pctOver8":0.0,"energyRatio":1.00024,"litPx":229116}},"ms":{"s1000":0.7027,"s750":0.8103,"s500":0.5481,"s350":0.4575,"s250":0.4616,"s125":0.4345},"before":{"metrics":{"s750":{"p99":1,"maxDelta":3},"s500":{"p99":3,"maxDelta":4},"s350":{"p99":6,"maxDelta":8},"s250":{"p99":6,"maxDelta":11},"s125":{"p99":29,"maxDelta":39}},"ms":{"s1000":0.6994,"s750":0.6415,"s500":0.4091,"s350":0.2995,"s250":0.2344,"s125":0.2173}}},{"id":"card_outside","title":"Card: outside glow + fill","blurb":"glowSide OUTSIDE over an OpaqueMode INSIDE fill of (0.12, 0.13, 0.18). glowRadius 10, bloom 0.5; stops (0.3, 1.0, 0.6) at 0 and (0.2, 0.6, 1.0) at 0.5.","crop":[272,132,128,96],"profile":{"x":640,"y0":144,"edgeY":180,"rows":{"s1000":[107,107,108,109,109,110,111,112,112,114,114,115,116,117,118,120,121,122,123,125,126,127,129,131,133,135,138,139,142,144,149,160,180,197,206,209,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34],"s750":[106,107,108,109,109,110,111,112,112,114,114,115,116,117,118,120,121,122,123,125,126,127,129,131,133,135,138,139,142,145,149,160,180,197,206,209,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34],"s500":[106,107,108,109,109,110,111,112,112,113,114,115,116,117,118,119,121,122,123,124,126,127,129,131,133,135,138,140,142,145,149,160,180,197,206,209,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34],"s350":[107,107,108,109,109,110,111,112,112,113,114,115,116,117,118,120,121,121,123,125,126,128,130,132,133,136,138,140,142,145,149,160,180,197,206,209,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34],"s250":[106,107,108,109,109,110,111,112,112,113,114,115,116,117,118,120,121,122,123,125,126,128,129,132,133,136,138,140,142,145,149,160,180,197,206,209,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34],"s125":[107,108,108,109,110,110,111,112,113,114,115,115,116,117,118,119,121,122,123,125,126,128,130,132,133,135,138,139,142,144,149,160,180,197,206,209,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34,34]}},"metrics":{"s750":{"maxDelta":1,"meanLit":0.352,"psnr":56.41,"p99":1,"pctOver8":0.0,"energyRatio":0.99967,"litPx":907004},"s500":{"maxDelta":1,"meanLit":0.337,"psnr":56.68,"p99":1,"pctOver8":0.0,"energyRatio":0.99969,"litPx":906931},"s350":{"maxDelta":1,"meanLit":0.337,"psnr":56.7,"p99":1,"pctOver8":0.0,"energyRatio":0.99978,"litPx":906897},"s250":{"maxDelta":1,"meanLit":0.326,"psnr":56.91,"p99":1,"pctOver8":0.0,"energyRatio":0.99995,"litPx":906798},"s125":{"maxDelta":2,"meanLit":0.326,"psnr":56.92,"p99":1,"pctOver8":0.0,"energyRatio":1.00028,"litPx":906821}},"ms":{"s1000":2.1676,"s750":1.662,"s500":0.9503,"s350":0.669,"s250":0.5382,"s125":0.4532},"before":{"metrics":{"s750":{"p99":1,"maxDelta":3},"s500":{"p99":2,"maxDelta":5},"s350":{"p99":3,"maxDelta":9},"s250":{"p99":2,"maxDelta":15},"s125":{"p99":26,"maxDelta":52}},"ms":{"s1000":2.1496,"s750":1.4814,"s500":0.8016,"s350":0.4943,"s250":0.3935,"s125":0.2862}}},{"id":"bounded_band","title":"Hard-bounded band","blurb":"insideCutoff {6, soft 2}, outsideCutoff {14, soft 3}, glowRadius 20, bloom 0.8. Two feathered cut edges.","crop":[272,132,128,96],"profile":{"x":640,"y0":144,"edgeY":180,"rows":{"s1000":[5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,15,73,132,143,144,145,145,146,147,147,148,149,155,166,178,184,186,186,184,178,167,155,150,126,27,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5],"s750":[5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,15,74,133,144,144,145,145,146,146,148,148,149,154,166,178,184,186,186,184,178,166,155,150,126,27,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5],"s500":[5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,15,73,132,144,144,145,145,146,147,148,148,149,155,166,177,184,186,186,184,178,166,155,150,126,27,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5],"s350":[5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,15,74,133,144,144,145,145,146,147,147,148,149,154,166,178,184,186,186,184,178,166,155,149,126,28,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5],"s250":[5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,15,73,132,143,144,145,145,146,147,147,148,149,155,166,178,184,186,186,184,178,167,155,150,126,27,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5],"s125":[5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,15,73,133,144,144,145,146,146,147,147,148,149,155,166,178,184,186,186,184,178,166,155,149,126,27,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5,5]}},"metrics":{"s750":{"maxDelta":2,"meanLit":0.462,"psnr":68.24,"p99":1,"pctOver8":0.0,"energyRatio":1.00032,"litPx":47012},"s500":{"maxDelta":2,"meanLit":0.47,"psnr":68.15,"p99":1,"pctOver8":0.0,"energyRatio":1.00027,"litPx":47012},"s350":{"maxDelta":2,"meanLit":0.461,"psnr":68.25,"p99":1,"pctOver8":0.0,"energyRatio":1.00055,"litPx":47012},"s250":{"maxDelta":2,"meanLit":0.475,"psnr":68.07,"p99":1,"pctOver8":0.0,"energyRatio":1.00053,"litPx":47012},"s125":{"maxDelta":2,"meanLit":0.521,"psnr":67.62,"p99":1,"pctOver8":0.0,"energyRatio":1.00124,"litPx":47012}},"ms":{"s1000":0.19,"s750":0.4518,"s500":0.4627,"s350":0.4705,"s250":0.4132,"s125":0.4137},"before":{"metrics":{"s750":{"p99":23,"maxDelta":31},"s500":{"p99":41,"maxDelta":43},"s350":{"p99":51,"maxDelta":71},"s250":{"p99":69,"maxDelta":72},"s125":{"p99":95,"maxDelta":114}},"ms":{"s1000":0.1906,"s750":0.3473,"s500":0.2914,"s350":0.2355,"s250":0.2435,"s125":0.2006}}},{"id":"arcs","title":"Partial arcs","blurb":"Three arcs, two stops each. 0.02 + 0.20: (0, 0.9, 1) to (0.2, 0.3, 1). 0.36 + 0.22: (1, 0.2, 0.8) to (1, 0.6, 0.1). 0.68 + 0.24 at intensity 0.8: (0.3, 1, 0.3) to (1, 1, 0.2). Six arc ends to resolve.","crop":[296,140,192,144],"profile":{"x":640,"y0":144,"edgeY":180,"rows":{"s1000":[61,62,63,64,65,65,66,68,69,70,71,72,73,74,76,77,79,80,81,83,85,87,90,91,94,97,100,105,109,115,124,147,180,203,214,219,219,215,203,180,147,124,115,109,105,100,97,94,91,90,87,85,83,81,80,79,77,76,74,73,72,71,70,69,67,66,66,65,64,63,62,61,60],"s750":[61,62,63,64,65,65,66,68,68,70,71,72,73,75,76,78,79,80,81,83,85,87,89,92,94,97,101,105,109,115,124,147,180,203,214,219,219,214,203,180,147,124,115,109,105,100,97,94,91,90,87,85,83,81,81,79,78,76,75,73,73,71,70,68,67,66,65,65,64,62,61,61,60],"s500":[61,62,63,64,65,65,66,67,69,70,71,72,73,74,76,77,79,80,82,83,85,87,90,92,94,97,101,105,109,115,124,147,180,203,214,218,219,214,203,180,147,124,115,109,105,100,97,94,91,90,87,85,83,81,80,79,77,76,74,73,72,71,70,69,67,66,66,65,63,62,61,60,59],"s350":[61,62,63,64,65,66,66,68,69,70,71,72,73,75,76,78,79,80,82,84,86,88,90,91,95,97,100,105,109,115,124,147,180,203,214,218,219,214,203,180,147,124,115,109,105,100,97,94,91,90,87,85,83,81,80,79,77,75,74,73,72,71,69,68,67,66,66,65,64,63,62,61,60],"s250":[61,62,63,64,65,66,66,67,69,70,71,72,73,75,76,78,79,80,81,83,85,87,90,92,95,97,100,105,109,115,124,147,180,203,214,218,219,214,203,180,147,124,115,109,105,100,97,94,91,90,87,85,83,81,80,79,77,76,74,73,72,71,70,69,67,66,66,65,64,62,61,60,59],"s125":[61,62,63,64,65,66,67,68,69,70,72,72,73,75,76,77,79,80,81,83,85,87,90,91,94,97,100,105,109,115,124,147,180,203,214,218,219,214,203,180,147,124,115,109,105,100,97,94,91,90,87,85,83,81,80,79,77,76,74,73,72,71,70,69,68,67,66,65,64,63,62,61,60]}},"metrics":{"s750":{"maxDelta":1,"meanLit":0.446,"psnr":55.88,"p99":1,"pctOver8":0.0,"energyRatio":1.00437,"litPx":364167},"s500":{"maxDelta":1,"meanLit":0.414,"psnr":56.3,"p99":1,"pctOver8":0.0,"energyRatio":1.00406,"litPx":363393},"s350":{"maxDelta":1,"meanLit":0.4,"psnr":56.52,"p99":1,"pctOver8":0.0,"energyRatio":1.00391,"litPx":363499},"s250":{"maxDelta":2,"meanLit":0.388,"psnr":56.79,"p99":1,"pctOver8":0.0,"energyRatio":1.00348,"litPx":363051},"s125":{"maxDelta":2,"meanLit":0.347,"psnr":57.15,"p99":1,"pctOver8":0.0,"energyRatio":1.00219,"litPx":363149}},"ms":{"s1000":2.7865,"s750":2.0396,"s500":1.1084,"s350":0.7463,"s250":0.5775,"s125":0.4941},"before":{"metrics":{"s750":{"p99":3,"maxDelta":5},"s500":{"p99":4,"maxDelta":7},"s350":{"p99":12,"maxDelta":16},"s250":{"p99":7,"maxDelta":26},"s125":{"p99":57,"maxDelta":76}},"ms":{"s1000":2.765,"s750":2.1717,"s500":0.9129,"s350":0.5358,"s250":0.3985,"s125":0.213}}},{"id":"segments","title":"Segment hotspots","blurb":"Dim base: intensity 0.35, one stop (0.25, 0.4, 1.0). Three boosts at 2.0, each one colour: at 0.12, length 0.05, white; at 0.45, length 0.04, (1, 0.3, 0.7); at 0.80, length 0.06, (0.4, 1, 0.9).","crop":[256,382,128,96],"profile":{"x":678,"y0":144,"edgeY":180,"rows":{"s1000":[80,82,83,85,87,88,89,91,93,95,96,98,100,101,103,105,107,110,111,114,116,119,122,125,129,132,136,141,146,152,162,181,202,214,219,221,221,219,214,202,181,162,152,146,141,136,132,129,125,122,119,116,114,111,110,107,105,103,102,100,98,96,95,93,91,89,88,87,85,83,82,80,79],"s750":[80,82,83,85,87,88,89,91,93,94,96,97,99,101,103,105,107,110,111,114,116,119,122,125,128,132,136,141,146,152,162,181,202,214,219,221,221,219,214,202,181,162,152,146,141,136,132,128,125,122,119,116,114,111,110,107,105,103,101,99,97,96,94,93,91,89,88,87,85,83,82,80,79],"s500":[80,82,83,85,87,88,89,91,93,94,96,98,100,101,103,105,107,109,111,114,116,119,122,125,129,132,137,141,146,152,162,181,202,214,219,221,221,219,214,202,181,162,152,146,141,136,132,128,125,122,119,116,114,111,110,107,105,103,101,100,98,96,95,93,91,89,88,87,85,83,82,80,79],"s350":[80,82,83,85,86,88,89,91,93,95,96,97,99,101,103,105,107,110,111,114,117,119,122,125,129,132,136,141,146,152,162,181,202,214,219,221,221,219,214,202,181,162,152,146,141,136,132,128,125,122,119,116,114,111,110,107,105,103,101,99,97,96,94,92,91,89,88,86,85,83,82,80,79],"s250":[80,82,83,85,87,88,89,91,93,94,96,98,100,101,103,105,107,110,111,114,116,119,122,125,129,132,136,141,146,152,162,181,202,214,219,221,221,219,214,202,181,162,152,146,141,136,132,128,125,122,119,116,114,111,110,107,105,103,101,100,98,96,95,93,91,89,88,87,85,83,82,80,79],"s125":[80,82,84,85,86,88,90,92,93,95,96,98,100,101,103,105,107,110,111,114,116,119,122,125,129,132,136,141,146,152,162,181,202,214,219,221,221,219,214,202,181,162,152,146,141,136,132,128,125,122,119,116,114,111,110,107,105,103,102,100,98,96,95,93,92,90,88,87,85,84,82,80,79]}},"metrics":{"s750":{"maxDelta":1,"meanLit":0.451,"psnr":56.16,"p99":1,"pctOver8":0.0,"energyRatio":1.00357,"litPx":438806},"s500":{"maxDelta":1,"meanLit":0.41,"psnr":56.63,"p99":1,"pctOver8":0.0,"energyRatio":1.0035,"litPx":438815},"s350":{"maxDelta":1,"meanLit":0.399,"psnr":56.86,"p99":1,"pctOver8":0.0,"energyRatio":1.00364,"litPx":439060},"s250":{"maxDelta":1,"meanLit":0.374,"psnr":57.21,"p99":1,"pctOver8":0.0,"energyRatio":1.00329,"litPx":439943},"s125":{"maxDelta":1,"meanLit":0.333,"psnr":57.43,"p99":1,"pctOver8":0.0,"energyRatio":1.00215,"litPx":440323}},"ms":{"s1000":2.7805,"s750":2.0631,"s500":1.1329,"s350":0.7574,"s250":0.5757,"s125":0.4823},"before":{"metrics":{"s750":{"p99":3,"maxDelta":5},"s500":{"p99":6,"maxDelta":8},"s350":{"p99":12,"maxDelta":17},"s250":{"p99":16,"maxDelta":27},"s125":{"p99":62,"maxDelta":93}},"ms":{"s1000":2.7714,"s750":2.1838,"s500":0.9211,"s350":0.5705,"s250":0.3897,"s125":0.269}}},{"id":"overdrive","title":"Overdriven glow","blurb":"intensity 3, bloom 1.5, lineWidth 6, glowRadius 8. Stops (1.0, 0.15, 0.05) at 0 and (1.0, 0.75, 0.1) at 0.5. The tone map is saturated across most of the band.","crop":[272,132,128,96],"profile":{"x":640,"y0":144,"edgeY":180,"rows":{"s1000":[121,121,121,121,121,121,121,121,122,122,122,122,122,122,122,122,122,122,122,123,123,123,124,124,124,124,124,125,125,126,129,130,131,132,133,133,133,133,132,131,130,129,126,125,125,124,124,124,124,124,123,123,123,123,123,122,122,122,122,122,122,122,122,122,122,122,122,122,122,122,122,122,122],"s750":[121,121,121,121,121,121,122,122,122,122,122,121,121,121,122,122,122,122,122,122,122,123,123,123,124,124,124,125,125,126,129,130,132,132,133,133,133,133,132,132,130,129,126,125,125,125,124,124,124,124,124,123,123,123,122,122,122,122,122,122,122,122,122,122,122,122,122,122,122,122,122,122,122],"s500":[121,121,121,121,121,121,121,122,122,122,122,121,121,122,122,122,122,122,122,123,123,123,123,124,124,124,124,125,125,126,129,130,131,132,133,133,133,133,132,131,130,129,126,125,125,124,124,124,124,124,124,123,123,123,122,122,123,122,122,122,122,122,122,122,122,122,122,122,122,122,122,122,122],"s350":[121,121,121,121,121,121,121,121,121,122,122,121,122,122,122,122,122,122,122,122,122,123,123,124,124,124,124,125,125,126,129,130,131,132,133,133,133,133,132,131,130,129,126,125,125,125,124,124,124,124,124,123,123,123,123,123,123,122,122,122,122,122,122,122,122,122,122,122,122,122,122,122,122],"s250":[121,121,121,121,121,121,121,121,121,121,122,122,122,122,122,122,122,122,123,123,123,123,123,124,124,124,124,124,125,126,129,130,131,132,133,133,133,133,132,131,130,129,126,125,124,124,124,124,124,124,124,123,123,123,123,123,123,122,122,122,122,122,122,122,122,122,122,122,122,122,122,122,122],"s125":[121,121,121,121,121,121,121,122,122,122,122,122,122,122,122,122,122,122,122,123,123,123,124,124,124,124,124,124,125,126,129,130,131,132,133,133,133,133,132,131,130,129,126,125,125,124,124,124,124,124,124,123,123,123,123,123,123,122,122,122,122,122,122,122,122,122,122,122,122,122,122,122,121]}},"metrics":{"s750":{"maxDelta":1,"meanLit":0.475,"psnr":55.31,"p99":1,"pctOver8":0.0,"energyRatio":0.99995,"litPx":921600},"s500":{"maxDelta":1,"meanLit":0.449,"psnr":55.61,"p99":1,"pctOver8":0.0,"energyRatio":0.99988,"litPx":921600},"s350":{"maxDelta":1,"meanLit":0.455,"psnr":55.5,"p99":1,"pctOver8":0.0,"energyRatio":0.99983,"litPx":921600},"s250":{"maxDelta":1,"meanLit":0.431,"psnr":55.81,"p99":1,"pctOver8":0.0,"energyRatio":0.9998,"litPx":921600},"s125":{"maxDelta":2,"meanLit":0.435,"psnr":55.7,"p99":1,"pctOver8":0.0,"energyRatio":0.99974,"litPx":921600}},"ms":{"s1000":2.7043,"s750":1.9962,"s500":1.0878,"s350":0.7445,"s250":0.5658,"s125":0.4701},"before":{"metrics":{"s750":{"p99":1,"maxDelta":1},"s500":{"p99":1,"maxDelta":1},"s350":{"p99":1,"maxDelta":2},"s250":{"p99":2,"maxDelta":2},"s125":{"p99":5,"maxDelta":7}},"ms":{"s1000":2.6804,"s750":1.8002,"s500":0.9049,"s350":0.5634,"s250":0.3392,"s125":0.2683}}}],"sweep":{"step":0.125,"steps":64,"series":{"hairline":{"s1000":{"peak":[172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176],"centroidErr":[0.0007,0.0049,0.0006,0.02,0.0009,-0.0191,0.0029,0.0026,0.0007,0.0049,0.0006,0.02,0.0009,-0.0191,0.0029,0.0026,0.0007,0.0049,0.0006,0.02,0.0009,-0.0191,0.0029,0.0026,0.0007,0.0049,0.0006,0.02,0.0009,-0.0191,0.0029,0.0026,0.0007,0.0049,0.0006,0.02,0.0009,-0.0191,0.0029,0.0026,0.0007,0.0049,0.0006,0.02,0.0009,-0.0191,0.0029,0.0026,0.0007,0.0049,0.0006,0.02,0.0009,-0.0191,0.0029,0.0026,0.0007,0.0049,0.0006,0.02,0.0009,-0.0191,0.0029,0.0026],"fwhm":[3.0816,2.9236,2.8275,2.5574,2.4499,2.5574,2.7922,2.9292,3.0816,2.9236,2.8275,2.5574,2.4499,2.5574,2.7922,2.9292,3.0816,2.9236,2.8275,2.5574,2.4499,2.5574,2.7922,2.9292,3.0816,2.9236,2.8275,2.5574,2.4499,2.5574,2.7922,2.9292,3.0816,2.9236,2.8275,2.5574,2.4499,2.5574,2.7922,2.9292,3.0816,2.9236,2.8275,2.5574,2.4499,2.5574,2.7922,2.9292,3.0816,2.9236,2.8275,2.5574,2.4499,2.5574,2.7922,2.9292,3.0816,2.9236,2.8275,2.5574,2.4499,2.5574,2.7922,2.9292],"energy":[14722910,14712668,14685214,14672286,14671413,14672428,14686275,14713616,14722912,14712668,14685214,14672286,14671412,14672427,14686274,14713615,14722910,14712668,14685214,14672286,14671413,14672428,14686275,14713616,14722912,14712668,14685214,14672286,14671412,14672427,14686274,14713615,14722910,14712668,14685214,14672286,14671413,14672428,14686275,14713616,14722912,14712668,14685214,14672286,14671412,14672427,14686274,14713615,14722910,14712668,14685214,14672286,14671413,14672428,14686275,14713616,14722912,14712668,14685214,14672286,14671412,14672427,14686274,14713615]},"s750":{"peak":[172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176],"centroidErr":[0.0147,0.0348,0.0449,0.0259,0.0226,0.0124,0.0109,0.0253,0.0093,0.0203,-0.0016,0.008,0.0175,-0.0242,0.0128,0.0085,-0.0166,0.03,0.0134,0.0191,0.037,-0.0005,-0.0098,0.0017,0.0324,0.0029,0.0352,0.0257,0.0079,0.0015,-0.0081,0.0253,0.0249,0.0348,0.0449,0.0259,0.018,0.0118,0.0109,0.018,0.015,0.0203,-0.0016,0.0073,0.0167,-0.0375,0.0128,0.0157,0.005,0.03,0.0249,0.0139,0.0491,0.0133,-0.0021,0.0078,0.0296,0.0269,0.0377,0.0369,0.02,0.0019,0.0075,0.0229],"fwhm":[3.1904,2.9406,2.911,2.6469,2.5787,2.4436,2.8353,2.9223,3.102,2.9554,2.8396,2.5323,2.3763,2.5429,2.791,2.9554,3.1021,2.9554,2.8229,2.5705,2.5809,2.4877,2.8353,2.9554,3.1027,2.9406,2.8338,2.6299,2.5286,2.4682,2.8353,2.9406,3.1904,2.9406,2.911,2.6469,2.5787,2.4436,2.8353,2.9223,3.102,2.9554,2.8396,2.5323,2.3763,2.5429,2.791,2.9554,3.0559,2.9554,2.8229,2.5705,2.5809,2.4877,2.8353,2.9554,3.1027,2.9406,2.8338,2.6299,2.5286,2.4682,2.8353,2.9406],"energy":[14776227,14765980,14738916,14725820,14724591,14725385,14739035,14767020,14776190,14766132,14738727,14726026,14724916,14726282,14739421,14767194,14775866,14766270,14739102,14726216,14724987,14726432,14739457,14766974,14776396,14766172,14738443,14725560,14724637,14726110,14739453,14766633,14776209,14765982,14738870,14725795,14724866,14725762,14739037,14766629,14776610,14766078,14738790,14726222,14725230,14725957,14739445,14766924,14775831,14766345,14739060,14726233,14725267,14726213,14739755,14766972,14776455,14766190,14738499,14725358,14724987,14725842,14739408,14766657]},"s500":{"peak":[172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176],"centroidErr":[0.0214,0.0057,0.0191,0.0152,-0.0334,-0.0506,0.0024,-0.0152,-0.0028,0.0011,0.0243,0.0077,0.0222,-0.0033,-0.0108,0.0059,0.0221,0.0057,0.01,0.0091,-0.0334,-0.0506,0.0024,-0.0159,-0.0028,0.0011,0.0235,0.0077,0.0222,-0.0033,-0.0108,0.0093,0.0214,0.0057,0.0191,0.0091,-0.0334,-0.0506,0.0024,-0.0152,-0.0028,0.0011,0.0243,0.0077,0.0222,-0.0033,-0.0108,0.0059,0.0221,0.0057,0.01,0.0152,-0.0334,-0.0506,0.0024,-0.0152,-0.0028,0.0011,0.0235,0.0077,0.0222,-0.0033,-0.0108,0.0093],"fwhm":[3.2297,2.9404,2.8282,2.4888,2.6414,2.6299,2.8353,2.9224,3.1564,2.9404,2.7763,2.467,2.5286,2.5379,2.8353,2.9407,3.2297,2.9404,2.8282,2.4888,2.6414,2.6299,2.8353,2.9224,3.1564,2.9404,2.7751,2.467,2.5286,2.5379,2.8353,2.9407,3.2297,2.9404,2.8282,2.4888,2.6414,2.6299,2.8353,2.9224,3.1564,2.9404,2.7763,2.467,2.5286,2.5379,2.8353,2.9407,3.2297,2.9404,2.8282,2.4888,2.6414,2.6299,2.8353,2.9224,3.1564,2.9404,2.7751,2.467,2.5286,2.5379,2.8353,2.9407],"energy":[14779647,14769910,14742686,14730387,14729427,14730669,14744281,14771761,14781059,14770272,14742534,14729695,14728422,14729329,14742445,14770229,14779626,14769901,14742600,14730478,14729721,14730605,14744398,14771943,14780968,14770238,14742493,14729779,14728430,14729341,14742366,14770416,14779609,14769804,14742796,14730415,14729501,14730551,14744298,14772028,14780955,14770581,14742680,14729762,14728360,14729233,14742537,14770139,14779693,14769801,14742678,14730219,14729650,14730737,14744325,14771820,14780977,14770335,14742855,14729720,14728556,14729296,14742469,14770193]},"s350":{"peak":[172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176],"centroidErr":[-0.0115,0.0122,-0.0059,0.0272,-0.0488,-0.0439,-0.0327,-0.0397,-0.0191,-0.0219,0.0238,0.0062,-0.0346,0.0097,-0.0211,-0.0177,0.0245,-0.016,0.0434,-0.0018,0.0225,-0.0012,-0.0298,-0.0139,0.0252,-0.0434,0.0176,0.006,-0.0286,-0.0289,-0.0466,-0.0242,0.0208,-0.0248,0.0128,-0.0093,0.0143,0.004,-0.0111,-0.0279,0.0036,0.014,0.0189,0.0154,0.0161,-0.0114,0.0146,-0.0036,-0.0295,0.0162,-0.0069,0.0035,-0.0223,-0.0079,-0.0112,0.0189,0.0122,0.0223,0.0123,0.0136,-0.0244,0.0011,-0.0086,-0.0289],"fwhm":[3.0949,2.9351,2.8275,2.5444,2.6182,2.6237,2.8353,2.935,3.0,2.9258,2.8253,2.5522,2.6423,2.5444,2.8353,2.9365,2.9976,2.9268,2.8171,2.5444,2.6182,2.4745,2.8353,2.9281,3.1016,2.9225,2.8171,2.5476,2.6182,2.5444,2.8353,2.9365,3.1766,2.9395,2.774,2.5287,2.4464,2.5426,2.8353,2.935,3.0883,2.9395,2.8275,2.5492,2.6423,2.5379,2.7843,2.9407,3.0883,2.9336,2.7811,2.4517,2.6423,2.5444,2.7922,2.9407,3.0075,2.9225,2.833,2.6567,2.6391,2.5444,2.8353,2.9407],"energy":[14764698,14754975,14727920,14715183,14714051,14714861,14728564,14756180,14765722,14755747,14728265,14714915,14714530,14715280,14728929,14755988,14765681,14755340,14727752,14714607,14714091,14715071,14728982,14756859,14766170,14755924,14728748,14715834,14714977,14715363,14728542,14756097,14766347,14755953,14728186,14715000,14714195,14715327,14728647,14756071,14764769,14754237,14726931,14714526,14713574,14714689,14728725,14756711,14766059,14756483,14728686,14716169,14715120,14716186,14730007,14757847,14767427,14757056,14729678,14716437,14716036,14716816,14730265,14757123]},"s250":{"peak":[172,176,177,178,178,178,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,178,178,178,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176],"centroidErr":[0.0069,0.0076,0.0295,-0.0197,-0.007,-0.0046,-0.0224,0.001,0.0035,0.0189,0.0404,-0.0073,-0.0201,0.0059,-0.0394,-0.0329,-0.0123,0.0182,0.0189,-0.0155,-0.0116,-0.0152,0.0026,-0.0232,-0.0199,0.0007,-0.0218,0.0058,-0.0296,-0.0024,-0.0063,0.0181,0.0002,0.0026,0.0374,0.0096,-0.0196,-0.0046,-0.0047,0.0188,0.0035,-0.0064,0.0203,-0.0073,-0.0207,-0.0027,-0.0321,-0.0481,-0.0082,0.0018,0.0308,0.0087,-0.0223,-0.0067,-0.0005,0.0062,-0.0237,0.0063,0.011,0.0128,-0.0078,-0.0024,-0.0004,-0.004],"fwhm":[3.0764,2.9487,2.7844,2.5244,2.4215,2.5244,2.7852,2.9532,3.0,2.9404,2.7713,2.5476,2.4946,2.4682,2.8949,2.9407,3.0816,2.939,2.8275,2.4682,2.6665,2.5476,2.7922,2.9407,3.2305,2.9275,2.8227,2.4682,2.4542,2.4436,2.8353,2.9266,3.1627,2.9224,2.7844,2.5147,2.4215,2.5244,2.7852,2.9281,3.0,2.9404,2.7701,2.5476,2.4545,2.4682,2.8353,2.9407,3.1234,2.939,2.8275,2.4481,2.6423,2.5444,2.7922,2.9281,3.1594,2.9232,2.7821,2.4115,2.439,2.4436,2.7824,2.9407],"energy":[14763141,14753364,14725718,14712341,14711554,14712433,14726062,14754395,14763432,14753700,14726859,14714379,14714343,14714940,14728927,14755305,14764583,14753595,14726610,14713569,14712298,14712621,14725942,14752691,14762920,14752497,14724778,14712142,14711756,14712803,14726499,14753632,14763187,14753397,14725607,14712280,14711638,14712773,14726265,14753931,14763067,14753269,14726680,14714235,14714304,14714899,14728445,14755092,14763939,14753537,14726765,14713511,14711677,14712375,14726053,14752611,14762660,14752434,14724728,14712325,14711500,14712471,14726319,14753588]},"s125":{"peak":[172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176,172,176,177,177,177,177,177,176],"centroidErr":[-0.0216,0.0281,0.0185,0.0085,0.0083,-0.005,0.0209,0.0194,-0.0295,0.0036,0.014,0.0069,0.0296,0.0045,0.0089,0.0131,-0.0411,-0.0055,0.015,0.0039,-0.0045,-0.0191,-0.032,0.0153,-0.0128,0.0166,0.0034,-0.0044,-0.0152,-0.0067,0.0057,-0.02,-0.026,0.0198,0.029,0.02,0.0082,-0.0095,0.0036,-0.0009,-0.0177,0.0002,0.0013,-0.0119,-0.0113,-0.0191,-0.0232,-0.0063,0.0196,-0.0052,0.0103,-0.0115,-0.0201,-0.0374,-0.0227,0.0008,0.0021,-0.0189,0.0175,-0.0115,-0.0314,-0.0356,0.0065,-0.0242],"fwhm":[3.2447,2.9221,2.774,2.5476,2.6665,2.5476,2.8353,2.9762,3.0816,2.9395,2.8275,2.4682,2.6665,2.4682,2.8353,2.9426,3.0798,2.921,2.8275,2.5476,2.4269,2.6335,2.8353,2.9426,3.2507,2.9395,2.7713,2.5476,2.4499,2.5574,2.7922,2.9762,3.1027,2.9395,2.8275,2.5574,2.5261,2.5574,2.8353,2.9762,3.0807,2.9236,2.7844,2.4682,2.5852,2.5574,2.8353,2.9368,3.0741,2.9395,2.7822,2.4682,2.42,2.6335,2.8353,2.9762,3.2507,2.928,2.7844,2.4682,2.6423,2.5574,2.7922,2.9762],"energy":[14758654,14748187,14719676,14706972,14703910,14705530,14718623,14746021,14755133,14746597,14718760,14705032,14706396,14708108,14722061,14750552,14759856,14749958,14723775,14709260,14709595,14710919,14725485,14753867,14763452,14753331,14725413,14712952,14712795,14713767,14725976,14753713,14762219,14751730,14724962,14711974,14710487,14710893,14725150,14752587,14760434,14751438,14722787,14710483,14710031,14710300,14724046,14751277,14759628,14750361,14721510,14707546,14706953,14708182,14721511,14748550,14758910,14749389,14721811,14708755,14708419,14708469,14721930,14750533]}},"default":{"s1000":{"peak":[186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186],"centroidErr":[0.0012,0.0008,0.0142,-0.0097,0.0053,0.0116,-0.0131,0.0125,0.0012,0.0008,0.0142,-0.0097,-0.0009,0.0116,-0.0131,0.0125,0.0012,0.0008,0.0142,-0.0097,0.0053,0.0116,-0.0131,0.0041,0.0012,0.0008,0.0142,-0.0097,0.0053,0.0023,-0.0131,0.0125,0.0012,0.0008,0.0142,-0.0097,0.0053,0.0116,-0.0131,0.0041,0.0012,0.0008,0.0142,-0.0097,0.0053,0.0116,-0.0131,0.0041,0.0012,0.0008,0.0142,-0.0097,0.0053,0.0116,-0.0131,0.0125,0.0012,0.0008,0.0142,-0.0097,0.0053,0.0023,-0.0131,0.0125],"fwhm":[8.6102,8.6475,8.6596,8.7157,8.7628,8.7,8.6768,8.6558,8.6102,8.6475,8.6596,8.7157,8.7745,8.7,8.6768,8.6558,8.6102,8.6475,8.6596,8.7157,8.7628,8.7,8.6768,8.6475,8.6102,8.6475,8.6596,8.7157,8.7628,8.7248,8.6768,8.6558,8.6102,8.6475,8.6596,8.7157,8.7628,8.7,8.6768,8.6475,8.6102,8.6475,8.6596,8.7157,8.7628,8.7,8.6768,8.6475,8.6102,8.6475,8.6596,8.7157,8.7628,8.7,8.6768,8.6558,8.6102,8.6475,8.6596,8.7157,8.7628,8.7248,8.6768,8.6558],"energy":[25258446,25258769,25258521,25258625,25258835,25259027,25259228,25259383,25259347,25259658,25259450,25259549,25259793,25259829,25260006,25260138,25260162,25260279,25260141,25260135,25260311,25260437,25260560,25260769,25260634,25260933,25260610,25260659,25260816,25261001,25261055,25261191,25261098,25261277,25261112,25261155,25261227,25261341,25261479,25261600,25261459,25261619,25261384,25261398,25261529,25261627,25261706,25261863,25261712,25261940,25261653,25261589,25261676,25261762,25261827,25261930,25261804,25261925,25261709,25261614,25261707,25261828,25261792,25261887]},"s750":{"peak":[186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186],"centroidErr":[0.0257,0.0131,0.0274,0.0152,0.0427,-0.0063,-0.0112,0.0074,0.0084,0.0258,0.0093,0.013,0.0074,0.0052,0.0143,-0.016,0.0087,0.0161,0.0009,0.0107,0.0201,0.0086,-0.0111,-0.0046,0.0246,0.011,0.0161,0.0122,0.0281,-0.002,-0.0113,-0.0168,0.0155,0.0312,0.0135,0.0162,0.0196,-0.0006,0.0087,0.0063,-0.013,0.0223,0.011,0.0257,0.0003,0.0009,-0.0001,0.0113,-0.0077,0.0175,0.0235,0.0024,0.0366,0.0036,0.008,0.0142,0.0144,0.0256,0.022,-0.0129,0.0186,-0.0089,-0.0014,0.0164],"fwhm":[8.639,8.6475,8.6631,8.7639,8.7651,8.7556,8.6804,8.639,8.6102,8.6475,8.7109,8.7327,8.7492,8.7327,8.6768,8.6475,8.6102,8.6475,8.6623,8.7234,8.7802,8.6978,8.6631,8.6683,8.6475,8.6475,8.6795,8.7639,8.7745,8.7191,8.6804,8.6683,8.639,8.6475,8.6631,8.7639,8.7802,8.7234,8.6768,8.6475,8.6475,8.6395,8.7109,8.7327,8.7347,8.7327,8.6804,8.6102,8.639,8.6475,8.7109,8.6887,8.7572,8.7234,8.6804,8.6305,8.6475,8.6475,8.6795,8.729,8.7595,8.7234,8.6768,8.6597],"energy":[25319857,25320476,25319967,25320279,25320962,25321344,25321723,25321678,25321788,25321349,25321703,25321250,25321593,25321264,25321698,25321868,25321812,25322051,25322011,25322140,25322022,25321797,25322122,25322452,25322482,25322883,25322834,25323047,25323227,25323431,25322966,25323269,25322870,25323070,25322732,25323377,25323461,25323928,25323920,25324068,25323884,25323602,25323440,25323406,25323232,25323145,25323352,25323901,25323592,25323976,25323490,25323459,25323236,25323447,25323412,25323635,25323420,25323723,25323889,25323989,25323783,25323992,25323891,25323694]},"s500":{"peak":[186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186],"centroidErr":[-0.0042,-0.0047,0.0014,-0.0023,0.0469,-0.0022,0.0147,0.0195,-0.0072,0.0149,0.0235,0.0244,0.0089,0.0172,0.0197,-0.006,-0.0055,0.0022,0.0151,0.0119,0.0292,0.0033,0.0071,0.0108,0.0018,0.0137,-0.0011,0.0229,0.0279,0.0074,0.028,-0.0181,0.0086,0.0,0.0067,0.0216,0.0478,-0.0042,0.0155,0.0014,-0.0126,-0.0047,0.0337,0.0054,0.0203,0.0128,0.0151,-0.013,0.0067,0.0087,0.0047,0.038,0.0113,-0.0023,-0.0052,-0.0003,-0.0043,-0.0059,0.0116,0.0373,0.0219,0.0236,-0.0002,-0.0034],"fwhm":[8.639,8.6475,8.6937,8.7248,8.7399,8.7,8.6768,8.6102,8.6188,8.6475,8.6596,8.7073,8.7379,8.6907,8.6596,8.639,8.639,8.6395,8.6623,8.7226,8.7375,8.7,8.6604,8.6475,8.6188,8.6475,8.6596,8.6979,8.7432,8.6887,8.6768,8.639,8.639,8.6475,8.6596,8.7327,8.7432,8.6907,8.6776,8.6475,8.6405,8.6475,8.6623,8.6979,8.7802,8.6907,8.6804,8.639,8.639,8.6475,8.6596,8.7327,8.7802,8.6907,8.6871,8.6475,8.639,8.6475,8.6631,8.7327,8.7802,8.6887,8.6804,8.639],"energy":[25313843,25314650,25314502,25314874,25314972,25314796,25315534,25315285,25315040,25315792,25315216,25315937,25315609,25315583,25315816,25316193,25316124,25316385,25316576,25316431,25316599,25316384,25316624,25317231,25316641,25316998,25316402,25316990,25316747,25316778,25317204,25317310,25317087,25317322,25317928,25317621,25317635,25317408,25317847,25317645,25317606,25317599,25317595,25317562,25317666,25317378,25317957,25317867,25317713,25318137,25318530,25317994,25318055,25317637,25317962,25318136,25317843,25317852,25318037,25317887,25317627,25317371,25317711,25317991]},"s350":{"peak":[186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186],"centroidErr":[-0.0109,-0.0198,0.0218,0.0141,-0.0238,0.008,-0.035,0.0039,0.0012,0.01,0.0086,0.0171,0.0116,-0.0116,0.0214,0.017,0.0154,0.0239,0.0031,0.0232,-0.0049,-0.0025,0.0047,-0.0052,-0.0249,0.0137,0.0247,0.0129,0.0003,-0.0013,-0.0047,-0.0107,0.0022,0.0079,0.0124,-0.0016,0.0003,0.004,-0.0002,0.0203,0.0172,0.0316,0.0018,0.0007,0.007,0.0006,-0.0187,-0.0163,-0.0237,0.0118,0.0299,0.0083,0.0025,-0.0005,0.0078,-0.0214,0.0232,0.0163,0.0085,0.0049,0.023,0.0098,0.0126,0.0106],"fwhm":[8.6102,8.6102,8.6282,8.6595,8.7492,8.6595,8.6288,8.6102,8.6034,8.6475,8.6303,8.7014,8.7492,8.6595,8.645,8.6102,8.6102,8.6475,8.6937,8.7248,8.7492,8.6907,8.6477,8.6475,8.639,8.6475,8.6282,8.6595,8.7234,8.6554,8.6282,8.639,8.6102,8.6102,8.6623,8.685,8.6519,8.6595,8.6768,8.6024,8.639,8.639,8.6623,8.7157,8.7537,8.6595,8.6309,8.6475,8.6475,8.639,8.6282,8.6576,8.7073,8.685,8.6604,8.639,8.639,8.6475,8.6623,8.685,8.7345,8.6595,8.6768,8.6475],"energy":[25318522,25318793,25317980,25318735,25319294,25318784,25319425,25319721,25319789,25320082,25319609,25319834,25319186,25320103,25320255,25320462,25320973,25320518,25319850,25319351,25320491,25319753,25320755,25321141,25320259,25320344,25320758,25320169,25320641,25320829,25321064,25321519,25320620,25320452,25320565,25320665,25320847,25320520,25320779,25321153,25320599,25319850,25319349,25319636,25319261,25319786,25319723,25319685,25319867,25320215,25319836,25319492,25319640,25319729,25319496,25319754,25319061,25319062,25319328,25318777,25319186,25319863,25319433,25319103]},"s250":{"peak":[186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186],"centroidErr":[-0.0047,0.0024,-0.006,-0.0238,-0.0467,0.0051,0.0035,-0.0072,0.0016,-0.0081,-0.0135,0.0004,-0.0198,-0.0099,-0.0165,0.0048,-0.001,0.0214,0.0415,0.0037,-0.0,0.0005,0.0154,0.0023,0.0018,0.0182,-0.0116,-0.0183,-0.0101,-0.0109,0.0075,-0.0171,-0.0127,-0.0176,-0.0361,-0.0127,-0.0337,-0.0083,0.0197,-0.0003,-0.0161,0.0124,-0.0389,0.0152,-0.0108,0.0001,-0.0258,0.0081,0.0015,-0.0137,0.0431,0.0185,-0.0011,-0.0154,0.046,0.0156,0.0056,0.0053,0.013,-0.0159,0.0133,0.0109,0.0002,-0.0083],"fwhm":[8.6102,8.6191,8.7109,8.7157,8.7492,8.7157,8.691,8.6762,8.639,8.6491,8.7109,8.7234,8.7341,8.7327,8.6596,8.6191,8.6034,8.6191,8.6854,8.7234,8.7089,8.7157,8.7109,8.6191,8.6102,8.6191,8.6674,8.7066,8.7289,8.7234,8.6918,8.6558,8.6034,8.6191,8.6768,8.7234,8.7492,8.7234,8.6883,8.6762,8.609,8.6762,8.7109,8.7234,8.7341,8.7,8.7235,8.6762,8.6102,8.6191,8.6854,8.7191,8.7029,8.7234,8.6883,8.6191,8.6089,8.6102,8.6502,8.7024,8.7121,8.6887,8.6804,8.6191],"energy":[25310549,25311098,25311575,25311092,25310973,25311444,25311616,25312776,25311728,25311866,25311927,25312385,25312025,25311731,25312310,25311961,25312251,25312011,25312896,25311586,25311794,25311956,25312822,25312770,25312720,25313454,25313280,25313356,25314054,25314307,25313839,25313333,25313166,25314037,25314620,25314001,25313619,25314310,25314288,25315096,25314489,25313754,25313741,25313892,25313625,25313638,25314159,25314038,25313747,25313780,25314421,25313593,25313374,25312843,25313843,25313720,25313421,25314233,25314569,25314280,25314489,25315109,25314438,25314022]},"s125":{"peak":[186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186,186],"centroidErr":[-0.0091,-0.0081,0.022,0.0082,0.0341,-0.016,0.0018,0.0348,-0.0073,0.0118,-0.0017,0.0111,0.0177,0.0333,0.0261,-0.0116,-0.0009,0.0031,0.0013,0.0009,-0.0054,0.0004,0.0201,-0.0447,0.0288,0.017,0.0042,-0.0239,-0.0069,0.0043,0.0236,0.0037,-0.021,0.0159,0.0294,0.023,0.0016,-0.0055,-0.0064,-0.0096,0.0028,0.0051,0.0255,0.0151,-0.0118,0.0077,0.002,0.0358,0.0279,0.0103,0.0388,0.018,0.0225,-0.0062,0.0241,0.0089,-0.0101,-0.0385,-0.0366,0.0038,0.0165,-0.0152,-0.0279,-0.0018],"fwhm":[8.6102,8.639,8.6631,8.7234,8.7595,8.7234,8.6768,8.6762,8.6034,8.639,8.6623,8.6921,8.7492,8.6576,8.6883,8.6474,8.6089,8.639,8.7015,8.685,8.7121,8.6921,8.691,8.6558,8.639,8.6478,8.6696,8.6829,8.7181,8.6941,8.6569,8.6112,8.6102,8.6475,8.6623,8.7234,8.7029,8.7157,8.7235,8.6102,8.5966,8.6191,8.7121,8.7234,8.7089,8.7157,8.691,8.6311,8.644,8.639,8.6937,8.7234,8.7745,8.7234,8.6883,8.639,8.6157,8.6191,8.6768,8.6921,8.7492,8.6921,8.6623,8.6474],"energy":[25303803,25303619,25302959,25302442,25300994,25302888,25303405,25303715,25303668,25306319,25306428,25307171,25308460,25308546,25309530,25308753,25309718,25306504,25309701,25307420,25307798,25308110,25308723,25310117,25308477,25311007,25310235,25309730,25309704,25311108,25310442,25308985,25309162,25309390,25311604,25311546,25309086,25308714,25310677,25309614,25308877,25308923,25308208,25308402,25308525,25307215,25308325,25309351,25308011,25307208,25309398,25308563,25308600,25306927,25307357,25307134,25306831,25304657,25304260,25304745,25306120,25307438,25307080,25306318]}}}},"sweepBefore":{"hairline":{"s1000":{"wobble":0.02,"width":2.765},"s750":{"wobble":0.0672,"width":4.235},"s500":{"wobble":0.1521,"width":5.444},"s350":{"wobble":0.2889,"width":6.918},"s250":{"wobble":0.528,"width":8.978},"s125":{"wobble":1.756,"width":15.286}},"default":{"s1000":{"wobble":0.0142,"width":8.679},"s750":{"wobble":0.0222,"width":8.753},"s500":{"wobble":0.0342,"width":8.855},"s350":{"wobble":0.0687,"width":8.975},"s250":{"wobble":0.1602,"width":9.284},"s125":{"wobble":0.9072,"width":14.575}}}};
+
+const NOTES = {
+  default: "p99 1 and max 2 at every scale, 0.125 included, where it used to break (p99 60, max 86). The price is speed: on this GPU 0.25 went from 6.6x to 4.9x faster than 1.0.",
+  hairline: "The case the edge ring exists for. Inside the ring the filament is shaded at full resolution, so the 1 px line keeps its 1.0 width at every scale; it used to render about 3x wider at 0.25 and wander half a pixel as the rect moved (see the motion section). p99 at 0.25: 86 before, 1 now.",
+  crisp_tube: "Bilinear reconstruction used to round the plateau's hard shoulders off from 0.75 down (p99 18 there, 43 at 0.25). The ring shades them at full resolution: p99 1 at every scale.",
+  soft_wash: "Almost all low-frequency light, so it was already within 4 levels at 0.125. The ring takes that to 1, and costs it speed like everything else: 6.9x faster than 1.0 at 0.25 before, 4.5x now.",
+  sharp_corners: "Tracks the defaults. The mitre used to stair-step at 0.125 (p99 60); p99 1 now.",
+  small_rect: "The worst scene, and the only one above max 2 at 0.25 (max 4, p99 1). At 0.125 the whole rect is 20 x 12 buffer texels and reads p99 4, max 11, against 79 and 97 before.",
+  glow_inside: "The one-sided cut was already exact, applied in the blit; the ring fixes the glow beside it (p99 29 to 1 at 0.125). But this is a cheap scene - 0.70 ms at 1.0 - so the scaled path's fixed cost leaves little: 0.75 is now slower than 1.0 (0.9x) and 0.125 only 1.6x faster, against 1.1x to 3.2x before.",
+  card_outside: "The fill and the cut were already full resolution. The ring fixes the filament just outside the card's edge, which was the error at 0.125 (p99 26 to 1).",
+  bounded_band: "Its cutoff edges used to blur by a buffer texel (p99 41 at 0.5, 69 at 0.25). Now the blit and the ring draw them at destination resolution: p99 1 at every scale. But it costs 0.19 ms at 1.0 and about 0.4 ms at every reduced scale on this GPU - roughly 2x SLOWER. It was already slower here before the ring (0.7x at 0.5). Do not lower the scale for a tight band.",
+  arcs: "Arc ends resolve like the line itself: p99 1 at every scale, against 57 at 0.125 before.",
+  segments: "The hotspots' filament edges used to show from 0.25 (p99 16, 62 at 0.125); p99 1 at every scale now.",
+  overdrive: "The saturated tone map already hid nearly all reconstruction error (p99 5 at 0.125). 1 now."
+};
+
+const SCALES = DATA.scales;
+const TAGS = SCALES.map(s => s.tag);
+const REDUCED = SCALES.slice(1);
+const COLHEX = { s1000: "#cde2fb", s750: "#9ec5f4", s500: "#6da7ec", s350: "#3987e5", s250: "#256abf", s125: "#184f95" };
+const fmtScale = v => (v === 1 ? "1.0" : String(v));
+const scaleOf = tag => SCALES.find(s => s.tag === tag).value;
+const byId = id => DATA.scenarios.find(s => s.id === id);
+const img = (id, tag, kind) => `images/neon-resolution-scale/${id}_${tag}${kind ? "_" + kind : ""}.png`;
+
+function grade(m) {
+  if (!m) return "ref";
+  if (m.p99 <= 4) return "match";
+  if (m.p99 <= 12) return "minor";
+  if (m.p99 <= 32) return "visible";
+  return "severe";
+}
+const GRADE_TEXT = { match: "match", minor: "minor", visible: "visible", severe: "severe", ref: "reference" };
+const chip = g => `<span class="chip" data-g="${g}"><i aria-hidden="true"></i>${GRADE_TEXT[g]}</span>`;
+const speed = (sc, tag) => sc.ms.s1000 / sc.ms[tag];
+function lowestOk(sc) {
+  let best = "s1000";
+  for (const s of REDUCED) {
+    const g = grade(sc.metrics[s.tag]);
+    if (g === "match" || g === "minor") best = s.tag;
+  }
+  return best;
+}
+
+const state = { scene: "hairline", scale: "s250", view: "swipe", swipe: 50, sweep: "hairline", step: 0 };
+try {
+  const saved = JSON.parse(localStorage.getItem("neonScaleView") || "{}");
+  if (saved.view) state.view = saved.view;
+} catch (e) {}
+
+document.getElementById("gpuName").textContent = DATA.gpu;
+document.getElementById("gpuName2").textContent = DATA.gpu;
+
+/* ---------- findings ---------- */
+(function findings() {
+  const d = byId("default"), h = byId("hairline"), w = byId("soft_wash"), b = byId("bounded_band");
+  const hs = DATA.sweep.series.hairline;
+  const mean = a => a.reduce((x, y) => x + y, 0) / a.length;
+  const wob = t => Math.max(...hs[t].centroidErr.map(Math.abs));
+  const hb = DATA.sweepBefore.hairline;
+  const reduced = ["s750", "s500", "s350", "s250"];
+  const worstAfter = Math.max(...DATA.scenarios.map(sc => Math.max(...reduced.map(t => sc.metrics[t].p99))));
+  const worstBefore = Math.max(...DATA.scenarios.map(sc => Math.max(...reduced.map(t => sc.before.metrics[t].p99))));
+  const speedB = (sc, tag) => sc.before.ms.s1000 / sc.before.ms[tag];
+  const items = [
+    [`p99 ${worstAfter}<small>every scene, 0.75 to 0.25</small>`, `Every scene reads p99 ${worstAfter} or less against its own 1.0 render down to 0.25, against up to ${worstBefore} before the edge ring. The ring re-shades a thin band round the line at full resolution, which is where every large error used to be. Only <code>small_rect</code> passes max 2 there.`],
+    [`${speed(d, "s250").toFixed(1)}x<small>defaults at 0.25</small>`, `The ring costs speed. On this GPU the defaults were ${speedB(d, "s250").toFixed(1)}x faster than 1.0 at 0.25 and are now ${speed(d, "s250").toFixed(1)}x; 0.5 went from ${speedB(d, "s500").toFixed(1)}x to ${speed(d, "s500").toFixed(1)}x. Below 0.25 there is little left to win: 0.125 is ${speed(d, "s125").toFixed(1)}x.`],
+    [`${mean(hs.s250.fwhm).toFixed(1)} px<small>hairline at 0.25, was ${hb.s250.width.toFixed(1)}</small>`, `The 1 px hairline keeps its 1.0 width at every scale and stays within &plusmn;${wob("s250").toFixed(2)} px of its edge as it moves. Before the ring it rendered ${hb.s250.width.toFixed(1)} px wide at 0.25 and wandered &plusmn;${hb.s250.wobble.toFixed(2)} px.`],
+    [`${(b.ms.s500 / b.ms.s1000).toFixed(1)}x slower<small>tight band at 0.5</small>`, `Not always cheaper. A scene that is cheap at 1.0 has nothing to save, and the scaled path has a fixed cost: the hard-bounded band costs ${b.ms.s1000.toFixed(2)} ms at 1.0 and ${b.ms.s500.toFixed(2)} ms at 0.5. Measure before lowering the scale on a band or a one-sided glow.`]
+  ];
+  document.getElementById("findings").innerHTML = items.map(([k, t]) => `<div class="finding"><div class="k">${k}</div><p>${t}</p></div>`).join("");
+})();
+
+/* ---------- legend + sheet ---------- */
+document.getElementById("gradeLegend").innerHTML =
+  ["match", "minor", "visible", "severe"].map(chip).join("") +
+  `<span class="rule-note">p99 error: 4 or less / 12 or less / 32 or less / above 32 levels</span>`;
+
+function buildSheet() {
+  const g = document.getElementById("sheetGrid");
+  let h = `<div class="hd">Scene</div>`;
+  for (const s of SCALES) h += `<div class="hd"><span class="sw" style="background:${COLHEX[s.tag]}"></span>${fmtScale(s.value)}</div>`;
+  h += `<div class="hd">Lowest at minor or better</div>`;
+  for (const sc of DATA.scenarios) {
+    h += `<div class="rowname"><b>${sc.title}</b><span>${sc.id}</span></div>`;
+    for (const s of SCALES) {
+      const m = sc.metrics[s.tag];
+      const gr = grade(m);
+      const right = m ? `p99 ${m.p99} <span class="was">was ${sc.before.metrics[s.tag].p99}</span>` : "ref";
+      h += `<div class="cell"><button type="button" data-scene="${sc.id}" data-scale="${s.tag}" aria-pressed="false" aria-label="${sc.title} at ${fmtScale(s.value)}: ${GRADE_TEXT[gr]}">
+        <img loading="lazy" src="${img(sc.id, s.tag, "crop")}" alt="" width="${sc.crop[2]}" height="${sc.crop[3]}">
+        <span class="meta">${chip(gr)}<span>${right}</span></span>
+        <span class="meta"><span>${sc.ms[s.tag].toFixed(2)} ms</span><span>${m ? speed(sc, s.tag).toFixed(1) + "x" : ""}</span></span>
+      </button></div>`;
+    }
+    const lo = lowestOk(sc);
+    h += `<div class="lowest"><b>${fmtScale(scaleOf(lo))}</b><span>${lo === "s1000" ? "none below 1.0" : speed(sc, lo).toFixed(1) + "x faster"}</span></div>`;
+  }
+  g.innerHTML = h;
+  g.addEventListener("click", e => {
+    const b = e.target.closest("button[data-scene]");
+    if (!b) return;
+    state.scene = b.dataset.scene;
+    if (b.dataset.scale !== "s1000") state.scale = b.dataset.scale;
+    renderInspector();
+    document.getElementById("inspect").scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+  });
+}
+
+function markSheet() {
+  document.querySelectorAll("#sheetGrid button[data-scene]").forEach(b => {
+    b.setAttribute("aria-pressed", String(b.dataset.scene === state.scene && b.dataset.scale === state.scale));
+  });
+}
+
+/* ---------- controls ---------- */
+const sel = document.getElementById("sceneSel");
+sel.innerHTML = DATA.scenarios.map(s => `<option value="${s.id}">${s.title}</option>`).join("");
+sel.addEventListener("change", () => { state.scene = sel.value; renderInspector(); });
+
+const scaleSeg = document.getElementById("scaleSeg");
+scaleSeg.innerHTML = REDUCED.map(s => `<button type="button" data-v="${s.tag}"><span class="sw" style="background:${COLHEX[s.tag]}"></span>${fmtScale(s.value)}</button>`).join("");
+scaleSeg.addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; state.scale = b.dataset.v; renderInspector(); });
+
+const viewSeg = document.getElementById("viewSeg");
+const VIEWS = [["swipe", "Swipe"], ["diff", "Difference"], ["side", "Side by side"]];
+viewSeg.innerHTML = VIEWS.map(([v, l]) => `<button type="button" data-v="${v}">${l}</button>`).join("");
+viewSeg.addEventListener("click", e => {
+  const b = e.target.closest("button"); if (!b) return;
+  state.view = b.dataset.v;
+  try { localStorage.setItem("neonScaleView", JSON.stringify({ view: state.view })); } catch (err) {}
+  renderStage();
+  markSegs();
+});
+
+function markSegs() {
+  scaleSeg.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.v === state.scale)));
+  viewSeg.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.v === state.view)));
+}
+
+/* ---------- stage ---------- */
+function cropBoxStyle(sc) {
+  const [x, y, w, h] = sc.crop;
+  return `left:${x / DATA.width * 100}%;top:${y / DATA.height * 100}%;width:${w / DATA.width * 100}%;height:${h / DATA.height * 100}%`;
+}
+function renderStage() {
+  const sc = byId(state.scene), t = state.scale, host = document.getElementById("stageHost");
+  const sLbl = fmtScale(scaleOf(t));
+  if (state.view === "swipe") {
+    host.innerHTML = `<div class="stage" id="stage">
+      <img src="${img(sc.id, t)}" alt="${sc.title} at scale ${sLbl}">
+      <img class="top" id="topImg" src="${img(sc.id, "s1000")}" alt="${sc.title} at scale 1.0">
+      <div class="cropbox" style="${cropBoxStyle(sc)}"></div>
+      <div class="handle" id="handle"></div>
+      <span class="tag l">1.0</span><span class="tag r">${sLbl}</span>
+      <input type="range" id="swipeRange" min="0" max="100" step="0.1" value="${state.swipe}" aria-label="Swipe between 1.0 and ${sLbl}">
+    </div>`;
+    const r = document.getElementById("swipeRange");
+    const apply = () => {
+      state.swipe = +r.value;
+      document.getElementById("topImg").style.clipPath = `inset(0 ${100 - state.swipe}% 0 0)`;
+      document.getElementById("handle").style.left = state.swipe + "%";
+    };
+    r.addEventListener("input", apply);
+    apply();
+  } else if (state.view === "diff") {
+    host.innerHTML = `<div class="stage">
+      <img src="${img(sc.id, t, "diff")}" alt="Error heatmap, ${sc.title} at ${sLbl} against 1.0">
+      <div class="cropbox" style="${cropBoxStyle(sc)}"></div>
+      <span class="tag l">|${sLbl} &minus; 1.0|</span>
+    </div>`;
+  } else {
+    host.innerHTML = `<div class="stage side">
+      <div class="pane"><img src="${img(sc.id, "s1000")}" alt="${sc.title} at 1.0" style="position:absolute;inset:0;width:100%;height:100%"><div class="cropbox" style="${cropBoxStyle(sc)}"></div><span class="tag l">1.0</span></div>
+      <div class="pane"><img src="${img(sc.id, t)}" alt="${sc.title} at ${sLbl}" style="position:absolute;inset:0;width:100%;height:100%"><div class="cropbox" style="${cropBoxStyle(sc)}"></div><span class="tag l">${sLbl}</span></div>
+    </div>`;
+  }
+  const m = sc.metrics[t];
+  const legend = state.view === "diff" ? `<span class="heat-legend">0<span class="bar"></span>64+ levels</span>` : "";
+  document.getElementById("stageCap").innerHTML =
+    `${chip(grade(m))}<span>p99 <b>${m.p99}</b></span><span>max <b>${m.maxDelta}</b></span><span>mean <b>${m.meanLit.toFixed(2)}</b></span><span>&gt;8 levels <b>${m.pctOver8.toFixed(1)}%</b> of lit px</span><span><b>${sc.ms[t].toFixed(2)}</b> ms vs ${sc.ms.s1000.toFixed(2)} (<b>${speed(sc, t).toFixed(1)}x</b>)</span><span class="was">before the edge ring: p99 ${sc.before.metrics[t].p99}, max ${sc.before.metrics[t].maxDelta}, ${sc.before.ms[t].toFixed(2)} ms</span>${legend}`;
+}
+
+/* ---------- loupes ---------- */
+function renderLoupes() {
+  const sc = byId(state.scene);
+  document.getElementById("loupes").innerHTML = SCALES.map(s => {
+    const m = sc.metrics[s.tag];
+    const pressed = s.tag === state.scale;
+    const right = m ? `p99 ${m.p99} &middot; ${speed(sc, s.tag).toFixed(1)}x` : "reference";
+    return `<button type="button" class="loupe" data-v="${s.tag}" aria-pressed="${pressed}" ${m ? "" : 'tabindex="-1"'} aria-label="Scale ${fmtScale(s.value)}">
+      <img class="px" src="${img(sc.id, s.tag, "crop")}" alt="Crop at ${fmtScale(s.value)}" width="${sc.crop[2]}" height="${sc.crop[3]}">
+      <span class="cap"><b><span class="sw" style="background:${COLHEX[s.tag]}"></span>${fmtScale(s.value)}</b>${m ? chip(grade(m)) : ""}<span>${right}</span></span>
+    </button>`;
+  }).join("");
+}
+document.getElementById("loupes").addEventListener("click", e => {
+  const b = e.target.closest(".loupe"); if (!b || b.dataset.v === "s1000") return;
+  state.scale = b.dataset.v; renderInspector();
+});
+
+/* ---------- svg helpers ---------- */
+const NS = "http://www.w3.org/2000/svg";
+const el = (tag, attrs, parent) => {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  if (parent) parent.appendChild(e);
+  return e;
+};
+function tipFor(fig) {
+  let t = fig.querySelector(".tip");
+  if (!t) { t = document.createElement("div"); t.className = "tip"; t.hidden = true; fig.appendChild(t); }
+  return t;
+}
+function placeTip(tip, fig, clientX, clientY) {
+  const r = fig.getBoundingClientRect();
+  tip.hidden = false;
+  let x = clientX - r.left + 14, y = clientY - r.top + 14;
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  if (x + tw > r.width - 4) x = clientX - r.left - tw - 14;
+  if (y + th > r.height - 4) y = r.height - th - 4;
+  tip.style.left = Math.max(4, x) + "px";
+  tip.style.top = Math.max(4, y) + "px";
+}
+function keyHtml(tags) {
+  return tags.map(t => `<span><span class="ln" style="background:${COLHEX[t]}"></span>${fmtScale(scaleOf(t))}</span>`).join("");
+}
+
+/* ---------- profile chart ---------- */
+function renderProfile() {
+  const sc = byId(state.scene), svg = document.getElementById("profileSvg"), fig = document.getElementById("profileFig");
+  svg.innerHTML = "";
+  const W = 560, H = 270, ml = 34, mr = 10, mt = 10, mb = 34;
+  const rows = sc.profile.rows, n = rows.s1000.length, off0 = sc.profile.y0 - sc.profile.edgeY;
+  const xs = i => ml + (i / (n - 1)) * (W - ml - mr);
+  const ymax = 255;
+  const ys = v => mt + (1 - v / ymax) * (H - mt - mb);
+  for (const v of [0, 64, 128, 192, 255]) {
+    el("line", { x1: ml, x2: W - mr, y1: ys(v), y2: ys(v), class: v === 0 ? "axis" : "grid" }, svg);
+    el("text", { x: ml - 6, y: ys(v) + 3, "text-anchor": "end" }, svg).textContent = v;
+  }
+  for (let o = -30; o <= 30; o += 10) {
+    const i = o - off0;
+    el("line", { x1: xs(i), x2: xs(i), y1: H - mb, y2: H - mb + 4, class: "axis" }, svg);
+    el("text", { x: xs(i), y: H - mb + 15, "text-anchor": "middle" }, svg).textContent = o > 0 ? "+" + o : o;
+  }
+  el("line", { x1: xs(-off0), x2: xs(-off0), y1: mt, y2: H - mb, stroke: "#d9b36c", "stroke-dasharray": "3 3", "stroke-width": 1, opacity: 0.6 }, svg);
+  el("text", { x: ml, y: H - 4 }, svg).textContent = "outside";
+  el("text", { x: W - mr, y: H - 4, "text-anchor": "end" }, svg).textContent = "inside";
+  el("text", { x: (ml + W - mr) / 2, y: H - 4, "text-anchor": "middle" }, svg).textContent = "px from rect edge";
+  const order = TAGS.filter(t => t !== state.scale && t !== "s1000").concat([state.scale, "s1000"]);
+  for (const t of order) {
+    const d = rows[t].map((v, i) => `${i ? "L" : "M"}${xs(i).toFixed(1)},${ys(v).toFixed(1)}`).join("");
+    const emph = t === state.scale || t === "s1000";
+    el("path", { d, fill: "none", stroke: COLHEX[t], "stroke-width": emph ? 2 : 1.25, opacity: emph ? 1 : 0.45, "stroke-linejoin": "round" }, svg);
+  }
+  const cross = el("line", { y1: mt, y2: H - mb, stroke: "#aab1bc", "stroke-width": 1, opacity: 0 }, svg);
+  const hit = el("rect", { x: ml, y: mt, width: W - ml - mr, height: H - mt - mb, fill: "transparent" }, svg);
+  const tip = tipFor(fig);
+  const move = ev => {
+    const pt = svg.getBoundingClientRect();
+    const sx = (ev.clientX - pt.left) * (W / pt.width);
+    const i = Math.max(0, Math.min(n - 1, Math.round((sx - ml) / (W - ml - mr) * (n - 1))));
+    cross.setAttribute("x1", xs(i)); cross.setAttribute("x2", xs(i)); cross.setAttribute("opacity", 0.6);
+    const o = i + off0;
+    tip.innerHTML = `<div class="h">${o > 0 ? "+" + o : o} px (${o < 0 ? "outside" : o > 0 ? "inside" : "on the edge"})</div>` +
+      TAGS.map(t => `<div class="r"><span class="sw" style="background:${COLHEX[t]}"></span>${fmtScale(scaleOf(t)).padEnd(5, " ")} luma ${rows[t][i]}</div>`).join("");
+    placeTip(tip, fig, ev.clientX, ev.clientY);
+  };
+  hit.addEventListener("pointermove", move);
+  hit.addEventListener("pointerleave", () => { tip.hidden = true; cross.setAttribute("opacity", 0); });
+  document.getElementById("profileKey").innerHTML = keyHtml(TAGS);
+  document.getElementById("profileSub").textContent = `Luma down column x = ${sc.profile.x}, 1.0 and ${fmtScale(scaleOf(state.scale))} drawn bold.`;
+}
+
+/* ---------- cost chart ---------- */
+function renderCost() {
+  const sc = byId(state.scene), svg = document.getElementById("costSvg"), fig = document.getElementById("costFig");
+  svg.innerHTML = "";
+  const W = 420, H = 270, ml = 38, mr = 8, mt = 22, mb = 40;
+  const maxMs = Math.max(...TAGS.map(t => sc.ms[t]));
+  const top = maxMs <= 0.25 ? 0.25 : maxMs <= 0.5 ? 0.5 : Math.ceil(maxMs * 2) / 2;
+  const ys = v => mt + (1 - v / top) * (H - mt - mb);
+  const step = top / 4;
+  for (let k = 0; k <= 4; k++) {
+    const v = step * k;
+    el("line", { x1: ml, x2: W - mr, y1: ys(v), y2: ys(v), class: k === 0 ? "axis" : "grid" }, svg);
+    el("text", { x: ml - 6, y: ys(v) + 3, "text-anchor": "end" }, svg).textContent = v.toFixed(top < 1 ? 2 : 1);
+  }
+  el("text", { x: 4, y: 12 }, svg).textContent = "ms";
+  const band = (W - ml - mr) / TAGS.length, bw = Math.min(34, band * 0.56);
+  const tip = tipFor(fig);
+  TAGS.forEach((t, k) => {
+    const cx = ml + band * (k + 0.5), v = sc.ms[t], y = ys(v), x0 = cx - bw / 2, r = Math.min(4, (ys(0) - y) / 2);
+    const d = `M${x0},${ys(0)}V${y + r}Q${x0},${y} ${x0 + r},${y}H${x0 + bw - r}Q${x0 + bw},${y} ${x0 + bw},${y + r}V${ys(0)}Z`;
+    const bar = el("path", { d, fill: COLHEX[t], opacity: t === state.scale || t === "s1000" ? 1 : 0.55 }, svg);
+    const ideal = sc.ms.s1000 * scaleOf(t) ** 2;
+    if (t !== "s1000") el("line", { x1: x0 - 4, x2: x0 + bw + 4, y1: ys(ideal), y2: ys(ideal), stroke: "#d9b36c", "stroke-width": 2, "stroke-dasharray": "4 3" }, svg);
+    el("text", { x: cx, y: Math.min(y, ys(ideal)) - 6, "text-anchor": "middle", fill: "#e8eaee" }, svg).textContent = v.toFixed(2);
+    el("text", { x: cx, y: H - mb + 15, "text-anchor": "middle" }, svg).textContent = fmtScale(scaleOf(t));
+    el("text", { x: cx, y: H - mb + 29, "text-anchor": "middle" }, svg).textContent = t === "s1000" ? "" : speed(sc, t).toFixed(1) + "x";
+    const hit = el("rect", { x: cx - band / 2, y: mt, width: band, height: H - mt - mb, fill: "transparent" }, svg);
+    hit.addEventListener("pointermove", ev => {
+      tip.innerHTML = `<div class="h">scale ${fmtScale(scaleOf(t))}</div><div class="r"><span class="sw" style="background:${COLHEX[t]}"></span>${v.toFixed(3)} ms measured</div>` +
+        (t === "s1000" ? "" : `<div class="r">${ideal.toFixed(3)} ms if cost were pure area</div><div class="r">${speed(sc, t).toFixed(2)}x faster than 1.0</div>`);
+      placeTip(tip, fig, ev.clientX, ev.clientY);
+    });
+    hit.addEventListener("pointerleave", () => { tip.hidden = true; });
+  });
+}
+
+/* ---------- metrics table ---------- */
+function renderTable() {
+  const sc = byId(state.scene), t = document.getElementById("metricsTable");
+  let h = `<thead><tr><th>Scale</th><th>GPU ms</th><th>Before</th><th>Speed-up</th><th>Grade</th><th>p99 &Delta;</th><th>Before</th><th>Max &Delta;</th><th>Mean &Delta;</th><th>Px &Delta;&gt;8</th><th>Light vs 1.0</th><th>PSNR dB</th></tr></thead><tbody>`;
+  for (const s of SCALES) {
+    const m = sc.metrics[s.tag];
+    h += `<tr data-v="${s.tag}" class="${s.tag === state.scale ? "sel" : ""}"><td><span class="sw" style="background:${COLHEX[s.tag]}"></span>${fmtScale(s.value)}</td><td>${sc.ms[s.tag].toFixed(3)}</td><td class="was">${sc.before.ms[s.tag].toFixed(3)}</td><td>${m ? speed(sc, s.tag).toFixed(2) + "x" : "-"}</td><td>${chip(grade(m))}</td>` +
+      (m ? `<td>${m.p99}</td><td class="was">${sc.before.metrics[s.tag].p99}</td><td>${m.maxDelta}</td><td>${m.meanLit.toFixed(2)}</td><td>${m.pctOver8.toFixed(1)}%</td><td>${(m.energyRatio * 100 - 100 >= 0 ? "+" : "") + (m.energyRatio * 100 - 100).toFixed(1)}%</td><td>${m.psnr.toFixed(1)}</td>`
+         : `<td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td><td>-</td>`) + `</tr>`;
+  }
+  t.innerHTML = h + "</tbody>";
+}
+document.getElementById("metricsTable").addEventListener("click", e => {
+  const r = e.target.closest("tr[data-v]"); if (!r || r.dataset.v === "s1000") return;
+  state.scale = r.dataset.v; renderInspector();
+});
+
+function renderNote() {
+  const sc = byId(state.scene);
+  document.getElementById("sceneNote").innerHTML = `<h3>${sc.title}</h3><p>${NOTES[sc.id] || ""}</p><div class="blurb">${sc.blurb}</div>`;
+}
+
+function renderInspector() {
+  sel.value = state.scene;
+  markSegs();
+  markSheet();
+  renderNote();
+  renderStage();
+  renderLoupes();
+  renderProfile();
+  renderCost();
+  renderTable();
+}
+
+/* ---------- motion ---------- */
+const SF = 32, STEP = DATA.sweep.step;
+function renderSprites() {
+  const hs = DATA.sweep.series.hairline;
+  const mean = a => a.reduce((x, y) => x + y, 0) / a.length;
+  document.getElementById("sprites").innerHTML = SCALES.map(s => {
+    const c = hs[s.tag].centroidErr.slice(0, SF);
+    return `<div class="sprite-cell">
+      <div class="sprite" data-v="${s.tag}" role="img" aria-label="Hairline edge at ${fmtScale(s.value)} while moving" style="background-image:url(images/neon-resolution-scale/sweep_hairline_${s.tag}.png)"></div>
+      <div class="cap"><b><span class="sw" style="background:${COLHEX[s.tag]};width:8px;height:8px;border-radius:2px;display:inline-block"></span>${fmtScale(s.value)}</b><br>width ${mean(hs[s.tag].fwhm).toFixed(1)} px<br>off by &plusmn;${Math.max(...hs[s.tag].centroidErr.map(Math.abs)).toFixed(2)} px<br><span class="was">was ${DATA.sweepBefore.hairline[s.tag].width.toFixed(1)} px, &plusmn;${DATA.sweepBefore.hairline[s.tag].wobble.toFixed(2)}</span></div>
+    </div>`;
+  }).join("");
+  setStep(state.step);
+}
+function setStep(f) {
+  state.step = f;
+  const pct = (f / (SF - 1)) * 100;
+  // the edge sits 20 - 4 = 16 rows into each 40-row frame at step 0, then moves 1/8 row per step
+  const edge = ((16 + f * STEP) / 40) * 100;
+  document.querySelectorAll(".sprite").forEach(d => {
+    d.style.backgroundPosition = `0 ${pct}%`;
+    d.style.setProperty("--edge", `${edge}%`);
+  });
+  document.getElementById("stepRange").value = f;
+  document.getElementById("stepOut").textContent = `+${(f * STEP).toFixed(3)} px`;
+  return edge;
+}
+let timer = null;
+const playBtn = document.getElementById("playBtn");
+function play(on) {
+  if (on && !timer) {
+    timer = setInterval(() => setStep((state.step + 1) % SF), 140);
+  } else if (!on && timer) {
+    clearInterval(timer); timer = null;
+  }
+  playBtn.textContent = timer ? "Pause" : "Play";
+}
+playBtn.addEventListener("click", () => play(!timer));
+document.getElementById("stepRange").addEventListener("input", e => { play(false); setStep(+e.target.value); });
+
+const sweepSeg = document.getElementById("sweepSeg");
+sweepSeg.innerHTML = [["hairline", "Hairline"], ["default", "Defaults"]].map(([v, l]) => `<button type="button" data-v="${v}">${l}</button>`).join("");
+sweepSeg.addEventListener("click", e => { const b = e.target.closest("button"); if (!b) return; state.sweep = b.dataset.v; renderSweep(); });
+
+function renderSweep() {
+  sweepSeg.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.v === state.sweep)));
+  const ser = DATA.sweep.series[state.sweep], svg = document.getElementById("sweepSvg"), fig = svg.closest(".fig");
+  svg.innerHTML = "";
+  const W = 900, H = 260, ml = 44, mr = 10, mt = 10, mb = 30, n = DATA.sweep.steps;
+  const amax = Math.max(...TAGS.map(t => Math.max(...ser[t].centroidErr.map(Math.abs))));
+  const lim = amax > 1 ? 2 : amax > 0.5 ? 1 : 0.25;
+  const xs = i => ml + (i / (n - 1)) * (W - ml - mr);
+  const ys = v => mt + (1 - (v + lim) / (2 * lim)) * (H - mt - mb);
+  for (let k = -2; k <= 2; k++) {
+    const v = (lim / 2) * k;
+    el("line", { x1: ml, x2: W - mr, y1: ys(v), y2: ys(v), class: k === 0 ? "axis" : "grid" }, svg);
+    el("text", { x: ml - 6, y: ys(v) + 3, "text-anchor": "end" }, svg).textContent = (v > 0 ? "+" : "") + v.toFixed(lim < 1 ? 3 : 1).replace(/\.?0+$/, "") ;
+  }
+  for (let p = 0; p <= 8; p++) {
+    const i = p / STEP;
+    const x = xs(Math.min(i, n - 1));
+    el("line", { x1: x, x2: x, y1: H - mb, y2: H - mb + 4, class: "axis" }, svg);
+    el("text", { x, y: H - mb + 15, "text-anchor": "middle" }, svg).textContent = p + (p === 8 ? " px" : "");
+  }
+  el("text", { x: 4, y: 12 }, svg).textContent = "px";
+  for (const t of TAGS.slice().reverse()) {
+    const d = ser[t].centroidErr.map((v, i) => `${i ? "L" : "M"}${xs(i).toFixed(1)},${ys(v).toFixed(1)}`).join("");
+    el("path", { d, fill: "none", stroke: COLHEX[t], "stroke-width": 2, "stroke-linejoin": "round" }, svg);
+  }
+  const cross = el("line", { y1: mt, y2: H - mb, stroke: "#aab1bc", "stroke-width": 1, opacity: 0 }, svg);
+  const hit = el("rect", { x: ml, y: mt, width: W - ml - mr, height: H - mt - mb, fill: "transparent" }, svg);
+  const tip = tipFor(fig);
+  hit.addEventListener("pointermove", ev => {
+    const pt = svg.getBoundingClientRect();
+    const sx = (ev.clientX - pt.left) * (W / pt.width);
+    const i = Math.max(0, Math.min(n - 1, Math.round((sx - ml) / (W - ml - mr) * (n - 1))));
+    cross.setAttribute("x1", xs(i)); cross.setAttribute("x2", xs(i)); cross.setAttribute("opacity", 0.6);
+    tip.innerHTML = `<div class="h">moved +${(i * STEP).toFixed(3)} px</div>` + TAGS.map(t => {
+      const v = ser[t].centroidErr[i];
+      return `<div class="r"><span class="sw" style="background:${COLHEX[t]}"></span>${fmtScale(scaleOf(t)).padEnd(5, " ")} ${(v >= 0 ? "+" : "") + v.toFixed(3)} px</div>`;
+    }).join("");
+    placeTip(tip, fig, ev.clientX, ev.clientY);
+  });
+  hit.addEventListener("pointerleave", () => { tip.hidden = true; cross.setAttribute("opacity", 0); });
+  document.getElementById("sweepKey").innerHTML = keyHtml(TAGS);
+}
+
+/* ---------- boot ---------- */
+buildSheet();
+renderInspector();
+renderSprites();
+renderSweep();
+if (!matchMedia("(prefers-reduced-motion: reduce)").matches) play(true);
+</script>
+
+</body>
+</html>

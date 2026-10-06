@@ -85,20 +85,20 @@ namespace EdgeLighting
     /// layer.
     typedef enum class SpotlightField
     {
-        POSITION_X = 0,     ///< @c SpotLight::position.x, app px
-        POSITION_Y = 1,     ///< @c SpotLight::position.y, app px
-        ANGLE = 2,          ///< @c SpotLight::angle, degrees
-        BEAM_ANGLE = 3,     ///< @c SpotLight::beamAngle, degrees
-        THROW_LENGTH = 4,   ///< @c SpotLight::throwLength, px
-        APERTURE_WIDTH = 5, ///< @c SpotLight::apertureWidth, px
-        SOFTNESS = 6,       ///< @c SpotLight::softness, [0, 1]
-        INTENSITY = 7,      ///< @c SpotLight::intensity
-        BLOOM = 8,          ///< @c SpotLight::bloom
-        BLOOM_RADIUS = 9,   ///< @c SpotLight::bloomRadius, px
-        COLOR_TEMP = 10,    ///< @c SpotLight::colorTemp, Kelvin
-        TINT_R = 11,        ///< @c SpotLight::tint.r, linear
-        TINT_G = 12,        ///< @c SpotLight::tint.g, linear
-        TINT_B = 13,        ///< @c SpotLight::tint.b, linear
+        POSITION_X = 0,      ///< @c SpotLight::position.x, app px
+        POSITION_Y = 1,      ///< @c SpotLight::position.y, app px
+        ANGLE = 2,           ///< @c SpotLight::angle, degrees
+        BEAM_ANGLE = 3,      ///< @c SpotLight::beamAngle, degrees
+        THROW_LENGTH = 4,    ///< @c SpotLight::throwLength, px
+        APERTURE_WIDTH = 5,  ///< @c SpotLight::apertureWidth, px
+        SOFTNESS = 6,        ///< @c SpotLight::softness, [0, 1]
+        INTENSITY = 7,       ///< @c SpotLight::intensity
+        BLOOM = 8,           ///< @c SpotLight::bloom
+        BLOOM_RADIUS = 9,    ///< @c SpotLight::bloomRadius, px
+        COLOR_TEMP = 10,     ///< @c SpotLight::colorTemp, Kelvin
+        TINT_R = 11,         ///< @c SpotLight::tint.r, linear
+        TINT_G = 12,         ///< @c SpotLight::tint.g, linear
+        TINT_B = 13,         ///< @c SpotLight::tint.b, linear
         SPREAD_FALLOFF = 14, ///< @c SpotLight::spreadFalloff, exponent [0, 2]
     } SpotlightField;
 

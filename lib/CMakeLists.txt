@@ -36,9 +36,14 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/wireframe.vert"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/wireframe.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.vert"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-common.glsl"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-pieces.glsl"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-gather.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-emission.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-glow-cover.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-blit.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/blit.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/black-rect.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-lut-debug.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-stop-marker.frag"
@@ -57,8 +62,11 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/wireframe.vert" WIREFRAME_VERT_CO
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/wireframe.frag" WIREFRAME_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.vert" NEON_VERT_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.frag" NEON_FRAG_CONTENT)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-gather.frag" NEON_GATHER_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-emission.frag" NEON_EMISSION_FRAG_CONTENT)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-glow-cover.frag" NEON_GLOW_COVER_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-blit.frag" NEON_BLIT_FRAG_CONTENT)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/blit.frag" BLIT_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/black-rect.frag" BLACK_RECT_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-lut-debug.frag" NEON_LUT_DEBUG_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-stop-marker.frag" NEON_STOP_MARKER_FRAG_CONTENT)
@@ -68,9 +76,23 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lens-flare.frag" LENS_FLARE_FRAG_
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight.vert" SPOTLIGHT_VERT_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight.frag" SPOTLIGHT_FRAG_CONTENT)
 
-# Shared neon tuning #defines, injected into the single-pass neon shaders via
-# @NEON_TUNING@ in shaders.h.in (also #included by the C++ renderers).
+# Shared neon tuning #defines, injected into neon.frag, neon-gather.frag,
+# neon-emission.frag, neon-glow-cover.frag and neon-blit.frag via @NEON_TUNING@
+# in shaders.h.in (also #included by the C++ renderers).
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/neon-tuning.h" NEON_TUNING)
+
+# The perimeter gather and what it reads, injected into neon.frag and
+# neon-gather.frag via @NEON_COMMON@ in shaders.h.in, after @NEON_TUNING@ - the
+# one GLSL chunk two neon programs share, so the loop has a single copy. Not a
+# shader on its own: it has no main().
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-common.glsl" NEON_COMMON)
+
+# The corner arcs' development onto a straight line and the glow coverage
+# table's layout, injected into neon.frag and neon-glow-cover.frag via
+# @NEON_PIECES@ in shaders.h.in, after @NEON_TUNING@ (and in neon.frag after
+# @NEON_COMMON@): the read and the bake of that table have to agree on both to
+# the texel. Not a shader on its own either.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-pieces.glsl" NEON_PIECES)
 
 # Shared droplet band #defines, injected into droplets.frag via
 # @DROPLETS_TUNING@ in shaders.h.in (also #included by the C++ renderer).
