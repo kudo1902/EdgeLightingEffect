@@ -1363,7 +1363,7 @@ field, before overwriting it, and computes:
 | `mLightBlocksDirty` | `segmentsDirty`, or `arcs` (accumulated, never cleared here) | `packLightBlockData` on the next `Render` |
 | (none for P0) | - | P0 is keyed on what it binds, not on config fields: see `isEmissionTableStale` below |
 | `mOffscreenCurrent` | cleared on **any** change | P1a and P1b on the next `Render` - see below |
-| `mGlowCoverDirty` | `segmentsDirty`, `arcs`, geometry `width` / `height` / `cornerRadius` / `winding`, `glowRadius` (accumulated, never cleared here) | P0b on the next `Render` - skipped, flag left set, while the ring is lit uniformly |
+| `mGlowCoverDirty` (a mask, one bit per piece) | every piece: geometry `width` / `height` / `cornerRadius` / `winding`, `glowRadius`; only the pieces a changed arc or segment reaches: `segmentsDirty`, `arcs` (accumulated, never cleared here) | P0b on the next `Render` - skipped, flag left set, while the ring is lit uniformly |
 
 Then, in order: overflow warnings for more than 8 arcs or segments, the
 segment merge, the flags above, `mCurrentConfig = config`, release of the
@@ -1404,7 +1404,7 @@ Render
  |- if glowReady:
  |    packLightBlocks()                             // re-pack if dirty; bind blocks 0 and 2
  |    if isEmissionTableStale(): [blend off] P0 emission table
- |    if mGlowCoverDirty && !IsGlowCoverUnread():
+ |    if mGlowCoverDirty != 0 && !IsGlowCoverUnread():  // its dirty pieces only
  |                               [blend off] P0b glow coverage table
  |    if scaled:
  |       gatherRegion = GetBufferRegion(mGatherOuter, ..., gatherScale, no cap)
@@ -1620,10 +1620,10 @@ weight: 1, then 0.6 for the dimmer arc, 0 in the gaps), row 1's colour
 | | |
 | - | - |
 | **Purpose** | Pre-compute, for each of the eight pieces of the emitter, how lit that piece is as the halo and the bloom see it from any fragment position round it, so each piece can scale its glow by its own coverage (Part 3.6). |
-| **Runs** | Both paths, only when `mGlowCoverDirty` (a change to the arcs, the segments, the rect's width, height, corner radius or winding, or `glowRadius`). Never on time, nor under an intensity, colour or other-layer animation - but every frame under an animation of one of those inputs (0.14-0.27 ms a frame in all on an AMD Radeon Pro 5300M, one arc to three arcs and two segments - about half what V20's table cost). Skipped on a ring lit uniformly - one full arc, no segments - which never reads it (`IsGlowCoverUnread`); its program and its buffer are built on the first frame that bakes (`ensureGlowCoverProgram`, `ensureGlowCoverBuffer`), not in `Initialize`, and the buffer is released when the layer is disabled. |
-| **Target** | `mGlowCoverBuffer`, 1024 x 128 texels (1.0 MB), RGBA16F (RGBA8 fallback), `GL_LINEAR`. Its own `RenderTargetState` is captured and restored. |
+| **Runs** | Both paths, only when `mGlowCoverDirty` (a change to the arcs, the segments, the rect's width, height, corner radius or winding, or `glowRadius`), and then only over the PIECES that change reaches - a light's old and new support, or all eight for a shape change (I42). Never on time, nor under an intensity, colour or other-layer animation - but every frame under an animation of one of those inputs (0.14-0.27 ms a frame in all on an AMD Radeon Pro 5300M, one arc to three arcs and two segments - about half what V20's table cost). Skipped on a ring lit uniformly - one full arc, no segments - which never reads it (`IsGlowCoverUnread`); its program and its buffer are built on the first frame that bakes (`ensureGlowCoverProgram`, `ensureGlowCoverBuffer`), not in `Initialize`, and the buffer is released when the layer is disabled. |
+| **Target** | `mGlowCoverBuffer`, 1024 x 128 texels: RGBA16F, 1.0 MB (RGBA8 fallback) - or RG16F, 0.5 MB (RG8 fallback) while the config has no segments - `GL_LINEAR`. Released by `Update` after 5 s unread. Its own `RenderTargetState` is captured and restored. |
 | **State** | Blend off. Scissor off. No clear: the quad covers every texel. |
-| **Geometry** | `mFullscreenVertexArray`, identity MVP: one fragment per texel. |
+| **Geometry** | `mFullscreenVertexArray`: identity MVP when every piece is dirty, one fragment per texel; otherwise one draw per dirty band through an MVP onto that band's straight, corner or both - texel-aligned rectangles, so it writes exactly their texels and no scissor state is touched. |
 | **Uniforms** | `uMVP` (identity), `uHeadFeather`, `uTailFeather`, `uHaloWidth`, `uBloomWidth`, `uStraightSize`, `uRadius` - all lengths as fractions of the full-res perimeter, which is what lets both resolution paths share the table - `uWinding`, which places each piece on the perimeter, and `uGlowCoverSplit`, each band's split between its straight and its corner. |
 | **Blocks** | `SegmentBlock` (0), `ArcBlock` (2). |
 | **Output** | One sheet per piece (`neon-pieces.glsl` has the layout and its inverse), two to a band. At a band's left, a straight: across, the fragment's projection along it - uniform over it, then 64 columns past each end, spaced `kh / 4` at the end and wider beyond - and down its distance `a = kh v / (1 - v)`, `v = (j + 0.5) / 32`. At its right, a corner, with a guard texel at each end: across, the direction from the arc's centre as a diamond angle (the arc's own quadrant uniform, then out to the diagonal behind the centre, where the guards join the two sides), and down the distance from the centre - the inside of the arc in the top half, the outside below. The columns between their overhangs go to the two in proportion to their lengths. Each texel holds that piece's coverage over its own extent, weighted by each layer's kernel about the fragment's foot, as a ratio to the kernel's mass over the piece: `r` = the arcs' coverage x intensity under the halo's kernel, `g` under the bloom's (closed form); `b` and `a` the segments' boost x bell under each (Gauss-Legendre, ~1e-3 of the boost). Each encoded `c / (1 + c)`. |
@@ -1859,7 +1859,7 @@ same place relative to the piece, so P0b bakes it once per config change and
 #### The layout
 
 ```
- 1024 columns, four bands of 32 rows (1024 x 128, 1.0 MB in RGBA16F)
+ 1024 columns, four bands of 32 rows (1024 x 128, 1.0 MB in RGBA16F, 0.5 MB in RG16F without segments)
 
  |<- 64 ->|<-- the straight: inner -->|<- 64 ->|g|<- 32 ->|<-- the corner -->|<- 32 ->|g|
  band 0    straight x = -halfW                     corner block 0, signs (-, -)
@@ -1974,7 +1974,9 @@ Notes:
   never pays.
 - **When it runs.** Only when one of its inputs changes (`mGlowCoverDirty`:
   the arcs, the segments, the rect's width, height, corner radius or winding,
-  `glowRadius`), never on time - and not at all on a ring lit uniformly (one full arc, no segments),
+  `glowRadius`), and only over the pieces the change reaches - each texel
+  integrates the lights over its own piece alone, so a moved light dirties the
+  pieces its old and new supports meet (I42) - never on time - and not at all on a ring lit uniformly (one full arc, no segments),
   which never reads it (`IsGlowCoverUnread`, the shader's own `uniformCover`
   test made a hair stricter so the table can never be read stale). Under an
   animation of the arcs or segments it runs every frame: 0.14-0.27 ms on the

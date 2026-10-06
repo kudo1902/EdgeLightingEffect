@@ -3927,7 +3927,8 @@ library before both changes at every step. `neon-scale-check check` and
 
 ## Twenty-first pass (the perf plan's first items)
 
-Items 4, 6 and 7 of [`neon-perf-plan.md`](neon-perf-plan.md), measured on an
+Items 4, 6 and 7 of [`neon-perf-plan.md`](neon-perf-plan.md) (I39-I41), and
+items 5 and 10 (I42, I43), measured on an
 Apple M2 Pro with `neon-scale-check time` and its new `--mode` (item 2 of the
 plan): three interleaved rounds per mode, five for `hue` and `segment-travel`,
 1920 x 1080, median. Numbered from I39 because I35-I38 are already taken, for
@@ -4002,6 +4003,90 @@ segment, in `check`, `partition` and every probe of that kind. Attachment 0 is
 bound in its place, as I33 did for unit 5. The log line is gone from `check`,
 `partition` and the 212-frame walk, whose frames are unchanged.
 
+### I42. The glow coverage table re-baked whole for a light that reached part of it - FIXED
+
+Item 5 of [`neon-perf-plan.md`](neon-perf-plan.md). Every texel of
+`neon-glow-cover.frag` integrates the arcs' and segments' coverage over its own
+piece of the outline and nothing else (`pieceCover` clips each trapezoid and
+bell to the piece and normalises by the kernel's mass over it), yet any change
+to either light block re-baked all 1024 x 128 texels - ~0.16 ms a frame on an
+Apple M2 Pro under a travelling segment, more than half the production band's
+frame.
+
+`mGlowCoverDirty` is now a mask, one bit per piece. `OnConfigChanged` packs the
+old and new light blocks with the uploader's own packers (`PackArcBlock`,
+`PackSegmentBlock`, so the abut flags a neighbour's move changes are compared
+too) and marks the pieces each changed light's old and new support meets
+(`GetGlowCoverDirtyPieces`, through `GetGlowCoverPieceSpans`, a mirror of the
+bake's piece placement): an arc's trapezoid inside [start - tail feather, start
++ length + head feather], a segment's bell inside position +/- the bake's own
+reach. All eight on a shape, winding or glow radius change, on a change to the
+brightest arc's intensity - `arcsOnPiece` clamps every piece to it - and for an
+arc or bell covering the whole ring. `renderGlowCoverPass` draws its quad onto
+each dirty band's rectangle through an MVP: the bake keys off `gl_FragCoord`,
+so a texel-aligned rectangle writes exactly its texels, and no scissor state is
+touched (`NoScissorScope` restores the enable flag, not the box).
+
+Verified texel for texel: a long-lived effect through 300 random arc and
+segment edits per seed - moves, lengths, intensities, abutting arcs, full
+rings, uniform stretches, shape, winding and glow changes - read back as floats
+against a fresh effect's full bake of the same config, 788 tables over three
+seeds, 0 differing, 343 of the frames re-baked in more than one rectangle. The
+check catches the bug it is for: dropping the old supports mismatched 44 of 132
+tables. The 212-frame walk of I39-I41 stays byte-identical, `check` unchanged,
+`partition` passing.
+
+Timing, `neon-scale-check time` against `f7465fc`, five interleaved rounds:
+
+| mode | 1.0 | 0.5 | 0.25 |
+| ---- | --: | --: | ---: |
+| `segment-travel` | 1.07x (1.02-1.12x) | 1.12x (1.06-1.21x) | 1.15x (1.10-1.26x) |
+| `arc-wipe` | 1.01x | 1.01x | 1.01x |
+| `still` | 1.00x | 1.00x | 1.00x |
+
+and on the plan's 1840 x 1000 band, `segment-travel`, 0.283 -> 0.220 ms at 1.0
+(1.29x) and 1.28x at 0.5. Less than the plan's one-band upper bound (1.91x),
+for a reason in the bake rather than here: it cuts a segment's bell at
+`5 / sqrt(2)` of its invSigma, so a segment of length 0.1 reaches +/-0.18 of the
+ring and usually meets three to five pieces. Cutting the bell nearer - the
+emission pass already drops a bell under 0.005 of its boost - would shrink that,
+but would change texels, so it waits on `check`'s headroom (the plan's item 1).
+An arc wipe gains little because the whole arc's span is marked when its length
+moves; marking only the moving end is possible (the plateau between the two is
+unchanged at equal intensity and feathers) but the arcs' bake is the cheap half.
+
+### I43. The glow coverage table held 1 MB however little of it was in use - FIXED
+
+Item 10 of [`neon-perf-plan.md`](neon-perf-plan.md), its first and third
+bullets. Two things kept the renderer's largest allocation larger, and longer,
+than anything read:
+
+- **Four channels with nothing in two of them.** `.b` / `.a` carry the
+  segments' halo and bloom coverage, and a config with no segments bakes zeros
+  there - most partly lit rings (an arc wipe, an outline tracer). The table is
+  now RG16F (RG8 fallback, `GLOW_COVER_FORMATS_RG`, the same tiers as the
+  RGBA list) while there are no segments: 0.5 MB. `glowCoverAt` zeroes `.b` /
+  `.a` when `uSegmentCount` is 0, because a two-channel texture samples alpha
+  as 1, which the decode would turn into 1024. Segments appearing reallocate it
+  at four channels (every piece dirty); segments leaving keep four, so a
+  transient segment cannot reallocate the table each time it comes and goes.
+- **Kept for the life of the layer.** I33 deliberately kept the table through
+  a uniformly lit stretch, since an arc animation reaching length 1 passes
+  through one every loop. `Update` now releases it once it has gone unread for
+  `GLOW_COVER_RELEASE_SECONDS` (5 s of frame time): the loop keeps its table,
+  a ring that has settled gives its memory back.
+
+Measured, live texture bytes on an Apple M2 Pro: an arcs-only partly lit ring
+0.58 MB (1.08 before); with a segment 1.15 MB; after 6 s lit uniformly 0.08
+MB, where it used to hold 1.08 for good. Exact: the 212-frame walk and the 788
+coverage tables of I42 unchanged (the table check now compares `.rg` alone
+where there are no segments, the two layouts differing only in the alpha they
+read back); the frame drawn from a table re-allocated after a release is
+byte-identical to a fresh effect's; `check` unchanged, `partition` passing.
+Timing 0.99x-1.00x in every mode - the halved fetch did not make the glow fix
+cheaper on this GPU, which fits the plan's attribution of that cost to the
+arithmetic around the fetch rather than to its bytes.
+
 ---
 
 ## What is left
@@ -4014,7 +4099,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, and the twenty-first I39, I40 and I41 (I39 closing I2). Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, and the twenty-first I39 to I43 (I39 closing I2). Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -4052,6 +4137,8 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I39 | fixed | the emission table re-baked on every config change; it is now keyed on what its pass binds - two uniforms by value, three LUTs and two light blocks by upload count - so no config field list can drift from the shader |
 | I40 | fixed | the gather and the reduced-scale shading re-ran on frames where nothing moved; skipped then (`mOffscreenCurrent`), byte-identical, 3.84x geometric mean on still frames at 0.5 on an M2 Pro, moving frames unchanged |
 | I41 | fixed | without segments `uGatherSeg` was bound to texture 0, and Apple's driver logged it on every split or scaled run; attachment 0 stands in, as for I33 |
+| I42 | fixed | any arc or segment change re-baked the whole glow coverage table; each piece's texels depend on that piece alone, so only the pieces a changed light reaches are re-baked - exact (texel for texel), 1.29x on the band's travelling-segment frames on an M2 Pro |
+| I43 | fixed | the glow coverage table was RGBA16F with two channels of zeros on a config without segments, and was held for the life of the layer; now RG16F there (0.5 MB) and released after 5 s unread |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

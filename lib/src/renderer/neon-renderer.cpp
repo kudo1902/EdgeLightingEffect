@@ -7,6 +7,7 @@
 #include "util/gl-utils.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <iterator>
 #include <cstdint>
@@ -234,6 +235,23 @@ namespace EdgeLighting
             {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, "RGBA16F"},
             {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, "RGBA8"},
         };
+        /// The same list, row for row, with two channels: the table of a config
+        /// with no segments, whose .b / .a (the segments' halo and bloom
+        /// coverage) are zero at every texel - half the memory, and half the
+        /// bytes per fetch. A row's index is its precision tier in both lists,
+        /// so one refused tier (mGlowCoverFormat) holds for both.
+        constexpr TargetFormat GLOW_COVER_FORMATS_RG[] = {
+            {GL_RG16F, GL_RG, GL_HALF_FLOAT, "RG16F"},
+            {GL_RG8, GL_RG, GL_UNSIGNED_BYTE, "RG8"},
+        };
+        static_assert(std::size(GLOW_COVER_FORMATS) == std::size(GLOW_COVER_FORMATS_RG),
+                      "the glow coverage table's two format lists are walked by one index");
+
+        /// How long, in seconds of frame time, the glow coverage table may go
+        /// unread before Update releases it. Long enough that an arc animation
+        /// passing through a full ring once per loop keeps it; short enough
+        /// that a ring which has settled uniform gives back its 0.5-1 MB.
+        constexpr float GLOW_COVER_RELEASE_SECONDS = 5.0f;
 
         /// Gather-buffer formats in PREFERENCE ORDER, best first - walked by
         /// @ref NeonRenderer::resizeGatherBuffer.
@@ -350,6 +368,45 @@ namespace EdgeLighting
                 flags += 4.0f;
             }
             return flags;
+        }
+
+        /// The std140 SegmentBlock for @p segments (the merged effective
+        /// list), as neon.frag, neon-emission.frag and neon-glow-cover.frag
+        /// read it: vec4(position, invSigma, boost, hasStops), capped at the
+        /// block's size. One packer for the upload and for the glow coverage
+        /// table's dirty pieces, so the two cannot describe different blocks.
+        inline SegmentBlockData PackSegmentBlock(const std::vector<SegmentBoost> &segments)
+        {
+            SegmentBlockData block = {};
+            const int count = std::min(static_cast<int>(segments.size()), int(MAX_SEGMENT_BOOSTS));
+            block.count = count;
+            for (int i = 0; i < count; ++i)
+            {
+                const SegmentBoost &seg = segments[i];
+                const float invSigma = 1.0f / std::max(seg.length * 0.5f, 1e-3f);
+                // .w = hasOwnStops flag; the shader reads its colour from row
+                // `i` of the segment LUT atlas when set, else falls back to the
+                // base gradient at that sample.
+                const float hasStops = seg.colorStops.empty() ? 0.0f : 1.0f;
+                block.segments[i] = glm::vec4(seg.position, invSigma, seg.boost, hasStops);
+            }
+            return block;
+        }
+
+        /// The std140 ArcBlock for @p arcs: vec4(start, length, intensity,
+        /// flags) - .w the PackArcFlags bitmask, not just hasStops - capped at
+        /// the block's size. Shared for the reason PackSegmentBlock is.
+        inline ArcBlockData PackArcBlock(const std::vector<Arc> &arcs)
+        {
+            ArcBlockData block = {};
+            const int count = std::min(static_cast<int>(arcs.size()), int(MAX_ARCS));
+            block.count = count;
+            for (int i = 0; i < count; ++i)
+            {
+                const Arc &arc = arcs[i];
+                block.arcs[i] = glm::vec4(arc.start, arc.length, arc.intensity, PackArcFlags(arcs, i, count));
+            }
+            return block;
         }
 
         /// @c NeonConfig::resolutionScale, clamped to the range the passes can
@@ -1118,6 +1175,214 @@ namespace EdgeLighting
                              split(std::max(config.geometry.width - 2.0f * r, 0.0f)));
         }
 
+        /// The glow coverage table's eight pieces, numbered as its bands hold
+        /// them: piece 2b is band b's straight, piece 2b + 1 its corner. One
+        /// bit each in NeonRenderer::mGlowCoverDirty.
+        constexpr int GLOW_COVER_PIECES = 8;
+        constexpr uint32_t GLOW_COVER_ALL_PIECES = (1u << GLOW_COVER_PIECES) - 1u;
+        static_assert(GLOW_COVER_ALL_PIECES == 0xFFu,
+                      "NeonRenderer::mGlowCoverDirty starts at 0xFF: every piece, which is this");
+
+        /// Where one piece lies on the perimeter, in the same [0, 1) parameter
+        /// the arcs and segments are placed in: it runs from @c start for
+        /// @c length in the direction @c sign.
+        typedef struct GlowCoverPieceSpan
+        {
+            float start;
+            float sign;
+            float length;
+        } GlowCoverPieceSpan;
+
+        /// neon-glow-cover.frag's pieceStart, verbatim.
+        inline GlowCoverPieceSpan GlowCoverPieceStart(float cwStart, float cwSigma, float arcLen, float length,
+                                                      Winding winding)
+        {
+            if (winding == Winding::CLOCKWISE)
+            {
+                return GlowCoverPieceSpan{cwStart, cwSigma, length};
+            }
+            const float s = 1.0f - arcLen - cwStart;
+            return GlowCoverPieceSpan{s - std::floor(s), -cwSigma, length};
+        }
+
+        /// Every piece's span, from the same lengths renderGlowCoverPass hands
+        /// the bake and through the same placement - straightStart and
+        /// cornerStart in neon-glow-cover.frag, mirrored here. The table's
+        /// dirty pieces are only exact while the two agree: change where the
+        /// bake places a piece and this has to follow.
+        inline std::array<GlowCoverPieceSpan, GLOW_COVER_PIECES> GetGlowCoverPieceSpans(const Config &config)
+        {
+            const float perimeter = std::max(GetPerimeter(config), 1e-3f);
+            const float radius = GetDrawnCornerRadius(config);
+            const float ws = std::max(config.geometry.width - 2.0f * radius, 0.0f) / perimeter;
+            const float hs = std::max(config.geometry.height - 2.0f * radius, 0.0f) / perimeter;
+            const float arcLen = glm::half_pi<float>() * (radius / perimeter);
+            const Winding w = config.geometry.winding;
+            std::array<GlowCoverPieceSpan, GLOW_COVER_PIECES> spans;
+            // Bands 0 and 1 hold the vertical straights (length hs), 2 and 3
+            // the horizontal ones (ws); band b's corner has signs
+            // ((b == 1 || b == 3) ? +1 : -1, (b >= 2) ? +1 : -1).
+            spans[0] = GlowCoverPieceStart(2.0f * ws + 3.0f * arcLen + hs, 1.0f, arcLen, hs, w);
+            spans[2] = GlowCoverPieceStart(ws + arcLen + hs, -1.0f, arcLen, hs, w);
+            spans[4] = GlowCoverPieceStart(2.0f * ws + 2.0f * arcLen + hs, -1.0f, arcLen, ws, w);
+            spans[6] = GlowCoverPieceStart(0.0f, 1.0f, arcLen, ws, w);
+            for (int band = 0; band < 4; ++band)
+            {
+                const float sx = (band == 1 || band == 3) ? 1.0f : -1.0f;
+                const float sy = (band >= 2) ? 1.0f : -1.0f;
+                const float cw = (sx > 0.0f) ? ws + arcLen + ((sy > 0.0f) ? 0.0f : hs)
+                                             : 2.0f * ws + 3.0f * arcLen + hs + ((sy > 0.0f) ? hs : 0.0f);
+                spans[2 * band + 1] = GlowCoverPieceStart(cw, -sx * sy, arcLen, arcLen, w);
+            }
+            return spans;
+        }
+
+        /// Slack added to every span tested against a piece, in perimeter
+        /// fractions: float round-off between this mirror and the bake, where
+        /// a support that only touches a piece's end adds nothing either way.
+        constexpr float GLOW_COVER_SPAN_SLACK = 1e-3f;
+
+        /// The pieces whose perimeter span meets [@p lo, @p hi] (perimeter
+        /// fractions, any wrap; hi - lo below 1).
+        inline uint32_t GlowCoverPiecesTouching(const std::array<GlowCoverPieceSpan, GLOW_COVER_PIECES> &spans,
+                                                float lo, float hi)
+        {
+            lo -= GLOW_COVER_SPAN_SLACK;
+            hi += GLOW_COVER_SPAN_SLACK;
+            if (hi - lo >= 1.0f)
+            {
+                return GLOW_COVER_ALL_PIECES;
+            }
+            const float shift = std::floor(lo);
+            lo -= shift;
+            hi -= shift;
+            uint32_t mask = 0;
+            for (int i = 0; i < GLOW_COVER_PIECES; ++i)
+            {
+                const GlowCoverPieceSpan &p = spans[i];
+                float p0 = (p.sign > 0.0f) ? p.start : p.start - p.length;
+                p0 -= std::floor(p0);
+                const float p1 = p0 + p.length;
+                // Both in [0, 2); one lap either way covers every overlap.
+                for (int lap = -1; lap <= 1; ++lap)
+                {
+                    if (lo + static_cast<float>(lap) <= p1 && p0 <= hi + static_cast<float>(lap))
+                    {
+                        mask |= 1u << i;
+                        break;
+                    }
+                }
+            }
+            return mask;
+        }
+
+        /// Which pieces of the glow coverage table moved between the light
+        /// blocks @p oldArcs / @p oldSegments and @p newArcs / @p newSegments,
+        /// for a config whose shape, winding and glow radius did not change
+        /// (those move every piece, and the caller says so itself).
+        ///
+        /// Exact because every texel of neon-glow-cover.frag integrates the
+        /// arcs' and segments' coverage over ITS OWN piece and nothing else:
+        /// pieceCover clips each arc's trapezoid and each segment's bell to
+        /// [0, len] of the piece, and normalises by the kernel's mass over the
+        /// same span. So a light whose support misses a piece leaves that
+        /// piece's texels exactly as they were, and a changed light dirties
+        /// the pieces its old support and its new support meet. Compared as
+        /// PACKED, so a neighbour's move that changes an arc's abut flags -
+        /// and with them its trapezoid - counts as a change to that arc.
+        ///
+        /// What reaches every piece instead, and so dirties all of them:
+        ///   - the brightest arc's intensity, which arcsOnPiece clamps every
+        ///     piece's coverage to (`most`, over arcs with intensity above 0
+        ///     and length above 1e-6 - the same test, so an arc crossing either
+        ///     threshold moves it too);
+        ///   - an arc over the whole ring (length >= 1 - 1e-6), which lights
+        ///     every piece without a trapezoid;
+        ///   - a segment whose bell reaches round the whole ring (the bake's
+        ///     reach, min(5 / (sqrt(2) invSigma), 0.5), at its cap of 0.5).
+        /// The supports are the bake's own: an arc's trapezoid lies inside
+        /// [start - tail feather, start + length + head feather], a segment's
+        /// bell is cut at position +/- reach.
+        inline uint32_t GetGlowCoverDirtyPieces(const ArcBlockData &oldArcs, const ArcBlockData &newArcs,
+                                                const SegmentBlockData &oldSegments,
+                                                const SegmentBlockData &newSegments, const Config &config)
+        {
+            const std::array<GlowCoverPieceSpan, GLOW_COVER_PIECES> spans = GetGlowCoverPieceSpans(config);
+            const float perimeter = std::max(GetPerimeter(config), 1e-3f);
+            const float tailFeather = static_cast<float>(TAIL_FEATHER_PX) / perimeter;
+            const float headFeather = static_cast<float>(HEAD_FEATHER_PX) / perimeter;
+
+            auto lights = [](const glm::vec4 &arc) { return arc.z > 0.0f && arc.y > 1e-6f; };
+            auto brightest = [&](const ArcBlockData &block) {
+                float most = 0.0f;
+                for (int i = 0; i < block.count; ++i)
+                {
+                    if (lights(block.arcs[i]))
+                    {
+                        most = std::max(most, block.arcs[i].z);
+                    }
+                }
+                return most;
+            };
+            if (brightest(oldArcs) != brightest(newArcs))
+            {
+                return GLOW_COVER_ALL_PIECES;
+            }
+
+            uint32_t mask = 0;
+            auto arcSupport = [&](const glm::vec4 &arc) -> uint32_t {
+                if (!lights(arc))
+                {
+                    return 0u;
+                }
+                if (arc.y >= 1.0f - 1e-6f)
+                {
+                    return GLOW_COVER_ALL_PIECES;
+                }
+                return GlowCoverPiecesTouching(spans, arc.x - tailFeather, arc.x + arc.y + headFeather);
+            };
+            const int arcCount = std::max(oldArcs.count, newArcs.count);
+            for (int i = 0; i < arcCount; ++i)
+            {
+                const glm::vec4 none(0.0f);
+                const glm::vec4 &before = (i < oldArcs.count) ? oldArcs.arcs[i] : none;
+                const glm::vec4 &after = (i < newArcs.count) ? newArcs.arcs[i] : none;
+                if (before != after)
+                {
+                    mask |= arcSupport(before) | arcSupport(after);
+                }
+            }
+
+            auto segmentSupport = [&](const glm::vec4 &seg) -> uint32_t {
+                if (seg.z <= 0.0f)
+                {
+                    return 0u;
+                }
+                if (seg.y <= 1e-6f)
+                {
+                    return GLOW_COVER_ALL_PIECES;
+                }
+                const float reach = std::min(5.0f * 0.7071067811865476f / seg.y, 0.5f);
+                if (reach >= 0.5f)
+                {
+                    return GLOW_COVER_ALL_PIECES;
+                }
+                return GlowCoverPiecesTouching(spans, seg.x - reach, seg.x + reach);
+            };
+            const int segmentCount = std::max(oldSegments.count, newSegments.count);
+            for (int i = 0; i < segmentCount; ++i)
+            {
+                const glm::vec4 none(0.0f);
+                const glm::vec4 &before = (i < oldSegments.count) ? oldSegments.segments[i] : none;
+                const glm::vec4 &after = (i < newSegments.count) ? newSegments.segments[i] : none;
+                if (before != after)
+                {
+                    mask |= segmentSupport(before) | segmentSupport(after);
+                }
+            }
+            return mask;
+        }
+
         /// The scale the scaled path's GATHER runs at: as coarse as the
         /// gather's own smoothness allows, never finer than @p scale.
         ///
@@ -1397,7 +1662,7 @@ namespace EdgeLighting
         return true;
     }
 
-    void NeonRenderer::Update(float deltaTime, float, const Config &)
+    void NeonRenderer::Update(float deltaTime, float, const Config &config)
     {
         // A fade frame re-uploads the ring the emission table is baked FROM,
         // without any config change to announce it. Nothing here has to say
@@ -1405,6 +1670,35 @@ namespace EdgeLighting
         // table's key (isEmissionTableStale), and so does anything else that
         // writes it.
         mGradientLUT.Tick(deltaTime);
+
+        // Give the glow coverage table back once nothing has read it for
+        // GLOW_COVER_RELEASE_SECONDS: a ring lit uniformly (or a disabled
+        // layer, which OnConfigChanged already releases for) never samples it,
+        // and I33 kept it allocated through a uniform stretch only because an
+        // arc animation passes through one every loop. The delay keeps that
+        // case; a ring that has settled frees its 0.5-1 MB. Here and not in
+        // Render, which must not delete a framebuffer (Framebuffer::Release).
+        // mEffectiveSegments is current: the effect refreshes the config, and
+        // with it OnConfigChanged, before it forwards Update.
+        if (!mGlowCoverBuffer.IsValid())
+        {
+            mGlowCoverUnreadSeconds = 0.0f;
+        }
+        else if (!config.neon.enable || IsGlowCoverUnread(mEffectiveSegments, config))
+        {
+            mGlowCoverUnreadSeconds += std::max(deltaTime, 0.0f);
+            if (mGlowCoverUnreadSeconds >= GLOW_COVER_RELEASE_SECONDS)
+            {
+                // A fresh allocation sets every piece dirty, so the table that
+                // replaces this one is baked whole on the frame it is next read.
+                mGlowCoverBuffer.Release();
+                mGlowCoverUnreadSeconds = 0.0f;
+            }
+        }
+        else
+        {
+            mGlowCoverUnreadSeconds = 0.0f;
+        }
     }
 
     void NeonRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
@@ -1496,7 +1790,7 @@ namespace EdgeLighting
         const bool splitGather = !scaled && SplitsGatherAtFullRes(config, mGlowArea);
         bool glowReady = ensurePathPrograms(scaled, splitGather) &&
                          (IsGlowCoverUnread(mEffectiveSegments, config) ||
-                          (ensureGlowCoverProgram() && ensureGlowCoverBuffer()));
+                          (ensureGlowCoverProgram() && ensureGlowCoverBuffer(!mEffectiveSegments.empty())));
 
         // The render target this renderer was handed - framebuffer AND
         // viewport, saved as a pair because the offscreen phase has to put both
@@ -1544,7 +1838,7 @@ namespace EdgeLighting
         // and nothing else writes the buffer. Nor on a ring lit uniformly,
         // which never reads it: the flag stays set, so the first change that
         // breaks the uniformity bakes it.
-        const bool glowCoverStale = glowReady && mGlowCoverDirty && !IsGlowCoverUnread(mEffectiveSegments, config);
+        const bool glowCoverStale = glowReady && mGlowCoverDirty != 0 && !IsGlowCoverUnread(mEffectiveSegments, config);
         // Passes 1a and 1b not at all when what their buffers already hold is
         // what they would draw - see mOffscreenCurrent. Then the frame never
         // leaves the caller's framebuffer, so there is no target to capture
@@ -1778,12 +2072,16 @@ namespace EdgeLighting
         // cornerRadius; the winding; and the glow radius. Not the rect's
         // POSITION: the table is in perimeter units, so a moving rect bakes
         // nothing. Add a uniform to that pass and it belongs here.
-        const bool glowCoverDirty = segmentsDirty || arcsDirty ||
-                                    config.geometry.width != mCurrentConfig.geometry.width ||
-                                    config.geometry.height != mCurrentConfig.geometry.height ||
-                                    config.geometry.cornerRadius != mCurrentConfig.geometry.cornerRadius ||
-                                    config.geometry.winding != mCurrentConfig.geometry.winding ||
-                                    config.neon.glowRadius != mCurrentConfig.neon.glowRadius;
+        //
+        // The config-side half moves every piece of the table; the light
+        // blocks move only the pieces a changed light reaches, worked out
+        // below once the merged segment list is current
+        // (GetGlowCoverDirtyPieces).
+        const bool glowCoverShapeDirty = config.geometry.width != mCurrentConfig.geometry.width ||
+                                         config.geometry.height != mCurrentConfig.geometry.height ||
+                                         config.geometry.cornerRadius != mCurrentConfig.geometry.cornerRadius ||
+                                         config.geometry.winding != mCurrentConfig.geometry.winding ||
+                                         config.neon.glowRadius != mCurrentConfig.neon.glowRadius;
         // Overflow warnings, before mCurrentConfig is overwritten below: the
         // previous counts are still in it, which is what lets these fire once
         // per overflow without a latch of their own.
@@ -1810,6 +2108,9 @@ namespace EdgeLighting
         // unchanged pair of pools rebuilds to the list already in it, which
         // mSegmentLUT's own dirty check and packLightBlocks would both then
         // see as unmoved anyway.
+        // The segment block as the glow coverage table last saw it, packed
+        // from the merged list before the refill below replaces it.
+        const SegmentBlockData oldSegmentBlock = PackSegmentBlock(mEffectiveSegments);
         if (segmentsDirty)
         {
             SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
@@ -1831,11 +2132,23 @@ namespace EdgeLighting
         // none (intensity, bloom, the glow, the rect) re-bakes nothing.
         //
         // The glow coverage table is gated here instead, on the narrow,
-        // visible set of inputs in glowCoverDirty above. Gated wide, it re-ran
-        // every frame under any animation at all - intensity, colour, or a
-        // field of another layer entirely - for a table none of those move.
-        // Accumulated, for the reasons given for mLightBlocksDirty just below.
-        mGlowCoverDirty = mGlowCoverDirty || glowCoverDirty;
+        // visible set of inputs above. Gated wide, it re-ran every frame under
+        // any animation at all - intensity, colour, or a field of another
+        // layer entirely - for a table none of those move. And per PIECE: a
+        // light that moved re-bakes only the pieces its old and new supports
+        // reach, so a segment travelling along one straight re-bakes that
+        // straight's band, not the whole table. Accumulated, for the reasons
+        // given for mLightBlocksDirty just below.
+        if (glowCoverShapeDirty)
+        {
+            mGlowCoverDirty = GLOW_COVER_ALL_PIECES;
+        }
+        else if (segmentsDirty || arcsDirty)
+        {
+            mGlowCoverDirty |= GetGlowCoverDirtyPieces(PackArcBlock(mCurrentConfig.neon.arcs),
+                                                       PackArcBlock(config.neon.arcs), oldSegmentBlock,
+                                                       PackSegmentBlock(mEffectiveSegments), config);
+        }
         // The light blocks get the OPPOSITE treatment, because their inputs are
         // narrow and visible rather than wide and indirect: @ref
         // packLightBlockData reads mEffectiveSegments and config.neon.arcs, and
@@ -2832,7 +3145,6 @@ namespace EdgeLighting
         // into the std140 SegmentBlock UBO (DALi-compatible pattern - see
         // neon.frag). Empty vector -> uSegmentCount=0 and both shaders skip the
         // whole feature.
-        SegmentBlockData segBlock = {};
         // mEffectiveSegments is NOT refilled here. OnConfigChanged refills it
         // whenever either segment pool changes, and this runs once per frame
         // from Render - so on a frame where the pools did not move the merged
@@ -2840,36 +3152,13 @@ namespace EdgeLighting
         // OnConfigChanged has already run (Update -> refreshActiveConfig
         // precedes Render). Refilling here would be a second
         // FillEffectiveSegments of the same frame.
-        const std::vector<SegmentBoost> &effSegments = mEffectiveSegments;
-        int segCount = std::min(static_cast<int>(effSegments.size()),
-                                int(MAX_SEGMENT_BOOSTS));
-        segBlock.count = segCount;
-        for (int i = 0; i < segCount; ++i)
-        {
-            const auto &s = effSegments[i];
-            float invSigma = 1.0f / std::max(s.length * 0.5f, 1e-3f);
-            // .w = hasOwnStops flag; the shader reads its colour from row `i`
-            // of the segment LUT atlas when set, else falls back to the base
-            // gradient at that sample.
-            float hasStops = s.colorStops.empty() ? 0.0f : 1.0f;
-            segBlock.segments[i] = glm::vec4(s.position, invSigma, s.boost, hasStops);
-        }
+        const SegmentBlockData segBlock = PackSegmentBlock(mEffectiveSegments);
         mSegmentBlock.SetData(&segBlock, sizeof(segBlock));
 
-        // Pack the arcs vector into ArcBlock: vec4(start, length, intensity,
-        // hasStops) per entry. .w picks between the winner arc's own atlas row
-        // and the base gradient in the shader's winner-take-all branch.
-        ArcBlockData arcBlock = {};
-        int arcCount = std::min(static_cast<int>(config.neon.arcs.size()),
-                                int(MAX_ARCS));
-        arcBlock.count = arcCount;
-        for (int i = 0; i < arcCount; ++i)
-        {
-            const auto &a = config.neon.arcs[i];
-            // .w is a bitmask, not just hasStops - see PackArcFlags.
-            float flags = PackArcFlags(config.neon.arcs, i, arcCount);
-            arcBlock.arcs[i] = glm::vec4(a.start, a.length, a.intensity, flags);
-        }
+        // The arcs, with .w the PackArcFlags bitmask: it picks between the
+        // winner arc's own atlas row and the base gradient in the shader's
+        // winner-take-all branch, and carries the abut bits.
+        const ArcBlockData arcBlock = PackArcBlock(config.neon.arcs);
         mArcBlock.SetData(&arcBlock, sizeof(arcBlock));
     }
 
@@ -2968,38 +3257,49 @@ namespace EdgeLighting
         mEmissionTime = time;
     }
 
-    bool NeonRenderer::ensureGlowCoverBuffer()
+    bool NeonRenderer::ensureGlowCoverBuffer(bool segments)
     {
         // Allocated is enough: the table's size is fixed, so a live buffer has
         // nothing to resize to, and this runs every frame a partly lit ring
-        // draws.
+        // draws - unless segments have appeared on a two-channel table, which
+        // has nowhere to put them. The other way round keeps what it has: a
+        // four-channel table with no segments reads its .b / .a as zeros like
+        // a two-channel one, and dropping back to two would reallocate the
+        // table every time a transient segment came and went.
         if (mGlowCoverBuffer.IsValid())
         {
-            return true;
+            const GLint format = mGlowCoverBuffer.GetInternalFormat();
+            const bool twoChannel = (format == GL_RG16F || format == GL_RG8);
+            if (!segments || !twoChannel)
+            {
+                return true;
+            }
         }
 
-        // The gather buffer's walk, over GLOW_COVER_FORMATS, with a linear
-        // filter: the consumer interpolates between neighbouring positions round
-        // each piece. Resumed from mGlowCoverFormat, because this buffer is
-        // released with the layer and cannot record a refused format in its own
-        // attachment - so a driver that refused RGBA16F once is not asked again
-        // on every re-enable, and logs once.
+        // The gather buffer's walk, over GLOW_COVER_FORMATS (or its RG twin),
+        // with a linear filter: the consumer interpolates between neighbouring
+        // positions round each piece. Resumed from mGlowCoverFormat, because
+        // this buffer is released with the layer and cannot record a refused
+        // format in its own attachment - so a driver that refused RGBA16F once
+        // is not asked again on every re-enable, and logs once.
         for (; mGlowCoverFormat < std::size(GLOW_COVER_FORMATS); ++mGlowCoverFormat)
         {
-            const TargetFormat &f = GLOW_COVER_FORMATS[mGlowCoverFormat];
+            const TargetFormat &f =
+                segments ? GLOW_COVER_FORMATS[mGlowCoverFormat] : GLOW_COVER_FORMATS_RG[mGlowCoverFormat];
             if (mGlowCoverBuffer.Resize(GLOW_COVER_WIDTH, GLOW_COVER_HEIGHT,
                                         f.internalFormat, f.format, f.type, GL_LINEAR))
             {
                 // Undefined texels until a bake writes them - whatever the
                 // flag said about the buffer this one replaces.
-                mGlowCoverDirty = true;
+                mGlowCoverDirty = GLOW_COVER_ALL_PIECES;
                 return true;
             }
             if (mGlowCoverFormat + 1 < std::size(GLOW_COVER_FORMATS))
             {
                 LOG_E("NeonRenderer: %s glow coverage target unavailable, falling back to %s. "
                       "The halo and bloom coverage will be stored at 8 bits.",
-                      f.name, GLOW_COVER_FORMATS[mGlowCoverFormat + 1].name);
+                      f.name,
+                      (segments ? GLOW_COVER_FORMATS : GLOW_COVER_FORMATS_RG)[mGlowCoverFormat + 1].name);
             }
         }
         // Every candidate refused: leave the index on the last one, so the next
@@ -3042,12 +3342,51 @@ namespace EdgeLighting
         mGlowCoverShader.SetUniform("uStraightSize", straights / perimeter);
         mGlowCoverShader.SetUniform("uRadius", radius / perimeter);
         mGlowCoverShader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
-        mGlowCoverShader.SetUniform("uGlowCoverSplit", GetGlowCoverSplit(config));
-        mFullscreenVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        const glm::vec2 split = GetGlowCoverSplit(config);
+        mGlowCoverShader.SetUniform("uGlowCoverSplit", split);
+        if (mGlowCoverDirty == GLOW_COVER_ALL_PIECES)
+        {
+            mFullscreenVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        }
+        else
+        {
+            // Only the dirty pieces, each band's straight and corner as one
+            // rectangle where both are dirty. Bounded by GEOMETRY, not a
+            // scissor: the bake keys every texel off gl_FragCoord, so the NDC
+            // quad drawn through a matrix onto a texel-aligned rectangle writes
+            // exactly that rectangle's texels and no others (its edges sit on
+            // whole texels, and every centre is half a texel inside one), and
+            // nothing of the host's scissor state - box included, which
+            // NoScissorScope does not restore - is touched.
+            const float width = static_cast<float>(GLOW_COVER_WIDTH);
+            const float height = static_cast<float>(GLOW_COVER_HEIGHT);
+            for (int band = 0; band < 4; ++band)
+            {
+                const bool straight = (mGlowCoverDirty & (1u << (2 * band))) != 0;
+                const bool corner = (mGlowCoverDirty & (1u << (2 * band + 1))) != 0;
+                if (!straight && !corner)
+                {
+                    continue;
+                }
+                // The band's straight is the columns left of the split, its
+                // corner the rest - neon-glow-cover.frag's own test.
+                const float inner = (band < 2) ? split.x : split.y;
+                const float splitColumn = static_cast<float>(2 * GLOW_COVER_OVERHANG) + inner;
+                const float x0 = straight ? 0.0f : splitColumn;
+                const float x1 = corner ? width : splitColumn;
+                const float y0 = static_cast<float>(band * GLOW_COVER_ROWS);
+                const float y1 = y0 + static_cast<float>(GLOW_COVER_ROWS);
+                const glm::mat4 rect =
+                    glm::translate(glm::mat4(1.0f), glm::vec3((x0 + x1) / width - 1.0f, (y0 + y1) / height - 1.0f, 0.0f)) *
+                    glm::scale(glm::mat4(1.0f), glm::vec3((x1 - x0) / width, (y1 - y0) / height, 1.0f));
+                mGlowCoverShader.SetUniform("uMVP", rect);
+                mFullscreenVertexArray.DrawArrays(GL_TRIANGLES, 6);
+            }
+        }
         mGlowCoverShader.Unuse();
 
         prevTarget.Restore();
-        mGlowCoverDirty = false;
+        mGlowCoverDirty = 0;
     }
 
     void NeonRenderer::uploadShapeUniforms(ShaderProgram &shader, const glm::mat4 &mvp, float scale,

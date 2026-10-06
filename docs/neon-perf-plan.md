@@ -334,6 +334,7 @@ walk (a long-lived effect against a fresh one through every kind of change,
 byte-identical at each step).
 
 **5. Re-bake only the pieces of the glow coverage table that changed.**
+*Done - section 9, I42: exact, 1.29x on the band rather than the 1.91x below.*
 
 Each piece's texels integrate coverage over that piece's own extent and
 nothing else: `pieceCover` in `neon-glow-cover.frag` clips every arc's
@@ -451,7 +452,7 @@ already exist, has to follow.
 ### 5.4 Memory
 
 **10. A smaller glow coverage table.** 1.0 MB, and most of what a partly lit
-ring holds at 1.0.
+ring holds at 1.0. *First and third bullets done - section 9, I43.*
 
 - **Two channels without segments** (item 8): 0.5 MB. Reallocate when segments
   appear or disappear, as the gather buffer's attachment count already does.
@@ -556,10 +557,12 @@ Measure on the target's CPU first. On the M2 neither is visible.
 | 2. `time --mode` | **done**: `still`, `hue`, `intensity`, `arc-wipe`, `segment-travel` |
 | 3. Target-device run | open |
 | 4. Skip the offscreen passes when nothing moved | **step 1 done** (I40); step 2, the keyed gather, open |
-| 5. Per-piece glow coverage bake | open |
+| 5. Per-piece glow coverage bake | **done** (I42) |
 | 6. Emission table keyed on its inputs | **done** (I39) |
 | 7. Complete texture on `uGatherSeg` | **done** (I41) |
-| 8-13 | open |
+| 8, 9 | open (wait on item 1) |
+| 10. Smaller glow coverage table | **two-channel without segments and idle release done** (I43); sizing by perimeter and RGBA8 open |
+| 11-13 | open |
 
 What 4, 6 and 7 measured together on the Apple M2 Pro, `neon-scale-check time`
 at 1920 x 1080, before -> after, geometric mean over the twelve scenes (three
@@ -595,3 +598,30 @@ Verification is recorded with the findings (I39-I41): 212 frames of a
 long-lived effect byte-identical to the library before, `check` unchanged,
 `partition` passing on two seeds.
 
+### Item 5
+
+Exact - 788 coverage tables read back after random arc and segment edits,
+every one equal, texel for texel, to a fresh effect's full bake - and,
+`neon-scale-check time` against `f7465fc`, five interleaved rounds:
+
+| mode | 1.0 | 0.5 | 0.25 |
+| ---- | --: | --: | ---: |
+| `segment-travel` | 1.07x (1.02-1.12x) | 1.12x (1.06-1.21x) | 1.15x (1.10-1.26x) |
+| `arc-wipe` | 1.01x | 1.01x | 1.01x |
+| `still` | 1.00x | 1.00x | 1.00x |
+
+On the 1840 x 1000 band, a travelling segment's frame went from 0.283 to 0.220
+ms (1.29x) at 1.0 and 1.28x at 0.5 - against the 1.91x section 5.2 measured by
+baking one band of four. The gap is the bake's own segment reach: it cuts a
+bell at `5 / sqrt(2)` of its invSigma, so a segment of length 0.1 reaches
++/-0.18 of the ring and meets three to five pieces, not one. Two follow-ups,
+neither exact: cut the bell nearer, where the emission pass already drops it
+(under 0.005 of its boost), which needs `check`'s headroom back first (item 1);
+and, exact but small, mark only the moving end of an arc whose length alone
+changed.
+
+### Item 10, first and third bullets
+
+Exact (I43), and a memory change only: 0.99x-1.00x in every timing mode.
+Live textures on the M2 for a partly lit ring with no segments, 1.08 -> 0.58
+MB; after a ring has sat uniformly lit for more than 5 s, 1.08 -> 0.08 MB.

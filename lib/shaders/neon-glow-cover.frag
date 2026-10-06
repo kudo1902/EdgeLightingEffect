@@ -472,5 +472,7 @@ void main() {
         cover += weight[i] * pieceCover(place, len, foot, cH, cB);
     }
     cover     = max(cover, vec4(0.0));
+    // Into an RG16F table when the config has no segments (.b / .a are zero
+    // then and are dropped), RGBA16F otherwise - see ensureGlowCoverBuffer.
     fragColor = cover / (1.0 + cover);
 }

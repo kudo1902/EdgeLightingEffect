@@ -184,7 +184,11 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   function in a source whether `main()` reaches it or not. Lengths enter only as
   ratios, so both resolution paths share one table. 1024 x 128
   (`GLOW_COVER_WIDTH` x `GLOW_COVER_HEIGHT`), RGBA16F (1.0 MB, half V20's 2)
-  with an RGBA8 fallback, encoded `c / (1 + c)`, and re-baked only when one of
+  with an RGBA8 fallback - or RG16F / RG8 (0.5 MB) on a config with no
+  segments, whose .b / .a would only hold zeros (`GLOW_COVER_FORMATS_RG`; a
+  two-channel texture samples .a as 1, so `glowCoverAt` zeroes .b / .a on
+  `uSegmentCount == 0` - keep the two together; promoted to four channels the
+  first frame segments appear and kept there, I43) - encoded `c / (1 + c)`, and re-baked only when one of
   its inputs moves (`mGlowCoverDirty`, gated in `OnConfigChanged` on the arcs,
   the effective segments, width, height, cornerRadius, winding and glowRadius -
   NOT any config change, I34): never on time, and not under an intensity,
@@ -192,13 +196,29 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   arcs, segments, shape or glow radius, which costs 0.14-0.27 ms a frame on an
   AMD Radeon Pro 5300M - about half what V20's table did (0.17-0.55 ms) -
   everything a config change costs included: the cost to watch on a slower GPU.
-  Add a uniform to `renderGlowCoverPass` and its field joins that gate. A ring lit
+  Add a uniform to `renderGlowCoverPass` and its field joins that gate. The
+  flag is a mask, one bit per PIECE (I42): every texel integrates the lights
+  over its own piece alone, so a changed arc or segment re-bakes only the
+  pieces its old and new supports reach (`GetGlowCoverDirtyPieces`, compared
+  on the PACKED blocks, abut flags included), drawn as rectangles of the table
+  by geometry rather than a scissor. Every piece on a shape, winding or glow
+  radius change, on a change to the brightest arc's intensity (which clamps
+  every piece) and for a light covering the whole ring. Exact - verified texel
+  for texel against a full bake - and 1.06-1.29x on a travelling segment's
+  frames on an Apple M2 Pro; less than one band per segment would give,
+  because the bake cuts a bell at 5 sigma, so a segment of length 0.1 reaches
+  +/-0.18 of the ring. `GetGlowCoverPieceSpans` mirrors the bake's
+  `straightStart` / `cornerStart`: move where the bake places a piece and it
+  has to follow. A ring lit
   uniformly (one full arc, no segments) never reads the table, so it is neither
   baked (`IsGlowCoverUnread`, the shader's `uniformCover` made a hair stricter
   so a stale table is never read - change the two together), nor its program
   compiled, nor the table allocated: `ensureGlowCoverProgram` and
   `ensureGlowCoverBuffer` build both on the first frame that needs them, and the
-  table is released when the layer is disabled (I33). Until then unit 5 holds the
+  table is released when the layer is disabled (I33), and by `Update` once it
+  has gone unread for `GLOW_COVER_RELEASE_SECONDS` (5 s of frame time - long
+  enough for an arc animation passing through a full ring each loop, I43).
+  Until then unit 5 holds the
   gradient ring as a stand-in - never read, but a texture-0 sampler draws a
   warning from Apple's driver. Things there that are load-bearing and must stay: behind a
   corner's centre `arcTangentSegment` flips which end it develops about across

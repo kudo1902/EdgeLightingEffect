@@ -532,8 +532,14 @@ float segmentGlow(vec2 cover) {
 // neon-glow-cover.frag bakes once per config change, at the texture coordinate
 // glowCoverStraightUV / glowCoverCornerUV (neon-pieces.glsl) give for the
 // piece.
+//
+// Without segments the table may have only two channels (RG16F, half the
+// memory): its .b / .a would be zero anyway, but a two-channel texture samples
+// .a as 1, which the decode turns into 1024. So they are zeroed here instead -
+// on a uniform, and exactly what a four-channel table holds there.
 vec4 glowCoverAt(vec2 uv) {
     vec4 e = textureLod(uGlowCover, uv, 0.0);
+    e.ba = (uSegmentCount > 0) ? e.ba : vec2(0.0);
     return e / max(1.0 - e, vec4(1.0 / 1024.0));
 }
 

@@ -364,9 +364,15 @@ namespace EdgeLighting
         /// a released buffer has none - the walk of @ref resizeGatherBuffer.
         /// A fresh allocation holds undefined texels, so it sets
         /// @c mGlowCoverDirty.
+        ///
+        /// Two channels (RG16F, 0.5 MB) when the config has no segments
+        /// (@p segments false), whose coverage would fill .b / .a with zeros;
+        /// four (RGBA16F, 1 MB) when it has - reallocating a two-channel table
+        /// the first frame segments appear, and keeping four after they go,
+        /// so a transient segment does not reallocate it every time.
         /// @return false only if NO candidate could be allocated, in which case
         ///         the frame draws the fill alone, as for a failed program.
-        bool ensureGlowCoverBuffer();
+        bool ensureGlowCoverBuffer(bool segments);
 
         /// Pass 0b: bake the glow coverage table into @c mGlowCoverBuffer -
         /// for each piece of the emitter, the arcs' and the segments' coverage
@@ -374,7 +380,9 @@ namespace EdgeLighting
         /// kernel about a fragment's foot on it (neon-glow-cover.frag, V20 and
         /// V21 in docs/review-findings.md).
         /// Retargets the framebuffer and viewport, so it restores both before
-        /// returning, and clears @c mGlowCoverDirty on the way out.
+        /// returning, and clears @c mGlowCoverDirty on the way out. Bakes only
+        /// the pieces @c mGlowCoverDirty names, by drawing its quad onto their
+        /// rectangles of the table - all of it in one draw when all are dirty.
         /// @pre Blending disabled, and the light blocks packed this frame.
         void renderGlowCoverPass(const Config &config);
 
@@ -618,15 +626,22 @@ namespace EdgeLighting
         /// it - see neon-glow-cover.frag, laid out in neon-pieces.glsl. Written by @ref renderGlowCoverPass, read by every
         /// neon.frag program with one filtered fetch per piece. Allocated on
         /// the first frame that bakes it (@ref ensureGlowCoverBuffer), never
-        /// for a ring lit uniformly, and released when the layer is disabled;
-        /// its lengths are ratios that scale together, so both resolution
-        /// paths share it.
+        /// for a ring lit uniformly, and released when the layer is disabled
+        /// or once nothing has read it for GLOW_COVER_RELEASE_SECONDS
+        /// (@ref Update); two channels while the config has no segments. Its
+        /// lengths are ratios that scale together, so both resolution paths
+        /// share it.
         Framebuffer mGlowCoverBuffer{"NeonRenderer.GlowCover"};
 
         /// Index into the glow coverage table's format list of the best format
         /// the driver has not refused. Only ever advances - see
         /// @ref ensureGlowCoverBuffer.
         size_t mGlowCoverFormat = 0;
+
+        /// Seconds of frame time @c mGlowCoverBuffer has gone unread - the ring
+        /// lit uniformly, or the layer off. @ref Update releases the table at
+        /// GLOW_COVER_RELEASE_SECONDS (docs/neon-perf-plan.md item 10).
+        float mGlowCoverUnreadSeconds = 0.0f;
 
         /// Pass 1's target on the scaled path: the composited colour, one RGBA8
         /// attachment at the reduced scale, covering what the blit reads
@@ -684,8 +699,10 @@ namespace EdgeLighting
         /// the regions they cover are placed in it (GetBufferRegion).
         glm::ivec2 mOffscreenViewport{0};
 
-        /// Whether @c mGlowCoverBuffer has to be re-baked. NOT set on every
-        /// config change, as the emission table's flag used to be: the bake
+        /// Which pieces of @c mGlowCoverBuffer have to be re-baked: bit 2b is
+        /// band b's straight, bit 2b + 1 its corner, all eight when the shape
+        /// moves. NOT set on every config change, as the emission table's
+        /// flag used to be: the bake
         /// reads the two light blocks (the arcs and the effective segments),
         /// the rect's width, height, corner radius and winding, and the glow
         /// radius - every one of them in @ref renderGlowCoverPass or the
@@ -695,13 +712,22 @@ namespace EdgeLighting
         /// re-ran it every frame under an intensity or colour animation, or an
         /// animation of another LAYER's fields, none of which it reads.
         ///
+        /// Per PIECE because each piece's texels integrate the lights over that
+        /// piece alone: a changed arc or segment dirties only the pieces its
+        /// old and new supports reach (GetGlowCoverDirtyPieces), so a segment
+        /// travelling along one straight re-bakes that band rather than the
+        /// table - 1.18-1.91x on such frames on an Apple M2 Pro
+        /// (docs/neon-perf-plan.md, item 5). The shape, the winding and the
+        /// glow radius dirty all eight, as do the brightest arc's intensity
+        /// and any light covering the whole ring.
+        ///
         /// Accumulated, never assigned, for @c mLightBlocksDirty's reasons, and
         /// cleared only by the bake - so a change made while the bake is
         /// skipped (a ring lit uniformly) is still pending when it next runs.
-        /// Also set by @ref ensureGlowCoverBuffer on a fresh allocation. Never
-        /// depends on time. Starts true - the buffer holds undefined texels
-        /// until the first bake.
-        bool mGlowCoverDirty = true;
+        /// Also set whole by @ref ensureGlowCoverBuffer on a fresh allocation.
+        /// Never depends on time. Starts with every piece - the buffer holds
+        /// undefined texels until the first bake.
+        uint32_t mGlowCoverDirty = 0xFFu; ///< GLOW_COVER_ALL_PIECES in the .cpp.
 
         /// Whether @c mSegmentBlock / @c mArcBlock still hold the current
         /// config. Cleared by @ref packLightBlocks once it has repacked.
