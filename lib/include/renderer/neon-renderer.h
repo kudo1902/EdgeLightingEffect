@@ -77,6 +77,15 @@ namespace EdgeLighting
     ///          part of the frame their readers reach (@ref GetBufferRegion).
     ///          See docs/neon-resolution-scale-plan.md sections 12 and 13.
     ///
+    /// At 1.0, with no segments and a colour-stop alpha time cannot move, pass
+    /// 1 is factored: neon.frag's output is mask * tonemap(col * Fa) with only
+    /// the gathered hue col changing, so pass 1f bakes Fa (and the mask) into
+    /// @c mFieldBuffer once the config has held for a frame, and pass 1c
+    /// (neon-field.frag) composites it with the hue in pass 1's place - 4x on
+    /// the default frame with the hue rotating, 9x still, within 1/255. A frame
+    /// whose config just changed draws pass 1 directly. See
+    /// docs/neon-perf-plan.md section 11 and I46 in docs/review-findings.md.
+    ///
     /// The paths share one schedule: every pixel-valued uniform is multiplied
     /// by the scale unconditionally (a no-op at 1.0) and the shader converts
     /// its own full-res px constants with @c uResolutionScale. Only the render
@@ -457,6 +466,41 @@ namespace EdgeLighting
                             const glm::vec2 &gatherUVScale, const glm::vec2 &gatherUVOffset,
                             float time, const Config &config);
 
+        // --- Pass 1 at scale 1.0, factored: the hue-invariant field ---------
+        // On a config with no segments whose colour-stop alpha cannot move
+        // with time, neon.frag's output is mask * tonemap(col * Fa), with only
+        // the gathered hue col changing from frame to frame (neon-field.frag).
+        // So pass 1 splits in two: 1f bakes Fa (and the mask) once the config
+        // has held for a frame, offscreen, after the gather; 1c composites it
+        // with the gathered hue, on the caller's framebuffer, in pass 1's place.
+        // 4.1x on the default frame with the hue rotating, 9x still, on an
+        // Apple M2 Pro (docs/neon-perf-plan.md section 11, I46).
+
+        /// Make sure the field's two programs - neon.frag with NEON_READS_GATHER
+        /// and NEON_FIELD_BAKE, and neon-field.frag - are built, building them
+        /// if not. A failure is recorded in @c mFailedPrograms; the field is
+        /// then never used and pass 1 draws as before.
+        bool ensureFieldPrograms();
+
+        /// Pass 1f: bake the field into @c mFieldBuffer, @p width x @p height
+        /// texels over the glow quad's box, drawn through @p mvp - that box's
+        /// projection at scale 1.0 - reading the gather through the full-res
+        /// map @p gatherUVScale / @p gatherUVOffset. R16F, or RG16F with
+        /// @p mask (a one-sided glow or a cutoff). Leaves the buffer bound;
+        /// @ref Render restores the target.
+        /// @pre Blending disabled; pass 1a has run or its buffer is current.
+        /// @return false if the buffer could not be allocated - the field is
+        ///         then never used.
+        bool renderFieldPass(const glm::mat4 &mvp, int width, int height, bool mask,
+                             const glm::vec2 &gatherUVScale, const glm::vec2 &gatherUVOffset,
+                             float time, const Config &config);
+
+        /// Pass 1c: in pass 1's place at scale 1.0, the glow quad drawn with
+        /// neon-field.frag - the field times the gathered hue, tone-mapped.
+        /// @pre Premultiplied-over blending; the caller's framebuffer bound.
+        void renderFieldCompositePass(const glm::mat4 &mvp, const glm::vec2 &gatherUVScale,
+                                      const glm::vec2 &gatherUVOffset);
+
         /// Pass 2a: opaque-mode background fill (its band ring, or a clear), at
         /// FULL resolution on the caller's framebuffer regardless of the
         /// resolution scale - it is a flat shape from an analytic SDF, so
@@ -518,6 +562,8 @@ namespace EdgeLighting
         static constexpr unsigned int PROGRAM_BLIT = 1u << 3;
         static constexpr unsigned int PROGRAM_RING = 1u << 4;
         static constexpr unsigned int PROGRAM_GLOW_COVER = 1u << 5;
+        static constexpr unsigned int PROGRAM_FIELD = 1u << 6;
+        static constexpr unsigned int PROGRAM_FIELD_COMPOSITE = 1u << 7;
 
         Config mCurrentConfig;
         ShaderProgram mNeonShader;                                     ///< neon.frag: gather and shade, direct path. Built on first draw.
@@ -528,6 +574,8 @@ namespace EdgeLighting
         ShaderProgram mGlowCoverShader;                                ///< Glow coverage pre-pass (neon-glow-cover.frag).
         ShaderProgram mBlackRectShader;                                ///< Opaque-mode black background fill (black-rect.frag).
         ShaderProgram mBlitShader;                                     ///< Scaled-path upscale composite (neon-blit.frag). Built on first draw.
+        ShaderProgram mNeonFieldShader;                                ///< neon.frag + NEON_READS_GATHER + NEON_FIELD_BAKE: pass 1f. Built on first use.
+        ShaderProgram mFieldCompositeShader;                           ///< neon-field.frag: pass 1c. Built on first use.
         VertexArray mGlowVertexArray{"NeonRenderer.Glow"};             ///< Tight glow quad (rect + glow reach), in scaled space.
         VertexArray mFullscreenVertexArray{"NeonRenderer.Fullscreen"}; ///< NDC quad: emission bake, and the ALL-mode opaque fill when a clear cannot stand in.
         VertexArray mFillVertexArray{"NeonRenderer.Fill"};             ///< Opaque-fill band ring (rect +- the fill's cutoffs), in FULL-RES rect-local px.
@@ -637,6 +685,32 @@ namespace EdgeLighting
         /// the driver has not refused. Only ever advances - see
         /// @ref ensureGlowCoverBuffer.
         size_t mGlowCoverFormat = 0;
+
+        /// The hue-invariant field (pass 1f), Fa in .r and, for a config with
+        /// a one-sided glow or a cutoff, the mask in .g: R16F or RG16F at full
+        /// resolution over the glow quad's box (3.3 MB for a 960 x 540 rect at
+        /// 1080p, R16F). Released with the conditions that want it - see
+        /// OnConfigChanged - and never allocated for a config that cannot use
+        /// it (segments, a reduced scale).
+        Framebuffer mFieldBuffer{"NeonRenderer.Field"};
+        /// The field in @c mFieldBuffer describes this frame: no config change,
+        /// gradient upload or viewport change since it was baked.
+        bool mFieldCurrent = false;
+        /// Nothing invalidated the field on the last frame, so baking it now
+        /// should be reused. The bake waits for this: an animation that
+        /// changes the config every frame would otherwise pay a bake AND a
+        /// composite on each, 5-7% slower than drawing pass 1 directly.
+        bool mFieldSettled = false;
+        /// The field cannot be used on this driver (its programs failed, or
+        /// no half-float target allocates); pass 1 draws as before.
+        bool mFieldUnavailable = false;
+        /// What the field was baked for, besides the config: the viewport, the
+        /// gradient ring's upload count, the region's rect-local origin and
+        /// whether it carries a mask.
+        glm::ivec2 mFieldViewport{0};
+        uint32_t mFieldGradientUploads = 0;
+        glm::vec2 mFieldOrigin{0.0f};
+        bool mFieldHasMask = false;
 
         /// Seconds of frame time @c mGlowCoverBuffer has gone unread - the ring
         /// lit uniformly, or the layer off. @ref Update releases the table at

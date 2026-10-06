@@ -255,7 +255,11 @@ move some by 1/255 and wait on item 1.
 
 ### 5.1 Measurement first
 
-**1. Regenerate the comparison page's 1.0 images.** The four steps in
+**1. Regenerate the comparison page's 1.0 images.** *Done on the Apple M2 Pro,
+after A (I46), so the images are the output that ships: `check`'s 1.0 column
+reads 0 on all twelve scenes there. The page is now timed with the hue
+rotating (`generate --mode hue`): a still frame reuses its passes at every
+scale, and with the field 1.0 is the cheapest scale on every scene it serves.* The four steps in
 [`tools/neon-scale-check/README.md`](../tools/neon-scale-check/README.md).
 Until then `check` has no headroom on the M2 (section 1), so nothing that moves
 a pixel at 1.0 can be verified.
@@ -554,7 +558,7 @@ Measure on the target's CPU first. On the M2 neither is visible.
 
 | item | state |
 | ---- | ----- |
-| 1. Regenerate the comparison page's 1.0 images | open - waits on which GPU owns the reference images (the page's are the AMD's) |
+| 1. Regenerate the comparison page's 1.0 images | **done on the Apple M2 Pro** (2026-10-06, the tree with I46): `check`'s 1.0 column reads 0 there; the page is timed with the hue rotating |
 | 2. `time --mode` | **done**: `still`, `hue`, `intensity`, `arc-wipe`, `segment-travel` |
 | 3. Target-device run | **done on the Apple M2 Pro** (section 10); the real target still unmeasured |
 | The split's gate | **set to the M2's values**, 1.0 and 0 (section 10.6, I44) |
@@ -796,3 +800,159 @@ segments: the last two rows are the worst case, a thumbnail-sized rect whose
 glow covers the frame. If that host exists, the cheapest cap is to clamp the
 split's gather scale rather than refuse the split - not built, since gathering
 a small rect coarser than its kernel costs it quality (V17).
+
+## 11. The neon's next targets (after I39-I44)
+
+Section 10's end-to-end run left one frame type unimproved: the library's
+default, a hue rotating every frame, where every pass recomputes. This section
+attributes what that frame costs now and ranks what could take it down. Apple
+M2 Pro, 1920 x 1080, current tree; each term stubbed in the shader source at
+compile time (a `glShaderSource` hook, no library change), three interleaved
+rounds, median. Terms are not additive - removing one lets the compiler drop
+what fed only it.
+
+### 11.1 Where a default frame goes
+
+| scene | total | after the gather read | corners | straights' bloom | `perimeterPosition` | straights' halo | gather pass | filament | tone map |
+| ----- | ----: | --------------------: | ------: | ---------------: | ------------------: | --------------: | ----------: | -------: | -------: |
+| 960 x 540, 1.0, hue | 0.622 | 0.474 (76%) | 16% | 14% | 9% | 7% | 8% | 0% | 0% |
+| 960 x 540, 1.0, still | 0.572 | 0.509 (89%) | 23% | 19% | 13% | 9% | - | 1% | 2% |
+| arc 0.5, 1.0, hue | 0.805 | 0.646 (80%) | 23% | 20% | 10% | 9% | 11% | 4% | 3% |
+| screen-sized rect, 1.0, hue | 0.636 | 0.474 (75%) | 18% | 20% | 15% | 13% | 13% | 9% | 9% |
+| 960 x 540, 0.5, hue | 0.344 | 0.175 (51%) | 16% | 13% | 10% | 7% | **20%** | 5% | 4% |
+| production band, 1.0, hue | 0.105 | ~0 | 3% | 2% | 2% | 1% | 0% | 0% | 0% |
+
+"After the gather read" stubs everything from the read of the gather buffer
+on - what is left (rasterising 1.7M px, the SDF, the derivative, the cuts, the
+filament core, the read, the blend, and on a hue frame the emission and gather
+passes) is the frame's floor: 0.148 ms with the hue rotating, 0.064 still.
+
+- **The shading's arithmetic is the frame.** Three quarters of a default frame
+  at 1.0, in a few transcendental-heavy terms; the corners and the straights'
+  bloom alone are 30-43%.
+- **Not dead fragments.** An occlusion count against the lit pixels: 97% of
+  the fragments the default quad shades end up non-zero (88-91% for a smaller
+  glow or rect), so a tighter quad would buy at most a tenth.
+- **The production band is overhead, not shading.** Stubbing any term moves
+  nothing; its 0.105 ms is the passes themselves.
+- **Below 1.0 the gather pass is a fifth of a moving frame**, and the floor -
+  the blit over the lit area, the ring - half.
+
+### 11.2 Targets, ranked by what they could take off a default frame
+
+**A. Factor the hue out of the shading (new; the largest by far).** *Built -
+I46: at 1.0, 3.3x geometric mean with the hue rotating and 6.3x still at
+1080p, animated frames unchanged, within 1/255, +3.3 MB for the default rect.* Under hue
+rotation only two things in `neon.frag` move: the gathered hue `col` (through
+the emission table) and the colour-stop alpha `baseAlphaPt`, which is constant
+when the stops share one alpha (the default). Everything else - the halo, the
+bloom, the pieces' coverage, the filament, the fade, the cuts - depends on the
+config and the geometry alone. The output is
+
+    out(p, t) = mask(p) * tonemap( col(p, t) * Fa(p) + segHue(p, t) * Fs(p) )
+
+with `Fa`, `Fs` and `mask` time-invariant - and with no segments, `Fs` is 0
+and the default config has no mask (both sides, no cutoffs). So `Fa` could be
+baked once per config change into a full-resolution R16F field over the glow
+quad, and a moving frame would be the gather plus a composite: read the field,
+read the gather, tone-map. The floor above prices that composite: a default
+frame 0.622 -> ~0.15 ms with the hue rotating (~4x) and 0.572 -> ~0.07 ms still
+(~8x), at 1.0. The costs:
+
+- memory: R16F over the quad, 3.4 MB at 1080p for the default rect (RG16F,
+  6.8 MB, with a cut or cutoff; RGBA16F with segments), four times that at 4K
+  - the renderer's largest allocation by far, so a cap or an opt-in;
+- precision: half-float `Fa` and a reordered product move pixels by up to
+  ~1/255, so it waits on item 1's headroom;
+- a fallback for what breaks the factorisation: stops with differing alpha,
+  segments with their own stops under a rotating hue.
+
+Below 1.0 the same split would cache pass 1b's field at the reduced scale
+(0.85 MB at 0.5) and leave only the ring at full resolution per frame.
+
+*Prototyped (scratch build, not in the tree).* `neon.frag` compiled with a
+`NEON_FIELD_BAKE` define sets the gathered hue to 1 and writes the
+pre-tone-map result (`Fa`) and the masks applied to 1.0 (`mask`) into an
+RG16F buffer, through the same transform as the glow pass, so texel and pixel
+coincide; a 15-line composite reads it, reads the gathered hue, and tone-maps.
+At 1.0, no segments and an opaque ring (anything else takes the existing
+path). The bake is LAZY: a frame whose config just changed draws the existing
+way, and only a config that has held for a frame is baked - otherwise an
+animation that changes the config every frame paid a bake and a composite
+(5-7% slower). Measured on the M2, 1080p, three interleaved rounds:
+
+| scene | current | field | |
+| ----- | ------: | ----: | -: |
+| 960 x 540, hue rotating (the default) | 0.565 ms | 0.139 ms | **4.1x** |
+| 960 x 540, still | 0.495 | 0.055 | **9.1x** |
+| arc 0.5, hue rotating | 0.768 | 0.138 | 5.6x |
+| screen-sized rect, hue | 0.532 | 0.146 | 3.6x |
+| 640 x 360, hue | 0.474 | 0.144 | 3.3x |
+| inside cutoff (a mask), hue | 0.477 | 0.145 | 3.3x |
+| production band, hue | 0.101 | 0.099 | 1.0x |
+| intensity pulse / arc wipe / glow pulse (config changes every frame) | 0.563 / 0.809 / 0.554 | 0.565 / 0.809 / 0.541 | 1.0x |
+| segments, stops with differing alpha (fall back) | 0.817 / 0.621 | 0.822 / 0.619 | 1.0x |
+
+Output against the existing path, one frame per scene after 12 hue frames:
+
+| field format | pixels moved | by |
+| ------------ | -----------: | -: |
+| RG16F | 0.2-1.1% of the frame (4,683-23,000) | exactly 1 level |
+| RG32F | 0-11 pixels | exactly 1 level |
+| either, on a fallback config | 0 | - |
+
+RG32F costs 3.3x instead of 4.1x on the default frame (the composite reads
+twice the bytes) and twice the memory. The prototype's buffer was the whole
+viewport (7.9 MB RG16F at 1080p); built for real it would cover only the glow
+quad (`GetBufferRegion`), and be one channel where there is no mask - the
+default config has none - so 3.3 MB for the default rect at 1080p, 13 MB at 4K.
+
+What building it for real takes:
+
+- the buffer region-bounded and R16F / RG16F by the mask, released like the
+  scaled buffers;
+- the field read offset by the host's viewport origin (the prototype assumed
+  0, 0);
+- a field per path below 1.0 (pass 1b's, at the reduced scale, with the ring
+  still shaded per frame), or 1.0 only;
+- its own staleness, sharing I40's: any config change, the viewport, and the
+  gather's coverage channel - which the hue does not move;
+- a one-level change on ~1% of pixels on the frame an animation stops and the
+  field takes over (none with RG32F) - the paths differ by that much;
+- item 1 first: `check` cannot absorb a 1/255 move at 1.0 today.
+
+**B. Skip `perimeterPosition` and the gradient alpha fetch when nothing reads
+them (exact, small).** *Done - I45: the default frame 1.11x at 1080p (0.633 ->
+0.568 ms with the hue rotating), byte-identical where it engages; 1-2 pixels by
+1 level elsewhere, from code generation.* `sPos` feeds three things: the gradient's alpha fetch,
+the arc loop - which returns before reading it for an arc over the whole ring
+- and the segment loop. On a uniformly lit ring with no segments and stops of
+one alpha (the default), it is computed for nothing, and so is the fetch. A
+uniform flag and the constant alpha from the CPU skip both: ~9% of a default
+frame at 1.0 (13% still, 15% on a screen-sized rect), byte-identical, a few
+lines in `neon.frag` and `uploadNeonUniforms`.
+
+**C. The corner pieces (16-23%).** Item 9's far-field point source: past a
+CPU-bounded radius an arc is a point of length `pi r / 2`, with no
+development `atan`. Perhaps half the share; up to 1/255.
+
+**D. The straights' bloom (14-20%).** One two-argument `atan` per straight
+plus the two shared pedestals. A skip like the corners', bounded on the CPU,
+for a straight seen from far past its end; or a polynomial `atan`. Needs
+measuring - a cheaper `atan` is GPU-specific. Up to 1/255.
+
+**E. The gather pass on moving frames (8% at 1.0, 20% at 0.5).** It re-runs
+every frame the hue rotates. A coarser grid (`GATHER_TEXELS_PER_KERNEL`) or
+fewer samples trade quality; the two-level gather (perf review section 6) is
+the exact-ish route. Worth it below 1.0 mostly.
+
+**Not targets:** the filament and the tone map (0-9%), a tighter quad (at most
+3-12% of fragments), and the production band's shading (none to take).
+
+### 11.3 Recommended order
+
+1. **B** - exact, a few lines, ~9% on every default frame at 1.0.
+2. **A** - prototyped: 4.1x on the default frame (hue rotating), 9.1x still,
+   no cost while animating, within 1/255; 3.3 MB at 1080p built properly. The
+   decision is the memory, and item 1's headroom comes first.
+3. **C and D** after item 1's headroom, measured one at a time.

@@ -45,23 +45,28 @@ The tool uses only public headers (`core/`, `util/capture-util.h`, and for
 ./build/tools/neon-scale-check/neon-scale-check check
 ```
 
+Every image the tool measures is the STEADY frame - the second after the
+config is set, each over a fresh clear - because at scale 1.0 the neon draws
+the first frame after a config change directly and its hue-invariant field
+takes over from the next (I46 in `docs/review-findings.md`).
+
 Prints one row per scene and exits 1 if anything is out of bounds (marked `!`):
 
-| what | bound | measured (AMD Radeon Pro 5300M) |
+| what | bound | measured (Apple M2 Pro, the page's machine since 2026-10-06) |
 | ---- | ----- | -------------------------------- |
 | scale 1.0 against the committed `docs/images/neon-resolution-scale/<scene>_s1000.png` | max 2 | 0 |
 | each reduced scale against its own 1.0 render, max error | 3 | 1-2 |
-| `small_rect` at 0.25 / 0.125 (20 x 12 buffer texels at 0.125) | 5 / 12 | 4 / 11 |
-| the moving hairline's worst centroid error, every scale | 0.1 px | 0.02-0.05 |
+| `small_rect` at 0.25 / 0.125 (20 x 12 buffer texels at 0.125) | 5 / 12 | 3 / 10 |
+| the moving hairline's worst centroid error, every scale | 0.1 px | 0.02-0.07 |
 
-The measured column predates the split gather
-([`docs/neon-resolution-scale-plan.md`](../../docs/neon-resolution-scale-plan.md)
-section 13). After it, on Mesa llvmpipe, every reduced scale reads 2 at most,
-`small_rect` 4 / 10, and the hairline 0.035-0.061 px - against 2-3, 4 / 11 and
-0.026-0.039 for the build before it on the same machine. The hairline moved
-because the ring now reads its colour and coverage from a grid about 8 px
-apart rather than 2-4 px apart; re-measure on the GPU before tightening that
-bound.
+The committed images were regenerated on the Apple M2 Pro on 2026-10-06, from
+the tree with the hue-invariant field at 1.0 (I46), so the 1.0 column reads 0
+there; until then they were an AMD Radeon Pro 5300M's, and the M2 read 2 on
+`hairline` and `card_outside` - no headroom left for a 1/255 change at 1.0. A
+GPU other than the M2 should expect 1-2 on that column. The hairline's
+0.069 px (at 0.35) is the split gather's: the ring reads its colour and
+coverage from a grid about 8 px apart rather than 2-4 px apart; re-measure on
+the GPU before tightening that bound.
 
 Each bound is the measured value plus one level for GPU-to-GPU variance (the
 first version of the page was rendered on an Apple M2 Pro, and its 1.0 images
@@ -189,9 +194,11 @@ them as the page's figures, not as a before / after measurement.)
    plan): `git archive 542dad4 | tar -x -C /tmp/el-before`, build that tree in
    `/tmp/el-before/build`, then configure the tool with
    `-DEL_ROOT=/tmp/el-before`.
-2. Run `generate` three times per build, INTERLEAVED (after, before, before,
-   after, after, before), each into its own directory; one `--images` run of
-   the in-tree build.
+2. Run `generate --mode hue` three times per build, INTERLEAVED (after,
+   before, before, after, after, before), each into its own directory; one
+   `--images --no-timing` run of the in-tree build. Hue mode because a still
+   frame now reuses its passes at every scale - and at 1.0 the hue-invariant
+   field - so still timings no longer show what the scale costs.
 3. `python3 tools/neon-scale-check/update-page.py --after a1/head.json a2/head.json a3/head.json --before b1/before.json b2/before.json b3/before.json`
    It merges the runs (metrics must agree; timing takes the minimum) and
    rewrites only the page's `const DATA = ...;` line.

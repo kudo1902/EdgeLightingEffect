@@ -74,8 +74,10 @@ namespace NeonScaleCheck
     /// asks for a freshly initialised effect (timing); otherwise reused.
     void CreateEffect(EdgeLightingEffect &effect);
 
-    /// Set @p config, tick the clock once by 0, and render one frame into an
-    /// offscreen FRAME_WIDTH x FRAME_HEIGHT target over rgb(5, 5, 8).
+    /// Set @p config, tick the clock once by 0, and render the steady frame -
+    /// the second, each over a fresh clear - into an offscreen FRAME_WIDTH x
+    /// FRAME_HEIGHT target over rgb(5, 5, 8). The first frame after a config
+    /// change can take a different path (the neon's field, I46).
     RGB Render(EdgeLightingEffect &effect, const Config &config);
 
     /// What changes between the frames @ref TimeRender times.

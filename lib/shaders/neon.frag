@@ -55,6 +55,15 @@ uniform float uInsideCutoffSoftness;  ///< Feather width in px, running on from 
 uniform float uOutsideCutoff;         ///< Cutoff::size of the outside cutoff: positive px distance OUTSIDE the rect edge where its fade STARTS. Disabled sides collapse to a huge sentinel CPU-side.
 uniform float uOutsideCutoffSoftness; ///< Feather width in px, running on from uOutsideCutoff away from the rect.
 uniform int   uWinding;               ///< 0 = CLOCKWISE, 1 = COUNTER_CLOCKWISE (matches Winding enum).
+// Non-zero when nothing below reads the fragment's perimeter position: no
+// segments, every lit arc over the whole ring with no stops of its own, and a
+// gradient ring whose alpha is 255 at every texel. Then sPos and the
+// gradient's alpha read are skipped - perimeterPosition is an atan and a
+// cascade of branches, ~9% of a default frame - and the alpha is the 1.0 the
+// read would have returned. Set by the CPU (IsPerimeterUnread), which tests
+// the arcs' length a hair more strictly than arcCoverContinuous does, so it
+// can never claim this where a read would happen.
+uniform int   uPerimeterUnread;
 
 // Ratio between the buffer this pass is drawing into and the viewport the
 // caller sees: 1.0 when the gather runs at full resolution straight onto the
@@ -1077,6 +1086,12 @@ void main() {
     vec3  segColHue         = gather.segHue;   // segment hue
     float segCoverGathered  = gather.segCover; // segment boost x bell
 #endif
+#ifdef NEON_FIELD_BAKE
+    // The hue-invariant field (neon-field.frag): with the hue at 1, everything
+    // below computes the field Fa that the gathered hue multiplies. Only built
+    // for configs with no segments, so segColHue is already 0.
+    col = vec3(1.0);
+#endif
 
     // --- Continuous coverage, read at this fragment's own position -------
     // Recover the fragment's OWN continuous perimeter position GEOMETRICALLY
@@ -1086,7 +1101,11 @@ void main() {
     // exact even at corners, unlike the old proximity-weighted circular mean
     // of the sample phases, which smeared the whole corner curve to ~0 and
     // lit it for any arc starting at position 0.
-    float sPos = perimeterPosition(vPos);
+    float sPos = 0.0;
+    if (uPerimeterUnread == 0)
+    {
+        sPos = perimeterPosition(vPos);
+    }
     // Inward feathers: convert pixel widths to perimeter fractions at the
     // current geometry (`peri` is computed above the gather). `peri` is derived
     // from uRectSize and so is in SCALED px, while the two constants are
@@ -1118,8 +1137,11 @@ void main() {
     // position, and the premultiplied output alpha (peak channel, bottom of
     // main) follows for free, so the background shows through rather than
     // being occluded by a black tube.
-    float baseAlphaPt = texture(uGradientLUT,
-                                vec2(sPos - uTime * uHueRotationRate, 0.5)).a;
+    float baseAlphaPt = 1.0;
+    if (uPerimeterUnread == 0)
+    {
+        baseAlphaPt = texture(uGradientLUT, vec2(sPos - uTime * uHueRotationRate, 0.5)).a;
+    }
     // Winner-take-all across arcs, as documented for overlap. This can be a
     // plain max() again because arcCoverContinuous now reaches a FULL 1.0 at an
     // abutting endpoint rather than 0 (inward) or 0.5 (straddling), so two arcs
@@ -1629,10 +1651,18 @@ void main() {
     // others by the same ratio. Per-channel tonemap desaturates warm mixes
     // (orange -> peach) because R saturates while G/B are still linear;
     // scaling by the peak's compression preserves the original R:G:B ratio.
+#ifdef NEON_FIELD_BAKE
+    // Fa is the pre-tone-map result at hue 1; the masks below then run on 1.0,
+    // which leaves the mask itself. neon-field.frag tone-maps col * Fa and
+    // applies the mask after, as this file does.
+    float fieldFa = result.r;
+    result = vec3(1.0);
+#else
     float peak = max(max(result.r, result.g), result.b);
     float mapped = peak / (peak + TONE_MAP_SHOULDER);
     result = result * (mapped / max(peak, 1e-6));
     result = pow(result, vec3(GAMMA_EXPONENT));
+#endif
 
     // --- One-sided cut: mask the WHOLE layer at the line --------------
     // Anchored at the opaque fill's own edge and feathered INTO the lit side -
@@ -1758,6 +1788,10 @@ void main() {
     // reads as a solid tube; the dim halo/bloom (alpha ~ 0) stay additive; the
     // dark surround (alpha = 0) leaves the background untouched. Pairs with
     // glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA) in the renderer.
+#ifdef NEON_FIELD_BAKE
+    fragColor = vec4(fieldFa, result.r, 0.0, 1.0);
+#else
     float alpha = clamp(max(result.r, max(result.g, result.b)), 0.0, 1.0);
     fragColor = vec4(result, alpha);
+#endif
 }

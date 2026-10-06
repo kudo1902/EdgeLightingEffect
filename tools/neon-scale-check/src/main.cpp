@@ -1,6 +1,6 @@
 // neon-scale-check: the harness behind docs/neon-resolution-scale-comparison.html.
 //
-//   neon-scale-check generate <outdir> [--label NAME] [--images] [--no-timing]
+//   neon-scale-check generate <outdir> [--label NAME] [--images] [--no-timing] [--mode MODE]
 //       Renders the twelve scenes at six scales and writes <outdir>/<label>.json
 //       - metrics, cross-sections, timing and the motion sweep. With --images it
 //       also writes every PNG the page shows into <outdir>/images/.
@@ -170,13 +170,20 @@ namespace
     {
         if (argc < 3)
         {
-            std::fprintf(stderr, "usage: neon-scale-check generate <outdir> [--label NAME] [--images] [--no-timing]\n");
+            std::fprintf(stderr,
+                         "usage: neon-scale-check generate <outdir> [--label NAME] [--images] [--no-timing] "
+                         "[--mode MODE]\n");
             return 2;
         }
         const std::string out = argv[2];
         std::string label = "run";
         bool images = false;
         bool timing = true;
+        // What changes between the timed frames, as for `time`. The page is
+        // timed with the hue rotating: since a still frame reuses its passes
+        // at every scale (I40, I46), a still timing no longer shows what the
+        // scale costs on the frames where it matters.
+        TimeMode mode = TimeMode::STILL;
         for (int i = 3; i < argc; ++i)
         {
             if (std::strcmp(argv[i], "--images") == 0)
@@ -190,6 +197,15 @@ namespace
             else if (std::strcmp(argv[i], "--label") == 0 && i + 1 < argc)
             {
                 label = argv[++i];
+            }
+            else if (std::strcmp(argv[i], "--mode") == 0 && i + 1 < argc)
+            {
+                if (!ParseTimeMode(argv[++i], mode))
+                {
+                    std::fprintf(stderr, "neon-scale-check: --mode wants still, hue, intensity, arc-wipe or "
+                                         "segment-travel\n");
+                    return 2;
+                }
             }
         }
         const std::string imageDir = out + "/images";
@@ -208,8 +224,8 @@ namespace
             std::fprintf(stderr, "neon-scale-check: cannot write %s/%s.json\n", out.c_str(), label.c_str());
             return 2;
         }
-        std::fprintf(js, "{\"build\": \"%s\", \"gpu\": \"%s\", \"scenarios\": {", label.c_str(),
-                     RendererName().c_str());
+        std::fprintf(js, "{\"build\": \"%s\", \"gpu\": \"%s\", \"timingMode\": \"%s\", \"scenarios\": {",
+                     label.c_str(), RendererName().c_str(), TimeModeName(mode));
         bool firstScene = true;
         for (const Scene &scene : SCENES)
         {
@@ -242,7 +258,8 @@ namespace
             std::fprintf(js, "}, \"ms\": {");
             for (int s = 0; s < SCALE_COUNT; ++s)
             {
-                const double ms = timing ? TimeRender(SceneConfig(scene, SCALES[s])) : -1.0;
+                const double ms =
+                    timing ? TimeRender(SceneConfig(scene, SCALES[s]), FRAME_WIDTH, FRAME_HEIGHT, nullptr, mode) : -1.0;
                 std::fprintf(js, "%s\"%s\": %.4f", s ? ", " : "", SCALE_TAGS[s], ms);
             }
             std::fprintf(js, "}}");
@@ -533,7 +550,7 @@ int main(int argc, char **argv)
     }
     std::fprintf(stderr,
                  "usage:\n"
-                 "  neon-scale-check generate <outdir> [--label NAME] [--images] [--no-timing] [--verbose]\n"
+                 "  neon-scale-check generate <outdir> [--label NAME] [--images] [--no-timing] [--mode MODE] [--verbose]\n"
                  "  neon-scale-check check [--images-dir DIR] [--verbose]\n"
                  "  neon-scale-check time <out.json> [--label NAME] [--size WxH] [--mode MODE] [--verbose]\n"
                  "  neon-scale-check partition [--configs N] [--seed S] [--verbose]\n");

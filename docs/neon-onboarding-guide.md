@@ -1434,6 +1434,15 @@ still ring never re-runs P0, and neither does a config change that moves none
 of those: an intensity, bloom, glow or geometry animation. (Until
 `docs/neon-perf-plan.md` item 6 it was any config change.)
 
+At 1.0, with no segments and a colour-stop alpha time cannot move, P1 itself
+is factored (I46): its output is `mask * tonemap(col * Fa)` with only the
+gathered hue `col` changing from frame to frame, so **P1f** - `neon.frag`
+compiled with `NEON_FIELD_BAKE`, offscreen after P1a - bakes `Fa` (and the
+mask) into `mFieldBuffer` once the config has held for a frame, and **P1c** -
+`neon-field.frag` - draws the glow quad in P1's place: read the field, read
+the hue, tone-map. A frame whose config just changed draws P1 directly, so an
+animation never pays a bake it cannot reuse.
+
 P1a and P1b - the gather and, below 1.0, the reduced-scale shading - are
 skipped the same way, as a pair: when `mOffscreenCurrent` is set (no config
 change since they last drew), P0 is not stale, P0b need not bake and the

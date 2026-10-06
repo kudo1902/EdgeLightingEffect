@@ -111,7 +111,14 @@ namespace NeonScaleCheck
         effect.Update(0.0f);
         OffscreenCapture capture;
         capture.Begin(FRAME_WIDTH, FRAME_HEIGHT);
+        // The STEADY frame, not the first: at scale 1.0 the frame a config
+        // changes on draws pass 1 directly, and the hue-invariant field takes
+        // over from the next (NeonRenderer's pass 1f / 1c, I46). What a host
+        // shows is the second, so that is what is measured - drawn over a
+        // fresh clear, so the first frame's glow is not composited twice.
         glClearColor(CLEAR_R, CLEAR_G, CLEAR_B, 1.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        effect.Render(FRAME_WIDTH, FRAME_HEIGHT);
         glClear(GL_COLOR_BUFFER_BIT);
         effect.Render(FRAME_WIDTH, FRAME_HEIGHT);
         CaptureUtil::Image image;

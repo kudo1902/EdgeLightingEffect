@@ -43,6 +43,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-emission.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-glow-cover.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-blit.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-field.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/blit.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/black-rect.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-lut-debug.frag"
@@ -66,6 +67,7 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-gather.frag" NEON_GATHER_FRA
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-emission.frag" NEON_EMISSION_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-glow-cover.frag" NEON_GLOW_COVER_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-blit.frag" NEON_BLIT_FRAG_CONTENT)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-field.frag" NEON_FIELD_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/blit.frag" BLIT_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/black-rect.frag" BLACK_RECT_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-lut-debug.frag" NEON_LUT_DEBUG_FRAG_CONTENT)
@@ -77,7 +79,7 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight.vert" SPOTLIGHT_VERT_CO
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight.frag" SPOTLIGHT_FRAG_CONTENT)
 
 # Shared neon tuning #defines, injected into neon.frag, neon-gather.frag,
-# neon-emission.frag, neon-glow-cover.frag and neon-blit.frag via @NEON_TUNING@
+# neon-emission.frag, neon-glow-cover.frag, neon-blit.frag and neon-field.frag via @NEON_TUNING@
 # in shaders.h.in (also #included by the C++ renderers).
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/neon-tuning.h" NEON_TUNING)
 

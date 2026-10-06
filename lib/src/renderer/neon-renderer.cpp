@@ -480,20 +480,34 @@ namespace EdgeLighting
             }
         }
 
-        /// @p src with `#define @p define` spliced in after its first line.
+        /// @p src with `#define NAME` spliced in after its first line for each
+        /// space-separated NAME in @p defines.
         ///
         /// How one shader file yields several programs. Every embedded source
         /// starts with the @GLSL_VERSION@ line, which must stay first, so the
-        /// define goes immediately after it - ahead of everything else, the
-        /// injected tuning header and neon-common.glsl included. Today that is
-        /// neon.frag's NEON_READS_GATHER variant; see
-        /// @ref NeonRenderer::ensurePathPrograms.
-        inline std::string WithDefine(const char *src, const char *define)
+        /// defines go immediately after it - ahead of everything else, the
+        /// injected tuning header and neon-common.glsl included. Today those
+        /// are neon.frag's NEON_READS_GATHER variant and, with it, the field
+        /// bake's NEON_FIELD_BAKE; see @ref NeonRenderer::ensurePathPrograms
+        /// and @ref NeonRenderer::ensureFieldPrograms.
+        inline std::string WithDefine(const char *src, const char *defines)
         {
+            std::string lines;
+            const std::string names(defines);
+            size_t start = 0;
+            while (start < names.size())
+            {
+                const size_t end = names.find(' ', start);
+                const std::string name = names.substr(start, end == std::string::npos ? std::string::npos : end - start);
+                if (!name.empty())
+                {
+                    lines += "#define " + name + "\n";
+                }
+                start = (end == std::string::npos) ? names.size() : end + 1;
+            }
             std::string out(src);
             const size_t eol = out.find('\n');
-            out.insert(eol == std::string::npos ? out.size() : eol + 1,
-                       std::string("#define ") + define + "\n");
+            out.insert(eol == std::string::npos ? out.size() : eol + 1, lines);
             return out;
         }
 
@@ -1146,6 +1160,70 @@ namespace EdgeLighting
                    config.neon.arcs[0].length >= 1.0f - 5e-7f;
         }
 
+        /// Whether no neon.frag program reads the fragment's perimeter
+        /// position (`uPerimeterUnread`): it feeds only the segment loop, the
+        /// arc loop - where an arc over the whole ring returns before reading
+        /// it, and an arc's own stops read it - and the gradient ring's alpha
+        /// read, which a ring that is opaque at every texel answers with 1.0.
+        /// So: no segments, every lit arc whole and without stops, and the
+        /// ring as uploaded opaque (@p ringOpaque). Then the shader skips
+        /// perimeterPosition and the alpha read, byte-identically.
+        ///
+        /// Like IsGlowCoverUnread it must never claim this where the shader
+        /// would read: it tests the same arcs the block packs (capped at
+        /// MAX_ARCS, dark ones skipped as the shader's loop skips them) and
+        /// the length against 1 - 5e-7, a hair stricter than
+        /// arcCoverContinuous's 1 - 1e-6.
+        inline bool IsPerimeterUnread(const std::vector<SegmentBoost> &effectiveSegments, const Config &config,
+                                      bool ringOpaque)
+        {
+            if (!effectiveSegments.empty() || !ringOpaque)
+            {
+                return false;
+            }
+            const int count = std::min(static_cast<int>(config.neon.arcs.size()), int(MAX_ARCS));
+            for (int i = 0; i < count; ++i)
+            {
+                const Arc &arc = config.neon.arcs[i];
+                if (arc.intensity <= 0.0f)
+                {
+                    continue;
+                }
+                if (arc.length < 1.0f - 5e-7f || !arc.colorStops.empty())
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /// Whether this config's pass 1 at scale 1.0 can be factored into the
+        /// hue-invariant field (pass 1f) and its composite (pass 1c): what
+        /// neon.frag writes must be mask * tonemap(col * Fa), with only the
+        /// gathered hue col moving with time. Not with segments - their hue
+        /// enters as a second product, and the field would need a channel for
+        /// it - and not when time can move the colour-stop alpha neon.frag
+        /// reads pointwise: a rotating hue over a ring that is not opaque at
+        /// every texel (@p ringOpaque, as uploaded). A function of the config
+        /// and the ring's upload; the split gather is checked by the caller.
+        inline bool IsFieldEligible(const std::vector<SegmentBoost> &effectiveSegments, const Config &config,
+                                    bool ringOpaque)
+        {
+            return config.neon.enable && GetClampedResolutionScale(config) >= 1.0f && effectiveSegments.empty() &&
+                   (config.neon.hueRotationRate == 0.0f || ringOpaque);
+        }
+
+        /// Whether neon.frag multiplies anything after its tone map - the
+        /// one-sided cut or a cutoff - so the field needs the mask in .g.
+        /// Without either every such multiply is by exactly 1.0 (a disabled
+        /// cutoff's sentinel puts its smoothstep at an end), and the field is
+        /// one channel.
+        inline bool HasFieldMask(const Config &config)
+        {
+            return config.neon.glowSide != GlowSide::BOTH || config.neon.insideCutoff.enable ||
+                   config.neon.outsideCutoff.enable;
+        }
+
         static_assert(GLOW_COVER_SHARED >= 2 * GLOW_COVER_MIN_INTERIOR,
                       "a band of the glow coverage table must leave columns for both its pieces");
 
@@ -1598,6 +1676,34 @@ namespace EdgeLighting
             return region;
         }
 
+        /// The hue-invariant field (pass 1f) is used only where the glow quad
+        /// fills at least this share of the box the field has to cover. The
+        /// field is a box - its texels sit on the viewport's pixels - while the
+        /// quad may be a thin frame: the production band's quad is ~7% of its
+        /// box, so its field was ~8 MB for a frame that measured 1.02x, the
+        /// shading there being too little for the field to save. At a half the
+        /// field holds at most two texels per shaded pixel.
+        constexpr float FIELD_MIN_FILL = 0.5f;
+
+        /// The box the field covers, at full resolution: the glow quad's,
+        /// clipped to the viewport, on the viewport's pixel grid.
+        inline BufferRegion GetFieldRegion(const Config &config, const glm::vec2 &glowOuter, int viewportWidth,
+                                           int viewportHeight)
+        {
+            const glm::vec2 centerFull(config.geometry.position.x + config.geometry.width * 0.5f,
+                                       static_cast<float>(viewportHeight) - config.geometry.position.y -
+                                           config.geometry.height * 0.5f);
+            return GetBufferRegion(glowOuter, centerFull, viewportWidth, viewportHeight, 1.0f, true);
+        }
+
+        /// Whether a glow quad of @p glowArea px fills enough of @p region for
+        /// the field to be worth its memory (FIELD_MIN_FILL).
+        inline bool FieldFillsRegion(float glowArea, const BufferRegion &region)
+        {
+            const float box = static_cast<float>(region.texels.x) * static_cast<float>(region.texels.y);
+            return glowArea >= FIELD_MIN_FILL * box;
+        }
+
         /// The ortho that draws @p region, at @p scale, from rect-local SCALED
         /// px - the space every scaled-path quad is built in.
         inline glm::mat4 RegionProjection(const BufferRegion &region, float scale)
@@ -1854,7 +1960,43 @@ namespace EdgeLighting
         // either.
         const bool reuseOffscreen = glowReady && (scaled || splitGather) && mOffscreenCurrent && !emissionStale &&
                                     !glowCoverStale && mOffscreenViewport == glm::ivec2(viewportWidth, viewportHeight);
-        if ((scaled || splitGather) && !reuseOffscreen)
+        // Pass 1 at 1.0 factored into the hue-invariant field (1f) and its
+        // composite (1c), where the config allows it. The field outlives the
+        // frame; besides a config change (OnConfigChanged), the viewport and a
+        // gradient ring upload - a cross-fade frame - invalidate it here. It is
+        // baked only once nothing invalidated it on the frame before, so an
+        // animation that changes the config every frame keeps drawing pass 1
+        // directly and never pays a bake it cannot reuse.
+        bool useField = false;
+        bool bakeField = false;
+        const BufferRegion fieldRegion = GetFieldRegion(config, mGlowOuter, viewportWidth, viewportHeight);
+        if (glowReady && !scaled && splitGather && !mFieldUnavailable &&
+            IsFieldEligible(mEffectiveSegments, config, mGradientLUT.IsOpaque()) &&
+            FieldFillsRegion(mGlowArea, fieldRegion))
+        {
+            const glm::ivec2 viewport(viewportWidth, viewportHeight);
+            if (viewport != mFieldViewport || mGradientLUT.GetUploadCount() != mFieldGradientUploads)
+            {
+                mFieldViewport = viewport;
+                mFieldGradientUploads = mGradientLUT.GetUploadCount();
+                mFieldCurrent = false;
+                mFieldSettled = false;
+            }
+            if (mFieldCurrent)
+            {
+                useField = true;
+            }
+            else if (mFieldSettled)
+            {
+                bakeField = ensureFieldPrograms();
+                useField = bakeField;
+            }
+            else
+            {
+                mFieldSettled = true;
+            }
+        }
+        if ((scaled || splitGather) && (!reuseOffscreen || bakeField))
         {
             prevTarget = RenderTargetState::Capture();
         }
@@ -1933,7 +2075,25 @@ namespace EdgeLighting
                 }
             }
 
-            if ((scaled || splitGather) && !reuseOffscreen)
+            // --- Pass 1f: the hue-invariant field, after the gather it reads.
+            // Over the glow quad's box at full resolution, its texel grid on
+            // the viewport's pixel grid (GetBufferRegion), so pass 1c finds a
+            // fragment's texel from its rect-local position alone. Unblended:
+            // the buffer is data.
+            if (bakeField && glowReady)
+            {
+                const bool mask = HasFieldMask(config);
+                glDisable(GL_BLEND);
+                useField = renderFieldPass(RegionProjection(fieldRegion, 1.0f), fieldRegion.texels.x,
+                                           fieldRegion.texels.y, mask, gatherUVFullScale, gatherUVFullOffset, time,
+                                           config);
+                mFieldCurrent = useField;
+                mFieldUnavailable = !useField;
+                mFieldOrigin = fieldRegion.origin;
+                mFieldHasMask = mask;
+            }
+
+            if ((scaled || splitGather) && (!reuseOffscreen || bakeField))
             {
                 // Back to the caller's target and viewport, both at once.
                 // Unconditional: the pass may have bound its target before
@@ -1970,8 +2130,17 @@ namespace EdgeLighting
                 // onto the target - or, with the gather split out, the shading
                 // alone, reading pass 1a's result through its full-res map
                 // (the same map the edge ring reads it through).
-                renderNeonPass(mvp, bufW, bufH, false, splitGather, gatherUVFullScale, gatherUVFullOffset, time,
-                               config);
+                // ... or, where the field holds this frame, pass 1c in its
+                // place: the field times the gathered hue.
+                if (useField)
+                {
+                    renderFieldCompositePass(mvp, gatherUVFullScale, gatherUVFullOffset);
+                }
+                else
+                {
+                    renderNeonPass(mvp, bufW, bufH, false, splitGather, gatherUVFullScale, gatherUVFullOffset, time,
+                                   config);
+                }
             }
             else
             {
@@ -2008,6 +2177,11 @@ namespace EdgeLighting
         // Wide, unlike the gates below: pass 1b reads most of the config, and
         // re-drawing them costs one frame's offscreen phase.
         mOffscreenCurrent = false;
+        // And the hue-invariant field, for the same reason, and one more frame
+        // before it is baked again: a config that changes every frame (an
+        // animation) never settles, and keeps drawing pass 1 directly.
+        mFieldCurrent = false;
+        mFieldSettled = false;
 
         // Snapshot dirtiness before we overwrite mCurrentConfig. Each rebuild
         // is gated on the exact set of fields it reads (see the corresponding
@@ -2268,6 +2442,16 @@ namespace EdgeLighting
         if (!UsesGatherBuffer(config, mGlowArea))
         {
             mGatherBuffer.Release();
+        }
+        // The field - the renderer's largest buffer at 1.0 - goes with any
+        // config that cannot use it. Not on the ring's opacity, which is the
+        // upload's rather than the config's: a rotating hue over a ring that
+        // is not opaque keeps a field it does not read until the next change.
+        if (!IsFieldEligible(mEffectiveSegments, config, true) ||
+            !FieldFillsRegion(mGlowArea, GetFieldRegion(config, mGlowOuter, mFieldViewport.x, mFieldViewport.y)))
+        {
+            mFieldBuffer.Release();
+            mFieldCurrent = false;
         }
     }
 
@@ -3433,6 +3617,8 @@ namespace EdgeLighting
         shader.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness * scale);
 
         shader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
+        shader.SetUniform("uPerimeterUnread",
+                          IsPerimeterUnread(mEffectiveSegments, config, mGradientLUT.IsOpaque()) ? 1 : 0);
 
         // The three LUT atlases are no longer read by the gather (the emission
         // pre-pass consumes them instead), but the pointwise path still samples
@@ -3550,6 +3736,91 @@ namespace EdgeLighting
         mGlowVertexArray.DrawArrays(GL_TRIANGLES, mGlowVertexCount);
         shader.Unuse();
         return true;
+    }
+
+    bool NeonRenderer::ensureFieldPrograms()
+    {
+        // The bake is neon.frag reading the gather (as pass 1 does at 1.0)
+        // with NEON_FIELD_BAKE: hue 1 in, field out. It shades, so it takes the
+        // arc block; it does not gather, so not the sample block.
+        if (!buildNeonProgram(mNeonFieldShader, ShaderSource::NEON_FRAG_SRC, "NEON_READS_GATHER NEON_FIELD_BAKE",
+                              "NeonRenderer.Field", PROGRAM_FIELD, false, true))
+        {
+            mFieldUnavailable = true;
+            return false;
+        }
+        if (mFieldCompositeShader.IsValid())
+        {
+            return true;
+        }
+        if ((mFailedPrograms & PROGRAM_FIELD_COMPOSITE) != 0)
+        {
+            mFieldUnavailable = true;
+            return false;
+        }
+        mFieldCompositeShader = ShaderProgram(ShaderSource::NEON_VERT_SRC, ShaderSource::NEON_FIELD_FRAG_SRC,
+                                              "NeonRenderer.FieldComposite");
+        if (!mFieldCompositeShader.IsValid())
+        {
+            mFailedPrograms |= PROGRAM_FIELD_COMPOSITE;
+            mFieldUnavailable = true;
+            LOG_E("NeonRenderer: the field composite failed to compile/link - scale 1.0 draws pass 1 directly.");
+            return false;
+        }
+        return true;
+    }
+
+    bool NeonRenderer::renderFieldPass(const glm::mat4 &mvp, int width, int height, bool mask,
+                                       const glm::vec2 &gatherUVScale, const glm::vec2 &gatherUVOffset, float time,
+                                       const Config &config)
+    {
+        // An offscreen target: the host's scissor is in the wrong coordinates
+        // here - see renderNeonPass.
+        GLUtils::NoScissorScope noScissor(true);
+
+        // Half float, one channel for Fa or two with the mask. No 8-bit
+        // fallback: Fa runs well past 1 and the tone map is steep near 0, so
+        // 8 bits would move whole levels - a driver that cannot render to
+        // half float draws pass 1 directly instead. NEAREST: the composite
+        // reads one texel per fragment, its own.
+        const bool ok = mask ? mFieldBuffer.Resize(width, height, GL_RG16F, GL_RG, GL_HALF_FLOAT, GL_NEAREST)
+                             : mFieldBuffer.Resize(width, height, GL_R16F, GL_RED, GL_HALF_FLOAT, GL_NEAREST);
+        if (!ok)
+        {
+            LOG_E("NeonRenderer: no half-float target for the hue-invariant field - scale 1.0 draws pass 1 directly.");
+            return false;
+        }
+        // Cleared to 0: a texel neon.frag discards composites to nothing.
+        mFieldBuffer.Bind();
+        mFieldBuffer.ClearBuffer();
+
+        // Every uniform pass 1 takes at 1.0, from the same upload, so the bake
+        // shades exactly what pass 1 would - with the hue at 1.
+        mNeonFieldShader.Use();
+        uploadNeonUniforms(mNeonFieldShader, mvp, 1.0f, time, mQuadMargin, mCornerSkip, config);
+        bindGatherBuffer(mNeonFieldShader, gatherUVScale, gatherUVOffset);
+        mGlowVertexArray.DrawArrays(GL_TRIANGLES, mGlowVertexCount);
+        mNeonFieldShader.Unuse();
+        return true;
+    }
+
+    void NeonRenderer::renderFieldCompositePass(const glm::mat4 &mvp, const glm::vec2 &gatherUVScale,
+                                                const glm::vec2 &gatherUVOffset)
+    {
+        // The glow quad pass 1 draws, through pass 1's transform: the same
+        // fragments, each reading its own field texel.
+        mFieldCompositeShader.Use();
+        mFieldCompositeShader.SetUniform("uMVP", mvp);
+        mFieldBuffer.BindTexture(6);
+        mFieldCompositeShader.SetUniform("uField", 6);
+        mFieldCompositeShader.SetUniform("uFieldOrigin", mFieldOrigin);
+        mFieldCompositeShader.SetUniform("uFieldHasMask", mFieldHasMask ? 1 : 0);
+        mGatherBuffer.BindTexture(3, 0);
+        mFieldCompositeShader.SetUniform("uGather", 3);
+        mFieldCompositeShader.SetUniform("uGatherUVScale", gatherUVScale);
+        mFieldCompositeShader.SetUniform("uGatherUVOffset", gatherUVOffset);
+        mGlowVertexArray.DrawArrays(GL_TRIANGLES, mGlowVertexCount);
+        mFieldCompositeShader.Unuse();
     }
 
     void NeonRenderer::bindGatherInputs(ShaderProgram &shader, const Config &config)

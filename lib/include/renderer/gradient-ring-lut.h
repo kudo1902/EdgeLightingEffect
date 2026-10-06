@@ -152,15 +152,27 @@ namespace EdgeLighting
             return true;
         }
 
+        /// Whether every texel of the ring as last uploaded has alpha 255 -
+        /// so a read of its alpha anywhere, filtered or not, is exactly 1.0.
+        /// Tracks the UPLOAD, cross-fade frames included, not the stops. The
+        /// neon skips its pointwise alpha read on a ring like this; see
+        /// @c NeonRenderer's IsPerimeterUnread.
+        bool IsOpaque() const { return mOpaque; }
+
     private:
         /// Quantise mDisplay to RGBA8 and upload it.
         void upload()
         {
             // Held as a member so a fade frame does no heap allocation.
             mBytes.resize(mDisplay.size());
+            mOpaque = true;
             for (size_t i = 0; i < mDisplay.size(); ++i)
             {
                 mBytes[i] = ColorUtils::ToByte(mDisplay[i]);
+                if (i % 4 == 3 && mBytes[i] != 255)
+                {
+                    mOpaque = false;
+                }
             }
 
             // 1-row 2D texture (sampled at v = 0.5 in the shader). REPEAT on
@@ -178,6 +190,7 @@ namespace EdgeLighting
         std::vector<unsigned char> mBytes; ///< Reused upload scratch.
         int mSize = 0;                     ///< Ring width in texels; 0 until the first bake.
         bool mFading = false;              ///< True while a cross-fade is in flight.
+        bool mOpaque = false;              ///< Every uploaded alpha byte is 255; see IsOpaque.
         float mElapsed = 0.0f;             ///< Seconds into the current fade.
         float mDuration = 0.0f;            ///< Snapshot of the duration for this fade.
 

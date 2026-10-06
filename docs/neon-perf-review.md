@@ -652,6 +652,13 @@ make. The recommendation comes first; the rest is what it trades.
    *Recommended: accept, and regenerate the page* (its README's four steps,
    one `--images` run plus three interleaved timing runs per build), so `check`
    measures drift from the current 1.0 again rather than from the old one.
+
+   > **Later:** regenerated on the Apple M2 Pro (2026-10-06), after the
+   > hue-invariant field (I46) - so the images are the output that ships, and
+   > `check`'s 1.0 column reads 0 on all twelve scenes there. The page is now
+   > timed with the hue rotating ([`neon-perf-plan.md`](neon-perf-plan.md)
+   > section 9).
+
 4. **Keep a way to force the inline loop at 1.0?** There is none now: the
    exact path is reachable only through a config the gate keeps inline. It
    would be a reference for future comparisons and an escape hatch if a

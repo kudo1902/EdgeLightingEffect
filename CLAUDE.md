@@ -26,7 +26,7 @@ Docs, in reading order. The three neon documents are tiers of the same material 
 - [`docs/lens-flare-perf-review.md`](docs/lens-flare-perf-review.md) - why the flare was the pipeline's most expensive layer and what the five changes that halved it did. Per-term cost attribution, the tuning header those changes forced, and the reason one of them cannot be byte-identical on any GPU. Read before touching `lens-flare.frag`'s ghost loop.
 - [`docs/neon-perf-review.md`](docs/neon-perf-review.md) - the same for the neon layer, which is 81% of the frame and whose gather loop is 95% of that. Per-term attribution, the three changes that took it to 1.46x, and the two directions that were measured and set aside (a windowed gather; an interior hole in the draw quad - since built without the inner fade it called for, as `GetGlowInnerReach`; see `docs/glow-inner-reach.md`). Section 8 is the measured shape of `resolutionScale` / `numSamples` / `glowRadius` - read it before tuning any of them for speed. Section 10 is the later round that took scale 1.0 another 2.3-4.4x at 1080p (the gather split out at 1.0, the single-`atan` bloom, and the exact / bounded piece skips), with the attribution of the shading pass that is now the cost. Read before touching `neon.frag`'s gather loop or its halo / bloom pieces.
 - [`docs/glow-inner-reach.md`](docs/glow-inner-reach.md) - the glow quad's interior hole with no cutoff set: why the interior was shaded to the centre, why the hole cannot sit at `reach` (the halo and the corner arcs' bloom are still lit past it), the closed-form bound that places it, the byte-for-byte proof it changes no pixel, and before/after frame times. Read before touching the halo / bloom terms in `neon.frag`, which `GetGlowInnerReach` mirrors.
-- [`docs/neon-perf-plan.md`](docs/neon-perf-plan.md) - what is left after the 1.0 gather split, measured on an Apple M2 Pro at `0cec9f4`: where a neon frame's time and memory go by frame type (still, hue rotating, intensity pulse, arc wipe, travelling segment), the attribution of the partly lit premium, and a ranked plan of thirteen items with prototype numbers for the two largest - skipping the offscreen passes on frames where nothing moved (byte-identical, 2-6x on still frames at 0.5) and re-baking only the glow coverage table's changed pieces (exact, up to 1.91x on travelling-segment frames). Also records that `neon-scale-check check` has no headroom left on the M2's 1.0 column, and that `time` cannot see animated-frame costs. Read before starting any neon perf or memory work.
+- [`docs/neon-perf-plan.md`](docs/neon-perf-plan.md) - what is left after the 1.0 gather split, measured on an Apple M2 Pro at `0cec9f4`: where a neon frame's time and memory go by frame type (still, hue rotating, intensity pulse, arc wipe, travelling segment), the attribution of the partly lit premium, and a ranked plan of thirteen items with prototype numbers for the two largest - skipping the offscreen passes on frames where nothing moved (byte-identical, 2-6x on still frames at 0.5) and re-baking only the glow coverage table's changed pieces (exact, up to 1.91x on travelling-segment frames). Its section 11 is the follow-up review and what it built: `perimeterPosition` skipped on a uniform ring (I45) and the hue-invariant field at 1.0 (I46). Read before starting any neon perf or memory work.
 - [`docs/spotlight-renderer-plan.md`](docs/spotlight-renderer-plan.md) - the `SpotlightRenderer` design and the offscreen verification behind it, including the solved strip bound and the one real defect that verification caught.
 - [`docs/corner-crease-and-filament-nyquist.md`](docs/corner-crease-and-filament-nyquist.md) - the analytic emission's measured defects and their fixes: the dark diagonal wedges at the corners (halo and bloom were the field of ONE infinite edge, now a sum over the emitter's pieces), the `resolutionScale` 0.5 mismatch at thin line widths (the filament's floor was in the wrong units, and then - section 2.8 - was a fixed half width when what decides the blit is the profile's SHAPE, so a soft `filamentFalloff` rendered twice as wide), and the corner over-extension the first fix introduced (the straights ran to the SHARP corner, so a phantom emitter lit the outside of every rounded corner; they now stop at the tangent points and each arc is developed onto its own tangent), and the crease THAT fix introduced (the arc was developed at rate `r`, which is right only for a fragment on the arc, so every arc's centre of curvature carried a C1 kink and an under-count - a dark cross at the middle of a circle; section 1.9). Section 1.10 is the one level up: all of that fixed the halo/bloom FIELD, while the coverage that SCALES it was still read at the fragment's NEAREST perimeter point - so any partly lit perimeter (a half-ring arc, a segment boost) cut the glow to a hard-edged polygon along the medial axis until the glow took a gathered coverage instead (itself replaced since V20 by each piece's own coverage, read from a baked table). Includes the per-edge bloom pedestal the first fix forced and the one shared pedestal the arcs are allowed instead, the small-rect and INTERIOR brightness changes the segment sum causes - section 1.5.2 is the one to read if someone reports "the glow got bigger" - and the offscreen probes behind every number. Read before touching the halo/bloom or filament blocks.
 - [`docs/glow-side-comparison.md`](docs/glow-side-comparison.md) - what changed when every edge the neon draws became COVERAGE applied to the graded output rather than a multiply into the linear emission, and when the one-sided cut moved off the reduced-resolution buffer into `neon-blit.frag`. Magnified before/after crops plus the sub-pixel sweeps behind them. Read it before retuning `glowSideSoftness` or `Cutoff::softness`, and before assuming a mask belongs above the tone map.
@@ -109,6 +109,42 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   Byte-identical; 2-6x on a still frame at scale 0.5 on an Apple M2 Pro. It
   does not change which path a config takes: the split's gate stays, since an
   animated frame still pays the offscreen pass.
+
+  **At `1.0`, pass 1 is usually factored into a hue-invariant field** (pass
+  1f / 1c, I46, `docs/neon-perf-plan.md` section 11): with no segments,
+  `neon.frag`'s output is `mask * tonemap(col * Fa)` where only the gathered
+  hue `col` moves with time. So `neon.frag` compiled with `NEON_FIELD_BAKE`
+  (`mNeonFieldShader`; it sets `col` to 1 and writes the pre-tone-map `Fa` and
+  the post-tone-map masks applied to 1.0) bakes `mFieldBuffer` offscreen,
+  after the gather, and `neon-field.frag` (`mFieldCompositeShader`, pass 1c)
+  draws the glow quad in pass 1's place: read the field, read the hue,
+  tone-map - 4x on the default frame with the hue rotating, 9x still, within
+  1/255. Eligible (`IsFieldEligible`) with no segments and, under a rotating
+  hue, a ring opaque at every texel (else time moves the alpha `neon.frag`
+  reads); and only where the quad fills at least half the field's box
+  (`FIELD_MIN_FILL` - a thin band's box is the whole screen). The bake is
+  LAZY: a frame that changed the config (or the viewport, or uploaded the
+  gradient ring) draws pass 1 directly, and the field is baked only once that
+  held for a frame (`mFieldSettled`) - an animation changing the config every
+  frame never pays a bake it cannot reuse. R16F, RG16F with a mask (a
+  one-sided glow or a cutoff), over the glow quad's box on the viewport's pixel
+  grid (3.3 MB for a 960 x 540 rect at 1080p); no 8-bit fallback - a driver
+  that cannot render half float draws pass 1 directly (`mFieldUnavailable`).
+  The composite finds its texel from `vPos`, not `gl_FragCoord`, so a host
+  viewport offset is fine. **The factorisation is an invariant of
+  `neon.frag`:** anything new there that reads `col` non-linearly, reads time,
+  or multiplies after the tone map without going through the masks breaks it -
+  extend `NEON_FIELD_BAKE` and `neon-field.frag` together, or narrow
+  `IsFieldEligible`. `neon-scale-check` captures the SECOND frame after a
+  config change for this reason: the first draws pass 1 directly.
+
+  **A uniformly lit ring skips its perimeter position** (`uPerimeterUnread`,
+  I45): with no segments, every lit arc over the whole ring and no stops of its
+  own, and a gradient ring opaque at every texel (`GradientRingLUT::IsOpaque`),
+  nothing reads `sPos`, so `perimeterPosition` and the gradient alpha read are
+  skipped - 1.11x on the default frame. `IsPerimeterUnread` on the CPU must
+  stay at least as strict as every reader of `sPos` in `neon.frag`: add a
+  reader and it has to know.
 
   **Two cheap paths through the halo / bloom pieces**, which are now most of the cost at 1.0: `bloomSegment` is ONE two-argument `atan` (the exact identity for a difference of two), and both kinds of piece are skipped where they add nothing. A straight's bloom is skipped past `reach` (exactly 0 there; each pair of edges shares its pedestal). A corner arc is skipped WHOLE past `uCornerSkip` from its circle (`GetCornerSkip`): a CPU bound (`GetCornerArcBound`, the same mirror `GetGlowInnerReach` uses, via `GlowBoundTerms`) where its bloom is exactly 0 and its halo under a quarter of half a level, so four skipped arcs stay under half a level - at most 1/255 on rounding-boundary pixels. Change the halo / bloom terms and `GlowBoundTerms` has to follow, for both bounds.
 

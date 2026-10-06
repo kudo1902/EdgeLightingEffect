@@ -4106,6 +4106,92 @@ MB with segments) where it held none; the production band holds 0.06 MB. The
 AMD's values are recorded in `neon-tuning.h` for a GPU that needs them back.
 Full numbers in `neon-perf-plan.md` section 10.6.
 
+### I45. A uniformly lit ring computed its perimeter position for nothing - FIXED
+
+Target B of [`neon-perf-plan.md`](neon-perf-plan.md) section 11. `neon.frag`
+called `perimeterPosition` - an `atan` and a cascade of branches - and read the
+gradient ring's alpha at the result, for every fragment. The position feeds only
+the segment loop, the arc loop (where an arc over the whole ring returns before
+reading it) and that alpha read, which an opaque ring answers with 1.0
+whatever the position. So on the default config - one full arc, no segments,
+opaque stops - both were dead work: ~9% of the frame by the section's
+attribution.
+
+`uPerimeterUnread` now skips both, set by the CPU (`IsPerimeterUnread`) when
+there are no segments, every lit arc covers the whole ring with no stops of
+its own (its length tested a hair more strictly than `arcCoverContinuous`
+does), and the ring as uploaded is opaque at every texel
+(`GradientRingLUT::IsOpaque`, recomputed on every upload, cross-fade frames
+included). Add a reader of `sPos` to `neon.frag` and this test has to know.
+
+Measured, `neon-scale-check time` against the tree before it, three
+interleaved rounds: the default scene with the hue rotating 0.633 -> 0.568 ms
+at 1080p (1.11x) and 0.507 -> 0.402 at 720p; the twelve scenes' geometric mean
+at 1.0 1.06-1.08x; scenes it does not engage on (`arcs`, `segments`, an arc
+wipe) unchanged. Output: byte-identical on every frame of the 212-frame walk
+where it engages - hue time and a colour cross-fade included. Where it does
+not, 4 of the walk's configs (partial arcs, segments) move 1-2 pixels by 1
+level: the branch around `perimeterPosition` changes how the compiler
+schedules its arithmetic, in all three forms tried (a branch at the call, an
+early return inside the function, the alpha read left unconditional).
+`check` unchanged, `partition` passing.
+
+### I46. Every frame at 1.0 re-shaded a glow whose only moving part is its hue - FIXED
+
+Target A of [`neon-perf-plan.md`](neon-perf-plan.md) section 11. At scale 1.0
+three quarters of a default frame was the shading's arithmetic - the halo, the
+bloom, the corner pieces - re-done every frame although, with no segments, only
+the gathered hue `col` moves with time: `neon.frag`'s output is
+`mask * tonemap(col * Fa)` with `Fa` and `mask` functions of the config and the
+geometry alone. A still frame re-did all of it too, since the caller's
+framebuffer has to be redrawn.
+
+Pass 1 at 1.0 is now factored. Pass 1f bakes `Fa` - `neon.frag` compiled with
+`NEON_FIELD_BAKE`, which sets the hue to 1 and writes the pre-tone-map result,
+and the post-tone-map masks applied to 1.0 - into `mFieldBuffer`, offscreen,
+after the gather; pass 1c (`neon-field.frag`) draws the glow quad in pass 1's
+place, reading the field and the gathered hue and tone-mapping as `neon.frag`
+does. The field is R16F, RG16F where there is a mask (a one-sided glow or a
+cutoff), over the glow quad's box on the viewport's pixel grid, found from the
+rect-local position, so a host viewport offset changes nothing (measured
+byte-identical at an offset of 173, 61). Eligible with no segments and, under a
+rotating hue, a ring opaque at every texel - otherwise time moves the alpha
+`neon.frag` reads pointwise - and only where the quad fills at least half the
+box (`FIELD_MIN_FILL`): the production band's quad is ~7% of its box, so its
+field would have been ~8 MB for nothing. The bake is lazy: a frame that changed
+the config, the viewport or the gradient ring draws pass 1 directly, and only a
+state that held for a frame is baked - built eagerly, an animation that changes
+the config every frame paid a bake and a composite on each, 5-7% slower. No
+8-bit fallback: a driver that cannot render half float draws pass 1 directly.
+
+Measured on an Apple M2 Pro, `neon-scale-check time` against the tree before
+it, three interleaved rounds, geometric mean over the twelve scenes at 1.0:
+
+| mode | 1280 x 720 | 1920 x 1080 | `default` at 1080p |
+| ---- | ---------: | ----------: | -----------------: |
+| still | 5.05x (up to 11.5x) | 6.27x (up to 13.9x) | 0.502 -> 0.067 ms |
+| hue rotating | 2.51x (up to 4.7x) | 3.33x (up to 6.9x) | 0.582 -> 0.145 ms |
+| intensity, arc wipe, segment travel | 1.00x | 0.99-1.00x | - |
+
+`bounded_band` (the field is not worth its box there) and `segments` (not
+eligible) are unchanged. Below 1.0 nothing changed; the tool's still column at
+0.5 read 0.89x, an artefact of each scene's now much lighter 1.0 run coming
+just before it - timed alone, 0.96-1.05x.
+
+Output: every 1.0 image of the comparison page moves by at most 1 level, on
+0.15-2.9% of its pixels, from the half-float field; every reduced scale and the
+`segments` scene byte-identical. On a long-lived effect the first frame after
+each config change is byte-identical to the tree before; held frames move by at
+most 1. `check` passes with an unchanged table, `partition` passes. Memory:
+3.4 MB of textures for the default rect at 1080p, where there was 0.1; 2.35 MB
+for a 160 x 96 rect (1.23); the band, segment configs and every reduced scale
+unchanged.
+
+**The factorisation is an invariant of `neon.frag`.** Anything added there that
+reads `col` other than linearly, reads time, or multiplies after the tone map
+outside the masks breaks it; extend `NEON_FIELD_BAKE` and `neon-field.frag`
+together, or narrow `IsFieldEligible`.
+
 ---
 
 ## What is left
@@ -4118,7 +4204,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, and the twenty-first I39 to I44 (I39 closing I2). Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, and the twenty-first I39 to I46 (I39 closing I2). Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -4159,6 +4245,8 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I42 | fixed | any arc or segment change re-baked the whole glow coverage table; each piece's texels depend on that piece alone, so only the pieces a changed light reaches are re-baked - exact (texel for texel), 1.29x on the band's travelling-segment frames on an M2 Pro |
 | I43 | fixed | the glow coverage table was RGBA16F with two channels of zeros on a config without segments, and was held for the life of the layer; now RG16F there (0.5 MB) and released after 5 s unread |
 | I44 | changed | the split's gate was the AMD's calibration and kept the loop inline where an M2 Pro split 1.1-4.75x faster; now the M2's values (every rect splits at 1.0), `bounded_band` 3.5-3.7x, at up to 16 / 33 MB of gather buffer for a tiny rect with a frame-filling glow |
+| I45 | fixed | a uniformly lit ring with opaque stops computed `perimeterPosition` and a gradient alpha read nothing used; skipped (`uPerimeterUnread`), the default frame 1.11x at 1080p, byte-identical where it engages |
+| I46 | fixed | pass 1 at 1.0 re-shaded a glow whose only moving part is its hue; now a hue-invariant field baked once a config holds and composited per frame - 3.3x (hue) / 6.3x (still) geometric mean at 1080p, within 1/255, +3.3 MB for the default rect |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

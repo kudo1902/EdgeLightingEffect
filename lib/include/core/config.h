@@ -431,14 +431,29 @@ namespace EdgeLighting
         /// Measure. See docs/neon-resolution-scale-plan.md sections 7, 12 and
         /// 13.
         ///
+        /// And at 1.0 itself, with no segments and stops whose alpha the hue
+        /// rotation cannot move, the renderer bakes the glow's hue-invariant
+        /// field once the config has held for a frame and only composites the
+        /// gathered hue with it after that (I46). There 1.0 is the CHEAPEST
+        /// scale on a still frame and with the hue rotating - on an Apple M2
+        /// Pro the comparison page's default scene (a 640 x 360 rect at
+        /// 1280 x 720) costs 0.11 ms at 1.0 against 0.20 at 0.5 and 0.15 at
+        /// 0.25 - and a reduced scale pays only on
+        /// frames whose config itself animates (an intensity pulse, an arc
+        /// wipe), with segments, or for a rect so small its gather runs near
+        /// full resolution. The field costs memory instead: about 3.3 MB at
+        /// 1920 x 1080 for a 960 x 540 rect. See docs/neon-perf-plan.md
+        /// section 11.
+        ///
         /// Memory: below 1.0 the renderer holds an RGBA8 buffer at the reduced
         /// scale over the part of the frame the glow can reach - never more
         /// than the whole viewport at that scale - and an RGBA16F gather buffer
         /// (two attachments with segments) over the same area at the gather's
         /// scale. At 1920 x 1080: 2.15 MB at 0.5 and 0.6 MB at 0.25 for a
-        /// full-screen rect, 1.8 / 0.54 MB for a 900 x 540 one. Nothing at
-        /// 1.0, and released when the scale returns to 1.0 or the layer is
-        /// disabled.
+        /// full-screen rect, 1.8 / 0.54 MB for a 900 x 540 one. Released when
+        /// the scale returns to 1.0 or the layer is disabled. At 1.0 the
+        /// gather buffer (small, but up to the glow quad at full resolution
+        /// for a rect under ~450 px of perimeter) and the field above.
         ///
         /// The two paths draw with different shader programs, built the first
         /// frame each path renders: a host that stays on one never compiles

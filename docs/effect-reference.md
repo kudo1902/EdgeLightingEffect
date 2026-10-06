@@ -450,6 +450,14 @@ layer that is already cheap at 1.0 - a tight cutoff band, a one-sided glow -
 can render slower below 1.0, and a soft filament (`filamentFalloff` below
 ~0.3) makes the ring wide. Measure on the target before lowering it.
 
+And at 1.0, with no segments and stops whose alpha a rotating hue cannot move,
+the renderer bakes the glow's hue-invariant field once the config holds and
+only composites the gathered hue after that (I46 in `review-findings.md`):
+there 1.0 is the cheapest scale on still frames and with the hue rotating, and
+a reduced scale pays only on frames whose config animates, with segments, or
+for a very small rect. The field costs ~3.3 MB at 1080p for a 960 x 540 rect.
+See `docs/neon-perf-plan.md` section 11.
+
 **`neon.numSamples`** (default 128)
 Number of gather-loop samples per fragment, capped at `NEON_MAX_LOOP_SAMPLES`
 (128), which sizes both the UBO and the shader's array. The samples are spread
