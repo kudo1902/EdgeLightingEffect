@@ -1097,7 +1097,11 @@ toward the centre and away from the rect. Uniforms `uInsideCutoff`,
 `uInsideCutoffSoftness`, `uOutsideCutoff`, `uOutsideCutoffSoftness` (x scale
 in `neon.frag`, unscaled in the blit). They also shape geometry: the quad's
 hole and outer cap, the ring and blit extents (`GetLitExtent`), and the quad
-margin (`GetGlowMargin` caps it at the outside cutoff's end). A cutoff on a
+margin (`GetGlowMargin` caps it at the outside cutoff's end). The hole does
+not need a cutoff, though: on a rect larger than twice the glow's reach the
+quad is holed anyway, at the depth past which the glow is provably under half
+an 8-bit level (`GetGlowInnerReach`), so an inside cutoff set past the visible
+glow buys no further speed. A cutoff on a
 side `glowSide` already removes is **neutralised** (treated as disabled).
 Both set `geometryDirty`. C ABI `el_effect_set_inside_cutoff`,
 `el_effect_set_outside_cutoff`.
