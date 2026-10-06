@@ -4087,6 +4087,25 @@ Timing 0.99x-1.00x in every mode - the halved fetch did not make the glow fix
 cheaper on this GPU, which fits the plan's attribution of that cost to the
 arithmetic around the fetch rather than to its bytes.
 
+### I44. The split's gate was calibrated on one GPU and cost another up to 4.75x - CHANGED
+
+`FULL_RES_SPLIT_GATHER_MAX_SCALE` (0.5) and `FULL_RES_SPLIT_MIN_AREA_PX`
+(140000) were the AMD Radeon Pro 5300M's crossovers, set when a still frame
+still re-ran the gather every frame and that GPU charged ~0.15 ms for leaving
+the caller's framebuffer. On an Apple M2 Pro that charge is ~6 us, and after
+I40 a still frame does not leave it at all: the split won at every size and in
+every mode there (`neon-perf-plan.md` section 10.2), and the gate kept the loop
+inline exactly where it lost - small glows and cutoff bands under ~1100 px.
+
+On the owner's decision the constants are now the M2's, 1.0 and 0: every rect
+splits at 1.0. `bounded_band`, the one check scene that changed path, renders
+3.5-3.7x faster still and 1.7-2.4x moving; nothing else moved. Configs that
+switch path move by 1/255 (`check` passes). The price is memory on small rects:
+a 40 x 24 rect whose glow fills a 1080p frame holds a 16 MB gather buffer (33
+MB with segments) where it held none; the production band holds 0.06 MB. The
+AMD's values are recorded in `neon-tuning.h` for a GPU that needs them back.
+Full numbers in `neon-perf-plan.md` section 10.6.
+
 ---
 
 ## What is left
@@ -4099,7 +4118,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, and the twenty-first I39 to I43 (I39 closing I2). Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, and the twenty-first I39 to I44 (I39 closing I2). Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -4139,6 +4158,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I41 | fixed | without segments `uGatherSeg` was bound to texture 0, and Apple's driver logged it on every split or scaled run; attachment 0 stands in, as for I33 |
 | I42 | fixed | any arc or segment change re-baked the whole glow coverage table; each piece's texels depend on that piece alone, so only the pieces a changed light reaches are re-baked - exact (texel for texel), 1.29x on the band's travelling-segment frames on an M2 Pro |
 | I43 | fixed | the glow coverage table was RGBA16F with two channels of zeros on a config without segments, and was held for the life of the layer; now RG16F there (0.5 MB) and released after 5 s unread |
+| I44 | changed | the split's gate was the AMD's calibration and kept the loop inline where an M2 Pro split 1.1-4.75x faster; now the M2's values (every rect splits at 1.0), `bounded_band` 3.5-3.7x, at up to 16 / 33 MB of gather buffer for a tiny rect with a frame-filling glow |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

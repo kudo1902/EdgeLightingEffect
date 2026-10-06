@@ -1423,11 +1423,16 @@ namespace EdgeLighting
         /// ring has always read it with, at full resolution, on the caller's
         /// framebuffer - the ring's program over the whole glow quad.
         ///
-        /// A rect small enough to gather near full resolution would run the
-        /// loop on nearly as many texels as it shades, plus a pass, so past
-        /// FULL_RES_SPLIT_GATHER_MAX_SCALE the loop stays inline. That bound is
-        /// also what caps the gather buffer's memory at what the scaled path at
-        /// 0.5 already allocates.
+        /// A rect small enough to gather near full resolution runs the loop
+        /// on nearly as many texels as it shades, plus a pass, so past
+        /// FULL_RES_SPLIT_GATHER_MAX_SCALE the loop stays inline - which on the
+        /// AMD 5300M was 0.5. The shipped value is the Apple M2 Pro's, 1.0, so
+        /// every rect splits at 1.0: there the split won even at gather scale
+        /// 1.0 (1.1x on a moving 64 x 36 rect, 4.6x still, since a still
+        /// frame reuses the gather). At 0.5 the bound also capped the gather
+        /// buffer at what the scaled path at 0.5 allocates; at 1.0 a tiny
+        /// rect's buffer can approach its glow quad at full resolution
+        /// (docs/neon-perf-plan.md section 10.6).
         ///
         /// A function of the geometry and the scale only - NOT of @c enable,
         /// which is not in geometryDirty: setupRingGeometry builds the gather
@@ -1446,7 +1451,11 @@ namespace EdgeLighting
         /// leaving the caller's framebuffer at all: measured on an AMD Radeon
         /// Pro 5300M, the first offscreen pass of a frame costs ~0.15 ms
         /// whatever it draws, and a second one in the same phase almost
-        /// nothing. So it pays for itself in either of two ways:
+        /// nothing. On an Apple M2 Pro it costs ~6 us, and the shipped
+        /// FULL_RES_SPLIT_MIN_AREA_PX is that GPU's, 0: the second term below
+        /// is then always true and every rect splits. The AMD's reasoning, for
+        /// a GPU that needs the gate back (its value was 140000), is that it
+        /// pays for itself in either of two ways:
         ///
         ///   - the emission table re-bakes every frame anyway, which it does
         ///     at any non-zero hue rotation (the default): the frame already

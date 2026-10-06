@@ -322,7 +322,8 @@ Steps:
    moves on every change. Pass 1b keeps the wide flag; it reads too much of the
    config to key narrowly.
 
-Do **not** retire `FULL_RES_SPLIT_MIN_AREA_PX` on step 1 alone. It would make
+Do **not** retire `FULL_RES_SPLIT_MIN_AREA_PX` on step 1 alone. (Since set to
+0 on the owner's decision, on the M2's measurement - section 10.6.) It would make
 still frames free on the AMD, but an animated frame with the cache invalid
 would split and pay the 0.15 ms there - the 3.6x-slower case the gate exists
 for. After step 2 only animations of the gather's own inputs (the shape, the
@@ -555,7 +556,8 @@ Measure on the target's CPU first. On the M2 neither is visible.
 | ---- | ----- |
 | 1. Regenerate the comparison page's 1.0 images | open - waits on which GPU owns the reference images (the page's are the AMD's) |
 | 2. `time --mode` | **done**: `still`, `hue`, `intensity`, `arc-wipe`, `segment-travel` |
-| 3. Target-device run | open |
+| 3. Target-device run | **done on the Apple M2 Pro** (section 10); the real target still unmeasured |
+| The split's gate | **set to the M2's values**, 1.0 and 0 (section 10.6, I44) |
 | 4. Skip the offscreen passes when nothing moved | **step 1 done** (I40); step 2, the keyed gather, open |
 | 5. Per-piece glow coverage bake | **done** (I42) |
 | 6. Emission table keyed on its inputs | **done** (I39) |
@@ -625,3 +627,172 @@ changed.
 Exact (I43), and a memory change only: 0.99x-1.00x in every timing mode.
 Live textures on the M2 for a partly lit ring with no segments, 1.08 -> 0.58
 MB; after a ring has sat uniformly lit for more than 5 s, 1.08 -> 0.08 MB.
+
+## 10. Item 3: measured on the Apple M2 Pro
+
+Item 3 run on the machine at hand, on the tree after I39-I43 (`f7465fc` plus
+items 5 and 10): the profile by frame type, the split's gate re-calibrated, the
+whole frame layer by layer, startup, and memory. Everything here is this GPU's;
+the real target - a tiler, by the docs - is still unmeasured, and this is the
+data the section 6 decisions were waiting on for this machine.
+
+### 10.1 The neon by frame type
+
+`neon-scale-check time` in every mode, median of two rounds, ms. A selection;
+the full grid is twelve scenes x six scales x five modes x three sizes.
+
+| scene, size, scale | still | hue | intensity | arc wipe | segment travel |
+| ------------------ | ----: | --: | --------: | -------: | -------------: |
+| `default` 720p 1.0 | 0.330 | 0.398 | 0.394 | 0.538 | 0.643 |
+| `default` 1080p 1.0 | 0.554 | 0.620 | 0.619 | 0.808 | 0.919 |
+| `default` 1080p 0.5 | 0.073 | 0.301 | 0.291 | 0.391 | 0.498 |
+| `default` 4K 1.0 | 1.192 | 1.304 | 1.291 | 1.587 | 1.797 |
+| `default` 4K 0.5 | 0.175 | 0.655 | 0.649 | 0.793 | 0.952 |
+| `soft_wash` 1080p 1.0 | 0.992 | 1.064 | 1.059 | 1.675 | 1.792 |
+| `soft_wash` 4K 1.0 | 3.899 | 4.064 | 4.068 | 6.401 | 6.576 |
+| `bounded_band` 1080p 1.0 | **0.232** | **0.106** | 0.250 | 0.344 | 0.518 |
+| `bounded_band` 4K 1.0 | 0.100 | 0.138 | 0.134 | 0.218 | 0.295 |
+
+- **Below 1.0 the still column is the cache (I40), and the rest is not.** At
+  0.5 a moving frame costs 3-5x a still one: everything the cache skips comes
+  back. A host that animates every frame should read the moving columns.
+- **`bounded_band` at 1080p is cheaper with the hue rotating than still**,
+  0.106 against 0.232 ms: a rotating hue forces the split, while the area gate
+  keeps this band inline. Section 10.2 is that row, for every size.
+- **Arcs and segments moving are the dearest frames** - 1.3-1.7x a still one
+  at 1.0 - and what is left of them is the glow coverage bake (the bell's
+  reach, section 9) and the partly lit shading (items 8 and 9).
+
+### 10.2 The split's gate, re-calibrated
+
+Two libraries built from this tree, one that never splits the gather at 1.0
+(`FULL_RES_SPLIT_GATHER_MAX_SCALE` 0) and one that always does (1.0, and
+`FULL_RES_SPLIT_MIN_AREA_PX` 0), timed interleaved with the shipped gate, two
+rounds, 1920 x 1080. "Pulse" is an intensity pulse at hue rate 0 - a config
+change every frame, so nothing is reused. Inline / split, above 1 the split
+wins:
+
+| rect (gather scale) | the gate picks | still | pulse | hue |
+| ------------------- | -------------- | ----: | ----: | --: |
+| 64 x 36 glow (1.00) | inline | 4.61x | 1.11x | 1.09x |
+| 96 x 54 glow (0.82) | inline | 4.67x | 1.37x | 1.41x |
+| 128 x 72 glow (0.62) | inline | 4.62x | 1.92x | 1.92x |
+| 192 x 108 glow (0.41) | split | 4.75x | 2.67x | 2.64x |
+| 960 x 540 glow (0.08) | split | 6.02x | 5.44x | 5.34x |
+| 160 x 87 band (0.50) | inline (hue: split) | 3.21x | 1.31x | 1.19x |
+| 640 x 348 band (0.12) | inline (hue: split) | 4.55x | 2.26x | 1.93x |
+| 960 x 522 band (0.08) | inline (hue: split) | 4.75x | 2.86x | 2.34x |
+| 1840 x 1000 band (0.06) | split | 5.50x | 3.49x | 3.37x |
+
+The split wins at every size in every mode on this GPU, and the gate leaves
+1.1-4.75x on the table wherever it picks inline: on the small glows its gather
+scale cap does, on the bands below ~1100 px wide its area threshold does. Two
+things changed since the AMD set those constants (perf review 10.1): this
+GPU's first offscreen pass costs ~6 us rather than 0.15 ms, and since I40 a
+still frame never leaves the caller's target, so the "still" column - the one
+the area threshold was calibrated against - no longer pays for the split at
+all on any GPU.
+
+What it would take, which is the owner's call (section 6):
+
+- **`FULL_RES_SPLIT_MIN_AREA_PX` to 0** on this GPU: no memory cost, and on
+  the AMD its only remaining reason is the animated, rate-0 frame of a quad
+  under ~140k px, which pays the 0.15 ms there. Re-measure the AMD's "pulse"
+  column before changing it for both.
+- **`FULL_RES_SPLIT_GATHER_MAX_SCALE` to 1.0** for the small glows: 1.1-1.9x on
+  moving frames and 4.6x still, but above 0.5 the gather buffer grows toward
+  the viewport at RGBA16F - up to 16.6 MB at 1080p for a tiny rect whose glow
+  fills the frame, against ~4 MB at the 0.5 cap (perf review 10.8, question 5).
+  A memory trade, not a free one.
+
+### 10.3 The whole frame
+
+Each layer alone and all four together, default configs, three spotlight lamps,
+min of five runs of 40 frames, "animated" with the clock advancing (the hue
+rotating, the droplets falling, the flare turning):
+
+| scene | neon | droplets | lens flare | spotlight x3 | all four |
+| ----- | ---: | -------: | ---------: | -----------: | -------: |
+| 1080p, 960 x 540 rect, still | 0.545 | 0.053 | 0.768 | 0.072 | 1.417 |
+| 1080p, 960 x 540 rect, animated | 0.616 | 0.053 | 0.765 | 0.072 | 1.501 |
+| 1080p, production band, still | 0.060 | 0.076 | 0.767 | 0.072 | 0.968 |
+| 1080p, production band, animated | 0.108 | 0.075 | 0.768 | 0.071 | 1.020 |
+| 4K, 1920 x 1080 rect, animated | 1.257 | 0.081 | 3.020 | 0.071 | 4.480 |
+| 4K, production band, animated | 0.179 | 0.134 | 3.023 | 0.071 | 3.423 |
+
+**The neon is no longer the expensive layer here; the lens flare is.** On the
+production band it is 75% of the frame at 1080p and 88% at 4K, and it costs the
+same whatever the rect, because it shades the whole viewport. Perf review 10.8
+question 6 asked exactly this, and on this GPU the answer is: the next speed
+work belongs to the flare - its hex sprite gating (`lens-flare-perf-review.md`
+section 7, about 1.7x on that layer) and its own `resolutionScale` - not to
+items 8, 9 or 12 here.
+
+### 10.4 Startup
+
+Construct + `Initialize` + `AddRenderer` + the first config, then the first
+frame (which compiles the path's programs), then the second; three processes
+each, ms:
+
+| path | init | first frame | second frame |
+| ---- | ---: | ----------: | -----------: |
+| 1.0, loop inline (a small rect) | 2.8-3.0 | 10.9-11.7 | 1.0-1.4 |
+| 1.0, gather split | 2.8-3.0 | 11.3-11.7 | 1.4-2.3 |
+| 1.0, split, partly lit (adds the coverage bake) | 2.9 | 17.2-18.8 | 1.3-3.1 |
+| 0.5 (gather, shade, ring, blit) | 2.9-3.0 | 19.5-22.3 | 0.8 |
+
+The first frame is the compile, and it is the number a host feels: ~11 ms at
+1.0, ~18 ms with a partly lit ring, ~20 ms below 1.0. Repeated processes, so
+the driver's shader cache may have been warm.
+
+### 10.5 Memory
+
+Live textures, 1920 x 1080, after item 10 (section 4 has the full table from
+before it): a uniform ring at 1.0 holds 0.08 MB; an arcs-only partly lit ring
+0.58 MB; with a segment 1.15 MB; a ring settled uniform for 5 s gives the
+table back; 0.5 holds 1.8-2.1 MB of reduced buffer, the production band
+included (section 4, item 11).
+
+### 10.6 The gate set to the M2's values
+
+The owner's decision on 10.2: `FULL_RES_SPLIT_GATHER_MAX_SCALE` 0.5 -> 1.0 and
+`FULL_RES_SPLIT_MIN_AREA_PX` 140000 -> 0, so every rect splits the gather at
+1.0. The gate itself stays, with the AMD's values recorded beside it in
+`neon-tuning.h`, so a GPU that needs it can be tuned back, and a max scale of 0
+still builds the inline loop as a reference.
+
+**Output.** Only configs that used to keep the loop inline move, by the split's
+own 1/255: of ten probed at 1080p - small glows 64 x 36 to 128 x 72, cutoff
+bands 160 to 960 px wide, with and without a segment, a tiny rect with a
+frame-filling glow - each moved 1,126-14,793 pixels by exactly 1 level.
+`neon-scale-check check` passes, `bounded_band` still reading 1 on the 1.0
+column; `partition` passes.
+
+**Time.** `neon-scale-check time` before -> after, three interleaved rounds.
+Of the twelve check scenes only `bounded_band` changed path:
+
+| `bounded_band` at 1.0 | still | intensity | arc wipe | segment travel |
+| --------------------- | ----: | --------: | -------: | -------------: |
+| 1280 x 720 | 0.172 -> 0.049 (3.50x) | 2.03x | 1.69x | 1.81x |
+| 1920 x 1080 | 0.242 -> 0.066 (3.69x) | 2.40x | 1.92x | 2.07x |
+
+Every other scene, at every scale and size, in every mode, 0.93x-1.06x - the
+session's noise on a path that did not change.
+
+**Memory**, the price, measured with the same probe (live textures, 1080p):
+
+| config | before | after |
+| ------ | -----: | ----: |
+| cutoff bands 160-960 px | 0.01 MB | 0.06-0.08 MB |
+| glow 128 x 72 / 96 x 54 / 64 x 36 | 0.01 MB | 1.65 / 2.68 / 3.62 MB |
+| glow 128 x 72 + segment | 1.01 MB | 4.29 MB |
+| 40 x 24 rect, `glowRadius` 20 | 0.01 MB | **16.08 MB** |
+| the same + segment | 1.01 MB | **33.15 MB** |
+
+The bands - the production case - cost nothing. A rect small enough to gather
+near full resolution (perimeter under ~450 px) now holds a gather buffer over
+its whole glow quad at up to full resolution, RGBA16F, two attachments with
+segments: the last two rows are the worst case, a thumbnail-sized rect whose
+glow covers the frame. If that host exists, the cheapest cap is to clamp the
+split's gather scale rather than refuse the split - not built, since gathering
+a small rect coarser than its kernel costs it quality (V17).

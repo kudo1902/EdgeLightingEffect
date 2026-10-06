@@ -630,6 +630,14 @@ make. The recommendation comes first; the rest is what it trades.
    cost there means a lower area bound, and the hue-rotating case needs no
    bound at all. The M2 Pro is the next best check; it is the machine the
    earlier sections were timed on.
+
+   > **Later:** measured on the M2 Pro
+   > ([`neon-perf-plan.md`](neon-perf-plan.md) section 10.2): the first
+   > offscreen pass there costs ~6 us and the split won at every size and in
+   > every mode, 1.1-4.75x where this gate kept the loop inline. The owner
+   > chose the M2's values, 1.0 and 0 - every rect splits at 1.0 - and the
+   > AMD's 0.5 and 140000 are recorded in `neon-tuning.h` for a GPU that needs
+   > them back (section 10.6 of the plan).
 2. **Does production run with the hue still?** The gate splits on any
    `hueRotationRate != 0`, and with the hue still only on area. If the
    production config is still, two follow-ups get more valuable: skipping the
@@ -658,6 +666,11 @@ make. The recommendation comes first; the rest is what it trades.
    where 1.0 used to allocate nothing. *Recommended: accept* - only that
    corner case is large, and lowering `FULL_RES_SPLIT_GATHER_MAX_SCALE` caps it
    at the price of the gains in 10.1's first table.
+
+   > **Later:** the max scale is now 1.0 (question 1's note), which lifts that
+   > cap: a tiny rect whose glow fills the frame holds 16 MB of gather buffer
+   > at 1080p, 33 MB with segments, where this answer assumed ~4 / 8 MB.
+   > Measured in [`neon-perf-plan.md`](neon-perf-plan.md) section 10.6.
 6. **What is next for speed?** The neon at 1.0 is now 2-4x cheaper, and the
    production band costs 0.25 ms. *Recommended: measure the whole production
    frame - every layer the host enables - on the target before choosing*,

@@ -565,9 +565,32 @@
 //     The still column fits 1.07 ns of loop per quad pixel against 0.15 ms
 //     fixed, which breaks even at ~137k px. The fixed cost is the GPU's and
 //     the driver's, so re-measure both constants on a new target. See
-//     SplitsGatherAtFullRes in neon-renderer.cpp. ---
-#define FULL_RES_SPLIT_GATHER_MAX_SCALE 0.5
-#define FULL_RES_SPLIT_MIN_AREA_PX      140000.0
+//     SplitsGatherAtFullRes in neon-renderer.cpp.
+//
+//     Re-measured on an Apple M2 Pro (docs/neon-perf-plan.md section 10),
+//     after unchanged frames stopped re-running the gather (I40): there the
+//     split wins at EVERY size, in every mode. Inline against split, 1080p:
+//
+//       rect (gather scale)        still      intensity pulse
+//         64 x 36 glow (1.00)      4.61x      1.11x
+//        128 x 72 glow (0.62)      4.62x      1.92x
+//        160 x 87 band (0.50)      3.21x      1.31x
+//        960 x 522 band (0.08)     4.75x      2.86x
+//
+//     The first offscreen pass there costs ~6 us, not 0.15 ms, and a still
+//     frame no longer leaves the caller's target at all.
+//
+//     THE VALUES BELOW ARE THE M2's: 1.0 and 0, so scale 1.0 always splits.
+//     The gate is kept, not deleted, so another GPU can be tuned back - the
+//     AMD 5300M's were 0.5 and 140000.0 - and so 0.0 for the max scale still
+//     builds the inline loop as a reference. The price of 1.0 is the gather
+//     buffer's memory: a rect small enough to gather near full resolution
+//     (perimeter under ~450 px) gets a buffer at up to full resolution over its
+//     glow quad, RGBA16F, two attachments with segments - 16.6 / 33 MB at
+//     1080p for a tiny rect whose glow covers the frame, where 0.5 capped it
+//     at a quarter of that. Re-measure both on the device that ships. ---
+#define FULL_RES_SPLIT_GATHER_MAX_SCALE 1.0
+#define FULL_RES_SPLIT_MIN_AREA_PX      0.0
 
 // --- Stand-in distance for a cutoff that glowSide has already subsumed.
 //
