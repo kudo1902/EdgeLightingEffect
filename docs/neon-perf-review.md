@@ -497,7 +497,7 @@ to follow it. A straight cannot be skipped whole the same way: its halo's
 ### 10.5 Result
 
 `neon-scale-check time`, AMD Radeon Pro 5300M, `80d71a7` against this
-change, interleaved rounds, median. The check scenes freeze the hue (rate 0),
+change, three interleaved rounds, median. The check scenes freeze the hue (rate 0),
 so these are the split's least favourable case - the gate of 10.1 decides on
 area alone.
 
@@ -505,39 +505,45 @@ area alone.
 
 | scene | 1.0 | 0.5 | 0.25 |
 | ----- | --: | --: | ---: |
-| default | 4.97 -> 1.23 (4.03x) | 1.03 -> 0.68 (1.51x) | 0.65 -> 0.47 (1.40x) |
-| hairline | 3.27 -> 0.77 (4.23x) | 0.80 -> 0.53 (1.52x) | 0.56 -> 0.40 (1.39x) |
-| crisp_tube | 4.12 -> 0.99 (4.18x) | 0.92 -> 0.61 (1.51x) | 0.60 -> 0.42 (1.41x) |
-| soft_wash | 6.01 -> 2.31 (2.61x) | 1.24 -> 1.07 (1.16x) | 0.76 -> 0.67 (1.14x) |
-| sharp_corners | 4.17 -> 0.95 (4.40x) | 0.68 -> 0.55 (1.24x) | 0.46 -> 0.40 (1.16x) |
-| small_rect | 1.94 -> 0.75 (2.60x) | 0.64 -> 0.49 (1.30x) | 0.48 -> 0.37 (1.31x) |
-| glow_inside | 1.55 -> 0.67 (2.30x) | 0.56 -> 0.47 (1.20x) | 0.48 -> 0.38 (1.27x) |
-| card_outside | 4.69 -> 1.51 (3.11x) | 1.03 -> 0.77 (1.33x) | 0.62 -> 0.51 (1.23x) |
-| bounded_band | 0.28 -> 0.23 (1.18x) | 0.47 -> 0.44 (1.08x) | 0.41 -> 0.36 (1.14x) |
-| arcs | 5.44 -> 1.64 (3.32x) | 1.15 -> 0.83 (1.40x) | 0.70 -> 0.51 (1.36x) |
-| segments | 5.45 -> 1.46 (3.74x) | 1.13 -> 0.78 (1.46x) | 0.69 -> 0.52 (1.33x) |
-| overdrive | 6.01 -> 2.28 (2.63x) | 1.21 -> 1.05 (1.15x) | 0.70 -> 0.64 (1.10x) |
+| default | 4.97 -> 1.23 (4.04x) | 1.04 -> 0.68 (1.52x) | 0.64 -> 0.47 (1.36x) |
+| hairline | 3.27 -> 0.77 (4.23x) | 0.80 -> 0.52 (1.53x) | 0.55 -> 0.39 (1.40x) |
+| crisp_tube | 4.14 -> 0.99 (4.19x) | 0.91 -> 0.60 (1.52x) | 0.60 -> 0.42 (1.44x) |
+| soft_wash | 6.01 -> 2.29 (2.62x) | 1.23 -> 1.07 (1.15x) | 0.77 -> 0.67 (1.15x) |
+| sharp_corners | 4.18 -> 0.95 (4.39x) | 0.68 -> 0.55 (1.24x) | 0.45 -> 0.40 (1.14x) |
+| small_rect | 1.94 -> 0.75 (2.58x) | 0.64 -> 0.51 (1.25x) | 0.46 -> 0.38 (1.24x) |
+| glow_inside | 1.55 -> 0.67 (2.30x) | 0.55 -> 0.48 (1.16x) | 0.49 -> 0.38 (1.29x) |
+| card_outside | 4.71 -> 1.51 (3.12x) | 1.04 -> 0.76 (1.37x) | 0.61 -> 0.51 (1.21x) |
+| bounded_band | 0.28 -> 0.23 (1.19x) | 0.50 -> 0.41 (1.22x) | 0.40 -> 0.36 (1.11x) |
+| arcs | 5.44 -> 1.64 (3.31x) | 1.18 -> 0.79 (1.50x) | 0.71 -> 0.51 (1.39x) |
+| segments | 5.46 -> 1.46 (3.73x) | 1.12 -> 0.77 (1.45x) | 0.69 -> 0.52 (1.33x) |
+| overdrive | 6.01 -> 2.28 (2.63x) | 1.21 -> 1.04 (1.16x) | 0.71 -> 0.64 (1.11x) |
 
 1280 x 720, ms (before -> after):
 
 | scene | 1.0 | 0.5 | 0.25 |
 | ----- | --: | --: | ---: |
-| default | 2.68 -> 0.80 (3.36x) | 0.69 -> 0.49 (1.42x) | 0.49 -> 0.37 (1.33x) |
-| hairline | 2.01 -> 0.55 (3.66x) | 0.58 -> 0.40 (1.46x) | 0.43 -> 0.33 (1.34x) |
-| crisp_tube | 2.33 -> 0.66 (3.51x) | 0.63 -> 0.44 (1.43x) | 0.46 -> 0.34 (1.36x) |
-| soft_wash | 2.71 -> 1.09 (2.49x) | 0.71 -> 0.62 (1.15x) | 0.52 -> 0.47 (1.10x) |
-| sharp_corners | 2.27 -> 0.59 (3.88x) | 0.47 -> 0.41 (1.14x) | 0.34 -> 0.32 (1.07x) |
-| small_rect | 1.66 -> 0.78 (2.13x) | 0.65 -> 0.57 (1.13x) | 0.40 -> 0.36 (1.11x) |
-| glow_inside | 0.70 -> 0.40 (1.75x) | 0.44 -> 0.36 (1.21x) | 0.41 -> 0.33 (1.23x) |
-| card_outside | 2.15 -> 0.84 (2.57x) | 0.62 -> 0.53 (1.17x) | 0.45 -> 0.41 (1.09x) |
-| bounded_band | 0.18 -> 0.16 (1.17x) | 0.35 -> 0.34 (1.01x) | 0.36 -> 0.31 (1.15x) |
-| arcs | 2.98 -> 1.06 (2.82x) | 0.77 -> 0.56 (1.37x) | 0.53 -> 0.41 (1.30x) |
-| segments | 2.99 -> 0.93 (3.20x) | 0.72 -> 0.55 (1.32x) | 0.50 -> 0.40 (1.27x) |
-| overdrive | 2.69 -> 1.10 (2.43x) | 0.71 -> 0.62 (1.15x) | 0.50 -> 0.42 (1.18x) |
+| default | 2.70 -> 0.80 (3.37x) | 0.69 -> 0.51 (1.37x) | 0.49 -> 0.38 (1.27x) |
+| hairline | 2.05 -> 0.55 (3.74x) | 0.59 -> 0.40 (1.47x) | 0.44 -> 0.32 (1.39x) |
+| crisp_tube | 2.32 -> 0.66 (3.54x) | 0.64 -> 0.46 (1.37x) | 0.46 -> 0.34 (1.37x) |
+| soft_wash | 2.70 -> 1.10 (2.45x) | 0.72 -> 0.64 (1.13x) | 0.52 -> 0.47 (1.10x) |
+| sharp_corners | 2.29 -> 0.59 (3.91x) | 0.46 -> 0.41 (1.14x) | 0.34 -> 0.33 (1.00x) |
+| small_rect | 1.66 -> 0.78 (2.13x) | 0.64 -> 0.57 (1.12x) | 0.39 -> 0.37 (1.06x) |
+| glow_inside | 0.70 -> 0.40 (1.76x) | 0.47 -> 0.39 (1.21x) | 0.40 -> 0.29 (1.39x) |
+| card_outside | 2.15 -> 0.85 (2.53x) | 0.62 -> 0.51 (1.20x) | 0.46 -> 0.41 (1.13x) |
+| bounded_band | 0.18 -> 0.16 (1.18x) | 0.36 -> 0.34 (1.07x) | 0.37 -> 0.30 (1.21x) |
+| arcs | 2.98 -> 1.06 (2.80x) | 0.76 -> 0.58 (1.31x) | 0.52 -> 0.40 (1.30x) |
+| segments | 3.01 -> 0.95 (3.19x) | 0.73 -> 0.56 (1.31x) | 0.51 -> 0.40 (1.28x) |
+| overdrive | 2.69 -> 1.10 (2.45x) | 0.71 -> 0.63 (1.12x) | 0.50 -> 0.44 (1.14x) |
 
 Below 1.0 the gain is 10.3-10.4 alone: pass 1b and the edge ring run the same
-shading. The screen-edge band of 10.2 went 0.506 -> 0.239 ms (2.1x) at 1.0.
-Construction and initialisation are unchanged (7.4 -> 7.3 ms median); a frame
+shading. With the hue rotating at the default 0.5 - the case the check scenes
+do not cover - one interleaved session (four rounds, 200 frames) read, at 1.0:
+
+| scene | still | hue rotating |
+| ----- | ----: | -----------: |
+| the screen-edge band of 10.2 | 0.522 -> 0.227 ms (2.30x) | 0.522 -> 0.250 ms (2.09x) |
+| default | 4.966 -> 1.232 ms (4.03x) | 4.974 -> 1.260 ms (3.95x) |
+Construction and initialisation are unchanged (7.3 -> 7.1 ms median at 1080p); a frame
 that splits compiles two programs on first use where the inline path compiled
 one, as the scaled path always has. The gather buffer at 1.0 is small - 144 x
 96 RGBA16F, 110 KB, for the default scene at 1080p - and never larger than the
@@ -584,3 +590,75 @@ Verification, all on the AMD:
   `tools/neon-guide-figures` keys its direct-path figures on the inline
   program (`PassKind::P1`), so where its scene splits it now skips
   `pass-p1-direct.png` and draws `geometry-direct.png` with no overlay.
+
+### 10.7 Status (2026-10-06)
+
+| item | state |
+| ---- | ----- |
+| The split at 1.0, its gate, the single-`atan` bloom, both piece skips, `CLAUDE.md` | landed in `cdcc19c` |
+| 10.5's tables at three rounds, the hue-rotating table, 10.7 and 10.8 | in the working tree, not committed |
+| `neon-scale-check check` / `partition --seed 1` | PASS / PASS |
+| Each change isolated, fifteen scenes; long-lived against fresh effect, twelve steps | at most 1/255; byte-identical |
+| Full build - library, C ABI, both demos, both tools | clean, no new warnings |
+| AMD Radeon Pro 5300M | every number in this section |
+| Apple M2 Pro, the Intel UHD 630 in the same Mac, the target device | **not measured** |
+| Either demo run on screen | **not done** - offscreen captures only |
+| `neon-guide-figures` re-run, comparison page regenerated, onboarding guide / `neon-shader-outputs.html` updated | **not done** (10.6) |
+
+### 10.8 Open questions
+
+Each is a call for the owner rather than for a measurement this machine can
+make. The recommendation comes first; the rest is what it trades.
+
+1. **Which GPU sets the split's gate?** `FULL_RES_SPLIT_MIN_AREA_PX` (140k)
+   and `FULL_RES_SPLIT_GATHER_MAX_SCALE` (0.5) are this AMD's crossovers, and
+   rest on a ~0.15 ms cost for leaving the caller's framebuffer that belongs
+   to the driver. *Recommended: calibrate on the target device* - run
+   `neon-scale-check time` there before and after `cdcc19c`, plus a still
+   cutoff band at a few sizes split and inline (10.1's table). A lower fixed
+   cost there means a lower area bound, and the hue-rotating case needs no
+   bound at all. The M2 Pro is the next best check; it is the machine the
+   earlier sections were timed on.
+2. **Does production run with the hue still?** The gate splits on any
+   `hueRotationRate != 0`, and with the hue still only on area. If the
+   production config is still, two follow-ups get more valuable: skipping the
+   gather pass on frames whose inputs did not move (10.6), and calibrating the
+   area bound on the target. *Recommended: tell me the production
+   `hueRotationRate`, and whether animations are usually attached* - an
+   attached animation re-bakes the emission table every frame too, which the
+   gate does not currently count.
+3. **Is 1/255 at scale 1.0 acceptable, and should the comparison page's 1.0
+   images be regenerated?** `check` reads 1 against a bound of 2 on every
+   scene, so the headroom for GPU-to-GPU variance on that column has halved.
+   *Recommended: accept, and regenerate the page* (its README's four steps,
+   one `--images` run plus three interleaved timing runs per build), so `check`
+   measures drift from the current 1.0 again rather than from the old one.
+4. **Keep a way to force the inline loop at 1.0?** There is none now: the
+   exact path is reachable only through a config the gate keeps inline. It
+   would be a reference for future comparisons and an escape hatch if a
+   driver mis-renders the split. *Recommended: no new `NeonConfig` field* (it
+   would need `operator==`, a C ABI setter and getter, and both demos), but a
+   compile-time switch on `FULL_RES_SPLIT_GATHER_MAX_SCALE` (0 disables the
+   split) is already enough for a reference build, and it is what the
+   measurements here used.
+5. **Is the gather buffer's memory at 1.0 acceptable?** 110 KB for the default
+   scene at 1080p. Its bound is the scaled path's at 0.5: about 4 MB at 1080p
+   (8 MB with segments) for a small rect whose glow covers the whole frame,
+   where 1.0 used to allocate nothing. *Recommended: accept* - only that
+   corner case is large, and lowering `FULL_RES_SPLIT_GATHER_MAX_SCALE` caps it
+   at the price of the gains in 10.1's first table.
+6. **What is next for speed?** The neon at 1.0 is now 2-4x cheaper, and the
+   production band costs 0.25 ms. *Recommended: measure the whole production
+   frame - every layer the host enables - on the target before choosing*,
+   since the neon may no longer be the largest layer. The candidates:
+   - the neon's shading pass (10.6: the 0.34 ms floor at the defaults, the
+     corner development's `atan`);
+   - skipping the gather pass on still frames (question 2);
+   - the two-level gather of section 6, for rects that stay inline;
+   - the lens flare's hex sprite gating, still open from section 9 at about
+     1.7x on that layer.
+7. **Who updates the docs that still describe 1.0 as one inline pass?**
+   *Recommended: a separate change* - re-run `neon-guide-figures` (after
+   teaching it to find pass 1 as `PassKind::P2C` when the split engages),
+   then revise the onboarding guide's pass chapter and
+   `neon-shader-outputs.html` from what it writes.
