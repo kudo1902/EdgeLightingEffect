@@ -601,7 +601,8 @@ Verification, all on the AMD:
 | Each change isolated, fifteen scenes; long-lived against fresh effect, twelve steps | at most 1/255; byte-identical |
 | Full build - library, C ABI, both demos, both tools | clean, no new warnings |
 | AMD Radeon Pro 5300M | every number in this section |
-| Apple M2 Pro, the Intel UHD 630 in the same Mac, the target device | **not measured** |
+| Apple M2 Pro | measured since, in [`neon-perf-plan.md`](neon-perf-plan.md): `check` PASS with the 1.0 column at its bound (2 on two scenes), 4.22-6.33x over `80d71a7` on still frames at 1.0 |
+| The Intel UHD 630 in the same Mac, the target device | **not measured** |
 | Either demo run on screen | **not done** - offscreen captures only |
 | `neon-guide-figures` re-run, comparison page regenerated, onboarding guide / `neon-shader-outputs.html` updated | **not done** (10.6) |
 
@@ -657,6 +658,15 @@ make. The recommendation comes first; the rest is what it trades.
    - the two-level gather of section 6, for rects that stay inline;
    - the lens flare's hex sprite gating, still open from section 9 at about
      1.7x on that layer.
+
+   > **Later:** answered for the neon by
+   > [`neon-perf-plan.md`](neon-perf-plan.md), measured on the Apple M2 Pro.
+   > The largest costs left turned out not to be in the shading: work repeated
+   > on frames where nothing moved (skipping the gather and the reduced-scale
+   > shading there was prototyped byte-identical, 2.0-6.0x on still frames at
+   > 0.5 and 1.15-1.66x at 1.0), and the glow coverage table re-baking in full
+   > every animated frame (~0.15 ms with one travelling segment; re-baking only
+   > the changed pieces is exact). The second bullet above is its item 4.
 7. **Who updates the docs that still describe 1.0 as one inline pass?**
    *Recommended: a separate change* - re-run `neon-guide-figures` (after
    teaching it to find pass 1 as `PassKind::P2C` when the split engages),
