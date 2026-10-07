@@ -470,8 +470,9 @@ namespace EdgeLighting
         VertexArray mBlitVertexArray{"NeonRenderer.BlitArea"};         ///< Scaled path: the lit area outside the ring, same space.
         VertexArray mGatherVertexArray{"NeonRenderer.GatherArea"};     ///< Scaled path: the gather pass's quad - pass 1's and the ring's, padded - in SCALED rect-local px.
         /// Vertices in @c mGlowVertexArray: 6 for the plain quad, 24 when the
-        /// glow is bounded from the inside and @ref setupGeometry cuts a hole.
-        /// See the note there for which settings do that.
+        /// glow is bounded from the inside and @ref setupGeometry cuts a hole -
+        /// by a cutoff, the one-sided cut, or the glow's own reach on a rect
+        /// larger than twice it. See the note there.
         int mGlowVertexCount = 6;
         /// Vertex count in @c mFillVertexArray - 24 for a ring (8 triangles),
         /// 0 when there is no ring and the fullscreen quad is used instead.
@@ -507,6 +508,16 @@ namespace EdgeLighting
 
         float mQuadMargin = 0.0f;     ///< Draw-quad margin (scaled px from rect edge); shader fades the bloom out by here.
         float mRingQuadMargin = 0.0f; ///< The same margin at scale 1.0, in full-res px - what the edge ring fades against.
+        /// How deep inside the edge the glow can still write a non-zero pixel,
+        /// FULL-RES px - the interior counterpart of @c mQuadMargin, which
+        /// @ref setupGeometry cuts the quad's hole at and @ref setupRingGeometry
+        /// bounds the blit with. See GetGlowInnerReach.
+        float mGlowInnerReach = 0.0f;
+        /// The emission bound mGlowInnerReach was solved for (GetGlowEmissionBound).
+        /// It moves with the arcs' intensities and the segments' boosts, which
+        /// are not otherwise geometry inputs - @ref OnConfigChanged compares
+        /// against it rather than rebuilding on every arc or segment change.
+        float mGlowEmission = 0.0f;
 
         /// Baked colour ring (@c NeonConfig::gradientLutSize x 1 RGBA8, sampled
         /// at v = 0.5). The wrapper owns the bake, the cross-fade and the guard
