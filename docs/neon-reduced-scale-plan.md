@@ -415,3 +415,65 @@ changes here:
   way to make the production band cheaper below 1.0, and moves first.
 - The order for the speed work becomes P3, P1, P2, then D1 if intensity pulses
   are common, then P4 and P5 on the target's numbers.
+
+## 9. What is left (after I53-I57)
+
+Re-measured 2026-10-07 at `509c5ea` on the Apple M2 Pro, Release build,
+1920 x 1080. GPU time per frame by `GL_TIME_ELAPSED` with a `glFlush` per frame,
+the neon alone, the `demo` rect (960 x 540), median of three rounds:
+
+| frame | 0.5 | 0.25 |
+| ----- | --: | ---: |
+| still | 0.033 | 0.030 |
+| hue rotating | 0.062 | 0.054 |
+| intensity pulse (+/-10%) | 0.047 | 0.045 |
+| arc wipe | 0.290 | 0.154 |
+| segment travel | 0.555 | 0.327 |
+
+Still, hue and intensity frames are now within 2x of each other. What is left
+is arc and segment animation, segments in general, the blit's fixed cost - and,
+outside the neon, the lens flare. Ranked by what they could take off a frame:
+
+1. **The lens flare's `resolutionScale` (default 1.0).** On the production
+   band, the flare alone: 0.70 ms of GPU at 1.0, 0.18-0.20 at 0.5, 0.02-0.04 at
+   0.25 - 15-30x the neon's whole frame at 0.5. If production draws the flare,
+   this is the largest single lever for frame rate, and it needs no code: set
+   the scale and check the look (`docs/lens-flare-unification-comparison.md`).
+   Then the hex sprite gating left open in `docs/lens-flare-perf-review.md`
+   section 7 (~1.7x on that layer).
+2. **Step 0 and T1 are still open.** Nothing here was measured on the target:
+   which frames production draws, whether it renders half float (both fields
+   are R16F only - without it every hue and still frame re-shades pass 1b and
+   the ring), and per-pass GPU time there. T1 (`neon-scale-check time --flush`)
+   would end the harness noise that made several A/B runs in I55-I57 need a
+   separate GPU-timer probe.
+3. **Arc-wipe frames: pass 1b is half the frame.** 0.19 ms of 0.36 (wall) at
+   0.5 - shaded directly, since an arc change moves the coverage `Fa` reads, so
+   no field holds. Levers: a lower scale (pass 1b 0.077 at 0.25), or re-shading
+   only the region the dirty coverage pieces reach (I54 already knows which) -
+   NOT exact, because the gathered colour is a long-range mean that moves
+   everywhere a little; measure it before building it.
+4. **Segments.** A config with a segment takes neither field, so its hue frames
+   shade pass 1b (0.19 ms at 0.5) and the ring every frame, and a travelling
+   segment adds the coverage bake (0.10) and a two-attachment gather (0.10):
+   - **4a. Gather only the segment attachment when only segments moved.**
+     Exact: the emission table's row 0 (base colour, arcs) does not read the
+     segments and attachment 0 of the gather reads only row 0, so on a
+     segment-travel frame with the hue still, attachment 0 is redrawn
+     unchanged. About half the gather's 0.10 ms.
+   - **4b. P5**, the coverage bake's bell cut nearer than 5 sigma (not exact).
+   - **4c. D3**, a field for segments - declined for its memory; revisit if
+     production keeps a segment lit.
+5. **The blit's fixed full-resolution cost.** 0.039 of a 0.057 ms still frame
+   (wall) at 0.5: 1.64 M fragments for the `demo` rect, every frame, whatever
+   moved. A fill-rate-bound target will feel it most. Measure first how many of
+   those fragments write under half a level (a tighter quad would be exact
+   there); P4, folding the field composite into the blit, removes one
+   offscreen pass on hue frames, and C9 the reduced buffer for field configs.
+6. **Cleanup and docs.** C7 (comment diet for `neon-renderer.cpp`, `.h` and
+   `neon-tuning.h`). `docs/neon-onboarding-guide.md` predates I44-I49 beyond
+   the passes refreshed for I57, and `docs/neon-perf-plan.md` section 9 does not
+   list I47, I49, I51 or I52.
+
+C8 in section 4.2 was "not recommended" when 1.0 was the default; the owner
+has since made it (I57, section 8).
