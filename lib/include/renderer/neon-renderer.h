@@ -559,6 +559,72 @@ namespace EdgeLighting
         void renderRingPass(const glm::mat4 &mvp, const glm::vec2 &gatherUVScale,
                             const glm::vec2 &gatherUVOffset, float time, const Config &config);
 
+        // --- Pass 2c, factored: the edge ring's field ----------------------
+        // Below 1.0 the ring is re-shaded on EVERY frame, still frames
+        // included: it draws onto the caller's framebuffer, so there is
+        // nothing to reuse. With no segments, no one-sided glow and no cutoff -
+        // the ring applies both after its tone map, at full resolution - its
+        // output is tonemap(col * Fa) like pass 1b's, so it splits the same
+        // way: pass 1r bakes Fa over the ring alone, at full resolution and
+        // packed into its four strips (@ref RingFieldLayout), once the config
+        // has held for a frame; pass 2r composites it with the gathered hue in
+        // pass 2c's place. 1.4-1.9x on still frames and 1.2-1.6x on hue frames
+        // below 1.0 on an AMD Radeon Pro 5300M, within 1/255 (I52).
+
+        /// How the ring's pixels are packed into @c mRingFieldBuffer. The ring
+        /// is an axis-aligned annulus (setupRingGeometry's PushAnnulus), so a
+        /// box of pixels minus a hole: its bottom and top strips are stored as
+        /// they are, one above the other, and its left and right strips
+        /// TRANSPOSED above those, so each runs along the atlas's width. Every
+        /// texel sits on one of the viewport's pixels, so the composite reads
+        /// the texel of its own pixel, exact as the field at 1.0 is.
+        /// neon-field.frag (NEON_FIELD_RING) reads this layout and
+        /// @ref renderRingFieldPass bakes it: change the three together.
+        typedef struct RingFieldLayout
+        {
+            glm::vec2 origin{0.0f};  ///< Rect-local full-res px of the box's lower-left pixel corner.
+            glm::ivec2 size{0};      ///< The box, in px: the ring's outer box, clipped to the viewport.
+            glm::ivec4 hole{0};      ///< Box px the ring never draws, [x0, x1) x [y0, y1) as x0, y0, x1, y1.
+            glm::ivec2 rows{0};      ///< First atlas row of the left strip and of the right strip.
+            glm::ivec2 atlas{0};     ///< The buffer's size, in texels.
+        } RingFieldLayout;
+
+        /// The packing for a ring of outer box @p ringOuter and hole
+        /// @p ringHole (half-extents, full-res px) centred at @p centerFull in
+        /// a viewport of @p viewportWidth x @p viewportHeight. The hole is
+        /// CONSERVATIVE - only pixels whose centre lies more than a pixel
+        /// inside it - so every pixel the ring can draw falls in a strip.
+        static RingFieldLayout computeRingFieldLayout(const glm::vec2 &ringOuter, const glm::vec2 &ringHole,
+                                                      const glm::vec2 &centerFull, int viewportWidth,
+                                                      int viewportHeight);
+
+        /// Make sure the ring field's composite (neon-field.frag with
+        /// NEON_FIELD_RING) and the bake (@ref ensureFieldPrograms) are built.
+        /// A failure is recorded in @c mFailedPrograms; the ring is then shaded
+        /// directly.
+        bool ensureRingFieldPrograms();
+
+        /// Pass 1r: bake the ring's field into @c mRingFieldBuffer, laid out
+        /// as @c mRingFieldLayout - the ring's shading uploaded exactly as
+        /// @ref renderRingPass uploads it, with the hue at 1, drawn once per
+        /// strip through that strip's atlas rows as the viewport and a
+        /// projection onto them (transposed for the two side strips). Reads
+        /// the gather through the full-res map @p gatherUVScale /
+        /// @p gatherUVOffset. Leaves the buffer bound; @ref Render restores the
+        /// target.
+        /// @pre Blending disabled; pass 1a has run or its buffer is current.
+        /// @return false if the buffer could not be allocated.
+        bool renderRingFieldPass(const glm::vec2 &gatherUVScale, const glm::vec2 &gatherUVOffset, float time,
+                                 const Config &config);
+
+        /// Pass 2r: in pass 2c's place, @c mRingVertexArray drawn through
+        /// @p mvp - the matrix the blit drew with, so the partition holds -
+        /// with the ring field's composite: the field times the gathered hue.
+        /// @pre Premultiplied-over blending; the caller's framebuffer and
+        ///      full-resolution viewport are restored.
+        void renderRingFieldCompositePass(const glm::mat4 &mvp, const glm::vec2 &gatherUVScale,
+                                          const glm::vec2 &gatherUVOffset);
+
     private:
         /// Bits of @c mFailedPrograms, one per lazily built program.
         static constexpr unsigned int PROGRAM_GATHER = 1u << 1;
@@ -568,6 +634,7 @@ namespace EdgeLighting
         static constexpr unsigned int PROGRAM_GLOW_COVER = 1u << 5;
         static constexpr unsigned int PROGRAM_FIELD = 1u << 6;
         static constexpr unsigned int PROGRAM_FIELD_COMPOSITE = 1u << 7;
+        static constexpr unsigned int PROGRAM_RING_FIELD_COMPOSITE = 1u << 8;
 
         Config mCurrentConfig;
         ShaderProgram mNeonGatherShader;                               ///< neon-gather.frag: the gather pass, both paths. Built on first draw.
@@ -579,6 +646,7 @@ namespace EdgeLighting
         ShaderProgram mBlitShader;                                     ///< Scaled-path upscale composite (neon-blit.frag). Built on first draw.
         ShaderProgram mNeonFieldShader;                                ///< neon.frag + NEON_FIELD_BAKE: pass 1f. Built on the first field-eligible frame.
         ShaderProgram mFieldCompositeShader;                           ///< neon-field.frag: pass 1c. Built with it.
+        ShaderProgram mRingFieldCompositeShader;                       ///< neon-field.frag + NEON_FIELD_RING: pass 2r. Its own object - it draws the caller's framebuffer, blended, in the frame pass 1c draws the reduced buffer unblended. Built on the first ring-field-eligible frame.
         VertexArray mGlowVertexArray{"NeonRenderer.Glow"};             ///< Tight glow quad (rect + glow reach), in scaled space.
         VertexArray mFullscreenVertexArray{"NeonRenderer.Fullscreen"}; ///< NDC quad: emission bake, and the ALL-mode opaque fill when a clear cannot stand in.
         VertexArray mFillVertexArray{"NeonRenderer.Fill"};             ///< Opaque-fill band ring (rect +- the fill's cutoffs), in FULL-RES rect-local px.
@@ -627,6 +695,8 @@ namespace EdgeLighting
         float mRingQuadMargin = 0.0f; ///< The same margin at scale 1.0, in full-res px - what the edge ring fades against.
         float mCornerSkip = 0.0f;     ///< uCornerSkip for pass 1 (scaled px) - see GetCornerSkip.
         float mRingCornerSkip = 0.0f; ///< The same at scale 1.0, in full-res px, for the edge ring.
+        glm::vec2 mRingOuter{0.0f};   ///< The edge ring's outer box, half-extents in full-res px; setupRingGeometry. 0 at 1.0.
+        glm::vec2 mRingHole{0.0f};    ///< Its hole, the same way.
         /// How deep inside the edge the glow can still write a non-zero pixel,
         /// FULL-RES px - the interior counterpart of @c mQuadMargin, which
         /// @ref setupGeometry cuts the quad's hole at and @ref setupRingGeometry
@@ -718,6 +788,24 @@ namespace EdgeLighting
         uint32_t mFieldGradientUploads = 0;
         glm::vec2 mFieldOrigin{0.0f};
         glm::vec2 mFieldTexelScale{1.0f};
+
+        /// The edge ring's field (pass 1r): Fa, R16F, at full resolution over
+        /// the ring alone, packed as @c mRingFieldLayout. Below 1.0 only, and
+        /// only for a config @ref Render finds eligible (no segments, no
+        /// one-sided glow, no cutoff). Released with the conditions that want
+        /// it - see OnConfigChanged.
+        Framebuffer mRingFieldBuffer{"NeonRenderer.RingField"};
+        RingFieldLayout mRingFieldLayout{}; ///< The packing it was baked with.
+        /// As mFieldCurrent / mFieldSettled / mFieldUnavailable, for the ring's
+        /// field: what it holds describes this frame; nothing invalidated it on
+        /// the last frame; it cannot be used on this driver.
+        bool mRingFieldCurrent = false;
+        bool mRingFieldSettled = false;
+        bool mRingFieldUnavailable = false;
+        /// What it was baked for besides the config: the viewport and the
+        /// gradient ring's upload count.
+        glm::ivec2 mRingFieldViewport{0};
+        uint32_t mRingFieldGradientUploads = 0;
 
         /// Seconds of frame time @c mGlowCoverBuffer has gone unread - the ring
         /// lit uniformly, or the layer off. @ref Update releases the table at

@@ -1240,6 +1240,22 @@ namespace EdgeLighting
                    !MasksAfterGrade(config) && (GetClampedResolutionScale(config) >= 1.0f || rotating);
         }
 
+        /// Whether the edge ring's shading can be factored into its own field
+        /// (pass 1r) and composite (pass 2r): below 1.0, with no segments and
+        /// a colour-stop alpha time cannot move - as IsFieldEligible - and
+        /// with neither a one-sided glow nor a cutoff, since the ring shades
+        /// with the direct path's uniforms and so applies both after its tone
+        /// map, which the field cannot carry. No rotating hue is needed: the
+        /// ring is re-shaded on every frame below 1.0, still frames included.
+        inline bool IsRingFieldEligible(const std::vector<SegmentBoost> &effectiveSegments, const Config &config,
+                                        bool ringOpaque)
+        {
+            const bool rotating = config.neon.hueRotationRate != 0.0f;
+            return config.neon.enable && GetClampedResolutionScale(config) < 1.0f && effectiveSegments.empty() &&
+                   (!rotating || ringOpaque) && config.neon.glowSide == GlowSide::BOTH &&
+                   !config.neon.insideCutoff.enable && !config.neon.outsideCutoff.enable;
+        }
+
         static_assert(GLOW_COVER_SHARED >= 2 * GLOW_COVER_MIN_INTERIOR,
                       "a band of the glow coverage table must leave columns for both its pieces");
 
@@ -1964,7 +1980,54 @@ namespace EdgeLighting
                 mFieldSettled = true;
             }
         }
-        if (!reuseOffscreen || bakeField)
+        // The edge ring factored the same way below 1.0 (pass 1r bakes its
+        // field, pass 2r composites it in pass 2c's place), on the same lazy
+        // schedule and with the same first-frame exception - but on still
+        // frames too, since the ring is re-shaded on every frame. Its own
+        // flags: it serves configs the shading's field does not (a hue that
+        // is not rotating) and is invalidated by the same things.
+        bool useRingField = false;
+        bool bakeRingField = false;
+        if (glowReady && scaled && mRingVertexCount > 0 && !mRingFieldUnavailable &&
+            IsRingFieldEligible(mEffectiveSegments, config, mGradientLUT.IsOpaque()))
+        {
+            const RingFieldLayout layout =
+                computeRingFieldLayout(mRingOuter, mRingHole, centerFull, viewportWidth, viewportHeight);
+            const bool firstFrame = !mRingFieldCompositeShader.IsValid();
+            if (layout.atlas.x > 0 && layout.atlas.y > 0 && ensureRingFieldPrograms())
+            {
+                const glm::ivec2 viewport(viewportWidth, viewportHeight);
+                if (viewport != mRingFieldViewport || mGradientLUT.GetUploadCount() != mRingFieldGradientUploads)
+                {
+                    mRingFieldViewport = viewport;
+                    mRingFieldGradientUploads = mGradientLUT.GetUploadCount();
+                    mRingFieldCurrent = false;
+                    mRingFieldSettled = false;
+                }
+                if (mRingFieldCurrent)
+                {
+                    useRingField = true;
+                }
+                else if (mRingFieldSettled)
+                {
+                    bakeRingField = true;
+                    useRingField = true;
+                }
+                else if (firstFrame)
+                {
+                    bakeRingField = true;
+                }
+                else
+                {
+                    mRingFieldSettled = true;
+                }
+                if (bakeRingField)
+                {
+                    mRingFieldLayout = layout;
+                }
+            }
+        }
+        if (!reuseOffscreen || bakeField || bakeRingField)
         {
             prevTarget = RenderTargetState::Capture();
         }
@@ -2087,7 +2150,17 @@ namespace EdgeLighting
                 bakeFieldPass(fieldRegion, gatherUVFullScale, gatherUVFullOffset);
             }
 
-            if (!reuseOffscreen || bakeField)
+            // --- Pass 1r: the edge ring's field, after the gather it reads.
+            if (bakeRingField && glowReady)
+            {
+                glDisable(GL_BLEND);
+                const bool baked = renderRingFieldPass(gatherUVFullScale, gatherUVFullOffset, time, config);
+                mRingFieldCurrent = baked;
+                mRingFieldUnavailable = !baked;
+                useRingField = useRingField && baked;
+            }
+
+            if (!reuseOffscreen || bakeField || bakeRingField)
             {
                 // Back to the caller's target and viewport, both at once.
                 // Unconditional: the pass may have bound its target before
@@ -2153,7 +2226,14 @@ namespace EdgeLighting
                                -1.0f, 1.0f) *
                     glm::translate(glm::mat4(1.0f), glm::vec3(centerFull, 0.0f));
                 renderBlitPass(fullResMvp, centerFull, blitUVScale, blitUVOffset, config);
-                renderRingPass(fullResMvp, gatherUVFullScale, gatherUVFullOffset, time, config);
+                if (useRingField)
+                {
+                    renderRingFieldCompositePass(fullResMvp, gatherUVFullScale, gatherUVFullOffset);
+                }
+                else
+                {
+                    renderRingPass(fullResMvp, gatherUVFullScale, gatherUVFullOffset, time, config);
+                }
             }
         }
 
@@ -2185,6 +2265,8 @@ namespace EdgeLighting
             // directly.
             mFieldCurrent = false;
             mFieldSettled = false;
+            mRingFieldCurrent = false;
+            mRingFieldSettled = false;
         }
 
         // Snapshot dirtiness before we overwrite mCurrentConfig. Each rebuild
@@ -2453,6 +2535,12 @@ namespace EdgeLighting
         {
             mFieldBuffer.Release();
             mFieldCurrent = false;
+        }
+        // The ring's field likewise, on its own conditions.
+        if (!IsRingFieldEligible(mEffectiveSegments, config, true))
+        {
+            mRingFieldBuffer.Release();
+            mRingFieldCurrent = false;
         }
     }
 
@@ -3056,6 +3144,8 @@ namespace EdgeLighting
             mRingVertexCount = 0;
             mBlitVertexCount = 0;
             mScaledOuter = glm::vec2(0.0f);
+            mRingOuter = glm::vec2(0.0f);
+            mRingHole = glm::vec2(0.0f);
             // Pass 1 reads the gather at every pixel of the glow quad and
             // nothing else, so the gather covers that quad, grown by the
             // bilinear footprint at both edges - the same construction as
@@ -3090,6 +3180,8 @@ namespace EdgeLighting
         const EdgeExtent ring = GetRingExtent(config, scale);
         const glm::vec2 ringOuter = CircumscribedBox(halfW, halfH, ring.out);
         const glm::vec2 ringHole = InscribedBox(halfW, halfH, radius, -ring.in);
+        mRingOuter = ringOuter;
+        mRingHole = ringHole;
 
         // The BLIT: everything outside the ring that can still be non-zero,
         // and nothing else. It used to be the whole viewport minus the ring -
@@ -4191,5 +4283,170 @@ namespace EdgeLighting
 
         mRingVertexArray.DrawArrays(GL_TRIANGLES, mRingVertexCount);
         mNeonRingShader.Unuse();
+    }
+
+    NeonRenderer::RingFieldLayout NeonRenderer::computeRingFieldLayout(const glm::vec2 &ringOuter,
+                                                                       const glm::vec2 &ringHole,
+                                                                       const glm::vec2 &centerFull, int viewportWidth,
+                                                                       int viewportHeight)
+    {
+        RingFieldLayout layout;
+        // The box, in viewport px: every pixel whose centre the ring's outer
+        // box can reach, with a pixel of slack each side, clipped to the
+        // viewport - the ring is never rasterised past it.
+        const glm::ivec2 lo = glm::max(glm::ivec2(glm::floor(centerFull - ringOuter)) - 1, glm::ivec2(0));
+        const glm::ivec2 hi =
+            glm::min(glm::ivec2(glm::ceil(centerFull + ringOuter)) + 1, glm::ivec2(viewportWidth, viewportHeight));
+        layout.size = glm::max(hi - lo, glm::ivec2(0));
+        layout.origin = glm::vec2(lo) - centerFull;
+
+        // The hole, in box px: the pixels whose centre (lo + q + 0.5) lies
+        // more than a pixel inside the ring's hole, which the ring therefore
+        // never draws. With none, the bottom strip is the whole box.
+        glm::ivec2 h0(0, layout.size.y);
+        glm::ivec2 h1(0, layout.size.y);
+        if (ringHole.x > 1.0f && ringHole.y > 1.0f)
+        {
+            const glm::ivec2 a =
+                glm::clamp(glm::ivec2(glm::ceil(centerFull - ringHole + 0.5f)) - lo, glm::ivec2(0), layout.size);
+            const glm::ivec2 b =
+                glm::clamp(glm::ivec2(glm::floor(centerFull + ringHole - 1.5f)) + 1 - lo, glm::ivec2(0), layout.size);
+            if (b.x > a.x && b.y > a.y)
+            {
+                h0 = a;
+                h1 = b;
+            }
+        }
+        layout.hole = glm::ivec4(h0, h1);
+
+        // Bottom rows, then the top's, then the two side strips' - each as
+        // many rows as it is wide, and as long as the hole is tall.
+        const int bottom = h0.y;
+        const int top = layout.size.y - h1.y;
+        const int mid = h1.y - h0.y;
+        const int left = (mid > 0) ? h0.x : 0;
+        const int right = (mid > 0) ? layout.size.x - h1.x : 0;
+        layout.rows = glm::ivec2(bottom + top, bottom + top + left);
+        layout.atlas = glm::ivec2(std::max(layout.size.x, mid), bottom + top + left + right);
+        return layout;
+    }
+
+    bool NeonRenderer::ensureRingFieldPrograms()
+    {
+        if (!ensureFieldPrograms())
+        {
+            mRingFieldUnavailable = true;
+            return false;
+        }
+        if (mRingFieldCompositeShader.IsValid())
+        {
+            return true;
+        }
+        if ((mFailedPrograms & PROGRAM_RING_FIELD_COMPOSITE) != 0)
+        {
+            mRingFieldUnavailable = true;
+            return false;
+        }
+        const std::string source = WithDefine(ShaderSource::NEON_FIELD_FRAG_SRC, "NEON_FIELD_RING");
+        mRingFieldCompositeShader =
+            ShaderProgram(ShaderSource::NEON_VERT_SRC, source.c_str(), "NeonRenderer.RingFieldComposite");
+        if (!mRingFieldCompositeShader.IsValid())
+        {
+            mFailedPrograms |= PROGRAM_RING_FIELD_COMPOSITE;
+            mRingFieldUnavailable = true;
+            LOG_E("NeonRenderer: the ring field's composite failed to compile/link - the ring is shaded directly.");
+            return false;
+        }
+        return true;
+    }
+
+    bool NeonRenderer::renderRingFieldPass(const glm::vec2 &gatherUVScale, const glm::vec2 &gatherUVOffset,
+                                           float time, const Config &config)
+    {
+        // An offscreen target: the host's scissor is in the wrong coordinates
+        // here - see renderNeonPass.
+        GLUtils::NoScissorScope noScissor(true);
+
+        // Half float, one channel, NEAREST - as the shading's field, for its
+        // reasons (renderFieldPass).
+        const RingFieldLayout &layout = mRingFieldLayout;
+        if (!mRingFieldBuffer.Resize(layout.atlas.x, layout.atlas.y, GL_R16F, GL_RED, GL_HALF_FLOAT, GL_NEAREST))
+        {
+            LOG_E("NeonRenderer: no half-float target for the edge ring's field - the ring is shaded directly.");
+            return false;
+        }
+        // Cleared to 0: atlas texels no strip covers are never read, and a
+        // texel neon.frag discards composites to nothing.
+        mRingFieldBuffer.Bind();
+        mRingFieldBuffer.ClearBuffer();
+
+        // Every uniform the ring takes (renderRingPass), so the bake shades
+        // exactly what pass 2c would - with the hue at 1. Only the transform
+        // changes per strip.
+        mNeonFieldShader.Use();
+        uploadNeonUniforms(mNeonFieldShader, glm::mat4(1.0f), 1.0f, time, mRingQuadMargin, mRingCornerSkip, config);
+        bindGatherBuffer(mNeonFieldShader, gatherUVScale, gatherUVOffset);
+
+        // One draw of the ring per strip: the strip's atlas rows as the
+        // viewport, and a projection taking its rect-local px onto them at
+        // one texel per px - translated to the strip's corner and, for the
+        // two side strips, transposed (x and y swapped), so each runs along
+        // the atlas. The viewport clips every other strip's triangles away.
+        glm::mat4 transpose(0.0f);
+        transpose[0][1] = 1.0f;
+        transpose[1][0] = 1.0f;
+        transpose[2][2] = 1.0f;
+        transpose[3][3] = 1.0f;
+        auto drawStrip = [&](int row, int width, int height, const glm::mat4 &toStrip) {
+            if (width <= 0 || height <= 0)
+            {
+                return;
+            }
+            glViewport(0, row, width, height);
+            mNeonFieldShader.SetUniform(
+                "uMVP", glm::ortho(0.0f, static_cast<float>(width), 0.0f, static_cast<float>(height), -1.0f, 1.0f) *
+                            toStrip);
+            mRingVertexArray.DrawArrays(GL_TRIANGLES, mRingVertexCount);
+        };
+        const glm::vec2 o = layout.origin;
+        const glm::ivec4 hole = layout.hole;
+        const int bottom = hole.y;
+        const int top = layout.size.y - hole.w;
+        const int mid = hole.w - hole.y;
+        const int left = layout.rows.y - layout.rows.x;
+        const int right = layout.atlas.y - layout.rows.y;
+        const glm::vec2 sideCorner(o.x, o.y + static_cast<float>(hole.y));
+        drawStrip(0, layout.size.x, bottom, glm::translate(glm::mat4(1.0f), glm::vec3(-o, 0.0f)));
+        drawStrip(bottom, layout.size.x, top,
+                  glm::translate(glm::mat4(1.0f), glm::vec3(-o.x, -(o.y + static_cast<float>(hole.w)), 0.0f)));
+        drawStrip(layout.rows.x, mid, left,
+                  transpose * glm::translate(glm::mat4(1.0f), glm::vec3(-sideCorner, 0.0f)));
+        drawStrip(layout.rows.y, mid, right,
+                  transpose * glm::translate(glm::mat4(1.0f),
+                                             glm::vec3(-(sideCorner.x + static_cast<float>(hole.z)), -sideCorner.y,
+                                                       0.0f)));
+        mNeonFieldShader.Unuse();
+        return true;
+    }
+
+    void NeonRenderer::renderRingFieldCompositePass(const glm::mat4 &mvp, const glm::vec2 &gatherUVScale,
+                                                    const glm::vec2 &gatherUVOffset)
+    {
+        // The ring the blit left its hole for, through the blit's matrix, each
+        // fragment reading its own pixel's texel of the packed field.
+        const RingFieldLayout &layout = mRingFieldLayout;
+        mRingFieldCompositeShader.Use();
+        mRingFieldCompositeShader.SetUniform("uMVP", mvp);
+        mRingFieldBuffer.BindTexture(7);
+        mRingFieldCompositeShader.SetUniform("uField", 7);
+        mRingFieldCompositeShader.SetUniform("uRingLo", layout.origin);
+        mRingFieldCompositeShader.SetUniform("uRingHole", glm::vec4(layout.hole));
+        mRingFieldCompositeShader.SetUniform("uRingRows", glm::vec2(layout.rows));
+        mGatherBuffer.BindTexture(3, 0);
+        mRingFieldCompositeShader.SetUniform("uGather", 3);
+        mRingFieldCompositeShader.SetUniform("uGatherUVScale", gatherUVScale);
+        mRingFieldCompositeShader.SetUniform("uGatherUVOffset", gatherUVOffset);
+        mRingVertexArray.DrawArrays(GL_TRIANGLES, mRingVertexCount);
+        mRingFieldCompositeShader.Unuse();
     }
 }

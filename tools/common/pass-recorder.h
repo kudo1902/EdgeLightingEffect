@@ -39,7 +39,7 @@ namespace NeonTools
         P1C,      ///< Field composite (neon-field.frag: onto the target at 1.0, into the reduced buffer below it).
         P2A,      ///< Opaque fill (black-rect.frag).
         P2B,      ///< Blit (neon-blit.frag).
-        P2C       ///< Edge ring (neon.frag, onto the target) - and pass 1 at 1.0, the same program.
+        P2C       ///< Edge ring (neon.frag, onto the target, or its field's composite) - and pass 1 at 1.0, the same program.
     } PassKind;
 
     /// What one colour attachment held right after a draw: RGBA floats, GL row

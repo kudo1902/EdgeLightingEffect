@@ -4364,6 +4364,32 @@ Two things the measurement caught on the way:
   config change; at 1.0, 166 + 141 -> 294 + 7.5 ms over the first two frames.
   The price is one bake an animated config may not reuse, once per renderer.
 
+### I51. The field's mask channel served only scale 1.0 - CHANGED
+
+At 1.0 `neon.frag` multiplies the one-sided cut and the cutoffs in after its
+tone map, so I46's field carried them as a second channel (RG16F) and the
+composite multiplied it back in. Below 1.0 the blit applies both, so the
+reduced-scale field (I50) never had a mask - the channel and its code served a
+scale the owner's target does not use. Removed: `IsFieldEligible` now refuses
+a config with a one-sided glow or a cutoff at 1.0 (`MasksAfterGrade`), the
+field is R16F only, the bake writes `Fa` and returns at the grade, and
+`neon-field.frag` lost `uFieldHasMask`.
+
+Nothing below 1.0 moves: every frame of the twelve scenes at five reduced
+scales, still and with the hue rotating, byte-identical; `check` passes,
+`partition` on two seeds, the guide's 68 figures byte-identical. At 1.0 the two
+check scenes with a one-sided glow now shade directly - which is the
+reference the field approximated, so `glow_inside` moved by up to 2 levels and
+`card_outside` by 1, toward exact - and pay for it (AMD Radeon Pro 5300M,
+1080p, `neon-scale-check time`, two interleaved rounds; the third was stopped):
+
+| scene at 1.0 | still | hue |
+| ------------ | ----: | --: |
+| `glow_inside` | 0.057 -> 0.425 ms | 0.14 -> 0.58 ms |
+| `card_outside` | 0.130 -> 1.04 ms | 0.28 -> 1.23 ms |
+
+Every other scene and frame type, at every scale, 0.97-1.08x.
+
 ---
 
 ## What is left
@@ -4376,7 +4402,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, and the twenty-third I50. Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, and the twenty-third I50, I51 and I52. Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -4423,6 +4449,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I48 | changed | the bloom's and the corner development's atans were the driver's; now a minimax polynomial (1.7e-6 rad), 1.07-1.11x on animated frames at 1.0 and 0.5 on an AMD 5300M, within 1 level on at most 0.016% of channels; unmeasured on the M2 |
 | I49 | changed | three byte-identical SDF functions and the tone map were hand-copied between shaders, "uniformly lit" was decided twice, and the inline-gather path no shipped config built was still compiled in; one copy of each, one CPU predicate, the inline path and its gate removed for a `GATHER_MAX_SCALE` of 0.5 (20 -> 8 MB, 3.3x, up to 9 levels on a 40 x 24 rect; no check image moves) |
 | I50 | changed | below 1.0 a rotating hue re-shaded pass 1b every frame; the hue-invariant field now serves it too, baked on the reduced buffer's grid and composited in pass 1b's place - 2.00x / 1.56x / 1.23x on hue frames at 0.75 / 0.5 / 0.25 (AMD 5300M, 1080p), +0.84 MB at 0.5, within 1 level; the field's programs now built and first drawn on a config's first frame, which removes the bake frame's ~140 ms stall |
+| I51 | changed | the field's mask channel (RG16F) served only scale 1.0; removed - at 1.0 a one-sided glow or a cutoff now shades directly (`glow_inside` / `card_outside` 4-8x slower there, toward exact by 1-2 levels), nothing below 1.0 moves |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

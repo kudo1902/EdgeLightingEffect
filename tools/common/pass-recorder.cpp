@@ -46,7 +46,13 @@ void main() { fragColor = uColor; }
             {
                 return PassKind::P2A;
             }
-            // Before uGather: the field's composite reads the gather too.
+            // Before uGather: the field's composite reads the gather too. The
+            // edge ring's composite (NEON_FIELD_RING) draws the ring's pixels
+            // in pass 2c's place, so it is filed as the ring.
+            if (HasUniform(program, "uRingHole"))
+            {
+                return PassKind::P2C;
+            }
             if (HasUniform(program, "uField"))
             {
                 return PassKind::P1C;

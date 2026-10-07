@@ -12,7 +12,7 @@ Docs, in reading order. The three neon documents are tiers of the same material 
 
 - [`docs/implementation.md`](docs/implementation.md) - brief: how the library is put together on the C++ side and how a frame runs. Start here.
 - [`docs/neon-onboarding-guide.md`](docs/neon-onboarding-guide.md) - the long on-ramp for someone new to graphics: the GPU concepts the neon relies on (pipeline, coordinate spaces, textures, std140 blocks, FBOs, premultiplied alpha, SDFs, tone mapping, derivatives), then every `NeonConfig` field traced to its uniform, pass and dirty flag, every GL object, every pass with its inputs / state / outputs, and each shader stage by stage. Ends with pitfalls, recipes and exercises. Illustrated throughout with renders from the library itself - each layer and config field on screen, and what every pass writes, captured from a real frame. Read it before the three neon documents below if the vocabulary is new.
-- [`docs/neon-shader-outputs.html`](docs/neon-shader-outputs.html) - one frame at resolution scale 0.5, then the same scene at 1.0, pass by pass: what each of the neon's nine programs (`mEmissionShader`, `mGlowCoverShader`, `mNeonGatherShader`, `mNeonShadeShader`, the blit, `mNeonRingShader`, the fill, and the field bake `mNeonFieldShader` and its composite `mFieldCompositeShader` - at 1.0, and below it under a rotating hue) actually wrote, at the resolution it runs, and why each is its own program - the field bake's case at length. The pictures for Part 6 of the guide on one page.
+- [`docs/neon-shader-outputs.html`](docs/neon-shader-outputs.html) - one frame at resolution scale 0.5, then the same scene at 1.0, pass by pass: what the neon's programs (`mEmissionShader`, `mGlowCoverShader`, `mNeonGatherShader`, `mNeonShadeShader`, the blit, `mNeonRingShader`, the fill, and the field bake `mNeonFieldShader` and its composite `mFieldCompositeShader` - at 1.0, and below it under a rotating hue; the edge ring's field composite `mRingFieldCompositeShader` is listed but not pictured) actually wrote, at the resolution it runs, and why each is its own program - the field bake's case at length. The pictures for Part 6 of the guide on one page.
 - [`docs/neon-renderer-overview.html`](docs/neon-renderer-overview.html) - the renderer in ~7 minutes: one quad, two measurements, three layers of light.
 - [`docs/neon-renderer-explained.html`](docs/neon-renderer-explained.html) - the same ground at length, with the reasoning and the bugs behind each decision.
 - [`docs/neon-renderer-reference.html`](docs/neon-renderer-reference.html) - full mechanism reference: every uniform, constant, derivation and gating rule, plus the droplet and flare term stacks. Sections 18 and 19 are flow charts - what the CPU rebuilds and which GL object each bake writes, one frame's draw sequence for both renderers, and the fragment program as annotated GLSL dataflow. Read this before changing a shader.
@@ -161,12 +161,37 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   size (0.84 MB at 0.5 for that rect). 1.1-2.0x on hue frames on the AMD 5300M (1.55x at 0.5),
   within 1/255; every other frame type unchanged. `IsFieldEligible` requires
   the rotating hue below 1.0, so a still config there never compiles or
-  allocates it. **The factorisation is an invariant of
+  allocates it.
+
+  **Below `1.0` the edge ring has a field of its own** (pass 1r / 2r, I52).
+  The ring is re-shaded on EVERY frame - it draws onto the caller's
+  framebuffer, so nothing is reused - still frames included, and it is a
+  full-resolution cost the scale does not shrink. With no segments, no
+  one-sided glow and no cutoff (`IsRingFieldEligible`: the ring shades with the
+  direct path's uniforms, so it applies both after its tone map, which the
+  field cannot carry) its output is `tonemap(col * Fa)` too. So the bake
+  program draws the ring's own geometry, with the ring's own uniforms
+  (`mRingQuadMargin`, `mRingCornerSkip`), into `mRingFieldBuffer` - full
+  resolution but PACKED (`RingFieldLayout`, `computeRingFieldLayout`): the ring
+  is an axis-aligned annulus, so its pixels are four strips, stored bottom, top,
+  then the two side strips transposed, every texel on a viewport pixel; one
+  draw per strip, each through its atlas rows as the viewport. The composite
+  (`neon-field.frag` with `NEON_FIELD_RING`, `mRingFieldCompositeShader` - its
+  own object, since it draws the caller's framebuffer blended in the frame
+  pass 1c draws the reduced buffer unblended) finds its strip from the box
+  pixel against a CONSERVATIVE hole, so every ring pixel lands in one. The
+  layout, the bake's per-strip projections and the shader's lookup must change
+  together. R16F, ~0.27 MB for a 960 x 540 rect at 1080p (1.06 MB as a plain
+  box). 1.4-1.9x on still frames and 1.2-1.6x on hue frames below 1.0 on the
+  AMD 5300M, within 1/255; its own lazy flags and first-frame bake.
+  `PassRecorder` files its composite as P2C (by `uRingHole`), so `partition`
+  still replays the ring. **The factorisation is an invariant of
   `neon.frag`:** anything new there that reads `col` non-linearly, reads time,
   or multiplies after the tone map on a config the field takes breaks it -
   extend `NEON_FIELD_BAKE` and `neon-field.frag` together, or narrow
-  `IsFieldEligible`. `neon-scale-check` captures the SECOND frame after a
-  config change for this reason: the first draws pass 1 directly.
+  `IsFieldEligible` and `IsRingFieldEligible`. `neon-scale-check` captures the
+  SECOND frame after a config change for this reason: the first draws pass 1
+  directly.
 
   **A uniformly lit ring skips its perimeter position** (`uPerimeterUnread`,
   I45): with no segments, every lit arc over the whole ring and no stops of its
