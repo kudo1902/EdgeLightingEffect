@@ -1172,56 +1172,90 @@ namespace NeonGuideFigures
             }
         }
 
-        // P1 - pass 1 at scale 1.0, for the same scene: its FIRST frame, which
-        // the edge ring's program shades over the whole glow quad from the
-        // gather - so the recorder files it under P2C. (The inline program
-        // this used to find under P1 has not been built since every rect
-        // split the gather at 1.0, and is gone.)
-        {
-            Config direct = c;
-            direct.neon.resolutionScale = 1.0f;
-            std::unique_ptr<EdgeLightingEffect> effect = FreshEffect();
-            Render(*effect, direct, PASS_W, PASS_H, false, true);
-            if (const DrawRecord *p1 = PassRecorder::Find(PassKind::P2C))
-            {
-                SavePNG(AttachmentImage(p1->written[0], [](const glm::vec4 &v) { return glm::vec3(v); }),
-                        Path(dir, "pass-p1-direct.png"));
-            }
-        }
-
         // P1f / P1c - the hue-invariant field and its composite. The scene
-        // without its segment, since segments keep the field off, at scale
-        // 1.0. The field from its FIRST frame, which draws pass 1 and also
-        // bakes the field (the first frame a config the field can serve is
-        // drawn builds and first draws its programs); the composite from its
-        // SECOND, which reads that field in pass 1's place.
+        // without its segment, since segments keep the field off, at the
+        // page's scale with the hue rotating - the frames the field serves.
+        // The field from its FIRST frame, which shades pass 1b and also bakes
+        // the field (the first frame a config the field can serve is drawn
+        // builds and first draws its programs) - the first P1F draw, before
+        // the ring's own field bakes; the composite from the SECOND, one clock
+        // tick on, so the hue has moved and pass 1c draws in pass 1b's place
+        // rather than the frame reusing the buffer.
         {
             Config field = c;
-            field.neon.resolutionScale = 1.0f;
             field.neon.segmentBoosts.clear();
+            field.neon.hueRotationRate = 0.5f;
             std::unique_ptr<EdgeLightingEffect> effect = FreshEffect();
             Render(*effect, field, PASS_W, PASS_H, false, true);
-            if (const DrawRecord *p1f = PassRecorder::Find(PassKind::P1F))
+            const DrawRecord *p1f = nullptr;
+            for (const DrawRecord &d : PassRecorder::GetDraws())
+            {
+                if (d.kind == PassKind::P1F)
+                {
+                    p1f = &d;
+                    break;
+                }
+            }
+            if (p1f)
             {
                 // .r is Fa, the pre-tone-map brightness at hue 1: shown
                 // through the tone map, which is what that brightness looks
                 // like in white light.
                 const Attachment &f = p1f->written[0];
-                SavePNG(AttachmentImage(f,
-                                        [](const glm::vec4 &v) {
-                                            const float fa = std::max(v.r, 0.0f);
-                                            const float mapped = fa / (fa + float(TONE_MAP_SHOULDER));
-                                            return glm::vec3(std::pow(mapped, float(GAMMA_EXPONENT)));
-                                        }),
+                SavePNG(Magnify(AttachmentImage(f,
+                                                [](const glm::vec4 &v) {
+                                                    const float fa = std::max(v.r, 0.0f);
+                                                    const float mapped = fa / (fa + float(TONE_MAP_SHOULDER));
+                                                    return glm::vec3(std::pow(mapped, float(GAMMA_EXPONENT)));
+                                                }),
+                                FitFactor(f.width, PASS_W)),
                         Path(dir, "pass-p1f-field.png"));
                 std::printf("    field buffer %d x %d, internal format 0x%x\n", f.width, f.height,
                             unsigned(f.internalFormat));
             }
+            effect->Update(1.0f / 60.0f);
             Render(*effect, field, PASS_W, PASS_H, false, true);
             if (const DrawRecord *p1c = PassRecorder::Find(PassKind::P1C))
             {
-                SavePNG(AttachmentImage(p1c->written[0], [](const glm::vec4 &v) { return glm::vec3(v); }),
+                const Attachment &r = p1c->written[0];
+                SavePNG(Magnify(AttachmentImage(r, [](const glm::vec4 &v) { return glm::vec3(v); }),
+                                FitFactor(r.width, PASS_W)),
                         Path(dir, "pass-p1c-composite.png"));
+            }
+        }
+
+        // P1r / P2r - the edge ring's field, below 1.0 with no segments: the
+        // scene without its segment at the page's scale, hue still. Its FIRST
+        // frame bakes the ring's field - mNeonFieldShader again, one draw per
+        // strip into the packed buffer, so the last P1F record holds all four -
+        // while the ring still shades directly; its SECOND composites it in the
+        // ring's place, which the recorder files as P2C (by uRingHole).
+        {
+            Config ring = c;
+            ring.neon.segmentBoosts.clear();
+            std::unique_ptr<EdgeLightingEffect> effect = FreshEffect();
+            Render(*effect, ring, PASS_W, PASS_H, false, true);
+            if (const DrawRecord *p1r = PassRecorder::Find(PassKind::P1F))
+            {
+                // The atlas as stored: bottom strip, top strip, then the left
+                // and right strips transposed. Fa through the tone map, as for
+                // P1f, magnified so its rows show.
+                const Attachment &f = p1r->written[0];
+                SavePNG(Magnify(AttachmentImage(f,
+                                                [](const glm::vec4 &v) {
+                                                    const float fa = std::max(v.r, 0.0f);
+                                                    const float mapped = fa / (fa + float(TONE_MAP_SHOULDER));
+                                                    return glm::vec3(std::pow(mapped, float(GAMMA_EXPONENT)));
+                                                }),
+                                FitFactor(f.width, 600)),
+                        Path(dir, "pass-p1r-ring-field.png"));
+                std::printf("    ring field %d x %d, internal format 0x%x\n", f.width, f.height,
+                            unsigned(f.internalFormat));
+            }
+            const Canvas composited = Render(*effect, ring, PASS_W, PASS_H, false, true);
+            if (const DrawRecord *p2r = PassRecorder::Find(PassKind::P2C))
+            {
+                SavePNG(OnlyWhereDrawn(composited, *p2r), Path(dir, "pass-p2r-ring-composite.png"));
             }
         }
 
@@ -1246,8 +1280,8 @@ namespace NeonGuideFigures
             SavePNG(Magnify(Crop(full, 76, 244, 104, 70), 3), Path(dir, "scale-1-final.png"));
         }
 
-        // 5.6 / 8.3 - the geometry each path draws, with both cutoffs on so
-        // every boundary lands inside the frame.
+        // 5.6 / 8.3 - the geometry the passes on the caller's framebuffer
+        // draw, with both cutoffs on so every boundary lands inside the frame.
         {
             Config g = PassScene();
             g.neon.colorStops = ShowcaseStops();
@@ -1257,12 +1291,6 @@ namespace NeonGuideFigures
             g.neon.insideCutoff = Cutoff{true, 40.0f, 16.0f};
             g.neon.outsideCutoff = Cutoff{true, 36.0f, 16.0f};
 
-            {
-                std::unique_ptr<EdgeLightingEffect> effect = FreshEffect();
-                const Canvas frame = Render(*effect, g, PASS_W, PASS_H, false, true);
-                SavePNG(GeometryOverlay(frame, {{PassKind::P2C, glm::vec3(0.3f, 0.6f, 1.0f)}}),
-                        Path(dir, "geometry-direct.png"));
-            }
             {
                 g.neon.resolutionScale = 0.5f;
                 std::unique_ptr<EdgeLightingEffect> effect = FreshEffect();

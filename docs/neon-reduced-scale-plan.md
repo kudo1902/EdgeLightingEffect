@@ -375,7 +375,13 @@ with a segment. `docs/neon-perf-review.md` section 8 has the measured shape of
 | C4 | **set aside**: `renderEmissionPass` and `renderGlowCoverPass` capture their own target on purpose - a pass restores what IT finds, which keeps it correct wherever it is called from (the note in `Render`) - and the two `glGetIntegerv` each did not show in the CPU profile |
 | C5 | **done**: the class comment (the gather is `neon-gather.frag`'s), `setupRingGeometry` (builds the gather quad and both region boxes at every scale), `resizeGatherBuffer`, the pass-order note, `renderBlitPass`, `mGatherVertexArray`, and the same "the gather IS the composite" wording in `renderNeonPass` |
 | C6 | **done**: `PassKind::P1` and its classification branch |
-| C7-C9 | open - the owner's call |
+| C7, C9 | open - the owner's call |
+| C8 | **done** (I57), the owner's call made: the direct path is gone, `resolutionScale` defaults to 0.5, and 1.0 takes the one path with a full-size buffer (within 1 level of the old 1.0 output); every frame below 1.0 byte-identical to the build before |
+| P3 | **done** (I53): the ring field's composite recomputes the cut and cutoffs; the production band's still frame 0.051 -> 0.029 ms at 0.5 and 0.054 -> 0.035 at 0.25 (faster than 1.0's ~0.055), masked check scenes 1.2-2.7x still, within 1 level |
+| P2 | **done** (I54): an arc that only moved re-bakes the bands its ends swept; texel-exact over 6,706 random edits; arc-wipe frames 1.10x at 0.5, 1.15x at 0.25 (M2), up to 1.74x with segments |
+| P1 | **done** (I55): the gather skipped while its inputs hold and the quad fits the last one drawn; intensity-pulse frames 1.31x at 0.5, 1.43x at 0.25 (M2); within 1 level, not byte-identical as section 5 expected - a held region reaches the same texels through another projection |
+| D1 | **measured, the owner's call**: `IntensityPulse` swings 0.4-1.0 by default, not +/-10%. With the bloom's `reach` held at the pulse's peak (1.0) - neon.frag's shader term alone, the CPU's quad margin untouched - the image moves by at most 2 levels on the default look (1 from intensity 0.85 up), 1 on `soft_wash` and `hairline`, and 6 on `overdrive` (bloom 1.5) at intensity 0.4 (3 at 0.7, 2 at 0.85), at 0.5 and 0.25 alike. Expected gain if built: an intensity frame at 0.5 becomes the field's composite and the ring field's instead of pass 1b and the ring, ~3x |
+| D1 | **done** (I56), accepted by the owner: intensity-only changes keep both fields, scaled while the intensity moves, exact once it holds; intensity-pulse frames 2.31x at 0.5 and 1.60x at 0.25 (GPU 0.193 -> 0.049 ms at 0.5) |
 
 Verified against `b0ac8cf` on the Apple M2 Pro: a 261-frame walk over three
 long-lived effects (first frames at 1.0, at 0.5 under a rotating hue and at
@@ -391,3 +397,21 @@ The committed guide figures (`docs/images/neon-onboarding/`, last regenerated
 at `9f5db99`) no longer match what `b0ac8cf` renders on this machine - 60 of
 65 differ, before and after this change alike. They predate I50-I52; regenerate
 them separately.
+
+**Owner, 2026-10-07: scale 1.0 is never used in production.** What that
+changes here:
+
+- Nothing below 1.0 gets faster by deleting the 1.0 path. Its programs and
+  buffers are built per path on first use (`ensurePathPrograms`), so a host
+  that stays below 1.0 never compiles, allocates or runs any of it; and the
+  `uResolutionScale < 1.0` branches in `neon.frag` are not 1.0-only - the edge
+  ring shades with scale-1.0 uniforms below 1.0 too. C8 becomes a cleanup
+  option (the direct branches in `Render`, `renderNeonPass` /
+  `renderFieldCompositePass`'s `scaled` flag, `MasksAfterGrade`, the 1.0
+  branches of `GetFieldRegion`, `setupRingGeometry` and `ensurePathPrograms`),
+  with two costs to weigh: 1.0 is `resolutionScale`'s default for every other
+  host, and `check` measures every reduced scale against the 1.0 render.
+- D2 is withdrawn: a thin band can no longer fall back to 1.0, so P3 is the
+  way to make the production band cheaper below 1.0, and moves first.
+- The order for the speed work becomes P3, P1, P2, then D1 if intensity pulses
+  are common, then P4 and P5 on the target's numbers.

@@ -579,8 +579,8 @@ Measure on the target's CPU first. On the M2 neither is visible.
 | 2. `time --mode` | **done**: `still`, `hue`, `intensity`, `arc-wipe`, `segment-travel` |
 | 3. Target-device run | **done on the Apple M2 Pro** (section 10); the real target still unmeasured |
 | The split's gate | **set to the M2's values**, 1.0 and 0 (section 10.6, I44) |
-| 4. Skip the offscreen passes when nothing moved | **step 1 done** (I40); step 2, the keyed gather, open |
-| 5. Per-piece glow coverage bake | **done** (I42) |
+| 4. Skip the offscreen passes when nothing moved | **step 1 done** (I40); **step 2, the keyed gather, done** (I55: a held region rather than a stable one, within 1 level) |
+| 5. Per-piece glow coverage bake | **done** (I42); its exact follow-up, an arc's moving end only, **done** (I54) |
 | 6. Emission table keyed on its inputs | **done** (I39) |
 | 7. Complete texture on `uGatherSeg` | **done** (I41) |
 | 8 | open |

@@ -4,7 +4,9 @@ Renders every image in
 [`docs/neon-onboarding-guide.md`](../../docs/neon-onboarding-guide.md) into
 `docs/images/neon-onboarding/`, which
 [`docs/neon-shader-outputs.html`](../../docs/neon-shader-outputs.html) also
-reads its pass images from. Off in the default build, like
+reads its pass images from - plus two only that page shows, the edge ring's
+field and its composite below 1.0 (`pass-p1r-ring-field.png`,
+`pass-p2r-ring-composite.png`). Off in the default build, like
 [`neon-scale-check`](../neon-scale-check/README.md).
 
 ## Build and run

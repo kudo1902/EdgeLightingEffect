@@ -69,9 +69,15 @@ common mistake in this code:
 centre, +x right and **+y up**. "App coordinates" are the host's: origin at the
 top-left of the viewport, +y **down**. Part 1.3 explains the conversions.
 
-**Scale 1.0 vs below.** "The direct path" is `resolutionScale == 1.0`; "the
-scaled path" or "the reduced path" is anything below it. Part 8 is entirely
-about the second.
+**One path at every scale.** The glow is shaded into a reduced buffer at
+`resolutionScale` of the viewport (default 0.5), blitted back, and a ring
+around the edge re-shaded at full resolution; at 1.0 the reduced buffer is
+simply full size. There used to be a separate "direct path" at 1.0 that
+shaded straight onto the target; it was removed in I57 (see
+[`review-findings.md`](review-findings.md)), and where this guide still
+describes it - the passes at scale 1.0, `mNeonShader`, an inline gather loop
+- it predates that change and the gather split before it. Part 8 is about
+the reduced path, which is now the only one.
 
 **Figures.** Every image in this guide is rendered by the library itself,
 offscreen, by [`tools/neon-guide-figures`](../tools/neon-guide-figures/README.md):
@@ -1485,24 +1491,17 @@ unconditionally; read each as "unless reused".
 margin, in scaled px, with a hole where nothing can be lit: inside an inside
 cutoff, or inside the line for `glowSide = OUTSIDE`. It stores `mQuadMargin`
 (the shader fades light to 0 over the last part of this margin, so the quad's
-edge never shows), `mRingQuadMargin` (the same at scale 1.0, for the ring),
-and `mGlowOuter` / `mGlowHole` (full-res half extents, for the ring builder).
-With no hole it is 6 vertices; with one, 24.
-
-![The glow quad's triangles at scale 1.0](images/neon-onboarding/geometry-direct.png)
-
-*The glow quad (P1) as drawn, over the dimmed frame: both cutoffs on
-(`insideCutoff` {40, 16}, `outsideCutoff` {36, 16}), so it is a box capped
-just past the outside cutoff's fade with a hole inside the inside cutoff's -
-four strips, eight triangles, 24 vertices. Nothing outside it is shaded at
-all.*
+edge never shows), `mRingQuadMargin` (the same at scale 1.0 without the blit's
+guard band, for the ring), and `mGlowOuter` / `mGlowHole` (full-res half
+extents, for the ring builder). With no hole it is 6 vertices; with one, 24.
+Pass 1b draws it into the reduced buffer; nothing outside it is shaded at all.
 
 **`setupFillGeometry`: the fill band.** A rectangle with a hole, sized by the
 fill's own cutoffs plus 3 px of safety, full-res. None when the fill covers
 the whole viewport (the clear path draws it instead).
 
-**`setupRingGeometry`: the scaled path's three areas.** At scale 1.0 it
-zeroes everything and returns. Below it, in full-res rect-local px:
+**`setupRingGeometry`: the three areas on the caller's framebuffer, and the
+gather's quad.** In full-res rect-local px, at every scale:
 
 1. **The ring**: an annulus `GetRingWidth` either side of the outline,
    clipped to where the glow can be lit (`GetRingExtent`, `GetLitExtent`).
@@ -1657,25 +1656,11 @@ the columns at either side, past the straight's ends, hold what the piece looks
 like from beyond them. At its right is a corner's: the arc's own quadrant in
 the middle, the arc itself halfway down, its inside above.*
 
-### P1: the glow, direct path (`renderNeonPass(scaled = false)`, `neon.frag` plain)
+### P1: the glow, direct path - removed (I57)
 
-| | |
-| - | - |
-| **Purpose** | Gather, shade and composite the glow in one pass. |
-| **Runs** | Scale 1.0 only. |
-| **Target** | The caller's framebuffer and viewport, as handed in. The host's scissor applies. |
-| **State** | Blend on, premultiplied-over (`GL_ONE, GL_ONE_MINUS_SRC_ALPHA`). Drawn after the fill. |
-| **Geometry** | `mGlowVertexArray` with `mvp = ortho(0, w, 0, h) * translate(centerFull)`. |
-| **Uniforms** | all of `uploadNeonUniforms` (Part 7.4, table of uniforms) plus `uNumSamples`, `uQuadMargin = mQuadMargin`. |
-| **Textures** | units 0-2 the LUTs (alpha reads), unit 3 `uEmission`, unit 5 `uGlowCover`. |
-| **Blocks** | `SegmentBlock` (0), `LoopSamplesBlock` (1), `ArcBlock` (2). |
-| **Output** | `fragColor`: premultiplied graded colour, alpha = brightest channel. |
-
-![P1's output at scale 1.0](images/neon-onboarding/pass-p1-direct.png)
-
-*P1's output for the same scene at scale 1.0: one draw, the loop and the
-shading together, everything at full resolution. Below 1.0 the next four
-passes rebuild this picture.*
+Scale 1.0 used to draw the glow in one pass straight onto the caller's
+framebuffer. It now takes the passes below with a full-size reduced buffer,
+within 1 level of what that pass drew.
 
 ### P1a: the gather (`renderGatherPass`, `neon-gather.frag`)
 
@@ -2503,9 +2488,9 @@ model stick.
 | **coverage table** | the texture P0b writes: for each piece of the outline, how lit it is as the halo and bloom see it from around it |
 | **diamond angle** | `x / (|x| + |y|)`: a direction as one division, monotone in the true angle; the coverage table indexes corners by it |
 | **cutoff** | a cap on how far the glow (or the fill) reaches from the outline |
-| **direct path** | `resolutionScale` 1.0: one pass straight onto the target |
+| **direct path** | removed (I57): `resolutionScale` 1.0 used to draw one pass straight onto the target; it now takes the reduced path at full size |
 | **draw call** | one `glDrawArrays`: a batch of triangles through the pipeline |
-| **edge ring** | the band around the outline re-shaded at full resolution below scale 1.0 |
+| **edge ring** | the band around the outline re-shaded at full resolution, at every scale |
 | **emission table** | the 128x2 texture P0 writes: per-sample colour and weight |
 | **FBO** | framebuffer object: an offscreen render target |
 | **filament** | the bright line itself |

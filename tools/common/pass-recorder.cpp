@@ -71,9 +71,10 @@ void main() { fragColor = uColor; }
                                                       GL_FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE, &componentType);
                 return (componentType == GL_FLOAT) ? PassKind::P1F : PassKind::P1B;
             }
+            // The gather is the one program that reads the emission table.
             if (HasUniform(program, "uEmission"))
             {
-                return HasUniform(program, "uLineWidth") ? PassKind::P1 : PassKind::P1A;
+                return PassKind::P1A;
             }
             if (!ontoCaller && HasUniform(program, "uArcLUT"))
             {

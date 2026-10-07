@@ -254,13 +254,13 @@
   <header class="masthead">
     <p class="eyebrow">NeonRenderer &middot; one frame, pass by pass</p>
     <h1>What each neon shader draws</h1>
-    <p class="standfirst">One frame of a 440 &times; 220 rect in a 640 &times; 360 frame at resolution scale 0.5, then the same scene at 1.0, read back between the renderer&rsquo;s draws: every program&rsquo;s own output, at the resolution it actually runs - and why each of the nine programs exists.</p>
+    <p class="standfirst">One frame of a 440 &times; 220 rect in a 640 &times; 360 frame at resolution scale 0.5 - the default - read back between the renderer&rsquo;s draws: every program&rsquo;s own output, at the resolution it actually runs - and why each of the ten programs exists. There is one path at every scale: at 1.0 the reduced buffer is simply full size.</p>
     <p>The scene has something in every buffer: an arc over <code>t</code> 0 to 0.6 on the base gradient, a dimmer arc (intensity 0.6, its own orange-to-red stops) over 0.65 to 0.95, dark gaps between them, and a segment at 0.3. The images are the ones Part 6 of <a href="neon-onboarding-guide.md">the onboarding guide</a> uses; <code>tools/neon-guide-figures</code> renders them.</p>
   </header>
 
   <figure class="diagram">
     <div class="diagram-scroll">
-    <svg class="dg" viewBox="0 0 1080 1960" role="img" aria-label="How one frame is built below scale 1.0, with the real contents of every buffer. The emission, gather and shade passes each write an offscreen buffer the next pass reads; the gather buffer is read again by the ring. The glow coverage pass writes a table of how lit each of the outline's eight pieces is, read by the shade pass and the ring. Then the fill, the blit and the ring composite onto the caller's framebuffer, the blit and the ring covering disjoint areas, giving the finished frame. At scale 1.0 the emission, coverage and gather passes run the same way; then either the field bake writes a hue-free brightness buffer that the field composite tints and tone-maps onto the framebuffer, or, on a frame whose config just changed, the ring's program shades the whole glow quad directly.">
+    <svg class="dg" viewBox="0 0 1080 2144" role="img" aria-label="How one frame is built, with the real contents of every buffer. The emission, gather and shade passes each write an offscreen buffer the next pass reads; the gather buffer is read again by the ring. The glow coverage pass writes a table of how lit each of the outline's eight pieces is, read by the shade pass and the ring. Then the fill, the blit and the ring composite onto the caller's framebuffer, the blit and the ring covering disjoint areas, giving the finished frame. With no segments, the ring's own field bake writes the ring's hue-free brightness, packed into four strips, and its composite draws the ring from it in the ring's place; and under a rotating hue or a moving intensity the glow's field bake writes the shading's hue-free brightness, which its composite tints and tone-maps into the reduced buffer in place of the shade pass.">
       <defs>
         <marker id="dg-ah" viewBox="0 0 10 10" refX="10" refY="5" markerUnits="userSpaceOnUse" markerWidth="9" markerHeight="9" orient="auto">
           <path class="ah" d="M0,0 L10,5 L0,10 z"/>
@@ -279,18 +279,18 @@
       <rect class="shader" x="30" y="64" width="310" height="56" rx="8"/>
       <text class="t-id" x="44" y="86">P0b</text>
       <text x="86" y="86">mGlowCoverShader</text>
-      <text class="t-file" x="44" y="106">neon-glow-cover.frag &#183; config change</text>
+      <text class="t-file" x="44" y="106">neon-glow-cover.frag &#183; pieces that moved</text>
       <line class="w" x1="340" y1="92" x2="384" y2="92" marker-end="url(#dg-ah)"/>
-      <text class="t-file" x="44" y="148">Runs after P0, and only when the</text>
-      <text class="t-file" x="44" y="164">config changed; skipped while the</text>
-      <text class="t-file" x="44" y="180">ring is lit uniformly.</text>
+      <text class="t-file" x="44" y="148">Runs after P0, and only for the pieces</text>
+      <text class="t-file" x="44" y="164">a config change reaches; skipped while</text>
+      <text class="t-file" x="44" y="180">the ring is lit uniformly.</text>
       <text class="t-file" x="44" y="212">Each texel: how lit ONE piece of the</text>
       <text class="t-file" x="44" y="228">outline is - one of 4 straights or</text>
       <text class="t-file" x="44" y="244">4 corner arcs - seen from one</text>
       <text class="t-file" x="44" y="260">fragment position round it: its own</text>
       <text class="t-file" x="44" y="276">coverage under the layer&#8217;s kernel,</text>
       <text class="t-file" x="44" y="292">over its own extent only.</text>
-      <text class="t-file" x="44" y="324">Read by P1b and P2c (P1, P1f at 1.0):</text>
+      <text class="t-file" x="44" y="324">Read by every neon.frag pass and bake:</text>
       <text class="t-file" x="44" y="340">one linear fetch per piece.</text>
       <rect class="fbo" x="385" y="64" width="665" height="284" rx="1"/>
       <text class="t-dim" x="399" y="84">FBO</text>
@@ -328,7 +328,7 @@
       <rect class="shader" x="385" y="380" width="310" height="56" rx="8"/>
       <text class="t-id" x="399" y="402">P1a</text>
       <text x="441" y="402">mNeonGatherShader</text>
-      <text class="t-file" x="399" y="422">neon-gather.frag &#183; the sample loop</text>
+      <text class="t-file" x="399" y="422">neon-gather.frag &#183; when its inputs move</text>
       <rect class="shader" x="740" y="380" width="310" height="56" rx="8"/>
       <text class="t-id" x="754" y="402">P1b</text>
       <text x="796" y="402">mNeonShadeShader</text>
@@ -417,63 +417,91 @@
       <text class="t-file" x="48" y="1244">fills exactly the band the blit left empty.</text>
       <image href="images/neon-onboarding/pass-after-ring.png" x="684" y="1115" width="352" height="198" preserveAspectRatio="xMidYMid meet"/>
       <rect class="frame" x="684" y="1115" width="352" height="198"/>
-      <rect class="lane" x="14" y="1344" width="1052" height="596" rx="6"/>
-      <text class="t-lane" x="30" y="1368">AT SCALE 1.0 &#183; NO REDUCED BUFFER, NO BLIT, NO RING BAND</text>
-      <text class="t-file" x="30" y="1392">P0, P0b and P1a run as above, the gather on the same grid. Then pass 1 is drawn one of two ways:</text>
+      <rect class="lane" x="14" y="1344" width="1052" height="380" rx="6"/>
+      <text class="t-lane" x="30" y="1368">NO SEGMENTS &#183; THE RING&#8217;S OWN FIELD</text>
+      <text class="t-file" x="30" y="1392">P2c reshades the ring on every frame, still frames included. Its field caches it as P1f does the glow:</text>
       <rect class="shader" x="30" y="1410" width="310" height="56" rx="8"/>
-      <text class="t-id" x="44" y="1432">P1f</text>
+      <text class="t-id" x="44" y="1432">P1r</text>
       <text x="86" y="1432">mNeonFieldShader</text>
       <text class="t-file" x="44" y="1452">neon.frag + NEON_FIELD_BAKE &#183; once settled</text>
-      <text class="t-file" x="44" y="1494">Offscreen, unblended, once the config</text>
-      <text class="t-file" x="44" y="1510">has held for a frame: the glow&#8217;s</text>
-      <text class="t-file" x="44" y="1526">brightness with the hue fixed at 1,</text>
-      <text class="t-file" x="44" y="1542">before the tone map. No segments.</text>
+      <text class="t-file" x="44" y="1494">Offscreen, unblended: the ring&#8217;s</text>
+      <text class="t-file" x="44" y="1510">brightness with the hue fixed at 1,</text>
+      <text class="t-file" x="44" y="1526">with the ring&#8217;s own uniforms, at full</text>
+      <text class="t-file" x="44" y="1542">resolution - packed as four strips,</text>
+      <text class="t-file" x="44" y="1558">one draw each: bottom, top, then the</text>
+      <text class="t-file" x="44" y="1574">two sides transposed. No segments.</text>
       <line class="w" x1="340" y1="1438" x2="384" y2="1438" marker-end="url(#dg-ah)"/>
-      <rect class="fbo" x="385" y="1410" width="310" height="220" rx="1"/>
+      <rect class="fbo" x="385" y="1410" width="310" height="160" rx="1"/>
       <text class="t-dim" x="399" y="1430">FBO</text>
-      <text x="441" y="1430">mFieldBuffer</text>
-      <text class="t-file" x="399" y="1448">640 &#215; 360 &#183; R16F &#183; Fa</text>
+      <text x="441" y="1430">mRingFieldBuffer</text>
+      <text class="t-file" x="399" y="1448">458 &#215; 108 &#183; R16F &#183; Fa</text>
       <text class="t-dim" x="681" y="1448" text-anchor="end">read: texelFetch</text>
-      <image href="images/neon-onboarding/pass-p1f-field.png" x="397" y="1460" width="286" height="161" preserveAspectRatio="xMidYMid meet"/>
-      <rect class="frame" x="397" y="1460" width="286" height="161"/>
+      <image href="images/neon-onboarding/pass-p1r-ring-field.png" x="397" y="1466" width="286" height="67" preserveAspectRatio="xMidYMid meet"/>
+      <rect class="frame" x="397" y="1466" width="286" height="67"/>
+      <text class="t-file" x="399" y="1554">sides above, bottom and top below</text>
+      <text class="t-file" x="399" y="1600">Each texel is one ring pixel; P2r finds</text>
+      <text class="t-file" x="399" y="1616">its own from its strip, then draws</text>
+      <text class="t-file" x="399" y="1632">field &#215; gathered hue, tone-mapped,</text>
+      <text class="t-file" x="399" y="1648">&#215; the one-sided cut and the cutoffs</text>
+      <text class="t-file" x="399" y="1664">from each pixel&#8217;s own distance to</text>
+      <text class="t-file" x="399" y="1680">the edge - as the ring&#8217;s shading</text>
+      <text class="t-file" x="399" y="1696">applies them. Within 1/255 of P2c.</text>
       <rect class="shader" x="740" y="1410" width="310" height="56" rx="8"/>
-      <text class="t-id" x="754" y="1432">P1c</text>
-      <text x="796" y="1432">mFieldCompositeShader</text>
-      <text class="t-file" x="754" y="1452">neon-field.frag &#183; still and hue frames</text>
-      <path class="r" d="M695,1520 H717 V1438 H739" marker-end="url(#dg-ah)"/>
+      <text class="t-id" x="754" y="1432">P2r</text>
+      <text x="796" y="1432">mRingFieldCompositeShader</text>
+      <text class="t-file" x="754" y="1452">neon-field.frag + NEON_FIELD_RING</text>
+      <path class="r" d="M695,1490 H717 V1438 H739" marker-end="url(#dg-ah)"/>
       <line class="w" x1="895" y1="1466" x2="895" y2="1489" marker-end="url(#dg-ah)"/>
-      <rect class="final" x="740" y="1490" width="310" height="210" rx="2"/>
+      <rect class="out" x="740" y="1490" width="310" height="214" rx="2"/>
       <text class="t-dim" x="754" y="1512">drew</text>
-      <text x="796" y="1512">field &#215; gathered hue, tone-mapped</text>
-      <image href="images/neon-onboarding/pass-p1c-composite.png" x="752" y="1528" width="286" height="161" preserveAspectRatio="xMidYMid meet"/>
+      <text x="796" y="1512">the ring band, in P2c&#8217;s place</text>
+      <image href="images/neon-onboarding/pass-p2r-ring-composite.png" x="752" y="1528" width="286" height="161" preserveAspectRatio="xMidYMid meet"/>
       <rect class="frame" x="752" y="1528" width="286" height="161"/>
-      <rect class="shader" x="30" y="1720" width="310" height="56" rx="8"/>
-      <text class="t-id" x="44" y="1742">P1</text>
-      <text x="86" y="1742">mNeonRingShader</text>
-      <text class="t-file" x="44" y="1762">neon.frag &#183; the ring&#8217;s program</text>
-      <text class="t-file" x="44" y="1804">A frame whose config just changed, and</text>
-      <text class="t-file" x="44" y="1820">every frame with segments, which the</text>
-      <text class="t-file" x="44" y="1836">field cannot carry: the whole shading,</text>
-      <text class="t-file" x="44" y="1852">on every pixel of the glow quad, from</text>
-      <text class="t-file" x="44" y="1868">the gather buffer.</text>
-      <line class="w" x1="340" y1="1748" x2="384" y2="1748" marker-end="url(#dg-ah)"/>
-      <rect class="final" x="385" y="1720" width="310" height="210" rx="2"/>
-      <text class="t-dim" x="399" y="1742">drew</text>
-      <text x="441" y="1742">the glow, fully shaded</text>
-      <image href="images/neon-onboarding/pass-p1-direct.png" x="397" y="1758" width="286" height="161" preserveAspectRatio="xMidYMid meet"/>
-      <rect class="frame" x="397" y="1758" width="286" height="161"/>
-      <text class="t-file" x="754" y="1744">Both ways draw the same picture, within</text>
-      <text class="t-file" x="754" y="1760">1/255. P1c is two fetches and a tone</text>
-      <text class="t-file" x="754" y="1776">map a pixel; P1 is the whole shading.</text>
-      <text class="t-file" x="754" y="1800">The field is baked once the config has</text>
-      <text class="t-file" x="754" y="1816">held for one frame and reused until it</text>
-      <text class="t-file" x="754" y="1832">changes - still frames and a rotating</text>
-      <text class="t-file" x="754" y="1848">hue alike, since only the hue moves.</text>
-      <text class="t-file" x="754" y="1872">The field scene drops the segment,</text>
-      <text class="t-file" x="754" y="1888">which keeps the field off.</text>
+      <text class="t-file" x="44" y="1606">Baked on the schedule P1f keeps - once</text>
+      <text class="t-file" x="44" y="1622">a config has held, on a config&#8217;s first</text>
+      <text class="t-file" x="44" y="1638">frame, kept through an intensity pulse</text>
+      <text class="t-file" x="44" y="1654">- but on still frames too, since the</text>
+      <text class="t-file" x="44" y="1670">ring is redrawn on every frame.</text>
+      <rect class="lane" x="14" y="1744" width="1052" height="380" rx="6"/>
+      <text class="t-lane" x="30" y="1768">ROTATING HUE OR MOVING INTENSITY, NO SEGMENTS &#183; THE GLOW&#8217;S FIELD</text>
+      <text class="t-file" x="30" y="1792">A frame that would redraw P1b with only the hue or the intensity moved draws its field instead:</text>
+      <rect class="shader" x="30" y="1810" width="310" height="56" rx="8"/>
+      <text class="t-id" x="44" y="1832">P1f</text>
+      <text x="86" y="1832">mNeonFieldShader</text>
+      <text class="t-file" x="44" y="1852">neon.frag + NEON_FIELD_BAKE &#183; once settled</text>
+      <text class="t-file" x="44" y="1894">Offscreen, unblended: pass 1b&#8217;s</text>
+      <text class="t-file" x="44" y="1910">brightness with the hue fixed at 1,</text>
+      <text class="t-file" x="44" y="1926">before the tone map, on the reduced</text>
+      <text class="t-file" x="44" y="1942">buffer&#8217;s own grid. No segments.</text>
+      <text class="t-file" x="44" y="1974">Kept through an intensity animation,</text>
+      <text class="t-file" x="44" y="1990">scaled by I / I0 while the intensity</text>
+      <text class="t-file" x="44" y="2006">moves below the bake, baked again</text>
+      <text class="t-file" x="44" y="2022">exactly when it stops (I56).</text>
+      <line class="w" x1="340" y1="1838" x2="384" y2="1838" marker-end="url(#dg-ah)"/>
+      <rect class="fbo" x="385" y="1810" width="310" height="220" rx="1"/>
+      <text class="t-dim" x="399" y="1830">FBO</text>
+      <text x="441" y="1830">mFieldBuffer</text>
+      <text class="t-file" x="399" y="1848">320 &#215; 180 &#183; R16F &#183; Fa</text>
+      <text class="t-dim" x="681" y="1848" text-anchor="end">read: texelFetch</text>
+      <image href="images/neon-onboarding/pass-p1f-field.png" x="397" y="1860" width="286" height="161" preserveAspectRatio="xMidYMid meet"/>
+      <rect class="frame" x="397" y="1860" width="286" height="161"/>
+      <text class="t-file" x="399" y="2054">The blit and the ring carry on as</text>
+      <text class="t-file" x="399" y="2070">before; within 1/255 of P1b on a</text>
+      <text class="t-file" x="399" y="2086">hue frame.</text>
+      <rect class="shader" x="740" y="1810" width="310" height="56" rx="8"/>
+      <text class="t-id" x="754" y="1832">P1c</text>
+      <text x="796" y="1832">mFieldCompositeShader</text>
+      <text class="t-file" x="754" y="1852">neon-field.frag &#183; hue, intensity frames</text>
+      <path class="r" d="M695,1920 H717 V1838 H739" marker-end="url(#dg-ah)"/>
+      <line class="w" x1="895" y1="1866" x2="895" y2="1889" marker-end="url(#dg-ah)"/>
+      <rect class="fbo" x="740" y="1890" width="310" height="210" rx="1"/>
+      <text class="t-dim" x="754" y="1912">FBO</text>
+      <text x="796" y="1912">mScaledBuffer, in P1b&#8217;s place</text>
+      <image href="images/neon-onboarding/pass-p1c-composite.png" x="752" y="1928" width="286" height="161" preserveAspectRatio="xMidYMid meet"/>
+      <rect class="frame" x="752" y="1928" width="286" height="161"/>
     </svg>
     </div>
-    <figcaption>How one frame is built below scale 1.0, with what each buffer and each pass actually held, captured from this frame. Phase 1 fills four offscreen buffers. P0b&rsquo;s glow coverage table (top) is read by both shading passes, P1b and the ring; of the other three, each is read by the pass after it, and the gather buffer a second time by the ring. Phase 2 composites onto the caller&rsquo;s framebuffer: the blit draws everything except a band around the outline, and the ring fills exactly that band. At scale 1.0 (bottom) there is no reduced buffer: either the field bake and its composite draw the glow, or, on a frame whose config just changed, the ring&rsquo;s program shades it whole. Every pass also reads uniforms and the CPU-baked LUTs and uniform blocks, which are left out. P0b runs after P0 in the frame; it is drawn on top here only because its table feeds passes in both phases. Sizes are this page&rsquo;s 640 &times; 360 frame; the gather captures are magnified, so their texels show.</figcaption>
+    <figcaption>How one frame is built, with what each buffer and each pass actually held, captured from this frame. Phase 1 fills four offscreen buffers - on a frame where they are stale: P0 runs only when an input of the table moved, P0b only for the pieces a change reaches, P1a only when something it reads moved, and on a frame where nothing moved none of them, nor P1b, runs at all. P0b&rsquo;s glow coverage table (top) is read by both shading passes, P1b and the ring; of the other three, each is read by the pass after it, and the gather buffer a second time by the ring. Phase 2 composites onto the caller&rsquo;s framebuffer: the blit draws everything except a band around the outline, and the ring fills exactly that band. With no segments (the third lane) the ring has a field of its own: P1r bakes it once the config has held, and P2r composites it in P2c&rsquo;s place on every later frame, still frames included. Under a rotating hue or a moving intensity (bottom) the glow has one too: P1f bakes it, and P1c writes the reduced buffer from it in P1b&rsquo;s place. At scale 1.0 all of this runs the same way, with a full-size reduced buffer. Every pass also reads uniforms and the CPU-baked LUTs and uniform blocks, which are left out. P0b runs after P0 in the frame; it is drawn on top here only because its table feeds passes in both phases. Sizes are this page&rsquo;s 640 &times; 360 frame; the gather captures are magnified, so their texels show.</figcaption>
   </figure>
 
   <nav aria-label="Passes in frame order">
@@ -484,14 +512,15 @@
       <li><a href="#p1b"><span class="id">P1b</span><span class="grid">320&times;180</span></a></li>
       <li><a href="#p2b"><span class="id">P2b</span><span class="grid">640&times;360</span></a></li>
       <li><a href="#p2c"><span class="id">P2c</span><span class="grid">640&times;360, ring only</span></a></li>
-      <li><a href="#p1f"><span class="id">P1f</span><span class="grid">640&times;360, 1.0</span></a></li>
-      <li><a href="#p1"><span class="id">P1</span><span class="grid">640&times;360, 1.0</span></a></li>
-      <li><a href="#p1c"><span class="id">P1c</span><span class="grid">640&times;360, 1.0</span></a></li>
-      <li><a href="#why"><span class="id">Why</span><span class="grid">nine programs</span></a></li>
+      <li><a href="#p1r"><span class="id">P1r</span><span class="grid">458&times;108, packed</span></a></li>
+      <li><a href="#p2r"><span class="id">P2r</span><span class="grid">640&times;360, ring only</span></a></li>
+      <li><a href="#p1f"><span class="id">P1f</span><span class="grid">320&times;180, hue</span></a></li>
+      <li><a href="#p1c"><span class="id">P1c</span><span class="grid">320&times;180, hue</span></a></li>
+      <li><a href="#why"><span class="id">Why</span><span class="grid">ten programs</span></a></li>
     </ul>
   </nav>
 
-  <p class="group">Below scale 1.0, in frame order</p>
+  <p class="group">In frame order</p>
 
   <section class="pass" id="p0">
     <div class="meta">
@@ -533,7 +562,7 @@
       </dl>
     </div>
     <div class="body">
-      <p>For each of the outline&rsquo;s eight pieces, how lit that piece is as the halo and the bloom see it from any fragment position round it: the piece&rsquo;s own coverage over its own extent, weighted by each layer&rsquo;s kernel - in closed form for the arcs, integrated numerically for the segments&rsquo; bells. Each of four bands holds a straight at its left (the projection along it across, past both ends at the sides; the distance from the line down) and a corner at its right (the direction from the arc&rsquo;s centre across, the distance from it down, the arc itself halfway), the two sharing the band&rsquo;s columns in proportion to their lengths. The halo and bloom are a sum over those pieces, and every shading pass - P1b, P2c, and P1 at scale 1.0 - scales each piece&rsquo;s share by its own read of this table, one linear fetch per piece. Baked on a config change only; its lengths enter only as ratios, so both resolution paths share it.</p>
+      <p>For each of the outline&rsquo;s eight pieces, how lit that piece is as the halo and the bloom see it from any fragment position round it: the piece&rsquo;s own coverage over its own extent, weighted by each layer&rsquo;s kernel - in closed form for the arcs, integrated numerically for the segments&rsquo; bells. Each of four bands holds a straight at its left (the projection along it across, past both ends at the sides; the distance from the line down) and a corner at its right (the direction from the arc&rsquo;s centre across, the distance from it down, the arc itself halfway), the two sharing the band&rsquo;s columns in proportion to their lengths. The halo and bloom are a sum over those pieces, and every shading pass and field bake - P1b, P2c, P1r and P1f - scales each piece&rsquo;s share by its own read of this table, one linear fetch per piece. Never re-baked on time, and on a change only the pieces it reaches: each texel integrates the lights over its own piece alone, so a segment that moved re-bakes the pieces its old and new bells touch, and an arc that only moved - a wipe, a travelling arc - just the bands its two ends swept (I42, I54), texel for texel what a full bake writes. Its lengths enter only as ratios, so both resolution paths share it.</p>
       <ol>
         <li>The arcs as the halo sees them: each straight&rsquo;s own stretch of the arcs sharp at the top of its band, softening down it as the kernel widens; beside it, a corner.</li>
         <li>The arcs as the bloom sees them, six times wider, so even on the line the gaps are only a shade darker.</li>
@@ -561,7 +590,7 @@
       </dl>
     </div>
     <div class="body">
-      <p>The sample loop, about 95% of the neon&rsquo;s cost, run once per texel of a coarse grid: about two texels per colour-kernel width. Its results vary slowly enough that the later passes read them back with a bilinear fetch. Shown 4&times; with nearest-neighbour scaling, so the texels stay visible.</p>
+      <p>The sample loop, about 95% of the neon&rsquo;s cost, run once per texel of a coarse grid: about two texels per colour-kernel width. Its results vary slowly enough that the later passes read them back with a bilinear fetch. It reads only the emission table, the sample positions, the rect&rsquo;s shape and whether there are segments, so it is skipped on any frame that moved none of them - including a config change that moves only the glow&rsquo;s reach (an intensity or bloom pulse, a glow-radius or cutoff sweep), which moves the gather&rsquo;s quad but none of its texels: the quad settles on the widest one the animation reaches and every reader reads the buffer through the region it was drawn over (I55). Shown 4&times; with nearest-neighbour scaling, so the texels stay visible.</p>
       <div class="shots">
         <figure>
           <img src="images/neon-onboarding/pass-p1a-gather-hue.png" alt="Gather buffer: the gathered hue" width="512" height="320">
@@ -635,7 +664,7 @@
       </dl>
     </div>
     <div class="body">
-      <p>The same source as P1b, with its uniforms uploaded as if the scale were 1.0. It reshades the band where the line and every hard edge live, reading the gather buffer for colour and coverage. Its strips share their edges with the blit&rsquo;s, so no pixel is drawn twice.</p>
+      <p>The same source as P1b, with its uniforms uploaded as if the scale were 1.0. It reshades the band where the line and every hard edge live, reading the gather buffer for colour and coverage, and - since it shades with scale-1.0 uniforms - multiplies the one-sided cut and the cutoffs in after its tone map itself. Its strips share their edges with the blit&rsquo;s, so no pixel is drawn twice. It draws onto the caller&rsquo;s framebuffer, so nothing of it survives a frame: on a config with segments it runs on every frame, still frames included. Without segments it runs only until the ring&rsquo;s field holds, and P2r draws the band instead.</p>
       <div class="shots">
         <figure>
           <img src="images/neon-onboarding/pass-p2c-ring-only.png" alt="The ring band alone around the outline" width="640" height="360">
@@ -649,7 +678,55 @@
     </div>
   </section>
 
-  <p class="group">At scale 1.0</p>
+
+  <p class="group">Without segments: the ring&rsquo;s own field</p>
+
+  <section class="pass" id="p1r">
+    <div class="meta">
+      <h2 class="sec"><span class="num">P1r</span>Ring field bake</h2>
+      <dl class="spec">
+        <div><dt>Program</dt><dd><code>mNeonFieldShader</code>, the same as P1f</dd></div>
+        <div><dt>Shader</dt><dd><code>neon.frag</code> + <code>NEON_FIELD_BAKE</code></dd></div>
+        <div><dt>Target</dt><dd><code>mRingFieldBuffer</code></dd></div>
+        <div><dt>Grid</dt><dd>458 &times; 108 texels: the ring&rsquo;s pixels, packed</dd></div>
+        <div><dt>Format</dt><dd>R16F</dd></div>
+        <div><dt>Runs</dt><dd>A config&rsquo;s first frame, then once it has held after a change - an intensity-only change excepted</dd></div>
+      </dl>
+    </div>
+    <div class="body">
+      <p>P2c is a full-resolution cost the scale does not shrink, paid on every frame. With no segments its output is <code>mask &times; tonemap(col &times; Fa)</code> - the same factorisation as P1f&rsquo;s, the mask being the one-sided cut and the cutoffs, which depend on the pixel&rsquo;s position alone - so this pass bakes <code>Fa</code> over the ring once, with the ring&rsquo;s own uniforms (scale 1.0, its own fade margin and corner skip). The ring is an axis-aligned annulus, a box minus a hole, so its pixels are four strips: the bottom and the top stored as they are, the left and the right transposed above them so each runs along the buffer&rsquo;s width (<code>RingFieldLayout</code>). One draw per strip, each through its own rows as the viewport; every texel sits on one of the viewport&rsquo;s pixels. About 0.27 MB for a 960 &times; 540 rect at 1080p, against 1.06 MB as a plain box. It keeps P1f&rsquo;s schedule (<code>LazyBake</code>, its own instance) - but needs no rotating hue, since the ring is redrawn on still frames too.</p>
+      <div class="shots">
+        <figure class="wide">
+          <img src="images/neon-onboarding/pass-p1r-ring-field.png" alt="The ring field buffer: the ring's brightness in grey, packed as four strips" width="458" height="108">
+          <figcaption><code>Fa</code> over the ring, through the tone map as for P1f: the bottom strip at the bottom, the top above it, the two sides transposed above those.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section class="pass" id="p2r">
+    <div class="meta">
+      <h2 class="sec"><span class="num">P2r</span>Ring field composite</h2>
+      <dl class="spec">
+        <div><dt>Program</dt><dd><code>mRingField<wbr>CompositeShader</code></dd></div>
+        <div><dt>Shader</dt><dd><code>neon-field.frag</code> + <code>NEON_FIELD_RING</code></dd></div>
+        <div><dt>Target</dt><dd>The caller&rsquo;s framebuffer</dd></div>
+        <div><dt>Grid</dt><dd>640 &times; 360 px, full resolution</dd></div>
+        <div><dt>Covers</dt><dd>The ring band only, in P2c&rsquo;s place</dd></div>
+      </dl>
+    </div>
+    <div class="body">
+      <p>P2c&rsquo;s picture from P1r&rsquo;s field, through the blit&rsquo;s matrix so the partition still holds. Each fragment finds its pixel in the ring&rsquo;s box, its strip against a conservative hole, and its texel; multiplies by the gathered hue; tone-maps; and then multiplies in the one-sided cut and the cutoffs from its own distance to the edge - the terms the ring&rsquo;s shading applies after its tone map, copied from <code>neon.frag</code> and fed the same uniforms. Within 1/255 of P2c. Its own program object, not P1c&rsquo;s: it draws the caller&rsquo;s framebuffer blended in the frame P1c may draw the reduced buffer unblended. 1.4-1.9x on still frames and 1.2-1.6x on hue frames (I52, AMD Radeon Pro 5300M); a one-sided glow or a cutoff used to keep the ring shading directly, and taking them here made those configs&rsquo; still frames 1.2-2.7x faster (I53, Apple M2 Pro).</p>
+      <div class="shots">
+        <figure class="wide">
+          <img src="images/neon-onboarding/pass-p2r-ring-composite.png" alt="The ring band drawn from the ring field" width="640" height="360">
+          <figcaption>P2r&rsquo;s output, with the blit&rsquo;s pixels left out: the scene without its segment, on its second frame at scale 0.5.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <p class="group">Under a rotating hue or a moving intensity, without segments: the glow&rsquo;s field</p>
 
   <section class="pass" id="p1f">
     <div class="meta">
@@ -658,39 +735,17 @@
         <div><dt>Program</dt><dd><code>mNeonFieldShader</code></dd></div>
         <div><dt>Shader</dt><dd><code>neon.frag</code> + <code>NEON_FIELD_BAKE</code></dd></div>
         <div><dt>Target</dt><dd><code>mFieldBuffer</code></dd></div>
-        <div><dt>Grid</dt><dd>640 &times; 360 texels, the glow quad&rsquo;s box on the frame&rsquo;s pixels</dd></div>
+        <div><dt>Grid</dt><dd>320 &times; 180 texels: the reduced buffer&rsquo;s own region and grid</dd></div>
         <div><dt>Format</dt><dd>R16F</dd></div>
-        <div><dt>Runs</dt><dd>A config&rsquo;s first frame, then once it has held after a change; below 1.0 only with the hue rotating</dd></div>
+        <div><dt>Runs</dt><dd>With the hue rotating or the intensity moving: a config&rsquo;s first frame, then once it has held after a change - an intensity-only change excepted</dd></div>
       </dl>
     </div>
     <div class="body">
-      <p>With no segments, everything <code>neon.frag</code> computes is the gathered hue times a brightness that does not depend on it: <code>tonemap(col &times; Fa)</code>, provided nothing is applied after the tone map. Only <code>col</code> moves when the hue rotates. So this pass runs the whole shading once with the hue fixed at 1 and stores <code>Fa</code>, the brightness before the tone map, in one half-float channel. Offscreen, unblended. At 1.0 a one-sided glow or a cutoff is multiplied in after the tone map, so a config with either shades directly instead (it used to take a mask in a second channel, which no frame below 1.0 ever needed). After a config change it waits until the config has held for a frame, so an animation that changes the config every frame never pays for a bake it cannot reuse; only the first frame a config the field can serve is drawn bakes at once, alongside P1, because this driver finishes compiling a program on its first draw and a bake left for the next frame stalled it ~125 ms. Below 1.0 the same pass runs at the reduced scale on the reduced buffer&rsquo;s own grid - where the blit applies the cut and the cutoffs, so every config is unmasked - and only with the hue rotating - the one frame type below 1.0 that redraws the shading with nothing but the time moved. Captured on this scene without its segment, since segments keep the field off.</p>
+      <p>With no segments, everything pass 1b computes is the gathered hue times a brightness that does not depend on it: <code>tonemap(col &times; Fa)</code> - the blit applies the cut and the cutoffs afterwards. Only <code>col</code> moves when the hue rotates. So this pass runs pass 1b&rsquo;s shading once with the hue fixed at 1 and stores <code>Fa</code>, the brightness before the tone map, in one half-float channel, on the reduced buffer&rsquo;s own region and grid. Offscreen, unblended. A frame where nothing moved reuses pass 1b&rsquo;s buffer already, so the field is built only for the frames that would redraw it with nothing else moved: the hue&rsquo;s, and an intensity animation&rsquo;s. The intensity is the one config change that does not throw the field away (I56): the output is near enough intensity &times; a brightness that does not move, so a field baked at I<sub>0</sub> serves a dimmer intensity scaled by I / I<sub>0</sub> while it moves, is baked again when it climbs past I<sub>0</sub>, and baked exactly on the frame it stops - up to 2 levels off on the default look while it moves (6 on a 1.5 bloom over a 0.4-1.0 pulse), nothing once it holds. After any other config change it waits until the config has held for a frame, so an animation that changes the config every frame never pays for a bake it cannot reuse; only the first frame a config the field can serve is drawn bakes at once, alongside P1b, because this driver finishes compiling a program on its first draw and a bake left for the next frame stalled it ~125 ms. The same program also bakes the ring&rsquo;s field (P1r). Captured on this scene without its segment, since segments keep the field off, with the hue rotating.</p>
       <div class="shots">
         <figure class="wide">
           <img src="images/neon-onboarding/pass-p1f-field.png" alt="The field buffer: the glow's brightness in grey, without colour" width="640" height="360">
-          <figcaption><code>Fa</code>, shown through the tone map: the glow&rsquo;s brightness in white light. The colour is added by P1c.</figcaption>
-        </figure>
-      </div>
-    </div>
-  </section>
-
-  <section class="pass" id="p1">
-    <div class="meta">
-      <h2 class="sec"><span class="num">P1</span>Pass 1, shaded directly</h2>
-      <dl class="spec">
-        <div><dt>Program</dt><dd><code>mNeonRingShader</code></dd></div>
-        <div><dt>Shader</dt><dd><code>neon.frag</code>, the ring&rsquo;s program</dd></div>
-        <div><dt>Target</dt><dd>The caller&rsquo;s framebuffer</dd></div>
-        <div><dt>Grid</dt><dd>640 &times; 360 px, full resolution</dd></div>
-        <div><dt>Runs</dt><dd>A frame whose config just changed; every frame with segments</dd></div>
-      </dl>
-    </div>
-    <div class="body">
-      <p>The whole shading, on every pixel of the glow quad, from the same gather buffer the scaled path reads - the edge ring&rsquo;s program over the whole quad instead of a band. It draws a frame the field cannot: the first after a config change, every frame of an animation that changes the config, and every frame of a config with segments. The page&rsquo;s scene has a segment, so this is how it draws at 1.0 on every frame; below 1.0, P1a through P2c rebuild this picture.</p>
-      <div class="shots">
-        <figure class="wide">
-          <img src="images/neon-onboarding/pass-p1-direct.png" alt="The same scene shaded directly at scale 1.0" width="640" height="360">
-          <figcaption>P1&rsquo;s output at scale 1.0, the page&rsquo;s scene with its segment.</figcaption>
+          <figcaption><code>Fa</code>, shown through the tone map: the glow&rsquo;s brightness in white light. The colour is added by P1c. Shown 2&times; with nearest-neighbour scaling.</figcaption>
         </figure>
       </div>
     </div>
@@ -700,19 +755,19 @@
     <div class="meta">
       <h2 class="sec"><span class="num">P1c</span>Field composite</h2>
       <dl class="spec">
-        <div><dt>Program</dt><dd><code>mFieldCompositeShader</code></dd></div>
+        <div><dt>Program</dt><dd><code>mField<wbr>CompositeShader</code></dd></div>
         <div><dt>Shader</dt><dd><code>neon-field.frag</code></dd></div>
-        <div><dt>Target</dt><dd>The caller&rsquo;s framebuffer</dd></div>
-        <div><dt>Grid</dt><dd>640 &times; 360 px, full resolution</dd></div>
-        <div><dt>Runs</dt><dd>In P1&rsquo;s place while the field holds; below 1.0, in P1b&rsquo;s under a rotating hue</dd></div>
+        <div><dt>Target</dt><dd><code>mScaledBuffer</code></dd></div>
+        <div><dt>Grid</dt><dd>320 &times; 180 texels, scale 0.5</dd></div>
+        <div><dt>Runs</dt><dd>In P1b&rsquo;s place while the field holds, under a rotating hue or a moving intensity</dd></div>
       </dl>
     </div>
     <div class="body">
-      <p>P1&rsquo;s picture from P1f&rsquo;s field: each pixel reads its field texel and the gathered hue, multiplies, and tone-maps with the same function <code>neon.frag</code> uses (<code>neonToneMap</code>). Two fetches and a tone map instead of the whole shading - on every still frame and every frame of a rotating hue, the library&rsquo;s default. Within 1/255 of P1. Below 1.0 the same program writes the reduced buffer, unblended, in P1b&rsquo;s place on every frame of a rotating hue, and the blit and the ring carry on as before: 1.55x on those frames at 0.5, 1.98x at 0.75 (I50).</p>
+      <p>P1b&rsquo;s picture from P1f&rsquo;s field: each texel reads its field texel and the gathered hue, multiplies, and tone-maps with the same function <code>neon.frag</code> uses (<code>neonToneMap</code>). Two fetches and a tone map instead of the whole shading, written into the reduced buffer, unblended, in P1b&rsquo;s place; the blit and the ring carry on as before. Within 1/255 of P1b on a hue frame: 1.55x on those frames at 0.5, 1.98x at 0.75 (I50). During an intensity animation it multiplies the field by I / I<sub>0</sub> first (<code>uFieldGain</code>, exactly 1 otherwise): intensity-pulse frames 2.31x at 0.5, 1.60x at 0.25 (I56, Apple M2 Pro).</p>
       <div class="shots">
         <figure class="wide">
           <img src="images/neon-onboarding/pass-p1c-composite.png" alt="The field composite: the field tinted by the gathered hue" width="640" height="360">
-          <figcaption>P1c&rsquo;s output: the same scene without its segment, on its second frame at scale 1.0.</figcaption>
+          <figcaption>P1c&rsquo;s output, the reduced buffer: the same scene without its segment, on its second frame with the hue rotating. Shown 2&times; with nearest-neighbour scaling.</figcaption>
         </figure>
       </div>
     </div>
@@ -720,8 +775,8 @@
 
   <section class="why-sec" id="why">
     <p class="group">Why each program exists</p>
-    <h2>Nine programs, one job each</h2>
-    <p>Every program is built on the first frame that needs it, so a host compiles only its own: at scale 1.0 with no partly lit ring, six (P0, P1a, P1f, P1c, the ring&rsquo;s P1 and the fill); the coverage table adds P0b; below 1.0, P1b and the blit replace the field&rsquo;s two. Each row says what the program is for and why it is not folded into another.</p>
+    <h2>Ten programs, one job each</h2>
+    <p>Every program is built on the first frame that needs it, so a host compiles only its own: with segments, six (P0, P1a, P1b, the blit, the ring&rsquo;s P2c and the fill); without them, nine - the field&rsquo;s two, built together, and the ring&rsquo;s composite P2r on top. A partly lit ring adds P0b to either. Each row says what the program is for and why it is not folded into another.</p>
     <div class="why-wrap">
       <table class="why">
         <thead>
@@ -745,28 +800,33 @@
           </tr>
           <tr>
             <td><span class="pid">P1b</span> <code>mNeonShadeShader</code></td>
-            <td>The glow at the reduced scale, below 1.0 only.</td>
+            <td>The glow at the reduced scale.</td>
             <td>The same source as the ring, compiled twice so each program draws one target in one blend state a frame: one program drawing an offscreen buffer unblended and the framebuffer blended in the same frame measured 93-624x slower on the AMD macOS driver.</td>
           </tr>
           <tr>
-            <td><span class="pid">P2c / P1</span> <code>mNeonRingShader</code></td>
-            <td>The full-resolution shading: the edge ring below 1.0, the whole glow quad at 1.0 when the field cannot serve the frame.</td>
+            <td><span class="pid">P2c</span> <code>mNeonRingShader</code></td>
+            <td>The full-resolution shading of the edge ring, where the line and every hard edge live.</td>
             <td>The only program that draws the filament and the hard edges at full resolution; every other glow pass reads a buffer or draws offscreen.</td>
           </tr>
           <tr>
             <td><span class="pid">P2b</span> <code>mBlitShader</code></td>
-            <td>The reduced buffer upsampled onto the frame outside the ring, below 1.0 only.</td>
+            <td>The reduced buffer upsampled onto the frame outside the ring.</td>
             <td>It also applies the one-sided cut and the cutoffs at destination resolution: drawn inside the reduced buffer, a mask is smeared over 1/scale pixels by the upsample (59/255 on the dark side of a cut at 0.5, measured).</td>
           </tr>
           <tr>
-            <td><span class="pid">P1f</span> <code>mNeonFieldShader</code></td>
-            <td>The hue-invariant field: the glow&rsquo;s brightness with the hue fixed at 1, before the tone map - for a config without segments (nor, at 1.0, a one-sided glow or a cutoff), on its first frame and once it has held after a change; below 1.0 only with the hue rotating.</td>
-            <td>See below - the field is the cheap path at 1.0 and on hue frames below it, and the bake cannot share a program with the passes it replaces.</td>
+            <td><span class="pid">P1f / P1r</span> <code>mNeonFieldShader</code></td>
+            <td>The hue-invariant field: the brightness with the hue fixed at 1, before the tone map - for a config without segments, on its first frame and once it has held after a change, kept through an intensity animation. The glow&rsquo;s (P1f, with the hue rotating or the intensity moving) and the ring&rsquo;s (P1r, on still frames too).</td>
+            <td>See below - the field is the cheap path for hue and intensity frames and for the ring, and the bake cannot share a program with the passes it replaces.</td>
           </tr>
           <tr>
             <td><span class="pid">P1c</span> <code>mFieldCompositeShader</code></td>
-            <td>The field times the gathered hue, tone-mapped, in P1&rsquo;s place while the field holds - or below 1.0 in P1b&rsquo;s, into the reduced buffer.</td>
-            <td>Two fetches and a tone map a pixel, where P1 runs the whole shading - the field&rsquo;s saving lives here.</td>
+            <td>The field times the gathered hue - and I / I<sub>0</sub> while the intensity moves - tone-mapped, into the reduced buffer in P1b&rsquo;s place while the field holds.</td>
+            <td>Two fetches and a tone map a texel, where P1b runs the whole shading - the field&rsquo;s saving lives here.</td>
+          </tr>
+          <tr>
+            <td><span class="pid">P2r</span> <code>mRingFieldCompositeShader</code></td>
+            <td>The ring&rsquo;s field times the gathered hue, tone-mapped, times the one-sided cut and the cutoffs, in P2c&rsquo;s place - still frames included.</td>
+            <td>The ring is redrawn on every frame at full resolution; this is the cheap way to redraw it. Not P1c&rsquo;s program: it draws the caller&rsquo;s framebuffer blended in the frame P1c may draw the reduced buffer unblended, and it carries the strip lookup and the masks P1c does not.</td>
           </tr>
           <tr>
             <td><span class="pid">P2a</span> <code>mBlackRectShader</code></td>
@@ -778,17 +838,17 @@
     </div>
 
     <h2>Why the field bake is necessary</h2>
-    <p><strong>The field is what makes scale 1.0 cheap.</strong> Without P1f there is nothing for P1c to read, and every frame at 1.0 - still or hue rotating, the library&rsquo;s default - runs P1&rsquo;s whole shading on every pixel of the glow quad. Measured on the check suite&rsquo;s default scene at 1920 &times; 1080: on an AMD Radeon Pro 5300M, 0.07 ms a still frame and 0.24 ms with the hue rotating, against ~1.06 ms for a frame P1 draws - one whose config changes every frame (about 15x and 4x); on an Apple M2 Pro, 9x still and 4x with the hue rotating when the field landed (I46). And a still or hue-rotating frame is what a host shows most of the time. Below 1.0 it does the same for P1b on hue-rotating frames, the one frame type there that redraws the shading with only the time moved: 1.98x at 0.75, 1.55x at 0.5, 1.21x at 0.25 (I50, same GPU, twelve scenes) - though 1.0 stays the cheaper scale for those frames, since the blit and the ring are full-resolution costs the field does not touch.</p>
+    <p><strong>The fields are what make a moving frame cheap.</strong> Without P1f there is nothing for P1c to read, and every hue-rotating frame - the library&rsquo;s default - reruns pass 1b&rsquo;s whole shading; without P1r, the ring is shaded in full on every frame, still ones included. Measured on the AMD Radeon Pro 5300M: the glow&rsquo;s field 1.98x on hue frames at 0.75, 1.55x at 0.5, 1.21x at 0.25 (I50, twelve scenes); the ring&rsquo;s 1.4-1.9x on still frames and 1.2-1.6x on hue frames (I52). And on an Apple M2 Pro the glow&rsquo;s field carries an intensity animation, scaled, where it used to be thrown away on every frame: 2.31x on intensity-pulse frames at 0.5 (I56). (Before I57 the same field stood in for a direct pass 1 at scale 1.0, where it measured 4x with the hue rotating and 9x still - I46.)</p>
     <p><strong>It cannot be the ring&rsquo;s program.</strong> Three things separate it, and each is a reason:</p>
     <ol>
-      <li><em>A different output.</em> It writes the brightness <code>Fa</code> before the tone map - one half-float channel - where every other <code>neon.frag</code> program writes a finished, premultiplied colour. As a compile-time define (<code>NEON_FIELD_BAKE</code>) that difference costs the hot shading program nothing; as a runtime switch it would add branches to the program every animated frame at 1.0 runs, and this compiler has slowed that program for code no frame executes.</li>
+      <li><em>A different output.</em> It writes the brightness <code>Fa</code> before the tone map - one half-float channel - where every other <code>neon.frag</code> program writes a finished, premultiplied colour. As a compile-time define (<code>NEON_FIELD_BAKE</code>) that difference costs the hot shading program nothing; as a runtime switch it would add branches to the program every animated frame runs, and this compiler has slowed that program for code no frame executes.</li>
       <li><em>A different target and blend state.</em> It draws an offscreen buffer, unblended; the ring&rsquo;s program draws the caller&rsquo;s framebuffer, blended. One program doing both is the shape that measured 93-624x slower on the AMD macOS driver - the reason P1b and the ring are already two programs.</li>
-      <li><em>It costs only where it pays.</em> Built on the first frame of a config the field can serve, never for a config with segments, below 1.0 without a rotating hue, or for a thin band the field is not worth its memory for (<code>FIELD_MIN_FILL</code>) - so a host that never uses the field never compiles it.</li>
+      <li><em>It costs only where it pays.</em> Built on the first frame of a config a field can serve, never for a config with segments; the glow&rsquo;s field is not allocated without a rotating hue or a moving intensity, nor for a thin band it is not worth its memory for (<code>FIELD_MIN_FILL</code>) - the ring&rsquo;s, a few strips of full-resolution pixels, is, since the ring is redrawn on every frame. A host that only draws segment configs never compiles either.</li>
     </ol>
-    <p>The alternatives were weighed: baking with the ring&rsquo;s program behind a uniform would save one compile on the first settled frame at the price of reasons 1 and 2, and baking with P1b&rsquo;s program saves nothing at 1.0, where that program is not otherwise built. What the field must keep is an invariant of <code>neon.frag</code>: anything new there that reads the hue other than linearly, reads time, or multiplies after the tone map on a config the field takes breaks the factorisation, and has to extend <code>NEON_FIELD_BAKE</code> and <code>neon-field.frag</code> together.</p>
+    <p>The alternatives were weighed: baking with the ring&rsquo;s program behind a uniform would save one compile on the first settled frame at the price of reasons 1 and 2, and baking with P1b&rsquo;s program would draw two targets in two blend states with it in one frame. What the field must keep is an invariant of <code>neon.frag</code>: anything new there that reads the hue other than linearly, reads time, or multiplies after the tone map on a config the field takes breaks the factorisation, and has to extend <code>NEON_FIELD_BAKE</code> and <code>neon-field.frag</code> together.</p>
   </section>
 
   <footer>
-    <p>Captured by <code>tools/neon-guide-figures</code>, which wraps the library&rsquo;s draw call to read each pass&rsquo;s target back without changing the frame (recorded and unrecorded frames are byte-identical). P1 and P1f are the first frame at scale 1.0 - the first frame a config the field can serve is drawn shades directly and bakes the field too - and P1c the second, which composites it. Regenerate after a change to how the neon looks; see <a href="../tools/neon-guide-figures/README.md">its README</a>.</p>
+    <p>Captured by <code>tools/neon-guide-figures</code>, which wraps the library&rsquo;s draw call to read each pass&rsquo;s target back without changing the frame (recorded and unrecorded frames are byte-identical). P1f is the first frame of the scene without its segment, with the hue rotating - the first frame a config the field can serve is drawn shades directly and bakes the field too - and P1c the second, one clock tick on, which composites it; P1r and P2r are the first and second frames of the same scene with the hue still. Regenerate after a change to how the neon looks; see <a href="../tools/neon-guide-figures/README.md">its README</a>.</p>
   </footer>
 </div>
