@@ -211,10 +211,12 @@ float haloSegment(float a, float t1, float t2, float k) {
 // costliest term in the shader (the straights call it twelve times, the
 // corners four), and the identity halves its atans and drops both divides:
 // 1.13-1.26x on the whole shading pass at 1920 x 1080 (AMD Radeon Pro 5300M),
-// for 0-16 pixels a frame moving by 1/255 from the rounding.
+// for 0-16 pixels a frame moving by 1/255 from the rounding. And the atan is
+// minimaxAtan (neon-pieces.glsl), not the driver's: with the corners' `th`,
+// another 1.10-1.13x on frames whose config animates, on the same GPU.
 float bloomSegment(float a, float t1, float t2, float k) {
     float c = sqrt(a * a + k * k);
-    return k / c * atan(c * (t2 - t1), c * c + t1 * t2);
+    return k / c * minimaxAtan(c * (t2 - t1), c * c + t1 * t2);
 }
 
 // The bloom's 1/a tail is heavy enough that it has to be pedestal-subtracted to
