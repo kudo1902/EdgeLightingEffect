@@ -99,8 +99,13 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   (`mOffscreenCurrent`, [`docs/neon-perf-plan.md`](docs/neon-perf-plan.md)
   item 4). Both are pure functions of the config, the viewport, the two tables
   they read and - only through the hue - the time, and both buffers persist
-  between frames. The flag is cleared by `OnConfigChanged` on ANY change (wide
-  on purpose: pass 1b reads most of the config), and honoured only when the
+  between frames. The flag is cleared by `OnConfigChanged` on ANY change to
+  `config.neon` or `config.geometry` (wide on purpose: pass 1b reads most of
+  the neon's config) - and, with the field's two flags, ONLY on those: the call
+  comes for any change to the composited config, so gated on "any change" an
+  animation of another layer (the lens flare's sun, an `AnimatableField`)
+  cleared all three every frame and cost the neon 4.9x with the hue rotating,
+  15x still (I47). It is honoured only when the
   emission table is current (which carries the time and a cross-fade), the
   glow coverage table needs no bake, and the viewport is the one recorded with
   it. Such a frame never leaves the caller's framebuffer and takes no

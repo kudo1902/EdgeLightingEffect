@@ -693,8 +693,9 @@ namespace EdgeLighting
         /// OnConfigChanged - and never allocated for a config that cannot use
         /// it (segments, a reduced scale).
         Framebuffer mFieldBuffer{"NeonRenderer.Field"};
-        /// The field in @c mFieldBuffer describes this frame: no config change,
-        /// gradient upload or viewport change since it was baked.
+        /// The field in @c mFieldBuffer describes this frame: no change to the
+        /// neon's config or the geometry, gradient upload or viewport change
+        /// since it was baked.
         bool mFieldCurrent = false;
         /// Nothing invalidated the field on the last frame, so baking it now
         /// should be reused. The bake waits for this: an animation that
@@ -760,10 +761,12 @@ namespace EdgeLighting
         /// tables they read (emission, glow coverage) and - only through the
         /// hue rotation - the time; both buffers persist between frames and
         /// nothing else writes them. So: cleared by @ref OnConfigChanged on ANY
-        /// config change (pass 1b reads too much of the config for a narrow
-        /// gate to be worth its risk), set by @ref Render after an offscreen
-        /// phase that drew both, and honoured only on a frame whose emission
-        /// table is current (@ref isEmissionTableStale, which carries the time
+        /// change to the neon's config or the geometry (pass 1b reads too much
+        /// of the former for a narrower gate to be worth its risk), but not on
+        /// another layer's, which nothing here reads and an animation of which
+        /// would otherwise clear it every frame; set by @ref Render after an
+        /// offscreen phase that drew both; and honoured only on a frame whose
+        /// emission table is current (@ref isEmissionTableStale, which carries the time
         /// and the ring's cross-fade), whose glow coverage table needs no bake,
         /// and whose viewport is @c mOffscreenViewport. Measured
         /// byte-identical; 2-6x on a still frame at scale 0.5 on an Apple M2

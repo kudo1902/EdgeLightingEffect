@@ -2172,16 +2172,28 @@ namespace EdgeLighting
 
     void NeonRenderer::OnConfigChanged(const Config &config)
     {
-        // The offscreen buffers were drawn from the config this replaces - and
-        // this call only comes when the composited config actually changed.
-        // Wide, unlike the gates below: pass 1b reads most of the config, and
-        // re-drawing them costs one frame's offscreen phase.
-        mOffscreenCurrent = false;
-        // And the hue-invariant field, for the same reason, and one more frame
-        // before it is baked again: a config that changes every frame (an
-        // animation) never settles, and keeps drawing pass 1 directly.
-        mFieldCurrent = false;
-        mFieldSettled = false;
+        // The offscreen buffers were drawn from the config this replaces. Wide,
+        // unlike the gates below - pass 1b reads most of the neon's config, and
+        // re-drawing them costs one frame's offscreen phase - but no wider than
+        // what this renderer reads at all: its own sub-config and the geometry
+        // (Render reads debug.opaqueOnly too, and returns before any of this).
+        // This call comes whenever the COMPOSITED config changed, another
+        // layer's fields included, and an animation of one - the lens flare's
+        // sun riding the perimeter, an AnimatableField - changes it every
+        // frame. Cleared on that, the field never settled and the neon drew
+        // pass 1 directly every frame: 4.9x with the hue rotating and 15x
+        // still at 1.0, ~4x still at 0.5 (AMD Radeon Pro 5300M, 1920 x 1080),
+        // for an image the field draws byte-identically.
+        if (config.neon != mCurrentConfig.neon || config.geometry != mCurrentConfig.geometry)
+        {
+            mOffscreenCurrent = false;
+            // And the hue-invariant field, for the same reason, and one more
+            // frame before it is baked again: a config that changes every
+            // frame (an animation) never settles, and keeps drawing pass 1
+            // directly.
+            mFieldCurrent = false;
+            mFieldSettled = false;
+        }
 
         // Snapshot dirtiness before we overwrite mCurrentConfig. Each rebuild
         // is gated on the exact set of fields it reads (see the corresponding

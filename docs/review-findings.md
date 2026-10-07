@@ -4192,6 +4192,38 @@ reads `col` other than linearly, reads time, or multiplies after the tone map
 outside the masks breaks it; extend `NEON_FIELD_BAKE` and `neon-field.frag`
 together, or narrow `IsFieldEligible`.
 
+### I47. Another layer's animation cost the neon its cached passes every frame - FIXED
+
+`NeonRenderer::OnConfigChanged` cleared `mOffscreenCurrent` (I40) and the
+field's `mFieldCurrent` / `mFieldSettled` (I46) on any call - and the effect
+makes that call whenever the COMPOSITED config changes, another layer's
+fields included. `AnimatableField` exposes eleven lens-flare fields to
+animations, and the flare's sun riding the perimeter is the obvious one, so
+an animation of a layer the neon never reads cleared all three every frame:
+the field never settled, pass 1 drew directly at 1.0, and the offscreen
+passes re-ran below it. Every other renderer already gated its
+`OnConfigChanged` on its own sub-config.
+
+Measured on an AMD Radeon Pro 5300M at 1920 x 1080, the check suite's
+`default` scene laid out for the frame, a neon-only effect with
+`lensFlare.perimeterPosition` moving 0.003 a frame through `SetConfig` (so
+the change reaches the neon only through `OnConfigChanged`), two runs:
+
+| neon frame, ms | alone | flare moving, before | flare moving, after |
+| -------------- | ----: | -------------------: | ------------------: |
+| 1.0, hue rotating | 0.243 | 1.205 (4.9x) | 0.224-0.239 |
+| 1.0, still | 0.078 | 1.169 (15x) | 0.075-0.076 |
+| 0.5, still | 0.162-0.175 | 0.655-0.660 (~4x) | 0.166-0.168 |
+
+The three flags are now cleared only when `config.neon` or `config.geometry`
+changed - everything the renderer reads, `debug.opaqueOnly` aside, which
+`Render` reads live and returns on before touching any of them. Output: a
+steady frame with the flare moving is byte-identical to the same frame
+before the fix with nothing moving, at 1.0 and 0.5; before it, the
+flare-moving frame took the direct path and differed from that by 1 level on
+~20k channels. Add a read of another sub-config to this renderer and the
+gate has to name it.
+
 ---
 
 ## What is left
@@ -4204,7 +4236,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, and the twenty-first I39 to I46 (I39 closing I2). Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), and the twenty-second I47. Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -4247,6 +4279,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I44 | changed | the split's gate was the AMD's calibration and kept the loop inline where an M2 Pro split 1.1-4.75x faster; now the M2's values (every rect splits at 1.0), `bounded_band` 3.5-3.7x, at up to 16 / 33 MB of gather buffer for a tiny rect with a frame-filling glow |
 | I45 | fixed | a uniformly lit ring with opaque stops computed `perimeterPosition` and a gradient alpha read nothing used; skipped (`uPerimeterUnread`), the default frame 1.11x at 1080p, byte-identical where it engages |
 | I46 | fixed | pass 1 at 1.0 re-shaded a glow whose only moving part is its hue; now a hue-invariant field baked once a config holds and composited per frame - 3.3x (hue) / 6.3x (still) geometric mean at 1080p, within 1/255, +3.3 MB for the default rect |
+| I47 | fixed | the neon cleared its cached offscreen passes and its field on any composited config change, so an animation of another layer (the lens flare's sun) cost it 4.9x (hue) / 15x (still) at 1.0; now cleared only on a change to `config.neon` or `config.geometry`, byte-identical |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch
