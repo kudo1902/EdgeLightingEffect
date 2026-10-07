@@ -104,18 +104,7 @@ uniform float uInsideCutoffSoftness;
 uniform float uOutsideCutoff;
 uniform float uOutsideCutoffSoftness;
 
-float sdRoundBox(vec2 p, vec2 b, float r) {
-    vec2 q = abs(p) - b + r;
-    return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
-}
-
-// neon.frag's, verbatim: Euclidean (d - cut) above cornerRadius 0, per-axis at
-// 0 so a square rect keeps a square band. See the derivation there.
-float bandOuterDistance(vec2 p, float d, vec2 halfSize, float r, float cut) {
-    if (r > 1e-4) { return d - cut; }
-    vec2 b = halfSize + vec2(cut);
-    return sdRoundBox(p, b, 0.0);
-}
+// sdRoundBox and bandOuterDistance are neon.frag's own, from neon-sdf.glsl.
 
 void main() {
     vec2 uv = vPos * uUVScale + uUVOffset; // rect-local full-res px -> buffer UV

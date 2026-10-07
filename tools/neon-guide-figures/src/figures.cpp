@@ -1172,16 +1172,54 @@ namespace NeonGuideFigures
             }
         }
 
-        // P1 - the direct path's one pass, for the same scene at scale 1.0.
+        // P1 - pass 1 at scale 1.0, for the same scene: its FIRST frame, which
+        // the edge ring's program shades over the whole glow quad from the
+        // gather - so the recorder files it under P2C. (The inline program
+        // this used to find under P1 has not been built since every rect
+        // split the gather at 1.0, and is gone.)
         {
             Config direct = c;
             direct.neon.resolutionScale = 1.0f;
             std::unique_ptr<EdgeLightingEffect> effect = FreshEffect();
             Render(*effect, direct, PASS_W, PASS_H, false, true);
-            if (const DrawRecord *p1 = PassRecorder::Find(PassKind::P1))
+            if (const DrawRecord *p1 = PassRecorder::Find(PassKind::P2C))
             {
                 SavePNG(AttachmentImage(p1->written[0], [](const glm::vec4 &v) { return glm::vec3(v); }),
                         Path(dir, "pass-p1-direct.png"));
+            }
+        }
+
+        // P1f / P1c - the hue-invariant field and its composite. The scene
+        // without its segment, since segments keep the field off, at scale
+        // 1.0, and its SECOND frame: the first draws pass 1 and lets the
+        // config settle, the second bakes the field and composites it.
+        {
+            Config field = c;
+            field.neon.resolutionScale = 1.0f;
+            field.neon.segmentBoosts.clear();
+            std::unique_ptr<EdgeLightingEffect> effect = FreshEffect();
+            Render(*effect, field, PASS_W, PASS_H);
+            Render(*effect, field, PASS_W, PASS_H, false, true);
+            if (const DrawRecord *p1f = PassRecorder::Find(PassKind::P1F))
+            {
+                // .r is Fa, the pre-tone-map brightness at hue 1: shown
+                // through the tone map, which is what that brightness looks
+                // like in white light.
+                const Attachment &f = p1f->written[0];
+                SavePNG(AttachmentImage(f,
+                                        [](const glm::vec4 &v) {
+                                            const float fa = std::max(v.r, 0.0f);
+                                            const float mapped = fa / (fa + float(TONE_MAP_SHOULDER));
+                                            return glm::vec3(std::pow(mapped, float(GAMMA_EXPONENT)));
+                                        }),
+                        Path(dir, "pass-p1f-field.png"));
+                std::printf("    field buffer %d x %d, internal format 0x%x\n", f.width, f.height,
+                            unsigned(f.internalFormat));
+            }
+            if (const DrawRecord *p1c = PassRecorder::Find(PassKind::P1C))
+            {
+                SavePNG(AttachmentImage(p1c->written[0], [](const glm::vec4 &v) { return glm::vec3(v); }),
+                        Path(dir, "pass-p1c-composite.png"));
             }
         }
 
@@ -1220,7 +1258,7 @@ namespace NeonGuideFigures
             {
                 std::unique_ptr<EdgeLightingEffect> effect = FreshEffect();
                 const Canvas frame = Render(*effect, g, PASS_W, PASS_H, false, true);
-                SavePNG(GeometryOverlay(frame, {{PassKind::P1, glm::vec3(0.3f, 0.6f, 1.0f)}}),
+                SavePNG(GeometryOverlay(frame, {{PassKind::P2C, glm::vec3(0.3f, 0.6f, 1.0f)}}),
                         Path(dir, "geometry-direct.png"));
             }
             {

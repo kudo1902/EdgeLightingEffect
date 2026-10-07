@@ -486,10 +486,9 @@ namespace EdgeLighting
         /// How one shader file yields several programs. Every embedded source
         /// starts with the @GLSL_VERSION@ line, which must stay first, so the
         /// defines go immediately after it - ahead of everything else, the
-        /// injected tuning header and neon-common.glsl included. Today those
-        /// are neon.frag's NEON_READS_GATHER variant and, with it, the field
-        /// bake's NEON_FIELD_BAKE; see @ref NeonRenderer::ensurePathPrograms
-        /// and @ref NeonRenderer::ensureFieldPrograms.
+        /// injected tuning header and neon-common.glsl included. Today that is
+        /// neon.frag's one variant, the field bake's NEON_FIELD_BAKE; see
+        /// @ref NeonRenderer::ensureFieldPrograms.
         inline std::string WithDefine(const char *src, const char *defines)
         {
             std::string lines;
@@ -1148,12 +1147,14 @@ namespace EdgeLighting
         /// animation of anything but the arcs and segments (intensity, colour,
         /// geometry, glow), that is every frame's bake.
         ///
-        /// It must never claim this where the shader does not: the shader
-        /// would then read a stale table. So it reads the same inputs
-        /// packLightBlockData packs - the effective segments, the arcs, capped
-        /// at the blocks' sizes - and tests the arc's length against a
-        /// threshold a little ABOVE the shader's 1.0 - 1e-6, so a length that
-        /// rounds either way between the two compilers counts as partial here.
+        /// The ONLY test of it: neon.frag takes this decision as a uniform
+        /// (uUniformCover) rather than making its own, so the bake it skips
+        /// and the reads the shader skips cannot fall out of step. It reads
+        /// the inputs packLightBlockData packs - the effective segments and
+        /// the arcs - and keeps its threshold a hair above arcCoverContinuous's
+        /// full-ring 1 - 1e-6, so a length between the two counts as partial:
+        /// the table is baked and read, which is the exact path, rather than
+        /// assumed.
         inline bool IsGlowCoverUnread(const std::vector<SegmentBoost> &effectiveSegments, const Config &config)
         {
             return effectiveSegments.empty() && config.neon.arcs.size() == 1 &&
@@ -1461,8 +1462,9 @@ namespace EdgeLighting
             return mask;
         }
 
-        /// The scale the scaled path's GATHER runs at: as coarse as the
-        /// gather's own smoothness allows, never finer than @p scale.
+        /// The scale the GATHER runs at, at every resolutionScale: as coarse as
+        /// the gather's own smoothness allows, never finer than @p scale nor
+        /// than GATHER_MAX_SCALE.
         ///
         /// The gather produces the perimeter hue and the two gathered coverages,
         /// each a Lorentzian-weighted mean over the whole perimeter with kernel
@@ -1470,10 +1472,13 @@ namespace EdgeLighting
         /// and nowhere narrower: at a distance d from the line the kernel is
         /// sqrt(d^2 + kc^2) wide. So a grid GATHER_TEXELS_PER_KERNEL texels per
         /// kc carries it through a bilinear read, which the edge ring already
-        /// relies on, and the loop - ~95% of the neon's cost - runs on that grid
-        /// instead of on every texel the shading needs. Floored at
-        /// GATHER_MIN_SCALE so a very large rect does not pin a viewport-sized
-        /// gather to a handful of texels. See neon-tuning.h for the calibration.
+        /// relies on, and the loop - ~95% of the neon's cost when it ran inline
+        /// - runs on that grid instead of on every texel the shading needs; for
+        /// anything but a small rect that is far below 1 (0.11 for a 640 x 360
+        /// rect). Floored at GATHER_MIN_SCALE so a very large rect does not pin
+        /// a viewport-sized gather to a handful of texels, and capped at
+        /// GATHER_MAX_SCALE so a tiny one does not gather its whole glow quad
+        /// at full resolution - see neon-tuning.h for both.
         ///
         /// A function of the geometry and @p scale only, so it moves only under
         /// geometryDirty, which rebuilds the gather pass's quad with it. It
@@ -1484,88 +1489,8 @@ namespace EdgeLighting
             const float kc = std::max(GetPerimeter(config) * static_cast<float>(COLOR_BLEND_PERIM_FRAC),
                                       static_cast<float>(EMISSION_MIN_WIDTH));
             const float floorScale = std::min(static_cast<float>(GATHER_MIN_SCALE), scale);
-            return std::clamp(static_cast<float>(GATHER_TEXELS_PER_KERNEL) / kc, floorScale, scale);
-        }
-
-        /// Whether the DIRECT path (scale 1.0) CAN run the gather as a pass of
-        /// its own, as the scaled path does, rather than inline in every
-        /// fragment of the glow quad - whether its gather grid is coarse
-        /// enough to be worth it. @ref SplitsGatherAtFullRes decides whether
-        /// it does.
-        ///
-        /// The loop is ~95% of a full-res neon frame, and its four results are
-        /// as smooth at 1.0 as below it: GetGatherScale is a property of the
-        /// rect, not of the scale, and for anything but a small rect it is far
-        /// below 1 (0.11 for a 640 x 360 rect). So pass 1a gathers onto that
-        /// grid and pass 1 reads it back with the same bilinear fetch the edge
-        /// ring has always read it with, at full resolution, on the caller's
-        /// framebuffer - the ring's program over the whole glow quad.
-        ///
-        /// A rect small enough to gather near full resolution runs the loop
-        /// on nearly as many texels as it shades, plus a pass, so past
-        /// FULL_RES_SPLIT_GATHER_MAX_SCALE the loop stays inline - which on the
-        /// AMD 5300M was 0.5. The shipped value is the Apple M2 Pro's, 1.0, so
-        /// every rect splits at 1.0: there the split won even at gather scale
-        /// 1.0 (1.1x on a moving 64 x 36 rect, 4.6x still, since a still
-        /// frame reuses the gather). At 0.5 the bound also capped the gather
-        /// buffer at what the scaled path at 0.5 allocates; at 1.0 a tiny
-        /// rect's buffer can approach its glow quad at full resolution
-        /// (docs/neon-perf-plan.md section 10.6).
-        ///
-        /// A function of the geometry and the scale only - NOT of @c enable,
-        /// which is not in geometryDirty: setupRingGeometry builds the gather
-        /// quad from this, and a layer switched on with no other change has to
-        /// find the quad already built.
-        inline bool CanSplitGatherAtFullRes(const Config &config)
-        {
-            return GetClampedResolutionScale(config) >= 1.0f &&
-                   GetGatherScale(config, 1.0f) <= static_cast<float>(FULL_RES_SPLIT_GATHER_MAX_SCALE);
-        }
-
-        /// Whether the direct path DOES split the gather out, for a glow quad
-        /// of @p glowArea full-res px (@c mGlowArea).
-        ///
-        /// The split's cost is not the gather - a few thousand texels - but
-        /// leaving the caller's framebuffer at all: measured on an AMD Radeon
-        /// Pro 5300M, the first offscreen pass of a frame costs ~0.15 ms
-        /// whatever it draws, and a second one in the same phase almost
-        /// nothing. On an Apple M2 Pro it costs ~6 us, and the shipped
-        /// FULL_RES_SPLIT_MIN_AREA_PX is that GPU's, 0: the second term below
-        /// is then always true and every rect splits. The AMD's reasoning, for
-        /// a GPU that needs the gate back (its value was 140000), is that it
-        /// pays for itself in either of two ways:
-        ///
-        ///   - the emission table re-bakes every frame anyway, which it does
-        ///     at any non-zero hue rotation (the default): the frame already
-        ///     leaves the caller's target, and the split measured 1.00x on a
-        ///     160 x 96 cutoff band up to 1.59x on a 1600 x 900 one;
-        ///   - or the loop it moves off the quad outweighs that switch on its
-        ///     own: ~1.07 ns a pixel at 128 samples against ~0.15 ms, which
-        ///     breaks even at ~140k px (FULL_RES_SPLIT_MIN_AREA_PX). A still
-        ///     band smaller than that ran up to 3.6x SLOWER split.
-        ///
-        /// A function of the config and the quad, both stable from frame to
-        /// frame, so a still scene never alternates between the two paths -
-        /// which would flicker by the 1/255 they differ by.
-        inline bool SplitsGatherAtFullRes(const Config &config, float glowArea)
-        {
-            if (!CanSplitGatherAtFullRes(config))
-            {
-                return false;
-            }
-            const float work = glowArea * static_cast<float>(GetClampedNumSamples(config));
-            return config.neon.hueRotationRate != 0.0f ||
-                   work >= static_cast<float>(FULL_RES_SPLIT_MIN_AREA_PX) * static_cast<float>(NEON_MAX_LOOP_SAMPLES);
-        }
-
-        /// Whether this config gives @c mGatherBuffer anything to do: the
-        /// scaled path always gathers into it, and the direct path does when
-        /// @ref SplitsGatherAtFullRes. One predicate for Render and the release
-        /// in OnConfigChanged, for the reason @ref UsesScaledBuffer is one.
-        inline bool UsesGatherBuffer(const Config &config, float glowArea)
-        {
-            return config.neon.enable &&
-                   (GetClampedResolutionScale(config) < 1.0f || SplitsGatherAtFullRes(config, glowArea));
+            const float ceilScale = std::min(static_cast<float>(GATHER_MAX_SCALE), scale);
+            return std::clamp(static_cast<float>(GATHER_TEXELS_PER_KERNEL) / kc, floorScale, ceilScale);
         }
 
         /// A buffer's size in texels at @p scale of a @p viewport px axis:
@@ -1899,11 +1824,8 @@ namespace EdgeLighting
         // runs - see ensurePathPrograms. A failure is logged once and the
         // frame degrades to the fill: no glow, nothing stale. The glow
         // coverage table's program and buffer likewise, but only on a ring
-        // that reads the table.
-        // Below 1.0 the gather is always its own pass; at 1.0 when it pays for
-        // one (SplitsGatherAtFullRes).
-        const bool splitGather = !scaled && SplitsGatherAtFullRes(config, mGlowArea);
-        bool glowReady = ensurePathPrograms(scaled, splitGather) &&
+        // that reads the table. The gather is its own pass at every scale.
+        bool glowReady = ensurePathPrograms(scaled) &&
                          (IsGlowCoverUnread(mEffectiveSegments, config) ||
                           (ensureGlowCoverProgram() && ensureGlowCoverBuffer(!mEffectiveSegments.empty())));
 
@@ -1915,9 +1837,10 @@ namespace EdgeLighting
         // BEFORE any pass binds a target of its own - querying later would
         // capture that.
         //
-        // Only when a pass here retargets: the scaled path, and the direct
-        // path's split gather. Otherwise pass 1 draws straight onto the
-        // caller's framebuffer and there is nothing to come back to.
+        // Only on a frame whose offscreen phase draws anything: one that
+        // reuses its offscreen buffers (mOffscreenCurrent) and bakes no field
+        // never leaves the caller's framebuffer, so there is nothing to come
+        // back to.
         //
         // @ref renderEmissionPass captures its own rather than being handed
         // this one: a pass restores what IT finds, which is what keeps it
@@ -1928,8 +1851,8 @@ namespace EdgeLighting
         glm::vec2 gatherUVScale(0.0f);
         glm::vec2 gatherUVOffset(0.0f);
         // Full-res rect-local px -> buffer uv, for the passes on the caller's
-        // framebuffer: the edge ring's (or the direct path's split gather's)
-        // onto the gather buffer and the blit's onto the reduced one. Set with
+        // framebuffer: the edge ring's (or, at 1.0, pass 1's) onto the gather
+        // buffer and the blit's onto the reduced one. Set with
         // the regions below.
         glm::vec2 gatherUVFullScale(0.0f);
         glm::vec2 gatherUVFullOffset(0.0f);
@@ -1958,7 +1881,7 @@ namespace EdgeLighting
         // what they would draw - see mOffscreenCurrent. Then the frame never
         // leaves the caller's framebuffer, so there is no target to capture
         // either.
-        const bool reuseOffscreen = glowReady && (scaled || splitGather) && mOffscreenCurrent && !emissionStale &&
+        const bool reuseOffscreen = glowReady && mOffscreenCurrent && !emissionStale &&
                                     !glowCoverStale && mOffscreenViewport == glm::ivec2(viewportWidth, viewportHeight);
         // Pass 1 at 1.0 factored into the hue-invariant field (1f) and its
         // composite (1c), where the config allows it. The field outlives the
@@ -1970,7 +1893,7 @@ namespace EdgeLighting
         bool useField = false;
         bool bakeField = false;
         const BufferRegion fieldRegion = GetFieldRegion(config, mGlowOuter, viewportWidth, viewportHeight);
-        if (glowReady && !scaled && splitGather && !mFieldUnavailable &&
+        if (glowReady && !scaled && !mFieldUnavailable &&
             IsFieldEligible(mEffectiveSegments, config, mGradientLUT.IsOpaque()) &&
             FieldFillsRegion(mGlowArea, fieldRegion))
         {
@@ -1996,7 +1919,7 @@ namespace EdgeLighting
                 mFieldSettled = true;
             }
         }
-        if ((scaled || splitGather) && (!reuseOffscreen || bakeField))
+        if (!reuseOffscreen || bakeField)
         {
             prevTarget = RenderTargetState::Capture();
         }
@@ -2022,32 +1945,29 @@ namespace EdgeLighting
                 renderGlowCoverPass(config);
             }
 
-            if (scaled || splitGather)
+            // The offscreen buffers cover a REGION of the frame, not the
+            // viewport (GetBufferRegion): each pass draws through an ortho
+            // onto its region, in pass 1's scaled rect-local space - where
+            // every scaled quad lives - and each reader maps its own
+            // rect-local px onto the buffer's uv.
+            //
+            // --- Pass 1a: the gather, at its own coarse scale, into the
+            // gather buffer. Unblended: the buffer is data. Read by pass 1b
+            // from scaled px and by the ring from full-res px - or, at 1.0,
+            // by pass 1 itself.
+            const BufferRegion gatherRegion = GetBufferRegion(
+                mGatherOuter, centerFull, viewportWidth, viewportHeight, GetGatherScale(config, scale), false);
+            gatherUVOffset = -gatherRegion.origin / gatherRegion.size;
+            gatherUVScale = glm::vec2(1.0f) / (gatherRegion.size * scale);
+            gatherUVFullScale = glm::vec2(1.0f) / gatherRegion.size;
+            gatherUVFullOffset = gatherUVOffset;
+            // The region and its maps are computed either way: the passes
+            // on the caller's framebuffer read through them.
+            if (!reuseOffscreen)
             {
-                // Both scaled-path buffers cover a REGION of the frame, not
-                // the viewport (GetBufferRegion): each pass draws through an
-                // ortho onto its region, in pass 1's scaled rect-local space -
-                // where every scaled quad lives - and each reader maps its own
-                // rect-local px onto the buffer's uv.
-                //
-                // --- Pass 1a: the gather, at its own coarse scale, into the
-                // gather buffer. Unblended: the buffer is data. Read by pass 1b
-                // from scaled px and by the ring from full-res px - or, on the
-                // direct path's split gather, by pass 1 itself, at 1.0.
-                const BufferRegion gatherRegion = GetBufferRegion(
-                    mGatherOuter, centerFull, viewportWidth, viewportHeight, GetGatherScale(config, scale), false);
-                gatherUVOffset = -gatherRegion.origin / gatherRegion.size;
-                gatherUVScale = glm::vec2(1.0f) / (gatherRegion.size * scale);
-                gatherUVFullScale = glm::vec2(1.0f) / gatherRegion.size;
-                gatherUVFullOffset = gatherUVOffset;
-                // The region and its maps are computed either way: the passes
-                // on the caller's framebuffer read through them.
-                if (!reuseOffscreen)
-                {
-                    glDisable(GL_BLEND);
-                    glowReady = renderGatherPass(RegionProjection(gatherRegion, scale), gatherRegion.texels.x,
-                                                 gatherRegion.texels.y, scale, config);
-                }
+                glDisable(GL_BLEND);
+                glowReady = renderGatherPass(RegionProjection(gatherRegion, scale), gatherRegion.texels.x,
+                                             gatherRegion.texels.y, scale, config);
             }
 
             if (scaled)
@@ -2069,8 +1989,8 @@ namespace EdgeLighting
                     if (!reuseOffscreen)
                     {
                         glowReady = renderNeonPass(RegionProjection(scaledRegion, scale), scaledRegion.texels.x,
-                                                   scaledRegion.texels.y, true, true, gatherUVScale,
-                                                   gatherUVOffset, time, config);
+                                                   scaledRegion.texels.y, true, gatherUVScale, gatherUVOffset,
+                                                   time, config);
                     }
                 }
             }
@@ -2093,7 +2013,7 @@ namespace EdgeLighting
                 mFieldHasMask = mask;
             }
 
-            if ((scaled || splitGather) && (!reuseOffscreen || bakeField))
+            if (!reuseOffscreen || bakeField)
             {
                 // Back to the caller's target and viewport, both at once.
                 // Unconditional: the pass may have bound its target before
@@ -2104,7 +2024,7 @@ namespace EdgeLighting
         }
         // What the offscreen buffers hold from here on: this frame's passes 1a
         // and 1b, drawn or reused - unless a pass failed or the path has none.
-        mOffscreenCurrent = glowReady && (scaled || splitGather);
+        mOffscreenCurrent = glowReady;
         mOffscreenViewport = glm::ivec2(viewportWidth, viewportHeight);
 
         // ===== Caller's framebuffer ==========================================
@@ -2126,20 +2046,18 @@ namespace EdgeLighting
         {
             if (!scaled)
             {
-                // --- Pass 1 (direct): the gather and the shading, composited
-                // onto the target - or, with the gather split out, the shading
-                // alone, reading pass 1a's result through its full-res map
-                // (the same map the edge ring reads it through).
-                // ... or, where the field holds this frame, pass 1c in its
-                // place: the field times the gathered hue.
+                // --- Pass 1 (direct): the shading, composited onto the
+                // target, reading pass 1a's result through its full-res map
+                // (the same map the edge ring reads it through) - or, where
+                // the field holds this frame, pass 1c in its place: the field
+                // times the gathered hue.
                 if (useField)
                 {
                     renderFieldCompositePass(mvp, gatherUVFullScale, gatherUVFullOffset);
                 }
                 else
                 {
-                    renderNeonPass(mvp, bufW, bufH, false, splitGather, gatherUVFullScale, gatherUVFullOffset, time,
-                                   config);
+                    renderNeonPass(mvp, bufW, bufH, false, gatherUVFullScale, gatherUVFullOffset, time, config);
                 }
             }
             else
@@ -2409,10 +2327,13 @@ namespace EdgeLighting
         // reading it, which an arc animation reaching length 1 does once per
         // loop, and which would then reallocate it on the way back. Released
         // or never allocated, ensureGlowCoverBuffer reallocates it, and marks
-        // it for a bake, on the next frame that reads it.
+        // it for a bake, on the next frame that reads it. The gather buffer
+        // likewise: every frame gathers into it at every scale, so only a
+        // disabled layer has no use for it.
         if (!config.neon.enable)
         {
             mGlowCoverBuffer.Release();
+            mGatherBuffer.Release();
         }
 
         // Rebuilds need the GL objects Initialize creates. The neon.frag
@@ -2446,15 +2367,6 @@ namespace EdgeLighting
 
         bakeLUTs(config);
 
-        // The gather buffer, as the scaled buffer above - but it has one more
-        // user, the direct path when it splits the gather out, and that asks
-        // for the glow quad's area, so this waits for setupGeometry. Nothing
-        // is allocated before Initialize, so the early return above skips
-        // nothing it could free.
-        if (!UsesGatherBuffer(config, mGlowArea))
-        {
-            mGatherBuffer.Release();
-        }
         // The field - the renderer's largest buffer at 1.0 - goes with any
         // config that cannot use it. Not on the ring's opacity, which is the
         // upload's rather than the config's: a rotating hue over a ring that
@@ -2572,35 +2484,27 @@ namespace EdgeLighting
         return true;
     }
 
-    bool NeonRenderer::ensurePathPrograms(bool scaled, bool splitGather)
+    bool NeonRenderer::ensurePathPrograms(bool scaled)
     {
-        // The direct path draws with neon.frag as it is, and nothing else -
-        // unless it splits the gather out, when it draws with the scaled
-        // path's gather pass and the edge ring's program instead. The ring's
-        // program is the one that fits: it already draws the caller's
-        // framebuffer, blended, at full resolution, from the gather buffer,
+        // The direct path draws with the gather pass and the edge ring's
+        // program, which shades the whole glow quad from the gather buffer.
+        // The ring's program is the one that fits: it already draws the
+        // caller's framebuffer, blended, at full resolution, from that buffer,
         // and the two paths never both draw in one frame - so it still draws
         // one target in one blend state per frame (see below).
         if (!scaled)
         {
-            if (!splitGather)
-            {
-                return buildNeonProgram(mNeonShader, ShaderSource::NEON_FRAG_SRC, nullptr, "NeonRenderer",
-                                        PROGRAM_PLAIN, true, true);
-            }
             return buildNeonProgram(mNeonGatherShader, ShaderSource::NEON_GATHER_FRAG_SRC, nullptr,
                                     "NeonRenderer.Gather", PROGRAM_GATHER, true, false) &&
-                   buildNeonProgram(mNeonRingShader, ShaderSource::NEON_FRAG_SRC, "NEON_READS_GATHER",
-                                    "NeonRenderer.Ring", PROGRAM_RING, false, true);
+                   buildNeonProgram(mNeonRingShader, ShaderSource::NEON_FRAG_SRC, nullptr, "NeonRenderer.Ring",
+                                    PROGRAM_RING, false, true);
         }
 
-        // The scaled path draws with four, none of them the direct path's:
-        // the gather pass (neon-gather.frag: the same loop, alone), the
-        // shading that reads it back - TWICE, one program object for pass 1 at
-        // the reduced scale and another for the edge ring at full resolution -
-        // and the composite. So a host that never leaves 1.0 never compiles
-        // the last four, and one that never sits at 1.0 never compiles the
-        // first - each pays for exactly the path it draws.
+        // The scaled path draws with four, two of them the direct path's: the
+        // gather pass (neon-gather.frag), the shading that reads it back -
+        // TWICE, one program object for pass 1 at the reduced scale and the
+        // edge ring's at full resolution - and the composite. So a host that
+        // never leaves 1.0 never compiles pass 1b's program or the blit.
         //
         // Why the shading is compiled twice from one source: each program
         // object then draws ONE render target, in one blend state, per frame.
@@ -2612,9 +2516,9 @@ namespace EdgeLighting
         // which half of that difference the driver keys on.
         if (!buildNeonProgram(mNeonGatherShader, ShaderSource::NEON_GATHER_FRAG_SRC, nullptr, "NeonRenderer.Gather",
                               PROGRAM_GATHER, true, false) ||
-            !buildNeonProgram(mNeonShadeShader, ShaderSource::NEON_FRAG_SRC, "NEON_READS_GATHER", "NeonRenderer.Shade",
+            !buildNeonProgram(mNeonShadeShader, ShaderSource::NEON_FRAG_SRC, nullptr, "NeonRenderer.Shade",
                               PROGRAM_SHADE, false, true) ||
-            !buildNeonProgram(mNeonRingShader, ShaderSource::NEON_FRAG_SRC, "NEON_READS_GATHER", "NeonRenderer.Ring",
+            !buildNeonProgram(mNeonRingShader, ShaderSource::NEON_FRAG_SRC, nullptr, "NeonRenderer.Ring",
                               PROGRAM_RING, false, true))
         {
             return false;
@@ -3065,26 +2969,20 @@ namespace EdgeLighting
     void NeonRenderer::setupRingGeometry(const Config &config)
     {
         // Scale 1.0 is the direct path: neither the blit nor the ring runs, so
-        // there is nothing to partition - only, when it can split the gather
-        // out, the gather pass's quad to build. Keyed on the clamped scale
-        // rather than on UsesScaledBuffer, because `enable` is not in this
-        // method's dirty gate and nothing here depends on it.
+        // there is nothing to partition - only the gather pass's quad to
+        // build. Keyed on the clamped scale rather than on UsesScaledBuffer,
+        // because `enable` is not in this method's dirty gate and nothing here
+        // depends on it.
         const float scale = GetClampedResolutionScale(config);
         if (scale >= 1.0f)
         {
             mRingVertexCount = 0;
             mBlitVertexCount = 0;
             mScaledOuter = glm::vec2(0.0f);
-            if (!CanSplitGatherAtFullRes(config))
-            {
-                mGatherVertexCount = 0;
-                mGatherOuter = glm::vec2(0.0f);
-                return;
-            }
-            // The direct path's split gather: pass 1 reads it at every pixel
-            // of the glow quad and nothing else, so the gather covers that
-            // quad, grown by the bilinear footprint at both edges - the same
-            // construction as below, with no ring to union in.
+            // Pass 1 reads the gather at every pixel of the glow quad and
+            // nothing else, so the gather covers that quad, grown by the
+            // bilinear footprint at both edges - the same construction as
+            // below, with no ring to union in.
             const float pad = FOOTPRINT_TEXELS / GetGatherScale(config, 1.0f) + 1.0f;
             const glm::vec2 outer = mGlowOuter + glm::vec2(pad);
             const glm::vec2 hole = (mGlowHole.x > 0.0f && mGlowHole.y > 0.0f)
@@ -3631,6 +3529,7 @@ namespace EdgeLighting
         shader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
         shader.SetUniform("uPerimeterUnread",
                           IsPerimeterUnread(mEffectiveSegments, config, mGradientLUT.IsOpaque()) ? 1 : 0);
+        shader.SetUniform("uUniformCover", IsGlowCoverUnread(mEffectiveSegments, config) ? 1 : 0);
 
         // The three LUT atlases are no longer read by the gather (the emission
         // pre-pass consumes them instead), but the pointwise path still samples
@@ -3668,8 +3567,8 @@ namespace EdgeLighting
     }
 
     bool NeonRenderer::renderNeonPass(const glm::mat4 &mvp, int bufWidth, int bufHeight, bool scaled,
-                                      bool readsGather, const glm::vec2 &gatherUVScale,
-                                      const glm::vec2 &gatherUVOffset, float time, const Config &config)
+                                      const glm::vec2 &gatherUVScale, const glm::vec2 &gatherUVOffset, float time,
+                                      const Config &config)
     {
         const float scale = GetClampedResolutionScale(config);
 
@@ -3725,23 +3624,14 @@ namespace EdgeLighting
             mScaledBuffer.ClearBuffer();
         }
 
-        // The direct path gathers and shades in one program, unless it split
-        // the gather out. The scaled path, and the split direct path, shade
-        // from the gather pass's result instead of running the loop here -
-        // the latter with the edge ring's program, which draws the same
-        // target in the same blend state (see ensurePathPrograms). Every
-        // other uniform is the same.
-        ShaderProgram &shader = scaled ? mNeonShadeShader : (readsGather ? mNeonRingShader : mNeonShader);
+        // Both paths shade from the gather pass's result: the scaled path
+        // with its own program, the direct path with the edge ring's, which
+        // draws the same target in the same blend state (see
+        // ensurePathPrograms). Every other uniform is the same.
+        ShaderProgram &shader = scaled ? mNeonShadeShader : mNeonRingShader;
         shader.Use();
         uploadNeonUniforms(shader, mvp, scale, time, mQuadMargin, mCornerSkip, config);
-        if (readsGather)
-        {
-            bindGatherBuffer(shader, gatherUVScale, gatherUVOffset);
-        }
-        else
-        {
-            bindGatherInputs(shader, config);
-        }
+        bindGatherBuffer(shader, gatherUVScale, gatherUVOffset);
 
         // Tight glow quad in both modes - opaque's far region is covered by the
         // fill pass, so the gather never runs fullscreen.
@@ -3755,7 +3645,7 @@ namespace EdgeLighting
         // The bake is neon.frag reading the gather (as pass 1 does at 1.0)
         // with NEON_FIELD_BAKE: hue 1 in, field out. It shades, so it takes the
         // arc block; it does not gather, so not the sample block.
-        if (!buildNeonProgram(mNeonFieldShader, ShaderSource::NEON_FRAG_SRC, "NEON_READS_GATHER NEON_FIELD_BAKE",
+        if (!buildNeonProgram(mNeonFieldShader, ShaderSource::NEON_FRAG_SRC, "NEON_FIELD_BAKE",
                               "NeonRenderer.Field", PROGRAM_FIELD, false, true))
         {
             mFieldUnavailable = true;
@@ -3838,7 +3728,7 @@ namespace EdgeLighting
     void NeonRenderer::bindGatherInputs(ShaderProgram &shader, const Config &config)
     {
         // Loop sample positions come from the LoopSamplesBlock UBO (see
-        // neon.frag) - raw float32 vec4[N], .xy holds the perimeter point in
+        // neon-gather.frag) - raw float32 vec4[N], .xy holds the perimeter point in
         // the same scaled space as the transform.
         mLoopSamplesBlock.BindBase(LOOP_SAMPLES_BLOCK_BINDING);
         shader.SetUniform("uNumSamples", GetClampedNumSamples(config));

@@ -9,8 +9,12 @@
 // neon-common.glsl is not a shader: it is the gather loop and its inputs,
 // injected below into the two neon programs that run it. neon-pieces.glsl is
 // not one either: the corner development and the glow coverage table's layout,
-// injected into neon.frag and the bake that writes that table. (No configure
-// placeholder may appear in these comments - configure_file expands it here.)
+// injected into neon.frag and the bake that writes that table. neon-sdf.glsl
+// (the rounded box's distance and the band's boundaries) goes into the three
+// programs that draw that edge - neon.frag, the blit and the opaque fill - and
+// neon-grade.glsl (the tone map) into neon.frag and the field's composite.
+// (No configure placeholder may appear in these comments - configure_file
+// expands it here.)
 
 namespace EdgeLighting
 {
@@ -32,6 +36,8 @@ namespace EdgeLighting
 @NEON_TUNING@
 @NEON_COMMON@
 @NEON_PIECES@
+@NEON_SDF@
+@NEON_GRADE@
 @NEON_FRAG_CONTENT@
 )shadersrc";
 
@@ -55,11 +61,13 @@ namespace EdgeLighting
 
                 static const char *const NEON_BLIT_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
 @NEON_TUNING@
+@NEON_SDF@
 @NEON_BLIT_FRAG_CONTENT@
 )shadersrc";
 
                 static const char *const NEON_FIELD_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
 @NEON_TUNING@
+@NEON_GRADE@
 @NEON_FIELD_FRAG_CONTENT@
 )shadersrc";
 
@@ -68,6 +76,7 @@ namespace EdgeLighting
 )shadersrc";
 
                 static const char *const BLACK_RECT_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
+@NEON_SDF@
 @BLACK_RECT_FRAG_CONTENT@
 )shadersrc";
 

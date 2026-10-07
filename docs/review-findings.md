@@ -4224,6 +4224,90 @@ flare-moving frame took the direct path and differed from that by 1 level on
 ~20k channels. Add a read of another sub-config to this renderer and the
 gate has to name it.
 
+### I48. The shading's hottest atans were the driver's - CHANGED
+
+Target D of [`neon-perf-plan.md`](neon-perf-plan.md) section 11, its
+polynomial half. On a frame whose config animates - which the hue-invariant
+field cannot serve - the shading at 1.0 is the frame, and on an AMD Radeon Pro
+5300M its two largest terms were the corner arcs (22-24%) and the straights'
+bloom (20-21%), each led by a two-argument `atan`: `bloomSegment`'s, which
+every straight and corner calls, and the corner development's `th`.
+
+Both now call `minimaxAtan` (`neon-pieces.glsl`, shared with the coverage
+bake so the two still develop a corner alike): an octant-reduced degree-11
+minimax polynomial, at most 1.7e-6 rad off over the whole range.
+`neon-scale-check time` before -> after, 1920 x 1080, three interleaved
+rounds, geometric mean over the twelve scenes:
+
+| mode | 1.0 | 0.5 | `default` at 1.0, ms |
+| ---- | --: | --: | -------------------: |
+| intensity | 1.10x | 1.11x | 1.176 -> 1.062 |
+| arc wipe | 1.10x | 1.07x | 1.625 -> 1.516 |
+| segment travel | 1.08x | 1.09x | 1.696 -> 1.543 |
+| hue | 1.09x | 1.05x | 0.250 -> 0.234 |
+| still | 1.05x | 1.03x | 0.071 -> 0.073 |
+
+Output against the library before it on the same GPU: every image of the
+twelve scenes at all six scales within 1 level, on at most 0.016% of a
+frame's channels (`arcs` and `segments` the most); `check` unchanged,
+`partition` passing on two seeds. **Unmeasured on the Apple M2 Pro**, and a
+cheaper `atan` is the most GPU-specific change there is - a driver whose own
+`atan` is already a short polynomial can come out even or behind. Time it
+there, and on the target, before relying on the gain. The same function in
+`perimeterPosition` was measured and left out: byte-identical but 0.1-0.4%.
+
+### I49. The neon's shaders carried copies, two predicates and a path nothing took - CHANGED
+
+Steps 0-3 of [`neon-shader-cleanup-plan.md`](neon-shader-cleanup-plan.md), on
+the AMD Radeon Pro 5300M, each verified on its own against the library before
+it: `neon-scale-check check`, `partition` on two seeds, and every image of the
+twelve scenes at six scales plus the hairline sweep, diffed channel for
+channel.
+
+- **One copy of the shared code.** `sdRoundBox`, `bandOuterDistance` and
+  `bandInnerDistance` were byte-identical in `neon.frag`, `neon-blit.frag` and
+  `black-rect.frag`; the tone map was copied "verbatim" into
+  `neon-field.frag`. They are now `neon-sdf.glsl` and `neon-grade.glsl`,
+  injected like the other chunks. Byte-identical. (A shared edge-mask function
+  was planned too and dropped: in `neon.frag` the mask's inputs are interleaved
+  with the discards and the quad fade that use them, so the function would
+  have held three `smoothstep`s and needed constants `black-rect.frag` does not
+  get.)
+- **One predicate for a uniformly lit ring.** The CPU's `IsGlowCoverUnread`
+  and the shader's own `uniformCover` test had to be kept "a hair" apart by
+  hand; the shader now takes the CPU's decision as `uUniformCover`.
+  Byte-identical; the only lengths that change behaviour (within 1e-6 of a full
+  ring) now read the table, which is baked for them.
+- **The inline-gather path removed.** Since I44 no shipped config built
+  `mNeonShader`; with it went `CanSplitGatherAtFullRes` /
+  `SplitsGatherAtFullRes` / `UsesGatherBuffer`, the `FULL_RES_SPLIT_*`
+  constants, the `NEON_READS_GATHER` define (`neon.frag` always reads the
+  gather) and the loop's copy in `neon-common.glsl` (now `neon-gather.frag`'s
+  alone). In return `GATHER_MAX_SCALE` (0.5) caps the gather's resolution, the
+  memory bound the gate used to be. Every check image byte-identical (every
+  scene already split); on the rects the cap binds on (perimeter under ~454
+  px), measured at 1080p, scale 1.0, before -> after:
+
+  | rect | live textures | hue frame | largest change |
+  | ---- | ------------: | --------: | -------------: |
+  | 40 x 24, `glowRadius` 20 | 20.0 -> 8.1 MB | 3.25 -> 0.99 ms | 9 levels, ~280 channels above 1 |
+  | the same + a segment | 33.2 -> 9.4 MB | 6.9 -> 3.8 ms | 9 levels |
+  | 64 x 36 | 4.5 -> 1.8 MB | 0.84 -> 0.34 ms | 5 levels |
+  | 128 x 72 | 2.9 -> 2.1 MB | 0.54 -> 0.38 ms | 1 level |
+
+  A cap of 0.75 was measured too (13.0 MB / 1.92 ms / 3 levels on the first
+  row); 0.5 is the owner's choice. The error is the coarse gather on a rect
+  whose colour kernel is narrower than a gather texel (V17).
+
+Program slots 13 -> 9 counting the reverted `NEON_UNIFORM_COVER` twins (10 at
+`1488648`); `neon.frag` builds plain (shading, twice) and with
+`NEON_FIELD_BAKE`, and nothing else. Timed against `1488648` in `still`, `hue`
+and `intensity` at 1080p, two interleaved rounds: 0.98-1.08x geometric mean
+at every scale - no change. Step 4, one gather loop body for both cases, was
+measured and set aside: byte-identical but 0.88x on hue frames at 1.0. Step 6
+then cut `neon.frag`'s commentary from 1,207 to 615 lines, comments only, the
+measured history moved verbatim to `docs/neon-frag-notes.md`.
+
 ---
 
 ## What is left
@@ -4236,7 +4320,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), and the twenty-second I47. Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), and the twenty-second I47, I48 and I49. Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -4280,6 +4364,8 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I45 | fixed | a uniformly lit ring with opaque stops computed `perimeterPosition` and a gradient alpha read nothing used; skipped (`uPerimeterUnread`), the default frame 1.11x at 1080p, byte-identical where it engages |
 | I46 | fixed | pass 1 at 1.0 re-shaded a glow whose only moving part is its hue; now a hue-invariant field baked once a config holds and composited per frame - 3.3x (hue) / 6.3x (still) geometric mean at 1080p, within 1/255, +3.3 MB for the default rect |
 | I47 | fixed | the neon cleared its cached offscreen passes and its field on any composited config change, so an animation of another layer (the lens flare's sun) cost it 4.9x (hue) / 15x (still) at 1.0; now cleared only on a change to `config.neon` or `config.geometry`, byte-identical |
+| I48 | changed | the bloom's and the corner development's atans were the driver's; now a minimax polynomial (1.7e-6 rad), 1.07-1.11x on animated frames at 1.0 and 0.5 on an AMD 5300M, within 1 level on at most 0.016% of channels; unmeasured on the M2 |
+| I49 | changed | three byte-identical SDF functions and the tone map were hand-copied between shaders, "uniformly lit" was decided twice, and the inline-gather path no shipped config built was still compiled in; one copy of each, one CPU predicate, the inline path and its gate removed for a `GATHER_MAX_SCALE` of 0.5 (20 -> 8 MB, 3.3x, up to 9 levels on a 40 x 24 rect; no check image moves) |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

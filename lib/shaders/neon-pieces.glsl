@@ -36,9 +36,9 @@ precision highp float;
 // The shading's two hottest transcendentals are atans: bloomSegment's (every
 // straight's bloom and every corner's, in neon.frag) and the corner
 // development's `th` below. GLSL's atan(y, x) is the driver's, and measured on
-// an AMD Radeon Pro 5300M at scale 1.0 this octant-reduced minimax polynomial
-// in its place took 11.6% off a frame whose config animates (an intensity
-// pulse) and 8.9% off an arc wipe, moving 46-69 of 8.3M channels by 1 level.
+// an AMD Radeon Pro 5300M this octant-reduced minimax polynomial in its place
+// made every frame whose config animates 1.07-1.11x faster, at 1.0 and 0.5,
+// moving at most 0.016% of a frame's channels by 1 level (I48).
 // Its error is at most 1.7e-6 rad over the whole range - a few float ulps of
 // PI - so nothing downstream can tell it from the built-in.
 //

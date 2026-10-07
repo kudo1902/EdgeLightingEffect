@@ -38,6 +38,8 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.vert"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-common.glsl"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-pieces.glsl"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-sdf.glsl"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-grade.glsl"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-gather.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-emission.frag"
@@ -95,6 +97,14 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-common.glsl" NEON_COMMON)
 # @NEON_COMMON@): the read and the bake of that table have to agree on both to
 # the texel. Not a shader on its own either.
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-pieces.glsl" NEON_PIECES)
+
+# The rounded box's signed distance and the cutoff band's boundaries, injected
+# via @NEON_SDF@ into neon.frag, neon-blit.frag and black-rect.frag - the three
+# programs that draw the glow's edge and have to agree on it to the pixel - and
+# the tone map, via @NEON_GRADE@ into neon.frag and neon-field.frag, after
+# @NEON_TUNING@. One copy each; neither is a shader on its own.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-sdf.glsl" NEON_SDF)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-grade.glsl" NEON_GRADE)
 
 # Shared droplet band #defines, injected into droplets.frag via
 # @DROPLETS_TUNING@ in shaders.h.in (also #included by the C++ renderer).

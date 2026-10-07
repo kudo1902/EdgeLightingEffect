@@ -33,8 +33,9 @@ void main() { fragColor = uColor; }
         }
 
         /// Name the pass from what its program declares. Every neon fragment
-        /// shader has a uniform no other one has, except the two that share
-        /// neon.frag's NEON_READS_GATHER source - those differ by target.
+        /// shader has a uniform no other one has, except the three built from
+        /// neon.frag's source - those differ by target, and offscreen by the
+        /// scale they were uploaded at.
         PassKind Classify(GLuint program, bool ontoCaller)
         {
             if (HasUniform(program, "uSource"))
@@ -45,9 +46,26 @@ void main() { fragColor = uColor; }
             {
                 return PassKind::P2A;
             }
+            // Before uGather: the field's composite reads the gather too.
+            if (HasUniform(program, "uField"))
+            {
+                return PassKind::P1C;
+            }
             if (HasUniform(program, "uGather"))
             {
-                return ontoCaller ? PassKind::P2C : PassKind::P1B;
+                if (ontoCaller)
+                {
+                    return PassKind::P2C;
+                }
+                // Offscreen, one source twice over: pass 1b below scale 1.0,
+                // the field bake at 1.0 - the only one uploaded at 1.0.
+                GLfloat scale = 0.0f;
+                const GLint location = glGetUniformLocation(program, "uResolutionScale");
+                if (location >= 0)
+                {
+                    glGetUniformfv(program, location, &scale);
+                }
+                return (scale >= 1.0f) ? PassKind::P1F : PassKind::P1B;
             }
             if (HasUniform(program, "uEmission"))
             {

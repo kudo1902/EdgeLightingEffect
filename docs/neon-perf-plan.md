@@ -454,6 +454,23 @@ defaults), so the gain could be a large share of the corners' 40%. Unbuilt and
 unmeasured. Change the halo or bloom terms and this bound, like the two that
 already exist, has to follow.
 
+*Measured and set aside (2026-10-07, AMD Radeon Pro 5300M, after I48): the
+premise does not hold.* A CPU mirror of the corner piece against two far
+fields - a midpoint rule on the developed segment, and a point of length
+`pi r / 2` at the arc's real midpoint (no development, no `atan`) - put the
+radius where either stays within `uCornerSkip`'s own budget (a quarter of half
+a level per arc) at 314 px against a 315 px skip at the defaults: **0%** of
+the default rect's corner evaluations would take it, and the same within a
+pixel of the skip for a hairline glow and a 200 px corner radius. The pedestal
+leaves the bloom near that budget everywhere it is non-zero, and the far
+field's error at 150 px is 12.5 budgets. Only a frame-sized glow (`soft_wash`)
+opens a band, mostly off screen. Loosened until it matters - the point
+source past 138 px, 16x that budget, 71% of evaluations - it is 1.07x on an
+intensity pulse and 1.04x on an arc wipe at 1.0, and moves 3.4% of the
+frame's channels by a level (past 85 px: 1.08x / 1.05x, up to 3 levels on
+5.4%), with a radius solved numerically for one config, since no closed-form
+bound on the point's error is tight enough to place it. Not worth either.
+
 ### 5.4 Memory
 
 **10. A smaller glow coverage table.** 1.0 MB, and most of what a partly lit
@@ -566,7 +583,8 @@ Measure on the target's CPU first. On the M2 neither is visible.
 | 5. Per-piece glow coverage bake | **done** (I42) |
 | 6. Emission table keyed on its inputs | **done** (I39) |
 | 7. Complete texture on `uGatherSeg` | **done** (I41) |
-| 8, 9 | open (wait on item 1) |
+| 8 | open |
+| 9 | **measured and set aside** (2026-10-07): within budget it applies nowhere at the defaults; loosened, 1.04-1.07x for a level on 3.4% of the frame |
 | 10. Smaller glow coverage table | **two-channel without segments and idle release done** (I43); sizing by perimeter and RGBA8 open |
 | 11-13 | open |
 
@@ -934,12 +952,29 @@ lines in `neon.frag` and `uploadNeonUniforms`.
 
 **C. The corner pieces (16-23%).** Item 9's far-field point source: past a
 CPU-bounded radius an arc is a point of length `pi r / 2`, with no
-development `atan`. Perhaps half the share; up to 1/255.
+development `atan`. Perhaps half the share; up to 1/255. *Measured and set
+aside - see item 9: within the budget it applies to none of the default
+rect's corner evaluations, and loosened to where it pays 1.04-1.07x it moves
+3.4% of the frame.*
 
 **D. The straights' bloom (14-20%).** One two-argument `atan` per straight
 plus the two shared pedestals. A skip like the corners', bounded on the CPU,
 for a straight seen from far past its end; or a polynomial `atan`. Needs
-measuring - a cheaper `atan` is GPU-specific. Up to 1/255.
+measuring - a cheaper `atan` is GPU-specific. Up to 1/255. *The polynomial
+half is built - I48: `minimaxAtan` in `bloomSegment` (the straights' and the
+corners' bloom) and in the corners' development, 1.07-1.11x on every animated
+frame mode at 1.0 and 0.5 on an AMD Radeon Pro 5300M, at most 1 level on at
+most 0.016% of channels. Unmeasured on the M2.*
+
+On the AMD the attribution of a frame whose config animates (intensity pulse
+/ arc wipe at 0.5, `default` at 1080p, scale 1.0, before I48) reads: corners
+24% / 22%, the straights' bloom 21% / 20%, the per-piece glow fix 6% / 18%,
+the straights' halo 7% / 9%, `perimeterPosition` 2% / 6%, filament and tone
+map 1-2% each. Measured and set aside there: `minimaxAtan` in
+`perimeterPosition` (0.1-0.4%, inside the noise), and moving the uniform-only
+pedestal / renormalisation math to the CPU (at most 7.2% / 1.9% with the
+values folded to constants - an upper bound - against the 4-7% section 8
+records it losing on Apple).
 
 **E. The gather pass on moving frames (8% at 1.0, 20% at 0.5).** It re-runs
 every frame the hue rotates. A coarser grid (`GATHER_TEXELS_PER_KERNEL`) or

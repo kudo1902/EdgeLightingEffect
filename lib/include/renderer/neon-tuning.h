@@ -461,7 +461,7 @@
 // --- Edge ring width. Scaled path only, CPU only.
 //
 //     Below resolutionScale 1.0, NeonRenderer redraws a ring around the rect
-//     edge at FULL resolution (the NEON_READS_GATHER variant of neon.frag),
+//     edge at FULL resolution (neon.frag's ring program),
 //     reading only the gather's result from the gather buffer. The ring reaches R
 //     full-res px either side of the edge (GetRingWidth in neon-renderer.cpp):
 //
@@ -499,14 +499,16 @@
 //     it). ---
 #define RING_GUARD_TEXELS         1.0
 
-// --- Gather resolution. Scaled path only, CPU only.
+// --- Gather resolution. CPU only.
 //
-//     Below resolutionScale 1.0 the gather - ~95% of neon.frag's cost - runs in
-//     a pass of its own (neon-gather.frag) at its own scale, and pass 1 and the
-//     edge ring shade from its result (NEON_READS_GATHER). Its scale is
-//     (GetGatherScale in neon-renderer.cpp)
+//     At every resolutionScale the gather - ~95% of neon.frag's cost when it
+//     ran inline - runs in a pass of its own (neon-gather.frag) at its own
+//     scale, and pass 1 and the
+//     edge ring shade from its result. Its scale is (GetGatherScale in
+//     neon-renderer.cpp)
 //
-//         clamp(GATHER_TEXELS_PER_KERNEL / kc, GATHER_MIN_SCALE, resolutionScale)
+//         clamp(GATHER_TEXELS_PER_KERNEL / kc, GATHER_MIN_SCALE,
+//               min(resolutionScale, GATHER_MAX_SCALE))
 //
 //     with kc the colour kernel's width in full-res px, perimeter *
 //     COLOR_BLEND_PERIM_FRAC: the gather's outputs are Lorentzian-weighted
@@ -534,63 +536,30 @@
 #define GATHER_TEXELS_PER_KERNEL  2.0
 #define GATHER_MIN_SCALE          0.0625
 
-// --- The gather split at resolutionScale 1.0. CPU only.
+// --- The gather's ceiling. CPU only.
 //
-//     The direct path runs the gather as a pass of its own too, onto the same
-//     grid, when GetGatherScale at 1.0 is at most FULL_RES_SPLIT_GATHER_MAX_SCALE
-//     - the grid then has at least 4x fewer texels than the quad has pixels,
-//     and the gather buffer is never bigger than the scaled path's at 0.5 -
-//     AND the split pays for leaving the caller's framebuffer: either the hue
-//     rotates (the emission table re-bakes every frame, so the frame leaves it
-//     anyway) or the glow quad covers at least FULL_RES_SPLIT_MIN_AREA_PX
-//     (scaled by numSamples / NEON_MAX_LOOP_SAMPLES), where the loop it moves
-//     off the quad outweighs that switch on its own.
+//     GetGatherScale never gathers finer than this, at any resolutionScale.
+//     It binds only on a rect whose perimeter is under ~450 px (kc under 4
+//     px), which would otherwise gather near full resolution: its gather
+//     buffer - RGBA16F over the glow quad's box, two attachments with
+//     segments - ran to 16 / 33 MB at 1080p for a 40 x 24 rect whose glow
+//     fills the frame. At 0.5 that is a quarter, the same as the scaled path
+//     at 0.5 always gathered at, and the check suite's smallest rect (perimeter
+//     478 px) is not touched.
 //
-//     Measured on an AMD Radeon Pro 5300M at 1920 x 1080, split against
-//     inline, both with the same shading:
-//
-//       gather scale (rect)        split / inline
-//       1.00 (60 x 36)                 0.98x       loop on as many texels
-//       0.94 (80 x 48)                 1.05x
-//       0.75 (100 x 60)                1.27x
-//       0.54 (140 x 84)                1.53x
-//       0.19 (400 x 240)               1.96x
-//
-//       still cutoff band, quad area   split / inline   hue rotating
-//         16k px (160 x 96)            0.27x            1.00x
-//         66k px (640 x 360)           0.67x            1.22x
-//        109k px (960 x 540)           0.86x            1.37x
-//        187k px (1600 x 900)          1.17x            1.59x
-//
-//     The still column fits 1.07 ns of loop per quad pixel against 0.15 ms
-//     fixed, which breaks even at ~137k px. The fixed cost is the GPU's and
-//     the driver's, so re-measure both constants on a new target. See
-//     SplitsGatherAtFullRes in neon-renderer.cpp.
-//
-//     Re-measured on an Apple M2 Pro (docs/neon-perf-plan.md section 10),
-//     after unchanged frames stopped re-running the gather (I40): there the
-//     split wins at EVERY size, in every mode. Inline against split, 1080p:
-//
-//       rect (gather scale)        still      intensity pulse
-//         64 x 36 glow (1.00)      4.61x      1.11x
-//        128 x 72 glow (0.62)      4.62x      1.92x
-//        160 x 87 band (0.50)      3.21x      1.31x
-//        960 x 522 band (0.08)     4.75x      2.86x
-//
-//     The first offscreen pass there costs ~6 us, not 0.15 ms, and a still
-//     frame no longer leaves the caller's target at all.
-//
-//     THE VALUES BELOW ARE THE M2's: 1.0 and 0, so scale 1.0 always splits.
-//     The gate is kept, not deleted, so another GPU can be tuned back - the
-//     AMD 5300M's were 0.5 and 140000.0 - and so 0.0 for the max scale still
-//     builds the inline loop as a reference. The price of 1.0 is the gather
-//     buffer's memory: a rect small enough to gather near full resolution
-//     (perimeter under ~450 px) gets a buffer at up to full resolution over its
-//     glow quad, RGBA16F, two attachments with segments - 16.6 / 33 MB at
-//     1080p for a tiny rect whose glow covers the frame, where 0.5 capped it
-//     at a quarter of that. Re-measure both on the device that ships. ---
-#define FULL_RES_SPLIT_GATHER_MAX_SCALE 1.0
-#define FULL_RES_SPLIT_MIN_AREA_PX      0.0
+//     It replaces the split gate at 1.0 (FULL_RES_SPLIT_GATHER_MAX_SCALE /
+//     FULL_RES_SPLIT_MIN_AREA_PX, removed - docs/neon-shader-cleanup-plan.md
+//     step 3), which ran the gather INLINE in neon.frag where splitting it
+//     out did not pay: on an AMD Radeon Pro 5300M, where the first offscreen
+//     pass of a frame costs ~0.15 ms, for a still cutoff band under ~140k px
+//     of quad and for a gather near full resolution. Since unchanged frames
+//     stopped re-running the gather (I40) the still case no longer leaves
+//     the caller's framebuffer at all; an Apple M2 Pro measured the split
+//     1.1-4.75x faster at every size and mode, and the AMD, re-measured with
+//     every rect split against its own gate, 0.98-1.02x in every animated
+//     mode with one loss - a cutoff band under an intensity pulse, 0.84x.
+//     So every scale splits, and the inline loop went with the gate. ---
+#define GATHER_MAX_SCALE          0.5
 
 // --- Stand-in distance for a cutoff that glowSide has already subsumed.
 //

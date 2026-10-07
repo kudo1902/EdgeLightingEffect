@@ -16,7 +16,7 @@ precision highp float;
 // - neon.frag compiled with NEON_FIELD_BAKE, which sets col to 1 and writes the
 // pre-tone-map result and the masks applied to 1.0 - and a frame becomes the
 // gather plus this: read the field, read the gathered hue, tone-map. The tone
-// map is neon.frag's own, line for line, from the same tuning header.
+// map is neon.frag's own function, neonToneMap from neon-grade.glsl.
 //
 // The field covers the glow quad's box at full resolution with its texel
 // centres on the viewport's pixel centres, so the texel a fragment wants is
@@ -39,12 +39,8 @@ void main() {
     vec2 field = texelFetch(uField, ivec2(floor(vPos - uFieldOrigin)), 0).rg;
     vec3 col   = textureLod(uGather, vPos * uGatherUVScale + uGatherUVOffset, 0.0).rgb;
 
-    vec3 result = col * field.r;
-    // neon.frag's tone map, verbatim.
-    float peak = max(max(result.r, result.g), result.b);
-    float mapped = peak / (peak + TONE_MAP_SHOULDER);
-    result = result * (mapped / max(peak, 1e-6));
-    result = pow(result, vec3(GAMMA_EXPONENT));
+    // neon.frag's tone map - the same function, from neon-grade.glsl.
+    vec3 result = neonToneMap(col * field.r);
     // The one-sided cut and the cutoffs, which neon.frag applies after the tone
     // map. An R16F field has no .g - it reads 0 - so it is read only when the
     // field carries one.
