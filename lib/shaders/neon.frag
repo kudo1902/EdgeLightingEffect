@@ -23,10 +23,11 @@
 
 // The SHADING: everything except the perimeter gather, which neon-gather.frag
 // runs as a pass of its own at every scale and this file reads back with a
-// bilinear fetch. Built into TWO program objects, one per target: pass 1 below
-// 1.0 (at resolutionScale, into the reduced buffer), and the edge ring (at
-// full resolution, onto the target) - which at 1.0 shades the whole glow quad
-// instead. See NeonRenderer::ensurePathPrograms. The one variant NeonRenderer
+// bilinear fetch. Built into TWO program objects, one per target: pass 1b (at
+// resolutionScale, into the reduced buffer) and the edge ring (at full
+// resolution, onto the target), at every scale - 1.0 included, which takes
+// the same path with a full-size reduced buffer. See
+// NeonRenderer::ensurePathPrograms. The one variant NeonRenderer
 // splices in after the version line (WithDefine) is NEON_FIELD_BAKE, the
 // hue-invariant field's bake; see neon-field.frag.
 out vec4 fragColor;
@@ -75,6 +76,13 @@ uniform int   uUniformCover;
 // resolution scale, which reads as the scaled path "looking different" rather
 // than as a bug.
 uniform float uResolutionScale;
+
+// 1 for a pass whose output the blit composites - pass 1b, and the field bake
+// that stands in for it - which leaves the one-sided cut and the cutoffs to
+// the blit; 0 for the edge ring and its field bake, which draw the frame's own
+// pixels and apply both after the grade. Not the scale: at 1.0 pass 1b still
+// goes through the blit.
+uniform int uBlitOwnsCut;
 
 // The segment block (uSegmentCount, uSegments) is in neon-common.glsl - the
 // gather branches on it too.
@@ -135,8 +143,8 @@ uniform vec2 uGlowCoverSplit;
 // The gather - neon-gather.frag, its own pass at its own coarse scale
 // (GetGatherScale) - stores four results this file reads back instead of
 // running the loop: pass 1 at resolutionScale, the edge ring at full resolution
-// (the filament and every hard edge, which a reduced buffer cannot carry), and
-// at 1.0 the whole glow quad. They are Lorentzian-weighted means whose kernel
+// (the filament and every hard edge, which a reduced buffer cannot carry).
+// They are Lorentzian-weighted means whose kernel
 // is never narrower than kc, so they survive a bilinear read from a grid a
 // fraction of kc apart.
 //
@@ -554,12 +562,12 @@ void main() {
     // share one ramp. The cut is ANCHORED at the line and feathers INTO the lit
     // side, never back past the fill.
     //
-    // DIRECT PATH ONLY. A buffer texel lit at its centre is smeared over
-    // 1/scale destination pixels both ways by the blit, so below 1.0
-    // neon-blit.frag applies the cut from ITS fwidth, and what is left here is
-    // the CULL, BLIT_SIDE_GUARD_PX past the cut so the blit has lit texels to
-    // rebuild the boundary from (neon-tuning.h).
-    bool  blitOwnsCut = (uResolutionScale < 1.0);
+    // THE RING ONLY. A buffer texel lit at its centre is smeared over 1/scale
+    // destination pixels both ways by the blit, so for pass 1b neon-blit.frag
+    // applies the cut from ITS fwidth, and what is left here is the CULL,
+    // BLIT_SIDE_GUARD_PX past the cut so the blit has lit texels to rebuild
+    // the boundary from (neon-tuning.h).
+    bool  blitOwnsCut = (uBlitOwnsCut != 0);
     float sideBack = 0.5 * sideAA;
     float sideCull = blitOwnsCut ? BLIT_SIDE_GUARD_PX : sideBack;
     // Deliberately NOT mirrored in neon-gather.frag - see the note at its top.
@@ -626,11 +634,11 @@ void main() {
     {
         dIn = bandInnerDistance(d, inMid);
     }
-    // On the scaled path the blit owns the masks as well as the cut, and
-    // rebuilds each boundary from the buffer texels around it - so the cull
-    // runs BLIT_CUTOFF_GUARD_PX past the end of the ramp rather than at it, for
-    // the reason sideCull does. The guard is an exact 0 at scale 1.0, where
-    // the direct path keeps culling exactly where its own masks end.
+    // For pass 1b the blit owns the masks as well as the cut, and rebuilds
+    // each boundary from the buffer texels around it - so the cull runs
+    // BLIT_CUTOFF_GUARD_PX past the end of the ramp rather than at it, for the
+    // reason sideCull does. The guard is an exact 0 for the ring, which keeps
+    // culling exactly where its own masks end.
     float cutGuard = blitOwnsCut ? BLIT_CUTOFF_GUARD_PX : 0.0;
     if (dOut >  outHalf + cutGuard ) discard;
     if (dIn  < -(inHalf + cutGuard)) discard;
@@ -1089,9 +1097,10 @@ void main() {
     // neonToneMap (neon-grade.glsl, shared with neon-field.frag).
 #ifdef NEON_FIELD_BAKE
     // Fa: the pre-tone-map result at hue 1, which neon-field.frag tone-maps
-    // times the gathered hue. Nothing below would multiply it: the field is
-    // built only for configs neither of the masks below touches at 1.0
-    // (IsFieldEligible), and below 1.0 the blit owns both.
+    // times the gathered hue. The masks below are not in it: for the shading's
+    // field the blit owns both; the edge ring's field, baked with the ring's
+    // uniforms, has its composite apply them (neon-field.frag,
+    // NEON_FIELD_RING).
     fragColor = vec4(result.r, 0.0, 0.0, 1.0);
     return;
 #endif
@@ -1111,9 +1120,9 @@ void main() {
     // smoothstep(hi, lo, d): edge0 > edge1 is UNDEFINED in GLSL. Same curve,
     // portably.
     //
-    // DIRECT PATH ONLY: below 1.0 neon-blit.frag applies this exact expression
-    // against ITS own fwidth. Keep the two in step - they are one edge, written
-    // twice because only one of them ever runs.
+    // THE RING ONLY: for pass 1b neon-blit.frag applies this exact expression
+    // against ITS own fwidth, and the ring field's composite (neon-field.frag)
+    // applies it for the ring's field. Keep the three in step - one edge.
     if (!blitOwnsCut)
     {
         if (uGlowSide == GLOW_SIDE_INSIDE)       result *= 1.0 - smoothstep(sideBack - sideSoft, sideBack, d);
@@ -1128,10 +1137,10 @@ void main() {
     // removes the staircase, the placement the brightness bias at half
     // coverage.
     //
-    // DIRECT PATH ONLY: below 1.0 neon-blit.frag applies these same two ramps
-    // at destination resolution, from BLIT_CUTOFF_GUARD_PX of lit texels the
-    // discards leave it. Keep the two in step - one edge, written twice because
-    // only one of them runs.
+    // THE RING ONLY: for pass 1b neon-blit.frag applies these same two ramps at
+    // destination resolution, from BLIT_CUTOFF_GUARD_PX of lit texels the
+    // discards leave it, and the ring field's composite applies them for the
+    // ring's field. Keep the three in step - one edge.
     if (!blitOwnsCut)
     {
         result *= smoothstep(-inHalf, inHalf, dIn);

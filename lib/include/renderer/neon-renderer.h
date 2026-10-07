@@ -17,20 +17,22 @@ namespace EdgeLighting
     /// The neon renderer.
     ///
     /// Draws a tight quad over the rect + glow-reach margin and runs one
-    /// fragment shader that composes filament + halo + bloom.
+    /// fragment shader (neon.frag) that composes filament + halo + bloom from
+    /// an analytic rounded-box SDF and what the gather pass left in its
+    /// buffer.
     ///
-    /// Per-fragment work: an analytic rounded-box SDF, plus a gather loop over
-    /// @c NeonConfig::numSamples perimeter samples (positions live in a UBO)
-    /// that costs two @c texelFetch calls per sample into @c uEmission - the
-    /// table baked by the emission pre-pass - or ONE where the config carries
-    /// no segments, since the pre-pass then writes row 1 as all zeros and the
-    /// shader takes a second, shorter loop body. That branch is on a uniform
-    /// and sits OUTSIDE the loop; see the note at the gather in neon.frag for
-    /// why inside was measured slower than not branching at all. The
-    /// per-sample arc scan, segment
-    /// loop and filtered LUT reads that used to run here are all
-    /// fragment-invariant and moved to @c neon-emission.frag, which is why the
-    /// per-fragment cost no longer scales with the arc or segment count. See
+    /// The gather (neon-gather.frag) is a loop over
+    /// @c NeonConfig::numSamples perimeter samples (positions live in a UBO),
+    /// run at its own coarse scale, that costs two @c texelFetch calls per
+    /// sample into @c uEmission - the table baked by the emission pre-pass -
+    /// or ONE where the config carries no segments, since the pre-pass then
+    /// writes row 1 as all zeros and the shader takes a second, shorter loop
+    /// body. That branch is on a uniform and sits OUTSIDE the loop; see the
+    /// note at the loop in neon-gather.frag for why inside was measured
+    /// slower than not branching at all. The per-sample arc scan, segment
+    /// loop and filtered LUT reads that used to run in it are all
+    /// fragment-invariant and moved to @c neon-emission.frag, which is why its
+    /// cost no longer scales with the arc or segment count. See
     /// docs/emission-prepass.md.
     ///
     /// The three baked LUTs stay bound, but for the POINTWISE reads only - the
@@ -51,62 +53,45 @@ namespace EdgeLighting
     ///
     /// --- Resolution scale -----------------------------------------------
     ///
-    /// One renderer, two paths, chosen by @c NeonConfig::resolutionScale:
-    ///
-    ///   1.0  - the glow draws straight onto the framebuffer it was handed.
-    ///          No reduced buffer, no blit. The gather runs alone into
-    ///          @c mGatherBuffer exactly as below 1.0, and the edge ring's
-    ///          program shades the whole quad from it at full resolution -
-    ///          within 1/255 of running the loop inline in every fragment, and
-    ///          2-4x cheaper on a large quad (docs/neon-perf-review.md section
-    ///          10). The inline loop, and the gate that kept it for rects where
-    ///          the split did not pay, are gone (docs/neon-shader-cleanup-plan.md
-    ///          step 3).
-    ///   <1.0 - the gather runs ALONE (neon-gather.frag) into
-    ///          @c mGatherBuffer, at a scale set by the gather's own smoothness
-    ///          rather than by @c resolutionScale - about 2 texels per colour
-    ///          kernel, so typically far coarser (@ref GetGatherScale). Then
-    ///          neon.frag, which reads that result back, shades
-    ///          @c mScaledBuffer at the requested
-    ///          fraction, which is bilinear-blitted back over the area that
-    ///          can still be lit outside a thin ring around the rect edge, and
-    ///          shades that ring at full resolution. The loop - ~95% of the
-    ///          neon's cost - runs on a few thousand texels, while the
-    ///          filament, the cut and the cutoffs near the line still come out
-    ///          as the direct path draws them. Both buffers cover only the
-    ///          part of the frame their readers reach (@ref GetBufferRegion).
-    ///          See docs/neon-resolution-scale-plan.md sections 12 and 13.
+    /// ONE path at every @c NeonConfig::resolutionScale, 1.0 included (I57;
+    /// there was a direct path at 1.0 that shaded straight onto the target,
+    /// removed once no shipped config used 1.0). The gather runs ALONE
+    /// (neon-gather.frag) into @c mGatherBuffer, at a scale set by its own
+    /// smoothness rather than by @c resolutionScale - about 2 texels per
+    /// colour kernel, so typically far coarser (@ref GetGatherScale). Then
+    /// neon.frag, which reads that result back, shades @c mScaledBuffer at the
+    /// requested fraction - full size at 1.0 - which is bilinear-blitted back
+    /// over the area that can still be lit outside a thin ring around the rect
+    /// edge, and the ring is re-shaded at full resolution. The loop - ~95% of
+    /// the neon's cost when every pixel ran it - runs on a few thousand texels,
+    /// while the filament, the cut and the cutoffs near the line come out at
+    /// full resolution. Both buffers cover only the part of the frame their
+    /// readers reach (@ref GetBufferRegion). See
+    /// docs/neon-resolution-scale-plan.md sections 12 and 13.
     ///
     /// With no segments and a colour-stop alpha time cannot move, the shading
     /// is factored: neon.frag's output is tonemap(col * Fa) with only the
     /// gathered hue col changing, so pass 1f bakes Fa into @c mFieldBuffer
-    /// once the config has held for a frame, and
-    /// pass 1c (neon-field.frag) composites it with the hue in the shading's
-    /// place. Not at 1.0 with a one-sided glow or a cutoff, which neon.frag
-    /// applies after its tone map there: those shade directly. At 1.0 the
-    /// composite is pass 1, on every frame - 4x on the default frame
-    /// with the hue rotating, 9x still, within 1/255. Below 1.0 it is pass 1b,
-    /// into @c mScaledBuffer, and only under a rotating hue - every other
-    /// frame where nothing moved already skips pass 1b - 1.1-2.0x on those
-    /// frames, within 1/255. A frame whose config just changed shades
-    /// directly. See docs/neon-perf-plan.md section 11, and I46 and I50 in
-    /// docs/review-findings.md.
+    /// once the config has held for a frame, and pass 1c (neon-field.frag)
+    /// composites it with the hue in pass 1b's place, into @c mScaledBuffer -
+    /// under a rotating hue, the frames that would otherwise redraw pass 1b
+    /// with only the time moved, 1.1-2.0x on them, and under an intensity
+    /// animation, scaled (I56). The ring has a field of its own (pass 1r / 2r),
+    /// still frames included. A frame whose config just changed shades
+    /// directly. See docs/neon-perf-plan.md section 11, and I46, I50, I52 and
+    /// I56 in docs/review-findings.md.
     ///
-    /// The paths share one schedule: every pixel-valued uniform is multiplied
-    /// by the scale unconditionally (a no-op at 1.0) and the shader converts
-    /// its own full-res px constants with @c uResolutionScale. Only the render
-    /// target, the shading programs, the blit, the ring and the buffer
-    /// allocations are conditional.
+    /// Every pixel-valued uniform is multiplied by the scale (a no-op at 1.0)
+    /// and the shader converts its own full-res px constants with
+    /// @c uResolutionScale; the ring takes them at 1.0, and @c uBlitOwnsCut
+    /// says which passes leave the cut and the cutoffs to the blit.
     ///
-    /// The gather loop itself lives in neon-gather.frag, the one program that
-    /// runs it, on both paths.
-    ///
-    /// The neon programs and the blit are built per PATH, the first frame that
-    /// path renders (@ref ensurePathPrograms): two at 1.0 (the gather, and the
-    /// ring's shading), four below it (the gather, the shading twice - one
-    /// object per target - and the blit). A host that stays on one path never
-    /// compiles the others', and the price is a one-time compile on the first
-    /// frame after a switch.
+    /// The neon programs and the blit are built on the first frame
+    /// (@ref ensurePathPrograms): the gather, the shading twice - one object
+    /// per target - and the blit. The fields' three programs are built on the
+    /// first frame a config they can serve is drawn (@ref ensureFieldPrograms,
+    /// @ref ensureRingFieldPrograms), and the glow coverage bake on the first
+    /// frame that bakes the table (@ref ensureGlowCoverProgram).
     ///
     /// Debug overlays (LUT strip, colour-stop markers) are NOT here - they are
     /// a separate layer, @ref DebugRenderer, driven by @ref DebugConfig. The
@@ -149,8 +134,35 @@ namespace EdgeLighting
             bool operator!=(const EmissionInputs &o) const { return !(*this == o); }
         } EmissionInputs;
 
+        /// Everything pass 1a reads besides the region it draws and the quad
+        /// it draws over: what neon-gather.frag is handed
+        /// (@ref uploadShapeUniforms, @ref bindGatherInputs) and the buffer it
+        /// draws into. The table and the sample block by version, as
+        /// @ref EmissionInputs keys them. See @ref currentGatherInputs.
+        typedef struct GatherInputs
+        {
+            uint32_t emissionBakes = 0; ///< mEmissionBakes - what uEmission holds.
+            uint32_t sampleUploads = 0; ///< mLoopSamplesBlock.GetUploadCount() - LoopSamplesBlock.
+            int numSamples = 0;         ///< uNumSamples, clamped as the pass uploads it.
+            float scale = 0.0f;         ///< The resolution scale - the space of the shape and the projection.
+            glm::vec2 rectSize{0.0f};   ///< uRectSize.
+            float cornerRadius = 0.0f;  ///< uCornerRadius.
+            int attachments = 0;        ///< 2 with segments (uSegmentCount > 0 picks the loop body), else 1.
+            glm::ivec2 viewport{0};     ///< The viewport the region's texel grid is anchored to, and clipped to.
+            glm::vec2 center{0.0f};     ///< The rect's centre in it, full-res px, y up - where that grid and clip fall on the rect.
+
+            bool operator==(const GatherInputs &o) const
+            {
+                return emissionBakes == o.emissionBakes && sampleUploads == o.sampleUploads &&
+                       numSamples == o.numSamples && scale == o.scale && rectSize == o.rectSize &&
+                       cornerRadius == o.cornerRadius && attachments == o.attachments && viewport == o.viewport &&
+                       center == o.center;
+            }
+            bool operator!=(const GatherInputs &o) const { return !(*this == o); }
+        } GatherInputs;
+
         /// Build the programs both paths use - the emission pre-pass and the
-        /// opaque fill. The rest are per path; see @ref ensurePathPrograms -
+        /// opaque fill. The rest are built on the first frame; see @ref ensurePathPrograms -
         /// and the glow coverage bake is built when first needed; see
         /// @ref ensureGlowCoverProgram.
         bool setupShaders();
@@ -169,16 +181,13 @@ namespace EdgeLighting
         /// block - each only where the source declares it.
         bool buildNeonProgram(ShaderProgram &program, const char *fragSrc, const char *define, const char *name,
                               unsigned int programBit, bool gathers, bool shades);
-        /// Make sure every program the path @p scaled draws with is built,
-        /// building any that are not. The direct path needs neon-gather.frag
-        /// and the ring's neon.frag program; the scaled path needs those, a
-        /// second neon.frag program for pass 1 and the blit. Lazy
-        /// rather than at @ref Initialize: compiling the path a host
-        /// never uses cost a third of the startup and the memory of programs
-        /// nothing draws with. The trade is a one-time compile on the first
-        /// frame a host switches path. False if any of them failed, in which
-        /// case the glow is skipped and the frame degrades to the fill.
-        bool ensurePathPrograms(bool scaled);
+        /// Make sure every program the glow draws with is built, building any
+        /// that are not: neon-gather.frag, neon.frag twice (pass 1b and the
+        /// ring - one program object per target) and the blit. Lazy rather
+        /// than at @ref Initialize, so a host that never enables the glow
+        /// never compiles them. False if any of them failed, in which case the
+        /// glow is skipped and the frame degrades to the fill.
+        bool ensurePathPrograms();
         /// Upload the static NDC quad the fullscreen passes draw. Called once
         /// from @ref Initialize: the quad is in clip space, so unlike
         /// @ref setupGeometry's it is independent of the geometry, the
@@ -205,7 +214,7 @@ namespace EdgeLighting
         /// fullscreen quad, never to a ring. Both passes ask one shared
         /// predicate so they cannot disagree; see @c FillsWholeViewport.
         void setupFillGeometry(const Config &config);
-        /// Build the scaled path's two FULL-RES partition arrays, from one set
+        /// Build the two FULL-RES partition arrays, from one set
         /// of box coordinates: @c mRingVertexArray, a rectangular annulus over
         /// the edge ring (GetRingWidth either side of the edge, clipped to the
         /// band the glow can still be lit in), which pass 2c re-shades at full
@@ -217,8 +226,10 @@ namespace EdgeLighting
         /// The two share their boundary vertices bit for bit, so the rasteriser
         /// gives every pixel to at most one of them - both composite
         /// premultiplied-over, and a pixel drawn by both would composite twice.
-        /// Builds nothing (both counts 0) at scale 1.0, where neither pass runs.
-        /// Reads @c mQuadMargin, so it runs after @ref setupGeometry.
+        /// It also builds the gather pass's quad
+        /// (@c mGatherVertexArray) and the two region boxes, @c mGatherOuter and
+        /// @c mScaledOuter. Reads @c mQuadMargin, so it runs after
+        /// @ref setupGeometry.
         void setupRingGeometry(const Config &config);
         void rebuildLoopSamples(const Config &config);
         /// Re-bake the three colour LUTs. Each wrapper self-guards, so this is
@@ -251,11 +262,11 @@ namespace EdgeLighting
 
         /// Size @c mGatherBuffer to @p width x @p height with @p attachments
         /// colour attachments, in the best format the driver will give -
-        /// RGBA16F, then RGBA8. Called every scaled frame from
-        /// @ref renderGatherPass; @c Framebuffer::Resize early-outs when
-        /// nothing changed. The format reached is recorded in
+        /// RGBA16F, then RGBA8. Called from @ref renderGatherPass on every
+        /// frame that runs pass 1a, at every scale; @c Framebuffer::Resize
+        /// early-outs when nothing changed. The format reached is recorded in
         /// @c mGatherFormat, not in the buffer, because the buffer is released
-        /// whenever the scaled path is idle.
+        /// when the layer is disabled.
         /// @return false only if no candidate could be allocated.
         bool resizeGatherBuffer(int width, int height, int attachments);
 
@@ -263,19 +274,12 @@ namespace EdgeLighting
         // The numbering is the pipeline order from docs/emission-prepass.md,
         // and the .cpp defines them in this same order - keep all three in
         // step. The data dependency is the real contract: pass 0 bakes the
-        // table the gather reads, pass 1a's gather buffer is what pass 1 and
+        // table the gather reads, pass 1a's gather buffer is what pass 1b and
         // pass 2c shade from, pass 2a's fill must land before pass 2b
-        // composites the glow over it, and at scale 1.0 pass 1 IS the
-        // composite (it gathers itself, draws onto the target directly, and
-        // neither 1a, 2b nor 2c runs). 2b and 2c cover
-        // disjoint areas, so their order between themselves is free.
-        //
-        // NOTE on the DIRECT path @ref Render calls pass 2a before pass 1 -
-        // the one place declaration order and call order differ. Pass 1 draws
-        // onto the caller's framebuffer there, and the fill has to be under
-        // it. On the scaled path the order is the numbering: every offscreen
-        // pass (0, 1) first, then everything on the caller's framebuffer
-        // (2a, 2b, 2c), so that target is drawn in one unbroken run.
+        // composites the glow over it. 2b and 2c cover disjoint areas, so
+        // their order between themselves is free. Every offscreen pass (0, 0b,
+        // 1a, 1b, and the fields' bakes) runs first, then everything on the
+        // caller's framebuffer, so that target is drawn in one unbroken run.
 
         // STATE OWNERSHIP. `Render` owns blend state - enable and func - and
         // sets it immediately before each pass that depends on it, so no pass
@@ -345,6 +349,13 @@ namespace EdgeLighting
         /// upload and bind them now.
         EmissionInputs currentEmissionInputs(const Config &config) const;
 
+        /// Pass 1a's inputs besides its region and quad, as
+        /// @ref renderGatherPass would hand them over now, for a viewport of
+        /// @p viewportWidth x @p viewportHeight.
+        /// @pre Pass 0 has run this frame if it is going to: the table's
+        ///      version is part of the key.
+        GatherInputs currentGatherInputs(const Config &config, int viewportWidth, int viewportHeight) const;
+
         /// Pass 0: bake the fragment-invariant half of the gather into
         /// @c mEmissionBuffer, at the clamped sample count so texel i here is
         /// sample i in the gather. Retargets the framebuffer and viewport, so
@@ -409,10 +420,13 @@ namespace EdgeLighting
         /// shades nothing - it takes @ref uploadShapeUniforms alone. The
         /// gather's own inputs - the sample block, the count and the emission
         /// table - are not here: only the gathering programs have them, and
-        /// @ref bindGatherInputs binds them.
+        /// @ref bindGatherInputs binds them. @p blitOwnsCut is true for a pass
+        /// the blit composites (pass 1b and its field bake), which leaves the
+        /// one-sided cut and the cutoffs to it, false for the edge ring and its
+        /// field bake, which apply both after the grade (uBlitOwnsCut).
         /// @pre @p shader is in use.
-        void uploadNeonUniforms(ShaderProgram &shader, const glm::mat4 &mvp, float scale,
-                                float time, float quadMargin, float cornerSkip, const Config &config);
+        void uploadNeonUniforms(ShaderProgram &shader, const glm::mat4 &mvp, float scale, float time,
+                                float quadMargin, float cornerSkip, bool blitOwnsCut, const Config &config);
 
         /// Bind the gather loop's own inputs - the sample block, the count and
         /// the emission table - for @p shader, which is in use. Only the
@@ -436,43 +450,125 @@ namespace EdgeLighting
         bool renderGatherPass(const glm::mat4 &mvp, int gatherWidth, int gatherHeight, float scale,
                               const Config &config);
 
-        /// Pass 1: the neon on the tight glow quad, shaded from the gather
-        /// pass's result, so it must run after it.
-        ///
-        /// Draws either straight onto the bound framebuffer (@p scaled false)
-        /// with @c mNeonRingShader, from @c mGatherBuffer through the uv map
-        /// @p gatherUVScale / @p gatherUVOffset - or into @c mScaledBuffer
-        /// (@p scaled true), @p bufWidth x @p bufHeight texels drawn through
-        /// @p mvp - its region's projection - with @c mNeonShadeShader,
-        /// through that map. The scaled path also clears
-        /// that buffer and leaves it bound, and @ref Render restores the
-        /// target before pass 2a.
-        /// @pre On the direct path, premultiplied-over blending: the glow
-        ///      composites over what is already on the target. On the scaled
-        ///      path, blending DISABLED: the buffer was just cleared and the
-        ///      quad covers each texel once, so over would only have added
-        ///      zero, for a destination read per texel.
-        /// @return false if the scaled target could not be allocated, in which
-        ///         case nothing was drawn and passes 2b and 2c must be skipped
-        ///         too - they would otherwise composite a stale or undefined
-        ///         buffer.
-        bool renderNeonPass(const glm::mat4 &mvp, int bufWidth, int bufHeight, bool scaled,
-                            const glm::vec2 &gatherUVScale, const glm::vec2 &gatherUVOffset,
-                            float time, const Config &config);
+        /// Size @c mScaledBuffer to @p bufWidth x @p bufHeight texels, bind it
+        /// and clear it - pass 1b's target, whether the shading draws it
+        /// (@ref renderNeonPass) or the field's composite does
+        /// (@ref renderFieldCompositePass). The caller lifts the host's
+        /// scissor first and keeps it lifted through its draw (see
+        /// renderNeonPass).
+        /// @return false if the buffer could not be allocated, in which case
+        ///         nothing was bound and the caller must draw nothing.
+        bool bindScaledTarget(int bufWidth, int bufHeight);
+
+        /// Pass 1b: the neon on the tight glow quad, shaded from the gather
+        /// pass's result, so it must run after it - into @c mScaledBuffer,
+        /// @p bufWidth x @p bufHeight texels drawn through @p mvp (its region's
+        /// projection) with @c mNeonShadeShader, reading @c mGatherBuffer
+        /// through the uv map @p gatherUVScale / @p gatherUVOffset. Clears that
+        /// buffer and leaves it bound; @ref Render restores the target before
+        /// pass 2a.
+        /// @pre Blending DISABLED: the buffer was just cleared and the quad
+        ///      covers each texel once, so over would only have added zero, for
+        ///      a destination read per texel.
+        /// @return false if the reduced target could not be allocated, in
+        ///         which case nothing was drawn and passes 2b and 2c must be
+        ///         skipped too - they would otherwise composite a stale or
+        ///         undefined buffer.
+        bool renderNeonPass(const glm::mat4 &mvp, int bufWidth, int bufHeight, const glm::vec2 &gatherUVScale,
+                            const glm::vec2 &gatherUVOffset, float time, const Config &config);
 
         // --- The shading, factored: the hue-invariant field ----------------
         // On a config with no segments whose colour-stop alpha cannot move
-        // with time and nothing applied after its tone map, neon.frag's output
-        // is tonemap(col * Fa), with only the gathered hue col changing from
-        // frame to frame (neon-field.frag). So the shading splits in two: 1f
-        // bakes Fa once the config has held for a frame, offscreen, after the
-        // gather; 1c
-        // composites it with the gathered hue in the shading's place - pass 1's
-        // at 1.0, on the caller's framebuffer (4.1x on the default frame with
-        // the hue rotating, 9x still, on an Apple M2 Pro; docs/neon-perf-plan.md
-        // section 11, I46), and pass 1b's below 1.0, into the reduced buffer,
-        // under a rotating hue (1.1-2.0x on those frames on an AMD Radeon Pro
-        // 5300M, I50).
+        // with time, pass 1b's output is tonemap(col * Fa), with only the
+        // gathered hue col changing from frame to frame (neon-field.frag) - the
+        // blit applies the cut and the cutoffs after it. So the shading splits
+        // in two: 1f bakes Fa once the config has held for a frame, offscreen,
+        // after the gather; 1c composites it with the gathered hue in pass 1b's
+        // place, into the reduced buffer, under a rotating hue (1.1-2.0x on
+        // those frames on an AMD Radeon Pro 5300M, I50) and an intensity
+        // animation (I56).
+
+        /// When a field is baked and when it is read - the schedule the
+        /// shading's field (@c mField) and the edge ring's (@c mRingField)
+        /// share. A field outlives the frame it was baked on; a config change
+        /// (@ref OnConfigChanged calls @ref Invalidate), the viewport and a
+        /// gradient ring upload - a cross-fade frame - invalidate it.
+        ///
+        /// The bake is LAZY: only a config that has held for a frame is baked
+        /// (@c settled), so an animation that changes the config every frame
+        /// keeps shading directly and never pays a bake it cannot reuse - a
+        /// bake AND a composite on every frame measured 5-7% slower than
+        /// shading directly.
+        ///
+        /// Except on the FIRST frame a renderer draws a config the field can
+        /// serve, which builds the field's programs and bakes it at once,
+        /// while still shading directly. Building alone is not enough: this
+        /// driver finishes a program's compile on its first DRAW, in the
+        /// target and blend state it draws with, so a bake program only linked
+        /// there left a ~125 ms stall on the bake frame after it (~155 ms all
+        /// told, AMD Radeon Pro 5300M). And that frame still shades directly
+        /// so that the shading program's first draw lands there too -
+        /// compositing instead deferred THAT stall to the first config change.
+        /// The price is one bake an animated config may not reuse, once per
+        /// renderer.
+        ///
+        /// The neon's INTENSITY is the one config change that does not
+        /// invalidate a field (I56): neon.frag's output is near enough
+        /// I * G with G fixed while only the intensity moves, so a field baked
+        /// at intensity I0 serves intensity I as Fa * I / I0 (@c Decision::gain).
+        /// Near enough, not exactly: the bloom's reach and the quad's fade and
+        /// hole also follow the intensity, and the field holds them as they
+        /// were at I0 - up to 2 levels on the default look across
+        /// IntensityPulse's 0.4-1.0, 6 on a 1.5 bloom (docs/neon-reduced-scale-
+        /// plan.md, D1). So only while the intensity is MOVING, and only below
+        /// I0, whose quad covers every dimmer one's; a brighter frame bakes
+        /// again at its own intensity, so a pulse settles on its peak after
+        /// one cycle; and the frame the intensity stops on bakes again too,
+        /// exactly - a held config never shows a scaled field.
+        typedef struct LazyBake
+        {
+            /// What @ref Decide says a frame does with the field.
+            typedef struct Decision
+            {
+                bool use = false;  ///< Composite the field in the shading's place.
+                bool bake = false; ///< Bake it first, after the gather it reads.
+                float gain = 1.0f; ///< What the composite multiplies the field by: I / I0, exactly 1 unless scaled.
+            } Decision;
+
+            bool current = false;         ///< The buffer describes this frame up to its intensity: nothing else invalidated it since its bake.
+            bool settled = false;         ///< Nothing invalidated it on the last frame, so a bake now would be reused.
+            bool unavailable = false;     ///< Not on this driver (a program failed, or no half-float target): shade directly.
+            glm::ivec2 viewport{0};       ///< The viewport it was decided for.
+            uint32_t gradientUploads = 0; ///< The gradient ring's upload count it was decided for.
+            float intensity = 0.0f;       ///< NeonConfig::intensity it was baked at (I0).
+
+            /// The schedule's step for a frame whose config the field can
+            /// serve, drawn at @p frameViewport with the gradient ring at
+            /// @p frameGradientUploads and the neon at @p frameIntensity, which
+            /// a config change moved since the last frame if
+            /// @p intensityMoving; @p firstFrame when the field's programs were
+            /// not built before this frame.
+            Decision Decide(const glm::ivec2 &frameViewport, uint32_t frameGradientUploads, bool firstFrame,
+                            float frameIntensity, bool intensityMoving);
+
+            /// The config changed: what the buffer holds is stale, and the
+            /// next frame is not settled.
+            void Invalidate()
+            {
+                current = false;
+                settled = false;
+            }
+
+            /// A bake ran, at @p bakedIntensity: what the buffer holds is
+            /// current if it @p baked, and the field is never used again on
+            /// this driver if not.
+            void OnBaked(bool baked, float bakedIntensity)
+            {
+                current = baked;
+                unavailable = !baked;
+                intensity = bakedIntensity;
+            }
+        } LazyBake;
 
         /// Make sure the field's two programs - neon.frag with NEON_FIELD_BAKE,
         /// and neon-field.frag - are built, building them if not. Called on
@@ -484,11 +580,10 @@ namespace EdgeLighting
         bool ensureFieldPrograms();
 
         /// Pass 1f: bake the field into @c mFieldBuffer, @p width x @p height
-        /// texels, drawn through @p mvp - the projection of the region pass 1c
-        /// reads it over, at @p scale: the glow quad's box at 1.0, the reduced
-        /// buffer's region below it - reading the gather through the map
-        /// @p gatherUVScale / @p gatherUVOffset the shading at that scale
-        /// reads it through. R16F, Fa alone. Leaves the buffer bound;
+        /// texels, drawn through @p mvp - the projection of the reduced buffer's
+        /// region at @p scale, which pass 1c reads it over - reading the gather
+        /// through the map @p gatherUVScale / @p gatherUVOffset pass 1b reads
+        /// it through. R16F, Fa alone. Leaves the buffer bound;
         /// @ref Render restores the target.
         /// @pre Blending disabled; pass 1a has run or its buffer is current.
         /// @return false if the buffer could not be allocated - the field is
@@ -496,15 +591,16 @@ namespace EdgeLighting
         bool renderFieldPass(const glm::mat4 &mvp, int width, int height, const glm::vec2 &gatherUVScale,
                              const glm::vec2 &gatherUVOffset, float scale, float time, const Config &config);
 
-        /// Pass 1c: in the shading's place, the glow quad drawn with
-        /// neon-field.frag - the field times the gathered hue, tone-mapped.
-        /// The same arguments as @ref renderNeonPass: with @p scaled it draws
-        /// pass 1b's target, @c mScaledBuffer at @p bufWidth x @p bufHeight,
-        /// sized, bound and cleared here; without, the caller's framebuffer.
-        /// @pre Blending disabled when @p scaled, premultiplied-over otherwise.
+        /// Pass 1c: in pass 1b's place, the glow quad drawn with
+        /// neon-field.frag - the field times the gathered hue, tone-mapped -
+        /// into pass 1b's target, @c mScaledBuffer at @p bufWidth x
+        /// @p bufHeight, sized, bound and cleared here. The same arguments as
+        /// @ref renderNeonPass; the field is multiplied by @p gain
+        /// (@c LazyBake::Decision::gain).
+        /// @pre Blending disabled.
         /// @return false if the reduced buffer could not be allocated.
-        bool renderFieldCompositePass(const glm::mat4 &mvp, int bufWidth, int bufHeight, bool scaled,
-                                      const glm::vec2 &gatherUVScale, const glm::vec2 &gatherUVOffset);
+        bool renderFieldCompositePass(const glm::mat4 &mvp, int bufWidth, int bufHeight,
+                                      const glm::vec2 &gatherUVScale, const glm::vec2 &gatherUVOffset, float gain);
 
         /// Pass 2a: opaque-mode background fill (its band ring, or a clear), at
         /// FULL resolution on the caller's framebuffer regardless of the
@@ -525,11 +621,10 @@ namespace EdgeLighting
         /// paint through a mask the host set up to clip this pass.
         void renderOpaqueFill(int viewportWidth, int viewportHeight, const Config &config);
 
-        /// Pass 2b: bilinear composite of the scaled buffer onto the caller's
+        /// Pass 2b: bilinear composite of the reduced buffer onto the caller's
         /// framebuffer, AND the one-sided glow cut and the inside/outside
-        /// cutoffs. Only runs when the scaled path did - on the direct path
-        /// @ref renderNeonPass owns the cut, because there the gather already
-        /// runs at the destination rate. Covers what can still be lit outside
+        /// cutoffs, at full resolution, for what pass 1b drew (the ring applies
+        /// its own). Covers what can still be lit outside
         /// the edge ring (@c mBlitVertexArray), which pass 2c draws - and
         /// draws nothing when that is empty.
         ///
@@ -549,8 +644,8 @@ namespace EdgeLighting
         /// Pass 2c: the edge ring. Re-shades the ring at FULL resolution with
         /// @c mNeonRingShader, which takes the gather's result from
         /// @c mGatherBuffer instead of running the gather - so the filament,
-        /// the cut and the cutoffs near the line come out as the direct path
-        /// draws them, while the expensive loop ran once, coarsely. Reads it
+        /// the cut and the cutoffs near the line come out at full resolution,
+        /// while the expensive loop ran once, coarsely. Reads it
         /// through @p gatherUVScale / @p gatherUVOffset, the gather region's
         /// map from full-res rect-local px. Draws @c mRingVertexArray, which
         /// shares its edges with what pass 2b drew, through the same @p mvp.
@@ -560,16 +655,17 @@ namespace EdgeLighting
                             const glm::vec2 &gatherUVOffset, float time, const Config &config);
 
         // --- Pass 2c, factored: the edge ring's field ----------------------
-        // Below 1.0 the ring is re-shaded on EVERY frame, still frames
-        // included: it draws onto the caller's framebuffer, so there is
-        // nothing to reuse. With no segments, no one-sided glow and no cutoff -
-        // the ring applies both after its tone map, at full resolution - its
-        // output is tonemap(col * Fa) like pass 1b's, so it splits the same
-        // way: pass 1r bakes Fa over the ring alone, at full resolution and
-        // packed into its four strips (@ref RingFieldLayout), once the config
-        // has held for a frame; pass 2r composites it with the gathered hue in
-        // pass 2c's place. 1.4-1.9x on still frames and 1.2-1.6x on hue frames
-        // below 1.0 on an AMD Radeon Pro 5300M, within 1/255 (I52).
+        // The ring is re-shaded on EVERY frame, still frames included: it draws onto the caller's framebuffer, so there is
+        // nothing to reuse. With no segments its output is
+        // mask * tonemap(col * Fa) - the mask being the one-sided cut and the
+        // cutoffs, which the ring applies after its tone map at full
+        // resolution, and a function of the pixel's position alone - so it
+        // splits like pass 1b's: pass 1r bakes Fa over the ring alone, at full
+        // resolution and packed into its four strips (@ref RingFieldLayout),
+        // once the config has held for a frame; pass 2r composites it with the
+        // gathered hue in pass 2c's place, and multiplies the mask back in.
+        // 1.4-1.9x on still frames and 1.2-1.6x on hue frames on an AMD Radeon
+        // Pro 5300M, within 1/255 (I52); the mask since I53.
 
         /// How the ring's pixels are packed into @c mRingFieldBuffer. The ring
         /// is an axis-aligned annulus (setupRingGeometry's PushAnnulus), so a
@@ -577,7 +673,7 @@ namespace EdgeLighting
         /// they are, one above the other, and its left and right strips
         /// TRANSPOSED above those, so each runs along the atlas's width. Every
         /// texel sits on one of the viewport's pixels, so the composite reads
-        /// the texel of its own pixel, exact as the field at 1.0 is.
+        /// the texel of its own pixel.
         /// neon-field.frag (NEON_FIELD_RING) reads this layout and
         /// @ref renderRingFieldPass bakes it: change the three together.
         typedef struct RingFieldLayout
@@ -619,11 +715,13 @@ namespace EdgeLighting
 
         /// Pass 2r: in pass 2c's place, @c mRingVertexArray drawn through
         /// @p mvp - the matrix the blit drew with, so the partition holds -
-        /// with the ring field's composite: the field times the gathered hue.
+        /// with the ring field's composite: the field times @p gain times the
+        /// gathered hue, tone-mapped, times the one-sided cut and the cutoffs,
+        /// which it takes from @p config as the ring's own shading does.
         /// @pre Premultiplied-over blending; the caller's framebuffer and
         ///      full-resolution viewport are restored.
         void renderRingFieldCompositePass(const glm::mat4 &mvp, const glm::vec2 &gatherUVScale,
-                                          const glm::vec2 &gatherUVOffset);
+                                          const glm::vec2 &gatherUVOffset, float gain, const Config &config);
 
     private:
         /// Bits of @c mFailedPrograms, one per lazily built program.
@@ -638,8 +736,8 @@ namespace EdgeLighting
 
         Config mCurrentConfig;
         ShaderProgram mNeonGatherShader;                               ///< neon-gather.frag: the gather pass, both paths. Built on first draw.
-        ShaderProgram mNeonShadeShader;                                ///< neon.frag: the scaled path's pass 1. Built on first draw.
-        ShaderProgram mNeonRingShader;                                 ///< The same source, its own program: the edge ring below 1.0, pass 1 at 1.0. See ensurePathPrograms.
+        ShaderProgram mNeonShadeShader;                                ///< neon.frag: pass 1b, into the reduced buffer. Built on first draw.
+        ShaderProgram mNeonRingShader;                                 ///< The same source, its own program: the edge ring. See ensurePathPrograms.
         ShaderProgram mEmissionShader;                                 ///< Perimeter emission pre-pass (neon-emission.frag).
         ShaderProgram mGlowCoverShader;                                ///< Glow coverage pre-pass (neon-glow-cover.frag).
         ShaderProgram mBlackRectShader;                                ///< Opaque-mode black background fill (black-rect.frag).
@@ -650,9 +748,9 @@ namespace EdgeLighting
         VertexArray mGlowVertexArray{"NeonRenderer.Glow"};             ///< Tight glow quad (rect + glow reach), in scaled space.
         VertexArray mFullscreenVertexArray{"NeonRenderer.Fullscreen"}; ///< NDC quad: emission bake, and the ALL-mode opaque fill when a clear cannot stand in.
         VertexArray mFillVertexArray{"NeonRenderer.Fill"};             ///< Opaque-fill band ring (rect +- the fill's cutoffs), in FULL-RES rect-local px.
-        VertexArray mRingVertexArray{"NeonRenderer.Ring"};             ///< Scaled path: the edge ring's annulus, FULL-RES rect-local px.
-        VertexArray mBlitVertexArray{"NeonRenderer.BlitArea"};         ///< Scaled path: the lit area outside the ring, same space.
-        VertexArray mGatherVertexArray{"NeonRenderer.GatherArea"};     ///< Scaled path: the gather pass's quad - pass 1's and the ring's, padded - in SCALED rect-local px.
+        VertexArray mRingVertexArray{"NeonRenderer.Ring"};             ///< The edge ring's annulus, FULL-RES rect-local px.
+        VertexArray mBlitVertexArray{"NeonRenderer.BlitArea"};         ///< The lit area outside the ring, same space.
+        VertexArray mGatherVertexArray{"NeonRenderer.GatherArea"};     ///< Both paths: the gather pass's quad - pass 1's and the ring's, padded - in SCALED rect-local px.
         /// Vertices in @c mGlowVertexArray: 6 for the plain quad, 24 when the
         /// glow is bounded from the inside and @ref setupGeometry cuts a hole -
         /// by a cutoff, the one-sided cut, or the glow's own reach on a rect
@@ -663,12 +761,13 @@ namespace EdgeLighting
         /// Written by @ref setupFillGeometry, read by @ref renderOpaqueFill,
         /// and doubles as the "is it built" flag so the two cannot disagree.
         int mFillVertexCount = 0;
-        int mRingVertexCount = 0;     ///< 0 at scale 1.0; see setupRingGeometry.
-        int mBlitVertexCount = 0;     ///< 0 at scale 1.0, and whenever nothing outside the ring can be lit.
+        int mRingVertexCount = 0;     ///< See setupRingGeometry.
+        int mBlitVertexCount = 0;     ///< 0 whenever nothing outside the ring can be lit.
         int mGatherVertexCount = 0;   ///< The gather pass's quad, both paths; see setupRingGeometry.
         glm::vec2 mGlowOuter{0.0f};   ///< Pass 1's quad, half-extents in FULL-RES px; setupGeometry.
         glm::vec2 mGlowHole{0.0f};    ///< Its hole, the same; 0 when it has none.
         glm::vec2 mGatherOuter{0.0f}; ///< The gather quad's half-extents, FULL-RES px; setupRingGeometry.
+        glm::vec2 mGatherHole{0.0f};  ///< Its hole, the same; 0 on an axis where it has none.
         float mGlowArea = 0.0f;       ///< The glow quad's area, FULL-RES px, unclipped; setupGeometry. See FieldFillsRegion.
         glm::vec2 mScaledOuter{0.0f}; ///< What the blit reads of mScaledBuffer, the same; setupRingGeometry.
 
@@ -692,10 +791,10 @@ namespace EdgeLighting
         UniformBuffer mArcBlock{"NeonRenderer.ArcBlock"};
 
         float mQuadMargin = 0.0f;     ///< Draw-quad margin (scaled px from rect edge); shader fades the bloom out by here.
-        float mRingQuadMargin = 0.0f; ///< The same margin at scale 1.0, in full-res px - what the edge ring fades against.
+        float mRingQuadMargin = 0.0f; ///< The same margin at scale 1.0 with no guard band, in full-res px - what the edge ring fades against.
         float mCornerSkip = 0.0f;     ///< uCornerSkip for pass 1 (scaled px) - see GetCornerSkip.
         float mRingCornerSkip = 0.0f; ///< The same at scale 1.0, in full-res px, for the edge ring.
-        glm::vec2 mRingOuter{0.0f};   ///< The edge ring's outer box, half-extents in full-res px; setupRingGeometry. 0 at 1.0.
+        glm::vec2 mRingOuter{0.0f};   ///< The edge ring's outer box, half-extents in full-res px; setupRingGeometry.
         glm::vec2 mRingHole{0.0f};    ///< Its hole, the same way.
         /// How deep inside the edge the glow can still write a non-zero pixel,
         /// FULL-RES px - the interior counterpart of @c mQuadMargin, which
@@ -759,68 +858,47 @@ namespace EdgeLighting
         /// @ref ensureGlowCoverBuffer.
         size_t mGlowCoverFormat = 0;
 
-        /// The hue-invariant field (pass 1f): Fa, R16F. At 1.0 at full
-        /// resolution over the glow quad's box (3.3 MB for a 960 x 540 rect at
-        /// 1080p); below it on the reduced buffer's own region and grid, half
-        /// that buffer's size (0.84 MB at 0.5 for the same rect). Released with
-        /// the conditions that want it - see OnConfigChanged - and never
-        /// allocated for a config that cannot use it (segments, a one-sided
-        /// glow or a cutoff at 1.0, or below 1.0 a hue that does not rotate).
+        /// The hue-invariant field (pass 1f): Fa, R16F, on the reduced buffer's
+        /// own region and grid, half that buffer's size (0.84 MB at 0.5 for a
+        /// 960 x 540 rect at 1080p). Released with the conditions that want it
+        /// - see OnConfigChanged - and never allocated for a config that cannot
+        /// use it (segments, or a hue that does not rotate with the intensity
+        /// still).
         Framebuffer mFieldBuffer{"NeonRenderer.Field"};
-        /// The field in @c mFieldBuffer describes this frame: no change to the
-        /// neon's config or the geometry, gradient upload or viewport change
-        /// since it was baked.
-        bool mFieldCurrent = false;
-        /// Nothing invalidated the field on the last frame, so baking it now
-        /// should be reused. The bake waits for this: an animation that
-        /// changes the config every frame would otherwise pay a bake AND a
-        /// composite on each, 5-7% slower than drawing pass 1 directly.
-        bool mFieldSettled = false;
-        /// The field cannot be used on this driver (its programs failed, or
-        /// no half-float target allocates); pass 1 draws as before.
-        bool mFieldUnavailable = false;
-        /// What the field was baked for, besides the config: the viewport, the
-        /// gradient ring's upload count, how pass 1c finds a fragment's texel
-        /// - floor((vPos - origin) * texelScale), both in vPos's scaled
-        /// rect-local px: at 1.0 the region's origin and exactly 1, below it
-        /// the reduced buffer's origin and texels per scaled px.
-        glm::ivec2 mFieldViewport{0};
-        uint32_t mFieldGradientUploads = 0;
+        /// When @c mFieldBuffer is baked and read - see @ref LazyBake.
+        LazyBake mField;
+        /// How pass 1c finds a fragment's texel of the field it was baked as -
+        /// floor((vPos - origin) * texelScale), both in vPos's scaled
+        /// rect-local px: the reduced buffer's origin and texels per scaled px.
         glm::vec2 mFieldOrigin{0.0f};
         glm::vec2 mFieldTexelScale{1.0f};
 
         /// The edge ring's field (pass 1r): Fa, R16F, at full resolution over
-        /// the ring alone, packed as @c mRingFieldLayout. Below 1.0 only, and
-        /// only for a config @ref Render finds eligible (no segments, no
-        /// one-sided glow, no cutoff). Released with the conditions that want
-        /// it - see OnConfigChanged.
+        /// the ring alone, packed as @c mRingFieldLayout. Only for a config
+        /// @ref Render finds eligible (no segments, and a
+        /// colour-stop alpha time cannot move). Released with the conditions
+        /// that want it - see OnConfigChanged.
         Framebuffer mRingFieldBuffer{"NeonRenderer.RingField"};
         RingFieldLayout mRingFieldLayout{}; ///< The packing it was baked with.
-        /// As mFieldCurrent / mFieldSettled / mFieldUnavailable, for the ring's
-        /// field: what it holds describes this frame; nothing invalidated it on
-        /// the last frame; it cannot be used on this driver.
-        bool mRingFieldCurrent = false;
-        bool mRingFieldSettled = false;
-        bool mRingFieldUnavailable = false;
-        /// What it was baked for besides the config: the viewport and the
-        /// gradient ring's upload count.
-        glm::ivec2 mRingFieldViewport{0};
-        uint32_t mRingFieldGradientUploads = 0;
+        /// When @c mRingFieldBuffer is baked and read - see @ref LazyBake.
+        LazyBake mRingField;
+        /// A config change since the last frame moved NeonConfig::intensity.
+        /// Set by @ref OnConfigChanged, consumed by the next @ref Render: the
+        /// fields serve a scaled intensity only while it moves (LazyBake).
+        bool mIntensityMoving = false;
 
         /// Seconds of frame time @c mGlowCoverBuffer has gone unread - the ring
         /// lit uniformly, or the layer off. @ref Update releases the table at
         /// GLOW_COVER_RELEASE_SECONDS (docs/neon-perf-plan.md item 10).
         float mGlowCoverUnreadSeconds = 0.0f;
 
-        /// Pass 1's target on the scaled path: the composited colour, one RGBA8
-        /// attachment at the reduced scale, covering what the blit reads
+        /// Pass 1b's target: the composited colour, one RGBA8 attachment at the
+        /// reduced scale - full size at 1.0 - covering what the blit reads
         /// (@c mScaledOuter) and never more than the whole reduced viewport -
-        /// see GetBufferRegion. Never touched at @c resolutionScale 1.0 - not
-        /// allocated, not bound, not blitted - so the full-res path pays
-        /// nothing for its existence.
+        /// see GetBufferRegion. Released when the layer is disabled.
         Framebuffer mScaledBuffer{"NeonRenderer.Scaled"};
 
-        /// The gather pass's target on both paths, at GetGatherScale -
+        /// The gather pass's target, at GetGatherScale -
         /// coarser than @c mScaledBuffer for any rect much bigger than a
         /// thumbnail - over the gather quad's box (@c mGatherOuter) clipped
         /// to the viewport: the gathered colour and arc coverage, plus a
@@ -834,6 +912,26 @@ namespace EdgeLighting
         /// @ref resizeGatherBuffer.
         size_t mGatherFormat = 0;
 
+        /// What pass 1a last drew into @c mGatherBuffer, so a frame whose
+        /// gather would draw the same values can skip it (Render). Its inputs
+        /// (@ref GatherInputs), the quad it covered - outer box and hole, as
+        /// @c mGatherOuter / @c mGatherHole were then - and the region it was
+        /// laid out over (GetBufferRegion's origin, size and texels). Every
+        /// texel is a function of its position and those inputs alone, on a
+        /// texel grid anchored to the viewport rather than to the region, so
+        /// while the inputs hold the buffer answers any quad inside the one it
+        /// covered: readers then read it through the region it was drawn over.
+        /// That is what an animation of the glow's reach - an intensity or
+        /// bloom pulse, a glow-radius or cutoff sweep - needs, since it moves
+        /// the quad every frame and nothing the gather computes.
+        bool mGatherDrawn = false;
+        GatherInputs mGatherInputs;
+        glm::vec2 mGatherDrawnOuter{0.0f};
+        glm::vec2 mGatherDrawnHole{0.0f};
+        glm::vec2 mGatherDrawnOrigin{0.0f};
+        glm::vec2 mGatherDrawnSize{0.0f};
+        glm::ivec2 mGatherDrawnTexels{0};
+
         /// The inputs other than time that @ref renderEmissionPass last baked
         /// @c mEmissionBuffer from - see @ref isEmissionTableStale.
         EmissionInputs mEmissionInputs;
@@ -845,6 +943,9 @@ namespace EdgeLighting
         /// while @c hueRotationRate is non-zero; at 0 the table does not
         /// depend on time and this is not consulted.
         float mEmissionTime = 0.0f;
+        /// How many times @ref renderEmissionPass has written
+        /// @c mEmissionBuffer - the table's version, for @ref GatherInputs.
+        uint32_t mEmissionBakes = 0;
 
         /// Whether the offscreen phase's buffers - @c mGatherBuffer, and below
         /// 1.0 @c mScaledBuffer - still hold exactly what this frame's passes

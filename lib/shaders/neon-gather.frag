@@ -6,10 +6,10 @@
 // was ~95% of the neon's cost when it ran inline in every fragment - runs
 // ONCE, alone, into NeonRenderer's gather buffer, at its own coarse scale
 // (GetGatherScale in neon-renderer.cpp). neon.frag then shades everything else
-// from what this writes: below 1.0 pass 1 at resolutionScale and the edge ring
-// at full resolution, at 1.0 the whole glow quad with the ring's program. The
-// inline path that ran the loop in neon.frag at 1.0 is gone
-// (docs/neon-shader-cleanup-plan.md step 3). See
+// from what this writes: pass 1b at resolutionScale and the edge ring at full
+// resolution. The inline path that ran the loop in neon.frag at 1.0 is gone
+// (docs/neon-shader-cleanup-plan.md step 3), and so is the direct path that
+// shaded the whole glow quad with the ring's program at 1.0 (I57). See
 // docs/neon-resolution-scale-plan.md section 13 and docs/neon-perf-review.md
 // section 10.
 //

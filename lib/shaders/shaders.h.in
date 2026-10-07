@@ -68,6 +68,7 @@ namespace EdgeLighting
                 static const char *const NEON_FIELD_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
 @NEON_TUNING@
 @NEON_GRADE@
+@NEON_SDF@
 @NEON_FIELD_FRAG_CONTENT@
 )shadersrc";
 

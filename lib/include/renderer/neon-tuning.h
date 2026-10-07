@@ -99,10 +99,10 @@
 //     against 0-10 without it). See
 //     docs/corner-crease-and-filament-nyquist.md section 2.
 //
-//     GATED to the scaled path in both consumers. At scale 1.0 the gather
-//     already runs at the destination rate, there is no blit to survive, and
-//     the direct path has to stay bit-identical to the full-res renderer it
-//     replaced. The old flat constant was a no-op at 1.0 by arithmetic
+//     GATED to scales below 1.0 in both consumers. At scale 1.0 the reduced
+//     buffer is full size and the blit copies it 1:1, so there is nothing to
+//     survive, and the ring always shades at 1.0. The old flat constant was a
+//     no-op at 1.0 by arithmetic
 //     coincidence - it equalled the converted stated floor; this expression
 //     would not be, above N = 2, so the gate is explicit now. ---
 #define FILAMENT_MIN_HALF_WIDTH   0.5
@@ -404,15 +404,15 @@
 //     full-res px (BLIT_CUTOFF_GUARD_PX below is the other): it describes the
 //     BUFFER's own sampling, so it must NOT be converted with uResolutionScale.
 //
-//     Below resolutionScale 1.0 the one-sided cut is not applied by neon.frag
-//     at all - neon-blit.frag applies it at DESTINATION resolution, where a
-//     pixel is a pixel and the edge can land exactly where the direct path
+//     For pass 1b the one-sided cut is not applied by neon.frag at all -
+//     neon-blit.frag applies it at DESTINATION resolution, where a pixel is a
+//     pixel and the edge can land exactly where the full-resolution shading
 //     puts it. What neon.frag still does is cull the dark side, and the bound
 //     it culls at cannot be the cut itself: the blit reconstructs each
 //     destination pixel from the 2x2 buffer texels around it, so a texel
 //     killed at the cut leaves the first LIT destination pixel rebuilt partly
 //     from black. Measured at scale 0.5, glowSide OUTSIDE: the first lit pixel
-//     came back at 178 against the 239 the direct path puts there, a dark seam
+//     came back at 178 against the 239 full resolution puts there, a dark seam
 //     hugging the inside of the glow's own edge.
 //
 //     So the cull runs this far PAST the cut, and the guard band's emission is
@@ -426,15 +426,14 @@
 //     blit's mask is zero everywhere past the cut, including at the hard step
 //     where this bound finally discards.
 //
-//     NOT used on the direct path, which owns its own cut and must stay
-//     bit-identical to the full-res renderer it replaced. See neon.frag's
-//     sideCull and the post-grade cut block. ---
+//     NOT used by the edge ring, which owns its own cut (uBlitOwnsCut 0). See
+//     neon.frag's sideCull and the post-grade cut block. ---
 #define BLIT_SIDE_GUARD_PX        2.0
 
-// --- Cutoff guard band, in BUFFER pixels. Scaled path only.
+// --- Cutoff guard band, in BUFFER pixels. Pass 1b only.
 //
 //     BLIT_SIDE_GUARD_PX's argument, applied to the inside/outside cutoffs.
-//     Below resolutionScale 1.0 neon-blit.frag applies the cutoff masks at
+//     For pass 1b neon-blit.frag applies the cutoff masks at
 //     DESTINATION resolution, and neon.frag only culls - this far past the end
 //     of each ramp, so the blit's bilinear filter rebuilds every boundary from
 //     lit texels rather than from black. Same value as the side guard, for the
@@ -454,13 +453,13 @@
 //     reduced-resolution glow inside the band, not its edges. See
 //     docs/neon-resolution-scale-plan.md, step 2.
 //
-//     NOT used on the direct path, whose masks and culls are unchanged. See
+//     NOT used by the edge ring, whose masks and culls are its own. See
 //     neon.frag's cutGuard and NeonRenderer::setupGeometry's cutGuardPx. ---
 #define BLIT_CUTOFF_GUARD_PX      2.0
 
-// --- Edge ring width. Scaled path only, CPU only.
+// --- Edge ring width. CPU only.
 //
-//     Below resolutionScale 1.0, NeonRenderer redraws a ring around the rect
+//     At every scale, NeonRenderer redraws a ring around the rect
 //     edge at FULL resolution (neon.frag's ring program),
 //     reading only the gather's result from the gather buffer. The ring reaches R
 //     full-res px either side of the edge (GetRingWidth in neon-renderer.cpp):
