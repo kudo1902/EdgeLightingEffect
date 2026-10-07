@@ -4607,6 +4607,58 @@ at 0.25, 1.44x at 0.125 - up to 4.8x at 0.5 on `overdrive` and `arcs`.
 0.193 -> 0.049 ms at 0.5, 0.085 -> 0.046 at 0.25; hue frames unchanged within
 noise.
 
+### I57. The neon kept a second path for a scale its hosts never ship - CHANGED
+
+`resolutionScale` 1.0 had a path of its own: the glow drawn straight onto the
+caller's framebuffer by the ring's program over the whole glow quad, with no
+reduced buffer, no blit and no edge ring. It carried its own variants of
+nearly everything the scaled path has - the hue-invariant field over the glow
+quad's box on the viewport's grid, composited onto the caller's framebuffer;
+`MasksAfterGrade`, which sent every one-sided or cutoff config at 1.0 back to
+shading directly because `neon.frag` multiplied those in after its tone map
+there; a 1.0 branch in `setupRingGeometry`; the 1.0 forms of `GetGlowMargin`
+and `GetCutoffGuardPx`; `UsesScaledBuffer`; and a test of `uResolutionScale`
+in `neon.frag` deciding whether the shading or the blit applied the cut. The
+owner's hosts always run below 1.0 (`docs/neon-reduced-scale-plan.md`, C8), so
+all of it was code to keep correct for frames nobody draws.
+
+Now there is one path. At 1.0 the reduced buffer is full size and pass 1b, the
+blit and the edge ring draw exactly as at any other scale. `uBlitOwnsCut`
+replaces the scale test - 1 for pass 1b and the field bake that stands in for
+it, 0 for the ring and its field bake - so which pass applies the cut no longer
+depends on the scale. `IsFieldEligible` is `IsShadingFactorable` and a rotating
+hue or a moving intensity at every scale, `IsRingFieldEligible` is
+`IsShadingFactorable` alone, and `NeonConfig::resolutionScale` defaults to 0.5
+(the owner's choice; `docs/upgrade-notes.md` section 0).
+
+Every frame below 1.0 is byte-identical to the build before: 697 frames over
+seven walks (still, hue, intensity pulses, arcs, a segment, cross-fades,
+one-sided and cutoff configs, the production band, a disable and re-enable,
+viewport changes) at six scales from 0.125 to 1.0. The 1.0 frames are within 1
+level of the direct path - a rounding step on up to 17% of channels, from the
+8-bit buffer they now pass through. `check` passes (its 1.0 column within 1 of
+the committed images; the reduced cells, measured against it, moved by at most
+1), `partition` passes (seeds 1 and 7), and no GL error is logged.
+
+Below 1.0 the cost is unchanged. GPU time by timer query with a flush per
+frame, still frames at 1920 x 1080 on an Apple M2 Pro: 0.054 -> 0.052 ms at
+0.5, 0.051 -> 0.050 at 0.25; `neon-scale-check time` reads 0.95-1.05x on hue
+and intensity frames, and 0.81-0.97x on still ones, which the timer query puts
+down to the harness's noise on ~0.05 ms frames.
+
+At 1.0 the trade is mixed and accepted, since nothing ships there.
+`neon-scale-check time`, median of three interleaved rounds, geometric mean:
+
+| mode | at 1.0 | why |
+| ---- | -----: | --- |
+| still | 1.67x | pass 1b's buffer is reused on a frame where nothing moved (`mOffscreenCurrent`); the direct path re-shaded the quad on the caller's framebuffer every frame - `segments` 0.767 -> 0.108 ms, `glow_inside` 0.271 -> 0.070 |
+| hue | 0.88x | the blit and the ring over a full-size buffer cost more than the old full-resolution composite - `default` 0.172 -> 0.275 ms |
+| intensity | 0.62x | the same - `default` 0.080 -> 0.193 ms |
+
+The full-size buffer holds up to 8.3 MB for a full-screen rect at 1920 x 1080,
+and the first frame at 1.0 now builds pass 1b's program and the blit as well
+as the ring's.
+
 ---
 
 ## What is left
@@ -4619,7 +4671,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, and the twenty-fourth I53, I54, I55 and I56. Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, and the twenty-fourth I53, I54, I55, I56 and I57. Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -4672,6 +4724,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I54 | changed | an arc that moved re-baked every glow coverage piece either support touched - nearly the whole table under an arc wipe; now only the bands its ends swept (bitwise, plus the antipode rule for one fixed end), texel-exact over 6,706 random edits - arc-wipe frames 1.06x at 1.0 to 1.15x at 0.25 (M2), `segments` up to 1.74x |
 | I55 | changed | the gather re-ran on every config change; now skipped while its inputs hold and this frame's quad lies inside the last one drawn, read through that region - intensity-pulse frames 1.19x at 1.0, 1.31x at 0.5, 1.43x at 0.25 (M2), within 1 level; and pass 1b, which inherited its unblended state from pass 1a's `glDisable`, now sets it itself |
 | I56 | changed | an intensity animation invalidated both fields every frame; an intensity-only change now keeps them, scaled by I / I0 while it moves below the bake, re-baked above it and exactly when it stops - intensity-pulse frames 2.31x at 0.5, 1.60x at 0.25 (M2); held frames byte-identical, moving ones within 2 levels on the default look, 6 on a 1.5 bloom over a 0.4-1.0 pulse (owner-accepted) |
+| I57 | changed | the direct path at 1.0 removed: 1.0 takes the scaled path with a full-size buffer, `uBlitOwnsCut` replaces the scale test, `resolutionScale` defaults to 0.5 - every frame below 1.0 byte-identical and no slower; 1.0 within 1 level, 1.67x on still frames, 0.88x hue and 0.62x intensity there (M2), up to 8.3 MB more at full screen |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch
