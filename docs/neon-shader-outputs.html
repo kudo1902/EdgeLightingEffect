@@ -659,12 +659,12 @@
         <div><dt>Shader</dt><dd><code>neon.frag</code> + <code>NEON_FIELD_BAKE</code></dd></div>
         <div><dt>Target</dt><dd><code>mFieldBuffer</code></dd></div>
         <div><dt>Grid</dt><dd>640 &times; 360 texels, the glow quad&rsquo;s box on the frame&rsquo;s pixels</dd></div>
-        <div><dt>Format</dt><dd>R16F; RG16F with a mask</dd></div>
-        <div><dt>Runs</dt><dd>Once a config has held for a frame</dd></div>
+        <div><dt>Format</dt><dd>R16F</dd></div>
+        <div><dt>Runs</dt><dd>A config&rsquo;s first frame, then once it has held after a change; below 1.0 only with the hue rotating</dd></div>
       </dl>
     </div>
     <div class="body">
-      <p>With no segments, everything <code>neon.frag</code> computes is the gathered hue times a brightness that does not depend on it: <code>mask &times; tonemap(col &times; Fa)</code>. Only <code>col</code> moves when the hue rotates. So this pass runs the whole shading once with the hue fixed at 1 and stores <code>Fa</code>, the brightness before the tone map, and, when a one-sided glow or a cutoff needs it, the mask in a second channel. Offscreen, unblended. It waits until the config has held for a frame, so an animation that changes the config every frame never pays for a bake it cannot reuse. Captured on this scene without its segment, since segments keep the field off.</p>
+      <p>With no segments, everything <code>neon.frag</code> computes is the gathered hue times a brightness that does not depend on it: <code>tonemap(col &times; Fa)</code>, provided nothing is applied after the tone map. Only <code>col</code> moves when the hue rotates. So this pass runs the whole shading once with the hue fixed at 1 and stores <code>Fa</code>, the brightness before the tone map, in one half-float channel. Offscreen, unblended. At 1.0 a one-sided glow or a cutoff is multiplied in after the tone map, so a config with either shades directly instead (it used to take a mask in a second channel, which no frame below 1.0 ever needed). After a config change it waits until the config has held for a frame, so an animation that changes the config every frame never pays for a bake it cannot reuse; only the first frame a config the field can serve is drawn bakes at once, alongside P1, because this driver finishes compiling a program on its first draw and a bake left for the next frame stalled it ~125 ms. Below 1.0 the same pass runs at the reduced scale on the reduced buffer&rsquo;s own grid - where the blit applies the cut and the cutoffs, so every config is unmasked - and only with the hue rotating - the one frame type below 1.0 that redraws the shading with nothing but the time moved. Captured on this scene without its segment, since segments keep the field off.</p>
       <div class="shots">
         <figure class="wide">
           <img src="images/neon-onboarding/pass-p1f-field.png" alt="The field buffer: the glow's brightness in grey, without colour" width="640" height="360">
@@ -704,11 +704,11 @@
         <div><dt>Shader</dt><dd><code>neon-field.frag</code></dd></div>
         <div><dt>Target</dt><dd>The caller&rsquo;s framebuffer</dd></div>
         <div><dt>Grid</dt><dd>640 &times; 360 px, full resolution</dd></div>
-        <div><dt>Runs</dt><dd>In P1&rsquo;s place while the field holds</dd></div>
+        <div><dt>Runs</dt><dd>In P1&rsquo;s place while the field holds; below 1.0, in P1b&rsquo;s under a rotating hue</dd></div>
       </dl>
     </div>
     <div class="body">
-      <p>P1&rsquo;s picture from P1f&rsquo;s field: each pixel reads its field texel and the gathered hue, multiplies, tone-maps with the same function <code>neon.frag</code> uses (<code>neonToneMap</code>), and applies the mask. Two fetches and a tone map instead of the whole shading - on every still frame and every frame of a rotating hue, the library&rsquo;s default. Within 1/255 of P1.</p>
+      <p>P1&rsquo;s picture from P1f&rsquo;s field: each pixel reads its field texel and the gathered hue, multiplies, and tone-maps with the same function <code>neon.frag</code> uses (<code>neonToneMap</code>). Two fetches and a tone map instead of the whole shading - on every still frame and every frame of a rotating hue, the library&rsquo;s default. Within 1/255 of P1. Below 1.0 the same program writes the reduced buffer, unblended, in P1b&rsquo;s place on every frame of a rotating hue, and the blit and the ring carry on as before: 1.55x on those frames at 0.5, 1.98x at 0.75 (I50).</p>
       <div class="shots">
         <figure class="wide">
           <img src="images/neon-onboarding/pass-p1c-composite.png" alt="The field composite: the field tinted by the gathered hue" width="640" height="360">
@@ -760,12 +760,12 @@
           </tr>
           <tr>
             <td><span class="pid">P1f</span> <code>mNeonFieldShader</code></td>
-            <td>The hue-invariant field: the glow&rsquo;s brightness with the hue fixed at 1, before the tone map, plus the mask - at 1.0, once a config without segments has held for a frame.</td>
-            <td>See below - the field is the cheap path at 1.0, and the bake cannot share a program with the passes it replaces.</td>
+            <td>The hue-invariant field: the glow&rsquo;s brightness with the hue fixed at 1, before the tone map - for a config without segments (nor, at 1.0, a one-sided glow or a cutoff), on its first frame and once it has held after a change; below 1.0 only with the hue rotating.</td>
+            <td>See below - the field is the cheap path at 1.0 and on hue frames below it, and the bake cannot share a program with the passes it replaces.</td>
           </tr>
           <tr>
             <td><span class="pid">P1c</span> <code>mFieldCompositeShader</code></td>
-            <td>The field times the gathered hue, tone-mapped, in P1&rsquo;s place while the field holds.</td>
+            <td>The field times the gathered hue, tone-mapped, in P1&rsquo;s place while the field holds - or below 1.0 in P1b&rsquo;s, into the reduced buffer.</td>
             <td>Two fetches and a tone map a pixel, where P1 runs the whole shading - the field&rsquo;s saving lives here.</td>
           </tr>
           <tr>
@@ -778,17 +778,17 @@
     </div>
 
     <h2>Why the field bake is necessary</h2>
-    <p><strong>The field is what makes scale 1.0 cheap.</strong> Without P1f there is nothing for P1c to read, and every frame at 1.0 - still or hue rotating, the library&rsquo;s default - runs P1&rsquo;s whole shading on every pixel of the glow quad. Measured on the check suite&rsquo;s default scene at 1920 &times; 1080: on an AMD Radeon Pro 5300M, 0.07 ms a still frame and 0.24 ms with the hue rotating, against ~1.06 ms for a frame P1 draws - one whose config changes every frame (about 15x and 4x); on an Apple M2 Pro, 9x still and 4x with the hue rotating when the field landed (I46). And a still or hue-rotating frame is what a host shows most of the time.</p>
+    <p><strong>The field is what makes scale 1.0 cheap.</strong> Without P1f there is nothing for P1c to read, and every frame at 1.0 - still or hue rotating, the library&rsquo;s default - runs P1&rsquo;s whole shading on every pixel of the glow quad. Measured on the check suite&rsquo;s default scene at 1920 &times; 1080: on an AMD Radeon Pro 5300M, 0.07 ms a still frame and 0.24 ms with the hue rotating, against ~1.06 ms for a frame P1 draws - one whose config changes every frame (about 15x and 4x); on an Apple M2 Pro, 9x still and 4x with the hue rotating when the field landed (I46). And a still or hue-rotating frame is what a host shows most of the time. Below 1.0 it does the same for P1b on hue-rotating frames, the one frame type there that redraws the shading with only the time moved: 1.98x at 0.75, 1.55x at 0.5, 1.21x at 0.25 (I50, same GPU, twelve scenes) - though 1.0 stays the cheaper scale for those frames, since the blit and the ring are full-resolution costs the field does not touch.</p>
     <p><strong>It cannot be the ring&rsquo;s program.</strong> Three things separate it, and each is a reason:</p>
     <ol>
-      <li><em>A different output.</em> It writes the brightness <code>Fa</code> before the tone map and the mask - one or two half-float channels - where every other <code>neon.frag</code> program writes a finished, premultiplied colour. As a compile-time define (<code>NEON_FIELD_BAKE</code>) that difference costs the hot shading program nothing; as a runtime switch it would add branches to the program every animated frame at 1.0 runs, and this compiler has slowed that program for code no frame executes.</li>
+      <li><em>A different output.</em> It writes the brightness <code>Fa</code> before the tone map - one half-float channel - where every other <code>neon.frag</code> program writes a finished, premultiplied colour. As a compile-time define (<code>NEON_FIELD_BAKE</code>) that difference costs the hot shading program nothing; as a runtime switch it would add branches to the program every animated frame at 1.0 runs, and this compiler has slowed that program for code no frame executes.</li>
       <li><em>A different target and blend state.</em> It draws an offscreen buffer, unblended; the ring&rsquo;s program draws the caller&rsquo;s framebuffer, blended. One program doing both is the shape that measured 93-624x slower on the AMD macOS driver - the reason P1b and the ring are already two programs.</li>
-      <li><em>It costs only where it pays.</em> Built the first time a field is baked, never for a config with segments, below 1.0, or for a thin band the field is not worth its memory for (<code>FIELD_MIN_FILL</code>) - so a host that never uses the field never compiles it.</li>
+      <li><em>It costs only where it pays.</em> Built on the first frame of a config the field can serve, never for a config with segments, below 1.0 without a rotating hue, or for a thin band the field is not worth its memory for (<code>FIELD_MIN_FILL</code>) - so a host that never uses the field never compiles it.</li>
     </ol>
-    <p>The alternatives were weighed: baking with the ring&rsquo;s program behind a uniform would save one compile on the first settled frame at the price of reasons 1 and 2, and baking with P1b&rsquo;s program saves nothing at 1.0, where that program is not otherwise built. What the field must keep is an invariant of <code>neon.frag</code>: anything new there that reads the hue other than linearly, reads time, or multiplies after the tone map outside the masks breaks the factorisation, and has to extend <code>NEON_FIELD_BAKE</code> and <code>neon-field.frag</code> together.</p>
+    <p>The alternatives were weighed: baking with the ring&rsquo;s program behind a uniform would save one compile on the first settled frame at the price of reasons 1 and 2, and baking with P1b&rsquo;s program saves nothing at 1.0, where that program is not otherwise built. What the field must keep is an invariant of <code>neon.frag</code>: anything new there that reads the hue other than linearly, reads time, or multiplies after the tone map on a config the field takes breaks the factorisation, and has to extend <code>NEON_FIELD_BAKE</code> and <code>neon-field.frag</code> together.</p>
   </section>
 
   <footer>
-    <p>Captured by <code>tools/neon-guide-figures</code>, which wraps the library&rsquo;s draw call to read each pass&rsquo;s target back without changing the frame (recorded and unrecorded frames are byte-identical). P1 is the first frame at scale 1.0; P1f and P1c are the second, since the field is baked only once a config has held for a frame. Regenerate after a change to how the neon looks; see <a href="../tools/neon-guide-figures/README.md">its README</a>.</p>
+    <p>Captured by <code>tools/neon-guide-figures</code>, which wraps the library&rsquo;s draw call to read each pass&rsquo;s target back without changing the frame (recorded and unrecorded frames are byte-identical). P1 and P1f are the first frame at scale 1.0 - the first frame a config the field can serve is drawn shades directly and bakes the field too - and P1c the second, which composites it. Regenerate after a change to how the neon looks; see <a href="../tools/neon-guide-figures/README.md">its README</a>.</p>
   </footer>
 </div>

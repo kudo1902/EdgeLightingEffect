@@ -886,7 +886,12 @@ frame 0.622 -> ~0.15 ms with the hue rotating (~4x) and 0.572 -> ~0.07 ms still
   segments with their own stops under a rotating hue.
 
 Below 1.0 the same split would cache pass 1b's field at the reduced scale
-(0.85 MB at 0.5) and leave only the ring at full resolution per frame.
+(0.85 MB at 0.5) and leave only the ring at full resolution per frame. *Built -
+I50, AMD Radeon Pro 5300M, 1080p: under a rotating hue only (every other
+unchanged frame skips pass 1b already), 2.00x / 1.56x / 1.23x on hue frames at
+0.75 / 0.5 / 0.25, 0.84 MB at 0.5, within 1 level. The blit stays per frame as
+well as the ring, which is why 1.0 is still the cheaper scale for those frames
+(0.22 against 0.37 ms on the default rect).*
 
 *Prototyped (scratch build, not in the tree).* `neon.frag` compiled with a
 `NEON_FIELD_BAKE` define sets the gathered hue to 1 and writes the

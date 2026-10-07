@@ -57,15 +57,13 @@ void main() { fragColor = uColor; }
                 {
                     return PassKind::P2C;
                 }
-                // Offscreen, one source twice over: pass 1b below scale 1.0,
-                // the field bake at 1.0 - the only one uploaded at 1.0.
-                GLfloat scale = 0.0f;
-                const GLint location = glGetUniformLocation(program, "uResolutionScale");
-                if (location >= 0)
-                {
-                    glGetUniformfv(program, location, &scale);
-                }
-                return (scale >= 1.0f) ? PassKind::P1F : PassKind::P1B;
+                // Offscreen, one source twice over: pass 1b, into the RGBA8
+                // reduced buffer, or the field bake, into its half-float
+                // field - at either scale, so told apart by the target.
+                GLint componentType = GL_NONE;
+                glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                                      GL_FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE, &componentType);
+                return (componentType == GL_FLOAT) ? PassKind::P1F : PassKind::P1B;
             }
             if (HasUniform(program, "uEmission"))
             {

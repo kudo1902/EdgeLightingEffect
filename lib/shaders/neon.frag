@@ -1088,14 +1088,14 @@ void main() {
     // --- Grade --------------------------------------------------------
     // neonToneMap (neon-grade.glsl, shared with neon-field.frag).
 #ifdef NEON_FIELD_BAKE
-    // Fa is the pre-tone-map result at hue 1; the masks below then run on 1.0,
-    // which leaves the mask itself. neon-field.frag tone-maps col * Fa and
-    // applies the mask after, as this file does.
-    float fieldFa = result.r;
-    result = vec3(1.0);
-#else
-    result = neonToneMap(result);
+    // Fa: the pre-tone-map result at hue 1, which neon-field.frag tone-maps
+    // times the gathered hue. Nothing below would multiply it: the field is
+    // built only for configs neither of the masks below touches at 1.0
+    // (IsFieldEligible), and below 1.0 the blit owns both.
+    fragColor = vec4(result.r, 0.0, 0.0, 1.0);
+    return;
 #endif
+    result = neonToneMap(result);
 
     // --- One-sided cut: mask the WHOLE layer at the line --------------
     // Anchored at the opaque fill's own edge and feathered INTO the lit side
@@ -1144,10 +1144,6 @@ void main() {
     // reads as a solid tube; the dim halo/bloom (alpha ~ 0) stay additive; the
     // dark surround (alpha = 0) leaves the background untouched. Pairs with
     // glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA) in the renderer.
-#ifdef NEON_FIELD_BAKE
-    fragColor = vec4(fieldFa, result.r, 0.0, 1.0);
-#else
     float alpha = clamp(max(result.r, max(result.g, result.b)), 0.0, 1.0);
     fragColor = vec4(result, alpha);
-#endif
 }

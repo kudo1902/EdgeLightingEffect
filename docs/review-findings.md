@@ -4308,6 +4308,62 @@ measured and set aside: byte-identical but 0.88x on hue frames at 1.0. Step 6
 then cut `neon.frag`'s commentary from 1,207 to 615 lines, comments only, the
 measured history moved verbatim to `docs/neon-frag-notes.md`.
 
+### I50. Below 1.0, a rotating hue re-shaded pass 1b every frame - CHANGED
+
+Below 1.0 a frame where nothing moved skips passes 1a and 1b
+(`mOffscreenCurrent`), but under a rotating hue - the library's default - the
+emission table moves every frame, so both ran every frame, and pass 1b is the
+whole shading at the reduced scale: 48% of a hue frame at 0.5 on the default
+scene, by GPU timer (AMD Radeon Pro 5300M, 1080p). With no segments its output
+is the same `mask * tonemap(col * Fa)` I46 factored at 1.0, and the mask is 1
+there (the blit owns the cut and the cutoffs below 1.0). So the field now runs
+at both scales: below 1.0 `mNeonFieldShader` bakes `Fa` at the reduced scale on
+the reduced buffer's own region and texel grid (`GetFieldRegion`), and
+`mFieldCompositeShader` writes `mScaledBuffer`, unblended, in pass 1b's place;
+the blit and the ring are unchanged. Eligible below 1.0 only with the hue
+rotating (`IsFieldEligible`) - every other way a settled config redraws pass 1b
+invalidates the field too - so a still config there never compiles or
+allocates it. R16F, half the reduced buffer: 0.84 MB at 0.5 and 0.21 MB at 0.25
+for the default rect at 1080p.
+
+`neon-scale-check time --mode hue` against `9f5db99`, 1920 x 1080, three
+interleaved rounds, geometric mean over the twelve scenes:
+
+| scale | 0.75 | 0.5 | 0.35 | 0.25 | 0.125 |
+| ----- | ---: | --: | ---: | ---: | ----: |
+| hue frames | 2.00x | 1.56x | 1.32x | 1.23x | 1.13x |
+| `default`, ms | 0.926 -> 0.403 | 0.623 -> 0.368 | 0.495 -> 0.352 | 0.433 -> 0.348 | 0.412 -> 0.377 |
+
+Up to 2.9x (`soft_wash`, `overdrive` at 0.75). `still`, `intensity`, `arc-wipe`
+and `segment-travel` read 0.97-1.08x at every scale, 1.0 included; `segments`
+(no field) and `bounded_band` (under `FIELD_MIN_FILL`) are untouched. 1.0 stays
+the cheaper scale for hue frames (`default` 0.223 ms) - the blit and the ring
+are full-resolution costs the field does not reach. Hue frames of all twelve
+scenes at five reduced scales within 1 level of `9f5db99` (on up to 0.9% of a
+frame's channels); scale 1.0, `segments` and `bounded_band` byte-identical;
+`check` passes, `partition` on two seeds.
+
+Two things the measurement caught on the way:
+
+- **The composite's texel lookup.** Below 1.0 `gl_FragCoord` finds the texel
+  exactly (the field and the target share a grid), but a select between it and
+  the 1.0 lookup cost the 1.0 composite ~30% on still frames. Both scales now
+  compute `floor((vPos - uFieldOrigin) * uFieldTexelScale)`, the scale exactly 1
+  at 1.0 - byte-identical to the `gl_FragCoord` version below 1.0.
+- **Where the compile lands.** Built on the bake frame - the second after a
+  config change - as I46 built them at 1.0, the field's programs stalled that
+  frame 156 ms below 1.0 in the prototype (141 ms at 1.0, where that stall had
+  always been). Building them on the first frame did not
+  move it - this driver finishes a program's compile on its first DRAW, in its
+  real target and blend state, so ~125 ms stayed on the bake frame - and
+  compositing on the first frame instead moved the shading program's first
+  draw, and its stall, to the first config change. So the first frame a config
+  the field can serve is drawn builds both programs AND bakes the field, while
+  still shading directly: first frame at 0.5, 302 -> 426 ms, then 2.5 -> 7.9 ms
+  for frame 2 (the composite's own first draw), no stall after, nor on the next
+  config change; at 1.0, 166 + 141 -> 294 + 7.5 ms over the first two frames.
+  The price is one bake an animated config may not reuse, once per renderer.
+
 ---
 
 ## What is left
@@ -4320,7 +4376,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), and the twenty-second I47, I48 and I49. Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, and the twenty-third I50. Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -4366,6 +4422,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I47 | fixed | the neon cleared its cached offscreen passes and its field on any composited config change, so an animation of another layer (the lens flare's sun) cost it 4.9x (hue) / 15x (still) at 1.0; now cleared only on a change to `config.neon` or `config.geometry`, byte-identical |
 | I48 | changed | the bloom's and the corner development's atans were the driver's; now a minimax polynomial (1.7e-6 rad), 1.07-1.11x on animated frames at 1.0 and 0.5 on an AMD 5300M, within 1 level on at most 0.016% of channels; unmeasured on the M2 |
 | I49 | changed | three byte-identical SDF functions and the tone map were hand-copied between shaders, "uniformly lit" was decided twice, and the inline-gather path no shipped config built was still compiled in; one copy of each, one CPU predicate, the inline path and its gate removed for a `GATHER_MAX_SCALE` of 0.5 (20 -> 8 MB, 3.3x, up to 9 levels on a 40 x 24 rect; no check image moves) |
+| I50 | changed | below 1.0 a rotating hue re-shaded pass 1b every frame; the hue-invariant field now serves it too, baked on the reduced buffer's grid and composited in pass 1b's place - 2.00x / 1.56x / 1.23x on hue frames at 0.75 / 0.5 / 0.25 (AMD 5300M, 1080p), +0.84 MB at 0.5, within 1 level; the field's programs now built and first drawn on a config's first frame, which removes the bake frame's ~140 ms stall |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

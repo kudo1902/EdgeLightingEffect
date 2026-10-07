@@ -1198,31 +1198,46 @@ namespace EdgeLighting
             return true;
         }
 
-        /// Whether this config's pass 1 at scale 1.0 can be factored into the
-        /// hue-invariant field (pass 1f) and its composite (pass 1c): what
-        /// neon.frag writes must be mask * tonemap(col * Fa), with only the
-        /// gathered hue col moving with time. Not with segments - their hue
-        /// enters as a second product, and the field would need a channel for
-        /// it - and not when time can move the colour-stop alpha neon.frag
-        /// reads pointwise: a rotating hue over a ring that is not opaque at
-        /// every texel (@p ringOpaque, as uploaded). A function of the config
-        /// and the ring's upload; the split gather is checked by the caller.
+        /// Whether neon.frag multiplies anything after its tone map - the
+        /// one-sided cut or a cutoff. Without either every such multiply is by
+        /// exactly 1.0 (a disabled cutoff's sentinel puts its smoothstep at an
+        /// end). Never below 1.0: there neon-blit.frag applies the cut and the
+        /// cutoffs (neon.frag's blitOwnsCut), so the shading multiplies by
+        /// nothing after its tone map.
+        inline bool MasksAfterGrade(const Config &config)
+        {
+            return GetClampedResolutionScale(config) >= 1.0f &&
+                   (config.neon.glowSide != GlowSide::BOTH || config.neon.insideCutoff.enable ||
+                    config.neon.outsideCutoff.enable);
+        }
+
+        /// Whether this config's shading can be factored into the hue-invariant
+        /// field (pass 1f) and its composite (pass 1c): what neon.frag writes
+        /// must be tonemap(col * Fa), with only the gathered hue col moving
+        /// with time. Not with segments - their hue enters as a second
+        /// product, and the field would need a channel for it - and not when
+        /// time can move the colour-stop alpha neon.frag reads pointwise: a
+        /// rotating hue over a ring that is not opaque at every texel
+        /// (@p ringOpaque, as uploaded). And not at 1.0 with a one-sided glow
+        /// or a cutoff (MasksAfterGrade): the field is Fa alone, one channel,
+        /// and those configs shade directly - the mask channel they needed
+        /// served no frame below 1.0, where the blit applies both.
+        ///
+        /// At 1.0 the composite stands in for pass 1, which draws onto the
+        /// caller's framebuffer on every frame. Below it, it stands in for pass
+        /// 1b, which mOffscreenCurrent already skips on every frame where
+        /// nothing moved - so the only frames left for a field to serve are the
+        /// ones where only the time moved, and so only under a rotating hue.
+        /// Every other way a settled config redraws pass 1b (a cross-fade's
+        /// ring upload, a viewport change) invalidates the field too. A field
+        /// for a still ring below 1.0 would cost its memory and its compile
+        /// and never be read. A function of the config and the ring's upload.
         inline bool IsFieldEligible(const std::vector<SegmentBoost> &effectiveSegments, const Config &config,
                                     bool ringOpaque)
         {
-            return config.neon.enable && GetClampedResolutionScale(config) >= 1.0f && effectiveSegments.empty() &&
-                   (config.neon.hueRotationRate == 0.0f || ringOpaque);
-        }
-
-        /// Whether neon.frag multiplies anything after its tone map - the
-        /// one-sided cut or a cutoff - so the field needs the mask in .g.
-        /// Without either every such multiply is by exactly 1.0 (a disabled
-        /// cutoff's sentinel puts its smoothstep at an end), and the field is
-        /// one channel.
-        inline bool HasFieldMask(const Config &config)
-        {
-            return config.neon.glowSide != GlowSide::BOTH || config.neon.insideCutoff.enable ||
-                   config.neon.outsideCutoff.enable;
+            const bool rotating = config.neon.hueRotationRate != 0.0f;
+            return config.neon.enable && effectiveSegments.empty() && (!rotating || ringOpaque) &&
+                   !MasksAfterGrade(config) && (GetClampedResolutionScale(config) >= 1.0f || rotating);
         }
 
         static_assert(GLOW_COVER_SHARED >= 2 * GLOW_COVER_MIN_INTERIOR,
@@ -1607,26 +1622,37 @@ namespace EdgeLighting
         /// quad may be a thin frame: the production band's quad is ~7% of its
         /// box, so its field was ~8 MB for a frame that measured 1.02x, the
         /// shading there being too little for the field to save. At a half the
-        /// field holds at most two texels per shaded pixel.
+        /// field holds at most two texels per shaded pixel. The same share
+        /// below 1.0, counted in the reduced buffer's texels.
         constexpr float FIELD_MIN_FILL = 0.5f;
 
-        /// The box the field covers, at full resolution: the glow quad's,
-        /// clipped to the viewport, on the viewport's pixel grid.
-        inline BufferRegion GetFieldRegion(const Config &config, const glm::vec2 &glowOuter, int viewportWidth,
-                                           int viewportHeight)
+        /// The box the field covers. At 1.0 the glow quad's, clipped to the
+        /// viewport, on the viewport's pixel grid. Below it exactly the reduced
+        /// buffer's region (the blit's read extent @p scaledOuter, as pass 1b
+        /// draws it), so the field and @c mScaledBuffer share one texel grid
+        /// and pass 1c writes each texel of the one from the same texel of the
+        /// other.
+        inline BufferRegion GetFieldRegion(const Config &config, const glm::vec2 &glowOuter,
+                                           const glm::vec2 &scaledOuter, int viewportWidth, int viewportHeight)
         {
             const glm::vec2 centerFull(config.geometry.position.x + config.geometry.width * 0.5f,
                                        static_cast<float>(viewportHeight) - config.geometry.position.y -
                                            config.geometry.height * 0.5f);
+            const float scale = GetClampedResolutionScale(config);
+            if (scale < 1.0f)
+            {
+                return GetBufferRegion(scaledOuter, centerFull, viewportWidth, viewportHeight, scale, true);
+            }
             return GetBufferRegion(glowOuter, centerFull, viewportWidth, viewportHeight, 1.0f, true);
         }
 
-        /// Whether a glow quad of @p glowArea px fills enough of @p region for
-        /// the field to be worth its memory (FIELD_MIN_FILL).
-        inline bool FieldFillsRegion(float glowArea, const BufferRegion &region)
+        /// Whether a glow quad of @p glowArea FULL-RES px, drawn at @p scale,
+        /// fills enough of @p region for the field to be worth its memory
+        /// (FIELD_MIN_FILL).
+        inline bool FieldFillsRegion(float glowArea, const BufferRegion &region, float scale)
         {
             const float box = static_cast<float>(region.texels.x) * static_cast<float>(region.texels.y);
-            return glowArea >= FIELD_MIN_FILL * box;
+            return glowArea * scale * scale >= FIELD_MIN_FILL * box;
         }
 
         /// The ortho that draws @p region, at @p scale, from rect-local SCALED
@@ -1883,19 +1909,34 @@ namespace EdgeLighting
         // either.
         const bool reuseOffscreen = glowReady && mOffscreenCurrent && !emissionStale &&
                                     !glowCoverStale && mOffscreenViewport == glm::ivec2(viewportWidth, viewportHeight);
-        // Pass 1 at 1.0 factored into the hue-invariant field (1f) and its
-        // composite (1c), where the config allows it. The field outlives the
-        // frame; besides a config change (OnConfigChanged), the viewport and a
-        // gradient ring upload - a cross-fade frame - invalidate it here. It is
-        // baked only once nothing invalidated it on the frame before, so an
-        // animation that changes the config every frame keeps drawing pass 1
+        // The shading factored into the hue-invariant field (1f) and its
+        // composite (1c), where the config allows it: in pass 1's place at
+        // 1.0, in pass 1b's below it. The field outlives the frame; besides a
+        // config change (OnConfigChanged), the viewport and a gradient ring
+        // upload - a cross-fade frame - invalidate it here. It is baked only
+        // once nothing invalidated it on the frame before, so an animation
+        // that changes the config every frame keeps drawing the shading
         // directly and never pays a bake it cannot reuse.
+        //
+        // Except on the FIRST frame a config the field can serve is drawn,
+        // which builds the field's two programs and bakes the field at once,
+        // while still shading directly. Building alone is not enough: this
+        // driver finishes a program's compile on its first DRAW, in the target
+        // and blend state it draws with, so a bake program only linked here
+        // left a ~125 ms stall on the bake frame after it (~155 ms all told,
+        // AMD Radeon Pro 5300M). And the frame still shades directly so that
+        // the shading program's first draw lands here too - compositing
+        // instead deferred THAT stall to the first config change. The price is
+        // one bake an animated config may not reuse, once per renderer. A
+        // frame below 1.0 that reuses its offscreen buffers has no pass 1b for
+        // the field to replace, and the first frame never does.
         bool useField = false;
         bool bakeField = false;
-        const BufferRegion fieldRegion = GetFieldRegion(config, mGlowOuter, viewportWidth, viewportHeight);
-        if (glowReady && !scaled && !mFieldUnavailable &&
-            IsFieldEligible(mEffectiveSegments, config, mGradientLUT.IsOpaque()) &&
-            FieldFillsRegion(mGlowArea, fieldRegion))
+        const BufferRegion fieldRegion =
+            GetFieldRegion(config, mGlowOuter, mScaledOuter, viewportWidth, viewportHeight);
+        const bool fieldProgramsBuilt = mNeonFieldShader.IsValid() && mFieldCompositeShader.IsValid();
+        if (glowReady && !mFieldUnavailable && IsFieldEligible(mEffectiveSegments, config, mGradientLUT.IsOpaque()) &&
+            FieldFillsRegion(mGlowArea, fieldRegion, scale) && ensureFieldPrograms() && !(scaled && reuseOffscreen))
         {
             const glm::ivec2 viewport(viewportWidth, viewportHeight);
             if (viewport != mFieldViewport || mGradientLUT.GetUploadCount() != mFieldGradientUploads)
@@ -1911,8 +1952,12 @@ namespace EdgeLighting
             }
             else if (mFieldSettled)
             {
-                bakeField = ensureFieldPrograms();
-                useField = bakeField;
+                bakeField = true;
+                useField = true;
+            }
+            else if (!fieldProgramsBuilt)
+            {
+                bakeField = true;
             }
             else
             {
@@ -1944,6 +1989,25 @@ namespace EdgeLighting
                 glDisable(GL_BLEND);
                 renderGlowCoverPass(config);
             }
+
+            // How pass 1f runs, at either scale: bake the field over @p region
+            // - the one its composite draws (GetFieldRegion) - through that
+            // region's projection at this frame's scale, after the gather it
+            // reads. Unblended: the buffer is data. Records how pass 1c finds
+            // a fragment's texel: the region's origin and its texels per px,
+            // both in the composite's vPos space (scaled px; at 1.0 the
+            // field's own px, at exactly one texel per px). A failed bake
+            // composites nothing: the frame shades directly.
+            auto bakeFieldPass = [&](const BufferRegion &region, const glm::vec2 &uvScale,
+                                     const glm::vec2 &uvOffset) {
+                const bool baked = renderFieldPass(RegionProjection(region, scale), region.texels.x,
+                                                   region.texels.y, uvScale, uvOffset, scale, time, config);
+                useField = useField && baked;
+                mFieldCurrent = baked;
+                mFieldUnavailable = !baked;
+                mFieldOrigin = region.origin * scale;
+                mFieldTexelScale = glm::vec2(region.texels) / (region.size * scale);
+            };
 
             // The offscreen buffers cover a REGION of the frame, not the
             // viewport (GetBufferRegion): each pass draws through an ortho
@@ -1980,6 +2044,13 @@ namespace EdgeLighting
                 // pass skips both composites below, so a failed frame degrades
                 // to the fill rather than compositing a stale buffer from an
                 // earlier frame. Read by the blit, from full-res px.
+                //
+                // Or, where the field holds - under a rotating hue, once the
+                // config has held for a frame - pass 1c in its place, into the
+                // same buffer: the field times this frame's gathered hue, with
+                // pass 1f baking the field first on the frame that needs it.
+                // The field's region IS this buffer's (GetFieldRegion), so each
+                // composite fragment reads the field texel under it.
                 if (glowReady)
                 {
                     const BufferRegion scaledRegion =
@@ -1988,29 +2059,32 @@ namespace EdgeLighting
                     blitUVOffset = -scaledRegion.origin / scaledRegion.size;
                     if (!reuseOffscreen)
                     {
-                        glowReady = renderNeonPass(RegionProjection(scaledRegion, scale), scaledRegion.texels.x,
-                                                   scaledRegion.texels.y, true, gatherUVScale, gatherUVOffset,
-                                                   time, config);
+                        const glm::mat4 scaledProj = RegionProjection(scaledRegion, scale);
+                        if (bakeField)
+                        {
+                            bakeFieldPass(fieldRegion, gatherUVScale, gatherUVOffset);
+                        }
+                        if (useField)
+                        {
+                            glowReady = renderFieldCompositePass(scaledProj, scaledRegion.texels.x,
+                                                                 scaledRegion.texels.y, true, gatherUVScale,
+                                                                 gatherUVOffset);
+                        }
+                        else
+                        {
+                            glowReady = renderNeonPass(scaledProj, scaledRegion.texels.x, scaledRegion.texels.y,
+                                                       true, gatherUVScale, gatherUVOffset, time, config);
+                        }
                     }
                 }
             }
-
-            // --- Pass 1f: the hue-invariant field, after the gather it reads.
-            // Over the glow quad's box at full resolution, its texel grid on
-            // the viewport's pixel grid (GetBufferRegion), so pass 1c finds a
-            // fragment's texel from its rect-local position alone. Unblended:
-            // the buffer is data.
-            if (bakeField && glowReady)
+            else if (bakeField && glowReady)
             {
-                const bool mask = HasFieldMask(config);
+                // --- Pass 1f at 1.0: over the glow quad's box at full
+                // resolution, its texel grid on the viewport's pixel grid,
+                // read back by pass 1c on the caller's framebuffer below.
                 glDisable(GL_BLEND);
-                useField = renderFieldPass(RegionProjection(fieldRegion, 1.0f), fieldRegion.texels.x,
-                                           fieldRegion.texels.y, mask, gatherUVFullScale, gatherUVFullOffset, time,
-                                           config);
-                mFieldCurrent = useField;
-                mFieldUnavailable = !useField;
-                mFieldOrigin = fieldRegion.origin;
-                mFieldHasMask = mask;
+                bakeFieldPass(fieldRegion, gatherUVFullScale, gatherUVFullOffset);
             }
 
             if (!reuseOffscreen || bakeField)
@@ -2053,7 +2127,7 @@ namespace EdgeLighting
                 // times the gathered hue.
                 if (useField)
                 {
-                    renderFieldCompositePass(mvp, gatherUVFullScale, gatherUVFullOffset);
+                    renderFieldCompositePass(mvp, bufW, bufH, false, gatherUVFullScale, gatherUVFullOffset);
                 }
                 else
                 {
@@ -2368,11 +2442,14 @@ namespace EdgeLighting
         bakeLUTs(config);
 
         // The field - the renderer's largest buffer at 1.0 - goes with any
-        // config that cannot use it. Not on the ring's opacity, which is the
-        // upload's rather than the config's: a rotating hue over a ring that
-        // is not opaque keeps a field it does not read until the next change.
+        // config that cannot use it: segments, or below 1.0 a hue that stopped
+        // rotating. Not on the ring's opacity, which is the upload's rather
+        // than the config's: a rotating hue over a ring that is not opaque
+        // keeps a field it does not read until the next change.
         if (!IsFieldEligible(mEffectiveSegments, config, true) ||
-            !FieldFillsRegion(mGlowArea, GetFieldRegion(config, mGlowOuter, mFieldViewport.x, mFieldViewport.y)))
+            !FieldFillsRegion(mGlowArea,
+                              GetFieldRegion(config, mGlowOuter, mScaledOuter, mFieldViewport.x, mFieldViewport.y),
+                              GetClampedResolutionScale(config)))
         {
             mFieldBuffer.Release();
             mFieldCurrent = false;
@@ -3642,9 +3719,11 @@ namespace EdgeLighting
 
     bool NeonRenderer::ensureFieldPrograms()
     {
-        // The bake is neon.frag reading the gather (as pass 1 does at 1.0)
-        // with NEON_FIELD_BAKE: hue 1 in, field out. It shades, so it takes the
-        // arc block; it does not gather, so not the sample block.
+        // The bake is neon.frag reading the gather (as the shading does at
+        // either scale) with NEON_FIELD_BAKE: hue 1 in, field out. It shades,
+        // so it takes the arc block; it does not gather, so not the sample
+        // block. One object for both scales: it only ever draws the field
+        // buffer, unblended, and the composite draws one target per frame.
         if (!buildNeonProgram(mNeonFieldShader, ShaderSource::NEON_FRAG_SRC, "NEON_FIELD_BAKE",
                               "NeonRenderer.Field", PROGRAM_FIELD, false, true))
         {
@@ -3666,63 +3745,77 @@ namespace EdgeLighting
         {
             mFailedPrograms |= PROGRAM_FIELD_COMPOSITE;
             mFieldUnavailable = true;
-            LOG_E("NeonRenderer: the field composite failed to compile/link - scale 1.0 draws pass 1 directly.");
+            LOG_E("NeonRenderer: the field composite failed to compile/link - the glow is shaded directly.");
             return false;
         }
         return true;
     }
 
-    bool NeonRenderer::renderFieldPass(const glm::mat4 &mvp, int width, int height, bool mask,
-                                       const glm::vec2 &gatherUVScale, const glm::vec2 &gatherUVOffset, float time,
+    bool NeonRenderer::renderFieldPass(const glm::mat4 &mvp, int width, int height, const glm::vec2 &gatherUVScale,
+                                       const glm::vec2 &gatherUVOffset, float scale, float time,
                                        const Config &config)
     {
         // An offscreen target: the host's scissor is in the wrong coordinates
         // here - see renderNeonPass.
         GLUtils::NoScissorScope noScissor(true);
 
-        // Half float, one channel for Fa or two with the mask. No 8-bit
-        // fallback: Fa runs well past 1 and the tone map is steep near 0, so
-        // 8 bits would move whole levels - a driver that cannot render to
-        // half float draws pass 1 directly instead. NEAREST: the composite
-        // reads one texel per fragment, its own.
-        const bool ok = mask ? mFieldBuffer.Resize(width, height, GL_RG16F, GL_RG, GL_HALF_FLOAT, GL_NEAREST)
-                             : mFieldBuffer.Resize(width, height, GL_R16F, GL_RED, GL_HALF_FLOAT, GL_NEAREST);
-        if (!ok)
+        // Half float, one channel: Fa. No 8-bit fallback: Fa runs well past 1
+        // and the tone map is steep near 0, so 8 bits would move whole levels
+        // - a driver that cannot render to half float shades directly instead.
+        // NEAREST: the composite reads one texel per fragment, its own.
+        if (!mFieldBuffer.Resize(width, height, GL_R16F, GL_RED, GL_HALF_FLOAT, GL_NEAREST))
         {
-            LOG_E("NeonRenderer: no half-float target for the hue-invariant field - scale 1.0 draws pass 1 directly.");
+            LOG_E("NeonRenderer: no half-float target for the hue-invariant field - the glow is shaded directly.");
             return false;
         }
         // Cleared to 0: a texel neon.frag discards composites to nothing.
         mFieldBuffer.Bind();
         mFieldBuffer.ClearBuffer();
 
-        // Every uniform pass 1 takes at 1.0, from the same upload, so the bake
-        // shades exactly what pass 1 would - with the hue at 1.
+        // Every uniform the shading takes at this scale - pass 1 at 1.0, pass
+        // 1b below it - from the same upload, so the bake shades exactly what
+        // that pass would, with the hue at 1.
         mNeonFieldShader.Use();
-        uploadNeonUniforms(mNeonFieldShader, mvp, 1.0f, time, mQuadMargin, mCornerSkip, config);
+        uploadNeonUniforms(mNeonFieldShader, mvp, scale, time, mQuadMargin, mCornerSkip, config);
         bindGatherBuffer(mNeonFieldShader, gatherUVScale, gatherUVOffset);
         mGlowVertexArray.DrawArrays(GL_TRIANGLES, mGlowVertexCount);
         mNeonFieldShader.Unuse();
         return true;
     }
 
-    void NeonRenderer::renderFieldCompositePass(const glm::mat4 &mvp, const glm::vec2 &gatherUVScale,
-                                                const glm::vec2 &gatherUVOffset)
+    bool NeonRenderer::renderFieldCompositePass(const glm::mat4 &mvp, int bufWidth, int bufHeight, bool scaled,
+                                                const glm::vec2 &gatherUVScale, const glm::vec2 &gatherUVOffset)
     {
-        // The glow quad pass 1 draws, through pass 1's transform: the same
+        // Below 1.0 pass 1b's target, set up as renderNeonPass sets it up -
+        // the host's scissor lifted, the reduced buffer sized, bound and
+        // cleared - for the same reasons, given there. At 1.0 the caller's
+        // framebuffer, as pass 1 draws it.
+        GLUtils::NoScissorScope noScissor(scaled);
+        if (scaled)
+        {
+            if (!mScaledBuffer.Resize(bufWidth, bufHeight, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, GL_LINEAR))
+            {
+                return false;
+            }
+            mScaledBuffer.Bind();
+            mScaledBuffer.ClearBuffer();
+        }
+
+        // The glow quad the shading draws, through its transform: the same
         // fragments, each reading its own field texel.
         mFieldCompositeShader.Use();
         mFieldCompositeShader.SetUniform("uMVP", mvp);
         mFieldBuffer.BindTexture(6);
         mFieldCompositeShader.SetUniform("uField", 6);
         mFieldCompositeShader.SetUniform("uFieldOrigin", mFieldOrigin);
-        mFieldCompositeShader.SetUniform("uFieldHasMask", mFieldHasMask ? 1 : 0);
+        mFieldCompositeShader.SetUniform("uFieldTexelScale", mFieldTexelScale);
         mGatherBuffer.BindTexture(3, 0);
         mFieldCompositeShader.SetUniform("uGather", 3);
         mFieldCompositeShader.SetUniform("uGatherUVScale", gatherUVScale);
         mFieldCompositeShader.SetUniform("uGatherUVOffset", gatherUVOffset);
         mGlowVertexArray.DrawArrays(GL_TRIANGLES, mGlowVertexCount);
         mFieldCompositeShader.Unuse();
+        return true;
     }
 
     void NeonRenderer::bindGatherInputs(ShaderProgram &shader, const Config &config)

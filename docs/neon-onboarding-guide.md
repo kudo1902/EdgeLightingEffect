@@ -1434,14 +1434,22 @@ still ring never re-runs P0, and neither does a config change that moves none
 of those: an intensity, bloom, glow or geometry animation. (Until
 `docs/neon-perf-plan.md` item 6 it was any config change.)
 
-At 1.0, with no segments and a colour-stop alpha time cannot move, P1 itself
-is factored (I46): its output is `mask * tonemap(col * Fa)` with only the
-gathered hue `col` changing from frame to frame, so **P1f** - `neon.frag`
-compiled with `NEON_FIELD_BAKE`, offscreen after P1a - bakes `Fa` (and the
-mask) into `mFieldBuffer` once the config has held for a frame, and **P1c** -
+At 1.0, with no segments, a colour-stop alpha time cannot move and neither a
+one-sided glow nor a cutoff (both are multiplied in after the tone map there),
+P1 itself is factored (I46, I51): its output is `tonemap(col * Fa)` with only
+the gathered hue `col` changing from frame to frame, so **P1f** - `neon.frag`
+compiled with `NEON_FIELD_BAKE`, offscreen after P1a - bakes `Fa` into
+`mFieldBuffer` (R16F) once the config has held for a frame, and **P1c** -
 `neon-field.frag` - draws the glow quad in P1's place: read the field, read
 the hue, tone-map. A frame whose config just changed draws P1 directly, so an
-animation never pays a bake it cannot reuse.
+animation never pays a bake it cannot reuse - except the first frame such a
+config is drawn, which draws P1 AND bakes the field, so that both programs'
+first draws (where this driver finishes compiling them) land on a frame that
+is compiling anyway. Below 1.0 the same factorisation stands in for P1b, but
+only under a rotating hue - every other unchanged frame skips P1b already (see
+below): P1f bakes on the reduced buffer's own grid - the blit applies the cut
+and the cutoffs there, so nothing follows the tone map - and P1c writes the
+reduced buffer in P1b's place (I50).
 
 P1a and P1b - the gather and, below 1.0, the reduced-scale shading - are
 skipped the same way, as a pair: when `mOffscreenCurrent` is set (no config

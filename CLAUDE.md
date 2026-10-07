@@ -12,7 +12,7 @@ Docs, in reading order. The three neon documents are tiers of the same material 
 
 - [`docs/implementation.md`](docs/implementation.md) - brief: how the library is put together on the C++ side and how a frame runs. Start here.
 - [`docs/neon-onboarding-guide.md`](docs/neon-onboarding-guide.md) - the long on-ramp for someone new to graphics: the GPU concepts the neon relies on (pipeline, coordinate spaces, textures, std140 blocks, FBOs, premultiplied alpha, SDFs, tone mapping, derivatives), then every `NeonConfig` field traced to its uniform, pass and dirty flag, every GL object, every pass with its inputs / state / outputs, and each shader stage by stage. Ends with pitfalls, recipes and exercises. Illustrated throughout with renders from the library itself - each layer and config field on screen, and what every pass writes, captured from a real frame. Read it before the three neon documents below if the vocabulary is new.
-- [`docs/neon-shader-outputs.html`](docs/neon-shader-outputs.html) - one frame at resolution scale 0.5, then the same scene at 1.0, pass by pass: what each of the neon's nine programs (`mEmissionShader`, `mGlowCoverShader`, `mNeonGatherShader`, `mNeonShadeShader`, the blit, `mNeonRingShader`, the fill, and at 1.0 the field bake `mNeonFieldShader` and its composite `mFieldCompositeShader`) actually wrote, at the resolution it runs, and why each is its own program - the field bake's case at length. The pictures for Part 6 of the guide on one page.
+- [`docs/neon-shader-outputs.html`](docs/neon-shader-outputs.html) - one frame at resolution scale 0.5, then the same scene at 1.0, pass by pass: what each of the neon's nine programs (`mEmissionShader`, `mGlowCoverShader`, `mNeonGatherShader`, `mNeonShadeShader`, the blit, `mNeonRingShader`, the fill, and the field bake `mNeonFieldShader` and its composite `mFieldCompositeShader` - at 1.0, and below it under a rotating hue) actually wrote, at the resolution it runs, and why each is its own program - the field bake's case at length. The pictures for Part 6 of the guide on one page.
 - [`docs/neon-renderer-overview.html`](docs/neon-renderer-overview.html) - the renderer in ~7 minutes: one quad, two measurements, three layers of light.
 - [`docs/neon-renderer-explained.html`](docs/neon-renderer-explained.html) - the same ground at length, with the reasoning and the bugs behind each decision.
 - [`docs/neon-renderer-reference.html`](docs/neon-renderer-reference.html) - full mechanism reference: every uniform, constant, derivation and gating rule, plus the droplet and flare term stacks. Sections 18 and 19 are flow charts - what the CPU rebuilds and which GL object each bake writes, one frame's draw sequence for both renderers, and the fragment program as annotated GLSL dataflow. Read this before changing a shader.
@@ -118,29 +118,52 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   animated frame still pays the offscreen pass.
 
   **At `1.0`, pass 1 is usually factored into a hue-invariant field** (pass
-  1f / 1c, I46, `docs/neon-perf-plan.md` section 11): with no segments,
-  `neon.frag`'s output is `mask * tonemap(col * Fa)` where only the gathered
-  hue `col` moves with time. So `neon.frag` compiled with `NEON_FIELD_BAKE`
-  (`mNeonFieldShader`; it sets `col` to 1 and writes the pre-tone-map `Fa` and
-  the post-tone-map masks applied to 1.0) bakes `mFieldBuffer` offscreen,
+  1f / 1c, I46, `docs/neon-perf-plan.md` section 11): with no segments and
+  nothing applied after the tone map, `neon.frag`'s output is
+  `tonemap(col * Fa)` where only the gathered hue `col` moves with time. So
+  `neon.frag` compiled with `NEON_FIELD_BAKE` (`mNeonFieldShader`; it sets
+  `col` to 1 and writes the pre-tone-map `Fa`) bakes `mFieldBuffer` offscreen,
   after the gather, and `neon-field.frag` (`mFieldCompositeShader`, pass 1c)
   draws the glow quad in pass 1's place: read the field, read the hue,
   tone-map - 4x on the default frame with the hue rotating, 9x still, within
-  1/255. Eligible (`IsFieldEligible`) with no segments and, under a rotating
-  hue, a ring opaque at every texel (else time moves the alpha `neon.frag`
-  reads); and only where the quad fills at least half the field's box
+  1/255. Eligible (`IsFieldEligible`) with no segments; under a rotating hue,
+  a ring opaque at every texel (else time moves the alpha `neon.frag` reads);
+  not at 1.0 with a one-sided glow or a cutoff (`MasksAfterGrade` - `neon.frag`
+  multiplies those in after its tone map there, and such a config shades
+  directly; the field used to carry them as a second channel, I51); and only
+  where the quad fills at least half the field's box
   (`FIELD_MIN_FILL` - a thin band's box is the whole screen). The bake is
   LAZY: a frame that changed the config (or the viewport, or uploaded the
   gradient ring) draws pass 1 directly, and the field is baked only once that
   held for a frame (`mFieldSettled`) - an animation changing the config every
-  frame never pays a bake it cannot reuse. R16F, RG16F with a mask (a
-  one-sided glow or a cutoff), over the glow quad's box on the viewport's pixel
-  grid (3.3 MB for a 960 x 540 rect at 1080p); no 8-bit fallback - a driver
+  frame never pays a bake it cannot reuse. The one exception is the FIRST
+  frame a config the field can serve is drawn: it builds both programs AND
+  bakes the field, while still shading directly. This driver finishes a
+  program's compile on its first draw in its real target and blend state, so
+  programs only linked there left a ~125 ms stall on the bake frame, and a
+  first frame that composited instead of shading deferred the shading
+  program's own first-draw stall to the first config change - keep all three
+  first draws on that frame. R16F, over the glow quad's box on the viewport's
+  pixel grid (3.3 MB for a 960 x 540 rect at 1080p); no 8-bit fallback - a driver
   that cannot render half float draws pass 1 directly (`mFieldUnavailable`).
-  The composite finds its texel from `vPos`, not `gl_FragCoord`, so a host
-  viewport offset is fine. **The factorisation is an invariant of
+  The composite finds its texel from `vPos` (`floor((vPos - uFieldOrigin) *
+  uFieldTexelScale)`), not `gl_FragCoord`, so a host viewport offset is fine;
+  a select between the two cost the 1.0 composite ~30% on the AMD.
+
+  **Below `1.0` the same field replaces pass 1b, under a rotating hue only**
+  (I50). Pass 1b is skipped on every frame where nothing moved already
+  (`mOffscreenCurrent`), so the frames left are the ones where only the time
+  moved: the hue. There the bake runs at the reduced scale on the reduced
+  buffer's own region and texel grid (`GetFieldRegion`), and the composite
+  writes `mScaledBuffer`, unblended, in pass 1b's place; the blit and the ring
+  are unchanged. The blit applies the cut and the cutoffs below 1.0, so every
+  config the field takes there is unmasked. R16F at half the reduced buffer's
+  size (0.84 MB at 0.5 for that rect). 1.1-2.0x on hue frames on the AMD 5300M (1.55x at 0.5),
+  within 1/255; every other frame type unchanged. `IsFieldEligible` requires
+  the rotating hue below 1.0, so a still config there never compiles or
+  allocates it. **The factorisation is an invariant of
   `neon.frag`:** anything new there that reads `col` non-linearly, reads time,
-  or multiplies after the tone map without going through the masks breaks it -
+  or multiplies after the tone map on a config the field takes breaks it -
   extend `NEON_FIELD_BAKE` and `neon-field.frag` together, or narrow
   `IsFieldEligible`. `neon-scale-check` captures the SECOND frame after a
   config change for this reason: the first draws pass 1 directly.
@@ -297,7 +320,7 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   .cpp definition order and the pass numbering all agree; the one deliberate
   exception is documented at the declaration.
 
-  **Shader programs are built per path, on first use** (`ensurePathPrograms`): `Initialize` builds only the emission and fill programs; the first frame at 1.0 builds `neon-gather.frag` and the ring's `neon.frag` program, the first frame below it those two plus pass 1b's `neon.frag` program and the blit, and the first frame that bakes the glow coverage table builds its bake (`ensureGlowCoverProgram`; a ring lit uniformly never does). So a `neon.frag` that fails to compile no longer fails `Initialize`: it is logged once, recorded in `mFailedPrograms` and never retried, and that path draws the fill only. `OnConfigChanged` gates its rebuilds on `mInitialized`, NOT on a program's validity - do not go back to testing a program's `IsValid()`, which is false on a host that has not drawn that path yet. See
+  **Shader programs are built per path, on first use** (`ensurePathPrograms`): `Initialize` builds only the emission and fill programs; the first frame at 1.0 builds `neon-gather.frag` and the ring's `neon.frag` program, the first frame below it those two plus pass 1b's `neon.frag` program and the blit, the first frame that bakes the glow coverage table builds its bake (`ensureGlowCoverProgram`; a ring lit uniformly never does), and the first frame of a config the hue-invariant field can serve builds the field's two (`ensureFieldPrograms`; never with segments, nor below 1.0 without a rotating hue). So a `neon.frag` that fails to compile no longer fails `Initialize`: it is logged once, recorded in `mFailedPrograms` and never retried, and that path draws the fill only. `OnConfigChanged` gates its rebuilds on `mInitialized`, NOT on a program's validity - do not go back to testing a program's `IsValid()`, which is false on a host that has not drawn that path yet. See
   [`docs/emission-prepass.md`](docs/emission-prepass.md) for the pass tables and
   [`docs/emission-prepass-comparison.md`](docs/emission-prepass-comparison.md)
   for the measured before/after of the pre-pass commit alone.

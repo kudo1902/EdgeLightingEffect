@@ -456,7 +456,10 @@ only composites the gathered hue after that (I46 in `review-findings.md`):
 there 1.0 is the cheapest scale on still frames and with the hue rotating, and
 a reduced scale pays only on frames whose config animates, with segments, or
 for a very small rect. The field costs ~3.3 MB at 1080p for a 960 x 540 rect.
-See `docs/neon-perf-plan.md` section 11.
+See `docs/neon-perf-plan.md` section 11. Below 1.0 the same field stands in for
+the reduced-scale shading on hue-rotating frames (I50): 1.55x on those frames
+at 0.5, for 0.84 MB more on that rect - which narrows the gap without closing
+it, since the blit and the ring are full-resolution costs it does not touch.
 
 **`neon.numSamples`** (default 128)
 Number of gather-loop samples per fragment, capped at `NEON_MAX_LOOP_SAMPLES`

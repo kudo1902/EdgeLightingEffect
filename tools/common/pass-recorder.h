@@ -35,8 +35,8 @@ namespace NeonTools
         P1,       ///< Direct-path glow with the gather inline (neon.frag reading uEmission) - no longer built; pass 1 at 1.0 is the ring program, P2C.
         P1A,      ///< Gather pass (neon-gather.frag).
         P1B,      ///< Reduced-scale shading (neon.frag, offscreen, below scale 1.0).
-        P1F,      ///< Hue-invariant field bake (neon.frag + NEON_FIELD_BAKE, offscreen, scale 1.0).
-        P1C,      ///< Field composite (neon-field.frag, onto the target, scale 1.0).
+        P1F,      ///< Hue-invariant field bake (neon.frag + NEON_FIELD_BAKE, offscreen, either scale).
+        P1C,      ///< Field composite (neon-field.frag: onto the target at 1.0, into the reduced buffer below it).
         P2A,      ///< Opaque fill (black-rect.frag).
         P2B,      ///< Blit (neon-blit.frag).
         P2C       ///< Edge ring (neon.frag, onto the target) - and pass 1 at 1.0, the same program.

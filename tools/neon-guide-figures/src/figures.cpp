@@ -1191,14 +1191,15 @@ namespace NeonGuideFigures
 
         // P1f / P1c - the hue-invariant field and its composite. The scene
         // without its segment, since segments keep the field off, at scale
-        // 1.0, and its SECOND frame: the first draws pass 1 and lets the
-        // config settle, the second bakes the field and composites it.
+        // 1.0. The field from its FIRST frame, which draws pass 1 and also
+        // bakes the field (the first frame a config the field can serve is
+        // drawn builds and first draws its programs); the composite from its
+        // SECOND, which reads that field in pass 1's place.
         {
             Config field = c;
             field.neon.resolutionScale = 1.0f;
             field.neon.segmentBoosts.clear();
             std::unique_ptr<EdgeLightingEffect> effect = FreshEffect();
-            Render(*effect, field, PASS_W, PASS_H);
             Render(*effect, field, PASS_W, PASS_H, false, true);
             if (const DrawRecord *p1f = PassRecorder::Find(PassKind::P1F))
             {
@@ -1216,6 +1217,7 @@ namespace NeonGuideFigures
                 std::printf("    field buffer %d x %d, internal format 0x%x\n", f.width, f.height,
                             unsigned(f.internalFormat));
             }
+            Render(*effect, field, PASS_W, PASS_H, false, true);
             if (const DrawRecord *p1c = PassRecorder::Find(PassKind::P1C))
             {
                 SavePNG(AttachmentImage(p1c->written[0], [](const glm::vec4 &v) { return glm::vec3(v); }),
