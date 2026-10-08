@@ -137,20 +137,26 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
 
   **Pass 1b is factored into a hue-invariant field under a rotating hue or a
   moving intensity** (pass 1f / 1c; I46 at the old 1.0 path, I50, I56;
-  `docs/neon-perf-plan.md` section 11): with no segments, pass 1b's output is
-  `tonemap(col * Fa)` where only the gathered hue `col` moves with time (the
-  blit applies the cut and the cutoffs after it, so every config the field
-  takes is unmasked). So `neon.frag` compiled with `NEON_FIELD_BAKE`
-  (`mFieldBakeShader`; it sets `col` to 1 and writes the pre-tone-map `Fa`)
+  `docs/neon-perf-plan.md` section 11): pass 1b's output is
+  `tonemap(col * Fa + segColHue * Fs)` where only the gathered hues `col` and
+  `segColHue` move with time (the blit applies the cut and the cutoffs after
+  it, so every config the field takes is unmasked; `Fs` is 0 without
+  segments). So `neon.frag` compiled with `NEON_FIELD_BAKE`
+  (`mFieldBakeShader`; it puts the arc hue on red and the segment hue on green
+  and writes the pre-tone-map `Fa` / `Fs` in one draw - `.r` is the same
+  expression as the old one-channel bake, bit for bit)
   bakes `mGlowField.buffer` on the reduced buffer's own region and texel grid
   (`GetFieldRegion`), after the gather, and `neon-field.frag`
   (`mFieldCompositeShader`, pass 1c) writes `mScaledBuffer`, unblended, in
-  pass 1b's place: read the field, read the hue, tone-map. Pass 1b is skipped
+  pass 1b's place: read the field, read the hues, tone-map. Pass 1b is skipped
   on every frame where nothing moved already (`mOffscreen.reusable`), so the
   frames left for the field are the hue's and an intensity animation's -
   1.1-2.0x on hue frames on the AMD 5300M (1.55x at 0.5), 2.31x on
   intensity-pulse frames at 0.5 on the M2, within 1/255 on hue frames.
-  Eligible (`IsFieldEligible`) with no segments; under a rotating hue, a ring
+  Eligible (`IsFieldEligible`) with or without segments (D3, 2026-10-08:
+  segment configs used to shade pass 1b and the ring on every hue and still
+  frame - now 2.1x on hue frames at 0.5 and 3.2x at 1.0, 1.5-2.1x still, M2,
+  within 1/255); under a rotating hue, a ring
   opaque at every texel (else time moves the alpha `neon.frag` reads); with
   the hue rotating or the intensity moving (a still config never compiles or
   allocates it); and only where the quad fills at least half the field's box
@@ -163,7 +169,8 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   it baked at, composites `Fa * I / I0` (`uFieldGain`) while the intensity
   moves below I0, bakes again above it, and bakes exactly on the frame it
   stops (up to 2 levels off while moving on the default look, 6 on a 1.5
-  bloom; held frames exact - pass 1b's buffer holding a composite is never
+  bloom; the gain scales `Fa` only - the segments' emission does not read the
+  intensity; held frames exact - pass 1b's buffer holding a composite is never
   reused, so the held frame redraws it). The one exception is the FIRST frame
   a config the field can serve is drawn: it builds both programs AND bakes the
   field, while still shading directly. This driver finishes a program's
@@ -172,7 +179,8 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   that composited instead of shading deferred the shading program's own
   first-draw stall to the first config change - keep all three first draws on
   that frame. R16F at half the reduced buffer's size (0.84 MB at 0.5 for a
-  960 x 540 rect at 1080p); no 8-bit fallback - a driver that cannot render
+  960 x 540 rect at 1080p), RG16F with segments (`GetFieldFormat`, 1.7 MB) -
+  the composite's `uFieldSegments` follows the same test; no 8-bit fallback - a driver that cannot render
   half float shades directly (`LazyBake::unavailable`). That schedule is
   `NeonRenderer::LazyBake`, one instance per field (`mGlowField.schedule`, `mRingField.schedule`),
   so the two fields cannot drift apart. The composite finds its texel from
@@ -182,8 +190,8 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   **The edge ring has a field of its own** (pass 1r / 2r, I52).
   The ring is re-shaded on EVERY frame - it draws onto the caller's
   framebuffer, so nothing is reused - still frames included, and it is a
-  full-resolution cost the scale does not shrink. With no segments
-  (`IsRingFieldEligible`) its output is `mask * tonemap(col * Fa)`: the ring
+  full-resolution cost the scale does not shrink. Its output
+  (`IsRingFieldEligible`) is `mask * tonemap(col * Fa + segColHue * Fs)`: the ring
   shades with scale-1.0 uniforms and `uBlitOwnsCut` 0, so it multiplies the one-sided cut
   and the cutoffs in after its tone map, and that mask is a function of the
   pixel's position alone, which the composite recomputes (I53 - before it a
@@ -202,13 +210,13 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   layout, the bake's per-strip projections and the shader's lookup must change
   together; and its mask is `neon.frag`'s post-grade cut and cutoffs copied
   term for term, fed by the same upload (`UploadEdgeMaskUniforms`) - change
-  either and change both. R16F, ~0.27 MB for a 960 x 540 rect at 1080p (1.06 MB as a plain
+  either and change both. R16F (RG16F with segments, twice it), ~0.27 MB for a 960 x 540 rect at 1080p (1.06 MB as a plain
   box). 1.4-1.9x on still frames and 1.2-1.6x on hue frames on the
   AMD 5300M, within 1/255; its own `LazyBake` (`mRingField.schedule`), so its own
   settle and first-frame bake.
   `PassRecorder` files its composite as P2C (by `uRingHole`), so `partition`
   still replays the ring. **The factorisation is an invariant of
-  `neon.frag`:** anything new there that reads `col` non-linearly, reads time,
+  `neon.frag`:** anything new there that reads `col` or `segColHue` non-linearly (or mixes them across channels - the bake carries them on red and green), reads time,
   or multiplies after the tone map on a config the field takes breaks it -
   extend `NEON_FIELD_BAKE` and `neon-field.frag` together, or narrow
   `IsFieldEligible` and `IsRingFieldEligible`. `neon-scale-check` captures the
@@ -396,7 +404,7 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   buffer - and the .cpp defines the methods in the header's order. Keep the
   two in step.
 
-  **Shader programs are built on first use** (`ensureGlowPrograms`): `Initialize` builds only the emission program; the first frame builds `neon-gather.frag`, pass 1b's and the ring's `neon.frag` programs and the blit, the first frame that bakes the glow coverage table builds its bake (`ensureGlowCoverProgram`; a ring lit uniformly never does), and the first frame of a config a field can serve builds the field's two and the ring field's composite (`ensureFieldPrograms`, `ensureRingFieldPrograms`; never with segments), and the first frame whose opaque fill draws through its shader builds the fill (`ensureFillProgram`; never with `OpaqueMode::NONE`, nor for a fill a clear stands in for). So a `neon.frag` that fails to compile no longer fails `Initialize`: it is logged once, recorded in `mFailedPrograms` and never retried, and the frame draws the fill only. `OnConfigChanged` gates its rebuilds on `mInitialized`, NOT on a program's validity - do not go back to testing a program's `IsValid()`, which is false on a host that has not drawn yet. See
+  **Shader programs are built on first use** (`ensureGlowPrograms`): `Initialize` builds only the emission program; the first frame builds `neon-gather.frag`, pass 1b's and the ring's `neon.frag` programs and the blit, the first frame that bakes the glow coverage table builds its bake (`ensureGlowCoverProgram`; a ring lit uniformly never does), and the first frame of a config a field can serve builds the field's two and the ring field's composite (`ensureFieldPrograms`, `ensureRingFieldPrograms`), and the first frame whose opaque fill draws through its shader builds the fill (`ensureFillProgram`; never with `OpaqueMode::NONE`, nor for a fill a clear stands in for). So a `neon.frag` that fails to compile no longer fails `Initialize`: it is logged once, recorded in `mFailedPrograms` and never retried, and the frame draws the fill only. `OnConfigChanged` gates its rebuilds on `mInitialized`, NOT on a program's validity - do not go back to testing a program's `IsValid()`, which is false on a host that has not drawn yet. See
   [`docs/emission-prepass.md`](docs/emission-prepass.md) for the pass tables and
   [`docs/emission-prepass-comparison.md`](docs/emission-prepass-comparison.md)
   for the measured before/after of the pre-pass commit alone.

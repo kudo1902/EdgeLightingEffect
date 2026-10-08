@@ -4659,6 +4659,50 @@ The full-size buffer holds up to 8.3 MB for a full-screen rect at 1920 x 1080,
 and the first frame at 1.0 now builds pass 1b's program and the blit as well
 as the ring's.
 
+### I58. A config with segments took neither field - CHANGED
+
+Both hue-invariant fields (I50, I52) were refused to any config with a
+segment, because the segment hue enters `neon.frag` as a second product and the
+field had one channel. So a segment config shaded pass 1b on every rotating-hue
+frame and the edge ring on every frame, still ones included - on an AMD Radeon
+Pro 5300M at 0.5, 2.44 ms a hue frame against 0.90 for the same config with
+arcs (`neon-animation-perf-analysis.md` section 8, item 2; the reduced-scale
+plan's D3).
+
+The shading is linear in both hues: before the tone map it is
+`col * Fa + segColHue * Fs`, with `Fa` and `Fs` independent of time on every
+config the field already took (the colour-stop alpha condition covers the
+stop-less segments' inherited alpha too). So `NEON_FIELD_BAKE` now sets the arc
+hue to red and the segment hue to green and writes `.rg` - `Fa` and `Fs` in one
+draw, `.r` the same expression as the old one-channel bake, bit for bit - into
+an RG16F field where the config has segments (`GetFieldFormat`; R16F as before
+without them), and `neon-field.frag` adds `segColHue * Fs`, read from the
+gather's second attachment, behind a uniform (`uFieldSegments`) that a
+segment-free config never takes. `IsShadingFactorable` drops its segment test.
+The intensity gain (I56) scales `Fa` alone: the segments' emission does not
+read the intensity.
+
+Verified against the build before, on an Apple M2 Pro: every `neon-scale-check`
+image in five modes byte-identical but the `segments` scene, which moves by at
+most 1 level on 1,500-3,100 pixels at every scale; the 68 guide figures
+byte-identical; `check` and `partition` (seeds 1 and 7) pass. An offscreen
+probe over ten moving frames at 1.0, 0.5 and 0.25: the `segments` scene and a
+stop-less-segments-over-partial-arcs scene (bloom 1.5) with the hue rotating
+within 1 level; a falling intensity with segments within 2 (I56's own bound);
+a ring that is not opaque under a rotating hue - still refused - byte-identical.
+
+`neon-scale-check time`, median of three interleaved rounds, 1920 x 1080:
+
+| `segments` | 1.0 | 0.75 | 0.5 | 0.35 | 0.25 | 0.125 |
+| ---------- | --: | ---: | --: | ---: | ---: | ----: |
+| hue | 3.20x | 2.74x | 2.09x | 1.76x | 1.58x | 1.64x |
+| still | 1.36x | 2.06x | 1.98x | 1.54x | 1.50x | 1.82x |
+
+Every other scene: geometric mean 1.00 on hue frames and 1.01 on still ones
+(noise). The price is memory on segment configs only: the glow's field doubles
+(0.84 -> 1.7 MB for a 960 x 540 rect at 1080p at 0.5) and so does the ring's
+(~0.27 -> ~0.54 MB).
+
 ---
 
 ## What is left
@@ -4671,7 +4715,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, and the twenty-fourth I53, I54, I55, I56 and I57. Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, and the twenty-fifth I58. Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus R7 from the second pass, V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:

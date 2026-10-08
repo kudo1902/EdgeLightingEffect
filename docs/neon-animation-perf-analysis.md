@@ -169,7 +169,7 @@ interleaved rounds against the build before them: no regression (geomeans
 | # | change | frames it helps | gain (measured / estimated) | image | effort |
 | - | ------ | --------------- | --------------------------- | ----- | ------ |
 | 1 | `resolutionScale` 0.25-0.35 for animated content | every config change | 8 arcs 3.07 -> 2.29 ms (1.34x), 8 segments 5.40 -> 4.59 ms; P1b 1.20 -> 0.42 ms | <= 3 levels (`check`) | none |
-| 2 | a two-channel field, so segment configs take the fields | every hue and still frame of a config with segments | est. hue 2.44 -> ~1.0 ms, still 0.74 -> ~0.45 ms (P1b -> composite, ring -> its field) | within 1/255, like today's field | medium; +~1.1 MB |
+| 2 | **built (I58)**: a two-channel field, so segment configs take the fields - measured 2.09x on hue frames, 1.98x still at 0.5 on an M2 | every hue and still frame of a config with segments | est. hue 2.44 -> ~1.0 ms, still 0.74 -> ~0.45 ms (P1b -> composite, ring -> its field) | within 1/255, like today's field | medium; +~1.1 MB |
 | 3 | narrower bell support (the emission's own 0.005 cut) + 8-node rule in the bake | segment animation | 8 segments: bake 2.43 -> 1.26 ms, frame 5.40 -> 3.91 ms (1.38x) | <= 2 levels on ~3% of pixels in segment scenes; arcs unchanged | small |
 | 4 | half-rate soft glow while only lights move (bake + P1b every other frame; filament and ring every frame) | light animation | est. -1 ms (8 arcs) to -2 ms (8 segments) | the halo may trail the line by one frame | medium |
 | 5 | bloom-tail threshold (stop the quad and the blit where the glow falls under 2-4 levels) | every frame | blit and P1b area -11% (2 levels) to -21% (4 levels) on the default frame | the faint tail goes | small, plus a look decision |

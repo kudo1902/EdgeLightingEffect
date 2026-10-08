@@ -1173,7 +1173,7 @@ namespace NeonGuideFigures
         }
 
         // P1f / P1c - the hue-invariant field and its composite. The scene
-        // without its segment, since segments keep the field off, at the
+        // without its segment, so the field is the one-channel Fa the page shows, at the
         // page's scale with the hue rotating - the frames the field serves.
         // The field from its FIRST frame, which shades pass 1b and also bakes
         // the field (the first frame a config the field can serve is drawn
@@ -1224,7 +1224,7 @@ namespace NeonGuideFigures
             }
         }
 
-        // P1r / P2r - the edge ring's field, below 1.0 with no segments: the
+        // P1r / P2r - the edge ring's field, below 1.0, one channel: the
         // scene without its segment at the page's scale, hue still. Its FIRST
         // frame bakes the ring's field - mFieldBakeShader again, one draw per
         // strip into the packed buffer, so the last P1F record holds all four -

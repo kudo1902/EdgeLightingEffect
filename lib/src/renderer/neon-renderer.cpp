@@ -1253,18 +1253,34 @@ namespace EdgeLighting
             return true;
         }
 
-        /// Whether neon.frag's pre-tone-map output on this config is col * Fa,
-        /// with only the gathered hue col moving with time - what both fields
-        /// rest on (IsFieldEligible, IsRingFieldEligible). Not with segments -
-        /// their hue enters as a second product, and a field would need a
-        /// channel for it - and not when time can move the colour-stop alpha
-        /// neon.frag reads pointwise: a rotating hue over a ring that is not
-        /// opaque at every texel (@p ringOpaque, as uploaded).
-        inline bool IsShadingFactorable(const std::vector<SegmentBoost> &effectiveSegments, const Config &config,
-                                        bool ringOpaque)
+        /// Whether neon.frag's pre-tone-map output on this config is
+        /// col * Fa + segColHue * Fs, with only the gathered hues col and
+        /// segColHue moving with time - what both fields rest on
+        /// (IsFieldEligible, IsRingFieldEligible). Segments are no bar: their
+        /// hue is the second product, and the field carries Fs in a second
+        /// channel (GetFieldFormat, D3). Not when time can move the
+        /// colour-stop alpha neon.frag reads pointwise - the base ring's, which
+        /// a stop-less segment inherits too: a rotating hue over a ring that is
+        /// not opaque at every texel (@p ringOpaque, as uploaded).
+        inline bool IsShadingFactorable(const Config &config, bool ringOpaque)
         {
             const bool rotating = config.neon.hueRotationRate != 0.0f;
-            return config.neon.enable && effectiveSegments.empty() && (!rotating || ringOpaque);
+            return config.neon.enable && (!rotating || ringOpaque);
+        }
+
+        /// A field's render-target format.
+        typedef struct FieldFormat
+        {
+            GLint internalFormat; ///< GL_R16F or GL_RG16F.
+            GLenum format;        ///< GL_RED or GL_RG.
+        } FieldFormat;
+
+        /// The fields' format: Fa alone (R16F) without segments, Fa and Fs
+        /// (RG16F, twice the memory) with them - the composite's
+        /// uFieldSegments has to agree, so both read @p effectiveSegments.
+        inline FieldFormat GetFieldFormat(const std::vector<SegmentBoost> &effectiveSegments)
+        {
+            return effectiveSegments.empty() ? FieldFormat{GL_R16F, GL_RED} : FieldFormat{GL_RG16F, GL_RG};
         }
 
         /// Whether this config's shading can be factored into the hue-invariant
@@ -1281,10 +1297,9 @@ namespace EdgeLighting
         /// too. A field for a still config would cost its memory and its
         /// compile and never be read. A function of the config, the ring's
         /// upload and the intensity's motion.
-        inline bool IsFieldEligible(const std::vector<SegmentBoost> &effectiveSegments, const Config &config,
-                                    bool ringOpaque, bool intensityMoving)
+        inline bool IsFieldEligible(const Config &config, bool ringOpaque, bool intensityMoving)
         {
-            return IsShadingFactorable(effectiveSegments, config, ringOpaque) &&
+            return IsShadingFactorable(config, ringOpaque) &&
                    (config.neon.hueRotationRate != 0.0f || intensityMoving);
         }
 
@@ -1309,10 +1324,9 @@ namespace EdgeLighting
         /// included. A one-sided glow or a cutoff is no bar either: the ring
         /// applies both after its tone map, and so does its composite, from the
         /// pixel's own distance to the edge (neon-field.frag, NEON_FIELD_RING).
-        inline bool IsRingFieldEligible(const std::vector<SegmentBoost> &effectiveSegments, const Config &config,
-                                        bool ringOpaque)
+        inline bool IsRingFieldEligible(const Config &config, bool ringOpaque)
         {
-            return IsShadingFactorable(effectiveSegments, config, ringOpaque);
+            return IsShadingFactorable(config, ringOpaque);
         }
 
         /// The one-sided cut and the cutoffs, for @p shader at @p scale: what
@@ -2138,7 +2152,7 @@ namespace EdgeLighting
             GetFieldRegion(config, mScaledOuter, viewportWidth, viewportHeight);
         const bool fieldProgramsBuilt = mFieldBakeShader.IsValid() && mFieldCompositeShader.IsValid();
         if (glowReady && !mGlowField.schedule.unavailable &&
-            IsFieldEligible(mEffectiveSegments, config, mGradientLUT.IsOpaque(), intensityMoving) &&
+            IsFieldEligible(config, mGradientLUT.IsOpaque(), intensityMoving) &&
             FieldFillsRegion(GetAnnulusArea(mGlowBounds), fieldRegion, scale) && ensureFieldPrograms() &&
             !reuseOffscreen)
         {
@@ -2152,7 +2166,7 @@ namespace EdgeLighting
         // every frame.
         LazyBake::Decision ringField;
         if (glowReady && mRingMesh.count > 0 && !mRingField.schedule.unavailable &&
-            IsRingFieldEligible(mEffectiveSegments, config, mGradientLUT.IsOpaque()))
+            IsRingFieldEligible(config, mGradientLUT.IsOpaque()))
         {
             const RingFieldLayout layout =
                 computeRingFieldLayout(mRingBounds, centerFull, viewportWidth, viewportHeight);
@@ -2664,11 +2678,11 @@ namespace EdgeLighting
 
         bakeLUTs(config);
 
-        // The field goes with any config that cannot use it: segments, or a
-        // hue that stopped rotating with the intensity still. Not on the ring's opacity, which is the upload's rather
+        // The field goes with any config that cannot use it: a hue that
+        // stopped rotating with the intensity still. Not on the ring's opacity, which is the upload's rather
         // than the config's: a rotating hue over a ring that is not opaque
         // keeps a field it does not read until the next change.
-        if (!IsFieldEligible(mEffectiveSegments, config, true, mIntensityMoving) ||
+        if (!IsFieldEligible(config, true, mIntensityMoving) ||
             !FieldFillsRegion(GetAnnulusArea(mGlowBounds),
                               GetFieldRegion(config, mScaledOuter, mGlowField.schedule.viewport.x,
                                              mGlowField.schedule.viewport.y),
@@ -2678,7 +2692,7 @@ namespace EdgeLighting
             mGlowField.schedule.current = false;
         }
         // The ring's field likewise, on its own conditions.
-        if (!IsRingFieldEligible(mEffectiveSegments, config, true))
+        if (!IsRingFieldEligible(config, true))
         {
             mRingField.buffer.Release();
             mRingField.schedule.current = false;
@@ -3863,7 +3877,8 @@ namespace EdgeLighting
         mGlowCoverShader.SetUniform("uGlowCoverSplit", split);
         // Draws the pieces of @p pieces: the whole table in one draw when all
         // are dirty, else each band's straight and corner as rectangles.
-        auto drawPieces = [&](uint32_t pieces) {
+        auto drawPieces = [&](uint32_t pieces)
+        {
             if (pieces == GLOW_COVER_ALL_PIECES)
             {
                 mGlowCoverShader.SetUniform("uMVP", glm::mat4(1.0f));
@@ -3990,11 +4005,14 @@ namespace EdgeLighting
         // here - see renderShadePass.
         GLUtils::NoScissorScope noScissor(true);
 
-        // Half float, one channel: Fa. No 8-bit fallback: Fa runs well past 1
-        // and the tone map is steep near 0, so 8 bits would move whole levels
-        // - a driver that cannot render to half float shades directly instead.
-        // NEAREST: the composite reads one texel per fragment, its own.
-        if (!mGlowField.buffer.Resize(texels.x, texels.y, GL_R16F, GL_RED, GL_HALF_FLOAT, GL_NEAREST))
+        // Half float: Fa, and Fs beside it with segments (GetFieldFormat). No
+        // 8-bit fallback: Fa runs well past 1 and the tone map is steep near 0,
+        // so 8 bits would move whole levels - a driver that cannot render to
+        // half float shades directly instead. NEAREST: the composite reads one
+        // texel per fragment, its own.
+        const FieldFormat format = GetFieldFormat(mEffectiveSegments);
+        if (!mGlowField.buffer.Resize(texels.x, texels.y, format.internalFormat, format.format, GL_HALF_FLOAT,
+                                      GL_NEAREST))
         {
             LOG_E("NeonRenderer: no half-float target for the hue-invariant field - the glow is shaded directly.");
             return false;
@@ -4068,10 +4086,8 @@ namespace EdgeLighting
         mFieldCompositeShader.SetUniform("uFieldOrigin", mGlowField.origin);
         mFieldCompositeShader.SetUniform("uFieldGain", gain);
         mFieldCompositeShader.SetUniform("uFieldTexelScale", mGlowField.texelScale);
-        mGather.buffer.BindTexture(3, 0);
-        mFieldCompositeShader.SetUniform("uGather", 3);
-        mFieldCompositeShader.SetUniform("uGatherUVScale", gatherUV.scale);
-        mFieldCompositeShader.SetUniform("uGatherUVOffset", gatherUV.offset);
+        mFieldCompositeShader.SetUniform("uFieldSegments", mEffectiveSegments.empty() ? 0 : 1);
+        bindGatherBuffer(mFieldCompositeShader, gatherUV);
         mGlowMesh.Draw();
         mFieldCompositeShader.Unuse();
         return true;
@@ -4083,10 +4099,12 @@ namespace EdgeLighting
         // here - see renderShadePass.
         GLUtils::NoScissorScope noScissor(true);
 
-        // Half float, one channel, NEAREST - as the shading's field, for its
-        // reasons (renderFieldPass).
+        // Half float, one channel or two, NEAREST - as the shading's field,
+        // for its reasons (renderFieldPass).
         const RingFieldLayout &layout = mRingField.layout;
-        if (!mRingField.buffer.Resize(layout.atlas.x, layout.atlas.y, GL_R16F, GL_RED, GL_HALF_FLOAT, GL_NEAREST))
+        const FieldFormat format = GetFieldFormat(mEffectiveSegments);
+        if (!mRingField.buffer.Resize(layout.atlas.x, layout.atlas.y, format.internalFormat, format.format,
+                                      GL_HALF_FLOAT, GL_NEAREST))
         {
             LOG_E("NeonRenderer: no half-float target for the edge ring's field - the ring is shaded directly.");
             return false;
@@ -4475,10 +4493,8 @@ namespace EdgeLighting
         mRingFieldCompositeShader.SetUniform("uRingHole", glm::vec4(layout.hole));
         mRingFieldCompositeShader.SetUniform("uRingRows", glm::vec2(layout.rows));
         mRingFieldCompositeShader.SetUniform("uFieldGain", gain);
-        mGather.buffer.BindTexture(3, 0);
-        mRingFieldCompositeShader.SetUniform("uGather", 3);
-        mRingFieldCompositeShader.SetUniform("uGatherUVScale", gatherUV.scale);
-        mRingFieldCompositeShader.SetUniform("uGatherUVOffset", gatherUV.offset);
+        mRingFieldCompositeShader.SetUniform("uFieldSegments", mEffectiveSegments.empty() ? 0 : 1);
+        bindGatherBuffer(mRingFieldCompositeShader, gatherUV);
         mRingMesh.Draw();
         mRingFieldCompositeShader.Unuse();
     }

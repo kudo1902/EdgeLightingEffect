@@ -328,8 +328,9 @@ with a segment. `docs/neon-perf-review.md` section 8 has the measured shape of
   intensity is not that reference value; needs a visual sign-off.
 - **D2. Pin thin bands to 1.0** (`docs/neon-perf-plan.md` item 11) - or P3,
   then re-measure 3.4.
-- **D3. A field for segments** (cleanup plan step 5, declined for its memory).
-  Revisit only if production keeps a segment lit: the `segments` scene pays
+- **D3. A field for segments** (cleanup plan step 5, declined for its memory;
+  **built 2026-10-08 as I58** - RG16F only on segment configs, 2.09x on their
+  hue frames at 0.5). Was: revisit only if production keeps a segment lit: the `segments` scene pays
   2.0x (0.25) to 4.3x (0.75) the default's hue frame.
 
 ### Measured and set aside

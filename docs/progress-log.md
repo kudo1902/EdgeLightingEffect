@@ -5,6 +5,29 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-08 (later) - D3: the fields take segment configs
+
+On top of `d54465a`. Measured on an Apple M2 Pro, 1920 x 1080. I58 in
+[`review-findings.md`](review-findings.md) has the detail.
+
+- **What changed.** The hue-invariant fields (pass 1f / 1c, and the ring's 1r /
+  2r) now serve configs with segments. `neon.frag` is linear in both hues, so
+  the bake puts the arc hue on red and the segment hue on green and writes
+  `Fa` and `Fs` in one draw into an RG16F field (R16F as before without
+  segments, `GetFieldFormat`); the composite adds `segColHue * Fs` behind
+  `uFieldSegments`. The intensity gain scales `Fa` only.
+- **Measured.** `segments` hue frames 2.09x at 0.5 (3.20x at 1.0, 1.58x at
+  0.25), still frames 1.5-2.1x; every other scene unchanged (geomean 1.00 hue,
+  1.01 still).
+- **Image.** Configs without segments byte-identical (all `neon-scale-check`
+  images in five modes, the 68 guide figures). Segment configs within 1/255 on
+  hue and still frames, within 2 while an intensity falls (I56's bound).
+  `check` and `partition` pass.
+- **Cost.** Memory on segment configs only: 0.84 -> 1.7 MB for the glow's
+  field at 0.5 for a 960 x 540 rect, ~0.27 -> ~0.54 MB for the ring's.
+- **Not covered.** A travelling segment still changes the config every frame,
+  so neither field holds there (as for arcs); still measured on the M2 only.
+
 ## 2026-10-08
 
 Commits `ae59629`, `61c3bda`, `51f8825`, `f4ab7df`, `daf0ff4` on
@@ -112,10 +135,8 @@ what was ruled out.
 
 ### Open
 
-- **A two-channel field for segment configs** (the reduced-scale plan's D3,
-  declined earlier for its memory): segment configs pay ~1.5 ms more than arc
-  configs on every rotating-hue frame (2.44 vs 0.90 ms) and ~0.3 ms more on
-  every still one; estimated 2.44 -> ~1.0 ms for ~1.1 MB. An owner decision.
+- ~~**A two-channel field for segment configs**~~ - built the same day (I58,
+  the entry above).
 - **A lower `resolutionScale` for animated content** (no code): 8 arcs moving
   3.07 -> 2.29 ms at 0.25, <= 3 levels.
 - **Measure on the target**: which frames production draws, half-float render

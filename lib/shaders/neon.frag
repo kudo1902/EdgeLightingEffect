@@ -737,10 +737,16 @@ void main() {
         segCoverGathered = gather1.a / max(1.0 - gather1.a, 1.0 / 255.0);
     }
 #ifdef NEON_FIELD_BAKE
-    // The hue-invariant field (neon-field.frag): with the hue at 1, everything
-    // below computes the field Fa that the gathered hue multiplies. Only built
-    // for configs with no segments, so segColHue is already 0.
-    col = vec3(1.0);
+    // The hue-invariant field (neon-field.frag). Everything below is linear in
+    // the two hues - the output is col * Fa + segColHue * Fs before the tone
+    // map - so with the arc hue on red alone and the segment hue on green
+    // alone, .r computes Fa and .g computes Fs in one draw. .r is the same
+    // expression as with col at 1 and segColHue 0, bit for bit; without
+    // segments segColHue stays 0, so .g is 0 and the R16F field drops it.
+    col = vec3(1.0, 0.0, 0.0);
+    if (uSegmentCount > 0) {
+        segColHue = vec3(0.0, 1.0, 0.0);
+    }
 #endif
 
     // --- Continuous coverage, read at this fragment's own position -------
@@ -1109,12 +1115,12 @@ void main() {
     // --- Grade --------------------------------------------------------
     // neonToneMap (neon-grade.glsl, shared with neon-field.frag).
 #ifdef NEON_FIELD_BAKE
-    // Fa: the pre-tone-map result at hue 1, which neon-field.frag tone-maps
-    // times the gathered hue. The masks below are not in it: for the shading's
-    // field the blit owns both; the edge ring's field, baked with the ring's
-    // uniforms, has its composite apply them (neon-field.frag,
-    // NEON_FIELD_RING).
-    fragColor = vec4(result.r, 0.0, 0.0, 1.0);
+    // Fa and Fs: the pre-tone-map result per unit of each hue, which
+    // neon-field.frag tone-maps times the gathered hues. The masks below are
+    // not in it: for the shading's field the blit owns both; the edge ring's
+    // field, baked with the ring's uniforms, has its composite apply them
+    // (neon-field.frag, NEON_FIELD_RING).
+    fragColor = vec4(result.r, result.g, 0.0, 1.0);
     return;
 #endif
     result = neonToneMap(result);

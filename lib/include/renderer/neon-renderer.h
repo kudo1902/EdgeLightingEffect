@@ -210,9 +210,10 @@ namespace EdgeLighting
     /// readers reach (@ref GetBufferRegion). See
     /// docs/neon-resolution-scale-plan.md sections 12 and 13.
     ///
-    /// With no segments and a colour-stop alpha time cannot move, the shading
-    /// is factored: neon.frag's output is tonemap(col * Fa) with only the
-    /// gathered hue col changing, so pass 1f bakes Fa into @c mGlowField.buffer
+    /// With a colour-stop alpha time cannot move, the shading is factored:
+    /// neon.frag's output is tonemap(col * Fa + segColHue * Fs) with only the
+    /// gathered hues changing, so pass 1f bakes Fa (and Fs, with segments - D3)
+    /// into @c mGlowField.buffer
     /// once the config has held for a frame, and pass 1c (neon-field.frag)
     /// composites it with the hue in pass 1b's place, into @c mScaledBuffer -
     /// under a rotating hue, the frames that would otherwise redraw pass 1b
@@ -925,12 +926,13 @@ namespace EdgeLighting
         /// its texels.
         typedef struct GlowField
         {
-            /// The hue-invariant field (pass 1f): Fa, R16F, on the reduced buffer's
-            /// own region and grid, half that buffer's size (0.84 MB at 0.5 for a
-            /// 960 x 540 rect at 1080p). Released with the conditions that want it
-            /// - see OnConfigChanged - and never allocated for a config that cannot
-            /// use it (segments, or a hue that does not rotate with the intensity
-            /// still).
+            /// The hue-invariant field (pass 1f): Fa, R16F - or Fa and Fs, RG16F,
+            /// with segments (GetFieldFormat, D3) - on the reduced buffer's own
+            /// region and grid, half that buffer's size (0.84 MB at 0.5 for a 960
+            /// x 540 rect at 1080p, 1.7 MB with segments). Released with the
+            /// conditions that want it - see OnConfigChanged - and never allocated
+            /// for a config that cannot use it (a hue that does not rotate with
+            /// the intensity still).
             Framebuffer buffer{"NeonRenderer.Field"};
 
             /// When @c mGlowField.buffer is baked and read - see @ref LazyBake.
@@ -950,10 +952,10 @@ namespace EdgeLighting
         /// read on.
         typedef struct RingField
         {
-            /// The edge ring's field (pass 1r): Fa, R16F, at full resolution over
-            /// the ring alone, packed as @c mRingField.layout. Only for a config
-            /// @ref Render finds eligible (no segments, and a
-            /// colour-stop alpha time cannot move). Released with the conditions
+            /// The edge ring's field (pass 1r): Fa, R16F - Fa and Fs, RG16F, with
+            /// segments - at full resolution over the ring alone, packed as
+            /// @c mRingField.layout. Only for a config @ref Render finds eligible
+            /// (a colour-stop alpha time cannot move). Released with the conditions
             /// that want it - see OnConfigChanged.
             Framebuffer buffer{"NeonRenderer.RingField"};
             RingFieldLayout layout{}; ///< The packing it was baked with.
@@ -1348,9 +1350,10 @@ namespace EdgeLighting
         bool renderGatherPass(const glm::mat4 &mvp, const glm::ivec2 &texels, float scale, const Config &config);
 
         // P1f and P1c - the shading, factored into a hue-invariant field.
-        // On a config with no segments whose colour-stop alpha cannot move
-        // with time, pass 1b's output is tonemap(col * Fa), with only the
-        // gathered hue col changing from frame to frame (neon-field.frag) - the
+        // On a config whose colour-stop alpha cannot move with time, pass 1b's
+        // output is tonemap(col * Fa + segColHue * Fs), with only the gathered
+        // hues changing from frame to frame (neon-field.frag; Fs is 0 without
+        // segments, and a second channel with them - D3) - the
         // blit applies the cut and the cutoffs after it. So the shading splits
         // in two: 1f bakes Fa once the config has held for a frame, offscreen,
         // after the gather; 1c composites it with the gathered hue in pass 1b's
@@ -1361,7 +1364,8 @@ namespace EdgeLighting
         /// Pass 1f: bake the field into @c mGlowField.buffer, @p texels, drawn
         /// through @p mvp - the projection of the reduced buffer's region at
         /// @p scale, which pass 1c reads it over - reading the gather through
-        /// @p gatherUV, as pass 1b reads it. R16F, Fa alone. Leaves the buffer bound;
+        /// @p gatherUV, as pass 1b reads it. R16F, Fa alone - RG16F, Fa and Fs,
+        /// with segments (GetFieldFormat). Leaves the buffer bound;
         /// @ref Render restores the target.
         /// @pre Blending disabled; pass 1a has run or its buffer is current.
         /// @return false if the buffer could not be allocated - the field is
@@ -1399,8 +1403,7 @@ namespace EdgeLighting
         // P1r and P2r - the edge ring, factored into a field of its own.
         // The ring is re-shaded on EVERY frame, still frames included: it
         // draws onto the caller's framebuffer, so there is nothing to reuse.
-        // With no segments its output is
-        // mask * tonemap(col * Fa) - the mask being the one-sided cut and the
+        // Its output is mask * tonemap(col * Fa + segColHue * Fs) - the mask being the one-sided cut and the
         // cutoffs, which the ring applies after its tone map at full
         // resolution, and a function of the pixel's position alone - so it
         // splits like pass 1b's: pass 1r bakes Fa over the ring alone, at full
