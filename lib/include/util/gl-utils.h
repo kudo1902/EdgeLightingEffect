@@ -182,7 +182,7 @@ namespace EdgeLighting
         /// so the only place the box means what it says. Passes that draw
         /// straight onto the caller's framebuffer - the opaque fill, the
         /// unscaled gather, every debug overlay - must NOT use this; their
-        /// clipping is exactly what the host asked for. (@c renderOpaqueFill
+        /// clipping is exactly what the host asked for. (@c renderFillPass
         /// goes further and intersects its clear box with the host's, because
         /// a clear is not clipped by the viewport the way its draw was.)
         ///
