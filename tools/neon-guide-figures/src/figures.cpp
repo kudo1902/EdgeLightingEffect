@@ -1226,7 +1226,7 @@ namespace NeonGuideFigures
 
         // P1r / P2r - the edge ring's field, below 1.0 with no segments: the
         // scene without its segment at the page's scale, hue still. Its FIRST
-        // frame bakes the ring's field - mNeonFieldShader again, one draw per
+        // frame bakes the ring's field - mFieldBakeShader again, one draw per
         // strip into the packed buffer, so the last P1F record holds all four -
         // while the ring still shades directly; its SECOND composites it in the
         // ring's place, which the recorder files as P2C (by uRingHole).
