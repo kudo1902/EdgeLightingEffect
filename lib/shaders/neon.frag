@@ -744,11 +744,20 @@ void main() {
 #endif
 
     // --- Continuous coverage, read at this fragment's own position -------
+    // Everything in this block - sPos, the pointwise alpha, emitCover and
+    // segCoverPt - feeds ONE term, the filament (emitFil * core * lineGate,
+    // below), and `core` is exactly 0 past the filament's reach. So off the
+    // line - most of the glow quad - none of it is computed: the term is 0 * a
+    // finite value either way, so the output is the same bits. Add a reader of
+    // any of the four outside the filament and it has to move out of this gate.
+    // The LUT reads are explicit-LOD for the same reason: they now sit in
+    // non-uniform control flow, and every LUT has a single level.
+    bool filamentLit = core > 0.0 && lineGate > 0.0;
     // The fragment's own perimeter position, recovered geometrically from vPos,
     // with each arc read directly there - exact at the corners too. Skipped
     // where nothing reads it (uPerimeterUnread).
     float sPos = 0.0;
-    if (uPerimeterUnread == 0)
+    if (uPerimeterUnread == 0 && filamentLit)
     {
         sPos = perimeterPosition(vPos);
     }
@@ -760,19 +769,21 @@ void main() {
     // ends soften over a different length at a different resolution scale.
     float headF  = HEAD_FEATHER_PX * uResolutionScale / peri;
     float tailF  = TAIL_FEATHER_PX * uResolutionScale / peri;
-    // ONE arc coverage, per-arc intensity folded in, drives the filament as
-    // well as the halo and bloom: `col` is gated-normalised, so intensity
-    // reaches the emission only through emitCover.
+    // The arcs' coverage at this point, per-arc intensity folded in, for the
+    // FILAMENT: `col` is gated-normalised, so intensity reaches the filament
+    // only through emitCover. The halo and bloom take the gathered coverage and
+    // each piece's table instead (see Compose below) - which is what lets this
+    // whole block sit behind filamentLit.
     //
     // Colour-stop ALPHA rides here too, on the magnitude and POINTWISE: folded
     // into `col` it would cancel, and gathered it would be a ring-wide mean
-    // dragged toward the opaque far side. Alpha 0 kills filament, halo and
-    // bloom together at that position, and the premultiplied output alpha
-    // follows.
+    // dragged toward the opaque far side. Alpha 0 kills the filament at that
+    // position (the glow does not see stop alpha - V18), and the premultiplied
+    // output alpha follows.
     float baseAlphaPt = 1.0;
-    if (uPerimeterUnread == 0)
+    if (uPerimeterUnread == 0 && filamentLit)
     {
-        baseAlphaPt = texture(uGradientLUT, vec2(sPos - uTime * uHueRotationRate, 0.5)).a;
+        baseAlphaPt = textureLod(uGradientLUT, vec2(sPos - uTime * uHueRotationRate, 0.5), 0.0).a;
     }
     // Winner-take-all across arcs, as documented for overlap. This can be a
     // plain max() again because arcCoverContinuous now reaches a FULL 1.0 at an
@@ -780,7 +791,8 @@ void main() {
     // tiling the ring hand over at max(w1, w2) with no notch - and because
     // their ramps overlap, the handover stays smooth even when w1 != w2.
     float emitCover = 0.0;
-    for (int a = 0; a < uArcCount; a++) {
+    int   arcCount  = filamentLit ? uArcCount : 0;
+    for (int a = 0; a < arcCount; a++) {
         vec4 arc = uArcs[a];
         if (arc.z <= 0.0) continue;                       // dark arc: no filament
         float c = arcCoverContinuous(sPos, arc.x, arc.y, headF, tailF,
@@ -804,7 +816,7 @@ void main() {
             rel       -= floor(rel);                       // wrap to [0, 1)
             if (rel > 0.5 * (1.0 + arc.y)) { rel -= 1.0; } // behind the start, not past the head
             float uArc = rel / max(arc.y, 1e-4);
-            aA         = texture(uArcLUT, vec2(uArc, rowY)).a;
+            aA         = textureLod(uArcLUT, vec2(uArc, rowY), 0.0).a;
         } else {
             aA = baseAlphaPt;
         }
@@ -818,7 +830,8 @@ void main() {
     // rect. Segments emit where no arc covers, so they carry their own
     // filament/halo/bloom.
     float segCoverPt = 0.0;
-    for (int s = 0; s < uSegmentCount; s++) {
+    int   segCount   = filamentLit ? uSegmentCount : 0;
+    for (int s = 0; s < segCount; s++) {
         vec4  seg = uSegments[s];
         float rel = sPos - seg.x;
         rel      -= floor(rel + 0.5);                     // wrap to [-0.5, 0.5]
@@ -830,7 +843,7 @@ void main() {
         if (seg.w > 0.5) {
             float tLocal = clamp(0.5 + e * 0.5, 0.0, 1.0);
             float rowY   = (float(s) + 0.5) / float(MAX_SEGMENT_BOOSTS);
-            sA           = texture(uSegmentLUT, vec2(tLocal, rowY)).a;
+            sA           = textureLod(uSegmentLUT, vec2(tLocal, rowY), 0.0).a;
         } else {
             sA = baseAlphaPt;
         }

@@ -678,6 +678,40 @@ main) follows for free, so the background shows through rather than
 being occluded by a black tube.
 ```
 
+## filamentLit: the pointwise inputs, off the line
+
+Added 2026-10-08, after a report that the frame rate dropped when several arcs
+or segments changed length every frame.
+
+Everything in the "Continuous coverage" block - `sPos`, the pointwise stop
+alpha, `emitCover` and `segCoverPt` - feeds one term, the filament
+(`emitFil * core * lineGate`). The halo and bloom take the gathered coverage
+and each piece's table (V18-V21), not these. And `core` is pedestal-subtracted,
+so it is exactly 0 past the filament's reach. The block used to run for every
+fragment of the glow quad anyway - `perimeterPosition`, a LUT fetch and a loop
+over every arc and segment, multiplied by 0 almost everywhere. It now sits
+behind `filamentLit = core > 0 && lineGate > 0`.
+
+Exact: off the line the term is `+0 * finite` either way. The three LUT reads
+became `textureLod(..., 0.0)`, since they now sit in non-uniform control flow;
+every LUT is `GL_LINEAR` with a single level, so that is the same sample.
+Verified byte-identical on `neon-scale-check check`, `partition` (seeds 1 and
+7), all 68 guide figures, and 21 animated captures aimed at this block (8 arcs
+with translucent own stops, abutting arcs, 8 segments with stops, a translucent
+ring, `lineWidth` 0, a soft filament, the one-sided band with cutoffs - at
+scales 1.0, 0.5 and 0.25, six frames each).
+
+Measured on an AMD Radeon Pro 5300M, 1920 x 1080, scale 0.5, a 960 x 540 rect,
+per-pass `GL_TIME_ELAPSED`: pass 1b went from growing with the light count
+(1.33 ms with 1 arc animating, 1.90 ms with 8) to flat (1.17, 1.20); the frame
+with 8 arcs changing length every frame 3.82 -> 3.07 ms, with 8 segments on a
+rotating hue 2.74 -> 2.44 ms. The ring (pass 2c) takes the same saving where
+it shades directly. Frames whose pass 1b is skipped or composited from the
+field are unaffected.
+
+Add a reader of any of the four outside the filament and it has to move out of
+this gate - the shader says so at the gate.
+
 ## An arc's own stops: no hue term, wrapped rel
 
 `neon.frag` line 1116, before the move.
