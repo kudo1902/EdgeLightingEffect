@@ -202,7 +202,7 @@ coarser than the reduced buffer), and stores its four results in a small
 buffer. A variant of `neon.frag` that reads those
 results back instead of looping then shades the glow twice: at the reduced
 scale into the reduced buffer, and at full resolution in a thin ring around the
-edge. The line and every edge near it come out as the direct path draws them.
+edge. The line and every edge near it are shaded at full resolution, as with no scale at all.
 Everything outside the ring is the reduced buffer, bilinear-blitted.
 
 The full derivation, including the closed forms and the sampling bugs they
@@ -329,9 +329,9 @@ Two rules that are easy to get wrong:
 
 | Goal | Touch |
 |---|---|
-| Tune neon appearance | `neon-tuning.h` and `neon.frag` - one copy, both resolution paths |
-| Change the gather loop | `neon-common.glsl` - both paths run it; the encode in `neon-gather.frag` and the decode in `neon.frag` change together |
-| Change what the gather bakes | `neon-emission.frag` **and** `neon-common.glsl` - keep the pre-pass invariant (§6) |
+| Tune neon appearance | `neon-tuning.h` and `neon.frag` - one copy, every scale |
+| Change the gather loop | `neon-gather.frag` (`gatherPerimeter`) - the loop and its encode; the decode in `neon.frag` changes with it |
+| Change what the gather bakes | `neon-emission.frag` **and** `neon-gather.frag` - keep the pre-pass invariant (§6) |
 | Add a config field | `config.h` (field **and** `operator==`), the renderer that reads it, `DebugUI`, and the C ABI mirror if exposed |
 | Add a shader | `lib/CMakeLists.txt` (two lists) and `shaders.h.in` |
 | Add a renderer | `BaseRenderer` subclass, `Config` sub-struct, `main.cpp` registration, `DebugUI` section, `el_renderer_flags_e` bit |
