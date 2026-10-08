@@ -187,5 +187,11 @@ void main() {
 #endif
 
     float alpha = clamp(max(result.r, max(result.g, result.b)), 0.0, 1.0);
+#ifdef NEON_FIELD_RING
+    // The output dither, as the ring's own shading writes it (neon.frag): this
+    // is a write to the caller's framebuffer. Pass 1c's to the reduced buffer
+    // is not dithered; the blit is.
+    result = neonDither(result);
+#endif
     fragColor = vec4(result, alpha);
 }

@@ -63,13 +63,15 @@ void main() { fragColor = uColor; }
                 {
                     return PassKind::P2C;
                 }
-                // Offscreen, one source twice over: pass 1b, into the RGBA8
-                // reduced buffer, or the field bake, into its half-float
-                // field - at either scale, so told apart by the target.
-                GLint componentType = GL_NONE;
+                // Offscreen, one source twice over: pass 1b, into the RGBA
+                // reduced buffer, or the field bake, into its R16F / RG16F
+                // field - at either scale, so told apart by the target. By its
+                // ALPHA, not by float: the reduced buffer is half float too
+                // wherever the driver renders to it (SCALED_FORMATS, R7).
+                GLint alphaBits = 0;
                 glGetFramebufferAttachmentParameteriv(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                                                      GL_FRAMEBUFFER_ATTACHMENT_COMPONENT_TYPE, &componentType);
-                return (componentType == GL_FLOAT) ? PassKind::P1F : PassKind::P1B;
+                                                      GL_FRAMEBUFFER_ATTACHMENT_ALPHA_SIZE, &alphaBits);
+                return (alphaBits == 0) ? PassKind::P1F : PassKind::P1B;
             }
             // The gather is the one program that reads the emission table.
             if (HasUniform(program, "uEmission"))

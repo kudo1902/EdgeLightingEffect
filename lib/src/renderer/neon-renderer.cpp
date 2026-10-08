@@ -219,25 +219,20 @@ namespace EdgeLighting
         /// Adding a candidate is adding a row; ResizeInBestFormat walks whatever
         /// is here.
         ///
-        /// WHY ONLY THIS BUFFER, GLOW_COVER_FORMATS AND GATHER_FORMATS HAVE A
-        /// LIST. They are the only ones that ask for a format a conforming
-        /// driver may refuse. RGBA8
-        /// - what mScaledBuffer, LensFlareRenderer's scaled buffer and
-        /// OffscreenCapture all take - is mandatory colour-renderable in both
-        /// GL 3.3 core and GLES 3.0, so there is nothing for those to fall
-        /// back FROM, and nothing to fall back TO either: an RGBA8 failure is
-        /// out-of-memory or a broken driver, which no other format fixes. They
-        /// bail instead, and should.
+        /// WHY ONLY THIS BUFFER, GLOW_COVER_FORMATS, GATHER_FORMATS AND
+        /// SCALED_FORMATS HAVE A LIST. They are the only ones that ask for a
+        /// format a conforming driver may refuse. RGBA8 - what
+        /// LensFlareRenderer's scaled buffer and OffscreenCapture take - is
+        /// mandatory colour-renderable in both GL 3.3 core and GLES 3.0, so
+        /// there is nothing for those to fall back FROM, and nothing to fall
+        /// back TO either: an RGBA8 failure is out-of-memory or a broken
+        /// driver, which no other format fixes. They bail instead, and should.
         ///
-        /// They are also the only two that WANT float. This one stores arc
-        /// intensity and stacked segment boosts, which routinely exceed 1.0;
-        /// the gather buffer stores data that a shading pass re-amplifies. The
-        /// others store composited output - premultiplied colour after
-        /// tone-mapping, in [0, 1] - where 8 bits is the right storage rather
-        /// than a compromise. (8 bits is not free there; see R7 in
-        /// docs/review-findings.md on halo/bloom contour banding. If that is
-        /// ever fixed with a float target rather than a dither, this walk
-        /// generalises to those buffers unchanged.)
+        /// This one stores arc intensity and stacked segment boosts, which
+        /// routinely exceed 1.0; the gather buffer stores data that a shading
+        /// pass re-amplifies; mScaledBuffer stores output, in [0, 1], but
+        /// output the blit dithers on its way out (R7), which 8 bits of storage
+        /// would already have rounded - see SCALED_FORMATS.
         constexpr TargetFormat EMISSION_FORMATS[] = {
             {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, "RGBA16F"},
             {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, "RGBA8"},
@@ -293,11 +288,31 @@ namespace EdgeLighting
             {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, "RGBA8"},
         };
 
+        /// mScaledBuffer's formats in PREFERENCE ORDER, best first - walked by
+        /// @ref NeonRenderer::bindScaledTarget.
+        ///
+        /// Half float leads because every pixel the blit draws comes from this
+        /// buffer, at every scale (1.0 included), and the output dither (R7,
+        /// neonDither) can only break up gradients that reach it unrounded. In
+        /// RGBA8 the halo's and bloom's slow tails are already plateaus of one
+        /// level, tens of px wide in the dark, before the blit reads them -
+        /// bilinear filtering joins the plateaus with ramps one texel long, and
+        /// a dither on an exact level does nothing, so the contour rings stay.
+        /// RGBA8 follows for drivers that will not render to half float: the
+        /// ring is still dithered there, the blit's area bands as before.
+        /// Half float is texture-filterable in GLES 3.0 core. Twice the memory:
+        /// 1.6 -> 3.2 MB for an 800 x 500 rect at 1080p at 0.5 (752 x 540
+        /// texels), at most 4.1 MB for any rect at 1080p at 0.5.
+        constexpr TargetFormat SCALED_FORMATS[] = {
+            {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, "RGBA16F"},
+            {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, "RGBA8"},
+        };
+
         /// Allocate @p buffer at @p width x @p height in the best of the
         /// @p count @p formats the driver will give: walk the list from
         /// @p tier, resizing to each candidate until one allocates. The walk
         /// of every buffer above that has a format list - the emission table,
-        /// the glow coverage table and the gather buffer.
+        /// the glow coverage table, the gather buffer and the reduced buffer.
         ///
         /// @p tier is where the walk resumes, and is left on the format that
         /// allocated. Keep it beside the buffer and pass it back on every call:
@@ -2949,7 +2964,9 @@ namespace EdgeLighting
         //
         // ONE attachment: the composited colour. The gather lives in its own,
         // coarser buffer (renderGatherPass).
-        if (!mScaledBuffer.Resize(texels.x, texels.y, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, GL_LINEAR))
+        if (!ResizeInBestFormat(mScaledBuffer, SCALED_FORMATS, std::size(SCALED_FORMATS), mScaledFormat, texels.x,
+                                texels.y, GL_LINEAR, 1, "reduced-scale",
+                                "The glow's slow gradients are rounded to 8 bits before the blit dithers them."))
         {
             return false;
         }

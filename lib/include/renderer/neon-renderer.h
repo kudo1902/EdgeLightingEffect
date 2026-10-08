@@ -1611,11 +1611,18 @@ namespace EdgeLighting
         RingField mRingField;      ///< P1r, read by P2r - see @ref RingField.
         OffscreenState mOffscreen; ///< Whether P1a and P1b can be skipped - see @ref OffscreenState.
 
-        /// Pass 1b's target: the composited colour, one RGBA8 attachment at the
+        /// Pass 1b's target: the composited colour, one attachment at the
         /// reduced scale - full size at 1.0 - covering what the blit reads
         /// (@c mScaledOuter) and never more than the whole reduced viewport -
-        /// see GetBufferRegion. Released when the layer is disabled.
+        /// see GetBufferRegion. RGBA16F where the driver renders to it, RGBA8
+        /// where not (SCALED_FORMATS). Released when the layer is disabled.
         Framebuffer mScaledBuffer{"NeonRenderer.Scaled"};
+
+        /// Index into SCALED_FORMATS of the best format the driver has not
+        /// refused for @c mScaledBuffer - the tier ResizeInBestFormat resumes
+        /// from, kept here because the buffer is released and cannot record
+        /// it. Only ever advances.
+        size_t mScaledFormat = 0;
     };
 }
 

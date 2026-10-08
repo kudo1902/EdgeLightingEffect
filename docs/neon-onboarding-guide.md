@@ -245,7 +245,7 @@ GLSL offers three ways to read:
 | `uArcLUT` | 128 x 8 | RGBA8 | LINEAR | CLAMP | one row per arc with its own colours |
 | `uEmission` | 128 x 2 | RGBA16F (RGBA8 fallback) | NEAREST | CLAMP | per-sample colour and weight, rebaked by a pre-pass |
 | `uGather`, `uGatherSeg` | depends on the rect | RGBA16F (RGBA8 fallback) | LINEAR | CLAMP | the gather's results, below scale 1.0 only |
-| `uSource` (blit) | the reduced buffer | RGBA8 | LINEAR | CLAMP | the glow shaded at reduced resolution |
+| `uSource` (blit) | the reduced buffer | RGBA16F (RGBA8 fallback) | LINEAR | CLAMP | the glow shaded at reduced resolution |
 
 The colour ring uses `REPEAT` so that rotating the hue is a single addition
 to u (u past 1 wraps). The atlases use `CLAMP` because an arc's gradient has
@@ -1328,7 +1328,7 @@ compiles it. A program that fails to compile is logged once, recorded in
 | `mEmission.buffer` | 128 x 2 | RGBA16F, else RGBA8 (`EMISSION_FORMATS`) | allocated once in `Initialize` |
 | `mGlowCover.buffer` | 1024 x 128 (`GLOW_COVER_WIDTH` x `GLOW_COVER_HEIGHT`): four bands of `GLOW_COVER_ROWS` rows, each a straight and a corner sharing its columns in proportion to their lengths (`uGlowCoverSplit`) | RGBA16F, else RGBA8 (`GLOW_COVER_FORMATS`), linear filter | allocated on the first frame that bakes it (`ensureGlowCoverBuffer`); never on a ring lit uniformly |
 | `mGather.buffer` | a region around the rect, at the gather scale | RGBA16F, else RGBA8 (`GATHER_FORMATS`); 1 attachment, 2 with segments | scaled path; resized every frame (no-op if unchanged) |
-| `mScaledBuffer` | what the blit reads, at `resolutionScale`, never larger than the reduced viewport | RGBA8, 1 attachment | scaled path; resized every frame |
+| `mScaledBuffer` | what the blit reads, at `resolutionScale`, never larger than the reduced viewport | RGBA16F, else RGBA8 (`SCALED_FORMATS`), 1 attachment | scaled path; resized every frame |
 
 The two scaled-path buffers are released in `OnConfigChanged` when the layer
 is disabled or the scale returns to 1.0, and the coverage table when the layer
@@ -1696,7 +1696,7 @@ scaled by its coverage.*
 | - | - |
 | **Purpose** | Shade the glow at `resolutionScale`, reading the gather's results instead of looping. |
 | **Runs** | Below scale 1.0. |
-| **Target** | `mScaledBuffer`: RGBA8, one attachment, covering what the blit will read (`mScaledOuter`), capped per axis at the reduced viewport size. Cleared to 0. |
+| **Target** | `mScaledBuffer`: RGBA16F (RGBA8 fallback, `SCALED_FORMATS`) so the blit's dither has unrounded gradients to work on, one attachment, covering what the blit will read (`mScaledOuter`), capped per axis at the reduced viewport size. Cleared to 0. |
 | **State** | Blend off: the buffer is fresh and the quad covers each texel once, so blending would only add a destination read. Scissor off. |
 | **Geometry** | `mGlowMesh` through `GetRegionProjection(scaledRegion)`. |
 | **Uniforms** | all of `uploadNeonUniforms` at the real scale, plus `uQuadMargin = mGlowLimits.quadMargin`, `uGatherUVScale` / `uGatherUVOffset` (the map from this pass's `vPos` to the gather buffer's uv). |
@@ -1732,7 +1732,7 @@ glow is fine at this resolution, the line is visibly blocky.*
 | **Geometry** | `mBlitMesh`, full-res, `ortho * translate(centerFull)`. |
 | **Uniforms** | `uMVP`, `uUVScale` / `uUVOffset` (the reduced buffer's region map), `uRectSize`, `uCornerRadius`, `uRectCenter`, `uGlowSide`, `uGlowSideSoftness`, the glow's four cutoff values: all **unscaled**, because this pass measures destination pixels. |
 | **Textures** | unit 0 `uSource` = `mScaledBuffer`. |
-| **Output** | `texture(uSource, uv) * cut`, premultiplied. |
+| **Output** | `texture(uSource, uv) * cut`, premultiplied, its colour dithered by +/- half an 8-bit level (`neonDither`, R7) so the glow's slow tails do not round into contour rings. |
 
 ![The caller's framebuffer after the blit](images/neon-onboarding/pass-after-blit.png)
 
@@ -1750,7 +1750,7 @@ the glow can reach except the ring. The black band is where the ring will go.*
 | **Geometry** | `mRingMesh`, full-res, the same transform as the blit; shares its edges with the blit's area exactly. |
 | **Uniforms** | `uploadNeonUniforms` **at scale 1.0** (so the shader behaves as the direct path: cut and cutoffs applied, no sampling floor), `uQuadMargin = mRingLimits.quadMargin`, and the gather map from full-res `vPos`. |
 | **Textures** | units 0-2 the LUTs, units 3-4 the gather buffer, unit 5 `uGlowCover`. |
-| **Output** | premultiplied graded colour, like P1. |
+| **Output** | premultiplied graded colour, like P1, its colour dithered as the blit's is (`neonDither`, R7) - this is a write to the caller's framebuffer. |
 
 ![The caller's framebuffer after the ring](images/neon-onboarding/pass-after-ring.png)
 
@@ -2075,7 +2075,7 @@ The stage numbers follow the source order.
 | 13 | **Pointwise segment coverage** | `segCoverPt = sum of boost * exp(-e^2) * alpha`; `segCol = segColHue * segCoverPt`. |
 | 14 | **Gathered coverage** | `emitCoverGathered = arcWeight / totalWeight`, `segCoverGathered = segWeight / totalWeight` (exactly 1.0 on a fully lit ring), divided at the end of `gatherPerimeter` and arriving with stage 11; `gatheredSeg = segmentGlow(gathered) = segCoverGathered * max(emitCoverGathered, min(segCoverGathered, 1))`. |
 | 15 | **Filament gate** | `filamentGate = max(smoothstep(0.5, 1, min(segCoverPt, 1)), emitCover)`: a segment on a dark stretch opens its own core only above half strength. |
-| 16 | **Halo and bloom, straights** | For each of the four edges: perpendicular distance and extent, `haloSegment` and `bloomSegmentPedestalled` (Part 3.5), summed. `reach` mirrors the CPU's quad margin. Each edge then calls `addStraightGlowFix`, adding to `glowFix` how far its own halo and bloom move when they take that piece's own coverage instead of the gathered one. It reads that straight's sheet of P0b's table (`glowCoverAt`) at the fragment's projection along the straight - unclamped, since past an end the coverage still changes - and its distance from the line, through `glowCoverStraightUV`: one linear fetch, `.r` / `.b` for the halo's arc and segment coverage, `.g` / `.a` for the bloom's. Skipped - one compare - for a piece whose halo plus bloom is under `GLOW_PIECE_MIN`, and for every piece on a ring lit uniformly. |
+| 16 | **Halo and bloom, straights** | For each of the four edges: perpendicular distance and extent, `haloSegment` and `bloomSegmentPedestalled` (Part 3.5), summed. `reach` mirrors the CPU's quad margin. Each edge's bloom - and each corner arc's in stage 17 - fades out over the outer half of `reach`, by its own distance, on both sides (`BLOOM_FADE_START_FRAC`, V23), so the glow ends gradually rather than on a crease. Each edge then calls `addStraightGlowFix`, adding to `glowFix` how far its own halo and bloom move when they take that piece's own coverage instead of the gathered one. It reads that straight's sheet of P0b's table (`glowCoverAt`) at the fragment's projection along the straight - unclamped, since past an end the coverage still changes - and its distance from the line, through `glowCoverStraightUV`: one linear fetch, `.r` / `.b` for the halo's arc and segment coverage, `.g` / `.a` for the bloom's. Skipped - one compare - for a piece whose halo plus bloom is under `GLOW_PIECE_MIN`, and for every piece on a ring lit uniformly. |
 | 17 | **Halo and bloom, corner arcs** | If `uCornerRadius > 0` (a uniform branch): each quarter arc is developed onto its tangent line (`arcTangentSegment`) and added with its weight; the four arcs share one bloom pedestal. One arc at a time (`addCornerPiece`): developed, its halo and bloom added, and its correction as in stage 16 (`addCornerGlowFix`), read from that corner's sheet at the fragment's polar position round the arc's centre (`glowCoverCornerUV`). Behind the centre, where the development flips ends across the diagonal, the bake has already blended both, so the read needs nothing special. |
 | 18 | **Normalisation** | `halo *= HALO_NORM_FACTOR`; `bloom *= BLOOM_NORM_FACTOR`, then renormalised so the on-line value stays and the tail reaches 0 at `reach`. |
 | 19 | **Glow gate** | `glowGate = clamp(uGlowRadius / (2 px), 0, 1)`: at radius 0 the analytic halo would be a full-height sub-pixel spike, so it fades in over the first 2 px. |
@@ -2122,7 +2122,7 @@ Things the source comments flag as load-bearing:
 | `sdRoundBox(p, b, r)` | the rounded-box SDF (Part 1.8) |
 | `haloSegment(a, t1, t2, k)` | closed-form halo of a straight piece; infinite-line limit `2k^2/(a^2+k^2)` |
 | `bloomSegment(a, t1, t2, k)` | closed-form bloom of a straight piece; infinite-line limit `pi k / sqrt(a^2+k^2)` |
-| `bloomSegmentPedestalled(...)` | the bloom minus its value at `reach`, so the tail ends at 0 |
+| `bloomSegmentPedestalled(...)` | the bloom minus its value at `reach`, so the tail ends at 0, faded out from half of `reach` so it ends without a crease (V23) |
 | `arcTangentSegment(w, r)` | develops a quarter arc onto the tangent at its point nearest the fragment; returns `(distance, t1, t2, weight)` (in `neon-pieces.glsl`, shared with the bake) |
 | `glowCoverStraightUV`, `glowCoverCornerUV` | where a piece's coverage is in P0b's table (in `neon-pieces.glsl`; Part 7.3) |
 | `addStraightGlowFix`, `addCornerGlowFix`, `addCornerPiece` | one piece's correction from its own coverage; `addCornerPiece` takes a corner start to finish - developed, lit, read - one at a time |
@@ -2194,6 +2194,7 @@ through the outermost ring of a viewport-sized fill.
 | `ARC_FEATHER_MAX_SHARE` | 0.4 | feather cap as a share of the arc's length |
 | `GLOW_GATE_FADE_PX` | 2 full-res px | glow fade-in at small radii |
 | `QUAD_FADE_START_FRAC` | 0.8 | the quad-edge fade starts at 80% of the margin |
+| `BLOOM_FADE_START_FRAC` | 0.5 | each piece's bloom fades out from 50% of `reach`, both sides (V23) |
 | `TONE_MAP_SHOULDER`, `GAMMA_EXPONENT` | 0.6, 0.85 | the grade |
 | `BLIT_SIDE_GUARD_PX`, `BLIT_CUTOFF_GUARD_PX` | 2 buffer px | the reduced pass's lit guard bands |
 | `CUTOFF_NEUTRALISED` | 1e6 | sentinel for a neutralised or disabled cutoff |

@@ -5,6 +5,78 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-09 - The references follow V23 and R7
+
+Uncommitted, on top of the two entries below. Apple M2 Pro.
+
+- **The comparison page** (`docs/neon-resolution-scale-comparison.html`) was
+  regenerated as `tools/neon-scale-check/README.md` describes: `542dad4` built
+  in a scratch tree, `generate --mode hue` three times per build interleaved,
+  one image run, `update-page.py`, the images copied over. `542dad4`'s metrics
+  reproduced the page's exactly. `check` passes again, drift 0 on all twelve
+  scenes.
+- **What the page now shows.** Every reduced scale p99 1 against 1.0 (max 2,
+  but `small_rect`: 3 at 0.25, 10 at 0.125). With the hue rotating every scale
+  costs about the same, 0.13-0.18 ms, since the fields serve that frame below
+  1.0 too; only `small_rect` gains clearly from a lower scale there (2.0x at
+  0.25). Its notes, lede and two findings were rewritten - they described the
+  2026-10-06 tree, before I47-I58.
+- **The guide's figures** were rerun: 58 of 68 moved (the dither touches every
+  final frame). `docs/neon-shader-outputs.html` names the reduced buffer's
+  new format and the blit's dither.
+- **Open.** The dither's cost on the target GPU; the guide's prose is still
+  stale since I44.
+
+## 2026-10-08 (night) - R7: the output is dithered
+
+On top of V23, uncommitted. Measured on an Apple M2 Pro. R7 in
+[`review-findings.md`](review-findings.md) has the detail.
+
+- **Reported.** "Many banding circles" on the same capture: the glow's dark
+  tail rounds into one-level plateaus up to 17 px wide outside and 32 inside,
+  concentric round the corners.
+- **What changed.** `neonDither` (`neon-grade.glsl`, `OUTPUT_DITHER_LSB`):
+  +/- half a level of interleaved gradient noise on the colour of the blit, the
+  edge ring and the ring field's composite - the three writes to the caller's
+  framebuffer. And `mScaledBuffer` is RGBA16F (RGBA8 fallback,
+  `SCALED_FORMATS`): with an 8-bit buffer the plateaus are baked in before the
+  blit, and the dither alone left the rings (measured).
+- **Image.** Widest plateau 17 -> 7 px outside, 32 -> 10 inside; block means
+  unchanged (-0.01 levels). Reduced scales moved closer to 1.0. `partition`
+  passes; the field composite within 1 level of direct.
+- **Cost.** ~+0.01 ms a still frame at 1080p at every scale (timer query; the
+  dither, most likely by defeating framebuffer compression), +0.02 at 0.5 and
+  +0.13 at 1.0 on the reported 3600 x 2126 frame (the half-float read). The
+  reduced buffer's memory doubles (1.6 -> 3.2 MB for 800 x 500 at 1080p at 0.5).
+  Unmeasured on a Mali tiler.
+- **Open.** Whether that cost is acceptable on the target is the owner's call;
+  `OUTPUT_DITHER_LSB` 0 turns the dither off. (`check`'s references were
+  regenerated on 2026-10-09.)
+
+## 2026-10-08 (evening) - V23: the bloom fades out instead of stopping on a crease
+
+On top of `457ec75`, uncommitted. Measured on an Apple M2 Pro. V23 in
+[`review-findings.md`](review-findings.md) has the detail.
+
+- **Reported.** A demo capture (1800 x 1063 rect, glowRadius 5, bloom 0.52,
+  scale 0.125): no smooth transition where the glow ends - a hard-edged dark
+  rectangle `reach` (340 px) inside the line, a rim the same distance out.
+- **Cause.** The bloom's pedestal lands it on 0 at `reach` with its slope still
+  on. Inside, nothing hid that crease; outside, the quad-edge fade did, but
+  starting at 0.8 of the margin it steepened the tail before flattening it.
+- **What changed.** Each piece's bloom (straights and corner arcs) is faded by
+  its own distance, both sides, from `BLOOM_FADE_START_FRAC` (0.5) of `reach` -
+  the latest start that does not steepen the tail - floored at a cutoff's end
+  as the quad-edge fade is (`neon.frag`, `neon-tuning.h`).
+- **Image.** At most 6 levels, in the bloom's outer half. Reduced scales against
+  1.0 within their bounds (max moved by 1 in three cells); the field composite
+  within 1 level of direct shading; `partition` passes (seeds 1, 7).
+- **Cost.** Arc-wipe frames 0.967x at 1.0, 0.973x at 0.5; still frames
+  unchanged.
+- **Open.** `check` failed at 1.0 on five scenes (drift 3-6 against the
+  committed images, bound 2) until the references were regenerated on
+  2026-10-09 (above).
+
 ## 2026-10-08 (later) - D3: the fields take segment configs
 
 On top of `d54465a`. Measured on an Apple M2 Pro, 1920 x 1080. I58 in

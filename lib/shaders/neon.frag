@@ -206,9 +206,10 @@ float bloomSegment(float a, float t1, float t2, float k) {
 //
 // SKIPPED past `reach`, where it is exactly zero: bloomSegment falls
 // monotonically with `a` for fixed t1 / t2, so the max() would clamp it to 0
-// anyway. Byte-identical.
-float bloomSegmentPedestalled(float a, float t1, float t2, float k, float reach, float pedestal) {
-    return (a < reach) ? max(bloomSegment(a, t1, t2, k) - pedestal, 0.0) : 0.0;
+// anyway. Byte-identical. The callers then fade it out before `reach` - the
+// bloom end fade in main() (V23).
+float bloomSegmentPedestalled(float a, float t1, float t2, float k, float reach, float pedestal, float fadeLo) {
+    return (a < reach) ? max(bloomSegment(a, t1, t2, k) - pedestal, 0.0) * (1.0 - smoothstep(fadeLo, reach, a)) : 0.0;
 }
 
 // --- Corner arcs, developed onto their tangent -------------------------
@@ -514,14 +515,22 @@ void addCornerGlowFix(inout vec4 fix, vec2 signs, vec2 w, float kh, vec2 gathere
 // level - four skipped arcs stay under half a level. The concave side, where
 // length(w) < r, is never skipped. Change the halo or bloom terms and
 // GlowBoundTerms has to follow.
+//
+// `bloomFade` is main()'s bloom end fade (V23) - its start on the concave side,
+// on the convex side, and `reach` - taken against the developed distance c.x,
+// the side picked as the straights pick theirs: by which side of the arc the
+// fragment's development measures from.
 void addCornerPiece(inout vec2 sum, inout vec4 fix, vec2 signs, vec2 w, float kh, float bw, float pedestal,
-                    vec2 gathered, float gatheredSeg, float haloW, float bloomW) {
+                    vec3 bloomFade, vec2 gathered, float gatheredSeg, float haloW, float bloomW) {
     if (length(w) - uCornerRadius >= uCornerSkip) {
         return;
     }
-    vec4  c = arcTangentSegment(w, uCornerRadius);
+    vec2  u = arcTangentDirection(w);
+    vec4  c = arcTangentSegmentAbout(w, uCornerRadius, u);
     float h = haloSegment(c.x, c.y, c.z, kh) * c.w;
-    float b = max(bloomSegment(c.x, c.y, c.z, bw) * c.w - pedestal, 0.0);
+    float fadeLo = (dot(w, u) >= uCornerRadius) ? bloomFade.y : bloomFade.x;
+    float b = max(bloomSegment(c.x, c.y, c.z, bw) * c.w - pedestal, 0.0) *
+              (1.0 - smoothstep(fadeLo, bloomFade.z, c.x));
     sum += vec2(h, b);
     addCornerGlowFix(fix, signs, w, kh, gathered, gatheredSeg, h, b, haloW * h, bloomW * b);
 }
@@ -953,10 +962,35 @@ void main() {
     float hBot   = haloSegment(aBot,   th1, th2, kh);
     float pedV   = bloomSegment(reach, tv1, tv2, bw);
     float pedH   = bloomSegment(reach, th1, th2, bw);
-    float bLeft  = bloomSegmentPedestalled(aLeft,  tv1, tv2, bw, reach, pedV);
-    float bRight = bloomSegmentPedestalled(aRight, tv1, tv2, bw, reach, pedV);
-    float bTop   = bloomSegmentPedestalled(aTop,   th1, th2, bw, reach, pedH);
-    float bBot   = bloomSegmentPedestalled(aBot,   th1, th2, bw, reach, pedH);
+
+    // The bloom's END FADE (V23). The pedestal lands each piece's bloom on 0 at
+    // `reach` with its slope still on: a crease, and the tone map's 0.85 power
+    // steepens it. Inside, nothing hid it, and a large rect's interior showed a
+    // hard-edged dark rectangle `reach` in. Outside, the quad-edge fade below
+    // did, but starting at 0.8 of the margin it pulls the tail down faster
+    // before it flattens it, which reads as an edge too. So each piece's bloom
+    // is faded by its OWN distance, on both sides, from BLOOM_FADE_START_FRAC of
+    // `reach` - about the latest start that does not steepen the tail
+    // (neon-tuning.h). Its start is floored at the cutoff's end on the side the
+    // fragment sits of that piece, as fadeStart is below, so a cutoff band is
+    // not dimmed ahead of its mask. A factor of the fragment's position alone,
+    // at most 1: the coverage table's ratios and the field's factorisation
+    // hold, and every CPU bound on the bloom only gets looser.
+    float bloomFadeFloor = reach * BLOOM_FADE_START_FRAC;
+    float inCutEdge      = inMid + inHalf + cutGuard;
+    float outCutEdge     = outMid + outHalf + cutGuard;
+    vec3  bloomFade = vec3((inCutEdge  < reach) ? max(bloomFadeFloor, inCutEdge)  : bloomFadeFloor,
+                           (outCutEdge < reach) ? max(bloomFadeFloor, outCutEdge) : bloomFadeFloor,
+                           reach);
+    // Each straight's fade starts from the cutoff on its side of that line.
+    float bLeft  = bloomSegmentPedestalled(aLeft,  tv1, tv2, bw, reach, pedV,
+                                           (vPos.x > -halfSize.x) ? bloomFade.x : bloomFade.y);
+    float bRight = bloomSegmentPedestalled(aRight, tv1, tv2, bw, reach, pedV,
+                                           (vPos.x <  halfSize.x) ? bloomFade.x : bloomFade.y);
+    float bTop   = bloomSegmentPedestalled(aTop,   th1, th2, bw, reach, pedH,
+                                           (vPos.y > -halfSize.y) ? bloomFade.x : bloomFade.y);
+    float bBot   = bloomSegmentPedestalled(aBot,   th1, th2, bw, reach, pedH,
+                                           (vPos.y <  halfSize.y) ? bloomFade.x : bloomFade.y);
 
     // The plain sums, as before V19, and V19's per-piece correction to them.
     float halo  = hLeft + hRight + hTop + hBot;
@@ -1027,13 +1061,13 @@ void main() {
         // for bit.
         vec2 cornerGlow = vec2(0.0);
         addCornerPiece(cornerGlow, glowFix, vec2( sN.x,  sN.y), vec2(wNear.x, wNear.y), kh, bw, arcPedestal,
-                       gatheredCover, gatheredSeg, haloW, bloomW);
+                       bloomFade, gatheredCover, gatheredSeg, haloW, bloomW);
         addCornerPiece(cornerGlow, glowFix, vec2( sN.x, -sN.y), vec2(wNear.x, wFar.y),  kh, bw, arcPedestal,
-                       gatheredCover, gatheredSeg, haloW, bloomW);
+                       bloomFade, gatheredCover, gatheredSeg, haloW, bloomW);
         addCornerPiece(cornerGlow, glowFix, vec2(-sN.x,  sN.y), vec2(wFar.x,  wNear.y), kh, bw, arcPedestal,
-                       gatheredCover, gatheredSeg, haloW, bloomW);
+                       bloomFade, gatheredCover, gatheredSeg, haloW, bloomW);
         addCornerPiece(cornerGlow, glowFix, vec2(-sN.x, -sN.y), vec2(wFar.x,  wFar.y),  kh, bw, arcPedestal,
-                       gatheredCover, gatheredSeg, haloW, bloomW);
+                       bloomFade, gatheredCover, gatheredSeg, haloW, bloomW);
         halo  += cornerGlow.x;
         bloom += cornerGlow.y;
     }
@@ -1173,5 +1207,7 @@ void main() {
     // dark surround (alpha = 0) leaves the background untouched. Pairs with
     // glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA) in the renderer.
     float alpha = clamp(max(result.r, max(result.g, result.b)), 0.0, 1.0);
-    fragColor = vec4(result, alpha);
+    // The output dither, on the ring's write to the caller's framebuffer only:
+    // pass 1b writes the reduced buffer, which the blit dithers as it writes.
+    fragColor = vec4(blitOwnsCut ? result : neonDither(result), alpha);
 }

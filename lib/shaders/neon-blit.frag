@@ -181,4 +181,9 @@ void main() {
     // exact 1.0, so that path stays bit-identical to the plain texture read
     // this shader used to be.
     fragColor = src * cut;
+
+    // The output dither (neon-grade.glsl): this is the write to the caller's
+    // framebuffer, so the place the reduced buffer's half-float precision
+    // finally meets 8 bits.
+    fragColor.rgb = neonDither(fragColor.rgb);
 }

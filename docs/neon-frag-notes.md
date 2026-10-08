@@ -895,6 +895,52 @@ skips baking the coverage table on, so wherever the table may be stale
 this holds and nothing reads it.
 ```
 
+## The bloom's end fade (V23)
+
+Added 2026-10-08, not moved from the shader: the history behind
+`bloomFade` in `main()`, the fade factor in `bloomSegmentPedestalled` and the
+one in `addCornerPiece`. [`review-findings.md`](review-findings.md) V23 has the
+report and the images.
+
+The pedestal lands each straight's bloom on exactly 0 at `reach`, but with its
+slope still on, and the tone map's 0.85 power steepens a linear arrival at 0.
+On an 1800 x 1063 rect at glowRadius 5, bloomStrength 0.52, intensity 0.8
+(`reach` 340 px) the glow lost one level every 16 px along the centre row,
+inside, right up to 332 px in, then went flat: a hard-edged dark rectangle.
+
+**A fade on the inward side only, from 0.8 of `reach`, was tried first** - the
+quad-edge fade's own fraction, mirrored inside. It removed the crease but not
+the edge: the last levels fell 275, 283, 291, 308 and 317 px in - closer
+together than before, then flat, and a 3x contrast crop still showed the
+rectangle. Any fade
+that starts with zero slope on a tail that is nearly linear pulls it down
+faster before it flattens it - on the infinite-line bloom above, the steepest
+slope inside the fade over the slope where it starts is:
+
+| fade starts at | peak slope / slope at start |
+| --- | ---: |
+| 0.8 `reach` | 1.40 |
+| 0.6 | 1.14 |
+| 0.5 | 1.035 |
+| 0.4 and below | 1.00 |
+
+The outside had always had the 0.8 shoulder through the quad-edge fade, and
+its rim bunched its last levels too (15, 8, 8, 17, 8 px apart). So the fade
+runs on both sides, from `BLOOM_FADE_START_FRAC` = 0.5 - also where
+c * (reach - a)^2 meets the pedestalled 1/a tail in value and slope.
+
+**Per piece, by that piece's own distance**, not by the fragment's depth: a
+mid-size rect (800 x 500 at 1080p, the same glow) is within `reach` of all four
+edges at its centre, so a depth-keyed fade never engages there, while each
+pair's bloom still ends `reach` from its own line - a flat plateau between two
+vertical creases, which the per-piece fade removes.
+
+**Inside the `a < reach` skip.** A first form computed all four straights'
+factors as one vec4 before the skip: arc-wipe frames 0.945x at 1.0 and 0.953x
+at 0.5 (M2 Pro, 1920 x 1080, median of 3 interleaved rounds). One scalar per
+piece inside the branch that already skips past `reach`, byte-identical to it:
+0.967x and 0.973x. Still frames reuse their passes and show nothing.
+
 ## The arcs' shared pedestal
 
 `neon.frag` line 1399, before the move.

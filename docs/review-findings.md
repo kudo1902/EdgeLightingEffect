@@ -36,7 +36,7 @@ old fork survived.
 | - | ----- | ---- |
 | visual | V1, V2, V3, V4, V6, V7 | V5 (closed as a documented limitation) |
 | implementation | I1, I2 (by I39), I3, I4, I6, I7 | I5 (documented), I8 (audited) |
-| second pass | R1, R2, R3, R4, R5, R6 | R7 |
+| second pass | R1, R2, R3, R4, R5, R6, R7 | - |
 | third pass | V8, I9, I10, I11, I12 (partly) | V9, I12's two stale design docs |
 | fourth pass | I14 | I13 |
 | fifth pass | I15 | - |
@@ -815,7 +815,7 @@ the intended `uResolutionScale` corrections. `PackArcFlags` and
 
 What follows is what the pass turned up. R1 to R6 have since been fixed, each
 keeping its original description so the reasoning stays readable next to the
-change. R7 is open.
+change. R7 was open until the twenty-sixth pass, and is fixed too.
 
 ### R1. `Initialize()` promises a re-entry guarantee it does not implement - FIXED
 
@@ -1062,7 +1062,7 @@ resolution", so the warning would have fired on every scaled frame. `Shift+O`
 now toggles the scale between 1.0 and 0.5. The lens-flare pair still warns, and
 still needs to.
 
-### R7. The halo and bloom band into 8-bit contours - OPEN
+### R7. The halo and bloom band into 8-bit contours - FIXED
 
 Both wide layers are smooth, very low-slope gradients - the bloom falls as
 `1/D` - so over most of their reach they cross an 8-bit quantisation step only
@@ -1129,6 +1129,72 @@ implementation of exactly this existed in the working tree before the pull that
 brought `17745a9` in, as an `OUTPUT_DITHER_LSB` constant in `neon-tuning.h`
 plus the shader blocks. It is not in the tree now. Whether that was deliberate
 or lost is not something I can tell from here, so nothing has been re-applied.
+
+**Fixed (2026-10-08, twenty-sixth pass)**, after a user report of "many
+banding circles" on a demo capture (V23's scene: 1800 x 1063 rect, glowRadius
+5, bloom 0.52, scale 0.125) - the rings round the corners are plain at 3x
+contrast. Two changes, both needed:
+
+- **The dither** - `neonDither` in `neon-grade.glsl`, interleaved gradient
+  noise in +/- half a level (`OUTPUT_DITHER_LSB` 1.0), on the colour of the
+  three writes to the caller's framebuffer: the blit, the edge ring
+  (`neon.frag` with `uBlitOwnsCut` 0) and the ring field's composite. As the
+  note above says, not in an offscreen buffer; not on alpha either, which over
+  a bright background would cancel it through the premultiplied blend.
+- **A half-float reduced buffer** (`SCALED_FORMATS`: RGBA16F, RGBA8 where the
+  driver will not render to it). The note above predates the unified renderer:
+  every pixel the blit draws now comes through `mScaledBuffer`, at every scale,
+  and in RGBA8 the tails are already one-level plateaus there - noise on an
+  exact level rounds back to it. Measured: dither with an RGBA8 buffer leaves
+  the widest plateau on the centre row at 13-18 px outside and 30-35 inside,
+  and the rings visible.
+
+Centre row of the reported scene, from the line out to the glow's end:
+
+| | level changes | mean plateau | widest outside | widest inside |
+| - | ------------: | -----------: | -------------: | ------------: |
+| before (V23 only) | 92 | 3.2 px | 17 px | 32 px |
+| dither, RGBA8 buffer | 143 | 2.0 px | 13 px | 30 px |
+| dither, RGBA16F buffer | 156 | 1.9 px | 7 px | 10 px |
+
+The mean is preserved: 32 x 32 block means move by -0.01 levels on average,
+0.3 at worst. `check`: reduced scales against 1.0 moved toward it (several
+cells 2 -> 1, the RGBA8 rounding gone); 1.0 against the committed images adds
+one drift past the bound (`arcs`, 2 -> 3) to V23's five. On 2026-10-09 the
+comparison page was regenerated after both, as its README describes - against
+`542dad4` again, whose metrics reproduced the page's to the level - and `check`
+passes, drift 0 on all twelve; the guide's figures were rerun too (58 of 68
+moved). `partition` passes
+(seeds 1 and 7); the hue field's composite stays within 1 level of direct
+shading. `PassRecorder` told pass 1b from the field bake by a float target;
+it now asks for alpha bits (the field has none), and the guide's 68 figures
+render as before.
+
+**Cost**, still frames, Apple M2 Pro, GPU time by timer query with a flush per
+frame, median of 200 frames and of three rotated runs, in ms:
+
+| scene | scale | before | + half float | + dither | both |
+| ----- | ----- | -----: | -----------: | -------: | ---: |
+| reported, 3600 x 2126 | 1.0 | 0.185 | 0.311 | 0.184 | 0.307 |
+| | 0.5 | 0.095 | 0.117 | 0.110 | 0.131 |
+| | 0.125 | 0.074 | 0.078 | 0.103 | 0.102 |
+| 960 x 540 at 1080p | 0.5 | 0.013 | 0.011 | 0.022 | 0.020 |
+| | 0.125 | 0.013 | 0.012 | 0.022 | 0.023 |
+| 800 x 500 at 1080p | 0.5 | 0.005 | 0.011 | 0.019 | 0.021 |
+| | 0.125 | 0.008 | 0.010 | 0.024 | 0.019 |
+
+The half-float buffer costs at 1.0 (the blit reads twice the bytes of a
+full-size buffer) and little below 0.5. The dither costs ~0.01 ms a frame at
+1080p at every scale, and more on a larger frame: it tracks the noisy area of
+the CALLER'S framebuffer, not the scale, which is what noise defeating the
+GPU's lossless framebuffer compression would do - an inference, not measured
+directly. Small in absolute terms, but 1.5-4x on still frames that were
+already cheap, and unmeasured on a Mali tiler, where framebuffer compression
+matters more. Memory: the reduced buffer doubles, 1.6 -> 3.2 MB for an
+800 x 500 rect at 1080p at 0.5. `neon-scale-check time` could not resolve
+any of this - its still figures read 0.74-0.87x for a build whose only change
+was an unused function in the blit's source, which the timer query puts at no
+cost; use a timer query for still frames.
 
 ---
 
@@ -4705,6 +4771,94 @@ Every other scene: geometric mean 1.00 on hue frames and 1.01 on still ones
 
 ---
 
+## Twenty-sixth pass (the bloom's end)
+
+### V23. The glow stopped on a crease: a hard-edged dark rectangle inside a large rect - FIXED
+
+Reported from a capture of the demo: an 1800 x 1063 rect at (900, 531) in a
+3600 x 2126 frame, `cornerRadius` 0, `lineWidth` 1, `filamentFalloff` 0.46,
+`intensity` 0.8, `glowRadius` 5, `bloomStrength` 0.52, one full arc,
+`resolutionScale` 0.125: "there is not smooth transition between halo region
+and non-covered region". The glow ends on a visible rectangle about 340 px
+inside the line - the dark centre has hard edges and square corners - and,
+less sharply, on a rim the same distance outside.
+
+340 px is `reach` (`glowRadius * 48 * (1 + bloomStrength * intensity)`), where
+the bloom ends. A headless probe renders the reported scene to the level on the
+centre row, which is where the numbers below come from.
+
+**Mechanism.** `bloomSegmentPedestalled` subtracts each straight's own value at
+`reach`, so its bloom lands on exactly 0 there - continuous, but with the slope
+still on, and the tone map's 0.85 power steepens a linear arrival at 0. Inside
+the rect nothing else ended it: along the centre row the glow lost a level
+every 16 px all the way in, then went flat at 332 px. Outside, the quad-edge
+fade ran over the last fifth of the margin, but a fade that starts that late,
+with zero slope, on a nearly linear tail pulls it down faster before it
+flattens it - its slope peaks 1.40x the tail's - so the rim's last levels
+bunched (15, 8, 8, 17, 8 px apart) and read as an edge too. On a mid-size rect
+(800 x 500 at 1080p, the same glow) the centre is within `reach` of every edge,
+so the dark rectangle is gone, but each pair's bloom still ends `reach` from
+its own line: a flat plateau between two vertical creases.
+
+**Fix.** Each piece's bloom is multiplied by `1 - smoothstep(start, reach, a)`
+of its OWN distance `a` - the straights' perpendicular distance, the corner
+arcs' developed one - on both sides of it, `start` being
+`BLOOM_FADE_START_FRAC` (0.5) of `reach`. 0.5 is the latest start that does not
+steepen the tail (the slope peaks 1.14x at 0.6, 1.035x at 0.5, not at all from
+0.4 down - `neon-frag-notes.md`, "The bloom's end fade"). The start is floored
+at the cutoff's end on the side the fragment sits of that piece, as the
+quad-edge fade's `fadeStart` is, so a cutoff band is not dimmed ahead of its
+mask. A fade on the inward side only, from 0.8, was built first: it removed
+the crease, but its last levels fell at 275, 283, 291, 308 and 317 px - closer
+together, then flat - and a 3x contrast crop still showed the rectangle.
+
+Level drops on the centre row, distance from the line in px:
+
+| | last five level drops | then |
+| - | --------------------- | ---- |
+| inside, before | 275, 291, 307, 317, 332 | flat: the rectangle |
+| inside, after | 243, 251, 267, 284, 308 | gaps 8, 16, 17, 24 |
+| outside, before | 276, 284, 292, 309, 317 | gaps 8, 8, 17, 8 |
+| outside, after | 244, 252, 268, 285, 301 | gaps 8, 16, 17, 16 |
+
+(Steps fall on the 8 px texels of the 0.125 buffer.) Inside and out now end
+the same way, and on the mid-size rect the plateau and its creases are gone.
+
+**What moved.** Only the bloom's outer half, by at most 6 levels: 21-40% of
+each probe frame (the reported scene at 0.125 and 1.0, the same with
+`cornerRadius` 120, the default 640 x 360 scene, the mid-size rect).
+`neon-scale-check check`: every reduced scale against 1.0 stays inside its
+bound, and moved by at most 1 (max 1 -> 2 on `default` at 0.35 and
+`card_outside` at 0.25, 2 -> 1 on `segments` at 0.35; p99 unchanged
+everywhere). But scale 1.0 now drifts 3-6 levels from the page's
+committed images on `default` (3), `hairline` (4), `crisp_tube` (6),
+`sharp_corners` (3) and `segments` (5), past the gate's bound of 2 - since
+regenerated with R7 (2026-10-09, below), after which `check` passes at drift 0. `bounded_band`, the cutoff band, stays at 1.
+`partition` passes (seeds 1 and 7). Under a rotating hue the field's composite
+reads within 1 level of direct shading on all five probe scenes, as before.
+
+**What it does not break.** The factor depends on the fragment's position
+alone and is at most 1. So the field's factorisation holds (it is applied before
+the tone map, like the quad-edge fade), the glow coverage table's ratios are
+unchanged (it is constant along a piece), and every CPU bound on the bloom -
+`GetGlowInnerReach`, `GetCornerSkip` through `GlowBoundTerms` - only gets
+looser. A fade that RAISED the bloom anywhere would break all three.
+
+**Cost.** Apple M2 Pro, 1920 x 1080, `neon-scale-check time`, median of three
+interleaved rounds, geometric mean over the twelve scenes:
+
+| mode | 1.0 | 0.5 | 0.25 | 0.125 |
+| ---- | --: | --: | ---: | ----: |
+| arc-wipe | 0.967x | 0.973x | 0.982x | 0.976x |
+| still | 1.01x | 0.99x | 1.04x | 1.04x |
+
+Still frames reuse their passes, so only frames that shade pay; the still row
+is noise. The fade is computed inside the branch that already skips a straight
+past `reach` - the same factors computed as one vec4 before it cost twice as
+much (0.945x at 1.0, 0.953x at 0.5).
+
+---
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
@@ -4715,9 +4869,9 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, and the twenty-fifth I58. Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, and the twenty-sixth V23 and R7. Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
-the code rather than only here, plus R7 from the second pass, V9 and I12's
+the code rather than only here, plus V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
 
 | item | state | why |
@@ -4731,7 +4885,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I2 | fixed by I39 | declined first for its staleness risk; I39 keys the table on what its pass binds, which needs no list of config fields |
 | I5 | documented | the alternative is a breaking renderer-API change for an unmeasured cost |
 | I8 | audited, no UI written | the C ABI itself is complete; what is missing is `demo-capi` coverage, ranked in the section above |
-| R7 | open | a measured quantisation defect with a cheap cure, but unproven visual severity; see the note there before starting |
+| R7 | fixed | the dark tail's one-level plateaus drew contour rings; the three writes to the caller's framebuffer now add a +/- half-level dither, and the reduced buffer is half float so the blit has something left to dither. Widest plateau 17 -> 7 px outside, 32 -> 10 inside. +0.01 ms a still frame at 1080p (likely lost framebuffer compression), the reduced buffer's memory doubled |
 | V9 | open | the honest fix is a design decision (interpolate the arc colour between adjacent samples in the consumer), not a patch; the three options are ranked in the section |
 | I12 | partly fixed | the live shader comment is corrected; `architecture-design.md` and `multiple-arcs-design.md` still name the removed LUT functions, and both are design prose rather than comments beside live code |
 | I13 | open | undefined `pow` reachable only through the C ABI; both cures change what the boundary accepts or what the term computes below `ghostSize` 0.6, so it is a behaviour decision rather than a repair |
@@ -4769,6 +4923,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I55 | changed | the gather re-ran on every config change; now skipped while its inputs hold and this frame's quad lies inside the last one drawn, read through that region - intensity-pulse frames 1.19x at 1.0, 1.31x at 0.5, 1.43x at 0.25 (M2), within 1 level; and pass 1b, which inherited its unblended state from pass 1a's `glDisable`, now sets it itself |
 | I56 | changed | an intensity animation invalidated both fields every frame; an intensity-only change now keeps them, scaled by I / I0 while it moves below the bake, re-baked above it and exactly when it stops - intensity-pulse frames 2.31x at 0.5, 1.60x at 0.25 (M2); held frames byte-identical, moving ones within 2 levels on the default look, 6 on a 1.5 bloom over a 0.4-1.0 pulse (owner-accepted) |
 | I57 | changed | the direct path at 1.0 removed: 1.0 takes the scaled path with a full-size buffer, `uBlitOwnsCut` replaces the scale test, `resolutionScale` defaults to 0.5 - every frame below 1.0 byte-identical and no slower; 1.0 within 1 level, 1.67x on still frames, 0.88x hue and 0.62x intensity there (M2), up to 8.3 MB more at full screen |
+| V23 | fixed | the bloom's pedestal ended it on a crease at `reach`, so a large rect's centre showed a hard-edged dark rectangle and the outer rim bunched its last levels; each piece's bloom now fades out by its own distance from 0.5 `reach`, both sides - at most 6 levels in the outer half of the tail, arc-wipe frames 0.97x, still frames unchanged. the page's images regenerated with R7 |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

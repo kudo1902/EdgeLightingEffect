@@ -395,6 +395,16 @@
 #define TONE_MAP_SHOULDER         0.6
 #define GAMMA_EXPONENT            0.85
 
+// --- The output dither (R7), peak to peak in 8-bit levels: neonDither
+//     (neon-grade.glsl) adds noise in +/- half this to every colour the neon
+//     writes to the caller's framebuffer - the blit, the edge ring and the
+//     ring's field composite, never an offscreen buffer. The halo and bloom
+//     are slow gradients that cross a level only every few px, up to tens of
+//     px in the dark tail, so an undithered write draws concentric contour
+//     rings around the rect. 1.0 is the least that removes them; 0 turns the
+//     dither off. It assumes an 8-bit target. ---
+#define OUTPUT_DITHER_LSB         1.0
+
 // --- Epsilons ---
 #define WSUM_EPSILON              1e-6
 
@@ -618,8 +628,33 @@
 //     ahead of the cutoff mask - and only on the exterior, since the fade keys
 //     on positive d. Both shaders therefore floor the ramp's start at the
 //     cutoff boundary whenever that boundary falls inside the quad; see the
-//     fadeStart block in neon.frag. ---
+//     fadeStart block in neon.frag.
+//
+//     Since V23 the bloom no longer relies on this fade to end smoothly - each
+//     piece fades by its own distance from BLOOM_FADE_START_FRAC, below, which
+//     has it under a level well before this ramp starts. ---
 #define QUAD_FADE_START_FRAC      0.8
+
+// --- Where each piece's bloom starts fading out, as a FRACTION of `reach`
+//     (neon.frag's bloom end fade, V23).
+//
+//     The pedestal takes the bloom's 1/a tail to exactly 0 at `reach`, but
+//     with its slope still on, so the glow stopped on a crease: inside a large
+//     rect, a hard-edged dark rectangle `reach` in. The quad-edge fade above
+//     hid it outside, but over [0.8, 1.0] of the margin, where the tail is
+//     still ~5 levels up, and a fade that late STEEPENS the tail before it
+//     flattens it - a shoulder, then flat, which reads as an edge too. So
+//     each piece's bloom is multiplied by 1 - smoothstep(FRAC * reach, reach,
+//     a) of its own distance, on both sides.
+//
+//     0.5 is about the latest start that does not steepen it: the steepest
+//     slope inside the fade over the slope where it starts, on the
+//     infinite-line bloom at glowRadius 5, bloomStrength 0.52, intensity 0.8,
+//     is 1.40 at 0.8, 1.14 at 0.6, 1.035 at 0.5 and 1.00 from 0.4 down. (It
+//     is also where c * (reach - a)^2 meets the pedestalled 1/a tail in value
+//     and slope.) An earlier start costs more of the tail; at 0.5 the glow
+//     reads up to 6 levels dimmer in the outer half of its reach. ---
+#define BLOOM_FADE_START_FRAC     0.5
 
 // --- Filament reach for the same quad sizing, expressed in sigmas.
 //
