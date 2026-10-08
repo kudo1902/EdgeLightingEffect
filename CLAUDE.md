@@ -310,7 +310,7 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   two-channel texture samples .a as 1, so `glowCoverAt` zeroes .b / .a on
   `uSegmentCount == 0` - keep the two together; promoted to four channels the
   first frame segments appear and kept there, I43) - encoded `c / (1 + c)`, and re-baked only when one of
-  its inputs moves (`mGlowCover.dirtyPieces`, gated in `OnConfigChanged` on the arcs,
+  its inputs moves (`mGlowCover.dirtyArcPieces` / `dirtySegmentPieces`, gated in `OnConfigChanged` on the arcs,
   the effective segments, width, height, cornerRadius, winding and glowRadius -
   NOT any config change, I34): never on time, and not under an intensity,
   colour or other-layer animation, but EVERY frame under an animation of the
@@ -320,9 +320,17 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   Add a uniform to `renderGlowCoverPass` and its field joins that gate. The
   flag is a mask, one bit per PIECE (I42): every texel integrates the lights
   over its own piece alone, so a changed arc or segment re-bakes only the
-  pieces its old and new supports reach (`GetGlowCoverDirtyPieces`, compared
-  on the PACKED blocks, abut flags included), drawn as rectangles of the table
-  by geometry rather than a scissor. Every piece on a shape, winding or glow
+  pieces its old and new supports reach (`GetGlowCoverDirtyArcPieces`,
+  `GetGlowCoverDirtySegmentPieces`, compared on the PACKED blocks, abut flags
+  included), drawn as rectangles of the table by geometry rather than a
+  scissor. And per light TYPE: a piece's arc channels (.r / .g) depend on the
+  arcs and the geometry alone, its segment channels (.b / .a) on the segments
+  alone, so the two kinds keep separate masks and the bake integrates and
+  writes (`glColorMask`, `uBakeArcs` / `uBakeSegments`) only the kind a piece
+  needs - arcs animating over still segments no longer re-integrate every bell
+  (bake 1.35 -> 0.35 ms, frame 1.42x with 4 + 4 on an AMD 5300M). Exact: verified
+  byte for byte against the full bake. Add a light-dependent term to either half
+  of `pieceCover` that reads the other kind and the split stops being exact. Every piece on a shape, winding or glow
   radius change, on a change to the brightest arc's intensity (which clamps
   every piece) and for a light covering the whole ring. Exact - verified texel
   for texel against a full bake - and 1.06-1.29x on a travelling segment's

@@ -1372,7 +1372,7 @@ field, before overwriting it, and computes:
 | `mLightBlocks.dirty` | `segmentsDirty`, or `arcs` (accumulated, never cleared here) | `packLightBlockData` on the next `Render` |
 | (none for P0) | - | P0 is keyed on what it binds, not on config fields: see `isEmissionTableStale` below |
 | `mOffscreen.reusable` | cleared on **any** change | P1a and P1b on the next `Render` - see below |
-| `mGlowCover.dirtyPieces` (a mask, one bit per piece) | every piece: geometry `width` / `height` / `cornerRadius` / `winding`, `glowRadius`; only the pieces a changed arc or segment reaches: `segmentsDirty`, `arcs` (accumulated, never cleared here) | P0b on the next `Render` - skipped, flag left set, while the ring is lit uniformly |
+| `mGlowCover.dirtyArcPieces` / `dirtySegmentPieces` (masks, one bit per piece, one per light type) | every piece in both: geometry `width` / `height` / `cornerRadius` / `winding`, `glowRadius`; only the pieces a changed arc reaches (arc mask) or a changed segment reaches (segment mask) (accumulated, never cleared here) | P0b on the next `Render` - skipped, flag left set, while the ring is lit uniformly |
 
 Then, in order: overflow warnings for more than 8 arcs or segments, the
 segment merge, the flags above, `mCurrentConfig = config`, release of the
@@ -1414,7 +1414,7 @@ Render
  |- if glowReady:
  |    packLightBlocks()                             // re-pack if dirty; bind blocks 0 and 2
  |    if isEmissionTableStale(): [blend off] P0 emission table
- |    if mGlowCover.dirtyPieces != 0 && !IsGlowCoverUnread():  // its dirty pieces only
+ |    if (dirtyArcPieces | dirtySegmentPieces) && !IsGlowCoverUnread():  // its dirty pieces only
  |                               [blend off] P0b glow coverage table
  |    if scaled:
  |       gatherRegion = GetBufferRegion(mGatherBounds.outer, ..., gatherScale, no cap)
@@ -1640,7 +1640,7 @@ weight: 1, then 0.6 for the dimmer arc, 0 in the gaps), row 1's colour
 | | |
 | - | - |
 | **Purpose** | Pre-compute, for each of the eight pieces of the emitter, how lit that piece is as the halo and the bloom see it from any fragment position round it, so each piece can scale its glow by its own coverage (Part 3.6). |
-| **Runs** | Both paths, only when `mGlowCover.dirtyPieces` (a change to the arcs, the segments, the rect's width, height, corner radius or winding, or `glowRadius`), and then only over the PIECES that change reaches - a light's old and new support, or all eight for a shape change (I42). Never on time, nor under an intensity, colour or other-layer animation - but every frame under an animation of one of those inputs (0.14-0.27 ms a frame in all on an AMD Radeon Pro 5300M, one arc to three arcs and two segments - about half what V20's table cost). Skipped on a ring lit uniformly - one full arc, no segments - which never reads it (`IsGlowCoverUnread`); its program and its buffer are built on the first frame that bakes (`ensureGlowCoverProgram`, `ensureGlowCoverBuffer`), not in `Initialize`, and the buffer is released when the layer is disabled. |
+| **Runs** | Only when a dirty mask is set (a change to the arcs, the segments, the rect's width, height, corner radius or winding, or `glowRadius`), and then only over the PIECES that change reaches - a light's old and new support, or all eight for a shape change (I42) - and only for the light TYPE that changed: a piece only the arcs dirtied integrates and writes its arc channels alone, under `glColorMask`. Never on time, nor under an intensity, colour or other-layer animation - but every frame under an animation of one of those inputs (0.14-0.27 ms a frame in all on an AMD Radeon Pro 5300M, one arc to three arcs and two segments - about half what V20's table cost). Skipped on a ring lit uniformly - one full arc, no segments - which never reads it (`IsGlowCoverUnread`); its program and its buffer are built on the first frame that bakes (`ensureGlowCoverProgram`, `ensureGlowCoverBuffer`), not in `Initialize`, and the buffer is released when the layer is disabled. |
 | **Target** | `mGlowCover.buffer`, 1024 x 128 texels: RGBA16F, 1.0 MB (RGBA8 fallback) - or RG16F, 0.5 MB (RG8 fallback) while the config has no segments - `GL_LINEAR`. Released by `Update` after 5 s unread. Its own `RenderTargetState` is captured and restored. |
 | **State** | Blend off. Scissor off. No clear: the quad covers every texel. |
 | **Geometry** | `mFullscreenVertexArray`: identity MVP when every piece is dirty, one fragment per texel; otherwise one draw per dirty band through an MVP onto that band's straight, corner or both - texel-aligned rectangles, so it writes exactly their texels and no scissor state is touched. |
@@ -1978,7 +1978,8 @@ Notes:
   compiled on the first frame that bakes (`ensureGlowCoverProgram`), not in
   `Initialize`: ~70 ms on that frame on the AMD, which a ring lit uniformly
   never pays.
-- **When it runs.** Only when one of its inputs changes (`mGlowCover.dirtyPieces`:
+- **When it runs.** Only when one of its inputs changes (`mGlowCover.dirtyArcPieces` /
+  `dirtySegmentPieces`, one mask per light type:
   the arcs, the segments, the rect's width, height, corner radius or winding,
   `glowRadius`), and only over the pieces the change reaches - each texel
   integrates the lights over its own piece alone, so a moved light dirties the

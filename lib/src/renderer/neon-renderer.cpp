@@ -1364,11 +1364,11 @@ namespace EdgeLighting
 
         /// The glow coverage table's eight pieces, numbered as its bands hold
         /// them: piece 2b is band b's straight, piece 2b + 1 its corner. One
-        /// bit each in NeonRenderer::mGlowCover.dirtyPieces.
+        /// bit each in NeonRenderer::mGlowCover's two dirty masks.
         constexpr int GLOW_COVER_PIECES = 8;
         constexpr uint32_t GLOW_COVER_ALL_PIECES = (1u << GLOW_COVER_PIECES) - 1u; ///< The mask with every piece dirty.
         static_assert(GLOW_COVER_ALL_PIECES == 0xFFu,
-                      "NeonRenderer::mGlowCover.dirtyPieces starts at 0xFF: every piece, which is this");
+                      "NeonRenderer::mGlowCover's dirty masks start at 0xFF: every piece, which is this");
 
         /// Where one piece lies on the perimeter, in the same [0, 1) parameter
         /// the arcs and segments are placed in: it runs from @c start for
@@ -1438,7 +1438,7 @@ namespace EdgeLighting
         /// The pieces whose perimeter span meets [@p lo, @p hi] (perimeter
         /// fractions, any wrap; hi - lo below 1), each widened by
         /// @ref GLOW_COVER_SPAN_SLACK.
-        /// @return One bit per piece of @p spans, as mGlowCover.dirtyPieces numbers
+        /// @return One bit per piece of @p spans, as mGlowCover's dirty masks number
         ///         them; every piece when the widened interval covers the ring.
         inline uint32_t GetGlowCoverPiecesTouching(const std::array<GlowCoverPieceSpan, GLOW_COVER_PIECES> &spans,
                                                    float lo, float hi)
@@ -1472,10 +1472,13 @@ namespace EdgeLighting
             return mask;
         }
 
-        /// Which pieces of the glow coverage table moved between the light
-        /// blocks @p oldArcs / @p oldSegments and @p newArcs / @p newSegments,
-        /// for a config whose shape, winding and glow radius did not change
-        /// (those move every piece, and the caller says so itself).
+        /// Which pieces' ARC channels (.r / .g) of the glow coverage table moved
+        /// between the arc blocks @p oldArcs and @p newArcs, for a config whose
+        /// shape, winding and glow radius did not change (those move every
+        /// piece, and the caller says so itself). The segments' channels are
+        /// @ref GetGlowCoverDirtySegmentPieces's: a piece's arc channels depend
+        /// on the arcs alone, its segment channels on the segments alone, so
+        /// each kind is re-baked only where it moved.
         ///
         /// Exact because every texel of neon-glow-cover.frag integrates the
         /// arcs' and segments' coverage over ITS OWN piece and nothing else:
@@ -1501,9 +1504,8 @@ namespace EdgeLighting
         /// bell is cut at position +/- reach. An arc that only MOVED - its
         /// intensity and abut flags the same - dirties less than its two
         /// supports: only the bands its ends swept (see arcMoved below).
-        inline uint32_t GetGlowCoverDirtyPieces(const ArcBlockData &oldArcs, const ArcBlockData &newArcs,
-                                                const SegmentBlockData &oldSegments,
-                                                const SegmentBlockData &newSegments, const Config &config)
+        inline uint32_t GetGlowCoverDirtyArcPieces(const ArcBlockData &oldArcs, const ArcBlockData &newArcs,
+                                                   const Config &config)
         {
             const std::array<GlowCoverPieceSpan, GLOW_COVER_PIECES> spans = GetGlowCoverPieceSpans(config);
             const float perimeter = std::max(GetPerimeter(config), 1e-3f);
@@ -1638,7 +1640,19 @@ namespace EdgeLighting
                     mask |= arcMoved(before, after);
                 }
             }
+            return mask;
+        }
 
+        /// Which pieces' SEGMENT channels (.b / .a) of the glow coverage table
+        /// moved between the segment blocks @p oldSegments and @p newSegments -
+        /// the segment half of @ref GetGlowCoverDirtyArcPieces, under the same
+        /// conditions and for the same reasons: a changed segment dirties the
+        /// pieces its old and new bells reach, cut where the bake cuts them.
+        inline uint32_t GetGlowCoverDirtySegmentPieces(const SegmentBlockData &oldSegments,
+                                                       const SegmentBlockData &newSegments, const Config &config)
+        {
+            const std::array<GlowCoverPieceSpan, GLOW_COVER_PIECES> spans = GetGlowCoverPieceSpans(config);
+            uint32_t mask = 0;
             auto segmentSupport = [&](const glm::vec4 &seg) -> uint32_t
             {
                 if (seg.z <= 0.0f)
@@ -2106,7 +2120,8 @@ namespace EdgeLighting
         // which never reads it: the flag stays set, so the first change that
         // breaks the uniformity bakes it.
         const bool glowCoverStale =
-            glowReady && mGlowCover.dirtyPieces != 0 && !IsGlowCoverUnread(mEffectiveSegments, config);
+            glowReady && (mGlowCover.dirtyArcPieces | mGlowCover.dirtySegmentPieces) != 0 &&
+            !IsGlowCoverUnread(mEffectiveSegments, config);
         // Passes 1a and 1b not at all when what their buffers already hold is
         // what they would draw - see mOffscreen.reusable. Then the frame never
         // leaves the caller's framebuffer, so there is no target to capture
@@ -2460,7 +2475,7 @@ namespace EdgeLighting
         // The config-side half moves every piece of the table; the light
         // blocks move only the pieces a changed light reaches, worked out
         // below once the merged segment list is current
-        // (GetGlowCoverDirtyPieces).
+        // (GetGlowCoverDirtyArcPieces, GetGlowCoverDirtySegmentPieces).
         const bool glowCoverShapeDirty = config.geometry.width != mCurrentConfig.geometry.width ||
                                          config.geometry.height != mCurrentConfig.geometry.height ||
                                          config.geometry.cornerRadius != mCurrentConfig.geometry.cornerRadius ||
@@ -2523,15 +2538,27 @@ namespace EdgeLighting
         // reach, so a segment travelling along one straight re-bakes that
         // straight's band, not the whole table. Accumulated, for the reasons
         // given for mLightBlocks.dirty just below.
+        //
+        // And per light TYPE: the arcs' channels and the segments' are dirtied
+        // separately, so arcs animating over still segments never re-integrate
+        // the segments' bells (see GlowCoverTable::dirtyArcPieces).
         if (glowCoverShapeDirty)
         {
-            mGlowCover.dirtyPieces = GLOW_COVER_ALL_PIECES;
+            mGlowCover.dirtyArcPieces = GLOW_COVER_ALL_PIECES;
+            mGlowCover.dirtySegmentPieces = GLOW_COVER_ALL_PIECES;
         }
-        else if (segmentsDirty || arcsDirty)
+        else
         {
-            mGlowCover.dirtyPieces |= GetGlowCoverDirtyPieces(PackArcBlock(mCurrentConfig.neon.arcs),
-                                                              PackArcBlock(config.neon.arcs), oldSegmentBlock,
-                                                              PackSegmentBlock(mEffectiveSegments), config);
+            if (arcsDirty)
+            {
+                mGlowCover.dirtyArcPieces |= GetGlowCoverDirtyArcPieces(PackArcBlock(mCurrentConfig.neon.arcs),
+                                                                        PackArcBlock(config.neon.arcs), config);
+            }
+            if (segmentsDirty)
+            {
+                mGlowCover.dirtySegmentPieces |=
+                    GetGlowCoverDirtySegmentPieces(oldSegmentBlock, PackSegmentBlock(mEffectiveSegments), config);
+            }
         }
         // The light blocks get the OPPOSITE treatment, because their inputs are
         // narrow and visible rather than wide and indirect: @ref
@@ -2883,7 +2910,8 @@ namespace EdgeLighting
         }
         // Undefined texels until a bake writes them - whatever the flag said
         // about the buffer this one replaces.
-        mGlowCover.dirtyPieces = GLOW_COVER_ALL_PIECES;
+        mGlowCover.dirtyArcPieces = GLOW_COVER_ALL_PIECES;
+        mGlowCover.dirtySegmentPieces = GLOW_COVER_ALL_PIECES;
         return true;
     }
 
@@ -3833,12 +3861,15 @@ namespace EdgeLighting
         mGlowCoverShader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
         const glm::vec2 split = GetGlowCoverSplit(config);
         mGlowCoverShader.SetUniform("uGlowCoverSplit", split);
-        if (mGlowCover.dirtyPieces == GLOW_COVER_ALL_PIECES)
-        {
-            mFullscreenVertexArray.DrawArrays(GL_TRIANGLES, 6);
-        }
-        else
-        {
+        // Draws the pieces of @p pieces: the whole table in one draw when all
+        // are dirty, else each band's straight and corner as rectangles.
+        auto drawPieces = [&](uint32_t pieces) {
+            if (pieces == GLOW_COVER_ALL_PIECES)
+            {
+                mGlowCoverShader.SetUniform("uMVP", glm::mat4(1.0f));
+                mFullscreenVertexArray.DrawArrays(GL_TRIANGLES, 6);
+                return;
+            }
             // Only the dirty pieces, each band's straight and corner as one
             // rectangle where both are dirty. Bounded by GEOMETRY, not a
             // scissor: the bake keys every texel off gl_FragCoord, so the NDC
@@ -3851,8 +3882,8 @@ namespace EdgeLighting
             const float height = static_cast<float>(GLOW_COVER_HEIGHT);
             for (int band = 0; band < 4; ++band)
             {
-                const bool straight = (mGlowCover.dirtyPieces & (1u << (2 * band))) != 0;
-                const bool corner = (mGlowCover.dirtyPieces & (1u << (2 * band + 1))) != 0;
+                const bool straight = (pieces & (1u << (2 * band))) != 0;
+                const bool corner = (pieces & (1u << (2 * band + 1))) != 0;
                 if (!straight && !corner)
                 {
                     continue;
@@ -3871,11 +3902,43 @@ namespace EdgeLighting
                 mGlowCoverShader.SetUniform("uMVP", rect);
                 mFullscreenVertexArray.DrawArrays(GL_TRIANGLES, 6);
             }
+        };
+
+        // Per light type: a piece only the arcs dirtied integrates the arcs and
+        // writes .r / .g alone, a piece only the segments dirtied .b / .a alone
+        // - the channels left alone already hold what a full bake would write,
+        // since each kind's depend on that kind and the geometry only. The
+        // colour mask is the host's state, so it is put back.
+        const uint32_t arcs = mGlowCover.dirtyArcPieces;
+        const uint32_t segments = mGlowCover.dirtySegmentPieces;
+        GLboolean hostMask[4] = {GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
+        glGetBooleanv(GL_COLOR_WRITEMASK, hostMask);
+        typedef struct Group
+        {
+            uint32_t pieces;
+            bool arcs;
+            bool segments;
+        } Group;
+        const Group groups[] = {{arcs & segments, true, true},
+                                {arcs & ~segments, true, false},
+                                {segments & ~arcs, false, true}};
+        for (const Group &group : groups)
+        {
+            if (group.pieces == 0)
+            {
+                continue;
+            }
+            mGlowCoverShader.SetUniform("uBakeArcs", group.arcs ? 1 : 0);
+            mGlowCoverShader.SetUniform("uBakeSegments", group.segments ? 1 : 0);
+            glColorMask(group.arcs, group.arcs, group.segments, group.segments);
+            drawPieces(group.pieces);
         }
+        glColorMask(hostMask[0], hostMask[1], hostMask[2], hostMask[3]);
         mGlowCoverShader.Unuse();
 
         prevTarget.Restore();
-        mGlowCover.dirtyPieces = 0;
+        mGlowCover.dirtyArcPieces = 0;
+        mGlowCover.dirtySegmentPieces = 0;
     }
 
     bool NeonRenderer::renderGatherPass(const glm::mat4 &mvp, const glm::ivec2 &texels, float scale,

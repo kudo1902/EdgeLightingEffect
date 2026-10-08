@@ -868,7 +868,8 @@ namespace EdgeLighting
             ///
             /// Per PIECE because each piece's texels integrate the lights over that
             /// piece alone: a changed arc or segment dirties only the pieces its
-            /// old and new supports reach (GetGlowCoverDirtyPieces), so a segment
+            /// old and new supports reach (GetGlowCoverDirtyArcPieces,
+            /// GetGlowCoverDirtySegmentPieces), so a segment
             /// travelling along one straight re-bakes that band rather than the
             /// table - 1.18-1.91x on such frames on an Apple M2 Pro
             /// (docs/neon-perf-plan.md, item 5). The shape, the winding and the
@@ -881,7 +882,16 @@ namespace EdgeLighting
             /// Also set whole by @ref ensureGlowCoverBuffer on a fresh allocation.
             /// Never depends on time. Starts with every piece - the buffer holds
             /// undefined texels until the first bake.
-            uint32_t dirtyPieces = 0xFFu; ///< GLOW_COVER_ALL_PIECES in the .cpp.
+            ///
+            /// And per LIGHT TYPE: a piece's arc channels (.r / .g) depend on the
+            /// arcs and the geometry alone, its segment channels (.b / .a) on the
+            /// segments alone. So the two kinds keep separate masks, and the bake
+            /// integrates and writes only the kind a piece needs - arcs animating
+            /// over still segments no longer re-integrate every segment's bell
+            /// in each dirty piece (1.35 -> 0.36 ms of bake with 4 + 4 on an AMD
+            /// Radeon Pro 5300M). The geometry dirties both.
+            uint32_t dirtyArcPieces = 0xFFu;     ///< Pieces whose arc channels need a bake; GLOW_COVER_ALL_PIECES in the .cpp.
+            uint32_t dirtySegmentPieces = 0xFFu; ///< Pieces whose segment channels need a bake, likewise.
 
             /// Seconds of frame time @c mGlowCover.buffer has gone unread - the ring
             /// lit uniformly, or the layer off. @ref Update releases the table at
@@ -1058,7 +1068,7 @@ namespace EdgeLighting
         /// The format walk is ResizeInBestFormat's, resumed from
         /// @c mGlowCover.format, since a released buffer has no format of its
         /// own to resume from. A fresh allocation holds undefined texels, so it
-        /// sets @c mGlowCover.dirtyPieces.
+        /// sets both of @c mGlowCover's dirty masks whole.
         ///
         /// Two channels (RG16F, 0.5 MB) when the config has no segments
         /// (@p segments false), whose coverage would fill .b / .a with zeros;
@@ -1317,9 +1327,12 @@ namespace EdgeLighting
         /// kernel about a fragment's foot on it (neon-glow-cover.frag, V20 and
         /// V21 in docs/review-findings.md).
         /// Retargets the framebuffer and viewport, so it restores both before
-        /// returning, and clears @c mGlowCover.dirtyPieces on the way out. Bakes only
-        /// the pieces @c mGlowCover.dirtyPieces names, by drawing its quad onto their
-        /// rectangles of the table - all of it in one draw when all are dirty.
+        /// returning, and clears both of @c mGlowCover's dirty masks on the
+        /// way out. Bakes only the pieces they name, by drawing its quad onto
+        /// their rectangles of the table - all of it in one draw when all are
+        /// dirty - and, for a piece only one light type dirtied, integrates
+        /// that type alone and writes its channels under @c glColorMask,
+        /// restoring the host's mask after.
         /// @pre Blending disabled, and the light blocks packed this frame.
         void renderGlowCoverPass(const Config &config);
 

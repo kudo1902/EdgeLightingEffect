@@ -101,6 +101,8 @@ uniform vec2  uStraightSize;   ///< The horizontal and vertical straights' lengt
 uniform float uRadius;         ///< The corner radius as a fraction of the perimeter.
 uniform int   uWinding;        ///< 0 = CLOCKWISE, 1 = COUNTER_CLOCKWISE, as neon.frag's.
 uniform vec2  uGlowCoverSplit; ///< Each band's straight interior columns, as neon.frag's (glowCoverInner).
+uniform int   uBakeArcs;       ///< 1 to integrate the arcs (.r / .g); 0 when only the segments changed - those channels are masked off.
+uniform int   uBakeSegments;   ///< 1 to integrate the segments (.b / .a); 0 when only the arcs changed, likewise.
 
 // See neon.frag's copies: the abutment bits pick each endpoint's feather
 // direction. Values are 0..7, all exact in a float.
@@ -384,8 +386,12 @@ vec4 pieceCover(vec2 place, float len, float x, float cH, float cB) {
     if (total.x <= 0.0 || total.y <= 0.0) {
         return vec4(0.0);
     }
-    vec2 arcs = arcsOnPiece(place, len, x, cH, cB, total);
-    vec2 segs = segmentsOnPiece(place, len, x, cH, cB, total);
+    // A piece's arc channels depend on the arcs and the geometry alone, its
+    // segment channels on the segments alone, so a bake that only one kind of
+    // light needs integrates that kind and writes its channels (the pass masks
+    // the others off) - the rest already hold what this would write.
+    vec2 arcs = (uBakeArcs != 0) ? arcsOnPiece(place, len, x, cH, cB, total) : vec2(0.0);
+    vec2 segs = (uBakeSegments != 0) ? segmentsOnPiece(place, len, x, cH, cB, total) : vec2(0.0);
     return vec4(arcs.x, arcs.y, segs.x, segs.y);
 }
 
