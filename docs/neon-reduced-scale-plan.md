@@ -477,3 +477,23 @@ outside the neon, the lens flare. Ranked by what they could take off a frame:
 
 C8 in section 4.2 was "not recommended" when 1.0 was the default; the owner
 has since made it (I57, section 8).
+
+**Status, 2026-10-08** (AMD Radeon Pro 5300M; detail in
+[`neon-animation-perf-analysis.md`](neon-animation-perf-analysis.md), the
+day's changes in [`progress-log.md`](progress-log.md)):
+
+- Item 4 (segments) and arc animation: two exact changes built - the
+  filament's pointwise inputs skipped off the line (`filamentLit`; P1b no
+  longer grows with the light count) and the coverage bake re-integrating only
+  the light type that changed (arcs over still segments 1.42x). 4b (P5, the
+  bell cut nearer than 5 sigma) was prototyped with an 8-node rule (8 segments
+  moving 1.38x, <= 2 levels on ~3% of pixels) and not taken; 4c (D3) is
+  re-proposed with numbers - segment configs pay ~1.5 ms more on every
+  rotating-hue frame.
+- Item 5 (the blit), measured: 96% of its 1.64M fragments are visible, and
+  under 2 levels only ~11% on the default frame, so a tighter quad buys little
+  exactly. P4 is ruled out on this GPU: the composite would run on 4x the
+  fragments.
+- Item 6: the comment work on `neon-renderer.h` / `.cpp` is done as Doxygen
+  for every type, function, member and helper rather than a cut (C7 itself,
+  the diet, is still the owner's call).
