@@ -1191,7 +1191,10 @@ void main() {
     // neon-field.frag tone-maps times the gathered hues. The masks below are
     // not in it: for the shading's field the blit owns both; the edge ring's
     // field, baked with the ring's uniforms, has its composite apply them
-    // (neon-field.frag, NEON_FIELD_RING).
+    // (neon-field.frag, NEON_FIELD_RING). uGlowSideSoftness is read only
+    // below this return, so this program may compile it out, and
+    // NeonRenderer leaves it out of the bake's upload (UploadEdgeMaskUniforms):
+    // a read of it above here has to go back into that upload.
     fragColor = vec4(result.r, result.g, 0.0, 1.0);
     return;
 #endif

@@ -1352,11 +1352,23 @@ namespace EdgeLighting
         /// to both - the ring's composite has to multiply in exactly what the
         /// ring's own shading would. Pixel-valued, so multiplied by @p scale,
         /// as uploadShapeUniforms' are; a disabled cutoff at its sentinel.
+        ///
+        /// @p cutSoftness is false for the field bake (neon.frag with
+        /// NEON_FIELD_BAKE), which returns at the grade, ahead of the one-sided
+        /// cut. The cut's softness has no other reader, so a compiler that
+        /// drops what follows a return drops uGlowSideSoftness from that
+        /// program, and setting it logged "uniform 'uGlowSideSoftness' not
+        /// found" on NeonRenderer.Field. Everything else here also feeds the
+        /// discards above the grade, so the bake keeps it.
         /// @pre @p shader is in use.
-        inline void UploadEdgeMaskUniforms(ShaderProgram &shader, float scale, const Config &config)
+        inline void UploadEdgeMaskUniforms(ShaderProgram &shader, float scale, const Config &config,
+                                           bool cutSoftness)
         {
             shader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
-            shader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness * scale);
+            if (cutSoftness)
+            {
+                shader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness * scale);
+            }
             shader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff) * scale);
             shader.SetUniform("uInsideCutoffSoftness", config.neon.insideCutoff.softness * scale);
             shader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff) * scale);
@@ -3942,7 +3954,9 @@ namespace EdgeLighting
         shader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
         shader.SetUniform("uGlowRadius", config.neon.glowRadius * scale);
         shader.SetUniform("uBloomStrength", config.neon.bloomStrength);
-        UploadEdgeMaskUniforms(shader, scale, config);
+        // The field bake ends at the grade, before the cut that reads the
+        // softness - see UploadEdgeMaskUniforms.
+        UploadEdgeMaskUniforms(shader, scale, config, &shader != &mFieldBakeShader);
 
         shader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
         shader.SetUniform("uPerimeterUnread",
@@ -4802,7 +4816,7 @@ namespace EdgeLighting
         const RingFieldLayout &layout = mRingField.layout;
         mRingFieldCompositeShader.Use();
         uploadShapeUniforms(mRingFieldCompositeShader, mvp, 1.0f, config);
-        UploadEdgeMaskUniforms(mRingFieldCompositeShader, 1.0f, config);
+        UploadEdgeMaskUniforms(mRingFieldCompositeShader, 1.0f, config, true);
         mRingField.buffer.BindTexture(7);
         mRingFieldCompositeShader.SetUniform("uField", 7);
         mRingFieldCompositeShader.SetUniform("uRingLo", layout.origin);
