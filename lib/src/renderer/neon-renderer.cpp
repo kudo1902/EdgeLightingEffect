@@ -1238,8 +1238,9 @@ namespace EdgeLighting
         /// it, and an arc's own stops read it - and the gradient ring's alpha
         /// read, which a ring that is opaque at every texel answers with 1.0.
         /// So: no segments, every lit arc whole and without stops, and the
-        /// ring as uploaded opaque (@p ringOpaque). Then the shader skips
-        /// perimeterPosition and the alpha read, byte-identically.
+        /// ring as uploaded opaque (@p ringOpaque). Then the shader skips the
+        /// filament's walk over the outline's pieces (perimeterAt and
+        /// filamentPieceDistance) and the alpha read, byte-identically.
         ///
         /// Like IsGlowCoverUnread it must never claim this where the shader
         /// would read: it tests the same arcs the block packs (capped at

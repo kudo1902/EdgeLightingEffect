@@ -123,10 +123,11 @@ bool coverHeadAbuts(float flags) { return mod(floor(flags * 0.25), 2.0) >= 0.5; 
 // (.x) the perimeter position of a piece's t1 end - the end haloSegment's t1
 // and arcTangentSegment's +x end measure from - and (.y) +1 if perimeter
 // position grows toward its t2 end, -1 if it shrinks. `cwStart` / `cwSigma`
-// are the CLOCKWISE values; neon.frag's perimeterPosition lays
+// are the CLOCKWISE values; neon.frag's perimeterAt lays
 // COUNTER_CLOCKWISE out over the same geometry the other way round from the
 // top-left tangent point, which is s -> 1 - arcLen - s. Checked against
-// perimeterPosition for every piece, both windings, at four shapes.
+// neon.frag's perimeter map (then perimeterPosition, whose layout perimeterAt
+// keeps) for every piece, both windings, at four shapes.
 vec2 pieceStart(float cwStart, float cwSigma, float arcLen) {
     if (uWinding == 0) {
         return vec2(cwStart, cwSigma);
@@ -136,7 +137,7 @@ vec2 pieceStart(float cwStart, float cwSigma, float arcLen) {
 }
 
 // The straight in band `band` (GLOW_COVER_BAND_*), and the corner arc in
-// quadrant `signs` (+y the top edge, as perimeterPosition has it), whose t1 end
+// quadrant `signs` (+y the top edge, as neon.frag's pieces have it), whose t1 end
 // is the tangent point on the vertical edge.
 vec2 straightStart(int band, float ws, float hs, float arcLen) {
     if (band == GLOW_COVER_BAND_NEG_X) {

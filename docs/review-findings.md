@@ -5035,6 +5035,111 @@ guard would end it, which the shader says at the gate.
 
 ---
 
+## Twenty-ninth pass (the arc wipe's tail on a sharp corner)
+
+### V25. An arc ending on a sharp corner is cut along the corner's diagonal, on one side of the line only - FIXED
+
+**Reported**, from the demo's arc wipe with `startPos` / `endPos` moved to 0:
+"the tail at top-left corner is asymmetric and has hard cut". The config:
+1920 x 1080 at (960, 540) in a 3840 x 2160 frame, `cornerRadius` 0, CW,
+`lineWidth` 1, `filamentFalloff` 0.23, `glowRadius` 0, `bloomStrength` 0,
+scale 0.5, one arc growing from start 0 (wipe phase 1). Reproduced offscreen
+on an AMD Radeon Pro 5300M, pixel for pixel the capture's shape:
+
+| before | after |
+| ------ | ----- |
+| ![](images/review-findings/arc-tail-sharp-corner.png) | ![](images/review-findings/arc-tail-sharp-corner-fixed.png) |
+| ![](images/review-findings/arc-head-round-corner.png) | ![](images/review-findings/arc-head-round-corner-fixed.png) |
+
+Top: the tail parked on the top-left corner. Above the line its end ramp
+(`TAIL_FEATHER_PX`) fades in as it does mid-edge; below it the glow stops on a
+hard 45-degree edge running in from the corner. Bottom: the head 12 px past
+the top-right corner during the chase - the same diagonal, plus a notch where
+the line turns down the right edge. The head on a straight run was always
+symmetric.
+
+**Mechanism.** The filament read ONE coverage per fragment, at
+`perimeterPosition(vPos)` - its NEAREST perimeter point. Inside a sharp corner
+that map jumps across the diagonal: a fragment 3 px right of the left edge and
+5 px below the top one is nearer the LEFT edge, so it read the left edge's
+coverage (dark - the arc is on the top edge) and its core at 3 px, and dropped
+the top edge's light at 5 px that its neighbour on the other side of the
+diagonal kept. With the filament's soft tail reaching 32 px (64 sigma at this falloff)
+and the ramp only 14, the lower half of the tail's cap was the corner's Voronoi cell boundary.
+Outside the corner nothing jumps (every exterior fragment shares the corner
+point, which is what V2's inward feather keeps dark), so the cut was one-sided.
+It is V14's mechanism - a nearest-point read cut along the medial axis - one
+level down, in the filament, which V14 deliberately left pointwise. It shows
+at any end within the filament's reach of a corner whose radius is under that
+reach: a wipe's tail or head parked on a sharp corner, every end passing
+through one during a chase, and (on a tiny rect with a fat line) the spine.
+
+**Fix.** The filament is a MAX OVER THE OUTLINE'S PIECES - the four straights
+and four corner arcs the halo and bloom are summed over. Each piece within
+reach contributes its core at the fragment's distance from IT times the
+coverage at ITS own nearest point (`filamentPieceDistance`, `perimeterAt`,
+`filamentCover`); the arcs' and the segments' magnitudes each take the max, so
+the output stays linear in the two hues and the field's factorisation holds.
+Each piece's term is continuous in the fragment's position, so the max is.
+Three properties keep it from moving anything else:
+
+- **A uniformly lit ring is unchanged.** The core falls with distance and the
+  outline's distance is the nearest piece's, so the max is the old
+  `core(ad) * cover`. Under `uPerimeterUnread` the loop runs once at `ad` with
+  the old expression - the default frame is byte-identical, not merely close.
+- **No bleed past a free end.** Every piece meeting at an end reads that end's
+  coverage, which the inward feather makes 0 - the exterior wedge of a sharp
+  corner stays at background, as V2 requires.
+- **One call site.** `filamentCover` (the arc and segment loops and the LUT
+  reads) is called from one place, in a loop whose step comes from the data -
+  four straights on a sharp rect, eight pieces otherwise, one pass when nothing
+  reads a position - so it is not unrolled into eight copies. A piece's corner
+  `atan` is taken only within reach.
+
+`perimeterPosition` is gone: nothing reads a fragment's nearest point any more.
+`perimeterAt` keeps its layout (the two windings' piece order), which the
+glow coverage bake mirrors.
+
+**Measured** (AMD Radeon Pro 5300M, offscreen, the frame after the config and
+the third, before against after):
+
+| scene | px > 2 levels | max |
+| ----- | ------------- | --- |
+| reported tail, scale 0.5 / 1.0 | 453 / 453 | 119 |
+| head parked on the corner (phase 3) | 975 | 132 |
+| CCW, tail on the corner | 947 | 129 |
+| head 12 px past a corner (chase) | 1,200 | 113 |
+| tail 10 px before a corner | 1,188 | 122 |
+| radius 8, 4 px soft line | 56 | 16 |
+| radius 40, 4 px soft line | 0 | 0 |
+| tail on a corner, `glowRadius` 10, bloom 0.3 | 0 (2 px by 2) | 2 |
+| full ring, default look, radius 0 / 40 | 0 (byte-identical) | 0 |
+| full ring, a stop at alpha 0.4 | 0 (byte-identical) | 0 |
+| segment centred on a corner, no arcs | 0 (byte-identical) | 0 |
+| 120 x 60 rect, 6 px soft line, half ring | 27,458 | 189 |
+
+Every change sits in the corner's box. The last row is the spine case: the old
+read cut the lit edge's filament along the rect's medial axis, and it now
+crosses the interior to its reach - a different picture, and the right one: a
+fully lit ring of the same config lights the same pixels. Direct against field
+frames stay within 1 level in every scene. `check` passes with every figure
+identical to the build before; `partition` (seed 1) passes; all 69 guide
+figures are byte-identical (none has an arc end within a fat line's reach of a
+corner). Moving the head and the tail through a corner in 0.5 px steps, each
+step a config change as an animation draws it, no step changes any pixel of
+the corner by more than the line's own motion on a straight run (27-28 levels
+per half pixel, both builds) - the cap turns the corner with no pop.
+
+**Cost: none measurable.** `neon-scale-check time` at 1920 x 1080, scales 1.0
+and 0.5, three rounds with the build order rotated, medians: geometric means
+after / before 0.94 / 0.98 still, 0.99 / 0.99 arc-wipe and 0.98 / 0.95
+segment-travel - inside the same build's own round-to-round spread (median
+1.13x max / min per figure). The walk replaces `perimeterPosition`'s nearest
+point and its `atan` with up to eight cheap distances and an `atan` only for a
+corner within reach, and one `filamentCover` almost everywhere.
+
+---
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
@@ -5045,7 +5150,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, and the twenty-eighth I59, I60, I61 and I62. Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, and the twenty-ninth V25. Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -5105,6 +5210,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I60 | changed | the segments' bells were integrated at the arcs' resolution; they have a narrow table of their own (pass 0s, 4 columns per sigma from 128) copied into the main one by a fill pass (0f), `neon.frag` unchanged - within 2 levels, 99.992% within 1; 8 segments on the band 0.87 -> 0.56 ms (0.64x), 960 x 540 0.83x |
 | I61 | changed | each bell was integrated, and its moves tracked, out to 5 sigma; 4.24 now (`GLOW_COVER_BELL_REACH`), at most 1 level on up to 1.6% of lit pixels, segment-table bake 0.75 -> 0.58 timer units; the plan's 8-node rule was measured (3 levels) and not taken |
 | I62 | changed | pass 1b and its field bake computed the filament the edge ring always redraws; skipped there (`uBlitOwnsCut`), every final frame byte-identical, the intermediate-buffer figures without the line |
+| V25 | fixed | the filament read one coverage at the fragment's nearest perimeter point, which jumps across a corner's diagonal, so an arc ending on a sharp corner (an arc wipe from 0) was cut along it on the inside half only; the filament is now a max over the outline's pieces, each at its own distance and its own nearest point - uniformly lit rings byte-identical, `check` unchanged |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

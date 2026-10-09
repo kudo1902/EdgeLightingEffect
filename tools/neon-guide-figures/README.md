@@ -39,7 +39,8 @@ Three kinds of figure, one function per group in
   `OffscreenCapture`, then cropped and magnified on the CPU. Most of Parts 3
   and 4.
 - **Diagrams.** Drawn on the CPU from the shaders' own formulas, ported line
-  for line: `sdRoundBox`, `perimeterPosition`, `rectPerimeter`, the gather's
+  for line: `sdRoundBox`, `perimeterPosition` (the nearest-point map the
+  filament read before V25; its layout is `perimeterAt`'s), `rectPerimeter`, the gather's
   Lorentzian weight and the grade's curve. Plots are written as SVG with their
   own white background.
 - **Pass captures.** What the renderer's private buffers hold between passes,

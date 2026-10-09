@@ -108,7 +108,9 @@ fifteen scenes.
 
 ## perimeterPosition
 
-`neon.frag` line 248, before the move.
+`neon.frag` line 248, before the move. Replaced on 2026-10-09 by `perimeterAt`
+and `filamentPieceDistance` (V25) - see "The filament's pieces" below; the
+layout it mapped onto is `perimeterAt`'s, unchanged.
 
 ```text
 Exact per-fragment perimeter position: maps this fragment's local-space point
@@ -635,7 +637,8 @@ coverage a config produces.
 
 ## sPos
 
-`neon.frag` line 1050, before the move.
+`neon.frag` line 1050, before the move. Since V25 there is one position per
+piece of the outline, not one per fragment - see "The filament's pieces" below.
 
 ```text
 --- Continuous coverage, read at this fragment's own position -------
@@ -724,6 +727,35 @@ below a texel and this stops holding.
 
 (The milliseconds above are `GL_TIME_ELAPSED` readings, which on this GPU are
 ~3.85x the wall-clock time - ratios, not costs.)
+
+## The filament's pieces (V25)
+
+Added 2026-10-09, after a report that an arc wipe's tail parked on a sharp
+corner was asymmetric with a hard cut.
+
+Until then the filament read one position per fragment, `perimeterPosition`'s
+nearest outline point, and every coverage there. Inside a sharp corner that map
+jumps across the diagonal, so a fragment nearer the unlit edge took that edge's
+coverage and lost the lit edge's light: the end ramp's inside half stopped on a
+45-degree line while its outside half (where every fragment shares the corner
+point) faded as it does mid-edge. It is V14's medial-axis cut, which V14 fixed
+for the glow and left in the filament on purpose - the filament needs coverage
+exact at a position, and a gathered mean is not.
+
+The fix keeps it exact per position and drops "one position per fragment":
+each piece of the outline - the four straights between the tangent points and
+the four corner arcs, the split the halo and bloom are summed over - lights the
+fragment with its core at the fragment's distance from IT, times the coverage
+at ITS own nearest point, and the filament is the max of those, separately for
+the arcs and the segments. A max because the core falls with distance: on a
+uniformly lit ring the nearest piece wins, at `ad`, so nothing moves. A corner
+arc whose quarter does not face the fragment is left out: its nearest point is
+an end it shares with a straight, and on the boundary the two terms agree.
+
+Cost: four or eight piece distances per filament fragment, and `filamentCover`
+for each piece within reach - one away from the corners, two or three near one.
+Under `uPerimeterUnread` the loop runs once, at `ad`, with the old expression,
+so the default frame is byte-identical.
 
 ## An arc's own stops: no hue term, wrapped rel
 

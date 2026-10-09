@@ -5,6 +5,36 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-09 (night) - V25: an arc's end on a sharp corner
+
+On top of `fb6f06f`, uncommitted. AMD Radeon Pro 5300M. V25 in
+[`review-findings.md`](review-findings.md) has the detail.
+
+- **Reported.** The arc wipe, started from position 0: the tail parked on the
+  top-left corner was asymmetric, with a hard cut.
+- **Cause.** The filament read one coverage per fragment, at its NEAREST
+  perimeter point, and inside a sharp corner that map jumps across the
+  diagonal - fragments nearer the unlit edge dropped the lit edge's light, so
+  the end ramp's inside half was cut along the diagonal. The same at every end
+  passing within the filament's reach of a corner tighter than that reach.
+- **What changed.** The filament is a max over the outline's pieces (four
+  straights, four corner arcs), each at the fragment's distance from it and the
+  coverage at its own nearest point (`filamentPieceDistance`, `perimeterAt`,
+  `filamentCover` in `neon.frag`); `perimeterPosition` is gone.
+- **Measured.** The corner ends symmetric and soft; changes confined to the
+  corners' boxes (up to 132 levels there). Uniformly lit rings, a ring with a
+  translucent stop and a segment on a corner byte-identical; `check` identical
+  to the build before, `partition` passes, all 69 guide figures
+  byte-identical; direct against field within 1; an end swept through a
+  corner in 0.5 px steps never pops. No measurable cost: `time` geometric
+  means 0.94-0.99 after / before on still, arc-wipe and segment-travel at 1.0
+  and 0.5, inside the 1.13x round-to-round spread.
+- **Open.** On a rect smaller than twice the filament's reach a lit edge's
+  filament now crosses the interior rather than stopping at the spine -
+  correct, but a visible change on tiny rects with a fat soft line. Nothing
+  timed on the M2 Pro. The onboarding guide and the reference pages still
+  describe the nearest-point read.
+
 ## 2026-10-09 (evening) - The glow coverage table at the resolution each light needs
 
 [`neon-glow-cover-resolution-plan.md`](neon-glow-cover-resolution-plan.md)

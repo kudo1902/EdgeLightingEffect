@@ -232,18 +232,36 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   **A uniformly lit ring skips its perimeter position** (`uPerimeterUnread`,
   I45): with no segments, every lit arc over the whole ring and no stops of its
   own, and a gradient ring opaque at every texel (`GradientRingLUT::IsOpaque`),
-  nothing reads `sPos`, so `perimeterPosition` and the gradient alpha read are
-  skipped - 1.11x on the default frame. `IsPerimeterUnread` on the CPU must
-  stay at least as strict as every reader of `sPos` in `neon.frag`: add a
+  nothing reads a perimeter position, so the filament's walk over the pieces
+  (below) and the gradient alpha read are skipped - one pass at the
+  fragment's own distance, 1.11x on the default frame (measured against the
+  nearest-point map the walk replaced). `IsPerimeterUnread` on the CPU must
+  stay at least as strict as every reader of `sPos` in `filamentCover`: add a
   reader and it has to know.
 
+  **The filament is a max over the outline's pieces** (V25, `filamentPieceDistance`,
+  `perimeterAt`): each of the four straights and four corner arcs within the
+  filament's reach contributes its core at the fragment's distance from IT
+  times the coverage at ITS own nearest point (`filamentCover`), and the arc
+  and segment magnitudes each take the max. It used to read one coverage at the
+  fragment's NEAREST perimeter point, which jumps across the medial axis, so an
+  arc ending on a sharp corner (an arc wipe from position 0) was cut along the
+  corner's diagonal on the inside half of the line only. A max, not a sum, so
+  a uniformly lit ring is unchanged (byte-identical on `check` and the full-ring
+  probes); no bleed past a free end, since every piece meeting there reads that
+  end's 0. One call site for `filamentCover` in a loop whose step comes from
+  the data (4 straights on a sharp rect, 8 pieces otherwise, 1 pass under
+  `uPerimeterUnread`) - keep it from unrolling. On a rect smaller than twice
+  the reach, a lit edge's filament now crosses the interior instead of
+  stopping on the spine.
+
   **Off the line, the filament's pointwise inputs are not computed at all**
-  (`filamentLit`): `sPos`, the pointwise stop alpha, `emitCover` and
-  `segCoverPt` feed ONLY the filament, whose pedestal-subtracted `core` is
+  (`filamentLit`): the pieces' positions, the pointwise stop alpha and the two
+  coverages `filamentCover` returns feed ONLY the filament, whose pedestal-subtracted `core` is
   exactly 0 past its reach, so `neon.frag` skips that whole block wherever the
   filament is 0 - most of the glow quad. Byte-identical, and pass 1b no longer
   grows with the number of arcs and segments (1.90 -> 1.20 ms with 8 arcs
-  changing length every frame, AMD 5300M at 0.5). Those four may be read only
+  changing length every frame, AMD 5300M at 0.5). Those may be read only
   by the filament: a new reader outside it has to move out of the gate. And in
   a pass the blit composites (`uBlitOwnsCut` - pass 1b and its field bake)
   `filamentLit` is always false: the edge ring re-shades everything within the

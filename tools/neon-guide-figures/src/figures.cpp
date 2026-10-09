@@ -149,8 +149,10 @@ namespace NeonGuideFigures
             return std::min(std::max(q.x, q.y), 0.0f) + glm::length(glm::max(q, glm::vec2(0.0f))) - r;
         }
 
-        /// neon.frag's perimeterPosition, line for line: the perimeter
-        /// fraction of @p p's nearest outline point. @p p is rect-local, +y up.
+        /// The perimeter fraction of @p p's nearest outline point. @p p is
+        /// rect-local, +y up. neon.frag's perimeterPosition, line for line,
+        /// until V25 replaced that nearest-point map with a walk over the
+        /// outline's pieces; the layout it lands on is still perimeterAt's.
         float PerimeterPosition(const glm::vec2 &p, float w, float h, float radius, bool clockwise)
         {
             const float pi = 3.14159265358979f;

@@ -48,10 +48,11 @@ uniform float uOutsideCutoffSoftness; ///< Feather width in px, running on from 
 uniform int   uWinding;               ///< 0 = CLOCKWISE, 1 = COUNTER_CLOCKWISE (matches Winding enum).
 // Non-zero when nothing below reads the fragment's perimeter position: no
 // segments, every lit arc over the whole ring with no stops of its own, and a
-// gradient ring whose alpha is 255 at every texel. Then sPos and the
-// gradient's alpha read are skipped - perimeterPosition is an atan and a
-// cascade of branches, ~9% of a default frame - and the alpha is the 1.0 the
-// read would have returned. Set by the CPU (IsPerimeterUnread), which tests
+// gradient ring whose alpha is 255 at every texel. Then the filament's walk
+// over the outline's pieces and the gradient's alpha read are skipped - the
+// nearest-point map that walk replaced was ~9% of a default frame on its own
+// - and the alpha is the 1.0 the read would have returned. Set by the CPU
+// (IsPerimeterUnread), which tests
 // the arcs' length a hair more strictly than arcCoverContinuous does, so it
 // can never claim this where a read would happen.
 uniform int   uPerimeterUnread;
@@ -222,109 +223,23 @@ float bloomSegmentPedestalled(float a, float t1, float t2, float k, float reach,
 // the same line this file integrates the corner's halo and bloom along, so the
 // two share one copy.
 
-// Exact per-fragment perimeter position: this fragment's nearest perimeter
-// point mapped back to its arc-length parameter t in [0, 1), matching the CPU's
-// GeometryUtils::GetPointOnRectangle for BOTH windings (uWinding 0 / 1).
-float perimeterPosition(vec2 p) {
-    float halfW  = uRectSize.x * 0.5;
-    float halfH  = uRectSize.y * 0.5;
-    float r      = clamp(uCornerRadius, 0.0, min(halfW, halfH));
-    float halfWs = halfW - r;
-    float halfHs = halfH - r;
+// --- The outline's pieces, for the filament -----------------------------
+// The outline as the filament sees it: eight PIECES numbered in CW order -
+// 0 top, 1 top-right, 2 right, 3 bottom-right, 4 bottom, 5 bottom-left, 6 left,
+// 7 top-left (+y the top edge) - four straights between the tangent points and
+// four quarter arcs, the same split the halo and bloom are summed over. A
+// point on a piece is its progress u in [0, 1] along it in the CW direction.
+
+// The perimeter position t in [0, 1] of the point a fraction u along piece
+// `seg`, matching the CPU's GeometryUtils::GetPointOnRectangle for BOTH
+// windings (uWinding 0 / 1): CCW runs the same pieces with mirrored progress
+// (1 - u) and a CCW layout, so both windings stay exact.
+float perimeterAt(int seg, float u) {
+    float r      = clamp(uCornerRadius, 0.0, min(uRectSize.x, uRectSize.y) * 0.5);
     float ws     = uRectSize.x - 2.0 * r;
     float hs     = uRectSize.y - 2.0 * r;
     float arcLen = PI * r * 0.5;
     float peri   = 2.0 * ws + 2.0 * hs + 4.0 * arcLen;
-
-    // Closest point on the rounded-rect perimeter (inverse rounded-box SDF).
-    vec2  b  = vec2(halfWs, halfHs);
-    vec2  c  = clamp(p, -b, b);
-    vec2  d  = p - c;
-    float dl = length(d);
-    vec2  cp;
-    if (dl > 1e-6)
-    {
-        cp = c + d * (r / dl);
-    }
-    else
-    {
-        // Inside the inner box: project straight along the dominant axis to
-        // the nearest edge.
-        vec2  e  = b - abs(p);
-        float sx = (p.x >= 0.0) ? 1.0 : -1.0;
-        float sy = (p.y >= 0.0) ? 1.0 : -1.0;
-        cp = (e.x < e.y) ? vec2(sx * halfW, p.y) : vec2(p.x, sy * halfH);
-    }
-
-    float ax = abs(cp.x);
-    float ay = abs(cp.y);
-
-    // Canonical segment id (0..7 in CW order: top, TR, right, BR, bottom, BL,
-    // left, TL) and the traversal progress u in [0, 1] measured in the CW
-    // direction. CCW runs the same geometric core with mirrored progress
-    // (1 - u) and a CCW segment layout, so both windings stay exact.
-    int   seg;
-    float u;
-    if (ax > halfWs && ay > halfHs)
-    {
-        // Corner arc. The angle of the offset from the corner centre (radius r)
-        // gives the fraction across the quarter-arc.
-        float sx = (cp.x >= 0.0) ? 1.0 : -1.0;
-        float sy = (cp.y >= 0.0) ? 1.0 : -1.0;
-        float th = atan(cp.y - sy * halfHs, cp.x - sx * halfWs);
-        if (sx > 0.0 && sy > 0.0)
-        {
-            seg = 1;                                     // top-right: theta 0..pi/2
-            u   = (HALF_PI - th) / HALF_PI;
-        }
-        else if (sx > 0.0)
-        {
-            seg = 3;                                     // bottom-right: theta -pi/2..0
-            u   = -th / HALF_PI;
-        }
-        else if (sy < 0.0)
-        {
-            seg = 5;                                     // bottom-left: theta -pi/2..-pi
-            if (th > 0.0) th -= TWO_PI;                  // atan2 hands the left tangency back as +pi
-            u = (-HALF_PI - th) / HALF_PI;
-        }
-        else
-        {
-            seg = 7;                                     // top-left: theta pi/2..pi
-            u   = (PI - th) / HALF_PI;
-        }
-    }
-    else if (ay >= halfHs)
-    {
-        if (cp.y > 0.0)
-        {
-            seg = 0;                                     // top edge: left to right
-            u   = (cp.x + halfWs) / ws;
-        }
-        else
-        {
-            seg = 4;                                     // bottom edge: right to left
-            u   = (halfWs - cp.x) / ws;
-        }
-    }
-    else if (ax >= halfWs)
-    {
-        if (cp.x > 0.0)
-        {
-            seg = 2;                                     // right edge: top to bottom
-            u   = (halfHs - cp.y) / hs;
-        }
-        else
-        {
-            seg = 6;                                     // left edge: bottom to top
-            u   = (cp.y + halfHs) / hs;
-        }
-    }
-    else
-    {
-        seg = 0;                                         // degenerate - never hit for r > 0
-        u   = 0.0;
-    }
 
     float base;
     float len;
@@ -359,6 +274,73 @@ float perimeterPosition(vec2 p) {
     default: base = 2.0 * hs + 3.0 * arcLen + 2.0 * ws;       len = arcLen; break;
     }
     return (base + len * (1.0 - u)) / peri;
+}
+
+// The distance from p to piece `seg` and, in `u`, where on it the nearest
+// point lies - each piece's OWN nearest point, an end where p lies past it.
+// -1.0 for a piece the filament takes nothing from here: one `reach` or more
+// away, where its core is exactly 0; a straight of zero length or a corner of
+// radius 0, a point both its neighbours end on; or p outside a corner's
+// quarter, where the arc's nearest point is the end it shares with a straight
+// that already carries it (on that boundary the two agree, so leaving it out
+// is continuous).
+float filamentPieceDistance(int seg, vec2 p, float reach, out float u) {
+    float halfW  = uRectSize.x * 0.5;
+    float halfH  = uRectSize.y * 0.5;
+    float r      = clamp(uCornerRadius, 0.0, min(halfW, halfH));
+    float halfWs = halfW - r;
+    float halfHs = halfH - r;
+    float ws     = uRectSize.x - 2.0 * r;
+    float hs     = uRectSize.y - 2.0 * r;
+    u = 0.0;
+
+    float dist;
+    if (seg == 0 || seg == 4)
+    {
+        // Top edge left to right, bottom edge right to left.
+        if (ws <= 0.0) return -1.0;
+        float x = clamp(p.x, -halfWs, halfWs);
+        dist    = length(p - vec2(x, (seg == 0) ? halfH : -halfH));
+        u       = (seg == 0) ? (x + halfWs) / ws : (halfWs - x) / ws;
+    }
+    else if (seg == 2 || seg == 6)
+    {
+        // Right edge top to bottom, left edge bottom to top.
+        if (hs <= 0.0) return -1.0;
+        float y = clamp(p.y, -halfHs, halfHs);
+        dist    = length(p - vec2((seg == 2) ? halfW : -halfW, y));
+        u       = (seg == 2) ? (halfHs - y) / hs : (y + halfHs) / hs;
+    }
+    else
+    {
+        // Corner arc. The angle of the offset from its centre (radius r) gives
+        // the fraction across the quarter, and is needed only within reach.
+        if (r <= 0.0) return -1.0;
+        vec2 sg = vec2((seg == 1 || seg == 3) ? 1.0 : -1.0, (seg == 1 || seg == 7) ? 1.0 : -1.0);
+        vec2 w  = p - sg * vec2(halfWs, halfHs);
+        if (w.x * sg.x <= 0.0 || w.y * sg.y <= 0.0) return -1.0;
+        dist = abs(length(w) - r);
+        if (dist >= reach) return -1.0;
+        float th = atan(w.y, w.x);
+        if (seg == 1)
+        {
+            u = (HALF_PI - th) / HALF_PI;                // top-right: theta 0..pi/2
+        }
+        else if (seg == 3)
+        {
+            u = -th / HALF_PI;                           // bottom-right: theta -pi/2..0
+        }
+        else if (seg == 5)
+        {
+            if (th > 0.0) th -= TWO_PI;                  // atan2 hands the left tangency back as +pi
+            u = (-HALF_PI - th) / HALF_PI;               // bottom-left: theta -pi/2..-pi
+        }
+        else
+        {
+            u = (PI - th) / HALF_PI;                     // top-left: theta pi/2..pi
+        }
+    }
+    return (dist < reach) ? dist : -1.0;
 }
 
 
@@ -418,6 +400,106 @@ float arcCoverContinuous(float sPos, float start, float length, float fHead, flo
     float headIn = headAbuts ? 1.0 - smoothstep(length, length + fH, rel)
                              : 1.0 - smoothstep(length - fH, length, rel);
     return tailIn * headIn;
+}
+
+// The filament's generalized-Gaussian core at distance `a` from the line,
+// pedestal-subtracted to reach exactly 0 at its reach - see main().
+float filamentCore(float a, float sigma, float N, float corePed) {
+    float c = exp2(-pow(a / sigma, N));
+    return max(c - corePed, 0.0) / max(1.0 - corePed, 1e-6);
+}
+
+// The filament's two magnitudes at perimeter position sPos: .x the arcs'
+// coverage x intensity x stop alpha (emitCover), .y the segments' boost x bell
+// x stop alpha times their sharp gate (segCoverPt * filamentGate). main() takes
+// them at each piece's own nearest point; the feathers arrive as perimeter
+// fractions. Called from ONE place, so it is inlined once.
+vec2 filamentCover(float sPos, float headF, float tailF) {
+    // Colour-stop ALPHA rides here, on the magnitude and POINTWISE: folded
+    // into `col` it would cancel, and gathered it would be a ring-wide mean
+    // dragged toward the opaque far side. Alpha 0 kills the filament at that
+    // position (the glow does not see stop alpha - V18), and the premultiplied
+    // output alpha follows. Under uPerimeterUnread the ring is opaque at every
+    // texel, so the read would return the 1.0 it starts at.
+    float baseAlphaPt = 1.0;
+    if (uPerimeterUnread == 0)
+    {
+        baseAlphaPt = textureLod(uGradientLUT, vec2(sPos - uTime * uHueRotationRate, 0.5), 0.0).a;
+    }
+    // The arcs' coverage at this point, per-arc intensity folded in: `col` is
+    // gated-normalised, so intensity reaches the filament only through it.
+    // Winner-take-all across arcs, as documented for overlap. This can be a
+    // plain max() again because arcCoverContinuous now reaches a FULL 1.0 at an
+    // abutting endpoint rather than 0 (inward) or 0.5 (straddling), so two arcs
+    // tiling the ring hand over at max(w1, w2) with no notch - and because
+    // their ramps overlap, the handover stays smooth even when w1 != w2.
+    float emitCover = 0.0;
+    for (int a = 0; a < uArcCount; a++) {
+        vec4 arc = uArcs[a];
+        if (arc.z <= 0.0) continue;                       // dark arc: no filament
+        float c = arcCoverContinuous(sPos, arc.x, arc.y, headF, tailF,
+                                     arcTailAbuts(arc.w), arcHeadAbuts(arc.w));
+        if (c <= 0.0) continue;                           // does not reach here
+        // Each arc's own alpha, from the same LUT its colour came from and in
+        // the same coordinate space the gather used - arc-local for hasStops,
+        // perimeter space otherwise.
+        float aA;
+        if (arcHasStops(arc.w)) {
+            // NO hue-rotation term here: uArc is the arc's OWN head-to-tail
+            // coordinate, so there is nothing to rotate (it slid the gradient
+            // off one end and seamed it mid-edge). An arc's gradient moves by
+            // moving the arc or animating its stops, as a segment's does.
+            //
+            // WRAPPED, as arcCoverContinuous wraps its rel - an arc may
+            // straddle the seam - with the same midpoint split, so a fragment
+            // behind the start clamps to the head colour.
+            float rowY = (float(a) + 0.5) / float(MAX_ARCS);
+            float rel  = sPos - arc.x;
+            rel       -= floor(rel);                       // wrap to [0, 1)
+            if (rel > 0.5 * (1.0 + arc.y)) { rel -= 1.0; } // behind the start, not past the head
+            float uArc = rel / max(arc.y, 1e-4);
+            aA         = textureLod(uArcLUT, vec2(uArc, rowY), 0.0).a;
+        } else {
+            aA = baseAlphaPt;
+        }
+        emitCover = max(emitCover, c * arc.z * aA);
+    }
+
+    // Segment coverage at this point. This is the segments' whole magnitude
+    // now: boost * bell, straight off the analytic gaussian, so it cannot
+    // inherit either the gather's sample stepping or the far-side dilution that
+    // used to make a segment dimmer on a small rect. Segments emit where no arc
+    // covers, so they carry their own filament/halo/bloom.
+    float segCoverPt = 0.0;
+    for (int s = 0; s < uSegmentCount; s++) {
+        vec4  seg = uSegments[s];
+        float rel = sPos - seg.x;
+        rel      -= floor(rel + 0.5);                     // wrap to [-0.5, 0.5]
+        float e   = rel * seg.y;
+        // Per-segment alpha, pointwise - see emitCover above. Stop-less
+        // segments inherit the base gradient's alpha, mirroring how their
+        // colour falls back to segFallback in the gather.
+        float sA;
+        if (seg.w > 0.5) {
+            float tLocal = clamp(0.5 + e * 0.5, 0.0, 1.0);
+            float rowY   = (float(s) + 0.5) / float(MAX_SEGMENT_BOOSTS);
+            sA           = textureLod(uSegmentLUT, vec2(tLocal, rowY), 0.0).a;
+        } else {
+            sA = baseAlphaPt;
+        }
+        segCoverPt += seg.z * exp(-e * e) * sA;
+    }
+
+    // The segments' SHARP gate (smoothstep 0.5..1), maxed with emitCover. Both
+    // are exact at this perimeter position, so neither can quantise a slow
+    // tracer's head to the gather points nor light the corner preceding an
+    // arc's tail - the two bugs the old circular-mean/sample-based gates had.
+    // Unclamped on purpose: boost above 1 must still brighten, as it did when
+    // the gather's `bell` carried the magnitude. (segmentGlow's min(.., 1.0)
+    // only bounds the shared halo/bloom reach - it is not the segment's
+    // brightness.)
+    float filamentGate = max(smoothstep(0.5, 1.0, min(segCoverPt, 1.0)), emitCover);
+    return vec2(emitCover, segCoverPt * filamentGate);
 }
 
 // A piece whose own halo plus bloom at this fragment is below this, in linear
@@ -690,21 +772,23 @@ void main() {
                           pow(log2(1.0 / FILAMENT_NYQUIST_MIN_SHARE), 1.0 / N)
                         : 0.0;
     float sigma     = max(max(halfWidth, max(minHalf, 1e-3)), nyquist);
-    float core      = exp2(-pow(ad / sigma, N));
 
     // Filament reach, in sigmas, for THIS falloff - see neon-tuning.h. Also
     // sizes the draw quad CPU-side; the two must stay in step.
     float reachSigmas = clamp(pow(log2(FILAMENT_GAIN / FILAMENT_CUTOFF), 1.0 / N),
                               FILAMENT_REACH_MIN_SIGMAS, FILAMENT_REACH_MAX_SIGMAS);
     // Pedestal-subtract the core so it reaches exactly zero at that reach,
-    // renormalised to keep the ad = 0 peak at 1.0. Where the reach formula is
-    // honoured the pedestal is ~1.7e-4 and invisible; where MAX_SIGMAS clamps
-    // it (soft falloff, whose tail would otherwise run for hundreds of sigmas)
-    // this is what makes the glow end smoothly and, crucially, SYMMETRICALLY.
-    // Without it the interior kept the full tail while the exterior was cut at
-    // the quad edge.
+    // renormalised to keep the ad = 0 peak at 1.0 (filamentCore). Where the
+    // reach formula is honoured the pedestal is ~1.7e-4 and invisible; where
+    // MAX_SIGMAS clamps it (soft falloff, whose tail would otherwise run for
+    // hundreds of sigmas) this is what makes the glow end smoothly and,
+    // crucially, SYMMETRICALLY. Without it the interior kept the full tail
+    // while the exterior was cut at the quad edge.
     float corePed   = exp2(-pow(reachSigmas, N));
-    core            = max(core - corePed, 0.0) / max(1.0 - corePed, 1e-6);
+    // At the fragment's distance from the outline, i.e. from its NEAREST
+    // piece: the filament where the whole ring reads one coverage, and the
+    // test for whether any piece reaches this fragment at all.
+    float core      = filamentCore(ad, sigma, N, corePed);
     float lineGate  = clamp(uLineWidth / max(minHalf * 2.0, 1e-3), 0.0, 1.0);
 
     // Perimeter of the rounded rect, in px - converts the arc feathers below
@@ -763,15 +847,15 @@ void main() {
     }
 #endif
 
-    // --- Continuous coverage, read at this fragment's own position -------
-    // Everything in this block - sPos, the pointwise alpha, emitCover and
-    // segCoverPt - feeds ONE term, the filament (emitFil * core * lineGate,
-    // below), and `core` is exactly 0 past the filament's reach. So off the
-    // line - most of the glow quad - none of it is computed: the term is 0 * a
-    // finite value either way, so the output is the same bits. Add a reader of
-    // any of the four outside the filament and it has to move out of this gate.
-    // The LUT reads are explicit-LOD for the same reason: they now sit in
-    // non-uniform control flow, and every LUT has a single level.
+    // --- Filament coverage, read at each piece's own nearest point -------
+    // Everything in this block - the perimeter positions, the pointwise alpha
+    // and the two coverages (filamentCover) - feeds ONE term, the filament
+    // (`filament`, below), and `core` is exactly 0 past the filament's reach.
+    // So off the line - most of the glow quad - none of it is computed: the
+    // term is 0 * a finite value either way, so the output is the same bits.
+    // Add a reader of any of them outside the filament and it has to move out
+    // of this gate. The LUT reads are explicit-LOD for the same reason: they
+    // now sit in non-uniform control flow, and every LUT has a single level.
     //
     // And never in a pass the blit composites (pass 1b and its field bake):
     // the edge ring re-shades every pixel within the filament's reach, as pass
@@ -781,14 +865,6 @@ void main() {
     // check's scenes and the guide's figures). Shrink that guard and this has
     // to go.
     bool filamentLit = !blitOwnsCut && core > 0.0 && lineGate > 0.0;
-    // The fragment's own perimeter position, recovered geometrically from vPos,
-    // with each arc read directly there - exact at the corners too. Skipped
-    // where nothing reads it (uPerimeterUnread).
-    float sPos = 0.0;
-    if (uPerimeterUnread == 0 && filamentLit)
-    {
-        sPos = perimeterPosition(vPos);
-    }
     // Inward feathers: convert pixel widths to perimeter fractions at the
     // current geometry (`peri` is computed above the gather). `peri` is derived
     // from uRectSize and so is in SCALED px, while the two constants are
@@ -797,112 +873,61 @@ void main() {
     // ends soften over a different length at a different resolution scale.
     float headF  = HEAD_FEATHER_PX * uResolutionScale / peri;
     float tailF  = TAIL_FEATHER_PX * uResolutionScale / peri;
-    // The arcs' coverage at this point, per-arc intensity folded in, for the
-    // FILAMENT: `col` is gated-normalised, so intensity reaches the filament
-    // only through emitCover. The halo and bloom take the gathered coverage and
-    // each piece's table instead (see Compose below) - which is what lets this
-    // whole block sit behind filamentLit.
+    // The filament as a MAX OVER THE OUTLINE'S PIECES (V25): each piece within
+    // reach lights this fragment with its core at the fragment's distance from
+    // IT, times the coverage at ITS nearest point - the same four straights and
+    // four corners the halo and bloom are summed over. Not one read at the
+    // fragment's nearest perimeter point: that map jumps across the medial
+    // axis, so where the coverage differs on the two sides - an arc ending on a
+    // sharp corner, an end ramp round any corner tighter than the filament's
+    // reach - the filament was cut along the corner's diagonal, a hard 45-degree
+    // edge on one side of the line only. Each piece's term is continuous in
+    // the fragment's position, so their max is too. A max, not a sum, so a
+    // ring lit uniformly is unchanged: core falls with distance, and the
+    // nearest piece is the one at `ad`. And no bleed past a free end: every
+    // piece meeting there reads that end's coverage, which is 0
+    // (arcCoverContinuous).
     //
-    // Colour-stop ALPHA rides here too, on the magnitude and POINTWISE: folded
-    // into `col` it would cancel, and gathered it would be a ring-wide mean
-    // dragged toward the opaque far side. Alpha 0 kills the filament at that
-    // position (the glow does not see stop alpha - V18), and the premultiplied
-    // output alpha follows.
-    float baseAlphaPt = 1.0;
-    if (uPerimeterUnread == 0 && filamentLit)
-    {
-        baseAlphaPt = textureLod(uGradientLUT, vec2(sPos - uTime * uHueRotationRate, 0.5), 0.0).a;
-    }
-    // Winner-take-all across arcs, as documented for overlap. This can be a
-    // plain max() again because arcCoverContinuous now reaches a FULL 1.0 at an
-    // abutting endpoint rather than 0 (inward) or 0.5 (straddling), so two arcs
-    // tiling the ring hand over at max(w1, w2) with no notch - and because
-    // their ramps overlap, the handover stays smooth even when w1 != w2.
-    float emitCover = 0.0;
-    int   arcCount  = filamentLit ? uArcCount : 0;
-    for (int a = 0; a < arcCount; a++) {
-        vec4 arc = uArcs[a];
-        if (arc.z <= 0.0) continue;                       // dark arc: no filament
-        float c = arcCoverContinuous(sPos, arc.x, arc.y, headF, tailF,
-                                     arcTailAbuts(arc.w), arcHeadAbuts(arc.w));
-        if (c <= 0.0) continue;                           // does not reach here
-        // Each arc's own alpha, from the same LUT its colour came from and in
-        // the same coordinate space the gather used - arc-local for hasStops,
-        // perimeter space otherwise.
-        float aA;
-        if (arcHasStops(arc.w)) {
-            // NO hue-rotation term here: uArc is the arc's OWN head-to-tail
-            // coordinate, so there is nothing to rotate (it slid the gradient
-            // off one end and seamed it mid-edge). An arc's gradient moves by
-            // moving the arc or animating its stops, as a segment's does.
-            //
-            // WRAPPED, as arcCoverContinuous wraps its rel - an arc may
-            // straddle the seam - with the same midpoint split, so a fragment
-            // behind the start clamps to the head colour.
-            float rowY = (float(a) + 0.5) / float(MAX_ARCS);
-            float rel  = sPos - arc.x;
-            rel       -= floor(rel);                       // wrap to [0, 1)
-            if (rel > 0.5 * (1.0 + arc.y)) { rel -= 1.0; } // behind the start, not past the head
-            float uArc = rel / max(arc.y, 1e-4);
-            aA         = textureLod(uArcLUT, vec2(uArc, rowY), 0.0).a;
-        } else {
-            aA = baseAlphaPt;
+    // .x the arcs' magnitude and .y the segments', each with its core folded
+    // in - two maxes, so the output stays linear in the two hues (the field's
+    // factorisation, see NEON_FIELD_BAKE). Under uPerimeterUnread every
+    // position reads one coverage, so the loop runs once, at the fragment's
+    // own distance (filamentCore 1, `core` applied after - the expression as
+    // before), and no position is computed. The step comes from the data, so
+    // the loop is not unrolled into eight copies of filamentCover; a sharp
+    // rect skips its four point-sized corners.
+    vec2  filament  = vec2(0.0);
+    bool  perPiece  = uPerimeterUnread == 0;
+    float filReach  = sigma * reachSigmas;
+    int   pieceStep = !perPiece ? 8 : ((uCornerRadius > 0.0) ? 1 : 2);
+    int   pieceEnd  = filamentLit ? 8 : 0;
+    for (int piece = 0; piece < pieceEnd; piece += pieceStep) {
+        float sPos  = 0.0;
+        float pCore = 1.0;
+        if (perPiece) {
+            float u;
+            float dist = filamentPieceDistance(piece, vPos, filReach, u);
+            if (dist < 0.0) continue;
+            pCore = filamentCore(dist, sigma, N, corePed);
+            if (pCore <= 0.0) continue;
+            sPos = perimeterAt(piece, u);
         }
-        emitCover = max(emitCover, c * arc.z * aA);
+        filament = max(filament, pCore * filamentCover(sPos, headF, tailF));
     }
-
-    // Segment coverage at this fragment's own perimeter position. This is the
-    // segments' whole magnitude now: boost * bell, straight off the analytic
-    // gaussian, so it cannot inherit either the gather's sample stepping or
-    // the far-side dilution that used to make a segment dimmer on a small
-    // rect. Segments emit where no arc covers, so they carry their own
-    // filament/halo/bloom.
-    float segCoverPt = 0.0;
-    int   segCount   = filamentLit ? uSegmentCount : 0;
-    for (int s = 0; s < segCount; s++) {
-        vec4  seg = uSegments[s];
-        float rel = sPos - seg.x;
-        rel      -= floor(rel + 0.5);                     // wrap to [-0.5, 0.5]
-        float e   = rel * seg.y;
-        // Per-segment alpha, pointwise - see emitCover above. Stop-less
-        // segments inherit the base gradient's alpha, mirroring how their
-        // colour falls back to segFallback in the gather.
-        float sA;
-        if (seg.w > 0.5) {
-            float tLocal = clamp(0.5 + e * 0.5, 0.0, 1.0);
-            float rowY   = (float(s) + 0.5) / float(MAX_SEGMENT_BOOSTS);
-            sA           = textureLod(uSegmentLUT, vec2(tLocal, rowY), 0.0).a;
-        } else {
-            sA = baseAlphaPt;
-        }
-        segCoverPt += seg.z * exp(-e * e) * sA;
-    }
-
-    // Attach the segments' magnitude to their hue. Unclamped on purpose: boost
-    // above 1 must still brighten, as it did when the gather's `bell` carried
-    // the magnitude. (segmentGlow's min(.., 1.0) only bounds the shared
-    // halo/bloom reach - it is not the segment's brightness.)
-    vec3 segCol = segColHue * segCoverPt;
+    float filamentCoreAt = perPiece ? 1.0 : core;
 
     // --- GLOW coverage: the same two magnitudes, GATHERED ------------------
     // The halo and bloom integrate over the WHOLE emitter, so what scales them
     // is the emitter's coverage averaged over that integral, not the nearest
-    // perimeter point's: sPos is a nearest-point map that JUMPS across the
-    // medial axis, and a smooth field scaled by it creases there (V4 one level
-    // up). The gather's ratio SUM(cover * g) / SUM(g) is that mean - smooth by
+    // perimeter point's: a nearest-point map JUMPS across the medial axis, and
+    // a smooth field scaled by it creases there (V4 one level up). The
+    // gather's ratio SUM(cover * g) / SUM(g) is that mean - smooth by
     // construction, and exactly 1.0 on a fully lit ring.
     //
     // Colour-stop alpha is NOT in this pair (V18): the glow does not see it. On
     // the line the gathered mean is too wide (V19), so the halo block corrects
     // it per piece toward each piece's own coverage - see addPieceGlowFix.
     vec2 gatheredCover = vec2(emitCoverGathered, segCoverGathered);
-
-    // Sharp gate for the SDF-derived filament, from the same two pointwise
-    // coverages. Both are exact at this fragment's perimeter position, so
-    // neither can quantise a slow tracer's head to the gather points nor light
-    // the corner preceding an arc's tail - the two bugs the old
-    // circular-mean/sample-based gates had.
-    float filamentGate = max(smoothstep(0.5, 1.0, min(segCoverPt, 1.0)), emitCover);
 
     // --- Analytic halo + bloom --------------------------------------------
     // Closed forms evaluated as a SUM OVER THE EMITTER'S PIECES - four
@@ -1109,26 +1134,25 @@ void main() {
 
     // Compose: base arc x intensity + segments (independent of intensity, so a
     // segment stays lit on a dark arc). EACH SOURCE CARRIES ITS OWN COVERAGE:
-    // `col` is a unit hue everywhere, so it is multiplied by emitCover here;
-    // one shared gate let a segment's gate lift the arc term where no arc
-    // covers (a red segment on a blue half-ring read magenta).
+    // `col` is a unit hue everywhere, so it is multiplied by the arcs'
+    // coverage here; one shared gate let a segment's gate lift the arc term
+    // where no arc covers (a red segment on a blue half-ring read magenta).
     vec3 arcCol = col * uIntensity;
 
-    // filamentGate is the segment's SHARP gate (smoothstep 0.5..1) maxed with
-    // emitCover; segmentGlow's is the soft one. Applied to the segment term
-    // only - the arc takes its own coverage directly in both, since for an arc
-    // the two gates were just that coverage anyway.
+    // The segments' filament carries their SHARP gate (filamentCover);
+    // segmentGlow's is the soft one. The arc takes its own coverage directly
+    // in both, since for an arc the two gates were just that coverage anyway.
     //
     // THE TWO TAKE DIFFERENT COVERAGES, and that is the point. The filament is
     // an SDF-derived line: it lives ON the perimeter, so it wants the
-    // POINTWISE pair, exact at this fragment's own perimeter position. The
-    // halo and bloom are integrals over the whole emitter, so they want the
-    // GATHERED pair - plus glowFix, V19's per-piece correction toward the
-    // coverage at each piece's foot, in the same arc / segment halves.
-    vec3 emitFil  = arcCol * emitCover           + segCol     * filamentGate;
+    // POINTWISE pair, exact at each piece's own nearest point. The halo and
+    // bloom are integrals over the whole emitter, so they want the GATHERED
+    // pair - plus glowFix, V19's per-piece correction toward the coverage at
+    // each piece's foot, in the same arc / segment halves.
+    vec3 emitFil  = arcCol * filament.x          + segColHue  * filament.y;
     vec3 emitGlow = arcCol * gatheredCover.x     + segColHue  * gatheredSeg;
 
-    vec3 result  = emitFil  * core  * FILAMENT_GAIN  * lineGate;
+    vec3 result  = emitFil  * filamentCoreAt * FILAMENT_GAIN  * lineGate;
     result      += (emitGlow * halo  + arcCol * glowFix.x + segColHue * glowFix.y) * HALO_GAIN      * glowGate;
     result      += (emitGlow * bloom + arcCol * glowFix.z + segColHue * glowFix.w) * uBloomStrength * glowGate;
 
