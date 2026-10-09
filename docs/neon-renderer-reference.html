@@ -613,50 +613,36 @@ float bandInnerDistance(float d, float cut) { return d + cut; }</code></pre>
     <section id="s4">
       <h2 class="sec"><span class="num">04</span> Perimeter inversion</h2>
 
-      <p class="lede">Turning a fragment position back into an arc-length parameter. This is the fiddliest function in the shader and the one most likely to be got wrong by a well-meaning edit.</p>
+      <p class="lede">Turning a fragment position back into arc-length parameters - one per piece of the outline, since V25. This is the fiddliest code in the shader and the one most likely to be got wrong by a well-meaning edit.</p>
 
-      <h3>Step 1: nearest point on the outline</h3>
+      <h3>Step 1: each piece's own nearest point</h3>
 
-<pre><code>vec2  b  = vec2(halfWs, halfHs);   // the smaller, sharp-cornered box
-vec2  c  = clamp(p, -b, b);        // nearest point on that box
-vec2  d  = p - c;
-float dl = length(d);
-if (dl &gt; 1e-6) { cp = c + d * (r / dl); }   // push out by r -&gt; on the outline
-else           { /* project along the dominant axis, see below */ }</code></pre>
-
-      <p>This is the distance formula run backwards: instead of returning how far the nearest point is, it returns where it is. The <code>dl &lt;= 1e-6</code> branch handles fragments strictly inside the inner box, where the direction is degenerate; it projects along whichever axis is closer to its wall:</p>
-
-<pre><code>vec2  e  = b - abs(p);
-float sx = (p.x &gt;= 0.0) ? 1.0 : -1.0;
-float sy = (p.y &gt;= 0.0) ? 1.0 : -1.0;
-cp = (e.x &lt; e.y) ? vec2(sx * halfW, p.y) : vec2(p.x, sy * halfH);</code></pre>
-
-      <h3>Step 2: which of the eight pieces</h3>
-
-      <p>With <code>ax = abs(cp.x)</code> and <code>ay = abs(cp.y)</code>, a chain of comparisons classifies <code>cp</code> into a canonical id numbered in clockwise order, and computes <code>u</code>, the traversal progress across that piece measured clockwise.</p>
+      <p>The outline is eight pieces: four straights between the tangent points and four quarter arcs, numbered clockwise from the top edge. <code>filamentPieceDistance(seg, p, reach, u)</code> finds, for ONE piece, the point on it nearest the fragment, returns the distance to it and sets <code>u</code>, the traversal progress across that piece measured clockwise. Each piece takes its own nearest point, an end where the fragment lies past it: a straight clamps the fragment's coordinate along it to its extent; an arc takes the direction of the fragment from its centre.</p>
 
       <div class="tbl-wrap">
         <table>
-          <caption>Canonical piece ids and their local progress</caption>
-          <thead><tr><th>Test</th><th>id</th><th>Piece</th><th>u</th></tr></thead>
+          <caption>Piece ids, each piece's nearest point, and its local progress</caption>
+          <thead><tr><th>id</th><th>Piece</th><th>Nearest point</th><th>u</th></tr></thead>
           <tbody>
-            <tr><td class="mono">ax &gt; halfWs &amp;&amp; ay &gt; halfHs</td><td class="num">1</td><td>top-right arc</td><td class="mono">(HALF_PI - th) / HALF_PI</td></tr>
-            <tr><td class="mono">"</td><td class="num">3</td><td>bottom-right arc</td><td class="mono">-th / HALF_PI</td></tr>
-            <tr><td class="mono">"</td><td class="num">5</td><td>bottom-left arc</td><td class="mono">(-HALF_PI - th) / HALF_PI</td></tr>
-            <tr><td class="mono">"</td><td class="num">7</td><td>top-left arc</td><td class="mono">(PI - th) / HALF_PI</td></tr>
-            <tr><td class="mono">ay &gt;= halfHs, cp.y &gt; 0</td><td class="num">0</td><td>top edge, left to right</td><td class="mono">(cp.x + halfWs) / ws</td></tr>
-            <tr><td class="mono">ax &gt;= halfWs, cp.x &gt; 0</td><td class="num">2</td><td>right edge, top to bottom</td><td class="mono">(halfHs - cp.y) / hs</td></tr>
-            <tr><td class="mono">ay &gt;= halfHs, cp.y &lt;= 0</td><td class="num">4</td><td>bottom edge, right to left</td><td class="mono">(halfWs - cp.x) / ws</td></tr>
-            <tr><td class="mono">ax &gt;= halfWs, cp.x &lt;= 0</td><td class="num">6</td><td>left edge, bottom to top</td><td class="mono">(cp.y + halfHs) / hs</td></tr>
+            <tr><td class="num">0</td><td>top edge, left to right</td><td class="mono">(clamp(p.x, -halfWs, halfWs), halfH)</td><td class="mono">(x + halfWs) / ws</td></tr>
+            <tr><td class="num">2</td><td>right edge, top to bottom</td><td class="mono">(halfW, clamp(p.y, -halfHs, halfHs))</td><td class="mono">(halfHs - y) / hs</td></tr>
+            <tr><td class="num">4</td><td>bottom edge, right to left</td><td class="mono">(clamp(p.x, -halfWs, halfWs), -halfH)</td><td class="mono">(halfWs - x) / ws</td></tr>
+            <tr><td class="num">6</td><td>left edge, bottom to top</td><td class="mono">(-halfW, clamp(p.y, -halfHs, halfHs))</td><td class="mono">(y + halfHs) / hs</td></tr>
+            <tr><td class="num">1</td><td>top-right arc</td><td class="mono">centre (halfWs, halfHs) + r * dir(w)</td><td class="mono">(HALF_PI - th) / HALF_PI</td></tr>
+            <tr><td class="num">3</td><td>bottom-right arc</td><td class="mono">centre (halfWs, -halfHs) + r * dir(w)</td><td class="mono">-th / HALF_PI</td></tr>
+            <tr><td class="num">5</td><td>bottom-left arc</td><td class="mono">centre (-halfWs, -halfHs) + r * dir(w)</td><td class="mono">(-HALF_PI - th) / HALF_PI</td></tr>
+            <tr><td class="num">7</td><td>top-left arc</td><td class="mono">centre (-halfWs, halfHs) + r * dir(w)</td><td class="mono">(PI - th) / HALF_PI</td></tr>
           </tbody>
         </table>
       </div>
 
-      <p>where <code>th = atan(cp.y - sy*halfHs, cp.x - sx*halfWs)</code> is the angle around that corner's centre. Piece 5 needs one fixup: <code>atan</code> hands the left tangency back as <code>+pi</code> rather than <code>-pi</code>, so <code>th</code> is decremented by <code>TWO_PI</code> when positive.</p>
+      <p>where <code>w</code> is the fragment's offset from that corner's centre and <code>th = atan(w.y, w.x)</code> the angle round it; the distance to an arc is <code>abs(length(w) - r)</code>. Piece 5 needs one fixup: <code>atan</code> hands the left tangency back as <code>+pi</code> rather than <code>-pi</code>, so <code>th</code> is decremented by <code>TWO_PI</code> when positive.</p>
+
+      <p>A piece the filament takes nothing from returns <code>-1</code>: one at <code>reach</code> or further, where its core is exactly 0 (an arc's <code>atan</code> is only taken within it); a straight of zero length, or every arc at radius 0 - a point both its neighbours already end on; and an arc whose quarter does not face the fragment (<code>w</code> outside the corner's quadrant), whose nearest point is the end it shares with a straight. On that quadrant's boundary the arc's term and the straight's agree, so leaving it out is continuous.</p>
 
       <h3>Step 3: cumulative base, then divide</h3>
 
-      <p>With <code>ws = width - 2r</code>, <code>hs = height - 2r</code>, <code>arcLen = PI * r / 2</code> and <code>peri = 2ws + 2hs + 4arcLen</code>, the piece id selects a cumulative base. The two windings use different tables and the counter-clockwise one mirrors the progress to <code>1 - u</code>.</p>
+      <p><code>perimeterAt(seg, u)</code>. With <code>ws = width - 2r</code>, <code>hs = height - 2r</code>, <code>arcLen = PI * r / 2</code> and <code>peri = 2ws + 2hs + 4arcLen</code>, the piece id selects a cumulative base. The two windings use different tables and the counter-clockwise one mirrors the progress to <code>1 - u</code>.</p>
 
       <div class="tbl-wrap">
         <table>
@@ -678,13 +664,18 @@ cp = (e.x &lt; e.y) ? vec2(sx * halfW, p.y) : vec2(p.x, sy * halfH);</code></pre
       <p><code>a</code> abbreviates <code>arcLen</code>. The return is <code>(base + len * u) / peri</code> clockwise, and <code>(base + len * (1 - u)) / peri</code> counter-clockwise. Note that <strong><code>t = 0</code> sits at the left end of the top edge</strong> for clockwise winding, which is where the top-left corner arc finishes, and at the bottom end of the left edge for counter-clockwise.</p>
 
       <div class="note">
+        <span class="tag">Why per piece and not the nearest point</span>
+        Until V25 this section described ONE position per fragment: the nearest point on the whole outline, classified into a piece. Inside a sharp corner that map jumps across the diagonal, where the nearest edge changes, so an arc ending on the corner - an arc wipe from 0 - lit the filament on the lit edge's side of the diagonal and nothing on the other, a hard 45-degree cut on the inside half of the line only. The filament now takes the max over the pieces within reach of each piece's core at the fragment's distance from it times the coverage at its own nearest point (section 05). On a uniformly lit ring the nearest piece wins at <code>ad</code>, so nothing moves.
+      </div>
+
+      <div class="note">
         <span class="tag">Why geometric and not sampled</span>
         An earlier version estimated a fragment's position as a proximity-weighted circular mean of the nearby loop samples' phases. Near a corner those phases wrap through <code>2pi</code> straight into the start of the ring, so the mean collapsed the whole corner curve to roughly 0 and lit corners that an arc starting at 0 should have left dark. The geometric inverse is exact everywhere. It is also what makes CPU-authored positions agree with the shader: <code>GeometryUtils::GetPointOnRectangle</code> is the forward map of exactly these tables.
       </div>
 
       <div class="warn">
         <span class="tag">If you change this</span>
-        Three places must move together: <code>perimeterPosition</code> in <code>neon.frag</code>, <code>GeometryUtils::GetPointOnRectangle</code> (and its <code>Detail::GetPointOnRectCW</code> / <code>CCW</code> helpers), and <code>GetSunFragPosition</code>, which places the lens-flare sun in the same parameter space. A mismatch shows up as arcs that do not line up with where the UI says they are.
+        Four places must move together: <code>perimeterAt</code> and <code>filamentPieceDistance</code> in <code>neon.frag</code>, the coverage bake's <code>pieceStart</code> in <code>neon-glow-cover.frag</code>, <code>GeometryUtils::GetPointOnRectangle</code> (and its <code>Detail::GetPointOnRectCW</code> / <code>CCW</code> helpers), and <code>GetSunFragPosition</code>, which places the lens-flare sun in the same parameter space. A mismatch shows up as arcs that do not line up with where the UI says they are.
       </div>
     </section>
 
@@ -745,6 +736,17 @@ core = max(core - corePed, 0.0) / max(1.0 - corePed, 1e-6);</code></pre>
 <pre><code>float lineGate = clamp(uLineWidth / (FILAMENT_MIN_HALF_WIDTH * 2.0), 0.0, 1.0);</code></pre>
 
       <p><code>sigma</code> is floored at <code>FILAMENT_MIN_HALF_WIDTH</code>, so <code>lineWidth = 0</code> would otherwise render a half-pixel bright dot rather than nothing. The gate fades the whole filament out over <code>lineWidth</code> in <code>[0, 1]</code>, making 0 mean "no line".</p>
+
+      <h3>Per piece of the outline</h3>
+
+      <p>The core is a function of <code>ad</code>, the distance to the whole outline; what scales it is the coverage. Since V25 the filament takes both per piece: each of the eight pieces within <code>sigma * reachSigmas</code> (section 04) gives its core at the fragment's distance from it times the coverage at its own nearest point, and the arcs' and the segments' magnitudes each take the max over pieces.</p>
+
+<pre><code>for each piece p within reach:          // 4 straights, and 4 arcs above radius 0
+    core_p   = filamentCore(dist_p, sigma, N, corePed);
+    filament = max(filament, core_p * filamentCover(perimeterAt(p, u_p), headF, tailF));
+emitFil = arcCol * filament.x + segColHue * filament.y;   // .y carries filamentGate</code></pre>
+
+      <p>A max, not a sum: the core falls with distance and <code>ad</code> is the nearest piece's distance, so a uniformly lit ring renders as the single read did - and under <code>uPerimeterUnread</code> the loop runs once, at <code>ad</code>, with no position at all. No light passes a free end: every piece meeting there reads that end's coverage, which the inward feather (section 07) makes 0. The loop's step comes from the data, so the compiler does not unroll it into eight copies of <code>filamentCover</code>.</p>
     </section>
 
     <!-- ============================================================ -->
@@ -881,7 +883,7 @@ for (int s = 0; s &lt; uSegmentCount; s++) {
           <tbody>
             <tr><td class="mono">emitCover</td><td class="mono">max over arcs of (cover * intensity)</td><td>the arc term in both filament and glow</td></tr>
             <tr><td class="mono">emitCoverAll</td><td class="mono">max(emitCover, min(segCoverPt, 1))</td><td>the segment term in the glow</td></tr>
-            <tr><td class="mono">filamentGate</td><td class="mono">max(smoothstep(0.5, 1, min(segCoverPt,1)), emitCover)</td><td>the segment term in the filament</td></tr>
+            <tr><td class="mono">filamentGate</td><td class="mono">max(smoothstep(0.5, 1, min(segCoverPt,1)), emitCover)</td><td>the segment term in the filament, at each piece's own nearest point (section 05)</td></tr>
           </tbody>
         </table>
       </div>
@@ -889,7 +891,7 @@ for (int s = 0; s &lt; uSegmentCount; s++) {
       <p>Composition then keeps the two sources' coverages separate:</p>
 
 <pre><code>vec3 arcCol   = col * uIntensity;
-vec3 emitFil  = arcCol * emitCover + segCol * filamentGate;
+vec3 emitFil  = arcCol * filament.x + segColHue * filament.y;   // per piece: section 05
 vec3 emitGlow = arcCol * emitCover + segCol * emitCoverAll;</code></pre>
 
       <div class="note">
@@ -1106,7 +1108,7 @@ result *= 1.0 - smoothstep(-outHalf, outHalf, dOut);</code></pre>
 
       <p>Each ramp is symmetric around its fade's MIDPOINT, not around the uniform. At or above the floor a sample exactly on the uniform (<code>size</code>) is at full weight and the 50% point is <code>softness / 2</code> further out; only at softness 0 do the two coincide, with about 50% on the uniform. These are what let a wide glow be clipped to a stated band regardless of <code>glowRadius</code>.</p>
 
-      <p><strong>Each fade starts at its cutoff.</strong> A cutoff means "untouched up to <code>size</code>, gone by <code>size + softness</code>". The uniform is <code>size</code> itself; the shader puts the fade's midpoint <code>softness / 2</code> past it (<code>inMid</code> / <code>outMid</code>), measures <code>dIn</code> / <code>dOut</code> from there, and lays the ramp symmetrically about it over the floored width. At or above the floor that is exactly <code>size</code> to <code>size + softness</code>. Below it the one-pixel ramp stays centred on the requested fade rather than starting at <code>size</code>, deliberately: at softness 0 the edge's 50% point is <code>size</code> at every resolution scale, where anchoring the floored ramp at <code>size</code> would put it half a floor out - 0.5 px at full res, 2 px at scale 0.25, where the floor is one buffer pixel. So a softness below the floor still moves the edge by half its value; only the width is floored. <code>black-rect.frag</code> follows the same rule with its <code>fwidth</code> floor. The CPU's bounds come from one helper, <code>GetCutoffEnd(cutoff, floor)</code> in <code>neon-renderer.cpp</code>, which mirrors that rule: the glow quad's outer cap (the fade's end plus 1 px, which also becomes <code>uQuadMargin</code> and must stay strictly past <code>cutEdge</code>), its inner hole, and the fill ring. Placing the fade in the shaders was checked against uploading <code>size + softness / 2</code> as the uniform instead: the two agree to within 1/255 across 504 scenes (both layers, every glow side and fill mode, scales 1.0 / 0.5 / 0.25), 410 of them byte-identical.</p>
+      <p><strong>Each fade starts at its cutoff.</strong> A cutoff means "untouched up to <code>size</code>, gone by <code>size + softness</code>". The uniform is <code>size</code> itself; the shader puts the fade's midpoint <code>softness / 2</code> past it (<code>inMid</code> / <code>outMid</code>), measures <code>dIn</code> / <code>dOut</code> from there, and lays the ramp symmetrically about it over the floored width. At or above the floor that is exactly <code>size</code> to <code>size + softness</code>. Below it the one-pixel ramp stays centred on the requested fade rather than starting at <code>size</code>, deliberately: at softness 0 the edge's 50% point is <code>size</code> at every resolution scale, where anchoring the floored ramp at <code>size</code> would put it half a floor out - 0.5 px at full res, 2 px at scale 0.25, where the floor is one buffer pixel. So a softness below the floor still moves the edge by half its value; only the width is floored. <code>black-rect.frag</code> follows the same rule with its one-pixel floor (<code>sdRoundBoxFwidth</code> - <code>fwidth(d)</code> without its doubling on a sharp corner, V26). The CPU's bounds come from one helper, <code>GetCutoffEnd(cutoff, floor)</code> in <code>neon-renderer.cpp</code>, which mirrors that rule: the glow quad's outer cap (the fade's end plus 1 px, which also becomes <code>uQuadMargin</code> and must stay strictly past <code>cutEdge</code>), its inner hole, and the fill ring. Placing the fade in the shaders was checked against uploading <code>size + softness / 2</code> as the uniform instead: the two agree to within 1/255 across 504 scenes (both layers, every glow side and fill mode, scales 1.0 / 0.5 / 0.25), 410 of them byte-identical.</p>
 
       <h3>The opaque fill <span class="src">black-rect.frag</span></h3>
 
@@ -1116,7 +1118,7 @@ result *= 1.0 - smoothstep(-outHalf, outHalf, dOut);</code></pre>
 
       <h3>What the pass is drawn on</h3>
 
-      <p>The silhouette comes from the SDF and <code>gl_FragCoord</code>, never from the vertex position, so the geometry underneath is free to be whatever bounds the band tightest - the same trade <code>setupGeometry</code> makes for the glow. <code>NeonRenderer::setupFillGeometry</code> takes it: <code>OUTSIDE</code> / <code>INSIDE</code> / <code>BOTH</code> draw a <strong>rectangular annulus</strong> in full-res rect-local pixels, sized to each of the fill's cutoffs plus that side's feather plus a 3 px margin that absorbs the <code>fwidth</code> floor. A 20 px band then costs 20 px of fragments rather than a whole viewport: measured at 3840x2160, 0.30 ms to 0.03 ms.</p>
+      <p>The silhouette comes from the SDF and <code>gl_FragCoord</code>, never from the vertex position, so the geometry underneath is free to be whatever bounds the band tightest - the same trade <code>setupGeometry</code> makes for the glow. <code>NeonRenderer::setupFillGeometry</code> takes it: <code>OUTSIDE</code> / <code>INSIDE</code> / <code>BOTH</code> draw a <strong>rectangular annulus</strong> in full-res rect-local pixels, sized to each of the fill's cutoffs plus that side's feather plus a 3 px margin that absorbs the one-pixel antialiasing floor. A 20 px band then costs 20 px of fragments rather than a whole viewport: measured at 3840x2160, 0.30 ms to 0.03 ms.</p>
 
       <p>The hole matters more than it looks. The region the fill cannot reach is the <em>inward</em> parallel curve - a rounded box shrunk by the inside margin, its radius shrunk to match - and the largest axis-aligned rectangle inside a rounded box is not that box's own half-extents. Each corner has to clear the corner arc, which pulls both half-extents in by <code>r(1 - 1/sqrt(2))</code>. Cut the hole square instead and a triangular wedge at each corner falls outside the ring but inside the fill's real footprint; at the default <code>cornerRadius</code> of 40 that is a ~12 px bite out of all four corners of the band.</p>
 
@@ -1734,12 +1736,12 @@ void main() {
           <line x1="790" y1="352" x2="790" y2="366" class="dg-line" marker-end="url(#ga2)"/>
 
           <rect x="550" y="368" width="480" height="40" class="dg-box"/>
-          <text x="562" y="393" class="dg-t2">float sPos = perimeterPosition(vPos);  // exact</text>
+          <text x="562" y="393" class="dg-t2">per piece in reach: t = perimeterAt(p, u)</text>
           <line x1="790" y1="408" x2="790" y2="422" class="dg-line" marker-end="url(#ga2)"/>
 
           <rect x="550" y="424" width="480" height="86" class="dg-box-a"/>
-          <text x="562" y="443" class="dg-t c-t">pointwise coverage at this fragment</text>
-          <text x="562" y="461" class="dg-t2">emitCover    = max(arcCoverContinuous(sPos,..) * z);</text>
+          <text x="562" y="443" class="dg-t c-t">pointwise coverage at each piece's t</text>
+          <text x="562" y="461" class="dg-t2">emitCover    = max(arcCoverContinuous(t,..) * z);</text>
           <text x="562" y="476" class="dg-t2">segCoverPt   = sum(boost * exp(-e*e));</text>
           <text x="562" y="491" class="dg-t2">emitCoverAll = max(emitCover, min(segCoverPt, 1.0));</text>
           <text x="562" y="506" class="dg-t2">filamentGate = max(smoothstep(.5,1.,segCoverPt), emitCover);</text>
@@ -1750,13 +1752,13 @@ void main() {
 
           <rect x="180" y="634" width="700" height="54" class="dg-box"/>
           <text x="192" y="653" class="dg-t2">arcCol   = col * uIntensity;</text>
-          <text x="192" y="669" class="dg-t2">emitFil  = arcCol * emitCover + segCol * filamentGate;</text>
+          <text x="192" y="669" class="dg-t2">emitFil  = arcCol * filament.x + segColHue * filament.y;</text>
           <text x="192" y="683" class="dg-t2">emitGlow = arcCol * gatheredCover.x + segColHue * gatheredSeg;</text>
           <line x1="530" y1="688" x2="530" y2="702" class="dg-line" marker-end="url(#gb2)"/>
 
           <rect x="130" y="704" width="800" height="70" class="dg-box-a"/>
           <text x="142" y="723" class="dg-t">compose the three layers</text>
-          <text x="142" y="741" class="dg-t2">result  = emitFil  * core  * FILAMENT_GAIN  * lineGate;</text>
+          <text x="142" y="741" class="dg-t2">result  = emitFil  * FILAMENT_GAIN  * lineGate;   // each piece's core is in filament</text>
           <text x="142" y="756" class="dg-t2">result += (emitGlow * halo  + arcCol * glowFix.x + segColHue * glowFix.y) * HALO_GAIN      * glowGate;</text>
           <text x="142" y="770" class="dg-t2">result += (emitGlow * bloom + arcCol * glowFix.z + segColHue * glowFix.w) * uBloomStrength * glowGate;</text>
           <line x1="530" y1="774" x2="530" y2="788" class="dg-line" marker-end="url(#ga2)"/>
@@ -1793,8 +1795,8 @@ void main() {
             <tr><td class="num">4</td><td>Perimeter length and kernel widths</td><td class="mono">peri, kc, kh, bw</td><td>6, 9</td></tr>
             <tr><td class="num">5</td><td>Gather loop over 128 samples: arc winner, LUT reads, segment hues</td><td class="mono">acc, segAcc, wsumLit, wsumSegW</td><td>7, 9</td></tr>
             <tr><td class="num">6</td><td>Gated normalisation</td><td class="mono">col, segColHue</td><td>9</td></tr>
-            <tr><td class="num">7</td><td class="mono">perimeterPosition(vPos)</td><td class="mono">sPos</td><td>4</td></tr>
-            <tr><td class="num">8</td><td>Pointwise arc and segment coverage</td><td class="mono">emitCover, segCoverPt, emitCoverAll, filamentGate</td><td>7, 8</td></tr>
+            <tr><td class="num">7</td><td>Each piece within the filament's reach: <code>filamentPieceDistance</code>, then <code>perimeterAt</code> (V25)</td><td class="mono">distance, t per piece</td><td>4, 5</td></tr>
+            <tr><td class="num">8</td><td>Pointwise arc and segment coverage at each piece's <code>t</code> (<code>filamentCover</code>), times that piece's core, max over pieces</td><td class="mono">filament (emitCover, segCoverPt, filamentGate)</td><td>5, 7, 8</td></tr>
             <tr><td class="num">9</td><td>Halo and bloom summed over the eight pieces, bloom pedestal, each piece's coverage read from pass 0b's table, glow gate</td><td class="mono">halo, bloom, glowFix, glowGate</td><td>6</td></tr>
             <tr><td class="num">10</td><td>Compose the three layers</td><td class="mono">result</td><td>13</td></tr>
             <tr><td class="num">11</td><td>One-sided cut, then both cutoff masks</td><td class="mono">result</td><td>12</td></tr>
@@ -1804,7 +1806,7 @@ void main() {
         </table>
       </div>
 
-      <p>Note step 7: the fragment's own perimeter position is computed <em>after</em> the gather, not before. The gather needs only the per-sample positions from the UBO, while <code>sPos</code> is needed only by the pointwise coverages that follow.</p>
+      <p>Note step 7: the pieces' perimeter positions are computed <em>after</em> the gather, not before, and only where the filament is lit. The gather needs only the per-sample positions from the UBO, while the positions are needed only by the pointwise coverages that follow.</p>
 
       <div class="warn">
         <span class="tag">The pairs to keep in step</span>

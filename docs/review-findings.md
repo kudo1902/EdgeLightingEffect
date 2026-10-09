@@ -5223,6 +5223,54 @@ still, 1.01 on arc-wipe and 1.00 on hue frames.
 
 ---
 
+## Thirty-first pass (a uniform the field bake compiles out)
+
+### I63. The field bake was sent a uniform it never reads, and an optimising compiler logged it - CHANGED
+
+**Reported** from the target: "uGlowSideSoftness not found in neon field" -
+`ShaderProgram[NeonRenderer.Field]: uniform 'uGlowSideSoftness' not found`,
+logged once each time the program is built.
+
+`NeonRenderer.Field` is `mFieldBakeShader`, `neon.frag` compiled with
+`NEON_FIELD_BAKE`, which writes the field and returns at the grade. The
+one-sided cut comes after that return, and the cut's softness - `sideSoft =
+max(uGlowSideSoftness, sideAA)` - has no other reader. So the uniform is dead
+in that variant, and a compiler that removes dead code removes it; Tizen's
+does. `uploadNeonUniforms` uploads the same set to every program built from
+`neon.frag`, the bake included, and `ShaderProgram::SetUniform` logs a missing
+uniform the first time it looks one up.
+
+Harmless - a uniform the program does not have is a no-op to set, and the bake
+never needed the value - and older than the report: the cut has always sat
+after the bake's return. Apple's GL keeps a uniform the source references
+whether the reference is reachable or not, so neither GPU on the i7 Mac (AMD
+Radeon Pro 5300M, Intel UHD 630) logs it, before or after.
+
+**Changed.** `UploadEdgeMaskUniforms` takes `cutSoftness`, and
+`uploadNeonUniforms` passes false for `mFieldBakeShader` alone (pass 1f and
+pass 1r both draw with it). Every other program keeps it, and on each the
+read is behind a uniform an optimiser cannot fold: `uBlitOwnsCut` in the
+shading and the ring, `uGlowSide` and the cutoffs in the ring field's
+composite and the blit. `neon.frag` notes at the bake's return that a read
+added above it has to go back into the upload.
+
+**Audited** the same way for every neon program, since it is the variants that
+compile code out: each program's uploads against what its variant reads,
+reachably. The bake's other uniforms all have a reader before the return (most
+through the discards); the two `neon-field.frag` composites are each sent only
+what their own variant reads; the coverage table's bake and fill read every
+uniform they are sent from code their `neon-pieces.glsl` half compiles and
+`main` reaches; the shading, ring, gather, blit, fill and emission programs
+have one build each. The other layers' shaders have no variants and no early
+return. The audit was by reading, not by an optimising compiler: one run on the
+device with the log on is the confirmation.
+
+**Verified** on the AMD: no "not found" logged for any glow side with the hue
+still or rotating; still and hue-rotating frames, inside and outside, and the
+V26 corner sweep byte-identical to the build before; `check` identical.
+
+---
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
@@ -5233,7 +5281,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, and the thirtieth V26. Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, the thirtieth V26, and the thirty-first I63. Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -5295,6 +5343,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I62 | changed | pass 1b and its field bake computed the filament the edge ring always redraws; skipped there (`uBlitOwnsCut`), every final frame byte-identical, the intermediate-buffer figures without the line |
 | V25 | fixed | the filament read one coverage at the fragment's nearest perimeter point, which jumps across a corner's diagonal, so an arc ending on a sharp corner (an arc wipe from 0) was cut along it on the inside half only; the filament is now a max over the outline's pieces, each at its own distance and its own nearest point - uniformly lit rings byte-identical, `check` unchanged |
 | V26 | fixed | every edge ramp (the one-sided cut, the cutoffs' floor, the blit's, the ring field's, the opaque fill's coverage) was sized by `fwidth(d)`, which reads 2 on a sharp corner's vertex pixel when the quad straddles both edges - that pixel came out at 0.84 (the fill's 0.75) on whichever corners the quad parity hit; `sdRoundBoxFwidth` takes the analytic gradient instead - corners agree within the dither, two-sided scenes byte-identical |
+| I63 | changed | the field bake (`neon.frag` + `NEON_FIELD_BAKE`) was sent `uGlowSideSoftness`, whose only reader follows the bake's return, so Tizen's compiler removed it and the upload logged "not found"; the bake is no longer sent it - frames byte-identical, the other neon programs audited for the same |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

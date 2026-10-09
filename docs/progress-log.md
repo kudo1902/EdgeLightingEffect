@@ -5,6 +5,22 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-09 (late night) - I63: a uniform the field bake compiles out
+
+`1d9f509`. I63 in [`review-findings.md`](review-findings.md) has the detail.
+
+- **Reported.** On Tizen: `uniform 'uGlowSideSoftness' not found` on
+  `NeonRenderer.Field`.
+- **Cause.** The field bake returns at the grade, before the one-sided cut,
+  which is the uniform's only reader, so an optimising compiler drops it; the
+  shared upload still set it. Harmless, and as old as the bake; Apple's GL
+  keeps the uniform, so it never showed on the Macs.
+- **What changed.** `UploadEdgeMaskUniforms(..., cutSoftness)`: the bake alone
+  is not sent it.
+- **Measured.** Byte-identical frames, `check` identical, nothing logged on the
+  AMD. Every neon program's uploads audited against what its variant reads; no
+  other uniform is dead anywhere. Open: confirm on the device.
+
 ## 2026-10-09 (late night) - V26: one corner of a one-sided glow
 
 On top of V25, uncommitted. AMD Radeon Pro 5300M. V26 in

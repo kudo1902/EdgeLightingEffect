@@ -227,7 +227,12 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   extend `NEON_FIELD_BAKE` and `neon-field.frag` together, or narrow
   `IsFieldEligible` and `IsRingFieldEligible`. `neon-scale-check` captures the
   SECOND frame after a config change for this reason: the first draws pass 1
-  directly.
+  directly. The bake RETURNS at the grade, so a uniform read only below that
+  return is dead in it, and Tizen's compiler removes it: sending it anyway logs
+  `uniform '...' not found` on `NeonRenderer.Field` (Apple's GL keeps such a
+  uniform, so the Macs never show this). `uGlowSideSoftness` is the one today,
+  and `uploadNeonUniforms` does not send it to `mFieldBakeShader` (I63) - add a
+  uniform read only after the grade and it joins that exception.
 
   **A uniformly lit ring skips its perimeter position** (`uPerimeterUnread`,
   I45): with no segments, every lit arc over the whole ring and no stops of its

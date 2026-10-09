@@ -640,7 +640,12 @@
         <figcaption><b>Fig 3</b> Two independent measurements per pixel. <code>d</code> runs <em>across</em> the outline and controls brightness; <code>t</code> runs <em>along</em> it and controls colour and which stretches are lit. Everything the renderer does is one of these two multiplied by the other.</figcaption>
       </figure>
 
-      <p>Getting <code>t</code> right is fiddlier than getting <code>d</code> right. The shader finds the nearest point on the outline geometrically, works out which of the eight pieces it landed on (four straight edges, four corner arcs), and converts that to a fraction of the total perimeter.</p>
+      <p>Getting <code>t</code> right is fiddlier than getting <code>d</code> right. The outline is eight pieces (four straight edges, four corner arcs). For each piece near the pixel, the shader finds the point on that piece nearest the pixel, geometrically, and converts it to a fraction of the total perimeter. The line is then lit by whichever piece gives it the most light - that piece's brightness at the pixel's distance from it, times how lit the outline is at that piece's <code>t</code>.</p>
+
+      <div class="note">
+        <span class="tag">Why per piece</span>
+        It used to take one <code>t</code> per pixel, from the nearest point on the whole outline. Inside a sharp corner the nearest edge switches along the diagonal, so <code>t</code> jumps there - and an arc that ended on the corner lit the line on one side of the diagonal and nothing on the other: a hard 45-degree cut through the inside half of the line only (V25). Asking every nearby piece and keeping the brightest has no jump, and on a fully lit ring it is exactly what the nearest piece alone gave.
+      </div>
 
       <div class="note">
         <span class="tag">Why the effort</span>
@@ -648,14 +653,14 @@
       </div>
 
       <details>
-        <summary>Under the hood: finding the nearest point</summary>
+        <summary>Under the hood: each piece's nearest point</summary>
         <div class="aside-body">
-          <p>The first three lines are the distance formula run backwards - instead of returning how far the nearest point is, they return where it is:</p>
-<pre><code>vec2  b  = vec2(halfWs, halfHs);   // the smaller, sharp-cornered box
-vec2  c  = clamp(p, -b, b);        // nearest point on that box
-vec2  d  = p - c;
-cp = c + d * (r / length(d));      // push out by r -> on the outline</code></pre>
-          <p>From <code>cp</code>, a chain of comparisons decides which of the eight perimeter pieces it belongs to. Straight edges give the fraction directly from the coordinate; corner arcs use the angle around the corner's centre. A pair of lookup tables then converts (piece, fraction) into a distance along the perimeter, one table per winding direction, and dividing by the perimeter length gives <code>t</code>.</p>
+          <p>For a straight edge, the nearest point is the pixel's coordinate along the edge, clamped to the edge's ends; for a corner arc, the point on the arc in the pixel's direction from the corner's centre:</p>
+<pre><code>x  = clamp(p.x, -halfWs, halfWs);         // top edge: nearest point (x, halfH)
+u  = (x + halfWs) / ws;                   // how far along it, 0 to 1
+w  = p - cornerCentre;                    // a corner arc: the pixel's offset
+u  = angle of w round the centre / 90deg; // how far round the quarter</code></pre>
+          <p>Straight edges give the fraction directly from the coordinate; corner arcs use the angle around the corner's centre. A pair of lookup tables (<code>perimeterAt</code>) then converts (piece, fraction) into a distance along the perimeter, one table per winding direction, and dividing by the perimeter length gives <code>t</code>. Pieces too far away for the line to reach the pixel are skipped, so most pixels ask one piece and a corner's ask two or three.</p>
           <p>This matches the CPU-side <code>GeometryUtils::GetPointOnRectangle</code> exactly, which is what lets settings authored on the CPU (an arc from 0.25 to 0.5, say) line up with what the shader draws.</p>
         </div>
       </details>
@@ -1015,7 +1020,7 @@ const bool lutDirty      = colorStops changed || blendSpace changed;</code></pre
 
           <!-- right column -->
           <rect x="420" y="124" width="300" height="40" class="dg-box"/>
-          <text x="432" y="141" class="dg-t">perimeterPosition(vPos) -&gt; t</text>
+          <text x="432" y="141" class="dg-t">each nearby piece -&gt; t</text>
           <text x="432" y="156" class="dg-t2">0 to 1 around the ring, Section 3</text>
           <line x1="570" y1="164" x2="570" y2="186" class="dg-line" marker-end="url(#sa)"/>
 

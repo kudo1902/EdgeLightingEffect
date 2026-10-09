@@ -418,6 +418,15 @@ pixel. To know how many units "one pixel" is, the shader asks the GPU for the
 how much `d` changes between this pixel and its neighbour. Then
 `smoothstep(-w, w, d)` with `w` derived from it gives a one-pixel ramp.
 
+The neon takes that width from `sdRoundBoxFwidth` (`neon-sdf.glsl`) rather than
+from `fwidth(d)` itself: the gradient of `d` worked out analytically, times
+`fwidth` of the position. Along an edge the two are the same number. At a sharp
+corner they are not: on the corner's own pixel the quad below can hold both
+neighbours outside the rect, `d` jumps a whole pixel along each axis, and
+`fwidth(d)` reads 2 - the ramp doubled and that one pixel came out dimmer, on
+whichever corners the quad happened to line up with (V26 in
+[`review-findings.md`](review-findings.md)).
+
 Derivatives work because the GPU shades pixels in 2x2 blocks ("quads") and
 subtracts neighbours' values. That has a catch: **if some pixels of a quad
 have taken a different branch, or have already discarded, the neighbour's
@@ -425,7 +434,8 @@ value does not exist and the derivative is undefined.** So:
 
 - Compute every derivative at the top of `main()`, before any `discard` or
   any branch that depends on per-pixel values. `neon.frag` has exactly one
-  derivative (`sideAA`, from `fwidth(d)`), computed before every discard.
+  derivative (`sideAA`, from `sdRoundBoxFwidth`), computed before every
+  discard.
 - A branch on a **uniform** is safe: every pixel in the draw takes the same
   path. The neon branches on uniforms freely (`uSegmentCount > 0`,
   `uCornerRadius > 0.0`, the resolution scale).
@@ -695,19 +705,22 @@ inside it, "how bright and what colour am I?" from two numbers:
   *brightness*: the three layers are functions of `|d|`.
 - **`t`, the position along the outline**, from 0 to 1. Decides *colour* and
   *which stretches are lit*: colour stops, arcs and segments are all authored
-  in `t`. The shader computes it in `perimeterPosition(vPos)`: find the
-  nearest point on the outline, decide which of its eight pieces it is on (four
-  straight edges, four corner arcs), and convert to a fraction of the total
-  length.
+  in `t`. The outline is eight pieces (four straight edges, four corner arcs);
+  for each, the shader finds the point on that piece nearest the pixel
+  (`filamentPieceDistance`) and converts it to a fraction of the total length
+  (`perimeterAt`). The pixel's own `t` is the one on its nearest piece.
 
 ![The perimeter position t of every pixel](images/neon-onboarding/perimeter-t-field.png)
 
 *`t` for every pixel of a 400 x 220 rect, as a hue wheel (red at 0 and 1),
-computed with `neon.frag`'s own `perimeterPosition`; the arrow marks `t = 0`
-and the default winding. Outside, the corner arcs fan out and `t` is
+computed with the nearest-point map `neon.frag` read until V25 (the figure
+tool's `PerimeterPosition`, on `perimeterAt`'s layout); the arrow marks
+`t = 0` and the default winding. Outside, the corner arcs fan out and `t` is
 continuous. Inside, it jumps along the four corner diagonals and the
 horizontal centre line, where the nearest edge changes. Anything read at a
-pixel's own `t` inherits those seams.*
+pixel's own `t` inherits those seams - which is why nothing in `neon.frag`
+does any more: the filament reads every nearby piece's own `t` (Part 3.6), the
+halo and bloom a coverage that moves smoothly with the pixel.*
 
 `t` matches the CPU's `GeometryUtils::GetPointOnRectangle` exactly, which is
 what lets an arc authored as "0.25 to 0.5" line up with what is drawn. Where
@@ -883,10 +896,13 @@ brightness floor instead of fading to black (the sum of four edges' light).
 Each pixel computes two kinds of coverage, because the layers need different
 things:
 
-- **Pointwise coverage** (`emitCover`, `segCoverPt`): how lit the outline is
-  *at this pixel's own `t`*, including arc feathers and colour-stop alpha. The
-  filament uses it, because the filament is a line and only its own position
-  matters.
+- **Pointwise coverage** (`emitCover`, `segCoverPt`, from `filamentCover`):
+  how lit the outline is *at one exact `t`*, including arc feathers and
+  colour-stop alpha. The filament uses it, because the filament is a line and
+  only the line's own position matters - read at each nearby piece's nearest
+  point, with that piece's core at the pixel's distance from it, and the
+  brightest kept. Read once, at the pixel's own `t`, it cut an arc's end along
+  a sharp corner's diagonal on one side of the line (V25).
 - **Gathered coverage** (`emitCoverGathered`, `segCoverGathered`): how lit the
   outline is *on average around this pixel*, weighted like the colour. It
   gives the halo and bloom their starting scale. Using the pointwise value
@@ -924,9 +940,11 @@ Then (in `neon.frag`, after the gather):
 
 ```
 arcCol   = col * intensity                                      // gathered hue x master brightness
-emitFil  = arcCol * emitCover         + segCol     * filamentGate
+filament = max over the pieces p within reach of                // V25
+           core(distance to p) * (emitCover, segCoverPt * filamentGate) at p's nearest t
+emitFil  = arcCol * filament.x        + segColHue  * filament.y
 emitGlow = arcCol * emitCoverGathered + segColHue  * gatheredSeg
-result   = emitFil  * core  * 12   * lineGate
+result   = emitFil          * 12   * lineGate
          + (emitGlow * halo  + haloFix)  * 0.9  * glowGate
          + (emitGlow * bloom + bloomFix) * bloomStrength * glowGate
 result   = toneMap(result)                       // Part 1.9
@@ -996,8 +1014,8 @@ blit). They also place the 128 loop samples (`rebuildLoopSamples`, via
 `GetPointOnRectangle`), size every quad, and set the gather resolution
 (`GetGatherScale`). `position` never reaches `neon.frag`: everything there is
 rect-local. It enters through the MVP translation and as `uRectCenter` in the
-fill and the blit. `winding` becomes `uWinding` (read by `perimeterPosition`)
-and decides the order of the loop samples.
+fill and the blit. `winding` becomes `uWinding` (read by `perimeterAt`, and by
+the coverage table's bake) and decides the order of the loop samples.
 
 **Passes.** All drawing passes. Not the emission table (P0), which depends
 only on perimeter fractions.
@@ -2107,8 +2125,8 @@ The stage numbers follow the source order.
 | # | Stage | What it computes |
 | - | ----- | ---------------- |
 | 1 | **SDF** | `d = sdRoundBox(vPos, uRectSize/2, uCornerRadius)`, `ad = abs(d)`. |
-| 2 | **Antialias width** | `sideAA = max(fwidth(d) * uResolutionScale, 1e-6)`: one destination pixel in this pass's units. The only derivative in the shader, computed before every discard (Part 1.10). |
-| 3 | **One-sided cut parameters** | `sideSoft = max(uGlowSideSoftness, sideAA)` (feather, floored at 1 px); `blitOwnsCut = uResolutionScale < 1`; `sideBack = 0.5 * sideAA`; `sideCull` = 2 buffer px on the scaled path, else `sideBack`. |
+| 2 | **Antialias width** | `sideAA = max(sdRoundBoxFwidth(vPos, uRectSize/2, uCornerRadius) * uResolutionScale, 1e-6)`: one destination pixel in this pass's units - `fwidth(d)`'s value along an edge, without its doubling on a sharp corner's pixel (V26). The only derivative in the shader, computed before every discard (Part 1.10). |
+| 3 | **One-sided cut parameters** | `sideSoft = max(uGlowSideSoftness, sideAA)` (feather, floored at 1 px); `blitOwnsCut = uBlitOwnsCut != 0` (pass 1b and its field bake); `sideBack = 0.5 * sideAA`; `sideCull` = 2 buffer px where the blit owns the cut, else `sideBack`. |
 | 4 | **One-sided discards** | `INSIDE` and `d > sideCull`, or `OUTSIDE` and `d < -sideCull`: discard. (`neon-gather.frag` has none.) |
 | 5 | **Cutoff ramps** | Each softness floored at `sideAA`; `inHalf`, `outHalf` = half the ramp widths; `inMid = uInsideCutoff + softness/2` and `outMid` likewise, the 50% points of fades that start at the cutoff. |
 | 6 | **Band distances** | `dIn = d + inMid`; `dOut = d - outMid` (a per-axis box distance at corner radius 0, so a square rect keeps a square band). A cutoff on a side `glowSide` already removes is neutralised with the 1e6 sentinel. |
@@ -2117,10 +2135,10 @@ The stage numbers follow the source order.
 | 9 | **Perimeter** | `peri = rectPerimeter()` (`neon-common.glsl`) `= 2(W + H - 4r) + 2 pi r`, in this pass's px. |
 | 10 | **Kernel widths** | `kh = uGlowRadius` (halo), `bw = 6 * uGlowRadius` (bloom); and inside `gatherPerimeter`, `kc = peri * COLOR_BLEND_PERIM_FRAC` (colour); each floored at 0.001. |
 | 11 | **Gather** | Plain `neon.frag` (and `neon-gather.frag`, which does nothing else): `gatherPerimeter(vPos)` from `neon-common.glsl`, the loop of Part 3.3 over `uNumSamples` samples, `g = 1/(dist^2 + kc^2)`, reading the emission table with `texelFetch`, accumulating arc colour, arc weight, segment colour, segment weight and the total weight. `col` = arc colour / arc weight; `segColHue` = segment colour / segment weight. Two loop bodies under one uniform branch: the segment-free body skips one fetch per sample. It returns both hues and the two gathered coverages of stage 14. Reads-gather variant: `textureLod` the gather buffer and decode `e/(1-e)` instead. |
-| 12 | **Pointwise position and arc coverage** | `sPos = perimeterPosition(vPos)`; for each arc, `arcCoverContinuous` (feathered by `HEAD_FEATHER_PX`/`TAIL_FEATHER_PX`, outward where arcs abut) x intensity x stop alpha; `emitCover` = the max over arcs. |
-| 13 | **Pointwise segment coverage** | `segCoverPt = sum of boost * exp(-e^2) * alpha`; `segCol = segColHue * segCoverPt`. |
+| 12 | **Filament coverage, per piece** | Only where the filament is lit (`filamentLit`). For each piece of the outline within the filament's reach - the four straights, plus the four corner arcs above radius 0 - `filamentPieceDistance` gives the pixel's distance to it and its nearest point, `perimeterAt` that point's `t`, and `filamentCover(t)` the two coverages there: for each arc `arcCoverContinuous` (feathered by `HEAD_FEATHER_PX`/`TAIL_FEATHER_PX`, outward where arcs abut) x intensity x stop alpha, `emitCover` = the max over arcs. `filament` = the max over pieces of `filamentCore(distance)` x those (V25). Under `uPerimeterUnread` one pass at `ad`, with no `t` at all. |
+| 13 | **Pointwise segment coverage** | Inside `filamentCover`, at the same `t`: `segCoverPt = sum of boost * exp(-e^2) * alpha`. |
 | 14 | **Gathered coverage** | `emitCoverGathered = arcWeight / totalWeight`, `segCoverGathered = segWeight / totalWeight` (exactly 1.0 on a fully lit ring), divided at the end of `gatherPerimeter` and arriving with stage 11; `gatheredSeg = segmentGlow(gathered) = segCoverGathered * max(emitCoverGathered, min(segCoverGathered, 1))`. |
-| 15 | **Filament gate** | `filamentGate = max(smoothstep(0.5, 1, min(segCoverPt, 1)), emitCover)`: a segment on a dark stretch opens its own core only above half strength. |
+| 15 | **Filament gate** | Inside `filamentCover`: `filamentGate = max(smoothstep(0.5, 1, min(segCoverPt, 1)), emitCover)`, returned as `segCoverPt * filamentGate`: a segment on a dark stretch opens its own core only above half strength. |
 | 16 | **Halo and bloom, straights** | For each of the four edges: perpendicular distance and extent, `haloSegment` and `bloomSegmentPedestalled` (Part 3.5), summed. `reach` mirrors the CPU's quad margin. Each edge's bloom - and each corner arc's in stage 17 - fades out over the outer half of `reach`, by its own distance, on both sides (`BLOOM_FADE_START_FRAC`, V23), so the glow ends gradually rather than on a crease. Each edge then calls `addStraightGlowFix`, adding to `glowFix` how far its own halo and bloom move when they take that piece's own coverage instead of the gathered one. It reads that straight's sheet of P0b's table (`glowCoverAt`) at the fragment's projection along the straight - unclamped, since past an end the coverage still changes - and its distance from the line, through `glowCoverStraightUV`: one linear fetch, `.r` / `.b` for the halo's arc and segment coverage, `.g` / `.a` for the bloom's. Skipped - one compare - for a piece whose halo plus bloom is under `GLOW_PIECE_MIN`, and for every piece on a ring lit uniformly. |
 | 17 | **Halo and bloom, corner arcs** | If `uCornerRadius > 0` (a uniform branch): each quarter arc is developed onto its tangent line (`arcTangentSegment`) and added with its weight; the four arcs share one bloom pedestal. One arc at a time (`addCornerPiece`): developed, its halo and bloom added, and its correction as in stage 16 (`addCornerGlowFix`), read from that corner's sheet at the fragment's polar position round the arc's centre (`glowCoverCornerUV`). Behind the centre, where the development flips ends across the diagonal, the bake has already blended both, so the read needs nothing special. |
 | 18 | **Normalisation** | `halo *= HALO_NORM_FACTOR`; `bloom *= BLOOM_NORM_FACTOR`, then renormalised so the on-line value stays and the tail reaches 0 at `reach`. |
@@ -2135,7 +2153,7 @@ The stage numbers follow the source order.
 Things the source comments flag as load-bearing:
 
 - **Pointwise vs gathered coverage** (stages 12-14, 20): the filament uses the
-  pointwise values, the halo and bloom the gathered ones. Swapping them
+  pointwise values, per piece, the halo and bloom the gathered ones. Swapping them
   brings back hard creases along the corner diagonals on a partly lit ring.
   The halo and bloom's per-piece coverage (stages 16-17) is read at
   coordinates that move continuously with the fragment, so it does not bring
@@ -2173,9 +2191,11 @@ Things the source comments flag as load-bearing:
 | `glowCoverStraightUV`, `glowCoverCornerUV` | where a piece's coverage is in P0b's table (in `neon-pieces.glsl`; Part 7.3) |
 | `addStraightGlowFix`, `addCornerGlowFix`, `addCornerPiece` | one piece's correction from its own coverage; `addCornerPiece` takes a corner start to finish - developed, lit, read - one at a time |
 | `bandOuterDistance`, `bandInnerDistance` | distances to the outer and inner cutoff boundaries |
-| `perimeterPosition(p)` | the inverse of `GetPointOnRectangle`: nearest outline point, which of 8 pieces, fraction of the perimeter |
+| `perimeterAt(seg, u)` | the inverse of `GetPointOnRectangle` for a point `u` of the way along piece `seg` (8 pieces, CW order), as a fraction of the perimeter, either winding |
+| `filamentPieceDistance(seg, p, reach, u)` | the distance from `p` to piece `seg` and where on it the nearest point is; -1 for a piece out of reach or with no point of its own (V25) |
+| `filamentCover(t, headF, tailF)` | the filament's arc and segment coverage at `t`; `filamentCore(a, ...)` its pedestal-subtracted core at distance `a` |
 | `arcHasStops`, `arcTailAbuts`, `arcHeadAbuts` | decode the arc flags bitmask |
-| `arcCoverContinuous(...)` | an arc's feathered coverage at `sPos`, wrap-aware |
+| `arcCoverContinuous(...)` | an arc's feathered coverage at `t`, wrap-aware |
 
 ### 7.5 `neon-blit.frag` (P2b)
 
@@ -2185,8 +2205,9 @@ src = texture(uSource, uv)                     // premultiplied, bilinear
 cutIn  = glowSide != OUTSIDE && insideCutoff enabled
 cutOut = glowSide != INSIDE  && outsideCutoff enabled
 if (glowSide != BOTH || cutIn || cutOut) {     // a branch on uniforms only
-    d    = sdRoundBox(gl_FragCoord.xy - uRectCenter, halfSize, r)
-    aa   = fwidth(d)                           // one destination pixel
+    p    = gl_FragCoord.xy - uRectCenter
+    d    = sdRoundBox(p, halfSize, r)
+    aa   = sdRoundBoxFwidth(p, halfSize, r)    // one destination pixel (V26)
     cut  = one-sided cut (the same curve as neon.frag stage 23)
     cut *= cutoff masks (the same curves as neon.frag stage 24)
 } else cut = 1
@@ -2207,7 +2228,7 @@ crops.
 ```
 p        = gl_FragCoord.xy - uRectCenter
 d        = sdRoundBox(p, halfSize, r)
-aa       = max(fwidth(d), 1e-6)
+aa       = max(sdRoundBoxFwidth(p, halfSize, r), 1e-6)   // fwidth(d) without the corner doubling
 edgeIn   = clamp(0.5 - d/aa, 0, 1)                  // exact 1-px box filter of the edge
 edgeOut  = 1 - edgeIn
 inBand   = smoothstep(-inHalf, inHalf, d + inMid)   // fill's own inside cutoff
@@ -2217,7 +2238,7 @@ fragColor = vec4(uOpaqueColor.rgb * coverage, coverage)
 ```
 
 Written as one straight line with no early return and no `discard`: an early
-return above `fwidth` measured about 35% slower, and discard is avoided for
+return above the derivative measured about 35% slower, and discard is avoided for
 the Mali/Tizen targets. The edge uses an exact box filter rather than a
 `smoothstep`: the earlier two-pixel smoothstep let 15.6% of the background
 through the outermost ring of a viewport-sized fill.
