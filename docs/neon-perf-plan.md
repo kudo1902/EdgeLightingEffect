@@ -474,7 +474,13 @@ bound on the point's error is tight enough to place it. Not worth either.
 ### 5.4 Memory
 
 **10. A smaller glow coverage table.** 1.0 MB, and most of what a partly lit
-ring holds at 1.0. *First and third bullets done - section 9, I43.*
+ring holds at 1.0. *First, second and third bullets done - section 9, I43; the
+second as I59 and I60, by
+[`neon-glow-cover-resolution-plan.md`](neon-glow-cover-resolution-plan.md):
+the width follows the rect AND the halo width (a perimeter alone would have
+cut the thin 4K line V21 sized it for), in steps of 64 with a hysteresis
+rather than power-of-two buckets, and the segments have a narrower table of
+their own.*
 
 - **Two channels without segments** (item 8): 0.5 MB. Reallocate when segments
   appear or disappear, as the gather buffer's attachment count already does.

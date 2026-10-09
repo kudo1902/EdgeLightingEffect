@@ -1,11 +1,22 @@
 # The glow coverage table at the resolution each light needs: implementation plan
 
-Status: **proposed 2026-10-09, nothing built.** Measured on an **AMD Radeon Pro
+Status: **built 2026-10-09** - steps 0-3 and 5 as planned (constants
+calibrated), step 4 in part (the narrower bell support; the 8-node rule failed
+the criterion), and decision 4 (I62). Uncommitted, on top of `14ef6c7`;
+**section 11 is what was built and measured**, and I59-I62 in
+[`review-findings.md`](review-findings.md) carry the detail. The proposal
+below is unchanged.
+
+Measured on an **AMD Radeon Pro
 5300M** (macOS GL 4.1), Release build, the neon layer alone, 1920 x 1080, scale
 0.5 unless a row says otherwise, on top of `f54372a`. Every number below comes
 from a prototype built in a scratch copy of the tree; none of them is checked
 in (section 10 says what each was). Read ratios, not milliseconds: the target
-GPU is neither of the two this project measures on.
+GPU is neither of the two this project measures on. **And every millisecond in
+sections 2 and 6 is a `GL_TIME_ELAPSED` reading, which on this GPU is 3.6-4.0x
+the wall-clock time of the same frames** (found building step 0: 120 frames the
+timer put at 4.0 ms each finished in 125 ms) - the ratios hold, the
+milliseconds do not; section 11 gives both.
 
 This plan carries out the open half of item 10 in
 [`neon-perf-plan.md`](neon-perf-plan.md) ("columns sized to the perimeter")
@@ -635,3 +646,59 @@ does, and compared with a byte-diff tool. Step 0 re-creates both in
 | `band1` | one straight and one corner only, no filament in pass 1b |
 | `nofil1b` | pass 1b without the filament (`filamentLit` false where `uBlitOwnsCut`) |
 | `fs` | `nofil1b` plus far straights skipped past `max(reach, 64 kh)` |
+
+## 11. What was built (2026-10-09)
+
+AMD Radeon Pro 5300M, `GL_RENDERER` logged on every run; nothing timed on the
+M2 Pro yet. Each step was judged against the build before it on the `cover`
+set by section 5's criterion, and timed with `neon-scale-check time`
+(wall-clock, median of three interleaved rounds) in `still`, `hue`,
+`arc-wipe`, `segment-travel`, `resize` and `lights` (1 / 8 arcs, 1 / 8
+segments, 4 + 4) at 1.0 / 0.5 / 0.25. The six code patches, one per step,
+were kept apart in scratch trees so each could be measured alone.
+
+| step | what landed | differs from the plan | `cover` set vs the step before | `check` / `partition` / figures |
+| ---- | ----------- | --------------------- | ------------------------------ | ------------------------------- |
+| 0 | `time --mode lights` (`--arcs`, `--segments`), `--mode resize`, `--set cover`, `--scene`, `--scales`, `--gpu`, `--passes` (per-pass timer queries in `PassRecorder`), first-frame time; `generate --set cover` (17 scenes); `diff` | also found the timer queries' 3.85x | - | - |
+| 1 | `GlowCoverLayout`, `uGlowCoverLayout`, layout and split stored with the table | the shaders' parameter is `tableLayout` (`layout` is a GLSL keyword) | byte-identical | pass, byte-identical |
+| 2 | `GetGlowCoverWidth`, hysteresis of two steps | constants 0.8 / **1.6** / **5.0** (plan 0.8 / 1.0 / 4.0), from a 250-config sweep | max 2, 99.998% within 1 | pass; only the table's figure changes |
+| 3 | segment table (P0s), fill (P0f), `glowCoverTexel`, direct mode | **4** columns per sigma (plan 5); a 1.2x margin on leaving direct mode | max 2, 99.992% within 1 | pass; table figures only, new P0s figure |
+| 4 | `GLOW_COVER_BELL_REACH` 3 / invSigma, bake and mirror | **no 8-node rule**: alone 3 levels / 99.23%, with the support 2 / 99.57% - both fail | max 1 (1.6% of lit px at most) | pass |
+| D4 | pass 1b skips the filament (I62) | - | byte-identical | pass; four intermediate-buffer figures lose the line, captions updated |
+
+Frame cost at 0.5, band and 960 x 540 rect, every light changing length every
+frame. GPU timer units first (comparable with section 6's estimates), then
+wall-clock ms:
+
+| frame | section 6 estimate | start | step 2 | step 3 | all | wall: start -> all |
+| ----- | ------------------ | ----- | ------ | ------ | --- | ------------------ |
+| band, 1 arc + hue | - | 1.37 | 1.35 | 1.35 | 1.34 | 0.47 -> 0.46 |
+| band, 8 arcs | 2.04 -> ~1.85 | 2.22 | 1.85 | 1.86 | 1.80 | 0.63 -> 0.60 |
+| band, 1 segment | 1.78 -> ~1.45 | 1.76 | 1.64 | 1.54 | 1.52 | 0.56 -> 0.49 |
+| band, 8 segments | 4.0 -> ~1.9 | 4.06 | 3.31 | 2.06 | 1.97 | **1.05 -> 0.61 (1.72x)** |
+| band, 4 arcs + 4 segments | 3.0 -> ~1.9 | 3.03 | 2.55 | 2.16 | 2.08 | 0.87 -> 0.63 (1.38x) |
+| 960 x 540, 8 arcs | 3.18 -> ~2.85 | 3.20 | 2.92 | 2.89 | 2.85 | 0.94 -> 0.85 |
+| 960 x 540, 8 segments | 5.58 -> ~3.0 | 5.65 | 4.26 | 3.37 | 3.37 | **1.44 -> 0.92 (1.57x)** |
+| 960 x 540, 4 + 4 | - | 4.56 | 3.56 | 3.25 | 3.22 | 1.24 -> 0.93 (1.33x) |
+
+Elsewhere: thin glows on large rects keep 1024 columns, so step 2 leaves them
+alone and step 3 takes 1840 x 1000 at `glowRadius` 2 from 1.36 to 0.89 ms
+(0.66x) and 3600 x 2000 at 4K from 2.00 to 1.55 (0.78x) with eight segments.
+Still, hue, arc-wipe, segment-travel and resize frames stayed within the
+rounds' noise (+/-5%) at every step; step 1 cost nothing measurable (0.92-1.05,
+no direction), so the overhangs stayed uniforms. The first frame of a segment
+config builds one more program: +20-25 ms on a ~0.7 s first frame on this
+driver, inside the rounds' spread.
+
+Memory, the coverage tables together: 1.0 MB for every config before; now
+0.25 MB (200 x 120), 0.44 (960 x 540), 0.69 (the band), 1.0 for a thin glow on
+a large rect, plus 64-125 KB of segment table where segments have one.
+
+Open:
+
+- **The M2 Pro** - every number here is the AMD's.
+- **The RG8 / RGBA8 fallback** at the new widths is still unmeasured, as it
+  was at 1024 (item 10's fourth bullet).
+- **Decisions 1 and 2** were not reopened: the criterion is section 5's, and
+  the main table's overhangs stay 64 / 32.
+

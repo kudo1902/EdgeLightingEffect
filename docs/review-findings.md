@@ -4906,6 +4906,135 @@ the old build, with same-build rounds spreading 1.11x.
 
 ---
 
+## Twenty-eighth pass (the coverage table at the resolution each light needs)
+
+Built from [`neon-glow-cover-resolution-plan.md`](neon-glow-cover-resolution-plan.md),
+uncommitted on top of `14ef6c7`, measured on an AMD Radeon Pro 5300M (the
+i7 Mac; `GL_RENDERER` logged on every run). Each change was judged by the
+plan's section 5 against the build before it, on the `cover` set
+(`neon-scale-check generate --set cover`: 17 animated scenes, six frames each
+at 1.0 / 0.5 / 0.25, 1920 x 1080 and one 3840 x 2160, every frame the first
+after a light change): at most 2 levels, and 99.9% of lit pixels within 1.
+Times are `neon-scale-check time` wall-clock (minimum over 5 x 40 frames
+between `glFinish`), median of three interleaved rounds. **Not** the
+`GL_TIME_ELAPSED` figures the plan and `neon-animation-perf-analysis.md`
+quote: on this GPU those read 3.6-4.0x the wall-clock time of the same frames
+(120 frames the timer put at 4.0 ms each finished in 125 ms), so they are
+ratios, not milliseconds - the band's "4.0 ms" frame with eight segments is
+1.04 ms.
+
+### I59. The glow coverage table was 1024 columns for every rect - CHANGED
+
+V21 sized the table for its worst case, a 1 px halo on a 4K rect (768 columns
+read 6 levels off there), and every config paid for it: a 200 x 120 rect baked
+and held the same 1 MB as a TV panel. The columns' spacing that a config needs
+follows the rect AND the halo width - the overhangs resolve distance past a
+piece's end in halo widths - so a perimeter-only rule would have cut exactly
+the case V21 sized it for.
+
+The layout became a parameter (byte-identical on its own: the `cover` set,
+`check`, `partition` and the 68 guide figures; timing within noise, 0.92-1.05
+with no direction, so `neon.frag` reading a uniform where it read constants
+costs nothing measurable): `GlowCoverLayout`, uploaded as `uGlowCoverLayout`,
+stored with the table and set with its allocation, and the split stored by the
+bake - every read takes both from the table, never from the config. Then the
+width: `GetGlowCoverWidth`, the longest band's straight plus quarter arc at one
+column per `clamp(0.8 kh, 1.6, 5)` full-res px, plus the overhangs, in steps of
+64 from 256 to 1024, kept within two steps by a hysteresis. Calibrated on 250
+configs (rects 200 x 120 to 3600 x 2000, `glowRadius` 1-20, three corner
+radii, both windings, partial arcs with and without stops, with segments, three
+scales) at every width from 256 to 960 against 1024: the widest spacing that
+held the criterion everywhere was ~2.2 px at kh 1, 2.5 at 2, 4.6 at 5, 6.8 at
+10 and 10 at 20; the constants sit under that envelope, 12% at the default kh
+5, and spacing 20% wider fails there.
+
+| config | columns | memory, RGBA16F |
+| ------ | ------: | --------------: |
+| 200 x 120, default glow | 256 | 0.25 MB |
+| 960 x 540, default | 448 | 0.44 MB |
+| 1840 x 1000 band, default | 704 | 0.69 MB |
+| 1840 x 1000 or 3600 x 2000, `glowRadius` 2 | 1024 | 1.0 MB (as before) |
+
+`cover` set against the step before: max 2, 99.998% within 1 level. `check`'s
+1.0 column unchanged; only the table's own guide figure changes shape, every
+other within 1 level. Frame time at 0.5, eight segments changing length every
+frame: the band 1.04 -> 0.87 ms (0.84x), the 960 x 540 rect 1.41 -> 1.12
+(0.79x); eight arcs on the band 0.91x; thin glows on large rects, which keep
+1024 columns, unchanged; still, hue and resize frames within noise.
+
+### I60. Segments were baked at the arcs' resolution - CHANGED
+
+A segment's bell has a standard deviation of a third of its length - ~100 px
+for a length-0.05 segment on the band, against an arc's 14 px feather - but its
+two channels were integrated, 16 Gauss-Legendre nodes a kernel per texel, at
+every column the arcs needed. That made the bake the largest pass of every
+frame that moved a segment.
+
+The segments now have a table of their own (`mGlowCover.segBuffer`, RG16F):
+pass 0s - the same bake, `uBakeTarget` 1 - integrates them at
+`GetGlowCoverSegmentWidth` columns (4 per standard deviation of the narrowest
+bell, overhangs 16 / 8, from 128), and pass 0f (`neon-glow-cover-fill.frag`)
+copies them into the main table's .b / .a: each texel decoded through the main
+layout (`glowCoverTexel`, the decode the bake uses too), mapped into the
+segment table through its own, one linear fetch, under a colour mask. So
+`neon.frag` still reads one texel per piece and does not change - a second
+table read there would have added eight fetches and eight forward maps to every
+shading pass. Segments so short their table would be 0.75 of the main width or
+more, or a fill that fails to build, bake into the main table directly as
+before, with a margin on the way out of that mode.
+
+Calibrated on 135 configs with the segment table forced on, against the
+segments baked directly: with overhangs 16 / 8 every density from 3 to 8
+columns per sigma read at most 2 levels with 99.9992% within 1; 2 read 3
+levels off a thin glow at 4K. `cover` set against I59: max 2, 99.992% within 1.
+Frame time at 0.5, eight segments changing: the band 0.87 -> 0.56 ms (0.64x),
+1840 x 1000 with a thin glow 0.66x, 3600 x 2000 at 4K 0.78x, 960 x 540 0.83x;
+four arcs and four segments on the band 0.82x; arcs-only, still, hue and resize
+frames within noise. The segment table is 64-125 KB. The first frame of a
+segment config builds one more program, the fill: +20-25 ms on a ~0.7 s first
+frame (every program finishes its compile on its first draw on this driver),
+inside the rounds' +/-40 ms spread.
+
+### I61. A segment's bell was integrated out to 5 sigma - CHANGED
+
+`segmentsOnPiece` integrated each bell out to `5 / (sqrt(2) invSigma)` - 5
+standard deviations, where it is 4e-6 of its peak - and the CPU's dirty-piece
+mirror used the same reach, so a moved segment re-baked every piece within it.
+Both now read `GLOW_COVER_BELL_REACH`, 3 / invSigma (4.24 sigma, 1.2e-4 of the
+peak): a moved segment dirties fewer pieces, and the segment table's bake on
+the band with eight segments changing fell from 0.75 to 0.58 (timer units,
+`--passes`). Against I60 on the `cover` set: at most 1 level anywhere, on up to
+1.6% of a frame's lit pixels (0.15% on average). Wall-clock at 0.5: the band
+and the 960 x 540 rect with eight segments 0.93x and 0.95x, everything else
+within noise (geometric means 0.98-0.995).
+
+The plan's step 4 also halved the Gauss-Legendre rule to 8 nodes. Built and
+measured, alone and together: 8 nodes alone read 3 levels off a long, bright
+segment (`seg_long`: length 0.2, boost 2) with 99.23% of lit pixels within 1;
+both together 2 levels and 99.57% - under the plan's 99.9% either way. A bell
+spanning many kernel widths needs the nodes. Not taken; the shader says why.
+
+### I62. Pass 1b computed the filament the edge ring always redraws - CHANGED
+
+`filamentLit` gated the filament's pointwise inputs on the line, but pass 1b
+and its field bake still computed the filament there - for pixels the blit
+never shows. The edge ring re-shades every pixel within the filament's reach,
+as pass 1 drew it, plus `RING_GUARD_TEXELS` (`GetRingWidth`), so the blit's
+bilinear footprint never reaches a texel the filament lights. `filamentLit` is
+now false wherever `uBlitOwnsCut` is set. The plan's decision 4, from the
+review that preceded it.
+
+Byte-identical where it can be seen: all 306 frames of the `cover` set, `check`,
+`partition` (seeds 1 and 7) and every final-frame guide figure. Four figures
+that show the intermediate buffers do change - pass 1b's reduced buffer, the
+field, its composite, and the blit-only view at 0.25 - since the line is no
+longer in them; their captions say so. Time: no measurable change (geometric
+means 0.988-0.997, wall-clock), as expected of the review's 0.03-0.05 timer
+units. It stays because it is exact and removes work; narrowing the ring's
+guard would end it, which the shader says at the gate.
+
+---
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
@@ -4916,7 +5045,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, and the twenty-seventh V24. Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, and the twenty-eighth I59, I60, I61 and I62. Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -4972,6 +5101,10 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I57 | changed | the direct path at 1.0 removed: 1.0 takes the scaled path with a full-size buffer, `uBlitOwnsCut` replaces the scale test, `resolutionScale` defaults to 0.5 - every frame below 1.0 byte-identical and no slower; 1.0 within 1 level, 1.67x on still frames, 0.88x hue and 0.62x intensity there (M2), up to 8.3 MB more at full screen |
 | V23 | fixed | the bloom's pedestal ended it on a crease at `reach`, so a large rect's centre showed a hard-edged dark rectangle and the outer rim bunched its last levels; each piece's bloom now fades out by its own distance from 0.5 `reach`, both sides - at most 6 levels in the outer half of the tail, arc-wipe frames 0.97x, still frames unchanged. the page's images regenerated with R7 |
 | V24 | fixed | the ring's field baked the ring mesh into transposed side strips, where the fill rule hands an edge on a pixel centre the other way, so ~1% of configs composited an unbaked texel - a 1 px dark seam between the ring and the blit; the bake now draws each strip's whole box, direct-vs-field pixels over 8 levels 303 -> 2 on 400 configs |
+| I59 | changed | the glow coverage table was 1024 columns for every rect; its layout is now a parameter stored with the table and its width follows the rect and the halo width (256-1024, calibrated on 250 configs) - 0.25-0.69 MB for a default glow, 1024 still for a thin one on a large rect; within 2 levels, 99.998% within 1; 8 segments on the band 0.84x |
+| I60 | changed | the segments' bells were integrated at the arcs' resolution; they have a narrow table of their own (pass 0s, 4 columns per sigma from 128) copied into the main one by a fill pass (0f), `neon.frag` unchanged - within 2 levels, 99.992% within 1; 8 segments on the band 0.87 -> 0.56 ms (0.64x), 960 x 540 0.83x |
+| I61 | changed | each bell was integrated, and its moves tracked, out to 5 sigma; 4.24 now (`GLOW_COVER_BELL_REACH`), at most 1 level on up to 1.6% of lit pixels, segment-table bake 0.75 -> 0.58 timer units; the plan's 8-node rule was measured (3 levels) and not taken |
+| I62 | changed | pass 1b and its field bake computed the filament the edge ring always redraws; skipped there (`uBlitOwnsCut`), every final frame byte-identical, the intermediate-buffer figures without the line |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

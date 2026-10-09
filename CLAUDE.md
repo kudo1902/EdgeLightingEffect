@@ -30,6 +30,7 @@ Docs, in reading order. The three neon documents are tiers of the same material 
 - [`docs/neon-shader-cleanup-plan.md`](docs/neon-shader-cleanup-plan.md) - the neon's program slots, `neon.frag` variants and hand-copied shader functions as of `1488648`, and a stepwise plan to cut them to what earns its place without moving a pixel: one copy of the SDF / tone-map / edge-mask code, one predicate for a uniformly lit ring, the never-built inline-gather path removed (an owner's decision), and the measured reasons behind each. Read before adding a shader variant or program.
 - [`docs/neon-reduced-scale-plan.md`](docs/neon-reduced-scale-plan.md) - the owner's target from 2026-10-07 (frame rate with `resolutionScale` below 1.0), measured at `b0ac8cf` on an Apple M2 Pro: what a frame costs by frame type and by pass below 1.0 (config-animated frames are 4-10x a still or hue frame, and below ~0.35 the passes the scale does not shrink - gather, coverage bake, edge ring, blit - are most of them), why `neon-scale-check time` overstates moving frames' CPU (it never swaps, so the driver submits mid-frame), the cleanups that move no pixel, and a ranked plan starting with what must be measured on the target. Section 9 is what is left after I53-I57, re-measured: the lens flare's own scale, arc-wipe and segment frames, the blit. Read before any work on the neon's speed below 1.0.
 - [`docs/neon-animation-perf-analysis.md`](docs/neon-animation-perf-analysis.md) - measured on an AMD Radeon Pro 5300M on 2026-10-08, after a report that the frame rate dropped while several arcs or segments changed length: what each frame type costs pass by pass (still 0.42 ms, rotating hue 0.9, 8 arcs moving 3.1, 8 segments 5.4 at 0.5), fragments and visible share per pass, where the time goes inside the shading (the analytic pieces are over half of it), the two exact fixes built that day (`filamentLit`, the per-type coverage re-bake), and a ranked list of what is left - a lower scale, a two-channel field for segment configs, approximations in the bake - plus what was ruled out. Read before any neon perf work on animated frames.
+- [`docs/neon-glow-cover-resolution-plan.md`](docs/neon-glow-cover-resolution-plan.md) - why the glow coverage bake was the largest pass of every frame that moved a segment, and the plan that sized the table per light type: the layout as a parameter stored with the table (I59), the arcs' width from the rect and the halo width (I59), the segments' own narrow table and its fill pass (I60), the narrower bell support (I61) and pass 1b without the filament (I62). Section 11 is what was built and measured on an AMD Radeon Pro 5300M on 2026-10-09 (the band's eight-segment frame 1.05 -> 0.61 ms), including the 8-node rule that failed its criterion and the finding that this GPU's `GL_TIME_ELAPSED` reads ~3.85x the wall-clock time - every timer figure before it is a ratio. Read before touching the coverage bake, the fill or the table's width.
 - [`docs/neon-frag-notes.md`](docs/neon-frag-notes.md) - the measured history behind `neon.frag`'s lines, moved verbatim out of the shader in that plan's step 6 (one section per block, in shader order): the sweeps, before/after numbers and bug narratives its comments used to carry inline. The shader keeps the invariant, the CPU mirror and the warning at each line; read the matching section here before changing a block whose reason the shader only summarises.
 - [`docs/spotlight-renderer-plan.md`](docs/spotlight-renderer-plan.md) - the `SpotlightRenderer` design and the offscreen verification behind it, including the solved strip bound and the one real defect that verification caught.
 - [`docs/corner-crease-and-filament-nyquist.md`](docs/corner-crease-and-filament-nyquist.md) - the analytic emission's measured defects and their fixes: the dark diagonal wedges at the corners (halo and bloom were the field of ONE infinite edge, now a sum over the emitter's pieces), the `resolutionScale` 0.5 mismatch at thin line widths (the filament's floor was in the wrong units, and then - section 2.8 - was a fixed half width when what decides the blit is the profile's SHAPE, so a soft `filamentFalloff` rendered twice as wide), and the corner over-extension the first fix introduced (the straights ran to the SHARP corner, so a phantom emitter lit the outside of every rounded corner; they now stop at the tangent points and each arc is developed onto its own tangent), and the crease THAT fix introduced (the arc was developed at rate `r`, which is right only for a fragment on the arc, so every arc's centre of curvature carried a C1 kink and an under-count - a dark cross at the middle of a circle; section 1.9). Section 1.10 is the one level up: all of that fixed the halo/bloom FIELD, while the coverage that SCALES it was still read at the fragment's NEAREST perimeter point - so any partly lit perimeter (a half-ring arc, a segment boost) cut the glow to a hard-edged polygon along the medial axis until the glow took a gathered coverage instead (itself replaced since V20 by each piece's own coverage, read from a baked table). Includes the per-edge bloom pedestal the first fix forced and the one shared pedestal the arcs are allowed instead, the small-rect and INTERIOR brightness changes the segment sum causes - section 1.5.2 is the one to read if someone reports "the glow got bigger" - and the offscreen probes behind every number. Read before touching the halo/bloom or filament blocks.
@@ -61,7 +62,7 @@ There is no test target. The build produces four artifacts:
 - `build/demo/edge-lighting-demo` - demo driving the C++ library directly
 - `build/demo-capi/edge-lighting-capi-demo` - the same UI driving only the C ABI
 
-Two optional tools, off by default: configure with `-DEDGE_LIGHTING_BUILD_TOOLS=ON` and `build/tools/neon-scale-check/neon-scale-check` appears - the harness behind `docs/neon-resolution-scale-comparison.html`. `neon-scale-check check` is the closest thing to a regression test the neon has: it renders twelve fixed scenes at six resolution scales and exits non-zero if scale 1.0 drifts from the page's committed images, if a reduced scale exceeds its error bound, or if a moving hairline wanders off its edge. Run it after touching `neon.frag`, `neon-blit.frag`, `neon.vert` or the pass schedule in `NeonRenderer`. `neon-scale-check time` times every scene at every scale; `--mode hue|intensity|arc-wipe|segment-travel` times the frames a host draws while something moves (`SetConfig` + `Update` inside the timed loop), which the default `still` cannot see - re-bakes, and anything skipped on an unchanged frame. Measure a change that saves work on unchanged frames in `still` AND the animated modes. `neon-scale-check partition` is the second gate: across a thousand random configs (seeded, reproducible on any platform) it fails if the blit and the edge ring do not tile the frame exactly - a pixel drawn by both or, between them, by neither. It also builds standalone against another checkout's library, which is how "before" numbers are measured. See [`tools/neon-scale-check/README.md`](tools/neon-scale-check/README.md). The same option builds `build/tools/neon-guide-figures/neon-guide-figures`, which renders every image in `docs/neon-onboarding-guide.md` into `docs/images/neon-onboarding/` - rerun it after a change to how the neon looks, and diff the directory to see which figures moved. Its pass figures come from `PassRecorder` (`tools/common/`, shared with `neon-scale-check partition`), which wraps `glad_glDrawArrays` to read the renderer's private buffers between draws without any library hook; that only works against the static library. See [`tools/neon-guide-figures/README.md`](tools/neon-guide-figures/README.md).
+Two optional tools, off by default: configure with `-DEDGE_LIGHTING_BUILD_TOOLS=ON` and `build/tools/neon-scale-check/neon-scale-check` appears - the harness behind `docs/neon-resolution-scale-comparison.html`. `neon-scale-check check` is the closest thing to a regression test the neon has: it renders twelve fixed scenes at six resolution scales and exits non-zero if scale 1.0 drifts from the page's committed images, if a reduced scale exceeds its error bound, or if a moving hairline wanders off its edge. Run it after touching `neon.frag`, `neon-blit.frag`, `neon.vert` or the pass schedule in `NeonRenderer`. `neon-scale-check time` times every scene at every scale; `--mode hue|intensity|arc-wipe|segment-travel|lights|resize` times the frames a host draws while something moves (`SetConfig` + `Update` inside the timed loop), which the default `still` cannot see - re-bakes, and anything skipped on an unchanged frame; `lights` is N arcs and M segments all changing length (`--arcs`, `--segments`), and `--gpu` / `--passes` add timer queries per frame and per pass - ratios only, since on the AMD 5300M they read ~3.85x the wall-clock time. Measure a change that saves work on unchanged frames in `still` AND the animated modes. `neon-scale-check generate DIR --set cover` renders the animated `cover` scenes (every frame a light change, 1080p and 4K) and `neon-scale-check diff A B` judges two such directories by the glow-cover plan's criterion (max 2 levels, 99.9% of lit pixels within 1) - the gate for a change that may move pixels. `neon-scale-check partition` is the second gate: across a thousand random configs (seeded, reproducible on any platform) it fails if the blit and the edge ring do not tile the frame exactly - a pixel drawn by both or, between them, by neither. It also builds standalone against another checkout's library, which is how "before" numbers are measured. See [`tools/neon-scale-check/README.md`](tools/neon-scale-check/README.md). The same option builds `build/tools/neon-guide-figures/neon-guide-figures`, which renders every image in `docs/neon-onboarding-guide.md` into `docs/images/neon-onboarding/` - rerun it after a change to how the neon looks, and diff the directory to see which figures moved. Its pass figures come from `PassRecorder` (`tools/common/`, shared with `neon-scale-check partition`), which wraps `glad_glDrawArrays` to read the renderer's private buffers between draws without any library hook; that only works against the static library. See [`tools/neon-guide-figures/README.md`](tools/neon-guide-figures/README.md).
 
 `RES_DIR` is baked into both demo binaries as a compile definition pointing at the in-tree `res/` directory, so they can be launched from anywhere.
 
@@ -243,8 +244,14 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   filament is 0 - most of the glow quad. Byte-identical, and pass 1b no longer
   grows with the number of arcs and segments (1.90 -> 1.20 ms with 8 arcs
   changing length every frame, AMD 5300M at 0.5). Those four may be read only
-  by the filament: a new reader outside it has to move out of the gate. See
-  `filamentLit` in [`docs/neon-frag-notes.md`](docs/neon-frag-notes.md).
+  by the filament: a new reader outside it has to move out of the gate. And in
+  a pass the blit composites (`uBlitOwnsCut` - pass 1b and its field bake)
+  `filamentLit` is always false: the edge ring re-shades everything within the
+  filament's reach plus `RING_GUARD_TEXELS`, so the blit's bilinear footprint
+  never reaches a texel the filament lights, and the frame is byte-identical
+  without it (D4 of the glow-cover plan). Narrow the ring's guard and that
+  stops holding. See `filamentLit` in
+  [`docs/neon-frag-notes.md`](docs/neon-frag-notes.md).
 
   **Two cheap paths through the halo / bloom pieces**, which are most of the shading's cost: `bloomSegment` is ONE two-argument `atan` (the exact identity for a difference of two) - and that `atan`, with the corner development's `th`, is `minimaxAtan` from `neon-pieces.glsl` rather than the driver's (error under 1.7e-6 rad; 1.07-1.11x on frames whose config animates on an AMD 5300M, unmeasured on the M2 - I48) - and both kinds of piece are skipped where they add nothing. A straight's bloom is skipped past `reach` (exactly 0 there; each pair of edges shares its pedestal). A corner arc is skipped WHOLE past `uCornerSkip` from its circle (`GetCornerSkip`): a CPU bound (`GetCornerArcBound`, the same mirror `GetGlowInnerReach` uses, via `GlowBoundTerms`) where its bloom is exactly 0 and its halo under a quarter of half a level, so four skipped arcs stay under half a level - at most 1/255 on rounding-boundary pixels. Change the halo / bloom terms and `GlowBoundTerms` has to follow, for both bounds.
 
@@ -295,7 +302,11 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   arc's trapezoid against the kernel's mass and first moment, written so
   nothing cancels; `logRatio` for the bloom's moment, which lost three digits
   at a circle's centre as a plain log), segments by 16-point Gauss-Legendre in
-  `theta = atan(t / c)`. `neon.frag` scales each piece's halo and bloom by one
+  `theta = atan(t / c)`, each bell cut at `GLOW_COVER_BELL_REACH` (3 / invSigma,
+  4.24 sigma; 5 sigma before I61) - the CPU's dirty-piece mirror reads the same
+  constant, so change both or a piece a bell reaches is not re-baked. An
+  8-node rule was measured and rejected there: 3 levels off a long, bright
+  segment. `neon.frag` scales each piece's halo and bloom by one
   linear fetch of its own table (`addStraightGlowFix` / `addCornerGlowFix`)
   rather than by the coverage gathered around the fragment, which drew a thin
   line along a stretch no arc covers and a groove along it under a strong bloom
@@ -318,15 +329,45 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   `glowCoverCornerUV`, the read) and their inverses (`glowCoverStraightAt` /
   `glowCoverCornerAt`, the bake) sit side by side there and must stay exact
   inverses; `NEON_GLOW_COVER_BAKE` (defined in `shaders.h.in` for the bake
-  only) keeps each program to its own half, since this compiler builds every
-  function in a source whether `main()` reaches it or not. Lengths enter only as
-  ratios, so every resolution scale shares one table. 1024 x 128
-  (`GLOW_COVER_WIDTH` x `GLOW_COVER_HEIGHT`), RGBA16F (1.0 MB, half V20's 2)
+  only) keeps each program to its own half - `NEON_GLOW_COVER_FILL` compiles
+  both, for the fill below - since this compiler builds every function in a
+  source whether `main()` reaches it or not, and `glowCoverTexel` is the one
+  texel decode the bake and the fill share. Lengths enter only as
+  ratios, so every resolution scale shares one table. **The layout is a
+  parameter** (I59): `GlowCoverLayout` (width, overhangs, shared columns),
+  uploaded as `uGlowCoverLayout` and STORED WITH THE TABLE
+  (`mGlowCover.layout`, set with its allocation, and `mGlowCover.split`, set by
+  the bake) - every read takes both from there, never from the config, so a
+  read cannot use a layout the table was not baked with. Its width comes from
+  the rect and the halo width (`GetGlowCoverWidth`: the longest band's straight
+  plus quarter arc at one column per `clamp(0.8 kh, 1.6, 5)` full-res px, plus
+  the overhangs, in steps of 64 from 256 to 1024 - calibrated in
+  `neon-tuning.h`), applied by `ensureGlowCoverBuffer` with a hysteresis of two
+  steps so a resizing rect does not reallocate it every frame: 448 columns
+  for a 960 x 540 rect at the default glow, 704 for the 1840 x 1000 band,
+  still 1024 for a thin glow on a large rect, which needs them (V21). x 128
+  rows (`GLOW_COVER_HEIGHT`), RGBA16F (1.0 MB at 1024, half V20's 2)
   with an RGBA8 fallback - or RG16F / RG8 (0.5 MB) on a config with no
   segments, whose .b / .a would only hold zeros (`GLOW_COVER_FORMATS_RG`; a
   two-channel texture samples .a as 1, so `glowCoverAt` zeroes .b / .a on
   `uSegmentCount == 0` - keep the two together; promoted to four channels the
-  first frame segments appear and kept there, I43) - encoded `c / (1 + c)`, and re-baked only when one of
+  first frame segments appear and kept there, I43) - encoded `c / (1 + c)`.
+  **The segments have a table of their own** (I60, `mGlowCover.segBuffer`):
+  a bell is three to ten times wider than an arc's feather, so pass 0s bakes
+  their two channels (the bake with `uBakeTarget` 1, its own
+  `segLayout` / `segSplit`, overhangs 16 / 8) at a width set by the narrowest
+  bell (`GetGlowCoverSegmentWidth`: 4 columns per standard deviation, from
+  128, RG16F), and pass 0f (`neon-glow-cover-fill.frag`) copies them into the
+  main table's .b / .a through both layouts - decode the main texel, forward-map
+  it into the segment table, one linear fetch - under a colour mask. So
+  `neon.frag` still reads one texel per piece and is unchanged; the arcs-only
+  bake (P0b) no longer integrates a bell. Segments so short their table would
+  be 0.75 of the main one's width or more, none at all, or a fill that fails
+  to build bake into the main table directly as before (`segWantedDirect`,
+  with a margin on the way back so a length swinging round the threshold does
+  not flip the mode every frame; a flip re-bakes every segment piece). The
+  segment mask drives P0s and P0f; the segment table is released with the
+  main one and whenever the segments go direct. And re-baked only when one of
   its inputs moves (`mGlowCover.dirtyArcPieces` / `dirtySegmentPieces`, gated in `OnConfigChanged` on the arcs,
   the effective segments, width, height, cornerRadius, winding and glowRadius -
   NOT any config change, I34): never on time, and not under an intensity,

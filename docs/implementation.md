@@ -191,7 +191,12 @@ than per piece spilled light round each corner (V21). Where each piece's
 coverage sits in the table is in `neon-pieces.glsl`, which both the bake and
 `neon.frag` include. The table depends on the arcs, the segments, the rect's
 shape and the glow radius only, so it is re-baked on a config change and never
-on time.
+on time. Its width follows the rect and the halo width (`GetGlowCoverWidth`,
+256-1024 columns), and its layout is stored with it, so the bake and every
+read agree on it (I59). The segments' bells, far wider than an arc's feather,
+are baked into a narrow table of their own and copied into the main one by a
+fill pass (`neon-glow-cover-fill.frag`, I60), so `neon.frag` still reads one
+texel per piece.
 
 Below `resolutionScale` 1.0 the same split pays twice. The gather is the only
 part of the shader that is both expensive and smooth across the screen, so it

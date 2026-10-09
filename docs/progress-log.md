@@ -5,6 +5,44 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-09 (evening) - The glow coverage table at the resolution each light needs
+
+[`neon-glow-cover-resolution-plan.md`](neon-glow-cover-resolution-plan.md)
+built, uncommitted on top of `14ef6c7`. AMD Radeon Pro 5300M; I59-I62 in
+[`review-findings.md`](review-findings.md) and the plan's section 11 have the
+detail.
+
+- **Tooling (step 0).** `neon-scale-check` gained the frames of the original
+  report: `time --mode lights --arcs N --segments M`, `--mode resize`,
+  `--set cover` / `--scene` / `--scales`, `--gpu` / `--passes` (per-pass timer
+  queries through `PassRecorder`) and the first frame's time; `generate --set
+  cover` (17 animated scenes, the plan's prototypes among them) and `diff`,
+  the plan's criterion as an exit code.
+- **Found on the way.** `GL_TIME_ELAPSED` on this GPU reads 3.6-4.0x the
+  wall-clock time of the same frames, steadily: every timer figure measured
+  here before (`neon-animation-perf-analysis.md`, the plan's sections 2 and 6)
+  is a ratio, not milliseconds. The band's "4.0 ms" eight-segment frame is
+  1.05 ms.
+- **What changed.** The table's layout is a parameter stored with it (I59,
+  byte-identical); its width follows the rect and the halo width, 256-1024
+  columns (I59); the segments are baked into a narrow table of their own and
+  copied in by a fill pass, `neon.frag` unchanged (I60); each bell is cut at
+  4.24 sigma instead of 5 (I61); pass 1b no longer computes the filament the
+  ring always redraws (I62, byte-identical).
+- **Measured.** Wall-clock at 0.5 with every light changing length: the band
+  with eight segments 1.05 -> 0.61 ms (1.72x), four arcs and four segments
+  0.87 -> 0.63 (1.38x); the 960 x 540 rect with eight segments 1.44 -> 0.92
+  (1.57x); arcs alone 1.05-1.10x; still, hue and resize frames unchanged. In
+  timer units every row landed on the plan's estimate. Memory 1.0 MB -> 0.25-0.69
+  MB for a default glow (1.0 still for a thin glow on a large rect), plus
+  64-125 KB of segment table. Every step within 2 levels and 99.9% of lit
+  pixels within 1 of the step before; `check` and `partition` pass throughout.
+- **Decided.** The plan's 8-node rule was built and NOT taken: alone it read 3
+  levels off a long, bright segment, under the criterion. Overhangs and the
+  criterion itself (the plan's decisions 1 and 2) unchanged.
+- **Open.** Nothing timed on the M2 Pro; the 8-bit fallbacks at the new widths
+  unmeasured.
+
 ## 2026-10-09 (later) - V24: the gap between the edge ring and the blit
 
 On top of `063603f`, uncommitted. Measured on an AMD Radeon Pro 5300M. V24 in

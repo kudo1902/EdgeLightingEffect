@@ -296,7 +296,7 @@
       <rect class="fbo" x="385" y="64" width="665" height="284" rx="1"/>
       <text class="t-dim" x="399" y="84">FBO</text>
       <text x="441" y="84">mGlowCover.buffer</text>
-      <text class="t-file" x="399" y="102">1024 &#215; 128 &#183; RGBA16F &#183; 1.0 MB</text>
+      <text class="t-file" x="399" y="102">320 &#215; 128 &#183; RGBA16F &#183; 0.31 MB</text>
       <text class="t-dim" x="1036" y="102" text-anchor="end">read: linear</text>
       <image href="images/neon-onboarding/pass-p0b-glow-cover.png" x="397" y="116" width="414" height="219" preserveAspectRatio="xMidYMid meet"/>
       <rect class="frame" x="397" y="116" width="414" height="219"/>
@@ -478,7 +478,7 @@
   <nav aria-label="Passes in frame order">
     <ul class="flow">
       <li><a href="#p0"><span class="id">P0</span><span class="grid">128&times;2</span></a></li>
-      <li><a href="#p0b"><span class="id">P0b</span><span class="grid">1024&times;128</span></a></li>
+      <li><a href="#p0b"><span class="id">P0b</span><span class="grid">320&times;128</span></a></li>
       <li><a href="#p1a"><span class="id">P1a</span><span class="grid">128&times;80</span></a></li>
       <li><a href="#p1f"><span class="id">P1f</span><span class="grid">320&times;180, field</span></a></li>
       <li><a href="#p1b"><span class="id">P1b</span><span class="grid">320&times;180</span></a></li>
@@ -530,12 +530,12 @@
         <div><dt>Program</dt><dd><code>mGlowCoverShader</code></dd></div>
         <div><dt>Shader</dt><dd><code>neon-glow-cover.frag</code></dd></div>
         <div><dt>Target</dt><dd><code>mGlowCover.buffer</code></dd></div>
-        <div><dt>Grid</dt><dd>1024 &times; 128 texels</dd></div>
+        <div><dt>Grid</dt><dd>320 &times; 128 texels here: 256-1024 columns by the rect and the halo width</dd></div>
         <div><dt>Format</dt><dd>RGBA16F</dd></div>
       </dl>
     </div>
     <div class="body">
-      <p>For each of the outline&rsquo;s eight pieces, how lit that piece is as the halo and the bloom see it from any fragment position round it: the piece&rsquo;s own coverage over its own extent, weighted by each layer&rsquo;s kernel - in closed form for the arcs, integrated numerically for the segments&rsquo; bells. Each of four bands holds a straight at its left (the projection along it across, past both ends at the sides; the distance from the line down) and a corner at its right (the direction from the arc&rsquo;s centre across, the distance from it down, the arc itself halfway), the two sharing the band&rsquo;s columns in proportion to their lengths. The halo and bloom are a sum over those pieces, and every shading pass and field bake - P1b, P2c, P1r and P1f - scales each piece&rsquo;s share by its own read of this table, one linear fetch per piece. Never re-baked on time, and on a change only the pieces it reaches: each texel integrates the lights over its own piece alone, so a segment that moved re-bakes the pieces its old and new bells touch, and an arc that only moved - a wipe, a travelling arc - just the bands its two ends swept (I42, I54), texel for texel what a full bake writes. Its lengths enter only as ratios, so every resolution scale shares it.</p>
+      <p>For each of the outline&rsquo;s eight pieces, how lit that piece is as the halo and the bloom see it from any fragment position round it: the piece&rsquo;s own coverage over its own extent, weighted by each layer&rsquo;s kernel - in closed form for the arcs, integrated numerically for the segments&rsquo; bells. Each of four bands holds a straight at its left (the projection along it across, past both ends at the sides; the distance from the line down) and a corner at its right (the direction from the arc&rsquo;s centre across, the distance from it down, the arc itself halfway), the two sharing the band&rsquo;s columns in proportion to their lengths. The halo and bloom are a sum over those pieces, and every shading pass and field bake - P1b, P2c, P1r and P1f - scales each piece&rsquo;s share by its own read of this table, one linear fetch per piece. Never re-baked on time, and on a change only the pieces it reaches: each texel integrates the lights over its own piece alone, so a segment that moved re-bakes the pieces its old and new bells touch, and an arc that only moved - a wipe, a travelling arc - just the bands its two ends swept (I42, I54), texel for texel what a full bake writes. Its lengths enter only as ratios, so every resolution scale shares it. Its width is the rect&rsquo;s and the halo&rsquo;s (<code>GetGlowCoverWidth</code>, I59): 320 columns for this page&rsquo;s rect, where it was 1024 for every rect. And this scene&rsquo;s segment is not baked here at all: a bell is many times wider than an arc&rsquo;s feather, so the segments are baked into a 128-column table of their own (P0s, the same program with <code>uBakeTarget</code> 1) and copied into this one&rsquo;s <code>b</code> / <code>a</code> by a fill pass (P0f, <code>neon-glow-cover-fill.frag</code>), each texel decoded through this table&rsquo;s layout and fetched through the segment table&rsquo;s (I60). Panels 3 and 4 are that copy.</p>
       <ol>
         <li>The arcs as the halo sees them: each straight&rsquo;s own stretch of the arcs sharp at the top of its band, softening down it as the kernel widens; beside it, a corner.</li>
         <li>The arcs as the bloom sees them, six times wider, so even on the line the gaps are only a shade darker.</li>
@@ -617,10 +617,10 @@
       </dl>
     </div>
     <div class="body">
-      <p>Everything except the loop, shaded at half resolution from the gather buffer. The glow holds up at this size; the line comes out blocky. Shown 2&times; with nearest-neighbour scaling.</p>
+      <p>Everything except the loop and the line, shaded at half resolution from the gather buffer. The glow holds up at this size; the line would come out blocky, and since the edge ring re-shades every pixel it reaches at full resolution, this pass does not compute it at all (D4 of the glow-cover plan) - the frame is the same bits. Shown 2&times; with nearest-neighbour scaling.</p>
       <div class="shots">
         <figure class="wide">
-          <img src="images/neon-onboarding/pass-p1b-reduced.png" alt="The reduced buffer: the glow at half resolution with a blocky line" width="640" height="360">
+          <img src="images/neon-onboarding/pass-p1b-reduced.png" alt="The reduced buffer: the glow at half resolution, without the line" width="640" height="360">
           <figcaption>The reduced buffer, composited over the background.</figcaption>
         </figure>
       </div>
@@ -747,7 +747,7 @@
   <section class="why-sec" id="why">
     <p class="group">Why each program exists</p>
     <h2>Ten programs, one job each</h2>
-    <p>Every program is built on the first frame that needs it, so a host compiles only its own: with segments, five (P0, P1a, P1b, the blit and the ring&rsquo;s P2c), plus the fill with an opaque mode; without them, nine - the field&rsquo;s two, built together, and the ring&rsquo;s composite P2r on top. A partly lit ring adds P0b to either. Each row says what the program is for and why it is not folded into another.</p>
+    <p>Every program is built on the first frame that needs it, so a host compiles only its own: with segments, five (P0, P1a, P1b, the blit and the ring&rsquo;s P2c), plus the fill with an opaque mode; without them, nine - the field&rsquo;s two, built together, and the ring&rsquo;s composite P2r on top. A partly lit ring adds P0b to either, and P0f when it has segments long enough for a table of their own. Each row says what the program is for and why it is not folded into another.</p>
     <div class="why-wrap">
       <table class="why">
         <thead>
@@ -762,7 +762,12 @@
           <tr>
             <td><span class="pid">P0b</span> <code>mGlowCoverShader</code></td>
             <td>How lit each of the outline&rsquo;s eight pieces is, as the halo and the bloom see it - only for a partly lit ring.</td>
-            <td>Closed-form integrals per arc and a 16-point quadrature per segment over a 1024 &times; 128 table. Evaluated per pixel in <code>neon.frag</code> instead, a partly lit ring measured 2.0x / 3.3x slower at scale 1.0 / 0.5; too much for the CPU when a segment moves every frame.</td>
+            <td>Closed-form integrals per arc and a 16-point quadrature per segment over a 256-1024 &times; 128 table - and, as P0s, the segments alone over a narrower table of their own. Evaluated per pixel in <code>neon.frag</code> instead, a partly lit ring measured 2.0x / 3.3x slower at scale 1.0 / 0.5; too much for the CPU when a segment moves every frame.</td>
+          </tr>
+          <tr>
+            <td><span class="pid">P0f</span> <code>mGlowCoverFillShader</code></td>
+            <td>Copies the segment table into the coverage table&rsquo;s <code>b</code> / <code>a</code>, so <code>neon.frag</code> reads one texel per piece and never knows the segment table exists.</td>
+            <td>A decode and one fetch per texel, no integrals. Read in <code>neon.frag</code> instead, the second table would add eight fetches and eight forward maps to every shading pass on every frame of a segment config; as its own pass it costs only the frames a segment moves.</td>
           </tr>
           <tr>
             <td><span class="pid">P1a</span> <code>mGatherShader</code></td>

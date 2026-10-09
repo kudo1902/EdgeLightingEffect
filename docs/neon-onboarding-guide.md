@@ -1287,7 +1287,8 @@ and draws.
 | Member | Fragment shader | Built | Used by |
 | ------ | --------------- | ----- | ------- |
 | `mEmissionShader` | `neon-emission.frag` | `Initialize` | P0 |
-| `mGlowCoverShader` | `neon-glow-cover.frag` | first frame that bakes P0b | P0b |
+| `mGlowCoverShader` | `neon-glow-cover.frag` | first frame that bakes P0b | P0b, P0s |
+| `mGlowCoverFillShader` | `neon-glow-cover-fill.frag` | first frame whose segments get a table of their own | P0f |
 | `mGatherShader` | `neon-gather.frag` | first frame | P1a |
 | `mShadeShader` | `neon.frag` | first frame | P1b |
 | `mFieldBakeShader` | `neon.frag` + `NEON_FIELD_BAKE` | first frame a field can serve | P1f, P1r |
@@ -1326,7 +1327,8 @@ compiles it. A program that fails to compile is logged once, recorded in
 | Member | Size | Format | When |
 | ------ | ---- | ------ | ---- |
 | `mEmission.buffer` | 128 x 2 | RGBA16F, else RGBA8 (`EMISSION_FORMATS`) | allocated once in `Initialize` |
-| `mGlowCover.buffer` | 1024 x 128 (`GLOW_COVER_WIDTH` x `GLOW_COVER_HEIGHT`): four bands of `GLOW_COVER_ROWS` rows, each a straight and a corner sharing its columns in proportion to their lengths (`uGlowCoverSplit`) | RGBA16F, else RGBA8 (`GLOW_COVER_FORMATS`), linear filter | allocated on the first frame that bakes it (`ensureGlowCoverBuffer`); never on a ring lit uniformly |
+| `mGlowCover.buffer` | `GetGlowCoverWidth` x 128 - 256 to 1024 columns, from the rect and the halo width (448 for a 960 x 540 rect at the default glow, 704 for 1840 x 1000, 1024 for a thin glow on a large rect) - four bands of `GLOW_COVER_ROWS` rows, each a straight and a corner sharing its columns in proportion to their lengths (`uGlowCoverSplit`); its layout is stored with it (`mGlowCover.layout`) | RGBA16F, else RGBA8 (`GLOW_COVER_FORMATS`), linear filter | allocated on the first frame that bakes it (`ensureGlowCoverBuffer`), reallocated when the wanted width rises past it or falls two steps below; never on a ring lit uniformly |
+| `mGlowCover.segBuffer` | the segment table: `GetGlowCoverSegmentWidth` x 128 - from 128 columns, 4 per standard deviation of the narrowest bell | RG16F, else RG8, linear filter | only while the segments have a table of their own (not too short, the fill built); released with the main table and when the segments go direct |
 | `mGather.buffer` | a region around the rect, at the gather scale | RGBA16F, else RGBA8 (`GATHER_FORMATS`); 1 attachment, 2 with segments | scaled path; resized every frame (no-op if unchanged) |
 | `mScaledBuffer` | what the blit reads, at `resolutionScale`, never larger than the reduced viewport | RGBA16F, else RGBA8 (`SCALED_FORMATS`), 1 attachment | scaled path; resized every frame |
 
@@ -1415,7 +1417,9 @@ Render
  |    packLightBlocks()                             // re-pack if dirty; bind blocks 0 and 2
  |    if isEmissionTableStale(): [blend off] P0 emission table
  |    if (dirtyArcPieces | dirtySegmentPieces) && !IsGlowCoverUnread():  // its dirty pieces only
- |                               [blend off] P0b glow coverage table
+ |                               [blend off] P0b glow coverage table   // arcs only with a segment table
+ |                               [blend off] P0s segment table         // with one: dirty segment pieces
+ |                               [blend off] P0f fill (.b / .a)        //   copied into P0b's table
  |    if scaled:
  |       gatherRegion = GetBufferRegion(mGatherBounds.outer, ..., gatherScale, no cap)
  |       [blend off] P1a gather   -> mGather.buffer
@@ -1585,7 +1589,7 @@ The data flow between them, below scale 1.0:
  config --CPU bake--> LUTs (gradient, segment, arc) + UBOs (samples, segments, arcs)
                           |                                         |
                           v                                         v
- P0 emission table (128 x 2):                  P0b glow coverage table (1024 x 128):
+ P0 emission table (128 x 2):                  P0b glow coverage table (256-1024 x 128):
    per-sample colour x weight,                   how lit each of the 8 pieces is, seen
    segment colour x bell                         from every position round it - r g the
                           |  texelFetch          arcs, b a the segments (halo, bloom)
@@ -1641,7 +1645,7 @@ weight: 1, then 0.6 for the dimmer arc, 0 in the gaps), row 1's colour
 | - | - |
 | **Purpose** | Pre-compute, for each of the eight pieces of the emitter, how lit that piece is as the halo and the bloom see it from any fragment position round it, so each piece can scale its glow by its own coverage (Part 3.6). |
 | **Runs** | Only when a dirty mask is set (a change to the arcs, the segments, the rect's width, height, corner radius or winding, or `glowRadius`), and then only over the PIECES that change reaches - a light's old and new support, or all eight for a shape change (I42) - and only for the light TYPE that changed: a piece only the arcs dirtied integrates and writes its arc channels alone, under `glColorMask`. Never on time, nor under an intensity, colour or other-layer animation - but every frame under an animation of one of those inputs (0.14-0.27 ms a frame in all on an AMD Radeon Pro 5300M, one arc to three arcs and two segments - about half what V20's table cost). Skipped on a ring lit uniformly - one full arc, no segments - which never reads it (`IsGlowCoverUnread`); its program and its buffer are built on the first frame that bakes (`ensureGlowCoverProgram`, `ensureGlowCoverBuffer`), not in `Initialize`, and the buffer is released when the layer is disabled. |
-| **Target** | `mGlowCover.buffer`, 1024 x 128 texels: RGBA16F, 1.0 MB (RGBA8 fallback) - or RG16F, 0.5 MB (RG8 fallback) while the config has no segments - `GL_LINEAR`. Released by `Update` after 5 s unread. Its own `RenderTargetState` is captured and restored. |
+| **Target** | `mGlowCover.buffer`, `mGlowCover.layout.width` x 128 texels (256-1024, `GetGlowCoverWidth`): RGBA16F, 1.0 MB at 1024 (RGBA8 fallback) - or RG16F, half that (RG8 fallback) while the config has no segments - `GL_LINEAR`. Released by `Update` after 5 s unread. Its own `RenderTargetState` is captured and restored. When the segments have a table of their own (I60), this pass bakes the arcs' channels only, and two more follow it: **P0s** bakes the dirty segment pieces into `mGlowCover.segBuffer` - the same program, `uBakeTarget` 1, the segment table's own `uGlowCoverLayout` and `uGlowCoverSplit` - and **P0f** (`neon-glow-cover-fill.frag`) copies them into this table's .b / .a under `glColorMask(false, false, true, true)`, decoding each texel through this table's layout and fetching it from the segment table through its own. |
 | **State** | Blend off. Scissor off. No clear: the quad covers every texel. |
 | **Geometry** | `mFullscreenVertexArray`: identity MVP when every piece is dirty, one fragment per texel; otherwise one draw per dirty band through an MVP onto that band's straight, corner or both - texel-aligned rectangles, so it writes exactly their texels and no scissor state is touched. |
 | **Uniforms** | `uMVP` (identity), `uHeadFeather`, `uTailFeather`, `uHaloWidth`, `uBloomWidth`, `uStraightSize`, `uRadius` - all lengths as fractions of the full-res perimeter, which is what lets both resolution paths share the table - `uWinding`, which places each piece on the perimeter, and `uGlowCoverSplit`, each band's split between its straight and its corner. |
@@ -1658,7 +1662,35 @@ it across and the distance from the line growing downward: the piece's own
 stretch of the arcs is sharp at the top and softens as the kernel widens, and
 the columns at either side, past the straight's ends, hold what the piece looks
 like from beyond them. At its right is a corner's: the arc's own quadrant in
-the middle, the arc itself halfway down, its inside above.*
+the middle, the arc itself halfway down, its inside above. Its segment
+channels (bottom) were copied in by P0f from the segment table below.*
+
+### P0s and P0f: the segment table and its fill (I60)
+
+A segment's bell is three to ten times wider than an arc's 14 px feather, so
+integrating it at the arcs' width wasted most of the bake - which was the
+largest pass of every frame that moved a segment. When the segments are not
+too short (`GetGlowCoverSegmentWidth` under 0.75 of the main width), P0b
+bakes the arcs' channels alone and two passes follow, each over the dirty
+segment pieces only:
+
+| | P0s: the segment table | P0f: the fill |
+| - | - | - |
+| **Program** | `mGlowCoverShader`, `uBakeTarget` 1 | `mGlowCoverFillShader`, `neon-glow-cover-fill.frag` (`NEON_GLOW_COVER_FILL`: both halves of `neon-pieces.glsl`'s maps, none of the integrals) |
+| **Target** | `mGlowCover.segBuffer`: 128+ columns x 128, RG16F (RG8 fallback), its own layout (overhangs 16 / 8) and split | `mGlowCover.buffer`, under `glColorMask(false, false, true, true)` |
+| **Does** | the segments' halo and bloom coverage, the same integrals as P0b's, on `.r` / `.g` | decodes each main-table texel through the main layout (`glowCoverTexel`, `glowCoverStraightAt` / `glowCoverCornerAt`), maps it into the segment table through its layout (`glowCoverStraightUV` / `glowCoverCornerUV`), one linear fetch |
+
+So `neon.frag` still reads one texel per piece and never knows the segment
+table exists. The segment table is 4 columns per standard deviation of the
+narrowest bell, from 128 (`GLOW_COVER_SEG_COLUMNS_PER_SIGMA`, calibrated
+against the direct bake on 135 configs: within 2 levels, 99.9992% of lit
+pixels within 1).
+
+![The segment table](images/neon-onboarding/pass-p0s-segment-cover.png)
+
+*P0s's table for the same scene, as stored, every column: the segments as the
+halo (left) and the bloom (right) see them, the same four bands as P0b's - 128
+columns here, against the main table's 320.*
 
 ### P1: the glow, direct path - removed (I57)
 
@@ -1705,8 +1737,12 @@ scaled by its coverage.*
 
 ![The reduced buffer after P1b](images/neon-onboarding/pass-p1b-reduced.png)
 
-*The reduced buffer after P1b, 320 x 180 at scale 0.5, magnified 2x: the
-glow is fine at this resolution, the line is visibly blocky.*
+*The reduced buffer after P1b, 320 x 180 at scale 0.5, magnified 2x: the halo
+and the bloom, which hold up at this resolution, and no line. P1b does not
+compute the filament at all - the edge ring re-shades every pixel it can
+reach at full resolution, so nothing the blit shows would ever have come from
+it (D4 of [`neon-glow-cover-resolution-plan.md`](neon-glow-cover-resolution-plan.md)).
+Before that, the line was here too, visibly blocky.*
 
 ### P2a: the opaque fill (`renderFillPass`, `black-rect.frag`)
 
@@ -1865,7 +1901,7 @@ same place relative to the piece, so P0b bakes it once per config change and
 #### The layout
 
 ```
- 1024 columns, four bands of 32 rows (1024 x 128, 1.0 MB in RGBA16F, 0.5 MB in RG16F without segments)
+ W columns (256-1024, GetGlowCoverWidth), four bands of 32 rows (1.0 MB in RGBA16F at 1024, 0.5 MB in RG16F without segments)
 
  |<- 64 ->|<-- the straight: inner -->|<- 64 ->|g|<- 32 ->|<-- the corner -->|<- 32 ->|g|
  band 0    straight x = -halfW                     corner block 0, signs (-, -)
@@ -1893,7 +1929,15 @@ same place relative to the piece, so P0b bakes it once per config change and
 - **A corner's rows** are its distance from the centre: the top 16 inside the
   arc (spaced finely both next to the arc and near the centre, by a ratio of
   square roots), the bottom 16 outside it (spaced like a straight's).
-- **The split.** Each band's columns between the overhangs (`GLOW_COVER_SHARED`)
+- **The width.** `W` follows the rect and the halo width (`GetGlowCoverWidth`):
+  the longest band's straight plus quarter arc at one column per
+  `clamp(0.8 kh, 1.6, 5)` full-res px, plus the overhangs, in steps of 64 from
+  256 to 1024. A thin glow on a large rect still gets all 1024 - the overhangs
+  resolve distance past a piece's end in halo widths, which is what V21 sized
+  the table for. The layout (width, overhangs, shared columns) reaches the
+  shaders as `uGlowCoverLayout`, stored with the table, never recomputed at
+  read time (I59).
+- **The split.** Each band's columns between the overhangs (the layout's `.w`)
   go to its straight (`inner`) and its corner (the rest) in proportion to their
   lengths. `GetGlowCoverSplit` computes it on the CPU, in whole columns, and
   hands the same `uGlowCoverSplit` to the bake and every `neon.frag` program:
@@ -1991,8 +2035,10 @@ Notes:
 - **How good it is.** Within 2 levels of a brute-force per-pixel reference on
   every scene measured, but for 62 pixels of one 4K segment scene at 3.
   `GLOW_COVER_ROWS` is the knob for segments (48 rows read within 2
-  everywhere, for 0.5 MB more); `GLOW_COVER_WIDTH` is the one not to cut (768
-  columns read 6 levels off a 1 px halo on a 4K-sized rect).
+  everywhere, for 0.5 MB more); the width is the one not to cut where the
+  halo is thin (768 columns read 6 levels off a 1 px halo on a 4K-sized
+  rect), which is why `GetGlowCoverWidth` sizes it from the halo width as
+  well as the rect, calibrated against 1024 on 250 configs (I59).
 
 ### 7.4 `neon.frag`
 
@@ -2200,7 +2246,12 @@ through the outermost ring of a viewport-sized fill.
 | `CUTOFF_NEUTRALISED` | 1e6 | sentinel for a neutralised or disabled cutoff |
 | `RING_GUARD_TEXELS` | 1 | CPU: extra ring width, in reduced-buffer texels |
 | `GATHER_TEXELS_PER_KERNEL`, `GATHER_MIN_SCALE` | 2, 0.0625 | CPU: the gather's resolution |
-| `GLOW_COVER_WIDTH`, `GLOW_COVER_ROWS` | 1024, 32 | the coverage table: width, and rows per band (four bands) |
+| `GLOW_COVER_MIN_WIDTH`, `GLOW_COVER_MAX_WIDTH`, `GLOW_COVER_WIDTH_STEP` | 256, 1024, 64 | the coverage table's width bounds and step (`GetGlowCoverWidth`) |
+| `GLOW_COVER_PX_PER_COLUMN_PER_KH`, `GLOW_COVER_MIN_PX_PER_COLUMN`, `GLOW_COVER_MAX_PX_PER_COLUMN` | 0.8, 1.6, 5.0 | its column spacing, full-res px, from the halo width |
+| `GLOW_COVER_ROWS` | 32 | rows per band (four bands) |
+| `GLOW_COVER_SEG_COLUMNS_PER_SIGMA`, `GLOW_COVER_SEG_MIN_WIDTH`, `GLOW_COVER_SEG_DIRECT_SHARE` | 4, 128, 0.75 | the segment table: columns per bell standard deviation, its floor, and the share of the main width past which segments bake directly |
+| `GLOW_COVER_SEG_OVERHANG`, `GLOW_COVER_SEG_CORNER_OVERHANG` | 16, 8 | the segment table's overhangs |
+| `GLOW_COVER_BELL_REACH` | 3 | where the bake cuts a bell, in 1 / invSigma (4.24 sigma); the dirty-piece mirror reads it too |
 | `GLOW_COVER_OVERHANG`, `GLOW_COVER_CORNER_OVERHANG` | 64, 32 | its columns past a straight's ends, and either side of a corner's arc |
 | `GLOW_COVER_MIN_INTERIOR` | 16 | the fewest columns a straight or a corner keeps in its band |
 
@@ -2271,10 +2322,12 @@ from the same `PushAnnulus` strips as the blit area.*
 | :-: | :-: | :-: |
 | ![](images/neon-onboarding/scale-0.25-blit-only.png) | ![](images/neon-onboarding/scale-0.25-final.png) | ![](images/neon-onboarding/scale-1-final.png) |
 
-*Why the ring exists: a 2 px line at scale 0.25, magnified 3x. Left is what the
-blit would draw if it covered the line too, rebuilt by the figure tool from
-the real reduced buffer through the blit's own uv map: the line comes out
-nearly three times as wide. Centre is the real frame at 0.25; right is 1.0.*
+*Why the ring exists: a 2 px line at scale 0.25, magnified 3x. Left is what
+the blit would draw if it covered the line too, rebuilt by the figure tool from
+the real reduced buffer through the blit's own uv map - which no longer holds
+the line at all: pass 1b skips the filament, since the ring draws every pixel
+it reaches (D4). When it did, the line came out of the blit nearly three
+times as wide. Centre is the real frame at 0.25; right is 1.0.*
 
 ### 8.4 When not to lower the scale
 

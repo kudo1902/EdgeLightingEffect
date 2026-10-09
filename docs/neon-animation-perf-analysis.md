@@ -164,13 +164,32 @@ against the build before either change.
 interleaved rounds against the build before them: no regression (geomeans
 0.98-1.09; `still` does not run the changed code and its spread is noise).
 
+## 7b. Built 2026-10-09
+
+[`neon-glow-cover-resolution-plan.md`](neon-glow-cover-resolution-plan.md),
+I59-I62. **Read every millisecond in this document as a ratio:** they are
+`GL_TIME_ELAPSED` readings, which on this AMD Radeon Pro 5300M are 3.6-4.0x
+the wall-clock time of the same frames (found building that plan's step 0).
+
+| frame, scale 0.5 | timer units, before -> after | wall-clock ms, before -> after |
+| ---------------- | ---------------------------- | ------------------------------ |
+| band, 8 segments | 4.06 -> 1.97 | 1.05 -> 0.61 (1.72x) |
+| band, 4 arcs + 4 segments | 3.03 -> 2.08 | 0.87 -> 0.63 (1.38x) |
+| band, 8 arcs | 2.22 -> 1.80 | 0.63 -> 0.60 |
+| 960 x 540, 8 segments | 5.65 -> 3.37 | 1.44 -> 0.92 (1.57x) |
+| 960 x 540, 8 arcs | 3.20 -> 2.85 | 0.94 -> 0.85 |
+
+Item 3 below is half built: the narrower support (I61) is in, the 8-node rule
+was measured against the plan's criterion and failed it (3 levels off a long,
+bright segment).
+
 ## 8. Improvable points, ranked
 
 | # | change | frames it helps | gain (measured / estimated) | image | effort |
 | - | ------ | --------------- | --------------------------- | ----- | ------ |
 | 1 | `resolutionScale` 0.25-0.35 for animated content | every config change | 8 arcs 3.07 -> 2.29 ms (1.34x), 8 segments 5.40 -> 4.59 ms; P1b 1.20 -> 0.42 ms | <= 3 levels (`check`) | none |
 | 2 | **built (I58)**: a two-channel field, so segment configs take the fields - measured 2.09x on hue frames, 1.98x still at 0.5 on an M2 | every hue and still frame of a config with segments | est. hue 2.44 -> ~1.0 ms, still 0.74 -> ~0.45 ms (P1b -> composite, ring -> its field) | within 1/255, like today's field | medium; +~1.1 MB |
-| 3 | narrower bell support (the emission's own 0.005 cut) + 8-node rule in the bake | segment animation | 8 segments: bake 2.43 -> 1.26 ms, frame 5.40 -> 3.91 ms (1.38x) | <= 2 levels on ~3% of pixels in segment scenes; arcs unchanged | small |
+| 3 | **half built (I61)**: narrower bell support (4.24 sigma); the 8-node rule failed the criterion (3 levels) and is not in | segment animation | 8 segments: bake 2.43 -> 1.26 ms, frame 5.40 -> 3.91 ms (1.38x) | <= 2 levels on ~3% of pixels in segment scenes; arcs unchanged | small |
 | 4 | half-rate soft glow while only lights move (bake + P1b every other frame; filament and ring every frame) | light animation | est. -1 ms (8 arcs) to -2 ms (8 segments) | the halo may trail the line by one frame | medium |
 | 5 | bloom-tail threshold (stop the quad and the blit where the glow falls under 2-4 levels) | every frame | blit and P1b area -11% (2 levels) to -21% (4 levels) on the default frame | the faint tail goes | small, plus a look decision |
 | 6 | per-piece uniform-coverage skip (no table read on a piece fully lit or dark) | light animation with large arcs (a wipe) | est. up to ~10% of P1b; nothing for many small arcs | <= 1 level (the table's half-float rounding) | small |

@@ -165,7 +165,9 @@ averaged around the pixel (V19 and V20 in
 - **A fully lit ring is unchanged**, bit for bit.
 
 It costs one more offscreen pass and a 1.0 MB RGBA16F table (0.5 MB in RGBA8
-on a driver that cannot render to half float). V20's version of it - one
+on a driver that cannot render to half float) - since I59 sized to the rect and
+the halo width, 0.25-0.69 MB for a default glow, 1.0 MB only for a thin glow on
+a large rect. V20's version of it - one
 table per perimeter, 2 MB - cost ~1.1x on a partly lit ring and ~1.04x on a
 fully lit one at 1.0 (~1.2x and ~1.08x at 0.5) on an M2 Pro; V21's, one table
 per piece, measures 1.00-1.01x of that at 1.0 and 4-7% faster below it, on an

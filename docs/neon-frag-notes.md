@@ -712,6 +712,19 @@ field are unaffected.
 Add a reader of any of the four outside the filament and it has to move out of
 this gate - the shader says so at the gate.
 
+**Pass 1b skips the filament altogether** (I62, 2026-10-09): `filamentLit` is
+false wherever `uBlitOwnsCut` is set - pass 1b and its field bake. The edge
+ring re-shades every pixel within the filament's reach, as pass 1 drew it, plus
+`RING_GUARD_TEXELS` reduced texels (`GetRingWidth`), and the blit's bilinear
+footprint is one texel, so no texel it reads is one the filament lights.
+Byte-identical on the `cover` set (306 animated frames), `check`, `partition`
+and every final-frame figure; the four figures of intermediate buffers lose
+the line. No measurable time on the AMD (0.988-0.997). Narrow the ring's guard
+below a texel and this stops holding.
+
+(The milliseconds above are `GL_TIME_ELAPSED` readings, which on this GPU are
+~3.85x the wall-clock time - ratios, not costs.)
+
 ## An arc's own stops: no hue term, wrapped rel
 
 `neon.frag` line 1116, before the move.
