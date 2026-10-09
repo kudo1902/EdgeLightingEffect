@@ -439,7 +439,8 @@ outside the neon, the lens flare. Ranked by what they could take off a frame:
    band, the flare alone: 0.70 ms of GPU at 1.0, 0.18-0.20 at 0.5, 0.02-0.04 at
    0.25 - 15-30x the neon's whole frame at 0.5. If production draws the flare,
    this is the largest single lever for frame rate, and it needs no code: set
-   the scale and check the look (`docs/lens-flare-unification-comparison.md`).
+   the scale and check the look (`docs/neon-unification-plan.md` records that the
+   flare's scales were verified against 1.0 when its fork was merged).
    Then the hex sprite gating left open in `docs/lens-flare-perf-review.md`
    section 7 (~1.7x on that layer).
 2. **Step 0 and T1 are still open.** Nothing here was measured on the target:

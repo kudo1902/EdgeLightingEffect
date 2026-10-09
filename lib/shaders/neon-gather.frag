@@ -256,7 +256,7 @@ void main() {
     // from it to read back instead of running it. A coarse grid can carry them
     // where it cannot carry the filament because every one is a smooth
     // Lorentzian-weighted mean over the whole perimeter. See
-    // docs/neon-resolution-scale-proposal.md.
+    // docs/neon-resolution-scale-plan.md, section 0.
     //
     // The buffer is RGBA16F where the driver renders to it and RGBA8 where
     // not, so each value has to fit [0, 1] for the fallback. The hues already

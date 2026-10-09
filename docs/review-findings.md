@@ -37,7 +37,7 @@ old fork survived.
 | visual | V1, V2, V3, V4, V6, V7 | V5 (closed as a documented limitation) |
 | implementation | I1, I2 (by I39), I3, I4, I6, I7 | I5 (documented), I8 (audited) |
 | second pass | R1, R2, R3, R4, R5, R6, R7 | - |
-| third pass | V8, I9, I10, I11, I12 (partly) | V9, I12's two stale design docs |
+| third pass | V8, I9, I10, I11, I12 | V9 |
 | fourth pass | I14 | I13 |
 | fifth pass | I15 | - |
 | sixth pass | I16, I17, I19, I20 | I18 |
@@ -1515,7 +1515,7 @@ that was actually uploaded rather than the arguments that were asked for -
 otherwise a caller repeatedly passing `width = 1` would re-bake every frame,
 because the stored `mBakedWidth` (2) would never match the request.
 
-### I12. Comments still name the functions the LUT refactor removed - PARTLY FIXED
+### I12. Comments still name the functions the LUT refactor removed - FIXED
 
 The refactor deleted `rebuildGradientLUT`, `rebuildSegmentLUT`, `rebuildArcLUT`,
 `uploadGradientLUT`, `IsAtlasDirty`, `mBakedArcs` and `mBakedSegments`. Several
@@ -1544,8 +1544,8 @@ comments:
 
 | file | stale reference |
 | ---- | --------------- |
-| [`architecture-design.md`](architecture-design.md) | `if (lutDirty) { rebuildGradientLUT(config); }` in the `OnConfigChanged` pseudo-code |
-| [`multiple-arcs-design.md`](multiple-arcs-design.md) | `mBakedArcs` and `rebuildArcLUT` in the design sketch and the file-by-file change list |
+| `architecture-design.md` (removed) | `if (lutDirty) { rebuildGradientLUT(config); }` in the `OnConfigChanged` pseudo-code |
+| `multiple-arcs-design.md` (removed) | `mBakedArcs` and `rebuildArcLUT` in the design sketch and the file-by-file change list |
 
 `architecture-design.md` is already flagged in `CLAUDE.md` as predating the
 droplets and lens-flare renderers, and `multiple-arcs-design.md` is a design
@@ -1553,6 +1553,12 @@ document describing an implementation as it was proposed, so neither is quite
 the same class of problem as a wrong comment sitting next to live code.
 `neon-renderer-reference.html` was updated with the refactor and correctly
 describes `GradientRingLUT`.
+
+**Closed 2026-10-09** by removing both documents in a stale-docs cleanup:
+`multiple-arcs-design.md` described a design as proposed, before the arcs
+shipped and changed, and `architecture-design.md`'s still-current parts (the
+coordinate spaces and the (0, 0) viewport assumption, the demos, the C ABI's
+lifecycle and conventions) moved into `implementation.md`.
 
 ### How the implementation items were verified
 
@@ -5283,8 +5289,8 @@ fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
 eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, the thirtieth V26, and the thirty-first I63. Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
-the code rather than only here, plus V9 and I12's
-remainder from the third, I13 from the fourth, and I18 from the sixth:
+the code rather than only here, plus V9 from the third (I12's remainder closed
+with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 
 | item | state | why |
 | ---- | ----- | --- |
@@ -5299,7 +5305,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I8 | audited, no UI written | the C ABI itself is complete; what is missing is `demo-capi` coverage, ranked in the section above |
 | R7 | fixed | the dark tail's one-level plateaus drew contour rings; the three writes to the caller's framebuffer now add a +/- half-level dither, and the reduced buffer is half float so the blit has something left to dither. Widest plateau 17 -> 7 px outside, 32 -> 10 inside. +0.01 ms a still frame at 1080p (likely lost framebuffer compression), the reduced buffer's memory doubled |
 | V9 | open | the honest fix is a design decision (interpolate the arc colour between adjacent samples in the consumer), not a patch; the three options are ranked in the section |
-| I12 | partly fixed | the live shader comment is corrected; `architecture-design.md` and `multiple-arcs-design.md` still name the removed LUT functions, and both are design prose rather than comments beside live code |
+| I12 | fixed | the live shader comment was corrected first; the two design documents that still named the removed LUT functions were removed on 2026-10-09 |
 | I13 | open | undefined `pow` reachable only through the C ABI; both cures change what the boundary accepts or what the term computes below `ghostSize` 0.6, so it is a behaviour decision rather than a repair |
 | I18 | open | the division guarantees something the 8-bit blend discards, and the three ways out - drop it, document its limit, or accumulate at higher precision - are a design call, not a fix |
 | V12a | fixed | per-lamp shouldering cannot bound a SUM, so the blend does: the lamps screen instead of adding. Putting the shoulder on the sum was built and measured 2.5x to 9.3x slower, with a crease where differently coloured beams cross |

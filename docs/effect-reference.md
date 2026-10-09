@@ -5,9 +5,8 @@ you get with the default `Config()`, and how each field in the config affects
 the rendered pixels.
 
 This document is a reader-facing complement to
-[`architecture-design.md`](architecture-design.md) (which explains *how* the
-code is put together) - here we focus on *what the parameters do to the
-picture*.
+[`implementation.md`](implementation.md) (which explains *how* the code is put
+together) - here we focus on *what the parameters do to the picture*.
 
 Field defaults come from [`lib/include/core/config.h`](../lib/include/core/config.h);
 tuning constants from
@@ -280,10 +279,11 @@ against.
 - `0.5` = one full lap of the perimeter every 2 seconds (default).
 - `~2+` = clearly kinetic; useful for arcade / marching-lights vibes.
 
-Also drives the per-arc gradient sample when arcs have their own stops:
-inside an arc, the arc's LUT scrolls through the arc's window at the same
-rate (see [`multiple-arcs-design.md`](multiple-arcs-design.md) for the
-sampling model).
+It does NOT move an arc's own stops (`Arc::colorStops`): those are laid along
+the arc from head to tail, so there is nothing to rotate, and scrolling them
+used to slide the gradient off one end and seam it mid-edge (V3 in
+[`review-findings.md`](review-findings.md)). An arc's gradient moves by moving
+the arc, or by animating its stops.
 
 **`neon.colorTransitionDuration`** (default 0.3 s)
 Seconds to cross-fade the *baked LUT* when the colour stops or blend space
@@ -606,5 +606,5 @@ If you need to *animate* one of these fields rather than set it, the
 `FieldBoundAnimation` + `Modulator` family lets you plug an oscillator, an
 ease, or a sequence into any of the animatable fields listed in
 [`field-bound-animation.h`](../lib/include/animation/field-bound-animation.h).
-See [`architecture-design.md`](architecture-design.md) for the animation
+See [`implementation.md`](implementation.md) section 8 for the animation
 model.

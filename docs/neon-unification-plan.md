@@ -28,6 +28,32 @@ built `.dylib`: 16 assertions covering the defaults, both directions of the
 enable mapping, the "an explicit scale survives a redundant enable" case, and
 the knob round-trips.
 
+### Verified by rendering both sides
+
+Both fork merges were checked the same way: the same scenes rendered offscreen
+through `OffscreenCapture` on both sides of the merge, every RGB byte of a
+512 x 384 frame compared. The two comparison documents that held the tables and
+images were folded into this section on 2026-10-09; their history is in git.
+
+- **The neon** (`unify_neon_renderer` at `49afa8c` against `main_v2` at
+  `a4ea60b`): nine of eleven scenes byte-identical - full resolution, 0.5, 0.25,
+  the opaque fill alone and under the glow, arcs, segments, arcs at 0.5, arcs at
+  the base intensity. `wireframe` and `overlays` differed on 839 and 802 pixels,
+  every one on the bounding box's one-pixel outline (perimeter 840): the box now
+  draws OVER the glow, since `DebugRenderer` registers after the neon - the
+  intended change. Seen on both sides alike, so not the merge's: the partly lit
+  arcs' glow cut into hard-edged blocks, which the per-piece glow coverage
+  reworked later (V14, V19-V21 in `review-findings.md`).
+- **The lens flare** (`LensFlareOptimizedRenderer` into `LensFlareRenderer`,
+  from `99f494a`): twelve of twelve scenes byte-identical - 1.0, 0.5 and 0.25,
+  dense rays, a wide ghost chain, the sun on a corner and pushed off the edge,
+  the flare over the neon. The fragment shader had never been forked; the
+  optimized renderer differed only in its target and blit. Two defects closed
+  rather than kept: an out-of-range `resolutionScale` (2.0 used to supersample
+  into four times the fragments; it is clamped to `(0, 1]` now), and the double
+  draw when both renderers were enabled (mean luma 60.95 against 33.76 - the
+  state is no longer expressible).
+
 ### Follow-ups that landed after the seven parts
 
 Cleanups the merge made possible or exposed, in the order they were done:
@@ -296,7 +322,8 @@ Must be updated (they state the fork as fact):
 
 Leave alone as historical records, with a one-line "superseded by the unification"
 note at the top: `docs/branch-vs-main-comparison.md`,
-`docs/emission-prepass-comparison.md`. Sweep `docs/naming-review.md` and
+`docs/emission-prepass-comparison.md` (both removed since, 2026-10-09; their
+headline numbers are in `emission-prepass.md` section 7). Sweep `docs/naming-review.md` and
 `docs/review-findings.md` for entries the merge resolves.
 
 ---

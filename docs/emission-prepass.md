@@ -275,7 +275,7 @@ so this is a preference, not a defect that was fixed. In particular it does not
 make a sub-viewport work - the shaders read `gl_FragCoord` in window
 coordinates against uniforms computed as if the origin were (0, 0), so a
 sub-viewport renders displaced whatever this code restores. That limitation is
-unchanged; architecture-design.md §9 still describes it.
+unchanged; `implementation.md` section 11 still describes it.
 
 What capture buys is one fewer assumption to carry. It costs a single
 static-state `glGet` on a path that only runs when the table is stale, and it
@@ -352,8 +352,11 @@ a candidate list in preference order (`EMISSION_FORMATS`).
 
 GLES 3.0 exposes float colour-renderability only through an extension, so the
 walk falls through to `GL_RGBA8` and logs one line naming both formats. The
-fallback clamps highlights above 1.0 but is otherwise exact -
-`docs/branch-vs-main-comparison.md` section 3.5 measures how far it drifts.
+fallback clamps highlights above 1.0 but is otherwise exact. Measured when the
+pre-pass landed (forcing `RGBA8` on a GPU that has float targets): within 1-2
+levels of the float table while every arc intensity and segment boost is at or
+under 1.0, and up to 82 levels on a scene with a 2.5 boost, the clamp being the
+whole cause.
 
 Re-requesting a refused format would be expensive, not merely noisy:
 `Framebuffer::Resize` treats a format change as a reallocation, so asking for
@@ -407,11 +410,23 @@ next step and is not done here.
 
 ## 7. Results in brief
 
-Full before/after tables - performance, visuals and memory, with the
-methodology and its caveats - live in
-[`emission-prepass-comparison.md`](emission-prepass-comparison.md). That
-document is the single source for the numbers; this section only states the
-shape of the result so the design rationale above stands on its own.
+Measured when it landed (August 2026, a 1920 x 1080 rect in a 3840 x 2160
+frame, mean of 210 frames, `glFinish` in the timed region; the GPU was not
+recorded, and timings on it varied about 2x between sessions), against the
+same tree without the pre-pass. Then there were two
+renderers; read "full resolution" as `resolutionScale` 1.0 and "half
+resolution" as 0.5 on the one renderer there is now. The comparison document
+that held the full tables was retired on 2026-10-09 (it is in git history);
+every neon frame has been re-measured many times since, so read these for the
+shape, not the milliseconds:
+
+| scene | full res before / after | half res before / after |
+| ----- | ----------------------- | ----------------------- |
+| 1 full arc | 24.84 / 20.77 ms (1.20x) | 9.50 / 5.96 ms (1.59x) |
+| 1 partial arc + 1 segment | 40.61 / 20.76 ms (1.96x) | 12.61 / 5.76 ms (2.19x) |
+| 8 arcs + 8 segments | 134.67 / 22.88 ms (5.89x) | 34.19 / 7.18 ms (4.76x) |
+
+The table itself costs 2 KB (128 x 2 texels of `RGBA16F`), fixed.
 
 **Performance.** Per-fragment cost went from `O(samples * (arcs + segments))`
 to `O(samples)`. The visible consequence is flatness: the "after" timings

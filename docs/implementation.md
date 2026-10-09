@@ -1,10 +1,11 @@
 # Implementation
 
 The short version of how this library is put together and how a frame runs.
-For depth, see [`architecture-design.md`](architecture-design.md) (full
-architecture), [`effect-reference.md`](effect-reference.md) (per-parameter
-behaviour), and [`neon-renderer-explained.html`](neon-renderer-explained.html)
-(why the shader is shaped the way it is). When any of them disagrees with the
+For depth, see [`neon-onboarding-guide.md`](neon-onboarding-guide.md) (the
+neon from first principles, every pass and config field),
+[`effect-reference.md`](effect-reference.md) (per-parameter behaviour), and
+[`neon-renderer-explained.html`](neon-renderer-explained.html) (why the shader
+is shaped the way it is). When any of them disagrees with the
 headers under `lib/include/`, the headers win.
 
 ## 1. What gets built
@@ -123,7 +124,7 @@ resolution, from a variant of the same `neon.frag`. One `.cpp` each and one
 copy of every shader stage, no pair to keep in step and no way to double-draw.
 (The neon's gather pass is a `.frag` of its own, `neon-gather.frag`, but the
 loop it runs is the one `neon.frag` runs, shared through `neon-common.glsl`.) See
-`docs/neon-unification-plan.md` and `docs/lens-flare-unification-comparison.md`.
+`docs/neon-unification-plan.md`, which also records how both merges were verified.
 
 To add a renderer: subclass `BaseRenderer`, add a sub-config struct to `Config`
 with `operator==`, register it in [`demo/src/main.cpp`](../demo/src/main.cpp),
@@ -303,6 +304,28 @@ surface. `edge-lighting-capi.h` is the single public include, aggregating
   `capi-internal.h`. **Reordering or renumbering a mirrored C++ enum means
   adjusting those asserts** - append new values at the end.
 - Symbols are hidden by default; only `EL_API`-marked `el_*` functions export.
+- **Lifecycle.** `el_effect_create` makes a handle that owns only its staging
+  `Config` - no GL state, no renderers - so a host can build it before a context
+  exists. `el_effect_init` (the whole stack in the default order),
+  `el_effect_init_with_renderers(mask)` or `el_effect_init_with_renderer_order`
+  constructs the effect and its layers, and must run on the GL thread with a
+  current context. `el_effect_destroy` tears it down.
+- **Setters short-circuit unchanged writes** (`SET_AND_LOG` in
+  `capi-internal.h`): an unchanged value returns `EL_SUCCESS` without logging,
+  so a debug UI's get - widget - set every frame does not flood the log. Getters
+  log at `LOG_D`, which `capi-internal.h` compiles out on macOS and Windows.
+- **Arrays** (colour stops, segments, arcs, and each one's own stops) are a
+  `_count` setter plus per-index accessors: grow with `set_..._count(n + 1)`
+  then set index `n`; remove `k` by shifting down and `set_..._count(n - 1)`.
+  Both demos do exactly that.
+- **Animations** come from `el_animation_create(EL_ANIM_*)` presets, the
+  parametric `el_animation_create_*` factories, or
+  `el_animation_create_field_bound()` plus `el_animation_add_*_field` over
+  modulator handles (`el_modulator_create_*`). Each carries its own play state,
+  playhead, speed, duration, mode and end action, and completion /
+  state-change callbacks with a `void *userData`. The effect's manager is
+  reached through `el_effect_attach_animation` and its siblings; the clock
+  through `el_effect_clock_play` / `_pause`.
 
 `demo-capi/`'s include path deliberately excludes `lib/include/`, so it can only
 compile against the flat ABI. That is the guard proving the ABI is sufficient
@@ -330,7 +353,55 @@ Two rules that are easy to get wrong:
   scale. (`demo-capi/src/` is the exception - it cannot see `lib/include/`, so it
   has its own minimal helpers in `gl-mini.h`.)
 
-## 11. Where to change what
+## 11. Coordinate spaces, and the viewport origin
+
+| Space | Origin | +X | +Y | Used by |
+|---|---|---|---|---|
+| **App** | viewport top-left | right | down | `RectGeometry::position`, `SpotLight::position`, mouse input |
+| **Local** | rect centre | right | up | the SDF, `GetPointOnRectangle`, the loop samples, `vPos` |
+| **GL window** | viewport bottom-left | right | up | the model translation, `gl_FragCoord` |
+| **NDC** | viewport centre | right | up | `gl_Position` |
+
+The app-to-GL flip is one line, `center.y = viewportH - position.y - halfH`, and
+every renderer builds its MVP the same way, so rect-local vertices land where
+the app placed the rect. (The spotlight keeps app coordinates in its VBO and
+flips in its ortho instead.)
+
+**The viewport origin is assumed to be (0, 0).** `BaseRenderer::Render` takes
+the viewport's SIZE, never its origin, and that is baked into the shaders, not
+just the C++: several read `gl_FragCoord`, which is in window coordinates, against
+uniforms the CPU computes as if the viewport started at the window's origin -
+`black-rect.frag`'s `gl_FragCoord.xy - uRectCenter` is the plainest case, and
+the blit's cut is another. Render into a viewport at `(x, y)` and every such
+comparison is off by exactly that, so the fill and the cut draw displaced from
+the glow. A sub-viewport is not supported; supporting one means threading an
+origin into those uniforms, not restoring the viewport more carefully. The
+framebuffer is the opposite case, because it genuinely varies (the default one,
+or an `OffscreenCapture` FBO): a multi-pass renderer restores exactly the one
+it was handed (section 10).
+
+## 12. The demos
+
+`demo/` opens two GLFW windows sharing one GL context: the render surface and a
+floating debug panel (`DebugUI`). Each frame it snapshots the authored config
+(`GetConfig`), lets `DebugUI::Build` mutate that copy and attach or drive
+animations on the effect, writes it back with `SetConfig` (which reaches the
+renderers through `OnConfigChanged` only when something changed), draws the
+panel, then on the main context draws any backdrop, `Update(dt)` and
+`Render(w, h)`. Sliders showing an animated field read `GetActiveConfig()`, so
+the knob follows the live value, and pin to the base while being dragged. The
+border colour picker (`border-color-picker.{h,cpp}`) samples an image's border
+into colour stops placed on the rect's own perimeter parameterisation.
+
+`demo-capi/` is the same UI against the C ABI alone: its include path omits
+`lib/include/`, so an accidental `#include "core/..."` fails to build. Its
+`gl-mini.h`, `background-quad.h` and `image-quad.h` are raw-GLAD ports of the
+C++ demo's helpers, since the RAII wrappers live under `lib/include/gl/`, and its
+debug UI reads every widget through a getter and writes through a setter. It is
+a hand-maintained fork: a change to one demo usually needs the same change in
+the other.
+
+## 13. Where to change what
 
 | Goal | Touch |
 |---|---|

@@ -824,12 +824,12 @@ bloom = max(bloom - bloomPed, 0.0) * (bloomPeak / max(bloomPeak - bloomPed, 1e-6
         <table>
           <thead><tr><th></th><th class="mono">arcInside</th><th class="mono">arcCoverContinuous</th></tr></thead>
           <tbody>
-            <tr><td>Evaluated at</td><td>each gather sample's <code>si</code></td><td>the fragment's own <code>sPos</code></td></tr>
-            <tr><td>Feeds</td><td>the hue average only</td><td>filament, halo and bloom</td></tr>
+            <tr><td>Evaluated at</td><td>each gather sample's <code>si</code>, in the emission pre-pass (<code>neon-emission.frag</code>)</td><td>each nearby piece's nearest point (section 05); the coverage table's bake integrates the same ramps over each piece</td></tr>
+            <tr><td>Feeds</td><td>the hue average, and - as the arc weight <code>arcW</code> - the glow's gathered coverage</td><td>the filament; through the coverage table (pass 0b), each piece's halo and bloom</td></tr>
             <tr><td>Feather direction</td><td><strong>outward</strong> from the arc ends</td><td><strong>inward</strong>, inside the arc's span</td></tr>
             <tr><td>Feather width</td><td>1 sample (head), 0.25 sample (tail)</td><td><code>HEAD/TAIL_FEATHER_PX / peri</code></td></tr>
             <tr><td>Wrap handling</td><td>tests <code>si</code> and <code>si + 1</code>, takes the max</td><td><code>rel -= floor(rel)</code></td></tr>
-            <tr><td>Effect on brightness</td><td><strong>none</strong> - cancels in the gated normalisation</td><td>it <em>is</em> the brightness envelope</td></tr>
+            <tr><td>Effect on brightness</td><td>cancels out of the hue; scales the halo and bloom through the gathered coverage, which each piece then corrects toward its own (V14, V19-V21)</td><td>it <em>is</em> the filament's brightness envelope</td></tr>
           </tbody>
         </table>
       </div>
@@ -862,7 +862,7 @@ return tailIn * headIn;</code></pre>
 
       <p>A segment is <code>(position, invSigma, boost, hasStops)</code>. Up to <code>MAX_SEGMENT_BOOSTS</code>. They are <strong>additive lights independent of arcs</strong>: they emit where no arc covers, and they deliberately bypass <code>uIntensity</code> so a segment stays lit on a darkened or fully dark arc.</p>
 
-      <p>Like arcs, the magnitude and the hue come from different places. The hue is gathered in the loop with the raw proximity weight <code>g</code> (not the arc-gated <code>lg</code>). The magnitude is evaluated pointwise:</p>
+      <p>Like arcs, the magnitude and the hue come from different places. The hue is gathered in the loop with the bell-weighted proximity weight <code>bell * g</code> (not the arc-gated <code>arcW * g</code>). The filament's magnitude is evaluated pointwise, inside <code>filamentCover</code>, at each nearby piece's <code>sPos</code> (section 05):</p>
 
 <pre><code>float segCoverPt = 0.0;
 for (int s = 0; s &lt; uSegmentCount; s++) {
@@ -873,16 +873,17 @@ for (int s = 0; s &lt; uSegmentCount; s++) {
     segCoverPt += seg.z * exp(-e * e);     // boost * gaussian, summed
 }</code></pre>
 
-      <p>Summed rather than maxed, so overlapping segments reinforce. Left <strong>unclamped</strong> on purpose: a <code>boost</code> above 1 must still brighten. The separate <code>emitCoverAll</code> applies <code>min(segCoverPt, 1.0)</code>, but that only bounds the shared halo and bloom reach and is not the segment's brightness.</p>
+      <p>Summed rather than maxed, so overlapping segments reinforce. Left <strong>unclamped</strong> on purpose: a <code>boost</code> above 1 must still brighten. The glow's <code>segmentGlow</code> applies <code>min(.., 1.0)</code>, but that only bounds the shared halo and bloom reach and is not the segment's brightness.</p>
 
-      <p>Three gates come out of this, and they are not interchangeable:</p>
+      <p>Four coverages come out of the pointwise and the gathered reads, and they are not interchangeable:</p>
 
       <div class="tbl-wrap">
         <table>
           <thead><tr><th>Name</th><th>Expression</th><th>Applied to</th></tr></thead>
           <tbody>
-            <tr><td class="mono">emitCover</td><td class="mono">max over arcs of (cover * intensity)</td><td>the arc term in both filament and glow</td></tr>
-            <tr><td class="mono">emitCoverAll</td><td class="mono">max(emitCover, min(segCoverPt, 1))</td><td>the segment term in the glow</td></tr>
+            <tr><td class="mono">emitCover</td><td class="mono">max over arcs of (cover * intensity * stop alpha), pointwise</td><td>the arc term in the filament, per piece (section 05)</td></tr>
+            <tr><td class="mono">gatheredCover</td><td class="mono">(SUM arcW * g, SUM bell * g) / SUM g, from the gather</td><td>the starting scale of the arc and segment terms in the glow; each piece's own coverage from pass 0b's table corrects it (<code>glowFix</code>)</td></tr>
+            <tr><td class="mono">gatheredSeg</td><td class="mono">gatheredCover.y * max(gatheredCover.x, min(gatheredCover.y, 1))</td><td>the segment term in the glow (<code>segmentGlow</code>)</td></tr>
             <tr><td class="mono">filamentGate</td><td class="mono">max(smoothstep(0.5, 1, min(segCoverPt,1)), emitCover)</td><td>the segment term in the filament, at each piece's own nearest point (section 05)</td></tr>
           </tbody>
         </table>
@@ -892,7 +893,7 @@ for (int s = 0; s &lt; uSegmentCount; s++) {
 
 <pre><code>vec3 arcCol   = col * uIntensity;
 vec3 emitFil  = arcCol * filament.x + segColHue * filament.y;   // per piece: section 05
-vec3 emitGlow = arcCol * emitCover + segCol * emitCoverAll;</code></pre>
+vec3 emitGlow = arcCol * gatheredCover.x + segColHue * gatheredSeg;  // + glowFix per piece</code></pre>
 
       <div class="note">
         <span class="tag">Why not one shared gate</span>
@@ -1743,7 +1744,7 @@ void main() {
           <text x="562" y="443" class="dg-t c-t">pointwise coverage at each piece's t</text>
           <text x="562" y="461" class="dg-t2">emitCover    = max(arcCoverContinuous(t,..) * z);</text>
           <text x="562" y="476" class="dg-t2">segCoverPt   = sum(boost * exp(-e*e));</text>
-          <text x="562" y="491" class="dg-t2">emitCoverAll = max(emitCover, min(segCoverPt, 1.0));</text>
+          <text x="562" y="491" class="dg-t2">filament     = max over pieces(core * cover);</text>
           <text x="562" y="506" class="dg-t2">filamentGate = max(smoothstep(.5,1.,segCoverPt), emitCover);</text>
 
           <!-- converge -->

@@ -174,7 +174,8 @@ a matrix, conventionally called the **MVP** (model-view-projection). For 2D
 work like this, the MVP is just "translate, then map a pixel rectangle onto
 -1..+1", built with `glm::translate` and `glm::ortho`.
 
-The neon uses four spaces (see also [`coordinate-system.md`](coordinate-system.md)):
+The neon uses four spaces (see also [`implementation.md`](implementation.md),
+section 11, which adds why the viewport origin must be (0, 0)):
 
 ```
  App coords                 GL window coords          Rect-local            NDC
@@ -2146,8 +2147,8 @@ The stage numbers follow the source order.
 | 20 | **Compose** | The formula of Part 3.6. |
 | 21 | **Quad-edge fade** | `result *= 1 - smoothstep(-(uQuadMargin - fadeStart), 0, dQuad)`, with `dQuad` the per-axis distance to the quad's edge: light fades to 0 before the quad ends, so its rectangle never shows. Starts no earlier than the outside cutoff's end. |
 | 22 | **Grade** | Hue-preserving Reinhard on the peak channel (`TONE_MAP_SHOULDER` 0.6), then `pow(result, 0.85)` (Part 1.9). |
-| 23 | **One-sided cut mask** | Direct path and ring only: `INSIDE` `1 - smoothstep(sideBack - sideSoft, sideBack, d)`; `OUTSIDE` `smoothstep(-sideBack, sideSoft - sideBack, d)`. After the grade, because it is coverage. |
-| 24 | **Cutoff masks** | Direct path and ring only: `smoothstep(-inHalf, inHalf, dIn) * (1 - smoothstep(-outHalf, outHalf, dOut))`. |
+| 23 | **One-sided cut mask** | The ring only (`uBlitOwnsCut` 0; for pass 1b the blit applies it, Part 7.5): `INSIDE` `1 - smoothstep(sideBack - sideSoft, sideBack, d)`; `OUTSIDE` `smoothstep(-sideBack, sideSoft - sideBack, d)`. After the grade, because it is coverage. |
+| 24 | **Cutoff masks** | The ring only, likewise: `smoothstep(-inHalf, inHalf, dIn) * (1 - smoothstep(-outHalf, outHalf, dOut))`. |
 | 25 | **Output** | `fragColor = vec4(result, clamp(max(r, g, b), 0, 1))`, premultiplied. |
 
 Things the source comments flag as load-bearing:
