@@ -960,6 +960,13 @@ namespace EdgeLighting
             Framebuffer buffer{"NeonRenderer.RingField"};
             RingFieldLayout layout{}; ///< The packing it was baked with.
 
+            /// The layout's box as one quad, FULL-RES rect-local px, a pixel
+            /// past it each side: what pass 1r draws for every strip, so each
+            /// strip's viewport alone decides which texels are baked - all of
+            /// them. Uploaded with each bake; see @ref renderRingFieldPass for
+            /// why not the ring's own mesh.
+            Mesh box{"NeonRenderer.RingFieldBox"};
+
             /// When @c mRingField.buffer is baked and read - see @ref LazyBake.
             LazyBake schedule;
         } RingField;
@@ -1417,7 +1424,9 @@ namespace EdgeLighting
         /// as @c mRingField.layout - the ring's shading uploaded exactly as
         /// @ref renderRingPass uploads it, with the hue at 1, drawn once per
         /// strip through that strip's atlas rows as the viewport and a
-        /// projection onto them (transposed for the two side strips). Reads
+        /// projection onto them (transposed for the two side strips) - the
+        /// box quad @c mRingField.box, not the ring, so every texel of every
+        /// strip is baked. Reads
         /// the gather through the full-res map @p gatherUV. Leaves the buffer
         /// bound; @ref Render restores the target.
         /// @pre Blending disabled; pass 1a has run or its buffer is current.

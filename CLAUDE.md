@@ -197,12 +197,17 @@ Five renderers, all under `lib/include/renderer/`, all registered by the demo in
   pixel's position alone, which the composite recomputes (I53 - before it a
   one-sided glow or a cutoff, the production band's config, kept the ring
   shading directly every frame). So the bake
-  program draws the ring's own geometry, with the ring's own uniforms
-  (`mRingLimits.quadMargin`, `mRingLimits.cornerSkip`), into `mRingField.buffer` - full
+  program shades the ring's pixels with the ring's own uniforms
+  (`mRingLimits.quadMargin`, `mRingLimits.cornerSkip`) into `mRingField.buffer` - full
   resolution but PACKED (`RingFieldLayout`, `computeRingFieldLayout`): the ring
   is an axis-aligned annulus, so its pixels are four strips, stored bottom, top,
   then the two side strips transposed, every texel on a viewport pixel; one
-  draw per strip, each through its atlas rows as the viewport. The composite
+  draw per strip, each through its atlas rows as the viewport. Each draw is
+  the layout's whole BOX (`mRingField.box`), which the viewport clips to the
+  strip - NOT the ring mesh: a transposed strip turns a left edge into a
+  bottom one, which the fill rule hands the other way, so a ring edge that
+  snapped onto a pixel centre left that texel unbaked and the composite drew a
+  1 px dark seam between the ring and the blit (V24). The composite
   (`neon-field.frag` with `NEON_FIELD_RING`, `mRingFieldCompositeShader` - its
   own object, since it draws the caller's framebuffer blended in the frame
   pass 1c draws the reduced buffer unblended) finds its strip from the box

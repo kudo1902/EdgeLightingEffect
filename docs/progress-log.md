@@ -5,6 +5,27 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-09 (later) - V24: the gap between the edge ring and the blit
+
+On top of `063603f`, uncommitted. Measured on an AMD Radeon Pro 5300M. V24 in
+[`review-findings.md`](review-findings.md) has the detail.
+
+- **Reported.** A gap between the ring band and the lit area outside it.
+- **Cause.** Not the partition (`partition` passes) but the ring's field: its
+  bake drew the ring mesh into the TRANSPOSED side strips, where a ring edge
+  snapped onto a pixel centre goes to the other side of the fill rule, so the
+  composite drew pixels whose texel was never baked - a 1 px dark seam the
+  height of a side strip, on ~1% of configs, at every scale.
+- **What changed.** `renderRingFieldPass` draws the layout's whole box per
+  strip (`mRingField.box`), clipped by the strip's viewport, so every texel is
+  baked whatever the rasteriser does with an edge.
+- **Measured.** Direct-vs-field pixels over 8 levels 303 -> 2 on 400 random
+  configs (the 2 are an unrelated corner pixel, unchanged); 1-level flips
+  0.87% -> 0.91% of lit pixels; directly shaded frames byte-identical; `check`
+  and `partition` pass; the bake frame no slower.
+- **Open.** Two single pixels at a nearly square corner differ 10-17 levels
+  between the ring shaded directly and its field, before and after this change.
+
 ## 2026-10-09 - The references follow V23 and R7
 
 Uncommitted, on top of the two entries below. Apple M2 Pro.

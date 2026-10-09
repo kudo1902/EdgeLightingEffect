@@ -4857,6 +4857,53 @@ is noise. The fade is computed inside the branch that already skips a straight
 past `reach` - the same factors computed as one vec4 before it cost twice as
 much (0.945x at 1.0, 0.953x at 0.5).
 
+## Twenty-seventh pass (the ring / blit gap)
+
+### V24. A dark one-pixel seam between the edge ring and the blit - FIXED
+
+Reported: "the ring band and the lit area are not fully cover, it caused a gap
+between these areas". Reproduced on an AMD Radeon Pro 5300M: a black line one
+pixel wide on the ring's outermost column, the height of a side strip (97 px),
+up to 223 levels below its neighbours, on still frames at every scale
+including 1.0. It is not in the geometry - `partition` passes, and the ring
+mesh does draw the pixel - but in the ring's FIELD (I52): frame 1 after a
+config change shades the ring directly and is clean; frame 2 composites the
+field and has the seam.
+
+**Mechanism.** Pass 1r baked the field by drawing the ring's own mesh into
+each strip, and the side strips are drawn TRANSPOSED. When a vertical ring
+edge snaps (at the rasteriser's 1/256 px) onto a pixel centre, the fill rule
+hands that centre to one side. Transposing turns the edge from a left edge in
+the composite into a bottom edge in the bake, and the rule hands those the
+other way: the composite draws the pixel, the bake never writes its texel, and
+the cleared 0 composites to nothing - neither the ring nor the blit lights the
+pixel. The probe that settled it: one failing config (535.5 x 116.5 rect,
+`GlowSide::OUTSIDE`, scale 1.0, the ring's left edge 0.0006 px right of a
+pixel centre) nudged in 0.0005 px steps shows the seam for exactly the edge
+positions (79.5000, 79.5036] and nowhere else - one snap cell. On random
+configs it hit about 1 in 100 (2 of 100 and 4 of 400); the GPU decides, and an
+Intel UHD 630 run showed none.
+
+**Fix.** `renderRingFieldPass` draws the layout's whole box (`mRingField.box`,
+a pixel past it each side) for each strip instead of the ring, so the strip's
+viewport alone decides which texels are baked - every texel of every strip -
+and no edge of the draw lies near a texel centre. The box costs the layout's
+slack - one to two pixels each side of the band - on a bake that runs once a
+config settles.
+
+**Verified** on the AMD 5300M. The nudge sweep: 0 seam pixels at all 21
+positions (was 97 px at 8). 400 random configs (seed 5), direct against field:
+pixels more than 8 levels apart 303 -> 2, and those 2 are a separate,
+pre-existing difference - one pixel each at the corner of a nearly square
+corner (radius 1.2 and 0.09), 17 and 10 levels, identical before and after.
+Pixels 1 level apart 694,738 -> 723,288 of 79.7 M lit (0.87% -> 0.91%), the
+interpolation noise any change to a neon pass's geometry brings: `vPos` comes
+from other vertices. Frames shaded directly are byte-identical to the old
+build. `check` and `partition` (seeds 1 and 7) pass. The frame that bakes the
+field (GPU timer, 7 scenes at 1080p, three interleaved rounds) is no slower
+anywhere; `time --mode intensity` geometric means 0.96-1.03 per scale against
+the old build, with same-build rounds spreading 1.11x.
+
 ---
 
 ## What is left
@@ -4869,7 +4916,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, and the twenty-sixth V23 and R7. Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, and the twenty-seventh V24. Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -4924,6 +4971,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I56 | changed | an intensity animation invalidated both fields every frame; an intensity-only change now keeps them, scaled by I / I0 while it moves below the bake, re-baked above it and exactly when it stops - intensity-pulse frames 2.31x at 0.5, 1.60x at 0.25 (M2); held frames byte-identical, moving ones within 2 levels on the default look, 6 on a 1.5 bloom over a 0.4-1.0 pulse (owner-accepted) |
 | I57 | changed | the direct path at 1.0 removed: 1.0 takes the scaled path with a full-size buffer, `uBlitOwnsCut` replaces the scale test, `resolutionScale` defaults to 0.5 - every frame below 1.0 byte-identical and no slower; 1.0 within 1 level, 1.67x on still frames, 0.88x hue and 0.62x intensity there (M2), up to 8.3 MB more at full screen |
 | V23 | fixed | the bloom's pedestal ended it on a crease at `reach`, so a large rect's centre showed a hard-edged dark rectangle and the outer rim bunched its last levels; each piece's bloom now fades out by its own distance from 0.5 `reach`, both sides - at most 6 levels in the outer half of the tail, arc-wipe frames 0.97x, still frames unchanged. the page's images regenerated with R7 |
+| V24 | fixed | the ring's field baked the ring mesh into transposed side strips, where the fill rule hands an edge on a pixel centre the other way, so ~1% of configs composited an unbaked texel - a 1 px dark seam between the ring and the blit; the bake now draws each strip's whole box, direct-vs-field pixels over 8 levels 303 -> 2 on 400 configs |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

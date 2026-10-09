@@ -1970,6 +1970,7 @@ namespace EdgeLighting
         mRingMesh.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
         mBlitMesh.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
         mGatherMesh.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+        mRingField.box.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
 
         // The atlas bakes and the glow quad's interior hole read the merged
         // transient+preserved view, which OnConfigChanged normally keeps
@@ -4139,11 +4140,35 @@ namespace EdgeLighting
                            config);
         bindGatherBuffer(mFieldBakeShader, gatherUV);
 
-        // One draw of the ring per strip: the strip's atlas rows as the
-        // viewport, and a projection taking its rect-local px onto them at
-        // one texel per px - translated to the strip's corner and, for the
-        // two side strips, transposed (x and y swapped), so each runs along
-        // the atlas. The viewport clips every other strip's triangles away.
+        // One draw per strip: the strip's atlas rows as the viewport, and a
+        // projection taking its rect-local px onto them at one texel per px -
+        // translated to the strip's corner and, for the two side strips,
+        // transposed (x and y swapped), so each runs along the atlas.
+        //
+        // What is drawn is the whole BOX, a pixel past it each side, not the
+        // ring: the viewport clips it to the strip, so every texel of every
+        // strip is baked and no edge of the draw passes near a texel centre.
+        // Drawing the ring's own mesh left the composite reading texels the
+        // bake never wrote. A ring edge that snaps onto a pixel centre goes
+        // to one side of it by the rasteriser's fill rule, and transposing a
+        // strip turns a left edge into a bottom one, which that rule hands
+        // the other way: the composite drew the pixel, the bake skipped its
+        // texel, and the cleared 0 composited to nothing - a dark seam a pixel
+        // wide between the ring and the blit, the height of a side strip, on
+        // about 1% of configs on an AMD Radeon Pro 5300M (V24). The box costs
+        // the layout's slack - one to two pixels each side of the band - on a
+        // bake that runs only once a config settles; the frame that bakes
+        // measured no slower.
+        const glm::vec2 boxLo = layout.origin - glm::vec2(1.0f);
+        const glm::vec2 boxHi = layout.origin + glm::vec2(layout.size) + glm::vec2(1.0f);
+        // clang-format off
+        const float boxVerts[] = {
+            boxLo.x, boxHi.y,  boxLo.x, boxLo.y,  boxHi.x, boxLo.y,
+            boxLo.x, boxHi.y,  boxHi.x, boxLo.y,  boxHi.x, boxHi.y,
+        };
+        // clang-format on
+        mRingField.box.Upload(boxVerts, sizeof(boxVerts) / sizeof(float));
+
         glm::mat4 transpose(0.0f);
         transpose[0][1] = 1.0f;
         transpose[1][0] = 1.0f;
@@ -4159,7 +4184,7 @@ namespace EdgeLighting
             mFieldBakeShader.SetUniform(
                 "uMVP", glm::ortho(0.0f, static_cast<float>(width), 0.0f, static_cast<float>(height), -1.0f, 1.0f) *
                             toStrip);
-            mRingMesh.Draw();
+            mRingField.box.Draw();
         };
         const glm::vec2 o = layout.origin;
         const glm::ivec4 hole = layout.hole;
