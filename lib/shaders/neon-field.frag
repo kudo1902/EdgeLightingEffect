@@ -148,7 +148,7 @@ void main() {
     {
         vec2  halfSize = uRectSize * 0.5;
         float d        = sdRoundBox(vPos, halfSize, uCornerRadius);
-        float sideAA   = max(fwidth(d), 1e-6);
+        float sideAA   = max(sdRoundBoxFwidth(vPos, halfSize, uCornerRadius), 1e-6);
         float sideSoft = max(uGlowSideSoftness, sideAA);
         float sideBack = 0.5 * sideAA;
         float inHalf   = 0.5 * max(uInsideCutoffSoftness,  sideAA);

@@ -42,7 +42,8 @@ precision highp float;
 // coverage-1 paths below are therefore live code on that route, not dead
 // arms - keep them correct.
 //
-// The d == 0 rect edge gets exact 1 px box-filter coverage from fwidth(d);
+// The d == 0 rect edge gets exact 1 px box-filter coverage from its pixel
+// width (sdRoundBoxFwidth - fwidth(d) without its doubling on a sharp corner);
 // each cutoff boundary gets its own side's feather (uInsideCutoffSoftness /
 // uOutsideCutoffSoftness). See main().
 
@@ -74,7 +75,7 @@ void main() {
     // bearing, and each cost a separate measurement to learn.
     //
     // NO EARLY RETURN. The NONE and ALL guards used to sit here as
-    // `fragColor = ...; return;`, ahead of the fwidth(d) below. They read as
+    // `fragColor = ...; return;`, ahead of the derivative below. They read as
     // free - they branch on a uniform, so every lane in the draw takes the
     // same side - but the compiler does not get to assume that, and a
     // derivative downstream of a return it cannot prove uniform lands the
@@ -131,7 +132,7 @@ void main() {
     // Halving fixed both: each ramp spans exactly its width, so a pixel wholly
     // inside the band is fully covered and a softness of S px feathers over
     // S px.
-    float aa      = max(fwidth(d), 1e-6);
+    float aa      = max(sdRoundBoxFwidth(localPos, halfSize, uCornerRadius), 1e-6);
     float inHalf  = 0.5 * max(uInsideCutoffSoftness, aa);
     float outHalf = 0.5 * max(uOutsideCutoffSoftness, aa);
 
@@ -202,7 +203,7 @@ void main() {
     // returns. Being explicit is free; assuming was not.
     //
     // Note what did NOT move: `aa`, `inHalf`, `outHalf`, `edgeIn` and
-    // `edgeOut` all stay above the chain, because `aa` comes from fwidth(d).
+    // `edgeOut` all stay above the chain, because `aa` comes from a derivative.
     // A derivative must not end up downstream of control flow the compiler
     // cannot prove uniform - that IS the 35% mistake documented at the top.
     // Only branch-free ALU moves down here; the derivative stays put.

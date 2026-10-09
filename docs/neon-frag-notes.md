@@ -328,6 +328,19 @@ derivative in this shader - keep it at the top if a second one is ever
 needed.
 ```
 
+**Since V26 (2026-10-09) the width is not `fwidth(d)`** but
+`sdRoundBoxFwidth` (`neon-sdf.glsl`): the SDF's analytic gradient against the
+position's own derivatives, the same value along an edge. `fwidth(d)`
+differences `d` across the 2x2 quad, and on a sharp corner's vertex pixel the
+quad can hold both outside neighbours, so `d` steps a pixel along each axis and
+`fwidth` reads 2: the one-sided cut's ramp doubled there and the corner pixel
+came out at 0.84 of the other corners' (207 against 245 on a white line), at
+whichever corner the quad's parity landed - one corner of a rect, or none,
+depending on where it sat. The blit, the ring field's composite and the opaque
+fill took the same width and had the same pixel (the fill's at 0.75), and
+along the inside diagonal of an inside cutoff `fwidth` read 0 or 2 the same
+way.
+
 ## sideSoft: the cut's antialiasing floor
 
 `neon.frag` line 694, before the move.

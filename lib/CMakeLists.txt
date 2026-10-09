@@ -101,9 +101,10 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-common.glsl" NEON_COMMON)
 # its own either.
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-pieces.glsl" NEON_PIECES)
 
-# The rounded box's signed distance and the cutoff band's boundaries, injected
-# via @NEON_SDF@ into neon.frag, neon-blit.frag and black-rect.frag - the three
-# programs that draw the glow's edge and have to agree on it to the pixel - and
+# The rounded box's signed distance, its antialiasing width and the cutoff
+# band's boundaries, injected via @NEON_SDF@ into neon.frag, neon-blit.frag,
+# neon-field.frag and black-rect.frag - the four programs that draw the glow's
+# edge and have to agree on it to the pixel - and
 # the tone map, via @NEON_GRADE@ into neon.frag and neon-field.frag, after
 # @NEON_TUNING@. One copy each; neither is a shader on its own.
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-sdf.glsl" NEON_SDF)

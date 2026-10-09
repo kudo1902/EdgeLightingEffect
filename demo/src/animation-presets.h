@@ -249,8 +249,8 @@ namespace EdgeLightingDemo
             // head and tail move at the same speed throughout).
             return std::make_shared<ArcWipe>(
                 /*duration=*/3.0f,
-                /*startPos=*/0.1f,
-                /*endPos=*/0.1f,
+                /*startPos=*/0.0f,
+                /*endPos=*/0.0f,
                 /*maxLength=*/0.5f,
                 EdgeLighting::EasingFunction::Linear);
         }

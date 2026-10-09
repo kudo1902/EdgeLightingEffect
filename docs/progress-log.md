@@ -5,6 +5,28 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-09 (late night) - V26: one corner of a one-sided glow
+
+On top of V25, uncommitted. AMD Radeon Pro 5300M. V26 in
+[`review-findings.md`](review-findings.md) has the detail.
+
+- **Reported.** With `GlowSide::INSIDE`, the top-left corner was not sharp
+  while the other three were - for some rects, not all.
+- **Cause.** Every edge ramp was sized by `fwidth(d)`. On a sharp corner's
+  vertex pixel the 2x2 quad can hold both outside neighbours, so `fwidth` reads
+  2 and the ramp doubles: that one pixel came out at 0.84 (the opaque fill's
+  at 0.75). The quad's parity decides which corners, so it moved with the
+  rect's position.
+- **What changed.** `sdRoundBoxFwidth` in `neon-sdf.glsl` - the SDF's analytic
+  gradient against the position's derivatives - in `neon.frag`,
+  `neon-field.frag`, `neon-blit.frag` and `black-rect.frag`.
+- **Measured.** Random rects' four corners agree within the dither (up to 40
+  levels before; the fill 64 -> 0) for an inside glow, an outside glow, an
+  inside cutoff at softness 0 and the fill, at 0.25-1.0. Two-sided scenes
+  byte-identical; `check` identical, `partition` passes; five guide figures
+  move by 1 level. Cost +0.005-0.008 ms on still frames of the one-sided
+  scenes at 0.5 (`glow_inside` 0.090 -> 0.098), nothing measurable elsewhere.
+
 ## 2026-10-09 (night) - V25: an arc's end on a sharp corner
 
 On top of `fb6f06f`, uncommitted. AMD Radeon Pro 5300M. V25 in

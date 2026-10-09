@@ -30,7 +30,7 @@ precision highp float;
 // No placement inside the buffer fixes that, because the buffer does not
 // contain a destination-resolution edge to place. This pass does: it runs
 // full-res on the caller's framebuffer, exactly like black-rect.frag, so
-// fwidth(d) here is one DESTINATION pixel and the cut lands where the direct
+// its pixel width here (sdRoundBoxFwidth) is one DESTINATION pixel and the cut lands where the direct
 // path puts it. Measured on the same scene after the move, first lit pixel
 // against the direct path's 239: scale 0.5 gives 237, scale 0.25 gives 230,
 // and the dark side is 0 at both.
@@ -139,7 +139,7 @@ void main() {
         vec2  p        = gl_FragCoord.xy - uRectCenter;
         vec2  halfSize = uRectSize * 0.5;
         float d        = sdRoundBox(p, halfSize, uCornerRadius);
-        float aa       = max(fwidth(d), 1e-6);
+        float aa       = max(sdRoundBoxFwidth(p, halfSize, uCornerRadius), 1e-6);
         float soft     = max(uGlowSideSoftness, aa);
         float back     = 0.5 * aa;
 

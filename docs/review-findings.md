@@ -5140,6 +5140,89 @@ corner within reach, and one `filamentCover` almost everywhere.
 
 ---
 
+## Thirtieth pass (one corner of an inside glow)
+
+### V26. One sharp corner of a one-sided glow is softer than the other three, depending on where the rect sits - FIXED
+
+**Reported**: "the top-left corner is not sharp with glow inside mode, while
+other corners are sharp. With some geometry rect it happens, not all cases."
+
+**Reproduced** on an AMD Radeon Pro 5300M with a probe that mirrors each
+corner of an integer-placed rect into the top-left's orientation and compares
+the four (`GlowSide::INSIDE`, `cornerRadius` 0, one white stop, scale 0.5,
+random rects): on 30 rects the corners disagreed by up to 40 levels, and in
+every case it was ONE pixel - the corner's vertex pixel. On 311 x 169 at
+(119, 789) the top-left's read 207 and the other three 245-246; on other rects
+it was another corner, two of them, or none.
+
+| before | after |
+| ------ | ----- |
+| ![](images/review-findings/inside-corner-pixel.png) | ![](images/review-findings/inside-corner-pixel-fixed.png) |
+
+The four corners of that rect, 20 px round each vertex, 14x, laid out as they
+sit on screen: before, the top-left vertex pixel is visibly darker, which reads
+as a softened corner on a thin line, and the doubled ramp leaks a faint pixel
+just outside some corners; after, the four are the same.
+
+**Mechanism.** The one-sided cut's antialiasing width was `fwidth(d)` of the
+rounded box's distance - `|dFdx(d)| + |dFdy(d)|`, differenced across the 2x2
+quad. On a straight edge that is 1. On a sharp corner's vertex pixel the quad
+can hold BOTH neighbours that lie outside the rect - the one across the
+vertical edge and the one across the horizontal - and then `d` steps from
+-0.5 to +0.5 along each axis: `fwidth` reads 2, the ramp
+`1 - smoothstep(back - soft, back, d)` doubles, and the vertex pixel, wholly
+inside the rect, is cut to 0.84. The quad's parity - whether the vertex
+column and row are odd or even in the framebuffer - decides which corner, so
+a rect shows it at none, one or two corners, and moving it by a pixel moves
+it. The same width sized four more edges, with the same pixel wrong:
+
+- the ring field's composite (`neon-field.frag`), the cut on settled frames;
+- `neon-blit.frag`'s cut and cutoffs below 1.0;
+- the opaque fill's edge coverage `clamp(0.5 - d / aa, 0, 1)` (`black-rect.frag`):
+  0.75 on the vertex pixel - a quarter of the background through it;
+- an inside cutoff at softness 0, whose square inner corner sits on the inside
+  diagonal, where `fwidth` reads 0 or 2 by the same parity.
+
+**Fix.** `sdRoundBoxFwidth` in `neon-sdf.glsl`, shared by the four shaders:
+the distance's analytic gradient - per axis inside, radial in a corner's
+exterior - weighted by each axis's pixel, `fwidth(p)`. Along an edge it is
+`fwidth(d)`'s value; a pixel takes the gradient of the edge it is nearest, so
+it is 1 on every corner pixel. Still a derivative of the position, so a host
+drawing at another pixel density gets its pixel; the per-axis form is exact
+because every caller's position is the rect's frame through an unrotated
+orthographic transform. It shares `sdRoundBox`'s `length`: a first version
+with its own `normalize` and a general gradient-times-Jacobian cost about
+twice as much on the one-sided scenes' still frames.
+
+**Measured**, 30 random rects per row, corners compared in pairs (max
+difference over the six pairs; before / after):
+
+| look | max | pairs over 4 levels |
+| ---- | --- | ------------------- |
+| inside glow, default look, scale 0.5 / 1.0 / 0.25 | 40 -> 2 | 207 -> 0 |
+| inside glow, 1 px soft line, 1920 x 1080 and 3840 x 2160 | 38 -> 2 | 184 -> 0 |
+| inside glow, `glowRadius` 20, bloom 0.6 | 40 -> 2 | 187 -> 0 |
+| outside glow, scale 0.5 / 0.25 | 39 -> 2 | 220 -> 0 |
+| both sides, inside cutoff 12 px at softness 0, scale 0.5 / 1.0 | 29 -> 2 | 198 -> 0 |
+| opaque fill INSIDE alone (`opaqueOnly`) | 64 -> 0 | 220 -> 0 |
+
+What is left is the dither. Two-sided scenes without cutoffs are byte-identical
+(they never read the width): the fifteen V25 probe scenes, `check` (identical
+to the build before, every figure), and 64 of the 69 guide figures; the other
+five - the one-sided and fill figures - move 1 level on 5-158 pixels, where a
+rounded corner's finite difference and its derivative part by a hair.
+`partition` passes, seeds 1 and 7.
+
+**Cost.** `neon-scale-check time` at 1920 x 1080, medians of five rounds
+with the build order rotated: on still frames of the one-sided scenes at 0.5,
+`glow_inside` 0.090 -> 0.098 ms and `bounded_band` 0.043 -> 0.048 ms - the
+blit and the ring field's composite pay for the gradient on every pixel of
+the mask branch; at 1.0, `card_outside` and `default` inside the noise. Over
+all twelve scenes in three modes (three rounds), geometric means 1.00-1.04 on
+still, 1.01 on arc-wipe and 1.00 on hue frames.
+
+---
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
@@ -5150,7 +5233,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, and the twenty-ninth V25. Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, and the thirtieth V26. Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus V9 and I12's
 remainder from the third, I13 from the fourth, and I18 from the sixth:
@@ -5211,6 +5294,7 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I61 | changed | each bell was integrated, and its moves tracked, out to 5 sigma; 4.24 now (`GLOW_COVER_BELL_REACH`), at most 1 level on up to 1.6% of lit pixels, segment-table bake 0.75 -> 0.58 timer units; the plan's 8-node rule was measured (3 levels) and not taken |
 | I62 | changed | pass 1b and its field bake computed the filament the edge ring always redraws; skipped there (`uBlitOwnsCut`), every final frame byte-identical, the intermediate-buffer figures without the line |
 | V25 | fixed | the filament read one coverage at the fragment's nearest perimeter point, which jumps across a corner's diagonal, so an arc ending on a sharp corner (an arc wipe from 0) was cut along it on the inside half only; the filament is now a max over the outline's pieces, each at its own distance and its own nearest point - uniformly lit rings byte-identical, `check` unchanged |
+| V26 | fixed | every edge ramp (the one-sided cut, the cutoffs' floor, the blit's, the ring field's, the opaque fill's coverage) was sized by `fwidth(d)`, which reads 2 on a sharp corner's vertex pixel when the quad straddles both edges - that pixel came out at 0.84 (the fill's 0.75) on whichever corners the quad parity hit; `sdRoundBoxFwidth` takes the analytic gradient instead - corners agree within the dither, two-sided scenes byte-identical |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

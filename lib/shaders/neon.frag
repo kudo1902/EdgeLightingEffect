@@ -640,13 +640,14 @@ void main() {
     // dirty gate.
     //
     // The one-sided cut's antialiasing width: one DESTINATION pixel in this
-    // shader's units - fwidth(d) is one buffer pixel for an SDF, and
-    // uResolutionScale converts it to the pixel the opaque fill (always
-    // full-res) registers with. Computed HERE, above every discard, because a
-    // derivative downstream of non-uniform control flow is undefined. This is
-    // the only derivative in this shader - keep it at the top if a second one
-    // is ever needed.
-    float sideAA = max(fwidth(d) * uResolutionScale, 1e-6);
+    // shader's units - sdRoundBoxFwidth is one buffer pixel for the SDF (what
+    // fwidth(d) is along an edge, without its doubling on a sharp corner's
+    // vertex pixel - V26), and uResolutionScale converts it to the pixel the
+    // opaque fill (always full-res) registers with. Computed HERE, above every
+    // discard, because a derivative downstream of non-uniform control flow is
+    // undefined. This is the only derivative in this shader - keep it at the
+    // top if a second one is ever needed.
+    float sideAA = max(sdRoundBoxFwidth(vPos, halfSize, uCornerRadius) * uResolutionScale, 1e-6);
 
     // TOTAL feather width of the one-sided cut, floored at that pixel - the
     // floor is what antialiases the cut, and only because the ramp is applied
@@ -660,7 +661,7 @@ void main() {
     //
     // THE RING ONLY. A buffer texel lit at its centre is smeared over 1/scale
     // destination pixels both ways by the blit, so for pass 1b neon-blit.frag
-    // applies the cut from ITS fwidth, and what is left here is the CULL,
+    // applies the cut from ITS pixel width, and what is left here is the CULL,
     // BLIT_SIDE_GUARD_PX past the cut so the blit has lit texels to rebuild
     // the boundary from (neon-tuning.h).
     bool  blitOwnsCut = (uBlitOwnsCut != 0);
@@ -1211,7 +1212,7 @@ void main() {
     // portably.
     //
     // THE RING ONLY: for pass 1b neon-blit.frag applies this exact expression
-    // against ITS own fwidth, and the ring field's composite (neon-field.frag)
+    // against ITS own pixel width, and the ring field's composite (neon-field.frag)
     // applies it for the ring's field. Keep the three in step - one edge.
     if (!blitOwnsCut)
     {
