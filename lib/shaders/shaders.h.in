@@ -59,6 +59,13 @@ namespace EdgeLighting
 @NEON_GLOW_COVER_FRAG_CONTENT@
 )shadersrc";
 
+                static const char *const NEON_GLOW_COVER_FILL_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
+@NEON_TUNING@
+#define NEON_GLOW_COVER_FILL
+@NEON_PIECES@
+@NEON_GLOW_COVER_FILL_FRAG_CONTENT@
+)shadersrc";
+
                 static const char *const NEON_BLIT_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
 @NEON_TUNING@
 @NEON_GRADE@

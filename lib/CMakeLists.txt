@@ -44,6 +44,7 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-gather.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-emission.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-glow-cover.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-glow-cover-fill.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-blit.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-field.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/blit.frag"
@@ -68,6 +69,7 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.frag" NEON_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-gather.frag" NEON_GATHER_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-emission.frag" NEON_EMISSION_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-glow-cover.frag" NEON_GLOW_COVER_FRAG_CONTENT)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-glow-cover-fill.frag" NEON_GLOW_COVER_FILL_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-blit.frag" NEON_BLIT_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-field.frag" NEON_FIELD_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/blit.frag" BLIT_FRAG_CONTENT)
@@ -81,7 +83,7 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight.vert" SPOTLIGHT_VERT_CO
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight.frag" SPOTLIGHT_FRAG_CONTENT)
 
 # Shared neon tuning #defines, injected into neon.frag, neon-gather.frag,
-# neon-emission.frag, neon-glow-cover.frag, neon-blit.frag and neon-field.frag via @NEON_TUNING@
+# neon-emission.frag, neon-glow-cover.frag, neon-glow-cover-fill.frag, neon-blit.frag and neon-field.frag via @NEON_TUNING@
 # in shaders.h.in (also #included by the C++ renderers).
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/neon-tuning.h" NEON_TUNING)
 
@@ -92,10 +94,11 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/neon-tuning.h" NEON_TUNI
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-common.glsl" NEON_COMMON)
 
 # The corner arcs' development onto a straight line and the glow coverage
-# table's layout, injected into neon.frag and neon-glow-cover.frag via
-# @NEON_PIECES@ in shaders.h.in, after @NEON_TUNING@ (and in neon.frag after
-# @NEON_COMMON@): the read and the bake of that table have to agree on both to
-# the texel. Not a shader on its own either.
+# table's layout, injected into neon.frag, neon-glow-cover.frag and
+# neon-glow-cover-fill.frag via @NEON_PIECES@ in shaders.h.in, after
+# @NEON_TUNING@ (and in neon.frag after @NEON_COMMON@): the read, the bake and
+# the segment table's fill have to agree on both to the texel. Not a shader on
+# its own either.
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-pieces.glsl" NEON_PIECES)
 
 # The rounded box's signed distance and the cutoff band's boundaries, injected

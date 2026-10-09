@@ -136,6 +136,10 @@ uniform sampler2D uGlowCover;
 // corner - the same numbers the bake was given. See glowCoverInner.
 uniform vec2 uGlowCoverSplit;
 
+// The table's layout - its width, its overhangs, the columns its bands share -
+// as it was baked (neon-pieces.glsl, NeonRenderer::GlowCoverLayout).
+uniform vec4 uGlowCoverLayout;
+
 // The gather's own inputs - the sample block, uNumSamples and the emission
 // table uEmission - are neon-gather.frag's alone: this file reads the gather's
 // RESULT instead of running it, so it has no loop to feed.
@@ -482,7 +486,7 @@ void addStraightGlowFix(inout vec4 fix, int band, float x, float len, float a, f
     if (haloWeight + bloomWeight <= GLOW_PIECE_MIN) {
         return;
     }
-    addPieceGlowFix(fix, glowCoverStraightUV(band, x, len, a, kh, glowCoverInner(band, uGlowCoverSplit)),
+    addPieceGlowFix(fix, glowCoverStraightUV(band, x, len, a, kh, glowCoverInner(band, uGlowCoverSplit), uGlowCoverLayout),
                     gathered, gatheredSeg, h, b);
 }
 
@@ -494,7 +498,8 @@ void addCornerGlowFix(inout vec4 fix, vec2 signs, vec2 w, float kh, vec2 gathere
         return;
     }
     int block = glowCoverCornerBlock(signs);
-    addPieceGlowFix(fix, glowCoverCornerUV(block, w, uCornerRadius, kh, glowCoverInner(block, uGlowCoverSplit)),
+    addPieceGlowFix(fix, glowCoverCornerUV(block, w, uCornerRadius, kh, glowCoverInner(block, uGlowCoverSplit),
+                                           uGlowCoverLayout),
                     gathered, gatheredSeg, h, b);
 }
 
@@ -767,7 +772,15 @@ void main() {
     // any of the four outside the filament and it has to move out of this gate.
     // The LUT reads are explicit-LOD for the same reason: they now sit in
     // non-uniform control flow, and every LUT has a single level.
-    bool filamentLit = core > 0.0 && lineGate > 0.0;
+    //
+    // And never in a pass the blit composites (pass 1b and its field bake):
+    // the edge ring re-shades every pixel within the filament's reach, as pass
+    // 1 drew it, plus RING_GUARD_TEXELS (NeonRenderer's GetRingWidth), so the
+    // blit's bilinear footprint never reaches a texel the filament lights -
+    // the frame is the same bits without it (measured on the cover set,
+    // check's scenes and the guide's figures). Shrink that guard and this has
+    // to go.
+    bool filamentLit = !blitOwnsCut && core > 0.0 && lineGate > 0.0;
     // The fragment's own perimeter position, recovered geometrically from vPos,
     // with each arc read directly there - exact at the corners too. Skipped
     // where nothing reads it (uPerimeterUnread).

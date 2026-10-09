@@ -24,6 +24,7 @@ namespace EdgeLighting
         using NeonDetail::Annulus;
         using NeonDetail::BufferRegion;
         using NeonDetail::UVMap;
+        using NeonDetail::GlowCoverLayout;
 
         /// The size a disabled cutoff is handed to the shaders as, px. Disabled
         /// cutoffs collapse to this huge sentinel so the shader's smoothstep /
@@ -1361,26 +1362,139 @@ namespace EdgeLighting
             shader.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness * scale);
         }
 
-        static_assert(GLOW_COVER_SHARED >= 2 * GLOW_COVER_MIN_INTERIOR,
-                      "a band of the glow coverage table must leave columns for both its pieces");
+        static_assert(GLOW_COVER_MIN_WIDTH - 2 - 2 * GLOW_COVER_OVERHANG - 2 * GLOW_COVER_CORNER_OVERHANG >=
+                          2 * GLOW_COVER_MIN_INTERIOR,
+                      "the narrowest glow coverage table must leave columns for both pieces of a band");
+        static_assert(GLOW_COVER_MIN_WIDTH % GLOW_COVER_WIDTH_STEP == 0 &&
+                          GLOW_COVER_MAX_WIDTH % GLOW_COVER_WIDTH_STEP == 0,
+                      "the glow coverage table's width bounds are whole steps");
 
-        /// How many of each band's GLOW_COVER_SHARED columns go to its
+        /// The glow coverage table's layout at @p width columns, with the
+        /// tuning header's overhangs. @p width is clamped to
+        /// [GLOW_COVER_MIN_WIDTH, GLOW_COVER_MAX_WIDTH], which the
+        /// static_assert above guarantees leaves both pieces of a band their
+        /// GLOW_COVER_MIN_INTERIOR.
+        inline GlowCoverLayout MakeGlowCoverLayout(int width)
+        {
+            GlowCoverLayout layout;
+            layout.width = std::clamp(width, int(GLOW_COVER_MIN_WIDTH), int(GLOW_COVER_MAX_WIDTH));
+            layout.overhang = GLOW_COVER_OVERHANG;
+            layout.cornerOverhang = GLOW_COVER_CORNER_OVERHANG;
+            layout.minInterior = GLOW_COVER_MIN_INTERIOR;
+            return layout;
+        }
+
+        /// The columns the glow coverage table wants for @p config: the
+        /// longest band's interior at one column per S full-res px, S set by
+        /// the halo width, plus the overhangs, in whole WIDTH_STEPs between
+        /// MIN_WIDTH and MAX_WIDTH - see the formula beside
+        /// GLOW_COVER_PX_PER_COLUMN_PER_KH in neon-tuning.h.
+        ///
+        /// A function of the width, height, corner radius and glow radius
+        /// only - all four in OnConfigChanged's glowCoverShapeDirty - so a new
+        /// width always comes with a full re-bake, and costs the reallocation
+        /// and nothing more. A narrow glow on a large rect still gets the
+        /// whole MAX_WIDTH: the table's overhangs resolve distance past a
+        /// piece's end in halo widths, and V21 sized the width for exactly
+        /// that case (768 columns read 6 levels off a 1 px halo on a 4K rect).
+        inline int GetGlowCoverWidth(const Config &config)
+        {
+            const float r = GetDrawnCornerRadius(config);
+            const float straight = std::max(std::max(config.geometry.width, config.geometry.height) - 2.0f * r, 0.0f);
+            const float longest = straight + glm::half_pi<float>() * r;
+            const float kh = std::max(config.neon.glowRadius, static_cast<float>(EMISSION_MIN_WIDTH));
+            const float spacing = std::clamp(static_cast<float>(GLOW_COVER_PX_PER_COLUMN_PER_KH) * kh,
+                                             static_cast<float>(GLOW_COVER_MIN_PX_PER_COLUMN),
+                                             static_cast<float>(GLOW_COVER_MAX_PX_PER_COLUMN));
+            // In float until the clamp: a degenerate rect's L / S must not
+            // overflow an int on its way to MAX_WIDTH.
+            const float need = 2.0f + 2.0f * GLOW_COVER_OVERHANG + 2.0f * GLOW_COVER_CORNER_OVERHANG +
+                               std::ceil(longest / spacing);
+            const float step = static_cast<float>(GLOW_COVER_WIDTH_STEP);
+            const float width = std::ceil(need / step) * step;
+            return static_cast<int>(std::clamp(width, static_cast<float>(GLOW_COVER_MIN_WIDTH),
+                                               static_cast<float>(GLOW_COVER_MAX_WIDTH)));
+        }
+
+        static_assert(GLOW_COVER_SEG_MIN_WIDTH - 2 - 2 * GLOW_COVER_SEG_OVERHANG - 2 * GLOW_COVER_SEG_CORNER_OVERHANG >=
+                          2 * GLOW_COVER_MIN_INTERIOR,
+                      "the narrowest segment table must leave columns for both pieces of a band");
+        static_assert(GLOW_COVER_SEG_MIN_WIDTH % GLOW_COVER_WIDTH_STEP == 0,
+                      "the segment table's width floor is a whole step");
+
+        /// The segment table's layout at @p width columns: MakeGlowCoverLayout
+        /// with the segment overhangs, clamped to [GLOW_COVER_SEG_MIN_WIDTH,
+        /// GLOW_COVER_MAX_WIDTH].
+        inline GlowCoverLayout MakeGlowCoverSegmentLayout(int width)
+        {
+            GlowCoverLayout layout;
+            layout.width = std::clamp(width, int(GLOW_COVER_SEG_MIN_WIDTH), int(GLOW_COVER_MAX_WIDTH));
+            layout.overhang = GLOW_COVER_SEG_OVERHANG;
+            layout.cornerOverhang = GLOW_COVER_SEG_CORNER_OVERHANG;
+            layout.minInterior = GLOW_COVER_MIN_INTERIOR;
+            return layout;
+        }
+
+        /// The columns the segment table wants for @p block, the segment block
+        /// the bake reads: the longest band at one column per
+        /// 1 / GLOW_COVER_SEG_COLUMNS_PER_SIGMA of the narrowest lit bell's
+        /// standard deviation, plus the segment overhangs, in whole
+        /// WIDTH_STEPs from GLOW_COVER_SEG_MIN_WIDTH up to @p mainWidth - see
+        /// neon-tuning.h. The bell is the bake's own: exp(-(d invSigma)^2),
+        /// so its standard deviation is 1 / (sqrt(2) invSigma) of the
+        /// perimeter, read from the PACKED block (.y) so the two cannot
+        /// disagree. A lit segment with invSigma at 0 lights the whole ring
+        /// uniformly (the bake's own branch) and sets no width.
+        /// @return GLOW_COVER_SEG_MIN_WIDTH when no segment sets a width.
+        inline int GetGlowCoverSegmentWidth(const SegmentBlockData &block, const Config &config, int mainWidth)
+        {
+            float sigma = 0.0f;
+            for (int i = 0; i < block.count; ++i)
+            {
+                const glm::vec4 &seg = block.segments[i];
+                if (seg.z <= 0.0f || seg.y <= 1e-6f)
+                {
+                    continue;
+                }
+                const float s = 0.7071067811865476f / seg.y;
+                sigma = (sigma > 0.0f) ? std::min(sigma, s) : s;
+            }
+            if (sigma <= 0.0f)
+            {
+                return GLOW_COVER_SEG_MIN_WIDTH;
+            }
+            const float r = GetDrawnCornerRadius(config);
+            const float straight = std::max(std::max(config.geometry.width, config.geometry.height) - 2.0f * r, 0.0f);
+            const float longest = straight + glm::half_pi<float>() * r;
+            const float spacing = sigma * std::max(GetPerimeter(config), 1e-3f) /
+                                  static_cast<float>(GLOW_COVER_SEG_COLUMNS_PER_SIGMA);
+            const float need = 2.0f + 2.0f * GLOW_COVER_SEG_OVERHANG + 2.0f * GLOW_COVER_SEG_CORNER_OVERHANG +
+                               std::ceil(longest / std::max(spacing, 1e-3f));
+            const float step = static_cast<float>(GLOW_COVER_WIDTH_STEP);
+            const float width = std::ceil(need / step) * step;
+            return static_cast<int>(std::clamp(width, static_cast<float>(GLOW_COVER_SEG_MIN_WIDTH),
+                                               static_cast<float>(std::max(mainWidth, int(GLOW_COVER_SEG_MIN_WIDTH)))));
+        }
+
+        /// How many of each band's @p layout Shared() columns go to its
         /// straight, the rest going to its corner (neon-pieces.glsl,
         /// glowCoverInner): .x for the two vertical straights' bands, .y for
         /// the two horizontal ones'. In proportion to the straight's and the
         /// quarter arc's lengths, so every piece gets columns in proportion to
         /// its length - a circle's corners take what its straights do not
-        /// need - and each keeps GLOW_COVER_MIN_INTERIOR. Whole columns, and
+        /// need - and each keeps the layout's minInterior. Whole columns, and
         /// computed HERE once for the bake and every neon.frag program alike:
         /// the two shaders work in different units, and a split each rounded
         /// for itself could land a column apart and read the whole band from
-        /// the wrong texels. A function of the geometry alone.
-        inline glm::vec2 GetGlowCoverSplit(const Config &config)
+        /// the wrong texels. A function of the geometry and the layout alone;
+        /// the bake stores it with the table (GlowCoverTable::split), and the
+        /// reads take it from there.
+        inline glm::vec2 GetGlowCoverSplit(const Config &config, const GlowCoverLayout &layout)
         {
             const float r = GetDrawnCornerRadius(config);
             const float arc = glm::half_pi<float>() * r;
-            const float shared = float(GLOW_COVER_SHARED);
-            const float minInner = float(GLOW_COVER_MIN_INTERIOR);
+            const float shared = float(layout.Shared());
+            const float minInner = float(layout.minInterior);
             auto split = [&](float straight)
             {
                 const float total = straight + arc;
@@ -1527,7 +1641,8 @@ namespace EdgeLighting
         ///   - an arc over the whole ring (length >= 1 - 1e-6), which lights
         ///     every piece without a trapezoid;
         ///   - a segment whose bell reaches round the whole ring (the bake's
-        ///     reach, min(5 / (sqrt(2) invSigma), 0.5), at its cap of 0.5).
+        ///     reach, min(GLOW_COVER_BELL_REACH / invSigma, 0.5), at its cap
+        ///     of 0.5).
         /// The supports are the bake's own: an arc's trapezoid lies inside
         /// [start - tail feather, start + length + head feather], a segment's
         /// bell is cut at position +/- reach. An arc that only MOVED - its
@@ -1692,7 +1807,7 @@ namespace EdgeLighting
                 {
                     return GLOW_COVER_ALL_PIECES;
                 }
-                const float reach = std::min(5.0f * 0.7071067811865476f / seg.y, 0.5f);
+                const float reach = std::min(static_cast<float>(GLOW_COVER_BELL_REACH) / seg.y, 0.5f);
                 if (reach >= 0.5f)
                 {
                     return GLOW_COVER_ALL_PIECES;
@@ -2019,6 +2134,7 @@ namespace EdgeLighting
                 // A fresh allocation sets every piece dirty, so the table that
                 // replaces this one is baked whole on the frame it is next read.
                 mGlowCover.buffer.Release();
+                mGlowCover.segBuffer.Release();
                 mGlowCover.unreadSeconds = 0.0f;
             }
         }
@@ -2104,7 +2220,8 @@ namespace EdgeLighting
         // that reads the table. The gather is its own pass at every scale.
         bool glowReady = ensureGlowPrograms() &&
                          (IsGlowCoverUnread(mEffectiveSegments, config) ||
-                          (ensureGlowCoverProgram() && ensureGlowCoverBuffer(!mEffectiveSegments.empty())));
+                          (ensureGlowCoverProgram() && ensureGlowCoverFillProgram() &&
+                           ensureGlowCoverBuffer(!mEffectiveSegments.empty())));
 
         // The render target this renderer was handed - framebuffer AND
         // viewport, saved as a pair because the offscreen phase has to put both
@@ -2590,6 +2707,24 @@ namespace EdgeLighting
                     GetGlowCoverDirtySegmentPieces(oldSegmentBlock, PackSegmentBlock(mEffectiveSegments), config);
             }
         }
+        // The width the table wants for this config, applied by
+        // ensureGlowCoverBuffer on the next frame that reads it (GL calls are
+        // Render's). Every input is in glowCoverShapeDirty, so a new width
+        // only ever comes with every piece already dirty; it is computed
+        // whatever that says anyway, since a host whose first config matches
+        // the defaults it is compared against never sets that flag.
+        mGlowCover.wantedWidth = GetGlowCoverWidth(config);
+        // And the segments': a table of their own at the width their
+        // narrowest bell wants, or none - no segments, or segments so short
+        // their table would be nearly the main one's width, where the copy
+        // saves nothing. With a margin on the way back out, so a segment
+        // whose length swings round the threshold does not flip the mode
+        // (each flip re-bakes every segment piece) every frame.
+        mGlowCover.segWantedWidth =
+            GetGlowCoverSegmentWidth(PackSegmentBlock(mEffectiveSegments), config, mGlowCover.wantedWidth);
+        const float directShare = static_cast<float>(GLOW_COVER_SEG_DIRECT_SHARE) * (mGlowCover.segDirect ? 1.0f : 1.2f);
+        mGlowCover.segWantedDirect = mGlowCover.fillUnavailable || mEffectiveSegments.empty() ||
+                                     float(mGlowCover.segWantedWidth) >= directShare * float(mGlowCover.wantedWidth);
         // The light blocks get the OPPOSITE treatment, because their inputs are
         // narrow and visible rather than wide and indirect: @ref
         // packLightBlockData reads mEffectiveSegments and config.neon.arcs, and
@@ -2661,6 +2796,15 @@ namespace EdgeLighting
         {
             mGlowCover.buffer.Release();
             mGather.buffer.Release();
+        }
+        // The segment table goes with the main one, and whenever the segments
+        // are baked into the main table directly. Here, as the main table's
+        // release is, because Render must not delete a framebuffer; a table
+        // released and wanted again is reallocated (and baked whole) by
+        // ensureGlowCoverBuffer.
+        if (!config.neon.enable || mGlowCover.segWantedDirect)
+        {
+            mGlowCover.segBuffer.Release();
         }
 
         // Rebuilds need the GL objects Initialize creates. The neon.frag
@@ -2861,6 +3005,25 @@ namespace EdgeLighting
                              "a partly lit ring will draw no glow");
     }
 
+    bool NeonRenderer::ensureGlowCoverFillProgram()
+    {
+        // Only for segments that get a table of their own. A fill that will
+        // not build is no reason to draw no glow: the segments go back into
+        // the main table's bake, for good, and that path needs nothing more.
+        if (mGlowCover.segWantedDirect)
+        {
+            return true;
+        }
+        if (!ensureProgram(mGlowCoverFillShader, ShaderSource::NEON_GLOW_COVER_FILL_FRAG_SRC, nullptr,
+                           "NeonRenderer.GlowCoverFill", PROGRAM_GLOW_COVER_FILL, 0,
+                           "segments are baked into the glow coverage table directly"))
+        {
+            mGlowCover.fillUnavailable = true;
+            mGlowCover.segWantedDirect = true;
+        }
+        return true;
+    }
+
     bool NeonRenderer::ensureFieldPrograms()
     {
         // The bake is neon.frag reading the gather (as the shading does at
@@ -2908,39 +3071,91 @@ namespace EdgeLighting
 
     bool NeonRenderer::ensureGlowCoverBuffer(bool segments)
     {
-        // Allocated is enough: the table's size is fixed, so a live buffer has
-        // nothing to resize to, and this runs every frame a partly lit ring
-        // draws - unless segments have appeared on a two-channel table, which
-        // has nowhere to put them. The other way round keeps what it has: a
-        // four-channel table with no segments reads its .b / .a as zeros like
-        // a two-channel one, and dropping back to two would reallocate the
-        // table every time a transient segment came and went.
+        // A live buffer is kept while it can hold this config: this runs every
+        // frame a partly lit ring draws. It cannot when segments have appeared
+        // on a two-channel table, which has nowhere to put them. The other way
+        // round keeps what it has: a four-channel table with no segments reads
+        // its .b / .a as zeros like a two-channel one, and dropping back to two
+        // would reallocate the table every time a transient segment came and
+        // went - so a reallocation for any reason keeps four channels too.
+        //
+        // Nor when the width the config wants (mGlowCover.wantedWidth,
+        // GetGlowCoverWidth) is MORE than it has, or at least two
+        // GLOW_COVER_WIDTH_STEPs less. Between the two the wider table stays
+        // and is used as it is - more interior columns than needed, which is
+        // correct and costs a little more bake - so a resizing rect, or a glow
+        // radius that oscillates, does not reallocate it every frame.
+        auto widthHolds = [](int wanted, int width)
+        { return wanted <= width && wanted > width - 2 * int(GLOW_COVER_WIDTH_STEP); };
+        bool fourChannel = segments;
+        bool mainHolds = false;
         if (mGlowCover.buffer.IsValid())
         {
             const GLint format = mGlowCover.buffer.GetInternalFormat();
             const bool twoChannel = (format == GL_RG16F || format == GL_RG8);
-            if (!segments || !twoChannel)
+            mainHolds = (!segments || !twoChannel) && widthHolds(mGlowCover.wantedWidth, mGlowCover.layout.width);
+            fourChannel = segments || !twoChannel;
+        }
+        if (!mainHolds)
+        {
+            const GlowCoverLayout layout = MakeGlowCoverLayout(mGlowCover.wantedWidth);
+
+            // Over GLOW_COVER_FORMATS (or its RG twin), with a linear filter:
+            // the consumer interpolates between neighbouring positions round
+            // each piece. Resumed from mGlowCover.format, because this buffer
+            // is released with the layer and when it goes unread, and cannot
+            // record a refused format in its own attachment. One tier holds
+            // for both lists: a row's index is its precision in either.
+            const TargetFormat *formats = fourChannel ? GLOW_COVER_FORMATS : GLOW_COVER_FORMATS_RG;
+            if (!ResizeInBestFormat(mGlowCover.buffer, formats, std::size(GLOW_COVER_FORMATS), mGlowCover.format,
+                                    layout.width, GLOW_COVER_HEIGHT, GL_LINEAR, 1, "glow coverage",
+                                    "The halo and bloom coverage will be stored at 8 bits."))
             {
-                return true;
+                return false;
             }
+            // The layout the bake and every read take from now on - set with
+            // the allocation, since its width IS the texture's.
+            mGlowCover.layout = layout;
+            // Undefined texels until a bake writes them - whatever the flag
+            // said about the buffer this one replaces. In the segment table's
+            // mode the segment pieces' fill has to run again too, which the
+            // segment mask does.
+            mGlowCover.dirtyArcPieces = GLOW_COVER_ALL_PIECES;
+            mGlowCover.dirtySegmentPieces = GLOW_COVER_ALL_PIECES;
         }
 
-        // Over GLOW_COVER_FORMATS (or its RG twin), with a linear filter: the
-        // consumer interpolates between neighbouring positions round each
-        // piece. Resumed from mGlowCover.format, because this buffer is
-        // released with the layer and when it goes unread, and cannot record
-        // a refused format in its own attachment. One tier holds for both
-        // lists: a row's index is its precision in either.
-        const TargetFormat *formats = segments ? GLOW_COVER_FORMATS : GLOW_COVER_FORMATS_RG;
-        if (!ResizeInBestFormat(mGlowCover.buffer, formats, std::size(GLOW_COVER_FORMATS), mGlowCover.format,
-                                GLOW_COVER_WIDTH, GLOW_COVER_HEIGHT, GL_LINEAR, 1, "glow coverage",
-                                "The halo and bloom coverage will be stored at 8 bits."))
+        // The segments: baked into the main table directly, or into a table
+        // of their own and copied in. Either way, a change of mode re-bakes
+        // every segment piece: the main table's .b / .a hold the other mode's
+        // values until then.
+        const bool direct = !segments || mGlowCover.segWantedDirect;
+        if (direct != mGlowCover.segDirect)
         {
-            return false;
+            mGlowCover.segDirect = direct;
+            mGlowCover.dirtySegmentPieces = GLOW_COVER_ALL_PIECES;
         }
-        // Undefined texels until a bake writes them - whatever the flag said
-        // about the buffer this one replaces.
-        mGlowCover.dirtyArcPieces = GLOW_COVER_ALL_PIECES;
+        if (direct)
+        {
+            return true;
+        }
+        if (mGlowCover.segBuffer.IsValid() && widthHolds(mGlowCover.segWantedWidth, mGlowCover.segLayout.width))
+        {
+            return true;
+        }
+        // Two channels, the main table's precision tier. Should it fail, the
+        // segments go back into the main table, which needs nothing more.
+        const GlowCoverLayout segLayout = MakeGlowCoverSegmentLayout(mGlowCover.segWantedWidth);
+        if (!ResizeInBestFormat(mGlowCover.segBuffer, GLOW_COVER_FORMATS_RG, std::size(GLOW_COVER_FORMATS_RG),
+                                mGlowCover.format, segLayout.width, GLOW_COVER_HEIGHT, GL_LINEAR, 1,
+                                "segment coverage", "The segments' coverage will be stored at 8 bits."))
+        {
+            mGlowCover.fillUnavailable = true;
+            mGlowCover.segWantedDirect = true;
+            mGlowCover.segDirect = true;
+            mGlowCover.dirtySegmentPieces = GLOW_COVER_ALL_PIECES;
+            return true;
+        }
+        mGlowCover.segLayout = segLayout;
         mGlowCover.dirtySegmentPieces = GLOW_COVER_ALL_PIECES;
         return true;
     }
@@ -3763,7 +3978,10 @@ namespace EdgeLighting
             mGradientLUT.Bind(5);
         }
         shader.SetUniform("uGlowCover", 5);
-        shader.SetUniform("uGlowCoverSplit", GetGlowCoverSplit(config));
+        // The layout and split the table was baked with, never the config's
+        // own: see GlowCoverLayout.
+        shader.SetUniform("uGlowCoverLayout", mGlowCover.layout.AsUniform());
+        shader.SetUniform("uGlowCoverSplit", mGlowCover.split);
         shader.SetUniform("uQuadMargin", limits.quadMargin);
         shader.SetUniform("uCornerSkip", limits.cornerSkip);
     }
@@ -3866,10 +4084,6 @@ namespace EdgeLighting
         const RenderTargetState prevTarget = RenderTargetState::Capture();
         GLUtils::NoScissorScope noScissor;
 
-        // Binds the FBO and sets the viewport to the table. No clear: the NDC
-        // quad covers every texel.
-        mGlowCover.buffer.Bind();
-
         // Every length as a fraction of the full-res perimeter, which is what
         // lets the reduced-scale shading and the full-res ring share the
         // table: their px lengths all scale together. The widths are
@@ -3882,24 +4096,22 @@ namespace EdgeLighting
         const float radius = GetDrawnCornerRadius(config);
         const glm::vec2 straights(std::max(config.geometry.width - 2.0f * radius, 0.0f),
                                   std::max(config.geometry.height - 2.0f * radius, 0.0f));
-        mGlowCoverShader.Use();
-        mGlowCoverShader.SetUniform("uMVP", glm::mat4(1.0f));
-        mGlowCoverShader.SetUniform("uHeadFeather", static_cast<float>(HEAD_FEATHER_PX) / perimeter);
-        mGlowCoverShader.SetUniform("uTailFeather", static_cast<float>(TAIL_FEATHER_PX) / perimeter);
-        mGlowCoverShader.SetUniform("uHaloWidth", haloWidth / perimeter);
-        mGlowCoverShader.SetUniform("uBloomWidth", bloomWidth / perimeter);
-        mGlowCoverShader.SetUniform("uStraightSize", straights / perimeter);
-        mGlowCoverShader.SetUniform("uRadius", radius / perimeter);
-        mGlowCoverShader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
-        const glm::vec2 split = GetGlowCoverSplit(config);
-        mGlowCoverShader.SetUniform("uGlowCoverSplit", split);
-        // Draws the pieces of @p pieces: the whole table in one draw when all
-        // are dirty, else each band's straight and corner as rectangles.
-        auto drawPieces = [&](uint32_t pieces)
+        // The split, with the layout the buffer was allocated at; recorded
+        // for the reads, which take both from the table.
+        const GlowCoverLayout &layout = mGlowCover.layout;
+        const glm::vec2 split = GetGlowCoverSplit(config, layout);
+        mGlowCover.split = split;
+
+        // Draws the pieces of @p pieces of a table laid out as @p tableLayout
+        // and split as @p tableSplit, through @p shader: the whole table in
+        // one draw when all are dirty, else each band's straight and corner
+        // as rectangles.
+        auto drawPieces = [&](ShaderProgram &shader, uint32_t pieces, const GlowCoverLayout &tableLayout,
+                              const glm::vec2 &tableSplit)
         {
             if (pieces == GLOW_COVER_ALL_PIECES)
             {
-                mGlowCoverShader.SetUniform("uMVP", glm::mat4(1.0f));
+                shader.SetUniform("uMVP", glm::mat4(1.0f));
                 mFullscreenVertexArray.DrawArrays(GL_TRIANGLES, 6);
                 return;
             }
@@ -3911,7 +4123,7 @@ namespace EdgeLighting
             // whole texels, and every centre is half a texel inside one), and
             // nothing of the host's scissor state - box included, which
             // NoScissorScope does not restore - is touched.
-            const float width = static_cast<float>(GLOW_COVER_WIDTH);
+            const float width = static_cast<float>(tableLayout.width);
             const float height = static_cast<float>(GLOW_COVER_HEIGHT);
             for (int band = 0; band < 4; ++band)
             {
@@ -3922,9 +4134,9 @@ namespace EdgeLighting
                     continue;
                 }
                 // The band's straight is the columns left of the split, its
-                // corner the rest - neon-glow-cover.frag's own test.
-                const float inner = (band < 2) ? split.x : split.y;
-                const float splitColumn = static_cast<float>(2 * GLOW_COVER_OVERHANG) + inner;
+                // corner the rest - glowCoverTexel's own test.
+                const float inner = (band < 2) ? tableSplit.x : tableSplit.y;
+                const float splitColumn = static_cast<float>(2 * tableLayout.overhang) + inner;
                 const float x0 = straight ? 0.0f : splitColumn;
                 const float x1 = corner ? width : splitColumn;
                 const float y0 = static_cast<float>(band * GLOW_COVER_ROWS);
@@ -3932,18 +4144,36 @@ namespace EdgeLighting
                 const glm::mat4 rect =
                     glm::translate(glm::mat4(1.0f), glm::vec3((x0 + x1) / width - 1.0f, (y0 + y1) / height - 1.0f, 0.0f)) *
                     glm::scale(glm::mat4(1.0f), glm::vec3((x1 - x0) / width, (y1 - y0) / height, 1.0f));
-                mGlowCoverShader.SetUniform("uMVP", rect);
+                shader.SetUniform("uMVP", rect);
                 mFullscreenVertexArray.DrawArrays(GL_TRIANGLES, 6);
             }
         };
+
+        // --- P0b: the main table. Binds the FBO and sets the viewport to the
+        // table; no clear, the quads cover every texel they mean to write.
+        mGlowCover.buffer.Bind();
+        mGlowCoverShader.Use();
+        mGlowCoverShader.SetUniform("uHeadFeather", static_cast<float>(HEAD_FEATHER_PX) / perimeter);
+        mGlowCoverShader.SetUniform("uTailFeather", static_cast<float>(TAIL_FEATHER_PX) / perimeter);
+        mGlowCoverShader.SetUniform("uHaloWidth", haloWidth / perimeter);
+        mGlowCoverShader.SetUniform("uBloomWidth", bloomWidth / perimeter);
+        mGlowCoverShader.SetUniform("uStraightSize", straights / perimeter);
+        mGlowCoverShader.SetUniform("uRadius", radius / perimeter);
+        mGlowCoverShader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
+        mGlowCoverShader.SetUniform("uGlowCoverSplit", split);
+        mGlowCoverShader.SetUniform("uGlowCoverLayout", layout.AsUniform());
+        mGlowCoverShader.SetUniform("uBakeTarget", 0);
 
         // Per light type: a piece only the arcs dirtied integrates the arcs and
         // writes .r / .g alone, a piece only the segments dirtied .b / .a alone
         // - the channels left alone already hold what a full bake would write,
         // since each kind's depend on that kind and the geometry only. The
-        // colour mask is the host's state, so it is put back.
+        // colour mask is the host's state, so it is put back. With a segment
+        // table, the segments are not baked here at all: passes 0s and 0f
+        // below write .b / .a.
         const uint32_t arcs = mGlowCover.dirtyArcPieces;
         const uint32_t segments = mGlowCover.dirtySegmentPieces;
+        const bool viaSegmentTable = !mGlowCover.segDirect;
         GLboolean hostMask[4] = {GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
         glGetBooleanv(GL_COLOR_WRITEMASK, hostMask);
         typedef struct Group
@@ -3952,11 +4182,15 @@ namespace EdgeLighting
             bool arcs;
             bool segments;
         } Group;
-        const Group groups[] = {{arcs & segments, true, true},
+        const Group direct[] = {{arcs & segments, true, true},
                                 {arcs & ~segments, true, false},
                                 {segments & ~arcs, false, true}};
-        for (const Group &group : groups)
+        const Group arcsOnly[] = {{arcs, true, false}};
+        const Group *groups = viaSegmentTable ? arcsOnly : direct;
+        const size_t groupCount = viaSegmentTable ? std::size(arcsOnly) : std::size(direct);
+        for (size_t g = 0; g < groupCount; ++g)
         {
+            const Group &group = groups[g];
             if (group.pieces == 0)
             {
                 continue;
@@ -3964,10 +4198,49 @@ namespace EdgeLighting
             mGlowCoverShader.SetUniform("uBakeArcs", group.arcs ? 1 : 0);
             mGlowCoverShader.SetUniform("uBakeSegments", group.segments ? 1 : 0);
             glColorMask(group.arcs, group.arcs, group.segments, group.segments);
-            drawPieces(group.pieces);
+            drawPieces(mGlowCoverShader, group.pieces, layout, split);
+        }
+
+        if (viaSegmentTable && segments != 0)
+        {
+            // --- P0s: the dirty segment pieces into the segment table, at its
+            // own layout and split - the same program and integrals, the
+            // segments' two channels on .r / .g (uBakeTarget 1).
+            const GlowCoverLayout &segLayout = mGlowCover.segLayout;
+            const glm::vec2 segSplit = GetGlowCoverSplit(config, segLayout);
+            mGlowCover.segSplit = segSplit;
+            mGlowCover.segBuffer.Bind();
+            mGlowCoverShader.SetUniform("uGlowCoverSplit", segSplit);
+            mGlowCoverShader.SetUniform("uGlowCoverLayout", segLayout.AsUniform());
+            mGlowCoverShader.SetUniform("uBakeTarget", 1);
+            mGlowCoverShader.SetUniform("uBakeArcs", 0);
+            mGlowCoverShader.SetUniform("uBakeSegments", 1);
+            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            drawPieces(mGlowCoverShader, segments, segLayout, segSplit);
+            mGlowCoverShader.Unuse();
+
+            // --- P0f: the same pieces of the main table, .b / .a only, copied
+            // from the segment table through both layouts.
+            mGlowCover.buffer.Bind();
+            mGlowCoverFillShader.Use();
+            mGlowCover.segBuffer.BindTexture(0);
+            mGlowCoverFillShader.SetUniform("uSegCover", 0);
+            mGlowCoverFillShader.SetUniform("uGlowCoverLayout", layout.AsUniform());
+            mGlowCoverFillShader.SetUniform("uGlowCoverSplit", split);
+            mGlowCoverFillShader.SetUniform("uSegCoverLayout", segLayout.AsUniform());
+            mGlowCoverFillShader.SetUniform("uSegCoverSplit", segSplit);
+            mGlowCoverFillShader.SetUniform("uHaloWidth", haloWidth / perimeter);
+            mGlowCoverFillShader.SetUniform("uStraightSize", straights / perimeter);
+            mGlowCoverFillShader.SetUniform("uRadius", radius / perimeter);
+            glColorMask(GL_FALSE, GL_FALSE, GL_TRUE, GL_TRUE);
+            drawPieces(mGlowCoverFillShader, segments, layout, split);
+            mGlowCoverFillShader.Unuse();
+        }
+        else
+        {
+            mGlowCoverShader.Unuse();
         }
         glColorMask(hostMask[0], hostMask[1], hostMask[2], hostMask[3]);
-        mGlowCoverShader.Unuse();
 
         prevTarget.Restore();
         mGlowCover.dirtyArcPieces = 0;

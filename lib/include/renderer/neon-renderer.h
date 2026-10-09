@@ -153,6 +153,52 @@ namespace EdgeLighting
             glm::vec2 scale{0.0f};  ///< uv per px of the reader: 1 / (region size * the reader's px scale).
             glm::vec2 offset{0.0f}; ///< uv at px 0, the rect's centre: -origin / size.
         } UVMap;
+
+        /// How the glow coverage table's columns are laid out
+        /// (neon-pieces.glsl): its width, and how each band's columns divide
+        /// between its straight and its corner. Rows are not here - they are
+        /// GLOW_COVER_ROWS, a constant.
+        ///
+        /// @verbatim
+        ///   | overhang | inner | overhang |g| cornerOverhang | shared - inner | cornerOverhang |g|
+        ///   |<----------------------------------- width ----------------------------------->|
+        /// @endverbatim
+        ///
+        /// (g a guard texel.) @c inner is per band and per config
+        /// (GetGlowCoverSplit); everything here is per TABLE. The shaders take
+        /// it as one vec4, @ref AsUniform, and @c width is the texture's own
+        /// width, so the forward maps divide by the texture they read.
+        ///
+        /// @par The invariant
+        /// The layout a pass reads with is the one the table was baked with:
+        /// it is stored with the table (@c GlowCoverTable::layout), set when
+        /// the buffer is allocated, and every upload reads it from there -
+        /// never recomputed from the config at read time.
+        typedef struct GlowCoverLayout
+        {
+            int width = GLOW_COVER_MAX_WIDTH;                ///< Columns: the texture's width.
+            int overhang = GLOW_COVER_OVERHANG;              ///< A straight's columns past each end.
+            int cornerOverhang = GLOW_COVER_CORNER_OVERHANG; ///< A corner's columns either side of its arc.
+            int minInterior = GLOW_COVER_MIN_INTERIOR;       ///< The fewest interior columns either piece of a band keeps.
+
+            /// The columns a band's straight interior and corner interior
+            /// share, the rest being overhangs and the corner's two guards.
+            int Shared() const { return width - 2 - 2 * overhang - 2 * cornerOverhang; }
+
+            /// As the shaders take it (uGlowCoverLayout): columns, a
+            /// straight's overhang, a corner's, the shared columns.
+            glm::vec4 AsUniform() const
+            {
+                return glm::vec4(float(width), float(overhang), float(cornerOverhang), float(Shared()));
+            }
+
+            bool operator==(const GlowCoverLayout &o) const
+            {
+                return width == o.width && overhang == o.overhang && cornerOverhang == o.cornerOverhang &&
+                       minInterior == o.minInterior;
+            }
+            bool operator!=(const GlowCoverLayout &o) const { return !(*this == o); }
+        } GlowCoverLayout;
     }
 
     /// The neon renderer.
@@ -344,6 +390,7 @@ namespace EdgeLighting
         typedef NeonDetail::Annulus Annulus;
         typedef NeonDetail::BufferRegion BufferRegion;
         typedef NeonDetail::UVMap UVMap;
+        typedef NeonDetail::GlowCoverLayout GlowCoverLayout;
 
         /// A vertex array and how many vertices it holds: the geometry of every
         /// quad and @ref Annulus this renderer draws - @c mGlowMesh,
@@ -833,7 +880,7 @@ namespace EdgeLighting
         /// it has gone unread.
         typedef struct GlowCoverTable
         {
-            /// Glow coverage table, GLOW_COVER_WIDTH wide by four bands of
+            /// Glow coverage table, @c layout.width wide by four bands of
             /// GLOW_COVER_ROWS, each holding one straight and one corner, which
             /// share its columns in proportion to their lengths (GetGlowCoverSplit):
             /// for each piece of the emitter and each fragment position round it,
@@ -847,6 +894,62 @@ namespace EdgeLighting
             /// lengths are ratios that scale together, so every resolution scale
             /// shares it.
             Framebuffer buffer{"NeonRenderer.GlowCover"};
+
+            /// The column layout @c buffer was allocated at and is baked and
+            /// read through - see @ref GlowCoverLayout for why it lives here
+            /// rather than being derived at each use. Set by
+            /// @ref ensureGlowCoverBuffer with the allocation.
+            GlowCoverLayout layout;
+
+            /// The width the current config wants (GetGlowCoverWidth), set by
+            /// @ref OnConfigChanged and applied by @ref ensureGlowCoverBuffer,
+            /// which keeps a wider table within two GLOW_COVER_WIDTH_STEPs of
+            /// it rather than reallocate.
+            int wantedWidth = GLOW_COVER_MAX_WIDTH;
+
+            /// uGlowCoverSplit as the last bake computed it
+            /// (GetGlowCoverSplit, from the config and @c layout): every read
+            /// uploads this rather than its own, for the same reason.
+            glm::vec2 split{0.0f};
+
+            /// The SEGMENT TABLE: the segments' halo and bloom coverage (.r /
+            /// .g, RG16F with the main table's tier) at a width of their own
+            /// (GetGlowCoverSegmentWidth) - a bell is far wider than an arc's
+            /// feather, so it needs a fraction of the arcs' columns. Pass 0s
+            /// bakes it (neon-glow-cover.frag, uBakeTarget 1) and pass 0f
+            /// copies it into @c buffer's .b / .a (neon-glow-cover-fill.frag),
+            /// so neon.frag still reads one texel per piece. Allocated only
+            /// while @c segDirect is false; released with @c buffer, and when
+            /// the segments are baked directly.
+            Framebuffer segBuffer{"NeonRenderer.GlowCoverSegments"};
+
+            /// @c segBuffer's layout, set with its allocation - the same
+            /// invariant as @c layout.
+            GlowCoverLayout segLayout;
+
+            /// uGlowCoverSplit for @c segBuffer, as the last pass 0s computed it.
+            glm::vec2 segSplit{0.0f};
+
+            /// The segment table's width the current config wants, set by
+            /// @ref OnConfigChanged and applied by @ref ensureGlowCoverBuffer
+            /// with the main table's hysteresis.
+            int segWantedWidth = GLOW_COVER_SEG_MIN_WIDTH;
+
+            /// Whether the current config's segments are better baked straight
+            /// into @c buffer - no segments, segments so short their table
+            /// would be nearly as wide as the main one, or a fill program that
+            /// would not build. Set by @ref OnConfigChanged.
+            bool segWantedDirect = true;
+
+            /// Whether @c buffer's .b / .a are baked directly (true) or copied
+            /// from @c segBuffer (false): the mode the table is IN, which
+            /// @ref ensureGlowCoverBuffer moves to @c segWantedDirect, marking
+            /// every segment piece dirty when it changes.
+            bool segDirect = true;
+
+            /// The fill program failed to build: segments are baked directly
+            /// for the life of the renderer.
+            bool fillUnavailable = false;
 
             /// Index into the glow coverage table's format lists of the best
             /// format the driver has not refused: the tier ResizeInBestFormat
@@ -1044,6 +1147,12 @@ namespace EdgeLighting
         /// and the frame draws the fill alone, as for a path program.
         bool ensureGlowCoverProgram();
 
+        /// The segment table's fill program (neon-glow-cover-fill.frag, pass
+        /// 0f), built on the first frame whose segments get a table of their
+        /// own. A failure is logged once and sends the segments back into the
+        /// main table's own bake for good (@c GlowCoverTable::fillUnavailable).
+        bool ensureGlowCoverFillProgram();
+
         /// Make sure the field's two programs - neon.frag with NEON_FIELD_BAKE,
         /// and neon-field.frag - are built, building them if not. Called on
         /// every frame whose config the field can serve, so they are built on
@@ -1068,20 +1177,32 @@ namespace EdgeLighting
 
         // --- Buffers: allocated in the best format the driver gives ----------
         /// Make sure @c mGlowCover.buffer is allocated, allocating it if not, at
-        /// the coverage table's fixed dimensions in the best format the driver
-        /// will give. Called only on a frame that will bake the table, beside
+        /// the width the config wants (@c mGlowCover.wantedWidth,
+        /// GetGlowCoverWidth) in the best format the driver will give, and
+        /// set @c mGlowCover.layout to match. A live table is kept while it is
+        /// at least that wide and less than two GLOW_COVER_WIDTH_STEPs wider,
+        /// so a resizing rect does not reallocate it every frame. Called only
+        /// on a frame that will bake the table, beside
         /// @ref ensureGlowCoverProgram - so a host whose ring is lit uniformly
-        /// never holds the table's 1 MB - and the buffer is released again
-        /// when the layer is disabled (@ref OnConfigChanged).
+        /// never holds the table - and the buffer is released again when the
+        /// layer is disabled (@ref OnConfigChanged).
+        ///
+        /// Also the segment table (@c mGlowCover.segBuffer): moves the table
+        /// to @c mGlowCover.segWantedDirect's mode, allocating the segment
+        /// table at @c mGlowCover.segWantedWidth with the same hysteresis
+        /// when the segments get one, and marks every segment piece dirty when
+        /// the mode or that table changes. A segment table that cannot be
+        /// allocated sends the segments back into the main table's bake.
         ///
         /// The format walk is ResizeInBestFormat's, resumed from
         /// @c mGlowCover.format, since a released buffer has no format of its
         /// own to resume from. A fresh allocation holds undefined texels, so it
         /// sets both of @c mGlowCover's dirty masks whole.
         ///
-        /// Two channels (RG16F, 0.5 MB) when the config has no segments
-        /// (@p segments false), whose coverage would fill .b / .a with zeros;
-        /// four (RGBA16F, 1 MB) when it has - reallocating a two-channel table
+        /// Two channels (RG16F, 0.5 MB at the full width) when the config has
+        /// no segments (@p segments false), whose coverage would fill .b / .a
+        /// with zeros; four (RGBA16F, 1 MB) when it has - reallocating a
+        /// two-channel table
         /// the first frame segments appear, and keeping four after they go,
         /// so a transient segment does not reallocate it every time.
         /// @return false only if NO candidate could be allocated, in which case
@@ -1508,6 +1629,7 @@ namespace EdgeLighting
         static constexpr unsigned int PROGRAM_RING_FIELD_COMPOSITE = 1u << 7; ///< @c mRingFieldCompositeShader, P2r.
         static constexpr unsigned int PROGRAM_FILL = 1u << 8;                 ///< @c mFillShader, P2a.
         static constexpr unsigned int PROGRAM_EMISSION = 1u << 9;             ///< @c mEmissionShader, P0 - built in Initialize, whose failure fails it.
+        static constexpr unsigned int PROGRAM_GLOW_COVER_FILL = 1u << 10;     ///< @c mGlowCoverFillShader, P0f.
 
         /// Uniform blocks a program declares, for @ref ensureProgram.
         static constexpr unsigned int BLOCK_SEGMENT = 1u << 0; ///< SegmentBlock
@@ -1539,7 +1661,8 @@ namespace EdgeLighting
 
         // --- Programs: every one built through ensureProgram -----------------
         ShaderProgram mEmissionShader;           ///< P0, neon-emission.frag. Built in Initialize.
-        ShaderProgram mGlowCoverShader;          ///< P0b, neon-glow-cover.frag. Built on the first frame that bakes the table.
+        ShaderProgram mGlowCoverShader;          ///< P0b and P0s, neon-glow-cover.frag. Built on the first frame that bakes the table.
+        ShaderProgram mGlowCoverFillShader;      ///< P0f, neon-glow-cover-fill.frag. Built on the first frame with a segment table.
         ShaderProgram mGatherShader;             ///< P1a, neon-gather.frag. Built on the first frame.
         ShaderProgram mShadeShader;              ///< P1b, neon.frag, into the reduced buffer. Built on the first frame.
         ShaderProgram mFieldBakeShader;          ///< P1f and P1r, neon.frag + NEON_FIELD_BAKE. Built on the first field-eligible frame.

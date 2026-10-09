@@ -374,22 +374,107 @@
 //     its straights do not need and a long rect's straights get its corners':
 //     the straight has OVERHANG columns past each end, the corner
 //     CORNER_OVERHANG on each side of its arc and a guard texel at each end of
-//     its block, and the SHARED columns left over are split between the two
-//     interiors, each keeping at least MIN_INTERIOR. ROWS 32 is half of them
+//     its block, and the columns left over (the layout's `shared`) are split
+//     between the two interiors, each keeping at least MIN_INTERIOR. ROWS 32 is half of them
 //     within one halo width of a straight, and 16 inside and 16 outside a
 //     corner's arc. 1024 x 128 RGBA16F is 1.0 MB - half V20's single table per
 //     perimeter. Sizing it, against an exact per-piece reference (V21 in
 //     docs/review-findings.md): 48 rows (1.5 MB) read at most 2 levels off where
 //     32 reads 3 on a few pixels of a segment scene, for 1.3x the bake's cost
 //     under animation; 768 columns read 6 levels off a 1 px halo on a 4K-sized
-//     rect. Allocated once, at this fixed size. ---
-#define GLOW_COVER_WIDTH          1024
+//     rect.
+//
+//     The WIDTH is not a constant: the table's layout is a parameter
+//     (NeonRenderer's GlowCoverLayout, the shaders' uGlowCoverLayout), between
+//     MIN_WIDTH and MAX_WIDTH in steps of WIDTH_STEP. ROWS and HEIGHT are. ---
+#define GLOW_COVER_MAX_WIDTH      1024
+#define GLOW_COVER_MIN_WIDTH      256
+#define GLOW_COVER_WIDTH_STEP     64
 #define GLOW_COVER_ROWS           32
 #define GLOW_COVER_OVERHANG       64
 #define GLOW_COVER_CORNER_OVERHANG 32
 #define GLOW_COVER_MIN_INTERIOR   16
-#define GLOW_COVER_SHARED         (GLOW_COVER_WIDTH - 2 - 2 * GLOW_COVER_OVERHANG - 2 * GLOW_COVER_CORNER_OVERHANG)
 #define GLOW_COVER_HEIGHT         (4 * GLOW_COVER_ROWS)
+
+// --- The glow coverage table's width (NeonRenderer's GetGlowCoverWidth):
+//     enough interior columns that the longest band - its straight plus its
+//     quarter arc, L full-res px - gets one every S px, S growing with the
+//     halo width kh (max(glowRadius, EMISSION_MIN_WIDTH), px):
+//
+//         S    = clamp(PX_PER_COLUMN_PER_KH * kh, MIN_PX_PER_COLUMN, MAX_PX_PER_COLUMN)
+//         need = 2 + 2 OVERHANG + 2 CORNER_OVERHANG + ceil(L / S)
+//         W    = clamp(need rounded up to WIDTH_STEP, MIN_WIDTH, MAX_WIDTH)
+//
+//     In full-res px because the edge ring reads the table at full
+//     resolution; lengths enter the layout only as ratios, so every scale
+//     shares one table.
+//
+//     Calibrated 2026-10-09 on an AMD Radeon Pro 5300M against the 1024-wide
+//     table (docs/neon-glow-cover-resolution-plan.md step 2): 250 configs -
+//     rects 200 x 120 to 3600 x 2000, glowRadius 1 / 2 / 5 / 10 / 20,
+//     cornerRadius 0 / 40 / a circle, both windings, three partial arcs with
+//     and without colour stops and with two segments, at scales 1.0 / 0.5 /
+//     0.25 - each at every width from 256 to 960, the frame after a light
+//     change, against the same frame at 1024. The widest spacing that still
+//     met the plan's criterion (max 2 levels, 99.9% of lit pixels within 1)
+//     on every config was ~2.2 px per column at kh 1, 2.5 at 2, 4.6 at 5, 6.8
+//     at 10 and 10 at 20. These constants sit under that envelope - 12% at
+//     kh 5, 27% or more elsewhere - and at the widths they give, every config
+//     read at most 2 levels with at least 99.988% of lit pixels within 1.
+//     Spacing 20% wider failed at kh 5 (4 levels on a 200 px circle). A
+//     narrow glow on a large rect still gets MAX_WIDTH: at kh 1-2 a
+//     3600 x 2000 rect needed all 1024 columns. ---
+#define GLOW_COVER_PX_PER_COLUMN_PER_KH 0.8
+#define GLOW_COVER_MIN_PX_PER_COLUMN    1.6
+#define GLOW_COVER_MAX_PX_PER_COLUMN    5.0
+
+// --- The segment table (NeonRenderer's GetGlowCoverSegmentWidth,
+//     neon-glow-cover-fill.frag): the segments' two channels of the glow
+//     coverage table, baked at a width of their own and copied in. A bell's
+//     standard deviation is 0.3536 x its length x the perimeter - ~100 px for
+//     a length-0.05 segment on a 1840 x 1000 rect, against an arc's 14 px
+//     feather - so it needs far fewer columns than the arcs:
+//
+//         sigma = 0.3536 x the shortest lit segment's length x perimeter   (full-res px)
+//         need  = 2 + 2 SEG_OVERHANG + 2 SEG_CORNER_OVERHANG + ceil(L / (sigma / SEG_COLUMNS_PER_SIGMA))
+//         W     = clamp(need rounded up to WIDTH_STEP, SEG_MIN_WIDTH, the main table's width)
+//
+//     with L the longest band, as for the main table. Where W would be at
+//     least SEG_DIRECT_SHARE of the main table's width (very short segments)
+//     the separate table saves nothing, and the segments are baked into the
+//     main table directly, as before it existed.
+//
+//     Calibrated 2026-10-09 on an AMD Radeon Pro 5300M against the segments
+//     baked into the main table directly (plan step 3): 135 configs - rects
+//     200 x 120 to 3600 x 2000, glowRadius 2 / 5 / 10, cornerRadius 0 / 40 /
+//     a circle, scales 1.0 / 0.5 / 0.25, segments of length 0.01-0.2 with
+//     boosts 0.5-2, overlapping, abutting, over the corners, travelling, and
+//     under a partial arc - the frame after a light change, the segment table
+//     forced on. With overhangs 16 / 8, every COLUMNS_PER_SIGMA from 3 to 8
+//     read at most 2 levels with 99.9992% of lit pixels within 1; 2 read 3
+//     levels on a thin glow at 3840 x 2160. 4 is one step of margin. Overhangs
+//     8 / 4 held at every value tried (99.988%), 32 / 16 read at most 1 level
+//     from 4 up but do not fit SEG_MIN_WIDTH. ---
+#define GLOW_COVER_SEG_COLUMNS_PER_SIGMA 4.0
+
+// --- How far the glow coverage bake integrates a segment's bell either side
+//     of its centre, in units of 1 / invSigma (the bell is exp(-(d invSigma)^2),
+//     so 3 is 4.24 standard deviations, where it has fallen to 1.2e-4 of its
+//     peak). The bake (neon-glow-cover.frag, segmentsOnPiece) cuts the bell
+//     here and NeonRenderer's GetGlowCoverDirtySegmentPieces mirrors it to
+//     find the pieces a moved segment reaches: change one and the other
+//     follows, or a piece the bell reaches is not re-baked. It was 5 / sqrt(2)
+//     (5 sigma); at 3 a moved segment dirties fewer pieces, which took the
+//     segment table's bake on a band of 8 segments from 0.75 to 0.58 (timer
+//     units, AMD Radeon Pro 5300M), at most 1 level, on up to 1.6% of a
+//     frame's lit pixels (0.15% on average over the cover set; I61 in
+//     docs/review-findings.md). An 8-node rule on top halved it again but
+//     read 3 levels off a long, bright segment, and was not taken. ---
+#define GLOW_COVER_BELL_REACH            3.0
+#define GLOW_COVER_SEG_OVERHANG          16
+#define GLOW_COVER_SEG_CORNER_OVERHANG   8
+#define GLOW_COVER_SEG_MIN_WIDTH         128
+#define GLOW_COVER_SEG_DIRECT_SHARE      0.75
 
 // --- Grading ---
 #define TONE_MAP_SHOULDER         0.6
