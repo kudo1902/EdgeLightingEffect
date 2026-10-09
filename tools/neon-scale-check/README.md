@@ -151,7 +151,9 @@ build agree on every metric.
 
 Timing only: every scene at every scale, each on a freshly initialised effect
 (minimum over 5 runs of 40 frames between `glFinish` calls), plus how long each
-of those 72 effects took to construct and initialise - the shader compiles. At
+of those 72 effects took to construct and initialise (`initMs`) and its first
+frame took, `glFinish` to `glFinish` (`firstFrameMs`) - the shader compiles,
+which both drivers this project measures on finish on a program's first draw. At
 a size other than 1280 x 720 the scenes' layout scales with the frame (rect
 position, size, corner radius) while the neon's own px parameters do not, as a
 host's would not on a bigger display.
@@ -165,6 +167,8 @@ host's would not on a bigger display.
 | `intensity` | `intensity` pulsing by +/-10% through `SetConfig`, then `Update(1/60)` |
 | `arc-wipe` | `arcs[0].length` sweeping 0.3-0.9, the same way |
 | `segment-travel` | `segmentBoosts[0]` moving 0.003 of the perimeter a frame (one is added where a scene has none), the same way |
+| `resize` | the rect's width and height swinging +/-15% out of phase, through `SetConfig` - every frame re-bakes (and may reallocate) what the rect's size sets |
+| `lights` | `--arcs N` arcs and `--segments M` segments (defaults 8 / 0) IN PLACE OF the scene's own lights, every one changing length on its own phase, and the hue rotating at 0.5 - the frames of a host animating several lights at once. `--arcs 0` is one arc over the whole ring, still |
 
 `still` is what every figure before the option measured, and it cannot see any
 work the neon does only on a frame where something moved - re-baking the
@@ -176,6 +180,22 @@ should be measured with `still` AND the animated modes, to show both what it
 saves and that it costs the moving frames nothing. The JSON records the mode.
 See [`docs/neon-perf-plan.md`](../../docs/neon-perf-plan.md).
 
+`--set cover` times the `cover` scenes (below) instead of the page's, each at
+its own frame size, as its frame 0 configures it; `--scene a,b` and
+`--scales 1,0.5` narrow either set. Every figure is also printed, one line per
+scene and scale.
+
+`--gpu` adds a `GL_TIME_ELAPSED` query round each `Render` (median of 120
+frames, each flushed as a swap would), and `--passes` each pass's share, from
+a query round every draw (`PassRecorder`, named as the guide names the
+passes). **Read both as ratios.** On an AMD Radeon Pro 5300M under macOS GL the
+queries read 3.6-4.0x the wall-clock time of the same frames - 120 frames the
+timer put at 4.0 ms each finished in 125 ms, `glFinish` to `glFinish` -
+steadily across configs, so ratios between configs and passes hold while the
+milliseconds do not. The default figure, wall-clock between `glFinish` calls,
+is the frame's real cost. (The per-pass queries also serialise the draws, so
+the passes add up to more than the frame.)
+
 For a before / after comparison, build the tool once per library (standalone
 mode, above), run `time` for every build in rounds with the build order
 rotated each round, and take the MEDIAN per figure over the rounds the builds
@@ -186,6 +206,34 @@ figure). That is how
 was made. (The comparison page's own timings are still merged by minimum - see
 step 3 below - because they come from interleaved runs of only two builds; read
 them as the page's figures, not as a before / after measurement.)
+
+## `generate --set cover` and `diff`
+
+```bash
+./build/tools/neon-scale-check/neon-scale-check generate OUTDIR --set cover [--scene a,b]
+./build/tools/neon-scale-check/neon-scale-check diff BEFORE AFTER [--max 2] [--within1 99.9]
+```
+
+The `cover` set ([`src/cover.h`](src/cover.h)) is the measure for a change to
+the glow coverage table
+([`docs/neon-glow-cover-resolution-plan.md`](../../docs/neon-glow-cover-resolution-plan.md)).
+Its scenes MOVE: arcs and segments change length every frame, some segments
+travel, so every frame is the first after a config change - shaded directly,
+after a re-bake of whatever pieces of the table it reached - which is the path
+a table change shows on, and one the page's steady frames never take. Each
+scene has its own frame size (1920 x 1080, and one 3840 x 2160 frame for a
+thin glow on a TV-sized rect). `generate` writes six frames per scene at 1.0,
+0.5 and 0.25, each an RGBA PNG over transparent black so the layer's coverage
+alpha is kept, plus `gpu.txt`; about two minutes and 440 MB for the whole set.
+
+`diff` compares every PNG the two directories share: per file the largest RGB
+and alpha difference, p99.9, and the share of lit pixels (any RGB channel at
+1 or more in either image) off by 1, 2, 3-4, 5-8 and more levels. It exits 1
+when a file exceeds `--max` or has fewer than `--within1` percent of its lit
+pixels within 1 level - the plan's criterion for a step that may move pixels -
+and warns when the two were rendered on different GPUs (`gpu.txt`), since a
+switch alone moves pixels by a level. A byte-identical change reads 0 pixels
+differing.
 
 ## Regenerating the comparison page
 

@@ -4,6 +4,7 @@
 #define GLFW_INCLUDE_NONE
 #include <GLFW/glfw3.h>
 #include "util/capture-util.h"
+#include "pass-recorder.h"
 // stb_image and stb_image_write are compiled into libedge-lighting
 // (lib/src/util/stb-image.cpp); only the declarations are needed here.
 #include "stb/stb_image.h"
@@ -138,7 +139,7 @@ namespace NeonScaleCheck
     bool ParseTimeMode(const char *name, TimeMode &mode)
     {
         static const TimeMode MODES[] = {TimeMode::STILL, TimeMode::HUE, TimeMode::INTENSITY, TimeMode::ARC_WIPE,
-                                         TimeMode::SEGMENT_TRAVEL};
+                                         TimeMode::SEGMENT_TRAVEL, TimeMode::LIGHTS, TimeMode::RESIZE};
         for (TimeMode m : MODES)
         {
             if (std::strcmp(name, TimeModeName(m)) == 0)
@@ -174,21 +175,54 @@ namespace NeonScaleCheck
         {
             return "segment-travel";
         }
+        case TimeMode::LIGHTS:
+        {
+            return "lights";
+        }
+        case TimeMode::RESIZE:
+        {
+            return "resize";
+        }
         }
         return "still";
     }
 
     namespace
     {
-        /// @p config as @p mode starts it: the hue rotating, or a segment to
-        /// move when the scene has none. The other modes start from the scene
-        /// as it is.
-        Config TimeModeStart(const Config &config, TimeMode mode)
+        /// @p config as @p mode starts it: the hue rotating, a segment to
+        /// move when the scene has none, or @p lights in place of the scene's
+        /// own. The other modes start from the scene as it is.
+        Config TimeModeStart(const Config &config, TimeMode mode, const LightCounts &lights)
         {
             Config c = config;
-            if (mode == TimeMode::HUE)
+            if (mode == TimeMode::HUE || mode == TimeMode::LIGHTS)
             {
                 c.neon.hueRotationRate = 0.5f;
+            }
+            if (mode == TimeMode::LIGHTS)
+            {
+                c.neon.arcs.clear();
+                if (lights.arcs <= 0)
+                {
+                    c.neon.arcs.push_back(Arc{});
+                }
+                for (int i = 0; i < lights.arcs; ++i)
+                {
+                    Arc a;
+                    a.start = float(i) / float(lights.arcs);
+                    a.length = 0.6f / float(lights.arcs);
+                    c.neon.arcs.push_back(a);
+                }
+                c.neon.segmentBoosts.clear();
+                c.neon.preservedSegmentBoosts.clear();
+                for (int i = 0; i < lights.segments; ++i)
+                {
+                    SegmentBoost s;
+                    s.position = (float(i) + 0.5f) / float(lights.segments);
+                    s.length = 0.1f;
+                    s.boost = 1.0f;
+                    c.neon.segmentBoosts.push_back(s);
+                }
             }
             if (mode == TimeMode::SEGMENT_TRAVEL && c.neon.segmentBoosts.empty())
             {
@@ -205,10 +239,24 @@ namespace NeonScaleCheck
         /// Every frame differs from the one before, so each SetConfig is a
         /// real config change. Not called for STILL or HUE: the hue moves with
         /// the clock, not the config.
-        Config TimeModeFrame(const Config &start, TimeMode mode, int frame)
+        Config TimeModeFrame(const Config &start, TimeMode mode, int frame, const LightCounts &lights)
         {
             Config c = start;
             const float f = static_cast<float>(frame);
+            if (mode == TimeMode::LIGHTS)
+            {
+                for (int i = 0; i < lights.arcs; ++i)
+                {
+                    c.neon.arcs[size_t(i)].length =
+                        (0.3f + 0.6f * (0.5f + 0.5f * std::sin(0.05f * f + 1.3f * float(i)))) / float(lights.arcs);
+                }
+                for (int i = 0; i < lights.segments; ++i)
+                {
+                    c.neon.segmentBoosts[size_t(i)].length =
+                        0.05f + 0.10f * (0.5f + 0.5f * std::sin(0.05f * f + 1.3f * float(i)));
+                }
+                return c;
+            }
             if (mode == TimeMode::INTENSITY)
             {
                 c.neon.intensity = start.neon.intensity * (1.0f + 0.1f * std::sin(0.1f * f));
@@ -216,6 +264,11 @@ namespace NeonScaleCheck
             else if (mode == TimeMode::ARC_WIPE && !c.neon.arcs.empty())
             {
                 c.neon.arcs[0].length = 0.3f + 0.6f * (0.5f + 0.5f * std::sin(0.05f * f));
+            }
+            else if (mode == TimeMode::RESIZE)
+            {
+                c.geometry.width = start.geometry.width * (1.0f + 0.15f * std::sin(0.05f * f));
+                c.geometry.height = start.geometry.height * (1.0f + 0.15f * std::cos(0.05f * f));
             }
             else if (mode == TimeMode::SEGMENT_TRAVEL)
             {
@@ -225,7 +278,8 @@ namespace NeonScaleCheck
         }
     }
 
-    double TimeRender(const Config &config, int width, int height, double *initMs, TimeMode mode)
+    double TimeRender(const Config &config, int width, int height, double *initMs, TimeMode mode,
+                      const LightCounts &lights, double *firstMs)
     {
         const auto i0 = std::chrono::high_resolution_clock::now();
         EdgeLightingEffect effect;
@@ -235,7 +289,7 @@ namespace NeonScaleCheck
         {
             *initMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - i0).count();
         }
-        const Config start = TimeModeStart(config, mode);
+        const Config start = TimeModeStart(config, mode, lights);
         effect.SetConfig(start);
         effect.Update(0.0f);
         OffscreenCapture capture;
@@ -248,14 +302,22 @@ namespace NeonScaleCheck
             {
                 if (mode != TimeMode::HUE)
                 {
-                    effect.SetConfig(TimeModeFrame(start, mode, frameIndex));
+                    effect.SetConfig(TimeModeFrame(start, mode, frameIndex, lights));
                 }
                 effect.Update(1.0f / 60.0f);
             }
             effect.Render(width, height);
             ++frameIndex;
         };
-        for (int i = 0; i < 5; ++i)
+        glFinish();
+        const auto f0 = std::chrono::high_resolution_clock::now();
+        frame();
+        glFinish();
+        if (firstMs)
+        {
+            *firstMs = std::chrono::duration<double, std::milli>(std::chrono::high_resolution_clock::now() - f0).count();
+        }
+        for (int i = 0; i < 4; ++i)
         {
             frame();
         }
@@ -275,6 +337,111 @@ namespace NeonScaleCheck
         }
         capture.End();
         return best;
+    }
+
+    GpuTiming TimeGPU(const Config &config, int width, int height, TimeMode mode, const LightCounts &lights,
+                      bool perPass)
+    {
+        EdgeLightingEffect effect;
+        CreateEffect(effect);
+        const Config start = TimeModeStart(config, mode, lights);
+        effect.SetConfig(start);
+        effect.Update(0.0f);
+        OffscreenCapture capture;
+        capture.Begin(width, height);
+        int frameIndex = 0;
+        auto frame = [&](GLuint query) {
+            if (mode != TimeMode::STILL)
+            {
+                if (mode != TimeMode::HUE)
+                {
+                    effect.SetConfig(TimeModeFrame(start, mode, frameIndex, lights));
+                }
+                effect.Update(1.0f / 60.0f);
+            }
+            if (query != 0)
+            {
+                glBeginQuery(GL_TIME_ELAPSED, query);
+            }
+            effect.Render(width, height);
+            if (query != 0)
+            {
+                glEndQuery(GL_TIME_ELAPSED);
+            }
+            // What a host's swap does: hand the frame to the GPU, without
+            // waiting for it.
+            glFlush();
+            ++frameIndex;
+        };
+        for (int i = 0; i < 20; ++i)
+        {
+            frame(0);
+        }
+        glFinish();
+
+        GpuTiming timing;
+        const int frames = 120;
+        std::vector<GLuint> queries(frames);
+        glGenQueries(frames, queries.data());
+        for (int i = 0; i < frames; ++i)
+        {
+            frame(queries[size_t(i)]);
+        }
+        glFinish();
+        std::vector<double> ms(frames);
+        for (int i = 0; i < frames; ++i)
+        {
+            GLuint64 ns = 0;
+            glGetQueryObjectui64v(queries[size_t(i)], GL_QUERY_RESULT, &ns);
+            ms[size_t(i)] = double(ns) / 1e6;
+        }
+        glDeleteQueries(frames, queries.data());
+        std::sort(ms.begin(), ms.end());
+        timing.frameMs = ms[ms.size() / 2];
+
+        if (perPass)
+        {
+            const int recorded = 60;
+            NeonTools::PassRecorder::SetReadback(false);
+            NeonTools::PassRecorder::SetTiming(true);
+            NeonTools::PassRecorder::Begin();
+            for (int i = 0; i < recorded; ++i)
+            {
+                frame(0);
+            }
+            NeonTools::PassRecorder::End();
+            NeonTools::PassRecorder::ResolveTimes();
+            NeonTools::PassRecorder::SetTiming(false);
+            NeonTools::PassRecorder::SetReadback(true);
+            for (const NeonTools::DrawRecord &draw : NeonTools::PassRecorder::GetDraws())
+            {
+                const std::string name = NeonTools::PassKindName(draw.kind);
+                auto it = std::find_if(timing.passes.begin(), timing.passes.end(),
+                                       [&](const std::pair<std::string, double> &p) { return p.first == name; });
+                if (it == timing.passes.end())
+                {
+                    timing.passes.push_back({name, 0.0});
+                    it = timing.passes.end() - 1;
+                }
+                it->second += draw.gpuMs / double(recorded);
+            }
+            std::sort(timing.passes.begin(), timing.passes.end());
+        }
+        capture.End();
+        return timing;
+    }
+
+    RGBA RenderOnce(EdgeLightingEffect &effect, int width, int height)
+    {
+        OffscreenCapture capture;
+        capture.Begin(width, height);
+        glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
+        glClear(GL_COLOR_BUFFER_BIT);
+        effect.Render(width, height);
+        CaptureUtil::Image image;
+        capture.Read(image);
+        capture.End();
+        return image.pixels;
     }
 
     Metrics Measure(const RGB &image, const RGB &reference, RGB *heatmap)
@@ -433,5 +600,23 @@ namespace NeonScaleCheck
     bool WritePNG(const std::string &path, const RGB &rgb, int width, int height)
     {
         return stbi_write_png(path.c_str(), width, height, 3, rgb.data(), width * 3) != 0;
+    }
+
+    bool LoadPNG4(const std::string &path, RGBA &out, int &width, int &height)
+    {
+        int channels = 0;
+        unsigned char *pixels = stbi_load(path.c_str(), &width, &height, &channels, 4);
+        if (!pixels)
+        {
+            return false;
+        }
+        out.assign(pixels, pixels + size_t(width) * height * 4);
+        stbi_image_free(pixels);
+        return true;
+    }
+
+    bool WritePNG4(const std::string &path, const RGBA &rgba, int width, int height)
+    {
+        return stbi_write_png(path.c_str(), width, height, 4, rgba.data(), width * 4) != 0;
     }
 }

@@ -31,7 +31,9 @@ namespace NeonTools
     {
         OTHER,    ///< Anything else - the debug layer's overlays.
         P0,       ///< Emission table (neon-emission.frag).
-        P0B,      ///< Glow coverage table (neon-glow-cover.frag).
+        P0B,      ///< Glow coverage table (neon-glow-cover.frag, uBakeTarget 0).
+        P0S,      ///< Segment coverage table (neon-glow-cover.frag, uBakeTarget 1).
+        P0F,      ///< The segment table's fill into the glow coverage table (neon-glow-cover-fill.frag).
         P1A,      ///< Gather pass (neon-gather.frag).
         P1B,      ///< Reduced-scale shading (neon.frag, offscreen, below scale 1.0).
         P1F,      ///< Field bake (neon.frag + NEON_FIELD_BAKE, offscreen): the glow's field, then the ring's (P1r).
@@ -66,7 +68,12 @@ namespace NeonTools
         glm::vec2 uvScale{0.0f};          ///< The blit's uUVScale, when kind is P2B.
         glm::vec2 uvOffset{0.0f};         ///< The blit's uUVOffset, when kind is P2B.
         std::vector<Attachment> written;  ///< Every colour attachment of the target, after the draw (empty with readback off).
+        GLuint timerQuery = 0;            ///< The draw's GL_TIME_ELAPSED query, with timing on, until ResolveTimes.
+        double gpuMs = -1.0;              ///< The draw's GPU time, ms, once ResolveTimes has run; -1 without timing.
     } DrawRecord;
+
+    /// @p kind's short name, as the tools print it ("P0b", "P2c", ...).
+    const char *PassKindName(PassKind kind);
 
     class PassRecorder
     {
@@ -82,6 +89,18 @@ namespace NeonTools
         /// geometry matters - a float readback of a full frame per draw is
         /// most of what recording costs.
         static void SetReadback(bool enabled);
+
+        /// Whether a recorded draw is wrapped in a GL_TIME_ELAPSED query, for
+        /// a per-pass GPU time (@ref DrawRecord::gpuMs, filled by
+        /// @ref ResolveTimes). Off by default. The queries serialise the
+        /// draws, so a frame timed this way is slower than one that is not:
+        /// read the passes' shares, and take the frame's own time from a
+        /// query round the whole Render.
+        static void SetTiming(bool enabled);
+
+        /// Wait for every timed draw's query, store its time in
+        /// @ref DrawRecord::gpuMs and delete the query.
+        static void ResolveTimes();
 
         /// Record every draw until @ref End. The framebuffer bound for drawing
         /// at this moment is taken as the caller's, which is how a draw onto it

@@ -13,6 +13,7 @@ namespace NeonTools
         PFNGLDRAWARRAYSPROC gRealDrawArrays = nullptr;
         bool gRecording = false;
         bool gReadback = true;
+        bool gTiming = false;
         GLint gCallerFramebuffer = 0;
         std::vector<DrawRecord> gDraws;
 
@@ -82,9 +83,23 @@ void main() { fragColor = uColor; }
             {
                 return PassKind::P0;
             }
+            // The fill reads the segment table, which nothing else does;
+            // before uHaloWidth, which it declares too.
+            if (!ontoCaller && HasUniform(program, "uSegCover"))
+            {
+                return PassKind::P0F;
+            }
+            // One program bakes both coverage tables, told apart by the
+            // target it was handed.
             if (!ontoCaller && HasUniform(program, "uHaloWidth"))
             {
-                return PassKind::P0B;
+                const GLint target = glGetUniformLocation(program, "uBakeTarget");
+                GLint value = 0;
+                if (target >= 0)
+                {
+                    glGetUniformiv(program, target, &value);
+                }
+                return (value == 1) ? PassKind::P0S : PassKind::P0B;
             }
             return PassKind::OTHER;
         }
@@ -143,10 +158,21 @@ void main() { fragColor = uColor; }
 
         void APIENTRY HookDrawArrays(GLenum mode, GLint first, GLsizei count)
         {
-            gRealDrawArrays(mode, first, count);
             if (!gRecording)
             {
+                gRealDrawArrays(mode, first, count);
                 return;
+            }
+            GLuint timerQuery = 0;
+            if (gTiming)
+            {
+                glGenQueries(1, &timerQuery);
+                glBeginQuery(GL_TIME_ELAPSED, timerQuery);
+            }
+            gRealDrawArrays(mode, first, count);
+            if (gTiming)
+            {
+                glEndQuery(GL_TIME_ELAPSED);
             }
 
             GLint program = 0;
@@ -160,8 +186,13 @@ void main() { fragColor = uColor; }
             record.kind = Classify(GLuint(program), drawFramebuffer == gCallerFramebuffer);
             if (record.kind == PassKind::OTHER)
             {
+                if (timerQuery != 0)
+                {
+                    glDeleteQueries(1, &timerQuery);
+                }
                 return;
             }
+            record.timerQuery = timerQuery;
             record.program = GLuint(program);
             record.vertexArray = GLuint(vertexArray);
             record.mode = mode;
@@ -187,6 +218,62 @@ void main() { fragColor = uColor; }
         }
     }
 
+    const char *PassKindName(PassKind kind)
+    {
+        switch (kind)
+        {
+        case PassKind::P0:
+        {
+            return "P0";
+        }
+        case PassKind::P0B:
+        {
+            return "P0b";
+        }
+        case PassKind::P0S:
+        {
+            return "P0s";
+        }
+        case PassKind::P0F:
+        {
+            return "P0f";
+        }
+        case PassKind::P1A:
+        {
+            return "P1a";
+        }
+        case PassKind::P1B:
+        {
+            return "P1b";
+        }
+        case PassKind::P1F:
+        {
+            return "P1f";
+        }
+        case PassKind::P1C:
+        {
+            return "P1c";
+        }
+        case PassKind::P2A:
+        {
+            return "P2a";
+        }
+        case PassKind::P2B:
+        {
+            return "P2b";
+        }
+        case PassKind::P2C:
+        {
+            return "P2c";
+        }
+        case PassKind::OTHER:
+        {
+            return "other";
+        }
+        }
+        return "other";
+    }
+
     void PassRecorder::Install()
     {
         if (gRealDrawArrays == nullptr)
@@ -199,6 +286,7 @@ void main() { fragColor = uColor; }
     void PassRecorder::Release()
     {
         gFlatProgram.reset();
+        ResolveTimes();
         gDraws.clear();
     }
 
@@ -207,8 +295,30 @@ void main() { fragColor = uColor; }
         gReadback = enabled;
     }
 
+    void PassRecorder::SetTiming(bool enabled)
+    {
+        gTiming = enabled;
+    }
+
+    void PassRecorder::ResolveTimes()
+    {
+        for (DrawRecord &record : gDraws)
+        {
+            if (record.timerQuery == 0)
+            {
+                continue;
+            }
+            GLuint64 ns = 0;
+            glGetQueryObjectui64v(record.timerQuery, GL_QUERY_RESULT, &ns);
+            record.gpuMs = double(ns) / 1e6;
+            glDeleteQueries(1, &record.timerQuery);
+            record.timerQuery = 0;
+        }
+    }
+
     void PassRecorder::Begin()
     {
+        ResolveTimes();
         gDraws.clear();
         glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &gCallerFramebuffer);
         gRecording = true;

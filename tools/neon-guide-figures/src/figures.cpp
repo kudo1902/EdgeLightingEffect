@@ -1082,8 +1082,11 @@ namespace NeonGuideFigures
             // down) and a corner at its right (the direction from the arc's
             // centre across, the radius down, the arc itself halfway down),
             // sharing the band's width in proportion to their lengths. See
-            // neon-pieces.glsl.
-            if (const DrawRecord *p0b = PassRecorder::Find(PassKind::P0B))
+            // neon-pieces.glsl. Read after the table's LAST write: the fill
+            // (P0f) writes its segment channels after the arcs' bake, when the
+            // segments have a table of their own.
+            const DrawRecord *p0f = PassRecorder::Find(PassKind::P0F);
+            if (const DrawRecord *p0b = p0f ? p0f : PassRecorder::Find(PassKind::P0B))
             {
                 const Attachment &t = p0b->written[0];
                 const int step = 4;
@@ -1109,6 +1112,34 @@ namespace NeonGuideFigures
                     }
                 }
                 SavePNG(out, Path(dir, "pass-p0b-glow-cover.png"));
+            }
+
+            // P0s - the segment table the fill copies from, as stored: the
+            // segments' halo and bloom coverage, the same layout as the main
+            // table's at its own, narrower width (every column), a gap between
+            // bands. Only on a frame whose segments have a table of their own.
+            if (const DrawRecord *p0s = PassRecorder::Find(PassKind::P0S))
+            {
+                const Attachment &t = p0s->written[0];
+                const int gap = 6;
+                const int bandGap = 2;
+                const int panelH = GLOW_COVER_HEIGHT + 3 * bandGap;
+                Canvas out(2 * t.width + gap, panelH, glm::vec3(0.18f));
+                for (int k = 0; k < 2; ++k)
+                {
+                    const int x0 = k * (t.width + gap);
+                    for (int j = 0; j < t.height; ++j)
+                    {
+                        const int band = std::min(j / GLOW_COVER_ROWS, 3);
+                        for (int i = 0; i < t.width; ++i)
+                        {
+                            const glm::vec4 v = t.At(i, j);
+                            FillRect(out, x0 + i, j + band * bandGap, 1, 1,
+                                     glm::vec3(std::min(DecodeCoverage(k == 0 ? v.r : v.g), 1.0f)));
+                        }
+                    }
+                }
+                SavePNG(out, Path(dir, "pass-p0s-segment-cover.png"));
             }
 
             // P1a - the gather buffer: hue, arc coverage, segment coverage.

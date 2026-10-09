@@ -5,16 +5,35 @@
 //       - metrics, cross-sections, timing and the motion sweep. With --images it
 //       also writes every PNG the page shows into <outdir>/images/.
 //
+//   neon-scale-check generate <outdir> --set cover [--scene A,B]
+//       Renders the animated `cover` scenes (cover.h) - six frames each, at
+//       1.0, 0.5 and 0.25, every frame a config change - and writes each
+//       frame as an RGBA PNG into <outdir>, with the GPU in <outdir>/gpu.txt.
+//       Compare two such directories with `diff`.
+//
+//   neon-scale-check diff <dirA> <dirB> [--max N] [--within1 PCT]
+//       Per PNG present in both: the largest RGB and alpha difference, p99.9,
+//       and the share of lit pixels off by 1, 2, 3-4, 5-8 and more levels.
+//       Exits non-zero when any file's max exceeds N (default 2) or fewer than
+//       PCT percent (default 99.9) of its lit pixels are within 1 level -
+//       docs/neon-glow-cover-resolution-plan.md section 5's criterion.
+//
 //   neon-scale-check check [--images-dir DIR]
 //       A regression gate. Exits non-zero when scale 1.0 has drifted from the
 //       page's committed images, when a reduced scale exceeds its error bound,
 //       or when a moving hairline wanders off its edge. See README.md.
 //
 //   neon-scale-check time <out.json> [--label NAME] [--size WxH] [--mode MODE]
+//                         [--arcs N] [--segments M] [--set cover] [--scene A,B]
+//                         [--scales 1,0.5] [--gpu] [--passes]
 //       Timing only, at any frame size, plus each effect's initialisation
 //       time. For before / after comparisons; see README.md. MODE is what
 //       changes between the timed frames: still (the default), hue,
-//       intensity, arc-wipe or segment-travel.
+//       intensity, arc-wipe, segment-travel, lights (N arcs and M segments
+//       changing length every frame, defaults 8 / 0) or resize. --set cover times the
+//       cover scenes at their own frame sizes instead of the page's. --gpu
+//       adds a timer query round each Render; --passes also each pass's
+//       share.
 //
 //   neon-scale-check partition [--configs N] [--seed S]
 //       A regression gate for the scaled path's composite: across N random
@@ -24,10 +43,15 @@
 //   --verbose on any of them passes the library's INFO log through; without it
 //   only the library's WARN and ERROR lines are shown, on stderr.
 
+#include "cover.h"
 #include "harness.h"
 #include "partition.h"
 #include "scenes.h"
+#include "pass-recorder.h"
+// Compiled into libedge-lighting (lib/src/util/stb-image.cpp); declarations only.
+#include "stb/stb_image_write.h"
 
+#include <dirent.h>
 #include <sys/stat.h>
 
 #include <algorithm>
@@ -36,6 +60,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
 #include <iostream>
 #include <streambuf>
 #include <string>
@@ -109,6 +134,89 @@ namespace
         return true;
     }
 
+    /// @p list split at commas, empty items dropped.
+    std::vector<std::string> SplitList(const std::string &list)
+    {
+        std::vector<std::string> out;
+        size_t begin = 0;
+        while (begin <= list.size())
+        {
+            const size_t end = std::min(list.find(',', begin), list.size());
+            if (end > begin)
+            {
+                out.push_back(list.substr(begin, end - begin));
+            }
+            begin = end + 1;
+        }
+        return out;
+    }
+
+    /// Whether @p id passes the --scene filter @p only (empty: every scene).
+    bool Selected(const std::vector<std::string> &only, const char *id)
+    {
+        return only.empty() || std::find(only.begin(), only.end(), std::string(id)) != only.end();
+    }
+
+    /// The page's tag for @p scale: s1000 for 1.0, s500 for 0.5, ...
+    std::string ScaleTag(float scale)
+    {
+        char tag[16];
+        std::snprintf(tag, sizeof(tag), "s%d", int(std::lround(scale * 1000.0f)));
+        return tag;
+    }
+
+    /// `generate <outdir> --set cover`: every frame of every cover scene at
+    /// every cover scale, one RGBA PNG each, on a freshly initialised effect
+    /// per scene and scale.
+    int GenerateCover(const std::string &out, const std::vector<std::string> &only)
+    {
+        if (!MakeDirs(out))
+        {
+            std::fprintf(stderr, "neon-scale-check: cannot create %s\n", out.c_str());
+            return 2;
+        }
+        const GLSession gl;
+        {
+            std::ofstream gpu(out + "/gpu.txt");
+            gpu << RendererName() << "\n";
+        }
+        // Speed over size: the 3840 x 2160 frames dominate the run at the
+        // default level and filter search, and the files are compared, not
+        // shipped.
+        stbi_write_png_compression_level = 1;
+        stbi_write_force_png_filter = 1;
+        int written = 0;
+        for (const CoverScene &scene : COVER_SCENES)
+        {
+            if (!Selected(only, scene.id))
+            {
+                continue;
+            }
+            std::fprintf(stderr, "%s\n", scene.id);
+            for (float scale : COVER_SCALES)
+            {
+                EdgeLightingEffect effect;
+                CreateEffect(effect);
+                for (int f = 0; f < COVER_FRAMES; ++f)
+                {
+                    effect.SetConfig(CoverFrameConfig(scene, f, scale));
+                    effect.Update(1.0f / 60.0f);
+                    const RGBA frame = RenderOnce(effect, scene.width, scene.height);
+                    char name[256];
+                    std::snprintf(name, sizeof(name), "/%s_%s_f%d.png", scene.id, ScaleTag(scale).c_str(), f);
+                    if (!WritePNG4(out + name, frame, scene.width, scene.height))
+                    {
+                        std::fprintf(stderr, "neon-scale-check: cannot write %s%s\n", out.c_str(), name);
+                        return 2;
+                    }
+                    ++written;
+                }
+            }
+        }
+        std::fprintf(stderr, "wrote %d frames to %s\n", written, out.c_str());
+        return 0;
+    }
+
     const Scene &FindScene(const char *id)
     {
         for (const Scene &s : SCENES)
@@ -176,6 +284,21 @@ namespace
             return 2;
         }
         const std::string out = argv[2];
+        for (int i = 3; i + 1 < argc; ++i)
+        {
+            if (std::strcmp(argv[i], "--set") == 0 && std::strcmp(argv[i + 1], "cover") == 0)
+            {
+                std::vector<std::string> only;
+                for (int j = 3; j + 1 < argc; ++j)
+                {
+                    if (std::strcmp(argv[j], "--scene") == 0)
+                    {
+                        only = SplitList(argv[j + 1]);
+                    }
+                }
+                return GenerateCover(out, only);
+            }
+        }
         std::string label = "run";
         bool images = false;
         bool timing = true;
@@ -202,8 +325,8 @@ namespace
             {
                 if (!ParseTimeMode(argv[++i], mode))
                 {
-                    std::fprintf(stderr, "neon-scale-check: --mode wants still, hue, intensity, arc-wipe or "
-                                         "segment-travel\n");
+                    std::fprintf(stderr, "neon-scale-check: --mode wants still, hue, intensity, arc-wipe, "
+                                         "segment-travel, lights or resize\n");
                     return 2;
                 }
             }
@@ -336,12 +459,20 @@ namespace
     /// default, still, is what every earlier figure measured; the animated
     /// modes are the frames a host draws while something moves, and the only
     /// ones that see the work the neon does on a changed frame alone.
+    ///
+    /// --set cover times the cover scenes (cover.h) instead, each at its own
+    /// frame size and as its frame 0 configures it. --scene and --scales
+    /// narrow either set. --gpu adds each config's GPU frame time (TimeGPU),
+    /// --passes its passes' too. Every figure is also printed, one line per
+    /// scene and scale.
     int Time(int argc, char **argv)
     {
         if (argc < 3)
         {
             std::fprintf(stderr,
-                         "usage: neon-scale-check time <out.json> [--label NAME] [--size WxH] [--mode MODE]\n");
+                         "usage: neon-scale-check time <out.json> [--label NAME] [--size WxH] [--mode MODE] "
+                         "[--arcs N] [--segments M] [--set cover] [--scene A,B] [--scales 1,0.5] [--gpu] "
+                         "[--passes]\n");
             return 2;
         }
         const std::string out = argv[2];
@@ -349,6 +480,12 @@ namespace
         int width = FRAME_WIDTH;
         int height = FRAME_HEIGHT;
         TimeMode mode = TimeMode::STILL;
+        LightCounts lights;
+        bool cover = false;
+        bool gpu = false;
+        bool passes = false;
+        std::vector<std::string> only;
+        std::vector<float> scales;
         for (int i = 3; i < argc; ++i)
         {
             if (std::strcmp(argv[i], "--label") == 0 && i + 1 < argc)
@@ -359,8 +496,8 @@ namespace
             {
                 if (!ParseTimeMode(argv[++i], mode))
                 {
-                    std::fprintf(stderr, "neon-scale-check: --mode wants still, hue, intensity, arc-wipe or "
-                                         "segment-travel\n");
+                    std::fprintf(stderr, "neon-scale-check: --mode wants still, hue, intensity, arc-wipe, "
+                                         "segment-travel, lights or resize\n");
                     return 2;
                 }
             }
@@ -372,11 +509,95 @@ namespace
                     return 2;
                 }
             }
+            else if (std::strcmp(argv[i], "--arcs") == 0 && i + 1 < argc)
+            {
+                lights.arcs = std::max(0, std::min(std::atoi(argv[++i]), 8));
+            }
+            else if (std::strcmp(argv[i], "--segments") == 0 && i + 1 < argc)
+            {
+                lights.segments = std::max(0, std::min(std::atoi(argv[++i]), 8));
+            }
+            else if (std::strcmp(argv[i], "--set") == 0 && i + 1 < argc)
+            {
+                cover = std::strcmp(argv[++i], "cover") == 0;
+            }
+            else if (std::strcmp(argv[i], "--scene") == 0 && i + 1 < argc)
+            {
+                only = SplitList(argv[++i]);
+            }
+            else if (std::strcmp(argv[i], "--scales") == 0 && i + 1 < argc)
+            {
+                for (const std::string &item : SplitList(argv[++i]))
+                {
+                    scales.push_back(float(std::atof(item.c_str())));
+                }
+            }
+            else if (std::strcmp(argv[i], "--gpu") == 0)
+            {
+                gpu = true;
+            }
+            else if (std::strcmp(argv[i], "--passes") == 0)
+            {
+                gpu = true;
+                passes = true;
+            }
+        }
+        if (scales.empty())
+        {
+            if (cover)
+            {
+                scales.assign(std::begin(COVER_SCALES), std::end(COVER_SCALES));
+            }
+            else
+            {
+                scales.assign(SCALES, SCALES + SCALE_COUNT);
+            }
         }
         const float kx = float(width) / float(FRAME_WIDTH);
         const float ky = float(height) / float(FRAME_HEIGHT);
 
+        // Each scene to time, as a config at scale 1 and the frame it is drawn into.
+        typedef struct Timed
+        {
+            std::string id;
+            Config config;
+            int width;
+            int height;
+        } Timed;
+        std::vector<Timed> timed;
+        if (cover)
+        {
+            for (const CoverScene &scene : COVER_SCENES)
+            {
+                if (Selected(only, scene.id))
+                {
+                    timed.push_back({scene.id, CoverFrameConfig(scene, 0, 1.0f), scene.width, scene.height});
+                }
+            }
+        }
+        else
+        {
+            for (const Scene &scene : SCENES)
+            {
+                if (!Selected(only, scene.id))
+                {
+                    continue;
+                }
+                Config c = SceneConfig(scene, 1.0f);
+                c.geometry.position.x *= kx;
+                c.geometry.position.y *= ky;
+                c.geometry.width *= kx;
+                c.geometry.height *= ky;
+                c.geometry.cornerRadius *= std::min(kx, ky);
+                timed.push_back({scene.id, c, width, height});
+            }
+        }
+
         const GLSession gl;
+        if (passes)
+        {
+            NeonTools::PassRecorder::Install();
+        }
         FILE *js = std::fopen(out.c_str(), "w");
         if (!js)
         {
@@ -384,39 +605,248 @@ namespace
             return 2;
         }
         std::fprintf(js,
-                     "{\"build\": \"%s\", \"gpu\": \"%s\", \"size\": [%d, %d], \"mode\": \"%s\", "
-                     "\"scenarios\": {",
-                     label.c_str(), RendererName().c_str(), width, height, TimeModeName(mode));
-        std::vector<double> inits;
-        bool first = true;
-        for (const Scene &scene : SCENES)
+                     "{\"build\": \"%s\", \"gpu\": \"%s\", \"size\": [%d, %d], \"set\": \"%s\", \"mode\": \"%s\", "
+                     "\"arcs\": %d, \"segments\": %d, \"scenarios\": {",
+                     label.c_str(), RendererName().c_str(), width, height, cover ? "cover" : "page",
+                     TimeModeName(mode), lights.arcs, lights.segments);
+        std::printf("%s, %s, mode %s", RendererName().c_str(), cover ? "cover set" : "page set", TimeModeName(mode));
+        if (mode == TimeMode::LIGHTS)
         {
-            std::fprintf(stderr, "%s\n", scene.id);
-            std::fprintf(js, "%s\n\"%s\": {\"ms\": {", first ? "" : ",", scene.id);
-            first = false;
-            for (int s = 0; s < SCALE_COUNT; ++s)
+            std::printf(" (%d arcs, %d segments)", lights.arcs, lights.segments);
+        }
+        std::printf("\n");
+        std::vector<double> inits;
+        std::vector<double> firsts;
+        bool first = true;
+        for (const Timed &t : timed)
+        {
+            std::fprintf(stderr, "%s\n", t.id.c_str());
+            std::vector<double> ms;
+            std::vector<GpuTiming> gpus;
+            for (float scale : scales)
             {
-                Config c = SceneConfig(scene, SCALES[s]);
-                c.geometry.position.x *= kx;
-                c.geometry.position.y *= ky;
-                c.geometry.width *= kx;
-                c.geometry.height *= ky;
-                c.geometry.cornerRadius *= std::min(kx, ky);
+                Config c = t.config;
+                c.neon.resolutionScale = scale;
                 double initMs = 0.0;
-                const double ms = TimeRender(c, width, height, &initMs, mode);
+                double firstMs = 0.0;
+                ms.push_back(TimeRender(c, t.width, t.height, &initMs, mode, lights, &firstMs));
                 inits.push_back(initMs);
-                std::fprintf(js, "%s\"%s\": %.4f", s ? ", " : "", SCALE_TAGS[s], ms);
+                firsts.push_back(firstMs);
+                if (gpu)
+                {
+                    gpus.push_back(TimeGPU(c, t.width, t.height, mode, lights, passes));
+                }
+                std::printf("%-18s %-6s %8.4f ms", t.id.c_str(), ScaleTag(scale).c_str(), ms.back());
+                if (gpu)
+                {
+                    std::printf("  gpu %8.4f ms", gpus.back().frameMs);
+                    for (const auto &p : gpus.back().passes)
+                    {
+                        std::printf("  %s %.4f", p.first.c_str(), p.second);
+                    }
+                }
+                std::printf("\n");
+                std::fflush(stdout);
             }
-            std::fprintf(js, "}}");
+            std::fprintf(js, "%s\n\"%s\": {\"ms\": {", first ? "" : ",", t.id.c_str());
+            first = false;
+            for (size_t s = 0; s < scales.size(); ++s)
+            {
+                std::fprintf(js, "%s\"%s\": %.4f", s ? ", " : "", ScaleTag(scales[s]).c_str(), ms[s]);
+            }
+            std::fprintf(js, "}");
+            if (gpu)
+            {
+                std::fprintf(js, ", \"gpu\": {");
+                for (size_t s = 0; s < scales.size(); ++s)
+                {
+                    std::fprintf(js, "%s\"%s\": %.4f", s ? ", " : "", ScaleTag(scales[s]).c_str(), gpus[s].frameMs);
+                }
+                std::fprintf(js, "}");
+            }
+            if (passes)
+            {
+                std::fprintf(js, ", \"passes\": {");
+                for (size_t s = 0; s < scales.size(); ++s)
+                {
+                    std::fprintf(js, "%s\"%s\": {", s ? ", " : "", ScaleTag(scales[s]).c_str());
+                    for (size_t p = 0; p < gpus[s].passes.size(); ++p)
+                    {
+                        std::fprintf(js, "%s\"%s\": %.4f", p ? ", " : "", gpus[s].passes[p].first.c_str(),
+                                     gpus[s].passes[p].second);
+                    }
+                    std::fprintf(js, "}");
+                }
+                std::fprintf(js, "}");
+            }
+            std::fprintf(js, "}");
         }
         std::fprintf(js, "},\n\"initMs\": [");
         for (size_t i = 0; i < inits.size(); ++i)
         {
             std::fprintf(js, "%s%.3f", i ? ", " : "", inits[i]);
         }
+        std::fprintf(js, "],\n\"firstFrameMs\": [");
+        for (size_t i = 0; i < firsts.size(); ++i)
+        {
+            std::fprintf(js, "%s%.3f", i ? ", " : "", firsts[i]);
+        }
         std::fprintf(js, "]}\n");
         std::fclose(js);
+        if (passes)
+        {
+            NeonTools::PassRecorder::Release();
+        }
         std::fprintf(stderr, "wrote %s\n", out.c_str());
+        return 0;
+    }
+
+    /// The first line of @p dir/gpu.txt, or "unknown".
+    std::string ReadGpu(const std::string &dir)
+    {
+        std::ifstream in(dir + "/gpu.txt");
+        std::string line;
+        return std::getline(in, line) ? line : std::string("unknown");
+    }
+
+    /// `diff <dirA> <dirB>`: the measure docs/neon-glow-cover-resolution-plan.md
+    /// section 5 judges a step that may move pixels by. RGB and alpha are
+    /// reported apart (a layer's coverage alpha can move where its colour on
+    /// black cannot); the distribution is over LIT pixels, any RGB channel
+    /// at 1 or more in either image.
+    int Diff(int argc, char **argv)
+    {
+        if (argc < 4)
+        {
+            std::fprintf(stderr, "usage: neon-scale-check diff <dirA> <dirB> [--max N] [--within1 PCT]\n");
+            return 2;
+        }
+        const std::string a = argv[2];
+        const std::string b = argv[3];
+        int maxAllowed = 2;
+        double within1Required = 99.9;
+        for (int i = 4; i < argc; ++i)
+        {
+            if (std::strcmp(argv[i], "--max") == 0 && i + 1 < argc)
+            {
+                maxAllowed = std::atoi(argv[++i]);
+            }
+            else if (std::strcmp(argv[i], "--within1") == 0 && i + 1 < argc)
+            {
+                within1Required = std::atof(argv[++i]);
+            }
+        }
+        std::vector<std::string> names;
+        if (DIR *d = opendir(a.c_str()))
+        {
+            while (dirent *e = readdir(d))
+            {
+                const std::string n = e->d_name;
+                if (n.size() > 4 && n.substr(n.size() - 4) == ".png")
+                {
+                    names.push_back(n);
+                }
+            }
+            closedir(d);
+        }
+        std::sort(names.begin(), names.end());
+        const std::string gpuA = ReadGpu(a);
+        const std::string gpuB = ReadGpu(b);
+        std::printf("A: %s (%s)\nB: %s (%s)\n", a.c_str(), gpuA.c_str(), b.c_str(), gpuB.c_str());
+        if (gpuA != gpuB)
+        {
+            std::printf("WARNING: rendered on different GPUs - a GPU switch alone moves pixels by a level.\n");
+        }
+        std::printf("%-34s %4s %5s %6s %9s %8s %8s %8s %8s %8s\n", "file", "max", "alpha", "p99.9", "lit px", "1",
+                    "2", "3-4", "5-8", ">8");
+        int failures = 0;
+        int compared = 0;
+        int worstMax = 0;
+        int worstAlpha = 0;
+        double worstWithin1 = 100.0;
+        long changed = 0;
+        for (const std::string &n : names)
+        {
+            RGBA pa;
+            RGBA pb;
+            int wa = 0, ha = 0, wb = 0, hb = 0;
+            if (!LoadPNG4(a + "/" + n, pa, wa, ha))
+            {
+                continue;
+            }
+            if (!LoadPNG4(b + "/" + n, pb, wb, hb) || wa != wb || ha != hb)
+            {
+                std::printf("%-34s missing in B or a different size\n", n.c_str());
+                ++failures;
+                continue;
+            }
+            ++compared;
+            long hist[256] = {0};
+            long lit = 0;
+            int maxRgb = 0;
+            int maxAlpha = 0;
+            for (size_t i = 0; i < pa.size(); i += 4)
+            {
+                maxAlpha = std::max(maxAlpha, std::abs(int(pa[i + 3]) - int(pb[i + 3])));
+                const int la = std::max(pa[i], std::max(pa[i + 1], pa[i + 2]));
+                const int lb = std::max(pb[i], std::max(pb[i + 1], pb[i + 2]));
+                int d = 0;
+                for (int k = 0; k < 3; ++k)
+                {
+                    d = std::max(d, std::abs(int(pa[i + k]) - int(pb[i + k])));
+                }
+                maxRgb = std::max(maxRgb, d);
+                changed += (d > 0);
+                if (la == 0 && lb == 0)
+                {
+                    continue;
+                }
+                ++lit;
+                ++hist[d];
+            }
+            long acc = 0;
+            int p999 = 0;
+            for (int d = 255; d >= 0; --d)
+            {
+                acc += hist[d];
+                if (acc > lit / 1000)
+                {
+                    p999 = d;
+                    break;
+                }
+            }
+            auto pct = [&](int lo, int hi) {
+                long sum = 0;
+                for (int d = lo; d <= hi; ++d)
+                {
+                    sum += hist[d];
+                }
+                return lit ? 100.0 * double(sum) / double(lit) : 0.0;
+            };
+            const double within1 = pct(0, 1);
+            const bool bad = maxRgb > maxAllowed || within1 < within1Required;
+            failures += bad;
+            worstMax = std::max(worstMax, maxRgb);
+            worstAlpha = std::max(worstAlpha, maxAlpha);
+            worstWithin1 = std::min(worstWithin1, within1);
+            std::printf("%-34s %4d %5d %6d %9ld %7.3f%% %7.3f%% %7.3f%% %7.3f%% %7.3f%%%s\n", n.c_str(), maxRgb,
+                        maxAlpha, p999, lit, pct(1, 1), pct(2, 2), pct(3, 4), pct(5, 8), pct(9, 255),
+                        bad ? " !" : "");
+        }
+        std::printf("%d file(s): worst max %d (alpha %d), worst share within 1 level %.3f%%, %ld pixel(s) differ\n",
+                    compared, worstMax, worstAlpha, worstWithin1, changed);
+        if (compared == 0)
+        {
+            std::printf("FAIL: nothing compared\n");
+            return 1;
+        }
+        if (failures)
+        {
+            std::printf("FAIL: %d file(s) outside max %d / %.2f%% within 1 (marked !)\n", failures, maxAllowed,
+                        within1Required);
+            return 1;
+        }
+        std::printf("PASS (max %d, %.2f%% within 1)\n", maxAllowed, within1Required);
         return 0;
     }
 
@@ -548,11 +978,18 @@ int main(int argc, char **argv)
     {
         return Partition(argc, argv);
     }
+    if (argc >= 2 && std::strcmp(argv[1], "diff") == 0)
+    {
+        return Diff(argc, argv);
+    }
     std::fprintf(stderr,
                  "usage:\n"
                  "  neon-scale-check generate <outdir> [--label NAME] [--images] [--no-timing] [--mode MODE] [--verbose]\n"
+                 "  neon-scale-check generate <outdir> --set cover [--scene A,B] [--verbose]\n"
                  "  neon-scale-check check [--images-dir DIR] [--verbose]\n"
-                 "  neon-scale-check time <out.json> [--label NAME] [--size WxH] [--mode MODE] [--verbose]\n"
-                 "  neon-scale-check partition [--configs N] [--seed S] [--verbose]\n");
+                 "  neon-scale-check time <out.json> [--label NAME] [--size WxH] [--mode MODE] [--arcs N] [--segments M]\n"
+                 "                        [--set cover] [--scene A,B] [--scales 1,0.5] [--gpu] [--passes] [--verbose]\n"
+                 "  neon-scale-check partition [--configs N] [--seed S] [--verbose]\n"
+                 "  neon-scale-check diff <dirA> <dirB> [--max N] [--within1 PCT]\n");
     return 2;
 }
