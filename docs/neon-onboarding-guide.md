@@ -69,9 +69,15 @@ common mistake in this code:
 centre, +x right and **+y up**. "App coordinates" are the host's: origin at the
 top-left of the viewport, +y **down**. Part 1.3 explains the conversions.
 
-**Scale 1.0 vs below.** "The direct path" is `resolutionScale == 1.0`; "the
-scaled path" or "the reduced path" is anything below it. Part 8 is entirely
-about the second.
+**One path at every scale.** The glow is shaded into a reduced buffer at
+`resolutionScale` of the viewport (default 0.5), blitted back, and a ring
+around the edge re-shaded at full resolution; at 1.0 the reduced buffer is
+simply full size. There used to be a separate "direct path" at 1.0 that
+shaded straight onto the target; it was removed in I57 (see
+[`review-findings.md`](review-findings.md)), and where this guide still
+describes it - the passes at scale 1.0, `mNeonShader`, an inline gather loop
+- it predates that change and the gather split before it. Part 8 is about
+the reduced path, which is now the only one.
 
 **Figures.** Every image in this guide is rendered by the library itself,
 offscreen, by [`tools/neon-guide-figures`](../tools/neon-guide-figures/README.md):
@@ -168,7 +174,8 @@ a matrix, conventionally called the **MVP** (model-view-projection). For 2D
 work like this, the MVP is just "translate, then map a pixel rectangle onto
 -1..+1", built with `glm::translate` and `glm::ortho`.
 
-The neon uses four spaces (see also [`coordinate-system.md`](coordinate-system.md)):
+The neon uses four spaces (see also [`implementation.md`](implementation.md),
+section 11, which adds why the viewport origin must be (0, 0)):
 
 ```
  App coords                 GL window coords          Rect-local            NDC
@@ -239,7 +246,7 @@ GLSL offers three ways to read:
 | `uArcLUT` | 128 x 8 | RGBA8 | LINEAR | CLAMP | one row per arc with its own colours |
 | `uEmission` | 128 x 2 | RGBA16F (RGBA8 fallback) | NEAREST | CLAMP | per-sample colour and weight, rebaked by a pre-pass |
 | `uGather`, `uGatherSeg` | depends on the rect | RGBA16F (RGBA8 fallback) | LINEAR | CLAMP | the gather's results, below scale 1.0 only |
-| `uSource` (blit) | the reduced buffer | RGBA8 | LINEAR | CLAMP | the glow shaded at reduced resolution |
+| `uSource` (blit) | the reduced buffer | RGBA16F (RGBA8 fallback) | LINEAR | CLAMP | the glow shaded at reduced resolution |
 
 The colour ring uses `REPEAT` so that rotating the hue is a single addition
 to u (u past 1 wraps). The atlases use `CLAMP` because an arc's gradient has
@@ -412,6 +419,15 @@ pixel. To know how many units "one pixel" is, the shader asks the GPU for the
 how much `d` changes between this pixel and its neighbour. Then
 `smoothstep(-w, w, d)` with `w` derived from it gives a one-pixel ramp.
 
+The neon takes that width from `sdRoundBoxFwidth` (`neon-sdf.glsl`) rather than
+from `fwidth(d)` itself: the gradient of `d` worked out analytically, times
+`fwidth` of the position. Along an edge the two are the same number. At a sharp
+corner they are not: on the corner's own pixel the quad below can hold both
+neighbours outside the rect, `d` jumps a whole pixel along each axis, and
+`fwidth(d)` reads 2 - the ramp doubled and that one pixel came out dimmer, on
+whichever corners the quad happened to line up with (V26 in
+[`review-findings.md`](review-findings.md)).
+
 Derivatives work because the GPU shades pixels in 2x2 blocks ("quads") and
 subtracts neighbours' values. That has a catch: **if some pixels of a quad
 have taken a different branch, or have already discarded, the neighbour's
@@ -419,7 +435,8 @@ value does not exist and the derivative is undefined.** So:
 
 - Compute every derivative at the top of `main()`, before any `discard` or
   any branch that depends on per-pixel values. `neon.frag` has exactly one
-  derivative (`sideAA`, from `fwidth(d)`), computed before every discard.
+  derivative (`sideAA`, from `sdRoundBoxFwidth`), computed before every
+  discard.
 - A branch on a **uniform** is safe: every pixel in the draw takes the same
   path. The neon branches on uniforms freely (`uSegmentCount > 0`,
   `uCornerRadius > 0.0`, the resolution scale).
@@ -689,19 +706,22 @@ inside it, "how bright and what colour am I?" from two numbers:
   *brightness*: the three layers are functions of `|d|`.
 - **`t`, the position along the outline**, from 0 to 1. Decides *colour* and
   *which stretches are lit*: colour stops, arcs and segments are all authored
-  in `t`. The shader computes it in `perimeterPosition(vPos)`: find the
-  nearest point on the outline, decide which of its eight pieces it is on (four
-  straight edges, four corner arcs), and convert to a fraction of the total
-  length.
+  in `t`. The outline is eight pieces (four straight edges, four corner arcs);
+  for each, the shader finds the point on that piece nearest the pixel
+  (`filamentPieceDistance`) and converts it to a fraction of the total length
+  (`perimeterAt`). The pixel's own `t` is the one on its nearest piece.
 
 ![The perimeter position t of every pixel](images/neon-onboarding/perimeter-t-field.png)
 
 *`t` for every pixel of a 400 x 220 rect, as a hue wheel (red at 0 and 1),
-computed with `neon.frag`'s own `perimeterPosition`; the arrow marks `t = 0`
-and the default winding. Outside, the corner arcs fan out and `t` is
+computed with the nearest-point map `neon.frag` read until V25 (the figure
+tool's `PerimeterPosition`, on `perimeterAt`'s layout); the arrow marks
+`t = 0` and the default winding. Outside, the corner arcs fan out and `t` is
 continuous. Inside, it jumps along the four corner diagonals and the
 horizontal centre line, where the nearest edge changes. Anything read at a
-pixel's own `t` inherits those seams.*
+pixel's own `t` inherits those seams - which is why nothing in `neon.frag`
+does any more: the filament reads every nearby piece's own `t` (Part 3.6), the
+halo and bloom a coverage that moves smoothly with the pixel.*
 
 `t` matches the CPU's `GeometryUtils::GetPointOnRectangle` exactly, which is
 what lets an arc authored as "0.25 to 0.5" line up with what is drawn. Where
@@ -877,10 +897,13 @@ brightness floor instead of fading to black (the sum of four edges' light).
 Each pixel computes two kinds of coverage, because the layers need different
 things:
 
-- **Pointwise coverage** (`emitCover`, `segCoverPt`): how lit the outline is
-  *at this pixel's own `t`*, including arc feathers and colour-stop alpha. The
-  filament uses it, because the filament is a line and only its own position
-  matters.
+- **Pointwise coverage** (`emitCover`, `segCoverPt`, from `filamentCover`):
+  how lit the outline is *at one exact `t`*, including arc feathers and
+  colour-stop alpha. The filament uses it, because the filament is a line and
+  only the line's own position matters - read at each nearby piece's nearest
+  point, with that piece's core at the pixel's distance from it, and the
+  brightest kept. Read once, at the pixel's own `t`, it cut an arc's end along
+  a sharp corner's diagonal on one side of the line (V25).
 - **Gathered coverage** (`emitCoverGathered`, `segCoverGathered`): how lit the
   outline is *on average around this pixel*, weighted like the colour. It
   gives the halo and bloom their starting scale. Using the pointwise value
@@ -918,9 +941,11 @@ Then (in `neon.frag`, after the gather):
 
 ```
 arcCol   = col * intensity                                      // gathered hue x master brightness
-emitFil  = arcCol * emitCover         + segCol     * filamentGate
+filament = max over the pieces p within reach of                // V25
+           core(distance to p) * (emitCover, segCoverPt * filamentGate) at p's nearest t
+emitFil  = arcCol * filament.x        + segColHue  * filament.y
 emitGlow = arcCol * emitCoverGathered + segColHue  * gatheredSeg
-result   = emitFil  * core  * 12   * lineGate
+result   = emitFil          * 12   * lineGate
          + (emitGlow * halo  + haloFix)  * 0.9  * glowGate
          + (emitGlow * bloom + bloomFix) * bloomStrength * glowGate
 result   = toneMap(result)                       // Part 1.9
@@ -990,8 +1015,8 @@ blit). They also place the 128 loop samples (`rebuildLoopSamples`, via
 `GetPointOnRectangle`), size every quad, and set the gather resolution
 (`GetGatherScale`). `position` never reaches `neon.frag`: everything there is
 rect-local. It enters through the MVP translation and as `uRectCenter` in the
-fill and the blit. `winding` becomes `uWinding` (read by `perimeterPosition`)
-and decides the order of the loop samples.
+fill and the blit. `winding` becomes `uWinding` (read by `perimeterAt`, and by
+the coverage table's bake) and decides the order of the loop samples.
 
 **Passes.** All drawing passes. Not the emission table (P0), which depends
 only on perimeter fractions.
@@ -1204,8 +1229,9 @@ Travels to: `ArcBlock` (binding 2), packed by `packLightBlockData` as
 has its own stops; bit 1: another arc abuts its start; bit 2: another abuts
 its end); and `uArcLUT` (unit 2), one 128-texel row per arc. Read by P0
 (winner-take-all colour), the gather (via the table) and pointwise in
-`neon.frag` (coverage and alpha). Dirty: `mLightBlocksDirty`, the arc atlas's
-own guard, `mEmissionDirty`.
+`neon.frag` (coverage and alpha). Dirty: `mLightBlocks.dirty`, the arc atlas's
+own guard; P0 re-bakes when either moves (the block's or the atlas's upload
+count is part of its key).
 
 C ABI: `el_effect_set_arc_count`, `el_effect_set_arc(index, start, length,
 intensity, blendSpace)`, `el_effect_set_arc_color_stop_count` /
@@ -1232,7 +1258,8 @@ Travels to: `SegmentBlock` (binding 0) as `vec4(position, 1/(length/2), boost,
 hasStops)`; `uSegmentLUT` (unit 1). P0 writes their colour and bell sum into
 row 1 of the emission table. Having any segment selects the longer gather loop
 and adds a second gather attachment below scale 1.0. Dirty: `segmentsDirty`
-(which sets `mLightBlocksDirty`), the segment atlas's guard, `mEmissionDirty`.
+(which sets `mLightBlocks.dirty`), the segment atlas's guard; P0 re-bakes when
+either moves (upload counts, as for the arcs).
 
 C ABI: `el_effect_set_segment_boost_count`, `el_effect_set_segment_boost`,
 the `..._segment_color_stop` family, and the preserved family
@@ -1279,34 +1306,37 @@ and draws.
 | Member | Fragment shader | Built | Used by |
 | ------ | --------------- | ----- | ------- |
 | `mEmissionShader` | `neon-emission.frag` | `Initialize` | P0 |
-| `mGlowCoverShader` | `neon-glow-cover.frag` | first frame that bakes P0b | P0b |
-| `mBlackRectShader` | `black-rect.frag` | `Initialize` | P2a |
-| `mNeonShader` | `neon.frag`, no define | first frame at scale 1.0 | P1 (direct) |
-| `mNeonGatherShader` | `neon-gather.frag` | first frame below 1.0 | P1a |
-| `mNeonShadeShader` | `neon.frag` + `NEON_READS_GATHER` | first frame below 1.0 | P1b |
-| `mNeonRingShader` | the same source, a second program object | first frame below 1.0 | P2c |
-| `mBlitShader` | `neon-blit.frag` | first frame below 1.0 | P2b |
+| `mGlowCoverShader` | `neon-glow-cover.frag` | first frame that bakes P0b | P0b, P0s |
+| `mGlowCoverFillShader` | `neon-glow-cover-fill.frag` | first frame whose segments get a table of their own | P0f |
+| `mGatherShader` | `neon-gather.frag` | first frame | P1a |
+| `mShadeShader` | `neon.frag` | first frame | P1b |
+| `mFieldBakeShader` | `neon.frag` + `NEON_FIELD_BAKE` | first frame a field can serve | P1f, P1r |
+| `mFieldCompositeShader` | `neon-field.frag` | with it | P1c |
+| `mFillShader` | `black-rect.frag` | first fill drawn through it | P2a |
+| `mBlitShader` | `neon-blit.frag` | first frame | P2b |
+| `mRingShader` | `neon.frag`, a second program object | first frame | P2c |
+| `mRingFieldCompositeShader` | `neon-field.frag` + `NEON_FIELD_RING` | first frame the ring's field can serve | P2r |
 
-Programs are built per path on first use (`ensurePathPrograms`), so a host
-that stays at 1.0 never compiles the four scaled-path programs and vice versa.
+Every program goes through `ensureProgram`: built on first use (the glow's
+four by `ensureGlowPrograms`), and a failure logged once and never retried.
 The coverage bake is built the first time a table is needed
 (`ensureGlowCoverProgram`), so a host whose ring is lit uniformly never
 compiles it. A program that fails to compile is logged once, recorded in
-`mFailedPrograms` and never retried; that path then draws the fill only.
+`mFailedPrograms` and never retried; the frame then draws the fill only.
 
-**Vertex arrays** (each a VAO plus one VBO of `vec2` positions):
+**Meshes** (each a `Mesh`: a VAO plus one VBO of `vec2` positions, and its vertex count):
 
 | Member | Space | Holds |
 | ------ | ----- | ----- |
-| `mGlowVertexArray` | rect-local, scaled px | the glow quad: a rectangle, or a rectangle with a rectangular hole (4 strips) |
-| `mFillVertexArray` | rect-local, full-res px | the opaque fill's band |
-| `mRingVertexArray` | rect-local, full-res px | the edge ring (scaled path) |
-| `mBlitVertexArray` | rect-local, full-res px | the blit area: what can be lit outside the ring (scaled path) |
-| `mGatherVertexArray` | rect-local, scaled px | the gather pass's quad (scaled path) |
-| `mFullscreenVertexArray` | NDC | a static full-screen quad: the emission and coverage-table passes, and the fill's fallback |
+| `mGlowMesh` | rect-local, scaled px | the glow quad: a rectangle, or a rectangle with a rectangular hole (4 strips) |
+| `mFillMesh` | rect-local, full-res px | the opaque fill's band |
+| `mRingMesh` | rect-local, full-res px | the edge ring |
+| `mBlitMesh` | rect-local, full-res px | the blit area: what can be lit outside the ring |
+| `mGatherMesh` | rect-local, scaled px | the gather pass's quad |
+| `mFullscreenVertexArray` (a plain `VertexArray`) | NDC | a static full-screen quad: the emission and coverage-table passes, and the fill's fallback |
 
-**Uniform buffers:** `mSegmentBlock` (binding 0), `mLoopSamplesBlock`
-(binding 1), `mArcBlock` (binding 2). See Part 1.5.
+**Uniform buffers:** `mLightBlocks.segment` (binding 0), `mLoopSamplesBlock`
+(binding 1), `mLightBlocks.arc` (binding 2). See Part 1.5.
 
 **LUTs:** `mGradientLUT` (`GradientRingLUT`), `mSegmentLUT` and `mArcLUT`
 (`SpanAtlasLUT`). See Part 1.4.
@@ -1315,10 +1345,11 @@ compiles it. A program that fails to compile is logged once, recorded in
 
 | Member | Size | Format | When |
 | ------ | ---- | ------ | ---- |
-| `mEmissionBuffer` | 128 x 2 | RGBA16F, else RGBA8 (`EMISSION_FORMATS`) | allocated once in `Initialize` |
-| `mGlowCoverBuffer` | 1024 x 128 (`GLOW_COVER_WIDTH` x `GLOW_COVER_HEIGHT`): four bands of `GLOW_COVER_ROWS` rows, each a straight and a corner sharing its columns in proportion to their lengths (`uGlowCoverSplit`) | RGBA16F, else RGBA8 (`GLOW_COVER_FORMATS`), linear filter | allocated on the first frame that bakes it (`ensureGlowCoverBuffer`); never on a ring lit uniformly |
-| `mGatherBuffer` | a region around the rect, at the gather scale | RGBA16F, else RGBA8 (`GATHER_FORMATS`); 1 attachment, 2 with segments | scaled path; resized every frame (no-op if unchanged) |
-| `mScaledBuffer` | what the blit reads, at `resolutionScale`, never larger than the reduced viewport | RGBA8, 1 attachment | scaled path; resized every frame |
+| `mEmission.buffer` | 128 x 2 | RGBA16F, else RGBA8 (`EMISSION_FORMATS`) | allocated once in `Initialize` |
+| `mGlowCover.buffer` | `GetGlowCoverWidth` x 128 - 256 to 1024 columns, from the rect and the halo width (448 for a 960 x 540 rect at the default glow, 704 for 1840 x 1000, 1024 for a thin glow on a large rect) - four bands of `GLOW_COVER_ROWS` rows, each a straight and a corner sharing its columns in proportion to their lengths (`uGlowCoverSplit`); its layout is stored with it (`mGlowCover.layout`) | RGBA16F, else RGBA8 (`GLOW_COVER_FORMATS`), linear filter | allocated on the first frame that bakes it (`ensureGlowCoverBuffer`), reallocated when the wanted width rises past it or falls two steps below; never on a ring lit uniformly |
+| `mGlowCover.segBuffer` | the segment table: `GetGlowCoverSegmentWidth` x 128 - from 128 columns, 4 per standard deviation of the narrowest bell | RG16F, else RG8, linear filter | only while the segments have a table of their own (not too short, the fill built); released with the main table and when the segments go direct |
+| `mGather.buffer` | a region around the rect, at the gather scale | RGBA16F, else RGBA8 (`GATHER_FORMATS`); 1 attachment, 2 with segments | scaled path; resized every frame (no-op if unchanged) |
+| `mScaledBuffer` | what the blit reads, at `resolutionScale`, never larger than the reduced viewport | RGBA16F, else RGBA8 (`SCALED_FORMATS`), 1 attachment | scaled path; resized every frame |
 
 The two scaled-path buffers are released in `OnConfigChanged` when the layer
 is disabled or the scale returns to 1.0, and the coverage table when the layer
@@ -1330,13 +1361,14 @@ names in their constructors, so a GL context must be current when a
 
 ### 5.2 `Initialize()`
 
-1. `setupShaders()`: build `mEmissionShader` and `mBlackRectShader`.
-2. `resizeEmissionBuffer()`: allocate the 128x2 emission table, RGBA16F or
+1. `ensureProgram` builds `mEmissionShader`, the one program every frame uses.
+   Every other program, the fill's included, is built on first use.
+2. `ResizeInBestFormat`: allocate the 128x2 emission table, RGBA16F or
    RGBA8. Fails `Initialize` only if neither format allocates. The 1024x128
    coverage table is NOT allocated here: at 1 MB it is most of what the
    renderer holds, and the default ring never reads it.
 3. Declare the vertex format (attribute 0, two floats) on the five rebuildable
-   vertex arrays, once.
+   meshes, once.
 4. `rebuildLoopSamples`, `setupGeometry`, `setupFillGeometry`,
    `setupRingGeometry` (in that order: the ring reads values the glow quad
    computes), `FillEffectiveSegments`, `bakeLUTs`, `setupFullscreenQuad`, all
@@ -1358,9 +1390,10 @@ field, before overwriting it, and computes:
 | `geometryDirty` | `samplesDirty`, or `glowRadius`, `bloomStrength`, `intensity`, `lineWidth`, `filamentFalloff`, `glowSide`, `insideCutoff`, `outsideCutoff` | `setupGeometry`, then `setupRingGeometry` |
 | `fillDirty` | geometry, `opaqueMode`, `opaqueInsideCutoff`, `opaqueOutsideCutoff` | `setupFillGeometry` |
 | `segmentsDirty` | `segmentBoosts`, `preservedSegmentBoosts` | `FillEffectiveSegments` |
-| `mLightBlocksDirty` | `segmentsDirty`, or `arcs` (accumulated, never cleared here) | `packLightBlockData` on the next `Render` |
-| `mEmissionDirty` | **always** | P0 on the next `Render` |
-| `mGlowCoverDirty` | `segmentsDirty`, `arcs`, geometry `width` / `height` / `cornerRadius` / `winding`, `glowRadius` (accumulated, never cleared here) | P0b on the next `Render` - skipped, flag left set, while the ring is lit uniformly |
+| `mLightBlocks.dirty` | `segmentsDirty`, or `arcs` (accumulated, never cleared here) | `packLightBlockData` on the next `Render` |
+| (none for P0) | - | P0 is keyed on what it binds, not on config fields: see `isEmissionTableStale` below |
+| `mOffscreen.reusable` | cleared on **any** change | P1a and P1b on the next `Render` - see below |
+| `mGlowCover.dirtyArcPieces` / `dirtySegmentPieces` (masks, one bit per piece, one per light type) | every piece in both: geometry `width` / `height` / `cornerRadius` / `winding`, `glowRadius`; only the pieces a changed arc reaches (arc mask) or a changed segment reaches (segment mask) (accumulated, never cleared here) | P0b on the next `Render` - skipped, flag left set, while the ring is lit uniformly |
 
 Then, in order: overflow warnings for more than 8 arcs or segments, the
 segment merge, the flags above, `mCurrentConfig = config`, release of the
@@ -1370,18 +1403,20 @@ does nothing if they did not move.
 
 Two subtleties worth knowing before you touch this function:
 
-- `mLightBlocksDirty` is accumulated with `||`, not assigned. The very first
+- `mLightBlocks.dirty` is accumulated with `||`, not assigned. The very first
   call happens before `Initialize`; an assignment there would clear the
   initial `true`, the uniform blocks would never get a data store, and binding
   them crashed the driver (measured).
-- The rebuild gate is `mInitialized`, **not** a program's validity: on a host
-  that never draws at 1.0, `mNeonShader` is never valid.
+- The rebuild gate is `mInitialized`, **not** a program's validity: the
+  glow's programs are built on the first frame, so on a host that has not
+  drawn yet none of them is valid.
 
 ### 5.4 `Update(dt, time, config)`
 
-One line: `mEmissionDirty = mGradientLUT.Tick(dt) || mEmissionDirty;`. A
-running colour cross-fade re-uploads the ring texture without any config
-change, and P0 bakes from that texture, so the table must be refreshed.
+One line: `mGradientLUT.Tick(dt);`. A running colour cross-fade re-uploads the
+ring texture without any config change, and P0 bakes from that texture; the
+upload moves the ring's upload count, which is part of P0's key, so the next
+`Render` re-bakes the table with nothing set here.
 
 ### 5.5 `Render(w, h, time, config)`: the pass schedule
 
@@ -1391,7 +1426,7 @@ Render
  |- scale = clamp(resolutionScale, 0.001, 1);  scaled = (scale < 1)
  |- direct-path transform: mvp = ortho(0, w*scale, 0, h*scale) * translate(centerFull*scale)
  |- if debug.opaqueOnly: [blend over] fill (P2a); restore blend; return
- |- glowReady = ensurePathPrograms(scaled)          // compile on first use
+ |- glowReady = ensureGlowPrograms(scaled)          // compile on first use
  |      && (IsGlowCoverUnread()
  |          || (ensureGlowCoverProgram() && ensureGlowCoverBuffer()))
  |- if scaled: prevTarget = RenderTargetState::Capture()
@@ -1400,11 +1435,13 @@ Render
  |- if glowReady:
  |    packLightBlocks()                             // re-pack if dirty; bind blocks 0 and 2
  |    if isEmissionTableStale(): [blend off] P0 emission table
- |    if mGlowCoverDirty && !IsGlowCoverUnread():
- |                               [blend off] P0b glow coverage table
+ |    if (dirtyArcPieces | dirtySegmentPieces) && !IsGlowCoverUnread():  // its dirty pieces only
+ |                               [blend off] P0b glow coverage table   // arcs only with a segment table
+ |                               [blend off] P0s segment table         // with one: dirty segment pieces
+ |                               [blend off] P0f fill (.b / .a)        //   copied into P0b's table
  |    if scaled:
- |       gatherRegion = GetBufferRegion(mGatherOuter, ..., gatherScale, no cap)
- |       [blend off] P1a gather   -> mGatherBuffer
+ |       gatherRegion = GetBufferRegion(mGatherBounds.outer, ..., gatherScale, no cap)
+ |       [blend off] P1a gather   -> mGather.buffer
  |       scaledRegion = GetBufferRegion(mScaledOuter, ..., scale, capped)
  |       [blend off] P1b shade    -> mScaledBuffer
  |       prevTarget.Restore()                       // back to the caller's FBO + viewport
@@ -1422,9 +1459,38 @@ Every offscreen pass runs before anything touches the caller's framebuffer,
 so that target is drawn in one unbroken run (Part 1.11). `Render` owns the
 blend state; each pass owns its program and restores any target it changes.
 
-`isEmissionTableStale` is true when `mEmissionDirty` is set, or when
-`hueRotationRate != 0` and the time changed since the last bake. A still ring
-(rate 0, no config change) never re-runs P0.
+`isEmissionTableStale` is true before the first bake, when any input P0 binds
+has moved since the last one - `hueRotationRate` and the clamped `numSamples`
+by value, the three LUTs and the two light blocks by upload count
+(`EmissionInputs`) - or when `hueRotationRate != 0` and the time changed. A
+still ring never re-runs P0, and neither does a config change that moves none
+of those: an intensity, bloom, glow or geometry animation. (Until
+`docs/neon-perf-plan.md` item 6 it was any config change.)
+
+At 1.0, with no segments, a colour-stop alpha time cannot move and neither a
+one-sided glow nor a cutoff (both are multiplied in after the tone map there),
+P1 itself is factored (I46, I51): its output is `tonemap(col * Fa)` with only
+the gathered hue `col` changing from frame to frame, so **P1f** - `neon.frag`
+compiled with `NEON_FIELD_BAKE`, offscreen after P1a - bakes `Fa` into
+`mGlowField.buffer` (R16F) once the config has held for a frame, and **P1c** -
+`neon-field.frag` - draws the glow quad in P1's place: read the field, read
+the hue, tone-map. A frame whose config just changed draws P1 directly, so an
+animation never pays a bake it cannot reuse - except the first frame such a
+config is drawn, which draws P1 AND bakes the field, so that both programs'
+first draws (where this driver finishes compiling them) land on a frame that
+is compiling anyway. Below 1.0 the same factorisation stands in for P1b, but
+only under a rotating hue - every other unchanged frame skips P1b already (see
+below): P1f bakes on the reduced buffer's own grid - the blit applies the cut
+and the cutoffs there, so nothing follows the tone map - and P1c writes the
+reduced buffer in P1b's place (I50).
+
+P1a and P1b - the gather and, below 1.0, the reduced-scale shading - are
+skipped the same way, as a pair: when `mOffscreen.reusable` is set (no config
+change since they last drew), P0 is not stale, P0b need not bake and the
+viewport is the one they drew for, their buffers already hold what they would
+draw, and the frame never leaves the caller's framebuffer (no
+`RenderTargetState` capture either). The schedule above shows them
+unconditionally; read each as "unless reused".
 
 ### 5.6 Geometry builders and the math behind them
 
@@ -1438,10 +1504,10 @@ blend state; each pass owns its program and restores any target it changes.
 - `GetGlowMargin(config, scale)`: how far light reaches past the outline,
   `glowRadius x scale x 48 x (1 + bloomStrength x intensity)`, at least the
   filament's reach, capped by the outside cutoff when that applies.
-- `CircumscribedBox(hw, hh, d)`: the axis-aligned box that bounds the rounded
+- `GetCircumscribedBox(hw, hh, d)`: the axis-aligned box that bounds the rounded
   rect grown by `d`. Exact, because a grown rounded box is still a rounded
   box.
-- `InscribedBox(hw, hh, r, d)`: the largest axis-aligned box inside the
+- `GetInscribedBox(hw, hh, r, d)`: the largest axis-aligned box inside the
   rounded rect shrunk by `d`; it touches the corner arc at 45 degrees
   (`CORNER_INSET_FACTOR = 1 - 1/sqrt(2)`).
 - `PushAnnulus(verts, outer, inner)`: emits a rectangle with a rectangular
@@ -1450,26 +1516,19 @@ blend state; each pass owns its program and restores any target it changes.
 
 **`setupGeometry`: the glow quad.** The quad is the rect grown by the glow
 margin, in scaled px, with a hole where nothing can be lit: inside an inside
-cutoff, or inside the line for `glowSide = OUTSIDE`. It stores `mQuadMargin`
+cutoff, or inside the line for `glowSide = OUTSIDE`. It stores `mGlowLimits.quadMargin`
 (the shader fades light to 0 over the last part of this margin, so the quad's
-edge never shows), `mRingQuadMargin` (the same at scale 1.0, for the ring),
-and `mGlowOuter` / `mGlowHole` (full-res half extents, for the ring builder).
-With no hole it is 6 vertices; with one, 24.
-
-![The glow quad's triangles at scale 1.0](images/neon-onboarding/geometry-direct.png)
-
-*The glow quad (P1) as drawn, over the dimmed frame: both cutoffs on
-(`insideCutoff` {40, 16}, `outsideCutoff` {36, 16}), so it is a box capped
-just past the outside cutoff's fade with a hole inside the inside cutoff's -
-four strips, eight triangles, 24 vertices. Nothing outside it is shaded at
-all.*
+edge never shows), `mRingLimits.quadMargin` (the same at scale 1.0 without the blit's
+guard band, for the ring), and `mGlowBounds` (an `Annulus`: outer box and
+hole, full-res half extents, for the ring builder). With no hole it is 6 vertices; with one, 24.
+Pass 1b draws it into the reduced buffer; nothing outside it is shaded at all.
 
 **`setupFillGeometry`: the fill band.** A rectangle with a hole, sized by the
 fill's own cutoffs plus 3 px of safety, full-res. None when the fill covers
 the whole viewport (the clear path draws it instead).
 
-**`setupRingGeometry`: the scaled path's three areas.** At scale 1.0 it
-zeroes everything and returns. Below it, in full-res rect-local px:
+**`setupRingGeometry`: the three areas on the caller's framebuffer, and the
+gather's quad.** In full-res rect-local px, at every scale:
 
 1. **The ring**: an annulus `GetRingWidth` either side of the outline,
    clipped to where the glow can be lit (`GetRingExtent`, `GetLitExtent`).
@@ -1485,7 +1544,7 @@ zeroes everything and returns. Below it, in full-res rect-local px:
    and hands to both, and on `invariant gl_Position` in `neon.vert` (Part
    7.1). `neon-scale-check partition` (Part 9.3) tests the result.
 4. **The gather quad** (scaled px): the union of the glow quad and the ring,
-   padded by the gather's bilinear footprint. Stored as `mGatherOuter`.
+   padded by the gather's bilinear footprint. Stored as `mGatherBounds`.
 5. `mScaledOuter`: the blit's outer box plus its footprint, which sizes the
    reduced buffer.
 
@@ -1503,7 +1562,7 @@ length, in rect-local scaled px.
 **`packLightBlockData`: segments and arcs.** `SegmentBlock` gets
 `(position, 1/max(length/2, 0.001), boost, hasStops)` per effective segment;
 `ArcBlock` gets `(start, length, intensity, PackArcFlags(...))` per arc. Runs
-only when `mLightBlocksDirty`; the blocks are bound every frame.
+only when `mLightBlocks.dirty`; the blocks are bound every frame.
 
 ### 5.7 Worked numbers for the library defaults
 
@@ -1549,13 +1608,13 @@ The data flow between them, below scale 1.0:
  config --CPU bake--> LUTs (gradient, segment, arc) + UBOs (samples, segments, arcs)
                           |                                         |
                           v                                         v
- P0 emission table (128 x 2):                  P0b glow coverage table (1024 x 128):
+ P0 emission table (128 x 2):                  P0b glow coverage table (256-1024 x 128):
    per-sample colour x weight,                   how lit each of the 8 pieces is, seen
    segment colour x bell                         from every position round it - r g the
                           |  texelFetch          arcs, b a the segments (halo, bloom)
                           v                                         |
  P1a gather (coarse grid): weighted-mean colour                     |  textureLod
-   + gathered coverages  -> mGatherBuffer                           |  (linear), one
+   + gathered coverages  -> mGather.buffer                           |  (linear), one
                           |  textureLod (bilinear)                  |  fetch per piece
               .-----------+-----------.                             |
               v                       v                             v
@@ -1576,8 +1635,8 @@ Part 7.3 walks through it.
 | | |
 | - | - |
 | **Purpose** | Pre-compute, once per sample, everything the gather needs that does not depend on the pixel. |
-| **Runs** | Both paths, only when `isEmissionTableStale` (config changed, cross-fade running, or the hue rotating). |
-| **Target** | `mEmissionBuffer`, 128 x 2 texels, RGBA16F (RGBA8 fallback), `GL_NEAREST`. Its own `RenderTargetState` is captured and restored. |
+| **Runs** | Both paths, only when `isEmissionTableStale`: an input it binds moved (a uniform, a LUT re-bake or cross-fade frame, a light-block repack), or the hue is rotating. |
+| **Target** | `mEmission.buffer`, 128 x 2 texels, RGBA16F (RGBA8 fallback), `GL_NEAREST`. Its own `RenderTargetState` is captured and restored. |
 | **State** | Blend off. Scissor off (`NoScissorScope`: the host's scissor box is in window coordinates). No clear: the quad covers every texel. |
 | **Geometry** | `mFullscreenVertexArray`, identity MVP: one fragment per texel. |
 | **Uniforms** | `uMVP` (identity), `uTime`, `uHueRotationRate`, `uNumSamples`. |
@@ -1604,10 +1663,10 @@ weight: 1, then 0.6 for the dimmer arc, 0 in the gaps), row 1's colour
 | | |
 | - | - |
 | **Purpose** | Pre-compute, for each of the eight pieces of the emitter, how lit that piece is as the halo and the bloom see it from any fragment position round it, so each piece can scale its glow by its own coverage (Part 3.6). |
-| **Runs** | Both paths, only when `mGlowCoverDirty` (a change to the arcs, the segments, the rect's width, height, corner radius or winding, or `glowRadius`). Never on time, nor under an intensity, colour or other-layer animation - but every frame under an animation of one of those inputs (0.14-0.27 ms a frame in all on an AMD Radeon Pro 5300M, one arc to three arcs and two segments - about half what V20's table cost). Skipped on a ring lit uniformly - one full arc, no segments - which never reads it (`IsGlowCoverUnread`); its program and its buffer are built on the first frame that bakes (`ensureGlowCoverProgram`, `ensureGlowCoverBuffer`), not in `Initialize`, and the buffer is released when the layer is disabled. |
-| **Target** | `mGlowCoverBuffer`, 1024 x 128 texels (1.0 MB), RGBA16F (RGBA8 fallback), `GL_LINEAR`. Its own `RenderTargetState` is captured and restored. |
+| **Runs** | Only when a dirty mask is set (a change to the arcs, the segments, the rect's width, height, corner radius or winding, or `glowRadius`), and then only over the PIECES that change reaches - a light's old and new support, or all eight for a shape change (I42) - and only for the light TYPE that changed: a piece only the arcs dirtied integrates and writes its arc channels alone, under `glColorMask`. Never on time, nor under an intensity, colour or other-layer animation - but every frame under an animation of one of those inputs (0.14-0.27 ms a frame in all on an AMD Radeon Pro 5300M, one arc to three arcs and two segments - about half what V20's table cost). Skipped on a ring lit uniformly - one full arc, no segments - which never reads it (`IsGlowCoverUnread`); its program and its buffer are built on the first frame that bakes (`ensureGlowCoverProgram`, `ensureGlowCoverBuffer`), not in `Initialize`, and the buffer is released when the layer is disabled. |
+| **Target** | `mGlowCover.buffer`, `mGlowCover.layout.width` x 128 texels (256-1024, `GetGlowCoverWidth`): RGBA16F, 1.0 MB at 1024 (RGBA8 fallback) - or RG16F, half that (RG8 fallback) while the config has no segments - `GL_LINEAR`. Released by `Update` after 5 s unread. Its own `RenderTargetState` is captured and restored. When the segments have a table of their own (I60), this pass bakes the arcs' channels only, and two more follow it: **P0s** bakes the dirty segment pieces into `mGlowCover.segBuffer` - the same program, `uBakeTarget` 1, the segment table's own `uGlowCoverLayout` and `uGlowCoverSplit` - and **P0f** (`neon-glow-cover-fill.frag`) copies them into this table's .b / .a under `glColorMask(false, false, true, true)`, decoding each texel through this table's layout and fetching it from the segment table through its own. |
 | **State** | Blend off. Scissor off. No clear: the quad covers every texel. |
-| **Geometry** | `mFullscreenVertexArray`, identity MVP: one fragment per texel. |
+| **Geometry** | `mFullscreenVertexArray`: identity MVP when every piece is dirty, one fragment per texel; otherwise one draw per dirty band through an MVP onto that band's straight, corner or both - texel-aligned rectangles, so it writes exactly their texels and no scissor state is touched. |
 | **Uniforms** | `uMVP` (identity), `uHeadFeather`, `uTailFeather`, `uHaloWidth`, `uBloomWidth`, `uStraightSize`, `uRadius` - all lengths as fractions of the full-res perimeter, which is what lets both resolution paths share the table - `uWinding`, which places each piece on the perimeter, and `uGlowCoverSplit`, each band's split between its straight and its corner. |
 | **Blocks** | `SegmentBlock` (0), `ArcBlock` (2). |
 | **Output** | One sheet per piece (`neon-pieces.glsl` has the layout and its inverse), two to a band. At a band's left, a straight: across, the fragment's projection along it - uniform over it, then 64 columns past each end, spaced `kh / 4` at the end and wider beyond - and down its distance `a = kh v / (1 - v)`, `v = (j + 0.5) / 32`. At its right, a corner, with a guard texel at each end: across, the direction from the arc's centre as a diamond angle (the arc's own quadrant uniform, then out to the diagonal behind the centre, where the guards join the two sides), and down the distance from the centre - the inside of the arc in the top half, the outside below. The columns between their overhangs go to the two in proportion to their lengths. Each texel holds that piece's coverage over its own extent, weighted by each layer's kernel about the fragment's foot, as a ratio to the kernel's mass over the piece: `r` = the arcs' coverage x intensity under the halo's kernel, `g` under the bloom's (closed form); `b` and `a` the segments' boost x bell under each (Gauss-Legendre, ~1e-3 of the boost). Each encoded `c / (1 + c)`. |
@@ -1622,27 +1681,41 @@ it across and the distance from the line growing downward: the piece's own
 stretch of the arcs is sharp at the top and softens as the kernel widens, and
 the columns at either side, past the straight's ends, hold what the piece looks
 like from beyond them. At its right is a corner's: the arc's own quadrant in
-the middle, the arc itself halfway down, its inside above.*
+the middle, the arc itself halfway down, its inside above. Its segment
+channels (bottom) were copied in by P0f from the segment table below.*
 
-### P1: the glow, direct path (`renderNeonPass(scaled = false)`, `neon.frag` plain)
+### P0s and P0f: the segment table and its fill (I60)
 
-| | |
-| - | - |
-| **Purpose** | Gather, shade and composite the glow in one pass. |
-| **Runs** | Scale 1.0 only. |
-| **Target** | The caller's framebuffer and viewport, as handed in. The host's scissor applies. |
-| **State** | Blend on, premultiplied-over (`GL_ONE, GL_ONE_MINUS_SRC_ALPHA`). Drawn after the fill. |
-| **Geometry** | `mGlowVertexArray` with `mvp = ortho(0, w, 0, h) * translate(centerFull)`. |
-| **Uniforms** | all of `uploadNeonUniforms` (Part 7.4, table of uniforms) plus `uNumSamples`, `uQuadMargin = mQuadMargin`. |
-| **Textures** | units 0-2 the LUTs (alpha reads), unit 3 `uEmission`, unit 5 `uGlowCover`. |
-| **Blocks** | `SegmentBlock` (0), `LoopSamplesBlock` (1), `ArcBlock` (2). |
-| **Output** | `fragColor`: premultiplied graded colour, alpha = brightest channel. |
+A segment's bell is three to ten times wider than an arc's 14 px feather, so
+integrating it at the arcs' width wasted most of the bake - which was the
+largest pass of every frame that moved a segment. When the segments are not
+too short (`GetGlowCoverSegmentWidth` under 0.75 of the main width), P0b
+bakes the arcs' channels alone and two passes follow, each over the dirty
+segment pieces only:
 
-![P1's output at scale 1.0](images/neon-onboarding/pass-p1-direct.png)
+| | P0s: the segment table | P0f: the fill |
+| - | - | - |
+| **Program** | `mGlowCoverShader`, `uBakeTarget` 1 | `mGlowCoverFillShader`, `neon-glow-cover-fill.frag` (`NEON_GLOW_COVER_FILL`: both halves of `neon-pieces.glsl`'s maps, none of the integrals) |
+| **Target** | `mGlowCover.segBuffer`: 128+ columns x 128, RG16F (RG8 fallback), its own layout (overhangs 16 / 8) and split | `mGlowCover.buffer`, under `glColorMask(false, false, true, true)` |
+| **Does** | the segments' halo and bloom coverage, the same integrals as P0b's, on `.r` / `.g` | decodes each main-table texel through the main layout (`glowCoverTexel`, `glowCoverStraightAt` / `glowCoverCornerAt`), maps it into the segment table through its layout (`glowCoverStraightUV` / `glowCoverCornerUV`), one linear fetch |
 
-*P1's output for the same scene at scale 1.0: one draw, the loop and the
-shading together, everything at full resolution. Below 1.0 the next four
-passes rebuild this picture.*
+So `neon.frag` still reads one texel per piece and never knows the segment
+table exists. The segment table is 4 columns per standard deviation of the
+narrowest bell, from 128 (`GLOW_COVER_SEG_COLUMNS_PER_SIGMA`, calibrated
+against the direct bake on 135 configs: within 2 levels, 99.9992% of lit
+pixels within 1).
+
+![The segment table](images/neon-onboarding/pass-p0s-segment-cover.png)
+
+*P0s's table for the same scene, as stored, every column: the segments as the
+halo (left) and the bloom (right) see them, the same four bands as P0b's - 128
+columns here, against the main table's 320.*
+
+### P1: the glow, direct path - removed (I57)
+
+Scale 1.0 used to draw the glow in one pass straight onto the caller's
+framebuffer. It now takes the passes below with a full-size reduced buffer,
+within 1 level of what that pass drew.
 
 ### P1a: the gather (`renderGatherPass`, `neon-gather.frag`)
 
@@ -1650,9 +1723,9 @@ passes rebuild this picture.*
 | - | - |
 | **Purpose** | Run the expensive gather loop once, on a coarse grid, and store its results. |
 | **Runs** | Below scale 1.0. |
-| **Target** | `mGatherBuffer`: a region around the rect clipped to the viewport (`GetBufferRegion`, uncapped), at `GetGatherScale` (about 2 texels per colour kernel `kc`, never finer than `resolutionScale`). RGBA16F (RGBA8 fallback), linear filtering; 1 attachment, 2 when there are segments. Cleared to 0. |
+| **Target** | `mGather.buffer`: a region around the rect clipped to the viewport (`GetBufferRegion`, uncapped), at `GetGatherScale` (about 2 texels per colour kernel `kc`, never finer than `resolutionScale`). RGBA16F (RGBA8 fallback), linear filtering; 1 attachment, 2 when there are segments. Cleared to 0. |
 | **State** | Blend off (the attachments are data). Scissor off. Viewport = the buffer. |
-| **Geometry** | `mGatherVertexArray` through `RegionProjection(gatherRegion)`. |
+| **Geometry** | `mGatherMesh` through `GetRegionProjection(gatherRegion)`. |
 | **Uniforms** | only `uploadShapeUniforms`: `uMVP`, `uRectSize`, `uCornerRadius`; plus `uNumSamples`. The program has no other uniform, and setting one logs an error. |
 | **Textures** | unit 3 `uEmission`. |
 | **Blocks** | `LoopSamplesBlock` (1); `SegmentBlock` (0), whose count selects the loop body. |
@@ -1668,25 +1741,29 @@ is 1, darker where the outline near the texel is dim or dark) are smooth
 enough that this grid carries them; the right panel is the segment's colour
 scaled by its coverage.*
 
-### P1b: shade at the reduced scale (`renderNeonPass(scaled = true)`, `neon.frag` + `NEON_READS_GATHER`)
+### P1b: shade at the reduced scale (`renderShadePass(scaled = true)`, `neon.frag` + `NEON_READS_GATHER`)
 
 | | |
 | - | - |
 | **Purpose** | Shade the glow at `resolutionScale`, reading the gather's results instead of looping. |
 | **Runs** | Below scale 1.0. |
-| **Target** | `mScaledBuffer`: RGBA8, one attachment, covering what the blit will read (`mScaledOuter`), capped per axis at the reduced viewport size. Cleared to 0. |
+| **Target** | `mScaledBuffer`: RGBA16F (RGBA8 fallback, `SCALED_FORMATS`) so the blit's dither has unrounded gradients to work on, one attachment, covering what the blit will read (`mScaledOuter`), capped per axis at the reduced viewport size. Cleared to 0. |
 | **State** | Blend off: the buffer is fresh and the quad covers each texel once, so blending would only add a destination read. Scissor off. |
-| **Geometry** | `mGlowVertexArray` through `RegionProjection(scaledRegion)`. |
-| **Uniforms** | all of `uploadNeonUniforms` at the real scale, plus `uQuadMargin = mQuadMargin`, `uGatherUVScale` / `uGatherUVOffset` (the map from this pass's `vPos` to the gather buffer's uv). |
+| **Geometry** | `mGlowMesh` through `GetRegionProjection(scaledRegion)`. |
+| **Uniforms** | all of `uploadNeonUniforms` at the real scale, plus `uQuadMargin = mGlowLimits.quadMargin`, `uGatherUVScale` / `uGatherUVOffset` (the map from this pass's `vPos` to the gather buffer's uv). |
 | **Textures** | units 0-2 the LUTs, unit 3 `uGather`, unit 4 `uGatherSeg`, unit 5 `uGlowCover`. |
 | **Output** | premultiplied graded colour. The one-sided cut and the cutoffs are **not** applied here (only coarse discards with a 2-texel guard band): the blit applies them at full resolution. |
 
 ![The reduced buffer after P1b](images/neon-onboarding/pass-p1b-reduced.png)
 
-*The reduced buffer after P1b, 320 x 180 at scale 0.5, magnified 2x: the
-glow is fine at this resolution, the line is visibly blocky.*
+*The reduced buffer after P1b, 320 x 180 at scale 0.5, magnified 2x: the halo
+and the bloom, which hold up at this resolution, and no line. P1b does not
+compute the filament at all - the edge ring re-shades every pixel it can
+reach at full resolution, so nothing the blit shows would ever have come from
+it (D4 of [`neon-glow-cover-resolution-plan.md`](neon-glow-cover-resolution-plan.md)).
+Before that, the line was here too, visibly blocky.*
 
-### P2a: the opaque fill (`renderOpaqueFill`, `black-rect.frag`)
+### P2a: the opaque fill (`renderFillPass`, `black-rect.frag`)
 
 | | |
 | - | - |
@@ -1695,7 +1772,7 @@ glow is fine at this resolution, the line is visibly blocky.*
 | **Target** | The caller's framebuffer. The host's scissor applies. |
 | **State** | Blend on, premultiplied-over. |
 | **Fast path** | If the fill covers the whole viewport and no depth or stencil test is enabled: intersect the viewport with the host's scissor box, scissor to it, `glClearBufferfv(GL_COLOR, 0, {rgb, 1})`, restore the scissor. No draw. |
-| **Geometry** | `mFillVertexArray` (full-res, `ortho * translate(centerFull)`), or the full-screen quad when there is no band. |
+| **Geometry** | `mFillMesh` (full-res, `ortho * translate(centerFull)`), or the full-screen quad when there is no band. |
 | **Uniforms** | `uMVP`, `uRectSize`, `uCornerRadius`, `uRectCenter` (GL window coords), `uOpaqueMode`, the fill's four cutoff values (unscaled), `uOpaqueColor`. |
 | **Output** | `vec4(opaqueColor.rgb * coverage, coverage)`. |
 
@@ -1707,10 +1784,10 @@ glow is fine at this resolution, the line is visibly blocky.*
 | **Runs** | Below scale 1.0, unless the blit area is empty. |
 | **Target** | The caller's framebuffer. |
 | **State** | Blend on, premultiplied-over. |
-| **Geometry** | `mBlitVertexArray`, full-res, `ortho * translate(centerFull)`. |
+| **Geometry** | `mBlitMesh`, full-res, `ortho * translate(centerFull)`. |
 | **Uniforms** | `uMVP`, `uUVScale` / `uUVOffset` (the reduced buffer's region map), `uRectSize`, `uCornerRadius`, `uRectCenter`, `uGlowSide`, `uGlowSideSoftness`, the glow's four cutoff values: all **unscaled**, because this pass measures destination pixels. |
 | **Textures** | unit 0 `uSource` = `mScaledBuffer`. |
-| **Output** | `texture(uSource, uv) * cut`, premultiplied. |
+| **Output** | `texture(uSource, uv) * cut`, premultiplied, its colour dithered by +/- half an 8-bit level (`neonDither`, R7) so the glow's slow tails do not round into contour rings. |
 
 ![The caller's framebuffer after the blit](images/neon-onboarding/pass-after-blit.png)
 
@@ -1725,10 +1802,10 @@ the glow can reach except the ring. The black band is where the ring will go.*
 | **Runs** | Below scale 1.0, unless the ring is empty. |
 | **Target** | The caller's framebuffer, full resolution. |
 | **State** | Blend on, premultiplied-over. |
-| **Geometry** | `mRingVertexArray`, full-res, the same transform as the blit; shares its edges with the blit's area exactly. |
-| **Uniforms** | `uploadNeonUniforms` **at scale 1.0** (so the shader behaves as the direct path: cut and cutoffs applied, no sampling floor), `uQuadMargin = mRingQuadMargin`, and the gather map from full-res `vPos`. |
+| **Geometry** | `mRingMesh`, full-res, the same transform as the blit; shares its edges with the blit's area exactly. |
+| **Uniforms** | `uploadNeonUniforms` **at scale 1.0** (so the shader behaves as the direct path: cut and cutoffs applied, no sampling floor), `uQuadMargin = mRingLimits.quadMargin`, and the gather map from full-res `vPos`. |
 | **Textures** | units 0-2 the LUTs, units 3-4 the gather buffer, unit 5 `uGlowCover`. |
-| **Output** | premultiplied graded colour, like P1. |
+| **Output** | premultiplied graded colour, like P1, its colour dithered as the blit's is (`neonDither`, R7) - this is a write to the caller's framebuffer. |
 
 ![The caller's framebuffer after the ring](images/neon-onboarding/pass-after-ring.png)
 
@@ -1843,7 +1920,7 @@ same place relative to the piece, so P0b bakes it once per config change and
 #### The layout
 
 ```
- 1024 columns, four bands of 32 rows (1024 x 128, 1.0 MB in RGBA16F)
+ W columns (256-1024, GetGlowCoverWidth), four bands of 32 rows (1.0 MB in RGBA16F at 1024, 0.5 MB in RG16F without segments)
 
  |<- 64 ->|<-- the straight: inner -->|<- 64 ->|g|<- 32 ->|<-- the corner -->|<- 32 ->|g|
  band 0    straight x = -halfW                     corner block 0, signs (-, -)
@@ -1871,7 +1948,15 @@ same place relative to the piece, so P0b bakes it once per config change and
 - **A corner's rows** are its distance from the centre: the top 16 inside the
   arc (spaced finely both next to the arc and near the centre, by a ratio of
   square roots), the bottom 16 outside it (spaced like a straight's).
-- **The split.** Each band's columns between the overhangs (`GLOW_COVER_SHARED`)
+- **The width.** `W` follows the rect and the halo width (`GetGlowCoverWidth`):
+  the longest band's straight plus quarter arc at one column per
+  `clamp(0.8 kh, 1.6, 5)` full-res px, plus the overhangs, in steps of 64 from
+  256 to 1024. A thin glow on a large rect still gets all 1024 - the overhangs
+  resolve distance past a piece's end in halo widths, which is what V21 sized
+  the table for. The layout (width, overhangs, shared columns) reaches the
+  shaders as `uGlowCoverLayout`, stored with the table, never recomputed at
+  read time (I59).
+- **The split.** Each band's columns between the overhangs (the layout's `.w`)
   go to its straight (`inner`) and its corner (the rest) in proportion to their
   lengths. `GetGlowCoverSplit` computes it on the CPU, in whole columns, and
   hands the same `uGlowCoverSplit` to the bake and every `neon.frag` program:
@@ -1956,9 +2041,12 @@ Notes:
   compiled on the first frame that bakes (`ensureGlowCoverProgram`), not in
   `Initialize`: ~70 ms on that frame on the AMD, which a ring lit uniformly
   never pays.
-- **When it runs.** Only when one of its inputs changes (`mGlowCoverDirty`:
+- **When it runs.** Only when one of its inputs changes (`mGlowCover.dirtyArcPieces` /
+  `dirtySegmentPieces`, one mask per light type:
   the arcs, the segments, the rect's width, height, corner radius or winding,
-  `glowRadius`), never on time - and not at all on a ring lit uniformly (one full arc, no segments),
+  `glowRadius`), and only over the pieces the change reaches - each texel
+  integrates the lights over its own piece alone, so a moved light dirties the
+  pieces its old and new supports meet (I42) - never on time - and not at all on a ring lit uniformly (one full arc, no segments),
   which never reads it (`IsGlowCoverUnread`, the shader's own `uniformCover`
   test made a hair stricter so the table can never be read stale). Under an
   animation of the arcs or segments it runs every frame: 0.14-0.27 ms on the
@@ -1966,8 +2054,10 @@ Notes:
 - **How good it is.** Within 2 levels of a brute-force per-pixel reference on
   every scene measured, but for 62 pixels of one 4K segment scene at 3.
   `GLOW_COVER_ROWS` is the knob for segments (48 rows read within 2
-  everywhere, for 0.5 MB more); `GLOW_COVER_WIDTH` is the one not to cut (768
-  columns read 6 levels off a 1 px halo on a 4K-sized rect).
+  everywhere, for 0.5 MB more); the width is the one not to cut where the
+  halo is thin (768 columns read 6 levels off a 1 px halo on a 4K-sized
+  rect), which is why `GetGlowCoverWidth` sizes it from the halo width as
+  well as the rect, calibrated against 1024 on 250 configs (I59).
 
 ### 7.4 `neon.frag`
 
@@ -2013,7 +2103,7 @@ exactly like the direct path.
 | `uInsideCutoffSoftness`, `uOutsideCutoffSoftness` | float | scaled px | `softness` x scale |
 | `uWinding` | int | 0/1 | `geometry.winding` |
 | `uResolutionScale` | float | | clamped scale (1.0 for the ring) |
-| `uQuadMargin` | float | scaled px | `mQuadMargin` (`mRingQuadMargin` for the ring) |
+| `uQuadMargin` | float | scaled px | `mGlowLimits.quadMargin` (`mRingLimits.quadMargin` for the ring) |
 | `uNumSamples` | int | | clamped `numSamples` (plain `neon.frag` and `neon-gather.frag`) |
 | `uGatherUVScale`, `uGatherUVOffset` | vec2 | | the gather region's map (reads-gather variant) |
 | `uGlowCoverSplit` | vec2 | columns | `GetGlowCoverSplit`: each band's straight interior in the coverage table (Part 7.3) |
@@ -2036,8 +2126,8 @@ The stage numbers follow the source order.
 | # | Stage | What it computes |
 | - | ----- | ---------------- |
 | 1 | **SDF** | `d = sdRoundBox(vPos, uRectSize/2, uCornerRadius)`, `ad = abs(d)`. |
-| 2 | **Antialias width** | `sideAA = max(fwidth(d) * uResolutionScale, 1e-6)`: one destination pixel in this pass's units. The only derivative in the shader, computed before every discard (Part 1.10). |
-| 3 | **One-sided cut parameters** | `sideSoft = max(uGlowSideSoftness, sideAA)` (feather, floored at 1 px); `blitOwnsCut = uResolutionScale < 1`; `sideBack = 0.5 * sideAA`; `sideCull` = 2 buffer px on the scaled path, else `sideBack`. |
+| 2 | **Antialias width** | `sideAA = max(sdRoundBoxFwidth(vPos, uRectSize/2, uCornerRadius) * uResolutionScale, 1e-6)`: one destination pixel in this pass's units - `fwidth(d)`'s value along an edge, without its doubling on a sharp corner's pixel (V26). The only derivative in the shader, computed before every discard (Part 1.10). |
+| 3 | **One-sided cut parameters** | `sideSoft = max(uGlowSideSoftness, sideAA)` (feather, floored at 1 px); `blitOwnsCut = uBlitOwnsCut != 0` (pass 1b and its field bake); `sideBack = 0.5 * sideAA`; `sideCull` = 2 buffer px where the blit owns the cut, else `sideBack`. |
 | 4 | **One-sided discards** | `INSIDE` and `d > sideCull`, or `OUTSIDE` and `d < -sideCull`: discard. (`neon-gather.frag` has none.) |
 | 5 | **Cutoff ramps** | Each softness floored at `sideAA`; `inHalf`, `outHalf` = half the ramp widths; `inMid = uInsideCutoff + softness/2` and `outMid` likewise, the 50% points of fades that start at the cutoff. |
 | 6 | **Band distances** | `dIn = d + inMid`; `dOut = d - outMid` (a per-axis box distance at corner radius 0, so a square rect keeps a square band). A cutoff on a side `glowSide` already removes is neutralised with the 1e6 sentinel. |
@@ -2046,25 +2136,25 @@ The stage numbers follow the source order.
 | 9 | **Perimeter** | `peri = rectPerimeter()` (`neon-common.glsl`) `= 2(W + H - 4r) + 2 pi r`, in this pass's px. |
 | 10 | **Kernel widths** | `kh = uGlowRadius` (halo), `bw = 6 * uGlowRadius` (bloom); and inside `gatherPerimeter`, `kc = peri * COLOR_BLEND_PERIM_FRAC` (colour); each floored at 0.001. |
 | 11 | **Gather** | Plain `neon.frag` (and `neon-gather.frag`, which does nothing else): `gatherPerimeter(vPos)` from `neon-common.glsl`, the loop of Part 3.3 over `uNumSamples` samples, `g = 1/(dist^2 + kc^2)`, reading the emission table with `texelFetch`, accumulating arc colour, arc weight, segment colour, segment weight and the total weight. `col` = arc colour / arc weight; `segColHue` = segment colour / segment weight. Two loop bodies under one uniform branch: the segment-free body skips one fetch per sample. It returns both hues and the two gathered coverages of stage 14. Reads-gather variant: `textureLod` the gather buffer and decode `e/(1-e)` instead. |
-| 12 | **Pointwise position and arc coverage** | `sPos = perimeterPosition(vPos)`; for each arc, `arcCoverContinuous` (feathered by `HEAD_FEATHER_PX`/`TAIL_FEATHER_PX`, outward where arcs abut) x intensity x stop alpha; `emitCover` = the max over arcs. |
-| 13 | **Pointwise segment coverage** | `segCoverPt = sum of boost * exp(-e^2) * alpha`; `segCol = segColHue * segCoverPt`. |
+| 12 | **Filament coverage, per piece** | Only where the filament is lit (`filamentLit`). For each piece of the outline within the filament's reach - the four straights, plus the four corner arcs above radius 0 - `filamentPieceDistance` gives the pixel's distance to it and its nearest point, `perimeterAt` that point's `t`, and `filamentCover(t)` the two coverages there: for each arc `arcCoverContinuous` (feathered by `HEAD_FEATHER_PX`/`TAIL_FEATHER_PX`, outward where arcs abut) x intensity x stop alpha, `emitCover` = the max over arcs. `filament` = the max over pieces of `filamentCore(distance)` x those (V25). Under `uPerimeterUnread` one pass at `ad`, with no `t` at all. |
+| 13 | **Pointwise segment coverage** | Inside `filamentCover`, at the same `t`: `segCoverPt = sum of boost * exp(-e^2) * alpha`. |
 | 14 | **Gathered coverage** | `emitCoverGathered = arcWeight / totalWeight`, `segCoverGathered = segWeight / totalWeight` (exactly 1.0 on a fully lit ring), divided at the end of `gatherPerimeter` and arriving with stage 11; `gatheredSeg = segmentGlow(gathered) = segCoverGathered * max(emitCoverGathered, min(segCoverGathered, 1))`. |
-| 15 | **Filament gate** | `filamentGate = max(smoothstep(0.5, 1, min(segCoverPt, 1)), emitCover)`: a segment on a dark stretch opens its own core only above half strength. |
-| 16 | **Halo and bloom, straights** | For each of the four edges: perpendicular distance and extent, `haloSegment` and `bloomSegmentPedestalled` (Part 3.5), summed. `reach` mirrors the CPU's quad margin. Each edge then calls `addStraightGlowFix`, adding to `glowFix` how far its own halo and bloom move when they take that piece's own coverage instead of the gathered one. It reads that straight's sheet of P0b's table (`glowCoverAt`) at the fragment's projection along the straight - unclamped, since past an end the coverage still changes - and its distance from the line, through `glowCoverStraightUV`: one linear fetch, `.r` / `.b` for the halo's arc and segment coverage, `.g` / `.a` for the bloom's. Skipped - one compare - for a piece whose halo plus bloom is under `GLOW_PIECE_MIN`, and for every piece on a ring lit uniformly. |
+| 15 | **Filament gate** | Inside `filamentCover`: `filamentGate = max(smoothstep(0.5, 1, min(segCoverPt, 1)), emitCover)`, returned as `segCoverPt * filamentGate`: a segment on a dark stretch opens its own core only above half strength. |
+| 16 | **Halo and bloom, straights** | For each of the four edges: perpendicular distance and extent, `haloSegment` and `bloomSegmentPedestalled` (Part 3.5), summed. `reach` mirrors the CPU's quad margin. Each edge's bloom - and each corner arc's in stage 17 - fades out over the outer half of `reach`, by its own distance, on both sides (`BLOOM_FADE_START_FRAC`, V23), so the glow ends gradually rather than on a crease. Each edge then calls `addStraightGlowFix`, adding to `glowFix` how far its own halo and bloom move when they take that piece's own coverage instead of the gathered one. It reads that straight's sheet of P0b's table (`glowCoverAt`) at the fragment's projection along the straight - unclamped, since past an end the coverage still changes - and its distance from the line, through `glowCoverStraightUV`: one linear fetch, `.r` / `.b` for the halo's arc and segment coverage, `.g` / `.a` for the bloom's. Skipped - one compare - for a piece whose halo plus bloom is under `GLOW_PIECE_MIN`, and for every piece on a ring lit uniformly. |
 | 17 | **Halo and bloom, corner arcs** | If `uCornerRadius > 0` (a uniform branch): each quarter arc is developed onto its tangent line (`arcTangentSegment`) and added with its weight; the four arcs share one bloom pedestal. One arc at a time (`addCornerPiece`): developed, its halo and bloom added, and its correction as in stage 16 (`addCornerGlowFix`), read from that corner's sheet at the fragment's polar position round the arc's centre (`glowCoverCornerUV`). Behind the centre, where the development flips ends across the diagonal, the bake has already blended both, so the read needs nothing special. |
 | 18 | **Normalisation** | `halo *= HALO_NORM_FACTOR`; `bloom *= BLOOM_NORM_FACTOR`, then renormalised so the on-line value stays and the tail reaches 0 at `reach`. |
 | 19 | **Glow gate** | `glowGate = clamp(uGlowRadius / (2 px), 0, 1)`: at radius 0 the analytic halo would be a full-height sub-pixel spike, so it fades in over the first 2 px. |
 | 20 | **Compose** | The formula of Part 3.6. |
 | 21 | **Quad-edge fade** | `result *= 1 - smoothstep(-(uQuadMargin - fadeStart), 0, dQuad)`, with `dQuad` the per-axis distance to the quad's edge: light fades to 0 before the quad ends, so its rectangle never shows. Starts no earlier than the outside cutoff's end. |
 | 22 | **Grade** | Hue-preserving Reinhard on the peak channel (`TONE_MAP_SHOULDER` 0.6), then `pow(result, 0.85)` (Part 1.9). |
-| 23 | **One-sided cut mask** | Direct path and ring only: `INSIDE` `1 - smoothstep(sideBack - sideSoft, sideBack, d)`; `OUTSIDE` `smoothstep(-sideBack, sideSoft - sideBack, d)`. After the grade, because it is coverage. |
-| 24 | **Cutoff masks** | Direct path and ring only: `smoothstep(-inHalf, inHalf, dIn) * (1 - smoothstep(-outHalf, outHalf, dOut))`. |
+| 23 | **One-sided cut mask** | The ring only (`uBlitOwnsCut` 0; for pass 1b the blit applies it, Part 7.5): `INSIDE` `1 - smoothstep(sideBack - sideSoft, sideBack, d)`; `OUTSIDE` `smoothstep(-sideBack, sideSoft - sideBack, d)`. After the grade, because it is coverage. |
+| 24 | **Cutoff masks** | The ring only, likewise: `smoothstep(-inHalf, inHalf, dIn) * (1 - smoothstep(-outHalf, outHalf, dOut))`. |
 | 25 | **Output** | `fragColor = vec4(result, clamp(max(r, g, b), 0, 1))`, premultiplied. |
 
 Things the source comments flag as load-bearing:
 
 - **Pointwise vs gathered coverage** (stages 12-14, 20): the filament uses the
-  pointwise values, the halo and bloom the gathered ones. Swapping them
+  pointwise values, per piece, the halo and bloom the gathered ones. Swapping them
   brings back hard creases along the corner diagonals on a partly lit ring.
   The halo and bloom's per-piece coverage (stages 16-17) is read at
   coordinates that move continuously with the fragment, so it does not bring
@@ -2097,14 +2187,16 @@ Things the source comments flag as load-bearing:
 | `sdRoundBox(p, b, r)` | the rounded-box SDF (Part 1.8) |
 | `haloSegment(a, t1, t2, k)` | closed-form halo of a straight piece; infinite-line limit `2k^2/(a^2+k^2)` |
 | `bloomSegment(a, t1, t2, k)` | closed-form bloom of a straight piece; infinite-line limit `pi k / sqrt(a^2+k^2)` |
-| `bloomSegmentPedestalled(...)` | the bloom minus its value at `reach`, so the tail ends at 0 |
+| `bloomSegmentPedestalled(...)` | the bloom minus its value at `reach`, so the tail ends at 0, faded out from half of `reach` so it ends without a crease (V23) |
 | `arcTangentSegment(w, r)` | develops a quarter arc onto the tangent at its point nearest the fragment; returns `(distance, t1, t2, weight)` (in `neon-pieces.glsl`, shared with the bake) |
 | `glowCoverStraightUV`, `glowCoverCornerUV` | where a piece's coverage is in P0b's table (in `neon-pieces.glsl`; Part 7.3) |
 | `addStraightGlowFix`, `addCornerGlowFix`, `addCornerPiece` | one piece's correction from its own coverage; `addCornerPiece` takes a corner start to finish - developed, lit, read - one at a time |
 | `bandOuterDistance`, `bandInnerDistance` | distances to the outer and inner cutoff boundaries |
-| `perimeterPosition(p)` | the inverse of `GetPointOnRectangle`: nearest outline point, which of 8 pieces, fraction of the perimeter |
+| `perimeterAt(seg, u)` | the inverse of `GetPointOnRectangle` for a point `u` of the way along piece `seg` (8 pieces, CW order), as a fraction of the perimeter, either winding |
+| `filamentPieceDistance(seg, p, reach, u)` | the distance from `p` to piece `seg` and where on it the nearest point is; -1 for a piece out of reach or with no point of its own (V25) |
+| `filamentCover(t, headF, tailF)` | the filament's arc and segment coverage at `t`; `filamentCore(a, ...)` its pedestal-subtracted core at distance `a` |
 | `arcHasStops`, `arcTailAbuts`, `arcHeadAbuts` | decode the arc flags bitmask |
-| `arcCoverContinuous(...)` | an arc's feathered coverage at `sPos`, wrap-aware |
+| `arcCoverContinuous(...)` | an arc's feathered coverage at `t`, wrap-aware |
 
 ### 7.5 `neon-blit.frag` (P2b)
 
@@ -2114,8 +2206,9 @@ src = texture(uSource, uv)                     // premultiplied, bilinear
 cutIn  = glowSide != OUTSIDE && insideCutoff enabled
 cutOut = glowSide != INSIDE  && outsideCutoff enabled
 if (glowSide != BOTH || cutIn || cutOut) {     // a branch on uniforms only
-    d    = sdRoundBox(gl_FragCoord.xy - uRectCenter, halfSize, r)
-    aa   = fwidth(d)                           // one destination pixel
+    p    = gl_FragCoord.xy - uRectCenter
+    d    = sdRoundBox(p, halfSize, r)
+    aa   = sdRoundBoxFwidth(p, halfSize, r)    // one destination pixel (V26)
     cut  = one-sided cut (the same curve as neon.frag stage 23)
     cut *= cutoff masks (the same curves as neon.frag stage 24)
 } else cut = 1
@@ -2136,7 +2229,7 @@ crops.
 ```
 p        = gl_FragCoord.xy - uRectCenter
 d        = sdRoundBox(p, halfSize, r)
-aa       = max(fwidth(d), 1e-6)
+aa       = max(sdRoundBoxFwidth(p, halfSize, r), 1e-6)   // fwidth(d) without the corner doubling
 edgeIn   = clamp(0.5 - d/aa, 0, 1)                  // exact 1-px box filter of the edge
 edgeOut  = 1 - edgeIn
 inBand   = smoothstep(-inHalf, inHalf, d + inMid)   // fill's own inside cutoff
@@ -2146,7 +2239,7 @@ fragColor = vec4(uOpaqueColor.rgb * coverage, coverage)
 ```
 
 Written as one straight line with no early return and no `discard`: an early
-return above `fwidth` measured about 35% slower, and discard is avoided for
+return above the derivative measured about 35% slower, and discard is avoided for
 the Mali/Tizen targets. The edge uses an exact box filter rather than a
 `smoothstep`: the earlier two-pixel smoothstep let 15.6% of the background
 through the outermost ring of a viewport-sized fill.
@@ -2169,12 +2262,18 @@ through the outermost ring of a viewport-sized fill.
 | `ARC_FEATHER_MAX_SHARE` | 0.4 | feather cap as a share of the arc's length |
 | `GLOW_GATE_FADE_PX` | 2 full-res px | glow fade-in at small radii |
 | `QUAD_FADE_START_FRAC` | 0.8 | the quad-edge fade starts at 80% of the margin |
+| `BLOOM_FADE_START_FRAC` | 0.5 | each piece's bloom fades out from 50% of `reach`, both sides (V23) |
 | `TONE_MAP_SHOULDER`, `GAMMA_EXPONENT` | 0.6, 0.85 | the grade |
 | `BLIT_SIDE_GUARD_PX`, `BLIT_CUTOFF_GUARD_PX` | 2 buffer px | the reduced pass's lit guard bands |
 | `CUTOFF_NEUTRALISED` | 1e6 | sentinel for a neutralised or disabled cutoff |
 | `RING_GUARD_TEXELS` | 1 | CPU: extra ring width, in reduced-buffer texels |
 | `GATHER_TEXELS_PER_KERNEL`, `GATHER_MIN_SCALE` | 2, 0.0625 | CPU: the gather's resolution |
-| `GLOW_COVER_WIDTH`, `GLOW_COVER_ROWS` | 1024, 32 | the coverage table: width, and rows per band (four bands) |
+| `GLOW_COVER_MIN_WIDTH`, `GLOW_COVER_MAX_WIDTH`, `GLOW_COVER_WIDTH_STEP` | 256, 1024, 64 | the coverage table's width bounds and step (`GetGlowCoverWidth`) |
+| `GLOW_COVER_PX_PER_COLUMN_PER_KH`, `GLOW_COVER_MIN_PX_PER_COLUMN`, `GLOW_COVER_MAX_PX_PER_COLUMN` | 0.8, 1.6, 5.0 | its column spacing, full-res px, from the halo width |
+| `GLOW_COVER_ROWS` | 32 | rows per band (four bands) |
+| `GLOW_COVER_SEG_COLUMNS_PER_SIGMA`, `GLOW_COVER_SEG_MIN_WIDTH`, `GLOW_COVER_SEG_DIRECT_SHARE` | 4, 128, 0.75 | the segment table: columns per bell standard deviation, its floor, and the share of the main width past which segments bake directly |
+| `GLOW_COVER_SEG_OVERHANG`, `GLOW_COVER_SEG_CORNER_OVERHANG` | 16, 8 | the segment table's overhangs |
+| `GLOW_COVER_BELL_REACH` | 3 | where the bake cuts a bell, in 1 / invSigma (4.24 sigma); the dirty-piece mirror reads it too |
 | `GLOW_COVER_OVERHANG`, `GLOW_COVER_CORNER_OVERHANG` | 64, 32 | its columns past a straight's ends, and either side of a corner's arc |
 | `GLOW_COVER_MIN_INTERIOR` | 16 | the fewest columns a straight or a corner keeps in its band |
 
@@ -2211,7 +2310,7 @@ each to the box its readers can reach, clipped to the viewport:
 - **`mScaledBuffer`** (RGBA8) covers `mScaledOuter`, the blit area plus its
   bilinear footprint, and is capped per axis at the reduced viewport's size:
   a full-screen rect gets exactly the buffer it always had.
-- **`mGatherBuffer`** (RGBA16F) covers the gather quad's box, and is never
+- **`mGather.buffer`** (RGBA16F) covers the gather quad's box, and is never
   capped: a gather texel is about 10 px wide, and ending the buffer at the
   viewport edge made the last rows clamp to one value (measured 5/255 off).
 
@@ -2245,10 +2344,12 @@ from the same `PushAnnulus` strips as the blit area.*
 | :-: | :-: | :-: |
 | ![](images/neon-onboarding/scale-0.25-blit-only.png) | ![](images/neon-onboarding/scale-0.25-final.png) | ![](images/neon-onboarding/scale-1-final.png) |
 
-*Why the ring exists: a 2 px line at scale 0.25, magnified 3x. Left is what the
-blit would draw if it covered the line too, rebuilt by the figure tool from
-the real reduced buffer through the blit's own uv map: the line comes out
-nearly three times as wide. Centre is the real frame at 0.25; right is 1.0.*
+*Why the ring exists: a 2 px line at scale 0.25, magnified 3x. Left is what
+the blit would draw if it covered the line too, rebuilt by the figure tool from
+the real reduced buffer through the blit's own uv map - which no longer holds
+the line at all: pass 1b skips the filament, since the ring draws every pixel
+it reaches (D4). When it did, the line came out of the blit nearly three
+times as wide. Centre is the real frame at 0.25; right is 1.0.*
 
 ### 8.4 When not to lower the scale
 
@@ -2378,7 +2479,7 @@ scaled path ships to.
 8. **Forgetting the host's GL state.** The library assumes culling off, a full
    colour mask, `GL_FUNC_ADD` and no depth test (Part 2.3).
 9. **"Cleaning up" a load-bearing oddity:** `invariant gl_Position`, the two
-   program objects for P1b and P2c, the accumulated `mLightBlocksDirty`, the
+   program objects for P1b and P2c, the accumulated `mLightBlocks.dirty`, the
    `mInitialized` rebuild gate, or the gather program's narrow uniform set
    (`uploadShapeUniforms`). Each has a comment saying why; each was measured.
 10. **Putting per-pixel work in the emission pre-pass**, or per-sample work in
@@ -2468,9 +2569,9 @@ model stick.
 | **coverage table** | the texture P0b writes: for each piece of the outline, how lit it is as the halo and bloom see it from around it |
 | **diamond angle** | `x / (|x| + |y|)`: a direction as one division, monotone in the true angle; the coverage table indexes corners by it |
 | **cutoff** | a cap on how far the glow (or the fill) reaches from the outline |
-| **direct path** | `resolutionScale` 1.0: one pass straight onto the target |
+| **direct path** | removed (I57): `resolutionScale` 1.0 used to draw one pass straight onto the target; it now takes the reduced path at full size |
 | **draw call** | one `glDrawArrays`: a batch of triangles through the pipeline |
-| **edge ring** | the band around the outline re-shaded at full resolution below scale 1.0 |
+| **edge ring** | the band around the outline re-shaded at full resolution, at every scale |
 | **emission table** | the 128x2 texture P0 writes: per-sample colour and weight |
 | **FBO** | framebuffer object: an offscreen render target |
 | **filament** | the bright line itself |

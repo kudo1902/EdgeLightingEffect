@@ -149,8 +149,10 @@ namespace NeonGuideFigures
             return std::min(std::max(q.x, q.y), 0.0f) + glm::length(glm::max(q, glm::vec2(0.0f))) - r;
         }
 
-        /// neon.frag's perimeterPosition, line for line: the perimeter
-        /// fraction of @p p's nearest outline point. @p p is rect-local, +y up.
+        /// The perimeter fraction of @p p's nearest outline point. @p p is
+        /// rect-local, +y up. neon.frag's perimeterPosition, line for line,
+        /// until V25 replaced that nearest-point map with a walk over the
+        /// outline's pieces; the layout it lands on is still perimeterAt's.
         float PerimeterPosition(const glm::vec2 &p, float w, float h, float radius, bool clockwise)
         {
             const float pi = 3.14159265358979f;
@@ -1082,8 +1084,11 @@ namespace NeonGuideFigures
             // down) and a corner at its right (the direction from the arc's
             // centre across, the radius down, the arc itself halfway down),
             // sharing the band's width in proportion to their lengths. See
-            // neon-pieces.glsl.
-            if (const DrawRecord *p0b = PassRecorder::Find(PassKind::P0B))
+            // neon-pieces.glsl. Read after the table's LAST write: the fill
+            // (P0f) writes its segment channels after the arcs' bake, when the
+            // segments have a table of their own.
+            const DrawRecord *p0f = PassRecorder::Find(PassKind::P0F);
+            if (const DrawRecord *p0b = p0f ? p0f : PassRecorder::Find(PassKind::P0B))
             {
                 const Attachment &t = p0b->written[0];
                 const int step = 4;
@@ -1109,6 +1114,34 @@ namespace NeonGuideFigures
                     }
                 }
                 SavePNG(out, Path(dir, "pass-p0b-glow-cover.png"));
+            }
+
+            // P0s - the segment table the fill copies from, as stored: the
+            // segments' halo and bloom coverage, the same layout as the main
+            // table's at its own, narrower width (every column), a gap between
+            // bands. Only on a frame whose segments have a table of their own.
+            if (const DrawRecord *p0s = PassRecorder::Find(PassKind::P0S))
+            {
+                const Attachment &t = p0s->written[0];
+                const int gap = 6;
+                const int bandGap = 2;
+                const int panelH = GLOW_COVER_HEIGHT + 3 * bandGap;
+                Canvas out(2 * t.width + gap, panelH, glm::vec3(0.18f));
+                for (int k = 0; k < 2; ++k)
+                {
+                    const int x0 = k * (t.width + gap);
+                    for (int j = 0; j < t.height; ++j)
+                    {
+                        const int band = std::min(j / GLOW_COVER_ROWS, 3);
+                        for (int i = 0; i < t.width; ++i)
+                        {
+                            const glm::vec4 v = t.At(i, j);
+                            FillRect(out, x0 + i, j + band * bandGap, 1, 1,
+                                     glm::vec3(std::min(DecodeCoverage(k == 0 ? v.r : v.g), 1.0f)));
+                        }
+                    }
+                }
+                SavePNG(out, Path(dir, "pass-p0s-segment-cover.png"));
             }
 
             // P1a - the gather buffer: hue, arc coverage, segment coverage.
@@ -1172,16 +1205,90 @@ namespace NeonGuideFigures
             }
         }
 
-        // P1 - the direct path's one pass, for the same scene at scale 1.0.
+        // P1f / P1c - the hue-invariant field and its composite. The scene
+        // without its segment, so the field is the one-channel Fa the page shows, at the
+        // page's scale with the hue rotating - the frames the field serves.
+        // The field from its FIRST frame, which shades pass 1b and also bakes
+        // the field (the first frame a config the field can serve is drawn
+        // builds and first draws its programs) - the first P1F draw, before
+        // the ring's own field bakes; the composite from the SECOND, one clock
+        // tick on, so the hue has moved and pass 1c draws in pass 1b's place
+        // rather than the frame reusing the buffer.
         {
-            Config direct = c;
-            direct.neon.resolutionScale = 1.0f;
+            Config field = c;
+            field.neon.segmentBoosts.clear();
+            field.neon.hueRotationRate = 0.5f;
             std::unique_ptr<EdgeLightingEffect> effect = FreshEffect();
-            Render(*effect, direct, PASS_W, PASS_H, false, true);
-            if (const DrawRecord *p1 = PassRecorder::Find(PassKind::P1))
+            Render(*effect, field, PASS_W, PASS_H, false, true);
+            const DrawRecord *p1f = nullptr;
+            for (const DrawRecord &d : PassRecorder::GetDraws())
             {
-                SavePNG(AttachmentImage(p1->written[0], [](const glm::vec4 &v) { return glm::vec3(v); }),
-                        Path(dir, "pass-p1-direct.png"));
+                if (d.kind == PassKind::P1F)
+                {
+                    p1f = &d;
+                    break;
+                }
+            }
+            if (p1f)
+            {
+                // .r is Fa, the pre-tone-map brightness at hue 1: shown
+                // through the tone map, which is what that brightness looks
+                // like in white light.
+                const Attachment &f = p1f->written[0];
+                SavePNG(Magnify(AttachmentImage(f,
+                                                [](const glm::vec4 &v) {
+                                                    const float fa = std::max(v.r, 0.0f);
+                                                    const float mapped = fa / (fa + float(TONE_MAP_SHOULDER));
+                                                    return glm::vec3(std::pow(mapped, float(GAMMA_EXPONENT)));
+                                                }),
+                                FitFactor(f.width, PASS_W)),
+                        Path(dir, "pass-p1f-field.png"));
+                std::printf("    field buffer %d x %d, internal format 0x%x\n", f.width, f.height,
+                            unsigned(f.internalFormat));
+            }
+            effect->Update(1.0f / 60.0f);
+            Render(*effect, field, PASS_W, PASS_H, false, true);
+            if (const DrawRecord *p1c = PassRecorder::Find(PassKind::P1C))
+            {
+                const Attachment &r = p1c->written[0];
+                SavePNG(Magnify(AttachmentImage(r, [](const glm::vec4 &v) { return glm::vec3(v); }),
+                                FitFactor(r.width, PASS_W)),
+                        Path(dir, "pass-p1c-composite.png"));
+            }
+        }
+
+        // P1r / P2r - the edge ring's field, below 1.0, one channel: the
+        // scene without its segment at the page's scale, hue still. Its FIRST
+        // frame bakes the ring's field - mFieldBakeShader again, one draw per
+        // strip into the packed buffer, so the last P1F record holds all four -
+        // while the ring still shades directly; its SECOND composites it in the
+        // ring's place, which the recorder files as P2C (by uRingHole).
+        {
+            Config ring = c;
+            ring.neon.segmentBoosts.clear();
+            std::unique_ptr<EdgeLightingEffect> effect = FreshEffect();
+            Render(*effect, ring, PASS_W, PASS_H, false, true);
+            if (const DrawRecord *p1r = PassRecorder::Find(PassKind::P1F))
+            {
+                // The atlas as stored: bottom strip, top strip, then the left
+                // and right strips transposed. Fa through the tone map, as for
+                // P1f, magnified so its rows show.
+                const Attachment &f = p1r->written[0];
+                SavePNG(Magnify(AttachmentImage(f,
+                                                [](const glm::vec4 &v) {
+                                                    const float fa = std::max(v.r, 0.0f);
+                                                    const float mapped = fa / (fa + float(TONE_MAP_SHOULDER));
+                                                    return glm::vec3(std::pow(mapped, float(GAMMA_EXPONENT)));
+                                                }),
+                                FitFactor(f.width, 600)),
+                        Path(dir, "pass-p1r-ring-field.png"));
+                std::printf("    ring field %d x %d, internal format 0x%x\n", f.width, f.height,
+                            unsigned(f.internalFormat));
+            }
+            const Canvas composited = Render(*effect, ring, PASS_W, PASS_H, false, true);
+            if (const DrawRecord *p2r = PassRecorder::Find(PassKind::P2C))
+            {
+                SavePNG(OnlyWhereDrawn(composited, *p2r), Path(dir, "pass-p2r-ring-composite.png"));
             }
         }
 
@@ -1206,8 +1313,8 @@ namespace NeonGuideFigures
             SavePNG(Magnify(Crop(full, 76, 244, 104, 70), 3), Path(dir, "scale-1-final.png"));
         }
 
-        // 5.6 / 8.3 - the geometry each path draws, with both cutoffs on so
-        // every boundary lands inside the frame.
+        // 5.6 / 8.3 - the geometry the passes on the caller's framebuffer
+        // draw, with both cutoffs on so every boundary lands inside the frame.
         {
             Config g = PassScene();
             g.neon.colorStops = ShowcaseStops();
@@ -1217,12 +1324,6 @@ namespace NeonGuideFigures
             g.neon.insideCutoff = Cutoff{true, 40.0f, 16.0f};
             g.neon.outsideCutoff = Cutoff{true, 36.0f, 16.0f};
 
-            {
-                std::unique_ptr<EdgeLightingEffect> effect = FreshEffect();
-                const Canvas frame = Render(*effect, g, PASS_W, PASS_H, false, true);
-                SavePNG(GeometryOverlay(frame, {{PassKind::P1, glm::vec3(0.3f, 0.6f, 1.0f)}}),
-                        Path(dir, "geometry-direct.png"));
-            }
             {
                 g.neon.resolutionScale = 0.5f;
                 std::unique_ptr<EdgeLightingEffect> effect = FreshEffect();

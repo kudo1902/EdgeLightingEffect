@@ -30,7 +30,7 @@ precision highp float;
 // No placement inside the buffer fixes that, because the buffer does not
 // contain a destination-resolution edge to place. This pass does: it runs
 // full-res on the caller's framebuffer, exactly like black-rect.frag, so
-// fwidth(d) here is one DESTINATION pixel and the cut lands where the direct
+// its pixel width here (sdRoundBoxFwidth) is one DESTINATION pixel and the cut lands where the direct
 // path puts it. Measured on the same scene after the move, first lit pixel
 // against the direct path's 239: scale 0.5 gives 237, scale 0.25 gives 230,
 // and the dark side is 0 at both.
@@ -104,18 +104,7 @@ uniform float uInsideCutoffSoftness;
 uniform float uOutsideCutoff;
 uniform float uOutsideCutoffSoftness;
 
-float sdRoundBox(vec2 p, vec2 b, float r) {
-    vec2 q = abs(p) - b + r;
-    return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
-}
-
-// neon.frag's, verbatim: Euclidean (d - cut) above cornerRadius 0, per-axis at
-// 0 so a square rect keeps a square band. See the derivation there.
-float bandOuterDistance(vec2 p, float d, vec2 halfSize, float r, float cut) {
-    if (r > 1e-4) { return d - cut; }
-    vec2 b = halfSize + vec2(cut);
-    return sdRoundBox(p, b, 0.0);
-}
+// sdRoundBox and bandOuterDistance are neon.frag's own, from neon-sdf.glsl.
 
 void main() {
     vec2 uv = vPos * uUVScale + uUVOffset; // rect-local full-res px -> buffer UV
@@ -150,7 +139,7 @@ void main() {
         vec2  p        = gl_FragCoord.xy - uRectCenter;
         vec2  halfSize = uRectSize * 0.5;
         float d        = sdRoundBox(p, halfSize, uCornerRadius);
-        float aa       = max(fwidth(d), 1e-6);
+        float aa       = max(sdRoundBoxFwidth(p, halfSize, uCornerRadius), 1e-6);
         float soft     = max(uGlowSideSoftness, aa);
         float back     = 0.5 * aa;
 
@@ -192,4 +181,9 @@ void main() {
     // exact 1.0, so that path stays bit-identical to the plain texture read
     // this shader used to be.
     fragColor = src * cut;
+
+    // The output dither (neon-grade.glsl): this is the write to the caller's
+    // framebuffer, so the place the reduced buffer's half-float precision
+    // finally meets 8 bits.
+    fragColor.rgb = neonDither(fragColor.rgb);
 }

@@ -75,6 +75,14 @@ precision highp float;
 // segment boost x bell, each encoded c / (1 + c) like the gather buffer -
 // intensity and boost are unbounded, and the RGBA8 fallback would otherwise
 // clamp them at 1.
+//
+// Two targets (uBakeTarget). 0 is the table neon.frag reads, through
+// uGlowCoverLayout - every channel above. 1 is the SEGMENT TABLE: the
+// segments' two channels alone, on .r / .g of a narrower table of their own
+// (uGlowCoverLayout is then ITS layout), since a bell is far wider than an
+// arc's feather and needs far fewer columns. neon-glow-cover-fill.frag copies
+// it into the main table's .b / .a. Either way a texel is decoded through the
+// layout and split it is given, so the integrals below never know which.
 // ---------------------------------------------------------------------------
 
 out vec4 fragColor;
@@ -101,6 +109,10 @@ uniform vec2  uStraightSize;   ///< The horizontal and vertical straights' lengt
 uniform float uRadius;         ///< The corner radius as a fraction of the perimeter.
 uniform int   uWinding;        ///< 0 = CLOCKWISE, 1 = COUNTER_CLOCKWISE, as neon.frag's.
 uniform vec2  uGlowCoverSplit; ///< Each band's straight interior columns, as neon.frag's (glowCoverInner).
+uniform vec4  uGlowCoverLayout; ///< The table's layout, as neon.frag's: columns, overhangs, shared (neon-pieces.glsl).
+uniform int   uBakeArcs;       ///< 1 to integrate the arcs (.r / .g); 0 when only the segments changed - those channels are masked off.
+uniform int   uBakeSegments;   ///< 1 to integrate the segments (.b / .a); 0 when only the arcs changed, likewise.
+uniform int   uBakeTarget;     ///< 0 the main table (all four channels); 1 the segment table (the segments' two, on .r / .g).
 
 // See neon.frag's copies: the abutment bits pick each endpoint's feather
 // direction. Values are 0..7, all exact in a float.
@@ -111,10 +123,11 @@ bool coverHeadAbuts(float flags) { return mod(floor(flags * 0.25), 2.0) >= 0.5; 
 // (.x) the perimeter position of a piece's t1 end - the end haloSegment's t1
 // and arcTangentSegment's +x end measure from - and (.y) +1 if perimeter
 // position grows toward its t2 end, -1 if it shrinks. `cwStart` / `cwSigma`
-// are the CLOCKWISE values; neon.frag's perimeterPosition lays
+// are the CLOCKWISE values; neon.frag's perimeterAt lays
 // COUNTER_CLOCKWISE out over the same geometry the other way round from the
 // top-left tangent point, which is s -> 1 - arcLen - s. Checked against
-// perimeterPosition for every piece, both windings, at four shapes.
+// neon.frag's perimeter map (then perimeterPosition, whose layout perimeterAt
+// keeps) for every piece, both windings, at four shapes.
 vec2 pieceStart(float cwStart, float cwSigma, float arcLen) {
     if (uWinding == 0) {
         return vec2(cwStart, cwSigma);
@@ -124,7 +137,7 @@ vec2 pieceStart(float cwStart, float cwSigma, float arcLen) {
 }
 
 // The straight in band `band` (GLOW_COVER_BAND_*), and the corner arc in
-// quadrant `signs` (+y the top edge, as perimeterPosition has it), whose t1 end
+// quadrant `signs` (+y the top edge, as neon.frag's pieces have it), whose t1 end
 // is the tangent point on the vertical edge.
 vec2 straightStart(int band, float ws, float hs, float arcLen) {
     if (band == GLOW_COVER_BAND_NEG_X) {
@@ -302,6 +315,9 @@ vec2 arcsOnPiece(vec2 place, float len, float x, float cH, float cB, vec2 total)
 
 // --- The segments ------------------------------------------------------
 // 16-point Gauss-Legendre on [-1, 1], positive half; the rule is symmetric.
+// Not 8: measured against it (I61 in docs/review-findings.md), an 8-node rule
+// read 3 levels off a long, bright segment - a bell spanning many kernel
+// widths needs the nodes.
 const vec4 GL16_X0 = vec4(0.0950125098376374, 0.2816035507792589, 0.4580167776572274, 0.6178762444026438);
 const vec4 GL16_X1 = vec4(0.7554044083550030, 0.8656312023878318, 0.9445750230732326, 0.9894009349916499);
 const vec4 GL16_W0 = vec4(0.1894506104550685, 0.1826034150449236, 0.1691565193950025, 0.1495959888165767);
@@ -350,7 +366,7 @@ vec2 segmentsOnPiece(vec2 place, float len, float x, float cH, float cB, vec2 to
             lit += seg.z * total;
             continue;
         }
-        float reach = min(5.0 * 0.7071067811865476 / seg.y, 0.5);
+        float reach = min(GLOW_COVER_BELL_REACH / seg.y, 0.5);
         float qb    = (place.y > 0.0) ? seg.x - place.x : place.x - seg.x;
         qb -= floor(qb + 0.5);
         // Every image whose support reaches the piece, bounds from the data as
@@ -384,8 +400,12 @@ vec4 pieceCover(vec2 place, float len, float x, float cH, float cB) {
     if (total.x <= 0.0 || total.y <= 0.0) {
         return vec4(0.0);
     }
-    vec2 arcs = arcsOnPiece(place, len, x, cH, cB, total);
-    vec2 segs = segmentsOnPiece(place, len, x, cH, cB, total);
+    // A piece's arc channels depend on the arcs and the geometry alone, its
+    // segment channels on the segments alone, so a bake that only one kind of
+    // light needs integrates that kind and writes its channels (the pass masks
+    // the others off) - the rest already hold what this would write.
+    vec2 arcs = (uBakeArcs != 0) ? arcsOnPiece(place, len, x, cH, cB, total) : vec2(0.0);
+    vec2 segs = (uBakeSegments != 0) ? segmentsOnPiece(place, len, x, cH, cB, total) : vec2(0.0);
     return vec4(arcs.x, arcs.y, segs.x, segs.y);
 }
 
@@ -396,11 +416,11 @@ void main() {
     float hs     = uStraightSize.y;
     float r      = uRadius;
     float arcLen = PIECES_HALF_PI * r;
-    float y      = floor(gl_FragCoord.y);
-    int   band   = int(y) / GLOW_COVER_ROWS;
-    float row    = y - float(band * GLOW_COVER_ROWS) + 0.5;
-    float inner  = glowCoverInner(band, uGlowCoverSplit);
-    float split  = float(2 * GLOW_COVER_OVERHANG) + inner;
+    int   band;
+    float row;
+    float inner;
+    float split;
+    glowCoverTexel(gl_FragCoord.xy, uGlowCoverSplit, uGlowCoverLayout, band, row, inner, split);
 
     // This texel's piece, and up to two developments of it to weight
     // together. pieceCover - and, for a corner, the development - is called
@@ -421,7 +441,7 @@ void main() {
         // A straight: the projection and the distance this texel holds.
         len = (band == GLOW_COVER_BAND_NEG_X || band == GLOW_COVER_BAND_POS_X) ? hs : ws;
         if (len > 0.0) {
-            xa    = glowCoverStraightAt(gl_FragCoord.x, row, len, kh, inner);
+            xa    = glowCoverStraightAt(gl_FragCoord.x, row, len, kh, inner, uGlowCoverLayout);
             place = straightStart(band, ws, hs, arcLen);
             n     = 1;
         }
@@ -429,7 +449,7 @@ void main() {
         // A corner: the offset from its centre this texel holds, in
         // arcTangentSegment's frame.
         vec2 signs = vec2((band == 1 || band == 3) ? 1.0 : -1.0, (band >= 2) ? 1.0 : -1.0);
-        w          = glowCoverCornerAt(gl_FragCoord.x - split, row, r, kh, inner);
+        w          = glowCoverCornerAt(gl_FragCoord.x - split, row, r, kh, inner, uGlowCoverLayout);
         place      = cornerStart(signs, ws, hs, arcLen);
         len        = arcLen;
         corner     = true;
@@ -472,5 +492,9 @@ void main() {
         cover += weight[i] * pieceCover(place, len, foot, cH, cB);
     }
     cover     = max(cover, vec4(0.0));
+    // The segment table holds the segments' halo and bloom on .r / .g.
+    cover     = (uBakeTarget == 1) ? vec4(cover.ba, 0.0, 0.0) : cover;
+    // Into an RG16F table when the config has no segments (.b / .a are zero
+    // then and are dropped), RGBA16F otherwise - see ensureGlowCoverBuffer.
     fragColor = cover / (1.0 + cover);
 }

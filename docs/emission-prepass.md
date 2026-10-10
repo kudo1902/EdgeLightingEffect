@@ -114,7 +114,7 @@ tiles). `debug.opaqueOnly` short-circuits all of it to the fill alone.
 | - | (inline) | - | derives the direct path's proj / center / mvp and, below 1.0, the two buffers' regions (`GetBufferRegion`) and their projections, in SCALED space; builds the path's programs on its first frame (`ensurePathPrograms`) |
 | - | `packLightBlocks` | - | UBO upload only; the pack is gated, the bind is not |
 | 0 | `renderEmissionPass` | `mEmissionBuffer` (N x 2, allocated at `Initialize`) | `mFullscreenVertexArray`, identity MVP; runs only when the table is stale |
-| 0b | `renderGlowCoverPass` | `mGlowCoverBuffer` (1024 x 128; it and its program built on the first frame that bakes, never on a ring lit uniformly, the buffer released with the layer) | `mFullscreenVertexArray`, identity MVP, `neon-glow-cover.frag`: for each of the outline's eight pieces, its arcs' and segments' coverage as the halo and the bloom see it from a fragment, laid out by `neon-pieces.glsl` and read by every pass that shades (V20 and V21 in [`review-findings.md`](review-findings.md)); runs only on a config change |
+| 0b | `renderGlowCoverPass` | `mGlowCover.buffer` (256-1024 x 128 by the rect and the halo width, I59; it and its program built on the first frame that bakes, never on a ring lit uniformly, the buffer released with the layer) - and, when the segments have a table of their own, P0s into `mGlowCover.segBuffer` and P0f copying it into the main table's .b / .a (I60) | `mFullscreenVertexArray`, identity MVP, `neon-glow-cover.frag`: for each of the outline's eight pieces, its arcs' and segments' coverage as the halo and the bloom see it from a fragment, laid out by `neon-pieces.glsl` and read by every pass that shades (V20 and V21 in [`review-findings.md`](review-findings.md)); runs only on a config change |
 | 1a | `renderGatherPass` | `mGatherBuffer` (1-2 RGBA16F attachments, at `GetGatherScale`, over the gather quad's box) | `mGatherVertexArray`, `neon-gather.frag`: the gather loop (`gatherPerimeter`, shared with `neon.frag` through `neon-common.glsl`) and nothing else, storing its four results; blending off; scaled path only |
 | 1 | `renderNeonPass` (scaled) | `mScaledBuffer` (one RGBA8 attachment, over what the blit reads) | tight glow quad, `neon.frag`'s `NEON_READS_GATHER` variant (`mNeonShadeShader`), which reads the gather pass's results instead of running the loop; blending off |
 | 2a | `renderOpaqueFill` | caller's framebuffer | black rounded-rect fill (opaque modes only), always full-res; a band ring bounds it, and a coverage-1 fill (`ALL`, or `BOTH` with both fill cutoffs disabled) is a scissored `glClear` with no draw unless depth / stencil testing is on |
@@ -146,17 +146,20 @@ for the renderer's lifetime and written by nothing else, so a frame that moves
 neither input can read the texels the last bake left. `isEmissionTableStale`
 is that test, and it has exactly two terms.
 
-- **`mEmissionDirty`**, set by `OnConfigChanged` on **any** config change.
-  Deliberately not a narrow gate: the table reads a wide and indirect slice of
-  the config - `hueRotationRate`, `numSamples`, all three LUT textures and both
-  light UBOs - so a missed field would be a silently stale ring, while a spare
-  rebuild is one small pass. It is also set from `NeonRenderer::Update` when
-  `GradientRingLUT::Tick` reports a re-upload: a cross-fade moves the ring
-  texture with no config change to announce it, so `Tick` returns whether it
-  uploaded and the flag accumulates (`|=`, never `=`, or a settled ring would
-  clear a change made earlier in the same frame). It starts `true`, because the
-  buffer holds undefined texels until the first bake and no config change is
-  guaranteed before the first frame.
+- **What the pass binds**, compared against what the last bake bound
+  (`EmissionInputs`, built by `currentEmissionInputs`): `uHueRotationRate` and
+  `uNumSamples` (clamped) by value, and the three LUT textures and the two
+  light blocks by **upload count** - `BaseLUT::GetUploadCount`, which every
+  `Upload` moves, and `UniformBuffer::GetUploadCount`, which only an upload
+  that changed the bytes moves. Version numbers on the GL objects, not a list
+  of config fields: an intensity, bloom, glow or geometry animation moves none
+  of them and re-bakes nothing; a colour, arc or segment change moves one and
+  re-bakes; and a cross-fade frame, which moves the ring texture with no config
+  change at all, moves the ring's count like any re-bake. Plus "never baked"
+  (`mEmissionBaked`), because the buffer holds undefined texels until the
+  first bake and its stored key means nothing until then. The light blocks'
+  counts are only current once `packLightBlocks` has run, so `Render` packs
+  before it asks.
 - **`uTime`**, which reaches `neon-emission.frag` in exactly one place:
   `float ti = si - uTime * uHueRotationRate`. At a rate of 0 the product is
   exactly zero, so time drops out of the table altogether and a still ring
@@ -164,9 +167,22 @@ is that test, and it has exactly two terms.
   `time != mEmissionTime`, exact rather than tolerant, because `time` is fed
   straight back from the last bake rather than recomputed.
 
-`renderEmissionPass` records both (`mEmissionDirty`, `mEmissionTime`) on its
-way out, so the staleness test always reads a snapshot written by the only
-thing that ever writes the buffer.
+The first term used to be `mEmissionDirty`, set by `OnConfigChanged` on **any**
+config change and from `Update` whenever `GradientRingLUT::Tick` re-uploaded.
+That was deliberately wide: a gate on the config fields the shader reads would
+have to be kept in step with a shader in another language, and a missed field
+is a silently stale ring. The upload counts keep that safety without the field
+list - they track the objects the pass actually binds, whatever config field
+moved them - and drop the cost the wide flag carried: under an intensity or
+geometry animation it re-ran pass 0 every frame. On the AMD Radeon Pro 5300M,
+where the first offscreen pass of a frame costs ~0.15 ms whatever it draws,
+that was the only thing taking an inline-path frame off the caller's
+framebuffer (inferred from `neon-perf-review.md` section 10.1, not measured;
+`neon-perf-plan.md`, item 6).
+
+`renderEmissionPass` records all three (`mEmissionInputs`, `mEmissionBaked`,
+`mEmissionTime`) on its way out, so the staleness test always reads a snapshot
+written by the only thing that ever writes the buffer.
 
 Two consequences worth keeping in mind when changing this:
 
@@ -259,7 +275,7 @@ so this is a preference, not a defect that was fixed. In particular it does not
 make a sub-viewport work - the shaders read `gl_FragCoord` in window
 coordinates against uniforms computed as if the origin were (0, 0), so a
 sub-viewport renders displaced whatever this code restores. That limitation is
-unchanged; architecture-design.md §9 still describes it.
+unchanged; `implementation.md` section 11 still describes it.
 
 What capture buys is one fewer assumption to carry. It costs a single
 static-state `glGet` on a path that only runs when the table is stale, and it
@@ -336,8 +352,11 @@ a candidate list in preference order (`EMISSION_FORMATS`).
 
 GLES 3.0 exposes float colour-renderability only through an extension, so the
 walk falls through to `GL_RGBA8` and logs one line naming both formats. The
-fallback clamps highlights above 1.0 but is otherwise exact -
-`docs/branch-vs-main-comparison.md` section 3.5 measures how far it drifts.
+fallback clamps highlights above 1.0 but is otherwise exact. Measured when the
+pre-pass landed (forcing `RGBA8` on a GPU that has float targets): within 1-2
+levels of the float table while every arc intensity and segment boost is at or
+under 1.0, and up to 82 levels on a scene with a 2.5 boost, the clamp being the
+whole cause.
 
 Re-requesting a refused format would be expensive, not merely noisy:
 `Framebuffer::Resize` treats a format change as a reallocation, so asking for
@@ -391,11 +410,23 @@ next step and is not done here.
 
 ## 7. Results in brief
 
-Full before/after tables - performance, visuals and memory, with the
-methodology and its caveats - live in
-[`emission-prepass-comparison.md`](emission-prepass-comparison.md). That
-document is the single source for the numbers; this section only states the
-shape of the result so the design rationale above stands on its own.
+Measured when it landed (August 2026, a 1920 x 1080 rect in a 3840 x 2160
+frame, mean of 210 frames, `glFinish` in the timed region; the GPU was not
+recorded, and timings on it varied about 2x between sessions), against the
+same tree without the pre-pass. Then there were two
+renderers; read "full resolution" as `resolutionScale` 1.0 and "half
+resolution" as 0.5 on the one renderer there is now. The comparison document
+that held the full tables was retired on 2026-10-09 (it is in git history);
+every neon frame has been re-measured many times since, so read these for the
+shape, not the milliseconds:
+
+| scene | full res before / after | half res before / after |
+| ----- | ----------------------- | ----------------------- |
+| 1 full arc | 24.84 / 20.77 ms (1.20x) | 9.50 / 5.96 ms (1.59x) |
+| 1 partial arc + 1 segment | 40.61 / 20.76 ms (1.96x) | 12.61 / 5.76 ms (2.19x) |
+| 8 arcs + 8 segments | 134.67 / 22.88 ms (5.89x) | 34.19 / 7.18 ms (4.76x) |
+
+The table itself costs 2 KB (128 x 2 texels of `RGBA16F`), fixed.
 
 **Performance.** Per-fragment cost went from `O(samples * (arcs + segments))`
 to `O(samples)`. The visible consequence is flatness: the "after" timings
@@ -469,19 +500,21 @@ Rules for the pass structure itself (§3):
 
 Rules for the frame-level gate (§3, *When pass 0 runs*):
 
-- **A new input to the emission table must invalidate it.** Anything reaching
-  `neon-emission.frag` from the config is already covered, because
-  `mEmissionDirty` is set on *any* config change. Anything reaching it from
-  somewhere else is not: a second time-varying uniform would need a term
-  alongside the `uTime` one, and a second texture that moves without a config
-  change would need what `GradientRingLUT::Tick` got - a return value saying it
-  re-uploaded, accumulated into `mEmissionDirty` from `Update`.
-- **Do not narrow `mEmissionDirty`.** The temptation is to gate it on the
-  handful of fields the shader reads. The failure mode is a silently stale
-  ring, which is far worse than the one small pass a spare rebuild costs, and
-  the field list would have to be kept in step with a shader in another
-  language. The narrow gate next door (`mLightBlocksDirty`) earns its narrowness
-  by having two visible inputs in the same file.
+- **A new input to the emission table must join its key.** Every uniform,
+  texture and block `renderEmissionPass` hands the shader belongs in
+  `EmissionInputs`, filled by `currentEmissionInputs` - a value uniform by
+  value, a texture or block by a version number that every write to it moves.
+  That list sits beside the pass in the same file, which is what makes it safe
+  where a list of config fields was not. A second time-varying uniform needs a
+  term alongside the `uTime` one.
+- **Do not key it on config fields.** The temptation is to compare the handful
+  of `NeonConfig` fields the shader reads. That list would have to follow the
+  shader through every LUT and block between the two, and a missed field is a
+  silently stale ring. The upload counts follow the GPU objects themselves.
+- **Do not make an upload count skip writes.** `UniformBuffer::SetData`
+  skipping an identical upload is fine - the contents did not change - but a
+  write path that changes a LUT's texels without going through `Upload` would
+  leave the count, and so the table, behind.
 
 ## 9. Not done
 

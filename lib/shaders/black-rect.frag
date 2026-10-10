@@ -42,7 +42,8 @@ precision highp float;
 // coverage-1 paths below are therefore live code on that route, not dead
 // arms - keep them correct.
 //
-// The d == 0 rect edge gets exact 1 px box-filter coverage from fwidth(d);
+// The d == 0 rect edge gets exact 1 px box-filter coverage from its pixel
+// width (sdRoundBoxFwidth - fwidth(d) without its doubling on a sharp corner);
 // each cutoff boundary gets its own side's feather (uInsideCutoffSoftness /
 // uOutsideCutoffSoftness). See main().
 
@@ -64,41 +65,9 @@ uniform float uOutsideCutoff;         // Cutoff::size: positive distance OUTSIDE
 uniform float uOutsideCutoffSoftness; // feather width in px, running on from uOutsideCutoff away from the rect (NeonConfig::opaqueOutsideCutoff.softness).
 uniform vec4  uOpaqueColor;           // fill colour; only .rgb used today, .a reserved for a later partial-fill pass
 
-float sdRoundBox(vec2 p, vec2 b, float r) {
-    vec2 q = abs(p) - b + r;
-    return min(max(q.x, q.y), 0.0) + length(max(q, 0.0)) - r;
-}
-
-// --- Band boundary distances -------------------------------------------
-// The band's two boundaries, expressed as signed distances: dIn >= 0 means
-// "past the inside cutoff", dOut <= 0 means "within the outside cutoff".
-//
-// INNER: plain Euclidean (d + cut). Inside the shape the rounded-box SDF is
-// already per-axis, so the inner boundary is square at cornerRadius 0 and a
-// correct parallel curve (radius r - cut) above it. Nothing to fix.
-//
-// OUTER: Euclidean too whenever cornerRadius > 0, where it is exactly d - cut.
-// That is the parallel curve, so the band keeps a uniform width and the opaque
-// fill covers precisely as far as the light reaches - no black bulging past
-// the glow at the corners.
-//
-// The one exception is cornerRadius == 0: the parallel curve of a SHARP corner
-// is an arc of radius `cut`, so a rect the designer asked to be square comes
-// out with rounded outer corners. There, and only there, offset the box
-// per-axis instead to keep the corner square. The band is then ~1.41x wider
-// measured diagonally across that corner, which is unavoidable - a uniform
-// width and a square outer corner cannot both hold at a sharp corner.
-//
-// Disabled cutoffs arrive as a huge sentinel and still no-op: dIn goes hugely
-// positive, dOut hugely negative, so both masks evaluate to 1.
-float bandOuterDistance(vec2 p, float d, vec2 halfSize, float r, float cut) {
-    if (r > 1e-4) { return d - cut; }
-    vec2 b = halfSize + vec2(cut);
-    return sdRoundBox(p, b, 0.0);
-}
-float bandInnerDistance(float d, float cut) {
-    return d + cut;
-}
+// sdRoundBox and the band boundaries (bandOuterDistance, bandInnerDistance)
+// are the glow's own, from neon-sdf.glsl - the one copy that keeps this edge
+// registered with neon.frag's.
 
 void main() {
     // ONE straight-line path to a single write at the bottom: no early return
@@ -106,7 +75,7 @@ void main() {
     // bearing, and each cost a separate measurement to learn.
     //
     // NO EARLY RETURN. The NONE and ALL guards used to sit here as
-    // `fragColor = ...; return;`, ahead of the fwidth(d) below. They read as
+    // `fragColor = ...; return;`, ahead of the derivative below. They read as
     // free - they branch on a uniform, so every lane in the draw takes the
     // same side - but the compiler does not get to assume that, and a
     // derivative downstream of a return it cannot prove uniform lands the
@@ -163,7 +132,7 @@ void main() {
     // Halving fixed both: each ramp spans exactly its width, so a pixel wholly
     // inside the band is fully covered and a softness of S px feathers over
     // S px.
-    float aa      = max(fwidth(d), 1e-6);
+    float aa      = max(sdRoundBoxFwidth(localPos, halfSize, uCornerRadius), 1e-6);
     float inHalf  = 0.5 * max(uInsideCutoffSoftness, aa);
     float outHalf = 0.5 * max(uOutsideCutoffSoftness, aa);
 
@@ -234,7 +203,7 @@ void main() {
     // returns. Being explicit is free; assuming was not.
     //
     // Note what did NOT move: `aa`, `inHalf`, `outHalf`, `edgeIn` and
-    // `edgeOut` all stay above the chain, because `aa` comes from fwidth(d).
+    // `edgeOut` all stay above the chain, because `aa` comes from a derivative.
     // A derivative must not end up downstream of control flow the compiler
     // cannot prove uniform - that IS the 35% mistake documented at the top.
     // Only branch-free ALU moves down here; the derivative stays put.

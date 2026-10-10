@@ -474,6 +474,15 @@ extern "C"
      *           18 / 53 / 93 levels off at 0.5 / 0.25 / 0.125. Keep small rects
      *           at 1.0.
      *
+     *           At 1.0, with no segments and colour stops whose alpha a
+     *           rotating hue cannot move, the layer bakes the glow's
+     *           hue-invariant field once the config holds and only composites
+     *           the hue after that: there 1.0 is the CHEAPEST scale on still
+     *           frames and with the hue rotating, and a reduced scale pays
+     *           only on frames whose config animates, with segments, or for a
+     *           very small rect. The field costs ~3.3 MB at 1920 x 1080 for a
+     *           960 x 540 rect.
+     *
      *           Each path compiles its own shaders the first frame it renders,
      *           so the first frame after switching to or from 1.0 pays a
      *           one-time compile. Below 1.0 the layer holds an RGBA8 buffer

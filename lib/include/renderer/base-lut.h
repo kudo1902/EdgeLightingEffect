@@ -2,6 +2,7 @@
 #define _EDGE_LIGHTING_BASE_LUT_H_
 
 #include "gl/texture-2d.h"
+#include <cstdint>
 
 namespace EdgeLighting
 {
@@ -67,6 +68,16 @@ namespace EdgeLighting
         /// for. Not for binding (use @ref Bind) and not for writing: the
         /// texture is a derived value, see the class note.
         GLuint GetId() const { return mTexture.GetId(); }
+
+        /// How many times @ref Upload has written the texture - a version
+        /// number for its contents. A consumer that caches something DERIVED
+        /// from the image compares this against the count it derived at, and
+        /// so catches every path that moves the texture: a re-bake from a
+        /// config change and a cross-fade frame from @c GradientRingLUT::Tick
+        /// alike, with no list of the inputs that cause either. The neon's
+        /// emission table is that consumer; see
+        /// @c NeonRenderer::isEmissionTableStale.
+        uint32_t GetUploadCount() const { return mUploadCount; }
 
     protected:
         BaseLUT() = default;
@@ -148,6 +159,7 @@ namespace EdgeLighting
                 mTextureWrapS = wrapS;
             }
             mUploaded = true;
+            ++mUploadCount;
 
             glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(prevTexture));
             glActiveTexture(static_cast<GLenum>(prevUnit));
@@ -159,6 +171,11 @@ namespace EdgeLighting
         /// texture NAME exists from construction, so this is the only thing
         /// that distinguishes an empty LUT from a baked one.
         bool mUploaded = false;
+        /// Completed @ref Upload calls; see @ref GetUploadCount. Wraps after
+        /// 2^32 uploads, which a cross-fade every frame at 60 Hz reaches in two
+        /// years - and a wrap that landed exactly on a consumer's stored count
+        /// would also need every other input to it unchanged.
+        uint32_t mUploadCount = 0;
         /// The shape and sampler state currently in @c mTexture, so @ref Upload
         /// can tell a same-sized rewrite from a reallocation. Only meaningful
         /// once @c mUploaded is set.
