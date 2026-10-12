@@ -486,7 +486,7 @@ The final source of `neon.frag` is assembled in this order:
 
 ```
 #version 330 core                  <- @GLSL_VERSION@: "330 core" on macOS, "300 es" elsewhere
-[#define NEON_READS_GATHER]        <- only for the variant, spliced in at RUNTIME by WithDefine()
+[#define NEON_FIELD_BAKE]          <- only for the field bake variant, spliced in at RUNTIME by WithDefine()
 <contents of neon-tuning.h>        <- @NEON_TUNING@: shared constants, verbatim
 <contents of neon-common.glsl>     <- @NEON_COMMON@: starts with "precision highp float;"
 <contents of neon-pieces.glsl>     <- @NEON_PIECES@: the corner geometry and the coverage table's read
@@ -513,8 +513,8 @@ The final source of `neon.frag` is assembled in this order:
   coverage table's layout, shared by `neon.frag`, which reads the table, and
   the bake that writes it (Part 7.3). `NEON_GLOW_COVER_BAKE` picks which half
   of its layout code each program compiles.
-- **Variants.** `neon.frag` is compiled two ways from one source.
-  `WithDefine` in `neon-renderer.cpp` inserts `#define NEON_READS_GATHER` right
+- **Variants.** `neon.frag` is also compiled as the field bake from one source.
+  `WithDefine` in `neon-renderer.cpp` inserts `#define NEON_FIELD_BAKE` right
   after the `#version` line, which must stay first. Part 7.4 lists what each
   program includes.
 - **Editing a shader or a tuning header re-runs configure automatically** on
@@ -1741,7 +1741,7 @@ is 1, darker where the outline near the texel is dim or dark) are smooth
 enough that this grid carries them; the right panel is the segment's colour
 scaled by its coverage.*
 
-### P1b: shade at the reduced scale (`renderShadePass(scaled = true)`, `neon.frag` + `NEON_READS_GATHER`)
+### P1b: shade at the reduced scale (`renderShadePass(scaled = true)`, `neon.frag`)
 
 | | |
 | - | - |
@@ -1794,7 +1794,7 @@ Before that, the line was here too, visibly blocky.*
 *The caller's framebuffer after P2b: the reduced buffer upsampled everywhere
 the glow can reach except the ring. The black band is where the ring will go.*
 
-### P2c: the edge ring (`renderRingPass`, `neon.frag` + `NEON_READS_GATHER`, second object)
+### P2c: the edge ring (`renderRingPass`, `neon.frag`, second object)
 
 | | |
 | - | - |
@@ -2068,7 +2068,7 @@ loop (`gatherPerimeter`) and what it reads, injected ahead of the other two
 (Part 2.1). `neon-gather.frag` is short enough to read whole: its `main()` is
 the call and the encoded write. Everything else in this section is `neon.frag`.
 
-| | `neon.frag` (scale 1.0) | `neon-gather.frag` (P1a) | `neon.frag` + `NEON_READS_GATHER` (P1b, P2c) |
+| | `neon.frag` (scale 1.0) | `neon-gather.frag` (P1a) | `neon.frag` (P1b, P2c) |
 | - | - | - | - |
 | Gather loop, `LoopSamplesBlock`, `uNumSamples`, `uEmission` | yes | yes | no |
 | `ArcBlock`, LUTs, shading uniforms | yes | no | yes |
@@ -2078,7 +2078,7 @@ the call and the encoded write. Everything else in this section is `neon.frag`.
 | Shading after the gather | yes | no: it writes the gather results and that is the whole file | yes |
 | Outputs | `fragColor` | `oGather` (location 0), `oGatherSeg` (location 1) | `fragColor` |
 
-The same `NEON_READS_GATHER` source behaves differently in P1b and P2c because
+The same `neon.frag` source behaves differently in P1b and P2c because
 of one uniform: `uResolutionScale`. In P1b it is the real scale (< 1), so
 `blitOwnsCut` is true: the shader only culls with a guard band and leaves the
 cut and the cutoffs to the blit. In P2c it is 1.0, so the shader behaves

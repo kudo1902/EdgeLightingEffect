@@ -106,7 +106,7 @@ Config
  │                         opaqueInsideCutoff / opaqueOutsideCutoff (the
  │                         fill's own bounds; insideCutoff / outsideCutoff
  │                         bound the glow only)
- │                       - cost: resolutionScale (1.0 = full res, direct),
+ │                       - cost: resolutionScale (default 0.5; one path at every scale),
  │                         numSamples, gradientLutSize
  ├── DebugConfig         everything for inspecting rather than drawing:
  │                       enable, showGradientLUT, showColorStops (the

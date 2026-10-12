@@ -1041,7 +1041,7 @@ or step 5, which the original list missed.
   edges near the line - FIXED, with before / after from the comparison page)
   and **I25** (a reduced scale can cost more than 1.0 - documented), plus a
   note on V13 and rows in both summary tables.
-- `docs/neon-resolution-scale-proposal.md` (condensed into section 0 since): a "built since" note, the ring
+- The proposal (condensed into section 0 since, and since removed): a "built since" note, the ring
   width rule as shipped (2.4), measured quality beside the emulated (3.1) and
   measured cost on both machines (4.1), and the risks marked resolved where
   they are.

@@ -220,7 +220,7 @@ It is measured in **destination** pixels at every `resolutionScale`. Below
 `1.0` the cut is never drawn by the gather, for the reason in
 `neon-blit.frag`: the gather's output is upsampled, so an edge drawn in buffer
 pixels is smeared across the line as well as along the lit side. Near the line
-the full-resolution edge ring applies it, exactly as the direct path does, and
+the full-resolution edge ring applies it, exactly as a full-resolution shade does, and
 further out (a feather wider than the ring) the blit applies the same
 expression. One consequence is that the whole parameter is scale-invariant -
 the first lit pixel reads 37 / 37 / 36 at softness 4 across scales 1.0 / 0.5 /
@@ -430,9 +430,10 @@ of levels.
 under `Config::optimizedNeon`. The C ABI's `el_effect_*_optimized_*` functions
 still exist and now write these fields; see `el-effect.h`.)
 
-**`neon.resolutionScale`** (default 1.0)
-Fraction of the framebuffer resolution the gather runs at. `1.0` is the direct
-path: no offscreen buffer, no blit, nothing allocated. `0.5` halves each axis
+**`neon.resolutionScale`** (default 0.5)
+Fraction of the framebuffer resolution the glow is shaded at. There is one path
+at every scale (the direct path at `1.0` was removed in I57): `1.0` is the same
+passes with a full-size buffer. `0.5` halves each axis
 (quarter the gather work); `0.25` quarters each axis. Below `1.0` the reduced
 buffer is bilinear-blitted back everywhere except a ring around the edge, which
 is shaded at full resolution from the gather's stored result - so the line, the
@@ -441,8 +442,7 @@ one-sided cut and the cutoffs near it look as they do at 1.0. Within 2/255 of
 a 160 x 96 rect; before the edge ring the upscale started showing below ~0.35,
 and a thin line visibly at 0.75. The error grows as the rect shrinks - a 20 x 17
 rect reads 17 / 53 / 93 levels off at 0.5 / 0.25 / 0.125 - so keep small rects
-at 1.0. Each path compiles its shaders the first frame it draws, so the first
-frame after a switch to or from 1.0 pays a one-time compile. Clamped to `(0, 1]` at draw time - values
+at 1.0. Clamped to `(0, 1]` at draw time - values
 above 1.0 do not supersample.
 
 It is not a guaranteed saving. The ring and the blit are a fixed cost, so a

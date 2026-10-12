@@ -58,8 +58,9 @@ They composite in the order they are registered, which is the order below.
 
 **There are no forked renderer pairs.** The neon, the lens flare and the
 spotlight each carry their half-res path as a `resolutionScale` on the one
-renderer: `1.0` draws straight onto the target, anything lower renders into a
-scaled buffer and blits back. One `.cpp` and one `.frag` each, and no way to
+renderer. The flare and the spotlight draw straight onto the target at `1.0` and
+render into a scaled buffer below it; the neon always takes the scaled path
+(default `0.5`, and `1.0` is a full-size buffer). One `.cpp` and one `.frag` each, and no way to
 double-draw. (Note the spotlight's scale is not automatically cheaper - its
 geometry is already bounded, so the blit is a fixed cost that only pays for a
 large rig. Its reference doc has the measurements.)

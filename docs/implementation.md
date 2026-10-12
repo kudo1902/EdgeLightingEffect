@@ -117,9 +117,10 @@ cones by its own coverage instead of the cones adding onto the neon.
 
 **There are no forked renderer pairs left.** Both layers that had one now carry
 the half-res path as a resolution scale on a single renderer: `NeonConfig::
-resolutionScale` and `LensFlareConfig::resolutionScale`, where 1.0 draws
+resolutionScale` and `LensFlareConfig::resolutionScale`, where the flare's 1.0 draws
 straight onto the target and anything lower renders into a scaled buffer and
-blits back - the neon then re-shading a thin ring around the edge at full
+blits back; the neon has one path at every scale (default 0.5; 1.0 is a
+full-size buffer), re-shading a thin ring around the edge at full
 resolution, from a variant of the same `neon.frag`. One `.cpp` each and one
 copy of every shader stage, no pair to keep in step and no way to double-draw.
 (The neon's gather pass is a `.frag` of its own, `neon-gather.frag`, but the

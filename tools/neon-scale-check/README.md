@@ -76,7 +76,7 @@ column drifts at most 2 there, and every reduced scale stays inside its bound. B
 (`542dad4`) the check fails on 54 values, with the hairline wandering
 +/-0.53 px at 0.25 - which is what it is for.
 
-A failure on the 1.0 column means the direct path's output changed. If that
+A failure on the 1.0 column means the scale-1.0 output changed. If that
 was intended, regenerate the page (below) so the committed images describe it.
 A failure on a reduced scale means the scaled path lost quality the edge ring
 had; `--images-dir DIR` points the 1.0 comparison elsewhere.
