@@ -1,10 +1,10 @@
 # Edge-ring implementation plan for the scaled neon path
 
-The step-by-step plan for building the design in
-[`neon-resolution-scale-proposal.md`](neon-resolution-scale-proposal.md): keep
-the reduced-resolution glow, and re-shade a thin ring around the rect edge at
-full resolution from the reduced pass's gather output. Read the proposal first
-for why. This document is only how.
+The step-by-step plan for building the edge ring: keep the reduced-resolution
+glow, and re-shade a thin ring around the rect edge at full resolution from the
+reduced pass's gather output. Section 0 is why - the proposal it was built from,
+condensed into this document on 2026-10-09 (the full proposal, with its
+emulation method, is in git history); the rest is how.
 
 **Status: all seven steps done and committed - steps 0-5 (`546d2b7`, `45bd1f0`,
 `c155a37`, `8a50121`, `ea62200`), `db2c250` (`invariant gl_Position`), and
@@ -50,6 +50,65 @@ end.
 | 4 | the reduced pass writes the gather target | medium | none |
 | 5 | the edge ring | large | every scene below 1.0 |
 | 6 | docs | medium | - |
+
+## 0. Why: the proposal, condensed
+
+**Why the scaled path drifted.** Below 1.0 the whole layer was drawn into a
+buffer `scale` times the viewport and bilinearly upsampled. The soft parts of
+the glow survive that; the sharp parts cannot, because the buffer never held
+them. The filament: a line narrower than the buffer can sample was floored at a
+buffer-pixel Nyquist width, so at 0.25 a 1 px line came out 8.9 px wide at half
+maximum (3.1 px at 1.0), and a moving rect wandered up to +/-0.53 px off its
+edge. The cutoffs, applied inside the reduced buffer, blurred by a texel. And a
+high `filamentFalloff`'s hard shoulders were rounded off at any reduced scale.
+Worst errors against 1.0 on the twelve scenes: 77 levels at 0.5, 93 at 0.25.
+
+**What made a cheap fix possible.** The 128-sample gather was the expensive part
+- about three quarters of a frame or more (at 1.0 with `numSamples` 1, a frame
+cost 15-27% of a full one) - and everything it produces is smooth: the two hues
+and the two gathered coverages are Lorentzian means about 17 px wide on the
+default geometry. Everything with sharp structure - the filament core, the halo
+and bloom closed forms, the pointwise coverage, the tone map, every mask - is
+cheap analytic math per pixel. So: render the glow at the reduced scale as
+before, and re-shade only a thin ring around the edge at full resolution,
+reading the gather's output from the reduced buffer.
+
+**Predicted, then measured.** Emulated on all twelve scenes, within 2 levels of
+1.0 at 0.5 and 4 at 0.25, for an estimated 3.1-3.3x less than 1.0 at 0.5 and
+7.9-9.5x at 0.25 on the default scene. Built, it landed there: max 2 at 0.5, and
+2 at 0.25 but for `small_rect` at 4. On the M2 Pro the default scene came in at
+3.2x and 8.6x; on an AMD Radeon Pro 5300M the ring cost more than estimated,
+2.5x and 4.9x (section 7).
+
+**Two quick wins that stood on their own** and shipped with it: applying the
+cutoffs in the blit (step 2; `bounded_band` p99 41 -> 4 at 0.5, 69 -> 12 at
+0.25 with no ring), and preferring 1/n scales - 0.35 measured worse than 0.25 on
+three scenes, because its texels do not line up with destination pixels.
+
+**Alternatives measured and not taken.**
+
+- *Split without a ring*: gather at the reduced scale, shade the whole quad at
+  full resolution. The cleanest design, max 2 at both scales, but full-res
+  shading is about a quarter of a frame on its own: 2.0x at 0.5 and 3.1x at 0.25
+  on the default scene, failing the render-time constraint. The ring keeps its
+  quality without that cost. (Section 13 later split the gather out at every
+  scale, for a different reason.)
+- *A better upsampling filter* (bicubic, Lanczos, an SDF-guided joint
+  bilateral): none can recover a filament the Nyquist floor widened before the
+  buffer was written. It would only reduce staircasing at 0.125.
+- *Fewer samples, or a windowed gather, at full resolution*: `numSamples` is
+  linear in cost but beads the arc gradients (V9 in `review-findings.md`), and a
+  windowed gather tops out at 16-22 levels off whatever the window, because the
+  Lorentzian's far field moves the normalisation (`neon-perf-review.md`
+  section 6).
+
+**Risks it named, and how they resolved.** The emulated numbers held (section
+7). The ring's cost scales with the perimeter, not the area, and turned out a
+fixed ~75 us on the AMD. A tiler pays no extra pass for the ring: it is one more
+draw on the target the blit already drew to. And the ring/blit partition had to
+be exact - as built there is no per-pixel test: the two draw complementary
+vertex arrays from the same floats, and `invariant gl_Position` promises both
+programs the same positions (step 5).
 
 ## 1. The pass schedule, before and after
 
@@ -982,7 +1041,7 @@ or step 5, which the original list missed.
   edges near the line - FIXED, with before / after from the comparison page)
   and **I25** (a reduced scale can cost more than 1.0 - documented), plus a
   note on V13 and rows in both summary tables.
-- `docs/neon-resolution-scale-proposal.md`: a "built since" note, the ring
+- `docs/neon-resolution-scale-proposal.md` (condensed into section 0 since): a "built since" note, the ring
   width rule as shipped (2.4), measured quality beside the emulated (3.1) and
   measured cost on both machines (4.1), and the risks marked resolved where
   they are.

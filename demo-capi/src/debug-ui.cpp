@@ -814,8 +814,8 @@ void DebugUI::buildNeonSection(el_effect_handle_t effect)
     // --- Performance ------------------------------------------------------
     // These reach the one neon layer through the el_effect_*_optimized_*
     // entry points, which are deprecated in name only - the half-res path is
-    // a resolution scale on this renderer now, not a second one. Res Scale 1.0
-    // is the full-resolution path.
+    // a resolution scale on this renderer now, not a second one. Res Scale is
+    // the size of the buffer the glow is shaded into (1.0 = full size).
     if (ImGui::TreeNodeEx("Performance##Neon", ImGuiTreeNodeFlags_DefaultOpen))
     {
         float scale = 0.0f;

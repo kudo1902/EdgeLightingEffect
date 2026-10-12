@@ -7,6 +7,8 @@
 #include "util/gl-utils.h"
 #include <glm/gtc/matrix_transform.hpp>
 #include <algorithm>
+#include <array>
+#include <bitset>
 #include <cmath>
 #include <iterator>
 #include <cstdint>
@@ -16,16 +18,26 @@ namespace EdgeLighting
 {
     namespace
     {
+        // The value types the header declares for NeonRenderer's members
+        // (neon-renderer.h, NeonDetail), named here unqualified so the helpers
+        // below and the member definitions spell them the same way.
+        using NeonDetail::Annulus;
+        using NeonDetail::BufferRegion;
+        using NeonDetail::UVMap;
+        using NeonDetail::GlowCoverLayout;
+
+        /// The size a disabled cutoff is handed to the shaders as, px. Disabled
+        /// cutoffs collapse to this huge sentinel so the shader's smoothstep /
+        /// discard math naturally no-ops on realistic geometry; only the CPU
+        /// knows this number, shaders see it as a plain uniform.
+        constexpr float CUTOFF_DISABLED_SIZE = 1.0e6f;
+
         /// Pixel distance the shaders should treat as a cutoff's boundary -
         /// @c Cutoff::size, where its fade STARTS - as uInsideCutoff /
         /// uOutsideCutoff, for the glow and the fill alike. The shaders place
         /// the fade from there themselves (see inMid / outMid in neon.frag and
         /// black-rect.frag): solid up to @c size, gone by @c size + @c softness.
-        ///
-        /// Disabled cutoffs collapse to a huge sentinel so the shader's
-        /// smoothstep / discard math naturally no-ops on realistic geometry;
-        /// only the CPU knows this number, shaders see it as a plain uniform.
-        constexpr float CUTOFF_DISABLED_SIZE = 1.0e6f;
+        /// @return @c c.size, or @ref CUTOFF_DISABLED_SIZE when @p c is disabled.
         inline float GetCutoffSize(const Cutoff &c)
         {
             return c.enable ? c.size : CUTOFF_DISABLED_SIZE;
@@ -141,9 +153,9 @@ namespace EdgeLighting
         /// padded to 16 bytes and each vec3 element to a vec4 stride.
         typedef struct SegmentBlockData
         {
-            int32_t count;
-            float pad[3];
-            glm::vec4 segments[MAX_SEGMENT_BOOSTS];
+            int32_t count;                          ///< uSegmentCount: how many entries the shaders read.
+            float pad[3];                           ///< std140 padding of the int to 16 bytes.
+            glm::vec4 segments[MAX_SEGMENT_BOOSTS]; ///< (position, 1 / sigma, boost, own stops) each.
         } SegmentBlockData;
 
         static_assert(sizeof(SegmentBlockData) == 16 + 16 * MAX_SEGMENT_BOOSTS,
@@ -163,29 +175,38 @@ namespace EdgeLighting
 
         /// CPU-side mirror of neon.frag's std140 `ArcBlock`. Same layout
         /// pattern as SegmentBlockData: int padded to 16 bytes, then a vec4
-        /// per array element (start, length, intensity, hasStops).
+        /// per array element (start, length, intensity, flags) - the flags
+        /// being PackArcFlags' bitmask: own colour stops, and whether another
+        /// arc abuts the start or the end.
         typedef struct ArcBlockData
         {
-            int32_t count;
-            float pad[3];
-            glm::vec4 arcs[MAX_ARCS];
+            int32_t count;            ///< uArcCount: how many entries the shaders read.
+            float pad[3];             ///< std140 padding of the int to 16 bytes.
+            glm::vec4 arcs[MAX_ARCS]; ///< (start, length, intensity, flags) each; see PackArcBlock.
         } ArcBlockData;
 
         static_assert(sizeof(ArcBlockData) == 16 + 16 * MAX_ARCS,
                       "ArcBlockData must match the shader's std140 layout");
 
-        constexpr GLuint SEGMENT_BLOCK_BINDING = 0;
-        constexpr GLuint LOOP_SAMPLES_BLOCK_BINDING = 1;
-        constexpr GLuint ARC_BLOCK_BINDING = 2;
+        /// The uniform-block binding points, one per block and the same in
+        /// every program that declares it: NeonRenderer::ensureProgram binds
+        /// each program's blocks to these by name, and the passes bind the
+        /// buffers to them (UniformBuffer::BindBase) before they draw. "The
+        /// bakes" below are the emission table's and the glow coverage
+        /// table's; "neon.frag" is every program built from it.
+        constexpr GLuint SEGMENT_BLOCK_BINDING = 0;      ///< SegmentBlock: the gather, neon.frag and both bakes.
+        constexpr GLuint LOOP_SAMPLES_BLOCK_BINDING = 1; ///< LoopSamplesBlock: the gather only.
+        constexpr GLuint ARC_BLOCK_BINDING = 2;          ///< ArcBlock: neon.frag and both bakes.
 
         /// One candidate texture format for a buffer that walks a list - the
-        /// emission table and the gather buffer.
+        /// emission table, the glow coverage table and the gather buffer (see
+        /// ResizeInBestFormat).
         typedef struct TargetFormat
         {
-            GLint internalFormat;
-            GLenum format;
-            GLenum type;
-            const char *name; ///< For the fallback log line.
+            GLint internalFormat; ///< The sized internal format, e.g. GL_RGBA16F.
+            GLenum format;        ///< The pixel format of a transfer, e.g. GL_RGBA.
+            GLenum type;          ///< Its component type, e.g. GL_HALF_FLOAT.
+            const char *name;     ///< For the fallback log line.
         } TargetFormat;
 
         /// Emission-table formats in PREFERENCE ORDER, best first.
@@ -196,28 +217,23 @@ namespace EdgeLighting
         /// through an extension, so RGBA8 follows for drivers that refuse it -
         /// the picture is otherwise identical, but highlights above 1.0 clamp.
         ///
-        /// Adding a candidate is adding a row; @ref NeonRenderer::resizeEmissionBuffer
-        /// walks whatever is here.
+        /// Adding a candidate is adding a row; ResizeInBestFormat walks whatever
+        /// is here.
         ///
-        /// WHY ONLY THIS BUFFER, GLOW_COVER_FORMATS AND GATHER_FORMATS HAVE A
-        /// LIST. They are the only ones that ask for a format a conforming
-        /// driver may refuse. RGBA8
-        /// - what mScaledBuffer, LensFlareRenderer's scaled buffer and
-        /// OffscreenCapture all take - is mandatory colour-renderable in both
-        /// GL 3.3 core and GLES 3.0, so there is nothing for those to fall
-        /// back FROM, and nothing to fall back TO either: an RGBA8 failure is
-        /// out-of-memory or a broken driver, which no other format fixes. They
-        /// bail instead, and should.
+        /// WHY ONLY THIS BUFFER, GLOW_COVER_FORMATS, GATHER_FORMATS AND
+        /// SCALED_FORMATS HAVE A LIST. They are the only ones that ask for a
+        /// format a conforming driver may refuse. RGBA8 - what
+        /// LensFlareRenderer's scaled buffer and OffscreenCapture take - is
+        /// mandatory colour-renderable in both GL 3.3 core and GLES 3.0, so
+        /// there is nothing for those to fall back FROM, and nothing to fall
+        /// back TO either: an RGBA8 failure is out-of-memory or a broken
+        /// driver, which no other format fixes. They bail instead, and should.
         ///
-        /// They are also the only two that WANT float. This one stores arc
-        /// intensity and stacked segment boosts, which routinely exceed 1.0;
-        /// the gather buffer stores data that a shading pass re-amplifies. The
-        /// others store composited output - premultiplied colour after
-        /// tone-mapping, in [0, 1] - where 8 bits is the right storage rather
-        /// than a compromise. (8 bits is not free there; see R7 in
-        /// docs/review-findings.md on halo/bloom contour banding. If that is
-        /// ever fixed with a float target rather than a dither, this walk
-        /// generalises to those buffers unchanged.)
+        /// This one stores arc intensity and stacked segment boosts, which
+        /// routinely exceed 1.0; the gather buffer stores data that a shading
+        /// pass re-amplifies; mScaledBuffer stores output, in [0, 1], but
+        /// output the blit dithers on its way out (R7), which 8 bits of storage
+        /// would already have rounded - see SCALED_FORMATS.
         constexpr TargetFormat EMISSION_FORMATS[] = {
             {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, "RGBA16F"},
             {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, "RGBA8"},
@@ -234,9 +250,26 @@ namespace EdgeLighting
             {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, "RGBA16F"},
             {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, "RGBA8"},
         };
+        /// The same list, row for row, with two channels: the table of a config
+        /// with no segments, whose .b / .a (the segments' halo and bloom
+        /// coverage) are zero at every texel - half the memory, and half the
+        /// bytes per fetch. A row's index is its precision tier in both lists,
+        /// so one refused tier (mGlowCover.format) holds for both.
+        constexpr TargetFormat GLOW_COVER_FORMATS_RG[] = {
+            {GL_RG16F, GL_RG, GL_HALF_FLOAT, "RG16F"},
+            {GL_RG8, GL_RG, GL_UNSIGNED_BYTE, "RG8"},
+        };
+        static_assert(std::size(GLOW_COVER_FORMATS) == std::size(GLOW_COVER_FORMATS_RG),
+                      "the glow coverage table's two format lists are walked by one index");
+
+        /// How long, in seconds of frame time, the glow coverage table may go
+        /// unread before Update releases it. Long enough that an arc animation
+        /// passing through a full ring once per loop keeps it; short enough
+        /// that a ring which has settled uniform gives back its 0.5-1 MB.
+        constexpr float GLOW_COVER_RELEASE_SECONDS = 5.0f;
 
         /// Gather-buffer formats in PREFERENCE ORDER, best first - walked by
-        /// @ref NeonRenderer::resizeGatherBuffer.
+        /// ResizeInBestFormat, from @ref NeonRenderer::renderGatherPass.
         ///
         /// RGBA16F leads because the gather's results are DATA that pass 1 and
         /// the edge ring shade from - multiplied by intensity, the falloffs and
@@ -255,6 +288,68 @@ namespace EdgeLighting
             {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, "RGBA16F"},
             {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, "RGBA8"},
         };
+
+        /// mScaledBuffer's formats in PREFERENCE ORDER, best first - walked by
+        /// @ref NeonRenderer::bindScaledTarget.
+        ///
+        /// Half float leads because every pixel the blit draws comes from this
+        /// buffer, at every scale (1.0 included), and the output dither (R7,
+        /// neonDither) can only break up gradients that reach it unrounded. In
+        /// RGBA8 the halo's and bloom's slow tails are already plateaus of one
+        /// level, tens of px wide in the dark, before the blit reads them -
+        /// bilinear filtering joins the plateaus with ramps one texel long, and
+        /// a dither on an exact level does nothing, so the contour rings stay.
+        /// RGBA8 follows for drivers that will not render to half float: the
+        /// ring is still dithered there, the blit's area bands as before.
+        /// Half float is texture-filterable in GLES 3.0 core. Twice the memory:
+        /// 1.6 -> 3.2 MB for an 800 x 500 rect at 1080p at 0.5 (752 x 540
+        /// texels), at most 4.1 MB for any rect at 1080p at 0.5.
+        constexpr TargetFormat SCALED_FORMATS[] = {
+            {GL_RGBA16F, GL_RGBA, GL_HALF_FLOAT, "RGBA16F"},
+            {GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, "RGBA8"},
+        };
+
+        /// Allocate @p buffer at @p width x @p height in the best of the
+        /// @p count @p formats the driver will give: walk the list from
+        /// @p tier, resizing to each candidate until one allocates. The walk
+        /// of every buffer above that has a format list - the emission table,
+        /// the glow coverage table, the gather buffer and the reduced buffer.
+        ///
+        /// @p tier is where the walk resumes, and is left on the format that
+        /// allocated. Keep it beside the buffer and pass it back on every call:
+        /// re-asking for a format the driver refused would churn the
+        /// attachment - Framebuffer::Resize treats a format change as a
+        /// reallocation, and its failure path destroys what was there - and a
+        /// buffer that is released between uses cannot record the refusal in
+        /// its own attachment. So a driver that refused RGBA16F once is not
+        /// asked again, and logs the fallback once. When every candidate is
+        /// refused, @p tier is left on the last, the one most likely to
+        /// allocate on a later retry, rather than off the end of the list.
+        ///
+        /// Each fallback is logged as "@p what target unavailable, falling
+        /// back to <next>. @p consequence".
+        /// @return false only if no candidate allocated, in which case there
+        ///         is no attachment at all.
+        inline bool ResizeInBestFormat(Framebuffer &buffer, const TargetFormat *formats, size_t count, size_t &tier,
+                                       int width, int height, GLint filter, int attachments, const char *what,
+                                       const char *consequence)
+        {
+            for (; tier < count; ++tier)
+            {
+                const TargetFormat &f = formats[tier];
+                if (buffer.Resize(width, height, f.internalFormat, f.format, f.type, filter, attachments))
+                {
+                    return true;
+                }
+                if (tier + 1 < count)
+                {
+                    LOG_E("NeonRenderer: %s %s target unavailable, falling back to %s. %s", f.name, what,
+                          formats[tier + 1].name, consequence);
+                }
+            }
+            tier = count - 1;
+            return false;
+        }
 
         /// GL_NEAREST because the consumer reads the table with texelFetch:
         /// adjacent texels are unrelated perimeter samples (and the two rows
@@ -352,6 +447,45 @@ namespace EdgeLighting
             return flags;
         }
 
+        /// The std140 SegmentBlock for @p segments (the merged effective
+        /// list), as neon.frag, neon-emission.frag and neon-glow-cover.frag
+        /// read it: vec4(position, invSigma, boost, hasStops), capped at the
+        /// block's size. One packer for the upload and for the glow coverage
+        /// table's dirty pieces, so the two cannot describe different blocks.
+        inline SegmentBlockData PackSegmentBlock(const std::vector<SegmentBoost> &segments)
+        {
+            SegmentBlockData block = {};
+            const int count = std::min(static_cast<int>(segments.size()), int(MAX_SEGMENT_BOOSTS));
+            block.count = count;
+            for (int i = 0; i < count; ++i)
+            {
+                const SegmentBoost &seg = segments[i];
+                const float invSigma = 1.0f / std::max(seg.length * 0.5f, 1e-3f);
+                // .w = hasOwnStops flag; the shader reads its colour from row
+                // `i` of the segment LUT atlas when set, else falls back to the
+                // base gradient at that sample.
+                const float hasStops = seg.colorStops.empty() ? 0.0f : 1.0f;
+                block.segments[i] = glm::vec4(seg.position, invSigma, seg.boost, hasStops);
+            }
+            return block;
+        }
+
+        /// The std140 ArcBlock for @p arcs: vec4(start, length, intensity,
+        /// flags) - .w the PackArcFlags bitmask, not just hasStops - capped at
+        /// the block's size. Shared for the reason PackSegmentBlock is.
+        inline ArcBlockData PackArcBlock(const std::vector<Arc> &arcs)
+        {
+            ArcBlockData block = {};
+            const int count = std::min(static_cast<int>(arcs.size()), int(MAX_ARCS));
+            block.count = count;
+            for (int i = 0; i < count; ++i)
+            {
+                const Arc &arc = arcs[i];
+                block.arcs[i] = glm::vec4(arc.start, arc.length, arc.intensity, PackArcFlags(arcs, i, count));
+            }
+            return block;
+        }
+
         /// @c NeonConfig::resolutionScale, clamped to the range the passes can
         /// actually honour. Read through this everywhere rather than off the
         /// config: a zero or negative scale would give a zero-size buffer and a
@@ -363,26 +497,6 @@ namespace EdgeLighting
         inline float GetClampedResolutionScale(const Config &config)
         {
             return std::clamp(config.neon.resolutionScale, MIN_RESOLUTION_SCALE, 1.0f);
-        }
-
-        /// Whether this config gives @c mScaledBuffer anything to do.
-        ///
-        /// ONE predicate for two questions that have to agree: @ref Render asks
-        /// it to pick the path, and @ref OnConfigChanged asks it to decide
-        /// whether the buffer may be freed. Answer them separately and they
-        /// drift - the failure being a release of the buffer the very pass that
-        /// needs it is about to bind, which Resize would then quietly rebuild
-        /// once per frame.
-        ///
-        /// Both terms matter, and for the same reason: the buffer is
-        /// @c width * height * 4 bytes and neither a disabled layer nor the
-        /// direct path ever reads it. Only @c enable is a genuine gate on the
-        /// PASS, though - @ref Render returns on it before the scale is even
-        /// clamped - so inside Render, past that return, this is exactly
-        /// @c scale < 1.0.
-        inline bool UsesScaledBuffer(const Config &config)
-        {
-            return config.neon.enable && GetClampedResolutionScale(config) < 1.0f;
         }
 
         /// @c NeonConfig::numSamples clamped to [1, NEON_MAX_LOOP_SAMPLES] -
@@ -423,20 +537,33 @@ namespace EdgeLighting
             }
         }
 
-        /// @p src with `#define @p define` spliced in after its first line.
+        /// @p src with `#define NAME` spliced in after its first line for each
+        /// space-separated NAME in @p defines.
         ///
         /// How one shader file yields several programs. Every embedded source
         /// starts with the @GLSL_VERSION@ line, which must stay first, so the
-        /// define goes immediately after it - ahead of everything else, the
+        /// defines go immediately after it - ahead of everything else, the
         /// injected tuning header and neon-common.glsl included. Today that is
-        /// neon.frag's NEON_READS_GATHER variant; see
-        /// @ref NeonRenderer::ensurePathPrograms.
-        inline std::string WithDefine(const char *src, const char *define)
+        /// neon.frag's one variant, the field bake's NEON_FIELD_BAKE; see
+        /// @ref NeonRenderer::ensureFieldPrograms.
+        inline std::string WithDefine(const char *src, const char *defines)
         {
+            std::string lines;
+            const std::string names(defines);
+            size_t start = 0;
+            while (start < names.size())
+            {
+                const size_t end = names.find(' ', start);
+                const std::string name = names.substr(start, end == std::string::npos ? std::string::npos : end - start);
+                if (!name.empty())
+                {
+                    lines += "#define " + name + "\n";
+                }
+                start = (end == std::string::npos) ? names.size() : end + 1;
+            }
             std::string out(src);
             const size_t eol = out.find('\n');
-            out.insert(eol == std::string::npos ? out.size() : eol + 1,
-                       std::string("#define ") + define + "\n");
+            out.insert(eol == std::string::npos ? out.size() : eol + 1, lines);
             return out;
         }
 
@@ -463,14 +590,15 @@ namespace EdgeLighting
         constexpr float CUTOFF_FLOOR_PX = 1.0f;
 
         /// How far past the END of a cutoff's ramp neon.frag still draws, in
-        /// FULL-RES px. Mirrors its `cutGuard`: nothing on the direct path,
-        /// which culls where its masks end, and on the scaled path the guard
-        /// band the blit rebuilds the boundary from - stated in BUFFER px, so it
-        /// divides back out. The outer cap and the inner hole below both carry
-        /// it; leave it off either and the quad clips the texels the blit needs.
-        inline float GetCutoffGuardPx(float scale)
+        /// FULL-RES px. Mirrors its `cutGuard`: for pass 1b, whose masks the
+        /// blit applies (@p blitOwnsCut), the guard band the blit rebuilds the
+        /// boundary from - stated in BUFFER px, so it divides back out - and
+        /// nothing for the edge ring, which culls where its own masks end. The
+        /// outer cap and the inner hole below both carry it; leave it off
+        /// either and the quad clips the texels the blit needs.
+        inline float GetCutoffGuardPx(float scale, bool blitOwnsCut)
         {
-            return (scale < 1.0f) ? (static_cast<float>(BLIT_CUTOFF_GUARD_PX) / scale) : 0.0f;
+            return blitOwnsCut ? (static_cast<float>(BLIT_CUTOFF_GUARD_PX) / scale) : 0.0f;
         }
 
         /// The filament's half-width @c sigma and the distance @c reach where
@@ -516,8 +644,9 @@ namespace EdgeLighting
             // profile's SHAPE as well as its width, so the floor is stated as "the
             // profile must still be at FILAMENT_NYQUIST_MIN_SHARE of its peak
             // FILAMENT_NYQUIST_SAMPLE_PX out" and inverted for sigma. Mirrors
-            // neon.frag exactly, gate included - at scale 1.0 there is no blit to
-            // survive and the direct path must stay bit-identical. Change one and
+            // neon.frag exactly, gate included - at scale 1.0 the reduced buffer is
+            // full size, the blit copies it 1:1, and the filament must not widen;
+            // nor the ring's, which shades at 1.0 too. Change one and
             // the quad stops matching what the shader draws. See neon-tuning.h.
             const float filamentNyquist =
                 (scale < 1.0f) ? (static_cast<float>(FILAMENT_NYQUIST_SAMPLE_PX) /
@@ -531,9 +660,8 @@ namespace EdgeLighting
         }
 
         /// The edge ring's half-width R, in FULL-RES px, at the scale @p scale
-        /// is drawn at: how far either side of the rect edge the scaled path
-        /// re-shades at full resolution. Meaningless at 1.0, where no ring is
-        /// drawn.
+        /// is drawn at: how far either side of the rect edge the ring
+        /// re-shades at full resolution.
         ///
         /// It has to cover the filament at BOTH resolutions: the real one the
         /// ring draws, and the one pass 1 drew into the reduced buffer, which is
@@ -569,8 +697,9 @@ namespace EdgeLighting
 
         /// How far past the rect edge the glow quad reaches, in the px space
         /// of @p scale: the margin @ref NeonRenderer::setupGeometry builds the
-        /// quad with and hands neon.frag as uQuadMargin. At @p scale 1.0 it is
-        /// the direct path's margin, which the edge ring fades against.
+        /// quad with and hands neon.frag as uQuadMargin. At @p scale 1.0 and
+        /// without the blit's guard (@p blitOwnsCut false) it is the margin the
+        /// edge ring fades against.
         ///
         /// Size the quad to cover the lit region: rect + glowReach, so geometry
         /// bounds the far region instead of a per-fragment discard
@@ -592,7 +721,7 @@ namespace EdgeLighting
         /// exact expression to place its bloom pedestal, which is what lets the
         /// margin stay this tight without the truncation showing - keep the two
         /// in step.
-        inline float GetGlowMargin(const Config &config, float scale)
+        inline float GetGlowMargin(const Config &config, float scale, bool blitOwnsCut)
         {
             float margin = GetGlowReach(config, scale);
 
@@ -620,14 +749,16 @@ namespace EdgeLighting
             // enough cutoff lands inside it.
             if (config.neon.outsideCutoff.enable && config.neon.glowSide != GlowSide::INSIDE)
             {
-                // Where neon.frag's outside fade ends, plus the scaled path's guard
-                // band, plus the 1 px safety. The capped margin becomes
+                // Where neon.frag's outside fade ends, plus pass 1b's guard band
+                // (none for the ring), plus the 1 px safety. The capped margin becomes
                 // uQuadMargin, and neon.frag's fadeStart floor needs its cutEdge -
                 // that same end, guard included - to sit strictly inside it; the +1
                 // is what guarantees that. Drop it and the quad fade starts at
                 // 0.8 * margin, inside the band.
                 const float cutoffCap =
-                    (GetCutoffEnd(config.neon.outsideCutoff, CUTOFF_FLOOR_PX) + GetCutoffGuardPx(scale) + 1.0f) * scale;
+                    (GetCutoffEnd(config.neon.outsideCutoff, CUTOFF_FLOOR_PX) + GetCutoffGuardPx(scale, blitOwnsCut) +
+                     1.0f) *
+                    scale;
                 margin = std::min(margin, cutoffCap);
             }
             return margin;
@@ -674,6 +805,82 @@ namespace EdgeLighting
         {
             const float q = std::pow(0.5f / 255.0f, 1.0f / static_cast<float>(GAMMA_EXPONENT));
             return static_cast<float>(TONE_MAP_SHOULDER) * q / (1.0f - q);
+        }
+
+        /// neon.frag's halo and bloom, reduced to what the CPU's bounds on them
+        /// need: the two kernel widths, the corner radius, the arcs' shared
+        /// pedestal, and the factor each summed term is scaled by on its way
+        /// to the tone map - all in FULL-RES px, at the `reach` the pass at
+        /// @p scale computes. ONE mirror for @ref GetGlowInnerReach and
+        /// @ref GetCornerSkip, so a change to the shader's terms has one place
+        /// to follow it.
+        typedef struct GlowBoundTerms
+        {
+            float reach;       ///< neon.frag's `reach`, full-res px.
+            float kh;          ///< Halo kernel width.
+            float bw;          ///< Bloom kernel width.
+            float r;           ///< Corner radius as the shader is handed it.
+            float arcPedestal; ///< The corner arcs' shared bloom pedestal (0 at r = 0).
+            float haloScale;   ///< Summed halo -> pre-tone-map light, at the brightest emission.
+            float bloomScale;  ///< Summed bloom -> pre-tone-map light, likewise.
+        } GlowBoundTerms;
+
+        /// The terms of neon.frag's halo and bloom for @p config at @p scale, at
+        /// the brightest @p emission the config can carry
+        /// (GetGlowEmissionBound): the reach, both kernel widths and the
+        /// corner radius in full-res px, the corner arcs' shared bloom
+        /// pedestal, and the gains each sum leaves the shader with - the glow
+        /// gate, the halo and bloom normalisations, the bloom's renormalisation
+        /// against its pedestal and its strength. Mirrors the shader term for
+        /// term: change one of those there and this has to follow, or the two
+        /// bounds built on it (GetGlowInnerReach, GetCornerSkip) clip a tail.
+        inline GlowBoundTerms GetGlowBoundTerms(const Config &config, float scale, float emission)
+        {
+            const NeonConfig &neon = config.neon;
+            GlowBoundTerms t;
+            t.reach = GetGlowReach(config, scale) / scale;
+            t.kh = std::max(neon.glowRadius, static_cast<float>(EMISSION_MIN_WIDTH));
+            t.bw = std::max(neon.glowRadius * static_cast<float>(BLOOM_REACH_TO_GLOW),
+                            static_cast<float>(EMISSION_MIN_WIDTH));
+            t.r = GeometryUtils::GetEffectiveCornerRadius(config.geometry);
+
+            // The bloom's renormalisation and the arcs' shared pedestal, exactly
+            // as neon.frag derives them from `reach`.
+            const float pi = glm::pi<float>();
+            const float bloomPeak = static_cast<float>(BLOOM_NORM_FACTOR) * pi;
+            const float bloomPed = bloomPeak * t.bw / std::sqrt(t.reach * t.reach + t.bw * t.bw);
+            const float bloomGain = bloomPeak / std::max(bloomPeak - bloomPed, 1e-6f);
+            const float arcC = std::sqrt(t.reach * t.reach + t.bw * t.bw);
+            const float arcLamPed = std::sqrt((t.reach + t.r) * t.r);
+            t.arcPedestal = (t.r > 0.0f) ? t.r / arcLamPed * t.bw / arcC * 2.0f *
+                                               std::atan(arcLamPed * glm::half_pi<float>() / (2.0f * arcC))
+                                         : 0.0f;
+
+            // glowGate, and the gains each sum is scaled by on its way out.
+            const float gate = std::clamp(neon.glowRadius / static_cast<float>(GLOW_GATE_FADE_PX), 0.0f, 1.0f);
+            t.haloScale = emission * gate * static_cast<float>(HALO_NORM_FACTOR * HALO_GAIN);
+            t.bloomScale = emission * gate * static_cast<float>(BLOOM_NORM_FACTOR) * bloomGain *
+                           std::max(neon.bloomStrength, 0.0f);
+            return t;
+        }
+
+        /// An upper bound on the light ONE corner arc adds, pre tone map, at a
+        /// fragment no point of whose development lies nearer than @p dist.
+        /// The arc is weighted r / lam over a span lam * HALF_PI
+        /// (arcTangentSegment), so lam cancels: its halo is at most
+        /// pi r kh^2 / (2 c^3) and its bloom pi r bw / (2 c^2), c measured from
+        /// @p dist, the bloom less the shared pedestal. 0 at r = 0.
+        inline float GetCornerArcBound(const GlowBoundTerms &t, float dist)
+        {
+            if (t.r <= 0.0f)
+            {
+                return 0.0f;
+            }
+            const float pi = glm::pi<float>();
+            const float ch2 = dist * dist + t.kh * t.kh;
+            const float halo = pi * t.r * t.kh * t.kh / (2.0f * ch2 * std::sqrt(ch2));
+            const float bloom = std::max(pi * t.r * t.bw / (2.0f * (dist * dist + t.bw * t.bw)) - t.arcPedestal, 0.0f);
+            return t.haloScale * halo + t.bloomScale * bloom;
         }
 
         /// How deep inside the rect edge, in FULL-RES px, the glow can still
@@ -737,8 +944,8 @@ namespace EdgeLighting
         /// third through mGlowEmission (see @ref NeonRenderer::OnConfigChanged).
         inline float GetGlowInnerReach(const Config &config, float scale, float emission)
         {
-            const NeonConfig &neon = config.neon;
-            const float reach = GetGlowReach(config, scale) / scale; // neon.frag's `reach`, full-res px
+            const GlowBoundTerms terms = GetGlowBoundTerms(config, scale, emission);
+            const float reach = terms.reach; // neon.frag's `reach`, full-res px
             const float width = config.geometry.width;
             const float height = config.geometry.height;
             const float halfMin = std::min(width, height) * 0.5f;
@@ -749,41 +956,15 @@ namespace EdgeLighting
                 return reach;
             }
 
-            const float pi = glm::pi<float>();
-            const float kh = std::max(neon.glowRadius, static_cast<float>(EMISSION_MIN_WIDTH));
-            const float bw = std::max(neon.glowRadius * static_cast<float>(BLOOM_REACH_TO_GLOW),
-                                      static_cast<float>(EMISSION_MIN_WIDTH));
-            const float r = GeometryUtils::GetEffectiveCornerRadius(config.geometry);
-
-            // The bloom's renormalisation and the arcs' shared pedestal, exactly
-            // as neon.frag derives them from `reach`.
-            const float bloomPeak = static_cast<float>(BLOOM_NORM_FACTOR) * pi;
-            const float bloomPed = bloomPeak * bw / std::sqrt(reach * reach + bw * bw);
-            const float bloomGain = bloomPeak / std::max(bloomPeak - bloomPed, 1e-6f);
-            const float arcC = std::sqrt(reach * reach + bw * bw);
-            const float arcLamPed = std::sqrt((reach + r) * r);
-            const float arcPedestal =
-                (r > 0.0f) ? r / arcLamPed * bw / arcC * 2.0f * std::atan(arcLamPed * glm::half_pi<float>() / (2.0f * arcC))
-                           : 0.0f;
-
-            // glowGate, and the gains each sum is scaled by on its way out.
-            const float gate = std::clamp(neon.glowRadius / static_cast<float>(GLOW_GATE_FADE_PX), 0.0f, 1.0f);
-            const float haloScale = emission * gate * static_cast<float>(HALO_NORM_FACTOR * HALO_GAIN);
-            const float bloomScale =
-                emission * gate * static_cast<float>(BLOOM_NORM_FACTOR) * bloomGain * std::max(neon.bloomStrength, 0.0f);
-
-            auto bound = [&](float depth) {
+            const float kh = terms.kh;
+            auto bound = [&](float depth)
+            {
                 const float ch2 = depth * depth + kh * kh;
                 const float farW = width - depth;
                 const float farH = height - depth;
-                float halo = 2.0f * kh * kh * (2.0f / ch2 + 1.0f / (farW * farW + kh * kh) + 1.0f / (farH * farH + kh * kh));
-                float bloom = 0.0f;
-                if (r > 0.0f)
-                {
-                    halo += 4.0f * pi * r * kh * kh / (2.0f * ch2 * std::sqrt(ch2));
-                    bloom = 4.0f * std::max(pi * r * bw / (2.0f * (depth * depth + bw * bw)) - arcPedestal, 0.0f);
-                }
-                return haloScale * halo + bloomScale * bloom;
+                const float halo =
+                    2.0f * kh * kh * (2.0f / ch2 + 1.0f / (farW * farW + kh * kh) + 1.0f / (farH * farH + kh * kh));
+                return terms.haloScale * halo + 4.0f * GetCornerArcBound(terms, depth);
             };
 
             // Each term falls with depth over [reach, halfMin] - the far lines
@@ -815,6 +996,64 @@ namespace EdgeLighting
             return hi;
         }
 
+        /// How far outside a corner arc's circle, in the px space of @p scale,
+        /// neon.frag may skip that arc altogether (uCornerSkip, addCornerPiece)
+        /// for a glow whose emission is at most @p emission.
+        ///
+        /// Every point of an arc's development lies at least length(w) - r
+        /// from the fragment, so @ref GetCornerArcBound bounds what the arc
+        /// adds there. This is the smallest such distance at which that bound
+        /// is under a QUARTER of @ref GetGlowInvisibleLevel: a fragment can be
+        /// that far from all four arcs at once, and four skipped arcs together
+        /// then add less than half an 8-bit level. The tone map is concave, so
+        /// light that small moves no pixel by more than the rounding of the
+        /// one it lands on - wherever it lands, over however much other light.
+        ///
+        /// The bloom term is what places it in practice: past this distance it
+        /// is exactly 0, and the halo's 1/c^3 tail is already far under the
+        /// budget. At the defaults it lands within a few px of `reach` (320 px
+        /// against 312).
+        ///
+        /// A function of the glow's shape, the corner radius, @p emission and
+        /// @p scale, all of which rebuild the quad, which is where it is taken.
+        inline float GetCornerSkip(const Config &config, float scale, float emission)
+        {
+            const GlowBoundTerms terms = GetGlowBoundTerms(config, scale, emission);
+            const float budget = 0.25f * GetGlowInvisibleLevel();
+            // GetCornerArcBound falls monotonically with distance, so a
+            // doubling search brackets the crossing and a bisection finds it.
+            // r = 0 never enters the corner block, and a zero bound skips from
+            // the arc itself.
+            float lo = 0.0f;
+            float hi = std::max(terms.reach, 1.0f);
+            if (GetCornerArcBound(terms, lo) <= budget)
+            {
+                return 0.0f;
+            }
+            while (GetCornerArcBound(terms, hi) > budget)
+            {
+                lo = hi;
+                hi *= 2.0f;
+                if (hi > CUTOFF_DISABLED_SIZE)
+                {
+                    return CUTOFF_DISABLED_SIZE * scale;
+                }
+            }
+            while (hi - lo > 0.25f)
+            {
+                const float mid = 0.5f * (lo + hi);
+                if (GetCornerArcBound(terms, mid) <= budget)
+                {
+                    hi = mid;
+                }
+                else
+                {
+                    lo = mid;
+                }
+            }
+            return hi * scale;
+        }
+
         /// 1 - 1/sqrt(2): how far a rounded box's corner arc pulls the largest
         /// axis-aligned rectangle inside it in from the box's half-extents, per
         /// px of corner radius. That rectangle touches the arc at 45 degrees.
@@ -824,7 +1063,7 @@ namespace EdgeLighting
         /// within signed distance @p dist of a rounded box with half-extents
         /// (@p hw, @p hh): the box itself grown by @p dist (shrunk for a
         /// negative one). Clamped at 0.
-        inline glm::vec2 CircumscribedBox(float hw, float hh, float dist)
+        inline glm::vec2 GetCircumscribedBox(float hw, float hh, float dist)
         {
             return glm::max(glm::vec2(hw + dist, hh + dist), glm::vec2(0.0f));
         }
@@ -836,7 +1075,7 @@ namespace EdgeLighting
         /// the corner arc by CORNER_INSET_FACTOR of that radius. The hole
         /// construction setupFillGeometry and the glow quad have always used,
         /// for either sign of @p dist. Clamped at 0.
-        inline glm::vec2 InscribedBox(float hw, float hh, float r, float dist)
+        inline glm::vec2 GetInscribedBox(float hw, float hh, float r, float dist)
         {
             const float inset = std::max(r + dist, 0.0f) * CORNER_INSET_FACTOR;
             return glm::max(glm::vec2(hw + dist - inset, hh + dist - inset), glm::vec2(0.0f));
@@ -979,39 +1218,298 @@ namespace EdgeLighting
         /// animation of anything but the arcs and segments (intensity, colour,
         /// geometry, glow), that is every frame's bake.
         ///
-        /// It must never claim this where the shader does not: the shader
-        /// would then read a stale table. So it reads the same inputs
-        /// packLightBlockData packs - the effective segments, the arcs, capped
-        /// at the blocks' sizes - and tests the arc's length against a
-        /// threshold a little ABOVE the shader's 1.0 - 1e-6, so a length that
-        /// rounds either way between the two compilers counts as partial here.
+        /// The ONLY test of it: neon.frag takes this decision as a uniform
+        /// (uUniformCover) rather than making its own, so the bake it skips
+        /// and the reads the shader skips cannot fall out of step. It reads
+        /// the inputs packLightBlockData packs - the effective segments and
+        /// the arcs - and keeps its threshold a hair above arcCoverContinuous's
+        /// full-ring 1 - 1e-6, so a length between the two counts as partial:
+        /// the table is baked and read, which is the exact path, rather than
+        /// assumed.
         inline bool IsGlowCoverUnread(const std::vector<SegmentBoost> &effectiveSegments, const Config &config)
         {
             return effectiveSegments.empty() && config.neon.arcs.size() == 1 &&
                    config.neon.arcs[0].length >= 1.0f - 5e-7f;
         }
 
-        static_assert(GLOW_COVER_SHARED >= 2 * GLOW_COVER_MIN_INTERIOR,
-                      "a band of the glow coverage table must leave columns for both its pieces");
+        /// Whether no neon.frag program reads the fragment's perimeter
+        /// position (`uPerimeterUnread`): it feeds only the segment loop, the
+        /// arc loop - where an arc over the whole ring returns before reading
+        /// it, and an arc's own stops read it - and the gradient ring's alpha
+        /// read, which a ring that is opaque at every texel answers with 1.0.
+        /// So: no segments, every lit arc whole and without stops, and the
+        /// ring as uploaded opaque (@p ringOpaque). Then the shader skips the
+        /// filament's walk over the outline's pieces (perimeterAt and
+        /// filamentPieceDistance) and the alpha read, byte-identically.
+        ///
+        /// Like IsGlowCoverUnread it must never claim this where the shader
+        /// would read: it tests the same arcs the block packs (capped at
+        /// MAX_ARCS, dark ones skipped as the shader's loop skips them) and
+        /// the length against 1 - 5e-7, a hair stricter than
+        /// arcCoverContinuous's 1 - 1e-6.
+        inline bool IsPerimeterUnread(const std::vector<SegmentBoost> &effectiveSegments, const Config &config,
+                                      bool ringOpaque)
+        {
+            if (!effectiveSegments.empty() || !ringOpaque)
+            {
+                return false;
+            }
+            const int count = std::min(static_cast<int>(config.neon.arcs.size()), int(MAX_ARCS));
+            for (int i = 0; i < count; ++i)
+            {
+                const Arc &arc = config.neon.arcs[i];
+                if (arc.intensity <= 0.0f)
+                {
+                    continue;
+                }
+                if (arc.length < 1.0f - 5e-7f || !arc.colorStops.empty())
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
 
-        /// How many of each band's GLOW_COVER_SHARED columns go to its
+        /// Whether neon.frag's pre-tone-map output on this config is
+        /// col * Fa + segColHue * Fs, with only the gathered hues col and
+        /// segColHue moving with time - what both fields rest on
+        /// (IsFieldEligible, IsRingFieldEligible). Segments are no bar: their
+        /// hue is the second product, and the field carries Fs in a second
+        /// channel (GetFieldFormat, D3). Not when time can move the
+        /// colour-stop alpha neon.frag reads pointwise - the base ring's, which
+        /// a stop-less segment inherits too: a rotating hue over a ring that is
+        /// not opaque at every texel (@p ringOpaque, as uploaded).
+        inline bool IsShadingFactorable(const Config &config, bool ringOpaque)
+        {
+            const bool rotating = config.neon.hueRotationRate != 0.0f;
+            return config.neon.enable && (!rotating || ringOpaque);
+        }
+
+        /// A field's render-target format.
+        typedef struct FieldFormat
+        {
+            GLint internalFormat; ///< GL_R16F or GL_RG16F.
+            GLenum format;        ///< GL_RED or GL_RG.
+        } FieldFormat;
+
+        /// The fields' format: Fa alone (R16F) without segments, Fa and Fs
+        /// (RG16F, twice the memory) with them - the composite's
+        /// uFieldSegments has to agree, so both read @p effectiveSegments.
+        inline FieldFormat GetFieldFormat(const std::vector<SegmentBoost> &effectiveSegments)
+        {
+            return effectiveSegments.empty() ? FieldFormat{GL_R16F, GL_RED} : FieldFormat{GL_RG16F, GL_RG};
+        }
+
+        /// Whether this config's shading can be factored into the hue-invariant
+        /// field (pass 1f) and its composite (pass 1c): IsShadingFactorable.
+        /// The one-sided cut and the cutoffs are no bar: the blit applies both
+        /// to whatever pass 1b's buffer holds.
+        ///
+        /// The composite stands in for pass 1b, which mOffscreen.reusable already
+        /// skips on every frame where nothing moved - so the only frames left
+        /// for a field to serve are the ones where only the time moved, under a
+        /// rotating hue, and (@p intensityMoving) the frames of an intensity
+        /// animation (I56). Every other way a settled config redraws pass 1b (a
+        /// cross-fade's ring upload, a viewport change) invalidates the field
+        /// too. A field for a still config would cost its memory and its
+        /// compile and never be read. A function of the config, the ring's
+        /// upload and the intensity's motion.
+        inline bool IsFieldEligible(const Config &config, bool ringOpaque, bool intensityMoving)
+        {
+            return IsShadingFactorable(config, ringOpaque) &&
+                   (config.neon.hueRotationRate != 0.0f || intensityMoving);
+        }
+
+        /// Whether @p next differs from @p prev in NeonConfig::intensity and
+        /// nothing else the neon reads (its own sub-config and the geometry):
+        /// the one change that leaves the hue-invariant fields standing, scaled
+        /// (LazyBake, I56).
+        inline bool OnlyIntensityMoved(const Config &prev, const Config &next)
+        {
+            if (next.geometry != prev.geometry || next.neon.intensity == prev.neon.intensity)
+            {
+                return false;
+            }
+            NeonConfig same = next.neon;
+            same.intensity = prev.neon.intensity;
+            return same == prev.neon;
+        }
+
+        /// Whether the edge ring's shading can be factored into its own field
+        /// (pass 1r) and composite (pass 2r): IsShadingFactorable. No rotating
+        /// hue is needed: the ring is re-shaded on every frame, still frames
+        /// included. A one-sided glow or a cutoff is no bar either: the ring
+        /// applies both after its tone map, and so does its composite, from the
+        /// pixel's own distance to the edge (neon-field.frag, NEON_FIELD_RING).
+        inline bool IsRingFieldEligible(const Config &config, bool ringOpaque)
+        {
+            return IsShadingFactorable(config, ringOpaque);
+        }
+
+        /// The one-sided cut and the cutoffs, for @p shader at @p scale: what
+        /// neon.frag and the ring field's composite (neon-field.frag,
+        /// NEON_FIELD_RING) apply after their tone map, and so the same numbers
+        /// to both - the ring's composite has to multiply in exactly what the
+        /// ring's own shading would. Pixel-valued, so multiplied by @p scale,
+        /// as uploadShapeUniforms' are; a disabled cutoff at its sentinel.
+        ///
+        /// @p cutSoftness is false for the field bake (neon.frag with
+        /// NEON_FIELD_BAKE), which returns at the grade, ahead of the one-sided
+        /// cut. The cut's softness has no other reader, so a compiler that
+        /// drops what follows a return drops uGlowSideSoftness from that
+        /// program, and setting it logged "uniform 'uGlowSideSoftness' not
+        /// found" on NeonRenderer.Field. Everything else here also feeds the
+        /// discards above the grade, so the bake keeps it.
+        /// @pre @p shader is in use.
+        inline void UploadEdgeMaskUniforms(ShaderProgram &shader, float scale, const Config &config,
+                                           bool cutSoftness)
+        {
+            shader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
+            if (cutSoftness)
+            {
+                shader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness * scale);
+            }
+            shader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff) * scale);
+            shader.SetUniform("uInsideCutoffSoftness", config.neon.insideCutoff.softness * scale);
+            shader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff) * scale);
+            shader.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness * scale);
+        }
+
+        static_assert(GLOW_COVER_MIN_WIDTH - 2 - 2 * GLOW_COVER_OVERHANG - 2 * GLOW_COVER_CORNER_OVERHANG >=
+                          2 * GLOW_COVER_MIN_INTERIOR,
+                      "the narrowest glow coverage table must leave columns for both pieces of a band");
+        static_assert(GLOW_COVER_MIN_WIDTH % GLOW_COVER_WIDTH_STEP == 0 &&
+                          GLOW_COVER_MAX_WIDTH % GLOW_COVER_WIDTH_STEP == 0,
+                      "the glow coverage table's width bounds are whole steps");
+
+        /// The glow coverage table's layout at @p width columns, with the
+        /// tuning header's overhangs. @p width is clamped to
+        /// [GLOW_COVER_MIN_WIDTH, GLOW_COVER_MAX_WIDTH], which the
+        /// static_assert above guarantees leaves both pieces of a band their
+        /// GLOW_COVER_MIN_INTERIOR.
+        inline GlowCoverLayout MakeGlowCoverLayout(int width)
+        {
+            GlowCoverLayout layout;
+            layout.width = std::clamp(width, int(GLOW_COVER_MIN_WIDTH), int(GLOW_COVER_MAX_WIDTH));
+            layout.overhang = GLOW_COVER_OVERHANG;
+            layout.cornerOverhang = GLOW_COVER_CORNER_OVERHANG;
+            layout.minInterior = GLOW_COVER_MIN_INTERIOR;
+            return layout;
+        }
+
+        /// The columns the glow coverage table wants for @p config: the
+        /// longest band's interior at one column per S full-res px, S set by
+        /// the halo width, plus the overhangs, in whole WIDTH_STEPs between
+        /// MIN_WIDTH and MAX_WIDTH - see the formula beside
+        /// GLOW_COVER_PX_PER_COLUMN_PER_KH in neon-tuning.h.
+        ///
+        /// A function of the width, height, corner radius and glow radius
+        /// only - all four in OnConfigChanged's glowCoverShapeDirty - so a new
+        /// width always comes with a full re-bake, and costs the reallocation
+        /// and nothing more. A narrow glow on a large rect still gets the
+        /// whole MAX_WIDTH: the table's overhangs resolve distance past a
+        /// piece's end in halo widths, and V21 sized the width for exactly
+        /// that case (768 columns read 6 levels off a 1 px halo on a 4K rect).
+        inline int GetGlowCoverWidth(const Config &config)
+        {
+            const float r = GetDrawnCornerRadius(config);
+            const float straight = std::max(std::max(config.geometry.width, config.geometry.height) - 2.0f * r, 0.0f);
+            const float longest = straight + glm::half_pi<float>() * r;
+            const float kh = std::max(config.neon.glowRadius, static_cast<float>(EMISSION_MIN_WIDTH));
+            const float spacing = std::clamp(static_cast<float>(GLOW_COVER_PX_PER_COLUMN_PER_KH) * kh,
+                                             static_cast<float>(GLOW_COVER_MIN_PX_PER_COLUMN),
+                                             static_cast<float>(GLOW_COVER_MAX_PX_PER_COLUMN));
+            // In float until the clamp: a degenerate rect's L / S must not
+            // overflow an int on its way to MAX_WIDTH.
+            const float need = 2.0f + 2.0f * GLOW_COVER_OVERHANG + 2.0f * GLOW_COVER_CORNER_OVERHANG +
+                               std::ceil(longest / spacing);
+            const float step = static_cast<float>(GLOW_COVER_WIDTH_STEP);
+            const float width = std::ceil(need / step) * step;
+            return static_cast<int>(std::clamp(width, static_cast<float>(GLOW_COVER_MIN_WIDTH),
+                                               static_cast<float>(GLOW_COVER_MAX_WIDTH)));
+        }
+
+        static_assert(GLOW_COVER_SEG_MIN_WIDTH - 2 - 2 * GLOW_COVER_SEG_OVERHANG - 2 * GLOW_COVER_SEG_CORNER_OVERHANG >=
+                          2 * GLOW_COVER_MIN_INTERIOR,
+                      "the narrowest segment table must leave columns for both pieces of a band");
+        static_assert(GLOW_COVER_SEG_MIN_WIDTH % GLOW_COVER_WIDTH_STEP == 0,
+                      "the segment table's width floor is a whole step");
+
+        /// The segment table's layout at @p width columns: MakeGlowCoverLayout
+        /// with the segment overhangs, clamped to [GLOW_COVER_SEG_MIN_WIDTH,
+        /// GLOW_COVER_MAX_WIDTH].
+        inline GlowCoverLayout MakeGlowCoverSegmentLayout(int width)
+        {
+            GlowCoverLayout layout;
+            layout.width = std::clamp(width, int(GLOW_COVER_SEG_MIN_WIDTH), int(GLOW_COVER_MAX_WIDTH));
+            layout.overhang = GLOW_COVER_SEG_OVERHANG;
+            layout.cornerOverhang = GLOW_COVER_SEG_CORNER_OVERHANG;
+            layout.minInterior = GLOW_COVER_MIN_INTERIOR;
+            return layout;
+        }
+
+        /// The columns the segment table wants for @p block, the segment block
+        /// the bake reads: the longest band at one column per
+        /// 1 / GLOW_COVER_SEG_COLUMNS_PER_SIGMA of the narrowest lit bell's
+        /// standard deviation, plus the segment overhangs, in whole
+        /// WIDTH_STEPs from GLOW_COVER_SEG_MIN_WIDTH up to @p mainWidth - see
+        /// neon-tuning.h. The bell is the bake's own: exp(-(d invSigma)^2),
+        /// so its standard deviation is 1 / (sqrt(2) invSigma) of the
+        /// perimeter, read from the PACKED block (.y) so the two cannot
+        /// disagree. A lit segment with invSigma at 0 lights the whole ring
+        /// uniformly (the bake's own branch) and sets no width.
+        /// @return GLOW_COVER_SEG_MIN_WIDTH when no segment sets a width.
+        inline int GetGlowCoverSegmentWidth(const SegmentBlockData &block, const Config &config, int mainWidth)
+        {
+            float sigma = 0.0f;
+            for (int i = 0; i < block.count; ++i)
+            {
+                const glm::vec4 &seg = block.segments[i];
+                if (seg.z <= 0.0f || seg.y <= 1e-6f)
+                {
+                    continue;
+                }
+                const float s = 0.7071067811865476f / seg.y;
+                sigma = (sigma > 0.0f) ? std::min(sigma, s) : s;
+            }
+            if (sigma <= 0.0f)
+            {
+                return GLOW_COVER_SEG_MIN_WIDTH;
+            }
+            const float r = GetDrawnCornerRadius(config);
+            const float straight = std::max(std::max(config.geometry.width, config.geometry.height) - 2.0f * r, 0.0f);
+            const float longest = straight + glm::half_pi<float>() * r;
+            const float spacing = sigma * std::max(GetPerimeter(config), 1e-3f) /
+                                  static_cast<float>(GLOW_COVER_SEG_COLUMNS_PER_SIGMA);
+            const float need = 2.0f + 2.0f * GLOW_COVER_SEG_OVERHANG + 2.0f * GLOW_COVER_SEG_CORNER_OVERHANG +
+                               std::ceil(longest / std::max(spacing, 1e-3f));
+            const float step = static_cast<float>(GLOW_COVER_WIDTH_STEP);
+            const float width = std::ceil(need / step) * step;
+            return static_cast<int>(std::clamp(width, static_cast<float>(GLOW_COVER_SEG_MIN_WIDTH),
+                                               static_cast<float>(std::max(mainWidth, int(GLOW_COVER_SEG_MIN_WIDTH)))));
+        }
+
+        /// How many of each band's @p layout Shared() columns go to its
         /// straight, the rest going to its corner (neon-pieces.glsl,
         /// glowCoverInner): .x for the two vertical straights' bands, .y for
         /// the two horizontal ones'. In proportion to the straight's and the
         /// quarter arc's lengths, so every piece gets columns in proportion to
         /// its length - a circle's corners take what its straights do not
-        /// need - and each keeps GLOW_COVER_MIN_INTERIOR. Whole columns, and
+        /// need - and each keeps the layout's minInterior. Whole columns, and
         /// computed HERE once for the bake and every neon.frag program alike:
         /// the two shaders work in different units, and a split each rounded
         /// for itself could land a column apart and read the whole band from
-        /// the wrong texels. A function of the geometry alone.
-        inline glm::vec2 GetGlowCoverSplit(const Config &config)
+        /// the wrong texels. A function of the geometry and the layout alone;
+        /// the bake stores it with the table (GlowCoverTable::split), and the
+        /// reads take it from there.
+        inline glm::vec2 GetGlowCoverSplit(const Config &config, const GlowCoverLayout &layout)
         {
             const float r = GetDrawnCornerRadius(config);
             const float arc = glm::half_pi<float>() * r;
-            const float shared = float(GLOW_COVER_SHARED);
-            const float minInner = float(GLOW_COVER_MIN_INTERIOR);
-            auto split = [&](float straight) {
+            const float shared = float(layout.Shared());
+            const float minInner = float(layout.minInterior);
+            auto split = [&](float straight)
+            {
                 const float total = straight + arc;
                 const float inner = (total > 0.0f) ? std::round(shared * straight / total) : std::round(shared * 0.5f);
                 return std::clamp(inner, minInner, shared - minInner);
@@ -1020,8 +1518,332 @@ namespace EdgeLighting
                              split(std::max(config.geometry.width - 2.0f * r, 0.0f)));
         }
 
-        /// The scale the scaled path's GATHER runs at: as coarse as the
-        /// gather's own smoothness allows, never finer than @p scale.
+        /// The glow coverage table's eight pieces, numbered as its bands hold
+        /// them: piece 2b is band b's straight, piece 2b + 1 its corner. One
+        /// bit each in NeonRenderer::mGlowCover's two dirty masks.
+        constexpr int GLOW_COVER_PIECES = 8;
+        constexpr uint32_t GLOW_COVER_ALL_PIECES = (1u << GLOW_COVER_PIECES) - 1u; ///< The mask with every piece dirty.
+        static_assert(GLOW_COVER_ALL_PIECES == 0xFFu,
+                      "NeonRenderer::mGlowCover's dirty masks start at 0xFF: every piece, which is this");
+
+        /// Where one piece lies on the perimeter, in the same [0, 1) parameter
+        /// the arcs and segments are placed in: it runs from @c start for
+        /// @c length in the direction @c sign.
+        typedef struct GlowCoverPieceSpan
+        {
+            float start;  ///< Where the piece begins, perimeter fraction in [0, 1).
+            float sign;   ///< +1 when it runs the way the parameter grows, -1 the other way.
+            float length; ///< How far it runs, perimeter fraction.
+        } GlowCoverPieceSpan;
+
+        /// neon-glow-cover.frag's pieceStart, verbatim: the span of a piece
+        /// that starts at @p cwStart and runs @p length in direction
+        /// @p cwSigma when the perimeter is walked clockwise. Under
+        /// Winding::COUNTER_CLOCKWISE the parameter runs the other way, so the
+        /// start is mirrored to <tt>1 - arcLen - cwStart</tt>, wrapped into
+        /// [0, 1) (@p arcLen being a quarter arc's length, as the bake has
+        /// it), and the direction flipped.
+        inline GlowCoverPieceSpan GetGlowCoverPieceStart(float cwStart, float cwSigma, float arcLen, float length,
+                                                         Winding winding)
+        {
+            if (winding == Winding::CLOCKWISE)
+            {
+                return GlowCoverPieceSpan{cwStart, cwSigma, length};
+            }
+            const float s = 1.0f - arcLen - cwStart;
+            return GlowCoverPieceSpan{s - std::floor(s), -cwSigma, length};
+        }
+
+        /// Every piece's span, from the same lengths renderGlowCoverPass hands
+        /// the bake and through the same placement - straightStart and
+        /// cornerStart in neon-glow-cover.frag, mirrored here. The table's
+        /// dirty pieces are only exact while the two agree: change where the
+        /// bake places a piece and this has to follow.
+        inline std::array<GlowCoverPieceSpan, GLOW_COVER_PIECES> GetGlowCoverPieceSpans(const Config &config)
+        {
+            const float perimeter = std::max(GetPerimeter(config), 1e-3f);
+            const float radius = GetDrawnCornerRadius(config);
+            const float ws = std::max(config.geometry.width - 2.0f * radius, 0.0f) / perimeter;
+            const float hs = std::max(config.geometry.height - 2.0f * radius, 0.0f) / perimeter;
+            const float arcLen = glm::half_pi<float>() * (radius / perimeter);
+            const Winding w = config.geometry.winding;
+            std::array<GlowCoverPieceSpan, GLOW_COVER_PIECES> spans;
+            // Bands 0 and 1 hold the vertical straights (length hs), 2 and 3
+            // the horizontal ones (ws); band b's corner has signs
+            // ((b == 1 || b == 3) ? +1 : -1, (b >= 2) ? +1 : -1).
+            spans[0] = GetGlowCoverPieceStart(2.0f * ws + 3.0f * arcLen + hs, 1.0f, arcLen, hs, w);
+            spans[2] = GetGlowCoverPieceStart(ws + arcLen + hs, -1.0f, arcLen, hs, w);
+            spans[4] = GetGlowCoverPieceStart(2.0f * ws + 2.0f * arcLen + hs, -1.0f, arcLen, ws, w);
+            spans[6] = GetGlowCoverPieceStart(0.0f, 1.0f, arcLen, ws, w);
+            for (int band = 0; band < 4; ++band)
+            {
+                const float sx = (band == 1 || band == 3) ? 1.0f : -1.0f;
+                const float sy = (band >= 2) ? 1.0f : -1.0f;
+                const float cw = (sx > 0.0f) ? ws + arcLen + ((sy > 0.0f) ? 0.0f : hs)
+                                             : 2.0f * ws + 3.0f * arcLen + hs + ((sy > 0.0f) ? hs : 0.0f);
+                spans[2 * band + 1] = GetGlowCoverPieceStart(cw, -sx * sy, arcLen, arcLen, w);
+            }
+            return spans;
+        }
+
+        /// Slack added to every span tested against a piece, in perimeter
+        /// fractions: float round-off between this mirror and the bake, where
+        /// a support that only touches a piece's end adds nothing either way.
+        constexpr float GLOW_COVER_SPAN_SLACK = 1e-3f;
+
+        /// The pieces whose perimeter span meets [@p lo, @p hi] (perimeter
+        /// fractions, any wrap; hi - lo below 1), each widened by
+        /// @ref GLOW_COVER_SPAN_SLACK.
+        /// @return One bit per piece of @p spans, as mGlowCover's dirty masks number
+        ///         them; every piece when the widened interval covers the ring.
+        inline uint32_t GetGlowCoverPiecesTouching(const std::array<GlowCoverPieceSpan, GLOW_COVER_PIECES> &spans,
+                                                   float lo, float hi)
+        {
+            lo -= GLOW_COVER_SPAN_SLACK;
+            hi += GLOW_COVER_SPAN_SLACK;
+            if (hi - lo >= 1.0f)
+            {
+                return GLOW_COVER_ALL_PIECES;
+            }
+            const float shift = std::floor(lo);
+            lo -= shift;
+            hi -= shift;
+            uint32_t mask = 0;
+            for (int i = 0; i < GLOW_COVER_PIECES; ++i)
+            {
+                const GlowCoverPieceSpan &p = spans[i];
+                float p0 = (p.sign > 0.0f) ? p.start : p.start - p.length;
+                p0 -= std::floor(p0);
+                const float p1 = p0 + p.length;
+                // Both in [0, 2); one lap either way covers every overlap.
+                for (int lap = -1; lap <= 1; ++lap)
+                {
+                    if (lo + static_cast<float>(lap) <= p1 && p0 <= hi + static_cast<float>(lap))
+                    {
+                        mask |= 1u << i;
+                        break;
+                    }
+                }
+            }
+            return mask;
+        }
+
+        /// Which pieces' ARC channels (.r / .g) of the glow coverage table moved
+        /// between the arc blocks @p oldArcs and @p newArcs, for a config whose
+        /// shape, winding and glow radius did not change (those move every
+        /// piece, and the caller says so itself). The segments' channels are
+        /// @ref GetGlowCoverDirtySegmentPieces's: a piece's arc channels depend
+        /// on the arcs alone, its segment channels on the segments alone, so
+        /// each kind is re-baked only where it moved.
+        ///
+        /// Exact because every texel of neon-glow-cover.frag integrates the
+        /// arcs' and segments' coverage over ITS OWN piece and nothing else:
+        /// pieceCover clips each arc's trapezoid and each segment's bell to
+        /// [0, len] of the piece, and normalises by the kernel's mass over the
+        /// same span. So a light whose support misses a piece leaves that
+        /// piece's texels exactly as they were, and a changed light dirties
+        /// the pieces its old support and its new support meet. Compared as
+        /// PACKED, so a neighbour's move that changes an arc's abut flags -
+        /// and with them its trapezoid - counts as a change to that arc.
+        ///
+        /// What reaches every piece instead, and so dirties all of them:
+        ///   - the brightest arc's intensity, which arcsOnPiece clamps every
+        ///     piece's coverage to (`most`, over arcs with intensity above 0
+        ///     and length above 1e-6 - the same test, so an arc crossing either
+        ///     threshold moves it too);
+        ///   - an arc over the whole ring (length >= 1 - 1e-6), which lights
+        ///     every piece without a trapezoid;
+        ///   - a segment whose bell reaches round the whole ring (the bake's
+        ///     reach, min(GLOW_COVER_BELL_REACH / invSigma, 0.5), at its cap
+        ///     of 0.5).
+        /// The supports are the bake's own: an arc's trapezoid lies inside
+        /// [start - tail feather, start + length + head feather], a segment's
+        /// bell is cut at position +/- reach. An arc that only MOVED - its
+        /// intensity and abut flags the same - dirties less than its two
+        /// supports: only the bands its ends swept (see arcMoved below).
+        inline uint32_t GetGlowCoverDirtyArcPieces(const ArcBlockData &oldArcs, const ArcBlockData &newArcs,
+                                                   const Config &config)
+        {
+            const std::array<GlowCoverPieceSpan, GLOW_COVER_PIECES> spans = GetGlowCoverPieceSpans(config);
+            const float perimeter = std::max(GetPerimeter(config), 1e-3f);
+            const float tailFeather = static_cast<float>(TAIL_FEATHER_PX) / perimeter;
+            const float headFeather = static_cast<float>(HEAD_FEATHER_PX) / perimeter;
+
+            auto lights = [](const glm::vec4 &arc)
+            { return arc.z > 0.0f && arc.y > 1e-6f; };
+            auto brightest = [&](const ArcBlockData &block)
+            {
+                float most = 0.0f;
+                for (int i = 0; i < block.count; ++i)
+                {
+                    if (lights(block.arcs[i]))
+                    {
+                        most = std::max(most, block.arcs[i].z);
+                    }
+                }
+                return most;
+            };
+            if (brightest(oldArcs) != brightest(newArcs))
+            {
+                return GLOW_COVER_ALL_PIECES;
+            }
+
+            uint32_t mask = 0;
+            auto arcSupport = [&](const glm::vec4 &arc) -> uint32_t
+            {
+                if (!lights(arc))
+                {
+                    return 0u;
+                }
+                if (arc.y >= 1.0f - 1e-6f)
+                {
+                    return GLOW_COVER_ALL_PIECES;
+                }
+                return GetGlowCoverPiecesTouching(spans, arc.x - tailFeather, arc.x + arc.y + headFeather);
+            };
+            // An arc whose ends moved but whose intensity and abut flags did
+            // not: its trapezoid is a ramp at each end and a plateau between,
+            // so its coverage changed only where an end's ramp was or is - from
+            // the old end to the new, the short way, plus the feather each
+            // side. Not elsewhere, provided the arc never shrinks through 0 or
+            // grows through the whole ring on the way, which `wrapped` checks.
+            // So a wipe re-bakes round its head, a travelling arc round both
+            // ends, rather than every piece either support meets.
+            //
+            // "Moved" is BITWISE, since the table is compared - and has to stay -
+            // texel for texel with a full bake: an end moved if the float the
+            // bake computes it as changed (arc.x for the tail, arc.x + arc.y for
+            // the head, which a start wrapping past 0 changes by a whole lap
+            // with the head where it was), or if its ramp's width did (the bake
+            // caps each feather at ARC_FEATHER_MAX_SHARE of the length, computed
+            // here as arcsOnPiece computes it). And when ONE end moved, the
+            // pieces holding the other end's ramp that lie half a perimeter on
+            // from the moved band are dirtied too: arcsOnPiece shifts each
+            // arc's image by k = floor(lo + 0.5), lo measured from one end, so
+            // an end passing a piece's antipode sends that piece's other ramp
+            // down another float path to the same value. (A piece wholly on the
+            // plateau or off the arc clips to the same span or to nothing
+            // whatever k is.) Measured: without both rules 1 table in 795
+            // random edits differed from a full bake by a half-float step.
+            //
+            // Never more than the two supports: those are exact too, and for a
+            // short arc they are the smaller set.
+            auto feather = [](float full, const glm::vec4 &arc)
+            {
+                return std::min(full, arc.y * static_cast<float>(ARC_FEATHER_MAX_SHARE));
+            };
+            auto near = [&](float from, float to, float width) -> uint32_t
+            {
+                return GetGlowCoverPiecesTouching(spans, std::min(from, to) - width, std::max(from, to) + width);
+            };
+            auto far = [&](float from, float to, float width) -> uint32_t
+            {
+                return GetGlowCoverPiecesTouching(spans, std::min(from, to) - width + 0.5f,
+                                                  std::max(from, to) + width + 0.5f);
+            };
+            auto pieces = [](uint32_t mask)
+            { return std::bitset<GLOW_COVER_PIECES>(mask).count(); };
+            auto arcMoved = [&](const glm::vec4 &before, const glm::vec4 &after) -> uint32_t
+            {
+                const bool partial = lights(before) && lights(after) && before.y < 1.0f - 1e-6f &&
+                                     after.y < 1.0f - 1e-6f;
+                if (!partial || before.z != after.z || before.w != after.w)
+                {
+                    return arcSupport(before) | arcSupport(after);
+                }
+                float dStart = after.x - before.x;
+                dStart -= std::round(dStart);
+                float dEnd = (after.x + after.y) - (before.x + before.y);
+                dEnd -= std::round(dEnd);
+                const bool wrapped = std::abs(before.y + dEnd - dStart - after.y) > 1e-4f;
+                if (wrapped)
+                {
+                    return arcSupport(before) | arcSupport(after);
+                }
+                const float s = before.x;
+                const float e = before.x + before.y;
+                const bool tailMoved =
+                    s != after.x || feather(tailFeather, before) != feather(tailFeather, after);
+                const bool headMoved =
+                    e != after.x + after.y || feather(headFeather, before) != feather(headFeather, after);
+                uint32_t moved = 0;
+                if (tailMoved)
+                {
+                    moved |= near(s, s + dStart, tailFeather);
+                }
+                if (headMoved)
+                {
+                    moved |= near(e, e + dEnd, headFeather);
+                }
+                if (tailMoved && !headMoved)
+                {
+                    moved |= far(s, s + dStart, tailFeather) & near(e, e, headFeather);
+                }
+                if (headMoved && !tailMoved)
+                {
+                    moved |= far(e, e + dEnd, headFeather) & near(s, s, tailFeather);
+                }
+                const uint32_t supports = arcSupport(before) | arcSupport(after);
+                return (pieces(moved) < pieces(supports)) ? moved : supports;
+            };
+            const int arcCount = std::max(oldArcs.count, newArcs.count);
+            for (int i = 0; i < arcCount; ++i)
+            {
+                const glm::vec4 none(0.0f);
+                const glm::vec4 &before = (i < oldArcs.count) ? oldArcs.arcs[i] : none;
+                const glm::vec4 &after = (i < newArcs.count) ? newArcs.arcs[i] : none;
+                if (before != after)
+                {
+                    mask |= arcMoved(before, after);
+                }
+            }
+            return mask;
+        }
+
+        /// Which pieces' SEGMENT channels (.b / .a) of the glow coverage table
+        /// moved between the segment blocks @p oldSegments and @p newSegments -
+        /// the segment half of @ref GetGlowCoverDirtyArcPieces, under the same
+        /// conditions and for the same reasons: a changed segment dirties the
+        /// pieces its old and new bells reach, cut where the bake cuts them.
+        inline uint32_t GetGlowCoverDirtySegmentPieces(const SegmentBlockData &oldSegments,
+                                                       const SegmentBlockData &newSegments, const Config &config)
+        {
+            const std::array<GlowCoverPieceSpan, GLOW_COVER_PIECES> spans = GetGlowCoverPieceSpans(config);
+            uint32_t mask = 0;
+            auto segmentSupport = [&](const glm::vec4 &seg) -> uint32_t
+            {
+                if (seg.z <= 0.0f)
+                {
+                    return 0u;
+                }
+                if (seg.y <= 1e-6f)
+                {
+                    return GLOW_COVER_ALL_PIECES;
+                }
+                const float reach = std::min(static_cast<float>(GLOW_COVER_BELL_REACH) / seg.y, 0.5f);
+                if (reach >= 0.5f)
+                {
+                    return GLOW_COVER_ALL_PIECES;
+                }
+                return GetGlowCoverPiecesTouching(spans, seg.x - reach, seg.x + reach);
+            };
+            const int segmentCount = std::max(oldSegments.count, newSegments.count);
+            for (int i = 0; i < segmentCount; ++i)
+            {
+                const glm::vec4 none(0.0f);
+                const glm::vec4 &before = (i < oldSegments.count) ? oldSegments.segments[i] : none;
+                const glm::vec4 &after = (i < newSegments.count) ? newSegments.segments[i] : none;
+                if (before != after)
+                {
+                    mask |= segmentSupport(before) | segmentSupport(after);
+                }
+            }
+            return mask;
+        }
+
+        /// The scale the GATHER runs at, at every resolutionScale: as coarse as
+        /// the gather's own smoothness allows, never finer than @p scale nor
+        /// than GATHER_MAX_SCALE.
         ///
         /// The gather produces the perimeter hue and the two gathered coverages,
         /// each a Lorentzian-weighted mean over the whole perimeter with kernel
@@ -1029,10 +1851,13 @@ namespace EdgeLighting
         /// and nowhere narrower: at a distance d from the line the kernel is
         /// sqrt(d^2 + kc^2) wide. So a grid GATHER_TEXELS_PER_KERNEL texels per
         /// kc carries it through a bilinear read, which the edge ring already
-        /// relies on, and the loop - ~95% of the neon's cost - runs on that grid
-        /// instead of on every texel the shading needs. Floored at
-        /// GATHER_MIN_SCALE so a very large rect does not pin a viewport-sized
-        /// gather to a handful of texels. See neon-tuning.h for the calibration.
+        /// relies on, and the loop - ~95% of the neon's cost when it ran inline
+        /// - runs on that grid instead of on every texel the shading needs; for
+        /// anything but a small rect that is far below 1 (0.11 for a 640 x 360
+        /// rect). Floored at GATHER_MIN_SCALE so a very large rect does not pin
+        /// a viewport-sized gather to a handful of texels, and capped at
+        /// GATHER_MAX_SCALE so a tiny one does not gather its whole glow quad
+        /// at full resolution - see neon-tuning.h for both.
         ///
         /// A function of the geometry and @p scale only, so it moves only under
         /// geometryDirty, which rebuilds the gather pass's quad with it. It
@@ -1043,14 +1868,15 @@ namespace EdgeLighting
             const float kc = std::max(GetPerimeter(config) * static_cast<float>(COLOR_BLEND_PERIM_FRAC),
                                       static_cast<float>(EMISSION_MIN_WIDTH));
             const float floorScale = std::min(static_cast<float>(GATHER_MIN_SCALE), scale);
-            return std::clamp(static_cast<float>(GATHER_TEXELS_PER_KERNEL) / kc, floorScale, scale);
+            const float ceilScale = std::min(static_cast<float>(GATHER_MAX_SCALE), scale);
+            return std::clamp(static_cast<float>(GATHER_TEXELS_PER_KERNEL) / kc, floorScale, ceilScale);
         }
 
         /// A buffer's size in texels at @p scale of a @p viewport px axis:
         /// truncated, and at least one - what a buffer covering the whole
         /// viewport at @p scale holds. GetBufferRegion never sizes the reduced
         /// buffer past it.
-        inline int ScaledExtent(int viewport, float scale)
+        inline int GetScaledExtent(int viewport, float scale)
         {
             return std::max(static_cast<int>(static_cast<float>(viewport) * scale), 1);
         }
@@ -1063,21 +1889,13 @@ namespace EdgeLighting
         /// reallocates on any size change).
         constexpr int REGION_ALLOC_STEP = 16;
 
-        /// The part of the frame an offscreen buffer covers, and its size.
-        typedef struct BufferRegion
-        {
-            glm::vec2 origin;  ///< Lower-left corner, rect-local FULL-RES px (y up).
-            glm::vec2 size;    ///< Full-res px.
-            glm::ivec2 texels; ///< The buffer's size.
-        } BufferRegion;
-
         /// Where a buffer at @p scale has to sit for its readers: the box
         /// @p outer (half-extents in full-res px about the rect centre
         /// @p centerFull) clipped to the viewport - grown past the viewport's
         /// edge by the bilinear footprint (FOOTPRINT_TEXELS), since a fragment
         /// on the edge reads that far.
         ///
-        /// Both scaled-path buffers used to cover the whole viewport, whatever
+        /// Both offscreen buffers used to cover the whole viewport, whatever
         /// the rect. The reduced buffer is read only by the blit, inside the
         /// lit band, and the gather buffer only by pass 1 and the ring; a rect
         /// smaller than the screen needed a fraction of either. The gather
@@ -1087,7 +1905,7 @@ namespace EdgeLighting
         /// reduced buffer.
         ///
         /// With @p capToViewport, PER AXIS never more than the viewport-sized
-        /// buffer: when the rounded region would reach @ref ScaledExtent
+        /// buffer: when the rounded region would reach @ref GetScaledExtent
         /// texels the axis falls back to exactly that buffer - the whole
         /// viewport, @c floor(viewport * scale) texels drawn through an ortho
         /// over the EXACT scaled extent, viewport * scale - so a full-screen
@@ -1137,7 +1955,7 @@ namespace EdgeLighting
                 const float span = std::max(hi[axis] - lo[axis], 0.0f);
                 const int wanted = static_cast<int>(std::ceil(span / pitch)) + 1;
                 const int rounded = (wanted + REGION_ALLOC_STEP - 1) / REGION_ALLOC_STEP * REGION_ALLOC_STEP;
-                const int whole = ScaledExtent(viewportPx[axis], scale);
+                const int whole = GetScaledExtent(viewportPx[axis], scale);
                 if (capToViewport && rounded >= whole)
                 {
                     region.origin[axis] = -centerFull[axis];
@@ -1154,13 +1972,72 @@ namespace EdgeLighting
             return region;
         }
 
+        /// The hue-invariant field (pass 1f) is used only where the glow quad
+        /// fills at least this share of the box the field has to cover. The
+        /// field is a box - its texels sit on the viewport's pixels - while the
+        /// quad may be a thin frame: the production band's quad is ~7% of its
+        /// box, so its field was ~8 MB for a frame that measured 1.02x, the
+        /// shading there being too little for the field to save. At a half the
+        /// field holds at most two texels per shaded pixel, counted in the
+        /// reduced buffer's texels.
+        constexpr float FIELD_MIN_FILL = 0.5f;
+
+        /// The box the field covers: exactly the reduced buffer's region (the
+        /// blit's read extent @p scaledOuter, as pass 1b draws it), so the
+        /// field and @c mScaledBuffer share one texel grid and pass 1c writes
+        /// each texel of the one from the same texel of the other.
+        inline BufferRegion GetFieldRegion(const Config &config, const glm::vec2 &scaledOuter, int viewportWidth,
+                                           int viewportHeight)
+        {
+            const glm::vec2 centerFull(config.geometry.position.x + config.geometry.width * 0.5f,
+                                       static_cast<float>(viewportHeight) - config.geometry.position.y -
+                                           config.geometry.height * 0.5f);
+            return GetBufferRegion(scaledOuter, centerFull, viewportWidth, viewportHeight,
+                                   GetClampedResolutionScale(config), true);
+        }
+
+        /// Whether a glow quad of @p glowArea FULL-RES px, drawn at @p scale,
+        /// fills enough of @p region for the field to be worth its memory
+        /// (FIELD_MIN_FILL).
+        inline bool FieldFillsRegion(float glowArea, const BufferRegion &region, float scale)
+        {
+            const float box = static_cast<float>(region.texels.x) * static_cast<float>(region.texels.y);
+            return glowArea * scale * scale >= FIELD_MIN_FILL * box;
+        }
+
         /// The ortho that draws @p region, at @p scale, from rect-local SCALED
-        /// px - the space every scaled-path quad is built in.
-        inline glm::mat4 RegionProjection(const BufferRegion &region, float scale)
+        /// px - the space every scaled quad is built in.
+        inline glm::mat4 GetRegionProjection(const BufferRegion &region, float scale)
         {
             const glm::vec2 lo = region.origin * scale;
             const glm::vec2 hi = (region.origin + region.size) * scale;
             return glm::ortho(lo.x, hi.x, lo.y, hi.y, -1.0f, 1.0f);
+        }
+
+        /// The map from rect-local px onto @p region's uv, for a reader whose
+        /// px are @p pxScale times full-res ones: the reduced scale for a pass
+        /// drawn in scaled space, 1 for one on the caller's framebuffer.
+        inline UVMap GetRegionUVMap(const BufferRegion &region, float pxScale)
+        {
+            return UVMap{glm::vec2(1.0f) / (region.size * pxScale), -region.origin / region.size};
+        }
+
+        /// The area @p a covers, full-res px^2: the box less the hole. Unclipped
+        /// - the part off screen counts too. A hole of 0 on an axis subtracts
+        /// nothing, so a box with no hole is the whole box.
+        inline float GetAnnulusArea(const Annulus &a)
+        {
+            return 4.0f * (a.outer.x * a.outer.y - a.hole.x * a.hole.y);
+        }
+
+        /// Whether @p outer covers @p inner, each drawn as PushAnnulus draws
+        /// it: a hole empty on either axis draws the whole box.
+        inline bool AnnulusCovers(const Annulus &outer, const Annulus &inner)
+        {
+            const bool solid = outer.hole.x <= 0.0f || outer.hole.y <= 0.0f;
+            const bool innerSolid = inner.hole.x <= 0.0f || inner.hole.y <= 0.0f;
+            return glm::all(glm::lessThanEqual(inner.outer, outer.outer)) &&
+                   (solid || (!innerSolid && glm::all(glm::greaterThanEqual(inner.hole, outer.hole))));
         }
     }
 
@@ -1169,7 +2046,14 @@ namespace EdgeLighting
 
     bool NeonRenderer::Initialize()
     {
-        if (!setupShaders())
+        // The one program every frame uses, so built here rather than on
+        // first use: the emission pre-pass. Its fragment shader ignores vPos
+        // and keys off gl_FragCoord. Every other program is built the first
+        // time a frame needs it - see ensureGlowPrograms,
+        // ensureGlowCoverProgram, ensureFieldPrograms, ensureRingFieldPrograms
+        // and ensureFillProgram.
+        if (!ensureProgram(mEmissionShader, ShaderSource::NEON_EMISSION_FRAG_SRC, nullptr, "NeonRenderer.Emission",
+                           PROGRAM_EMISSION, BLOCK_SEGMENT | BLOCK_ARC, "the neon layer is disabled"))
         {
             LOG_E("Failed to compile/link NeonRenderer shaders.");
             return false;
@@ -1177,8 +2061,13 @@ namespace EdgeLighting
         // Allocated ONCE, here, and never touched again: the emission table's
         // dimensions are compile-time constants, so unlike every other buffer
         // in the renderer it has no reason to be revisited per frame. Its
-        // format is settled here too - see resizeEmissionBuffer.
-        if (!resizeEmissionBuffer())
+        // format is settled here too. The walk starts at the top: this is the
+        // only allocation the buffer ever gets, so there is no refused format
+        // to resume past and nothing to keep the tier for.
+        size_t emissionTier = 0;
+        if (!ResizeInBestFormat(mEmission.buffer, EMISSION_FORMATS, std::size(EMISSION_FORMATS), emissionTier,
+                                NEON_MAX_LOOP_SAMPLES, 2, EMISSION_FILTER, 1, "emission",
+                                "Arc intensities and stacked segment boosts above 1.0 will clamp."))
         {
             LOG_E("Failed to allocate the NeonRenderer emission table in any supported format.");
             return false;
@@ -1204,11 +2093,12 @@ namespace EdgeLighting
         //
         // @ref setupFullscreenQuad keeps its own paired call: that one uploads
         // exactly once and never returns, so there is nothing to separate.
-        mGlowVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
-        mFillVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
-        mRingVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
-        mBlitVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
-        mGatherVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+        mGlowMesh.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+        mFillMesh.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+        mRingMesh.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+        mBlitMesh.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+        mGatherMesh.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+        mRingField.box.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
 
         // The atlas bakes and the glow quad's interior hole read the merged
         // transient+preserved view, which OnConfigChanged normally keeps
@@ -1227,15 +2117,44 @@ namespace EdgeLighting
         return true;
     }
 
-    void NeonRenderer::Update(float deltaTime, float, const Config &)
+    void NeonRenderer::Update(float deltaTime, float, const Config &config)
     {
         // A fade frame re-uploads the ring the emission table is baked FROM,
-        // and does it without any config change for OnConfigChanged to catch -
-        // so the table has to be invalidated from here or it would hold the
-        // ring's colours from the frame the fade began for the whole fade.
-        // |=, not =: a config change earlier in this same frame must not be
-        // cleared by a settled ring reporting false.
-        mEmissionDirty = mGradientLUT.Tick(deltaTime) || mEmissionDirty;
+        // without any config change to announce it. Nothing here has to say
+        // so: the upload moves the ring's upload count, which is part of the
+        // table's key (isEmissionTableStale), and so does anything else that
+        // writes it.
+        mGradientLUT.Tick(deltaTime);
+
+        // Give the glow coverage table back once nothing has read it for
+        // GLOW_COVER_RELEASE_SECONDS: a ring lit uniformly (or a disabled
+        // layer, which OnConfigChanged already releases for) never samples it,
+        // and I33 kept it allocated through a uniform stretch only because an
+        // arc animation passes through one every loop. The delay keeps that
+        // case; a ring that has settled frees its 0.5-1 MB. Here and not in
+        // Render, which must not delete a framebuffer (Framebuffer::Release).
+        // mEffectiveSegments is current: the effect refreshes the config, and
+        // with it OnConfigChanged, before it forwards Update.
+        if (!mGlowCover.buffer.IsValid())
+        {
+            mGlowCover.unreadSeconds = 0.0f;
+        }
+        else if (!config.neon.enable || IsGlowCoverUnread(mEffectiveSegments, config))
+        {
+            mGlowCover.unreadSeconds += std::max(deltaTime, 0.0f);
+            if (mGlowCover.unreadSeconds >= GLOW_COVER_RELEASE_SECONDS)
+            {
+                // A fresh allocation sets every piece dirty, so the table that
+                // replaces this one is baked whole on the frame it is next read.
+                mGlowCover.buffer.Release();
+                mGlowCover.segBuffer.Release();
+                mGlowCover.unreadSeconds = 0.0f;
+            }
+        }
+        else
+        {
+            mGlowCover.unreadSeconds = 0.0f;
+        }
     }
 
     void NeonRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
@@ -1244,55 +2163,45 @@ namespace EdgeLighting
         {
             return;
         }
+        // Whether the intensity moved since the last frame - the fields' gain
+        // (LazyBake). Consumed here, so a frame that changes nothing finds it
+        // false: that is the frame a scaled field is baked again exactly.
+        const bool intensityMoving = mIntensityMoving;
+        mIntensityMoving = false;
 
         // Render is a pass schedule and nothing else: derive the transform,
         // then one call per pass. Each pass owns its own shader and, where it
         // retargets, its own framebuffer restore. Blend state is owned HERE.
         //
-        // TWO PHASES, in this order on both paths: everything that renders
-        // OFFSCREEN first (the emission table, and below 1.0 the gather and
-        // pass 1), then everything that lands on the caller's
-        // framebuffer (the fill, then the glow - pass 1 itself at 1.0, the
-        // blit and the edge ring below it). So the caller's target is drawn in
+        // TWO PHASES, in this order: everything that renders OFFSCREEN first
+        // (the emission and coverage tables, the gather, pass 1b and the field
+        // bakes), then everything that lands on the caller's framebuffer (the
+        // fill, the blit, the edge ring). So the caller's target is drawn in
         // one unbroken run per frame. On a tile-based GPU every switch away
         // from it and back stores its tiles out and loads them in again, and
         // the fill used to go first and force exactly that whenever an
         // offscreen pass followed it. The fill depends on nothing offscreen
         // and only has to land under the glow, so moving it costs nothing.
+        // ONE path at every resolution scale, 1.0 included: the glow is
+        // shaded into a reduced buffer - full size at 1.0 - blitted back, and
+        // the edge ring re-shaded at full resolution. (There used to be a
+        // direct path at 1.0 that shaded straight onto the target; no shipped
+        // config uses 1.0, and it went with I57.)
         const float scale = GetClampedResolutionScale(config);
-        // Past the enable return above, this is `scale < 1.0` - asked through
-        // the shared predicate so it cannot disagree with the release gate in
-        // OnConfigChanged about which configs want the buffer.
-        const bool scaled = UsesScaledBuffer(config);
-        const int bufW = ScaledExtent(viewportWidth, scale);
-        const int bufH = ScaledExtent(viewportHeight, scale);
 
-        // The DIRECT path's transform: the full-res ortho over the viewport,
-        // rect centre translated in. bufW/bufH are the viewport and the extent
-        // is exactly it at scale 1.0, which is what makes the direct path
-        // identical to the dedicated full-res renderer this class replaced.
-        // The scaled path's two offscreen passes draw through their own
-        // region projections instead (GetBufferRegion, RegionProjection),
-        // still in SCALED space, so the quads, the rect size and the loop
-        // samples all agree; the passes on the caller's framebuffer build
-        // their own full-res transforms.
-        //
-        // Viewport y runs down in Config but up in the projection, so the
-        // centre is mirrored about the viewport height.
-        //
-        // The max() only guards a zero viewport from reaching glm::ortho as an
-        // empty range - bufW's own max(1) used to cover that.
+        // The rect centre in the caller's framebuffer, full-res px. Viewport y
+        // runs down in Config but up in the projection, so the centre is
+        // mirrored about the viewport height. The offscreen passes draw
+        // through their own region projections (GetBufferRegion,
+        // GetRegionProjection) in SCALED space, so the quads, the rect size and
+        // the loop samples all agree; the passes on the caller's framebuffer
+        // share one full-res transform, built below.
         const float halfRectW = config.geometry.width * 0.5f;
         const float halfRectH = config.geometry.height * 0.5f;
-        const glm::vec2 extent(std::max(static_cast<float>(viewportWidth) * scale, 1.0e-3f),
-                               std::max(static_cast<float>(viewportHeight) * scale, 1.0e-3f));
-        const glm::mat4 proj = glm::ortho(0.0f, extent.x, 0.0f, extent.y, -1.0f, 1.0f);
         const glm::vec2 centerFull(config.geometry.position.x + halfRectW,
                                    static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
-        const glm::vec2 center = centerFull * scale;
-        const glm::mat4 mvp = proj * glm::translate(glm::mat4(1.0f), glm::vec3(center, 0.0f));
 
-        // Debug: the fill and nothing else, on both paths. What lands on
+        // Debug: the fill and nothing else. What lands on
         // screen is the opaque silhouette by itself - which is how the fill's
         // square corner at cornerRadius 0 gets compared against the emission's
         // round one. DebugRenderer honours the same flag, so the overlays do
@@ -1310,21 +2219,22 @@ namespace EdgeLighting
             {
                 glEnable(GL_BLEND);
                 glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-                renderOpaqueFill(viewportWidth, viewportHeight, config);
+                renderFillPass(viewportWidth, viewportHeight, config);
             }
             glEnable(GL_BLEND);
             glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             return;
         }
 
-        // The programs this path draws with, compiled the first frame it
-        // runs - see ensurePathPrograms. A failure is logged once and the
+        // The programs the glow draws with, compiled on the first frame -
+        // see ensureGlowPrograms. A failure is logged once and the
         // frame degrades to the fill: no glow, nothing stale. The glow
         // coverage table's program and buffer likewise, but only on a ring
-        // that reads the table.
-        bool glowReady = ensurePathPrograms(scaled) &&
+        // that reads the table. The gather is its own pass at every scale.
+        bool glowReady = ensureGlowPrograms() &&
                          (IsGlowCoverUnread(mEffectiveSegments, config) ||
-                          (ensureGlowCoverProgram() && ensureGlowCoverBuffer()));
+                          (ensureGlowCoverProgram() && ensureGlowCoverFillProgram() &&
+                           ensureGlowCoverBuffer(!mEffectiveSegments.empty())));
 
         // The render target this renderer was handed - framebuffer AND
         // viewport, saved as a pair because the offscreen phase has to put both
@@ -1334,22 +2244,90 @@ namespace EdgeLighting
         // BEFORE any pass binds a target of its own - querying later would
         // capture that.
         //
-        // SCALED PATH ONLY, because it is the only one whose passes this
-        // function retargets: on the direct path pass 1 draws straight onto the
-        // caller's framebuffer and there is nothing to come back to.
+        // Only on a frame whose offscreen phase draws anything: one that
+        // reuses its offscreen buffers (mOffscreen.reusable) and bakes no field
+        // never leaves the caller's framebuffer, so there is nothing to come
+        // back to.
         //
         // @ref renderEmissionPass captures its own rather than being handed
         // this one: a pass restores what IT finds, which is what keeps it
         // correct wherever it is called from.
         RenderTargetState prevTarget;
+        // Scaled rect-local px -> gather buffer uv, for pass 1b. Set with the
+        // gather's region below.
+        UVMap gatherUV;
         // Full-res rect-local px -> buffer uv, for the passes on the caller's
         // framebuffer: the edge ring's onto the gather buffer and the blit's
         // onto the reduced one. Set with the regions below.
-        glm::vec2 gatherUVFullScale(0.0f);
-        glm::vec2 gatherUVFullOffset(0.0f);
-        glm::vec2 blitUVScale(0.0f);
-        glm::vec2 blitUVOffset(0.0f);
-        if (scaled)
+        UVMap gatherUVFull;
+        UVMap scaledUV;
+
+        // What the offscreen phase has to draw this frame. The light blocks
+        // are packed first, because the emission table's staleness reads
+        // their upload counts - the pack touches no framebuffer state, so the
+        // target is still the caller's for the capture below.
+        if (glowReady)
+        {
+            packLightBlocks(config);
+        }
+        // Pass 0 only when something it reads has actually moved - see
+        // isEmissionTableStale. A still ring therefore costs one FBO bind,
+        // eight uniform sets, three texture binds and a draw on the frame its
+        // inputs change, and nothing on the frames after.
+        const bool emissionStale = glowReady && isEmissionTableStale(time, config);
+        // Pass 0b on a change to its inputs only. It never depends on time,
+        // and nothing else writes the buffer. Nor on a ring lit uniformly,
+        // which never reads it: the flag stays set, so the first change that
+        // breaks the uniformity bakes it.
+        const bool glowCoverStale =
+            glowReady && (mGlowCover.dirtyArcPieces | mGlowCover.dirtySegmentPieces) != 0 &&
+            !IsGlowCoverUnread(mEffectiveSegments, config);
+        // Passes 1a and 1b not at all when what their buffers already hold is
+        // what they would draw - see mOffscreen.reusable. Then the frame never
+        // leaves the caller's framebuffer, so there is no target to capture
+        // either.
+        const bool reuseOffscreen = glowReady && mOffscreen.reusable && !emissionStale &&
+                                    !glowCoverStale && mOffscreen.viewport == glm::ivec2(viewportWidth, viewportHeight);
+        // The shading factored into the hue-invariant field (1f) and its
+        // composite (1c), in pass 1b's place where the config allows it, on
+        // LazyBake's schedule. A frame that reuses its offscreen buffers has
+        // no pass 1b for the field to replace.
+        const glm::ivec2 viewport(viewportWidth, viewportHeight);
+        LazyBake::Decision field;
+        const BufferRegion fieldRegion =
+            GetFieldRegion(config, mScaledOuter, viewportWidth, viewportHeight);
+        const bool fieldProgramsBuilt = mFieldBakeShader.IsValid() && mFieldCompositeShader.IsValid();
+        if (glowReady && !mGlowField.schedule.unavailable &&
+            IsFieldEligible(config, mGradientLUT.IsOpaque(), intensityMoving) &&
+            FieldFillsRegion(GetAnnulusArea(mGlowBounds), fieldRegion, scale) && ensureFieldPrograms() &&
+            !reuseOffscreen)
+        {
+            field = mGlowField.schedule.Decide(viewport, mGradientLUT.GetUploadCount(), !fieldProgramsBuilt,
+                                               config.neon.intensity, intensityMoving);
+        }
+        // The edge ring factored the same way (pass 1r bakes its field, pass
+        // 2r composites it in pass 2c's place), on a schedule of its own - it
+        // serves configs the shading's field does not (a hue that is not
+        // rotating) - and on still frames too, since the ring is re-shaded on
+        // every frame.
+        LazyBake::Decision ringField;
+        if (glowReady && mRingMesh.count > 0 && !mRingField.schedule.unavailable &&
+            IsRingFieldEligible(config, mGradientLUT.IsOpaque()))
+        {
+            const RingFieldLayout layout =
+                computeRingFieldLayout(mRingBounds, centerFull, viewportWidth, viewportHeight);
+            const bool firstFrame = !mRingFieldCompositeShader.IsValid();
+            if (layout.atlas.x > 0 && layout.atlas.y > 0 && ensureRingFieldPrograms())
+            {
+                ringField = mRingField.schedule.Decide(viewport, mGradientLUT.GetUploadCount(), firstFrame,
+                                                       config.neon.intensity, intensityMoving);
+                if (ringField.bake)
+                {
+                    mRingField.layout = layout;
+                }
+            }
+        }
+        if (!reuseOffscreen || field.bake || ringField.bake)
         {
             prevTarget = RenderTargetState::Capture();
         }
@@ -1358,15 +2336,7 @@ namespace EdgeLighting
         if (glowReady)
         {
             // --- Pass 0: per-sample emission table --------------------------
-            packLightBlocks(config);
-            // ...and only re-bake the table when something it reads has
-            // actually moved. The buffer is allocated once and nothing else
-            // writes it, so a frame that changes neither the config nor (at a
-            // non-zero hue rate) the time reads the same texels the last bake
-            // left. A still ring therefore costs one FBO bind, eight uniform
-            // sets, three texture binds and a draw on the frame it changes, and
-            // nothing on the frames after.
-            if (isEmissionTableStale(time, config))
+            if (emissionStale)
             {
                 // A table write is not a composite: blending would mix this
                 // frame's emission into last frame's. Every later pass sets its
@@ -1376,56 +2346,122 @@ namespace EdgeLighting
                 renderEmissionPass(viewportWidth, viewportHeight, time, config);
             }
 
-            // --- Pass 0b: the glow coverage table, on a config change only. It
-            // never depends on time, and nothing else writes the buffer. Nor on
-            // a ring lit uniformly, which never reads it: the flag stays set,
-            // so the first change that breaks the uniformity bakes it.
-            if (mGlowCoverDirty && !IsGlowCoverUnread(mEffectiveSegments, config))
+            // --- Pass 0b: the glow coverage table, when glowCoverStale says.
+            if (glowCoverStale)
             {
                 glDisable(GL_BLEND);
                 renderGlowCoverPass(config);
             }
 
-            if (scaled)
+            // How pass 1f runs: bake the field over @p region - the reduced
+            // buffer's (GetFieldRegion) - through that region's projection at
+            // this frame's scale, after the gather it reads. Unblended: the
+            // buffer is data. Records how pass 1c finds a fragment's texel: the
+            // region's origin and its texels per px, both in the composite's
+            // vPos space (scaled px). A failed bake composites nothing: the
+            // frame shades directly.
+            auto bakeFieldPass = [&](const BufferRegion &region, const UVMap &uv)
             {
-                // Both scaled-path buffers cover a REGION of the frame, not
-                // the viewport (GetBufferRegion): each pass draws through an
-                // ortho onto its region, in pass 1's scaled rect-local space -
-                // where every scaled quad lives - and each reader maps its own
-                // rect-local px onto the buffer's uv.
-                //
-                // --- Pass 1a: the gather, at its own coarse scale, into the
-                // gather buffer. Unblended: the buffer is data. Read by pass 1b
-                // from scaled px and by the ring from full-res px.
-                const BufferRegion gatherRegion = GetBufferRegion(
-                    mGatherOuter, centerFull, viewportWidth, viewportHeight, GetGatherScale(config, scale), false);
-                const glm::vec2 gatherUVOffset = -gatherRegion.origin / gatherRegion.size;
-                const glm::vec2 gatherUVScale = glm::vec2(1.0f) / (gatherRegion.size * scale);
-                gatherUVFullScale = glm::vec2(1.0f) / gatherRegion.size;
-                gatherUVFullOffset = gatherUVOffset;
+                const bool baked =
+                    renderFieldPass(GetRegionProjection(region, scale), region.texels, uv, scale, time, config);
+                field.use = field.use && baked;
+                mGlowField.schedule.OnBaked(baked, config.neon.intensity);
+                mGlowField.origin = region.origin * scale;
+                mGlowField.texelScale = glm::vec2(region.texels) / (region.size * scale);
+            };
+
+            // The offscreen buffers cover a REGION of the frame, not the
+            // viewport (GetBufferRegion): each pass draws through an ortho
+            // onto its region, in pass 1's scaled rect-local space - where
+            // every scaled quad lives - and each reader maps its own
+            // rect-local px onto the buffer's uv.
+            //
+            // --- Pass 1a: the gather, at its own coarse scale, into the
+            // gather buffer. Unblended: the buffer is data. Read by pass 1b
+            // from scaled px and by the ring from full-res px.
+            //
+            // Not when what it last drew still answers this frame: the same
+            // inputs (GatherInputs - the table's version among them, so pass 0
+            // above has had its say) over a quad covering this frame's. Then
+            // every reader reads the buffer through the region it was drawn
+            // over (mGather.cache). A config change that moves only the glow's
+            // reach - an intensity or bloom pulse - moves the quad every frame
+            // and no texel of it: the quad settles on the widest one the
+            // animation reaches, and the gather stops running.
+            const GatherInputs gatherInputs = getGatherInputs(config, viewportWidth, viewportHeight);
+            const bool gatherCurrent = mGather.cache.drawn && mGather.buffer.IsValid() &&
+                                       gatherInputs == mGather.cache.inputs &&
+                                       AnnulusCovers(mGather.cache.bounds, mGatherBounds);
+            const BufferRegion gatherRegion =
+                gatherCurrent ? mGather.cache.region
+                              : GetBufferRegion(mGatherBounds.outer, centerFull, viewportWidth, viewportHeight,
+                                                GetGatherScale(config, scale), false);
+            gatherUV = GetRegionUVMap(gatherRegion, scale);
+            gatherUVFull = GetRegionUVMap(gatherRegion, 1.0f);
+            // The region and its maps are computed either way: the passes
+            // on the caller's framebuffer read through them.
+            if (!reuseOffscreen && !gatherCurrent)
+            {
                 glDisable(GL_BLEND);
-                glowReady = renderGatherPass(RegionProjection(gatherRegion, scale), gatherRegion.texels.x,
-                                             gatherRegion.texels.y, scale, config);
+                glowReady =
+                    renderGatherPass(GetRegionProjection(gatherRegion, scale), gatherRegion.texels, scale, config);
+                mGather.cache = GatherCache{glowReady, gatherInputs, mGatherBounds, gatherRegion};
+            }
 
-                // --- Pass 1b: the shading, at the reduced scale, into the
-                // reduced buffer, from that gather. Still unblended: the buffer
-                // was just cleared and the quad covers each texel once, so
-                // premultiplied-over would only add zero, at the price of a
-                // destination read per texel. A failed allocation in either
-                // pass skips both composites below, so a failed frame degrades
-                // to the fill rather than compositing a stale buffer from an
-                // earlier frame. Read by the blit, from full-res px.
-                if (glowReady)
+            // --- Pass 1b: the shading, at the reduced scale, into the
+            // reduced buffer, from that gather. Still unblended: the buffer
+            // was just cleared and the quad covers each texel once, so
+            // premultiplied-over would only add zero, at the price of a
+            // destination read per texel. A failed allocation in either
+            // pass skips both composites below, so a failed frame degrades
+            // to the fill rather than compositing a stale buffer from an
+            // earlier frame. Read by the blit, from full-res px.
+            //
+            // Or, where the field holds - under a rotating hue or a moving
+            // intensity, once the config has held for a frame - pass 1c in its
+            // place, into the same buffer: the field times this frame's gathered hue, with
+            // pass 1f baking the field first on the frame that needs it.
+            // The field's region IS this buffer's (GetFieldRegion), so each
+            // composite fragment reads the field texel under it.
+            if (glowReady)
+            {
+                const BufferRegion scaledRegion =
+                    GetBufferRegion(mScaledOuter, centerFull, viewportWidth, viewportHeight, scale, true);
+                scaledUV = GetRegionUVMap(scaledRegion, 1.0f);
+                if (!reuseOffscreen)
                 {
-                    const BufferRegion scaledRegion =
-                        GetBufferRegion(mScaledOuter, centerFull, viewportWidth, viewportHeight, scale, true);
-                    blitUVScale = glm::vec2(1.0f) / scaledRegion.size;
-                    blitUVOffset = -scaledRegion.origin / scaledRegion.size;
-                    glowReady = renderNeonPass(RegionProjection(scaledRegion, scale), scaledRegion.texels.x,
-                                               scaledRegion.texels.y, true, gatherUVScale, gatherUVOffset, time,
-                                               config);
+                    // Unblended, set HERE: pass 1a, which used to set it
+                    // just above, is skipped on a frame its inputs held,
+                    // and pass 1b then drew with the previous frame's
+                    // GL_SRC_ALPHA blend into its cleared buffer.
+                    glDisable(GL_BLEND);
+                    const glm::mat4 scaledProj = GetRegionProjection(scaledRegion, scale);
+                    if (field.bake)
+                    {
+                        bakeFieldPass(fieldRegion, gatherUV);
+                    }
+                    if (field.use)
+                    {
+                        glowReady = renderFieldCompositePass(scaledProj, scaledRegion.texels, gatherUV, field.gain);
+                    }
+                    else
+                    {
+                        glowReady = renderShadePass(scaledProj, scaledRegion.texels, gatherUV, time, config);
+                    }
                 }
+            }
 
+            // --- Pass 1r: the edge ring's field, after the gather it reads.
+            if (ringField.bake && glowReady)
+            {
+                glDisable(GL_BLEND);
+                const bool baked = renderRingFieldPass(gatherUVFull, time, config);
+                mRingField.schedule.OnBaked(baked, config.neon.intensity);
+                ringField.use = ringField.use && baked;
+            }
+
+            if (!reuseOffscreen || field.bake || ringField.bake)
+            {
                 // Back to the caller's target and viewport, both at once.
                 // Unconditional: the pass may have bound its target before
                 // failing, and leaving the caller on our buffer would silently
@@ -1433,6 +2469,15 @@ namespace EdgeLighting
                 prevTarget.Restore();
             }
         }
+        // What the offscreen buffers hold from here on: this frame's passes 1a
+        // and 1b, drawn or reused - unless a pass failed, or pass 1b's buffer
+        // holds the field's composite rather than the shading. Under a
+        // rotating hue nothing is reused anyway; otherwise the composite is
+        // there only because the intensity moved (I56) - scaled, or within a
+        // level of the shading - and the frame it settles on redraws pass 1b
+        // exactly.
+        mOffscreen.reusable = glowReady && !field.use;
+        mOffscreen.viewport = glm::ivec2(viewportWidth, viewportHeight);
 
         // ===== Caller's framebuffer ==========================================
         // Premultiplied-alpha "over": final = src.rgb + dst * (1 - src.a), for
@@ -1441,41 +2486,39 @@ namespace EdgeLighting
         glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
         // --- Pass 2a: opaque-mode background fill ---------------------------
-        // Full-res on the caller's framebuffer on both paths, and under the
-        // glow on both: here it lands before pass 1 at scale 1.0 and before
-        // the blit and the ring below it.
+        // Full-res on the caller's framebuffer, under the glow: before the
+        // blit and the ring.
         if (config.neon.opaqueMode != OpaqueMode::NONE)
         {
-            renderOpaqueFill(viewportWidth, viewportHeight, config);
+            renderFillPass(viewportWidth, viewportHeight, config);
         }
 
         if (glowReady)
         {
-            if (!scaled)
+            // --- Pass 2b / 2c: the blit and the edge ring. They cover
+            // disjoint areas (setupRingGeometry), so their order between
+            // themselves does not matter for the result.
+            //
+            // ONE full-res transform, built here and handed to both. Their
+            // partition holds only if the edges they share land on
+            // bit-identical pixel positions, which takes the same vertex
+            // floats (setupRingGeometry), the same vertex stage (neon.vert's
+            // invariant gl_Position) and the same uMVP. Two copies of one
+            // expression gave the same bits too, until someone edited one
+            // of them; a single matrix cannot drift. tools/neon-scale-check
+            // `partition` tests the result.
+            const glm::mat4 fullResMvp =
+                glm::ortho(0.0f, static_cast<float>(viewportWidth), 0.0f, static_cast<float>(viewportHeight),
+                           -1.0f, 1.0f) *
+                glm::translate(glm::mat4(1.0f), glm::vec3(centerFull, 0.0f));
+            renderBlitPass(fullResMvp, centerFull, scaledUV, config);
+            if (ringField.use)
             {
-                // --- Pass 1 (direct): the gather, composited onto the target.
-                renderNeonPass(mvp, bufW, bufH, false, glm::vec2(0.0f), glm::vec2(0.0f), time, config);
+                renderRingFieldCompositePass(fullResMvp, gatherUVFull, ringField.gain, config);
             }
             else
             {
-                // --- Pass 2b / 2c: the blit and the edge ring. They cover
-                // disjoint areas (setupRingGeometry), so their order between
-                // themselves does not matter for the result.
-                //
-                // ONE full-res transform, built here and handed to both. Their
-                // partition holds only if the edges they share land on
-                // bit-identical pixel positions, which takes the same vertex
-                // floats (setupRingGeometry), the same vertex stage (neon.vert's
-                // invariant gl_Position) and the same uMVP. Two copies of one
-                // expression gave the same bits too, until someone edited one
-                // of them; a single matrix cannot drift. tools/neon-scale-check
-                // `partition` tests the result.
-                const glm::mat4 fullResMvp =
-                    glm::ortho(0.0f, static_cast<float>(viewportWidth), 0.0f, static_cast<float>(viewportHeight),
-                               -1.0f, 1.0f) *
-                    glm::translate(glm::mat4(1.0f), glm::vec3(centerFull, 0.0f));
-                renderBlitPass(fullResMvp, centerFull, blitUVScale, blitUVOffset, config);
-                renderRingPass(fullResMvp, gatherUVFullScale, gatherUVFullOffset, time, config);
+                renderRingPass(fullResMvp, gatherUVFull, time, config);
             }
         }
 
@@ -1486,6 +2529,36 @@ namespace EdgeLighting
 
     void NeonRenderer::OnConfigChanged(const Config &config)
     {
+        // The offscreen buffers were drawn from the config this replaces. Wide,
+        // unlike the gates below - pass 1b reads most of the neon's config, and
+        // re-drawing them costs one frame's offscreen phase - but no wider than
+        // what this renderer reads at all: its own sub-config and the geometry
+        // (Render reads debug.opaqueOnly too, and returns before any of this).
+        // This call comes whenever the COMPOSITED config changed, another
+        // layer's fields included, and an animation of one - the lens flare's
+        // sun riding the perimeter, an AnimatableField - changes it every
+        // frame. Cleared on that, the field never settled and the neon drew
+        // pass 1 directly every frame: 4.9x with the hue rotating and 15x
+        // still at 1.0, ~4x still at 0.5 (AMD Radeon Pro 5300M, 1920 x 1080),
+        // for an image the field draws byte-identically.
+        if (config.neon != mCurrentConfig.neon || config.geometry != mCurrentConfig.geometry)
+        {
+            mOffscreen.reusable = false;
+            // And both fields, for the same reason, and one more frame before
+            // either is baked again: a config that changes every frame (an
+            // animation) never settles, and keeps shading directly (LazyBake).
+            // But not for the intensity alone, which a field serves scaled
+            // (I56).
+            if (!OnlyIntensityMoved(mCurrentConfig, config))
+            {
+                mGlowField.schedule.Invalidate();
+                mRingField.schedule.Invalidate();
+            }
+        }
+        // Accumulated until the next Render consumes it: this call can come
+        // more than once between two frames.
+        mIntensityMoving = mIntensityMoving || config.neon.intensity != mCurrentConfig.neon.intensity;
+
         // Snapshot dirtiness before we overwrite mCurrentConfig. Each rebuild
         // is gated on the exact set of fields it reads (see the corresponding
         // methods below) - dragging a slider like `bloomStrength` used to
@@ -1552,18 +2625,22 @@ namespace EdgeLighting
                                    config.neon.preservedSegmentBoosts != mCurrentConfig.neon.preservedSegmentBoosts;
         const bool arcsDirty = config.neon.arcs != mCurrentConfig.neon.arcs;
         // The glow coverage table's inputs, exactly: the two light blocks
-        // (segmentsDirty and arcsDirty, as for mLightBlocksDirty below) and
+        // (segmentsDirty and arcsDirty, as for mLightBlocks.dirty below) and
         // what renderGlowCoverPass reads off the config - the perimeter, the
         // drawn corner radius and the straights, all from width, height and
         // cornerRadius; the winding; and the glow radius. Not the rect's
         // POSITION: the table is in perimeter units, so a moving rect bakes
         // nothing. Add a uniform to that pass and it belongs here.
-        const bool glowCoverDirty = segmentsDirty || arcsDirty ||
-                                    config.geometry.width != mCurrentConfig.geometry.width ||
-                                    config.geometry.height != mCurrentConfig.geometry.height ||
-                                    config.geometry.cornerRadius != mCurrentConfig.geometry.cornerRadius ||
-                                    config.geometry.winding != mCurrentConfig.geometry.winding ||
-                                    config.neon.glowRadius != mCurrentConfig.neon.glowRadius;
+        //
+        // The config-side half moves every piece of the table; the light
+        // blocks move only the pieces a changed light reaches, worked out
+        // below once the merged segment list is current
+        // (GetGlowCoverDirtyArcPieces, GetGlowCoverDirtySegmentPieces).
+        const bool glowCoverShapeDirty = config.geometry.width != mCurrentConfig.geometry.width ||
+                                         config.geometry.height != mCurrentConfig.geometry.height ||
+                                         config.geometry.cornerRadius != mCurrentConfig.geometry.cornerRadius ||
+                                         config.geometry.winding != mCurrentConfig.geometry.winding ||
+                                         config.neon.glowRadius != mCurrentConfig.neon.glowRadius;
         // Overflow warnings, before mCurrentConfig is overwritten below: the
         // previous counts are still in it, which is what lets these fire once
         // per overflow without a latch of their own.
@@ -1590,6 +2667,9 @@ namespace EdgeLighting
         // unchanged pair of pools rebuilds to the list already in it, which
         // mSegmentLUT's own dirty check and packLightBlocks would both then
         // see as unmoved anyway.
+        // The segment block as the glow coverage table last saw it, packed
+        // from the merged list before the refill below replaces it.
+        const SegmentBlockData oldSegmentBlock = PackSegmentBlock(mEffectiveSegments);
         if (segmentsDirty)
         {
             SegmentUtils::FillEffectiveSegments(config.neon, mEffectiveSegments);
@@ -1604,19 +2684,60 @@ namespace EdgeLighting
         // boost raised under a hole cut for a dimmer glow clips its halo.
         const bool emissionDirty = GetGlowEmissionBound(config, mEffectiveSegments) != mGlowEmission;
 
-        // The emission table reads a wide slice of this config - the hue rate,
-        // the sample count, all three LUTs and both light UBOs - so it is
-        // invalidated on any change rather than on a gate that has to be kept
-        // in step with the shader. A missed field would be a stale ring; a
-        // spare rebuild is one small pass.
-        mEmissionDirty = true;
-        // The glow coverage table does NOT get that treatment, although it is
-        // the costlier bake of the two: its inputs are the narrow, visible set
-        // in glowCoverDirty above. Gated wide, it re-ran every frame under any
-        // animation at all - intensity, colour, or a field of another layer
-        // entirely - for a table none of those move. Accumulated, for the
-        // reasons given for mLightBlocksDirty just below.
-        mGlowCoverDirty = mGlowCoverDirty || glowCoverDirty;
+        // The emission table needs nothing from here. It is keyed on what its
+        // pass binds - two uniforms by value, three LUTs and two light blocks
+        // by upload count (isEmissionTableStale) - so a change that moves one
+        // of those re-bakes it through that count, and a change that moves
+        // none (intensity, bloom, the glow, the rect) re-bakes nothing.
+        //
+        // The glow coverage table is gated here instead, on the narrow,
+        // visible set of inputs above. Gated wide, it re-ran every frame under
+        // any animation at all - intensity, colour, or a field of another
+        // layer entirely - for a table none of those move. And per PIECE: a
+        // light that moved re-bakes only the pieces its old and new supports
+        // reach, so a segment travelling along one straight re-bakes that
+        // straight's band, not the whole table. Accumulated, for the reasons
+        // given for mLightBlocks.dirty just below.
+        //
+        // And per light TYPE: the arcs' channels and the segments' are dirtied
+        // separately, so arcs animating over still segments never re-integrate
+        // the segments' bells (see GlowCoverTable::dirtyArcPieces).
+        if (glowCoverShapeDirty)
+        {
+            mGlowCover.dirtyArcPieces = GLOW_COVER_ALL_PIECES;
+            mGlowCover.dirtySegmentPieces = GLOW_COVER_ALL_PIECES;
+        }
+        else
+        {
+            if (arcsDirty)
+            {
+                mGlowCover.dirtyArcPieces |= GetGlowCoverDirtyArcPieces(PackArcBlock(mCurrentConfig.neon.arcs),
+                                                                        PackArcBlock(config.neon.arcs), config);
+            }
+            if (segmentsDirty)
+            {
+                mGlowCover.dirtySegmentPieces |=
+                    GetGlowCoverDirtySegmentPieces(oldSegmentBlock, PackSegmentBlock(mEffectiveSegments), config);
+            }
+        }
+        // The width the table wants for this config, applied by
+        // ensureGlowCoverBuffer on the next frame that reads it (GL calls are
+        // Render's). Every input is in glowCoverShapeDirty, so a new width
+        // only ever comes with every piece already dirty; it is computed
+        // whatever that says anyway, since a host whose first config matches
+        // the defaults it is compared against never sets that flag.
+        mGlowCover.wantedWidth = GetGlowCoverWidth(config);
+        // And the segments': a table of their own at the width their
+        // narrowest bell wants, or none - no segments, or segments so short
+        // their table would be nearly the main one's width, where the copy
+        // saves nothing. With a margin on the way back out, so a segment
+        // whose length swings round the threshold does not flip the mode
+        // (each flip re-bakes every segment piece) every frame.
+        mGlowCover.segWantedWidth =
+            GetGlowCoverSegmentWidth(PackSegmentBlock(mEffectiveSegments), config, mGlowCover.wantedWidth);
+        const float directShare = static_cast<float>(GLOW_COVER_SEG_DIRECT_SHARE) * (mGlowCover.segDirect ? 1.0f : 1.2f);
+        mGlowCover.segWantedDirect = mGlowCover.fillUnavailable || mEffectiveSegments.empty() ||
+                                     float(mGlowCover.segWantedWidth) >= directShare * float(mGlowCover.wantedWidth);
         // The light blocks get the OPPOSITE treatment, because their inputs are
         // narrow and visible rather than wide and indirect: @ref
         // packLightBlockData reads mEffectiveSegments and config.neon.arcs, and
@@ -1641,16 +2762,14 @@ namespace EdgeLighting
         //
         // The same hazard returns later in a milder form: a host that calls
         // SetConfig twice before Update gets two of these, and the second
-        // compares against the arcs the first one already installed.
-        // mEmissionDirty is immune to all of it only because it is
-        // unconditional; a narrow gate has to hold until the pack clears it.
-        mLightBlocksDirty = mLightBlocksDirty || segmentsDirty || arcsDirty;
+        // compares against the arcs the first one already installed. A
+        // narrow gate has to hold until the pack clears it.
+        mLightBlocks.dirty = mLightBlocks.dirty || segmentsDirty || arcsDirty;
 
         mCurrentConfig = config;
 
-        // Give the scaled buffers back the moment this config stops wanting
-        // them - the layer switched off, or the scale returned to 1.0. With the
-        // glow coverage table below they are the only allocations in this
+        // Give the reduced buffer back the moment the layer is switched off.
+        // With the glow coverage table below it is one of the only allocations in this
         // renderer that are not a handful of KB: at 1920x1080 and scale 0.5
         // the reduced buffer is 2.1 MB of colour attachment, and nothing else
         // here freed it, so a host that enabled the neon at a reduced scale
@@ -1660,7 +2779,7 @@ namespace EdgeLighting
         // that reclaiming it would cost more in reallocation than it saves.
         //
         // Cheap to get wrong in only one direction, and this is the safe one:
-        // @ref renderNeonPass re-Resizes before it binds, so a release of a
+        // @ref renderShadePass re-Resizes before it binds, so a release of a
         // buffer that turns out to be wanted again costs one allocation on the
         // next drawn frame and nothing else. Resize's own early-out then keeps
         // it allocated for as long as the size and format hold.
@@ -1674,20 +2793,31 @@ namespace EdgeLighting
         // release is not one, and this path is also reachable pre-Initialize
         // (AddRenderer calls OnConfigChanged), where Release no-ops on the
         // buffer it finds unallocated.
-        if (!UsesScaledBuffer(config))
+        if (!config.neon.enable)
         {
             mScaledBuffer.Release();
-            mGatherBuffer.Release();
         }
         // The glow coverage table, 1 MB at RGBA16F, is given back only when the
         // layer is switched off - not when the ring turns uniform and stops
         // reading it, which an arc animation reaching length 1 does once per
         // loop, and which would then reallocate it on the way back. Released
         // or never allocated, ensureGlowCoverBuffer reallocates it, and marks
-        // it for a bake, on the next frame that reads it.
+        // it for a bake, on the next frame that reads it. The gather buffer
+        // likewise: every frame gathers into it at every scale, so only a
+        // disabled layer has no use for it.
         if (!config.neon.enable)
         {
-            mGlowCoverBuffer.Release();
+            mGlowCover.buffer.Release();
+            mGather.buffer.Release();
+        }
+        // The segment table goes with the main one, and whenever the segments
+        // are baked into the main table directly. Here, as the main table's
+        // release is, because Render must not delete a framebuffer; a table
+        // released and wanted again is reallocated (and baked whole) by
+        // ensureGlowCoverBuffer.
+        if (!config.neon.enable || mGlowCover.segWantedDirect)
+        {
+            mGlowCover.segBuffer.Release();
         }
 
         // Rebuilds need the GL objects Initialize creates. The neon.frag
@@ -1720,75 +2850,87 @@ namespace EdgeLighting
         }
 
         bakeLUTs(config);
+
+        // The field goes with any config that cannot use it: a hue that
+        // stopped rotating with the intensity still. Not on the ring's opacity, which is the upload's rather
+        // than the config's: a rotating hue over a ring that is not opaque
+        // keeps a field it does not read until the next change.
+        if (!IsFieldEligible(config, true, mIntensityMoving) ||
+            !FieldFillsRegion(GetAnnulusArea(mGlowBounds),
+                              GetFieldRegion(config, mScaledOuter, mGlowField.schedule.viewport.x,
+                                             mGlowField.schedule.viewport.y),
+                              GetClampedResolutionScale(config)))
+        {
+            mGlowField.buffer.Release();
+            mGlowField.schedule.current = false;
+        }
+        // The ring's field likewise, on its own conditions.
+        if (!IsRingFieldEligible(config, true))
+        {
+            mRingField.buffer.Release();
+            mRingField.schedule.current = false;
+        }
     }
 
-    bool NeonRenderer::setupShaders()
+    void NeonRenderer::Mesh::Upload(const float *data, size_t floatCount)
     {
-        // Only the two programs both resolution paths draw with. The neon.frag
-        // programs and the blit are per PATH and are built the first time that
-        // path renders - see ensurePathPrograms - and the glow coverage bake
-        // the first time a table is needed - see ensureGlowCoverProgram.
-        //
-        // Emission pre-pass. Reuses the neon vertex shader (uMVP -> vPos); the
-        // fragment shader ignores vPos and keys off gl_FragCoord instead.
-        mEmissionShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
-                                        ShaderSource::NEON_EMISSION_FRAG_SRC,
-                                        "NeonRenderer.Emission");
-        // Cheap fullscreen black fill, used only by opaque mode. Reuses the
-        // standard neon vertex shader (uMVP) so the fill quad respects the
-        // viewport.
-        mBlackRectShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
-                                         ShaderSource::BLACK_RECT_FRAG_SRC,
-                                         "NeonRenderer.BlackRect");
-        if (!mBlackRectShader.IsValid() || !mEmissionShader.IsValid())
-        {
-            return false;
-        }
-
-        // The pre-pass reads the same two blocks the main pass does, so they
-        // share bindings and are packed once per frame before either runs.
-        mEmissionShader.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
-        mEmissionShader.SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
-        return true;
+        vertexArray.SetVertexData(data, floatCount * sizeof(float), GL_DYNAMIC_DRAW);
+        count = static_cast<int>(floatCount / 2);
     }
 
-    bool NeonRenderer::ensureGlowCoverProgram()
+    void NeonRenderer::Mesh::Draw()
     {
-        // Built on first use rather than in Initialize, and for a reason with
-        // a number on it: it is the largest program the renderer compiles
-        // before a frame, ~10 ms on an AMD Radeon Pro 5300M - the compiler
-        // there builds every function in a source whether main() reaches it
-        // or not - and a host whose ring is lit uniformly never bakes the
-        // table at all (IsGlowCoverUnread), so never needs it. Initialize
-        // drops from 8.8 ms (V20's bake, built there) to ~6 ms; a host with a
-        // partly lit ring pays the compile on its first such frame, where
-        // ensurePathPrograms already builds the path's own programs.
-        if (mGlowCoverShader.IsValid())
-        {
-            return true;
-        }
-        if ((mFailedPrograms & PROGRAM_GLOW_COVER) != 0)
-        {
-            return false;
-        }
-        // The neon vertex shader over the NDC quad, the fragment shader keyed
-        // off gl_FragCoord - the emission pre-pass's arrangement.
-        mGlowCoverShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
-                                         ShaderSource::NEON_GLOW_COVER_FRAG_SRC,
-                                         "NeonRenderer.GlowCover");
-        if (!mGlowCoverShader.IsValid())
-        {
-            mFailedPrograms |= PROGRAM_GLOW_COVER;
-            LOG_E("NeonRenderer: the glow coverage bake failed to compile/link - a partly lit ring will draw no glow.");
-            return false;
-        }
-        mGlowCoverShader.SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
-        mGlowCoverShader.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
-        return true;
+        vertexArray.DrawArrays(GL_TRIANGLES, count);
     }
 
-    bool NeonRenderer::buildNeonProgram(ShaderProgram &program, const char *fragSrc, const char *define,
-                                        const char *name, unsigned int programBit, bool gathers, bool shades)
+    NeonRenderer::LazyBake::Decision NeonRenderer::LazyBake::Decide(const glm::ivec2 &frameViewport,
+                                                                    uint32_t frameGradientUploads, bool firstFrame,
+                                                                    float frameIntensity, bool intensityMoving)
+    {
+        if (frameViewport != viewport || frameGradientUploads != gradientUploads)
+        {
+            viewport = frameViewport;
+            gradientUploads = frameGradientUploads;
+            Invalidate();
+        }
+        Decision decision;
+        if (current)
+        {
+            decision.use = true;
+            if (frameIntensity != intensity)
+            {
+                // Scaled while the intensity moves below the bake's - whose
+                // quad covers this one's - and baked again, exactly, when it
+                // climbs past it or stops anywhere else.
+                if (intensityMoving && frameIntensity >= 0.0f && frameIntensity < intensity)
+                {
+                    decision.gain = frameIntensity / intensity;
+                }
+                else
+                {
+                    decision.bake = true;
+                }
+            }
+        }
+        else if (settled)
+        {
+            decision.bake = true;
+            decision.use = true;
+        }
+        else if (firstFrame)
+        {
+            decision.bake = true;
+        }
+        else
+        {
+            settled = true;
+        }
+        return decision;
+    }
+
+    bool NeonRenderer::ensureProgram(ShaderProgram &program, const char *fragSrc, const char *define,
+                                     const char *name, unsigned int programBit, unsigned int blocks,
+                                     const char *consequence)
     {
         if (program.IsValid())
         {
@@ -1807,42 +2949,36 @@ namespace EdgeLighting
         if (!program.IsValid())
         {
             mFailedPrograms |= programBit;
-            LOG_E("NeonRenderer: %s failed to compile/link - that resolution path will draw no glow.", name);
+            LOG_E("NeonRenderer: %s failed to compile/link - %s.", name, consequence);
             return false;
         }
-        // Every neon program reads the segment block (neon-common.glsl), at
-        // the same binding. Only the ones that run the gather have the sample
-        // block, and only the ones that shade have the arc block - the gather
-        // pass sees arcs only through the emission table. Binding a block a
-        // program does not declare logs an error, hence the two flags.
-        program.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
-        if (shades)
+        // Each block at its one binding, and only where the source declares
+        // it: binding a block a program does not declare logs an error. The
+        // gather and the shading read the segment block (neon-common.glsl);
+        // only the gather has the sample block, and only the shading and the
+        // coverage bake the arc block - the gather pass sees arcs only
+        // through the emission table.
+        if ((blocks & BLOCK_SEGMENT) != 0)
+        {
+            program.SetUniformBlockBinding("SegmentBlock", SEGMENT_BLOCK_BINDING);
+        }
+        if ((blocks & BLOCK_ARC) != 0)
         {
             program.SetUniformBlockBinding("ArcBlock", ARC_BLOCK_BINDING);
         }
-        if (gathers)
+        if ((blocks & BLOCK_SAMPLES) != 0)
         {
             program.SetUniformBlockBinding("LoopSamplesBlock", LOOP_SAMPLES_BLOCK_BINDING);
         }
         return true;
     }
 
-    bool NeonRenderer::ensurePathPrograms(bool scaled)
+    bool NeonRenderer::ensureGlowPrograms()
     {
-        // The direct path draws with neon.frag as it is, and nothing else.
-        if (!scaled)
-        {
-            return buildNeonProgram(mNeonShader, ShaderSource::NEON_FRAG_SRC, nullptr, "NeonRenderer",
-                                    PROGRAM_PLAIN, true, true);
-        }
-
-        // The scaled path draws with four, none of them the direct path's:
-        // the gather pass (neon-gather.frag: the same loop, alone), the
-        // shading that reads it back - TWICE, one program object for pass 1 at
-        // the reduced scale and another for the edge ring at full resolution -
-        // and the composite. So a host that never leaves 1.0 never compiles
-        // the last four, and one that never sits at 1.0 never compiles the
-        // first - each pays for exactly the path it draws.
+        // The glow draws with four: the gather pass (neon-gather.frag), the
+        // shading that reads it back - TWICE, one program object for pass 1b
+        // at the reduced scale and the edge ring's at full resolution - and
+        // the blit.
         //
         // Why the shading is compiled twice from one source: each program
         // object then draws ONE render target, in one blend state, per frame.
@@ -1850,44 +2986,335 @@ namespace EdgeLighting
         // an offscreen buffer unblended and the caller's framebuffer blended -
         // is the shape that measured 93-624x slower on the AMD macOS driver
         // (docs/neon-resolution-scale-plan.md section 7, build AB). A second
-        // compile on the first scaled frame is the price of never finding out
+        // compile on the first frame is the price of never finding out
         // which half of that difference the driver keys on.
-        if (!buildNeonProgram(mNeonGatherShader, ShaderSource::NEON_GATHER_FRAG_SRC, nullptr, "NeonRenderer.Gather",
-                              PROGRAM_GATHER, true, false) ||
-            !buildNeonProgram(mNeonShadeShader, ShaderSource::NEON_FRAG_SRC, "NEON_READS_GATHER", "NeonRenderer.Shade",
-                              PROGRAM_SHADE, false, true) ||
-            !buildNeonProgram(mNeonRingShader, ShaderSource::NEON_FRAG_SRC, "NEON_READS_GATHER", "NeonRenderer.Ring",
-                              PROGRAM_RING, false, true))
+        const char *noGlow = "the glow is not drawn";
+        return ensureProgram(mGatherShader, ShaderSource::NEON_GATHER_FRAG_SRC, nullptr, "NeonRenderer.Gather",
+                             PROGRAM_GATHER, BLOCK_SEGMENT | BLOCK_SAMPLES, noGlow) &&
+               ensureProgram(mShadeShader, ShaderSource::NEON_FRAG_SRC, nullptr, "NeonRenderer.Shade",
+                             PROGRAM_SHADE, BLOCK_SEGMENT | BLOCK_ARC, noGlow) &&
+               ensureProgram(mRingShader, ShaderSource::NEON_FRAG_SRC, nullptr, "NeonRenderer.Ring",
+                             PROGRAM_RING, BLOCK_SEGMENT | BLOCK_ARC, noGlow) &&
+               ensureProgram(mBlitShader, ShaderSource::NEON_BLIT_FRAG_SRC, nullptr, "NeonRenderer.Blit",
+                             PROGRAM_BLIT, 0, noGlow);
+    }
+
+    bool NeonRenderer::ensureGlowCoverProgram()
+    {
+        // Built on first use rather than in Initialize, and for a reason with
+        // a number on it: it is the largest program the renderer compiles
+        // before a frame, ~10 ms on an AMD Radeon Pro 5300M - the compiler
+        // there builds every function in a source whether main() reaches it
+        // or not - and a host whose ring is lit uniformly never bakes the
+        // table at all (IsGlowCoverUnread), so never needs it. Initialize
+        // drops from 8.8 ms (V20's bake, built there) to ~6 ms; a host with a
+        // partly lit ring pays the compile on its first such frame, where
+        // ensureGlowPrograms already builds the glow's own programs.
+        //
+        // The neon vertex shader over the NDC quad, the fragment shader keyed
+        // off gl_FragCoord - the emission pre-pass's arrangement.
+        return ensureProgram(mGlowCoverShader, ShaderSource::NEON_GLOW_COVER_FRAG_SRC, nullptr,
+                             "NeonRenderer.GlowCover", PROGRAM_GLOW_COVER, BLOCK_SEGMENT | BLOCK_ARC,
+                             "a partly lit ring will draw no glow");
+    }
+
+    bool NeonRenderer::ensureGlowCoverFillProgram()
+    {
+        // Only for segments that get a table of their own. A fill that will
+        // not build is no reason to draw no glow: the segments go back into
+        // the main table's bake, for good, and that path needs nothing more.
+        if (mGlowCover.segWantedDirect)
+        {
+            return true;
+        }
+        if (!ensureProgram(mGlowCoverFillShader, ShaderSource::NEON_GLOW_COVER_FILL_FRAG_SRC, nullptr,
+                           "NeonRenderer.GlowCoverFill", PROGRAM_GLOW_COVER_FILL, 0,
+                           "segments are baked into the glow coverage table directly"))
+        {
+            mGlowCover.fillUnavailable = true;
+            mGlowCover.segWantedDirect = true;
+        }
+        return true;
+    }
+
+    bool NeonRenderer::ensureFieldPrograms()
+    {
+        // The bake is neon.frag reading the gather (as the shading does at
+        // either scale) with NEON_FIELD_BAKE: hue 1 in, field out. It shades,
+        // so it takes the arc block; it does not gather, so not the sample
+        // block. One object for both scales: it only ever draws the field
+        // buffer, unblended, and the composite draws one target per frame.
+        const char *direct = "the glow is shaded directly";
+        if (!ensureProgram(mFieldBakeShader, ShaderSource::NEON_FRAG_SRC, "NEON_FIELD_BAKE", "NeonRenderer.Field",
+                           PROGRAM_FIELD_BAKE, BLOCK_SEGMENT | BLOCK_ARC, direct) ||
+            !ensureProgram(mFieldCompositeShader, ShaderSource::NEON_FIELD_FRAG_SRC, nullptr,
+                           "NeonRenderer.FieldComposite", PROGRAM_FIELD_COMPOSITE, 0, direct))
+        {
+            mGlowField.schedule.unavailable = true;
+            return false;
+        }
+        return true;
+    }
+
+    bool NeonRenderer::ensureRingFieldPrograms()
+    {
+        if (!ensureFieldPrograms())
+        {
+            mRingField.schedule.unavailable = true;
+            return false;
+        }
+        if (!ensureProgram(mRingFieldCompositeShader, ShaderSource::NEON_FIELD_FRAG_SRC, "NEON_FIELD_RING",
+                           "NeonRenderer.RingFieldComposite", PROGRAM_RING_FIELD_COMPOSITE, 0,
+                           "the ring is shaded directly"))
+        {
+            mRingField.schedule.unavailable = true;
+            return false;
+        }
+        return true;
+    }
+
+    bool NeonRenderer::ensureFillProgram()
+    {
+        // Built on first use rather than in Initialize: a host that never sets
+        // an OpaqueMode, or whose fill is always a clear (FillsWholeViewport),
+        // never compiles it.
+        return ensureProgram(mFillShader, ShaderSource::BLACK_RECT_FRAG_SRC, nullptr, "NeonRenderer.Fill",
+                             PROGRAM_FILL, 0, "opaque mode will draw no fill");
+    }
+
+    bool NeonRenderer::ensureGlowCoverBuffer(bool segments)
+    {
+        // A live buffer is kept while it can hold this config: this runs every
+        // frame a partly lit ring draws. It cannot when segments have appeared
+        // on a two-channel table, which has nowhere to put them. The other way
+        // round keeps what it has: a four-channel table with no segments reads
+        // its .b / .a as zeros like a two-channel one, and dropping back to two
+        // would reallocate the table every time a transient segment came and
+        // went - so a reallocation for any reason keeps four channels too.
+        //
+        // Nor when the width the config wants (mGlowCover.wantedWidth,
+        // GetGlowCoverWidth) is MORE than it has, or at least two
+        // GLOW_COVER_WIDTH_STEPs less. Between the two the wider table stays
+        // and is used as it is - more interior columns than needed, which is
+        // correct and costs a little more bake - so a resizing rect, or a glow
+        // radius that oscillates, does not reallocate it every frame.
+        auto widthHolds = [](int wanted, int width)
+        { return wanted <= width && wanted > width - 2 * int(GLOW_COVER_WIDTH_STEP); };
+        bool fourChannel = segments;
+        bool mainHolds = false;
+        if (mGlowCover.buffer.IsValid())
+        {
+            const GLint format = mGlowCover.buffer.GetInternalFormat();
+            const bool twoChannel = (format == GL_RG16F || format == GL_RG8);
+            mainHolds = (!segments || !twoChannel) && widthHolds(mGlowCover.wantedWidth, mGlowCover.layout.width);
+            fourChannel = segments || !twoChannel;
+        }
+        if (!mainHolds)
+        {
+            const GlowCoverLayout layout = MakeGlowCoverLayout(mGlowCover.wantedWidth);
+
+            // Over GLOW_COVER_FORMATS (or its RG twin), with a linear filter:
+            // the consumer interpolates between neighbouring positions round
+            // each piece. Resumed from mGlowCover.format, because this buffer
+            // is released with the layer and when it goes unread, and cannot
+            // record a refused format in its own attachment. One tier holds
+            // for both lists: a row's index is its precision in either.
+            const TargetFormat *formats = fourChannel ? GLOW_COVER_FORMATS : GLOW_COVER_FORMATS_RG;
+            if (!ResizeInBestFormat(mGlowCover.buffer, formats, std::size(GLOW_COVER_FORMATS), mGlowCover.format,
+                                    layout.width, GLOW_COVER_HEIGHT, GL_LINEAR, 1, "glow coverage",
+                                    "The halo and bloom coverage will be stored at 8 bits."))
+            {
+                return false;
+            }
+            // The layout the bake and every read take from now on - set with
+            // the allocation, since its width IS the texture's.
+            mGlowCover.layout = layout;
+            // Undefined texels until a bake writes them - whatever the flag
+            // said about the buffer this one replaces. In the segment table's
+            // mode the segment pieces' fill has to run again too, which the
+            // segment mask does.
+            mGlowCover.dirtyArcPieces = GLOW_COVER_ALL_PIECES;
+            mGlowCover.dirtySegmentPieces = GLOW_COVER_ALL_PIECES;
+        }
+
+        // The segments: baked into the main table directly, or into a table
+        // of their own and copied in. Either way, a change of mode re-bakes
+        // every segment piece: the main table's .b / .a hold the other mode's
+        // values until then.
+        const bool direct = !segments || mGlowCover.segWantedDirect;
+        if (direct != mGlowCover.segDirect)
+        {
+            mGlowCover.segDirect = direct;
+            mGlowCover.dirtySegmentPieces = GLOW_COVER_ALL_PIECES;
+        }
+        if (direct)
+        {
+            return true;
+        }
+        if (mGlowCover.segBuffer.IsValid() && widthHolds(mGlowCover.segWantedWidth, mGlowCover.segLayout.width))
+        {
+            return true;
+        }
+        // Two channels, the main table's precision tier. Should it fail, the
+        // segments go back into the main table, which needs nothing more.
+        const GlowCoverLayout segLayout = MakeGlowCoverSegmentLayout(mGlowCover.segWantedWidth);
+        if (!ResizeInBestFormat(mGlowCover.segBuffer, GLOW_COVER_FORMATS_RG, std::size(GLOW_COVER_FORMATS_RG),
+                                mGlowCover.format, segLayout.width, GLOW_COVER_HEIGHT, GL_LINEAR, 1,
+                                "segment coverage", "The segments' coverage will be stored at 8 bits."))
+        {
+            mGlowCover.fillUnavailable = true;
+            mGlowCover.segWantedDirect = true;
+            mGlowCover.segDirect = true;
+            mGlowCover.dirtySegmentPieces = GLOW_COVER_ALL_PIECES;
+            return true;
+        }
+        mGlowCover.segLayout = segLayout;
+        mGlowCover.dirtySegmentPieces = GLOW_COVER_ALL_PIECES;
+        return true;
+    }
+
+    bool NeonRenderer::bindScaledTarget(const glm::ivec2 &texels)
+    {
+        // Resize destroys the attachment on its failure path, so a failure
+        // leaves mScaledBuffer holding id 0 - and Bind would then bind the
+        // CALLER'S framebuffer, with only Framebuffer::ClearBuffer's own
+        // no-attachment guard standing between that and erasing everything
+        // already drawn this frame (a clear is not clipped by the viewport).
+        // Under an OffscreenCapture that target is the capture. Do not lean on
+        // that guard - bail here instead; Render skips the blit with the
+        // caller, and the caller's NoScissorScope puts the host's scissor back
+        // as its return unwinds.
+        //
+        // The filter is requested through Resize, which is the ONLY writer of
+        // the tracked value, so it cannot drift. Setting it on the texture
+        // afterwards instead leaves mFilter disagreeing with the texture, and
+        // the next frame's Resize then sees a mismatch and destroys and
+        // recreates the FBO - one reallocation per frame, measured.
+        //
+        // ONE attachment: the composited colour. The gather lives in its own,
+        // coarser buffer (renderGatherPass).
+        if (!ResizeInBestFormat(mScaledBuffer, SCALED_FORMATS, std::size(SCALED_FORMATS), mScaledFormat, texels.x,
+                                texels.y, GL_LINEAR, 1, "reduced-scale",
+                                "The glow's slow gradients are rounded to 8 bits before the blit dithers them."))
         {
             return false;
         }
-        if (!mBlitShader.IsValid())
-        {
-            if ((mFailedPrograms & PROGRAM_BLIT) != 0)
-            {
-                return false;
-            }
-            mBlitShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
-                                        ShaderSource::NEON_BLIT_FRAG_SRC,
-                                        "NeonRenderer.Blit");
-            if (!mBlitShader.IsValid())
-            {
-                mFailedPrograms |= PROGRAM_BLIT;
-                LOG_E("NeonRenderer: the blit failed to compile/link - the scaled path will draw no glow.");
-                return false;
-            }
-        }
+        // Bind, then clear to transparent black. Keep the two adjacent:
+        // ClearBuffer acts on whatever is BOUND, so the bind is its
+        // precondition rather than a nicety - see Framebuffer::ClearBuffer,
+        // which also carries the reason the clear touches no context state (it
+        // used to save, overwrite and restore GL_COLOR_CLEAR_VALUE every frame
+        // on this path). The caller's scissor guard is the other half of making
+        // this clear land where it is meant to.
+        mScaledBuffer.Bind();
+        mScaledBuffer.ClearBuffer();
         return true;
+    }
+
+    void NeonRenderer::rebuildLoopSamples(const Config &config)
+    {
+        // Evenly spaced points (by arc length) around the rounded-rect perimeter.
+        // Drives the additive halo/spill/colour gather in the fragment shader.
+        // Uploaded directly to the std140 UBO: vec4[N] where .xy holds the
+        // position in SCALED px - raw float32 through the constant cache, no
+        // decode step in the shader. (.zw stays 0 - the shader recovers a
+        // fragment's continuous perimeter position geometrically from vPos, so
+        // the per-sample phase pairs are no longer needed.)
+        //
+        // Only the first `n` entries are written; the rest of the block stays
+        // (0,0,0,0) and is never read, because the shader's loop bound is the
+        // same `n`. The spacing is 1/n of the perimeter, so lowering the count
+        // spreads the samples rather than truncating the walk partway round.
+        const float scale = GetClampedResolutionScale(config);
+        const int n = GetClampedNumSamples(config);
+
+        LoopSamplesBlockData block = {};
+        for (int i = 0; i < n; ++i)
+        {
+            float t = static_cast<float>(i) / static_cast<float>(n);
+            glm::vec2 p = GeometryUtils::GetPointOnRectangle(t, config.geometry) * scale;
+            block.samples[i] = glm::vec4(p, 0.0f, 0.0f);
+        }
+        mLoopSamplesBlock.SetData(&block, sizeof(block));
+    }
+
+    void NeonRenderer::bakeLUTs(const Config &config)
+    {
+        // All three LUT wrappers self-guard: each re-bakes only when the inputs
+        // it actually reads have moved, so this is called unconditionally and
+        // no dirty flag lives at the call site. The live fields an animation
+        // rewrites every frame (a segment's position / length / boost, an arc's
+        // start / length / intensity) ride the UBOs and never dirty a LUT.
+        //
+        // @note mEffectiveSegments must already hold the merged
+        //       transient+preserved view - both callers leave it current
+        //       first (Initialize fills it outright; OnConfigChanged refills
+        //       it on a change to either pool and otherwise it is unmoved).
+        // The ring width is a runtime knob; a change to it makes GradientRingLUT
+        // SNAP rather than fade, since two rings of different length cannot be
+        // blended element-wise. The two atlases below keep fixed widths - a
+        // segment or arc span is short and does not wrap, so extra texels would
+        // only pad head and tail.
+        mGradientLUT.Bake(config.neon.colorStops, config.neon.blendSpace,
+                          config.neon.gradientLutSize, config.neon.colorTransitionDuration);
+        mSegmentLUT.Bake(mEffectiveSegments, SEGMENT_LUT_WIDTH, MAX_SEGMENT_BOOSTS);
+        mArcLUT.Bake(config.neon.arcs, ARC_LUT_WIDTH, MAX_ARCS);
+    }
+
+    void NeonRenderer::packLightBlocks(const Config &config)
+    {
+        // Both the emission pre-pass and the main pass read these, so they are
+        // current before either draws.
+        //
+        // The PACK is gated; the BIND is not. The block contents are a pure
+        // function of the config, so repacking them on a frame that changed
+        // nothing reproduces bytes byte for byte - the same argument the
+        // emission table rests on, one tier cheaper. The binding is different:
+        // glBindBufferBase writes global context state that a host (or a
+        // future pass) can repoint between frames, and re-asserting it costs
+        // two calls against a whole frame's worth of drawing, so it stays
+        // unconditional rather than being inferred from a flag this class
+        // owns.
+        if (mLightBlocks.dirty)
+        {
+            packLightBlockData(config);
+            mLightBlocks.dirty = false;
+        }
+        mLightBlocks.segment.BindBase(SEGMENT_BLOCK_BINDING);
+        mLightBlocks.arc.BindBase(ARC_BLOCK_BINDING);
+    }
+
+    void NeonRenderer::packLightBlockData(const Config &config)
+    {
+        // Pack the segment vector as vec4(position, invSigma, boost, hasStops)
+        // into the std140 SegmentBlock UBO (DALi-compatible pattern - see
+        // neon.frag). Empty vector -> uSegmentCount=0 and both shaders skip the
+        // whole feature.
+        // mEffectiveSegments is NOT refilled here. OnConfigChanged refills it
+        // whenever either segment pool changes, and this runs once per frame
+        // from Render - so on a frame where the pools did not move the merged
+        // view is already current, and on a frame where they did,
+        // OnConfigChanged has already run (Update -> refreshActiveConfig
+        // precedes Render). Refilling here would be a second
+        // FillEffectiveSegments of the same frame.
+        const SegmentBlockData segBlock = PackSegmentBlock(mEffectiveSegments);
+        mLightBlocks.segment.SetData(&segBlock, sizeof(segBlock));
+
+        // The arcs, with .w the PackArcFlags bitmask: it picks between the
+        // winner arc's own atlas row and the base gradient in the shader's
+        // winner-take-all branch, and carries the abut bits.
+        const ArcBlockData arcBlock = PackArcBlock(config.neon.arcs);
+        mLightBlocks.arc.SetData(&arcBlock, sizeof(arcBlock));
     }
 
     void NeonRenderer::setupFullscreenQuad()
     {
         // Static NDC quad, shared by the three passes that cover their whole
         // target with an identity MVP: the emission bake, the opaque-mode
-        // black fill at OpaqueMode::ALL (whose shader derives its shape from
+        // fill at OpaqueMode::ALL (whose shader derives its shape from
         // gl_FragCoord, not aPos - every narrower mode is bounded by
-        // @ref setupFillGeometry's ring instead). The scaled path's blit used
-        // to share it; it now draws mBlitVertexArray.
+        // @ref setupFillGeometry's ring instead). The blit used
+        // to share it; it now draws mBlitMesh.
         //
         // Unlike setupGeometry's quad this one never changes - it is in NDC,
         // so it is independent of the geometry, the viewport and the
@@ -1915,21 +3342,17 @@ namespace EdgeLighting
         // the uniforms Render uploads. At resolutionScale 1.0 the factor is
         // identity and every expression below is its full-res form.
         const float scale = GetClampedResolutionScale(config);
-        const float margin = GetGlowMargin(config, scale);
+        const float margin = GetGlowMargin(config, scale, true);
 
-        // The scaled path's cutoff guard band, in FULL-RES px - see
-        // GetCutoffGuardPx. The inner hole below carries it like the outer cap.
-        const float cutGuardPx = GetCutoffGuardPx(scale);
+        // Pass 1b's cutoff guard band, in FULL-RES px - see GetCutoffGuardPx.
+        // The inner hole below carries it like the outer cap.
+        const float cutGuardPx = GetCutoffGuardPx(scale, true);
 
         // How far past the rect edge the one-sided cut still draws, on the side
-        // it culls, in FULL-RES px. Mirrors neon.frag's `sideCull`: half a
-        // destination pixel of anti-aliasing reach on the direct path, and on
-        // the scaled path the guard band the blit reconstructs the cut from,
-        // which is stated in BUFFER px and so divides back out. 1.0 covers the
-        // direct-path case including its diagonal.
-        const float sideCullPx = (scale < 1.0f)
-                                     ? (static_cast<float>(BLIT_SIDE_GUARD_PX) / scale)
-                                     : 1.0f;
+        // it culls, in FULL-RES px. Mirrors neon.frag's `sideCull` for pass 1b,
+        // whose cut the blit applies: the guard band the blit reconstructs the
+        // cut from, which is stated in BUFFER px and so divides back out.
+        const float sideCullPx = static_cast<float>(BLIT_SIDE_GUARD_PX) / scale;
 
         // uQuadMargin KEEPS THE UNCAPPED VALUE. It is not a description of the
         // rectangle being drawn; it is the distance the shader fades its
@@ -1948,13 +3371,13 @@ namespace EdgeLighting
         // does, the rasteriser is told what to cover. They agree except where a
         // cull makes the second one smaller, and where they disagree the
         // fragments that go missing are ones the shader discards anyway.
-        mQuadMargin = margin;
+        mGlowLimits.quadMargin = margin;
 
-        // The edge ring shades at FULL resolution, so it fades against the
-        // margin the direct path would use rather than this one - which on the
-        // scaled path carries the Nyquist-widened filament and the guard band.
-        // See renderRingPass.
-        mRingQuadMargin = GetGlowMargin(config, 1.0f);
+        // The edge ring shades at FULL resolution and applies its own masks,
+        // so it fades against the margin at scale 1.0 with no guard band,
+        // rather than this one - which carries the Nyquist-widened filament
+        // and the guard. See renderRingPass.
+        mRingLimits.quadMargin = GetGlowMargin(config, 1.0f, false);
 
         float halfW = config.geometry.width * 0.5f * scale;
         float halfH = config.geometry.height * 0.5f * scale;
@@ -2015,6 +3438,10 @@ namespace EdgeLighting
         // plain quad.
         mGlowEmission = GetGlowEmissionBound(config, mEffectiveSegments);
         mGlowInnerReach = GetGlowInnerReach(config, scale, mGlowEmission);
+        // Where neon.frag may skip a corner arc outright, for pass 1 and for
+        // the edge ring - from the same emission bound, so under the same gate.
+        mGlowLimits.cornerSkip = GetCornerSkip(config, scale, mGlowEmission);
+        mRingLimits.cornerSkip = GetCornerSkip(config, 1.0f, mGlowEmission);
         float innerReach = CUTOFF_DISABLED_SIZE;
         if (config.neon.glowSide == GlowSide::OUTSIDE)
         {
@@ -2057,8 +3484,8 @@ namespace EdgeLighting
 
         // The quad in FULL-RES px, for the gather pass's quad to cover - see
         // setupRingGeometry. A hole exists only when both extents are positive.
-        mGlowOuter = glm::vec2(ow, oh) / scale;
-        mGlowHole = (iw > 0.0f && ih > 0.0f) ? glm::vec2(iw, ih) / scale : glm::vec2(0.0f);
+        mGlowBounds.outer = glm::vec2(ow, oh) / scale;
+        mGlowBounds.hole = (iw > 0.0f && ih > 0.0f) ? glm::vec2(iw, ih) / scale : glm::vec2(0.0f);
 
         // No hole to cut: emit the plain quad, byte for byte the geometry this
         // method has always produced. Kept as its own arm rather than letting
@@ -2087,8 +3514,7 @@ namespace EdgeLighting
                 l, t, r, b, r, t,
             };
             // clang-format on
-            mGlowVertexArray.SetVertexData(quad, sizeof(quad), GL_DYNAMIC_DRAW);
-            mGlowVertexCount = 6;
+            mGlowMesh.Upload(quad, sizeof(quad) / sizeof(float));
             return;
         }
 
@@ -2131,8 +3557,7 @@ namespace EdgeLighting
         // fresh memory, which is the standard way to rewrite a buffer the GPU
         // may still be reading; a SubData into that same store is what risks
         // an implicit sync. Same reasoning in @ref setupFillGeometry.
-        mGlowVertexArray.SetVertexData(verts, sizeof(verts), GL_DYNAMIC_DRAW);
-        mGlowVertexCount = 24;
+        mGlowMesh.Upload(verts, sizeof(verts) / sizeof(float));
     }
 
     void NeonRenderer::setupFillGeometry(const Config &config)
@@ -2150,14 +3575,14 @@ namespace EdgeLighting
         // whatever NeonConfig::resolutionScale is doing to the glow.
         //
         // A fill that covers the viewport at coverage 1 needs no geometry at
-        // all - @ref renderOpaqueFill clears instead. That is ALL by
+        // all - @ref renderFillPass clears instead. That is ALL by
         // definition and BOTH with both cutoffs disabled by arithmetic; see
         // @ref FillsWholeViewport, which is the ONE place the two passes agree
         // on the question. NONE never reaches the pass at all.
         const OpaqueMode mode = config.neon.opaqueMode;
         if (mode == OpaqueMode::NONE || FillsWholeViewport(config.neon))
         {
-            mFillVertexCount = 0;
+            mFillMesh.count = 0;
             return;
         }
 
@@ -2165,7 +3590,7 @@ namespace EdgeLighting
         // to the END of that side's feather (GetCutoffEnd) - solid up to
         // size, gone by size + softness at or above the floor. The floor is
         // black-rect.frag's `aa`, fwidth(d): a nominal ONE pixel is passed,
-        // as setupGeometry does for the glow's direct path, so a near-zero
+        // as setupGeometry does for the edge ring, so a near-zero
         // softness is bounded at size + 0.5 rather than at size. SAFETY is on
         // top of that, for the part of `aa` the CPU cannot see (up to ~1.4 px
         // on a diagonal, so ~0.2 px more reach) plus rounding.
@@ -2295,27 +3720,12 @@ namespace EdgeLighting
         // edits and not per frame. It is hinted correctly anyway, because the
         // day a cutoff or the geometry becomes animatable is not the day
         // anyone will think to come back and look at a usage flag.
-        mFillVertexArray.SetVertexData(verts, sizeof(verts), GL_DYNAMIC_DRAW);
-        mFillVertexCount = 24;
+        mFillMesh.Upload(verts, sizeof(verts) / sizeof(float));
     }
 
     void NeonRenderer::setupRingGeometry(const Config &config)
     {
-        // Scale 1.0 is the direct path: neither the blit nor the ring runs, so
-        // there is nothing to partition. Keyed on the clamped scale rather than
-        // on UsesScaledBuffer, because `enable` is not in this method's dirty
-        // gate and nothing here depends on it.
         const float scale = GetClampedResolutionScale(config);
-        if (scale >= 1.0f)
-        {
-            mRingVertexCount = 0;
-            mBlitVertexCount = 0;
-            mGatherVertexCount = 0;
-            mGatherOuter = glm::vec2(0.0f);
-            mScaledOuter = glm::vec2(0.0f);
-            return;
-        }
-
         const float halfW = config.geometry.width * 0.5f;
         const float halfH = config.geometry.height * 0.5f;
         const float radius = GeometryUtils::GetEffectiveCornerRadius(config.geometry);
@@ -2330,8 +3740,9 @@ namespace EdgeLighting
         // The ring over-covers its band near the corners, and those few pixels
         // are shaded at full resolution, which is exact.
         const EdgeExtent ring = GetRingExtent(config, scale);
-        const glm::vec2 ringOuter = CircumscribedBox(halfW, halfH, ring.out);
-        const glm::vec2 ringHole = InscribedBox(halfW, halfH, radius, -ring.in);
+        const glm::vec2 ringOuter = GetCircumscribedBox(halfW, halfH, ring.out);
+        const glm::vec2 ringHole = GetInscribedBox(halfW, halfH, radius, -ring.in);
+        mRingBounds = Annulus{ringOuter, ringHole};
 
         // The BLIT: everything outside the ring that can still be non-zero,
         // and nothing else. It used to be the whole viewport minus the ring -
@@ -2342,7 +3753,7 @@ namespace EdgeLighting
         //     cutoff masks are exactly 0, so a one-sided glow loses the whole
         //     dark side and a cutoff band everything past its cutoffs.
         //   - The glow's fade. Pass 1's quad-edge fade takes every texel past
-        //     mQuadMargin to exactly 0 (and texels past the quad are the clear
+        //     mGlowLimits.quadMargin to exactly 0 (and texels past the quad are the clear
         //     colour), so a destination pixel whose bilinear footprint lies
         //     entirely out there composites 0. FOOTPRINT_TEXELS buffer texels
         //     plus a pixel past the margin is that footprint. The same holds
@@ -2351,12 +3762,12 @@ namespace EdgeLighting
         //
         // Never inside the ring's own boxes, so the two arrays still tile.
         const EdgeExtent lit = GetLitExtent(config);
-        const float glowBound = (mQuadMargin + FOOTPRINT_TEXELS) / scale + 1.0f;
+        const float glowBound = (mGlowLimits.quadMargin + FOOTPRINT_TEXELS) / scale + 1.0f;
         const float glowInnerBound = mGlowInnerReach + FOOTPRINT_TEXELS / scale + 1.0f;
         const float blitOut = std::max(ring.out, std::min(glowBound, lit.out + LIT_EDGE_SAFETY));
         const float blitIn = std::max(ring.in, std::min(glowInnerBound, lit.in + LIT_EDGE_SAFETY));
-        const glm::vec2 blitOuter = CircumscribedBox(halfW, halfH, blitOut);
-        const glm::vec2 blitHole = InscribedBox(halfW, halfH, radius, -blitIn);
+        const glm::vec2 blitOuter = GetCircumscribedBox(halfW, halfH, blitOut);
+        const glm::vec2 blitHole = GetInscribedBox(halfW, halfH, radius, -blitIn);
 
         // What the blit reads of the reduced buffer: its own outer box plus
         // its bilinear footprint and a pixel. The reduced buffer is sized to
@@ -2392,225 +3803,88 @@ namespace EdgeLighting
         // hole by that footprint too. Drawn with no culls (see neon.frag), so
         // every texel either of them can touch holds a real gather.
         const float gatherPad = FOOTPRINT_TEXELS / GetGatherScale(config, scale) + 1.0f;
-        const glm::vec2 gatherOuter = glm::max(mGlowOuter, ringOuter) + glm::vec2(gatherPad);
-        const glm::vec2 holeBoth = glm::min(mGlowHole, ringHole);
+        const glm::vec2 gatherOuter = glm::max(mGlowBounds.outer, ringOuter) + glm::vec2(gatherPad);
+        const glm::vec2 holeBoth = glm::min(mGlowBounds.hole, ringHole);
         const glm::vec2 gatherHole = (holeBoth.x > 0.0f && holeBoth.y > 0.0f)
                                          ? glm::max(holeBoth - glm::vec2(gatherPad), glm::vec2(0.0f))
                                          : glm::vec2(0.0f);
         std::vector<float> gatherVerts;
         gatherVerts.reserve(48);
         PushAnnulus(gatherVerts, gatherOuter * scale, gatherHole * scale);
-        mGatherOuter = gatherOuter;
+        mGatherBounds = Annulus{gatherOuter, gatherHole};
 
         // GL_DYNAMIC_DRAW and no SetAttribPointer, as in setupGeometry - and
         // for its reason too: this runs under geometryDirty, which an
         // intensity animation sets every frame.
-        mGatherVertexArray.SetVertexData(gatherVerts.data(), gatherVerts.size() * sizeof(float), GL_DYNAMIC_DRAW);
-        mGatherVertexCount = static_cast<int>(gatherVerts.size() / 2);
-        mRingVertexArray.SetVertexData(ringVerts.data(), ringVerts.size() * sizeof(float), GL_DYNAMIC_DRAW);
-        mRingVertexCount = static_cast<int>(ringVerts.size() / 2);
-        mBlitVertexArray.SetVertexData(blitVerts.data(), blitVerts.size() * sizeof(float), GL_DYNAMIC_DRAW);
-        mBlitVertexCount = static_cast<int>(blitVerts.size() / 2);
+        mGatherMesh.Upload(gatherVerts.data(), gatherVerts.size());
+        mRingMesh.Upload(ringVerts.data(), ringVerts.size());
+        mBlitMesh.Upload(blitVerts.data(), blitVerts.size());
     }
 
-    void NeonRenderer::rebuildLoopSamples(const Config &config)
+    NeonRenderer::RingFieldLayout NeonRenderer::computeRingFieldLayout(const Annulus &ring,
+                                                                       const glm::vec2 &centerFull, int viewportWidth,
+                                                                       int viewportHeight)
     {
-        // Evenly spaced points (by arc length) around the rounded-rect perimeter.
-        // Drives the additive halo/spill/colour gather in the fragment shader.
-        // Uploaded directly to the std140 UBO: vec4[N] where .xy holds the
-        // position in SCALED px - raw float32 through the constant cache, no
-        // decode step in the shader. (.zw stays 0 - the shader recovers a
-        // fragment's continuous perimeter position geometrically from vPos, so
-        // the per-sample phase pairs are no longer needed.)
-        //
-        // Only the first `n` entries are written; the rest of the block stays
-        // (0,0,0,0) and is never read, because the shader's loop bound is the
-        // same `n`. The spacing is 1/n of the perimeter, so lowering the count
-        // spreads the samples rather than truncating the walk partway round.
-        const float scale = GetClampedResolutionScale(config);
-        const int n = GetClampedNumSamples(config);
+        RingFieldLayout layout;
+        // The box, in viewport px: every pixel whose centre the ring's outer
+        // box can reach, with a pixel of slack each side, clipped to the
+        // viewport - the ring is never rasterised past it.
+        const glm::ivec2 lo = glm::max(glm::ivec2(glm::floor(centerFull - ring.outer)) - 1, glm::ivec2(0));
+        const glm::ivec2 hi =
+            glm::min(glm::ivec2(glm::ceil(centerFull + ring.outer)) + 1, glm::ivec2(viewportWidth, viewportHeight));
+        layout.size = glm::max(hi - lo, glm::ivec2(0));
+        layout.origin = glm::vec2(lo) - centerFull;
 
-        LoopSamplesBlockData block = {};
-        for (int i = 0; i < n; ++i)
+        // The hole, in box px: the pixels whose centre (lo + q + 0.5) lies
+        // more than a pixel inside the ring's hole, which the ring therefore
+        // never draws. With none, the bottom strip is the whole box.
+        glm::ivec2 h0(0, layout.size.y);
+        glm::ivec2 h1(0, layout.size.y);
+        if (ring.hole.x > 1.0f && ring.hole.y > 1.0f)
         {
-            float t = static_cast<float>(i) / static_cast<float>(n);
-            glm::vec2 p = GeometryUtils::GetPointOnRectangle(t, config.geometry) * scale;
-            block.samples[i] = glm::vec4(p, 0.0f, 0.0f);
-        }
-        mLoopSamplesBlock.SetData(&block, sizeof(block));
-    }
-
-    void NeonRenderer::bakeLUTs(const Config &config)
-    {
-        // All three LUT wrappers self-guard: each re-bakes only when the inputs
-        // it actually reads have moved, so this is called unconditionally and
-        // no dirty flag lives at the call site. The live fields an animation
-        // rewrites every frame (a segment's position / length / boost, an arc's
-        // start / length / intensity) ride the UBOs and never dirty a LUT.
-        //
-        // @note mEffectiveSegments must already hold the merged
-        //       transient+preserved view - both callers leave it current
-        //       first (Initialize fills it outright; OnConfigChanged refills
-        //       it on a change to either pool and otherwise it is unmoved).
-        // The ring width is a runtime knob; a change to it makes GradientRingLUT
-        // SNAP rather than fade, since two rings of different length cannot be
-        // blended element-wise. The two atlases below keep fixed widths - a
-        // segment or arc span is short and does not wrap, so extra texels would
-        // only pad head and tail.
-        mGradientLUT.Bake(config.neon.colorStops, config.neon.blendSpace,
-                          config.neon.gradientLutSize, config.neon.colorTransitionDuration);
-        mSegmentLUT.Bake(mEffectiveSegments, SEGMENT_LUT_WIDTH, MAX_SEGMENT_BOOSTS);
-        mArcLUT.Bake(config.neon.arcs, ARC_LUT_WIDTH, MAX_ARCS);
-    }
-
-    bool NeonRenderer::resizeEmissionBuffer()
-    {
-        // Walk EMISSION_FORMATS from the best the driver has not already
-        // refused, and take the first that allocates.
-        //
-        // Where the walk STARTS is what keeps this cheap. Re-asking for a
-        // format the driver refused would churn the attachment every frame -
-        // Framebuffer::Resize treats a format change as a reallocation, and its
-        // failure path destroys what was there - so a live buffer starts at the
-        // format it is already holding, which Resize then early-outs on. Only a
-        // buffer with no attachment (first frame, or after a failure) starts at
-        // the top. The buffer's own state is the record of how far down the list
-        // this renderer got; there is no flag here saying so.
-        size_t first = 0;
-        if (mEmissionBuffer.IsValid())
-        {
-            for (size_t i = 0; i < std::size(EMISSION_FORMATS); ++i)
+            const glm::ivec2 a =
+                glm::clamp(glm::ivec2(glm::ceil(centerFull - ring.hole + 0.5f)) - lo, glm::ivec2(0), layout.size);
+            const glm::ivec2 b =
+                glm::clamp(glm::ivec2(glm::floor(centerFull + ring.hole - 1.5f)) + 1 - lo, glm::ivec2(0), layout.size);
+            if (b.x > a.x && b.y > a.y)
             {
-                if (EMISSION_FORMATS[i].internalFormat == mEmissionBuffer.GetInternalFormat())
-                {
-                    first = i;
-                    break;
-                }
+                h0 = a;
+                h1 = b;
             }
         }
+        layout.hole = glm::ivec4(h0, h1);
 
-        for (size_t i = first; i < std::size(EMISSION_FORMATS); ++i)
-        {
-            const TargetFormat &f = EMISSION_FORMATS[i];
-            if (mEmissionBuffer.Resize(NEON_MAX_LOOP_SAMPLES, 2,
-                                       f.internalFormat, f.format, f.type, EMISSION_FILTER))
-            {
-                return true;
-            }
-            if (i + 1 < std::size(EMISSION_FORMATS))
-            {
-                // Once per driver, not once per frame: the next candidate's
-                // success moves `first` past this one for every later call.
-                LOG_E("NeonRenderer: %s emission target unavailable, falling back to %s. "
-                      "Arc intensities and stacked segment boosts above 1.0 will clamp.",
-                      f.name, EMISSION_FORMATS[i + 1].name);
-            }
-        }
-        return false;
+        // Bottom rows, then the top's, then the two side strips' - each as
+        // many rows as it is wide, and as long as the hole is tall.
+        const int bottom = h0.y;
+        const int top = layout.size.y - h1.y;
+        const int mid = h1.y - h0.y;
+        const int left = (mid > 0) ? h0.x : 0;
+        const int right = (mid > 0) ? layout.size.x - h1.x : 0;
+        layout.rows = glm::ivec2(bottom + top, bottom + top + left);
+        layout.atlas = glm::ivec2(std::max(layout.size.x, mid), bottom + top + left + right);
+        return layout;
     }
 
-    bool NeonRenderer::resizeGatherBuffer(int width, int height, int attachments)
+    NeonRenderer::EmissionInputs NeonRenderer::getEmissionInputs(const Config &config) const
     {
-        // The same walk as resizeEmissionBuffer, with one difference: this
-        // buffer is RELEASED whenever the scaled path has nothing to draw (see
-        // OnConfigChanged), so its own format cannot record how far down the
-        // list a driver forced it. mGatherFormat does, and only ever advances -
-        // a driver that refused RGBA16F once is not asked again on every
-        // re-arm, and logs once.
-        for (; mGatherFormat < std::size(GATHER_FORMATS); ++mGatherFormat)
-        {
-            const TargetFormat &f = GATHER_FORMATS[mGatherFormat];
-            if (mGatherBuffer.Resize(width, height, f.internalFormat, f.format, f.type, GL_LINEAR, attachments))
-            {
-                return true;
-            }
-            if (mGatherFormat + 1 < std::size(GATHER_FORMATS))
-            {
-                LOG_E("NeonRenderer: %s gather target unavailable, falling back to %s. "
-                      "Below resolutionScale 1.0 the glow reads up to ~2/255 further from 1.0.",
-                      f.name, GATHER_FORMATS[mGatherFormat + 1].name);
-            }
-        }
-        // Every candidate refused: leave the index on the last one, so the
-        // next frame retries the format most likely to allocate rather than
-        // running off the end of the list for good.
-        mGatherFormat = std::size(GATHER_FORMATS) - 1;
-        return false;
-    }
-
-    void NeonRenderer::packLightBlocks(const Config &config)
-    {
-        // Both the emission pre-pass and the main pass read these, so they are
-        // current before either draws.
-        //
-        // The PACK is gated; the BIND is not. The block contents are a pure
-        // function of the config, so repacking them on a frame that changed
-        // nothing reproduces bytes byte for byte - the same argument the
-        // emission table rests on, one tier cheaper. The binding is different:
-        // glBindBufferBase writes global context state that a host (or a
-        // future pass) can repoint between frames, and re-asserting it costs
-        // two calls against a whole frame's worth of drawing, so it stays
-        // unconditional rather than being inferred from a flag this class
-        // owns.
-        if (mLightBlocksDirty)
-        {
-            packLightBlockData(config);
-            mLightBlocksDirty = false;
-        }
-        mSegmentBlock.BindBase(SEGMENT_BLOCK_BINDING);
-        mArcBlock.BindBase(ARC_BLOCK_BINDING);
-    }
-
-    void NeonRenderer::packLightBlockData(const Config &config)
-    {
-        // Pack the segment vector as vec4(position, invSigma, boost, hasStops)
-        // into the std140 SegmentBlock UBO (DALi-compatible pattern - see
-        // neon.frag). Empty vector -> uSegmentCount=0 and both shaders skip the
-        // whole feature.
-        SegmentBlockData segBlock = {};
-        // mEffectiveSegments is NOT refilled here. OnConfigChanged refills it
-        // whenever either segment pool changes, and this runs once per frame
-        // from Render - so on a frame where the pools did not move the merged
-        // view is already current, and on a frame where they did,
-        // OnConfigChanged has already run (Update -> refreshActiveConfig
-        // precedes Render). Refilling here would be a second
-        // FillEffectiveSegments of the same frame.
-        const std::vector<SegmentBoost> &effSegments = mEffectiveSegments;
-        int segCount = std::min(static_cast<int>(effSegments.size()),
-                                int(MAX_SEGMENT_BOOSTS));
-        segBlock.count = segCount;
-        for (int i = 0; i < segCount; ++i)
-        {
-            const auto &s = effSegments[i];
-            float invSigma = 1.0f / std::max(s.length * 0.5f, 1e-3f);
-            // .w = hasOwnStops flag; the shader reads its colour from row `i`
-            // of the segment LUT atlas when set, else falls back to the base
-            // gradient at that sample.
-            float hasStops = s.colorStops.empty() ? 0.0f : 1.0f;
-            segBlock.segments[i] = glm::vec4(s.position, invSigma, s.boost, hasStops);
-        }
-        mSegmentBlock.SetData(&segBlock, sizeof(segBlock));
-
-        // Pack the arcs vector into ArcBlock: vec4(start, length, intensity,
-        // hasStops) per entry. .w picks between the winner arc's own atlas row
-        // and the base gradient in the shader's winner-take-all branch.
-        ArcBlockData arcBlock = {};
-        int arcCount = std::min(static_cast<int>(config.neon.arcs.size()),
-                                int(MAX_ARCS));
-        arcBlock.count = arcCount;
-        for (int i = 0; i < arcCount; ++i)
-        {
-            const auto &a = config.neon.arcs[i];
-            // .w is a bitmask, not just hasStops - see PackArcFlags.
-            float flags = PackArcFlags(config.neon.arcs, i, arcCount);
-            arcBlock.arcs[i] = glm::vec4(a.start, a.length, a.intensity, flags);
-        }
-        mArcBlock.SetData(&arcBlock, sizeof(arcBlock));
+        // Exactly what renderEmissionPass uploads and binds, besides uTime.
+        // Add an input to that pass and it belongs here, or the table goes
+        // stale whenever that input alone moves.
+        EmissionInputs inputs;
+        inputs.hueRotationRate = config.neon.hueRotationRate;
+        inputs.numSamples = GetClampedNumSamples(config);
+        inputs.gradientUploads = mGradientLUT.GetUploadCount();
+        inputs.segmentAtlasUploads = mSegmentLUT.GetUploadCount();
+        inputs.arcAtlasUploads = mArcLUT.GetUploadCount();
+        inputs.segmentBlockUploads = mLightBlocks.segment.GetUploadCount();
+        inputs.arcBlockUploads = mLightBlocks.arc.GetUploadCount();
+        return inputs;
     }
 
     bool NeonRenderer::isEmissionTableStale(float time, const Config &config) const
     {
-        if (mEmissionDirty)
+        if (!mEmission.bake.baked || getEmissionInputs(config) != mEmission.bake.inputs)
         {
             return true;
         }
@@ -2625,7 +3899,136 @@ namespace EdgeLighting
         // unchanged clock reproduces the identical float. A moving clock
         // essentially never lands on the same value twice, and if it did the
         // table it wants IS the one already in the buffer.
-        return config.neon.hueRotationRate != 0.0f && time != mEmissionTime;
+        return config.neon.hueRotationRate != 0.0f && time != mEmission.bake.time;
+    }
+
+    NeonRenderer::GatherInputs NeonRenderer::getGatherInputs(const Config &config, int viewportWidth,
+                                                             int viewportHeight) const
+    {
+        // Exactly what renderGatherPass uploads and binds, besides the
+        // projection - its region - and the quad: uploadShapeUniforms'
+        // shape, bindGatherInputs' samples and table, and the attachment
+        // count. Add an input to that pass and it belongs here, or the gather
+        // is skipped on a frame that input alone moved.
+        const float scale = GetClampedResolutionScale(config);
+        GatherInputs inputs;
+        inputs.emissionVersion = mEmission.bake.version;
+        inputs.sampleUploads = mLoopSamplesBlock.GetUploadCount();
+        inputs.numSamples = GetClampedNumSamples(config);
+        inputs.scale = scale;
+        inputs.rectSize = glm::vec2(config.geometry.width * scale, config.geometry.height * scale);
+        inputs.cornerRadius = GeometryUtils::GetEffectiveCornerRadius(config.geometry) * scale;
+        inputs.attachments = mEffectiveSegments.empty() ? 1 : 2;
+        inputs.viewport = glm::ivec2(viewportWidth, viewportHeight);
+        inputs.center = glm::vec2(config.geometry.position.x + config.geometry.width * 0.5f,
+                                  static_cast<float>(viewportHeight) - config.geometry.position.y -
+                                      config.geometry.height * 0.5f);
+        return inputs;
+    }
+
+    void NeonRenderer::uploadShapeUniforms(ShaderProgram &shader, const glm::mat4 &mvp, float scale,
+                                           const Config &config)
+    {
+        // Every pixel-valued uniform here and in uploadNeonUniforms is
+        // multiplied by `scale` - the reduced passes' scale, or 1.0 for the
+        // edge ring, which shades at full resolution. The shader converts
+        // neon-tuning.h's own full-res px constants with uResolutionScale to
+        // land in the same space.
+        shader.SetUniform("uMVP", mvp);
+        shader.SetUniform("uRectSize", glm::vec2(config.geometry.width * scale,
+                                                 config.geometry.height * scale));
+        shader.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry) * scale);
+    }
+
+    void NeonRenderer::uploadNeonUniforms(ShaderProgram &shader, const glm::mat4 &mvp, float scale,
+                                          float time, const ShadeLimits &limits, bool blitOwnsCut,
+                                          const Config &config)
+    {
+        uploadShapeUniforms(shader, mvp, scale, config);
+        shader.SetUniform("uResolutionScale", scale);
+        shader.SetUniform("uBlitOwnsCut", blitOwnsCut ? 1 : 0);
+        shader.SetUniform("uLineWidth", config.neon.lineWidth * scale);
+        shader.SetUniform("uFilamentFalloff", config.neon.filamentFalloff);
+        shader.SetUniform("uIntensity", config.neon.intensity);
+        shader.SetUniform("uTime", time);
+        shader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
+        shader.SetUniform("uGlowRadius", config.neon.glowRadius * scale);
+        shader.SetUniform("uBloomStrength", config.neon.bloomStrength);
+        // The field bake ends at the grade, before the cut that reads the
+        // softness - see UploadEdgeMaskUniforms.
+        UploadEdgeMaskUniforms(shader, scale, config, &shader != &mFieldBakeShader);
+
+        shader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
+        shader.SetUniform("uPerimeterUnread",
+                          IsPerimeterUnread(mEffectiveSegments, config, mGradientLUT.IsOpaque()) ? 1 : 0);
+        shader.SetUniform("uUniformCover", IsGlowCoverUnread(mEffectiveSegments, config) ? 1 : 0);
+
+        // The three LUT atlases are no longer read by the gather (the emission
+        // pre-pass consumes them instead), but the pointwise path still samples
+        // them for the colour-stop alpha - see the alpha reads in neon.frag.
+        mGradientLUT.Bind(0);
+        shader.SetUniform("uGradientLUT", 0);
+        mSegmentLUT.Bind(1);
+        shader.SetUniform("uSegmentLUT", 1);
+        mArcLUT.Bind(2);
+        shader.SetUniform("uArcLUT", 2);
+        // The glow coverage table from pass 0b, on its own unit - 3 and 4 are
+        // the emission table or the gather buffer, depending on the path.
+        //
+        // On a ring lit uniformly it may never have been allocated, and the
+        // shader's uniformCover branch then never reads it - IsGlowCoverUnread,
+        // which skips the allocation, is the stricter of the two tests. The
+        // unit still gets a COMPLETE texture rather than 0: Apple's driver logs
+        // a sampler bound to an unloadable texture at draw time whether or not
+        // it is read, and the direct path drew without that line before the
+        // table became lazy. The gradient ring stands in - already bound on
+        // unit 0 for this same program, so baked, and never a render target,
+        // so no feedback loop with any pass. Never sampled through this unit.
+        if (mGlowCover.buffer.IsValid())
+        {
+            mGlowCover.buffer.BindTexture(5);
+        }
+        else
+        {
+            mGradientLUT.Bind(5);
+        }
+        shader.SetUniform("uGlowCover", 5);
+        // The layout and split the table was baked with, never the config's
+        // own: see GlowCoverLayout.
+        shader.SetUniform("uGlowCoverLayout", mGlowCover.layout.AsUniform());
+        shader.SetUniform("uGlowCoverSplit", mGlowCover.split);
+        shader.SetUniform("uQuadMargin", limits.quadMargin);
+        shader.SetUniform("uCornerSkip", limits.cornerSkip);
+    }
+
+    void NeonRenderer::bindGatherInputs(ShaderProgram &shader, const Config &config)
+    {
+        // Loop sample positions come from the LoopSamplesBlock UBO (see
+        // neon-gather.frag) - raw float32 vec4[N], .xy holds the perimeter point in
+        // the same scaled space as the transform.
+        mLoopSamplesBlock.BindBase(LOOP_SAMPLES_BLOCK_BINDING);
+        shader.SetUniform("uNumSamples", GetClampedNumSamples(config));
+        // Emission table from pass 0 on unit 3; the gather texelFetches both
+        // of its rows per sample.
+        mEmission.buffer.BindTexture(3);
+        shader.SetUniform("uEmission", 3);
+    }
+
+    void NeonRenderer::bindGatherBuffer(ShaderProgram &shader, const UVMap &gatherUV)
+    {
+        // Attachment 1 exists only with segments. Without them the shader's
+        // uSegmentCount branch never reads uGatherSeg, but the unit still gets
+        // a COMPLETE texture - attachment 0 again - rather than texture 0:
+        // Apple's driver logs a sampler bound to an unloadable texture at draw
+        // time whether or not it is read (the I33 stand-in, for unit 5, has
+        // the same reason). Attachment 0 is this same frame's input, never a
+        // target of the pass that reads it, so there is no feedback loop.
+        mGather.buffer.BindTexture(3, 0);
+        shader.SetUniform("uGather", 3);
+        mGather.buffer.BindTexture(4, mGather.buffer.GetAttachmentCount() > 1 ? 1 : 0);
+        shader.SetUniform("uGatherSeg", 4);
+        shader.SetUniform("uGatherUVScale", gatherUV.scale);
+        shader.SetUniform("uGatherUVOffset", gatherUV.offset);
     }
 
     void NeonRenderer::renderEmissionPass(int viewportWidth, int viewportHeight,
@@ -2656,7 +4059,7 @@ namespace EdgeLighting
 
         // Binds the FBO and sets the viewport to NEON_MAX_LOOP_SAMPLES x 2. No
         // clear: the NDC quad covers every texel, so each one is written.
-        mEmissionBuffer.Bind();
+        mEmission.buffer.Bind();
 
         mEmissionShader.Use();
         mEmissionShader.SetUniform("uMVP", glm::mat4(1.0f));
@@ -2682,49 +4085,10 @@ namespace EdgeLighting
 
         // What the buffer now holds. Recorded by the only writer of it, so the
         // staleness test upstream can never describe a bake that did not run.
-        mEmissionDirty = false;
-        mEmissionTime = time;
-    }
-
-    bool NeonRenderer::ensureGlowCoverBuffer()
-    {
-        // Allocated is enough: the table's size is fixed, so a live buffer has
-        // nothing to resize to, and this runs every frame a partly lit ring
-        // draws.
-        if (mGlowCoverBuffer.IsValid())
-        {
-            return true;
-        }
-
-        // The gather buffer's walk, over GLOW_COVER_FORMATS, with a linear
-        // filter: the consumer interpolates between neighbouring positions round
-        // each piece. Resumed from mGlowCoverFormat, because this buffer is
-        // released with the layer and cannot record a refused format in its own
-        // attachment - so a driver that refused RGBA16F once is not asked again
-        // on every re-enable, and logs once.
-        for (; mGlowCoverFormat < std::size(GLOW_COVER_FORMATS); ++mGlowCoverFormat)
-        {
-            const TargetFormat &f = GLOW_COVER_FORMATS[mGlowCoverFormat];
-            if (mGlowCoverBuffer.Resize(GLOW_COVER_WIDTH, GLOW_COVER_HEIGHT,
-                                        f.internalFormat, f.format, f.type, GL_LINEAR))
-            {
-                // Undefined texels until a bake writes them - whatever the
-                // flag said about the buffer this one replaces.
-                mGlowCoverDirty = true;
-                return true;
-            }
-            if (mGlowCoverFormat + 1 < std::size(GLOW_COVER_FORMATS))
-            {
-                LOG_E("NeonRenderer: %s glow coverage target unavailable, falling back to %s. "
-                      "The halo and bloom coverage will be stored at 8 bits.",
-                      f.name, GLOW_COVER_FORMATS[mGlowCoverFormat + 1].name);
-            }
-        }
-        // Every candidate refused: leave the index on the last one, so the next
-        // frame that needs the table retries the format most likely to
-        // allocate, as resizeGatherBuffer does.
-        mGlowCoverFormat = std::size(GLOW_COVER_FORMATS) - 1;
-        return false;
+        mEmission.bake.inputs = getEmissionInputs(config);
+        mEmission.bake.baked = true;
+        mEmission.bake.time = time;
+        ++mEmission.bake.version;
     }
 
     void NeonRenderer::renderGlowCoverPass(const Config &config)
@@ -2734,10 +4098,6 @@ namespace EdgeLighting
         // renderEmissionPass gives.
         const RenderTargetState prevTarget = RenderTargetState::Capture();
         GLUtils::NoScissorScope noScissor;
-
-        // Binds the FBO and sets the viewport to the table. No clear: the NDC
-        // quad covers every texel.
-        mGlowCoverBuffer.Bind();
 
         // Every length as a fraction of the full-res perimeter, which is what
         // lets the reduced-scale shading and the full-res ring share the
@@ -2751,8 +4111,63 @@ namespace EdgeLighting
         const float radius = GetDrawnCornerRadius(config);
         const glm::vec2 straights(std::max(config.geometry.width - 2.0f * radius, 0.0f),
                                   std::max(config.geometry.height - 2.0f * radius, 0.0f));
+        // The split, with the layout the buffer was allocated at; recorded
+        // for the reads, which take both from the table.
+        const GlowCoverLayout &layout = mGlowCover.layout;
+        const glm::vec2 split = GetGlowCoverSplit(config, layout);
+        mGlowCover.split = split;
+
+        // Draws the pieces of @p pieces of a table laid out as @p tableLayout
+        // and split as @p tableSplit, through @p shader: the whole table in
+        // one draw when all are dirty, else each band's straight and corner
+        // as rectangles.
+        auto drawPieces = [&](ShaderProgram &shader, uint32_t pieces, const GlowCoverLayout &tableLayout,
+                              const glm::vec2 &tableSplit)
+        {
+            if (pieces == GLOW_COVER_ALL_PIECES)
+            {
+                shader.SetUniform("uMVP", glm::mat4(1.0f));
+                mFullscreenVertexArray.DrawArrays(GL_TRIANGLES, 6);
+                return;
+            }
+            // Only the dirty pieces, each band's straight and corner as one
+            // rectangle where both are dirty. Bounded by GEOMETRY, not a
+            // scissor: the bake keys every texel off gl_FragCoord, so the NDC
+            // quad drawn through a matrix onto a texel-aligned rectangle writes
+            // exactly that rectangle's texels and no others (its edges sit on
+            // whole texels, and every centre is half a texel inside one), and
+            // nothing of the host's scissor state - box included, which
+            // NoScissorScope does not restore - is touched.
+            const float width = static_cast<float>(tableLayout.width);
+            const float height = static_cast<float>(GLOW_COVER_HEIGHT);
+            for (int band = 0; band < 4; ++band)
+            {
+                const bool straight = (pieces & (1u << (2 * band))) != 0;
+                const bool corner = (pieces & (1u << (2 * band + 1))) != 0;
+                if (!straight && !corner)
+                {
+                    continue;
+                }
+                // The band's straight is the columns left of the split, its
+                // corner the rest - glowCoverTexel's own test.
+                const float inner = (band < 2) ? tableSplit.x : tableSplit.y;
+                const float splitColumn = static_cast<float>(2 * tableLayout.overhang) + inner;
+                const float x0 = straight ? 0.0f : splitColumn;
+                const float x1 = corner ? width : splitColumn;
+                const float y0 = static_cast<float>(band * GLOW_COVER_ROWS);
+                const float y1 = y0 + static_cast<float>(GLOW_COVER_ROWS);
+                const glm::mat4 rect =
+                    glm::translate(glm::mat4(1.0f), glm::vec3((x0 + x1) / width - 1.0f, (y0 + y1) / height - 1.0f, 0.0f)) *
+                    glm::scale(glm::mat4(1.0f), glm::vec3((x1 - x0) / width, (y1 - y0) / height, 1.0f));
+                shader.SetUniform("uMVP", rect);
+                mFullscreenVertexArray.DrawArrays(GL_TRIANGLES, 6);
+            }
+        };
+
+        // --- P0b: the main table. Binds the FBO and sets the viewport to the
+        // table; no clear, the quads cover every texel they mean to write.
+        mGlowCover.buffer.Bind();
         mGlowCoverShader.Use();
-        mGlowCoverShader.SetUniform("uMVP", glm::mat4(1.0f));
         mGlowCoverShader.SetUniform("uHeadFeather", static_cast<float>(HEAD_FEATHER_PX) / perimeter);
         mGlowCoverShader.SetUniform("uTailFeather", static_cast<float>(TAIL_FEATHER_PX) / perimeter);
         mGlowCoverShader.SetUniform("uHaloWidth", haloWidth / perimeter);
@@ -2760,206 +4175,117 @@ namespace EdgeLighting
         mGlowCoverShader.SetUniform("uStraightSize", straights / perimeter);
         mGlowCoverShader.SetUniform("uRadius", radius / perimeter);
         mGlowCoverShader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
-        mGlowCoverShader.SetUniform("uGlowCoverSplit", GetGlowCoverSplit(config));
-        mFullscreenVertexArray.DrawArrays(GL_TRIANGLES, 6);
-        mGlowCoverShader.Unuse();
+        mGlowCoverShader.SetUniform("uGlowCoverSplit", split);
+        mGlowCoverShader.SetUniform("uGlowCoverLayout", layout.AsUniform());
+        mGlowCoverShader.SetUniform("uBakeTarget", 0);
+
+        // Per light type: a piece only the arcs dirtied integrates the arcs and
+        // writes .r / .g alone, a piece only the segments dirtied .b / .a alone
+        // - the channels left alone already hold what a full bake would write,
+        // since each kind's depend on that kind and the geometry only. The
+        // colour mask is the host's state, so it is put back. With a segment
+        // table, the segments are not baked here at all: passes 0s and 0f
+        // below write .b / .a.
+        const uint32_t arcs = mGlowCover.dirtyArcPieces;
+        const uint32_t segments = mGlowCover.dirtySegmentPieces;
+        const bool viaSegmentTable = !mGlowCover.segDirect;
+        GLboolean hostMask[4] = {GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE};
+        glGetBooleanv(GL_COLOR_WRITEMASK, hostMask);
+        typedef struct Group
+        {
+            uint32_t pieces;
+            bool arcs;
+            bool segments;
+        } Group;
+        const Group direct[] = {{arcs & segments, true, true},
+                                {arcs & ~segments, true, false},
+                                {segments & ~arcs, false, true}};
+        const Group arcsOnly[] = {{arcs, true, false}};
+        const Group *groups = viaSegmentTable ? arcsOnly : direct;
+        const size_t groupCount = viaSegmentTable ? std::size(arcsOnly) : std::size(direct);
+        for (size_t g = 0; g < groupCount; ++g)
+        {
+            const Group &group = groups[g];
+            if (group.pieces == 0)
+            {
+                continue;
+            }
+            mGlowCoverShader.SetUniform("uBakeArcs", group.arcs ? 1 : 0);
+            mGlowCoverShader.SetUniform("uBakeSegments", group.segments ? 1 : 0);
+            glColorMask(group.arcs, group.arcs, group.segments, group.segments);
+            drawPieces(mGlowCoverShader, group.pieces, layout, split);
+        }
+
+        if (viaSegmentTable && segments != 0)
+        {
+            // --- P0s: the dirty segment pieces into the segment table, at its
+            // own layout and split - the same program and integrals, the
+            // segments' two channels on .r / .g (uBakeTarget 1).
+            const GlowCoverLayout &segLayout = mGlowCover.segLayout;
+            const glm::vec2 segSplit = GetGlowCoverSplit(config, segLayout);
+            mGlowCover.segSplit = segSplit;
+            mGlowCover.segBuffer.Bind();
+            mGlowCoverShader.SetUniform("uGlowCoverSplit", segSplit);
+            mGlowCoverShader.SetUniform("uGlowCoverLayout", segLayout.AsUniform());
+            mGlowCoverShader.SetUniform("uBakeTarget", 1);
+            mGlowCoverShader.SetUniform("uBakeArcs", 0);
+            mGlowCoverShader.SetUniform("uBakeSegments", 1);
+            glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+            drawPieces(mGlowCoverShader, segments, segLayout, segSplit);
+            mGlowCoverShader.Unuse();
+
+            // --- P0f: the same pieces of the main table, .b / .a only, copied
+            // from the segment table through both layouts.
+            mGlowCover.buffer.Bind();
+            mGlowCoverFillShader.Use();
+            mGlowCover.segBuffer.BindTexture(0);
+            mGlowCoverFillShader.SetUniform("uSegCover", 0);
+            mGlowCoverFillShader.SetUniform("uGlowCoverLayout", layout.AsUniform());
+            mGlowCoverFillShader.SetUniform("uGlowCoverSplit", split);
+            mGlowCoverFillShader.SetUniform("uSegCoverLayout", segLayout.AsUniform());
+            mGlowCoverFillShader.SetUniform("uSegCoverSplit", segSplit);
+            mGlowCoverFillShader.SetUniform("uHaloWidth", haloWidth / perimeter);
+            mGlowCoverFillShader.SetUniform("uStraightSize", straights / perimeter);
+            mGlowCoverFillShader.SetUniform("uRadius", radius / perimeter);
+            glColorMask(GL_FALSE, GL_FALSE, GL_TRUE, GL_TRUE);
+            drawPieces(mGlowCoverFillShader, segments, layout, split);
+            mGlowCoverFillShader.Unuse();
+        }
+        else
+        {
+            mGlowCoverShader.Unuse();
+        }
+        glColorMask(hostMask[0], hostMask[1], hostMask[2], hostMask[3]);
 
         prevTarget.Restore();
-        mGlowCoverDirty = false;
+        mGlowCover.dirtyArcPieces = 0;
+        mGlowCover.dirtySegmentPieces = 0;
     }
 
-    void NeonRenderer::uploadShapeUniforms(ShaderProgram &shader, const glm::mat4 &mvp, float scale,
-                                           const Config &config)
-    {
-        // Every pixel-valued uniform here and in uploadNeonUniforms is
-        // multiplied by `scale`, which is 1.0 on the direct path - so the two
-        // paths upload literally the same numbers there, and the scaled path
-        // is the only one that moves. The shader converts neon-tuning.h's own
-        // full-res px constants with uResolutionScale to land in the same
-        // space.
-        shader.SetUniform("uMVP", mvp);
-        shader.SetUniform("uRectSize", glm::vec2(config.geometry.width * scale,
-                                                 config.geometry.height * scale));
-        shader.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry) * scale);
-    }
-
-    void NeonRenderer::uploadNeonUniforms(ShaderProgram &shader, const glm::mat4 &mvp, float scale,
-                                          float time, float quadMargin, const Config &config)
-    {
-        uploadShapeUniforms(shader, mvp, scale, config);
-        shader.SetUniform("uResolutionScale", scale);
-        shader.SetUniform("uLineWidth", config.neon.lineWidth * scale);
-        shader.SetUniform("uFilamentFalloff", config.neon.filamentFalloff);
-        shader.SetUniform("uIntensity", config.neon.intensity);
-        shader.SetUniform("uTime", time);
-        shader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
-        shader.SetUniform("uGlowRadius", config.neon.glowRadius * scale);
-        shader.SetUniform("uBloomStrength", config.neon.bloomStrength);
-        shader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
-        shader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness * scale);
-        shader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff) * scale);
-        shader.SetUniform("uInsideCutoffSoftness", config.neon.insideCutoff.softness * scale);
-        shader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff) * scale);
-        shader.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness * scale);
-
-        shader.SetUniform("uWinding", static_cast<int>(config.geometry.winding));
-
-        // The three LUT atlases are no longer read by the gather (the emission
-        // pre-pass consumes them instead), but the pointwise path still samples
-        // them for the colour-stop alpha - see the alpha reads in neon.frag.
-        mGradientLUT.Bind(0);
-        shader.SetUniform("uGradientLUT", 0);
-        mSegmentLUT.Bind(1);
-        shader.SetUniform("uSegmentLUT", 1);
-        mArcLUT.Bind(2);
-        shader.SetUniform("uArcLUT", 2);
-        // The glow coverage table from pass 0b, on its own unit - 3 and 4 are
-        // the emission table or the gather buffer, depending on the path.
-        //
-        // On a ring lit uniformly it may never have been allocated, and the
-        // shader's uniformCover branch then never reads it - IsGlowCoverUnread,
-        // which skips the allocation, is the stricter of the two tests. The
-        // unit still gets a COMPLETE texture rather than 0: Apple's driver logs
-        // a sampler bound to an unloadable texture at draw time whether or not
-        // it is read, and the direct path drew without that line before the
-        // table became lazy. The gradient ring stands in - already bound on
-        // unit 0 for this same program, so baked, and never a render target,
-        // so no feedback loop with any pass. Never sampled through this unit.
-        if (mGlowCoverBuffer.IsValid())
-        {
-            mGlowCoverBuffer.BindTexture(5);
-        }
-        else
-        {
-            mGradientLUT.Bind(5);
-        }
-        shader.SetUniform("uGlowCover", 5);
-        shader.SetUniform("uGlowCoverSplit", GetGlowCoverSplit(config));
-        shader.SetUniform("uQuadMargin", quadMargin);
-    }
-
-    bool NeonRenderer::renderNeonPass(const glm::mat4 &mvp, int bufWidth, int bufHeight, bool scaled,
-                                      const glm::vec2 &gatherUVScale, const glm::vec2 &gatherUVOffset,
-                                      float time, const Config &config)
-    {
-        const float scale = GetClampedResolutionScale(config);
-
-        // SCALED PATH ONLY: mScaledBuffer is a reduced-size copy of the
-        // viewport, so a host scissor box - in the CALLER's window coordinates
-        // - lands on the wrong texels of it. The clear and the gather below
-        // would skip everything outside the box, and pass 2b would then read
-        // the region the box maps DOWN to, which is a different region again
-        // and one nothing wrote this frame: last frame's pixels, blitted back
-        // under the host's clip. See GLUtils::NoScissorScope.
-        //
-        // The direct path takes none of this - `scaled` false short-circuits
-        // even the query - because there the gather IS the composite, drawn
-        // straight onto the caller's framebuffer in the caller's coordinates,
-        // and the host's clip is exactly what it asked for. The scaled path's
-        // composite gets the same treatment once this scope ends, which is
-        // before Render calls renderBlitPass.
-        GLUtils::NoScissorScope noScissor(scaled);
-
-        if (scaled)
-        {
-            // Resize destroys the attachment on its failure path, so a failure
-            // leaves mScaledBuffer holding id 0 - and Bind would then bind the
-            // CALLER'S framebuffer, with only Framebuffer::ClearBuffer's own
-            // no-attachment guard standing between that and erasing everything
-            // already drawn this frame (a clear is not clipped by the
-            // viewport). Under an OffscreenCapture that target is the capture.
-            // Do not lean on that guard - bail here instead;
-            // Render skips the blit with us, and noScissor puts the host's
-            // scissor back as this return unwinds.
-            //
-            // The filter is requested through Resize, which is the ONLY writer
-            // of the tracked value, so it cannot drift. Setting it on the
-            // texture afterwards instead leaves mFilter disagreeing with the
-            // texture, and the next frame's Resize then sees a mismatch and
-            // destroys and recreates the FBO - one reallocation per frame,
-            // measured.
-            //
-            // ONE attachment: the composited colour. The gather lives in its
-            // own, coarser buffer (renderGatherPass).
-            if (!mScaledBuffer.Resize(bufWidth, bufHeight, GL_RGBA8, GL_RGBA, GL_UNSIGNED_BYTE, GL_LINEAR))
-            {
-                return false;
-            }
-            // Bind, then clear to transparent black. Keep the two adjacent:
-            // ClearBuffer acts on whatever is BOUND, so the bind is its
-            // precondition rather than a nicety - see Framebuffer::ClearBuffer,
-            // which also carries the reason the clear touches no context state
-            // (it used to save, overwrite and restore GL_COLOR_CLEAR_VALUE
-            // every frame on this path). The scissor guard above is the other
-            // half of making this clear land where it is meant to.
-            mScaledBuffer.Bind();
-            mScaledBuffer.ClearBuffer();
-        }
-
-        // The direct path gathers and shades in one program. The scaled path
-        // shades from the gather pass's result instead of running the loop
-        // here; every other uniform is the same.
-        ShaderProgram &shader = scaled ? mNeonShadeShader : mNeonShader;
-        shader.Use();
-        uploadNeonUniforms(shader, mvp, scale, time, mQuadMargin, config);
-        if (scaled)
-        {
-            bindGatherBuffer(shader, gatherUVScale, gatherUVOffset);
-        }
-        else
-        {
-            bindGatherInputs(shader, config);
-        }
-
-        // Tight glow quad in both modes - opaque's far region is covered by the
-        // fill pass, so the gather never runs fullscreen.
-        mGlowVertexArray.DrawArrays(GL_TRIANGLES, mGlowVertexCount);
-        shader.Unuse();
-        return true;
-    }
-
-    void NeonRenderer::bindGatherInputs(ShaderProgram &shader, const Config &config)
-    {
-        // Loop sample positions come from the LoopSamplesBlock UBO (see
-        // neon.frag) - raw float32 vec4[N], .xy holds the perimeter point in
-        // the same scaled space as the transform.
-        mLoopSamplesBlock.BindBase(LOOP_SAMPLES_BLOCK_BINDING);
-        shader.SetUniform("uNumSamples", GetClampedNumSamples(config));
-        // Emission table from pass 0 on unit 3; the gather texelFetches both
-        // of its rows per sample.
-        mEmissionBuffer.BindTexture(3);
-        shader.SetUniform("uEmission", 3);
-    }
-
-    void NeonRenderer::bindGatherBuffer(ShaderProgram &shader, const glm::vec2 &uvScale, const glm::vec2 &uvOffset)
-    {
-        // Attachment 1 exists only with segments; without them this binds
-        // texture 0, which the shader's uSegmentCount branch never reads.
-        mGatherBuffer.BindTexture(3, 0);
-        shader.SetUniform("uGather", 3);
-        mGatherBuffer.BindTexture(4, 1);
-        shader.SetUniform("uGatherSeg", 4);
-        shader.SetUniform("uGatherUVScale", uvScale);
-        shader.SetUniform("uGatherUVOffset", uvOffset);
-    }
-
-    bool NeonRenderer::renderGatherPass(const glm::mat4 &mvp, int gatherWidth, int gatherHeight, float scale,
+    bool NeonRenderer::renderGatherPass(const glm::mat4 &mvp, const glm::ivec2 &texels, float scale,
                                         const Config &config)
     {
         // A reduced-size target, so the host's scissor is in the wrong
-        // coordinates here - see renderNeonPass.
+        // coordinates here - see renderShadePass.
         GLUtils::NoScissorScope noScissor(true);
 
         // Attachment 0 holds the hue and the arc coverage, attachment 1 the
         // segments' - only when there ARE segments, keyed on the count so an
         // animation that moves segments never reallocates.
+        //
+        // In the best format the driver gives (GATHER_FORMATS), resumed from
+        // mGather.format: the buffer is released whenever the glow has nothing
+        // to draw (OnConfigChanged), so its own attachment cannot record how
+        // far down the list a driver forced it.
         const int attachments = mEffectiveSegments.empty() ? 1 : 2;
-        if (!resizeGatherBuffer(gatherWidth, gatherHeight, attachments))
+        if (!ResizeInBestFormat(mGather.buffer, GATHER_FORMATS, std::size(GATHER_FORMATS), mGather.format, texels.x,
+                                texels.y, GL_LINEAR, attachments, "gather",
+                                "Below resolutionScale 1.0 the glow reads up to ~2/255 further from 1.0."))
         {
             return false;
         }
-        mGatherBuffer.Bind();
-        mGatherBuffer.ClearBuffer();
+        mGather.buffer.Bind();
+        mGather.buffer.ClearBuffer();
 
         // The SAME transform as pass 1 - its scaled space, its samples -
         // drawn onto a smaller buffer: the ortho maps the scaled viewport onto
@@ -2970,15 +4296,206 @@ namespace EdgeLighting
         // The shape uniforms only, not uploadNeonUniforms: everything else is
         // shading, which neon-gather.frag does not have, and ShaderProgram
         // logs an error for each uniform it is handed that the program lacks.
-        mNeonGatherShader.Use();
-        uploadShapeUniforms(mNeonGatherShader, mvp, scale, config);
-        bindGatherInputs(mNeonGatherShader, config);
-        mGatherVertexArray.DrawArrays(GL_TRIANGLES, mGatherVertexCount);
-        mNeonGatherShader.Unuse();
+        mGatherShader.Use();
+        uploadShapeUniforms(mGatherShader, mvp, scale, config);
+        bindGatherInputs(mGatherShader, config);
+        mGatherMesh.Draw();
+        mGatherShader.Unuse();
         return true;
     }
 
-    void NeonRenderer::renderOpaqueFill(int viewportWidth, int viewportHeight, const Config &config)
+    bool NeonRenderer::renderFieldPass(const glm::mat4 &mvp, const glm::ivec2 &texels, const UVMap &gatherUV,
+                                       float scale, float time, const Config &config)
+    {
+        // An offscreen target: the host's scissor is in the wrong coordinates
+        // here - see renderShadePass.
+        GLUtils::NoScissorScope noScissor(true);
+
+        // Half float: Fa, and Fs beside it with segments (GetFieldFormat). No
+        // 8-bit fallback: Fa runs well past 1 and the tone map is steep near 0,
+        // so 8 bits would move whole levels - a driver that cannot render to
+        // half float shades directly instead. NEAREST: the composite reads one
+        // texel per fragment, its own.
+        const FieldFormat format = GetFieldFormat(mEffectiveSegments);
+        if (!mGlowField.buffer.Resize(texels.x, texels.y, format.internalFormat, format.format, GL_HALF_FLOAT,
+                                      GL_NEAREST))
+        {
+            LOG_E("NeonRenderer: no half-float target for the hue-invariant field - the glow is shaded directly.");
+            return false;
+        }
+        // Cleared to 0: a texel neon.frag discards composites to nothing.
+        mGlowField.buffer.Bind();
+        mGlowField.buffer.ClearBuffer();
+
+        // Every uniform pass 1b takes, from the same upload, so the bake shades
+        // exactly what that pass would, with the hue at 1.
+        mFieldBakeShader.Use();
+        uploadNeonUniforms(mFieldBakeShader, mvp, scale, time, mGlowLimits, true, config);
+        bindGatherBuffer(mFieldBakeShader, gatherUV);
+        mGlowMesh.Draw();
+        mFieldBakeShader.Unuse();
+        return true;
+    }
+
+    bool NeonRenderer::renderShadePass(const glm::mat4 &mvp, const glm::ivec2 &texels, const UVMap &gatherUV,
+                                       float time, const Config &config)
+    {
+        const float scale = GetClampedResolutionScale(config);
+
+        // mScaledBuffer is a reduced-size copy of the viewport, so a host
+        // scissor box - in the CALLER's window coordinates - lands on the
+        // wrong texels of it. The clear and the shading below would skip
+        // everything outside the box, and pass 2b would then read the region
+        // the box maps DOWN to, which is a different region again and one
+        // nothing wrote this frame: last frame's pixels, blitted back under
+        // the host's clip. See GLUtils::NoScissorScope. The blit and the ring
+        // get the host's clip back once this scope ends, which is before Render
+        // calls them.
+        GLUtils::NoScissorScope noScissor(true);
+        if (!bindScaledTarget(texels))
+        {
+            return false;
+        }
+
+        // Pass 1b's own program object - the ring's is the same source, but
+        // draws the caller's framebuffer blended (see ensureGlowPrograms).
+        // The blit applies the cut and the cutoffs to what this writes.
+        mShadeShader.Use();
+        uploadNeonUniforms(mShadeShader, mvp, scale, time, mGlowLimits, true, config);
+        bindGatherBuffer(mShadeShader, gatherUV);
+
+        // Tight glow quad - opaque's far region is covered by the fill pass,
+        // so the shading never runs fullscreen.
+        mGlowMesh.Draw();
+        mShadeShader.Unuse();
+        return true;
+    }
+
+    bool NeonRenderer::renderFieldCompositePass(const glm::mat4 &mvp, const glm::ivec2 &texels,
+                                                const UVMap &gatherUV, float gain)
+    {
+        // Pass 1b's target, set up as renderShadePass sets it up - the host's
+        // scissor lifted, the reduced buffer sized, bound and cleared - for
+        // the same reasons, given there.
+        GLUtils::NoScissorScope noScissor(true);
+        if (!bindScaledTarget(texels))
+        {
+            return false;
+        }
+
+        // The glow quad the shading draws, through its transform: the same
+        // fragments, each reading its own field texel.
+        mFieldCompositeShader.Use();
+        mFieldCompositeShader.SetUniform("uMVP", mvp);
+        mGlowField.buffer.BindTexture(6);
+        mFieldCompositeShader.SetUniform("uField", 6);
+        mFieldCompositeShader.SetUniform("uFieldOrigin", mGlowField.origin);
+        mFieldCompositeShader.SetUniform("uFieldGain", gain);
+        mFieldCompositeShader.SetUniform("uFieldTexelScale", mGlowField.texelScale);
+        mFieldCompositeShader.SetUniform("uFieldSegments", mEffectiveSegments.empty() ? 0 : 1);
+        bindGatherBuffer(mFieldCompositeShader, gatherUV);
+        mGlowMesh.Draw();
+        mFieldCompositeShader.Unuse();
+        return true;
+    }
+
+    bool NeonRenderer::renderRingFieldPass(const UVMap &gatherUV, float time, const Config &config)
+    {
+        // An offscreen target: the host's scissor is in the wrong coordinates
+        // here - see renderShadePass.
+        GLUtils::NoScissorScope noScissor(true);
+
+        // Half float, one channel or two, NEAREST - as the shading's field,
+        // for its reasons (renderFieldPass).
+        const RingFieldLayout &layout = mRingField.layout;
+        const FieldFormat format = GetFieldFormat(mEffectiveSegments);
+        if (!mRingField.buffer.Resize(layout.atlas.x, layout.atlas.y, format.internalFormat, format.format,
+                                      GL_HALF_FLOAT, GL_NEAREST))
+        {
+            LOG_E("NeonRenderer: no half-float target for the edge ring's field - the ring is shaded directly.");
+            return false;
+        }
+        // Cleared to 0: atlas texels no strip covers are never read, and a
+        // texel neon.frag discards composites to nothing.
+        mRingField.buffer.Bind();
+        mRingField.buffer.ClearBuffer();
+
+        // Every uniform the ring takes (renderRingPass), so the bake shades
+        // exactly what pass 2c would - with the hue at 1. Only the transform
+        // changes per strip.
+        mFieldBakeShader.Use();
+        uploadNeonUniforms(mFieldBakeShader, glm::mat4(1.0f), 1.0f, time, mRingLimits, false,
+                           config);
+        bindGatherBuffer(mFieldBakeShader, gatherUV);
+
+        // One draw per strip: the strip's atlas rows as the viewport, and a
+        // projection taking its rect-local px onto them at one texel per px -
+        // translated to the strip's corner and, for the two side strips,
+        // transposed (x and y swapped), so each runs along the atlas.
+        //
+        // What is drawn is the whole BOX, a pixel past it each side, not the
+        // ring: the viewport clips it to the strip, so every texel of every
+        // strip is baked and no edge of the draw passes near a texel centre.
+        // Drawing the ring's own mesh left the composite reading texels the
+        // bake never wrote. A ring edge that snaps onto a pixel centre goes
+        // to one side of it by the rasteriser's fill rule, and transposing a
+        // strip turns a left edge into a bottom one, which that rule hands
+        // the other way: the composite drew the pixel, the bake skipped its
+        // texel, and the cleared 0 composited to nothing - a dark seam a pixel
+        // wide between the ring and the blit, the height of a side strip, on
+        // about 1% of configs on an AMD Radeon Pro 5300M (V24). The box costs
+        // the layout's slack - one to two pixels each side of the band - on a
+        // bake that runs only once a config settles; the frame that bakes
+        // measured no slower.
+        const glm::vec2 boxLo = layout.origin - glm::vec2(1.0f);
+        const glm::vec2 boxHi = layout.origin + glm::vec2(layout.size) + glm::vec2(1.0f);
+        // clang-format off
+        const float boxVerts[] = {
+            boxLo.x, boxHi.y,  boxLo.x, boxLo.y,  boxHi.x, boxLo.y,
+            boxLo.x, boxHi.y,  boxHi.x, boxLo.y,  boxHi.x, boxHi.y,
+        };
+        // clang-format on
+        mRingField.box.Upload(boxVerts, sizeof(boxVerts) / sizeof(float));
+
+        glm::mat4 transpose(0.0f);
+        transpose[0][1] = 1.0f;
+        transpose[1][0] = 1.0f;
+        transpose[2][2] = 1.0f;
+        transpose[3][3] = 1.0f;
+        auto drawStrip = [&](int row, int width, int height, const glm::mat4 &toStrip)
+        {
+            if (width <= 0 || height <= 0)
+            {
+                return;
+            }
+            glViewport(0, row, width, height);
+            mFieldBakeShader.SetUniform(
+                "uMVP", glm::ortho(0.0f, static_cast<float>(width), 0.0f, static_cast<float>(height), -1.0f, 1.0f) *
+                            toStrip);
+            mRingField.box.Draw();
+        };
+        const glm::vec2 o = layout.origin;
+        const glm::ivec4 hole = layout.hole;
+        const int bottom = hole.y;
+        const int top = layout.size.y - hole.w;
+        const int mid = hole.w - hole.y;
+        const int left = layout.rows.y - layout.rows.x;
+        const int right = layout.atlas.y - layout.rows.y;
+        const glm::vec2 sideCorner(o.x, o.y + static_cast<float>(hole.y));
+        drawStrip(0, layout.size.x, bottom, glm::translate(glm::mat4(1.0f), glm::vec3(-o, 0.0f)));
+        drawStrip(bottom, layout.size.x, top,
+                  glm::translate(glm::mat4(1.0f), glm::vec3(-o.x, -(o.y + static_cast<float>(hole.w)), 0.0f)));
+        drawStrip(layout.rows.x, mid, left,
+                  transpose * glm::translate(glm::mat4(1.0f), glm::vec3(-sideCorner, 0.0f)));
+        drawStrip(layout.rows.y, mid, right,
+                  transpose * glm::translate(glm::mat4(1.0f),
+                                             glm::vec3(-(sideCorner.x + static_cast<float>(hole.z)), -sideCorner.y,
+                                                       0.0f)));
+        mFieldBakeShader.Unuse();
+        return true;
+    }
+
+    void NeonRenderer::renderFillPass(int viewportWidth, int viewportHeight, const Config &config)
     {
         // The fragment shader shapes the black coverage from an analytic
         // rounded-box SDF read off gl_FragCoord (highp - exact on Mali/Tizen):
@@ -3025,7 +4542,7 @@ namespace EdgeLighting
         // both cutoffs disabled produces identical output, and that is the
         // DEFAULT cutoff state, so it was the common way into this cost rather
         // than a corner case. @ref setupFillGeometry asks the same function, so
-        // a coverage-1 mode always arrives with mFillVertexCount == 0.
+        // a coverage-1 mode always arrives with an empty mFillMesh.
         //
         // Measured on that BOTH case with debug.opaqueOnly isolating the pass,
         // 3600x2126, min of 200 frames around glFinish: 1.18 ms before the
@@ -3093,11 +4610,9 @@ namespace EdgeLighting
             // through glViewport(x, y, w, h) with a non-zero origin got a
             // different rectangle erased than the one it asked the effect to
             // draw into; erased, note, not merely clipped, which is the worse
-            // way round to be wrong. This IS the host's viewport: on the
-            // scaled path Render has already put back the target and viewport
-            // the offscreen phase moved off (prevTarget.Restore), and nothing
-            // before this pass retargets on the direct path - the emission
-            // pass restores its own.
+            // way round to be wrong. This IS the host's viewport: Render has
+            // already put back the target and viewport the offscreen phase
+            // moved off (prevTarget.Restore).
             GLint vp[4];
             glGetIntegerv(GL_VIEWPORT, vp);
 
@@ -3159,7 +4674,7 @@ namespace EdgeLighting
             return;
         }
 
-        const bool ring = (mFillVertexCount > 0);
+        const bool ring = (mFillMesh.count > 0);
         glm::mat4 fillMvp(1.0f);
         if (ring)
         {
@@ -3168,11 +4683,15 @@ namespace EdgeLighting
             fillMvp = proj * glm::translate(glm::mat4(1.0f), glm::vec3(centerFull, 0.0f));
         }
 
-        mBlackRectShader.Use();
-        mBlackRectShader.SetUniform("uMVP", fillMvp);
-        mBlackRectShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
-        mBlackRectShader.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry));
-        mBlackRectShader.SetUniform("uRectCenter", centerFull);
+        if (!ensureFillProgram())
+        {
+            return;
+        }
+        mFillShader.Use();
+        mFillShader.SetUniform("uMVP", fillMvp);
+        mFillShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
+        mFillShader.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry));
+        mFillShader.SetUniform("uRectCenter", centerFull);
         // The FILL's own cutoff pair, never the glow's - see
         // NeonConfig::opaqueInsideCutoff. Same size, sentinel and softness as
         // setupFillGeometry reads, so the ring bounds exactly what this
@@ -3181,25 +4700,25 @@ namespace EdgeLighting
         // floors its width at `aa`, so a CPU-side clamp would add nothing.
         const Cutoff &fillIn = config.neon.opaqueInsideCutoff;
         const Cutoff &fillOut = config.neon.opaqueOutsideCutoff;
-        mBlackRectShader.SetUniform("uOpaqueMode", static_cast<int>(config.neon.opaqueMode));
-        mBlackRectShader.SetUniform("uInsideCutoff", GetCutoffSize(fillIn));
-        mBlackRectShader.SetUniform("uInsideCutoffSoftness", fillIn.softness);
-        mBlackRectShader.SetUniform("uOutsideCutoff", GetCutoffSize(fillOut));
-        mBlackRectShader.SetUniform("uOutsideCutoffSoftness", fillOut.softness);
-        mBlackRectShader.SetUniform("uOpaqueColor", config.neon.opaqueColor);
+        mFillShader.SetUniform("uOpaqueMode", static_cast<int>(config.neon.opaqueMode));
+        mFillShader.SetUniform("uInsideCutoff", GetCutoffSize(fillIn));
+        mFillShader.SetUniform("uInsideCutoffSoftness", fillIn.softness);
+        mFillShader.SetUniform("uOutsideCutoff", GetCutoffSize(fillOut));
+        mFillShader.SetUniform("uOutsideCutoffSoftness", fillOut.softness);
+        mFillShader.SetUniform("uOpaqueColor", config.neon.opaqueColor);
         if (ring)
         {
-            mFillVertexArray.DrawArrays(GL_TRIANGLES, mFillVertexCount);
+            mFillMesh.Draw();
         }
         else
         {
             mFullscreenVertexArray.DrawArrays(GL_TRIANGLES, 6);
         }
-        mBlackRectShader.Unuse();
+        mFillShader.Unuse();
     }
 
-    void NeonRenderer::renderBlitPass(const glm::mat4 &mvp, const glm::vec2 &centerFull, const glm::vec2 &uvScale,
-                                      const glm::vec2 &uvOffset, const Config &config)
+    void NeonRenderer::renderBlitPass(const glm::mat4 &mvp, const glm::vec2 &centerFull, const UVMap &scaledUV,
+                                      const Config &config)
     {
         // Bilinear upscaling of premultiplied alpha is fringe-free; the blit
         // shader composites over whatever is on the target already (the black
@@ -3211,12 +4730,12 @@ namespace EdgeLighting
         // any edge it draws across 1/scale destination pixels in both
         // directions, which put glow on the dark side of the line and softened
         // every cutoff by a buffer texel. This pass is full-res, so both land
-        // where the direct path puts them. See neon-blit.frag.
+        // where the edge ring puts them. See neon-blit.frag.
         // The area this pass covers can be EMPTY - a one-sided glow, or a
         // cutoff band no wider than the ring, leaves nothing outside the ring
         // that can be lit (setupRingGeometry). That is not a failure to fall
         // back from: drawing anything here would draw over the ring.
-        if (mBlitVertexCount == 0)
+        if (mBlitMesh.count == 0)
         {
             return;
         }
@@ -3224,25 +4743,25 @@ namespace EdgeLighting
 
         // FULL-RES geometry, under the full-res transform Render built for
         // this pass and the ring together - not Render's scaled one; the same
-        // y mirror as @ref renderOpaqueFill, the other always-full-res pass.
+        // y mirror as @ref renderFillPass, the other always-full-res pass.
         // uGlowSideSoftness goes up UNSCALED for the same reason: this pass
         // measures in destination pixels, the gather measures in buffer ones.
         //
         // The area this pass covers is everything outside the edge ring that
-        // can still be lit (setupRingGeometry) - mBlitVertexArray, in full-res
+        // can still be lit (setupRingGeometry) - mBlitMesh, in full-res
         // rect-local px. vPos is then rect-local px rather than NDC, and maps
-        // onto the reduced buffer through @p uvScale / @p uvOffset - its
+        // onto the reduced buffer through @p scaledUV - its
         // region's map (GetBufferRegion), which Render derives with the region.
         // The ring finds its gather texels the same way.
         mBlitShader.SetUniform("uMVP", mvp);
-        mBlitShader.SetUniform("uUVScale", uvScale);
-        mBlitShader.SetUniform("uUVOffset", uvOffset);
+        mBlitShader.SetUniform("uUVScale", scaledUV.scale);
+        mBlitShader.SetUniform("uUVOffset", scaledUV.offset);
         mBlitShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
         mBlitShader.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry));
         mBlitShader.SetUniform("uRectCenter", centerFull);
         mBlitShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
         mBlitShader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness);
-        // The four values renderNeonPass gives neon.frag, without the scale. A
+        // The four values renderShadePass gives neon.frag, without the scale. A
         // disabled side goes up as the sentinel, and the shader works out for
         // itself which side glowSide subsumes, exactly as neon.frag does.
         mBlitShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
@@ -3251,18 +4770,17 @@ namespace EdgeLighting
         mBlitShader.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness);
 
         // Just bind it. The filter is requested through Resize in pass 1b
-        // (renderNeonPass), so this pass sets no texture parameters at all.
+        // (renderShadePass), so this pass sets no texture parameters at all.
         mScaledBuffer.BindTexture(0);
         mBlitShader.SetUniform("uSource", 0);
 
-        mBlitVertexArray.DrawArrays(GL_TRIANGLES, mBlitVertexCount);
+        mBlitMesh.Draw();
         mBlitShader.Unuse();
     }
 
-    void NeonRenderer::renderRingPass(const glm::mat4 &mvp, const glm::vec2 &gatherUVScale,
-                                      const glm::vec2 &gatherUVOffset, float time, const Config &config)
+    void NeonRenderer::renderRingPass(const glm::mat4 &mvp, const UVMap &gatherUV, float time, const Config &config)
     {
-        if (mRingVertexCount == 0)
+        if (mRingMesh.count == 0)
         {
             return;
         }
@@ -3271,20 +4789,44 @@ namespace EdgeLighting
         // matrix the blit drew with (@p mvp, built once in Render), so the
         // ring lands exactly in the hole the blit area leaves.
 
-        // Every shading uniform exactly as the DIRECT path uploads it - scale
-        // 1.0, so the Nyquist floor is off and the cut and cutoffs are applied
-        // in the shader - fading against the direct path's margin rather than
-        // the scaled one. The segment and arc blocks are still bound from
+        // Every shading uniform at scale 1.0, as if the whole glow were drawn at
+        // full resolution - so the Nyquist floor is off and the cut and the
+        // cutoffs are applied in the shader (uBlitOwnsCut 0) - fading against
+        // the ring's own margin rather than pass 1b's. The segment and arc blocks are still bound from
         // packLightBlocks; the LUTs are bound by the upload.
-        mNeonRingShader.Use();
-        uploadNeonUniforms(mNeonRingShader, mvp, 1.0f, time, mRingQuadMargin, config);
+        mRingShader.Use();
+        uploadNeonUniforms(mRingShader, mvp, 1.0f, time, mRingLimits, false, config);
 
         // What the gather pass produced, in place of running the loop here -
         // the same buffer pass 1 shaded from, through the same region, here
         // mapped from full-res px.
-        bindGatherBuffer(mNeonRingShader, gatherUVScale, gatherUVOffset);
+        bindGatherBuffer(mRingShader, gatherUV);
 
-        mRingVertexArray.DrawArrays(GL_TRIANGLES, mRingVertexCount);
-        mNeonRingShader.Unuse();
+        mRingMesh.Draw();
+        mRingShader.Unuse();
     }
+
+    void NeonRenderer::renderRingFieldCompositePass(const glm::mat4 &mvp, const UVMap &gatherUV, float gain,
+                                                    const Config &config)
+    {
+        // The ring the blit left its hole for, through the blit's matrix, each
+        // fragment reading its own pixel's texel of the packed field - and,
+        // like the ring's own shading at scale 1.0, the rect's shape and the
+        // cut and cutoffs it multiplies in after the tone map.
+        const RingFieldLayout &layout = mRingField.layout;
+        mRingFieldCompositeShader.Use();
+        uploadShapeUniforms(mRingFieldCompositeShader, mvp, 1.0f, config);
+        UploadEdgeMaskUniforms(mRingFieldCompositeShader, 1.0f, config, true);
+        mRingField.buffer.BindTexture(7);
+        mRingFieldCompositeShader.SetUniform("uField", 7);
+        mRingFieldCompositeShader.SetUniform("uRingLo", layout.origin);
+        mRingFieldCompositeShader.SetUniform("uRingHole", glm::vec4(layout.hole));
+        mRingFieldCompositeShader.SetUniform("uRingRows", glm::vec2(layout.rows));
+        mRingFieldCompositeShader.SetUniform("uFieldGain", gain);
+        mRingFieldCompositeShader.SetUniform("uFieldSegments", mEffectiveSegments.empty() ? 0 : 1);
+        bindGatherBuffer(mRingFieldCompositeShader, gatherUV);
+        mRingMesh.Draw();
+        mRingFieldCompositeShader.Unuse();
+    }
+
 }

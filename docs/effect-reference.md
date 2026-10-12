@@ -5,9 +5,8 @@ you get with the default `Config()`, and how each field in the config affects
 the rendered pixels.
 
 This document is a reader-facing complement to
-[`architecture-design.md`](architecture-design.md) (which explains *how* the
-code is put together) - here we focus on *what the parameters do to the
-picture*.
+[`implementation.md`](implementation.md) (which explains *how* the code is put
+together) - here we focus on *what the parameters do to the picture*.
 
 Field defaults come from [`lib/include/core/config.h`](../lib/include/core/config.h);
 tuning constants from
@@ -280,10 +279,11 @@ against.
 - `0.5` = one full lap of the perimeter every 2 seconds (default).
 - `~2+` = clearly kinetic; useful for arcade / marching-lights vibes.
 
-Also drives the per-arc gradient sample when arcs have their own stops:
-inside an arc, the arc's LUT scrolls through the arc's window at the same
-rate (see [`multiple-arcs-design.md`](multiple-arcs-design.md) for the
-sampling model).
+It does NOT move an arc's own stops (`Arc::colorStops`): those are laid along
+the arc from head to tail, so there is nothing to rotate, and scrolling them
+used to slide the gradient off one end and seam it mid-edge (V3 in
+[`review-findings.md`](review-findings.md)). An arc's gradient moves by moving
+the arc, or by animating its stops.
 
 **`neon.colorTransitionDuration`** (default 0.3 s)
 Seconds to cross-fade the *baked LUT* when the colour stops or blend space
@@ -450,6 +450,17 @@ layer that is already cheap at 1.0 - a tight cutoff band, a one-sided glow -
 can render slower below 1.0, and a soft filament (`filamentFalloff` below
 ~0.3) makes the ring wide. Measure on the target before lowering it.
 
+And at 1.0, with no segments and stops whose alpha a rotating hue cannot move,
+the renderer bakes the glow's hue-invariant field once the config holds and
+only composites the gathered hue after that (I46 in `review-findings.md`):
+there 1.0 is the cheapest scale on still frames and with the hue rotating, and
+a reduced scale pays only on frames whose config animates, with segments, or
+for a very small rect. The field costs ~3.3 MB at 1080p for a 960 x 540 rect.
+See `docs/neon-perf-plan.md` section 11. Below 1.0 the same field stands in for
+the reduced-scale shading on hue-rotating frames (I50): 1.55x on those frames
+at 0.5, for 0.84 MB more on that rect - which narrows the gap without closing
+it, since the blit and the ring are full-resolution costs it does not touch.
+
 **`neon.numSamples`** (default 128)
 Number of gather-loop samples per fragment, capped at `NEON_MAX_LOOP_SAMPLES`
 (128), which sizes both the UBO and the shader's array. The samples are spread
@@ -595,5 +606,5 @@ If you need to *animate* one of these fields rather than set it, the
 `FieldBoundAnimation` + `Modulator` family lets you plug an oscillator, an
 ease, or a sequence into any of the animatable fields listed in
 [`field-bound-animation.h`](../lib/include/animation/field-bound-animation.h).
-See [`architecture-design.md`](architecture-design.md) for the animation
+See [`implementation.md`](implementation.md) section 8 for the animation
 model.

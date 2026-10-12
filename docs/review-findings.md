@@ -35,9 +35,9 @@ old fork survived.
 | | fixed | open |
 | - | ----- | ---- |
 | visual | V1, V2, V3, V4, V6, V7 | V5 (closed as a documented limitation) |
-| implementation | I1, I3, I4, I6, I7 | I2 (declined), I5 (documented), I8 (audited) |
-| second pass | R1, R2, R3, R4, R5, R6 | R7 |
-| third pass | V8, I9, I10, I11, I12 (partly) | V9, I12's two stale design docs |
+| implementation | I1, I2 (by I39), I3, I4, I6, I7 | I5 (documented), I8 (audited) |
+| second pass | R1, R2, R3, R4, R5, R6, R7 | - |
+| third pass | V8, I9, I10, I11, I12 | V9 |
 | fourth pass | I14 | I13 |
 | fifth pass | I15 | - |
 | sixth pass | I16, I17, I19, I20 | I18 |
@@ -570,7 +570,7 @@ character rather than on whoever next builds for a GLES target. Verified by
 appending a U+2192 to `neon-blit.frag` and confirming the configure fails with
 the file named.
 
-### I2. The emission pre-pass re-bakes unconditionally every frame - DECLINED FOR NOW
+### I2. The emission pre-pass re-bakes unconditionally every frame - DECLINED, THEN FIXED BY I39
 
 The table is a pure function of `(si, uTime, config)` - the pass's own stated
 invariant. When `hueRotationRate` is 0 and no animation is attached, `uTime`
@@ -597,6 +597,11 @@ attribute later.
 Worth revisiting if a profile ever puts the pass on the critical path - the
 invalidation inputs are all already tracked by the existing dirty flags, so it
 is a contained change when there is evidence for it.
+
+**Since fixed, as I39.** The skip itself landed earlier (`isEmissionTableStale`,
+with a flag set on every config change); I39 removed that last wide term
+without the risk recorded above, by keying the table on version numbers of the
+GL objects the pass binds rather than on config fields.
 
 ### I3. Registering both neon renderers doubles the CPU-side work - FIXED
 
@@ -810,7 +815,7 @@ the intended `uResolutionScale` corrections. `PackArcFlags` and
 
 What follows is what the pass turned up. R1 to R6 have since been fixed, each
 keeping its original description so the reasoning stays readable next to the
-change. R7 is open.
+change. R7 was open until the twenty-sixth pass, and is fixed too.
 
 ### R1. `Initialize()` promises a re-entry guarantee it does not implement - FIXED
 
@@ -1057,7 +1062,7 @@ resolution", so the warning would have fired on every scaled frame. `Shift+O`
 now toggles the scale between 1.0 and 0.5. The lens-flare pair still warns, and
 still needs to.
 
-### R7. The halo and bloom band into 8-bit contours - OPEN
+### R7. The halo and bloom band into 8-bit contours - FIXED
 
 Both wide layers are smooth, very low-slope gradients - the bloom falls as
 `1/D` - so over most of their reach they cross an 8-bit quantisation step only
@@ -1124,6 +1129,72 @@ implementation of exactly this existed in the working tree before the pull that
 brought `17745a9` in, as an `OUTPUT_DITHER_LSB` constant in `neon-tuning.h`
 plus the shader blocks. It is not in the tree now. Whether that was deliberate
 or lost is not something I can tell from here, so nothing has been re-applied.
+
+**Fixed (2026-10-08, twenty-sixth pass)**, after a user report of "many
+banding circles" on a demo capture (V23's scene: 1800 x 1063 rect, glowRadius
+5, bloom 0.52, scale 0.125) - the rings round the corners are plain at 3x
+contrast. Two changes, both needed:
+
+- **The dither** - `neonDither` in `neon-grade.glsl`, interleaved gradient
+  noise in +/- half a level (`OUTPUT_DITHER_LSB` 1.0), on the colour of the
+  three writes to the caller's framebuffer: the blit, the edge ring
+  (`neon.frag` with `uBlitOwnsCut` 0) and the ring field's composite. As the
+  note above says, not in an offscreen buffer; not on alpha either, which over
+  a bright background would cancel it through the premultiplied blend.
+- **A half-float reduced buffer** (`SCALED_FORMATS`: RGBA16F, RGBA8 where the
+  driver will not render to it). The note above predates the unified renderer:
+  every pixel the blit draws now comes through `mScaledBuffer`, at every scale,
+  and in RGBA8 the tails are already one-level plateaus there - noise on an
+  exact level rounds back to it. Measured: dither with an RGBA8 buffer leaves
+  the widest plateau on the centre row at 13-18 px outside and 30-35 inside,
+  and the rings visible.
+
+Centre row of the reported scene, from the line out to the glow's end:
+
+| | level changes | mean plateau | widest outside | widest inside |
+| - | ------------: | -----------: | -------------: | ------------: |
+| before (V23 only) | 92 | 3.2 px | 17 px | 32 px |
+| dither, RGBA8 buffer | 143 | 2.0 px | 13 px | 30 px |
+| dither, RGBA16F buffer | 156 | 1.9 px | 7 px | 10 px |
+
+The mean is preserved: 32 x 32 block means move by -0.01 levels on average,
+0.3 at worst. `check`: reduced scales against 1.0 moved toward it (several
+cells 2 -> 1, the RGBA8 rounding gone); 1.0 against the committed images adds
+one drift past the bound (`arcs`, 2 -> 3) to V23's five. On 2026-10-09 the
+comparison page was regenerated after both, as its README describes - against
+`542dad4` again, whose metrics reproduced the page's to the level - and `check`
+passes, drift 0 on all twelve; the guide's figures were rerun too (58 of 68
+moved). `partition` passes
+(seeds 1 and 7); the hue field's composite stays within 1 level of direct
+shading. `PassRecorder` told pass 1b from the field bake by a float target;
+it now asks for alpha bits (the field has none), and the guide's 68 figures
+render as before.
+
+**Cost**, still frames, Apple M2 Pro, GPU time by timer query with a flush per
+frame, median of 200 frames and of three rotated runs, in ms:
+
+| scene | scale | before | + half float | + dither | both |
+| ----- | ----- | -----: | -----------: | -------: | ---: |
+| reported, 3600 x 2126 | 1.0 | 0.185 | 0.311 | 0.184 | 0.307 |
+| | 0.5 | 0.095 | 0.117 | 0.110 | 0.131 |
+| | 0.125 | 0.074 | 0.078 | 0.103 | 0.102 |
+| 960 x 540 at 1080p | 0.5 | 0.013 | 0.011 | 0.022 | 0.020 |
+| | 0.125 | 0.013 | 0.012 | 0.022 | 0.023 |
+| 800 x 500 at 1080p | 0.5 | 0.005 | 0.011 | 0.019 | 0.021 |
+| | 0.125 | 0.008 | 0.010 | 0.024 | 0.019 |
+
+The half-float buffer costs at 1.0 (the blit reads twice the bytes of a
+full-size buffer) and little below 0.5. The dither costs ~0.01 ms a frame at
+1080p at every scale, and more on a larger frame: it tracks the noisy area of
+the CALLER'S framebuffer, not the scale, which is what noise defeating the
+GPU's lossless framebuffer compression would do - an inference, not measured
+directly. Small in absolute terms, but 1.5-4x on still frames that were
+already cheap, and unmeasured on a Mali tiler, where framebuffer compression
+matters more. Memory: the reduced buffer doubles, 1.6 -> 3.2 MB for an
+800 x 500 rect at 1080p at 0.5. `neon-scale-check time` could not resolve
+any of this - its still figures read 0.74-0.87x for a build whose only change
+was an unused function in the blit's source, which the timer query puts at no
+cost; use a timer query for still frames.
 
 ---
 
@@ -1444,7 +1515,7 @@ that was actually uploaded rather than the arguments that were asked for -
 otherwise a caller repeatedly passing `width = 1` would re-bake every frame,
 because the stored `mBakedWidth` (2) would never match the request.
 
-### I12. Comments still name the functions the LUT refactor removed - PARTLY FIXED
+### I12. Comments still name the functions the LUT refactor removed - FIXED
 
 The refactor deleted `rebuildGradientLUT`, `rebuildSegmentLUT`, `rebuildArcLUT`,
 `uploadGradientLUT`, `IsAtlasDirty`, `mBakedArcs` and `mBakedSegments`. Several
@@ -1473,8 +1544,8 @@ comments:
 
 | file | stale reference |
 | ---- | --------------- |
-| [`architecture-design.md`](architecture-design.md) | `if (lutDirty) { rebuildGradientLUT(config); }` in the `OnConfigChanged` pseudo-code |
-| [`multiple-arcs-design.md`](multiple-arcs-design.md) | `mBakedArcs` and `rebuildArcLUT` in the design sketch and the file-by-file change list |
+| `architecture-design.md` (removed) | `if (lutDirty) { rebuildGradientLUT(config); }` in the `OnConfigChanged` pseudo-code |
+| `multiple-arcs-design.md` (removed) | `mBakedArcs` and `rebuildArcLUT` in the design sketch and the file-by-file change list |
 
 `architecture-design.md` is already flagged in `CLAUDE.md` as predating the
 droplets and lens-flare renderers, and `multiple-arcs-design.md` is a design
@@ -1482,6 +1553,12 @@ document describing an implementation as it was proposed, so neither is quite
 the same class of problem as a wrong comment sitting next to live code.
 `neon-renderer-reference.html` was updated with the refactor and correctly
 describes `GradientRingLUT`.
+
+**Closed 2026-10-09** by removing both documents in a stale-docs cleanup:
+`multiple-arcs-design.md` described a design as proposed, before the arcs
+shipped and changed, and `architecture-design.md`'s still-current parts (the
+coordinate spaces and the (0, 0) viewport assumption, the demos, the C ABI's
+lifecycle and conventions) moved into `implementation.md`.
 
 ### How the implementation items were verified
 
@@ -3920,6 +3997,1284 @@ byte-identical to a fresh effect at every step, and byte-identical to the
 library before both changes at every step. `neon-scale-check check` and
 `partition` pass; no new log line in either.
 
+## Twenty-first pass (the perf plan's first items)
+
+Items 4, 6 and 7 of [`neon-perf-plan.md`](neon-perf-plan.md) (I39-I41), and
+items 5 and 10 (I42, I43), measured on an
+Apple M2 Pro with `neon-scale-check time` and its new `--mode` (item 2 of the
+plan): three interleaved rounds per mode, five for `hue` and `segment-travel`,
+1920 x 1080, median. Numbered from I39 because I35-I38 are already taken, for
+other findings, on the `improve_scale_visual2` and `design_threaded_model`
+branches.
+
+Verified for all three together: a long-lived effect walked through 212 frames
+- holds, every kind of input change, a colour cross-fade in flight, the hue
+with the clock running and stopped, scales 1.0, 0.5 and 0.25, a viewport
+resize, disable and re-enable - byte-identical to the library before them at
+every frame; `neon-scale-check check` unchanged and passing; `partition`
+passing on seeds 1 and 2; a full build (library, C ABI, both demos, both tools)
+with no new warning.
+
+### I39. The emission table re-baked on every config change - FIXED
+
+`OnConfigChanged` set `mEmissionDirty` unconditionally, so an intensity, bloom,
+glow, geometry or other-layer animation re-ran pass 0 every frame for a table
+none of those move. I2 had declined gating it on the config fields the shader
+reads, because such a list drifts from the shader and a missed field is a
+silently stale ring.
+
+The table is now keyed on what its pass BINDS (`EmissionInputs`,
+`currentEmissionInputs`): `uHueRotationRate` and the clamped `uNumSamples` by
+value, the three LUTs by `BaseLUT::GetUploadCount` and the two light blocks by
+`UniformBuffer::GetUploadCount` - new counters, moved by every LUT upload and
+by every block upload that changed the bytes. No config field is named, so
+none can be missed; a cross-fade frame moves the ring's count like a re-bake,
+which retired the `Update`-side flag too. `mEmissionDirty` is gone
+(`mEmissionBaked` covers the first frame). `Render` now packs the light blocks
+before asking, since their counts are part of the key.
+
+Under `--mode intensity` the cutoff band, the one check scene that keeps its
+gather inline at 1.0 (so the re-bake was its only offscreen pass), reads 1.12x
+/ 1.15x / 1.18x at 1.0 / 0.5 / 0.25 (0.266 -> 0.237 ms at 1.0); every other
+scene 1.00x-1.05x. On the AMD Radeon Pro 5300M, whose first offscreen pass of a
+frame costs ~0.15 ms, the band should gain more - not measured.
+
+### I40. The offscreen passes re-ran on frames where nothing moved - FIXED
+
+The gather (pass 1a) and, below 1.0, the reduced-scale shading (pass 1b) ran
+every frame, although both are pure functions of the config, the viewport, the
+two tables they read and - through the hue - the time, and both buffers
+persist. `mOffscreenCurrent` now skips both when nothing moved: cleared by
+`OnConfigChanged` on any change, honoured only when the emission table is
+current, the glow coverage table needs no bake and the viewport matches
+`mOffscreenViewport`. Such a frame takes no `RenderTargetState` capture and
+never leaves the caller's framebuffer.
+
+`--mode still`, before -> after:
+
+| scale | geometric mean | range over the twelve scenes |
+| ----- | -------------: | ---------------------------: |
+| 1.0 | 1.15x | 1.03x (`bounded_band`) - 1.47x (`small_rect`) |
+| 0.5 | 3.84x | 2.20x (`bounded_band`) - 6.63x (`small_rect`) |
+| 0.25 | 2.54x | 1.93x (`bounded_band`) - 4.41x (`small_rect`) |
+
+(`default` at 0.5: 0.295 -> 0.073 ms.) Moving frames cannot reuse and do not
+pay: `hue` 0.999x-1.002x and `segment-travel` 1.000x-1.001x geometric mean over
+five rounds, no cell outside 0.97x-1.02x. A three-round run had shown `hue` at
+0.94x on `segments`; five rounds put it at noise. The split's area gate
+(`FULL_RES_SPLIT_MIN_AREA_PX`) is unchanged: an animated frame still leaves the
+caller's target.
+
+### I41. The gather's segment sampler was bound to texture 0 - FIXED
+
+Without segments the gather buffer has one attachment, and `bindGatherBuffer`
+bound "attachment 1" - texture 0 - to `uGatherSeg` on unit 4. The shader never
+reads it then, but Apple's driver logged `unit 1 GLD_TEXTURE_INDEX_2D is
+unloadable ... using zero texture` on every split or scaled run with no
+segment, in `check`, `partition` and every probe of that kind. Attachment 0 is
+bound in its place, as I33 did for unit 5. The log line is gone from `check`,
+`partition` and the 212-frame walk, whose frames are unchanged.
+
+### I42. The glow coverage table re-baked whole for a light that reached part of it - FIXED
+
+Item 5 of [`neon-perf-plan.md`](neon-perf-plan.md). Every texel of
+`neon-glow-cover.frag` integrates the arcs' and segments' coverage over its own
+piece of the outline and nothing else (`pieceCover` clips each trapezoid and
+bell to the piece and normalises by the kernel's mass over it), yet any change
+to either light block re-baked all 1024 x 128 texels - ~0.16 ms a frame on an
+Apple M2 Pro under a travelling segment, more than half the production band's
+frame.
+
+`mGlowCoverDirty` is now a mask, one bit per piece. `OnConfigChanged` packs the
+old and new light blocks with the uploader's own packers (`PackArcBlock`,
+`PackSegmentBlock`, so the abut flags a neighbour's move changes are compared
+too) and marks the pieces each changed light's old and new support meets
+(`GetGlowCoverDirtyPieces`, through `GetGlowCoverPieceSpans`, a mirror of the
+bake's piece placement): an arc's trapezoid inside [start - tail feather, start
++ length + head feather], a segment's bell inside position +/- the bake's own
+reach. All eight on a shape, winding or glow radius change, on a change to the
+brightest arc's intensity - `arcsOnPiece` clamps every piece to it - and for an
+arc or bell covering the whole ring. `renderGlowCoverPass` draws its quad onto
+each dirty band's rectangle through an MVP: the bake keys off `gl_FragCoord`,
+so a texel-aligned rectangle writes exactly its texels, and no scissor state is
+touched (`NoScissorScope` restores the enable flag, not the box).
+
+Verified texel for texel: a long-lived effect through 300 random arc and
+segment edits per seed - moves, lengths, intensities, abutting arcs, full
+rings, uniform stretches, shape, winding and glow changes - read back as floats
+against a fresh effect's full bake of the same config, 788 tables over three
+seeds, 0 differing, 343 of the frames re-baked in more than one rectangle. The
+check catches the bug it is for: dropping the old supports mismatched 44 of 132
+tables. The 212-frame walk of I39-I41 stays byte-identical, `check` unchanged,
+`partition` passing.
+
+Timing, `neon-scale-check time` against `f7465fc`, five interleaved rounds:
+
+| mode | 1.0 | 0.5 | 0.25 |
+| ---- | --: | --: | ---: |
+| `segment-travel` | 1.07x (1.02-1.12x) | 1.12x (1.06-1.21x) | 1.15x (1.10-1.26x) |
+| `arc-wipe` | 1.01x | 1.01x | 1.01x |
+| `still` | 1.00x | 1.00x | 1.00x |
+
+and on the plan's 1840 x 1000 band, `segment-travel`, 0.283 -> 0.220 ms at 1.0
+(1.29x) and 1.28x at 0.5. Less than the plan's one-band upper bound (1.91x),
+for a reason in the bake rather than here: it cuts a segment's bell at
+`5 / sqrt(2)` of its invSigma, so a segment of length 0.1 reaches +/-0.18 of the
+ring and usually meets three to five pieces. Cutting the bell nearer - the
+emission pass already drops a bell under 0.005 of its boost - would shrink that,
+but would change texels, so it waits on `check`'s headroom (the plan's item 1).
+An arc wipe gains little because the whole arc's span is marked when its length
+moves; marking only the moving end is possible (the plateau between the two is
+unchanged at equal intensity and feathers) but the arcs' bake is the cheap half.
+
+### I43. The glow coverage table held 1 MB however little of it was in use - FIXED
+
+Item 10 of [`neon-perf-plan.md`](neon-perf-plan.md), its first and third
+bullets. Two things kept the renderer's largest allocation larger, and longer,
+than anything read:
+
+- **Four channels with nothing in two of them.** `.b` / `.a` carry the
+  segments' halo and bloom coverage, and a config with no segments bakes zeros
+  there - most partly lit rings (an arc wipe, an outline tracer). The table is
+  now RG16F (RG8 fallback, `GLOW_COVER_FORMATS_RG`, the same tiers as the
+  RGBA list) while there are no segments: 0.5 MB. `glowCoverAt` zeroes `.b` /
+  `.a` when `uSegmentCount` is 0, because a two-channel texture samples alpha
+  as 1, which the decode would turn into 1024. Segments appearing reallocate it
+  at four channels (every piece dirty); segments leaving keep four, so a
+  transient segment cannot reallocate the table each time it comes and goes.
+- **Kept for the life of the layer.** I33 deliberately kept the table through
+  a uniformly lit stretch, since an arc animation reaching length 1 passes
+  through one every loop. `Update` now releases it once it has gone unread for
+  `GLOW_COVER_RELEASE_SECONDS` (5 s of frame time): the loop keeps its table,
+  a ring that has settled gives its memory back.
+
+Measured, live texture bytes on an Apple M2 Pro: an arcs-only partly lit ring
+0.58 MB (1.08 before); with a segment 1.15 MB; after 6 s lit uniformly 0.08
+MB, where it used to hold 1.08 for good. Exact: the 212-frame walk and the 788
+coverage tables of I42 unchanged (the table check now compares `.rg` alone
+where there are no segments, the two layouts differing only in the alpha they
+read back); the frame drawn from a table re-allocated after a release is
+byte-identical to a fresh effect's; `check` unchanged, `partition` passing.
+Timing 0.99x-1.00x in every mode - the halved fetch did not make the glow fix
+cheaper on this GPU, which fits the plan's attribution of that cost to the
+arithmetic around the fetch rather than to its bytes.
+
+### I44. The split's gate was calibrated on one GPU and cost another up to 4.75x - CHANGED
+
+`FULL_RES_SPLIT_GATHER_MAX_SCALE` (0.5) and `FULL_RES_SPLIT_MIN_AREA_PX`
+(140000) were the AMD Radeon Pro 5300M's crossovers, set when a still frame
+still re-ran the gather every frame and that GPU charged ~0.15 ms for leaving
+the caller's framebuffer. On an Apple M2 Pro that charge is ~6 us, and after
+I40 a still frame does not leave it at all: the split won at every size and in
+every mode there (`neon-perf-plan.md` section 10.2), and the gate kept the loop
+inline exactly where it lost - small glows and cutoff bands under ~1100 px.
+
+On the owner's decision the constants are now the M2's, 1.0 and 0: every rect
+splits at 1.0. `bounded_band`, the one check scene that changed path, renders
+3.5-3.7x faster still and 1.7-2.4x moving; nothing else moved. Configs that
+switch path move by 1/255 (`check` passes). The price is memory on small rects:
+a 40 x 24 rect whose glow fills a 1080p frame holds a 16 MB gather buffer (33
+MB with segments) where it held none; the production band holds 0.06 MB. The
+AMD's values are recorded in `neon-tuning.h` for a GPU that needs them back.
+Full numbers in `neon-perf-plan.md` section 10.6.
+
+### I45. A uniformly lit ring computed its perimeter position for nothing - FIXED
+
+Target B of [`neon-perf-plan.md`](neon-perf-plan.md) section 11. `neon.frag`
+called `perimeterPosition` - an `atan` and a cascade of branches - and read the
+gradient ring's alpha at the result, for every fragment. The position feeds only
+the segment loop, the arc loop (where an arc over the whole ring returns before
+reading it) and that alpha read, which an opaque ring answers with 1.0
+whatever the position. So on the default config - one full arc, no segments,
+opaque stops - both were dead work: ~9% of the frame by the section's
+attribution.
+
+`uPerimeterUnread` now skips both, set by the CPU (`IsPerimeterUnread`) when
+there are no segments, every lit arc covers the whole ring with no stops of
+its own (its length tested a hair more strictly than `arcCoverContinuous`
+does), and the ring as uploaded is opaque at every texel
+(`GradientRingLUT::IsOpaque`, recomputed on every upload, cross-fade frames
+included). Add a reader of `sPos` to `neon.frag` and this test has to know.
+
+Measured, `neon-scale-check time` against the tree before it, three
+interleaved rounds: the default scene with the hue rotating 0.633 -> 0.568 ms
+at 1080p (1.11x) and 0.507 -> 0.402 at 720p; the twelve scenes' geometric mean
+at 1.0 1.06-1.08x; scenes it does not engage on (`arcs`, `segments`, an arc
+wipe) unchanged. Output: byte-identical on every frame of the 212-frame walk
+where it engages - hue time and a colour cross-fade included. Where it does
+not, 4 of the walk's configs (partial arcs, segments) move 1-2 pixels by 1
+level: the branch around `perimeterPosition` changes how the compiler
+schedules its arithmetic, in all three forms tried (a branch at the call, an
+early return inside the function, the alpha read left unconditional).
+`check` unchanged, `partition` passing.
+
+### I46. Every frame at 1.0 re-shaded a glow whose only moving part is its hue - FIXED
+
+Target A of [`neon-perf-plan.md`](neon-perf-plan.md) section 11. At scale 1.0
+three quarters of a default frame was the shading's arithmetic - the halo, the
+bloom, the corner pieces - re-done every frame although, with no segments, only
+the gathered hue `col` moves with time: `neon.frag`'s output is
+`mask * tonemap(col * Fa)` with `Fa` and `mask` functions of the config and the
+geometry alone. A still frame re-did all of it too, since the caller's
+framebuffer has to be redrawn.
+
+Pass 1 at 1.0 is now factored. Pass 1f bakes `Fa` - `neon.frag` compiled with
+`NEON_FIELD_BAKE`, which sets the hue to 1 and writes the pre-tone-map result,
+and the post-tone-map masks applied to 1.0 - into `mFieldBuffer`, offscreen,
+after the gather; pass 1c (`neon-field.frag`) draws the glow quad in pass 1's
+place, reading the field and the gathered hue and tone-mapping as `neon.frag`
+does. The field is R16F, RG16F where there is a mask (a one-sided glow or a
+cutoff), over the glow quad's box on the viewport's pixel grid, found from the
+rect-local position, so a host viewport offset changes nothing (measured
+byte-identical at an offset of 173, 61). Eligible with no segments and, under a
+rotating hue, a ring opaque at every texel - otherwise time moves the alpha
+`neon.frag` reads pointwise - and only where the quad fills at least half the
+box (`FIELD_MIN_FILL`): the production band's quad is ~7% of its box, so its
+field would have been ~8 MB for nothing. The bake is lazy: a frame that changed
+the config, the viewport or the gradient ring draws pass 1 directly, and only a
+state that held for a frame is baked - built eagerly, an animation that changes
+the config every frame paid a bake and a composite on each, 5-7% slower. No
+8-bit fallback: a driver that cannot render half float draws pass 1 directly.
+
+Measured on an Apple M2 Pro, `neon-scale-check time` against the tree before
+it, three interleaved rounds, geometric mean over the twelve scenes at 1.0:
+
+| mode | 1280 x 720 | 1920 x 1080 | `default` at 1080p |
+| ---- | ---------: | ----------: | -----------------: |
+| still | 5.05x (up to 11.5x) | 6.27x (up to 13.9x) | 0.502 -> 0.067 ms |
+| hue rotating | 2.51x (up to 4.7x) | 3.33x (up to 6.9x) | 0.582 -> 0.145 ms |
+| intensity, arc wipe, segment travel | 1.00x | 0.99-1.00x | - |
+
+`bounded_band` (the field is not worth its box there) and `segments` (not
+eligible) are unchanged. Below 1.0 nothing changed; the tool's still column at
+0.5 read 0.89x, an artefact of each scene's now much lighter 1.0 run coming
+just before it - timed alone, 0.96-1.05x.
+
+Output: every 1.0 image of the comparison page moves by at most 1 level, on
+0.15-2.9% of its pixels, from the half-float field; every reduced scale and the
+`segments` scene byte-identical. On a long-lived effect the first frame after
+each config change is byte-identical to the tree before; held frames move by at
+most 1. `check` passes with an unchanged table, `partition` passes. Memory:
+3.4 MB of textures for the default rect at 1080p, where there was 0.1; 2.35 MB
+for a 160 x 96 rect (1.23); the band, segment configs and every reduced scale
+unchanged.
+
+**The factorisation is an invariant of `neon.frag`.** Anything added there that
+reads `col` other than linearly, reads time, or multiplies after the tone map
+outside the masks breaks it; extend `NEON_FIELD_BAKE` and `neon-field.frag`
+together, or narrow `IsFieldEligible`.
+
+### I47. Another layer's animation cost the neon its cached passes every frame - FIXED
+
+`NeonRenderer::OnConfigChanged` cleared `mOffscreenCurrent` (I40) and the
+field's `mFieldCurrent` / `mFieldSettled` (I46) on any call - and the effect
+makes that call whenever the COMPOSITED config changes, another layer's
+fields included. `AnimatableField` exposes eleven lens-flare fields to
+animations, and the flare's sun riding the perimeter is the obvious one, so
+an animation of a layer the neon never reads cleared all three every frame:
+the field never settled, pass 1 drew directly at 1.0, and the offscreen
+passes re-ran below it. Every other renderer already gated its
+`OnConfigChanged` on its own sub-config.
+
+Measured on an AMD Radeon Pro 5300M at 1920 x 1080, the check suite's
+`default` scene laid out for the frame, a neon-only effect with
+`lensFlare.perimeterPosition` moving 0.003 a frame through `SetConfig` (so
+the change reaches the neon only through `OnConfigChanged`), two runs:
+
+| neon frame, ms | alone | flare moving, before | flare moving, after |
+| -------------- | ----: | -------------------: | ------------------: |
+| 1.0, hue rotating | 0.243 | 1.205 (4.9x) | 0.224-0.239 |
+| 1.0, still | 0.078 | 1.169 (15x) | 0.075-0.076 |
+| 0.5, still | 0.162-0.175 | 0.655-0.660 (~4x) | 0.166-0.168 |
+
+The three flags are now cleared only when `config.neon` or `config.geometry`
+changed - everything the renderer reads, `debug.opaqueOnly` aside, which
+`Render` reads live and returns on before touching any of them. Output: a
+steady frame with the flare moving is byte-identical to the same frame
+before the fix with nothing moving, at 1.0 and 0.5; before it, the
+flare-moving frame took the direct path and differed from that by 1 level on
+~20k channels. Add a read of another sub-config to this renderer and the
+gate has to name it.
+
+### I48. The shading's hottest atans were the driver's - CHANGED
+
+Target D of [`neon-perf-plan.md`](neon-perf-plan.md) section 11, its
+polynomial half. On a frame whose config animates - which the hue-invariant
+field cannot serve - the shading at 1.0 is the frame, and on an AMD Radeon Pro
+5300M its two largest terms were the corner arcs (22-24%) and the straights'
+bloom (20-21%), each led by a two-argument `atan`: `bloomSegment`'s, which
+every straight and corner calls, and the corner development's `th`.
+
+Both now call `minimaxAtan` (`neon-pieces.glsl`, shared with the coverage
+bake so the two still develop a corner alike): an octant-reduced degree-11
+minimax polynomial, at most 1.7e-6 rad off over the whole range.
+`neon-scale-check time` before -> after, 1920 x 1080, three interleaved
+rounds, geometric mean over the twelve scenes:
+
+| mode | 1.0 | 0.5 | `default` at 1.0, ms |
+| ---- | --: | --: | -------------------: |
+| intensity | 1.10x | 1.11x | 1.176 -> 1.062 |
+| arc wipe | 1.10x | 1.07x | 1.625 -> 1.516 |
+| segment travel | 1.08x | 1.09x | 1.696 -> 1.543 |
+| hue | 1.09x | 1.05x | 0.250 -> 0.234 |
+| still | 1.05x | 1.03x | 0.071 -> 0.073 |
+
+Output against the library before it on the same GPU: every image of the
+twelve scenes at all six scales within 1 level, on at most 0.016% of a
+frame's channels (`arcs` and `segments` the most); `check` unchanged,
+`partition` passing on two seeds. **Unmeasured on the Apple M2 Pro**, and a
+cheaper `atan` is the most GPU-specific change there is - a driver whose own
+`atan` is already a short polynomial can come out even or behind. Time it
+there, and on the target, before relying on the gain. The same function in
+`perimeterPosition` was measured and left out: byte-identical but 0.1-0.4%.
+
+### I49. The neon's shaders carried copies, two predicates and a path nothing took - CHANGED
+
+Steps 0-3 of [`neon-shader-cleanup-plan.md`](neon-shader-cleanup-plan.md), on
+the AMD Radeon Pro 5300M, each verified on its own against the library before
+it: `neon-scale-check check`, `partition` on two seeds, and every image of the
+twelve scenes at six scales plus the hairline sweep, diffed channel for
+channel.
+
+- **One copy of the shared code.** `sdRoundBox`, `bandOuterDistance` and
+  `bandInnerDistance` were byte-identical in `neon.frag`, `neon-blit.frag` and
+  `black-rect.frag`; the tone map was copied "verbatim" into
+  `neon-field.frag`. They are now `neon-sdf.glsl` and `neon-grade.glsl`,
+  injected like the other chunks. Byte-identical. (A shared edge-mask function
+  was planned too and dropped: in `neon.frag` the mask's inputs are interleaved
+  with the discards and the quad fade that use them, so the function would
+  have held three `smoothstep`s and needed constants `black-rect.frag` does not
+  get.)
+- **One predicate for a uniformly lit ring.** The CPU's `IsGlowCoverUnread`
+  and the shader's own `uniformCover` test had to be kept "a hair" apart by
+  hand; the shader now takes the CPU's decision as `uUniformCover`.
+  Byte-identical; the only lengths that change behaviour (within 1e-6 of a full
+  ring) now read the table, which is baked for them.
+- **The inline-gather path removed.** Since I44 no shipped config built
+  `mNeonShader`; with it went `CanSplitGatherAtFullRes` /
+  `SplitsGatherAtFullRes` / `UsesGatherBuffer`, the `FULL_RES_SPLIT_*`
+  constants, the `NEON_READS_GATHER` define (`neon.frag` always reads the
+  gather) and the loop's copy in `neon-common.glsl` (now `neon-gather.frag`'s
+  alone). In return `GATHER_MAX_SCALE` (0.5) caps the gather's resolution, the
+  memory bound the gate used to be. Every check image byte-identical (every
+  scene already split); on the rects the cap binds on (perimeter under ~454
+  px), measured at 1080p, scale 1.0, before -> after:
+
+  | rect | live textures | hue frame | largest change |
+  | ---- | ------------: | --------: | -------------: |
+  | 40 x 24, `glowRadius` 20 | 20.0 -> 8.1 MB | 3.25 -> 0.99 ms | 9 levels, ~280 channels above 1 |
+  | the same + a segment | 33.2 -> 9.4 MB | 6.9 -> 3.8 ms | 9 levels |
+  | 64 x 36 | 4.5 -> 1.8 MB | 0.84 -> 0.34 ms | 5 levels |
+  | 128 x 72 | 2.9 -> 2.1 MB | 0.54 -> 0.38 ms | 1 level |
+
+  A cap of 0.75 was measured too (13.0 MB / 1.92 ms / 3 levels on the first
+  row); 0.5 is the owner's choice. The error is the coarse gather on a rect
+  whose colour kernel is narrower than a gather texel (V17).
+
+Program slots 13 -> 9 counting the reverted `NEON_UNIFORM_COVER` twins (10 at
+`1488648`); `neon.frag` builds plain (shading, twice) and with
+`NEON_FIELD_BAKE`, and nothing else. Timed against `1488648` in `still`, `hue`
+and `intensity` at 1080p, two interleaved rounds: 0.98-1.08x geometric mean
+at every scale - no change. Step 4, one gather loop body for both cases, was
+measured and set aside: byte-identical but 0.88x on hue frames at 1.0. Step 6
+then cut `neon.frag`'s commentary from 1,207 to 615 lines, comments only, the
+measured history moved verbatim to `docs/neon-frag-notes.md`.
+
+### I50. Below 1.0, a rotating hue re-shaded pass 1b every frame - CHANGED
+
+Below 1.0 a frame where nothing moved skips passes 1a and 1b
+(`mOffscreenCurrent`), but under a rotating hue - the library's default - the
+emission table moves every frame, so both ran every frame, and pass 1b is the
+whole shading at the reduced scale: 48% of a hue frame at 0.5 on the default
+scene, by GPU timer (AMD Radeon Pro 5300M, 1080p). With no segments its output
+is the same `mask * tonemap(col * Fa)` I46 factored at 1.0, and the mask is 1
+there (the blit owns the cut and the cutoffs below 1.0). So the field now runs
+at both scales: below 1.0 `mNeonFieldShader` bakes `Fa` at the reduced scale on
+the reduced buffer's own region and texel grid (`GetFieldRegion`), and
+`mFieldCompositeShader` writes `mScaledBuffer`, unblended, in pass 1b's place;
+the blit and the ring are unchanged. Eligible below 1.0 only with the hue
+rotating (`IsFieldEligible`) - every other way a settled config redraws pass 1b
+invalidates the field too - so a still config there never compiles or
+allocates it. R16F, half the reduced buffer: 0.84 MB at 0.5 and 0.21 MB at 0.25
+for the default rect at 1080p.
+
+`neon-scale-check time --mode hue` against `9f5db99`, 1920 x 1080, three
+interleaved rounds, geometric mean over the twelve scenes:
+
+| scale | 0.75 | 0.5 | 0.35 | 0.25 | 0.125 |
+| ----- | ---: | --: | ---: | ---: | ----: |
+| hue frames | 2.00x | 1.56x | 1.32x | 1.23x | 1.13x |
+| `default`, ms | 0.926 -> 0.403 | 0.623 -> 0.368 | 0.495 -> 0.352 | 0.433 -> 0.348 | 0.412 -> 0.377 |
+
+Up to 2.9x (`soft_wash`, `overdrive` at 0.75). `still`, `intensity`, `arc-wipe`
+and `segment-travel` read 0.97-1.08x at every scale, 1.0 included; `segments`
+(no field) and `bounded_band` (under `FIELD_MIN_FILL`) are untouched. 1.0 stays
+the cheaper scale for hue frames (`default` 0.223 ms) - the blit and the ring
+are full-resolution costs the field does not reach. Hue frames of all twelve
+scenes at five reduced scales within 1 level of `9f5db99` (on up to 0.9% of a
+frame's channels); scale 1.0, `segments` and `bounded_band` byte-identical;
+`check` passes, `partition` on two seeds.
+
+Two things the measurement caught on the way:
+
+- **The composite's texel lookup.** Below 1.0 `gl_FragCoord` finds the texel
+  exactly (the field and the target share a grid), but a select between it and
+  the 1.0 lookup cost the 1.0 composite ~30% on still frames. Both scales now
+  compute `floor((vPos - uFieldOrigin) * uFieldTexelScale)`, the scale exactly 1
+  at 1.0 - byte-identical to the `gl_FragCoord` version below 1.0.
+- **Where the compile lands.** Built on the bake frame - the second after a
+  config change - as I46 built them at 1.0, the field's programs stalled that
+  frame 156 ms below 1.0 in the prototype (141 ms at 1.0, where that stall had
+  always been). Building them on the first frame did not
+  move it - this driver finishes a program's compile on its first DRAW, in its
+  real target and blend state, so ~125 ms stayed on the bake frame - and
+  compositing on the first frame instead moved the shading program's first
+  draw, and its stall, to the first config change. So the first frame a config
+  the field can serve is drawn builds both programs AND bakes the field, while
+  still shading directly: first frame at 0.5, 302 -> 426 ms, then 2.5 -> 7.9 ms
+  for frame 2 (the composite's own first draw), no stall after, nor on the next
+  config change; at 1.0, 166 + 141 -> 294 + 7.5 ms over the first two frames.
+  The price is one bake an animated config may not reuse, once per renderer.
+
+### I51. The field's mask channel served only scale 1.0 - CHANGED
+
+At 1.0 `neon.frag` multiplies the one-sided cut and the cutoffs in after its
+tone map, so I46's field carried them as a second channel (RG16F) and the
+composite multiplied it back in. Below 1.0 the blit applies both, so the
+reduced-scale field (I50) never had a mask - the channel and its code served a
+scale the owner's target does not use. Removed: `IsFieldEligible` now refuses
+a config with a one-sided glow or a cutoff at 1.0 (`MasksAfterGrade`), the
+field is R16F only, the bake writes `Fa` and returns at the grade, and
+`neon-field.frag` lost `uFieldHasMask`.
+
+Nothing below 1.0 moves: every frame of the twelve scenes at five reduced
+scales, still and with the hue rotating, byte-identical; `check` passes,
+`partition` on two seeds, the guide's 68 figures byte-identical. At 1.0 the two
+check scenes with a one-sided glow now shade directly - which is the
+reference the field approximated, so `glow_inside` moved by up to 2 levels and
+`card_outside` by 1, toward exact - and pay for it (AMD Radeon Pro 5300M,
+1080p, `neon-scale-check time`, two interleaved rounds; the third was stopped):
+
+| scene at 1.0 | still | hue |
+| ------------ | ----: | --: |
+| `glow_inside` | 0.057 -> 0.425 ms | 0.14 -> 0.58 ms |
+| `card_outside` | 0.130 -> 1.04 ms | 0.28 -> 1.23 ms |
+
+Every other scene and frame type, at every scale, 0.97-1.08x.
+
+### I52. Below 1.0 the edge ring was re-shaded on every frame - CHANGED
+
+Written up after the fact, from `b0ac8cf` and the figures its code carries.
+Below 1.0 the edge ring (pass 2c) draws onto the caller's framebuffer, so
+nothing of it survives a frame: it was shaded in full on every frame, still
+frames included, at full resolution - a cost the scale does not shrink. With
+no segments its output is `tonemap(col * Fa)` like pass 1b's, so it now has a
+field of its own: pass 1r bakes `Fa` over the ring alone with the ring's own
+uniforms (`mRingQuadMargin`, `mRingCornerSkip`), full resolution but PACKED
+into four strips (`RingFieldLayout`, `computeRingFieldLayout`: bottom, top,
+then the two sides transposed, every texel on a viewport pixel), and pass 2r
+(`neon-field.frag` with `NEON_FIELD_RING`, its own program object) composites
+it with the gathered hue in pass 2c's place. R16F, ~0.27 MB for a 960 x 540
+rect at 1080p; the field's lazy schedule and first-frame bake. 1.4-1.9x on
+still frames and 1.2-1.6x on hue frames below 1.0 on an AMD Radeon Pro 5300M,
+within 1/255. A one-sided glow or a cutoff - which the ring multiplies in after
+its tone map - kept the ring shading directly; I53 lifts that.
+
+### I53. The edge ring's field refused a one-sided glow and cutoffs - CHANGED
+
+I52's ring field took only configs with `GlowSide::BOTH` and no cutoff,
+because the ring shades with scale-1.0 uniforms and so multiplies the
+one-sided cut and both cutoffs in after its tone map, which a field of `Fa`
+does not hold. That left the production band (`GlowSide::OUTSIDE`, an outside
+cutoff) re-shading its ring on every frame: 0.047 ms of a 0.061 ms still frame
+at 0.5 on an Apple M2 Pro, and the reason that config rendered faster at 1.0
+than at any reduced scale (`docs/neon-reduced-scale-plan.md` section 3.4).
+
+But the output there is `mask * tonemap(col * Fa)`, and the mask is a
+function of the pixel's position alone - `neon-blit.frag` already computes the
+same two ramps at full resolution below 1.0. So the ring's composite now
+recomputes it: `neon-field.frag` (`NEON_FIELD_RING`) takes the shape and the
+six cut and cutoff uniforms (`uploadShapeUniforms` at scale 1.0 and
+`UploadEdgeMaskUniforms`, the latter now also `uploadNeonUniforms`' own, so
+both get one set of numbers) and multiplies in `neon.frag`'s post-grade terms,
+copied term for term; `neon-sdf.glsl` is injected into it for `sdRoundBox`
+and the band boundaries. Skipped on a uniform when neither is set, where every
+factor is exactly 1. `IsRingFieldEligible` loses its glow-side and cutoff
+conditions. What `neon.frag` discards ahead of the masks is a 0 texel of the
+field, which composites to nothing.
+
+Within 1 level: on a 44-frame walk of masked configs below 1.0 (the band at
+0.5, 0.25 and under a rotating hue; `INSIDE` and `OUTSIDE` with hard and soft
+cuts; inside + outside cutoffs at 0.5 and 0.125; square corners; an opaque
+card; an inside cutoff under a rotating hue), every frame the field takes is
+within 1 of the ring shaded directly, on 0.013-0.033% of channels - the I52
+standard. Every frame of the 261-frame walk of the reduced-scale plan's
+section 8 that the change does not reach is byte-identical, unmasked ring fields
+included. `check` reads the same table but for `bounded_band` at 0.125 (p99 0
+-> 1, max 1); `partition` passes on seeds 1 and 7; scale 1.0 is untouched.
+
+`neon-scale-check time`, Apple M2 Pro, 1920 x 1080, median of three
+interleaved rounds, the three masked check scenes, at 0.75 / 0.5 / 0.35 /
+0.25 / 0.125:
+
+| scene | still | hue |
+| ----- | ----: | --: |
+| `bounded_band` | 2.52 / 2.69 / 2.59 / 2.48 / 2.56x | 0.99-1.08x |
+| `glow_inside` | 2.19 / 2.25 / 2.37 / 2.29 / 2.56x | 1.02-1.12x |
+| `card_outside` | 1.21 / 1.20 / 1.22 / 1.20 / 1.35x | 1.06-1.15x |
+
+The production band (1840 x 1000, `OUTSIDE`, outside cutoff `{20, 4}`), still,
+median of six alternating rounds: 0.051 -> 0.029 ms at 0.5 and 0.054 -> 0.035
+at 0.25, against ~0.055 at 1.0 - the first configuration of it a reduced scale
+renders faster than 1.0. Intensity and other config-animated frames are
+unchanged (0.97-1.01x): a config that changes every frame never settles into a
+field. Every other scene and frame type 0.95-1.01x by geometric mean.
+
+### I54. An arc that moved re-baked every piece it touched - CHANGED
+
+I42 re-bakes only the pieces of the glow coverage table a changed light
+reaches, but for an arc "reaches" meant the union of its old and new supports:
+an arc of length 0.3-0.9 touches most of the ring, so an arc wipe re-baked
+nearly the whole table on every frame (all 131,072 texels under
+`neon-scale-check time --mode arc-wipe`), though only one end had moved.
+
+The bake's arc term is a trapezoid - a ramp at each end, a plateau between -
+so an arc whose intensity and abut flags are unchanged, and which is partial
+before and after, changed only where an end's ramp was or is.
+`GetGlowCoverDirtyPieces` now dirties, for such an arc, the band each moved end
+swept, the short way, plus its feather either side. Two things make that
+bit-exact rather than exact in arithmetic, and the first version without them
+left 1 table in 795 random edits a half-float step off a full bake:
+
+- "Moved" is bitwise: the tail is `arc.x` and the head `arc.x + arc.y` as the
+  bake computes them, so a start wrapping past 0 with the head held - which
+  moves the head's float by a whole lap - counts as a moved head; and an end
+  also counts as moved when its ramp's width did (the bake caps each feather
+  at `ARC_FEATHER_MAX_SHARE` of the length).
+- When ONE end moved, the pieces holding the other end's ramp that lie half a
+  perimeter on from the moved band are dirtied too: `arcsOnPiece` shifts each
+  arc's image by `k = floor(lo + 0.5)`, `lo` measured from one end, so an end
+  passing a piece's antipode sends that piece's other ramp down another float
+  path to the same value. A piece wholly on the plateau or off the arc clips
+  to the same span, or to nothing, whatever `k` is.
+
+Never more than the two supports, which are exact too and the smaller set for a
+short arc. Segments keep I42's rule.
+
+Exact: 6,706 tables read back after random arc and segment edits over five
+seeds (wipes, travels, tail moves, wraps past 0, capped feathers, abutting
+neighbours, intensity changes, arcs added and removed, whole-ring arcs),
+every one equal texel for texel to a fresh effect's full bake; every frame of
+a 305-frame walk byte-identical; `check` unchanged, `partition` passing on
+seeds 1 and 7. Texels re-baked per frame for one arc of length 0.2-0.7: 89,374
+-> 36,657 while its head moves, 79,835 -> 54,731 while it travels, 90,744 ->
+48,000 while its tail moves.
+
+`neon-scale-check time --mode arc-wipe`, Apple M2 Pro, 1920 x 1080, median of
+three interleaved rounds, geometric mean over the twelve scenes: 1.06x at 1.0,
+1.07x at 0.75, 1.10x at 0.5, 1.12x at 0.35, 1.15x at 0.25 and 0.125 - the bake
+does not shrink with the scale, so it is a larger share there. `segments`, whose
+four-channel table integrates three bells per texel, 1.26x at 1.0 to 1.74x at
+0.25.
+
+### I55. The gather re-ran on every config change, though most move nothing it reads - CHANGED
+
+Pass 1a, the gather - the perimeter loop, ~0.05 ms of an intensity frame at
+0.5 on an Apple M2 Pro, 0.09-0.10 with a segment - ran on every frame
+`mOffscreenCurrent` did not cover, which is every frame after any change to
+the neon's config. But it reads only the emission table, the sample block,
+the sample count, the scaled shape and whether there are segments; an
+intensity, bloom, glow-radius or cutoff animation moves none of them. It moves
+the gather's QUAD instead - the glow quad plus the ring, padded - and with it
+the region the buffer is laid out over, which is why "the keyed gather"
+(`docs/neon-perf-plan.md` item 4, step 2) was parked.
+
+Now the gather is skipped while its inputs hold (`GatherInputs`,
+`currentGatherInputs`; the table by `mEmissionBakes`, the sample block by
+upload count; plus the viewport and the rect's centre, since the region is
+clipped to the viewport around it) and this frame's quad lies inside the one
+it last drew (`AnnulusCovers` on `mGatherDrawnOuter` / `mGatherDrawnHole`).
+Every reader then reads the buffer through the region it was drawn over
+(`mGatherDrawnOrigin` / `Size` / `Texels`): its texels sit on a grid anchored
+to the viewport, not the region, and each is a function of its position and
+those inputs alone. A reach animation settles on the widest quad it reaches
+and stops gathering.
+
+The first version broke every skipped frame below 1.0 by up to 63 levels: pass
+1b, which has to draw unblended, never disabled blending itself - it inherited
+the `glDisable(GL_BLEND)` `Render` issued for pass 1a just above, so with pass
+1a skipped it drew with the previous frame's `GL_SRC_ALPHA` blend into its
+cleared buffer. Pass 1f below 1.0 leaned on the same line. Both now get it set
+immediately before them, as `Render`'s state contract says they should. A
+config change that moves neither the quad nor any image (`glowSideSoftness` on
+a two-sided glow) is the test that isolated it: byte-identical now, with the
+gather skipped on 11 frames of 12.
+
+Within 1 level: on a 210-frame walk of reach animations with the hue still
+(intensity pulses at 0.5 / 0.25 / 1.0, a bloom pulse, a glow-radius sweep, an
+outside-cutoff sweep, the production band pulsing), the gather ran on 0-7
+frames of each 30, and every skipped frame is within 1 of `b0ac8cf` on
+0.03-0.06% of channels - a held region reaches the same texel centres through
+another projection, so the gather's inputs can differ in the last bit; the
+band pulse is byte-identical. The reduced-scale plan's 305-frame walk is
+byte-identical to the build before, `check` reads the same table, `partition`
+passes on seeds 1 and 7.
+
+`neon-scale-check time --mode intensity`, Apple M2 Pro, 1920 x 1080, median of
+three interleaved rounds against `b0ac8cf` (I53 and I54 move nothing on these
+frames), geometric mean over the twelve scenes: 1.19x at 1.0, 1.21x at 0.75,
+1.31x at 0.5, 1.40x at 0.35, 1.43x at 0.25, 1.37x at 0.125; `small_rect`
+2.14x at 0.5 and 2.41x at 0.35. Nothing for an arc or segment animation or a
+rotating hue, which re-bake the emission table every frame.
+
+### I56. An intensity animation threw both fields away on every frame - CHANGED
+
+The hue-invariant field (I46, I50) and the ring's (I52) are invalidated by
+any change to the neon's config, so under an intensity animation - the
+library ships `IntensityPulse`, 0.4 to 1.0 by default - every frame shaded
+pass 1b and the ring directly: 0.19 ms of GPU at 0.5 on an Apple M2 Pro after
+I55, against 0.05 for a hue frame. The owner accepted the look change below
+(`docs/neon-reduced-scale-plan.md`, D1) for the speed.
+
+`neon.frag`'s output is near enough `I * G` with `G` fixed while only the
+intensity `I` moves: the colour terms are linear in it, and only the bloom's
+`reach` (`1 + bloomStrength * I`) and the CPU's quad margin, hole and corner
+skip also follow it. So an intensity-only change (`OnlyIntensityMoved`) no
+longer invalidates either field, and `LazyBake` keeps the intensity each was
+baked at, I0. While the intensity is MOVING (`mIntensityMoving`, set by
+`OnConfigChanged`, consumed by `Render`):
+
+- below I0, the composite multiplies the field by `I / I0` (`uFieldGain`) -
+  I0's quad covers every dimmer one's;
+- above it, the field is baked again at I, so a pulse settles on its peak
+  after one cycle;
+- below 1.0 the shading's field is eligible with the hue still too
+  (`IsFieldEligible`'s `intensityMoving`).
+
+The frame the intensity stops on bakes again at its own intensity, exactly, and
+pass 1b's buffer holding a composite is never reused by `mOffscreenCurrent` -
+the held frame redraws it - so a held config never shows a scaled field: the
+gain is exactly 1 there and `fa * 1.0` is `fa`'s bits.
+
+The look while it moves is `reach` and the fade as at I0: measured against the
+build before on 300 frames of pulses, every held frame byte-identical, and the
+moving ones within
+
+| animation | max | channels off |
+| --------- | --: | -----------: |
+| +/-10% (hue still or rotating), 1.0 / 0.5 / 0.25 | 1-2 | ~8% |
+| 0.4-1.0, the default look | 2 | 17% |
+| 0.4-1.0, `overdrive` (bloom 1.5) | 6 | 36% |
+| 0.4-1.0, the production band | 1 | 0.05% |
+
+`check` reads the same table and `partition` passes (both draw held configs);
+no GL error is logged.
+
+`neon-scale-check time --mode intensity` (+/-10%, hue still), Apple M2 Pro,
+1920 x 1080, median of three interleaved rounds against the build with I55,
+geometric mean: 3.50x at 1.0, 3.14x at 0.75, 2.31x at 0.5, 1.76x at 0.35, 1.60x
+at 0.25, 1.44x at 0.125 - up to 4.8x at 0.5 on `overdrive` and `arcs`.
+`segments`, which takes no field, and the one-sided scenes at 1.0
+(`MasksAfterGrade`) unchanged. GPU time by timer query with a flush per frame:
+0.193 -> 0.049 ms at 0.5, 0.085 -> 0.046 at 0.25; hue frames unchanged within
+noise.
+
+### I57. The neon kept a second path for a scale its hosts never ship - CHANGED
+
+`resolutionScale` 1.0 had a path of its own: the glow drawn straight onto the
+caller's framebuffer by the ring's program over the whole glow quad, with no
+reduced buffer, no blit and no edge ring. It carried its own variants of
+nearly everything the scaled path has - the hue-invariant field over the glow
+quad's box on the viewport's grid, composited onto the caller's framebuffer;
+`MasksAfterGrade`, which sent every one-sided or cutoff config at 1.0 back to
+shading directly because `neon.frag` multiplied those in after its tone map
+there; a 1.0 branch in `setupRingGeometry`; the 1.0 forms of `GetGlowMargin`
+and `GetCutoffGuardPx`; `UsesScaledBuffer`; and a test of `uResolutionScale`
+in `neon.frag` deciding whether the shading or the blit applied the cut. The
+owner's hosts always run below 1.0 (`docs/neon-reduced-scale-plan.md`, C8), so
+all of it was code to keep correct for frames nobody draws.
+
+Now there is one path. At 1.0 the reduced buffer is full size and pass 1b, the
+blit and the edge ring draw exactly as at any other scale. `uBlitOwnsCut`
+replaces the scale test - 1 for pass 1b and the field bake that stands in for
+it, 0 for the ring and its field bake - so which pass applies the cut no longer
+depends on the scale. `IsFieldEligible` is `IsShadingFactorable` and a rotating
+hue or a moving intensity at every scale, `IsRingFieldEligible` is
+`IsShadingFactorable` alone, and `NeonConfig::resolutionScale` defaults to 0.5
+(the owner's choice; `docs/upgrade-notes.md` section 0).
+
+Every frame below 1.0 is byte-identical to the build before: 697 frames over
+seven walks (still, hue, intensity pulses, arcs, a segment, cross-fades,
+one-sided and cutoff configs, the production band, a disable and re-enable,
+viewport changes) at six scales from 0.125 to 1.0. The 1.0 frames are within 1
+level of the direct path - a rounding step on up to 17% of channels, from the
+8-bit buffer they now pass through. `check` passes (its 1.0 column within 1 of
+the committed images; the reduced cells, measured against it, moved by at most
+1), `partition` passes (seeds 1 and 7), and no GL error is logged.
+
+Below 1.0 the cost is unchanged. GPU time by timer query with a flush per
+frame, still frames at 1920 x 1080 on an Apple M2 Pro: 0.054 -> 0.052 ms at
+0.5, 0.051 -> 0.050 at 0.25; `neon-scale-check time` reads 0.95-1.05x on hue
+and intensity frames, and 0.81-0.97x on still ones, which the timer query puts
+down to the harness's noise on ~0.05 ms frames.
+
+At 1.0 the trade is mixed and accepted, since nothing ships there.
+`neon-scale-check time`, median of three interleaved rounds, geometric mean:
+
+| mode | at 1.0 | why |
+| ---- | -----: | --- |
+| still | 1.67x | pass 1b's buffer is reused on a frame where nothing moved (`mOffscreenCurrent`); the direct path re-shaded the quad on the caller's framebuffer every frame - `segments` 0.767 -> 0.108 ms, `glow_inside` 0.271 -> 0.070 |
+| hue | 0.88x | the blit and the ring over a full-size buffer cost more than the old full-resolution composite - `default` 0.172 -> 0.275 ms |
+| intensity | 0.62x | the same - `default` 0.080 -> 0.193 ms |
+
+The full-size buffer holds up to 8.3 MB for a full-screen rect at 1920 x 1080,
+and the first frame at 1.0 now builds pass 1b's program and the blit as well
+as the ring's.
+
+### I58. A config with segments took neither field - CHANGED
+
+Both hue-invariant fields (I50, I52) were refused to any config with a
+segment, because the segment hue enters `neon.frag` as a second product and the
+field had one channel. So a segment config shaded pass 1b on every rotating-hue
+frame and the edge ring on every frame, still ones included - on an AMD Radeon
+Pro 5300M at 0.5, 2.44 ms a hue frame against 0.90 for the same config with
+arcs (`neon-animation-perf-analysis.md` section 8, item 2; the reduced-scale
+plan's D3).
+
+The shading is linear in both hues: before the tone map it is
+`col * Fa + segColHue * Fs`, with `Fa` and `Fs` independent of time on every
+config the field already took (the colour-stop alpha condition covers the
+stop-less segments' inherited alpha too). So `NEON_FIELD_BAKE` now sets the arc
+hue to red and the segment hue to green and writes `.rg` - `Fa` and `Fs` in one
+draw, `.r` the same expression as the old one-channel bake, bit for bit - into
+an RG16F field where the config has segments (`GetFieldFormat`; R16F as before
+without them), and `neon-field.frag` adds `segColHue * Fs`, read from the
+gather's second attachment, behind a uniform (`uFieldSegments`) that a
+segment-free config never takes. `IsShadingFactorable` drops its segment test.
+The intensity gain (I56) scales `Fa` alone: the segments' emission does not
+read the intensity.
+
+Verified against the build before, on an Apple M2 Pro: every `neon-scale-check`
+image in five modes byte-identical but the `segments` scene, which moves by at
+most 1 level on 1,500-3,100 pixels at every scale; the 68 guide figures
+byte-identical; `check` and `partition` (seeds 1 and 7) pass. An offscreen
+probe over ten moving frames at 1.0, 0.5 and 0.25: the `segments` scene and a
+stop-less-segments-over-partial-arcs scene (bloom 1.5) with the hue rotating
+within 1 level; a falling intensity with segments within 2 (I56's own bound);
+a ring that is not opaque under a rotating hue - still refused - byte-identical.
+
+`neon-scale-check time`, median of three interleaved rounds, 1920 x 1080:
+
+| `segments` | 1.0 | 0.75 | 0.5 | 0.35 | 0.25 | 0.125 |
+| ---------- | --: | ---: | --: | ---: | ---: | ----: |
+| hue | 3.20x | 2.74x | 2.09x | 1.76x | 1.58x | 1.64x |
+| still | 1.36x | 2.06x | 1.98x | 1.54x | 1.50x | 1.82x |
+
+Every other scene: geometric mean 1.00 on hue frames and 1.01 on still ones
+(noise). The price is memory on segment configs only: the glow's field doubles
+(0.84 -> 1.7 MB for a 960 x 540 rect at 1080p at 0.5) and so does the ring's
+(~0.27 -> ~0.54 MB).
+
+---
+
+## Twenty-sixth pass (the bloom's end)
+
+### V23. The glow stopped on a crease: a hard-edged dark rectangle inside a large rect - FIXED
+
+Reported from a capture of the demo: an 1800 x 1063 rect at (900, 531) in a
+3600 x 2126 frame, `cornerRadius` 0, `lineWidth` 1, `filamentFalloff` 0.46,
+`intensity` 0.8, `glowRadius` 5, `bloomStrength` 0.52, one full arc,
+`resolutionScale` 0.125: "there is not smooth transition between halo region
+and non-covered region". The glow ends on a visible rectangle about 340 px
+inside the line - the dark centre has hard edges and square corners - and,
+less sharply, on a rim the same distance outside.
+
+340 px is `reach` (`glowRadius * 48 * (1 + bloomStrength * intensity)`), where
+the bloom ends. A headless probe renders the reported scene to the level on the
+centre row, which is where the numbers below come from.
+
+**Mechanism.** `bloomSegmentPedestalled` subtracts each straight's own value at
+`reach`, so its bloom lands on exactly 0 there - continuous, but with the slope
+still on, and the tone map's 0.85 power steepens a linear arrival at 0. Inside
+the rect nothing else ended it: along the centre row the glow lost a level
+every 16 px all the way in, then went flat at 332 px. Outside, the quad-edge
+fade ran over the last fifth of the margin, but a fade that starts that late,
+with zero slope, on a nearly linear tail pulls it down faster before it
+flattens it - its slope peaks 1.40x the tail's - so the rim's last levels
+bunched (15, 8, 8, 17, 8 px apart) and read as an edge too. On a mid-size rect
+(800 x 500 at 1080p, the same glow) the centre is within `reach` of every edge,
+so the dark rectangle is gone, but each pair's bloom still ends `reach` from
+its own line: a flat plateau between two vertical creases.
+
+**Fix.** Each piece's bloom is multiplied by `1 - smoothstep(start, reach, a)`
+of its OWN distance `a` - the straights' perpendicular distance, the corner
+arcs' developed one - on both sides of it, `start` being
+`BLOOM_FADE_START_FRAC` (0.5) of `reach`. 0.5 is the latest start that does not
+steepen the tail (the slope peaks 1.14x at 0.6, 1.035x at 0.5, not at all from
+0.4 down - `neon-frag-notes.md`, "The bloom's end fade"). The start is floored
+at the cutoff's end on the side the fragment sits of that piece, as the
+quad-edge fade's `fadeStart` is, so a cutoff band is not dimmed ahead of its
+mask. A fade on the inward side only, from 0.8, was built first: it removed
+the crease, but its last levels fell at 275, 283, 291, 308 and 317 px - closer
+together, then flat - and a 3x contrast crop still showed the rectangle.
+
+Level drops on the centre row, distance from the line in px:
+
+| | last five level drops | then |
+| - | --------------------- | ---- |
+| inside, before | 275, 291, 307, 317, 332 | flat: the rectangle |
+| inside, after | 243, 251, 267, 284, 308 | gaps 8, 16, 17, 24 |
+| outside, before | 276, 284, 292, 309, 317 | gaps 8, 8, 17, 8 |
+| outside, after | 244, 252, 268, 285, 301 | gaps 8, 16, 17, 16 |
+
+(Steps fall on the 8 px texels of the 0.125 buffer.) Inside and out now end
+the same way, and on the mid-size rect the plateau and its creases are gone.
+
+**What moved.** Only the bloom's outer half, by at most 6 levels: 21-40% of
+each probe frame (the reported scene at 0.125 and 1.0, the same with
+`cornerRadius` 120, the default 640 x 360 scene, the mid-size rect).
+`neon-scale-check check`: every reduced scale against 1.0 stays inside its
+bound, and moved by at most 1 (max 1 -> 2 on `default` at 0.35 and
+`card_outside` at 0.25, 2 -> 1 on `segments` at 0.35; p99 unchanged
+everywhere). But scale 1.0 now drifts 3-6 levels from the page's
+committed images on `default` (3), `hairline` (4), `crisp_tube` (6),
+`sharp_corners` (3) and `segments` (5), past the gate's bound of 2 - since
+regenerated with R7 (2026-10-09, below), after which `check` passes at drift 0. `bounded_band`, the cutoff band, stays at 1.
+`partition` passes (seeds 1 and 7). Under a rotating hue the field's composite
+reads within 1 level of direct shading on all five probe scenes, as before.
+
+**What it does not break.** The factor depends on the fragment's position
+alone and is at most 1. So the field's factorisation holds (it is applied before
+the tone map, like the quad-edge fade), the glow coverage table's ratios are
+unchanged (it is constant along a piece), and every CPU bound on the bloom -
+`GetGlowInnerReach`, `GetCornerSkip` through `GlowBoundTerms` - only gets
+looser. A fade that RAISED the bloom anywhere would break all three.
+
+**Cost.** Apple M2 Pro, 1920 x 1080, `neon-scale-check time`, median of three
+interleaved rounds, geometric mean over the twelve scenes:
+
+| mode | 1.0 | 0.5 | 0.25 | 0.125 |
+| ---- | --: | --: | ---: | ----: |
+| arc-wipe | 0.967x | 0.973x | 0.982x | 0.976x |
+| still | 1.01x | 0.99x | 1.04x | 1.04x |
+
+Still frames reuse their passes, so only frames that shade pay; the still row
+is noise. The fade is computed inside the branch that already skips a straight
+past `reach` - the same factors computed as one vec4 before it cost twice as
+much (0.945x at 1.0, 0.953x at 0.5).
+
+## Twenty-seventh pass (the ring / blit gap)
+
+### V24. A dark one-pixel seam between the edge ring and the blit - FIXED
+
+Reported: "the ring band and the lit area are not fully cover, it caused a gap
+between these areas". Reproduced on an AMD Radeon Pro 5300M: a black line one
+pixel wide on the ring's outermost column, the height of a side strip (97 px),
+up to 223 levels below its neighbours, on still frames at every scale
+including 1.0. It is not in the geometry - `partition` passes, and the ring
+mesh does draw the pixel - but in the ring's FIELD (I52): frame 1 after a
+config change shades the ring directly and is clean; frame 2 composites the
+field and has the seam.
+
+**Mechanism.** Pass 1r baked the field by drawing the ring's own mesh into
+each strip, and the side strips are drawn TRANSPOSED. When a vertical ring
+edge snaps (at the rasteriser's 1/256 px) onto a pixel centre, the fill rule
+hands that centre to one side. Transposing turns the edge from a left edge in
+the composite into a bottom edge in the bake, and the rule hands those the
+other way: the composite draws the pixel, the bake never writes its texel, and
+the cleared 0 composites to nothing - neither the ring nor the blit lights the
+pixel. The probe that settled it: one failing config (535.5 x 116.5 rect,
+`GlowSide::OUTSIDE`, scale 1.0, the ring's left edge 0.0006 px right of a
+pixel centre) nudged in 0.0005 px steps shows the seam for exactly the edge
+positions (79.5000, 79.5036] and nowhere else - one snap cell. On random
+configs it hit about 1 in 100 (2 of 100 and 4 of 400); the GPU decides, and an
+Intel UHD 630 run showed none.
+
+**Fix.** `renderRingFieldPass` draws the layout's whole box (`mRingField.box`,
+a pixel past it each side) for each strip instead of the ring, so the strip's
+viewport alone decides which texels are baked - every texel of every strip -
+and no edge of the draw lies near a texel centre. The box costs the layout's
+slack - one to two pixels each side of the band - on a bake that runs once a
+config settles.
+
+**Verified** on the AMD 5300M. The nudge sweep: 0 seam pixels at all 21
+positions (was 97 px at 8). 400 random configs (seed 5), direct against field:
+pixels more than 8 levels apart 303 -> 2, and those 2 are a separate,
+pre-existing difference - one pixel each at the corner of a nearly square
+corner (radius 1.2 and 0.09), 17 and 10 levels, identical before and after.
+Pixels 1 level apart 694,738 -> 723,288 of 79.7 M lit (0.87% -> 0.91%), the
+interpolation noise any change to a neon pass's geometry brings: `vPos` comes
+from other vertices. Frames shaded directly are byte-identical to the old
+build. `check` and `partition` (seeds 1 and 7) pass. The frame that bakes the
+field (GPU timer, 7 scenes at 1080p, three interleaved rounds) is no slower
+anywhere; `time --mode intensity` geometric means 0.96-1.03 per scale against
+the old build, with same-build rounds spreading 1.11x.
+
+---
+
+## Twenty-eighth pass (the coverage table at the resolution each light needs)
+
+Built from [`neon-glow-cover-resolution-plan.md`](neon-glow-cover-resolution-plan.md),
+uncommitted on top of `14ef6c7`, measured on an AMD Radeon Pro 5300M (the
+i7 Mac; `GL_RENDERER` logged on every run). Each change was judged by the
+plan's section 5 against the build before it, on the `cover` set
+(`neon-scale-check generate --set cover`: 17 animated scenes, six frames each
+at 1.0 / 0.5 / 0.25, 1920 x 1080 and one 3840 x 2160, every frame the first
+after a light change): at most 2 levels, and 99.9% of lit pixels within 1.
+Times are `neon-scale-check time` wall-clock (minimum over 5 x 40 frames
+between `glFinish`), median of three interleaved rounds. **Not** the
+`GL_TIME_ELAPSED` figures the plan and `neon-animation-perf-analysis.md`
+quote: on this GPU those read 3.6-4.0x the wall-clock time of the same frames
+(120 frames the timer put at 4.0 ms each finished in 125 ms), so they are
+ratios, not milliseconds - the band's "4.0 ms" frame with eight segments is
+1.04 ms.
+
+### I59. The glow coverage table was 1024 columns for every rect - CHANGED
+
+V21 sized the table for its worst case, a 1 px halo on a 4K rect (768 columns
+read 6 levels off there), and every config paid for it: a 200 x 120 rect baked
+and held the same 1 MB as a TV panel. The columns' spacing that a config needs
+follows the rect AND the halo width - the overhangs resolve distance past a
+piece's end in halo widths - so a perimeter-only rule would have cut exactly
+the case V21 sized it for.
+
+The layout became a parameter (byte-identical on its own: the `cover` set,
+`check`, `partition` and the 68 guide figures; timing within noise, 0.92-1.05
+with no direction, so `neon.frag` reading a uniform where it read constants
+costs nothing measurable): `GlowCoverLayout`, uploaded as `uGlowCoverLayout`,
+stored with the table and set with its allocation, and the split stored by the
+bake - every read takes both from the table, never from the config. Then the
+width: `GetGlowCoverWidth`, the longest band's straight plus quarter arc at one
+column per `clamp(0.8 kh, 1.6, 5)` full-res px, plus the overhangs, in steps of
+64 from 256 to 1024, kept within two steps by a hysteresis. Calibrated on 250
+configs (rects 200 x 120 to 3600 x 2000, `glowRadius` 1-20, three corner
+radii, both windings, partial arcs with and without stops, with segments, three
+scales) at every width from 256 to 960 against 1024: the widest spacing that
+held the criterion everywhere was ~2.2 px at kh 1, 2.5 at 2, 4.6 at 5, 6.8 at
+10 and 10 at 20; the constants sit under that envelope, 12% at the default kh
+5, and spacing 20% wider fails there.
+
+| config | columns | memory, RGBA16F |
+| ------ | ------: | --------------: |
+| 200 x 120, default glow | 256 | 0.25 MB |
+| 960 x 540, default | 448 | 0.44 MB |
+| 1840 x 1000 band, default | 704 | 0.69 MB |
+| 1840 x 1000 or 3600 x 2000, `glowRadius` 2 | 1024 | 1.0 MB (as before) |
+
+`cover` set against the step before: max 2, 99.998% within 1 level. `check`'s
+1.0 column unchanged; only the table's own guide figure changes shape, every
+other within 1 level. Frame time at 0.5, eight segments changing length every
+frame: the band 1.04 -> 0.87 ms (0.84x), the 960 x 540 rect 1.41 -> 1.12
+(0.79x); eight arcs on the band 0.91x; thin glows on large rects, which keep
+1024 columns, unchanged; still, hue and resize frames within noise.
+
+### I60. Segments were baked at the arcs' resolution - CHANGED
+
+A segment's bell has a standard deviation of a third of its length - ~100 px
+for a length-0.05 segment on the band, against an arc's 14 px feather - but its
+two channels were integrated, 16 Gauss-Legendre nodes a kernel per texel, at
+every column the arcs needed. That made the bake the largest pass of every
+frame that moved a segment.
+
+The segments now have a table of their own (`mGlowCover.segBuffer`, RG16F):
+pass 0s - the same bake, `uBakeTarget` 1 - integrates them at
+`GetGlowCoverSegmentWidth` columns (4 per standard deviation of the narrowest
+bell, overhangs 16 / 8, from 128), and pass 0f (`neon-glow-cover-fill.frag`)
+copies them into the main table's .b / .a: each texel decoded through the main
+layout (`glowCoverTexel`, the decode the bake uses too), mapped into the
+segment table through its own, one linear fetch, under a colour mask. So
+`neon.frag` still reads one texel per piece and does not change - a second
+table read there would have added eight fetches and eight forward maps to every
+shading pass. Segments so short their table would be 0.75 of the main width or
+more, or a fill that fails to build, bake into the main table directly as
+before, with a margin on the way out of that mode.
+
+Calibrated on 135 configs with the segment table forced on, against the
+segments baked directly: with overhangs 16 / 8 every density from 3 to 8
+columns per sigma read at most 2 levels with 99.9992% within 1; 2 read 3
+levels off a thin glow at 4K. `cover` set against I59: max 2, 99.992% within 1.
+Frame time at 0.5, eight segments changing: the band 0.87 -> 0.56 ms (0.64x),
+1840 x 1000 with a thin glow 0.66x, 3600 x 2000 at 4K 0.78x, 960 x 540 0.83x;
+four arcs and four segments on the band 0.82x; arcs-only, still, hue and resize
+frames within noise. The segment table is 64-125 KB. The first frame of a
+segment config builds one more program, the fill: +20-25 ms on a ~0.7 s first
+frame (every program finishes its compile on its first draw on this driver),
+inside the rounds' +/-40 ms spread.
+
+### I61. A segment's bell was integrated out to 5 sigma - CHANGED
+
+`segmentsOnPiece` integrated each bell out to `5 / (sqrt(2) invSigma)` - 5
+standard deviations, where it is 4e-6 of its peak - and the CPU's dirty-piece
+mirror used the same reach, so a moved segment re-baked every piece within it.
+Both now read `GLOW_COVER_BELL_REACH`, 3 / invSigma (4.24 sigma, 1.2e-4 of the
+peak): a moved segment dirties fewer pieces, and the segment table's bake on
+the band with eight segments changing fell from 0.75 to 0.58 (timer units,
+`--passes`). Against I60 on the `cover` set: at most 1 level anywhere, on up to
+1.6% of a frame's lit pixels (0.15% on average). Wall-clock at 0.5: the band
+and the 960 x 540 rect with eight segments 0.93x and 0.95x, everything else
+within noise (geometric means 0.98-0.995).
+
+The plan's step 4 also halved the Gauss-Legendre rule to 8 nodes. Built and
+measured, alone and together: 8 nodes alone read 3 levels off a long, bright
+segment (`seg_long`: length 0.2, boost 2) with 99.23% of lit pixels within 1;
+both together 2 levels and 99.57% - under the plan's 99.9% either way. A bell
+spanning many kernel widths needs the nodes. Not taken; the shader says why.
+
+### I62. Pass 1b computed the filament the edge ring always redraws - CHANGED
+
+`filamentLit` gated the filament's pointwise inputs on the line, but pass 1b
+and its field bake still computed the filament there - for pixels the blit
+never shows. The edge ring re-shades every pixel within the filament's reach,
+as pass 1 drew it, plus `RING_GUARD_TEXELS` (`GetRingWidth`), so the blit's
+bilinear footprint never reaches a texel the filament lights. `filamentLit` is
+now false wherever `uBlitOwnsCut` is set. The plan's decision 4, from the
+review that preceded it.
+
+Byte-identical where it can be seen: all 306 frames of the `cover` set, `check`,
+`partition` (seeds 1 and 7) and every final-frame guide figure. Four figures
+that show the intermediate buffers do change - pass 1b's reduced buffer, the
+field, its composite, and the blit-only view at 0.25 - since the line is no
+longer in them; their captions say so. Time: no measurable change (geometric
+means 0.988-0.997, wall-clock), as expected of the review's 0.03-0.05 timer
+units. It stays because it is exact and removes work; narrowing the ring's
+guard would end it, which the shader says at the gate.
+
+---
+
+## Twenty-ninth pass (the arc wipe's tail on a sharp corner)
+
+### V25. An arc ending on a sharp corner is cut along the corner's diagonal, on one side of the line only - FIXED
+
+**Reported**, from the demo's arc wipe with `startPos` / `endPos` moved to 0:
+"the tail at top-left corner is asymmetric and has hard cut". The config:
+1920 x 1080 at (960, 540) in a 3840 x 2160 frame, `cornerRadius` 0, CW,
+`lineWidth` 1, `filamentFalloff` 0.23, `glowRadius` 0, `bloomStrength` 0,
+scale 0.5, one arc growing from start 0 (wipe phase 1). Reproduced offscreen
+on an AMD Radeon Pro 5300M, pixel for pixel the capture's shape:
+
+| before | after |
+| ------ | ----- |
+| ![](images/review-findings/arc-tail-sharp-corner.png) | ![](images/review-findings/arc-tail-sharp-corner-fixed.png) |
+| ![](images/review-findings/arc-head-round-corner.png) | ![](images/review-findings/arc-head-round-corner-fixed.png) |
+
+Top: the tail parked on the top-left corner. Above the line its end ramp
+(`TAIL_FEATHER_PX`) fades in as it does mid-edge; below it the glow stops on a
+hard 45-degree edge running in from the corner. Bottom: the head 12 px past
+the top-right corner during the chase - the same diagonal, plus a notch where
+the line turns down the right edge. The head on a straight run was always
+symmetric.
+
+**Mechanism.** The filament read ONE coverage per fragment, at
+`perimeterPosition(vPos)` - its NEAREST perimeter point. Inside a sharp corner
+that map jumps across the diagonal: a fragment 3 px right of the left edge and
+5 px below the top one is nearer the LEFT edge, so it read the left edge's
+coverage (dark - the arc is on the top edge) and its core at 3 px, and dropped
+the top edge's light at 5 px that its neighbour on the other side of the
+diagonal kept. With the filament's soft tail reaching 32 px (64 sigma at this falloff)
+and the ramp only 14, the lower half of the tail's cap was the corner's Voronoi cell boundary.
+Outside the corner nothing jumps (every exterior fragment shares the corner
+point, which is what V2's inward feather keeps dark), so the cut was one-sided.
+It is V14's mechanism - a nearest-point read cut along the medial axis - one
+level down, in the filament, which V14 deliberately left pointwise. It shows
+at any end within the filament's reach of a corner whose radius is under that
+reach: a wipe's tail or head parked on a sharp corner, every end passing
+through one during a chase, and (on a tiny rect with a fat line) the spine.
+
+**Fix.** The filament is a MAX OVER THE OUTLINE'S PIECES - the four straights
+and four corner arcs the halo and bloom are summed over. Each piece within
+reach contributes its core at the fragment's distance from IT times the
+coverage at ITS own nearest point (`filamentPieceDistance`, `perimeterAt`,
+`filamentCover`); the arcs' and the segments' magnitudes each take the max, so
+the output stays linear in the two hues and the field's factorisation holds.
+Each piece's term is continuous in the fragment's position, so the max is.
+Three properties keep it from moving anything else:
+
+- **A uniformly lit ring is unchanged.** The core falls with distance and the
+  outline's distance is the nearest piece's, so the max is the old
+  `core(ad) * cover`. Under `uPerimeterUnread` the loop runs once at `ad` with
+  the old expression - the default frame is byte-identical, not merely close.
+- **No bleed past a free end.** Every piece meeting at an end reads that end's
+  coverage, which the inward feather makes 0 - the exterior wedge of a sharp
+  corner stays at background, as V2 requires.
+- **One call site.** `filamentCover` (the arc and segment loops and the LUT
+  reads) is called from one place, in a loop whose step comes from the data -
+  four straights on a sharp rect, eight pieces otherwise, one pass when nothing
+  reads a position - so it is not unrolled into eight copies. A piece's corner
+  `atan` is taken only within reach.
+
+`perimeterPosition` is gone: nothing reads a fragment's nearest point any more.
+`perimeterAt` keeps its layout (the two windings' piece order), which the
+glow coverage bake mirrors.
+
+**Measured** (AMD Radeon Pro 5300M, offscreen, the frame after the config and
+the third, before against after):
+
+| scene | px > 2 levels | max |
+| ----- | ------------- | --- |
+| reported tail, scale 0.5 / 1.0 | 453 / 453 | 119 |
+| head parked on the corner (phase 3) | 975 | 132 |
+| CCW, tail on the corner | 947 | 129 |
+| head 12 px past a corner (chase) | 1,200 | 113 |
+| tail 10 px before a corner | 1,188 | 122 |
+| radius 8, 4 px soft line | 56 | 16 |
+| radius 40, 4 px soft line | 0 | 0 |
+| tail on a corner, `glowRadius` 10, bloom 0.3 | 0 (2 px by 2) | 2 |
+| full ring, default look, radius 0 / 40 | 0 (byte-identical) | 0 |
+| full ring, a stop at alpha 0.4 | 0 (byte-identical) | 0 |
+| segment centred on a corner, no arcs | 0 (byte-identical) | 0 |
+| 120 x 60 rect, 6 px soft line, half ring | 27,458 | 189 |
+
+Every change sits in the corner's box. The last row is the spine case: the old
+read cut the lit edge's filament along the rect's medial axis, and it now
+crosses the interior to its reach - a different picture, and the right one: a
+fully lit ring of the same config lights the same pixels. Direct against field
+frames stay within 1 level in every scene. `check` passes with every figure
+identical to the build before; `partition` (seed 1) passes; all 69 guide
+figures are byte-identical (none has an arc end within a fat line's reach of a
+corner). Moving the head and the tail through a corner in 0.5 px steps, each
+step a config change as an animation draws it, no step changes any pixel of
+the corner by more than the line's own motion on a straight run (27-28 levels
+per half pixel, both builds) - the cap turns the corner with no pop.
+
+**Cost: none measurable.** `neon-scale-check time` at 1920 x 1080, scales 1.0
+and 0.5, three rounds with the build order rotated, medians: geometric means
+after / before 0.94 / 0.98 still, 0.99 / 0.99 arc-wipe and 0.98 / 0.95
+segment-travel - inside the same build's own round-to-round spread (median
+1.13x max / min per figure). The walk replaces `perimeterPosition`'s nearest
+point and its `atan` with up to eight cheap distances and an `atan` only for a
+corner within reach, and one `filamentCover` almost everywhere.
+
+---
+
+## Thirtieth pass (one corner of an inside glow)
+
+### V26. One sharp corner of a one-sided glow is softer than the other three, depending on where the rect sits - FIXED
+
+**Reported**: "the top-left corner is not sharp with glow inside mode, while
+other corners are sharp. With some geometry rect it happens, not all cases."
+
+**Reproduced** on an AMD Radeon Pro 5300M with a probe that mirrors each
+corner of an integer-placed rect into the top-left's orientation and compares
+the four (`GlowSide::INSIDE`, `cornerRadius` 0, one white stop, scale 0.5,
+random rects): on 30 rects the corners disagreed by up to 40 levels, and in
+every case it was ONE pixel - the corner's vertex pixel. On 311 x 169 at
+(119, 789) the top-left's read 207 and the other three 245-246; on other rects
+it was another corner, two of them, or none.
+
+| before | after |
+| ------ | ----- |
+| ![](images/review-findings/inside-corner-pixel.png) | ![](images/review-findings/inside-corner-pixel-fixed.png) |
+
+The four corners of that rect, 20 px round each vertex, 14x, laid out as they
+sit on screen: before, the top-left vertex pixel is visibly darker, which reads
+as a softened corner on a thin line, and the doubled ramp leaks a faint pixel
+just outside some corners; after, the four are the same.
+
+**Mechanism.** The one-sided cut's antialiasing width was `fwidth(d)` of the
+rounded box's distance - `|dFdx(d)| + |dFdy(d)|`, differenced across the 2x2
+quad. On a straight edge that is 1. On a sharp corner's vertex pixel the quad
+can hold BOTH neighbours that lie outside the rect - the one across the
+vertical edge and the one across the horizontal - and then `d` steps from
+-0.5 to +0.5 along each axis: `fwidth` reads 2, the ramp
+`1 - smoothstep(back - soft, back, d)` doubles, and the vertex pixel, wholly
+inside the rect, is cut to 0.84. The quad's parity - whether the vertex
+column and row are odd or even in the framebuffer - decides which corner, so
+a rect shows it at none, one or two corners, and moving it by a pixel moves
+it. The same width sized four more edges, with the same pixel wrong:
+
+- the ring field's composite (`neon-field.frag`), the cut on settled frames;
+- `neon-blit.frag`'s cut and cutoffs below 1.0;
+- the opaque fill's edge coverage `clamp(0.5 - d / aa, 0, 1)` (`black-rect.frag`):
+  0.75 on the vertex pixel - a quarter of the background through it;
+- an inside cutoff at softness 0, whose square inner corner sits on the inside
+  diagonal, where `fwidth` reads 0 or 2 by the same parity.
+
+**Fix.** `sdRoundBoxFwidth` in `neon-sdf.glsl`, shared by the four shaders:
+the distance's analytic gradient - per axis inside, radial in a corner's
+exterior - weighted by each axis's pixel, `fwidth(p)`. Along an edge it is
+`fwidth(d)`'s value; a pixel takes the gradient of the edge it is nearest, so
+it is 1 on every corner pixel. Still a derivative of the position, so a host
+drawing at another pixel density gets its pixel; the per-axis form is exact
+because every caller's position is the rect's frame through an unrotated
+orthographic transform. It shares `sdRoundBox`'s `length`: a first version
+with its own `normalize` and a general gradient-times-Jacobian cost about
+twice as much on the one-sided scenes' still frames.
+
+**Measured**, 30 random rects per row, corners compared in pairs (max
+difference over the six pairs; before / after):
+
+| look | max | pairs over 4 levels |
+| ---- | --- | ------------------- |
+| inside glow, default look, scale 0.5 / 1.0 / 0.25 | 40 -> 2 | 207 -> 0 |
+| inside glow, 1 px soft line, 1920 x 1080 and 3840 x 2160 | 38 -> 2 | 184 -> 0 |
+| inside glow, `glowRadius` 20, bloom 0.6 | 40 -> 2 | 187 -> 0 |
+| outside glow, scale 0.5 / 0.25 | 39 -> 2 | 220 -> 0 |
+| both sides, inside cutoff 12 px at softness 0, scale 0.5 / 1.0 | 29 -> 2 | 198 -> 0 |
+| opaque fill INSIDE alone (`opaqueOnly`) | 64 -> 0 | 220 -> 0 |
+
+What is left is the dither. Two-sided scenes without cutoffs are byte-identical
+(they never read the width): the fifteen V25 probe scenes, `check` (identical
+to the build before, every figure), and 64 of the 69 guide figures; the other
+five - the one-sided and fill figures - move 1 level on 5-158 pixels, where a
+rounded corner's finite difference and its derivative part by a hair.
+`partition` passes, seeds 1 and 7.
+
+**Cost.** `neon-scale-check time` at 1920 x 1080, medians of five rounds
+with the build order rotated: on still frames of the one-sided scenes at 0.5,
+`glow_inside` 0.090 -> 0.098 ms and `bounded_band` 0.043 -> 0.048 ms - the
+blit and the ring field's composite pay for the gradient on every pixel of
+the mask branch; at 1.0, `card_outside` and `default` inside the noise. Over
+all twelve scenes in three modes (three rounds), geometric means 1.00-1.04 on
+still, 1.01 on arc-wipe and 1.00 on hue frames.
+
+---
+
+## Thirty-first pass (a uniform the field bake compiles out)
+
+### I63. The field bake was sent a uniform it never reads, and an optimising compiler logged it - CHANGED
+
+**Reported** from the target: "uGlowSideSoftness not found in neon field" -
+`ShaderProgram[NeonRenderer.Field]: uniform 'uGlowSideSoftness' not found`,
+logged once each time the program is built.
+
+`NeonRenderer.Field` is `mFieldBakeShader`, `neon.frag` compiled with
+`NEON_FIELD_BAKE`, which writes the field and returns at the grade. The
+one-sided cut comes after that return, and the cut's softness - `sideSoft =
+max(uGlowSideSoftness, sideAA)` - has no other reader. So the uniform is dead
+in that variant, and a compiler that removes dead code removes it; Tizen's
+does. `uploadNeonUniforms` uploads the same set to every program built from
+`neon.frag`, the bake included, and `ShaderProgram::SetUniform` logs a missing
+uniform the first time it looks one up.
+
+Harmless - a uniform the program does not have is a no-op to set, and the bake
+never needed the value - and older than the report: the cut has always sat
+after the bake's return. Apple's GL keeps a uniform the source references
+whether the reference is reachable or not, so neither GPU on the i7 Mac (AMD
+Radeon Pro 5300M, Intel UHD 630) logs it, before or after.
+
+**Changed.** `UploadEdgeMaskUniforms` takes `cutSoftness`, and
+`uploadNeonUniforms` passes false for `mFieldBakeShader` alone (pass 1f and
+pass 1r both draw with it). Every other program keeps it, and on each the
+read is behind a uniform an optimiser cannot fold: `uBlitOwnsCut` in the
+shading and the ring, `uGlowSide` and the cutoffs in the ring field's
+composite and the blit. `neon.frag` notes at the bake's return that a read
+added above it has to go back into the upload.
+
+**Audited** the same way for every neon program, since it is the variants that
+compile code out: each program's uploads against what its variant reads,
+reachably. The bake's other uniforms all have a reader before the return (most
+through the discards); the two `neon-field.frag` composites are each sent only
+what their own variant reads; the coverage table's bake and fill read every
+uniform they are sent from code their `neon-pieces.glsl` half compiles and
+`main` reaches; the shading, ring, gather, blit, fill and emission programs
+have one build each. The other layers' shaders have no variants and no early
+return. The audit was by reading, not by an optimising compiler: one run on the
+device with the log on is the confirmation.
+
+**Verified** on the AMD: no "not found" logged for any glow side with the hue
+still or rotating; still and hue-rotating frames, inside and outside, and the
+V26 corner sweep byte-identical to the build before; `check` identical.
+
 ---
 
 ## What is left
@@ -3932,10 +5287,10 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34. Five items from the
-first pass remain deliberately open, each with the reasoning recorded next to
-the code rather than only here, plus R7 from the second pass, V9 and I12's
-remainder from the third, I13 from the fourth, and I18 from the sixth:
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, the thirtieth V26, and the thirty-first I63. Three items from the
+first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
+the code rather than only here, plus V9 from the third (I12's remainder closed
+with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 
 | item | state | why |
 | ---- | ----- | --- |
@@ -3945,12 +5300,12 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | V14 | fixed | V4's third half: the halo/bloom FIELD lost its medial-axis crease, but the nearest-point coverage that SCALES it kept one, so any partly lit perimeter cut the glow to a hard-edged polygon |
 | V13 | fixed | V4's other half: the sampling floor was a fixed half width, so at a soft falloff - where sigma multiplies a 64-sigma tail - it doubled the filament to buy five levels of peak |
 | V5 | residual, documented | closing it means plumbing pixel-space feathers into the pre-pass for an effect nobody has reported; read V9 alongside it, which measures the other half of the same mechanism |
-| I2 | declined | negligible measured-by-structure win against a real staleness-bug risk |
+| I2 | fixed by I39 | declined first for its staleness risk; I39 keys the table on what its pass binds, which needs no list of config fields |
 | I5 | documented | the alternative is a breaking renderer-API change for an unmeasured cost |
 | I8 | audited, no UI written | the C ABI itself is complete; what is missing is `demo-capi` coverage, ranked in the section above |
-| R7 | open | a measured quantisation defect with a cheap cure, but unproven visual severity; see the note there before starting |
+| R7 | fixed | the dark tail's one-level plateaus drew contour rings; the three writes to the caller's framebuffer now add a +/- half-level dither, and the reduced buffer is half float so the blit has something left to dither. Widest plateau 17 -> 7 px outside, 32 -> 10 inside. +0.01 ms a still frame at 1080p (likely lost framebuffer compression), the reduced buffer's memory doubled |
 | V9 | open | the honest fix is a design decision (interpolate the arc colour between adjacent samples in the consumer), not a patch; the three options are ranked in the section |
-| I12 | partly fixed | the live shader comment is corrected; `architecture-design.md` and `multiple-arcs-design.md` still name the removed LUT functions, and both are design prose rather than comments beside live code |
+| I12 | fixed | the live shader comment was corrected first; the two design documents that still named the removed LUT functions were removed on 2026-10-09 |
 | I13 | open | undefined `pow` reachable only through the C ABI; both cures change what the boundary accepts or what the term computes below `ghostSize` 0.6, so it is a behaviour decision rather than a repair |
 | I18 | open | the division guarantees something the 8-bit blend discards, and the three ways out - drop it, document its limit, or accumulate at higher precision - are a design call, not a fix |
 | V12a | fixed | per-lamp shouldering cannot bound a SUM, so the blend does: the lamps screen instead of adding. Putting the shoulder on the sum was built and measured 2.5x to 9.3x slower, with a crease where differently coloured beams cross |
@@ -3967,6 +5322,34 @@ remainder from the third, I13 from the fourth, and I18 from the sixth:
 | I32 | fixed | the edge ring's gather attachments tripled the scaled path's memory; now 2.15 MB at 1080p and 0.5 for a full-screen rect, less for smaller ones |
 | I33 | fixed | the 1 MB glow coverage table was allocated in `Initialize` although a uniformly lit ring - the default - and a disabled layer never read it; it is now allocated on the first frame that bakes it and released with the layer |
 | I34 | fixed | the glow coverage table re-baked on every config change, so an intensity, colour or other-layer animation paid pass 0b every frame; it is now gated on its own inputs (light blocks, width, height, corner radius, winding, glow radius) |
+| I39 | fixed | the emission table re-baked on every config change; it is now keyed on what its pass binds - two uniforms by value, three LUTs and two light blocks by upload count - so no config field list can drift from the shader |
+| I40 | fixed | the gather and the reduced-scale shading re-ran on frames where nothing moved; skipped then (`mOffscreenCurrent`), byte-identical, 3.84x geometric mean on still frames at 0.5 on an M2 Pro, moving frames unchanged |
+| I41 | fixed | without segments `uGatherSeg` was bound to texture 0, and Apple's driver logged it on every split or scaled run; attachment 0 stands in, as for I33 |
+| I42 | fixed | any arc or segment change re-baked the whole glow coverage table; each piece's texels depend on that piece alone, so only the pieces a changed light reaches are re-baked - exact (texel for texel), 1.29x on the band's travelling-segment frames on an M2 Pro |
+| I43 | fixed | the glow coverage table was RGBA16F with two channels of zeros on a config without segments, and was held for the life of the layer; now RG16F there (0.5 MB) and released after 5 s unread |
+| I44 | changed | the split's gate was the AMD's calibration and kept the loop inline where an M2 Pro split 1.1-4.75x faster; now the M2's values (every rect splits at 1.0), `bounded_band` 3.5-3.7x, at up to 16 / 33 MB of gather buffer for a tiny rect with a frame-filling glow |
+| I45 | fixed | a uniformly lit ring with opaque stops computed `perimeterPosition` and a gradient alpha read nothing used; skipped (`uPerimeterUnread`), the default frame 1.11x at 1080p, byte-identical where it engages |
+| I46 | fixed | pass 1 at 1.0 re-shaded a glow whose only moving part is its hue; now a hue-invariant field baked once a config holds and composited per frame - 3.3x (hue) / 6.3x (still) geometric mean at 1080p, within 1/255, +3.3 MB for the default rect |
+| I47 | fixed | the neon cleared its cached offscreen passes and its field on any composited config change, so an animation of another layer (the lens flare's sun) cost it 4.9x (hue) / 15x (still) at 1.0; now cleared only on a change to `config.neon` or `config.geometry`, byte-identical |
+| I48 | changed | the bloom's and the corner development's atans were the driver's; now a minimax polynomial (1.7e-6 rad), 1.07-1.11x on animated frames at 1.0 and 0.5 on an AMD 5300M, within 1 level on at most 0.016% of channels; unmeasured on the M2 |
+| I49 | changed | three byte-identical SDF functions and the tone map were hand-copied between shaders, "uniformly lit" was decided twice, and the inline-gather path no shipped config built was still compiled in; one copy of each, one CPU predicate, the inline path and its gate removed for a `GATHER_MAX_SCALE` of 0.5 (20 -> 8 MB, 3.3x, up to 9 levels on a 40 x 24 rect; no check image moves) |
+| I50 | changed | below 1.0 a rotating hue re-shaded pass 1b every frame; the hue-invariant field now serves it too, baked on the reduced buffer's grid and composited in pass 1b's place - 2.00x / 1.56x / 1.23x on hue frames at 0.75 / 0.5 / 0.25 (AMD 5300M, 1080p), +0.84 MB at 0.5, within 1 level; the field's programs now built and first drawn on a config's first frame, which removes the bake frame's ~140 ms stall |
+| I51 | changed | the field's mask channel (RG16F) served only scale 1.0; removed - at 1.0 a one-sided glow or a cutoff now shades directly (`glow_inside` / `card_outside` 4-8x slower there, toward exact by 1-2 levels), nothing below 1.0 moves |
+| I52 | changed | below 1.0 the edge ring was re-shaded on every frame; it has a field of its own, packed into four strips at full resolution, composited in pass 2c's place - 1.4-1.9x still, 1.2-1.6x hue below 1.0 (AMD 5300M), ~0.27 MB, within 1 level |
+| I53 | changed | the ring's field refused a one-sided glow and cutoffs; its composite now recomputes them from the pixel's position, as the ring's shading applies them after its tone map - masked still frames 1.2-2.7x below 1.0 (M2), the production band 0.051 -> 0.029 ms at 0.5, within 1 level |
+| I54 | changed | an arc that moved re-baked every glow coverage piece either support touched - nearly the whole table under an arc wipe; now only the bands its ends swept (bitwise, plus the antipode rule for one fixed end), texel-exact over 6,706 random edits - arc-wipe frames 1.06x at 1.0 to 1.15x at 0.25 (M2), `segments` up to 1.74x |
+| I55 | changed | the gather re-ran on every config change; now skipped while its inputs hold and this frame's quad lies inside the last one drawn, read through that region - intensity-pulse frames 1.19x at 1.0, 1.31x at 0.5, 1.43x at 0.25 (M2), within 1 level; and pass 1b, which inherited its unblended state from pass 1a's `glDisable`, now sets it itself |
+| I56 | changed | an intensity animation invalidated both fields every frame; an intensity-only change now keeps them, scaled by I / I0 while it moves below the bake, re-baked above it and exactly when it stops - intensity-pulse frames 2.31x at 0.5, 1.60x at 0.25 (M2); held frames byte-identical, moving ones within 2 levels on the default look, 6 on a 1.5 bloom over a 0.4-1.0 pulse (owner-accepted) |
+| I57 | changed | the direct path at 1.0 removed: 1.0 takes the scaled path with a full-size buffer, `uBlitOwnsCut` replaces the scale test, `resolutionScale` defaults to 0.5 - every frame below 1.0 byte-identical and no slower; 1.0 within 1 level, 1.67x on still frames, 0.88x hue and 0.62x intensity there (M2), up to 8.3 MB more at full screen |
+| V23 | fixed | the bloom's pedestal ended it on a crease at `reach`, so a large rect's centre showed a hard-edged dark rectangle and the outer rim bunched its last levels; each piece's bloom now fades out by its own distance from 0.5 `reach`, both sides - at most 6 levels in the outer half of the tail, arc-wipe frames 0.97x, still frames unchanged. the page's images regenerated with R7 |
+| V24 | fixed | the ring's field baked the ring mesh into transposed side strips, where the fill rule hands an edge on a pixel centre the other way, so ~1% of configs composited an unbaked texel - a 1 px dark seam between the ring and the blit; the bake now draws each strip's whole box, direct-vs-field pixels over 8 levels 303 -> 2 on 400 configs |
+| I59 | changed | the glow coverage table was 1024 columns for every rect; its layout is now a parameter stored with the table and its width follows the rect and the halo width (256-1024, calibrated on 250 configs) - 0.25-0.69 MB for a default glow, 1024 still for a thin one on a large rect; within 2 levels, 99.998% within 1; 8 segments on the band 0.84x |
+| I60 | changed | the segments' bells were integrated at the arcs' resolution; they have a narrow table of their own (pass 0s, 4 columns per sigma from 128) copied into the main one by a fill pass (0f), `neon.frag` unchanged - within 2 levels, 99.992% within 1; 8 segments on the band 0.87 -> 0.56 ms (0.64x), 960 x 540 0.83x |
+| I61 | changed | each bell was integrated, and its moves tracked, out to 5 sigma; 4.24 now (`GLOW_COVER_BELL_REACH`), at most 1 level on up to 1.6% of lit pixels, segment-table bake 0.75 -> 0.58 timer units; the plan's 8-node rule was measured (3 levels) and not taken |
+| I62 | changed | pass 1b and its field bake computed the filament the edge ring always redraws; skipped there (`uBlitOwnsCut`), every final frame byte-identical, the intermediate-buffer figures without the line |
+| V25 | fixed | the filament read one coverage at the fragment's nearest perimeter point, which jumps across a corner's diagonal, so an arc ending on a sharp corner (an arc wipe from 0) was cut along it on the inside half only; the filament is now a max over the outline's pieces, each at its own distance and its own nearest point - uniformly lit rings byte-identical, `check` unchanged |
+| V26 | fixed | every edge ramp (the one-sided cut, the cutoffs' floor, the blit's, the ring field's, the opaque fill's coverage) was sized by `fwidth(d)`, which reads 2 on a sharp corner's vertex pixel when the quad straddles both edges - that pixel came out at 0.84 (the fill's 0.75) on whichever corners the quad parity hit; `sdRoundBoxFwidth` takes the analytic gradient instead - corners agree within the dither, two-sided scenes byte-identical |
+| I63 | changed | the field bake (`neon.frag` + `NEON_FIELD_BAKE`) was sent `uGlowSideSoftness`, whose only reader follows the bake's return, so Tizen's compiler removed it and the upload logged "not found"; the bake is no longer sent it - frames byte-identical, the other neon programs audited for the same |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

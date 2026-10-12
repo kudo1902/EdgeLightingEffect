@@ -4,7 +4,9 @@ Renders every image in
 [`docs/neon-onboarding-guide.md`](../../docs/neon-onboarding-guide.md) into
 `docs/images/neon-onboarding/`, which
 [`docs/neon-shader-outputs.html`](../../docs/neon-shader-outputs.html) also
-reads its pass images from. Off in the default build, like
+reads its pass images from - plus two only that page shows, the edge ring's
+field and its composite below 1.0 (`pass-p1r-ring-field.png`,
+`pass-p2r-ring-composite.png`). Off in the default build, like
 [`neon-scale-check`](../neon-scale-check/README.md).
 
 ## Build and run
@@ -37,7 +39,8 @@ Three kinds of figure, one function per group in
   `OffscreenCapture`, then cropped and magnified on the CPU. Most of Parts 3
   and 4.
 - **Diagrams.** Drawn on the CPU from the shaders' own formulas, ported line
-  for line: `sdRoundBox`, `perimeterPosition`, `rectPerimeter`, the gather's
+  for line: `sdRoundBox`, `perimeterPosition` (the nearest-point map the
+  filament read before V25; its layout is `perimeterAt`'s), `rectPerimeter`, the gather's
   Lorentzian weight and the grade's curve. Plots are written as SVG with their
   own white background.
 - **Pass captures.** What the renderer's private buffers hold between passes,

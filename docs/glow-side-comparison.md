@@ -71,9 +71,8 @@ The harness:
   `Update(0.0f)`, so neither run can drift;
 - clears to a blue-grey `0.11, 0.13, 0.19` rather than black, so "glow over bare
   backdrop the fill never covers" is distinguishable from both the black fill
-  and the glow - the same trap
-  [`neon-unification-comparison.md`](neon-unification-comparison.md) documents
-  for its `opaque_fill` scene;
+  and the glow - the same trap the neon unification's verification met in its
+  `opaque_fill` scene (`neon-unification-plan.md`);
 - compares raw RGBA byte-wise, never through a PNG decoder.
 
 **Sub-pixel behaviour is measured by moving the GEOMETRY, not by supersampling.**

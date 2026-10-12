@@ -365,8 +365,8 @@ void OnKey(GLFWwindow *window, int key, int scancode, int action, int mods)
     {
         if (mods & GLFW_MOD_SHIFT)
         {
-            // Toggle the neon layer between full resolution and half. There is
-            // no second renderer to switch to any more - this IS the old
+            // Toggle the neon layer's buffer between full size and half. There
+            // is no second renderer to switch to any more - this IS the old
             // "optimized on/off", expressed as the scale it always was.
             config.neon.resolutionScale = (config.neon.resolutionScale < 1.0f) ? 1.0f : 0.5f;
         }

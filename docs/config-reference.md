@@ -442,7 +442,7 @@ bound render the same pixels, so the slider past it is dead.
 | `neon.filamentFalloff` | `>= 0.001` | `neon-renderer.cpp:887` | `0` = `0.0005` = `0.001` |
 | `neon.lineWidth` | `>= 0` | shader gate | `-8` = `-1` = `0` (no filament) |
 | `neon.glowRadius` | `>= 0` | shader gate | `-20` = `-1` = `0` |
-| `neon.glowSideSoftness` | `>= 1 px` | one destination px (`fwidth` floor, in `neon.frag` or `neon-blit.frag`) | `0` through `1.0` identical; `1.05` differs |
+| `neon.glowSideSoftness` | `>= 1 px` | one destination px (the pixel-width floor, `sdRoundBoxFwidth`, in `neon.frag` or `neon-blit.frag`) | `0` through `1.0` identical; `1.05` differs |
 | `ColorStop.color.a` | `[0, 1]` | LUT bake | `1.0` = `1.5` = `4.0` |
 | `Arc.length` | `[0, 1]` | perimeter walk | `1.0` = `1.5` = `2.0` |
 | `Arc.intensity` | `>= 0` | mask fold | `-4` = `-1` = `0` |
@@ -466,8 +466,8 @@ bound render the same pixels, so the slider past it is dead.
 `Cutoff.softness` - the glow's `insideCutoff` / `outsideCutoff` and the fill's
 `opaqueInsideCutoff` / `opaqueOutsideCutoff` alike - looks like a `>= 1 px`
 clamp and is NOT one, which is why it is not in the table above. Only the
-feather's WIDTH is floored at one destination pixel, by the shader's `fwidth`
-floor on every path (below `resolutionScale` 1.0 the glow's cutoffs are drawn
+feather's WIDTH is floored at one destination pixel, by the shader's
+pixel-width floor (`sdRoundBoxFwidth`) on every path (below `resolutionScale` 1.0 the glow's cutoffs are drawn
 by `neon-blit.frag`, at destination resolution). Its POSITION is
 not: the fade's midpoint is always `size + softness/2`, and the floored width is
 laid symmetrically about it. At or above the floor the fade therefore runs

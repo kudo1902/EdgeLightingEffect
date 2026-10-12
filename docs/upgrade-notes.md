@@ -1,10 +1,34 @@
 # Upgrade notes: from `main` to the edge-ring branch
 
 What a host has to know when it moves from `main` (`1b5cf94`) to this branch.
-Five of the changes are silent - the host still compiles and links, and the
-picture moves - so read the first two sections before upgrading anything that
-uses an opaque fill or a cutoff softness, and section 5 before upgrading
-anything that lights only part of the ring.
+Six of the changes are silent - the host still compiles and links, and the
+picture moves - so read section 0 first (the default resolution scale is now
+0.5), the next two before upgrading anything that uses an opaque fill or a
+cutoff softness, and section 5 before upgrading anything that lights only part
+of the ring.
+
+## 0. `NeonConfig::resolutionScale` defaults to 0.5, and 1.0 takes the same path
+
+The neon has ONE path now (I57). The direct path - `resolutionScale` 1.0
+drawing the glow straight onto the target with no buffer, blit or edge ring -
+is gone, and the default dropped from 1.0 to 0.5.
+
+- A host that never set the scale now renders at 0.5: the glow shaded into a
+  half-resolution buffer and blitted back, a ring round the edge at full
+  resolution. Within 2/255 of the 1.0 render on every scene in
+  [`neon-resolution-scale-comparison.html`](neon-resolution-scale-comparison.html),
+  and cheaper on frames whose config animates (an intensity pulse, an arc wipe,
+  a travelling segment). To keep full resolution, set 1.0 explicitly.
+- A host that sets 1.0 gets the same passes with a full-size buffer: within 1
+  level of what the direct path drew (a rounding step on up to 17% of
+  channels, from the extra 8-bit buffer), and holding the reduced buffer at
+  full size over the glow's region (up to 8.3 MB for a full-screen rect at
+  1920 x 1080).
+- The C ABI follows: `el_effect_get_neon_resolution_scale` on a fresh effect
+  reads 0.5.
+
+The sentence below about byte-identity at scale 1.0 describes the branch
+before this change.
 
 At `resolutionScale` 1.0, as long as no opaque fill was bounded by the glow's
 cutoffs, every cutoff softness is 0 and the ring is lit all the way round (one
@@ -106,25 +130,21 @@ c.size = std::max(c.size - 0.5f * c.softness, 0.0f);
   without `EXT_color_buffer_half_float`) gets RGBA8 instead, logged once, and
   reads up to 3/255 off 1.0 rather than 2.
 
-## 4. Neon shaders are compiled on first draw, per path
+## 4. Neon shaders are compiled on first draw
 
-`Initialize` now compiles only the three programs both resolution paths share:
-the emission pre-pass, the glow coverage table (section 5) and the opaque fill. The neon's own programs are built
-the first frame each path renders. That is one program at 1.0, and four below
-1.0 (the gather, the shading twice - once for the reduced buffer and once for
-the edge ring, so no program draws two targets in a frame - and the
-composite).
+`Initialize` now compiles only the emission pre-pass and the opaque fill. The
+neon's own programs are built on the first frame: the gather, the shading
+twice - once for the reduced buffer and once for the edge ring, so no program
+draws two targets in a frame - and the blit; the glow coverage table's bake on
+the first frame that needs it (section 5), and the fields' programs on the
+first frame of a config they can serve.
 
-- A host that never changes path compiles only what it draws with, and creates
-  its effect faster. On Mesa llvmpipe, init plus the first frame at 0.25 drops
-  from ~50 ms to ~40 ms.
-- The first frame after switching to or from 1.0 pays that path's compile,
-  once. A host that switches during interaction can render one frame at each
-  scale it will use behind a loading screen.
+- A host creates its effect faster. On Mesa llvmpipe, init plus the first
+  frame at 0.25 dropped from ~50 ms to ~40 ms.
 - A neon shader that fails to compile no longer fails `Initialize`, so the
   renderer is no longer dropped from the effect. The error is logged once, on
-  the first frame of the failing path. That path then draws the opaque fill and
-  no glow, and the compile is not retried.
+  the first frame. The frame then draws the opaque fill and no glow, and the
+  compile is not retried.
 
 ## 5. The glow on a partly lit ring looks different
 
@@ -145,7 +165,9 @@ averaged around the pixel (V19 and V20 in
 - **A fully lit ring is unchanged**, bit for bit.
 
 It costs one more offscreen pass and a 1.0 MB RGBA16F table (0.5 MB in RGBA8
-on a driver that cannot render to half float). V20's version of it - one
+on a driver that cannot render to half float) - since I59 sized to the rect and
+the halo width, 0.25-0.69 MB for a default glow, 1.0 MB only for a thin glow on
+a large rect. V20's version of it - one
 table per perimeter, 2 MB - cost ~1.1x on a partly lit ring and ~1.04x on a
 fully lit one at 1.0 (~1.2x and ~1.08x at 0.5) on an M2 Pro; V21's, one table
 per piece, measures 1.00-1.01x of that at 1.0 and 4-7% faster below it, on an

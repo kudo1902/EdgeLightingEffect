@@ -2,7 +2,7 @@ precision highp float;
 
 // INVARIANT, because two programs have to agree on it to the bit. Below
 // resolutionScale 1.0, NeonRenderer splits the frame between the blit
-// (neon-blit.frag) and the edge ring (neon.frag's NEON_READS_GATHER variant): two
+// (neon-blit.frag) and the edge ring (neon.frag's ring program): two
 // vertex arrays that share their boundary vertices, so the rasteriser gives
 // every pixel to exactly one of the two draws. That holds only if both programs
 // compute the same gl_Position from the same aPos and uMVP - and GLSL does not

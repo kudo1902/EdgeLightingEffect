@@ -40,7 +40,8 @@ namespace EdgeLighting
         UniformBuffer &operator=(const UniformBuffer &) = delete;
 
         UniformBuffer(UniformBuffer &&other) noexcept
-            : mUbo(other.mUbo), mName(std::move(other.mName)), mCache(std::move(other.mCache))
+            : mUbo(other.mUbo), mName(std::move(other.mName)), mCache(std::move(other.mCache)),
+              mUploadCount(other.mUploadCount)
         {
             other.mUbo = 0;
             LOG_I("UniformBuffer[%s] moved (ubo=%u).", mName.c_str(), mUbo);
@@ -59,6 +60,7 @@ namespace EdgeLighting
                 mUbo = other.mUbo;
                 mName = std::move(other.mName);
                 mCache = std::move(other.mCache);
+                mUploadCount = other.mUploadCount;
                 other.mUbo = 0;
             }
             return *this;
@@ -78,7 +80,14 @@ namespace EdgeLighting
             glBindBuffer(GL_UNIFORM_BUFFER, mUbo);
             glBufferData(GL_UNIFORM_BUFFER, size, data, usage);
             glBindBuffer(GL_UNIFORM_BUFFER, 0);
+            ++mUploadCount;
         }
+
+        /// How many times @ref SetData actually uploaded - a version number for
+        /// the block's contents. A call that repeated the previous bytes is
+        /// skipped above and does not count, so an unchanged count means the
+        /// shader reads exactly what it read when the count was taken.
+        uint32_t GetUploadCount() const { return mUploadCount; }
 
         /// Attaches the buffer to @p bindingPoint. Pairs with
         /// ShaderProgram::SetUniformBlockBinding on the same point.
@@ -91,6 +100,7 @@ namespace EdgeLighting
         GLuint mUbo = 0; ///< Uniform Buffer Object handle.
         std::string mName = "unnamed";
         std::vector<uint8_t> mCache; ///< Last-uploaded bytes; skips redundant glBufferData.
+        uint32_t mUploadCount = 0;   ///< Uploads that changed the contents; see GetUploadCount.
     };
 
 } // namespace EdgeLighting

@@ -911,19 +911,19 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
 
     // --- Performance ------------------------------------------------------
     // Was its own "Optimized Neon" section back when the half-res path was a
-    // second renderer. It is one renderer now, so these are just knobs on it:
-    // Res Scale 1.0 is the full-resolution path (no offscreen buffer, no
-    // blit), anything lower renders scaled and composites back.
+    // second renderer. It is one renderer, one path, so these are just knobs
+    // on it: Res Scale is the size of the buffer the glow is shaded into
+    // before it is composited back (1.0 = full size; the default is 0.5).
     if (ImGui::TreeNodeEx("Performance##Neon", ImGuiTreeNodeFlags_DefaultOpen))
     {
         SliderWithInput("Res Scale##Neon", cfg.neon.resolutionScale, 0.125f, 1.0f, "%.3f");
         if (ImGui::IsItemHovered())
         {
-            ImGui::SetTooltip("1.0 draws straight onto the target at full resolution.\n"
-                              "Below that the glow renders into a scaled buffer and is\n"
+            ImGui::SetTooltip("The glow renders into a buffer this fraction of the\n"
+                              "frame (1.0 = full size, default 0.5) and is\n"
                               "bilinear-blitted back, with a thin ring around the edge\n"
                               "re-shaded at full resolution - the line stays sharp.\n"
-                              "Not always cheaper: a tight cutoff band can get slower.");
+                              "Pays mostly on frames whose config animates.");
         }
         SliderIntWithInput("Samples##Neon", cfg.neon.numSamples, 8, NEON_MAX_LOOP_SAMPLES);
         SliderIntWithInput("LUT Size##Neon", cfg.neon.gradientLutSize, 32, MAX_GRADIENT_LUT_SIZE);

@@ -38,11 +38,15 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.vert"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-common.glsl"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-pieces.glsl"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-sdf.glsl"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-grade.glsl"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-gather.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-emission.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-glow-cover.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-glow-cover-fill.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-blit.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-field.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/blit.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/black-rect.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-lut-debug.frag"
@@ -65,7 +69,9 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon.frag" NEON_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-gather.frag" NEON_GATHER_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-emission.frag" NEON_EMISSION_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-glow-cover.frag" NEON_GLOW_COVER_FRAG_CONTENT)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-glow-cover-fill.frag" NEON_GLOW_COVER_FILL_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-blit.frag" NEON_BLIT_FRAG_CONTENT)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-field.frag" NEON_FIELD_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/blit.frag" BLIT_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/black-rect.frag" BLACK_RECT_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-lut-debug.frag" NEON_LUT_DEBUG_FRAG_CONTENT)
@@ -77,7 +83,7 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight.vert" SPOTLIGHT_VERT_CO
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight.frag" SPOTLIGHT_FRAG_CONTENT)
 
 # Shared neon tuning #defines, injected into neon.frag, neon-gather.frag,
-# neon-emission.frag, neon-glow-cover.frag and neon-blit.frag via @NEON_TUNING@
+# neon-emission.frag, neon-glow-cover.frag, neon-glow-cover-fill.frag, neon-blit.frag and neon-field.frag via @NEON_TUNING@
 # in shaders.h.in (also #included by the C++ renderers).
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/neon-tuning.h" NEON_TUNING)
 
@@ -88,11 +94,21 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/neon-tuning.h" NEON_TUNI
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-common.glsl" NEON_COMMON)
 
 # The corner arcs' development onto a straight line and the glow coverage
-# table's layout, injected into neon.frag and neon-glow-cover.frag via
-# @NEON_PIECES@ in shaders.h.in, after @NEON_TUNING@ (and in neon.frag after
-# @NEON_COMMON@): the read and the bake of that table have to agree on both to
-# the texel. Not a shader on its own either.
+# table's layout, injected into neon.frag, neon-glow-cover.frag and
+# neon-glow-cover-fill.frag via @NEON_PIECES@ in shaders.h.in, after
+# @NEON_TUNING@ (and in neon.frag after @NEON_COMMON@): the read, the bake and
+# the segment table's fill have to agree on both to the texel. Not a shader on
+# its own either.
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-pieces.glsl" NEON_PIECES)
+
+# The rounded box's signed distance, its antialiasing width and the cutoff
+# band's boundaries, injected via @NEON_SDF@ into neon.frag, neon-blit.frag,
+# neon-field.frag and black-rect.frag - the four programs that draw the glow's
+# edge and have to agree on it to the pixel - and
+# the tone map, via @NEON_GRADE@ into neon.frag and neon-field.frag, after
+# @NEON_TUNING@. One copy each; neither is a shader on its own.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-sdf.glsl" NEON_SDF)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/neon-grade.glsl" NEON_GRADE)
 
 # Shared droplet band #defines, injected into droplets.frag via
 # @DROPLETS_TUNING@ in shaders.h.in (also #included by the C++ renderer).

@@ -99,10 +99,10 @@
 //     against 0-10 without it). See
 //     docs/corner-crease-and-filament-nyquist.md section 2.
 //
-//     GATED to the scaled path in both consumers. At scale 1.0 the gather
-//     already runs at the destination rate, there is no blit to survive, and
-//     the direct path has to stay bit-identical to the full-res renderer it
-//     replaced. The old flat constant was a no-op at 1.0 by arithmetic
+//     GATED to scales below 1.0 in both consumers. At scale 1.0 the reduced
+//     buffer is full size and the blit copies it 1:1, so there is nothing to
+//     survive, and the ring always shades at 1.0. The old flat constant was a
+//     no-op at 1.0 by arithmetic
 //     coincidence - it equalled the converted stated floor; this expression
 //     would not be, above N = 2, so the gate is explicit now. ---
 #define FILAMENT_MIN_HALF_WIDTH   0.5
@@ -374,26 +374,121 @@
 //     its straights do not need and a long rect's straights get its corners':
 //     the straight has OVERHANG columns past each end, the corner
 //     CORNER_OVERHANG on each side of its arc and a guard texel at each end of
-//     its block, and the SHARED columns left over are split between the two
-//     interiors, each keeping at least MIN_INTERIOR. ROWS 32 is half of them
+//     its block, and the columns left over (the layout's `shared`) are split
+//     between the two interiors, each keeping at least MIN_INTERIOR. ROWS 32 is half of them
 //     within one halo width of a straight, and 16 inside and 16 outside a
 //     corner's arc. 1024 x 128 RGBA16F is 1.0 MB - half V20's single table per
 //     perimeter. Sizing it, against an exact per-piece reference (V21 in
 //     docs/review-findings.md): 48 rows (1.5 MB) read at most 2 levels off where
 //     32 reads 3 on a few pixels of a segment scene, for 1.3x the bake's cost
 //     under animation; 768 columns read 6 levels off a 1 px halo on a 4K-sized
-//     rect. Allocated once, at this fixed size. ---
-#define GLOW_COVER_WIDTH          1024
+//     rect.
+//
+//     The WIDTH is not a constant: the table's layout is a parameter
+//     (NeonRenderer's GlowCoverLayout, the shaders' uGlowCoverLayout), between
+//     MIN_WIDTH and MAX_WIDTH in steps of WIDTH_STEP. ROWS and HEIGHT are. ---
+#define GLOW_COVER_MAX_WIDTH      1024
+#define GLOW_COVER_MIN_WIDTH      256
+#define GLOW_COVER_WIDTH_STEP     64
 #define GLOW_COVER_ROWS           32
 #define GLOW_COVER_OVERHANG       64
 #define GLOW_COVER_CORNER_OVERHANG 32
 #define GLOW_COVER_MIN_INTERIOR   16
-#define GLOW_COVER_SHARED         (GLOW_COVER_WIDTH - 2 - 2 * GLOW_COVER_OVERHANG - 2 * GLOW_COVER_CORNER_OVERHANG)
 #define GLOW_COVER_HEIGHT         (4 * GLOW_COVER_ROWS)
+
+// --- The glow coverage table's width (NeonRenderer's GetGlowCoverWidth):
+//     enough interior columns that the longest band - its straight plus its
+//     quarter arc, L full-res px - gets one every S px, S growing with the
+//     halo width kh (max(glowRadius, EMISSION_MIN_WIDTH), px):
+//
+//         S    = clamp(PX_PER_COLUMN_PER_KH * kh, MIN_PX_PER_COLUMN, MAX_PX_PER_COLUMN)
+//         need = 2 + 2 OVERHANG + 2 CORNER_OVERHANG + ceil(L / S)
+//         W    = clamp(need rounded up to WIDTH_STEP, MIN_WIDTH, MAX_WIDTH)
+//
+//     In full-res px because the edge ring reads the table at full
+//     resolution; lengths enter the layout only as ratios, so every scale
+//     shares one table.
+//
+//     Calibrated 2026-10-09 on an AMD Radeon Pro 5300M against the 1024-wide
+//     table (docs/neon-glow-cover-resolution-plan.md step 2): 250 configs -
+//     rects 200 x 120 to 3600 x 2000, glowRadius 1 / 2 / 5 / 10 / 20,
+//     cornerRadius 0 / 40 / a circle, both windings, three partial arcs with
+//     and without colour stops and with two segments, at scales 1.0 / 0.5 /
+//     0.25 - each at every width from 256 to 960, the frame after a light
+//     change, against the same frame at 1024. The widest spacing that still
+//     met the plan's criterion (max 2 levels, 99.9% of lit pixels within 1)
+//     on every config was ~2.2 px per column at kh 1, 2.5 at 2, 4.6 at 5, 6.8
+//     at 10 and 10 at 20. These constants sit under that envelope - 12% at
+//     kh 5, 27% or more elsewhere - and at the widths they give, every config
+//     read at most 2 levels with at least 99.988% of lit pixels within 1.
+//     Spacing 20% wider failed at kh 5 (4 levels on a 200 px circle). A
+//     narrow glow on a large rect still gets MAX_WIDTH: at kh 1-2 a
+//     3600 x 2000 rect needed all 1024 columns. ---
+#define GLOW_COVER_PX_PER_COLUMN_PER_KH 0.8
+#define GLOW_COVER_MIN_PX_PER_COLUMN    1.6
+#define GLOW_COVER_MAX_PX_PER_COLUMN    5.0
+
+// --- The segment table (NeonRenderer's GetGlowCoverSegmentWidth,
+//     neon-glow-cover-fill.frag): the segments' two channels of the glow
+//     coverage table, baked at a width of their own and copied in. A bell's
+//     standard deviation is 0.3536 x its length x the perimeter - ~100 px for
+//     a length-0.05 segment on a 1840 x 1000 rect, against an arc's 14 px
+//     feather - so it needs far fewer columns than the arcs:
+//
+//         sigma = 0.3536 x the shortest lit segment's length x perimeter   (full-res px)
+//         need  = 2 + 2 SEG_OVERHANG + 2 SEG_CORNER_OVERHANG + ceil(L / (sigma / SEG_COLUMNS_PER_SIGMA))
+//         W     = clamp(need rounded up to WIDTH_STEP, SEG_MIN_WIDTH, the main table's width)
+//
+//     with L the longest band, as for the main table. Where W would be at
+//     least SEG_DIRECT_SHARE of the main table's width (very short segments)
+//     the separate table saves nothing, and the segments are baked into the
+//     main table directly, as before it existed.
+//
+//     Calibrated 2026-10-09 on an AMD Radeon Pro 5300M against the segments
+//     baked into the main table directly (plan step 3): 135 configs - rects
+//     200 x 120 to 3600 x 2000, glowRadius 2 / 5 / 10, cornerRadius 0 / 40 /
+//     a circle, scales 1.0 / 0.5 / 0.25, segments of length 0.01-0.2 with
+//     boosts 0.5-2, overlapping, abutting, over the corners, travelling, and
+//     under a partial arc - the frame after a light change, the segment table
+//     forced on. With overhangs 16 / 8, every COLUMNS_PER_SIGMA from 3 to 8
+//     read at most 2 levels with 99.9992% of lit pixels within 1; 2 read 3
+//     levels on a thin glow at 3840 x 2160. 4 is one step of margin. Overhangs
+//     8 / 4 held at every value tried (99.988%), 32 / 16 read at most 1 level
+//     from 4 up but do not fit SEG_MIN_WIDTH. ---
+#define GLOW_COVER_SEG_COLUMNS_PER_SIGMA 4.0
+
+// --- How far the glow coverage bake integrates a segment's bell either side
+//     of its centre, in units of 1 / invSigma (the bell is exp(-(d invSigma)^2),
+//     so 3 is 4.24 standard deviations, where it has fallen to 1.2e-4 of its
+//     peak). The bake (neon-glow-cover.frag, segmentsOnPiece) cuts the bell
+//     here and NeonRenderer's GetGlowCoverDirtySegmentPieces mirrors it to
+//     find the pieces a moved segment reaches: change one and the other
+//     follows, or a piece the bell reaches is not re-baked. It was 5 / sqrt(2)
+//     (5 sigma); at 3 a moved segment dirties fewer pieces, which took the
+//     segment table's bake on a band of 8 segments from 0.75 to 0.58 (timer
+//     units, AMD Radeon Pro 5300M), at most 1 level, on up to 1.6% of a
+//     frame's lit pixels (0.15% on average over the cover set; I61 in
+//     docs/review-findings.md). An 8-node rule on top halved it again but
+//     read 3 levels off a long, bright segment, and was not taken. ---
+#define GLOW_COVER_BELL_REACH            3.0
+#define GLOW_COVER_SEG_OVERHANG          16
+#define GLOW_COVER_SEG_CORNER_OVERHANG   8
+#define GLOW_COVER_SEG_MIN_WIDTH         128
+#define GLOW_COVER_SEG_DIRECT_SHARE      0.75
 
 // --- Grading ---
 #define TONE_MAP_SHOULDER         0.6
 #define GAMMA_EXPONENT            0.85
+
+// --- The output dither (R7), peak to peak in 8-bit levels: neonDither
+//     (neon-grade.glsl) adds noise in +/- half this to every colour the neon
+//     writes to the caller's framebuffer - the blit, the edge ring and the
+//     ring's field composite, never an offscreen buffer. The halo and bloom
+//     are slow gradients that cross a level only every few px, up to tens of
+//     px in the dark tail, so an undithered write draws concentric contour
+//     rings around the rect. 1.0 is the least that removes them; 0 turns the
+//     dither off. It assumes an 8-bit target. ---
+#define OUTPUT_DITHER_LSB         1.0
 
 // --- Epsilons ---
 #define WSUM_EPSILON              1e-6
@@ -404,15 +499,15 @@
 //     full-res px (BLIT_CUTOFF_GUARD_PX below is the other): it describes the
 //     BUFFER's own sampling, so it must NOT be converted with uResolutionScale.
 //
-//     Below resolutionScale 1.0 the one-sided cut is not applied by neon.frag
-//     at all - neon-blit.frag applies it at DESTINATION resolution, where a
-//     pixel is a pixel and the edge can land exactly where the direct path
+//     For pass 1b the one-sided cut is not applied by neon.frag at all -
+//     neon-blit.frag applies it at DESTINATION resolution, where a pixel is a
+//     pixel and the edge can land exactly where the full-resolution shading
 //     puts it. What neon.frag still does is cull the dark side, and the bound
 //     it culls at cannot be the cut itself: the blit reconstructs each
 //     destination pixel from the 2x2 buffer texels around it, so a texel
 //     killed at the cut leaves the first LIT destination pixel rebuilt partly
 //     from black. Measured at scale 0.5, glowSide OUTSIDE: the first lit pixel
-//     came back at 178 against the 239 the direct path puts there, a dark seam
+//     came back at 178 against the 239 full resolution puts there, a dark seam
 //     hugging the inside of the glow's own edge.
 //
 //     So the cull runs this far PAST the cut, and the guard band's emission is
@@ -426,15 +521,14 @@
 //     blit's mask is zero everywhere past the cut, including at the hard step
 //     where this bound finally discards.
 //
-//     NOT used on the direct path, which owns its own cut and must stay
-//     bit-identical to the full-res renderer it replaced. See neon.frag's
-//     sideCull and the post-grade cut block. ---
+//     NOT used by the edge ring, which owns its own cut (uBlitOwnsCut 0). See
+//     neon.frag's sideCull and the post-grade cut block. ---
 #define BLIT_SIDE_GUARD_PX        2.0
 
-// --- Cutoff guard band, in BUFFER pixels. Scaled path only.
+// --- Cutoff guard band, in BUFFER pixels. Pass 1b only.
 //
 //     BLIT_SIDE_GUARD_PX's argument, applied to the inside/outside cutoffs.
-//     Below resolutionScale 1.0 neon-blit.frag applies the cutoff masks at
+//     For pass 1b neon-blit.frag applies the cutoff masks at
 //     DESTINATION resolution, and neon.frag only culls - this far past the end
 //     of each ramp, so the blit's bilinear filter rebuilds every boundary from
 //     lit texels rather than from black. Same value as the side guard, for the
@@ -454,14 +548,14 @@
 //     reduced-resolution glow inside the band, not its edges. See
 //     docs/neon-resolution-scale-plan.md, step 2.
 //
-//     NOT used on the direct path, whose masks and culls are unchanged. See
+//     NOT used by the edge ring, whose masks and culls are its own. See
 //     neon.frag's cutGuard and NeonRenderer::setupGeometry's cutGuardPx. ---
 #define BLIT_CUTOFF_GUARD_PX      2.0
 
-// --- Edge ring width. Scaled path only, CPU only.
+// --- Edge ring width. CPU only.
 //
-//     Below resolutionScale 1.0, NeonRenderer redraws a ring around the rect
-//     edge at FULL resolution (the NEON_READS_GATHER variant of neon.frag),
+//     At every scale, NeonRenderer redraws a ring around the rect
+//     edge at FULL resolution (neon.frag's ring program),
 //     reading only the gather's result from the gather buffer. The ring reaches R
 //     full-res px either side of the edge (GetRingWidth in neon-renderer.cpp):
 //
@@ -499,14 +593,16 @@
 //     it). ---
 #define RING_GUARD_TEXELS         1.0
 
-// --- Gather resolution. Scaled path only, CPU only.
+// --- Gather resolution. CPU only.
 //
-//     Below resolutionScale 1.0 the gather - ~95% of neon.frag's cost - runs in
-//     a pass of its own (neon-gather.frag) at its own scale, and pass 1 and the
-//     edge ring shade from its result (NEON_READS_GATHER). Its scale is
-//     (GetGatherScale in neon-renderer.cpp)
+//     At every resolutionScale the gather - ~95% of neon.frag's cost when it
+//     ran inline - runs in a pass of its own (neon-gather.frag) at its own
+//     scale, and pass 1 and the
+//     edge ring shade from its result. Its scale is (GetGatherScale in
+//     neon-renderer.cpp)
 //
-//         clamp(GATHER_TEXELS_PER_KERNEL / kc, GATHER_MIN_SCALE, resolutionScale)
+//         clamp(GATHER_TEXELS_PER_KERNEL / kc, GATHER_MIN_SCALE,
+//               min(resolutionScale, GATHER_MAX_SCALE))
 //
 //     with kc the colour kernel's width in full-res px, perimeter *
 //     COLOR_BLEND_PERIM_FRAC: the gather's outputs are Lorentzian-weighted
@@ -533,6 +629,31 @@
 //     docs/neon-resolution-scale-plan.md section 13. ---
 #define GATHER_TEXELS_PER_KERNEL  2.0
 #define GATHER_MIN_SCALE          0.0625
+
+// --- The gather's ceiling. CPU only.
+//
+//     GetGatherScale never gathers finer than this, at any resolutionScale.
+//     It binds only on a rect whose perimeter is under ~450 px (kc under 4
+//     px), which would otherwise gather near full resolution: its gather
+//     buffer - RGBA16F over the glow quad's box, two attachments with
+//     segments - ran to 16 / 33 MB at 1080p for a 40 x 24 rect whose glow
+//     fills the frame. At 0.5 that is a quarter, the same as the scaled path
+//     at 0.5 always gathered at, and the check suite's smallest rect (perimeter
+//     478 px) is not touched.
+//
+//     It replaces the split gate at 1.0 (FULL_RES_SPLIT_GATHER_MAX_SCALE /
+//     FULL_RES_SPLIT_MIN_AREA_PX, removed - docs/neon-shader-cleanup-plan.md
+//     step 3), which ran the gather INLINE in neon.frag where splitting it
+//     out did not pay: on an AMD Radeon Pro 5300M, where the first offscreen
+//     pass of a frame costs ~0.15 ms, for a still cutoff band under ~140k px
+//     of quad and for a gather near full resolution. Since unchanged frames
+//     stopped re-running the gather (I40) the still case no longer leaves
+//     the caller's framebuffer at all; an Apple M2 Pro measured the split
+//     1.1-4.75x faster at every size and mode, and the AMD, re-measured with
+//     every rect split against its own gate, 0.98-1.02x in every animated
+//     mode with one loss - a cutoff band under an intensity pulse, 0.84x.
+//     So every scale splits, and the inline loop went with the gate. ---
+#define GATHER_MAX_SCALE          0.5
 
 // --- Stand-in distance for a cutoff that glowSide has already subsumed.
 //
@@ -592,8 +713,33 @@
 //     ahead of the cutoff mask - and only on the exterior, since the fade keys
 //     on positive d. Both shaders therefore floor the ramp's start at the
 //     cutoff boundary whenever that boundary falls inside the quad; see the
-//     fadeStart block in neon.frag. ---
+//     fadeStart block in neon.frag.
+//
+//     Since V23 the bloom no longer relies on this fade to end smoothly - each
+//     piece fades by its own distance from BLOOM_FADE_START_FRAC, below, which
+//     has it under a level well before this ramp starts. ---
 #define QUAD_FADE_START_FRAC      0.8
+
+// --- Where each piece's bloom starts fading out, as a FRACTION of `reach`
+//     (neon.frag's bloom end fade, V23).
+//
+//     The pedestal takes the bloom's 1/a tail to exactly 0 at `reach`, but
+//     with its slope still on, so the glow stopped on a crease: inside a large
+//     rect, a hard-edged dark rectangle `reach` in. The quad-edge fade above
+//     hid it outside, but over [0.8, 1.0] of the margin, where the tail is
+//     still ~5 levels up, and a fade that late STEEPENS the tail before it
+//     flattens it - a shoulder, then flat, which reads as an edge too. So
+//     each piece's bloom is multiplied by 1 - smoothstep(FRAC * reach, reach,
+//     a) of its own distance, on both sides.
+//
+//     0.5 is about the latest start that does not steepen it: the steepest
+//     slope inside the fade over the slope where it starts, on the
+//     infinite-line bloom at glowRadius 5, bloomStrength 0.52, intensity 0.8,
+//     is 1.40 at 0.8, 1.14 at 0.6, 1.035 at 0.5 and 1.00 from 0.4 down. (It
+//     is also where c * (reach - a)^2 meets the pedestalled 1/a tail in value
+//     and slope.) An earlier start costs more of the tail; at 0.5 the glow
+//     reads up to 6 levels dimmer in the outer half of its reach. ---
+#define BLOOM_FADE_START_FRAC     0.5
 
 // --- Filament reach for the same quad sizing, expressed in sigmas.
 //

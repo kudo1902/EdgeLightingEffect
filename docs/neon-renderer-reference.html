@@ -434,7 +434,7 @@
           <tbody>
             <tr><td class="mono nw">lib/shaders/neon.frag</td><td>The neon fragment program, at any resolution scale. Everything in sections 3 to 13.</td></tr>
             <tr><td class="mono nw">lib/shaders/neon.vert</td><td>Twelve lines. Passes the quad corner through as <code>vPos</code> and applies <code>uMVP</code>.</td></tr>
-                        <tr><td class="mono nw">lib/shaders/neon-blit.frag</td><td>The scaled path's composite: a bilinear read of the reduced buffer, with the one-sided cut and the inside / outside cutoffs applied at destination resolution, drawn over everything except the edge ring. Scaled path only; nothing else compiles it.</td></tr>
+                        <tr><td class="mono nw">lib/shaders/neon-blit.frag</td><td>The blit (pass 2b): a bilinear read of the reduced buffer, with the one-sided cut and the inside / outside cutoffs applied at destination resolution, drawn over everything except the edge ring, at every scale. Only the blit's program compiles it.</td></tr>
             <tr><td class="mono nw">lib/shaders/black-rect.frag</td><td>The opaque fill pass (section 12).</td></tr>
             <tr><td class="mono nw">lib/shaders/droplets.frag</td><td>Section 15.</td></tr>
             <tr><td class="mono nw">lib/shaders/lens-flare.frag</td><td>Section 16.</td></tr>
@@ -485,7 +485,7 @@
             <tr><td class="mono nw">uInsideCutoffSoftness<br>uOutsideCutoffSoftness</td><td class="mono">float</td><td>Feather widths, running on from those cutoffs. Uploaded as configured (times the resolution scale) with no CPU-side floor: the shader treats a negative value as 0 when placing the fade and floors its width at one pixel, so neither clamp is needed before upload.</td></tr>
             <tr><td class="mono nw">uWinding</td><td class="mono">int</td><td>0 CLOCKWISE / 1 COUNTER_CLOCKWISE. Selects the segment-base table in section 4.</td></tr>
             <tr><td class="mono nw">uQuadMargin</td><td class="mono">float</td><td>Distance from the rect edge to the draw quad edge, per axis. Drives the edge fade.</td></tr>
-            <tr><td class="mono nw">uResolutionScale</td><td class="mono">float</td><td>Converts baked px constants into the space every other px uniform is already in. 1.0 on the direct path, where every conversion is identity. See section 14.</td></tr>
+            <tr><td class="mono nw">uResolutionScale</td><td class="mono">float</td><td>Converts baked px constants into the space every other px uniform is already in. 1.0 for the edge ring, and at resolution scale 1.0, where every conversion is identity. See section 14.</td></tr>
             <tr><td class="mono nw">uNumSamples</td><td class="mono">int</td><td>Live gather-loop bound, 1..128. The emission pre-pass is handed the same value, so texel <code>i</code> there is sample <code>i</code> here.</td></tr>
           </tbody>
         </table>
@@ -613,50 +613,36 @@ float bandInnerDistance(float d, float cut) { return d + cut; }</code></pre>
     <section id="s4">
       <h2 class="sec"><span class="num">04</span> Perimeter inversion</h2>
 
-      <p class="lede">Turning a fragment position back into an arc-length parameter. This is the fiddliest function in the shader and the one most likely to be got wrong by a well-meaning edit.</p>
+      <p class="lede">Turning a fragment position back into arc-length parameters - one per piece of the outline, since V25. This is the fiddliest code in the shader and the one most likely to be got wrong by a well-meaning edit.</p>
 
-      <h3>Step 1: nearest point on the outline</h3>
+      <h3>Step 1: each piece's own nearest point</h3>
 
-<pre><code>vec2  b  = vec2(halfWs, halfHs);   // the smaller, sharp-cornered box
-vec2  c  = clamp(p, -b, b);        // nearest point on that box
-vec2  d  = p - c;
-float dl = length(d);
-if (dl &gt; 1e-6) { cp = c + d * (r / dl); }   // push out by r -&gt; on the outline
-else           { /* project along the dominant axis, see below */ }</code></pre>
-
-      <p>This is the distance formula run backwards: instead of returning how far the nearest point is, it returns where it is. The <code>dl &lt;= 1e-6</code> branch handles fragments strictly inside the inner box, where the direction is degenerate; it projects along whichever axis is closer to its wall:</p>
-
-<pre><code>vec2  e  = b - abs(p);
-float sx = (p.x &gt;= 0.0) ? 1.0 : -1.0;
-float sy = (p.y &gt;= 0.0) ? 1.0 : -1.0;
-cp = (e.x &lt; e.y) ? vec2(sx * halfW, p.y) : vec2(p.x, sy * halfH);</code></pre>
-
-      <h3>Step 2: which of the eight pieces</h3>
-
-      <p>With <code>ax = abs(cp.x)</code> and <code>ay = abs(cp.y)</code>, a chain of comparisons classifies <code>cp</code> into a canonical id numbered in clockwise order, and computes <code>u</code>, the traversal progress across that piece measured clockwise.</p>
+      <p>The outline is eight pieces: four straights between the tangent points and four quarter arcs, numbered clockwise from the top edge. <code>filamentPieceDistance(seg, p, reach, u)</code> finds, for ONE piece, the point on it nearest the fragment, returns the distance to it and sets <code>u</code>, the traversal progress across that piece measured clockwise. Each piece takes its own nearest point, an end where the fragment lies past it: a straight clamps the fragment's coordinate along it to its extent; an arc takes the direction of the fragment from its centre.</p>
 
       <div class="tbl-wrap">
         <table>
-          <caption>Canonical piece ids and their local progress</caption>
-          <thead><tr><th>Test</th><th>id</th><th>Piece</th><th>u</th></tr></thead>
+          <caption>Piece ids, each piece's nearest point, and its local progress</caption>
+          <thead><tr><th>id</th><th>Piece</th><th>Nearest point</th><th>u</th></tr></thead>
           <tbody>
-            <tr><td class="mono">ax &gt; halfWs &amp;&amp; ay &gt; halfHs</td><td class="num">1</td><td>top-right arc</td><td class="mono">(HALF_PI - th) / HALF_PI</td></tr>
-            <tr><td class="mono">"</td><td class="num">3</td><td>bottom-right arc</td><td class="mono">-th / HALF_PI</td></tr>
-            <tr><td class="mono">"</td><td class="num">5</td><td>bottom-left arc</td><td class="mono">(-HALF_PI - th) / HALF_PI</td></tr>
-            <tr><td class="mono">"</td><td class="num">7</td><td>top-left arc</td><td class="mono">(PI - th) / HALF_PI</td></tr>
-            <tr><td class="mono">ay &gt;= halfHs, cp.y &gt; 0</td><td class="num">0</td><td>top edge, left to right</td><td class="mono">(cp.x + halfWs) / ws</td></tr>
-            <tr><td class="mono">ax &gt;= halfWs, cp.x &gt; 0</td><td class="num">2</td><td>right edge, top to bottom</td><td class="mono">(halfHs - cp.y) / hs</td></tr>
-            <tr><td class="mono">ay &gt;= halfHs, cp.y &lt;= 0</td><td class="num">4</td><td>bottom edge, right to left</td><td class="mono">(halfWs - cp.x) / ws</td></tr>
-            <tr><td class="mono">ax &gt;= halfWs, cp.x &lt;= 0</td><td class="num">6</td><td>left edge, bottom to top</td><td class="mono">(cp.y + halfHs) / hs</td></tr>
+            <tr><td class="num">0</td><td>top edge, left to right</td><td class="mono">(clamp(p.x, -halfWs, halfWs), halfH)</td><td class="mono">(x + halfWs) / ws</td></tr>
+            <tr><td class="num">2</td><td>right edge, top to bottom</td><td class="mono">(halfW, clamp(p.y, -halfHs, halfHs))</td><td class="mono">(halfHs - y) / hs</td></tr>
+            <tr><td class="num">4</td><td>bottom edge, right to left</td><td class="mono">(clamp(p.x, -halfWs, halfWs), -halfH)</td><td class="mono">(halfWs - x) / ws</td></tr>
+            <tr><td class="num">6</td><td>left edge, bottom to top</td><td class="mono">(-halfW, clamp(p.y, -halfHs, halfHs))</td><td class="mono">(y + halfHs) / hs</td></tr>
+            <tr><td class="num">1</td><td>top-right arc</td><td class="mono">centre (halfWs, halfHs) + r * dir(w)</td><td class="mono">(HALF_PI - th) / HALF_PI</td></tr>
+            <tr><td class="num">3</td><td>bottom-right arc</td><td class="mono">centre (halfWs, -halfHs) + r * dir(w)</td><td class="mono">-th / HALF_PI</td></tr>
+            <tr><td class="num">5</td><td>bottom-left arc</td><td class="mono">centre (-halfWs, -halfHs) + r * dir(w)</td><td class="mono">(-HALF_PI - th) / HALF_PI</td></tr>
+            <tr><td class="num">7</td><td>top-left arc</td><td class="mono">centre (-halfWs, halfHs) + r * dir(w)</td><td class="mono">(PI - th) / HALF_PI</td></tr>
           </tbody>
         </table>
       </div>
 
-      <p>where <code>th = atan(cp.y - sy*halfHs, cp.x - sx*halfWs)</code> is the angle around that corner's centre. Piece 5 needs one fixup: <code>atan</code> hands the left tangency back as <code>+pi</code> rather than <code>-pi</code>, so <code>th</code> is decremented by <code>TWO_PI</code> when positive.</p>
+      <p>where <code>w</code> is the fragment's offset from that corner's centre and <code>th = atan(w.y, w.x)</code> the angle round it; the distance to an arc is <code>abs(length(w) - r)</code>. Piece 5 needs one fixup: <code>atan</code> hands the left tangency back as <code>+pi</code> rather than <code>-pi</code>, so <code>th</code> is decremented by <code>TWO_PI</code> when positive.</p>
+
+      <p>A piece the filament takes nothing from returns <code>-1</code>: one at <code>reach</code> or further, where its core is exactly 0 (an arc's <code>atan</code> is only taken within it); a straight of zero length, or every arc at radius 0 - a point both its neighbours already end on; and an arc whose quarter does not face the fragment (<code>w</code> outside the corner's quadrant), whose nearest point is the end it shares with a straight. On that quadrant's boundary the arc's term and the straight's agree, so leaving it out is continuous.</p>
 
       <h3>Step 3: cumulative base, then divide</h3>
 
-      <p>With <code>ws = width - 2r</code>, <code>hs = height - 2r</code>, <code>arcLen = PI * r / 2</code> and <code>peri = 2ws + 2hs + 4arcLen</code>, the piece id selects a cumulative base. The two windings use different tables and the counter-clockwise one mirrors the progress to <code>1 - u</code>.</p>
+      <p><code>perimeterAt(seg, u)</code>. With <code>ws = width - 2r</code>, <code>hs = height - 2r</code>, <code>arcLen = PI * r / 2</code> and <code>peri = 2ws + 2hs + 4arcLen</code>, the piece id selects a cumulative base. The two windings use different tables and the counter-clockwise one mirrors the progress to <code>1 - u</code>.</p>
 
       <div class="tbl-wrap">
         <table>
@@ -678,13 +664,18 @@ cp = (e.x &lt; e.y) ? vec2(sx * halfW, p.y) : vec2(p.x, sy * halfH);</code></pre
       <p><code>a</code> abbreviates <code>arcLen</code>. The return is <code>(base + len * u) / peri</code> clockwise, and <code>(base + len * (1 - u)) / peri</code> counter-clockwise. Note that <strong><code>t = 0</code> sits at the left end of the top edge</strong> for clockwise winding, which is where the top-left corner arc finishes, and at the bottom end of the left edge for counter-clockwise.</p>
 
       <div class="note">
+        <span class="tag">Why per piece and not the nearest point</span>
+        Until V25 this section described ONE position per fragment: the nearest point on the whole outline, classified into a piece. Inside a sharp corner that map jumps across the diagonal, where the nearest edge changes, so an arc ending on the corner - an arc wipe from 0 - lit the filament on the lit edge's side of the diagonal and nothing on the other, a hard 45-degree cut on the inside half of the line only. The filament now takes the max over the pieces within reach of each piece's core at the fragment's distance from it times the coverage at its own nearest point (section 05). On a uniformly lit ring the nearest piece wins at <code>ad</code>, so nothing moves.
+      </div>
+
+      <div class="note">
         <span class="tag">Why geometric and not sampled</span>
         An earlier version estimated a fragment's position as a proximity-weighted circular mean of the nearby loop samples' phases. Near a corner those phases wrap through <code>2pi</code> straight into the start of the ring, so the mean collapsed the whole corner curve to roughly 0 and lit corners that an arc starting at 0 should have left dark. The geometric inverse is exact everywhere. It is also what makes CPU-authored positions agree with the shader: <code>GeometryUtils::GetPointOnRectangle</code> is the forward map of exactly these tables.
       </div>
 
       <div class="warn">
         <span class="tag">If you change this</span>
-        Three places must move together: <code>perimeterPosition</code> in <code>neon.frag</code>, <code>GeometryUtils::GetPointOnRectangle</code> (and its <code>Detail::GetPointOnRectCW</code> / <code>CCW</code> helpers), and <code>GetSunFragPosition</code>, which places the lens-flare sun in the same parameter space. A mismatch shows up as arcs that do not line up with where the UI says they are.
+        Four places must move together: <code>perimeterAt</code> and <code>filamentPieceDistance</code> in <code>neon.frag</code>, the coverage bake's <code>pieceStart</code> in <code>neon-glow-cover.frag</code>, <code>GeometryUtils::GetPointOnRectangle</code> (and its <code>Detail::GetPointOnRectCW</code> / <code>CCW</code> helpers), and <code>GetSunFragPosition</code>, which places the lens-flare sun in the same parameter space. A mismatch shows up as arcs that do not line up with where the UI says they are.
       </div>
     </section>
 
@@ -745,6 +736,17 @@ core = max(core - corePed, 0.0) / max(1.0 - corePed, 1e-6);</code></pre>
 <pre><code>float lineGate = clamp(uLineWidth / (FILAMENT_MIN_HALF_WIDTH * 2.0), 0.0, 1.0);</code></pre>
 
       <p><code>sigma</code> is floored at <code>FILAMENT_MIN_HALF_WIDTH</code>, so <code>lineWidth = 0</code> would otherwise render a half-pixel bright dot rather than nothing. The gate fades the whole filament out over <code>lineWidth</code> in <code>[0, 1]</code>, making 0 mean "no line".</p>
+
+      <h3>Per piece of the outline</h3>
+
+      <p>The core is a function of <code>ad</code>, the distance to the whole outline; what scales it is the coverage. Since V25 the filament takes both per piece: each of the eight pieces within <code>sigma * reachSigmas</code> (section 04) gives its core at the fragment's distance from it times the coverage at its own nearest point, and the arcs' and the segments' magnitudes each take the max over pieces.</p>
+
+<pre><code>for each piece p within reach:          // 4 straights, and 4 arcs above radius 0
+    core_p   = filamentCore(dist_p, sigma, N, corePed);
+    filament = max(filament, core_p * filamentCover(perimeterAt(p, u_p), headF, tailF));
+emitFil = arcCol * filament.x + segColHue * filament.y;   // .y carries filamentGate</code></pre>
+
+      <p>A max, not a sum: the core falls with distance and <code>ad</code> is the nearest piece's distance, so a uniformly lit ring renders as the single read did - and under <code>uPerimeterUnread</code> the loop runs once, at <code>ad</code>, with no position at all. No light passes a free end: every piece meeting there reads that end's coverage, which the inward feather (section 07) makes 0. The loop's step comes from the data, so the compiler does not unroll it into eight copies of <code>filamentCover</code>.</p>
     </section>
 
     <!-- ============================================================ -->
@@ -822,12 +824,12 @@ bloom = max(bloom - bloomPed, 0.0) * (bloomPeak / max(bloomPeak - bloomPed, 1e-6
         <table>
           <thead><tr><th></th><th class="mono">arcInside</th><th class="mono">arcCoverContinuous</th></tr></thead>
           <tbody>
-            <tr><td>Evaluated at</td><td>each gather sample's <code>si</code></td><td>the fragment's own <code>sPos</code></td></tr>
-            <tr><td>Feeds</td><td>the hue average only</td><td>filament, halo and bloom</td></tr>
+            <tr><td>Evaluated at</td><td>each gather sample's <code>si</code>, in the emission pre-pass (<code>neon-emission.frag</code>)</td><td>each nearby piece's nearest point (section 05); the coverage table's bake integrates the same ramps over each piece</td></tr>
+            <tr><td>Feeds</td><td>the hue average, and - as the arc weight <code>arcW</code> - the glow's gathered coverage</td><td>the filament; through the coverage table (pass 0b), each piece's halo and bloom</td></tr>
             <tr><td>Feather direction</td><td><strong>outward</strong> from the arc ends</td><td><strong>inward</strong>, inside the arc's span</td></tr>
             <tr><td>Feather width</td><td>1 sample (head), 0.25 sample (tail)</td><td><code>HEAD/TAIL_FEATHER_PX / peri</code></td></tr>
             <tr><td>Wrap handling</td><td>tests <code>si</code> and <code>si + 1</code>, takes the max</td><td><code>rel -= floor(rel)</code></td></tr>
-            <tr><td>Effect on brightness</td><td><strong>none</strong> - cancels in the gated normalisation</td><td>it <em>is</em> the brightness envelope</td></tr>
+            <tr><td>Effect on brightness</td><td>cancels out of the hue; scales the halo and bloom through the gathered coverage, which each piece then corrects toward its own (V14, V19-V21)</td><td>it <em>is</em> the filament's brightness envelope</td></tr>
           </tbody>
         </table>
       </div>
@@ -860,7 +862,7 @@ return tailIn * headIn;</code></pre>
 
       <p>A segment is <code>(position, invSigma, boost, hasStops)</code>. Up to <code>MAX_SEGMENT_BOOSTS</code>. They are <strong>additive lights independent of arcs</strong>: they emit where no arc covers, and they deliberately bypass <code>uIntensity</code> so a segment stays lit on a darkened or fully dark arc.</p>
 
-      <p>Like arcs, the magnitude and the hue come from different places. The hue is gathered in the loop with the raw proximity weight <code>g</code> (not the arc-gated <code>lg</code>). The magnitude is evaluated pointwise:</p>
+      <p>Like arcs, the magnitude and the hue come from different places. The hue is gathered in the loop with the bell-weighted proximity weight <code>bell * g</code> (not the arc-gated <code>arcW * g</code>). The filament's magnitude is evaluated pointwise, inside <code>filamentCover</code>, at each nearby piece's <code>sPos</code> (section 05):</p>
 
 <pre><code>float segCoverPt = 0.0;
 for (int s = 0; s &lt; uSegmentCount; s++) {
@@ -871,17 +873,18 @@ for (int s = 0; s &lt; uSegmentCount; s++) {
     segCoverPt += seg.z * exp(-e * e);     // boost * gaussian, summed
 }</code></pre>
 
-      <p>Summed rather than maxed, so overlapping segments reinforce. Left <strong>unclamped</strong> on purpose: a <code>boost</code> above 1 must still brighten. The separate <code>emitCoverAll</code> applies <code>min(segCoverPt, 1.0)</code>, but that only bounds the shared halo and bloom reach and is not the segment's brightness.</p>
+      <p>Summed rather than maxed, so overlapping segments reinforce. Left <strong>unclamped</strong> on purpose: a <code>boost</code> above 1 must still brighten. The glow's <code>segmentGlow</code> applies <code>min(.., 1.0)</code>, but that only bounds the shared halo and bloom reach and is not the segment's brightness.</p>
 
-      <p>Three gates come out of this, and they are not interchangeable:</p>
+      <p>Four coverages come out of the pointwise and the gathered reads, and they are not interchangeable:</p>
 
       <div class="tbl-wrap">
         <table>
           <thead><tr><th>Name</th><th>Expression</th><th>Applied to</th></tr></thead>
           <tbody>
-            <tr><td class="mono">emitCover</td><td class="mono">max over arcs of (cover * intensity)</td><td>the arc term in both filament and glow</td></tr>
-            <tr><td class="mono">emitCoverAll</td><td class="mono">max(emitCover, min(segCoverPt, 1))</td><td>the segment term in the glow</td></tr>
-            <tr><td class="mono">filamentGate</td><td class="mono">max(smoothstep(0.5, 1, min(segCoverPt,1)), emitCover)</td><td>the segment term in the filament</td></tr>
+            <tr><td class="mono">emitCover</td><td class="mono">max over arcs of (cover * intensity * stop alpha), pointwise</td><td>the arc term in the filament, per piece (section 05)</td></tr>
+            <tr><td class="mono">gatheredCover</td><td class="mono">(SUM arcW * g, SUM bell * g) / SUM g, from the gather</td><td>the starting scale of the arc and segment terms in the glow; each piece's own coverage from pass 0b's table corrects it (<code>glowFix</code>)</td></tr>
+            <tr><td class="mono">gatheredSeg</td><td class="mono">gatheredCover.y * max(gatheredCover.x, min(gatheredCover.y, 1))</td><td>the segment term in the glow (<code>segmentGlow</code>)</td></tr>
+            <tr><td class="mono">filamentGate</td><td class="mono">max(smoothstep(0.5, 1, min(segCoverPt,1)), emitCover)</td><td>the segment term in the filament, at each piece's own nearest point (section 05)</td></tr>
           </tbody>
         </table>
       </div>
@@ -889,8 +892,8 @@ for (int s = 0; s &lt; uSegmentCount; s++) {
       <p>Composition then keeps the two sources' coverages separate:</p>
 
 <pre><code>vec3 arcCol   = col * uIntensity;
-vec3 emitFil  = arcCol * emitCover + segCol * filamentGate;
-vec3 emitGlow = arcCol * emitCover + segCol * emitCoverAll;</code></pre>
+vec3 emitFil  = arcCol * filament.x + segColHue * filament.y;   // per piece: section 05
+vec3 emitGlow = arcCol * gatheredCover.x + segColHue * gatheredSeg;  // + glowFix per piece</code></pre>
 
       <div class="note">
         <span class="tag">Why not one shared gate</span>
@@ -1106,7 +1109,7 @@ result *= 1.0 - smoothstep(-outHalf, outHalf, dOut);</code></pre>
 
       <p>Each ramp is symmetric around its fade's MIDPOINT, not around the uniform. At or above the floor a sample exactly on the uniform (<code>size</code>) is at full weight and the 50% point is <code>softness / 2</code> further out; only at softness 0 do the two coincide, with about 50% on the uniform. These are what let a wide glow be clipped to a stated band regardless of <code>glowRadius</code>.</p>
 
-      <p><strong>Each fade starts at its cutoff.</strong> A cutoff means "untouched up to <code>size</code>, gone by <code>size + softness</code>". The uniform is <code>size</code> itself; the shader puts the fade's midpoint <code>softness / 2</code> past it (<code>inMid</code> / <code>outMid</code>), measures <code>dIn</code> / <code>dOut</code> from there, and lays the ramp symmetrically about it over the floored width. At or above the floor that is exactly <code>size</code> to <code>size + softness</code>. Below it the one-pixel ramp stays centred on the requested fade rather than starting at <code>size</code>, deliberately: at softness 0 the edge's 50% point is <code>size</code> at every resolution scale, where anchoring the floored ramp at <code>size</code> would put it half a floor out - 0.5 px at full res, 2 px at scale 0.25, where the floor is one buffer pixel. So a softness below the floor still moves the edge by half its value; only the width is floored. <code>black-rect.frag</code> follows the same rule with its <code>fwidth</code> floor. The CPU's bounds come from one helper, <code>GetCutoffEnd(cutoff, floor)</code> in <code>neon-renderer.cpp</code>, which mirrors that rule: the glow quad's outer cap (the fade's end plus 1 px, which also becomes <code>uQuadMargin</code> and must stay strictly past <code>cutEdge</code>), its inner hole, and the fill ring. Placing the fade in the shaders was checked against uploading <code>size + softness / 2</code> as the uniform instead: the two agree to within 1/255 across 504 scenes (both layers, every glow side and fill mode, scales 1.0 / 0.5 / 0.25), 410 of them byte-identical.</p>
+      <p><strong>Each fade starts at its cutoff.</strong> A cutoff means "untouched up to <code>size</code>, gone by <code>size + softness</code>". The uniform is <code>size</code> itself; the shader puts the fade's midpoint <code>softness / 2</code> past it (<code>inMid</code> / <code>outMid</code>), measures <code>dIn</code> / <code>dOut</code> from there, and lays the ramp symmetrically about it over the floored width. At or above the floor that is exactly <code>size</code> to <code>size + softness</code>. Below it the one-pixel ramp stays centred on the requested fade rather than starting at <code>size</code>, deliberately: at softness 0 the edge's 50% point is <code>size</code> at every resolution scale, where anchoring the floored ramp at <code>size</code> would put it half a floor out - 0.5 px at full res, 2 px at scale 0.25, where the floor is one buffer pixel. So a softness below the floor still moves the edge by half its value; only the width is floored. <code>black-rect.frag</code> follows the same rule with its one-pixel floor (<code>sdRoundBoxFwidth</code> - <code>fwidth(d)</code> without its doubling on a sharp corner, V26). The CPU's bounds come from one helper, <code>GetCutoffEnd(cutoff, floor)</code> in <code>neon-renderer.cpp</code>, which mirrors that rule: the glow quad's outer cap (the fade's end plus 1 px, which also becomes <code>uQuadMargin</code> and must stay strictly past <code>cutEdge</code>), its inner hole, and the fill ring. Placing the fade in the shaders was checked against uploading <code>size + softness / 2</code> as the uniform instead: the two agree to within 1/255 across 504 scenes (both layers, every glow side and fill mode, scales 1.0 / 0.5 / 0.25), 410 of them byte-identical.</p>
 
       <h3>The opaque fill <span class="src">black-rect.frag</span></h3>
 
@@ -1116,7 +1119,7 @@ result *= 1.0 - smoothstep(-outHalf, outHalf, dOut);</code></pre>
 
       <h3>What the pass is drawn on</h3>
 
-      <p>The silhouette comes from the SDF and <code>gl_FragCoord</code>, never from the vertex position, so the geometry underneath is free to be whatever bounds the band tightest - the same trade <code>setupGeometry</code> makes for the glow. <code>NeonRenderer::setupFillGeometry</code> takes it: <code>OUTSIDE</code> / <code>INSIDE</code> / <code>BOTH</code> draw a <strong>rectangular annulus</strong> in full-res rect-local pixels, sized to each of the fill's cutoffs plus that side's feather plus a 3 px margin that absorbs the <code>fwidth</code> floor. A 20 px band then costs 20 px of fragments rather than a whole viewport: measured at 3840x2160, 0.30 ms to 0.03 ms.</p>
+      <p>The silhouette comes from the SDF and <code>gl_FragCoord</code>, never from the vertex position, so the geometry underneath is free to be whatever bounds the band tightest - the same trade <code>setupGeometry</code> makes for the glow. <code>NeonRenderer::setupFillGeometry</code> takes it: <code>OUTSIDE</code> / <code>INSIDE</code> / <code>BOTH</code> draw a <strong>rectangular annulus</strong> in full-res rect-local pixels, sized to each of the fill's cutoffs plus that side's feather plus a 3 px margin that absorbs the one-pixel antialiasing floor. A 20 px band then costs 20 px of fragments rather than a whole viewport: measured at 3840x2160, 0.30 ms to 0.03 ms.</p>
 
       <p>The hole matters more than it looks. The region the fill cannot reach is the <em>inward</em> parallel curve - a rounded box shrunk by the inside margin, its radius shrunk to match - and the largest axis-aligned rectangle inside a rounded box is not that box's own half-extents. Each corner has to clear the corner arc, which pulls both half-extents in by <code>r(1 - 1/sqrt(2))</code>. Cut the hole square instead and a triangular wedge at each corner falls outside the ring but inside the fill's real footprint; at the default <code>cornerRadius</code> of 40 that is a ~12 px bite out of all four corners of the band.</p>
 
@@ -1200,7 +1203,7 @@ fragColor = vec4(result, alpha);</code></pre>
 
       <h3>What the shader must correct</h3>
 
-      <p>A constant written into the shader cannot scale itself. <code>uResolutionScale</code> is uploaded purely so the shader can convert the baked pixel constants. There are exactly three such sites, all marked in the source; at scale 1.0 every one of them is an identity, which is what makes the direct path bit-for-bit what the shader computed before the scale existed.</p>
+      <p>A constant written into the shader cannot scale itself. <code>uResolutionScale</code> is uploaded purely so the shader can convert the baked pixel constants. There are exactly three such sites, all marked in the source; at scale 1.0 every one of them is an identity, which is what made the old direct path at 1.0 - removed in I57 - bit-for-bit what the shader computed before the scale existed. The edge ring still shades with all three at identity.</p>
 
       <div class="tbl-wrap">
         <table>
@@ -1401,6 +1404,7 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
             <tr><td class="mono nw">WSUM_EPSILON</td><td class="num">1e-6</td><td>shaders</td><td>Guards the gather normalisation divides.</td></tr>
             <tr><td class="mono nw">EARLY_OUT_RADIUS_FACTOR</td><td class="num">48.0</td><td>both <code>setupGeometry</code> + both shaders <strong>(shared)</strong></td><td>Quad margin and the bloom pedestal. The two must agree.</td></tr>
             <tr><td class="mono nw">QUAD_FADE_START_FRAC</td><td class="num">0.8</td><td>shaders</td><td>Fraction of the margin, not a px span. 62 px ramp at stock settings.</td></tr>
+            <tr><td class="mono nw">BLOOM_FADE_START_FRAC</td><td class="num">0.5</td><td>shaders</td><td>Each piece's bloom fades out over [0.5, 1] x reach of its own distance, both sides, floored at a cutoff's end (V23). The latest start that does not steepen the tail.</td></tr>
           </tbody>
         </table>
       </div>
@@ -1412,7 +1416,7 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
     <section id="s18">
       <h2 class="sec"><span class="num">18</span> CPU pipeline</h2>
 
-      <p class="lede">Two charts. The first is what the CPU rebuilds and which GL object each rebuild writes; the second is the draw sequence one frame actually issues, for both resolution paths.</p>
+      <p class="lede">Two charts. The first is what the CPU rebuilds and which GL object each rebuild writes; the second is the draw sequence one frame actually issues.</p>
 
       <h3>What rebuilds what</h3>
 
@@ -1465,8 +1469,8 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
           <text x="532" y="182" class="dg-t2">quad = rect + margin, sharp</text>
           <line x1="784" y1="170" x2="806" y2="170" class="dg-line" marker-end="url(#ra)"/>
           <rect x="810" y="138" width="230" height="64" class="dg-box"/>
-          <text x="822" y="165" class="dg-t">mVertexArray</text>
-          <text x="822" y="182" class="dg-t2">6 verts + mQuadMargin</text>
+          <text x="822" y="165" class="dg-t">mGlowMesh</text>
+          <text x="822" y="182" class="dg-t2">6 verts + mGlowLimits.quadMargin</text>
 
           <!-- row 3 -->
           <rect x="20"  y="210" width="260" height="64" class="dg-box"/>
@@ -1519,15 +1523,14 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
           <text x="20" y="450" class="dg-t2">NOT here: arc / segment positions, lengths, intensities and boosts. Those ride the UBOs and are re-uploaded every frame.</text>
           <text x="20" y="466" class="dg-t2">Animating them is therefore free - no bake, no texture upload.</text>
         </svg>
-        <figcaption><b>Fig 3</b> The five dirty-gated rebuilds. Note that <code>samplesDirty</code> feeds <code>geometryDirty</code>: a geometry change re-sizes the draw quad as well as the sample ring. The five colour-bearing fields on the left are the only ones that touch a texture, which is why dragging a brightness slider costs nothing here. Not drawn: <code>fillDirty</code> rebuilds the opaque fill's band ring, and <code>ringDirty</code> - geometry, <code>resolutionScale</code>, <code>lineWidth</code>, <code>filamentFalloff</code> - rebuilds the scaled path's two partition arrays, <code>mRingVertexArray</code> and <code>mBlitVertexArray</code>, in <code>setupRingGeometry</code>. Nor are the two GPU bakes, which re-run pass 0 and pass 0b on the next <code>Render</code> (Fig 4): <code>mEmissionDirty</code>, set on ANY config change, and <code>mGlowCoverDirty</code>, set only when the arcs, the segments, the rect's width, height, corner radius or winding, or <code>glowRadius</code> change - so animating an arc or a segment, free here, costs pass 0b every frame (0.14-0.27 ms on an AMD Radeon Pro 5300M), while a brightness or colour animation does not.</figcaption>
+        <figcaption><b>Fig 3</b> The five dirty-gated rebuilds. Note that <code>samplesDirty</code> feeds <code>geometryDirty</code>: a geometry change re-sizes the draw quad as well as the sample ring. The five colour-bearing fields on the left are the only ones that touch a texture, which is why dragging a brightness slider costs nothing here. Not drawn: <code>fillDirty</code> rebuilds the opaque fill's band ring, and <code>ringDirty</code> - geometry, <code>resolutionScale</code>, <code>lineWidth</code>, <code>filamentFalloff</code> - rebuilds the two partition meshes, <code>mRingMesh</code> and <code>mBlitMesh</code>, in <code>setupRingGeometry</code>. Nor are the two GPU bakes, which re-run pass 0 and pass 0b on the next <code>Render</code> (Fig 4): pass 0 is keyed on what it binds rather than on any flag set here (<code>isEmissionTableStale</code>: its two uniforms by value, its three LUTs and two light blocks by upload count), so it re-bakes when a colour, arc or segment input moves and not under a brightness or geometry animation; and <code>mGlowCover.dirtyArcPieces</code> / <code>dirtySegmentPieces</code>, set only when the arcs, the segments, the rect's width, height, corner radius or winding, or <code>glowRadius</code> change - so animating an arc or a segment, free here, costs pass 0b every frame (0.14-0.27 ms on an AMD Radeon Pro 5300M for the whole table), while a brightness or colour animation does not. The flag is a mask, one bit per piece: a moved light re-bakes only the pieces its old and new supports reach.</figcaption>
       </figure>
 
       <h3>One frame's draw sequence</h3>
-
-      <p>Both paths are handed the same active config and the same bound framebuffer. What differs is where the gather lands, which program variant draws it, and what composites it back.</p>
+      <p>One path at every resolution scale, in two phases: everything offscreen first, then everything on the caller's framebuffer. Each pass runs only when what it reads moved, and two of them have a cheaper stand-in the renderer picks per frame.</p>
 
       <figure>
-        <svg viewBox="0 0 1060 780" role="img" aria-label="Two-lane chart of one frame. Shared Update and Render calls at the top split into the full-resolution path - fill, light blocks, emission table when stale, glow coverage table on a config change, then the glow quad straight onto the target - and the reduced-resolution path, which saves the target, draws the fill at full resolution, draws the gather unblended into a scaled FBO that also stores its results, restores the target, and composites with two complementary draws: the blit everywhere but a ring around the edge, and the ring re-shaded at full resolution.">
+        <svg viewBox="0 0 1060 1026" role="img" aria-label="One-column chart of one frame: the Update and Render calls, then phase 1 offscreen - the light blocks, the emission table, the glow coverage table, the gather, the glow field bake, the reduced buffer either shaded or composited from the field, and the ring field bake - then phase 2 on the caller's framebuffer: the fill, the blit, and the edge ring either shaded or composited from its field, then the blend state left for the next layer.">
           <defs>
             <marker id="fa2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
               <path d="M0,1 L9,5 L0,9 z" fill="var(--ink-3)"/>
@@ -1537,88 +1540,83 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
             </marker>
           </defs>
 
+          <path d="M860,163 H884 V249 H862" class="dg-line" marker-end="url(#fa2)"/>
           <rect x="200" y="16" width="660" height="46" class="dg-box"/>
           <text x="530" y="36" class="dg-t" text-anchor="middle">effect.Update(dt)</text>
           <text x="530" y="52" class="dg-t2" text-anchor="middle">tick clock, advance animations, rebuild active config</text>
-          <line x1="530" y1="62" x2="530" y2="80" class="dg-line" marker-end="url(#fa2)"/>
-
-          <rect x="200" y="82" width="660" height="46" class="dg-box"/>
-          <text x="530" y="102" class="dg-t" text-anchor="middle">renderer-&gt;Update(dt, t, cfg)</text>
-          <text x="530" y="118" class="dg-t2" text-anchor="middle">colour cross-fade only: mGradientLUT.Tick() blends source -&gt; target, re-uploads</text>
-          <line x1="530" y1="128" x2="530" y2="146" class="dg-line" marker-end="url(#fa2)"/>
-
-          <rect x="200" y="148" width="660" height="46" class="dg-box-a"/>
-          <text x="530" y="168" class="dg-t" text-anchor="middle">renderer-&gt;Render(w, h, t, cfg)</text>
-          <text x="530" y="184" class="dg-t2" text-anchor="middle">returns immediately when this renderer's enable flag is false</text>
-
-          <path d="M530,194 V214 H270 V238" class="dg-line" marker-end="url(#fa2)"/>
-          <path d="M530,194 V214 H790 V238" class="dg-line" marker-end="url(#fa2)"/>
-
-          <text x="40"  y="230" class="dg-h">NeonRenderer - resolutionScale 1.0</text>
-          <text x="560" y="230" class="dg-h">NeonRenderer - resolutionScale below 1.0</text>
-
-          <!-- left lane -->
-          <rect x="40" y="240" width="460" height="46" class="dg-box"/>
-          <text x="52" y="260" class="dg-t">pass 2a: opaque fill</text>
-          <text x="52" y="276" class="dg-t2">skipped when NONE; band ring; coverage 1 is a scissored glClear</text>
-          <line x1="270" y1="286" x2="270" y2="300" class="dg-line" marker-end="url(#fa2)"/>
-          <rect x="40" y="302" width="460" height="46" class="dg-box"/>
-          <text x="52" y="322" class="dg-t">packLightBlocks: SegmentBlock + ArcBlock</text>
-          <text x="52" y="338" class="dg-t2">repacked only when dirty, always bound</text>
-          <line x1="270" y1="348" x2="270" y2="362" class="dg-line" marker-end="url(#fa2)"/>
-          <rect x="40" y="364" width="460" height="46" class="dg-box"/>
-          <text x="52" y="384" class="dg-t">pass 0: emission table -&gt; mEmissionBuffer</text>
-          <text x="52" y="400" class="dg-t2">only when stale; blend off for the bake</text>
-          <line x1="270" y1="410" x2="270" y2="424" class="dg-line" marker-end="url(#fa2)"/>
-          <rect x="40" y="426" width="460" height="46" class="dg-box"/>
-          <text x="52" y="446" class="dg-t">pass 0b: glow coverage table -&gt; mGlowCoverBuffer</text>
-          <text x="52" y="462" class="dg-t2">on a config change, unless lit uniformly; blend off; 1024 x 128</text>
-          <line x1="270" y1="472" x2="270" y2="486" class="dg-line" marker-end="url(#fa2)"/>
-          <rect x="40" y="488" width="460" height="46" class="dg-box"/>
-          <text x="52" y="508" class="dg-t">bind the uniforms, 3 LUTs, uEmission, uGlowCover</text>
-          <text x="52" y="524" class="dg-t2">mvp = ortho(0,w,0,h) * translate(center); blend on</text>
-          <line x1="270" y1="534" x2="270" y2="548" class="dg-line" marker-end="url(#fa2)"/>
-          <rect x="40" y="550" width="460" height="46" class="dg-box-a"/>
-          <text x="52" y="570" class="dg-t">pass 1: glow quad straight onto the target</text>
-          <text x="52" y="586" class="dg-t2">neon.frag; the gather loop runs at every fragment</text>
-
-          <!-- right lane -->
-          <rect x="560" y="240" width="460" height="46" class="dg-box"/>
-          <text x="572" y="260" class="dg-t">RenderTargetState::Capture(); pass 2a: fill</text>
-          <text x="572" y="276" class="dg-t2">save the target first; the fill is FULL res on it</text>
-          <line x1="790" y1="286" x2="790" y2="300" class="dg-line" marker-end="url(#fa2)"/>
-          <rect x="560" y="302" width="460" height="46" class="dg-box"/>
-          <text x="572" y="322" class="dg-t">packLightBlocks; pass 0, then pass 0b</text>
-          <text x="572" y="338" class="dg-t2">each only when due, exactly as the direct path</text>
-          <line x1="790" y1="348" x2="790" y2="362" class="dg-line" marker-end="url(#fa2)"/>
-          <rect x="560" y="364" width="460" height="46" class="dg-box"/>
-          <text x="572" y="384" class="dg-t">GetBufferRegion x2; Resize, Bind, ClearBuffer</text>
-          <text x="572" y="400" class="dg-t2">gather: RGBA16F, 1-2 att.; colour: RGBA8, 1 att.</text>
-          <line x1="790" y1="410" x2="790" y2="424" class="dg-line" marker-end="url(#fa2)"/>
-          <rect x="560" y="426" width="460" height="46" class="dg-box-a"/>
-          <text x="572" y="446" class="dg-t">1a neon-gather.frag; 1b NEON_READS_GATHER</text>
-          <text x="572" y="462" class="dg-t2">blend OFF; the loop at its own scale, shading at s</text>
-          <line x1="790" y1="472" x2="790" y2="486" class="dg-line" marker-end="url(#fa2)"/>
-          <rect x="560" y="488" width="460" height="46" class="dg-box"/>
-          <text x="572" y="508" class="dg-t">restore target + viewport; blend on</text>
-          <text x="572" y="524" class="dg-t2">premultiplied over from here</text>
-          <line x1="790" y1="534" x2="790" y2="548" class="dg-line" marker-end="url(#fa2)"/>
-          <rect x="560" y="550" width="460" height="46" class="dg-box-a"/>
-          <text x="572" y="570" class="dg-t">pass 2b: blit over mBlitVertexArray</text>
-          <text x="572" y="586" class="dg-t2">all but the ring; cut + cutoffs at full res</text>
-          <line x1="790" y1="596" x2="790" y2="610" class="dg-line" marker-end="url(#fa2)"/>
-          <rect x="560" y="612" width="460" height="46" class="dg-box-a"/>
-          <text x="572" y="632" class="dg-t">pass 2c: mNeonRingShader over mRingVertexArray</text>
-          <text x="572" y="648" class="dg-t2">NEON_READS_GATHER, own object; full res, no loop</text>
-
-          <path d="M270,596 V680 H530 V702" class="dg-line" marker-end="url(#fb2)"/>
-          <path d="M790,658 V680 H530" class="dg-line"/>
-
-          <rect x="200" y="704" width="660" height="46" class="dg-box-a"/>
-          <text x="530" y="724" class="dg-t" text-anchor="middle">glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)</text>
-          <text x="530" y="740" class="dg-t2" text-anchor="middle">a known blend state for the next layer; GL_BLEND left on</text>
+          <line x1="530" y1="62" x2="530" y2="76" class="dg-line" marker-end="url(#fa2)"/>
+          <rect x="200" y="78" width="660" height="46" class="dg-box"/>
+          <text x="530" y="98" class="dg-t" text-anchor="middle">renderer-&gt;Update(dt, t, cfg)</text>
+          <text x="530" y="114" class="dg-t2" text-anchor="middle">colour cross-fade (mGradientLUT.Tick); releases a coverage table unread for 5 s</text>
+          <line x1="530" y1="124" x2="530" y2="138" class="dg-line" marker-end="url(#fa2)"/>
+          <rect x="200" y="140" width="660" height="46" class="dg-box-a"/>
+          <text x="530" y="160" class="dg-t" text-anchor="middle">renderer-&gt;Render(w, h, t, cfg)</text>
+          <text x="530" y="176" class="dg-t2" text-anchor="middle">returns at once when the layer is off; with DebugConfig::opaqueOnly, the fill alone</text>
+          <text x="200" y="216" class="dg-h">Phase 1 - offscreen, blending off, each pass only when stale</text>
+          <rect x="200" y="226" width="660" height="46" class="dg-box"/>
+          <text x="212" y="246" class="dg-t">ensureGlowPrograms; packLightBlocks; RenderTargetState::Capture()</text>
+          <text x="212" y="262" class="dg-t2">programs on first use; blocks repacked only when dirty, always bound; target saved</text>
+          <line x1="530" y1="272" x2="530" y2="286" class="dg-line" marker-end="url(#fa2)"/>
+          <rect x="200" y="288" width="660" height="46" class="dg-box"/>
+          <text x="212" y="308" class="dg-t">pass 0: emission table -&gt; mEmission.buffer</text>
+          <text x="212" y="324" class="dg-t2">neon-emission.frag; only when an input moved (isEmissionTableStale)</text>
+          <line x1="530" y1="334" x2="530" y2="348" class="dg-line" marker-end="url(#fa2)"/>
+          <rect x="200" y="350" width="660" height="46" class="dg-box"/>
+          <text x="212" y="370" class="dg-t">pass 0b: glow coverage table -&gt; mGlowCover.buffer</text>
+          <text x="212" y="386" class="dg-t2">neon-glow-cover.frag; the dirty pieces only; never on a ring lit uniformly</text>
+          <line x1="530" y1="396" x2="530" y2="410" class="dg-line" marker-end="url(#fa2)"/>
+          <rect x="200" y="412" width="660" height="46" class="dg-box"/>
+          <text x="212" y="432" class="dg-t">pass 1a: gather -&gt; mGather.buffer</text>
+          <text x="212" y="448" class="dg-t2">neon-gather.frag at GetGatherScale; skipped while mGather.cache still answers</text>
+          <line x1="530" y1="458" x2="530" y2="472" class="dg-line" marker-end="url(#fa2)"/>
+          <rect x="200" y="474" width="660" height="46" class="dg-box"/>
+          <text x="212" y="494" class="dg-t">pass 1f: glow field bake -&gt; mGlowField.buffer</text>
+          <text x="212" y="510" class="dg-t2">NEON_FIELD_BAKE; no segments, hue or intensity moving, once the config held</text>
+          <path d="M530,520 V536 H359 V542" class="dg-line" marker-end="url(#fa2)"/>
+          <path d="M530,520 V536 H701 V542" class="dg-line" marker-end="url(#fa2)"/>
+          <rect x="200" y="544" width="318" height="46" class="dg-box-a"/>
+          <text x="212" y="564" class="dg-t">pass 1b: shade -&gt; mScaledBuffer</text>
+          <text x="212" y="580" class="dg-t2">neon.frag (mShadeShader), at the scale</text>
+          <rect x="542" y="544" width="318" height="46" class="dg-box-a"/>
+          <text x="554" y="564" class="dg-t">pass 1c: field composite -&gt; mScaledBuffer</text>
+          <text x="554" y="580" class="dg-t2">neon-field.frag; field x gathered hue</text>
+          <text x="530" y="572" class="dg-t2" text-anchor="middle">or</text>
+          <path d="M359,590 V598 H530" class="dg-line"/>
+          <path d="M701,590 V598 H530" class="dg-line"/>
+          <line x1="530" y1="598" x2="530" y2="612" class="dg-line" marker-end="url(#fa2)"/>
+          <rect x="200" y="614" width="660" height="46" class="dg-box"/>
+          <text x="212" y="634" class="dg-t">pass 1r: ring field bake -&gt; mRingField.buffer</text>
+          <text x="212" y="650" class="dg-t2">NEON_FIELD_BAKE over the ring, packed in four strips; no segments, once held</text>
+          <line x1="530" y1="660" x2="530" y2="674" class="dg-line" marker-end="url(#fa2)"/>
+          <rect x="200" y="676" width="660" height="46" class="dg-box"/>
+          <text x="212" y="696" class="dg-t">restore the target and viewport; blending on</text>
+          <text x="212" y="712" class="dg-t2">premultiplied over from here: final = src + dst * (1 - src.a)</text>
+          <text x="200" y="752" class="dg-h">Phase 2 - the caller&#8217;s framebuffer, in one unbroken run</text>
+          <path d="M860,699 H884 V785 H862" class="dg-line" marker-end="url(#fa2)"/>
+          <rect x="200" y="762" width="660" height="46" class="dg-box"/>
+          <text x="212" y="782" class="dg-t">pass 2a: opaque fill</text>
+          <text x="212" y="798" class="dg-t2">black-rect.frag over mFillMesh; skipped when NONE; coverage 1 is a scissored glClear</text>
+          <line x1="530" y1="808" x2="530" y2="822" class="dg-line" marker-end="url(#fa2)"/>
+          <rect x="200" y="824" width="660" height="46" class="dg-box-a"/>
+          <text x="212" y="844" class="dg-t">pass 2b: blit over mBlitMesh</text>
+          <text x="212" y="860" class="dg-t2">neon-blit.frag: all but the ring; the cut and the cutoffs at full resolution</text>
+          <path d="M530,870 V886 H359 V892" class="dg-line" marker-end="url(#fa2)"/>
+          <path d="M530,870 V886 H701 V892" class="dg-line" marker-end="url(#fa2)"/>
+          <rect x="200" y="894" width="318" height="46" class="dg-box-a"/>
+          <text x="212" y="914" class="dg-t">pass 2c: mRingShader over mRingMesh</text>
+          <text x="212" y="930" class="dg-t2">neon.frag at scale 1.0, its own program object</text>
+          <rect x="542" y="894" width="318" height="46" class="dg-box-a"/>
+          <text x="554" y="914" class="dg-t">pass 2r: ring field composite</text>
+          <text x="554" y="930" class="dg-t2">neon-field.frag + NEON_FIELD_RING over mRingMesh</text>
+          <text x="530" y="922" class="dg-t2" text-anchor="middle">or</text>
+          <path d="M359,940 V948 H530" class="dg-line"/>
+          <path d="M701,940 V948 H530" class="dg-line"/>
+          <line x1="530" y1="948" x2="530" y2="962" class="dg-line" marker-end="url(#fb2)"/>
+          <rect x="200" y="964" width="660" height="46" class="dg-box-a"/>
+          <text x="530" y="984" class="dg-t" text-anchor="middle">glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)</text>
+          <text x="530" y="1000" class="dg-t2" text-anchor="middle">a known blend state for the next layer; GL_BLEND left on</text>
         </svg>
-        <figcaption><b>Fig 4</b> One frame, both paths. Below 1.0 the gather runs alone (pass 1a, <code>neon-gather.frag</code>, into <code>mGatherBuffer</code> at <code>GetGatherScale</code>) and pass 1b and the ring shade from its result, each with its own program object built from <code>NEON_READS_GATHER</code> - see <code>neon-resolution-scale-plan.md</code> section 13. The chart predates one reordering: every offscreen pass now runs FIRST (pass 0, and below 1.0 the gather into its FBO), and only then does anything land on the caller's framebuffer - the fill, then the glow - so a tile-based GPU never stores and reloads that target mid-frame. The fill is always full resolution on the caller's framebuffer and has to sit under the glow, which it still does on both paths. Pass 0 runs only when the emission table is stale. Pass 0b, the glow coverage table (<code>neon-glow-cover.frag</code> into <code>mGlowCoverBuffer</code>, 1024 x 128 RGBA16F), runs after it on both paths, on a config change only, and not at all on a ring lit uniformly (one full arc, no segments - <code>IsGlowCoverUnread</code>), whose program it also never compiles. Each texel holds how lit ONE of the emitter's eight pieces is as the halo and the bloom see it from one position round it: <code>r</code> / <code>g</code> the arcs' coverage x intensity under the halo's / bloom's kernel, <code>b</code> / <code>a</code> the segments' boost x bell the same two ways, each over the piece's own extent only, as a ratio to the kernel's mass there, encoded <code>c / (1 + c)</code>. Four bands of 32 rows, each a straight beside a corner (the layout is <code>neon-pieces.glsl</code>). Every pass that shades - pass 1 here, 1b and the ring below 1.0 - reads it, one linear fetch per piece (V19, V20 and V21 in <code>review-findings.md</code>). Below 1.0 the gather draws <em>unblended</em> into its own FBO - its extra attachments are data, and GLES 3.0 cannot exempt one attachment from blending - and stores its results for the ring. The caller's target is then restored, and two disjoint draws composite the frame: the ring at full resolution from the stored gather, and the blit over whatever outside it the glow can still light (the ring is clipped to that band too; past the cut, the cutoffs and the glow's fade every mask is an exact zero, so those pixels are drawn by neither). They share their boundary vertices, and <code>neon.vert</code> declares <code>invariant gl_Position</code>, so no pixel is composited twice. Getting the restore wrong is the bug described in section 14.</figcaption>
+        <figcaption><b>Fig 4</b> One frame. There is one path at every resolution scale - at 1.0 the reduced buffer is simply full size - in two phases. Phase 1 renders offscreen with blending off, each pass only when what it reads moved: the emission table (pass 0) when an input of it did (<code>isEmissionTableStale</code>); the glow coverage table (pass 0b, <code>neon-glow-cover.frag</code> into <code>mGlowCover.buffer</code>, 256-1024 x 128 RGBA16F by the rect and the halo width - I59) for the pieces a config change reaches - with a segment table of their own baked alongside (pass 0s) and copied into its <code>b</code> / <code>a</code> (pass 0f, <code>neon-glow-cover-fill.frag</code>) when the segments are long enough (I60) -, and never on a ring lit uniformly (one full arc, no segments - <code>IsGlowCoverUnread</code>), whose program it then never compiles; and the gather (pass 1a, <code>neon-gather.frag</code> into <code>mGather.buffer</code> at <code>GetGatherScale</code>) unless what it last drew still answers (<code>mGather.cache</code>). On a frame where nothing moved, none of passes 1a-1c runs and the frame never leaves the caller's framebuffer (<code>mOffscreen.reusable</code>). The gather draws <em>unblended</em> - its extra attachments are data, and GLES 3.0 cannot exempt one attachment from blending - and pass 1b and the ring shade from its result, each its own program object built from <code>neon.frag</code>. With no segments the glow and the ring each have a hue-invariant field: pass 1f bakes the glow's under a rotating hue or a moving intensity and pass 1c composites it in pass 1b's place; pass 1r bakes the ring's and pass 2r composites it in pass 2c's place, still frames included - one of each pair per frame, the same image within 1/255. Each texel holds how lit ONE of the emitter's eight pieces is as the halo and the bloom see it from one position round it: <code>r</code> / <code>g</code> the arcs' coverage x intensity under the halo's / bloom's kernel, <code>b</code> / <code>a</code> the segments' boost x bell the same two ways, each over the piece's own extent only, as a ratio to the kernel's mass there, encoded <code>c / (1 + c)</code>. Four bands of 32 rows, each a straight beside a corner (the layout is <code>neon-pieces.glsl</code>). Every pass that shades - 1b, the ring, and both field bakes - reads it, one linear fetch per piece (V19, V20 and V21 in <code>review-findings.md</code>). Phase 2 lands everything on the caller's framebuffer in one run, so a tile-based GPU never stores and reloads that target mid-frame: the fill, always full resolution and under the glow, then two disjoint draws - the ring at full resolution from the stored gather, and the blit over whatever outside it the glow can still light (the ring is clipped to that band too; past the cut, the cutoffs and the glow's fade every mask is an exact zero, so those pixels are drawn by neither). They share their boundary vertices, and <code>neon.vert</code> declares <code>invariant gl_Position</code>, so no pixel is composited twice. Getting the restore wrong is the bug described in section 14.</figcaption>
       </figure>
     </section>
 
@@ -1739,14 +1737,14 @@ void main() {
           <line x1="790" y1="352" x2="790" y2="366" class="dg-line" marker-end="url(#ga2)"/>
 
           <rect x="550" y="368" width="480" height="40" class="dg-box"/>
-          <text x="562" y="393" class="dg-t2">float sPos = perimeterPosition(vPos);  // exact</text>
+          <text x="562" y="393" class="dg-t2">per piece in reach: t = perimeterAt(p, u)</text>
           <line x1="790" y1="408" x2="790" y2="422" class="dg-line" marker-end="url(#ga2)"/>
 
           <rect x="550" y="424" width="480" height="86" class="dg-box-a"/>
-          <text x="562" y="443" class="dg-t c-t">pointwise coverage at this fragment</text>
-          <text x="562" y="461" class="dg-t2">emitCover    = max(arcCoverContinuous(sPos,..) * z);</text>
+          <text x="562" y="443" class="dg-t c-t">pointwise coverage at each piece's t</text>
+          <text x="562" y="461" class="dg-t2">emitCover    = max(arcCoverContinuous(t,..) * z);</text>
           <text x="562" y="476" class="dg-t2">segCoverPt   = sum(boost * exp(-e*e));</text>
-          <text x="562" y="491" class="dg-t2">emitCoverAll = max(emitCover, min(segCoverPt, 1.0));</text>
+          <text x="562" y="491" class="dg-t2">filament     = max over pieces(core * cover);</text>
           <text x="562" y="506" class="dg-t2">filamentGate = max(smoothstep(.5,1.,segCoverPt), emitCover);</text>
 
           <!-- converge -->
@@ -1755,13 +1753,13 @@ void main() {
 
           <rect x="180" y="634" width="700" height="54" class="dg-box"/>
           <text x="192" y="653" class="dg-t2">arcCol   = col * uIntensity;</text>
-          <text x="192" y="669" class="dg-t2">emitFil  = arcCol * emitCover + segCol * filamentGate;</text>
+          <text x="192" y="669" class="dg-t2">emitFil  = arcCol * filament.x + segColHue * filament.y;</text>
           <text x="192" y="683" class="dg-t2">emitGlow = arcCol * gatheredCover.x + segColHue * gatheredSeg;</text>
           <line x1="530" y1="688" x2="530" y2="702" class="dg-line" marker-end="url(#gb2)"/>
 
           <rect x="130" y="704" width="800" height="70" class="dg-box-a"/>
           <text x="142" y="723" class="dg-t">compose the three layers</text>
-          <text x="142" y="741" class="dg-t2">result  = emitFil  * core  * FILAMENT_GAIN  * lineGate;</text>
+          <text x="142" y="741" class="dg-t2">result  = emitFil  * FILAMENT_GAIN  * lineGate;   // each piece's core is in filament</text>
           <text x="142" y="756" class="dg-t2">result += (emitGlow * halo  + arcCol * glowFix.x + segColHue * glowFix.y) * HALO_GAIN      * glowGate;</text>
           <text x="142" y="770" class="dg-t2">result += (emitGlow * bloom + arcCol * glowFix.z + segColHue * glowFix.w) * uBloomStrength * glowGate;</text>
           <line x1="530" y1="774" x2="530" y2="788" class="dg-line" marker-end="url(#ga2)"/>
@@ -1798,8 +1796,8 @@ void main() {
             <tr><td class="num">4</td><td>Perimeter length and kernel widths</td><td class="mono">peri, kc, kh, bw</td><td>6, 9</td></tr>
             <tr><td class="num">5</td><td>Gather loop over 128 samples: arc winner, LUT reads, segment hues</td><td class="mono">acc, segAcc, wsumLit, wsumSegW</td><td>7, 9</td></tr>
             <tr><td class="num">6</td><td>Gated normalisation</td><td class="mono">col, segColHue</td><td>9</td></tr>
-            <tr><td class="num">7</td><td class="mono">perimeterPosition(vPos)</td><td class="mono">sPos</td><td>4</td></tr>
-            <tr><td class="num">8</td><td>Pointwise arc and segment coverage</td><td class="mono">emitCover, segCoverPt, emitCoverAll, filamentGate</td><td>7, 8</td></tr>
+            <tr><td class="num">7</td><td>Each piece within the filament's reach: <code>filamentPieceDistance</code>, then <code>perimeterAt</code> (V25)</td><td class="mono">distance, t per piece</td><td>4, 5</td></tr>
+            <tr><td class="num">8</td><td>Pointwise arc and segment coverage at each piece's <code>t</code> (<code>filamentCover</code>), times that piece's core, max over pieces</td><td class="mono">filament (emitCover, segCoverPt, filamentGate)</td><td>5, 7, 8</td></tr>
             <tr><td class="num">9</td><td>Halo and bloom summed over the eight pieces, bloom pedestal, each piece's coverage read from pass 0b's table, glow gate</td><td class="mono">halo, bloom, glowFix, glowGate</td><td>6</td></tr>
             <tr><td class="num">10</td><td>Compose the three layers</td><td class="mono">result</td><td>13</td></tr>
             <tr><td class="num">11</td><td>One-sided cut, then both cutoff masks</td><td class="mono">result</td><td>12</td></tr>
@@ -1809,7 +1807,7 @@ void main() {
         </table>
       </div>
 
-      <p>Note step 7: the fragment's own perimeter position is computed <em>after</em> the gather, not before. The gather needs only the per-sample positions from the UBO, while <code>sPos</code> is needed only by the pointwise coverages that follow.</p>
+      <p>Note step 7: the pieces' perimeter positions are computed <em>after</em> the gather, not before, and only where the filament is lit. The gather needs only the per-sample positions from the UBO, while the positions are needed only by the pointwise coverages that follow.</p>
 
       <div class="warn">
         <span class="tag">The pairs to keep in step</span>
