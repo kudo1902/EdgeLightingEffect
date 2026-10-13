@@ -2,7 +2,8 @@
 
 Status: **built 2026-10-09** - steps 0-3 and 5 as planned (constants
 calibrated), step 4 in part (the narrower bell support; the 8-node rule failed
-the criterion), and decision 4 (I62). Uncommitted, on top of `14ef6c7`;
+the criterion), and decision 4 (I62). Committed in `498ed6f` (code) and
+`fb6f06f` (documents), on top of `14ef6c7`;
 **section 11 is what was built and measured**, and I59-I62 in
 [`review-findings.md`](review-findings.md) carry the detail. The proposal
 below is unchanged.

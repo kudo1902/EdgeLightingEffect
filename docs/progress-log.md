@@ -5,6 +5,27 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-13 - Stale documents cleared; V16 re-measured on the M2 Pro
+
+`abd2ece` for the documents. Apple M2 Pro.
+
+- **Documents.** Six records of finished work removed (`architecture-design.md`,
+  `multiple-arcs-design.md` and the four comparison documents, with their
+  images); four of them were already recorded as removed on 2026-10-09 but
+  never deleted. The pages that still described the direct path at 1.0, the
+  inline gather, the "optimized" renderers or a field that refuses segments
+  were brought up to the code: `emission-prepass.md`'s pass table, the
+  guide's Parts 2.1, 5.5, 6 and 7.4, the three neon pages, `implementation.md`.
+  `CLAUDE.md` had lost the droplets, lens flare and debug renderers' entries
+  in `2bfd098`; restored.
+- **V16 re-measured.** Not fixed, but explained. Steady frames are within 1
+  level since V24 (`f54372a`, bisected); frames that shade the ring directly -
+  every frame of an animation - still read up to 5 levels off at the corners
+  (8 at `cornerRadius` 120). The cause is the ring's mesh, which moves with the
+  scale: pinning `GetRingWidth` makes the reduced scales match 1.0 exactly.
+  Addendum 2 of V16 in [`review-findings.md`](review-findings.md) has the
+  numbers and two candidate fixes; neither is built.
+
 ## 2026-10-09 (late night) - I63: a uniform the field bake compiles out
 
 `1d9f509`. I63 in [`review-findings.md`](review-findings.md) has the detail.
@@ -23,7 +44,7 @@ hold the detail.
 
 ## 2026-10-09 (late night) - V26: one corner of a one-sided glow
 
-On top of V25, uncommitted. AMD Radeon Pro 5300M. V26 in
+`d07140f`, on top of V25. AMD Radeon Pro 5300M. V26 in
 [`review-findings.md`](review-findings.md) has the detail.
 
 - **Reported.** With `GlowSide::INSIDE`, the top-left corner was not sharp
@@ -45,7 +66,8 @@ On top of V25, uncommitted. AMD Radeon Pro 5300M. V26 in
 
 ## 2026-10-09 (night) - V25: an arc's end on a sharp corner
 
-On top of `fb6f06f`, uncommitted. AMD Radeon Pro 5300M. V25 in
+`4b8e699` (the header comments in `f809b8f`), on top of `fb6f06f`. AMD Radeon
+Pro 5300M. V25 in
 [`review-findings.md`](review-findings.md) has the detail.
 
 - **Reported.** The arc wipe, started from position 0: the tail parked on the
@@ -76,7 +98,8 @@ On top of `fb6f06f`, uncommitted. AMD Radeon Pro 5300M. V25 in
 ## 2026-10-09 (evening) - The glow coverage table at the resolution each light needs
 
 [`neon-glow-cover-resolution-plan.md`](neon-glow-cover-resolution-plan.md)
-built, uncommitted on top of `14ef6c7`. AMD Radeon Pro 5300M; I59-I62 in
+built in `498ed6f`, its documents in `fb6f06f`, on top of `14ef6c7`. AMD Radeon
+Pro 5300M; I59-I62 in
 [`review-findings.md`](review-findings.md) and the plan's section 11 have the
 detail.
 
@@ -113,7 +136,7 @@ detail.
 
 ## 2026-10-09 (later) - V24: the gap between the edge ring and the blit
 
-On top of `063603f`, uncommitted. Measured on an AMD Radeon Pro 5300M. V24 in
+`f54372a`, on top of `063603f`. Measured on an AMD Radeon Pro 5300M. V24 in
 [`review-findings.md`](review-findings.md) has the detail.
 
 - **Reported.** A gap between the ring band and the lit area outside it.
@@ -134,7 +157,7 @@ On top of `063603f`, uncommitted. Measured on an AMD Radeon Pro 5300M. V24 in
 
 ## 2026-10-09 - The references follow V23 and R7
 
-Uncommitted, on top of the two entries below. Apple M2 Pro.
+`063603f`, with the two entries below. Apple M2 Pro.
 
 - **The comparison page** (`docs/neon-resolution-scale-comparison.html`) was
   regenerated as `tools/neon-scale-check/README.md` describes: `542dad4` built
@@ -156,7 +179,7 @@ Uncommitted, on top of the two entries below. Apple M2 Pro.
 
 ## 2026-10-08 (night) - R7: the output is dithered
 
-On top of V23, uncommitted. Measured on an Apple M2 Pro. R7 in
+`063603f`, on top of V23. Measured on an Apple M2 Pro. R7 in
 [`review-findings.md`](review-findings.md) has the detail.
 
 - **Reported.** "Many banding circles" on the same capture: the glow's dark
@@ -182,7 +205,7 @@ On top of V23, uncommitted. Measured on an Apple M2 Pro. R7 in
 
 ## 2026-10-08 (evening) - V23: the bloom fades out instead of stopping on a crease
 
-On top of `457ec75`, uncommitted. Measured on an Apple M2 Pro. V23 in
+`063603f`, on top of `457ec75`. Measured on an Apple M2 Pro. V23 in
 [`review-findings.md`](review-findings.md) has the detail.
 
 - **Reported.** A demo capture (1800 x 1063 rect, glowRadius 5, bloom 0.52,

@@ -10,7 +10,8 @@ issues are where the cost actually is, because a name that describes a mechanism
 the code no longer has will send the next reader down the wrong path.
 
 **Status:** N3, S3 and S8 are fixed, along with the `AGENTS.md` gap. S1 was applied
-and then reverted by decision - see there. The spotlight layer had a second
+and then reverted by decision - see there. S2 is moot: the renderers it names
+are gone. The spotlight layer had a second
 pass of its own after the clip area landed - see
 [Spotlight clip pass](#spotlight-clip-pass); everything it found is fixed except
 the `SpotLight` casing, held by decision. `demo/`, `demo-capi/` and the C ABI
@@ -199,7 +200,15 @@ the remaining piece: the names now describe a renderer that does not exist, and
 do. Not urgent - they work, and they are documented as deprecated in
 `el-effect.h`.
 
-### S2. "Optimized" does not say what the optimisation is
+### S2. "Optimized" does not say what the optimisation is - MOOT
+
+**Moot since the two unifications** ([`neon-unification-plan.md`](neon-unification-plan.md)):
+`NeonOptimizedRenderer` and `LensFlareOptimizedRenderer` no longer exist - each
+layer carries its reduced-resolution path as a `resolutionScale` on one
+renderer. The name survives only in the twelve deprecated C shims
+(`el_effect_set_optimized_*` / `el_effect_get_optimized_*`, in
+`lib/capi/el-deprecated.cpp`), which map onto those scales and are frozen by
+the ABI. The original finding follows.
 
 Both variants are half-resolution renders blitted back up. "Optimized" is the
 kind of qualifier that ages badly: it says a change was made, not what it was,
@@ -524,7 +533,8 @@ at a point in time, and `spotlight-tuning.h`'s own history note has to name
 | N1, N2, N5 | open - `demo-capi` only, out of scope for the `lib/` pass; N2's three `lib/` additions were fixed as they appeared |
 | N4 | open - `lib/capi/`, and the reserved-identifier half is a 47-file sweep |
 | S5 | open - the field rename reaches `lib/capi/`, so it cannot be done `lib`-only |
-| S2, S4, S6, S7 | recorded for whenever the C ABI is next revised; none worth doing alone |
+| S2 | moot - the renderers it names were folded into one each; only deprecated C shims keep the word |
+| S4, S6, S7 | recorded for whenever the C ABI is next revised; none worth doing alone |
 | spotlight clip pass | fixed, except the `SpotLight` casing - deferred by decision, and the one item to pick up if it is ever revisited |
 
 Verified after the fixes: clean rebuild of all four artifacts, and the probe

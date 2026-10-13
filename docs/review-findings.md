@@ -4,8 +4,9 @@ Open defects and rough edges found in a full read of the tree at
 `improve_perf_by_emission_prepass` (`bbdba62`), with the visual ones
 reproduced offscreen rather than argued from the source.
 
-Items marked FIXED have landed and carry a note on what was changed and how it
-was verified; the rest are still open.
+Items marked FIXED or CHANGED have landed and carry a note on what was changed
+and how it was verified; the table below lists the rest, and
+[What is left](#what-is-left) has one line on every item.
 
 > **Written before the neon unification.** Findings here describe a tree with
 > two neon renderers, `NeonRenderer` and the half-res `NeonOptimizedRenderer`,
@@ -32,19 +33,11 @@ up as a citation. Everything still linked still exists, so in a list that mixes
 the two - and several below do - the formatting tells you which halves of the
 old fork survived.
 
-| | fixed | open |
-| - | ----- | ---- |
-| visual | V1, V2, V3, V4, V6, V7 | V5 (closed as a documented limitation) |
-| implementation | I1, I2 (by I39), I3, I4, I6, I7 | I5 (documented), I8 (audited) |
-| second pass | R1, R2, R3, R4, R5, R6, R7 | - |
-| third pass | V8, I9, I10, I11, I12 | V9 |
-| fourth pass | I14 | I13 |
-| fifth pass | I15 | - |
-| sixth pass | I16, I17, I19, I20 | I18 |
-| eighth pass | V11 | - |
-| twelfth pass | I21, I22, I23, I24 | - |
-| fourteenth pass | V15 | I25 (documented) |
-| fifteenth pass | - | V16 |
+| state | items |
+| ----- | ----- |
+| open | V9, V16, V18, I13, I18 |
+| open by decision - documented, audited or a known limit | V5, I5, I8, I25, I28, V17 |
+| fixed or changed | every other V, I and R item, through the thirty-first pass |
 
 The R items come from a re-read after the V and I fixes landed - see
 [Second pass](#second-pass-after-bbdba62). V8 and V9 come from a later read of
@@ -3130,6 +3123,50 @@ above and with widths 1 and 2 at falloff 4 and 2: every one reads max 2 at
 at 0.5. So the arc half looks GPU-dependent, which fits the compiler theory.
 It stays open until the AMD 5300M or the M2 Pro is re-measured.
 
+### V16, addendum 2 (2026-10-13): reproduced on the M2 Pro, and the scale moves the ring's mesh
+
+Re-measured on an Apple M2 Pro at `df7133a`, with a probe on
+`neon-scale-check`'s harness (`BaseConfig()` with `glowRadius` 0, 1280 x 720,
+each reduced scale against 1.0; not checked in), in two frame types:
+
+- **The steady frame** - what `neon-scale-check` captures: the second after a
+  change, with the ring composited from its field (P2r). Within 1 level for
+  every row of the table above at every scale; the one miss is
+  `cornerRadius` 120 at width 1, 3 levels on 1-3 corner pixels. It read like
+  the table (5 levels on 23 px at width 1 and 0.75; 4 on 36-58 px at radius
+  120) until `f54372a` (V24), which bisects as the change.
+- **The first frame after a config change** - the ring shaded directly
+  (P2c), which is every frame of an animation that touches `config.neon`.
+  Still the table above: width 1 at falloff 4 reads 5 / 1 / 4 / 2 / 3 levels at
+  0.75 / 0.5 / 0.35 / 0.25 / 0.125 on 16-18 px, width 2 up to 4 on 15 px, and
+  `cornerRadius` 120 at width 1 up to 8 on 17 px at 0.25. Every pixel over 2
+  is on a rounded corner.
+
+**The two-programs explanation above cannot be it any more.** Since I57 the
+1.0 reference is drawn by the same ring program with the same scale-1.0
+uniforms. What the scale still changes for the ring is its MESH:
+`GetRingWidth` adds `RING_GUARD_TEXELS / scale`, so the strips' vertices move,
+and `vPos` at a pixel centre is interpolated from different vertices.
+**Confirmed** by pinning `GetRingWidth` to 40 px in a scratch build: the
+directly shaded ring at 0.75 and 0.25 then matches 1.0 exactly (max 0) on
+width 1 and width 2 at radius 40 and on width 1 at radius 120. The same
+mechanism accounts for what is left between the two frame types at ONE scale:
+the ring mesh and the ring field's per-strip boxes are different geometry over
+the same pixels, 3-4 levels on 11-15 px at `cornerRadius` 120 even at 1.0.
+Thousandths of a pixel in `vPos` become several levels only where the profile
+is that steep and the distance goes through an arc's `length()`; a straight
+edge's distance is a subtraction and does not amplify it.
+
+**Still open, now with a mechanism.** Two candidate fixes, neither built:
+derive the ring's `vPos` from `gl_FragCoord`, which is exact at every pixel
+centre whatever geometry drew it (the field bake and the ring would then agree
+too - but it leans further on the (0, 0) viewport origin `implementation.md`
+section 11 already assumes); or make the ring's vertices independent of the
+scale, which widens the ring that 1.0 shades. Both move pixels only on the
+shoulder; `check`, `partition` and the cover-set `diff` decide. `check` will
+not catch a regression here, since it captures the steady frame. Severity
+unchanged: it needs `glowRadius` 0 and a sub-pixel shoulder.
+
 ---
 
 ## Sixteenth pass (the branch review)
@@ -4915,7 +4952,8 @@ the old build, with same-build rounds spreading 1.11x.
 ## Twenty-eighth pass (the coverage table at the resolution each light needs)
 
 Built from [`neon-glow-cover-resolution-plan.md`](neon-glow-cover-resolution-plan.md),
-uncommitted on top of `14ef6c7`, measured on an AMD Radeon Pro 5300M (the
+committed in `498ed6f` and `fb6f06f` on top of `14ef6c7`, measured on an AMD
+Radeon Pro 5300M (the
 i7 Mac; `GL_RENDERER` logged on every run). Each change was judged by the
 plan's section 5 against the build before it, on the `cover` set
 (`neon-scale-check generate --set cover`: 17 animated scenes, six frames each
@@ -5311,7 +5349,7 @@ with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 | V12a | fixed | per-lamp shouldering cannot bound a SUM, so the blend does: the lamps screen instead of adding. Putting the shoulder on the sum was built and measured 2.5x to 9.3x slower, with a crease where differently coloured beams cross |
 | V15 | fixed | the reduced-resolution neon drew every edge near the line into a buffer that cannot hold one; the cutoffs moved into the blit and the line into a full-resolution edge ring |
 | I25 | documented | below 1.0 the scaled path has a fixed cost (composite, clears, edge ring), so a layer already cheap at 1.0 can render slower; capping the ring for soft filaments is decision 7 in `neon-resolution-scale-plan.md` |
-| V16 | open | a crisp, thin line with no glow reads up to 8 levels off at its corners below 1.0; most likely the ring and direct programs disagree on an arc's distance by thousandths of a pixel, which a sub-pixel shoulder magnifies - unconfirmed, GPU-specific as far as measured (it does not reproduce on Mesa llvmpipe), and covered by any glow |
+| V16 | open | a crisp, thin line with no glow reads up to 5 levels off at its corners below 1.0 (8 at `cornerRadius` 120) on the frames that shade the ring directly - every frame of an animation; steady frames, which composite the ring's field, are within 1 since V24. Confirmed on the M2 Pro (addendum 2): the scale moves the ring's mesh, so `vPos` at a corner pixel shifts by thousandths of a pixel, which a sub-pixel shoulder magnifies; covered by any glow |
 | I28 | documented | the opaque fill's own cutoffs (default off) and the outward `Cutoff::softness` move existing hosts' pictures without a compile error; `upgrade-notes.md` has the translation |
 | V17 | documented | small rects lose most of the reduced scale's quality (20 x 17: 53 levels at 0.25), as before the edge ring; keep them at 1.0 |
 | I31 | fixed | below 1.0 the gather loop ran at every reduced texel; it now runs once on a grid set by its own smoothness, 3.4-4.3x faster at 0.5 on most scenes |
