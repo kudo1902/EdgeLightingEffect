@@ -5,10 +5,92 @@
 #include "animation/neon-animations.h"
 #include "animation/field-bound-animation.h"
 #include "animation/modulator.h"
+#include <algorithm>
+#include <cmath>
 #include <memory>
+#include <vector>
 
 namespace EdgeLightingDemo
 {
+    // Demo-only: not part of the library. Move it to animation/neon-animations.h on demand.
+    /// @brief One-shot animation that grows four arcs, one per rect edge, out
+    ///        from each edge's centre until every arc covers its own edge.
+    /// @details Drives @c neon.arcs[0..3] (the vector is resized to four; the
+    ///          colour and intensity of entry [0], if any, are copied to the
+    ///          other three). Arc i starts at the centre of edge i with length
+    ///          0 and both @c start and @c length change every frame so the
+    ///          arc expands symmetrically about that centre. At the end each
+    ///          arc spans its edge's straight plus half of each neighbouring
+    ///          corner arc, so the four arcs tile the whole outline and abut
+    ///          exactly. The animation stops (ONE_SHOT, held) at that point.
+    ///
+    ///          Edge centres follow the perimeter parameter of the current
+    ///          @c geometry (width, height, cornerRadius, winding); they are
+    ///          recomputed each frame, so a resizing rect stays correct.
+    class EdgeExpand : public EdgeLighting::Animation
+    {
+    public:
+        /// @param duration Time for every arc to reach full coverage, seconds.
+        /// @param curve    Easing applied to the expansion.
+        EdgeExpand(float duration = 1.5f,
+                   EdgeLighting::EasingFunction::Curve curve = EdgeLighting::EasingFunction::OutCubic)
+            : Animation(duration), mCurve(curve) {}
+
+        void ApplyAt(EdgeLighting::Config &cfg, float elapsed) const override
+        {
+            float dur = GetDuration();
+            float p = dur > 0.0f ? std::min(std::max(elapsed / dur, 0.0f), 1.0f) : 1.0f;
+            if (mCurve)
+            {
+                p = mCurve(p);
+            }
+
+            const float w = cfg.geometry.width;
+            const float h = cfg.geometry.height;
+            const float r = std::min(std::max(cfg.geometry.cornerRadius, 0.0f), 0.5f * std::min(w, h));
+            const float arcPx = 1.5707963f * r;
+            const float perimeter = std::max(2.0f * (w + h - 4.0f * r) + 4.0f * arcPx, 1e-3f);
+            const float ws = std::max(w - 2.0f * r, 0.0f) / perimeter;
+            const float hs = std::max(h - 2.0f * r, 0.0f) / perimeter;
+            const float arcLen = arcPx / perimeter;
+
+            // Clockwise parameter layout: top, right, bottom, left.
+            const float centres[4] = {
+                0.5f * ws,
+                ws + arcLen + 0.5f * hs,
+                ws + hs + 2.0f * arcLen + 0.5f * ws,
+                2.0f * ws + hs + 3.0f * arcLen + 0.5f * hs};
+            const float lengths[4] = {ws + arcLen, hs + arcLen, ws + arcLen, hs + arcLen};
+            const bool ccw = cfg.geometry.winding == EdgeLighting::Winding::COUNTER_CLOCKWISE;
+
+            if (cfg.neon.arcs.empty())
+            {
+                cfg.neon.arcs.push_back(EdgeLighting::Arc{});
+            }
+            const EdgeLighting::Arc proto = cfg.neon.arcs[0];
+            cfg.neon.arcs.resize(4, proto);
+            for (int i = 0; i < 4; ++i)
+            {
+                const float c = ccw ? 1.0f - centres[i] : centres[i];
+                const float len = p * lengths[i];
+                float start = c - 0.5f * len;
+                start -= std::floor(start);
+                EdgeLighting::Arc &a = cfg.neon.arcs[i];
+                a.start = start;
+                a.length = len;
+            }
+        }
+
+        void CaptureBaseline(const EdgeLighting::Config &cfg) override { mSavedArcs = cfg.neon.arcs; }
+
+    protected:
+        void RestoreBaseline(EdgeLighting::Config &cfg) const override { cfg.neon.arcs = mSavedArcs; }
+
+    private:
+        EdgeLighting::EasingFunction::Curve mCurve;
+        std::vector<EdgeLighting::Arc> mSavedArcs;
+    };
+
     /// Built-in animation showcase. Each preset is a self-contained composition
     /// of @ref EdgeLighting::Animation / @ref EdgeLighting::Modulator pieces;
     /// the debug UI flips between them to demonstrate what the system can do.
@@ -29,6 +111,7 @@ namespace EdgeLightingDemo
         OUTLINE_TRACER_WRAP, ///< One-shot: arc grows 0→1.5, past full, head wraps.
         OUTLINE_COLLAPSE,    ///< One-shot: arc shrinks 1→0 to erase it.
         ARC_WIPE,            ///< One-shot: 3-phase grow/chase/shrink wipe around perimeter.
+        EDGE_EXPAND,         ///< One-shot: four arcs expand from each edge's centre to cover it.
         FADE_OUT,            ///< One-shot ease-out of intensity to 0.
         HUE_REVERSE,         ///< Hue direction flips abruptly every few seconds.
         LENS_SUN_ORBIT,      ///< Lens-flare sun rides all the way around the perimeter.
@@ -101,6 +184,10 @@ namespace EdgeLightingDemo
         case AnimationPreset::ARC_WIPE:
         {
             return "Arc Wipe";
+        }
+        case AnimationPreset::EDGE_EXPAND:
+        {
+            return "Edge Expand";
         }
         case AnimationPreset::FADE_OUT:
         {
@@ -253,6 +340,11 @@ namespace EdgeLightingDemo
                 /*endPos=*/0.0f,
                 /*maxLength=*/0.5f,
                 EdgeLighting::EasingFunction::Linear);
+        }
+
+        case AnimationPreset::EDGE_EXPAND:
+        {
+            return std::make_shared<EdgeExpand>(1.5f, EdgeLighting::EasingFunction::OutCubic);
         }
 
         case AnimationPreset::FADE_OUT:
