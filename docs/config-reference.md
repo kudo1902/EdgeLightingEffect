@@ -369,7 +369,8 @@ is undefined).
 
 Freely placed cones of light. Not a perimeter effect: reads only
 `Config::spotlight`. Light only (no backdrop/fixtures/occlusion), one
-additive pass (`GL_ONE, GL_ONE` color + alpha, coverage = max channel).
+screened pass (`GL_ONE_MINUS_DST_COLOR, GL_ONE` colour, `GL_ONE_MINUS_DST_ALPHA,
+GL_ONE` alpha, i.e. `dst + src * (1 - dst)`; coverage = max channel).
 Per-lamp solved strips (`SPOT_STRIP_SEGMENTS = 12` quads) in one VBO, one
 `glDrawArrays`. VBO holds app coords verbatim; y-flip in ortho.
 

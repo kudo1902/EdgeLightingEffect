@@ -552,12 +552,12 @@
 
     <!-- ============================================================ -->
     <section id="s4">
-      <h2 class="sec"><span class="num">04</span> Six layers over one rectangle</h2>
+      <h2 class="sec"><span class="num">04</span> Five layers over one rectangle</h2>
 
-      <p>The neon is one renderer among six. The orchestrator holds a list and calls each in turn every frame. There is no scene graph and no depth sorting: each renderer draws over whatever the previous one left behind, the order in the list <em>is</em> the stacking order, and any subset can be switched on.</p>
+      <p>The neon is one renderer among five. The orchestrator holds a list and calls each in turn every frame. There is no scene graph and no depth sorting: each renderer draws over whatever the previous one left behind, the order in the list <em>is</em> the stacking order (a host can change it), and any subset can be switched on.</p>
 
       <figure>
-        <svg viewBox="0 0 760 320" role="img" aria-label="The six renderers in draw order: wireframe, neon, neon optimized, droplets, lens flare, lens flare optimized. The two neon variants are alternatives to each other, as are the two lens flare variants.">
+        <svg viewBox="0 0 760 280" role="img" aria-label="The five renderers in their default draw order: neon, droplets, lens flare, spotlight, debug.">
           <text x="60" y="28" class="dg-h">draw order</text>
 
           <g class="dg-t2 c-3" text-anchor="end">
@@ -566,42 +566,34 @@
             <text x="52" y="142">3</text>
             <text x="52" y="182">4</text>
             <text x="52" y="222">5</text>
-            <text x="52" y="262">6</text>
           </g>
 
-          <rect x="60" y="40" width="440" height="34" class="dg-box"/>
-          <text x="74" y="62" class="dg-t">Wireframe</text>
-          <text x="240" y="62" class="dg-t2">the sharp debug outline</text>
+          <rect x="60" y="40" width="440" height="34" class="dg-box-a"/>
+          <text x="74" y="62" class="dg-t">Neon</text>
+          <text x="240" y="62" class="dg-t2">the glowing edge</text>
 
-          <rect x="60" y="80" width="440" height="34" class="dg-box-a"/>
-          <text x="74" y="102" class="dg-t">Neon</text>
-          <text x="240" y="102" class="dg-t2">the glowing edge</text>
+          <rect x="60" y="80" width="440" height="34" class="dg-box"/>
+          <text x="74" y="102" class="dg-t">Droplets</text>
+          <text x="240" y="102" class="dg-t2">rain in a band on the perimeter</text>
 
           <rect x="60" y="120" width="440" height="34" class="dg-box"/>
-          <text x="74" y="142" class="dg-t">Debug</text>
-          <text x="240" y="142" class="dg-t2">LUT strip and colour-stop markers</text>
+          <text x="74" y="142" class="dg-t">Lens flare</text>
+          <text x="240" y="142" class="dg-t2">a sun and the artifacts a lens adds</text>
 
           <rect x="60" y="160" width="440" height="34" class="dg-box"/>
-          <text x="74" y="182" class="dg-t">Droplets</text>
-          <text x="240" y="182" class="dg-t2">rain in a band on the perimeter</text>
+          <text x="74" y="182" class="dg-t">Spotlight</text>
+          <text x="240" y="182" class="dg-t2">aimed cones of light, not tied to the rect</text>
 
           <rect x="60" y="200" width="440" height="34" class="dg-box"/>
-          <text x="74" y="222" class="dg-t">Lens flare</text>
-          <text x="240" y="222" class="dg-t2">a sun and the artifacts a lens adds</text>
+          <text x="74" y="222" class="dg-t">Debug</text>
+          <text x="240" y="222" class="dg-t2">LUT strip, stop markers, sharp outline</text>
 
-          <rect x="60" y="240" width="440" height="34" class="dg-box"/>
-          <text x="74" y="262" class="dg-t">Lens flare (optimized)</text>
-          <text x="240" y="262" class="dg-t2">the half-resolution copy</text>
-
-          <path d="M520,204 H532 V270 H520" class="dg-acc" stroke-width="1.5"/>
-          <text x="542" y="241" class="dg-t2 c-a">enable one, never both</text>
-
-          <text x="60" y="302" class="dg-t2">all six read the same geometry: position, size, corner radius, winding direction</text>
+          <text x="60" y="262" class="dg-t2">all but the spotlight read the same geometry: position, size, corner radius, winding direction</text>
         </svg>
-        <figcaption><b>Fig 4</b> The registered layers, in the order the demo adds them. The lens flare still has a half-resolution twin that draws the same thing, so switching both on renders it twice, stacked on itself. The neon layer no longer does - it takes a resolution scale instead.</figcaption>
+        <figcaption><b>Fig 4</b> The registered layers, in the default order. Each draws once: the neon and the lens flare take a resolution scale rather than a second, half-resolution renderer, and the debug overlays are one layer of their own, drawn last.</figcaption>
       </figure>
 
-      <p>There is a thread running through them. Three of the six - neon, droplets and lens flare - build their geometry out of the same two measurements from Section 1:</p>
+      <p>There is a thread running through them. Three of the five - neon, droplets and lens flare - build their geometry out of the same two measurements from Section 1:</p>
 
       <ul class="body">
         <li><strong>Droplets</strong> use <code>d</code> to carve a band hugging the outline, then fill it with a hashed grid of drops. Gravity is global and points straight down the screen, so drops streak on the band's vertical stretches and bead on its horizontal ones. It looks like a fluid simulation; it is a masked noise field.</li>
@@ -613,9 +605,9 @@
 
     <!-- ============================================================ -->
     <section id="s5">
-      <h2 class="sec"><span class="num">05</span> Drawing at half resolution</h2>
+      <h2 class="sec"><span class="num">05</span> Drawing at reduced resolution</h2>
 
-      <p>The bloom covers a large area and every pixel in it runs the whole shader, but most of that area is a smooth gradient with no fine detail. So the neon renderer can draw into an offscreen buffer at half width and half height, then scale the result up - set <code>resolutionScale</code> below 1.0 and that is the path it takes. Half in each direction is a <strong>quarter of the pixels</strong>, so the per-pixel work drops roughly fourfold at the price of a fullscreen copy and one thin full-size pass around the edge (below). At 1.0 it skips the buffer entirely and draws straight onto the target.</p>
+      <p>The bloom covers a large area and every pixel in it runs the whole shader, but most of that area is a smooth gradient with no fine detail. So the neon renderer draws into an offscreen buffer at a fraction of the width and height - <code>resolutionScale</code>, 0.5 by default - then scales the result up. Half in each direction is a <strong>quarter of the pixels</strong>, so the per-pixel work drops roughly fourfold at the price of a fullscreen copy and one thin full-size pass around the edge (below). At 1.0 the buffer is simply full size: the same passes run at every scale.</p>
 
       <p>Two facts make this nearly free:</p>
 
@@ -624,11 +616,11 @@
         <li><strong>The maths is scale-free.</strong> Every comparison in the shader is a ratio of two lengths. Halve every input and both halve together, so the CPU can simply multiply each measurement by the scale before uploading and the shader never learns the difference.</li>
       </ul>
 
-      <p>What it used to cost was the filament. The wide soft layers survive the round trip essentially untouched, but a 4 px razor-sharp line drawn 2 px wide and blurred back up did not. So the small pass now also saves the expensive part of its answer - the colour gather, which is smooth - and a thin <strong>edge ring</strong> around the line is drawn again at full size, reading those saved results instead of recomputing them. The line and every edge near it come out as they do at 1.0, within two levels on all but a very small rectangle. What a lower scale trades now is speed, not sharpness: the ring is a fixed cost, so a scene already cheap at full size - a tight band, a one-sided glow - has little to win and can come out slower.</p>
+      <p>What it used to cost was the filament. The wide soft layers survive the round trip essentially untouched, but a 4 px razor-sharp line drawn 2 px wide and blurred back up did not. So the expensive part of the answer - the colour gather, which is smooth - now runs once, in a pass of its own on a coarse grid, and both the small pass and a thin <strong>edge ring</strong> around the line, drawn again at full size, read its saved results instead of recomputing them. The line and every edge near it come out as they do at 1.0, within two levels on all but a very small rectangle. What a lower scale trades now is speed, not sharpness: the ring is a fixed cost, so a scene already cheap at full size - a tight band, a one-sided glow - has little to win and can come out slower.</p>
 
       <div class="note">
-        <span class="tag">Watch out</span>
-        The lens flare still keeps a separate <code>*Optimized</code> renderer, a near-fork in both the <code>.cpp</code> and the <code>.frag</code> sharing one visual config - a change to how the flare looks has to land in both copies, and the build system cannot tell you when they have drifted. The neon layer used to work that way too; it now scales inside one renderer and one shader, so there is no second copy to forget.
+        <span class="tag">History</span>
+        The neon and the lens flare each used to keep a separate <code>*Optimized</code> half-resolution renderer, a near-fork in the <code>.cpp</code> sharing one visual config, so a change to how either looked had to land in both copies. Both now scale inside one renderer and one shader, so there is no second copy to forget.
       </div>
     </section>
 

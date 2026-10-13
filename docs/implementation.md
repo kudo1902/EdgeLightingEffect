@@ -121,10 +121,10 @@ resolutionScale` and `LensFlareConfig::resolutionScale`, where the flare's 1.0 d
 straight onto the target and anything lower renders into a scaled buffer and
 blits back; the neon has one path at every scale (default 0.5; 1.0 is a
 full-size buffer), re-shading a thin ring around the edge at full
-resolution, from a variant of the same `neon.frag`. One `.cpp` each and one
-copy of every shader stage, no pair to keep in step and no way to double-draw.
-(The neon's gather pass is a `.frag` of its own, `neon-gather.frag`, but the
-loop it runs is the one `neon.frag` runs, shared through `neon-common.glsl`.) See
+resolution, from the same `neon.frag` compiled as a second program. One
+`.cpp` each and one copy of every shader stage, no pair to keep in step and no
+way to double-draw. (The neon's gather is a pass of its own, `neon-gather.frag`,
+the only place its loop lives; `neon.frag` reads what that pass stored.) See
 `docs/neon-unification-plan.md`, which also records how both merges were verified.
 
 To add a renderer: subclass `BaseRenderer`, add a sub-config struct to `Config`
@@ -172,8 +172,9 @@ content rather than only adding light.
 Before that quad runs, the neon renderer executes an **emission pre-pass**.
 The gather's per-sample work - the arc winner-take-all, the segment bells, the
 LUT fetches - is a pure function of `(si, uTime, config)` and does not vary per
-fragment, so it is baked once per frame into an `N x 2` RGBA16F table
-(`neon-emission.frag`) that the gather then reads with `texelFetch`.
+fragment, so it is baked into an `N x 2` RGBA16F table
+(`neon-emission.frag`) that the gather then reads with `texelFetch` - and
+only on the frames one of its inputs moved, since nothing else writes it.
 Per-fragment cost is `O(samples)` rather than `O(samples * (arcs + segments))`.
 The invariant that keeps the split honest: **a pure function of
 `(si, uTime, config)` belongs in the pre-pass; anything that reads `vPos`
@@ -200,17 +201,20 @@ are baked into a narrow table of their own and copied into the main one by a
 fill pass (`neon-glow-cover-fill.frag`, I60), so `neon.frag` still reads one
 texel per piece.
 
-Below `resolutionScale` 1.0 the same split pays twice. The gather is the only
-part of the shader that is both expensive and smooth across the screen, so it
-runs alone, in a pass of its own (`neon-gather.frag`, which calls the same
-`gatherPerimeter` from `neon-common.glsl` that `neon.frag` calls inline), on a
-grid set by its own smoothness (about two texels per colour kernel - far
-coarser than the reduced buffer), and stores its four results in a small
-buffer. A variant of `neon.frag` that reads those
-results back instead of looping then shades the glow twice: at the reduced
-scale into the reduced buffer, and at full resolution in a thin ring around the
-edge. The line and every edge near it are shaded at full resolution, as with no scale at all.
-Everything outside the ring is the reduced buffer, bilinear-blitted.
+The same split pays a second time, at every `resolutionScale`. The gather is
+the only part of the shader that is both expensive and smooth across the
+screen, so it runs alone, in a pass of its own (`neon-gather.frag`,
+`gatherPerimeter`), on a grid set by its own smoothness (about two texels per
+colour kernel - far coarser than the reduced buffer), and stores its four
+results in a small buffer. `neon.frag` reads those results back with a
+bilinear fetch and shades the glow twice, as two program objects: at
+`resolutionScale` into the reduced buffer, and at full resolution in a thin
+ring around the edge. The line and every edge near it are shaded at full
+resolution, as with no scale at all. Everything outside the ring is the
+reduced buffer, bilinear-blitted; at 1.0 that buffer is simply full size.
+Frames that move nothing skip the offscreen passes, and frames where only the
+hue or the intensity moves composite a baked hue-invariant field instead of
+shading (Part 5.5 of [`neon-onboarding-guide.md`](neon-onboarding-guide.md)).
 
 The full derivation, including the closed forms and the sampling bugs they
 replaced, is in [`neon-renderer-explained.html`](neon-renderer-explained.html);

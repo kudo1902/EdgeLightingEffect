@@ -411,7 +411,7 @@
       <li><span class="n">11</span><a href="#s11">Quad sizing and fades</a></li>
       <li><span class="n">12</span><a href="#s12">Sides, cutoffs, opaque fill</a></li>
       <li><span class="n">13</span><a href="#s13">Grading and output</a></li>
-      <li><span class="n">14</span><a href="#s14">Half-resolution rules</a></li>
+      <li><span class="n">14</span><a href="#s14">Reduced-resolution rules</a></li>
       <li><span class="n">15</span><a href="#s15">Droplets</a></li>
       <li><span class="n">16</span><a href="#s16">Lens flare</a></li>
       <li><span class="n">17</span><a href="#s17">Constant reference</a></li>
@@ -905,9 +905,9 @@ vec3 emitGlow = arcCol * gatheredCover.x + segColHue * gatheredSeg;  // + glowFi
     <section id="s9">
       <h2 class="sec"><span class="num">09</span> The colour gather</h2>
 
-      <p class="lede">The one remaining loop, and the only place a length is expressed as a perimeter fraction rather than in pixels. It produces <strong>colour only</strong> - never brightness, coverage or reach.</p>
+      <p class="lede">The one remaining loop, and the only place a length is expressed as a perimeter fraction rather than in pixels. It produces <strong>colour</strong>, plus the two gathered coverages the shading starts from before each piece's own coverage (the glow coverage table) corrects them - never brightness or reach.</p>
 
-      <p>It lives in neither <code>neon.frag</code> nor the gather pass but in <code>lib/shaders/neon-common.glsl</code>, as <code>gatherPerimeter</code>, which CMake injects into both: <code>neon.frag</code> calls it inline at scale 1.0, and <code>neon-gather.frag</code> calls it alone below 1.0 and stores the result for the shading passes. The per-iteration listing below predates the emission pre-pass (the arc weight and the LUT lookup now arrive pre-baked in <code>uEmission</code>); the kernel reasoning after it is current.</p>
+      <p>It lives in <code>neon-gather.frag</code>, as <code>gatherPerimeter</code>: a pass of its own (pass 1a) at every resolution scale, which runs the loop once on a coarse grid and stores the result; <code>neon.frag</code> reads it back with a bilinear fetch. The per-iteration listing below predates the emission pre-pass (the arc weight and the LUT lookup now arrive pre-baked in <code>uEmission</code>); the kernel reasoning after it is current.</p>
 
       <h3>Per iteration</h3>
 
@@ -1003,7 +1003,7 @@ vec3 segColHue = segAcc / max(wsumSegW, WSUM_EPSILON);</code></pre>
 
       <ul class="body">
         <li><strong>First bake</strong>: seed all three buffers and upload; there is nothing to fade from.</li>
-        <li><strong>Ring width changed</strong>: snap. Source and target have different lengths and cannot be blended element-wise. Only reachable from the half-res renderer, whose width is a runtime knob.</li>
+        <li><strong>Ring width changed</strong>: snap. Source and target have different lengths and cannot be blended element-wise. Reachable only through <code>gradientLutSize</code>, which is a runtime knob.</li>
         <li><strong>Duration &lt;= 0</strong>: snap display to target, no fade.</li>
         <li><strong>Otherwise</strong>: fade from whatever is on screen, mid-fade or settled, so repeated changes chain smoothly rather than jumping back to the last settled ring.</li>
       </ul>
@@ -1143,7 +1143,7 @@ result *= 1.0 - smoothstep(-outHalf, outHalf, dOut);</code></pre>
 
       <p><code>discard</code> is left out because it is not needed: coverage 0 under <code>glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)</code> gives <code>dst = 0 + dst * (1 - 0)</code>, so writing transparent black is bit-exact with discarding. It measures the same either way here - the ring already keeps most zero-coverage fragments off the rasteriser - but a shader with no <code>discard</code> is the friendlier shape for the Mali / Tizen targets, where one cannot use forward pixel kill.</p>
 
-      <p>In the optimized renderer this pass is drawn at <strong>full resolution</strong>, straight to the target framebuffer, and the half-res neon is composited over it. A hard-edged silhouette is the one part of the effect where a soft upscale would be visible.</p>
+      <p>This pass is drawn at <strong>full resolution</strong>, straight to the target framebuffer, whatever the resolution scale, and the reduced-resolution glow is composited over it. A hard-edged silhouette is the one part of the effect where a soft upscale would be visible.</p>
     </section>
 
     <!-- ============================================================ -->
@@ -1172,14 +1172,14 @@ fragColor = vec4(result, alpha);</code></pre>
 
       <p><code>GAMMA_EXPONENT</code> at 0.85 lifts the mid-tones so the falloff reads the way the eye expects. Coverage is the brightest channel: the hot filament core reaches alpha near 1 and occludes the background like a real glass tube, the dim halo and bloom stay near 0 and remain additive, and the dark surround at alpha 0 leaves the background untouched. Pairs with <code>glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA)</code>.</p>
 
-      <p>Premultiplication is also what makes the half-resolution path work at all: averaging two premultiplied pixels is correct, so plain bilinear filtering suffices and the blit needs no more than that read, before its masks, to composite with no dark fringing.</p>
+      <p>Premultiplication is also what makes the reduced-resolution path work at all: averaging two premultiplied pixels is correct, so plain bilinear filtering suffices and the blit needs no more than that read, before its masks, to composite with no dark fringing.</p>
     </section>
 
     <!-- ============================================================ -->
     <section id="s14">
-      <h2 class="sec"><span class="num">14</span> Half-resolution rules</h2>
+      <h2 class="sec"><span class="num">14</span> Reduced-resolution rules</h2>
 
-      <p class="lede">The optimized shader is the same text plus a handful of unit corrections. Getting the rule wrong produces a geometric artifact rather than a crash, which makes it hard to trace.</p>
+      <p class="lede">The reduced-scale passes run the same shader text as the full-resolution edge ring, plus a handful of unit corrections. Getting the rule wrong produces a geometric artifact rather than a crash, which makes it hard to trace.</p>
 
       <h3>What the CPU scales</h3>
 
@@ -1199,7 +1199,7 @@ fragColor = vec4(result, alpha);</code></pre>
 
       <p>The unscaled group divides cleanly: the first three are unitless multipliers, and the last are perimeter fractions in <code>[0, 1]</code>, so they mean the same thing at any size.</p>
 
-      <p>This works because of a property of the SDF worth stating on its own: <strong>halve every input and the distance halves too</strong>. Every comparison in the shader is a ratio of two lengths, and both halve together, so every ratio is unchanged. The distance formula, the perimeter walk and all three brightness curves are therefore identical text in the two shaders.</p>
+      <p>This works because of a property of the SDF worth stating on its own: <strong>halve every input and the distance halves too</strong>. Every comparison in the shader is a ratio of two lengths, and both halve together, so every ratio is unchanged. The distance formula, the perimeter walk and all three brightness curves are therefore identical text at every scale.</p>
 
       <h3>What the shader must correct</h3>
 
@@ -1219,19 +1219,19 @@ fragColor = vec4(result, alpha);</code></pre>
 
       <p><strong>The rule: a constant measured in pixels needs the correction; a constant that is a plain fraction does not</strong>, because the value it multiplies is already in scaled pixels. <code>COLOR_BLEND_PERIM_FRAC</code> multiplies a <code>peri</code> that is already scaled, so correcting it would double-apply.</p>
 
-      <p>Miss one and the symptom is geometric, and only at scales below 1.0 - which is the awkward part, since the default path looks perfect. The arc feathers without their correction inset each arc's filament twice as deep at scale 0.5, leaving a visible stretch of bare halo past the ends.</p>
+      <p>Miss one and the symptom is geometric, and only at scales below 1.0 - which is the awkward part, since a render at 1.0 looks perfect. The arc feathers without their correction inset each arc's filament twice as deep at scale 0.5, leaving a visible stretch of bare halo past the ends.</p>
 
       <h3>The sample count</h3>
 
-      <p><code>uNumSamples</code> makes the gather loop bound dynamic, defaulting to 64 of the available 128. It changes <strong>one thing only</strong>: how many perimeter points the colour gather visits. It is safe to turn down precisely because of the section 6 rewrite - brightness, coverage and reach are all closed forms now and none of them touch the sample list. Halving the samples costs a little precision where two stops meet and nothing else: no dimming, no change in glow width, no beading.</p>
+      <p><code>uNumSamples</code> makes the gather loop bound dynamic, defaulting to all 128 (<code>NEON_MAX_LOOP_SAMPLES</code>). It changes <strong>one thing only</strong>: how many perimeter points the colour gather visits. It is safe to turn down precisely because of the section 6 rewrite - brightness, coverage and reach are all closed forms now and none of them touch the sample list. Halving the samples costs a little precision where two stops meet and nothing else: no dimming, no change in glow width, no beading.</p>
 
       <h3>Framebuffer discipline</h3>
 
-<pre><code>const GLuint targetFbo = Framebuffer::GetBoundId();   // before pass 1
+<pre><code>prevTarget = RenderTargetState::Capture();   // before the offscreen passes
 ...
-Framebuffer::BindId(targetFbo);                       // before pass 2</code></pre>
+prevTarget.Restore();                        // before the fill, the blit and the ring</code></pre>
 
-      <p>Restore the framebuffer the renderer was <em>handed</em>, never <code>BindDefault()</code>. During a frame capture the "backbuffer" is a real FBO, so binding the default one sends the composite to the window and the captured image comes back empty.</p>
+      <p>Restore the framebuffer - and viewport - the renderer was <em>handed</em>, never <code>BindDefault()</code>. During a frame capture the "backbuffer" is a real FBO, so binding the default one sends the composite to the window and the captured image comes back empty.</p>
     </section>
 
     <!-- ============================================================ -->
@@ -1316,7 +1316,7 @@ float runs = S(0.25, 0.8, horizontality);   // 1 where the band is vertical</cod
 
       <h3>Where the sun is</h3>
 
-      <p>Not in screen coordinates. The sun rides the perimeter at <code>perimeterPosition</code>, in the same 0-to-1 space the neon arcs use, with a signed <code>perimeterOffset</code> pushing it out or pulling it in. Crucially it follows the <em>offset curve</em> directly - itself a rounded rect of radius <code>cornerRadius + offset</code> - and the position advances by arc length along that curve, so the sun keeps a constant speed through the corners instead of visibly slowing. An offset below <code>-cornerRadius</code> clamps the corners square rather than inverting them. <code>GetSunFragPosition</code> is shared by both flare renderers so the sun lands identically; the half-res variant just multiplies the result by its scale.</p>
+      <p>Not in screen coordinates. The sun rides the perimeter at <code>perimeterPosition</code>, in the same 0-to-1 space the neon arcs use, with a signed <code>perimeterOffset</code> pushing it out or pulling it in. Crucially it follows the <em>offset curve</em> directly - itself a rounded rect of radius <code>cornerRadius + offset</code> - and the position advances by arc length along that curve, so the sun keeps a constant speed through the corners instead of visibly slowing. An offset below <code>-cornerRadius</code> clamps the corners square rather than inverting them. <code>GetSunFragPosition</code> gives the sun's position once for both of the flare's resolution paths; below 1.0 the scaled path just multiplies the result by its scale.</p>
 
       <h3>Working space</h3>
 
@@ -1381,18 +1381,18 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
         <table>
           <thead><tr><th>Constant</th><th class="mono">Value</th><th>Consumed by</th><th>Notes</th></tr></thead>
           <tbody>
-            <tr><td class="mono nw">FILAMENT_MIN_HALF_WIDTH</td><td class="num">0.5</td><td>both shaders, both <code>setupGeometry</code> <strong>(shared)</strong></td><td>Floors <code>sigma</code>. Needs <code>uResolutionScale</code> in the half-res shader.</td></tr>
+            <tr><td class="mono nw">FILAMENT_MIN_HALF_WIDTH</td><td class="num">0.5</td><td>both shaders, both <code>setupGeometry</code> <strong>(shared)</strong></td><td>Floors <code>sigma</code>. Converted by <code>uResolutionScale</code> in a pass shaded at a reduced scale.</td></tr>
             <tr><td class="mono nw">FILAMENT_GAIN</td><td class="num">12.0</td><td>shaders, reach formula</td><td>Why the core reads white-hot after tone mapping.</td></tr>
             <tr><td class="mono nw">FILAMENT_CUTOFF</td><td class="num">0.002</td><td>reach formula <strong>(shared)</strong></td><td>Brightness below which the filament is considered gone.</td></tr>
             <tr><td class="mono nw">FILAMENT_REACH_MIN_SIGMAS</td><td class="num">2.0</td><td>reach formula <strong>(shared)</strong></td><td>Keeps room at very high falloff.</td></tr>
             <tr><td class="mono nw">FILAMENT_REACH_MAX_SIGMAS</td><td class="num">64.0</td><td>reach formula <strong>(shared)</strong></td><td>Bounds fill cost where the reach formula diverges.</td></tr>
-            <tr><td class="mono nw">HEAD_FEATHER_PX</td><td class="num">14.0</td><td class="mono">arcCoverContinuous</td><td>px span, divided by <code>peri</code> at the call site. Scaled in the half-res copy.</td></tr>
+            <tr><td class="mono nw">HEAD_FEATHER_PX</td><td class="num">14.0</td><td class="mono">arcCoverContinuous</td><td>px span, divided by <code>peri</code> at the call site. Scaled by <code>uResolutionScale</code> at a reduced scale.</td></tr>
             <tr><td class="mono nw">TAIL_FEATHER_PX</td><td class="num">14.0</td><td class="mono">arcCoverContinuous</td><td>As above.</td></tr>
             <tr><td class="mono nw">ARC_FEATHER_MAX_SHARE</td><td class="num">0.4</td><td class="mono">arcCoverContinuous</td><td>Caps each feather at a share of arc length. 0.4 leaves a 0.2 plateau.</td></tr>
             <tr><td class="mono nw">HALO_GAIN</td><td class="num">0.90</td><td>shaders</td><td>Halo weight in the sum.</td></tr>
             <tr><td class="mono nw">HALO_NORM_FACTOR</td><td class="num">0.43</td><td>shaders</td><td>Peak is <code>2 x</code> this = 0.86, matching the old gather.</td></tr>
             <tr><td class="mono nw">COLOR_BLEND_PERIM_FRAC</td><td class="num">0.0088</td><td>shaders</td><td><strong>Unit-free.</strong> 24 px on stock geometry; 1.13 sample spacings everywhere. No scale correction.</td></tr>
-            <tr><td class="mono nw">GLOW_GATE_FADE_PX</td><td class="num">2.0</td><td>shaders</td><td>Full-res px span. Scaled in the half-res copy.</td></tr>
+            <tr><td class="mono nw">GLOW_GATE_FADE_PX</td><td class="num">2.0</td><td>shaders</td><td>Full-res px span. Scaled by <code>uResolutionScale</code> at a reduced scale.</td></tr>
             <tr><td class="mono nw">EMISSION_MIN_WIDTH</td><td class="num">1e-3</td><td>shaders</td><td>Guards the emission divides only.</td></tr>
             <tr><td class="mono nw">BLOOM_REACH_TO_GLOW</td><td class="num">6.0</td><td>shaders</td><td><code>bw = glowRadius * this</code>.</td></tr>
             <tr><td class="mono nw">BLOOM_NORM_FACTOR</td><td class="num">0.32</td><td>shaders</td><td>Peak is <code>PI x</code> this = 1.005.</td></tr>
@@ -1402,7 +1402,7 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
             <tr><td class="mono nw">TONE_MAP_SHOULDER</td><td class="num">0.6</td><td>shaders</td><td>Reinhard shoulder.</td></tr>
             <tr><td class="mono nw">GAMMA_EXPONENT</td><td class="num">0.85</td><td>shaders</td><td>Lifts mid-tones.</td></tr>
             <tr><td class="mono nw">WSUM_EPSILON</td><td class="num">1e-6</td><td>shaders</td><td>Guards the gather normalisation divides.</td></tr>
-            <tr><td class="mono nw">EARLY_OUT_RADIUS_FACTOR</td><td class="num">48.0</td><td>both <code>setupGeometry</code> + both shaders <strong>(shared)</strong></td><td>Quad margin and the bloom pedestal. The two must agree.</td></tr>
+            <tr><td class="mono nw">GLOW_REACH_RADIUS_FACTOR</td><td class="num">48.0</td><td><code>setupGeometry</code> + <code>neon.frag</code> <strong>(shared)</strong></td><td>Quad margin and the bloom pedestal. The two must agree.</td></tr>
             <tr><td class="mono nw">QUAD_FADE_START_FRAC</td><td class="num">0.8</td><td>shaders</td><td>Fraction of the margin, not a px span. 62 px ramp at stock settings.</td></tr>
             <tr><td class="mono nw">BLOOM_FADE_START_FRAC</td><td class="num">0.5</td><td>shaders</td><td>Each piece's bloom fades out over [0.5, 1] x reach of its own distance, both sides, floored at a cutoff's end (V23). The latest start that does not steepen the tail.</td></tr>
           </tbody>
@@ -1520,8 +1520,8 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
           <text x="822" y="381" class="dg-t">mArcLUT</text>
           <text x="822" y="398" class="dg-t2">128 x 8 RGBA8, REPEAT</text>
 
-          <text x="20" y="450" class="dg-t2">NOT here: arc / segment positions, lengths, intensities and boosts. Those ride the UBOs and are re-uploaded every frame.</text>
-          <text x="20" y="466" class="dg-t2">Animating them is therefore free - no bake, no texture upload.</text>
+          <text x="20" y="450" class="dg-t2">NOT here: arc / segment positions, lengths, intensities and boosts. Those ride the UBOs, repacked only when they change.</text>
+          <text x="20" y="466" class="dg-t2">No LUT bake, no texture upload - though moving them re-bakes the coverage table (pass 0b).</text>
         </svg>
         <figcaption><b>Fig 3</b> The five dirty-gated rebuilds. Note that <code>samplesDirty</code> feeds <code>geometryDirty</code>: a geometry change re-sizes the draw quad as well as the sample ring. The five colour-bearing fields on the left are the only ones that touch a texture, which is why dragging a brightness slider costs nothing here. Not drawn: <code>fillDirty</code> rebuilds the opaque fill's band ring, and <code>ringDirty</code> - geometry, <code>resolutionScale</code>, <code>lineWidth</code>, <code>filamentFalloff</code> - rebuilds the two partition meshes, <code>mRingMesh</code> and <code>mBlitMesh</code>, in <code>setupRingGeometry</code>. Nor are the two GPU bakes, which re-run pass 0 and pass 0b on the next <code>Render</code> (Fig 4): pass 0 is keyed on what it binds rather than on any flag set here (<code>isEmissionTableStale</code>: its two uniforms by value, its three LUTs and two light blocks by upload count), so it re-bakes when a colour, arc or segment input moves and not under a brightness or geometry animation; and <code>mGlowCover.dirtyArcPieces</code> / <code>dirtySegmentPieces</code>, set only when the arcs, the segments, the rect's width, height, corner radius or winding, or <code>glowRadius</code> change - so animating an arc or a segment, free here, costs pass 0b every frame (0.14-0.27 ms on an AMD Radeon Pro 5300M for the whole table), while a brightness or colour animation does not. The flag is a mask, one bit per piece: a moved light re-bakes only the pieces its old and new supports reach.</figcaption>
       </figure>
@@ -1571,7 +1571,7 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
           <line x1="530" y1="458" x2="530" y2="472" class="dg-line" marker-end="url(#fa2)"/>
           <rect x="200" y="474" width="660" height="46" class="dg-box"/>
           <text x="212" y="494" class="dg-t">pass 1f: glow field bake -&gt; mGlowField.buffer</text>
-          <text x="212" y="510" class="dg-t2">NEON_FIELD_BAKE; no segments, hue or intensity moving, once the config held</text>
+          <text x="212" y="510" class="dg-t2">NEON_FIELD_BAKE; hue or intensity moving, once the config held</text>
           <path d="M530,520 V536 H359 V542" class="dg-line" marker-end="url(#fa2)"/>
           <path d="M530,520 V536 H701 V542" class="dg-line" marker-end="url(#fa2)"/>
           <rect x="200" y="544" width="318" height="46" class="dg-box-a"/>
@@ -1586,7 +1586,7 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
           <line x1="530" y1="598" x2="530" y2="612" class="dg-line" marker-end="url(#fa2)"/>
           <rect x="200" y="614" width="660" height="46" class="dg-box"/>
           <text x="212" y="634" class="dg-t">pass 1r: ring field bake -&gt; mRingField.buffer</text>
-          <text x="212" y="650" class="dg-t2">NEON_FIELD_BAKE over the ring, packed in four strips; no segments, once held</text>
+          <text x="212" y="650" class="dg-t2">NEON_FIELD_BAKE over the ring, packed in four strips; once held</text>
           <line x1="530" y1="660" x2="530" y2="674" class="dg-line" marker-end="url(#fa2)"/>
           <rect x="200" y="676" width="660" height="46" class="dg-box"/>
           <text x="212" y="696" class="dg-t">restore the target and viewport; blending on</text>
@@ -1616,7 +1616,7 @@ float glow = 0.1 / (pow(sDist * 4.0,  0.5)        + GLOW_SOFT);   // 0.10</code>
           <text x="530" y="984" class="dg-t" text-anchor="middle">glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)</text>
           <text x="530" y="1000" class="dg-t2" text-anchor="middle">a known blend state for the next layer; GL_BLEND left on</text>
         </svg>
-        <figcaption><b>Fig 4</b> One frame. There is one path at every resolution scale - at 1.0 the reduced buffer is simply full size - in two phases. Phase 1 renders offscreen with blending off, each pass only when what it reads moved: the emission table (pass 0) when an input of it did (<code>isEmissionTableStale</code>); the glow coverage table (pass 0b, <code>neon-glow-cover.frag</code> into <code>mGlowCover.buffer</code>, 256-1024 x 128 RGBA16F by the rect and the halo width - I59) for the pieces a config change reaches - with a segment table of their own baked alongside (pass 0s) and copied into its <code>b</code> / <code>a</code> (pass 0f, <code>neon-glow-cover-fill.frag</code>) when the segments are long enough (I60) -, and never on a ring lit uniformly (one full arc, no segments - <code>IsGlowCoverUnread</code>), whose program it then never compiles; and the gather (pass 1a, <code>neon-gather.frag</code> into <code>mGather.buffer</code> at <code>GetGatherScale</code>) unless what it last drew still answers (<code>mGather.cache</code>). On a frame where nothing moved, none of passes 1a-1c runs and the frame never leaves the caller's framebuffer (<code>mOffscreen.reusable</code>). The gather draws <em>unblended</em> - its extra attachments are data, and GLES 3.0 cannot exempt one attachment from blending - and pass 1b and the ring shade from its result, each its own program object built from <code>neon.frag</code>. With no segments the glow and the ring each have a hue-invariant field: pass 1f bakes the glow's under a rotating hue or a moving intensity and pass 1c composites it in pass 1b's place; pass 1r bakes the ring's and pass 2r composites it in pass 2c's place, still frames included - one of each pair per frame, the same image within 1/255. Each texel holds how lit ONE of the emitter's eight pieces is as the halo and the bloom see it from one position round it: <code>r</code> / <code>g</code> the arcs' coverage x intensity under the halo's / bloom's kernel, <code>b</code> / <code>a</code> the segments' boost x bell the same two ways, each over the piece's own extent only, as a ratio to the kernel's mass there, encoded <code>c / (1 + c)</code>. Four bands of 32 rows, each a straight beside a corner (the layout is <code>neon-pieces.glsl</code>). Every pass that shades - 1b, the ring, and both field bakes - reads it, one linear fetch per piece (V19, V20 and V21 in <code>review-findings.md</code>). Phase 2 lands everything on the caller's framebuffer in one run, so a tile-based GPU never stores and reloads that target mid-frame: the fill, always full resolution and under the glow, then two disjoint draws - the ring at full resolution from the stored gather, and the blit over whatever outside it the glow can still light (the ring is clipped to that band too; past the cut, the cutoffs and the glow's fade every mask is an exact zero, so those pixels are drawn by neither). They share their boundary vertices, and <code>neon.vert</code> declares <code>invariant gl_Position</code>, so no pixel is composited twice. Getting the restore wrong is the bug described in section 14.</figcaption>
+        <figcaption><b>Fig 4</b> One frame. There is one path at every resolution scale - at 1.0 the reduced buffer is simply full size - in two phases. Phase 1 renders offscreen with blending off, each pass only when what it reads moved: the emission table (pass 0) when an input of it did (<code>isEmissionTableStale</code>); the glow coverage table (pass 0b, <code>neon-glow-cover.frag</code> into <code>mGlowCover.buffer</code>, 256-1024 x 128 RGBA16F by the rect and the halo width - I59) for the pieces a config change reaches - with a segment table of their own baked alongside (pass 0s) and copied into its <code>b</code> / <code>a</code> (pass 0f, <code>neon-glow-cover-fill.frag</code>) when the segments are long enough (I60) -, and never on a ring lit uniformly (one full arc, no segments - <code>IsGlowCoverUnread</code>), whose program it then never compiles; and the gather (pass 1a, <code>neon-gather.frag</code> into <code>mGather.buffer</code> at <code>GetGatherScale</code>) unless what it last drew still answers (<code>mGather.cache</code>). On a frame where nothing moved, none of passes 1a-1c runs and the frame never leaves the caller's framebuffer (<code>mOffscreen.reusable</code>). The gather draws <em>unblended</em> - its extra attachments are data, and GLES 3.0 cannot exempt one attachment from blending - and pass 1b and the ring shade from its result, each its own program object built from <code>neon.frag</code>. The glow and the ring each have a hue-invariant field (a second channel carries the segments' share, I58): pass 1f bakes the glow's under a rotating hue or a moving intensity and pass 1c composites it in pass 1b's place; pass 1r bakes the ring's and pass 2r composites it in pass 2c's place, still frames included - one of each pair per frame, the same image within 1/255. Each texel holds how lit ONE of the emitter's eight pieces is as the halo and the bloom see it from one position round it: <code>r</code> / <code>g</code> the arcs' coverage x intensity under the halo's / bloom's kernel, <code>b</code> / <code>a</code> the segments' boost x bell the same two ways, each over the piece's own extent only, as a ratio to the kernel's mass there, encoded <code>c / (1 + c)</code>. Four bands of 32 rows, each a straight beside a corner (the layout is <code>neon-pieces.glsl</code>). Every pass that shades - 1b, the ring, and both field bakes - reads it, one linear fetch per piece (V19, V20 and V21 in <code>review-findings.md</code>). Phase 2 lands everything on the caller's framebuffer in one run, so a tile-based GPU never stores and reloads that target mid-frame: the fill, always full resolution and under the glow, then two disjoint draws - the ring at full resolution from the stored gather, and the blit over whatever outside it the glow can still light (the ring is clipped to that band too; past the cut, the cutoffs and the glow's fade every mask is an exact zero, so those pixels are drawn by neither). They share their boundary vertices, and <code>neon.vert</code> declares <code>invariant gl_Position</code>, so no pixel is composited twice. Getting the restore wrong is the bug described in section 14.</figcaption>
       </figure>
     </section>
 
@@ -1811,7 +1811,7 @@ void main() {
 
       <div class="warn">
         <span class="tag">The pairs to keep in step</span>
-        <code>lens-flare.frag</code> and its optimized fork; <code>demo/src/debug-ui.cpp</code> and its <code>demo-capi/</code> counterpart. Also the four places that must agree on the perimeter parameterisation (section 4) and the three that must agree on the quad margin (section 11). None of these are checked by the build. Only the eye catches a drift.
+        <code>demo/src/debug-ui.cpp</code> and its <code>demo-capi/</code> counterpart; the CPU mirrors of shader terms (<code>GlowBoundTerms</code> for the halo and bloom, the cutoff and margin helpers). Also the four places that must agree on the perimeter parameterisation (section 4) and the three that must agree on the quad margin (section 11). None of these are checked by the build. Only the eye catches a drift.
       </div>
     </section>
 

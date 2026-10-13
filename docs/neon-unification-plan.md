@@ -314,7 +314,8 @@ Must be updated (they state the fork as fact):
   retires.
 - `docs/implementation.md`, `docs/emission-prepass.md` (pass tables + the "no such
   inversion" note, now that both paths share one schedule),
-  `docs/architecture-design.md`, `docs/effect-reference.md` (the `optimizedNeon.*`
+  `docs/architecture-design.md` (since removed; its current parts moved into
+  `implementation.md`), `docs/effect-reference.md` (the `optimizedNeon.*`
   parameter rows move under neon; new `debug.*` rows).
 - `docs/neon-renderer-reference.html` - the uniform tables gain `uResolutionScale` /
   `uNumSamples` on the main shader; the overview/explained tiers get a lighter pass

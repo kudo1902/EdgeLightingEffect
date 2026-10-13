@@ -1,5 +1,12 @@
 # Neon shaders: cleanup plan
 
+**Status: done** - every step, see [section 6](#6-status). Section 1 is the
+tree as it was BEFORE the cleanup (thirteen program slots, `NEON_UNIFORM_COVER`,
+the inline gather in `neon.frag`); none of that exists any more. The live
+program list is the `ShaderProgram` members in
+`lib/include/renderer/neon-renderer.h`. This is kept as the record of why each
+shortcut was kept or cut.
+
 How to take the neon layer's shaders from thirteen program slots, four
 compile-time variants of `neon.frag` and several hand-copied functions down to
 the set that earns its place, without changing what the layer draws. Written

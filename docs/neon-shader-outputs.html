@@ -707,7 +707,7 @@
       </dl>
     </div>
     <div class="body">
-      <p>The same source as P1b, with its uniforms uploaded as if the scale were 1.0. It reshades the band where the line and every hard edge live, reading the gather buffer for colour and coverage, and - since it shades with scale-1.0 uniforms - multiplies the one-sided cut and the cutoffs in after its tone map itself. Its strips share their edges with the blit&rsquo;s, so no pixel is drawn twice. It draws onto the caller&rsquo;s framebuffer, so nothing of it survives a frame: on a config with segments it runs on every frame, still frames included. Without segments it runs only until the ring&rsquo;s field holds, and P2r draws the band instead.</p>
+      <p>The same source as P1b, with its uniforms uploaded as if the scale were 1.0. It reshades the band where the line and every hard edge live, reading the gather buffer for colour and coverage, and - since it shades with scale-1.0 uniforms - multiplies the one-sided cut and the cutoffs in after its tone map itself. Its strips share their edges with the blit&rsquo;s, so no pixel is drawn twice. It draws onto the caller&rsquo;s framebuffer, so nothing of it survives a frame: it runs only until the ring&rsquo;s field holds, and P2r draws the band instead - segments or none (I58). The exception is a rotating hue over a gradient ring that is not opaque at every texel, which the field cannot serve; there it runs on every frame, still frames included.</p>
       <div class="shots">
         <figure>
           <img src="images/neon-onboarding/pass-p2c-ring-only.png" alt="The ring band alone around the outline" width="640" height="360">
@@ -730,7 +730,7 @@
         <div><dt>Target</dt><dd>The caller&rsquo;s framebuffer</dd></div>
         <div><dt>Grid</dt><dd>640 &times; 360 px, full resolution</dd></div>
         <div><dt>Covers</dt><dd>The ring band only, in P2c&rsquo;s place</dd></div>
-        <div><dt>Runs</dt><dd>Every frame the ring&rsquo;s field holds, still frames included; no segments</dd></div>
+        <div><dt>Runs</dt><dd>Every frame the ring&rsquo;s field holds, still frames included</dd></div>
       </dl>
     </div>
     <div class="body">

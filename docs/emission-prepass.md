@@ -5,10 +5,10 @@ introduces in `NeonRenderer`.
 
 > Written when the half-res path was a second renderer,
 > `NeonOptimizedRenderer`, with its own copy of the shader. It is one
-> renderer now, drawing at `NeonConfig::resolutionScale`; the pass tables
-> below have been updated, and the two-consumer warnings that used to run
-> through this document now have a single consumer to keep honest. See
-> `neon-unification-plan.md`.
+> renderer now, drawing at `NeonConfig::resolutionScale` - one path at every
+> scale since I57, with the gather a pass of its own (`neon-gather.frag`) that
+> is the table's only reader. Sections 3, 4 and 8 describe the code as it
+> stands; sections 1, 2 and 7 are the record of what the pre-pass changed.
 
 The short version: the neon gather loop was recomputing an identical per-sample
 table in every screen fragment. That table is now baked into a small texture -
@@ -98,56 +98,55 @@ through `emitCover` / `filamentGate`, which are pointwise and size-invariant.
 
 `Render` is a pass schedule and nothing else: derive the
 transform, then one call per pass, each in its own private method. Blend state
-is owned by `Render`; each pass owns its shader, and those that retarget the
-framebuffer restore it themselves.
+is owned by `Render`; each pass owns its shader.
 
-**`NeonRenderer::Render`** - one schedule, both resolution paths. `scaled` is
-`resolutionScale < 1.0`; it changes where pass 1 lands, which program variant
-draws it, and whether passes 1a, 2b and 2c run. The schedule runs in TWO PHASES on
-both paths: everything that renders offscreen first, then everything on the
-caller's framebuffer, so that target is drawn in one unbroken run per frame (on
-a tile-based GPU every switch away from it and back stores and reloads its
-tiles). `debug.opaqueOnly` short-circuits all of it to the fill alone.
+**`NeonRenderer::Render`** - one schedule at every `resolutionScale` (at 1.0
+the reduced buffer is simply full size; the direct path 1.0 used to take went
+with I57). It runs in TWO PHASES: everything that renders offscreen first, then
+everything on the caller's framebuffer, so that target is drawn in one unbroken
+run per frame (on a tile-based GPU every switch away from it and back stores
+and reloads its tiles). `debug.opaqueOnly` short-circuits all of it to the fill
+alone. The table below places pass 0 in the schedule; Parts 5.5 and 6 of
+[`neon-onboarding-guide.md`](neon-onboarding-guide.md) have the whole schedule
+and each pass's inputs, state and outputs.
 
-| pass | method | target | draw |
+| pass | method | target | runs |
 | ---- | ------ | ------ | ---- |
-| - | (inline) | - | derives the direct path's proj / center / mvp and, below 1.0, the two buffers' regions (`GetBufferRegion`) and their projections, in SCALED space; builds the path's programs on its first frame (`ensurePathPrograms`) |
-| - | `packLightBlocks` | - | UBO upload only; the pack is gated, the bind is not |
-| 0 | `renderEmissionPass` | `mEmissionBuffer` (N x 2, allocated at `Initialize`) | `mFullscreenVertexArray`, identity MVP; runs only when the table is stale |
-| 0b | `renderGlowCoverPass` | `mGlowCover.buffer` (256-1024 x 128 by the rect and the halo width, I59; it and its program built on the first frame that bakes, never on a ring lit uniformly, the buffer released with the layer) - and, when the segments have a table of their own, P0s into `mGlowCover.segBuffer` and P0f copying it into the main table's .b / .a (I60) | `mFullscreenVertexArray`, identity MVP, `neon-glow-cover.frag`: for each of the outline's eight pieces, its arcs' and segments' coverage as the halo and the bloom see it from a fragment, laid out by `neon-pieces.glsl` and read by every pass that shades (V20 and V21 in [`review-findings.md`](review-findings.md)); runs only on a config change |
-| 1a | `renderGatherPass` | `mGatherBuffer` (1-2 RGBA16F attachments, at `GetGatherScale`, over the gather quad's box) | `mGatherVertexArray`, `neon-gather.frag`: the gather loop (`gatherPerimeter`, shared with `neon.frag` through `neon-common.glsl`) and nothing else, storing its four results; blending off; scaled path only |
-| 1 | `renderNeonPass` (scaled) | `mScaledBuffer` (one RGBA8 attachment, over what the blit reads) | tight glow quad, `neon.frag`'s `NEON_READS_GATHER` variant (`mNeonShadeShader`), which reads the gather pass's results instead of running the loop; blending off |
-| 2a | `renderOpaqueFill` | caller's framebuffer | black rounded-rect fill (opaque modes only), always full-res; a band ring bounds it, and a coverage-1 fill (`ALL`, or `BOTH` with both fill cutoffs disabled) is a scissored `glClear` with no draw unless depth / stencil testing is on |
-| 1 | `renderNeonPass` (direct) | caller's framebuffer | tight glow quad, plain `neon.frag`, composited over the fill |
-| 2b | `renderBlitPass` | caller's framebuffer | bilinear composite of `mScaledBuffer` plus the one-sided cut and the cutoffs, over `mBlitVertexArray` - the part of the frame outside the edge ring where the glow can still be non-zero, which can be empty; scaled path only |
-| 2c | `renderRingPass` | caller's framebuffer | the edge ring, `mRingVertexArray`: `NEON_READS_GATHER` again, compiled into its own program object (`mNeonRingShader`) so no program draws two targets in a frame, at full resolution; scaled path only |
+| - | `ensureGlowPrograms`, `packLightBlocks` | - | programs on first use; the light blocks repacked only when they changed, always bound |
+| 0 | `renderEmissionPass` | `mEmission.buffer` (`NEON_MAX_LOOP_SAMPLES` x 2, allocated in `Initialize`) | only when an input moved (`isEmissionTableStale`, below) |
+| 0b, 0s, 0f | `renderGlowCoverPass` | `mGlowCover.buffer`, and `mGlowCover.segBuffer` when the segments have a table of their own | the pieces a config change reached; never on a ring lit uniformly |
+| 1a | `renderGatherPass` | `mGather.buffer`, at `GetGatherScale` | `neon-gather.frag`, the table's only reader; skipped while what it last drew still answers (`mGather.cache`) |
+| 1f | `renderFieldPass` | `mGlowField.buffer` | the hue-invariant field, on `LazyBake`'s schedule |
+| 1b or 1c | `renderShadePass` or `renderFieldCompositePass` | `mScaledBuffer` | the shading (`mShadeShader`), or the field's composite in its place |
+| 1r | `renderRingFieldPass` | `mRingField.buffer` | the edge ring's field, on its own `LazyBake` |
+| 2a | `renderFillPass` | caller's framebuffer | opaque modes only |
+| 2b | `renderBlitPass` | caller's framebuffer | `mScaledBuffer`, bilinear, everywhere the glow can be lit outside the edge ring |
+| 2c or 2r | `renderRingPass` or `renderRingFieldCompositePass` | caller's framebuffer | the edge ring at full resolution (`mRingShader`), or its field's composite |
 
-Pass 1 appears twice because it is the one pass whose target depends on the
-path: offscreen below 1.0, the composite itself at 1.0 - where it has to land
-after the fill, and the last two rows do not run. 2b and 2c cover disjoint
-areas built from the same vertices (`setupRingGeometry`), so no pixel is
-composited by both; a pixel neither covers is one the glow cannot reach. See
-[`neon-resolution-scale-plan.md`](neon-resolution-scale-plan.md) step 5 and
-sections 12 and 13. Since section 13 the emission table is read by the
-gather pass (1a) on the scaled path, and by pass 1 only on the direct one.
-The debug overlays that used to close this table are a separate layer now -
-`DebugRenderer`, drawn after this renderer, always at full resolution.
+On a frame where nothing moved, passes 1a-1c do not run at all
+(`mOffscreen.reusable`), and that frame never leaves the caller's framebuffer.
+2b and 2c cover disjoint areas built from the same vertices
+(`setupRingGeometry`), so no pixel is composited by both; a pixel neither
+covers is one the glow cannot reach. See
+[`neon-resolution-scale-plan.md`](neon-resolution-scale-plan.md) sections 12 and
+13. The debug overlays are a separate layer - `DebugRenderer`, drawn after this
+renderer, always at full resolution.
 
-The arc and segment UBOs are packed **before** pass 0, because both the
-pre-pass and the main pass read them - the pre-pass for the gathered emission,
-the main pass for the continuous filament gate.
+The arc and segment UBOs are packed **before** pass 0, because the pre-pass
+reads them and its staleness test reads their upload counts; the shading reads
+them too, for the pointwise coverages.
 
 ### When pass 0 runs
 
 The pre-pass hoists the gather's fragment-invariant half out of every
 *fragment*. The same argument hoists it out of every *frame*: the table is a
-pure function of `(si, uTime, config)`, and `mEmissionBuffer` is allocated once
+pure function of `(si, uTime, config)`, and `mEmission.buffer` is allocated once
 for the renderer's lifetime and written by nothing else, so a frame that moves
 neither input can read the texels the last bake left. `isEmissionTableStale`
 is that test, and it has exactly two terms.
 
 - **What the pass binds**, compared against what the last bake bound
-  (`EmissionInputs`, built by `currentEmissionInputs`): `uHueRotationRate` and
+  (`EmissionInputs`, built by `getEmissionInputs`): `uHueRotationRate` and
   `uNumSamples` (clamped) by value, and the three LUT textures and the two
   light blocks by **upload count** - `BaseLUT::GetUploadCount`, which every
   `Upload` moves, and `UniformBuffer::GetUploadCount`, which only an upload
@@ -156,7 +155,7 @@ is that test, and it has exactly two terms.
   of them and re-bakes nothing; a colour, arc or segment change moves one and
   re-bakes; and a cross-fade frame, which moves the ring texture with no config
   change at all, moves the ring's count like any re-bake. Plus "never baked"
-  (`mEmissionBaked`), because the buffer holds undefined texels until the
+  (`mEmission.bake.baked`), because the buffer holds undefined texels until the
   first bake and its stored key means nothing until then. The light blocks'
   counts are only current once `packLightBlocks` has run, so `Render` packs
   before it asks.
@@ -164,7 +163,7 @@ is that test, and it has exactly two terms.
   `float ti = si - uTime * uHueRotationRate`. At a rate of 0 the product is
   exactly zero, so time drops out of the table altogether and a still ring
   rebakes nothing however the clock runs. At any other rate the comparison is
-  `time != mEmissionTime`, exact rather than tolerant, because `time` is fed
+  `time != mEmission.bake.time`, exact rather than tolerant, because `time` is fed
   straight back from the last bake rather than recomputed.
 
 The first term used to be `mEmissionDirty`, set by `OnConfigChanged` on **any**
@@ -180,16 +179,17 @@ that was the only thing taking an inline-path frame off the caller's
 framebuffer (inferred from `neon-perf-review.md` section 10.1, not measured;
 `neon-perf-plan.md`, item 6).
 
-`renderEmissionPass` records all three (`mEmissionInputs`, `mEmissionBaked`,
-`mEmissionTime`) on its way out, so the staleness test always reads a snapshot
-written by the only thing that ever writes the buffer.
+`renderEmissionPass` records what it baked (`mEmission.bake`: the inputs, that
+it ran, the time, and a version the gather's own key reads) on its way out, so
+the staleness test always reads a snapshot written by the only thing that ever
+writes the buffer.
 
 Two consequences worth keeping in mind when changing this:
 
-- **Skipping pass 0 must leave nothing behind for pass 1.** It does:
-  `renderNeonPass` binds all three LUTs *and* the emission texture itself, and
-  `Render` re-asserts the blend mode before it. Pass 0's `glDisable(GL_BLEND)`
-  therefore moved inside the gate rather than in front of it.
+- **Skipping pass 0 must leave nothing behind for the gather.** It does:
+  `bindGatherInputs` binds the emission texture itself for pass 1a, and
+  `Render` sets the blend mode before every pass. Pass 0's `glDisable(GL_BLEND)`
+  therefore sits inside the gate rather than in front of it.
 - **A skipped pass and a run pass must leave identical GL state**, or the glow
   would flicker between the two. This is why `renderEmissionPass` restores the
   viewport *box* it queried rather than `(0, 0, viewportWidth, viewportHeight)`
@@ -209,43 +209,22 @@ UBOs would be bound with no data store at all. The bind itself stays
 unconditional - `glBindBufferBase` writes global context state this class does
 not own between frames.
 
-### One inversion: pass 2a runs first
-
-`Render` calls **pass 2a before pass 0**, the one place call order and pass
-numbering differ. Two reasons, and they compound:
-
-- The fill depends on nothing above it and must end up UNDER the glow either
-  way. Hoisting it is what lets a single schedule serve both resolution paths:
-  the direct path needs it down before the gather composites over it, and the
-  scaled path does not care, because its gather goes to an independent buffer.
-- It puts the fill ahead of the `debug.opaqueOnly` early-out, so the fill-only
-  mode skips a UBO upload and two draws it would never sample.
-
 Pass 0 cannot fail: its target is secured at `Initialize` (section 5), so it
-returns `void` and only pass 1's scaled-buffer allocation can still skip the
-composite.
-
-This is safe only because `renderEmissionPass` restores the framebuffer it was
-handed (see below); against a version that restored framebuffer 0 it would have
-been a bug.
-
-Declaration order in the headers follows the **pass numbering**, not the call
-order, and matches the definition order in the .cpp. The inversion above is
-noted at the declaration site so the two do not silently drift.
+returns `void`; the passes whose buffers are allocated per frame (the gather,
+pass 1b) return whether they drew, and a failure skips the composites that
+would read them.
 
 ### Pass contract
 
 State splits into two kinds, and they have opposite owners.
 
 **Modes belong to `Render`.** Blend enable and blend function are properties of
-the *phase*, not of a pass: the fill, the glow, the blit and the edge ring
-composite premultiplied, except that the gather pass (1a) draws UNBLENDED -
-its attachments are data - and so does pass 1 into the scaled buffer, which it
-has just cleared and covers once per texel - the stop markers composite
-straight alpha, the LUT strip draws unblended, and the renderer hands the world
-back on straight alpha. `Render` sets the mode
-immediately before each pass that depends on one, and **no pass touches
-`GL_BLEND` at all**. Two consequences worth having:
+the *phase*, not of a pass: every offscreen pass draws UNBLENDED - the tables,
+the gather and the field bakes are data, and pass 1b's buffer was just cleared
+and is covered once per texel - while the fill, the blit and the edge ring
+composite premultiplied, and the renderer hands the world back on straight
+alpha. `Render` sets the mode immediately before each pass that depends on
+one, and **no pass touches `GL_BLEND` at all**. Two consequences worth having:
 
 - The whole blend timeline reads top-to-bottom in one function.
 - Setting the mode per phase, rather than relying on carry-over from an earlier
@@ -253,12 +232,12 @@ immediately before each pass that depends on one, and **no pass touches
 
 Each pass states the mode it needs as an `@pre` on its declaration.
 
-**Excursions belong to the pass.** `renderEmissionPass` binds its own render
-target, so it captures `Framebuffer::GetBoundId()` and restores exactly that -
+**Excursions belong to the pass.** `renderEmissionPass` and
+`renderGlowCoverPass` bind their own render targets, so each captures the
+target it was handed (`RenderTargetState::Capture`) and restores exactly that -
 **not** framebuffer 0. The target is not always the default framebuffer: an
-offscreen frame capture (`OffscreenCapture`) binds a real FBO, and the gather
-has no bind of its own, so restoring 0 would redirect the whole neon pass to
-the window and leave the capture empty.
+offscreen frame capture (`OffscreenCapture`) binds a real FBO, so restoring 0
+would redirect the rest of the frame to the window and leave the capture empty.
 
 The viewport travels with the target - `Framebuffer::Bind()` sets both, since a
 target without its viewport is a half-configured state - so the pass restores
@@ -284,28 +263,26 @@ now be **skipped**: anything a run frame leaves behind that a skipped frame
 does not is a difference the glow can show, and "hand back what you found"
 needs no precondition to hold for the two to agree.
 
-The same rule covers the two scaled-path composites (`NeonRenderer`'s pass 2b
-and `LensFlareRenderer`'s blit), where it buys only the consistency. Those
-retarget from `Render` rather than from inside a pass, so each reads the box
-once at the head of `Render`, next to `targetFbo` and on the scaled path only -
-the direct path never retargets and pays no query.
+The rest of the offscreen phase - passes 1a, 1f, 1b or 1c, and 1r - binds one
+buffer after another for the passes on the caller's framebuffer to read, so
+no one of them can hand the target back: `Render` captures the caller's target
+once (`RenderTargetState::Capture`), before the phase and only on a frame that
+draws anything offscreen, and restores it after the last of those passes. The
+lens flare's scaled path follows the same rule around its blit.
 
 The distinction is whether the pass *goes somewhere and comes back* (an
 excursion, which only it can undo correctly) or merely *needs the world in a
 certain state* (a mode, which the schedule owns).
 
-`renderNeonPass` is the deliberate non-excursion: on the scaled path it renders
-into `mScaledBuffer` for passes 2b and 2c to consume rather than returning, so
-`Render` performs that framebuffer transition, using the `targetFbo` and
-viewport box it captured before pass 0.
+## 4. The gather
 
-## 4. The main shader
-
-`neon.frag` gained `uEmission` and lost `arcInside`
-entirely. The loop body is now:
+The gather loop gained `uEmission` and lost `arcInside` entirely. It is
+`gatherPerimeter` in `neon-gather.frag` (pass 1a) - it ran inside `neon.frag`
+when the pre-pass landed, and became a pass of its own later. The loop body
+(the branch with segments) is now:
 
 ```glsl
-vec2  dv = vPos - uLoopSamples[i].xy;
+vec2  dv = p - uLoopSamples[i].xy;
 float dd = dot(dv, dv);
 float g  = 1.0 / (dd + kc2);
 
@@ -328,9 +305,9 @@ Beyond the removed arithmetic, three structural things went with it:
 `texture()` also became `texelFetch()`: no LOD derivatives, no wrap math, no
 filtering, and the 2 KB table stays resident in texture cache.
 
-The three LUT samplers stay bound to the main shader - not for the gather, but
-for the **colour-stop alpha**, which is read pointwise at the fragment's own
-perimeter position. See §6.
+The three LUT samplers stay bound to the shading (`neon.frag`) - not for the
+gather, but for the **colour-stop alpha**, which is read pointwise at the
+fragment's own perimeter position. See §6.
 
 **The gather itself stays.** It is the part the SDF cannot replace: `d` from
 `sdRoundBox` is the distance to the *nearest* perimeter point, a `1/D^3`
@@ -340,7 +317,7 @@ perimeter stretches are both near a fragment.
 
 ## 5. Texture format
 
-`mEmissionBuffer` asks for `GL_RGBA16F` / `GL_HALF_FLOAT` / `GL_NEAREST`, from
+`mEmission.buffer` asks for `GL_RGBA16F` / `GL_HALF_FLOAT` / `GL_NEAREST`, from
 a candidate list in preference order (`EMISSION_FORMATS`).
 
 - **Float** because both rows exceed 1.0 in ordinary use: row 1 sums stacked
@@ -362,20 +339,17 @@ Re-requesting a refused format would be expensive, not merely noisy:
 `Framebuffer::Resize` treats a format change as a reallocation, so asking for
 `GL_RGBA16F` every frame on a driver that refuses it destroys and recreates the
 texture and FBO twice per frame - measured at 1218 allocations over a run that
-should need one. Two things prevent it:
+should need one. What prevents it:
 
-- **The walk starts where the buffer already is.** A live buffer is asked for
-  the format it is holding, which `Resize` early-outs on; only a buffer with no
-  attachment starts at the top of the list. The buffer's own state is the record
-  of how far down the list a previous call got - there is no flag tracking it.
-  (There was: `mEmissionFloatUnavailable`, since removed.)
-- **The walk runs once.** `resizeEmissionBuffer` is called from
-  `NeonRenderer::Initialize`, not per frame. The table's dimensions are
-  compile-time constants (`NEON_MAX_LOOP_SAMPLES x 2` - it is allocated at the
-  sample-count CEILING, and `numSamples` only bounds how much of it is read), so
-  nothing a later call could discover has changed. If no candidate allocates,
-  `Initialize` fails and the effect reports it, rather than the renderer
-  degrading silently to fill-only for the rest of the run.
+- **The walk runs once.** `NeonRenderer::Initialize` allocates the table
+  (`ResizeInBestFormat` over `EMISSION_FORMATS`), and nothing resizes it per
+  frame. The table's dimensions are compile-time constants
+  (`NEON_MAX_LOOP_SAMPLES x 2` - it is allocated at the sample-count CEILING,
+  and `numSamples` only bounds how much of it is read), so nothing a later call
+  could discover has changed, and no flag has to remember a refused format
+  (there was one, `mEmissionFloatUnavailable`, since removed). If no candidate
+  allocates, `Initialize` fails and the effect reports it, rather than the
+  renderer degrading silently to fill-only for the rest of the run.
 
 This motivated the format parameters on `Framebuffer::Resize`:
 
@@ -466,10 +440,9 @@ Practical consequences:
 - **Do not gate the filament from the gather.** Both lights read their coverage
   at `sPos`; a gather-derived gate brings back head quantisation and corner
   spill.
-- **The packing has one consumer.** `neon.frag` is the only reader of the
-  table, at either resolution scale, so a change to the row layout lands in one
-  place. (This used to say "keep the two consumers in step" - the second
-  consumer was `neon-optimized.frag`, now merged away.)
+- **The packing has one consumer.** `neon-gather.frag` (pass 1a) is the only
+  reader of the table, at every resolution scale, so a change to the row layout
+  lands there and in `neon-emission.frag`.
 - **Hand the pre-pass and the gather the same `uNumSamples`.** Texel `i` in the
   table has to be sample `i` in the gather; both go through
   `GetClampedNumSamples` for exactly that reason.
@@ -490,19 +463,17 @@ Rules for the pass structure itself (§3):
   in front of it, and the reason its viewport restore prefers capture over a
   reconstruction that only agrees while a precondition holds. Before gating any
   pass, enumerate the state it touches and check the skip path against it.
-- **`Render` owns blend state; a pass owns its shader.** The two passes that
-  deviate (the emission pre-pass, the LUT-strip overlay) say so in their own
-  comments.
-- **Adding a pass means three places stay in step**: the header declaration
-  (pass-number order), the .cpp definition order, and `Render`'s call order.
-  Where call order deviates - `NeonRenderer` runs pass 2a before pass 0 - the
-  reason is recorded at the declaration, not left to be rediscovered.
+- **`Render` owns blend state; a pass owns its shader.** No pass sets
+  `GL_BLEND` or a blend function itself.
+- **Adding a pass means three places stay in step**: the header declaration,
+  the .cpp definition, and `Render`'s call - the first two in the order the
+  third runs the passes.
 
 Rules for the frame-level gate (§3, *When pass 0 runs*):
 
 - **A new input to the emission table must join its key.** Every uniform,
   texture and block `renderEmissionPass` hands the shader belongs in
-  `EmissionInputs`, filled by `currentEmissionInputs` - a value uniform by
+  `EmissionInputs`, filled by `getEmissionInputs` - a value uniform by
   value, a texture or block by a version number that every write to it moves.
   That list sits beside the pass in the same file, which is what makes it safe
   where a list of config fields was not. A second time-varying uniform needs a
