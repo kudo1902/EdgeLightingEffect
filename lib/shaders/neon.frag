@@ -344,17 +344,20 @@ float filamentPieceDistance(int seg, vec2 p, float reach, out float u) {
 }
 
 
-// uArcs[].w is a BITMASK, not a bool - packed CPU-side in packLightBlocks:
-//   bit 0 (1) - the arc has its own colour stops (read row `a` of uArcLUT)
-//   bit 1 (2) - another arc covers the perimeter immediately BEFORE its start
-//   bit 2 (4) - another arc covers the perimeter immediately AFTER its end
-// The abutment bits pick each endpoint's feather direction in
-// arcCoverContinuous. They are a pure function of the arc set, so they are
-// resolved once per frame on the CPU rather than rediscovered per fragment by
-// an O(arcs^2) scan. Values are 0..7, all exact in a float.
+// uArcs[].w is packed CPU-side in PackArcFlags:
+//   bit 0 (1)        - the arc has its own colour stops (read row `a` of uArcLUT)
+//   2 * q, q 0..255  - how far another arc abuts its START (255 = covers the
+//                      perimeter immediately before it, 0 = free)
+//   512 * q          - the same for its END
+// The abutment amounts pick each endpoint's feather direction in
+// arcCoverContinuous (0 inward, 1 outward, between them the ramp slides, so
+// the tip of an arc closing on a neighbour moves smoothly). They are a pure
+// function of the arc set, so they are resolved once per frame on the CPU
+// rather than rediscovered per fragment by an O(arcs^2) scan. Values are
+// integers below 2^17, exact in a float.
 bool arcHasStops(float flags)  { return mod(flags, 2.0) >= 0.5; }
-bool arcTailAbuts(float flags) { return mod(floor(flags * 0.5), 2.0) >= 0.5; }
-bool arcHeadAbuts(float flags) { return mod(floor(flags * 0.25), 2.0) >= 0.5; }
+float arcTailAbut(float flags) { return mod(floor(flags * 0.5), 256.0) / 255.0; }
+float arcHeadAbut(float flags) { return floor(flags / 512.0) / 255.0; }
 
 // Continuous [0,1] coverage of a fragment for the arc [start, start+length],
 // which gates the sharp SDF filament. Feathered PER ENDPOINT, from the abut
@@ -371,7 +374,7 @@ bool arcHeadAbuts(float flags) { return mod(floor(flags * 0.25), 2.0) >= 0.5; }
 // sharp corner, where every fragment of the wedge shares one sPos. Feather
 // widths arrive as perimeter fractions (converted at the call site).
 float arcCoverContinuous(float sPos, float start, float length, float fHead, float fTail,
-                         bool tailAbuts, bool headAbuts) {
+                         float tailAbut, float headAbut) {
     if (length >= 1.0 - 1e-6) return 1.0;   // full coverage
     if (length <= 1e-6)       return 0.0;   // empty
     float rel = sPos - start;
@@ -381,7 +384,7 @@ float arcCoverContinuous(float sPos, float start, float length, float fHead, flo
     // between the arc's head and its own start down the middle: past that
     // midpoint a fragment is approaching the start, not trailing the head.
     // Only for an outward tail - an inward one never reads rel < 0.
-    if (tailAbuts && rel > 0.5 * (1.0 + length)) { rel -= 1.0; }
+    if (tailAbut > 0.0 && rel > 0.5 * (1.0 + length)) { rel -= 1.0; }
     // Cap each feather at a share of the arc's own length. The widths arrive
     // as a fixed pixel span but `length` is a perimeter FRACTION, so on a small
     // rect a short arc can be narrower than the two ramps combined - they then
@@ -393,12 +396,10 @@ float arcCoverContinuous(float sPos, float start, float length, float fHead, flo
     float fT     = min(fTail, cap);
     // Tail: inward ramps 0 -> 1 over [start, start + fT]; outward ramps over
     // [start - fT, start], reaching 1 AT the start.
-    float tailIn = tailAbuts ? smoothstep(-fT, 0.0, rel)
-                             : smoothstep(0.0, fT, rel);
+    float tailIn = smoothstep(-tailAbut * fT, (1.0 - tailAbut) * fT, rel);
     // Head: inward falls 1 -> 0 over [end - fH, end]; outward holds 1 to the
     // end and falls over [end, end + fH].
-    float headIn = headAbuts ? 1.0 - smoothstep(length, length + fH, rel)
-                             : 1.0 - smoothstep(length - fH, length, rel);
+    float headIn = 1.0 - smoothstep(length - (1.0 - headAbut) * fH, length + headAbut * fH, rel);
     return tailIn * headIn;
 }
 
@@ -438,7 +439,7 @@ vec2 filamentCover(float sPos, float headF, float tailF) {
         vec4 arc = uArcs[a];
         if (arc.z <= 0.0) continue;                       // dark arc: no filament
         float c = arcCoverContinuous(sPos, arc.x, arc.y, headF, tailF,
-                                     arcTailAbuts(arc.w), arcHeadAbuts(arc.w));
+                                     arcTailAbut(arc.w), arcHeadAbut(arc.w));
         if (c <= 0.0) continue;                           // does not reach here
         // Each arc's own alpha, from the same LUT its colour came from and in
         // the same coordinate space the gather used - arc-local for hasStops,

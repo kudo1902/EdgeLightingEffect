@@ -116,8 +116,8 @@ uniform int   uBakeTarget;     ///< 0 the main table (all four channels); 1 the 
 
 // See neon.frag's copies: the abutment bits pick each endpoint's feather
 // direction. Values are 0..7, all exact in a float.
-bool coverTailAbuts(float flags) { return mod(floor(flags * 0.5), 2.0) >= 0.5; }
-bool coverHeadAbuts(float flags) { return mod(floor(flags * 0.25), 2.0) >= 0.5; }
+float coverTailAbut(float flags) { return mod(floor(flags * 0.5), 256.0) / 255.0; }
+float coverHeadAbut(float flags) { return floor(flags / 512.0) / 255.0; }
 
 // --- Where each piece is on the perimeter ------------------------------
 // (.x) the perimeter position of a piece's t1 end - the end haloSegment's t1
@@ -285,8 +285,8 @@ vec2 arcsOnPiece(vec2 place, float len, float x, float cH, float cB, vec2 total)
         float cap = arc.y * ARC_FEATHER_MAX_SHARE;
         float fT  = min(uTailFeather, cap);
         float fH  = min(uHeadFeather, cap);
-        float c0  = arc.x + (coverTailAbuts(arc.w) ? -0.5 * fT : 0.5 * fT);
-        float c1  = arc.x + arc.y + (coverHeadAbuts(arc.w) ? 0.5 * fH : -0.5 * fH);
+        float c0  = arc.x + (0.5 - coverTailAbut(arc.w)) * fT;
+        float c1  = arc.x + arc.y + (coverHeadAbut(arc.w) - 0.5) * fH;
         // The same, along the piece: the trapezoid's four corners, its rising
         // end first, swapped when the piece runs against the perimeter.
         float lo  = (place.y > 0.0) ? c0 - place.x : place.x - c1;

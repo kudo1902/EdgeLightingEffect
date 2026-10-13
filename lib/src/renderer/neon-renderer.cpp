@@ -376,33 +376,44 @@ namespace EdgeLighting
         constexpr int ARC_LUT_WIDTH = 128;
 
         /// Packs @c uArcs[].w for arc @p i: bit 0 = the arc has its own colour
-        /// stops, bit 1 = another arc covers the perimeter immediately BEFORE
-        /// its start, bit 2 = another arc covers it immediately AFTER its end.
+        /// stops; bits 1-8 (value 2 * q) = how far another arc abuts its START,
+        /// bits 9+ (value 512 * q) = how far another arc abuts its END, each
+        /// quantised to q in 0..255 (255 = fully abutting, 0 = free).
         ///
-        /// The abutment bits choose each endpoint's feather direction in the
-        /// shaders' @c arcCoverContinuous, and getting that per-endpoint is what
+        /// The abutment amount chooses each endpoint's feather direction in the
+        /// shaders' @c arcCoverContinuous (0 = ramp inward, 1 = ramp outward,
+        /// in between the ramp slides), and getting that per-endpoint is what
         /// lets two arcs tile the ring without a seam notch while a lone arc
         /// still lights nothing outside its own span. Both properties matter:
         /// see the long note in neon.frag, and in particular why a symmetric
         /// feather cannot satisfy both at @c cornerRadius 0.
         ///
+        /// The amount is 1 where another arc covers the perimeter immediately
+        /// beside the endpoint and falls linearly to 0 over the endpoint's
+        /// feather width of open gap. A hard on/off flip made the tip of a
+        /// growing arc jump by its whole feather (and light the dark gap
+        /// between the two ramps at once) the frame two arcs touched.
+        ///
         /// It is a pure function of the arc set, so it is resolved here, once
         /// per frame, rather than by an O(arcs^2) scan in every fragment.
         ///
         /// @p arcs is the list as packed - only the first @p count entries are
-        /// visible to the shader, so only they can abut.
-        inline float PackArcFlags(const std::vector<Arc> &arcs, int i, int count)
+        /// visible to the shader, so only they can abut. @p perimeter is the
+        /// outline's length in px, to turn the feather widths into fractions.
+        inline float PackArcFlags(const std::vector<Arc> &arcs, int i, int count, float perimeter)
         {
             // Perimeter-fraction slop. Endpoints that are meant to coincide are
             // usually authored as exact values or driven by an animation, so
             // this only has to absorb float round-trip error.
             constexpr float EPS = 1e-5f;
+            const float tailReach = std::max(static_cast<float>(TAIL_FEATHER_PX) / std::max(perimeter, 1e-3f), EPS);
+            const float headReach = std::max(static_cast<float>(HEAD_FEATHER_PX) / std::max(perimeter, 1e-3f), EPS);
             const Arc &a = arcs[i];
             float flags = a.colorStops.empty() ? 0.0f : 1.0f;
 
             float end = a.start + a.length;
-            bool tailAbuts = false;
-            bool headAbuts = false;
+            float tailAmount = 0.0f;
+            float headAmount = 0.0f;
             for (int b = 0; b < count; ++b)
             {
                 if (b == i)
@@ -424,26 +435,39 @@ namespace EdgeLighting
                 // and no further than its end.
                 if (rTail > EPS && rTail <= o.length + EPS)
                 {
-                    tailAbuts = true;
+                    tailAmount = 1.0f;
+                }
+                else
+                {
+                    // Open gap from o's end forward to a.start.
+                    float gap = rTail - o.length;
+                    gap -= std::floor(gap);
+                    tailAmount = std::max(tailAmount, 1.0f - gap / tailReach);
                 }
                 // Where a's end falls within o. Covers strictly AFTER it when
                 // the end lands inside o but not exactly on o's own end - an
                 // arc finishing where this one finishes extends nothing.
                 float rHead = end - o.start;
                 rHead -= std::floor(rHead);
+                // An end a float ulp short of o.start wraps to ~1; it is
+                // meant to coincide with o.start, so take it as ~0.
+                if (rHead > 1.0f - EPS)
+                {
+                    rHead -= 1.0f;
+                }
                 if (rHead < o.length - EPS)
                 {
-                    headAbuts = true;
+                    headAmount = 1.0f;
+                }
+                else
+                {
+                    // Open gap from a's end forward to o.start.
+                    headAmount = std::max(headAmount, 1.0f - (1.0f - rHead) / headReach);
                 }
             }
-            if (tailAbuts)
-            {
-                flags += 2.0f;
-            }
-            if (headAbuts)
-            {
-                flags += 4.0f;
-            }
+            const float qTail = std::round(std::min(std::max(tailAmount, 0.0f), 1.0f) * 255.0f);
+            const float qHead = std::round(std::min(std::max(headAmount, 0.0f), 1.0f) * 255.0f);
+            flags += 2.0f * qTail + 512.0f * qHead;
             return flags;
         }
 
@@ -473,7 +497,7 @@ namespace EdgeLighting
         /// The std140 ArcBlock for @p arcs: vec4(start, length, intensity,
         /// flags) - .w the PackArcFlags bitmask, not just hasStops - capped at
         /// the block's size. Shared for the reason PackSegmentBlock is.
-        inline ArcBlockData PackArcBlock(const std::vector<Arc> &arcs)
+        inline ArcBlockData PackArcBlock(const std::vector<Arc> &arcs, float perimeter)
         {
             ArcBlockData block = {};
             const int count = std::min(static_cast<int>(arcs.size()), int(MAX_ARCS));
@@ -481,7 +505,7 @@ namespace EdgeLighting
             for (int i = 0; i < count; ++i)
             {
                 const Arc &arc = arcs[i];
-                block.arcs[i] = glm::vec4(arc.start, arc.length, arc.intensity, PackArcFlags(arcs, i, count));
+                block.arcs[i] = glm::vec4(arc.start, arc.length, arc.intensity, PackArcFlags(arcs, i, count, perimeter));
             }
             return block;
         }
@@ -2711,8 +2735,8 @@ namespace EdgeLighting
         {
             if (arcsDirty)
             {
-                mGlowCover.dirtyArcPieces |= GetGlowCoverDirtyArcPieces(PackArcBlock(mCurrentConfig.neon.arcs),
-                                                                        PackArcBlock(config.neon.arcs), config);
+                mGlowCover.dirtyArcPieces |= GetGlowCoverDirtyArcPieces(PackArcBlock(mCurrentConfig.neon.arcs, GetPerimeter(mCurrentConfig)),
+                                                                        PackArcBlock(config.neon.arcs, GetPerimeter(config)), config);
             }
             if (segmentsDirty)
             {
@@ -3303,7 +3327,7 @@ namespace EdgeLighting
         // The arcs, with .w the PackArcFlags bitmask: it picks between the
         // winner arc's own atlas row and the base gradient in the shader's
         // winner-take-all branch, and carries the abut bits.
-        const ArcBlockData arcBlock = PackArcBlock(config.neon.arcs);
+        const ArcBlockData arcBlock = PackArcBlock(config.neon.arcs, GetPerimeter(config));
         mLightBlocks.arc.SetData(&arcBlock, sizeof(arcBlock));
     }
 
