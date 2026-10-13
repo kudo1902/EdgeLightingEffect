@@ -770,6 +770,20 @@ for each piece within reach - one away from the corners, two or three near one.
 Under `uPerimeterUnread` the loop runs once, at `ad`, with the old expression,
 so the default frame is byte-identical.
 
+That cost estimate was wrong on the M2 Pro (I64, 2026-10-13; see
+[`neon-perf-deep-review.md`](neon-perf-deep-review.md) section 4). The pieces
+out of reach were meant to cost one early return each, but the compiler paid
+the whole body - `atan`, `pow` / `exp2`, `perimeterAt`, `filamentCover` - for
+all eight, masked: the edge ring, shaded directly on every animated frame, made
+those frames 1.05-1.17x slower. Built variants showed it: one iteration of the
+same code recovered it all, cheaper early returns recovered ~0.005 of 0.045 ms.
+So the loop now runs over CANDIDATES, chosen by the -1 cases of
+`filamentPieceDistance` - a straight within a reach of its line (loosened by
+1e-4 relative, so `length()`'s rounding never drops one the full test keeps),
+the corner whose quadrant holds the fragment, of which there is one at most -
+packed four bits a piece. Usually one candidate, at most five. Byte-identical
+on 306 `cover` frames and 210 page images; ~75% of the cost back.
+
 ## An arc's own stops: no hue term, wrapped rel
 
 `neon.frag` line 1116, before the move.

@@ -251,10 +251,11 @@ Bulk data reaches the shader three ways:
 
 - **UBOs** (std140): `LoopSamplesBlock` (128 perimeter points),
   `SegmentBlock`, `ArcBlock`. Per-frame values that the shader indexes.
-  `ArcBlock`'s `.w` is a bitmask, not a bool: bit 0 is "has own colour
-  stops", bits 1 and 2 record whether another arc abuts this one's tail /
-  head, which is what picks each endpoint's feather direction. Packed by
-  `PackArcFlags` in both renderers.
+  `ArcBlock`'s `.w` is a packed value, not a bool: bit 0 is "has own colour
+  stops", then `2 * q` and `512 * q` record how far another arc abuts this
+  one's tail and head (`q` 0-255: 255 touching, 0 free over the endpoint's
+  feather width), which is what picks - and slides - each endpoint's feather
+  direction. Packed by `PackArcFlags`.
 - **LUT textures**, all baked on the CPU as **RGBA8** - float textures are
   deliberately avoided for edge-device compatibility. Two shapes, and
   confusing them is silent:

@@ -845,9 +845,11 @@ namespace EdgeLighting
             /// config. Cleared by @ref packLightBlocks once it has repacked.
             ///
             /// NOT set on every config change, as the emission table's flag used
-            /// to be: the blocks are packed from @c mEffectiveSegments and
-            /// @c NeonConfig::arcs and nothing else, so @ref OnConfigChanged gates
-            /// it on exactly those two. It accumulates rather than being assigned,
+            /// to be: the blocks are packed from @c mEffectiveSegments,
+            /// @c NeonConfig::arcs and - for the arcs' abutment amounts, which
+            /// are fractions of a feather in perimeter units - the perimeter,
+            /// and nothing else, so @ref OnConfigChanged gates it on exactly
+            /// those three (V27). It accumulates rather than being assigned,
             /// because that call can run more than once before the next
             /// @ref Render - see the note there.
             ///

@@ -176,8 +176,8 @@ namespace EdgeLighting
         /// CPU-side mirror of neon.frag's std140 `ArcBlock`. Same layout
         /// pattern as SegmentBlockData: int padded to 16 bytes, then a vec4
         /// per array element (start, length, intensity, flags) - the flags
-        /// being PackArcFlags' bitmask: own colour stops, and whether another
-        /// arc abuts the start or the end.
+        /// being PackArcFlags' packed value: own colour stops, and how far
+        /// another arc abuts the start and the end.
         typedef struct ArcBlockData
         {
             int32_t count;            ///< uArcCount: how many entries the shaders read.
@@ -495,7 +495,7 @@ namespace EdgeLighting
         }
 
         /// The std140 ArcBlock for @p arcs: vec4(start, length, intensity,
-        /// flags) - .w the PackArcFlags bitmask, not just hasStops - capped at
+        /// flags) - .w PackArcFlags' packed value, not just hasStops - capped at
         /// the block's size. Shared for the reason PackSegmentBlock is.
         inline ArcBlockData PackArcBlock(const std::vector<Arc> &arcs, float perimeter)
         {
@@ -2648,6 +2648,14 @@ namespace EdgeLighting
         const bool segmentsDirty = config.neon.segmentBoosts != mCurrentConfig.neon.segmentBoosts ||
                                    config.neon.preservedSegmentBoosts != mCurrentConfig.neon.preservedSegmentBoosts;
         const bool arcsDirty = config.neon.arcs != mCurrentConfig.neon.arcs;
+        // The PACKED arcs move with the rect too: PackArcFlags turns each
+        // endpoint's gap into an abutment amount over the feather width, a
+        // fraction of the perimeter, so a resize under an unchanged list
+        // changes the block. Missed, a resize with two arcs within a feather of
+        // each other rendered up to 137 levels off until the arcs next changed
+        // (V27).
+        const bool arcPerimeterDirty =
+            !config.neon.arcs.empty() && GetPerimeter(config) != GetPerimeter(mCurrentConfig);
         // The glow coverage table's inputs, exactly: the two light blocks
         // (segmentsDirty and arcsDirty, as for mLightBlocks.dirty below) and
         // what renderGlowCoverPass reads off the config - the perimeter, the
@@ -2764,14 +2772,15 @@ namespace EdgeLighting
                                      float(mGlowCover.segWantedWidth) >= directShare * float(mGlowCover.wantedWidth);
         // The light blocks get the OPPOSITE treatment, because their inputs are
         // narrow and visible rather than wide and indirect: @ref
-        // packLightBlockData reads mEffectiveSegments and config.neon.arcs, and
-        // nothing else. mEffectiveSegments moves exactly when segmentsDirty
-        // does - it was rebuilt from that flag ten lines up - so the two
-        // together are the whole input set, and gating on them is the same
-        // enumeration samplesDirty and fillDirty above already do. Being
-        // conservative here would cost the gate its point: the common animation
-        // is an intensity or geometry sweep that touches neither list, and
-        // "any config change" would repack on every frame of it.
+        // packLightBlockData reads mEffectiveSegments, config.neon.arcs and -
+        // for the arcs' abutment amounts - the perimeter, and nothing else.
+        // mEffectiveSegments moves exactly when segmentsDirty does - it was
+        // rebuilt from that flag ten lines up - so the three together are the
+        // whole input set, and gating on them is the same enumeration
+        // samplesDirty and fillDirty above already do. Being conservative here
+        // would cost the gate its point: the common animation is an intensity
+        // sweep that touches none of them, and "any config change" would repack
+        // on every frame of it.
         //
         // ACCUMULATED, not assigned, and the difference is not subtle.
         //
@@ -2788,7 +2797,7 @@ namespace EdgeLighting
         // SetConfig twice before Update gets two of these, and the second
         // compares against the arcs the first one already installed. A
         // narrow gate has to hold until the pack clears it.
-        mLightBlocks.dirty = mLightBlocks.dirty || segmentsDirty || arcsDirty;
+        mLightBlocks.dirty = mLightBlocks.dirty || segmentsDirty || arcsDirty || arcPerimeterDirty;
 
         mCurrentConfig = config;
 
@@ -3324,9 +3333,9 @@ namespace EdgeLighting
         const SegmentBlockData segBlock = PackSegmentBlock(mEffectiveSegments);
         mLightBlocks.segment.SetData(&segBlock, sizeof(segBlock));
 
-        // The arcs, with .w the PackArcFlags bitmask: it picks between the
+        // The arcs, with .w PackArcFlags' packed value: it picks between the
         // winner arc's own atlas row and the base gradient in the shader's
-        // winner-take-all branch, and carries the abut bits.
+        // winner-take-all branch, and carries the abutment amounts.
         const ArcBlockData arcBlock = PackArcBlock(config.neon.arcs, GetPerimeter(config));
         mLightBlocks.arc.SetData(&arcBlock, sizeof(arcBlock));
     }

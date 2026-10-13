@@ -1235,9 +1235,11 @@ Default: `arcs = { Arc{} }`, one arc covering the whole ring. Up to 8
 (`MAX_ARCS`); extras are dropped with one logged error.
 
 Travels to: `ArcBlock` (binding 2), packed by `packLightBlockData` as
-`vec4(start, length, intensity, flags)`, where `flags` is a bitmask (bit 0:
-has its own stops; bit 1: another arc abuts its start; bit 2: another abuts
-its end); and `uArcLUT` (unit 2), one 128-texel row per arc. Read by P0
+`vec4(start, length, intensity, flags)`, where `flags` packs three things
+(bit 0: has its own stops; `2 * q`: how far another arc abuts its start;
+`512 * q`: the same for its end, `q` 0-255 from free to touching, falling
+over the endpoint's feather width of open gap so a growing arc's tip slides
+rather than jumps); and `uArcLUT` (unit 2), one 128-texel row per arc. Read by P0
 (winner-take-all colour), the gather (via the table) and pointwise in
 `neon.frag` (coverage and alpha). Dirty: `mLightBlocks.dirty`, the arc atlas's
 own guard; P0 re-bakes when either moves (the block's or the atlas's upload
@@ -1619,8 +1621,9 @@ simply full size), each only on the frames that need it - Part 5.5 has the
 schedule. Each card below lists what a pass reads, where it draws, with what
 state, and what it produces. "Unit N" is the texture unit a sampler is bound
 to. The field passes (P1f, P1c, P1r, P2r), which stand in for P1b and P2c on
-the frames a field can serve, are described in Part 5.5, and what each writes
-is pictured in [`neon-shader-outputs.html`](neon-shader-outputs.html).
+the frames a field can serve, follow the passes they replace; Part 5.5 has
+when each runs, and [`neon-shader-outputs.html`](neon-shader-outputs.html)
+pictures what each writes.
 
 ```
  P0       emission table                     [offscreen]    when an input moved
@@ -1790,6 +1793,45 @@ reach at full resolution, so nothing the blit shows would ever have come from
 it (D4 of [`neon-glow-cover-resolution-plan.md`](neon-glow-cover-resolution-plan.md)).
 Before that, the line was here too, visibly blocky.*
 
+### P1f: the glow's field (`renderFieldPass`, `neon.frag` + `NEON_FIELD_BAKE`)
+
+| | |
+| - | - |
+| **Purpose** | Bake P1b's output with the gathered hues factored out, so a frame where only the hue or the intensity moved can composite it (P1c) instead of shading. |
+| **Runs** | Under a rotating hue or a moving intensity, on `mGlowField.schedule` (`LazyBake`): once a config has held for a frame, on the first frame a config the field serves is drawn, when the intensity rises past the one it was baked at, and on the frame an intensity animation stops (Part 5.5). Never on a frame that reuses the offscreen buffers. |
+| **Target** | `mGlowField.buffer`: the reduced buffer's region and texel grid (`GetFieldRegion`), R16F, RG16F with segments (`GetFieldFormat`), `GL_NEAREST`. No 8-bit fallback: a driver without half-float targets shades P1b instead. Cleared to 0. |
+| **State** | Blend off. Scissor off. |
+| **Geometry** | `mGlowMesh` through the region's projection, as P1b draws it. |
+| **Uniforms** | P1b's: `uploadNeonUniforms` at the real scale with `uBlitOwnsCut` 1 - except `uGlowSideSoftness`, whose only reader follows the bake's return (I63). |
+| **Textures** | as P1b: units 0-2 the LUTs, units 3-4 the gather buffer, unit 5 `uGlowCover`. |
+| **Output** | the pre-tone-map emission as a multiple of each gathered hue: `Fa` on `.r`, `Fs` (segments) on `.g`. The program returns at the grade. |
+
+### P1c: the glow field's composite (`renderFieldCompositePass`, `neon-field.frag`)
+
+| | |
+| - | - |
+| **Purpose** | Write the reduced buffer in P1b's place: read the field, read this frame's gathered hues, tone-map. |
+| **Runs** | When the field holds (`field.use`), instead of P1b. |
+| **Target** | `mScaledBuffer`, set up as P1b's (`bindScaledTarget`). Cleared to 0. |
+| **State** | Blend off. Scissor off. |
+| **Geometry** | `mGlowMesh` through P1b's projection: the same fragments, each reading its own field texel, found from `vPos` (`floor((vPos - uFieldOrigin) * uFieldTexelScale)`), not `gl_FragCoord`. |
+| **Uniforms** | `uMVP`, `uFieldOrigin`, `uFieldTexelScale`, `uFieldGain` (the intensity over the one baked at; scales `Fa` only), `uFieldSegments`, `uGatherUVScale` / `uGatherUVOffset`. |
+| **Textures** | unit 6 `uField`; units 3-4 the gather buffer, for the hues. |
+| **Output** | `tonemap(col * Fa * uFieldGain + segColHue * Fs)`, premultiplied and unmasked - the blit applies the cut and the cutoffs, as it does to P1b's. Within 1 level of P1b on hue frames. |
+
+### P1r: the edge ring's field (`renderRingFieldPass`, `neon.frag` + `NEON_FIELD_BAKE`)
+
+| | |
+| - | - |
+| **Purpose** | The same factorisation for the edge ring, which lands on the caller's framebuffer and so is redrawn on every frame, still frames included. |
+| **Runs** | On `mRingField.schedule`, for every config but a rotating hue over a gradient ring that is not opaque at every texel (`IsRingFieldEligible`), and not when the ring is empty. |
+| **Target** | `mRingField.buffer`: the ring's pixels packed into four strips (`RingFieldLayout`) - bottom, top, then the two side strips transposed - one texel per viewport pixel. R16F / RG16F, `GL_NEAREST`. Cleared to 0. |
+| **State** | Blend off. Scissor off. The viewport is each strip's atlas rows in turn. |
+| **Geometry** | One draw per strip of the layout's whole BOX (`mRingField.box`, a pixel past it each side), which the viewport clips to the strip - not the ring mesh, whose edges left texels of a transposed strip unbaked (V24). |
+| **Uniforms** | P2c's: `uploadNeonUniforms` at scale 1.0 with `uBlitOwnsCut` 0 and `mRingLimits` (again without `uGlowSideSoftness`); `uMVP` per strip, translating to the strip's corner and transposing the side strips. |
+| **Textures** | as P2c. |
+| **Output** | `Fa` / `Fs` per ring pixel, pre-tone-map and unmasked: the cut and the cutoffs depend on the pixel's position alone, so P2r recomputes them. |
+
 ### P2a: the opaque fill (`renderFillPass`, `black-rect.frag`)
 
 | | |
@@ -1852,6 +1894,19 @@ drawing an offscreen buffer unblended and the window blended in the same frame
 was measured 93-624x slower on the AMD macOS driver
 ([`neon-resolution-scale-plan.md`](neon-resolution-scale-plan.md) section 7,
 build "AB"). Do not merge them as a cleanup.
+
+### P2r: the ring field's composite (`renderRingFieldCompositePass`, `neon-field.frag` + `NEON_FIELD_RING`)
+
+| | |
+| - | - |
+| **Purpose** | Draw the edge ring from its field, in P2c's place. |
+| **Runs** | When the ring's field holds (`ringField.use`), instead of P2c. |
+| **Target** | The caller's framebuffer, full resolution. |
+| **State** | Blend on, premultiplied-over. Its own program object (`mRingFieldCompositeShader`): P1c's draws the reduced buffer unblended in the same frame. |
+| **Geometry** | `mRingMesh`, through the blit's full-res transform. Each fragment finds its strip from its box pixel against a conservative hole (`uRingLo`, `uRingHole`, `uRingRows`), so every ring pixel lands in one. |
+| **Uniforms** | `uploadShapeUniforms` at 1.0, `UploadEdgeMaskUniforms` at 1.0 (the cut and cutoff values the ring's shading gets), `uRingLo`, `uRingHole`, `uRingRows`, `uFieldGain`, `uFieldSegments`, the gather map. |
+| **Textures** | unit 7 `uField`; units 3-4 the gather buffer. |
+| **Output** | `mask * tonemap(col * Fa * uFieldGain + segColHue * Fs)`, premultiplied, its colour dithered as the blit's is (`neonDither`). Within 1 level of P2c on still and hue frames - except at the rounded corners of a crisp hairline with no glow, where the two geometries disagree by a few levels (V16, addendum 2). |
 
 ---
 
@@ -2224,7 +2279,7 @@ Things the source comments flag as load-bearing:
 | `perimeterAt(seg, u)` | the inverse of `GetPointOnRectangle` for a point `u` of the way along piece `seg` (8 pieces, CW order), as a fraction of the perimeter, either winding |
 | `filamentPieceDistance(seg, p, reach, u)` | the distance from `p` to piece `seg` and where on it the nearest point is; -1 for a piece out of reach or with no point of its own (V25) |
 | `filamentCover(t, headF, tailF)` | the filament's arc and segment coverage at `t`; `filamentCore(a, ...)` its pedestal-subtracted core at distance `a` |
-| `arcHasStops`, `arcTailAbuts`, `arcHeadAbuts` | decode the arc flags bitmask |
+| `arcHasStops`, `arcTailAbut`, `arcHeadAbut` | decode the arc flags: the stops bit, and each endpoint's abutment amount in [0, 1] |
 | `arcCoverContinuous(...)` | an arc's feathered coverage at `t`, wrap-aware |
 
 ### 7.5 `neon-blit.frag` (P2b)

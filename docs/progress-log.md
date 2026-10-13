@@ -5,6 +5,38 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-13 (evening) - Deep perf review: I64 and V27 found and fixed
+
+Uncommitted, on top of `ba3b5d5`;
+[`neon-perf-deep-review.md`](neon-perf-deep-review.md) has the detail. Apple
+M2 Pro, HEAD against `6042866`, `fb6f06f` and `a38797a`, three rotated rounds
+per figure.
+
+- **Common frames unchanged.** Still, hue and intensity frames are where they
+  were at `6042866` (GPU timers: still 0.034 ms, hue 0.080 at 0.5).
+- **I64 (fixed).** Every frame that changes the config was 1.05-1.17x slower
+  than at `fb6f06f`: V25's eight-piece filament walk in the edge ring, whose
+  loop body this compiler pays for every piece whether or not it is in reach.
+  `neon.frag` now walks only the candidates (a straight within a reach of its
+  line, the one corner whose quadrant holds the fragment). Byte-identical on
+  306 `cover` frames and 210 page images, `check` and `partition` pass; arc
+  wipe 1.08x at 0.5 and 1.13x at 0.25 (GPU 1.12x / 1.20x), segment travel
+  1.05x / 1.07x, every scene faster or flat - ~75% of the regression back.
+- **V27 (fixed).** PR #65's abutment amounts depend on the perimeter, but the
+  arc block repacked only when the lights changed: a resize with two arcs
+  within a feather of each other rendered up to 137 levels off. The perimeter
+  is now in the gate (`arcPerimeterDirty`); the repro reads 0.
+- **CPU.** 37-45 us a still frame, 89-107 hue, 136-157 with eight lights
+  moving (M2 P-core); 70-93% of each pass is the driver opening a render pass.
+  Eight segments went 134 -> 151-157 us since `6042866` (I60's two passes).
+- **Hitches.** First frame ~45 ms (was ~20 before the fields' programs moved
+  onto it); the first partial arc 10-11 ms, the first segment 6-8 ms, the
+  first opaque fill 2.5-3.7 ms. A program-binary cache or an opt-in prewarm
+  is proposed, not built.
+- **Open.** The coverage bake's P0s-first reorder (exact, one render pass
+  fewer, not measurable on the M2); a program-binary cache or prewarm; both
+  fixes and everything else on the AMD and the target.
+
 ## 2026-10-13 - Stale documents cleared; V16 re-measured on the M2 Pro
 
 `abd2ece` for the documents. Apple M2 Pro.
@@ -25,6 +57,36 @@ hold the detail.
   scale: pinning `GetRingWidth` makes the reduced scales match 1.0 exactly.
   Addendum 2 of V16 in [`review-findings.md`](review-findings.md) has the
   numbers and two candidate fixes; neither is built.
+
+## 2026-10-13 (morning) - Arcs that close on a neighbour slide instead of jumping
+
+`2b08a67` and `769aa14`, merged as PR #65 (`df7133a`). No review item and no
+measurement recorded with it.
+
+- **Reported.** Four arcs growing out of each edge's centre until they tile
+  the outline (the demo's new `EdgeExpand` preset): the frame two arcs
+  touched, each tip jumped by its whole feather and lit the gap between the
+  two ramps at once.
+- **Cause.** Each endpoint's feather direction was a binary abutment flag
+  (V2's fix): inward while free, outward the moment another arc covered the
+  perimeter beside it, with nothing in between.
+- **What changed.** `PackArcFlags` packs an abutment AMOUNT per endpoint
+  instead - `1` touching, falling linearly to `0` over the endpoint's feather
+  width of open gap, quantised to 0-255 as `2 * q` (start) and `512 * q` (end)
+  above the stops bit - and `arcCoverContinuous` (`neon.frag`) and
+  `arcsOnPiece` (`neon-glow-cover.frag`) slide each ramp between its inward
+  and outward placement by it. The feather widths are perimeter fractions, so
+  `PackArcBlock` now takes the perimeter. An end a float ulp short of a
+  neighbour's start is now taken as touching it.
+- **What it moves.** Nothing where arcs are a feather width or more apart, or
+  exactly abutting: at amounts 0 and 1 the new ramps are the old two. Only an
+  endpoint within one feather width of another arc changes.
+- **Open.** Not measured against `check` or the cover set, and the glow
+  coverage table's moved-arc rule (I54) now sees an arc's flags change
+  whenever a neighbour moves within that width - correct, since it then
+  re-bakes both supports, but more of the table than before on those frames.
+  `EdgeExpand` is in `demo/` only; `demo-capi/` keeps its own preset list
+  without it.
 
 ## 2026-10-09 (late night) - I63: a uniform the field bake compiles out
 

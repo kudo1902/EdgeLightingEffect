@@ -114,8 +114,8 @@ uniform int   uBakeArcs;       ///< 1 to integrate the arcs (.r / .g); 0 when on
 uniform int   uBakeSegments;   ///< 1 to integrate the segments (.b / .a); 0 when only the arcs changed, likewise.
 uniform int   uBakeTarget;     ///< 0 the main table (all four channels); 1 the segment table (the segments' two, on .r / .g).
 
-// See neon.frag's copies: the abutment bits pick each endpoint's feather
-// direction. Values are 0..7, all exact in a float.
+// See neon.frag's copies: the abutment amounts (0 free .. 1 abutting) pick
+// each endpoint's feather direction. Integers below 2^17, exact in a float.
 float coverTailAbut(float flags) { return mod(floor(flags * 0.5), 256.0) / 255.0; }
 float coverHeadAbut(float flags) { return floor(flags / 512.0) / 255.0; }
 

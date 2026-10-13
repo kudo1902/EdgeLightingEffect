@@ -131,8 +131,9 @@ void main() {
     vec3 segFallback;
     if (bestIdx >= 0) {
         vec4 winner = uArcs[bestIdx];
-        // .w is a bitmask (bit 0 = hasStops, bits 1-2 = abutment, used only by
-        // the consumer's coverage feather) - test bit 0, not the whole value.
+        // .w is PackArcFlags' packed value (bit 0 = hasStops, then the two
+        // abutment amounts, used only by the consumer's coverage feather) -
+        // test bit 0, not the whole value.
         if (mod(winner.w, 2.0) >= 0.5) {
             // No hue-rotation term: uArc is the arc's own head-to-tail
             // coordinate, not a perimeter position. The consumer's alpha read

@@ -284,6 +284,11 @@ float perimeterAt(int seg, float u) {
 // quarter, where the arc's nearest point is the end it shares with a straight
 // that already carries it (on that boundary the two agree, so leaving it out
 // is continuous).
+//
+// main() calls this only for its CANDIDATES, picked by the -1 cases above: a
+// straight within a reach of its line, the corner whose quadrant holds p (I64).
+// Return -1 somewhere new and that test can stay; return a distance where it
+// returns -1 today and the test has to learn it, or the piece is never asked.
 float filamentPieceDistance(int seg, vec2 p, float reach, out float u) {
     float halfW  = uRectSize.x * 0.5;
     float halfH  = uRectSize.y * 0.5;
@@ -895,15 +900,43 @@ void main() {
     // factorisation, see NEON_FIELD_BAKE). Under uPerimeterUnread every
     // position reads one coverage, so the loop runs once, at the fragment's
     // own distance (filamentCore 1, `core` applied after - the expression as
-    // before), and no position is computed. The step comes from the data, so
-    // the loop is not unrolled into eight copies of filamentCover; a sharp
-    // rect skips its four point-sized corners.
+    // before), and no position is computed.
+    //
+    // The loop runs over the CANDIDATES only - the pieces that can be within
+    // reach - packed four bits each, because an early `continue` is not a
+    // skip here: the compiler pays the body for every iteration, and eight of
+    // them cost every frame that shades the edge ring directly 5-17% (I64). A
+    // straight is a candidate only within a reach of its LINE, which its
+    // distance can never be under (loosened by 1e-4 so rounding in length()
+    // never drops one filamentPieceDistance keeps); a corner only in its own
+    // quadrant, outside which filamentPieceDistance returns -1 - and a
+    // fragment is in one quadrant at most. So at most five candidates (four
+    // straights on a rect thinner than twice the reach, and a corner), usually
+    // one. A superset of the pieces in reach, and a max does not see the
+    // order: byte-identical to the walk over all eight. The bound comes from
+    // the data, so the loop is not unrolled into copies of filamentCover.
     vec2  filament  = vec2(0.0);
     bool  perPiece  = uPerimeterUnread == 0;
     float filReach  = sigma * reachSigmas;
-    int   pieceStep = !perPiece ? 8 : ((uCornerRadius > 0.0) ? 1 : 2);
-    int   pieceEnd  = filamentLit ? 8 : 0;
-    for (int piece = 0; piece < pieceEnd; piece += pieceStep) {
+    int   pieces    = 0;  // candidate piece numbers, four bits each
+    int   pieceEnd  = 0;  // how many
+    if (filamentLit && !perPiece) {
+        pieceEnd = 1;
+    } else if (filamentLit) {
+        float inReach = filReach * 1.0001;
+        float rFil    = clamp(uCornerRadius, 0.0, min(halfSize.x, halfSize.y));
+        if (abs(vPos.y - halfSize.y) < inReach) { pieces |= 0 << (4 * pieceEnd); pieceEnd++; }
+        if (abs(vPos.x - halfSize.x) < inReach) { pieces |= 2 << (4 * pieceEnd); pieceEnd++; }
+        if (abs(vPos.y + halfSize.y) < inReach) { pieces |= 4 << (4 * pieceEnd); pieceEnd++; }
+        if (abs(vPos.x + halfSize.x) < inReach) { pieces |= 6 << (4 * pieceEnd); pieceEnd++; }
+        if (rFil > 0.0 && abs(vPos.x) > halfSize.x - rFil && abs(vPos.y) > halfSize.y - rFil) {
+            int corner = (vPos.x > 0.0) ? ((vPos.y > 0.0) ? 1 : 3) : ((vPos.y > 0.0) ? 7 : 5);
+            pieces |= corner << (4 * pieceEnd);
+            pieceEnd++;
+        }
+    }
+    for (int k = 0; k < pieceEnd; k++) {
+        int   piece = (pieces >> (4 * k)) & 15;
         float sPos  = 0.0;
         float pCore = 1.0;
         if (perPiece) {

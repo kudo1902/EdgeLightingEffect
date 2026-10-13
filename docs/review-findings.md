@@ -5315,6 +5315,72 @@ V26 corner sweep byte-identical to the build before; `check` identical.
 
 ---
 
+## Thirty-second pass (deep perf review, 2026-10-13)
+
+[`neon-perf-deep-review.md`](neon-perf-deep-review.md) has the measurements.
+Apple M2 Pro, Release, HEAD `ba3b5d5` against `6042866`, `fb6f06f` and
+`a38797a`.
+
+### I64. V25's per-piece filament walk cost every animated frame 5-17% - FIXED
+
+**Measured.** Arc-wipe and segment-travel frames are 1.05-1.17x slower (wall)
+at HEAD than at `fb6f06f`, the same ~0.04-0.05 ms at every scale, and the jump
+lands between `fb6f06f` and `a38797a` (V25, V26, I63); still, hue and
+intensity frames are flat. V25's log entry measured no cost on the AMD; nothing
+was timed on the M2.
+
+**Cause.** The edge ring, shaded directly on every frame that changes the
+config, runs the filament's eight-piece loop in `neon.frag`. Built variants
+attribute it: collapsing the walk to one pass, or running the same compiled
+code for one iteration, recovers all of it; early rejects that make the
+unreachable pieces nearly free recover ~0.005 ms of 0.045. So the compiler pays
+the loop body for every piece, guarded or not.
+
+**Fixed.** `neon.frag` runs the walk over CANDIDATES: a straight only where
+the fragment is within a reach of its line (its distance can never be under
+that; loosened by 1e-4 relative against `length()`'s rounding), a corner only
+in its own quadrant, outside which `filamentPieceDistance` returns -1 - and a
+fragment is in one quadrant at most. They are packed four bits a piece and the
+loop's bound is their count, usually one, at most five. A superset of the
+pieces in reach, and a max does not see the order, so the frame is the same
+bits; `filamentPieceDistance` notes that its -1 cases now pick the candidates.
+
+**Verified** byte-identical to the build before on the 306 `cover` frames
+(`diff`: 0 pixels) and the 210 page images (`cmp`); `check` passes,
+`partition` passes on seeds 1 and 7. Measured, three rotated rounds, every
+scene (wall-clock, mean over scenes): arc wipe 0.443 -> 0.410 ms at 0.5
+(1.08x) and 0.321 -> 0.283 at 0.25 (1.13x; GPU 1.12x / 1.20x), segment travel
+1.05x / 1.07x; at 1.0, six rounds on four scenes, 1.00-1.03x. Every scene
+faster or flat; still and hue frames do not run the walk (their ring is the
+field's composite) and read the same within the harness noise. About 75% of
+the regression; what is left is the walk's real work at corners, where two or
+three pieces are in reach.
+
+### V27. The arc block's abutment amounts went stale when only the rect changed - FIXED
+
+**Cause.** PR #65 made `PackArcFlags` turn each endpoint's gap into an
+abutment amount over the feather width, a perimeter fraction, so the arc block
+depends on `GetPerimeter(config)`; `mLightBlocks.dirty` is still set only on
+`segmentsDirty || arcsDirty`. A width, height or corner-radius change with the
+same arcs leaves the previous perimeter's amounts in the block, and the
+filament, the emission table and the coverage table (re-baked whole on the
+shape change, from that block) read them until the arcs next change.
+
+**Measured.** Two arcs 0.003 apart, 800 x 400 -> 1600 x 800, steady frame
+against a fresh effect given the second config: 137 levels, 155k channels
+(0.005 apart: 85 levels; big -> small: 133). Zero with a gap wider than a
+feather at both sizes, and zero on `a38797a`.
+
+**Fixed.** `OnConfigChanged` adds `arcPerimeterDirty` - the perimeter
+changed while there are arcs - to `mLightBlocks.dirty`, and the header's note
+on the flag lists the perimeter among the blocks' inputs. The repro reads 0
+both ways at all three gaps; the 306 `cover` frames and 210 page images are
+byte-identical (none resizes under two close arcs). A resize animation with
+arcs now repacks a 144-byte block a frame, and re-bakes the emission table only
+while an endpoint is within a feather of a neighbour, when the bytes move.
+
+---
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
@@ -5325,7 +5391,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, the thirtieth V26, and the thirty-first I63. Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, the thirtieth V26, and the thirty-first I63; the thirty-second I64 and V27. Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus V9 from the third (I12's remainder closed
 with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
@@ -5388,6 +5454,8 @@ with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 | V25 | fixed | the filament read one coverage at the fragment's nearest perimeter point, which jumps across a corner's diagonal, so an arc ending on a sharp corner (an arc wipe from 0) was cut along it on the inside half only; the filament is now a max over the outline's pieces, each at its own distance and its own nearest point - uniformly lit rings byte-identical, `check` unchanged |
 | V26 | fixed | every edge ramp (the one-sided cut, the cutoffs' floor, the blit's, the ring field's, the opaque fill's coverage) was sized by `fwidth(d)`, which reads 2 on a sharp corner's vertex pixel when the quad straddles both edges - that pixel came out at 0.84 (the fill's 0.75) on whichever corners the quad parity hit; `sdRoundBoxFwidth` takes the analytic gradient instead - corners agree within the dither, two-sided scenes byte-identical |
 | I63 | changed | the field bake (`neon.frag` + `NEON_FIELD_BAKE`) was sent `uGlowSideSoftness`, whose only reader follows the bake's return, so Tizen's compiler removed it and the upload logged "not found"; the bake is no longer sent it - frames byte-identical, the other neon programs audited for the same |
+| I64 | fixed | V25's filament walk paid its loop body for all eight pieces in the edge ring, so every animated frame was 1.05-1.17x slower on the M2 than before it; the loop now runs over candidates (one straight or two, at most one corner) - byte-identical on 516 frames, arc wipe 1.08x at 0.5 and 1.13x at 0.25, ~75% of the regression back |
+| V27 | fixed | PR #65's abutment amounts depend on the perimeter but the arc block repacked only when the lights changed, so a resize with two arcs within a feather of each other rendered up to 137 levels off a fresh render until the arcs next changed; the perimeter is now in the gate |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch
