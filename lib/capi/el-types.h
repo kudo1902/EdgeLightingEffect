@@ -291,7 +291,8 @@ extern "C"
         EL_SPOTLIGHT_FIELD_TINT_R = 11,
         EL_SPOTLIGHT_FIELD_TINT_G = 12,
         EL_SPOTLIGHT_FIELD_TINT_B = 13,
-        EL_SPOTLIGHT_FIELD_SPREAD_FALLOFF = 14
+        EL_SPOTLIGHT_FIELD_SPREAD_FALLOFF = 14,
+        EL_SPOTLIGHT_FIELD_HEIGHT = 15 /**< Lamp height above the backdrop, px. Read only by the shadow. */
     } el_spotlight_field_e;
 
     /** @brief Which side of a clip area survives the cut.

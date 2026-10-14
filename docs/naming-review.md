@@ -400,7 +400,7 @@ Everything below is semantic, and all of it is applied. The one item deliberatel
 ### The noun is `lamp`, and `SpotLight` is the exception - BY DECISION
 
 The layer had two words for its central noun. The implementation said "lamp"
-almost everywhere (`lampCount`, `DeriveLamp`, `LampSolve`, `HasClippedLamp`,
+almost everywhere (`lampCount`, `DeriveLamp`, `LampSolve`, `HasMaskedLamp`,
 `WarnOnLampOverflow`, `VERTS_PER_LAMP`) while the config said "light"
 (`SpotlightConfig::lights`, `SPOT_MAX_LIGHTS`, `SpotLight`), and the two
 collided inside single functions - `SPOT_MAX_LIGHTS` sat directly above

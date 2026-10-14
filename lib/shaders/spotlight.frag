@@ -49,17 +49,18 @@ precision highp float;
 //   and there is no finite strip to draw. See spotlight-tuning.h.
 //
 // This shader never reads gl_FragCoord: everything arrives interpolated in the
-// lamp's frame - or, for the clip area, in app space through vApp. That is why
+// lamp's frame - or, for the clip area and the shadow caster, in app space
+// through vApp. That is why
 // the y-flip in Render is free, why SpotlightConfig::resolutionScale still
 // needs no uniform of its own, and why the sub-viewport caveat in
 // BaseRenderer's doc comment does not apply here.
 //
-// One caveat of its own, and the clip is the whole of it: reading app space
-// rather than gl_FragCoord keeps the mask's GEOMETRY identical at any scale,
-// but the mask is still resolved one fragment at a time, so a reduced buffer
+// One caveat of its own, and the two masks are the whole of it: reading app
+// space rather than gl_FragCoord keeps a mask's GEOMETRY identical at any
+// scale, but it is still resolved one fragment at a time, so a reduced buffer
 // resolves its boundary at that buffer's pitch. SpotlightRenderer pins the
-// scale to 1.0 while any clipped lamp is enabled rather than let that ship -
-// see GetClampedSpotScale.
+// scale to 1.0 while any clipped or shadow-casting lamp is enabled rather
+// than let that ship - see GetClampedSpotScale.
 //
 // THE CLIP, and why it multiplies rather than reshaping anything. A lamp with
 // SpotLight::clipped set is cut off by a rounded-rectangle area in app
@@ -104,6 +105,9 @@ flat in vec4 vP1;    ///< apertureWidth, bloom, bloomRadius, bloomWindow.
 flat in vec3 vColor; ///< Linear RGB.
 flat in float vClipWeight; ///< 1 where this lamp honours the clip area, else 0.
 flat in float vSpreadFalloff; ///< Exponent on the spread term, already clamped.
+/// Lamp x, y in app px, lamp height px, and 1 where this lamp casts the
+/// shadow caster's shadow, else 0. See spotShadowVis.
+flat in vec4 vShadow;
 
 /// The clip area, in APP coordinates: centre.xy, half extent.xy. Already
 /// collapsed from ClipArea's top-left + size on the CPU, because a
@@ -116,6 +120,16 @@ uniform vec4 uClipRect;
 /// answers are each other's complement, so mixing between them is one
 /// instruction and costs nothing in divergence.
 uniform vec3 uClipParams;
+
+/// The shadow caster, in APP coordinates: centre.xy, half extent.xy - the
+/// same collapse uClipRect gets.
+uniform vec4 uCasterRect;
+
+/// Corner radius px (clamped on the CPU), elevation px (never negative),
+/// penumbra px (never negative), opacity in [0, 1]. A caster with no area
+/// arrives with opacity 0, so a zero-size card casts nothing rather than a
+/// penumbra-sized smudge where it would be.
+uniform vec4 uCasterParams;
 
 out vec4 fragColor;
 
@@ -147,6 +161,45 @@ float spotClipMask(vec2 app) {
     float h = max(uClipParams.y, 1.0e-4) * 0.5;
     float inside = 1.0 - smoothstep(-h, h, d);
     return mix(1.0 - inside, inside, uClipParams.z);
+}
+
+/// Share of this lamp's light that reaches @p app past the shadow caster, in
+/// [0, 1].
+///
+/// THE MODEL (ShadowCaster in config.h): the card floats at elevation h over
+/// the backdrop, the lamp hangs at height H, k = h / H. The line from a
+/// backdrop point p up to the lamp crosses the card's plane at
+/// q = mix(p, lamp, k), so p is in shadow exactly when q is on the card - and
+/// the shadow is the card scaled about the lamp by 1 / (1 - k). That scaling
+/// is a similarity, so the card's own SDF at q, divided by (1 - k), IS the
+/// shadow's distance field in backdrop pixels. No angles and nothing to wrap
+/// round: one more sdRoundBox.
+///
+/// The penumbra is a smoothstep across that field, centred on the hard
+/// shadow's edge. Over two parallel planes a round lamp's penumbra has one
+/// width everywhere, which is why one width is the model; the smoothstep
+/// stands in for the lamp's disc convolved with the card, and differs from it
+/// mostly at the corners.
+///
+/// The card's own face is never shadowed - it sits above its shadow - so the
+/// result goes back to 1 inside the card, over one pixel.
+float spotShadowVis(vec2 app) {
+    // At or below the card the lamp is not above it and throws no shadow onto
+    // the backdrop. Not a pop: as H comes down towards h the shadow recedes
+    // to infinity first. Also what keeps the divide below finite.
+    if (vShadow.z <= uCasterParams.y) {
+        return 1.0;
+    }
+    float k = uCasterParams.y / vShadow.z;
+    vec2 q = mix(app, vShadow.xy, k);
+    float dShadow = sdRoundBox(q - uCasterRect.xy, uCasterRect.zw, uCasterParams.x) / (1.0 - k);
+    // The clip's floor, for the clip's reason: equal smoothstep edges are
+    // undefined rather than a step on some drivers.
+    float h = max(uCasterParams.z, 1.0e-4) * 0.5;
+    float shade = 1.0 - smoothstep(-h, h, dShadow);
+    float dCard = sdRoundBox(app - uCasterRect.xy, uCasterRect.zw, uCasterParams.x);
+    float onBackdrop = smoothstep(-0.5, 0.5, dCard);
+    return 1.0 - uCasterParams.w * shade * onBackdrop;
 }
 
 /// Interleaved gradient noise, in [-0.5, 0.5]. One fract, one dot: the whole
@@ -266,6 +319,17 @@ void main() {
     // and unclipped lamps shades them at the same cost - vClipWeight is flat,
     // so this is one lerp against a value constant across the triangle.
     lit *= mix(1.0, spotClipMask(vApp), vClipWeight);
+
+    // THE SHADOW, beside the cut and for the cut's reasons: coverage on the
+    // finished shading, after the shoulder and before the coverage alpha, so
+    // a shadowed fragment gives up the surface as well as the light - over a
+    // video plane the video shows through, unlit. A flat branch rather than
+    // the clip's mix, as for the spread exponent above: vShadow.w is constant
+    // across a lamp's strip, and a lamp that casts no shadow then pays
+    // nothing and renders exactly what it did before the caster existed.
+    if (vShadow.w > 0.0) {
+        lit *= spotShadowVis(vApp);
+    }
 
     // Coverage = brightest channel, exactly as in neon.frag and
     // lens-flare.frag: a bright aperture core reads as solid to whatever

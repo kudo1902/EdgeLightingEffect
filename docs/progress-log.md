@@ -5,6 +5,39 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-14 - Spotlight shadow caster
+
+Uncommitted on `main` at `ba3b5d5`. Apple M2 Pro.
+
+- **Asked for.** A shadow when a spotlight is visible. Two models were
+  prototyped as an interactive mock-up with `spotlight.frag`'s falloff: the
+  card floating above the backdrop (the shadow is the card projected from a
+  lamp hanging above it) and the card as a wall in the backdrop's plane (a
+  wedge behind it to the end of the beam). The wall was rejected: it cannot
+  say whether the card's face is lit, its shadow never ends, and it needs
+  angles that wrap - the mock-up's first version got that wrap wrong and drew
+  a shadow on the lamp's side. The owner chose the floating card, its own
+  rectangle rather than `Config::geometry`, and no darkening pass for now.
+- **What changed.** `ShadowCaster` (`SpotlightConfig::shadowCaster`: rect,
+  `elevation`, `penumbra`, `opacity`), `SpotLight::castsShadow` and
+  `SpotLight::height`; `spotShadowVis` in `spotlight.frag` (one more
+  `sdRoundBox`, behind a flat branch); the `aShadow` strip attribute;
+  `HasMaskedLamp` (was `HasClippedLamp`) pins the scale for a casting lamp
+  too; `OnConfigChanged` rebuilds the strips only on a lamp or clip-area
+  change. `SpotlightField::HEIGHT` / `EL_SPOTLIGHT_FIELD_HEIGHT`; four C ABI
+  pairs (`casts_shadow`, `height`, `shadow_rect`, `shadow_look`), additive;
+  both demo UIs. [`spotlight-renderer.md`](spotlight-renderer.md) section 4.7.
+- **Measured.** Every config without a casting lamp byte-identical to
+  `ba3b5d5` (four rigs, both clears, the scaled path included), and so are
+  lamps opted in under a 0 x 0 caster, at opacity 0 or below the card. Six
+  shadow cases within 1 level of a CPU evaluation of the model, alpha
+  included. Scale 0.5 with a casting lamp byte-identical to 1.0. C ABI path
+  byte-identical to the C++ one. Ten caster moves, zero strip uploads. Cost
+  1.22-1.25x on the spotlight pass at 1080p with 1, 5 and 8 casting lamps.
+- **Open.** The darkening pass (premultiplied black before the light, the only
+  form that darkens a hardware video plane), if a shadow has to read over
+  bright content. Not measured on the AMD 5300M or on Tizen.
+
 ## 2026-10-13 - Stale documents cleared; V16 re-measured on the M2 Pro
 
 `abd2ece` for the documents. Apple M2 Pro.

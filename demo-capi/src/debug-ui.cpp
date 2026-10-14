@@ -1051,18 +1051,20 @@ void DebugUI::buildSpotlightSection(el_effect_handle_t effect)
 
     if (resScale < 1.0f)
     {
-        // The library holds the scale at 1.0 while a clipped lamp is enabled,
-        // because the clip edge has to be resolved at full resolution. Say so
-        // here, or the slider reads as broken: it moves and the frame does not
-        // change. Mirrors the library's own test - the lamps that DRAW, within
-        // the ceiling.
+        // The library holds the scale at 1.0 while a clipped or
+        // shadow-casting lamp is enabled, because the mask edge has to be
+        // resolved at full resolution. Say so here, or the slider reads as
+        // broken: it moves and the frame does not change. Mirrors the
+        // library's own test - the lamps that DRAW, within the ceiling.
         const int drawnLamps = count < MAX_LAMPS ? count : MAX_LAMPS;
-        bool anyClippedLamp = false;
+        bool anyMaskedLamp = false;
         for (int i = 0; i < drawnLamps; i++)
         {
             el_bool_t lampClipped = 0;
+            el_bool_t lampCastsShadow = 0;
             el_bool_t lampEnabled = 0;
             el_effect_get_spotlight_clipped(effect, i, &lampClipped);
+            el_effect_get_spotlight_casts_shadow(effect, i, &lampCastsShadow);
             el_effect_get_spotlight_enabled(effect, i, &lampEnabled);
             // Intensity arrives with the rest of the look - there is no getter
             // for it alone, and adding one to read a hint would be the wrong
@@ -1071,16 +1073,16 @@ void DebugUI::buildSpotlightSection(el_effect_handle_t effect)
             float ignoredBloomRadius = 0.0f, ignoredColorTemp = 0.0f;
             el_effect_get_spotlight_look(effect, i, &lampIntensity, &ignoredBloom,
                                          &ignoredBloomRadius, &ignoredColorTemp);
-            if (lampClipped && lampEnabled && lampIntensity > 0.0f)
+            if ((lampClipped || lampCastsShadow) && lampEnabled && lampIntensity > 0.0f)
             {
-                anyClippedLamp = true;
+                anyMaskedLamp = true;
                 break;
             }
         }
 
-        if (anyClippedLamp)
+        if (anyMaskedLamp)
         {
-            ImGui::TextDisabled("Held at 1.0: a clipped lamp is enabled.");
+            ImGui::TextDisabled("Held at 1.0: a clipped or shadow-casting lamp is enabled.");
         }
         else
         {
@@ -1159,6 +1161,54 @@ void DebugUI::buildSpotlightSection(el_effect_handle_t effect)
         {
             ImGui::TextDisabled("Zero-size area: every clipped lamp draws nothing.");
         }
+
+        ImGui::Unindent();
+    }
+
+    // --- Shadow caster: ONE card for the layer, opted into per lamp below. ---
+    //
+    // Always shown, for the clip area's reason: it has no enable, and whether
+    // a lamp casts its shadow is that lamp's own "Cast Shadow". A 0 x 0 card
+    // casts nothing, so there is no zero-size trap to warn about.
+    ImGui::SeparatorText("Shadow Caster");
+    {
+        ImGui::Indent();
+
+        // Parameter order follows el_effect_set_geometry: w, h, x, y, radius.
+        float sw = 0.0f, sh = 0.0f, sx = 0.0f, sy = 0.0f, sr = 0.0f;
+        el_effect_get_spotlight_shadow_rect(effect, &sw, &sh, &sx, &sy, &sr);
+        bool casterDirty = false;
+        casterDirty |= ImGui::SliderFloat("X##SpotShadow", &sx, -200.0f, 2400.0f, "%.0f px");
+        casterDirty |= ImGui::SliderFloat("Y##SpotShadow", &sy, -200.0f, 1600.0f, "%.0f px");
+        casterDirty |= ImGui::SliderFloat("Width##SpotShadow", &sw, 0.0f, 2400.0f, "%.0f px");
+        casterDirty |= ImGui::SliderFloat("Height##SpotShadow", &sh, 0.0f, 1600.0f, "%.0f px");
+        casterDirty |= ImGui::SliderFloat("Corner Radius##SpotShadow", &sr, 0.0f, 400.0f, "%.0f px");
+        if (casterDirty)
+        {
+            el_effect_set_spotlight_shadow_rect(effect, sw, sh, sx, sy, sr);
+        }
+
+        float elevation = 40.0f, penumbra = 24.0f, opacity = 1.0f;
+        el_effect_get_spotlight_shadow_look(effect, &elevation, &penumbra, &opacity);
+        bool lookDirty = false;
+        lookDirty |= ImGui::SliderFloat("Elevation##SpotShadow", &elevation, 0.0f, 400.0f, "%.0f px");
+        lookDirty |= ImGui::SliderFloat("Penumbra##SpotShadow", &penumbra, 0.0f, 120.0f, "%.0f px");
+        lookDirty |= ImGui::SliderFloat("Opacity##SpotShadow", &opacity, 0.0f, 1.0f, "%.2f");
+        if (lookDirty)
+        {
+            el_effect_set_spotlight_shadow_look(effect, elevation, penumbra, opacity);
+        }
+
+        // Not bound to the effect's geometry, for the clip's reason. The two
+        // calls take the same five parameters in the same order.
+        if (ImGui::SmallButton("Match Rect##SpotShadow"))
+        {
+            float rw = 0.0f, rh = 0.0f, rx = 0.0f, ry = 0.0f, radius = 0.0f;
+            el_effect_get_geometry(effect, &rw, &rh, &rx, &ry, &radius);
+            el_effect_set_spotlight_shadow_rect(effect, rw, rh, rx, ry, radius);
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("copy once - it does not follow the rect");
 
         ImGui::Unindent();
     }
@@ -1245,6 +1295,14 @@ void DebugUI::buildSpotlightSection(el_effect_handle_t effect)
         el_effect_set_spotlight_clipped(effect, sel, lampClipEn ? 1 : 0);
     }
 
+    el_bool_t lampShadowOn = 0;
+    el_effect_get_spotlight_casts_shadow(effect, sel, &lampShadowOn);
+    bool lampShadowEn = lampShadowOn;
+    if (ImGui::Checkbox("Cast Shadow##Spot", &lampShadowEn))
+    {
+        el_effect_set_spotlight_casts_shadow(effect, sel, lampShadowEn ? 1 : 0);
+    }
+
     float x = 0.0f, y = 0.0f, angle = 0.0f;
     el_effect_get_spotlight_placement(effect, sel, &x, &y, &angle);
     bool placementDirty = false;
@@ -1254,6 +1312,15 @@ void DebugUI::buildSpotlightSection(el_effect_handle_t effect)
     if (placementDirty)
     {
         el_effect_set_spotlight_placement(effect, sel, x, y, angle);
+    }
+
+    // Above the backdrop; read only by the shadow. A separate call because
+    // el_effect_set_spotlight_placement is published with three parameters.
+    float lampHeight = 400.0f;
+    el_effect_get_spotlight_height(effect, sel, &lampHeight);
+    if (ImGui::SliderFloat("Height##Spot", &lampHeight, 0.0f, 2000.0f, "%.0f px"))
+    {
+        el_effect_set_spotlight_height(effect, sel, lampHeight);
     }
 
     ImGui::Separator();

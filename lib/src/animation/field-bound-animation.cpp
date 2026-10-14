@@ -469,6 +469,11 @@ namespace EdgeLighting
                 l.spreadFalloff = value;
                 break;
             }
+            case SpotlightField::HEIGHT:
+            {
+                l.height = value;
+                break;
+            }
             }
         }
 

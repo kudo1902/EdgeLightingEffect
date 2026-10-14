@@ -656,6 +656,34 @@ extern "C"
     EL_API el_result_e el_effect_set_spotlight_clipped(el_effect_handle_t effect, int32_t index, el_bool_t clipped);
     EL_API el_result_e el_effect_get_spotlight_clipped(el_effect_handle_t effect, int32_t index, el_bool_t *outClipped);
 
+    /** @brief Whether lamp @p index casts the shadow caster's shadow.
+     *  @details Per lamp, like @ref el_effect_set_spotlight_clipped, and
+     *           default off, so configuring a caster changes nothing until a
+     *           lamp asks for it.
+     *
+     *           Unlike the clip, the caster's default is a safe resting state:
+     *           a 0 x 0 caster casts nothing, so setting this first leaves the
+     *           lamp exactly as it was.
+     *  @note  Like a clipped lamp, an enabled shadow-casting lamp holds the
+     *         layer's resolution scale at 1.0. */
+    EL_API el_result_e el_effect_set_spotlight_casts_shadow(el_effect_handle_t effect, int32_t index,
+                                                            el_bool_t castsShadow);
+    EL_API el_result_e el_effect_get_spotlight_casts_shadow(el_effect_handle_t effect, int32_t index,
+                                                            el_bool_t *outCastsShadow);
+
+    /** @brief Height of lamp @p index above the backdrop, in px.
+     *  @details Read only by the shadow - the cone is a falloff in the
+     *           backdrop's plane and does not change with it. Sets how far
+     *           the card's shadow falls: the shadow is the card scaled about
+     *           the lamp by 1 / (1 - elevation / height), so a high lamp's
+     *           shadow barely clears the card and a low one's falls far. At or
+     *           below the caster's elevation the lamp casts no shadow.
+     *           Default 400. Its own call rather than a fourth parameter on
+     *           @ref el_effect_set_spotlight_placement, which is already
+     *           published with three. */
+    EL_API el_result_e el_effect_set_spotlight_height(el_effect_handle_t effect, int32_t index, float height);
+    EL_API el_result_e el_effect_get_spotlight_height(el_effect_handle_t effect, int32_t index, float *outHeight);
+
     /** @brief Drop every lamp. Any index-bound animation becomes a no-op until
      *         the list is re-created via @ref el_effect_set_spotlight_count. */
     EL_API el_result_e el_effect_clear_spotlights(el_effect_handle_t effect);
@@ -722,6 +750,61 @@ extern "C"
      *         outside. Default EL_CLIP_KEEP_INSIDE. */
     EL_API el_result_e el_effect_set_spotlight_clip_mode(el_effect_handle_t effect, el_clip_mode_e mode);
     EL_API el_result_e el_effect_get_spotlight_clip_mode(el_effect_handle_t effect, el_clip_mode_e *outMode);
+
+    /*
+     * Spotlight shadow caster (Config::spotlight.shadowCaster)
+     *
+     * ONE card for the whole layer, floating at an elevation above the
+     * backdrop, whose shadow every lamp opted in by
+     * el_effect_set_spotlight_casts_shadow casts. The shadow is the card
+     * projected from the lamp onto the backdrop; the card's own face is never
+     * shadowed. Light only, like the rest of the layer: a shadow is light the
+     * lamp does not add, and the coverage alpha follows it.
+     *
+     * Its own rectangle, deliberately not the effect's geometry, for the clip
+     * area's reasons - a host that wants the card to be the rect copies the
+     * five numbers across, and the rectangle setter takes them in
+     * el_effect_set_geometry's order for that. Moving the caster re-uploads
+     * nothing, so following an animated rect every frame is cheap.
+     *
+     * No enable. A 0 x 0 caster (the default) casts nothing.
+     *
+     * NAMING follows the clip's split:
+     *   el_effect_*_spotlight_shadow_<noun>  - the CASTER. No index.
+     *   el_effect_*_spotlight_casts_shadow   - a LAMP's state. Takes an index.
+     */
+
+    /** @brief The caster rectangle, in APP coordinates: TOP-LEFT corner plus
+     *         size. **Same five parameters in the same order as
+     *         @ref el_effect_set_geometry** and
+     *         @ref el_effect_set_spotlight_clip_rect.
+     *  @note  cornerRadius is clamped at draw time to half the shorter side.
+     *         A zero width or height casts no shadow. */
+    EL_API el_result_e el_effect_set_spotlight_shadow_rect(el_effect_handle_t effect,
+                                                           float width, float height,
+                                                           float x, float y,
+                                                           float cornerRadius);
+    EL_API el_result_e el_effect_get_spotlight_shadow_rect(el_effect_handle_t effect,
+                                                           float *outWidth, float *outHeight,
+                                                           float *outX, float *outY,
+                                                           float *outCornerRadius);
+
+    /** @brief How the caster's shadow reads.
+     *  @param elevation  Px the card floats above the backdrop. With each
+     *                    lamp's height, sets how far its shadow falls. 0 lays
+     *                    the card flat, leaving only half the penumbra as a
+     *                    rim. Negative is read as 0. Default 40.
+     *  @param penumbra   Width of the soft edge in px, centred on the hard
+     *                    shadow's boundary. A look setting, not a light size.
+     *                    Below 1 the edge aliases. Default 24.
+     *  @param opacity    Share of a shadowed lamp's light removed, [0, 1].
+     *                    Default 1. */
+    EL_API el_result_e el_effect_set_spotlight_shadow_look(el_effect_handle_t effect,
+                                                           float elevation, float penumbra,
+                                                           float opacity);
+    EL_API el_result_e el_effect_get_spotlight_shadow_look(el_effect_handle_t effect,
+                                                           float *outElevation, float *outPenumbra,
+                                                           float *outOpacity);
 
     /** @brief Fraction of the viewport the lamps render at before being
      *         bilinear-blitted back. 1.0 (default) draws direct - no offscreen

@@ -1232,26 +1232,27 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
     SliderWithInput("Res Scale##Spot", cfg.spotlight.resolutionScale, 0.125f, 1.0f, "%.3f");
     if (cfg.spotlight.resolutionScale < 1.0f)
     {
-        // The library holds the scale at 1.0 while a clipped lamp is enabled,
-        // because the clip edge has to be resolved at full resolution. Say so
-        // here, or the slider reads as broken: it moves and the frame does not
-        // change. Mirrors SpotlightRenderer's own HasClippedLamp test - the
-        // lamps that DRAW, within the ceiling.
+        // The library holds the scale at 1.0 while a clipped or
+        // shadow-casting lamp is enabled, because the mask edge has to be
+        // resolved at full resolution. Say so here, or the slider reads as
+        // broken: it moves and the frame does not change. Mirrors
+        // SpotlightRenderer's own HasMaskedLamp test - the lamps that DRAW,
+        // within the ceiling.
         size_t drawnLamps = std::min(cfg.spotlight.lamps.size(), size_t(SPOT_MAX_LAMPS));
-        bool anyClippedLamp = false;
+        bool anyMaskedLamp = false;
         for (size_t i = 0; i < drawnLamps; i++)
         {
             const auto &lamp = cfg.spotlight.lamps[i];
-            if (lamp.clipped && lamp.enable && lamp.intensity > 0.0f)
+            if ((lamp.clipped || lamp.castsShadow) && lamp.enable && lamp.intensity > 0.0f)
             {
-                anyClippedLamp = true;
+                anyMaskedLamp = true;
                 break;
             }
         }
 
-        if (anyClippedLamp)
+        if (anyMaskedLamp)
         {
-            ImGui::TextDisabled("Held at 1.0: a clipped lamp is enabled.");
+            ImGui::TextDisabled("Held at 1.0: a clipped or shadow-casting lamp is enabled.");
         }
         else if (cfg.spotlight.lamps.size() < 6)
         {
@@ -1319,6 +1320,48 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
         {
             ImGui::TextDisabled("Zero-size area: every clipped lamp draws nothing.");
         }
+
+        ImGui::Unindent();
+    }
+
+    // --- Shadow caster: ONE card for the layer, opted into per lamp below. ---
+    //
+    // Always shown, for the clip area's reason: it has no enable, and whether
+    // a lamp casts its shadow is that lamp's own "Cast Shadow". Unlike the
+    // clip there is no zero-size trap to warn about - a 0 x 0 card casts
+    // nothing, and a lamp opted in under it draws as it did.
+    ImGui::SeparatorText("Shadow Caster");
+    auto &caster = cfg.spotlight.shadowCaster;
+    {
+        ImGui::Indent();
+
+        SliderWithInput("X##SpotShadow", caster.position.x, -200.0f, 2400.0f, "%.0f px");
+        SliderWithInput("Y##SpotShadow", caster.position.y, -200.0f, 1600.0f, "%.0f px");
+        SliderWithInput("Width##SpotShadow", caster.width, 0.0f, 2400.0f, "%.0f px");
+        SliderWithInput("Height##SpotShadow", caster.height, 0.0f, 1600.0f, "%.0f px");
+        SliderWithInput("Corner Radius##SpotShadow", caster.cornerRadius, 0.0f, 400.0f, "%.0f px");
+
+        // How far above the backdrop the card floats. With each lamp's Height
+        // it decides how far that lamp's shadow falls from the card.
+        SliderWithInput("Elevation##SpotShadow", caster.elevation, 0.0f, 400.0f, "%.0f px");
+        // A look setting, not the lamp's size: the physical penumbra of a
+        // default lamp is ~1 px.
+        SliderWithInput("Penumbra##SpotShadow", caster.penumbra, 0.0f, 120.0f, "%.0f px");
+        SliderWithInput("Opacity##SpotShadow", caster.opacity, 0.0f, 1.0f, "%.2f");
+
+        // Not bound to Config::geometry either, and for the same reason as the
+        // clip. Moving the caster rebuilds nothing in the library, so a host
+        // can afford to copy the rect across every frame; this demo copies it
+        // once, on demand.
+        if (ImGui::SmallButton("Match Rect##SpotShadow"))
+        {
+            caster.position = cfg.geometry.position;
+            caster.width = cfg.geometry.width;
+            caster.height = cfg.geometry.height;
+            caster.cornerRadius = cfg.geometry.cornerRadius;
+        }
+        ImGui::SameLine();
+        ImGui::TextDisabled("copy once - it does not follow the rect");
 
         ImGui::Unindent();
     }
@@ -1399,6 +1442,7 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
     ImGui::Checkbox("Lamp Enabled##Spot", &l.enable);
 
     ImGui::Checkbox("Clip This Lamp##Spot", &l.clipped);
+    ImGui::Checkbox("Cast Shadow##Spot", &l.castsShadow);
 
     // App coordinates, top-left origin, +y down - the same space as
     // Geometry > Position, which is why the ranges here are viewport-sized
@@ -1406,6 +1450,10 @@ void DebugUI::buildSpotlightSection(EdgeLighting::Config &cfg)
     SliderWithInput("Position X##Spot", l.position.x, -200.0f, 2400.0f, "%.0f px");
     SliderWithInput("Position Y##Spot", l.position.y, -200.0f, 1600.0f, "%.0f px");
     SliderWithInput("Direction##Spot", l.angle, -180.0f, 360.0f, "%.1f deg");
+    // Above the backdrop. Read only by the shadow: lower the lamp towards the
+    // caster's elevation and its shadow falls further from the card; at or
+    // below it the lamp casts none.
+    SliderWithInput("Height##Spot", l.height, 0.0f, 2000.0f, "%.0f px");
 
     ImGui::Separator();
     SliderWithInput("Beam Angle##Spot", l.beamAngle, 3.0f, 120.0f, "%.1f deg");

@@ -47,6 +47,10 @@ layout(location = 5) in float aClipWeight; ///< 1 where this lamp honours the cl
 /// Exponent on the cone's spread term - SpotLight::spreadFalloff, clamped.
 /// Its own attribute because aP0 and aP1 are full; see StripVertex.
 layout(location = 6) in float aSpreadFalloff;
+/// Lamp x, y in app px, lamp height in px, and 1 if this lamp casts the
+/// shadow caster's shadow, else 0. Everything about the CASTER is a uniform;
+/// this is only what the shadow needs to know about the lamp.
+layout(location = 7) in vec4 aShadow;
 
 out vec2 vLocal;
 out vec2 vApp;
@@ -55,6 +59,7 @@ flat out vec4 vP1;
 flat out vec3 vColor;
 flat out float vClipWeight;
 flat out float vSpreadFalloff;
+flat out vec4 vShadow;
 
 uniform mat4 uMVP;
 
@@ -66,5 +71,6 @@ void main() {
     vColor = aColor;
     vClipWeight = aClipWeight;
     vSpreadFalloff = aSpreadFalloff;
+    vShadow = aShadow;
     gl_Position = uMVP * vec4(aPos, 0.0, 1.0);
 }

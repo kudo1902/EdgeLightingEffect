@@ -368,7 +368,8 @@ is undefined).
 ## SpotLight + SpotlightConfig -> SpotlightRenderer
 
 Freely placed cones of light. Not a perimeter effect: reads only
-`Config::spotlight`. Light only (no backdrop/fixtures/occlusion), one
+`Config::spotlight`. Light only (no backdrop/fixtures; the only occluder is
+the opt-in `shadowCaster` card, never the rect), one
 screened pass (`GL_ONE_MINUS_DST_COLOR, GL_ONE` colour, `GL_ONE_MINUS_DST_ALPHA,
 GL_ONE` alpha, i.e. `dst + src * (1 - dst)`; coverage = max channel).
 Per-lamp solved strips (`SPOT_STRIP_SEGMENTS = 12` quads) in one VBO, one
@@ -392,6 +393,8 @@ Per lamp (`SpotLight`):
 | `tint` | linear `vec3`, unclamped | `(1,1,1)` | `>= 0`, no cap | Gel multiplier on blackbody. `>1` legal (grows strip), `0` = lamp off (no geometry) |
 | `enable` | bool | `true` | - | Skip without removing (stable indices/animations) |
 | `clipped` | bool | `false` | - | Opt into `clipArea`. Only gate (area has no enable). Set area size first (`0x0 KEEP_INSIDE` blanks the lamp). Also pins `SpotlightConfig.resolutionScale` to `1.0` while any enabled lamp has it set |
+| `castsShadow` | bool | `false` | - | Opt into `shadowCaster`. Only gate (caster has no enable); a `0x0` caster casts nothing, so setting it first is safe. Pins `resolutionScale` to `1.0` like `clipped` |
+| `height` | px above backdrop | `400.0` | read as-is | Shadow only. Shadow = card scaled about the lamp by `1/(1-k)`, `k = elevation/height`. At or below `shadowCaster.elevation`: no shadow |
 
 Layer (`SpotlightConfig`):
 
@@ -400,7 +403,8 @@ Layer (`SpotlightConfig`):
 | `enable` | bool | `false` | - | Master switch |
 | `lamps` | list | empty | first 8 entries | Past `SPOT_MAX_LAMPS = 8` ignored - entries 9+ dropped byte-for-byte, with one logged warning |
 | `clipArea` | `ClipArea` | `0x0 KEEP_INSIDE` | see `ClipArea` | Cut region. `KEEP_INSIDE` also narrows strips (buys fragments back); `KEEP_OUTSIDE` unbounded, cannot |
-| `resolutionScale` | fraction `(0, 1]` | `1.0` | `[0.125, 1.0]` | Same two-path shape as neon/flare, no uniform differs (scale in viewport transform only). Floor is `0.125`, not neon's `0.001` - `0.001` through `0.125` are identical and `0.126` is the first that differs. Fixed blit floor (~922k frags at 720p) so only large rigs win; default `1.0`. Held at `1.0` while any enabled lamp is `clipped` (value kept, transitions logged) |
+| `shadowCaster` | `ShadowCaster` | `0x0`, elevation `40`, penumbra `24`, opacity `1` | radius clamped to half the shorter side; elevation, penumbra floored at 0; opacity `[0, 1]` | Card floating above the backdrop; casting lamps lose their light in its projected shadow, never on the card's own face. Uniforms only - moving it rebuilds no strips. `0x0` casts nothing |
+| `resolutionScale` | fraction `(0, 1]` | `1.0` | `[0.125, 1.0]` | Same two-path shape as neon/flare, no uniform differs (scale in viewport transform only). Floor is `0.125`, not neon's `0.001` - `0.001` through `0.125` are identical and `0.126` is the first that differs. Fixed blit floor (~922k frags at 720p) so only large rigs win; default `1.0`. Held at `1.0` while any enabled lamp is `clipped` or `castsShadow` (value kept, transitions logged) |
 
 Caller owns GL state the pass assumes and never sets: cull off (or
 front-face surviving CCW strips), full color+alpha mask, `FUNC_ADD`, no

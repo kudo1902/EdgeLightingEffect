@@ -1112,6 +1112,31 @@ namespace EdgeLighting
         /// blanks the lamp. Set the rectangle first.
         bool clipped = false;
 
+        /// Whether @c SpotlightConfig::shadowCaster casts a shadow of THIS
+        /// lamp's light.
+        ///
+        /// Per lamp for the reason @ref clipped is: a lamp washing the card
+        /// from the front and a lamp raking past it want different answers.
+        /// Default false, so adding a caster to an existing rig changes nothing
+        /// until a lamp asks for it.
+        ///
+        /// The only gate, as @ref clipped is for the clip area - but the
+        /// caster's defaults ARE a safe resting state: a 0 x 0 caster casts
+        /// nothing, so setting this first leaves the lamp exactly as it was.
+        bool castsShadow = false;
+
+        /// Height of the lamp above the backdrop, in px. Read only by the
+        /// shadow (see @ref ShadowCaster): the cone itself is a 2D falloff in
+        /// the backdrop's plane and does not change with it.
+        ///
+        /// What it sets is how far the card's shadow falls from the card. With
+        /// the caster at @c ShadowCaster::elevation, the shadow is the card
+        /// scaled about the lamp by `1 / (1 - k)`, `k = elevation / height`:
+        /// a high lamp throws a shadow that barely clears the card, a low one
+        /// throws it far. At or below the card's elevation the lamp is not
+        /// above the card at all and casts no shadow.
+        float height = 400.0f;
+
         bool operator==(const SpotLight &o) const
         {
             return position == o.position &&
@@ -1127,10 +1152,90 @@ namespace EdgeLighting
                    colorTemp == o.colorTemp &&
                    tint == o.tint &&
                    enable == o.enable &&
-                   clipped == o.clipped;
+                   clipped == o.clipped &&
+                   castsShadow == o.castsShadow &&
+                   height == o.height;
         }
         bool operator!=(const SpotLight &o) const { return !(*this == o); }
     } SpotLight;
+
+    /// A card floating above the backdrop, which shadows the light of every
+    /// lamp with @c SpotLight::castsShadow set.
+    ///
+    /// THE MODEL. The backdrop is a plane, the card is a rounded rectangle
+    /// parallel to it at @ref elevation, and each lamp hangs at its own
+    /// @c SpotLight::height. A backdrop point is in shadow when the line from
+    /// it up to the lamp passes through the card - so the shadow is the card
+    /// projected from the lamp onto the backdrop: the same rounded rectangle,
+    /// scaled about the lamp by `1 / (1 - elevation / height)`. Move a lamp
+    /// and its shadow swings and stretches; a lamp over the card throws an
+    /// even rim all round it.
+    ///
+    /// The card's own face is NOT shadowed - it sits above its shadow - so the
+    /// light inside this rectangle is the unshadowed lamp's, exactly as today.
+    ///
+    /// LIGHT ONLY, like the rest of the layer. A shadow here is light this
+    /// lamp does not add; nothing is darkened past what was behind the layer.
+    /// Over a dark backdrop that reads as a shadow; over bright content it is
+    /// only as visible as the light it removes. Like @ref ClipArea it is
+    /// coverage on the finished shading, after the highlight shoulder, so a
+    /// shadowed fragment also gives up its coverage alpha.
+    ///
+    /// **Its own rectangle, deliberately not @c Config::geometry**, for the
+    /// reasons @ref ClipArea gives - a host that wants the card to be the rect
+    /// copies the five numbers across, and the C ABI's setter takes them in
+    /// the geometry setter's order. Unlike the clip area it is NOT on the
+    /// strip rebuild path: everything about it reaches the GPU as uniforms, so
+    /// a caster that follows an animated rect costs no re-upload.
+    ///
+    /// **No enable flag, and the defaults are safe**: a 0 x 0 caster casts
+    /// nothing, so a lamp opted in before the caster has a size draws exactly
+    /// as it did. That is the opposite of the clip area's zero-size trap, and
+    /// on purpose - no shadow is the honest answer for no card.
+    typedef struct ShadowCaster
+    {
+        /// TOP-LEFT corner of the card in APP coordinates - the same space as
+        /// @c RectGeometry::position and @c SpotLight::position.
+        glm::vec2 position = glm::vec2(0.0f, 0.0f);
+        float width = 0.0f;  ///< Card size in px. Zero casts no shadow.
+        float height = 0.0f; ///< See @ref width.
+        /// Corner rounding in px, clamped to half the shorter side. The
+        /// shadow's corners scale with the rest of it.
+        float cornerRadius = 0.0f;
+
+        /// Height of the card above the backdrop, in px. With each lamp's
+        /// @c SpotLight::height this sets how far that lamp's shadow falls.
+        /// 0 lays the card on the backdrop, which leaves only the outer half
+        /// of the penumbra as a rim round it. Negative is read as 0.
+        float elevation = 40.0f;
+
+        /// Width of the shadow's soft edge, in px, centred on the hard
+        /// shadow's boundary.
+        ///
+        /// A look setting rather than a light size: the physical penumbra of a
+        /// lamp the size of @c SpotLight::apertureWidth is
+        /// `apertureWidth * k / (1 - k)` - about 1.4 px at the defaults, too
+        /// sharp to read as a soft shadow. Below 1 the edge aliases, the same
+        /// way @c ClipArea::edgeSoftness does.
+        float penumbra = 24.0f;
+
+        /// Share of a shadowed lamp's light the shadow removes, in [0, 1].
+        /// 1 is a real single-lamp shadow; lower lets some of the light
+        /// through, as if bounced. 0 casts nothing.
+        float opacity = 1.0f;
+
+        bool operator==(const ShadowCaster &o) const
+        {
+            return position == o.position &&
+                   width == o.width &&
+                   height == o.height &&
+                   cornerRadius == o.cornerRadius &&
+                   elevation == o.elevation &&
+                   penumbra == o.penumbra &&
+                   opacity == o.opacity;
+        }
+        bool operator!=(const ShadowCaster &o) const { return !(*this == o); }
+    } ShadowCaster;
 
     /// Spotlight renderer configuration: a list of independently placed lamps.
     ///
@@ -1140,9 +1245,10 @@ namespace EdgeLighting
     /// clipping. Nothing is occluded by the rect: a cone crosses the frame
     /// freely.
     ///
-    /// The one thing that DOES stop light is @c clip - an explicit area, opted
-    /// into per lamp by @c SpotLight::clipped. That is a cut, not a shadow:
-    /// nothing in the scene casts it and nothing in the scene blocks it.
+    /// Two things DO stop light, each an explicit shape of this sub-config
+    /// opted into per lamp: @c clipArea, a cut (@c SpotLight::clipped), and
+    /// @c shadowCaster, a card floating above the backdrop whose shadow the
+    /// lamp casts (@c SpotLight::castsShadow). Neither is the rect.
     typedef struct SpotlightConfig
     {
         bool enable = false; ///< Enable or disable the spotlight renderer
@@ -1161,6 +1267,11 @@ namespace EdgeLighting
         /// what IS specific to this layer is the per-lamp opt-in beside it,
         /// and that the @c KEEP_INSIDE case also narrows the strip geometry.
         ClipArea clipArea;
+
+        /// The card whose shadow lamps with @c SpotLight::castsShadow cast.
+        /// With no lamp opted in this is inert, and a 0 x 0 caster (the
+        /// default) casts nothing either way. See @ref ShadowCaster.
+        ShadowCaster shadowCaster;
 
         /// Fraction of the viewport the lamps are rendered at before being
         /// bilinear-blitted back to full resolution. 1.0 draws straight onto
@@ -1185,22 +1296,25 @@ namespace EdgeLighting
         /// Clamped to (0, 1] at draw time. Above 1.0 is refused rather than
         /// supersampled: the point of the knob is to shade FEWER fragments.
         ///
-        /// **Held at 1.0 while any enabled lamp has @c SpotLight::clipped
-        /// set.** The clip is a per-fragment mask, so a reduced buffer
-        /// resolves its boundary at that buffer's texel pitch and the blit
-        /// smears the result: the edge moves by up to a destination pixel,
-        /// light leaks outside a @c KEEP_INSIDE area, and
+        /// **Held at 1.0 while any enabled lamp has @c SpotLight::clipped or
+        /// @c SpotLight::castsShadow set.** The clip is a per-fragment mask,
+        /// so a reduced buffer resolves its boundary at that buffer's texel
+        /// pitch and the blit smears the result: the edge moves by up to a
+        /// destination pixel, light leaks outside a @c KEEP_INSIDE area, and
         /// @c ClipArea::edgeSoftness stops meaning anything below one buffer
-        /// texel. Correctness wins over a saving this layer only sees on a
+        /// texel. The shadow carries the same kind of edge - its penumbra is
+        /// soft, but where it meets the card the card's lit face starts within
+        /// one pixel. Correctness wins over a saving this layer only sees on a
         /// large rig anyway. The value is kept, not rewritten - drop the clip
-        /// and it takes effect again - and the renderer logs both transitions
-        /// so the override is never silent.
+        /// and the shadow and it takes effect again - and the renderer logs
+        /// both transitions so the override is never silent.
         float resolutionScale = 1.0f;
 
         bool operator==(const SpotlightConfig &o) const
         {
             return enable == o.enable && lamps == o.lamps &&
                    clipArea == o.clipArea &&
+                   shadowCaster == o.shadowCaster &&
                    resolutionScale == o.resolutionScale;
         }
         bool operator!=(const SpotlightConfig &o) const { return !(*this == o); }

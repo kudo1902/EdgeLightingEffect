@@ -26,11 +26,12 @@ namespace EdgeLighting
         /// strips are already the cheap part.
         constexpr float MIN_RESOLUTION_SCALE = 0.125f;
 
-        /// Whether any lamp this pass will actually DRAW honours the clip area.
+        /// Whether any lamp this pass will actually DRAW carries a per-fragment
+        /// mask: it honours the clip area, or casts the shadow caster's shadow.
         ///
         /// Gates the resolution scale - see @ref GetClampedSpotScale. Counts
         /// only lamps that draw, because a lamp that writes no fragments puts
-        /// no clip boundary in the buffer whatever its clip bit says. The test
+        /// no mask boundary in the buffer whatever its bits say. The test
         /// is deliberately the same @c enable && @c intensity > 0 that
         /// @ref SpotlightRenderer::buildStrips uses for its @c drawnLamps count,
         /// rather than a second copy of @ref DeriveLamp's black-tint bail: a
@@ -39,14 +40,20 @@ namespace EdgeLighting
         ///
         /// Indexed like everything else in this renderer, so entries past
         /// @c SPOT_MAX_LAMPS do not count - they never reach the VBO.
-        bool HasClippedLamp(const SpotlightConfig &spotlight)
+        ///
+        /// A shadow-casting lamp counts whatever the caster holds, the same
+        /// way a clipped lamp counts whatever the clip area holds: the per-lamp
+        /// bit is the one thing a host sets to opt in, so it is the one thing
+        /// the pin reads. A lamp opted in under a 0 x 0 caster costs the scale
+        /// and nothing else, which is the harmless direction.
+        bool HasMaskedLamp(const SpotlightConfig &spotlight)
         {
             const int lampCount = std::min(static_cast<int>(spotlight.lamps.size()),
                                            static_cast<int>(SPOT_MAX_LAMPS));
             for (int i = 0; i < lampCount; i++)
             {
                 const SpotLight &lamp = spotlight.lamps[static_cast<size_t>(i)];
-                if (lamp.clipped && lamp.enable && lamp.intensity > 0.0f)
+                if ((lamp.clipped || lamp.castsShadow) && lamp.enable && lamp.intensity > 0.0f)
                 {
                     return true;
                 }
@@ -55,7 +62,13 @@ namespace EdgeLighting
         }
 
         /// @c SpotlightConfig::resolutionScale clamped to (0, 1] - and PINNED
-        /// to 1.0 while any drawn lamp is clipped.
+        /// to 1.0 while any drawn lamp is clipped or casts a shadow.
+        ///
+        /// The shadow is pinned for the clip's reason, though less of it: its
+        /// penumbra is soft and would survive a reduced buffer, but where the
+        /// shadow meets the card, the card's unshadowed face starts within one
+        /// pixel (spotShadowVis' onBackdrop), and that edge smears exactly as
+        /// the clip's does below.
         ///
         /// WHY THE CLIP DISABLES THE SCALE. spotlight.frag evaluates the clip
         /// mask in whatever buffer it is rasterising into, so on the scaled
@@ -97,7 +110,7 @@ namespace EdgeLighting
         /// the loss is never silent.
         float GetClampedSpotScale(const Config &config)
         {
-            if (HasClippedLamp(config.spotlight))
+            if (HasMaskedLamp(config.spotlight))
             {
                 return 1.0f;
             }
@@ -114,9 +127,9 @@ namespace EdgeLighting
         /// that still needs it can have it freed underneath.
         ///
         /// That it goes through @ref GetClampedSpotScale rather than reading
-        /// @c resolutionScale is what makes the clip pin free here: opting a
-        /// lamp into the clip area takes this to false and hands the buffer
-        /// back, with no second place to teach about it.
+        /// @c resolutionScale is what makes the pin free here: opting a lamp
+        /// into the clip area or the shadow takes this to false and hands the
+        /// buffer back, with no second place to teach about it.
         bool UsesScaledBuffer(const Config &config)
         {
             return config.spotlight.enable && GetClampedSpotScale(config) < 1.0f;
@@ -483,6 +496,44 @@ namespace EdgeLighting
             return out;
         }
 
+        /// @c ShadowCaster resolved into the uniforms spotlight.frag reads:
+        /// the same centred box with a clamped radius @ref ClipSolve uses, plus
+        /// the three look values, floored.
+        typedef struct ShadowSolve
+        {
+            glm::vec2 center; ///< App px.
+            glm::vec2 half;   ///< Half extent, app px, never negative.
+            float radius;     ///< Corner radius, clamped to the shorter half extent.
+            float elevation;  ///< Px above the backdrop, never negative.
+            float penumbra;   ///< Px, never negative.
+            /// [0, 1], and 0 for a caster with no area. See @ref DeriveShadow.
+            float opacity;
+        } ShadowSolve;
+
+        /// Derive the shadow caster. Only @ref SpotlightRenderer::Render calls
+        /// it - nothing about the caster bounds geometry, since a shadow only
+        /// removes light from the strip a lamp already draws.
+        ///
+        /// A caster with no area gets opacity 0, which is the one place this
+        /// differs from @ref DeriveClip's "derive it like any other". The
+        /// shadow's penumbra is centred on the hard shadow's edge, so a 0 x 0
+        /// card would still darken a disc half the penumbra wide round where it
+        /// is - a smudge with nothing casting it. No card, no shadow.
+        ShadowSolve DeriveShadow(const ShadowCaster &caster)
+        {
+            ShadowSolve out{};
+            out.half = glm::vec2(std::max(caster.width, 0.0f) * 0.5f,
+                                 std::max(caster.height, 0.0f) * 0.5f);
+            out.center = caster.position + out.half;
+            out.radius = std::min(std::max(caster.cornerRadius, 0.0f),
+                                  std::min(out.half.x, out.half.y));
+            out.elevation = std::max(caster.elevation, 0.0f);
+            out.penumbra = std::max(caster.penumbra, 0.0f);
+            const bool hasArea = out.half.x > 0.0f && out.half.y > 0.0f;
+            out.opacity = hasArea ? std::min(std::max(caster.opacity, 0.0f), 1.0f) : 0.0f;
+            return out;
+        }
+
         /// Warn when a host hands over more lamps than one pass can draw.
         /// @ref SpotlightRenderer::buildStrips clamps the list with
         /// @c std::min against @c SPOT_MAX_LAMPS and everything past it never
@@ -516,8 +567,8 @@ namespace EdgeLighting
             }
         }
 
-        /// Say so when a clipped lamp takes @c resolutionScale out of effect,
-        /// and when it comes back. @ref GetClampedSpotScale explains why it
+        /// Say so when a clipped or shadow-casting lamp takes
+        /// @c resolutionScale out of effect, and when it comes back. @ref GetClampedSpotScale explains why it
         /// has to; this is what stops the host's setting being overridden in
         /// silence, which is the one thing that would make the pin feel like a
         /// bug rather than a trade.
@@ -530,8 +581,8 @@ namespace EdgeLighting
         /// Takes both sub-configs rather than two bools so the caller cannot
         /// compute "pinned" two different ways - the predicate is
         /// @ref GetClampedSpotScale's, applied to each of them here.
-        inline void LogOnClipPinTransition(const SpotlightConfig &prev,
-                                           const SpotlightConfig &now)
+        inline void LogOnScalePinTransition(const SpotlightConfig &prev,
+                                            const SpotlightConfig &now)
         {
             // A scale of 1.0 is what the pin produces anyway, so a config that
             // never asked for less has no transition to report either way.
@@ -540,8 +591,8 @@ namespace EdgeLighting
                 return;
             }
 
-            const bool wasPinned = HasClippedLamp(prev);
-            const bool isPinned = HasClippedLamp(now);
+            const bool wasPinned = HasMaskedLamp(prev);
+            const bool isPinned = HasMaskedLamp(now);
             if (isPinned == wasPinned)
             {
                 return;
@@ -550,14 +601,14 @@ namespace EdgeLighting
             if (isPinned)
             {
                 LOG_I("SpotlightRenderer: resolutionScale %.3f held at 1.0 while a "
-                      "clipped lamp is enabled - the clip edge has to be resolved at "
-                      "full resolution.",
+                      "clipped or shadow-casting lamp is enabled - the mask edge has to "
+                      "be resolved at full resolution.",
                       static_cast<double>(now.resolutionScale));
             }
             else
             {
-                LOG_I("SpotlightRenderer: no clipped lamp left - resolutionScale %.3f "
-                      "back in effect.",
+                LOG_I("SpotlightRenderer: no clipped or shadow-casting lamp left - "
+                      "resolutionScale %.3f back in effect.",
                       static_cast<double>(now.resolutionScale));
             }
         }
@@ -757,6 +808,20 @@ namespace EdgeLighting
                                   glm::vec3(clipSolve.radius, clipSolve.softness,
                                             clipSolve.keepInside ? 1.0f : 0.0f));
 
+        // The shadow caster, on the same terms as the clip: app coordinates,
+        // so not scale-dependent, and uploaded unconditionally - the per-lamp
+        // opt-in rides in the strips, so with no lamp casting these are inert
+        // and the shader never reads them. Every value the caster has reaches
+        // the GPU here and nowhere else, which is why OnConfigChanged can
+        // leave the strips alone when only the caster moved.
+        const ShadowSolve shadowSolve = DeriveShadow(config.spotlight.shadowCaster);
+        mShaderProgram.SetUniform("uCasterRect",
+                                  glm::vec4(shadowSolve.center.x, shadowSolve.center.y,
+                                            shadowSolve.half.x, shadowSolve.half.y));
+        mShaderProgram.SetUniform("uCasterParams",
+                                  glm::vec4(shadowSolve.radius, shadowSolve.elevation,
+                                            shadowSolve.penumbra, shadowSolve.opacity));
+
         mVertexArray.DrawArrays(GL_TRIANGLES, mVertexCount);
 
         mShaderProgram.Unuse();
@@ -830,15 +895,26 @@ namespace EdgeLighting
         WarnOnLampOverflow(mCurrentSpotlight.lamps.size(), config.spotlight.lamps.size());
         // Same placement, same reason: both halves of the transition are read
         // from mCurrentSpotlight, and it is about to be overwritten.
-        LogOnClipPinTransition(mCurrentSpotlight, config.spotlight);
+        LogOnScalePinTransition(mCurrentSpotlight, config.spotlight);
 
         if (mBuilt && config.spotlight == mCurrentSpotlight)
         {
             return;
         }
 
+        // The strips are a function of the lamps and the clip area (which
+        // narrows them) and of nothing else in the sub-config. The shadow
+        // caster in particular is all uniforms, so a caster that follows an
+        // animated rect - the case it is shaped for - re-uploads nothing.
+        const bool stripsStale = !mBuilt ||
+                                 config.spotlight.lamps != mCurrentSpotlight.lamps ||
+                                 config.spotlight.clipArea != mCurrentSpotlight.clipArea;
+
         mCurrentSpotlight = config.spotlight;
-        buildStrips(mCurrentSpotlight);
+        if (stripsStale)
+        {
+            buildStrips(mCurrentSpotlight);
+        }
     }
 
     bool SpotlightRenderer::setupShaders()
@@ -887,6 +963,7 @@ namespace EdgeLighting
         mVertexArray.SetAttribPointer(4, 3, GL_FLOAT, stride, offsetof(StripVertex, color));
         mVertexArray.SetAttribPointer(5, 1, GL_FLOAT, stride, offsetof(StripVertex, clipWeight));
         mVertexArray.SetAttribPointer(6, 1, GL_FLOAT, stride, offsetof(StripVertex, spreadFalloff));
+        mVertexArray.SetAttribPointer(7, 4, GL_FLOAT, stride, offsetof(StripVertex, shadow));
 
         mBufferReady = true;
     }
@@ -1122,6 +1199,10 @@ namespace EdgeLighting
             }
 
             const float clipWeight = clipped ? 1.0f : 0.0f;
+            // The lamp's own half of the shadow. Its height is passed through
+            // as set: whether the lamp is above the card is a comparison with
+            // the caster's elevation, a uniform, so the shader makes it.
+            const float shadowWeight = lamp.castsShadow ? 1.0f : 0.0f;
 
             for (int seg = 0; seg < SPOT_STRIP_SEGMENTS; seg++)
             {
@@ -1184,6 +1265,10 @@ namespace EdgeLighting
                     v.color[2] = s.color.b;
                     v.clipWeight = clipWeight;
                     v.spreadFalloff = s.spreadFalloff;
+                    v.shadow[0] = ox;
+                    v.shadow[1] = oy;
+                    v.shadow[2] = lamp.height;
+                    v.shadow[3] = shadowWeight;
                     mStripVerts.push_back(v);
                 }
             }

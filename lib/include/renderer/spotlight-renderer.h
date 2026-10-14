@@ -16,7 +16,9 @@ namespace EdgeLighting
     /// look by position along the rect's perimeter, and this one does not
     /// touch the rect at all. A lamp sits at a @c SpotLight::position in app
     /// coordinates and points at a @c SpotLight::angle, and nothing occludes
-    /// it - a cone crosses the frame freely.
+    /// it - a cone crosses the frame freely. (A lamp can opt into a shadow -
+    /// see the shadow caster below - but the caster is a shape of this
+    /// layer's own config, not the rect.)
     ///
     /// It also emits LIGHT ONLY. No backdrop, no fixture housings, no floor,
     /// no framebuffer capture, no LUT. What it is is the whole term stack in
@@ -100,10 +102,20 @@ namespace EdgeLighting
     /// reduced-resolution buffer, which is why opting a lamp in costs the
     /// resolution scale - see the note on the two paths above.
     ///
+    /// **A lamp can cast a card's shadow** - @c SpotlightConfig::shadowCaster,
+    /// a rounded rectangle floating at @c ShadowCaster::elevation over the
+    /// backdrop, opted into per lamp by @c SpotLight::castsShadow. The shadow
+    /// is the card projected from the lamp (at @c SpotLight::height) onto the
+    /// backdrop, which is the card scaled about the lamp, so the fragment stage
+    /// prices it at one more rounded-box SDF. It is a coverage multiply beside
+    /// the clip's and pins the scale the same way. It only removes light, so
+    /// the solved strips need no change; and the caster is all uniforms, so
+    /// moving it rebuilds nothing.
+    ///
     /// Parameters come from @c Config::spotlight. Nothing else is read - not
-    /// @c Config::geometry, not @c Config::neon. The clip area is part of that
-    /// sub-config rather than a reuse of @c Config::geometry for exactly this
-    /// reason.
+    /// @c Config::geometry, not @c Config::neon. The clip area and the shadow
+    /// caster are part of that sub-config rather than a reuse of
+    /// @c Config::geometry for exactly this reason.
     class SpotlightRenderer : public BaseRenderer
     {
     public:
@@ -149,9 +161,18 @@ namespace EdgeLighting
             /// costs nothing here: these are separate attribute pointers, not
             /// a std140 block.
             float spreadFalloff;
+            /// What the shadow needs to know about this lamp: its position in
+            /// app px, its @c SpotLight::height, and 1 if it casts the
+            /// @c SpotlightConfig::shadowCaster's shadow, else 0 - a weight
+            /// like @c clipWeight, baked here so a lamp that opted out and a
+            /// lamp with no caster to cast are both a 0 the shader skips.
+            ///
+            /// Nothing about the CASTER rides here. It is a uniform, which is
+            /// what keeps a moving caster off @ref buildStrips' path.
+            float shadow[4];
         } StripVertex;
 
-        static_assert(sizeof(StripVertex) == 17 * sizeof(float),
+        static_assert(sizeof(StripVertex) == 21 * sizeof(float),
                       "StripVertex must be tightly packed - ensureBuffer's "
                       "attribute pointers use sizeof(StripVertex) as the stride.");
 
@@ -207,15 +228,19 @@ namespace EdgeLighting
         Framebuffer mScaledBuffer{"Spotlight.Scaled"};
         VertexArray mVertexArray{"SpotlightRenderer"};
         /// Fullscreen NDC quad for the blit. A second VAO rather than a reuse
-        /// of @c mVertexArray: that one carries the five-attribute strip
+        /// of @c mVertexArray: that one carries the eight-attribute strip
         /// layout, and the blit wants a bare vec2 at location 0.
         VertexArray mBlitQuad{"Spotlight.Blit"};
 
-        /// The spotlight config behind the current VBO contents. A whole
+        /// The spotlight config last handed to @ref OnConfigChanged. A whole
         /// @c SpotlightConfig rather than hand-picked fields: it carries its
         /// own @c operator== and so cannot fall out of step with itself.
         /// Deliberately NOT a whole @c Config - nothing outside
         /// @c Config::spotlight reaches the strips.
+        ///
+        /// The VBO is built from its @c lamps and @c clipArea alone; the rest
+        /// (the shadow caster, the scale, the layer enable) is read per frame,
+        /// so a change confined to those updates this without a rebuild.
         SpotlightConfig mCurrentSpotlight;
 
         /// Staging for @ref buildStrips, a member rather than a local for the

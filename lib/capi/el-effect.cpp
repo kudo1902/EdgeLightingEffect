@@ -1544,6 +1544,69 @@ el_result_e el_effect_get_spotlight_clipped(el_effect_handle_t effect, int32_t i
     return EL_SUCCESS;
 }
 
+el_result_e el_effect_set_spotlight_casts_shadow(el_effect_handle_t effect, int32_t index,
+                                                 el_bool_t castsShadow)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_casts_shadow");
+    auto *l = SpotlightSlot(effect, index, "el_effect_set_spotlight_casts_shadow");
+    if (!l)
+    {
+        return EL_ERROR_INVALID_PARAMETER;
+    }
+    const bool v = (castsShadow != 0);
+    if (l->castsShadow == v)
+    {
+        return EL_SUCCESS;
+    }
+    LOG_I("effect=%p, index=%d, castsShadow=%d", (void *)effect, index, (int)castsShadow);
+    l->castsShadow = v;
+    return EL_SUCCESS;
+}
+
+el_result_e el_effect_get_spotlight_casts_shadow(el_effect_handle_t effect, int32_t index,
+                                                 el_bool_t *outCastsShadow)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_get_spotlight_casts_shadow");
+    VALIDATE_OUT_PTR(outCastsShadow, "el_effect_get_spotlight_casts_shadow");
+    auto *l = SpotlightSlot(effect, index, "el_effect_get_spotlight_casts_shadow");
+    if (!l)
+    {
+        return EL_ERROR_INVALID_PARAMETER;
+    }
+    *outCastsShadow = l->castsShadow ? 1 : 0;
+    return EL_SUCCESS;
+}
+
+el_result_e el_effect_set_spotlight_height(el_effect_handle_t effect, int32_t index, float height)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_height");
+    auto *l = SpotlightSlot(effect, index, "el_effect_set_spotlight_height");
+    if (!l)
+    {
+        return EL_ERROR_INVALID_PARAMETER;
+    }
+    if (l->height == height)
+    {
+        return EL_SUCCESS;
+    }
+    LOG_I("effect=%p, index=%d, height=%f", (void *)effect, index, height);
+    l->height = height;
+    return EL_SUCCESS;
+}
+
+el_result_e el_effect_get_spotlight_height(el_effect_handle_t effect, int32_t index, float *outHeight)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_get_spotlight_height");
+    VALIDATE_OUT_PTR(outHeight, "el_effect_get_spotlight_height");
+    auto *l = SpotlightSlot(effect, index, "el_effect_get_spotlight_height");
+    if (!l)
+    {
+        return EL_ERROR_INVALID_PARAMETER;
+    }
+    *outHeight = l->height;
+    return EL_SUCCESS;
+}
+
 el_result_e el_effect_clear_spotlights(el_effect_handle_t effect)
 {
     VALIDATE_EFFECT_PTR(effect, "el_effect_clear_spotlights");
@@ -1636,6 +1699,91 @@ el_result_e el_effect_get_spotlight_clip_mode(el_effect_handle_t effect, el_clip
     VALIDATE_OUT_PTR(outMode, "el_effect_get_spotlight_clip_mode");
     *outMode = static_cast<el_clip_mode_e>(effect->config.spotlight.clipArea.mode);
     LOG_D("effect=%p, mode=%d", (void *)effect, (int)*outMode);
+    return EL_SUCCESS;
+}
+
+// --- Spotlight shadow caster ---
+
+// Same parameter order as el_effect_set_geometry and the clip rect - width,
+// height, x, y, cornerRadius - so a host can forward one call's output into
+// the other. See the header.
+el_result_e el_effect_set_spotlight_shadow_rect(el_effect_handle_t effect,
+                                                float width, float height,
+                                                float x, float y,
+                                                float cornerRadius)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_shadow_rect");
+    EdgeLighting::ShadowCaster &c = effect->config.spotlight.shadowCaster;
+    if (c.width == width && c.height == height &&
+        c.position.x == x && c.position.y == y &&
+        c.cornerRadius == cornerRadius)
+    {
+        return EL_SUCCESS;
+    }
+    LOG_I("effect=%p, width=%f, height=%f, x=%f, y=%f, cornerRadius=%f",
+          (void *)effect, width, height, x, y, cornerRadius);
+    c.width = width;
+    c.height = height;
+    c.position.x = x;
+    c.position.y = y;
+    c.cornerRadius = cornerRadius;
+    return EL_SUCCESS;
+}
+
+el_result_e el_effect_get_spotlight_shadow_rect(el_effect_handle_t effect,
+                                                float *outWidth, float *outHeight,
+                                                float *outX, float *outY,
+                                                float *outCornerRadius)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_get_spotlight_shadow_rect");
+    VALIDATE_OUT_PTR(outWidth, "el_effect_get_spotlight_shadow_rect");
+    VALIDATE_OUT_PTR(outHeight, "el_effect_get_spotlight_shadow_rect");
+    VALIDATE_OUT_PTR(outX, "el_effect_get_spotlight_shadow_rect");
+    VALIDATE_OUT_PTR(outY, "el_effect_get_spotlight_shadow_rect");
+    VALIDATE_OUT_PTR(outCornerRadius, "el_effect_get_spotlight_shadow_rect");
+    const EdgeLighting::ShadowCaster &c = effect->config.spotlight.shadowCaster;
+    *outWidth = c.width;
+    *outHeight = c.height;
+    *outX = c.position.x;
+    *outY = c.position.y;
+    *outCornerRadius = c.cornerRadius;
+    LOG_D("effect=%p, width=%f, height=%f, x=%f, y=%f, cornerRadius=%f",
+          (void *)effect, *outWidth, *outHeight, *outX, *outY, *outCornerRadius);
+    return EL_SUCCESS;
+}
+
+el_result_e el_effect_set_spotlight_shadow_look(el_effect_handle_t effect,
+                                                float elevation, float penumbra,
+                                                float opacity)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_set_spotlight_shadow_look");
+    EdgeLighting::ShadowCaster &c = effect->config.spotlight.shadowCaster;
+    if (c.elevation == elevation && c.penumbra == penumbra && c.opacity == opacity)
+    {
+        return EL_SUCCESS;
+    }
+    LOG_I("effect=%p, elevation=%f, penumbra=%f, opacity=%f",
+          (void *)effect, elevation, penumbra, opacity);
+    c.elevation = elevation;
+    c.penumbra = penumbra;
+    c.opacity = opacity;
+    return EL_SUCCESS;
+}
+
+el_result_e el_effect_get_spotlight_shadow_look(el_effect_handle_t effect,
+                                                float *outElevation, float *outPenumbra,
+                                                float *outOpacity)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_get_spotlight_shadow_look");
+    VALIDATE_OUT_PTR(outElevation, "el_effect_get_spotlight_shadow_look");
+    VALIDATE_OUT_PTR(outPenumbra, "el_effect_get_spotlight_shadow_look");
+    VALIDATE_OUT_PTR(outOpacity, "el_effect_get_spotlight_shadow_look");
+    const EdgeLighting::ShadowCaster &c = effect->config.spotlight.shadowCaster;
+    *outElevation = c.elevation;
+    *outPenumbra = c.penumbra;
+    *outOpacity = c.opacity;
+    LOG_D("effect=%p, elevation=%f, penumbra=%f, opacity=%f",
+          (void *)effect, *outElevation, *outPenumbra, *outOpacity);
     return EL_SUCCESS;
 }
 

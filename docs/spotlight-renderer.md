@@ -26,10 +26,12 @@ at all:
   `SpotLight::angle`. **Moving `geometry.position` moves the rect and leaves
   the lamps where they are.** If a rig should travel with the frame, the caller
   moves it.
-- **Nothing occludes a cone.** It crosses the rect, the droplets and the flare
-  freely. There is no shadow model and no rect gating. The one way to stop
-  light is `spotlight.clipArea` (section 4.6) - an explicit area, opted into per
-  lamp, that cuts the light off rather than casting a shadow from anything.
+- **Nothing occludes a cone on its own.** It crosses the rect, the droplets and
+  the flare freely; there is no rect gating. Two explicit shapes of this layer's
+  own config stop light, each opted into per lamp: `spotlight.clipArea`
+  (section 4.6), which cuts the light off, and `spotlight.shadowCaster`
+  (section 4.7), a card floating above the backdrop whose shadow the lamp
+  casts. Neither is the rect.
 - **Light only adds, but never past full scale.** The pass SCREENS -
   `glBlendFuncSeparate(GL_ONE_MINUS_DST_COLOR, GL_ONE, GL_ONE_MINUS_DST_ALPHA,
   GL_ONE)` - in the alpha channel as well as in colour. A lamp never darkens
@@ -586,6 +588,96 @@ which is what ordinary resolution loss looks like. Both demo UIs say so beside
 the slider, since a knob that moves and changes nothing otherwise reads as
 broken.
 
+### 4.7 The shadow caster
+
+One card per layer, **`SpotlightConfig::shadowCaster`** (a `ShadowCaster`, in
+the same app coordinates as section 3), floating above the backdrop; every lamp
+with **`SpotLight::castsShadow`** set casts its shadow. Built on 2026-10-14
+after the alternatives were compared - see the progress log.
+
+**The model.** The backdrop is a plane, the card is a rounded rectangle parallel
+to it at `elevation`, and each lamp hangs at its own `SpotLight::height`. A
+backdrop point is in shadow when the line from it up to the lamp passes through
+the card, so the shadow is the card projected from the lamp onto the backdrop:
+the same rounded rectangle, **scaled about the lamp by `1 / (1 - k)`, with
+`k = elevation / height`**. In the shader that is one more `sdRoundBox`: the
+fragment is projected onto the card's plane, `q = mix(p, lamp, k)`, measured
+against the card, and the distance divided by `1 - k`, which is exactly the
+shadow's distance field in backdrop pixels (a similarity scales distances
+uniformly). No angles, nothing that wraps.
+
+What that gives, with no special cases:
+
+- Move a lamp and its shadow swings and stretches. A lamp far off to one side
+  throws the shadow well clear of the card; a lamp over the card throws an even
+  rim all round it.
+- A high lamp's shadow barely clears the card; lowering it towards
+  `elevation` throws the shadow further, and at or below `elevation` the lamp
+  is not above the card at all and casts none. That last step is not a pop: the
+  shadow has receded to infinity first.
+- **The card's own face is never shadowed** - it sits above its shadow - so the
+  light inside the card is the unshadowed lamp's, exactly as without a caster.
+  The shadow meets the card's edge within one pixel.
+
+**Light only, like the rest of the layer.** A shadow is light this lamp does
+not add; nothing is darkened past what was behind the layer. Over a dark
+backdrop that reads as a shadow; over bright content (a playing video) it is
+only as visible as the light it removes, and there the video shows through
+unlit. Like the clip it is coverage on the finished shading - after the
+highlight shoulder, before the coverage alpha - so a shadowed fragment gives up
+its alpha as well as its colour. A darkening shadow that reads over bright
+content (black drawn premultiplied-over before the light, the only form that
+reaches a hardware video plane) was discussed and deliberately left for later.
+
+| Field | Default | What it does |
+|---|---|---|
+| `shadowCaster.position`, `.width`, `.height` | `(0, 0)`, `0 x 0` | The card, top-left plus size. **A 0 x 0 card casts nothing**, so unlike the clip area's defaults these are a safe resting state |
+| `shadowCaster.cornerRadius` | `0` | Clamped to half the shorter side. The shadow's corners scale with it |
+| `shadowCaster.elevation` | `40` px | How high the card floats. With each lamp's `height`, how far its shadow falls. `0` lays the card flat and leaves only the outer half of the penumbra as a rim |
+| `shadowCaster.penumbra` | `24` px | Width of the soft edge, centred on the hard shadow's boundary. A look setting: the physical penumbra of a lamp the size of `apertureWidth` is `apertureWidth * k / (1 - k)`, ~1.4 px at the defaults. Below 1 the edge aliases |
+| `shadowCaster.opacity` | `1` | Share of the lamp's light removed, `[0, 1]`. Below 1 lets some through, as if bounced |
+| `SpotLight::castsShadow` | `false` | Per lamp, the only gate (the caster has no enable) |
+| `SpotLight::height` | `400` px | Height above the backdrop. Read only by the shadow; the cone does not change with it |
+
+**The penumbra is a smoothstep across the shadow's SDF**, the way every soft
+edge in this library is. Over two parallel planes a round lamp's true penumbra
+has one width everywhere, which is why one width is the model; the smoothstep
+stands in for the lamp's disc convolved with the card and differs from it
+mostly at the corners.
+
+**Its own rectangle, not `Config::geometry`,** for the clip area's reasons; a
+host that wants the card to be the rect copies the five numbers across, and both
+demo UIs have a "Match Rect" button for it. **Unlike the clip area, it is not on
+the strip rebuild path**: everything about the caster reaches the GPU as
+uniforms, and `OnConfigChanged` rebuilds the strips only when the lamps or the
+clip area change. So a caster that follows an animated rect every frame costs
+no re-upload (measured: ten caster moves, zero strip uploads; ten lamp height
+changes, ten). Nothing about it changes the strip solve either - a shadow only
+removes light from the strip a lamp already draws.
+
+**It pins the resolution scale** exactly as a clipped lamp does
+(`HasMaskedLamp`): the penumbra is soft and would survive a reduced buffer, but
+where the shadow meets the card's lit face the edge is one pixel wide.
+
+**Verified** (Apple M2 Pro, 1280x720, against `ba3b5d5`):
+
+- Every config without a shadow-casting lamp - one lamp, a five-lamp fan, a
+  clipped rig, an eight-lamp rig at scale 0.5, over an opaque and a
+  transparent clear - renders **byte-identical** to before. So do lamps that
+  opt in under a 0 x 0 caster, at opacity 0, or below the card.
+- Six shadow cases (default, a low lamp, a 1 px penumbra, a wide translucent
+  penumbra, a lamp over the card, a lamp from the other side) match a CPU
+  evaluation of the model - written from the ray-plane geometry, not copied
+  from the shader - **within 1 level** on every channel, alpha included.
+- A shadow-casting lamp at scale 0.5 renders byte-identical to 1.0.
+- The same scene set up through the C ABI alone renders byte-identical to the
+  C++ path.
+
+**Cost**, at 1920x1080 with every lamp aimed at the card from round it: **1.22x** on one
+lamp (0.117 -> 0.143 ms), **1.25x** on five, **1.24x** on eight - two more SDFs
+per fragment of a casting lamp's strip, against a falloff of two `exp`s and a
+`pow`. A lamp that does not cast takes a flat branch and pays nothing.
+
 ---
 
 ## 5. Animating a lamp
@@ -596,7 +688,7 @@ Every spotlight scalar is per-lamp, so there is no spotlight block in
 is the whole animatable surface: `POSITION_X`, `POSITION_Y`, `ANGLE`,
 `BEAM_ANGLE`, `THROW_LENGTH`, `APERTURE_WIDTH`, `SOFTNESS`, `INTENSITY`,
 `BLOOM`, `BLOOM_RADIUS`, `COLOR_TEMP`, `TINT_R`, `TINT_G`, `TINT_B`,
-`SPREAD_FALLOFF`. Bind one with
+`SPREAD_FALLOFF`, `HEIGHT`. Bind one with
 
 ```cpp
 anim->AddSpotlightField(lampIndex, SpotlightField::ANGLE, modulator);
@@ -628,8 +720,9 @@ them**, so a scaled frame is the same picture at lower resolution rather than a
 differently shaped one.
 
 One exception, and it is a hard gate rather than a caveat: **an enabled clipped
-lamp holds the scale at 1.0**, so everything in this section describes an
-unclipped rig. Section 4.6 has the measurements and the reason.
+or shadow-casting lamp holds the scale at 1.0**, so everything in this section
+describes a rig with neither. Sections 4.6 and 4.7 have the measurements and
+the reason.
 
 **But the bargain is not the same, and that is why the default is 1.0.** Neon
 and the flare shade the whole viewport, so quartering their fragments always
@@ -685,6 +778,10 @@ one function per scalar, mirroring the arc family:
 | `el_effect_set_spotlight_clip_rect` | `clipArea.width`, `.height`, `.position.x`, `.position.y`, `.cornerRadius` |
 | `el_effect_set_spotlight_clip_softness` | `clipArea.edgeSoftness` |
 | `el_effect_set_spotlight_clip_mode` | `clipArea.mode` (`el_clip_mode_e`) |
+| `el_effect_set_spotlight_casts_shadow` | per-lamp `castsShadow` |
+| `el_effect_set_spotlight_height` | per-lamp `height` |
+| `el_effect_set_spotlight_shadow_rect` | `shadowCaster.width`, `.height`, `.position.x`, `.position.y`, `.cornerRadius` |
+| `el_effect_set_spotlight_shadow_look` | `shadowCaster.elevation`, `.penumbra`, `.opacity` |
 
 `el_effect_set_spotlight_clip_rect` takes the **same five parameters in the same
 order as `el_effect_set_geometry`** - width, height, x, y, cornerRadius - so
@@ -692,7 +789,10 @@ lining the clip up with the rect is a straight forward of one call's output into
 the other. There is still no binding between them; a later rect move does not
 follow. `edgeSoftness` is a scalar setter of its own rather than a sixth
 parameter: it is not part of the shape, and retuning it should not re-send four
-numbers that did not change.
+numbers that did not change. `el_effect_set_spotlight_shadow_rect` takes the
+same five in the same order, for the same reason. The lamp's `height` is a call
+of its own rather than a fourth parameter on `el_effect_set_spotlight_placement`,
+which is published with three.
 
 Each has a matching `el_effect_get_*`. The tint and `spreadFalloff` are calls of
 their own rather than extra parameters on `el_effect_set_spotlight_look` and
@@ -729,6 +829,10 @@ then calls only `el_effect_render` renders the previous frame's rig.
 | Keep light out of a region (a video surface, say) | `clipArea.mode = KEEP_OUTSIDE` |
 | Confine light to a region | `clipArea.mode = KEEP_INSIDE` (the default) |
 | Soften or sharpen the cut | `clipArea.edgeSoftness` (0 aliases; 1.0 is one pixel) |
+| Have a card shadow one lamp's light | `SpotLight::castsShadow` + `spotlight.shadowCaster.*` |
+| How far the shadow falls from the card | `shadowCaster.elevation` up, or the lamp's `height` down |
+| Soften the shadow | `shadowCaster.penumbra` |
+| Let some light into the shadow | `shadowCaster.opacity` below 1 |
 | Turn the whole layer off | `spotlight.enable` |
 | Trade quality for speed (large rigs only) | `spotlight.resolutionScale` |
 
