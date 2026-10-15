@@ -5,6 +5,23 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-15 - I64: registry records no longer outlive their producers
+
+Uncommitted, on `design_system_sharing_resources_between_renderers`. Apple M2
+Pro. I64 in [`review-findings.md`](review-findings.md) has the detail.
+
+- **What changed.** `~EdgeLightingEffect` clears the `BufferRegistry`. So does
+  an `Initialize` that erases a renderer that failed. These are the only two
+  ways a renderer leaves the effect. The `CLAUDE.md` sentence that said the
+  effect never removes one is corrected, and so is the lifetime note on
+  `PublishedBuffer`.
+- **Measured.** A probe built under AddressSanitizer reproduces both paths as a
+  heap-use-after-free in `Framebuffer::GetName`: 5 stale records after the
+  effect is destroyed, 1 after the erase. With the fix, both leave 0 records
+  and ASan reports nothing. `neon-scale-check check` and `partition` pass.
+- **Open.** A renderer kept past the effect and drawn on its own still
+  publishes into a registry nothing clears. I65 to I73 are unchanged.
+
 ## 2026-10-15 - The buffer registry and the debug buffer view; reviewed
 
 `181acdd` on `design_system_sharing_resources_between_renderers`. AMD Radeon

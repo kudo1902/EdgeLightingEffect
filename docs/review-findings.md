@@ -35,7 +35,7 @@ old fork survived.
 
 | state | items |
 | ----- | ----- |
-| open | V9, V16, V18, I13, I18, I64 to I73 |
+| open | V9, V16, V18, I13, I18, I65 to I73 |
 | open by decision - documented, audited or a known limit | V5, I5, I8, I25, I28, V17 |
 | fixed or changed | every other V, I and R item, through the thirty-second pass |
 
@@ -5398,7 +5398,7 @@ each layer's publishing (`NeonRenderer::publishBuffers`, the lens flare's and
 the spotlight's scaled paths), the debug layer's buffer view
 (`DebugConfig::bufferView`, `DebugRenderer::renderBufferView`,
 [`debug-buffer-view.frag`](../lib/shaders/debug-buffer-view.frag)) and its C ABI.
-Ten items, I64 to I73, all open. I64, I65 and I68 are reproduced offscreen,
+Ten items, I64 to I73. I64 is fixed; the other nine are open. I64, I65 and I68 are reproduced offscreen,
 I72 is measured, the rest are read from the source and say so.
 
 What the pass found holding, so a fix can be checked against it: every one of
@@ -5408,7 +5408,7 @@ no heap allocation (the counter confirmed live, ~14,000 allocations over the
 process); `neon-scale-check check` passes; and under `opaqueOnly` the neon
 publishes nothing. AMD Radeon Pro 5300M throughout.
 
-### I64. A registry record can outlive the Framebuffer it points at - OPEN
+### I64. A registry record can outlive the Framebuffer it points at - FIXED
 
 A `PublishedBuffer` holds a raw `const Framebuffer *` into its producer, and
 the registry is held by `shared_ptr` by the effect AND by every renderer it
@@ -5432,6 +5432,33 @@ paths.
 **Fix.** Clear the registry in the effect's destructor and after `Initialize`
 erases a renderer, and correct the sentence. Both are one line; neither costs a
 frame anything.
+
+**Fixed (2026-10-15, uncommitted).** `~EdgeLightingEffect` clears the
+registry. `Initialize` clears it when it erased a renderer. Those are the
+only two places a renderer leaves the list: `SetRendererOrder` and
+`SetLayerOrder` only permute it. The `CLAUDE.md` sentence and the lifetime note
+on `PublishedBuffer` now say so. No frame does any extra work.
+
+Verified on an Apple M2 Pro with a probe built under AddressSanitizer. The
+library itself is not instrumented, but `Framebuffer::GetName` is inline, so
+the dead read is caught in the probe's own code.
+That Mac's allocator gave the dead name back as "" with `MallocScribble=1`, so
+the plain build did not crash there. Both paths, before and after:
+
+| path | records left | ASan |
+| ---- | ------------ | ---- |
+| effect destroyed, kept debug layer drawn standalone | 5 -> 0 | heap-use-after-free in `Framebuffer::GetName` -> clean |
+| second `Initialize` erases (and frees) a renderer that published | 1 -> 0 | heap-use-after-free -> clean |
+
+`neon-scale-check check` and `partition` still pass.
+
+**Still open, not part of this fix.** A renderer the host keeps past the effect
+still holds the registry. If it is drawn on its own after that, it publishes
+into a registry nothing clears any more. If the host then drops that producer
+while it keeps a debug layer, the dangling record comes back. Detaching each
+renderer from the registry in the destructor would close this. But it would
+also detach a renderer that a second effect has registered since, so it was
+left out.
 
 ### I65. Two buffers with one name are both listed, and only the first can be viewed - OPEN
 
@@ -5574,7 +5601,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, the thirtieth V26, the thirty-first I63, and the thirty-second V27. The thirty-third, a review of the buffer registry, opened I64 to I73. Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, the thirtieth V26, the thirty-first I63, and the thirty-second V27. The thirty-third, a review of the buffer registry, opened I64 to I73, and I64 is fixed since. Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus V9 from the third (I12's remainder closed
 with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:

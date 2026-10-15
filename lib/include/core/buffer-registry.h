@@ -27,10 +27,15 @@ namespace EdgeLighting
     /// where nothing moved), which is why nothing is lent out for writing.
     ///
     /// @par Lifetime
-    /// Until the next @ref BufferRegistry::Clear - the top of the next
-    /// @c EdgeLightingEffect::Render - while the producer lives, which it does
-    /// as long as the effect does. The placement describes the frame it was
-    /// published in; the accessors read the Framebuffer as it is now.
+    /// Until the next @ref BufferRegistry::Clear: the top of the next
+    /// @c EdgeLightingEffect::Render, the effect's destructor, or an
+    /// @c EdgeLightingEffect::Initialize that drops a renderer that failed.
+    /// Those last two are the only places a producer can leave the effect, so
+    /// a record the effect's frames publish never outlives the producer it
+    /// points into. A renderer the host keeps and draws on its own after the
+    /// effect is gone still publishes here, and nothing clears that. The
+    /// placement describes the frame it was published in; the accessors read
+    /// the Framebuffer as it is now.
     typedef struct PublishedBuffer
     {
         const Framebuffer *buffer = nullptr; ///< The producer's own.

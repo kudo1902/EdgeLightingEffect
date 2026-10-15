@@ -19,7 +19,12 @@ namespace EdgeLighting
     {
     }
 
-    EdgeLightingEffect::~EdgeLightingEffect() = default;
+    EdgeLightingEffect::~EdgeLightingEffect()
+    {
+        // A renderer the host kept holds the registry past this point, and its
+        // records point into the renderers this destructor is about to free.
+        mBufferRegistry->Clear();
+    }
 
     bool EdgeLightingEffect::Initialize()
     {
@@ -39,6 +44,13 @@ namespace EdgeLighting
             {
                 ++it;
             }
+        }
+        // A second call can drop a renderer that published last frame, and the
+        // erase may have freed it. The next Render clears the registry anyway,
+        // but between frames a record must not point into a dead renderer.
+        if (!allOk)
+        {
+            mBufferRegistry->Clear();
         }
         // From here on AddRenderer has to initialise what it is handed - this
         // loop is not coming round again for it.
