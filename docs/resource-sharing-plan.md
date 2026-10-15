@@ -457,8 +457,9 @@ and I65 to I73.
 - **ASan**: the I64 probe extended to kept renderers after the effect and to
   one renderer in two effects - clean.
 - **Debug view**: texel-exact against S0.
-- **Allocations**: no more per frame than S0 (section 7.1: the library
-  already allocates on every steady frame, so "none" is not the bar).
+- **Allocations**: no more of the library's own per frame than S0. Most of
+  what the tool counts is the GL driver's (section 7.1), so the bar is set on
+  the library's share.
 - **Frames**: identical to S0.
 
 **S3 - two phases** (3.3).
@@ -566,21 +567,28 @@ Settled by the owner on 2026-10-15, each as recommended.
   | all five layers below 1.0 | 6.4 MB |
 
   Buffers are 43 KB in every scene.
-- **Found: steady frames allocate.**
+- **The allocation counts are mostly the GL driver's.** The tool replaces the
+  global `operator new`. On macOS that also catches Apple's GL stack, which
+  is C++. Traced in a separate session, I75 (written there, not yet merged
+  into this branch):
+  - 24 B per draw;
+  - 40 B each time drawing moves to another framebuffer;
+  - a burst whenever the driver starts a command buffer - every few frames
+    here, because the tool never flushes. A host's swap would start one
+    every frame.
 
-  | frame | allocations |
-  | ----- | ----------- |
-  | a still neon frame | 2 |
-  | droplets on | 3 |
-  | the debug overlays on | 8 |
-  | a rotating hue | 9, and 40 every fourth frame |
-  | an arc wipe | 12-41 |
-  | all five layers | 22 and 72, alternating |
+  Checked here: on still frames the count equals the draw count exactly -
+  2 for still neon, 3 with droplets, 8 with the debug overlays.
 
-  `CLAUDE.md` says "steady state allocates nothing" of the buffer registry,
-  and the registry is not where these come from; but the frame as a whole
-  does allocate. Where they come from is not yet traced. S2 and later steps
-  take S0's counts as the bar, not zero.
+  The library itself allocates only on three neon config-change paths, so
+  in intensity-pulse and travelling-segment frames:
+  - `OnlyIntensityMoved`'s config copy;
+  - `setupRingGeometry`'s local vectors;
+  - `FillEffectiveSegments`'s re-copy.
+
+  It allocates nothing on still or hue frames. I75 proposes a fix for each,
+  and splitting the tool's count into library and driver. Until that split
+  exists, S2 and later steps compare S0's counts scene by scene.
 
 ### 7.2 S1 - the context and the shader cache
 
@@ -608,10 +616,11 @@ the cache as `ShaderCache::WithDefines`.
 - **Without an effect**: a `NeonRenderer` drawn on its own compiles
   privately and draws byte-identically to the same renderer inside an effect.
   Clean under AddressSanitizer, as are the I64 probes.
-- **Allocations**: unchanged on every steady frame. The frame that first
-  builds a stage pays 2 more, once: one cache entry, and the vector's growth.
-  It was seen on the stop-fade scene, whose field programs are built inside
-  the counted frames.
+- **Allocations**: unchanged in every scene but one. In the stop-fade scene
+  one frame read 222 against S0's 220. That is the driver: that frame's ring
+  upload is the process's first, and it builds a Metal pipeline whose
+  allocations vary by run (160-237 in I75). A third run read 225. `diff`
+  will always list that line.
 - **Not measured**: the AMD 5300M, and the target device. Linking one shader
   object into several programs is standard GL and GLES 3.0 behaviour, but a
   driver that mishandled it would show here first. A renderer can always be

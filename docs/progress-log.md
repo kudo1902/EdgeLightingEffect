@@ -29,9 +29,12 @@ against `a213d55`. Apple M2 Pro, Debug build. Section 7 of
   - A renderer drawn without an effect compiles privately and draws
     identically.
   - `neon-scale-check check` and `partition` pass.
-- **Found.** Steady frames allocate on the heap: 2 per still neon frame, 9
-  under a rotating hue (40 every fourth frame), 22 and 72 alternating with all
-  five layers. Not traced yet; later steps take S0's counts as the bar.
+- **Found, then traced** (I75, in a separate session). The tool's
+  allocation counts are mostly Apple's GL driver, which the replaced
+  `operator new` also catches: 24 B per draw, 40 B per render pass, and a
+  burst per command buffer. On still frames the count equals the draw count.
+  The library allocates only on three neon config-change paths (intensity
+  and segment animations); I75 proposes the fixes.
 - **Open.** Not measured on the AMD 5300M or the target device. Next is S2,
   the registry.
 

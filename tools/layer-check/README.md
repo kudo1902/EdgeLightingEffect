@@ -25,7 +25,7 @@ line per fact:
 | ---- | ---- |
 | `hash SCENE FRAME HEX` | FNV-1a 64 of the frame's RGBA, for each of the 4 frames after the config is set (dt 1/60) |
 | `mem SCENE TEX BUF` | bytes of GL textures and buffers alive after those frames, from `glTexImage2D` / `glBufferData` |
-| `alloc SCENE TOTAL F0 ... F7` | C++ heap allocations (`operator new`) in each of 8 more frames, the library's alone |
+| `alloc SCENE TOTAL F0 ... F7` | C++ heap allocations (`operator new`) in each of 8 more frames - the GL driver's included (below) |
 | `published NAME#N WxH chC` | what the all-layers frame published to the buffer registry |
 
 The scenes:
@@ -39,6 +39,19 @@ The scenes:
 - The debug overlays, still and during a colour-stop cross-fade.
 - All five layers at once below 1.0.
 - The debug view on every buffer that frame publishes.
+
+**The allocation counts are not the library's alone.** The tool replaces the
+global `operator new`, and on macOS that also catches Apple's GL stack, which
+is C++. It counts:
+- 24 B per draw;
+- 40 B per change of framebuffer;
+- a burst whenever the driver starts a command buffer. That happens every few
+  frames here, since the tool never flushes.
+
+A still frame's count equals its number of draws. The colour-stop cross-fade
+scene's first counted frame also varies between runs: the process's first
+ring upload builds a Metal pipeline. So `diff` lists that line however little
+changed. Separating the library's share is proposed in review finding I75.
 
 `--only SUBSTRING` runs only the scenes whose id contains it. The library's
 own log goes to stdout, so give `--out`.
