@@ -37,7 +37,7 @@ old fork survived.
 | ----- | ----- |
 | open | V9, V16, V18, I13, I18 |
 | open by decision - documented, audited or a known limit | V5, I5, I8, I25, I28, V17 |
-| fixed or changed | every other V, I and R item, through the thirty-first pass |
+| fixed or changed | every other V, I and R item, through the thirty-second pass |
 
 The R items come from a re-read after the V and I fixes landed - see
 [Second pass](#second-pass-after-bbdba62). V8 and V9 come from a later read of
@@ -5315,6 +5315,81 @@ V26 corner sweep byte-identical to the build before; `check` identical.
 
 ---
 
+## Thirty-second pass (the spotlight below scale 1.0)
+
+### V27. Below `resolutionScale` 1.0 the spotlight's dark tail bands into blocky contours - FIXED
+
+**Reported**: "with low resolution scale, the visual is not good" (the
+spotlight layer).
+
+**Reproduced** on an AMD Radeon Pro 5300M at 1280 x 720 with four scenes - a
+default lamp, a narrow 6-degree beam, a wide soft lamp with a 1500 px throw,
+and a five-lamp fan - at 1.0, 0.5, 0.25 and 0.125. The light itself was where
+it should be (a default lamp within 2 levels of 1.0 at 0.5, 4 at 0.25). The
+defect was in the dark tail, where the cone falls by one 8-bit level every 13
+to 50 px: at 0.25 and 0.125 it broke into blocky, diamond-shaped contour bands
+that 1.0 does not have, and the dither's noise came out as blotches one buffer
+texel wide.
+
+![](images/review-findings/spotlight-scale-tail.png)
+
+A default lamp's dark flank, 3x, gain 8 so the tail's levels are visible:
+before on the top row, after on the bottom. Left to right 1.0, 0.5, 0.25,
+0.125.
+
+**Mechanism.** The neon's R7, on the other layer that has a reduced buffer.
+`spotlight.frag` dithers its output before an 8-bit write, which is right at
+1.0, where that write is the caller's target. Below 1.0 it writes
+`mScaledBuffer` instead - RGBA8 - and the blit reads that back bilinearly.
+Two things then go wrong at once. The buffer has already rounded the tail into
+one-level plateaus several texels wide, and a later filter can only join them
+with ramps one texel long; and the dither, added per texel, is averaged by the
+same filter over texels `1 / scale` px wide, so it stops decorrelating the
+target's rounding and becomes low-frequency mottle. What reaches the target is
+the contour the dither exists to remove, drawn in the bilinear filter's
+diamond shapes.
+
+**Fixed** the way the neon fixed it. `mScaledBuffer` is RGBA16F (RGBA8 where
+the driver will not render to half float, `SCALED_FORMATS` in
+`spotlight-renderer.cpp`); `spotlight.frag` writes it undithered (`uDither` 0 -
+the one uniform the two paths now set differently); and the blit is the
+spotlight's own, `spotlight-blit.frag`, which adds the same noise once per
+destination pixel after its bilinear read. The noise function moved into
+`spotlight-dither.glsl`, injected into both programs. On the RGBA8 fallback
+the pass dithers as before and the blit dithers on top.
+
+**Measured**, against the 1.0 render, as the error left after a 9 x 9 box
+filter - which removes the dither and keeps the contours - over tail pixels
+between 1 and 48 levels:
+
+| scene | scale | before: px off > 0.5 level | after | RGBA8 fallback |
+| ----- | ----- | --- | --- | --- |
+| wide soft lamp | 0.25 | 3,586 | 49 | 2,676 |
+| wide soft lamp | 0.125 | 7,359 | 498 | 4,264 |
+| five-lamp fan | 0.25 | 6,472 | 0 | 5,855 |
+| five-lamp fan | 0.125 | 15,608 | 210 | 12,546 |
+
+Scale 1.0 is byte-identical on all four scenes - it never touches the buffer.
+No pixel the blit covers outside the strips lights up (lit pixels within 0.05%
+of 1.0's), and the coverage alpha over a transparent clear still matches the
+colour's premultiplication everywhere.
+
+What it does NOT change: the reduced scale still under-samples small bright
+features. The narrow beam's head, a few px across, is 24 levels off 1.0 at 0.25
+and 65 at 0.125, before and after. That is resolution, not quantisation.
+
+**Cost** (AMD Radeon Pro 5300M, 1920 x 1080, wall clock, four interleaved
+rounds): 1.04-1.08x the old scaled frame for one to eight lamps at 0.25 and
+0.5; 1.0 unchanged. Half float itself is 1.01-1.05x. The first version of the
+blit cost 1.26-1.33x, and two things in it were the cost, both measured
+variant by variant: reading `gl_FragCoord` in that full-viewport pass (+0.05 ms
+on its own; the pixel position now comes from `vPos` and a viewport uniform),
+and writing a dithered near-zero over every empty pixel rather than an exact 0
+(which the blend can skip). Memory doubles: 4.1 MB instead of 2.1 for the
+buffer at 1080p and 0.5, 1.0 MB at 0.25.
+
+---
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
@@ -5325,7 +5400,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, the thirtieth V26, and the thirty-first I63. Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, the thirtieth V26, the thirty-first I63, and the thirty-second V27. Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus V9 from the third (I12's remainder closed
 with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
@@ -5388,6 +5463,7 @@ with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 | V25 | fixed | the filament read one coverage at the fragment's nearest perimeter point, which jumps across a corner's diagonal, so an arc ending on a sharp corner (an arc wipe from 0) was cut along it on the inside half only; the filament is now a max over the outline's pieces, each at its own distance and its own nearest point - uniformly lit rings byte-identical, `check` unchanged |
 | V26 | fixed | every edge ramp (the one-sided cut, the cutoffs' floor, the blit's, the ring field's, the opaque fill's coverage) was sized by `fwidth(d)`, which reads 2 on a sharp corner's vertex pixel when the quad straddles both edges - that pixel came out at 0.84 (the fill's 0.75) on whichever corners the quad parity hit; `sdRoundBoxFwidth` takes the analytic gradient instead - corners agree within the dither, two-sided scenes byte-identical |
 | I63 | changed | the field bake (`neon.frag` + `NEON_FIELD_BAKE`) was sent `uGlowSideSoftness`, whose only reader follows the bake's return, so Tizen's compiler removed it and the upload logged "not found"; the bake is no longer sent it - frames byte-identical, the other neon programs audited for the same |
+| V27 | fixed | below `resolutionScale` 1.0 the spotlight dithered into an RGBA8 buffer the blit then filtered, so the dark tail came back as blocky contours and texel-wide mottle; the buffer is half float and undithered, and the spotlight's own blit dithers per destination pixel - tail pixels off by over half a level 3,586 -> 49 and 6,472 -> 0 at 0.25, 1.0 byte-identical, scaled frames 1.04-1.08x (AMD 5300M) |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

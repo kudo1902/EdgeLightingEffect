@@ -5,8 +5,9 @@
 // Shared spotlight constants - single source of truth.
 //
 // Consumed by BOTH:
-//   - the spotlight shader (spotlight.frag), where CMake text-injects this
-//     file via @SPOTLIGHT_TUNING@ in shaders.h.in, and
+//   - the spotlight shaders (spotlight.frag, and spotlight-blit.frag for
+//     SPOT_DITHER_STEPS), where CMake text-injects this file via
+//     @SPOTLIGHT_TUNING@ in shaders.h.in, and
 //   - the C++ renderer (spotlight-renderer.cpp), which #includes it to solve
 //     each lamp's support and size the strip it draws.
 //
@@ -165,8 +166,10 @@
 /// and re-run it before shipping a lower value.
 #define SPOT_STRIP_SEGMENTS       12
 
-/// Width of the ordered dither spotlight.frag adds before the framebuffer
-/// quantises its output, peak to peak, in destination steps. 1.0 is therefore
+/// Width of the ordered dither added before the framebuffer quantises the
+/// layer's output, peak to peak, in destination steps - by spotlight.frag at
+/// resolutionScale 1.0, and by spotlight-blit.frag below it (see
+/// spotlight-dither.glsl for why never into the reduced buffer). 1.0 is therefore
 /// a rectangular +/- HALF a step - the classic dither for an 8-bit target: it
 /// decorrelates the rounding error from the signal without adding visible
 /// noise, and its peak is exactly the rounding threshold, so it cannot round

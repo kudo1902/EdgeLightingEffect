@@ -56,6 +56,8 @@ set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lens-flare.frag"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight.vert"
     "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight-blit.frag"
+    "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight-dither.glsl"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/neon-tuning.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/droplets-tuning.h"
     "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/lens-flare-tuning.h"
@@ -81,6 +83,7 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lens-flare.vert" LENS_FLARE_VERT_
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/lens-flare.frag" LENS_FLARE_FRAG_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight.vert" SPOTLIGHT_VERT_CONTENT)
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight.frag" SPOTLIGHT_FRAG_CONTENT)
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight-blit.frag" SPOTLIGHT_BLIT_FRAG_CONTENT)
 
 # Shared neon tuning #defines, injected into neon.frag, neon-gather.frag,
 # neon-emission.frag, neon-glow-cover.frag, neon-glow-cover-fill.frag, neon-blit.frag and neon-field.frag via @NEON_TUNING@
@@ -123,6 +126,12 @@ file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/lens-flare-tuning.h" LEN
 # @SPOTLIGHT_TUNING@ in shaders.h.in (also #included by the C++ renderer,
 # which solves each lamp's support from the same falloff).
 file(READ "${CMAKE_CURRENT_SOURCE_DIR}/include/renderer/spotlight-tuning.h" SPOTLIGHT_TUNING)
+
+# The spotlight's output dither, injected via @SPOTLIGHT_DITHER@ into
+# spotlight.frag and spotlight-blit.frag, after @SPOTLIGHT_TUNING@ - the two
+# programs that write the layer to the caller's framebuffer (at scale 1.0 and
+# below it) and have to draw the same noise. Not a shader on its own.
+file(READ "${CMAKE_CURRENT_SOURCE_DIR}/shaders/spotlight-dither.glsl" SPOTLIGHT_DITHER)
 
 set(SHADER_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated")
 configure_file(

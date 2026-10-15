@@ -5,6 +5,32 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-15 - V27: the spotlight's dark tail below scale 1.0
+
+Uncommitted. AMD Radeon Pro 5300M. V27 in
+[`review-findings.md`](review-findings.md) has the detail.
+
+- **Reported.** The spotlight "is not good" at a low `resolutionScale`.
+- **Cause.** The neon's R7 again, on the spotlight's own reduced buffer: it was
+  RGBA8 and dithered per texel, so the bilinear blit read a tail already
+  rounded to one-level plateaus and averaged the noise into texel-wide mottle -
+  blocky, diamond-shaped contours at 0.25 and 0.125 where 1.0 is smooth.
+- **What changed.** The buffer is RGBA16F (RGBA8 fallback, which keeps the
+  in-pass dither); `spotlight.frag` writes it undithered (`uDither`); a new
+  `spotlight-blit.frag` dithers once per destination pixel after the read, with
+  the noise shared through a new chunk, `spotlight-dither.glsl`.
+  `blit.frag` is now the lens flare's alone.
+- **Measured.** Tail pixels off 1.0 by over half a level after a 9 x 9 box
+  filter, at 0.25: 3,586 -> 49 (wide soft lamp), 6,472 -> 0 (five-lamp fan).
+  1.0 byte-identical. Scaled frames 1.04-1.08x at 1080p; the first blit cost
+  1.26-1.33x, almost all of it from reading `gl_FragCoord` in a full-viewport
+  pass and writing noise over empty pixels - both removed. Buffer memory
+  doubles (4.1 MB at 1080p and 0.5).
+- **Open.** Unchanged by this and inherent to the scale: small bright features
+  (a narrow beam's head) are under-sampled - 24 levels off at 0.25. Only
+  measured on the AMD; the device should get one look at 0.25 over a dark
+  background.
+
 ## 2026-10-13 - Stale documents cleared; V16 re-measured on the M2 Pro
 
 `abd2ece` for the documents. Apple M2 Pro.

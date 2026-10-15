@@ -726,7 +726,8 @@ extern "C"
     /** @brief Fraction of the viewport the lamps render at before being
      *         bilinear-blitted back. 1.0 (default) draws direct - no offscreen
      *         buffer, no blit. Clamped to [0.125, 1.0] at draw time.
-     *  @note  Lossless in shape: not one uniform differs between the paths.
+     *  @note  Lossless in shape: the same falloff, shaded into a half-float
+     *         buffer and dithered at full resolution by the blit.
      *         But unlike the neon and flare scales this one is NOT
      *         automatically a saving - this layer already bounds its geometry
      *         to what the lamps light, so the blit's full viewport of
