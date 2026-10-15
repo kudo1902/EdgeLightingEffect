@@ -13,6 +13,9 @@
 // (the rounded box's distance and the band's boundaries) goes into the three
 // programs that draw that edge - neon.frag, the blit and the opaque fill - and
 // neon-grade.glsl (the tone map) into neon.frag and the field's composite.
+// spotlight-dither.glsl (the spotlight's output noise) goes into the two
+// programs that write that layer to the caller's framebuffer - spotlight.frag
+// and the spotlight's blit.
 // (No configure placeholder may appear in these comments - configure_file
 // expands it here.)
 
@@ -117,7 +120,14 @@ namespace EdgeLighting
 
                 static const char *const SPOTLIGHT_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
 @SPOTLIGHT_TUNING@
+@SPOTLIGHT_DITHER@
 @SPOTLIGHT_FRAG_CONTENT@
+)shadersrc";
+
+                static const char *const SPOTLIGHT_BLIT_FRAG_SRC = R"shadersrc(@GLSL_VERSION@
+@SPOTLIGHT_TUNING@
+@SPOTLIGHT_DITHER@
+@SPOTLIGHT_BLIT_FRAG_CONTENT@
 )shadersrc";
 
         }

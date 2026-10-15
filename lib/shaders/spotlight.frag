@@ -50,9 +50,10 @@ precision highp float;
 //
 // This shader never reads gl_FragCoord: everything arrives interpolated in the
 // lamp's frame - or, for the clip area, in app space through vApp. That is why
-// the y-flip in Render is free, why SpotlightConfig::resolutionScale still
-// needs no uniform of its own, and why the sub-viewport caveat in
-// BaseRenderer's doc comment does not apply here.
+// the y-flip in Render is free, why SpotlightConfig::resolutionScale needs no
+// uniform to shape the light (uDither below only says whether THIS pass
+// dithers), and why the sub-viewport caveat in BaseRenderer's doc comment does
+// not apply here.
 //
 // One caveat of its own, and the clip is the whole of it: reading app space
 // rather than gl_FragCoord keeps the mask's GEOMETRY identical at any scale,
@@ -149,29 +150,12 @@ float spotClipMask(vec2 app) {
     return mix(1.0 - inside, inside, uClipParams.z);
 }
 
-/// Interleaved gradient noise, in [-0.5, 0.5]. One fract, one dot: the whole
-/// dither costs about as much as the bloom's sqrt.
-///
-/// Deliberately NOT the fract(sin(dot(...))) hash. That one feeds sin an
-/// argument in the tens of thousands, and how much of it survives is a
-/// precision question every GPU answers differently - on a part that rounds
-/// it coarsely the "noise" degenerates into a second set of bands, which is
-/// the artefact this function exists to remove.
-///
-/// @p p is in PIXELS, and vLocal is the right pixel-valued thing to hand it:
-/// the lamp frame is a rotation plus a translation of the framebuffer, so a
-/// step of one fragment is a step of one unit here too, whatever the lamp's
-/// angle. That also keeps the promise below - the pattern is anchored to the
-/// lamp, so under an animation it travels WITH the beam instead of crawling
-/// across it, and gl_FragCoord still never appears in this shader.
-///
-/// NOT vApp, which is also in pixels but is anchored to the SCREEN: feeding it
-/// here would give every lamp the same pattern in the same place, so two
-/// overlapping beams would dither in lockstep and correlate exactly where the
-/// noise is meant to be independent.
-float spotDither(vec2 p) {
-    return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715)))) - 0.5;
-}
+/// 1 where this pass writes the caller's framebuffer (resolutionScale 1.0) or
+/// an RGBA8 reduced buffer, 0 where it writes the half-float reduced buffer -
+/// whose dither spotlight-blit.frag adds instead, after its bilinear read. The
+/// ONE uniform the two paths set differently; see SpotlightRenderer::Render
+/// and spotlight-dither.glsl.
+uniform float uDither;
 
 void main() {
     float along = vLocal.x;
@@ -309,7 +293,18 @@ void main() {
     //
     // Same offset on all three channels and on the coverage, so the dither
     // moves the value and never the hue or the premultiplication.
-    float dither = spotDither(vLocal) * (SPOT_DITHER_STEPS / 255.0);
+    //
+    // vLocal, not vApp or gl_FragCoord: the lamp frame is a rotation plus a
+    // translation of the framebuffer, so one fragment is one unit of it
+    // whatever the lamp's angle, and the pattern is anchored to the lamp - it
+    // travels WITH the beam under an animation instead of crawling across it,
+    // and two overlapping beams dither independently rather than in lockstep.
+    //
+    // Scaled by uDither, which is 0 on the scaled path's half-float buffer:
+    // one fragment there is 1 / scale destination pixels, and the blit's
+    // bilinear read would average this noise into blotches that wide. The blit
+    // dithers instead (spotlight-blit.frag).
+    float dither = spotDitherOffset(vLocal) * uDither;
 
     fragColor = vec4(max(lit + dither, 0.0), max(cov + dither, 0.0));
 }

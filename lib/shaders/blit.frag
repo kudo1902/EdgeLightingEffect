@@ -1,8 +1,10 @@
 precision highp float;
 
 // Plain composite of a reduced-resolution buffer back over the caller's
-// framebuffer: SpotlightRenderer's and LensFlareRenderer's scaled path. Drawn
-// with neon.vert over an NDC quad at an identity uMVP, so vPos is NDC.
+// framebuffer: LensFlareRenderer's scaled path. Drawn with neon.vert over an
+// NDC quad at an identity uMVP, so vPos is NDC. (SpotlightRenderer used this
+// too until its scaled path needed the dither its own blit adds - see
+// spotlight-blit.frag.)
 //
 // Bilinear upsampling of premultiplied colour + coverage alpha is fringe-free,
 // and the caller's premultiplied-over blend does the rest.
@@ -13,7 +15,8 @@ precision highp float;
 // two unrelated renderers had to remember to disable. This is exactly what
 // neon-blit.frag computes with its cut off - the same uv, and src * 1.0 is src
 // - so moving them here changed no pixel. Keep it this small: a layer that
-// needs more than a composite wants its own blit, as the neon has.
+// needs more than a composite wants its own blit, as the neon and the
+// spotlight have.
 
 in vec2 vPos;
 out vec4 fragColor;

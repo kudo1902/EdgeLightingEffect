@@ -622,10 +622,22 @@ the way animating a pure shader uniform is.
 
 ## 6. Resolution and cost
 
-`SpotlightConfig::resolutionScale` behaves exactly as the neon's and the
-flare's do - same two paths, same blit - and **not one uniform differs between
-them**, so a scaled frame is the same picture at lower resolution rather than a
-differently shaped one.
+`SpotlightConfig::resolutionScale` behaves as the flare's does - two paths,
+direct at 1.0 and a bilinear blit below it - and **no uniform that shapes the
+light differs between them**, so a scaled frame is the same picture at lower
+resolution rather than a differently shaped one.
+
+The one thing that moves is **where the output is dithered**. At 1.0 the strips
+dither their own write to the caller's 8-bit target. Below it they write a
+**half-float** buffer undithered, and the layer's own blit
+(`spotlight-blit.frag`) dithers once per destination pixel after its bilinear
+read. That split is the neon's (R7) and for the same reason: dithered into an
+RGBA8 buffer, the tail - one level every 13 to 50 px - was already rounded to
+plateaus before the blit read it, and the filter averaged the per-texel noise
+into blotches, so at 0.25 and 0.125 the dark tail came back as blocky contours
+(V27 in `review-findings.md`). A driver that will not render to half float
+gets RGBA8 with the old in-pass dither, plus the blit's. The buffer costs twice
+the memory for it: 4.1 MB at 1080p and 0.5.
 
 One exception, and it is a hard gate rather than a caveat: **an enabled clipped
 lamp holds the scale at 1.0**, so everything in this section describes an

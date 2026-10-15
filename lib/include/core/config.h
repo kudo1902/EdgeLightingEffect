@@ -1171,7 +1171,10 @@ namespace EdgeLighting
         /// fragment stage works entirely in full-res lamp-local pixels that
         /// arrive interpolated, so drawing into a smaller buffer reproduces
         /// the same picture at lower resolution rather than a differently
-        /// shaped one - not one uniform differs between the two paths.
+        /// shaped one. The buffer is half float (RGBA8 where the driver will
+        /// not render to it) and the blit dithers at full resolution, so the
+        /// dark tail stays as smooth as at 1.0 rather than banding into
+        /// blocky contours.
         ///
         /// But this layer does NOT shade the whole viewport: its strips are
         /// bounded to what each lamp lights, so a scale that quarters them

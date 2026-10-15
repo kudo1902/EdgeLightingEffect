@@ -47,13 +47,20 @@ namespace EdgeLighting
     /// .cpp for the measurements and for why the neon's fix - moving its cut
     /// into the blit - could not be reused here.
     ///
-    /// **Not one uniform differs between the paths** - fewer than the flare's
-    /// two. The fragment stage reads only interpolated full-res lamp-local
-    /// coordinates and flat per-lamp pixel values, so the scaling happens
-    /// entirely in the viewport transform: the same ortho over the same app
-    /// coordinates, rasterised into a smaller buffer. Only the render target,
-    /// the blit and the buffer allocation are conditional, which is what keeps
-    /// 1.0 bit-identical to the single-path renderer this grew out of.
+    /// **No uniform that shapes the light differs between the paths.** The
+    /// fragment stage reads only interpolated full-res lamp-local coordinates
+    /// and flat per-lamp pixel values, so the scaling happens entirely in the
+    /// viewport transform: the same ortho over the same app coordinates,
+    /// rasterised into a smaller buffer. Only the render target, the blit, the
+    /// buffer allocation and WHERE THE OUTPUT IS DITHERED are conditional,
+    /// which is what keeps 1.0 bit-identical to the single-path renderer this
+    /// grew out of. The dither is the one uniform (@c uDither): at 1.0 the
+    /// strips dither their own write to the caller's 8-bit target; below it
+    /// they write an undithered half-float buffer and spotlight-blit.frag
+    /// dithers after its bilinear read, because a buffer texel is 1 / scale
+    /// px wide and the read would average a per-texel dither into blotches -
+    /// and an RGBA8 buffer would have rounded the dark tail into blocky
+    /// contours first. See SCALED_FORMATS in the .cpp.
     ///
     /// Be aware of what the scale is worth here, because it is NOT the neon's
     /// or the flare's bargain: those shade the whole viewport, so quartering
@@ -158,6 +165,13 @@ namespace EdgeLighting
         bool setupShaders();
         void setupBlitGeometry();
 
+        /// Allocate @c mScaledBuffer at @p width x @p height in the best
+        /// format the driver will render to - half float, else RGBA8 - and
+        /// leave @c mScaledFormat on it. See SCALED_FORMATS in the .cpp.
+        /// @return false only if no format allocated, in which case there is
+        ///         no attachment and nothing may be bound or cleared.
+        bool resizeScaledBuffer(int width, int height);
+
         /// Allocate the VBO at its CEILING size and record the attribute
         /// layout, once. Never sized to the live lamp count: that would put a
         /// reallocation on the animation path, which is the mistake the neon
@@ -195,16 +209,23 @@ namespace EdgeLighting
 
     private:
         ShaderProgram mShaderProgram;
-        /// Scaled path only: composites the scaled buffer back at full res.
-        /// Built unconditionally rather than lazily - a shader compile in the
+        /// Scaled path only: composites the scaled buffer back at full res,
+        /// and dithers it on the way (spotlight-blit.frag). Built
+        /// unconditionally rather than lazily - a shader compile in the
         /// middle of a frame, the first time someone drags the scale slider
         /// off 1.0, is a stall exactly where it will be blamed on the scale.
-        /// (Reuses the neon blit shader - identical job.)
         ShaderProgram mBlitShader;
         /// Allocated only when the scaled path first runs; at scale 1.0 this
         /// stays empty and costs nothing, and it is released again as soon as
-        /// a config stops asking for it.
+        /// a config stops asking for it. Half float where the driver renders
+        /// to it, RGBA8 otherwise - see @ref resizeScaledBuffer.
         Framebuffer mScaledBuffer{"Spotlight.Scaled"};
+        /// Index into SCALED_FORMATS (the .cpp) of the best format the driver
+        /// has not refused for @c mScaledBuffer, where the walk resumes. Kept
+        /// beside the buffer rather than in it because the buffer is released
+        /// between uses. Also picks spotlight.frag's @c uDither on the scaled
+        /// path: 0 in half float, 1 in RGBA8.
+        size_t mScaledFormat = 0;
         VertexArray mVertexArray{"SpotlightRenderer"};
         /// Fullscreen NDC quad for the blit. A second VAO rather than a reuse
         /// of @c mVertexArray: that one carries the five-attribute strip
