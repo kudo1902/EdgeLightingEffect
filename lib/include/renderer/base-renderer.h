@@ -8,6 +8,8 @@
 
 namespace EdgeLighting
 {
+    class ResourceContext;
+    class ShaderProgram;
 
     /// Which visual layer a renderer draws - its identity in
     /// @ref EdgeLightingEffect's layer calls (@ref EdgeLightingEffect::AddRenderer
@@ -98,7 +100,30 @@ namespace EdgeLighting
         /// publishes and finds nothing.
         void SetBufferRegistry(std::shared_ptr<BufferRegistry> registry) { mBufferRegistry = std::move(registry); }
 
+        /// What this renderer shares with the other renderers of its effect -
+        /// see @ref ResourceContext. @c EdgeLightingEffect::AddRenderer hands
+        /// every renderer the effect's own, before it initialises a late one;
+        /// a renderer driven without an effect has none, and builds
+        /// everything for itself.
+        void SetResourceContext(std::shared_ptr<ResourceContext> context) { mResourceContext = std::move(context); }
+
     protected:
+        /// A program linking the vertex stage @p vertSrc and the fragment
+        /// stage @p fragSrc - with @p fragDefines spliced in after its
+        /// #version line when given (@c ShaderCache::WithDefines) - each taken
+        /// from the context's @c ShaderCache. A stage any renderer of the
+        /// effect compiled already is linked, not compiled again, and a stage
+        /// whose compile failed is not compiled again either: the program
+        /// comes back invalid, and the failure was logged once, by that first
+        /// compile. Both sources must be @c ShaderSource constants, since the
+        /// cache keeps the pointers.
+        ///
+        /// Always a program object of its own: the cache shares stages, never
+        /// programs (see @c ShaderCache). Without a context both stages are
+        /// compiled for this program alone, as before the cache existed.
+        ShaderProgram BuildProgram(const char *vertSrc, const char *fragSrc, const char *name,
+                                   const char *fragDefines = nullptr) const;
+
         /// Publish attachment @p attachment of @p buffer as a TABLE - a buffer
         /// that maps onto no area of the frame - if this renderer has a
         /// registry. Call it from @ref Render, once the buffer holds what this
@@ -140,6 +165,7 @@ namespace EdgeLighting
         }
 
         std::shared_ptr<BufferRegistry> mBufferRegistry;
+        std::shared_ptr<ResourceContext> mResourceContext;
     };
 
 } // namespace EdgeLighting

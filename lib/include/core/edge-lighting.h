@@ -236,6 +236,10 @@ namespace EdgeLighting
         /// @ref AddRenderer registers, so it outlives this effect for one a
         /// host still holds.
         std::shared_ptr<BufferRegistry> mBufferRegistry;
+        /// What the renderers share - the compiled shader stages today (see
+        /// @ref ResourceContext). Handed to every renderer @ref AddRenderer
+        /// registers, before it initialises a late one.
+        std::shared_ptr<ResourceContext> mResourceContext;
         /// Set once @ref Initialize has run, so @ref AddRenderer knows whether
         /// a newly registered renderer still has an Initialize coming or has
         /// missed it and must be initialised immediately.

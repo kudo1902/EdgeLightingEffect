@@ -920,15 +920,15 @@ namespace EdgeLighting
 
     bool SpotlightRenderer::setupShaders()
     {
-        mShaderProgram = ShaderProgram(ShaderSource::SPOTLIGHT_VERT_SRC,
-                                       ShaderSource::SPOTLIGHT_FRAG_SRC,
-                                       "SpotlightRenderer");
+        mShaderProgram = BuildProgram(ShaderSource::SPOTLIGHT_VERT_SRC,
+                                      ShaderSource::SPOTLIGHT_FRAG_SRC,
+                                      "SpotlightRenderer");
         // Its own blit, not blit.frag: the scaled path dithers there, after
         // the bilinear read, rather than into the buffer. See
         // spotlight-blit.frag.
-        mBlitShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
-                                    ShaderSource::SPOTLIGHT_BLIT_FRAG_SRC,
-                                    "SpotlightRenderer.Blit");
+        mBlitShader = BuildProgram(ShaderSource::NEON_VERT_SRC,
+                                   ShaderSource::SPOTLIGHT_BLIT_FRAG_SRC,
+                                   "SpotlightRenderer.Blit");
         return mShaderProgram.IsValid() && mBlitShader.IsValid();
     }
 

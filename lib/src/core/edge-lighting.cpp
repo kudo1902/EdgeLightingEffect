@@ -1,4 +1,5 @@
 #include "core/edge-lighting.h"
+#include "core/resource-context.h"
 #include "animation/animation-manager.h"
 #include "renderer/neon-renderer.h"
 #include "renderer/droplets-renderer.h"
@@ -15,7 +16,8 @@ namespace EdgeLighting
 
     EdgeLightingEffect::EdgeLightingEffect()
         : mAnimationManager(std::make_unique<AnimationManager>()),
-          mBufferRegistry(std::make_shared<BufferRegistry>())
+          mBufferRegistry(std::make_shared<BufferRegistry>()),
+          mResourceContext(std::make_shared<ResourceContext>())
     {
     }
 
@@ -112,8 +114,13 @@ namespace EdgeLighting
         // ever compile them, and the renderer's Render then drew with program
         // 0 every frame. Initialise it here instead, and drop it if that fails
         // - the same contract Initialize applies to the batch.
+        //
+        // The context goes first, so a renderer initialised here builds its
+        // programs from the stages the others compiled, like the rest.
+        renderer->SetResourceContext(mResourceContext);
         if (mInitialized && !renderer->Initialize())
         {
+            renderer->SetResourceContext(nullptr);
             LOG_E("EdgeLightingEffect: renderer registered after Initialize failed "
                   "to initialize - not added.");
             return;

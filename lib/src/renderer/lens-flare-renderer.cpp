@@ -410,12 +410,12 @@ namespace EdgeLighting
     {
         // blit.frag, not the neon's blit: this layer wants a plain composite
         // and has no rect to apply the neon's cuts against. See blit.frag.
-        mBlitShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
-                                    ShaderSource::BLIT_FRAG_SRC,
-                                    "LensFlareRenderer.Blit");
-        mFlareShader = ShaderProgram(ShaderSource::LENS_FLARE_VERT_SRC,
-                                     ShaderSource::LENS_FLARE_FRAG_SRC,
-                                     "LensFlareRenderer.Flare");
+        mBlitShader = BuildProgram(ShaderSource::NEON_VERT_SRC,
+                                   ShaderSource::BLIT_FRAG_SRC,
+                                   "LensFlareRenderer.Blit");
+        mFlareShader = BuildProgram(ShaderSource::LENS_FLARE_VERT_SRC,
+                                    ShaderSource::LENS_FLARE_FRAG_SRC,
+                                    "LensFlareRenderer.Flare");
         if (!mFlareShader.IsValid() || !mBlitShader.IsValid())
         {
             return false;

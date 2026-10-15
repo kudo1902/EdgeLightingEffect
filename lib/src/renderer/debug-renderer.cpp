@@ -266,18 +266,18 @@ namespace EdgeLighting
         // Both reuse the standard neon vertex shader (uMVP + aPos -> vPos), so
         // the strip quad respects the same rect-local transform as the glow and
         // each marker quad can be placed by its own model matrix.
-        mLUTDebugShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
-                                        ShaderSource::NEON_LUT_DEBUG_FRAG_SRC,
-                                        "DebugRenderer.LUTDebug");
-        mStopMarkerShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
-                                          ShaderSource::NEON_STOP_MARKER_FRAG_SRC,
-                                          "DebugRenderer.StopMarker");
+        mLUTDebugShader = BuildProgram(ShaderSource::NEON_VERT_SRC,
+                                       ShaderSource::NEON_LUT_DEBUG_FRAG_SRC,
+                                       "DebugRenderer.LUTDebug");
+        mStopMarkerShader = BuildProgram(ShaderSource::NEON_VERT_SRC,
+                                         ShaderSource::NEON_STOP_MARKER_FRAG_SRC,
+                                         "DebugRenderer.StopMarker");
         // The box keeps its own minimal vertex shader (uMVP + aPos, no vPos
         // varying) rather than borrowing the neon one - it is a line list, not
         // a quad, and has nothing to interpolate.
-        mWireframeShader = ShaderProgram(ShaderSource::WIREFRAME_VERT_SRC,
-                                         ShaderSource::WIREFRAME_FRAG_SRC,
-                                         "DebugRenderer.Wireframe");
+        mWireframeShader = BuildProgram(ShaderSource::WIREFRAME_VERT_SRC,
+                                        ShaderSource::WIREFRAME_FRAG_SRC,
+                                        "DebugRenderer.Wireframe");
         return mLUTDebugShader.IsValid() && mStopMarkerShader.IsValid() &&
                mWireframeShader.IsValid();
     }
@@ -288,9 +288,9 @@ namespace EdgeLighting
         {
             // The neon vertex shader, like the markers: the unit quad scaled
             // onto the box, vPos across it in [-1, +1].
-            mBufferViewShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
-                                              ShaderSource::DEBUG_BUFFER_VIEW_FRAG_SRC,
-                                              "DebugRenderer.BufferView");
+            mBufferViewShader = BuildProgram(ShaderSource::NEON_VERT_SRC,
+                                             ShaderSource::DEBUG_BUFFER_VIEW_FRAG_SRC,
+                                             "DebugRenderer.BufferView");
             mBufferViewFailed = !mBufferViewShader.IsValid();
             if (mBufferViewFailed)
             {

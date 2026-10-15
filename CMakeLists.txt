@@ -121,8 +121,9 @@ add_subdirectory(demo-capi)
 # docs/neon-onboarding-guide.md's figures. Not part of the library or the
 # demos. See tools/neon-scale-check/README.md and
 # tools/neon-guide-figures/README.md.
-option(EDGE_LIGHTING_BUILD_TOOLS "Build tools/neon-scale-check and tools/neon-guide-figures" OFF)
+option(EDGE_LIGHTING_BUILD_TOOLS "Build tools/neon-scale-check, tools/neon-guide-figures and tools/layer-check" OFF)
 if(EDGE_LIGHTING_BUILD_TOOLS)
     add_subdirectory(tools/neon-scale-check)
     add_subdirectory(tools/neon-guide-figures)
+    add_subdirectory(tools/layer-check)
 endif()

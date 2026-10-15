@@ -20,6 +20,80 @@
 
 namespace EdgeLighting
 {
+    /// RAII wrapper around one compiled GL shader stage, which any number of
+    /// @ref ShaderProgram objects can link - so a source several programs
+    /// share is compiled once rather than once per program. @ref ShaderCache
+    /// is where the library keeps them: one per stage, per effect.
+    ///
+    /// Move-only. Destroying it while a program still has it attached is
+    /// fine: GL keeps the stage until the last program holding it goes.
+    class ShaderObject
+    {
+    public:
+        ShaderObject() = default;
+
+        /// Compile @p src as a @p type stage (@c GL_VERTEX_SHADER,
+        /// @c GL_FRAGMENT_SHADER). On failure the GL info log is logged with
+        /// @p stage ("vertex" / "fragment") and @p programName for context, and
+        /// the object is left invalid.
+        ShaderObject(GLenum type, const char *src, const char *stage, const char *programName)
+        {
+            mId = glCreateShader(type);
+            glShaderSource(mId, 1, &src, nullptr);
+            glCompileShader(mId);
+
+            GLint ok = 0;
+            glGetShaderiv(mId, GL_COMPILE_STATUS, &ok);
+            if (!ok)
+            {
+                char log[1024];
+                GLsizei len = 0;
+                glGetShaderInfoLog(mId, sizeof(log), &len, log);
+                LOG_E("ShaderProgram[%s] %s compile error:\n%s", programName, stage, log);
+                glDeleteShader(mId);
+                mId = 0;
+            }
+        }
+
+        ~ShaderObject()
+        {
+            if (mId != 0)
+            {
+                glDeleteShader(mId);
+            }
+        }
+
+        ShaderObject(const ShaderObject &) = delete;
+        ShaderObject &operator=(const ShaderObject &) = delete;
+
+        ShaderObject(ShaderObject &&other) noexcept
+            : mId(other.mId)
+        {
+            other.mId = 0;
+        }
+
+        ShaderObject &operator=(ShaderObject &&other) noexcept
+        {
+            if (this != &other)
+            {
+                if (mId != 0)
+                {
+                    glDeleteShader(mId);
+                }
+                mId = other.mId;
+                other.mId = 0;
+            }
+            return *this;
+        }
+
+        /// Returns true if the stage compiled.
+        bool IsValid() const { return mId != 0; }
+        GLuint GetId() const { return mId; }
+
+    private:
+        GLuint mId = 0;
+    };
+
     /// RAII wrapper around a GL shader program with uniform caching.
     ///
     /// On top of the usual compile/link/use lifecycle, this class:
@@ -44,40 +118,32 @@ namespace EdgeLighting
         ShaderProgram(const char *vertSrc, const char *fragSrc, const char *name = nullptr)
             : mName(name ? name : "unnamed")
         {
-            GLuint vs = compileShader(GL_VERTEX_SHADER, vertSrc, "vertex", mName.c_str());
-            if (!vs)
+            const ShaderObject vs(GL_VERTEX_SHADER, vertSrc, "vertex", mName.c_str());
+            if (!vs.IsValid())
             {
                 return;
             }
 
-            GLuint fs = compileShader(GL_FRAGMENT_SHADER, fragSrc, "fragment", mName.c_str());
-            if (!fs)
+            const ShaderObject fs(GL_FRAGMENT_SHADER, fragSrc, "fragment", mName.c_str());
+            if (!fs.IsValid())
             {
-                glDeleteShader(vs);
                 return;
             }
 
-            mId = glCreateProgram();
-            glAttachShader(mId, vs);
-            glAttachShader(mId, fs);
-            glLinkProgram(mId);
-            glDeleteShader(vs);
-            glDeleteShader(fs);
+            link(vs, fs);
+        }
 
-            GLint ok = 0;
-            glGetProgramiv(mId, GL_LINK_STATUS, &ok);
-            if (!ok)
+        /// Link @p vertex and @p fragment, compiled already and kept by the
+        /// caller - how programs that share a stage share its compile (see
+        /// @ref ShaderObject). An invalid stage, whose failure its compile has
+        /// logged, leaves this program invalid. @p name as above.
+        ShaderProgram(const ShaderObject &vertex, const ShaderObject &fragment, const char *name = nullptr)
+            : mName(name ? name : "unnamed")
+        {
+            if (vertex.IsValid() && fragment.IsValid())
             {
-                char log[1024];
-                GLsizei len = 0;
-                glGetProgramInfoLog(mId, sizeof(log), &len, log);
-                LOG_E("ShaderProgram[%s] link error:\n%s", mName.c_str(), log);
-                glDeleteProgram(mId);
-                mId = 0;
-                return;
+                link(vertex, fragment);
             }
-
-            LOG_I("ShaderProgram[%s] linked (id=%u).", mName.c_str(), mId);
         }
 
         ~ShaderProgram()
@@ -435,27 +501,29 @@ namespace EdgeLighting
         }
 
     private:
-        /// Compile @p src as a @p type shader. Logs the GL info log on failure
-        /// with @p stage ("vertex" / "fragment") and @p programName for context.
-        /// @return The shader ID, or 0 on failure.
-        static GLuint compileShader(GLenum type, const char *src, const char *stage, const char *programName)
+        /// Link @p vs and @p fs into a new program, logging a failure under
+        /// mName. The stages stay attached; their objects are the caller's.
+        void link(const ShaderObject &vs, const ShaderObject &fs)
         {
-            GLuint shader = glCreateShader(type);
-            glShaderSource(shader, 1, &src, nullptr);
-            glCompileShader(shader);
+            mId = glCreateProgram();
+            glAttachShader(mId, vs.GetId());
+            glAttachShader(mId, fs.GetId());
+            glLinkProgram(mId);
 
             GLint ok = 0;
-            glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
+            glGetProgramiv(mId, GL_LINK_STATUS, &ok);
             if (!ok)
             {
                 char log[1024];
                 GLsizei len = 0;
-                glGetShaderInfoLog(shader, sizeof(log), &len, log);
-                LOG_E("ShaderProgram[%s] %s compile error:\n%s", programName, stage, log);
-                glDeleteShader(shader);
-                return 0;
+                glGetProgramInfoLog(mId, sizeof(log), &len, log);
+                LOG_E("ShaderProgram[%s] link error:\n%s", mName.c_str(), log);
+                glDeleteProgram(mId);
+                mId = 0;
+                return;
             }
-            return shader;
+
+            LOG_I("ShaderProgram[%s] linked (id=%u).", mName.c_str(), mId);
         }
 
         /// Look up the location for @p name, caching the result (including -1

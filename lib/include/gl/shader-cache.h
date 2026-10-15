@@ -1,0 +1,130 @@
+#ifndef _EDGE_LIGHTING_SHADER_CACHE_H_
+#define _EDGE_LIGHTING_SHADER_CACHE_H_
+
+#include "gl/shader-program.h"
+#include <cstring>
+#include <memory>
+#include <string>
+#include <vector>
+
+namespace EdgeLighting
+{
+    /// Compiled shader stages, each compiled once and linked by every program
+    /// that needs it - across renderers, which is what it is for: neon.vert
+    /// went into up to 17 programs, each compiling its own copy, and neon.frag
+    /// into two (docs/resource-sharing-plan.md, section 1.2).
+    ///
+    /// Shares STAGES, never programs. Every pass keeps a program object of its
+    /// own, since one program drawing an offscreen buffer unblended and the
+    /// caller's framebuffer blended in the same frame measured 93-624x slower
+    /// on the AMD macOS driver (docs/neon-resolution-scale-plan.md section 7,
+    /// build AB). The program object is what such a driver keys its
+    /// per-target state on; the stage is only the compile.
+    ///
+    /// Owned by a @c ResourceContext, one per effect. It holds GL objects, so
+    /// it is destroyed, like the renderers, with the GL context current.
+    class ShaderCache
+    {
+    public:
+        ShaderCache() = default;
+        ShaderCache(const ShaderCache &) = delete;
+        ShaderCache &operator=(const ShaderCache &) = delete;
+
+        /// The @p type stage compiled from @p source with @p defines spliced
+        /// in (@ref WithDefines; nullptr or "" for none), compiled by the first
+        /// request for it. A compile that failed is kept too, as an invalid
+        /// object: its error was logged once, by that compile, and no later
+        /// request - from any renderer - compiles it again. @p programName
+        /// only attributes that log.
+        ///
+        /// @p source must outlive the cache: a @c ShaderSource constant, which
+        /// is static. The cache keeps the pointer, not a copy. Two pointers to
+        /// the same text are one stage - every translation unit that includes
+        /// shaders.h has a pointer of its own, so a match is by content too.
+        const ShaderObject &Get(GLenum type, const char *source, const char *defines, const char *programName)
+        {
+            const char *names = defines ? defines : "";
+            const size_t length = std::strlen(source);
+            for (const std::unique_ptr<Entry> &entry : mEntries)
+            {
+                if (entry->type == type && entry->length == length && entry->defines == names &&
+                    (entry->source == source || std::memcmp(entry->source, source, length) == 0))
+                {
+                    return entry->object;
+                }
+            }
+
+            std::unique_ptr<Entry> entry(new Entry());
+            entry->type = type;
+            entry->source = source;
+            entry->length = length;
+            entry->defines = names;
+            const char *stage = type == GL_VERTEX_SHADER ? "vertex" : "fragment";
+            if (*names == '\0')
+            {
+                entry->object = ShaderObject(type, source, stage, programName);
+            }
+            else
+            {
+                const std::string text = WithDefines(source, names);
+                entry->object = ShaderObject(type, text.c_str(), stage, programName);
+            }
+            ++mCompileCount;
+            mEntries.push_back(std::move(entry));
+            return mEntries.back()->object;
+        }
+
+        /// How many stages the cache has compiled: every request it could not
+        /// serve from a stage it already held, failed compiles included.
+        size_t GetCompileCount() const { return mCompileCount; }
+
+        /// @p src with `#define NAME` spliced in after its first line for each
+        /// space-separated NAME in @p defines.
+        ///
+        /// How one shader file yields several programs. Every embedded source
+        /// starts with the @GLSL_VERSION@ line, which must stay first, so the
+        /// defines go immediately after it - ahead of everything else, the
+        /// injected tuning header and neon-common.glsl included. Today that is
+        /// neon.frag's field bake (NEON_FIELD_BAKE) and neon-field.frag's
+        /// ring composite (NEON_FIELD_RING); see
+        /// @c NeonRenderer::ensureFieldPrograms.
+        static std::string WithDefines(const char *src, const char *defines)
+        {
+            std::string lines;
+            const std::string names(defines);
+            size_t start = 0;
+            while (start < names.size())
+            {
+                const size_t end = names.find(' ', start);
+                const std::string name = names.substr(start, end == std::string::npos ? std::string::npos : end - start);
+                if (!name.empty())
+                {
+                    lines += "#define " + name + "\n";
+                }
+                start = (end == std::string::npos) ? names.size() : end + 1;
+            }
+            std::string out(src);
+            const size_t eol = out.find('\n');
+            out.insert(eol == std::string::npos ? out.size() : eol + 1, lines);
+            return out;
+        }
+
+    private:
+        /// One stage. Held by pointer, so the reference @ref Get returns stays
+        /// valid while the vector grows.
+        typedef struct Entry
+        {
+            GLenum type = 0;
+            const char *source = nullptr; ///< The caller's static text, not a copy.
+            size_t length = 0;            ///< strlen(source), compared before the text.
+            std::string defines;          ///< As requested; "" for none.
+            ShaderObject object;          ///< Invalid if the compile failed.
+        } Entry;
+
+        std::vector<std::unique_ptr<Entry>> mEntries;
+        size_t mCompileCount = 0;
+    };
+
+} // namespace EdgeLighting
+
+#endif // _EDGE_LIGHTING_SHADER_CACHE_H_

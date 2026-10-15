@@ -561,36 +561,6 @@ namespace EdgeLighting
             }
         }
 
-        /// @p src with `#define NAME` spliced in after its first line for each
-        /// space-separated NAME in @p defines.
-        ///
-        /// How one shader file yields several programs. Every embedded source
-        /// starts with the @GLSL_VERSION@ line, which must stay first, so the
-        /// defines go immediately after it - ahead of everything else, the
-        /// injected tuning header and neon-common.glsl included. Today that is
-        /// neon.frag's one variant, the field bake's NEON_FIELD_BAKE; see
-        /// @ref NeonRenderer::ensureFieldPrograms.
-        inline std::string WithDefine(const char *src, const char *defines)
-        {
-            std::string lines;
-            const std::string names(defines);
-            size_t start = 0;
-            while (start < names.size())
-            {
-                const size_t end = names.find(' ', start);
-                const std::string name = names.substr(start, end == std::string::npos ? std::string::npos : end - start);
-                if (!name.empty())
-                {
-                    lines += "#define " + name + "\n";
-                }
-                start = (end == std::string::npos) ? names.size() : end + 1;
-            }
-            std::string out(src);
-            const size_t eol = out.find('\n');
-            out.insert(eol == std::string::npos ? out.size() : eol + 1, lines);
-            return out;
-        }
-
         /// Floor, in FULL-RES px, under every glow cutoff ramp's width. Mirrors
         /// neon.frag's softFloor, which is what actually decides how far past a
         /// cutoff the feather runs and therefore how much quad the shader needs.
@@ -2971,8 +2941,11 @@ namespace EdgeLighting
             return false;
         }
 
-        const std::string source = define ? WithDefine(fragSrc, define) : std::string(fragSrc);
-        program = ShaderProgram(ShaderSource::NEON_VERT_SRC, source.c_str(), name);
+        // Both stages from the effect's shader cache: neon.vert is compiled
+        // once for every program here and every other renderer's, and a
+        // fragment source two programs share (neon.frag, for pass 1b and the
+        // ring) once for both. A stage that failed is not compiled again.
+        program = BuildProgram(ShaderSource::NEON_VERT_SRC, fragSrc, name, define);
         if (!program.IsValid())
         {
             mFailedPrograms |= programBit;
@@ -3007,14 +2980,15 @@ namespace EdgeLighting
         // at the reduced scale and the edge ring's at full resolution - and
         // the blit.
         //
-        // Why the shading is compiled twice from one source: each program
+        // Why the shading is two program objects from one source: each program
         // object then draws ONE render target, in one blend state, per frame.
         // One program drawing two differently configured targets in a frame -
         // an offscreen buffer unblended and the caller's framebuffer blended -
         // is the shape that measured 93-624x slower on the AMD macOS driver
         // (docs/neon-resolution-scale-plan.md section 7, build AB). A second
-        // compile on the first frame is the price of never finding out
-        // which half of that difference the driver keys on.
+        // link on the first frame is the price of never finding out which
+        // half of that difference the driver keys on. Not a second compile:
+        // both link the one neon.frag stage the shader cache holds.
         const char *noGlow = "the glow is not drawn";
         return ensureProgram(mGatherShader, ShaderSource::NEON_GATHER_FRAG_SRC, nullptr, "NeonRenderer.Gather",
                              PROGRAM_GATHER, BLOCK_SEGMENT | BLOCK_SAMPLES, noGlow) &&

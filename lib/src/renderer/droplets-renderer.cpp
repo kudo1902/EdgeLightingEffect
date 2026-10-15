@@ -183,9 +183,9 @@ namespace EdgeLighting
     {
         // Reuses the standard neon vertex shader (uMVP + aPos -> vPos) so the
         // pane quad lives in the same rect-local space as the glow quad.
-        mShaderProgram = ShaderProgram(ShaderSource::NEON_VERT_SRC,
-                                       ShaderSource::DROPLETS_FRAG_SRC,
-                                       "DropletsRenderer");
+        mShaderProgram = BuildProgram(ShaderSource::NEON_VERT_SRC,
+                                      ShaderSource::DROPLETS_FRAG_SRC,
+                                      "DropletsRenderer");
         return mShaderProgram.IsValid();
     }
 

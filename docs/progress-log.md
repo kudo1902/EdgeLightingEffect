@@ -5,6 +5,63 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-15 - Sharing plan S0 and S1: the five-layer baseline, and one compile per shader stage
+
+Uncommitted, on `design_system_sharing_resources_between_renderers`, measured
+against `a213d55`. Apple M2 Pro, Debug build. Section 7 of
+[`resource-sharing-plan.md`](resource-sharing-plan.md) has the detail.
+
+- **S0.** `tools/layer-check`, built with the other tools. `report` hashes
+  248 frames over 62 scenes through all five renderers, with GL memory and
+  per-frame heap allocations; `diff` fails on any changed frame; `startup`
+  counts and times every compile. Two runs of one binary agree exactly.
+- **S1.** A `ResourceContext` per effect, handed to every renderer, holding a
+  `ShaderCache`. Every program is linked from cached `ShaderObject`s
+  (`BaseRenderer::BuildProgram`), one program object per pass as before.
+- **Measured.**
+  - All 248 frames are identical to S0.
+  - Compiles 38 -> 22: `neon.vert` once instead of 16 times, `neon.frag`
+    once instead of twice.
+  - The all-programs first frame is ~9 ms faster (116.6-119.9 -> 108.3-113.8
+    ms, interleaved runs).
+  - A forced `neon.vert` failure is compiled and logged once instead of 6
+    times.
+  - A renderer drawn without an effect compiles privately and draws
+    identically.
+  - `neon-scale-check check` and `partition` pass.
+- **Found.** Steady frames allocate on the heap: 2 per still neon frame, 9
+  under a rotating hue (40 every fourth frame), 22 and 72 alternating with all
+  five layers. Not traced yet; later steps take S0's counts as the bar.
+- **Open.** Not measured on the AMD 5300M or the target device. Next is S2,
+  the registry.
+
+## 2026-10-15 - A plan for sharing resources between renderers
+
+Not built yet. Written on `design_system_sharing_resources_between_renderers`;
+see [`resource-sharing-plan.md`](resource-sharing-plan.md).
+
+- **Goals (owner).** Cross-layer effects, memory pooling, and one copy of
+  common objects. One owner writes each resource; everyone else only reads it.
+- **Proposed.** A `ResourceContext` per effect. It holds a registry of records
+  that are owned, typed and stamped per frame, a two-phase frame
+  (`Prepare` / `Render`), read declarations, a shader-object cache, one
+  fullscreen quad, the neon's gradient ring shared with the debug layer, and a
+  render-target pool. Steps S0-S7; S2 closes I65-I73 along the way.
+- **Found while writing it.** No buffer the neon owns holds its picture: the
+  reduced buffer has no filament, cut or cutoffs. So a cross-layer read needs
+  a public product with a contract. And pooling saves nothing across today's
+  layers under a two-phase frame.
+- **Decided (owner, the same day).** Every recommendation taken:
+  - the glow product as P-a, the reduced buffer with a shared mask chunk;
+  - droplets lit by the glow as the pilot;
+  - the flare and the spotlight kept out of the pool;
+  - one string key;
+  - the debug strip following the live ring;
+  - `SetResourceContext`;
+  - the shader cache built first (S1).
+
+  Host interop stays out of scope.
+
 ## 2026-10-15 - I64: registry records no longer outlive their producers
 
 Uncommitted, on `design_system_sharing_resources_between_renderers`. Apple M2

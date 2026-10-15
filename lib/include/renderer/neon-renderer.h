@@ -1130,7 +1130,9 @@ namespace EdgeLighting
         /// @p consequence, and never retried, so a broken driver costs one
         /// compile and one log line, not one per frame. @p blocks (@c BLOCK_*)
         /// names the uniform blocks the source declares, each bound to its
-        /// binding point.
+        /// binding point. Both stages come from the effect's shader cache
+        /// (@c BaseRenderer::BuildProgram), so neon.vert is compiled once for
+        /// every program, and neon.frag once for pass 1b and the ring.
         bool ensureProgram(ShaderProgram &program, const char *fragSrc, const char *define, const char *name,
                            unsigned int programBit, unsigned int blocks, const char *consequence);
 
