@@ -35,7 +35,7 @@ old fork survived.
 
 | state | items |
 | ----- | ----- |
-| open | V9, V16, V18, I13, I18 |
+| open | V9, V16, V18, I13, I18, I64 to I73 |
 | open by decision - documented, audited or a known limit | V5, I5, I8, I25, I28, V17 |
 | fixed or changed | every other V, I and R item, through the thirty-second pass |
 
@@ -5390,6 +5390,180 @@ buffer at 1080p and 0.5, 1.0 MB at 0.25.
 
 ---
 
+## Thirty-third pass (the buffer registry and the debug buffer view)
+
+A review of `181acdd` on `design_system_sharing_resources_between_renderers`:
+the `BufferRegistry` ([`core/buffer-registry.h`](../lib/include/core/buffer-registry.h)),
+each layer's publishing (`NeonRenderer::publishBuffers`, the lens flare's and
+the spotlight's scaled paths), the debug layer's buffer view
+(`DebugConfig::bufferView`, `DebugRenderer::renderBufferView`,
+[`debug-buffer-view.frag`](../lib/shaders/debug-buffer-view.frag)) and its C ABI.
+Ten items, I64 to I73, all open. I64, I65 and I68 are reproduced offscreen,
+I72 is measured, the rest are read from the source and say so.
+
+What the pass found holding, so a fix can be checked against it: every one of
+the ten published buffers, viewed, matches the texel under each pixel exactly,
+panels included (but for I72's boundary pixels); a frame with a view on makes
+no heap allocation (the counter confirmed live, ~14,000 allocations over the
+process); `neon-scale-check check` passes; and under `opaqueOnly` the neon
+publishes nothing. AMD Radeon Pro 5300M throughout.
+
+### I64. A registry record can outlive the Framebuffer it points at - OPEN
+
+A `PublishedBuffer` holds a raw `const Framebuffer *` into its producer, and
+the registry is held by `shared_ptr` by the effect AND by every renderer it
+registered (`BaseRenderer::SetBufferRegistry`), so it outlives the effect while
+any renderer does. Nothing clears it when a producer dies: not
+`~EdgeLightingEffect`, and not `EdgeLightingEffect::Initialize`, which erases a
+renderer that fails to initialise.
+
+**Reproduced.** An effect with the neon (by layer) and a `DebugRenderer` the
+host keeps; three frames with `bufferView` "NeonRenderer.Scaled", which leave
+five records; the effect is destroyed, taking the neon with it; the kept debug
+layer is drawn standalone. Its `Find` walks the five records and calls
+`GetName()` on the dead neon's Framebuffers. With `MallocScribble=1` (freed
+memory overwritten) the process dies with SIGSEGV (exit 139); without it the
+draw "succeeds" by reading freed memory.
+
+The `CLAUDE.md` sentence the commit added - "the effect never removes a
+renderer, so the `Framebuffer`s they point at outlive them" - is wrong on both
+paths.
+
+**Fix.** Clear the registry in the effect's destructor and after `Initialize`
+erases a renderer, and correct the sentence. Both are one line; neither costs a
+frame anything.
+
+### I65. Two buffers with one name are both listed, and only the first can be viewed - OPEN
+
+`BufferRegistry::Publish` tells records apart by Framebuffer pointer and
+attachment; `BufferRegistry::Find` - and so the view, which stores a name - by
+name and attachment. Two Framebuffers with one name are two records that one
+lookup cannot tell apart.
+
+**Reproduced.** Two `NeonRenderer`s registered through
+`AddRenderer(shared_ptr)`, which, unlike `AddRenderer(RendererLayer)`, does not
+refuse a second of one layer: 10 records, two named "NeonRenderer.Scaled"
+(textures 13 and 17); `Find` returns 13 every time, so the second neon's
+buffer cannot be shown. Both demos list two identical labels that select the
+same buffer, and the two `ImGui::Selectable` items share one ImGui ID.
+
+**Fix** - a decision: refuse (and log) a second record of a name at
+`Publish`; or make the key unique - the UI appends "#n" to the n-th record of a
+name and `Find` accepts it.
+
+### I66. The glow field and the ring field are published after a failed bake - OPEN
+
+`NeonRenderer::Render` hands `publishBuffers` `field.use || field.bake`. On a
+failed bake `bakeFieldPass` clears `field.use` but leaves `field.bake` set -
+and records `mGlowField.origin` / `texelScale` whether the bake succeeded or
+not - so the frame shades directly, never reads the field, and still lists
+"NeonRenderer.Field" as this frame's, placed by those values. The ring field
+is the same: `ringField.use || ringField.bake`, after
+`mRingField.schedule.OnBaked(false)`.
+
+Read from the source, not reproduced: it needs a bake forced to fail after
+its buffer allocated (an allocation failure leaves texture 0, which the
+registry already drops). The view would show undefined or earlier-config
+texels as the current field.
+
+**Fix.** Carry the bake's result out: publish on
+`field.use || (field.bake && baked)`, and likewise for the ring.
+
+### I67. The new protected methods are named like private ones - OPEN
+
+`BaseRenderer::publishBuffer` (both overloads) and
+`BaseRenderer::getBufferRegistry` are protected and camelCase. `AGENTS.md`,
+which `CLAUDE.md` defers to for naming: "Protected methods: `PascalCase` - they
+follow the **public** rule, not the private one." They are exactly the API it
+means - called by four subclasses.
+
+**Fix.** `PublishBuffer` / `GetBufferRegistry`; the private helper `publish`
+keeps its name.
+
+### I68. Changing `bufferView` alone keeps a stale `bufferViewAttachment` - OPEN
+
+The selection is two fields. A host that changes the name and not the
+attachment looks up a pair nothing published, and the view goes blank without
+a word.
+
+**Reproduced.** View "NeonRenderer.Gather" attachment 1 (a config with
+segments), then set only `bufferView = "NeonRenderer.Scaled"`:
+`Find("NeonRenderer.Scaled", 1)` misses, `Find("NeonRenderer.Scaled", 0)` hits,
+and nothing is drawn or logged. The C ABI's setter takes both together and
+both demos set both, so only a C++ host writing the config meets it.
+
+**Fix** - a decision: fold the pair into one key ("NeonRenderer.Gather[1]"),
+which also serves I65; or, when the pair misses and the name alone hits, log
+once and show attachment 0.
+
+### I69. `GetBufferRegistry`'s doc describes the records the commit replaced - OPEN
+
+`EdgeLightingEffect::GetBufferRegistry` says names and sizes are safe to read
+between frames and that a texture name "may already have been released". That
+was true of the first design, which copied a snapshot. Records now read the
+texture, size and format live from the Framebuffer - texture 0 and 0 x 0 once
+released - and it is only the placement (`origin`, `size`) that describes the
+last frame. Nor does it mention I64. Read from the source.
+
+**Fix.** Rewrite it for live reads, and point at I64's fix.
+
+### I70. Every glow frame publishes, whether or not anything reads the registry - OPEN
+
+`NeonRenderer::publishBuffers` runs for every host - debug layer registered or
+not - and re-evaluates `IsGlowCoverUnread`, which `Render` already evaluated for
+its own gates; up to nine `Publish` calls, each scanning the vector for a
+record to replace. Records only, no GL call: not measured, and expected to be
+well under the timer noise, but it is a debug-only cost on the hot path of the
+layer that is most of the frame.
+
+**Fix.** Pass the unread flag in. Skipping the publishing when no consumer
+asked would need a "wanted" flag the debug view sets - weigh that against
+I64/I65 first, since the list would then be empty for a UI that has not
+selected anything.
+
+### I71. The C ABI accepts a buffer name it can never hand back - OPEN
+
+`el_effect_set_debug_buffer_view` stores a name of any length;
+`el_effect_get_debug_buffer_view` returns `EL_ERROR_INVALID_PARAMETER` and an
+empty string for a name that does not fit the caller's buffer - including one
+of the documented `EL_BUFFER_NAME_CAPACITY` (64). So a 70-character name set
+successfully can never be read back, and `demo-capi`'s dropdown shows "(none)"
+while the config still holds it. Read from the source.
+
+**Fix.** Refuse a name of `EL_BUFFER_NAME_CAPACITY` or more at the setter, or
+have the getters report the length they need.
+
+### I72. A table's panel is stretched by a fractional factor - OPEN
+
+`DebugRenderer::renderBufferView` fits a panel at
+`min(room.x / texels.x, room.y / texels.y)`, any float, so texel columns
+alternate between two widths, and a pixel centre can fall exactly on a texel
+boundary, where the nearest texel is either neighbour depending on the
+interpolated `vPos`.
+
+**Measured** in the registry probe: "NeonRenderer.GlowCoverSegments" (128 x
+128) panels at 2.8125x on 1280 x 720; 947 pixels showed the neighbouring texel,
+up to 5 levels off, every one of them on an exact boundary. A view meant for
+reading texels shows them uneven.
+
+**Fix.** Floor the fit to a whole number of pixels per texel when it is at
+least 1 (a whole fraction below 1).
+
+### I73. `ChannelCount` knows twelve formats; any other reads as four channels - OPEN
+
+`ChannelCount` in `buffer-registry.cpp` covers R / RG / RGB / RGBA at 8 bits,
+16F and 32F. Every buffer the library publishes is one of those, but a host
+renderer's `GL_RGB10_A2`, `GL_SRGB8_ALPHA8`, `GL_R11F_G11F_B10F` or `GL_RG16`
+returns 0: "0 ch" in both demos, and treated as four channels by the shader -
+so the ALPHA view of a three-channel `GL_R11F_G11F_B10F` shows the fetch's fill
+value 1 as white, where `DebugBufferChannel` documents a missing channel as
+black. Read from the source.
+
+**Fix.** Extend the switch; GL ES 3.0 has no `glGetTexLevelParameteriv` to ask
+the driver instead.
+
+---
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
@@ -5400,7 +5574,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, the thirtieth V26, the thirty-first I63, and the thirty-second V27. Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, the thirtieth V26, the thirty-first I63, and the thirty-second V27. The thirty-third, a review of the buffer registry, opened I64 to I73. Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus V9 from the third (I12's remainder closed
 with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
@@ -5464,6 +5638,16 @@ with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 | V26 | fixed | every edge ramp (the one-sided cut, the cutoffs' floor, the blit's, the ring field's, the opaque fill's coverage) was sized by `fwidth(d)`, which reads 2 on a sharp corner's vertex pixel when the quad straddles both edges - that pixel came out at 0.84 (the fill's 0.75) on whichever corners the quad parity hit; `sdRoundBoxFwidth` takes the analytic gradient instead - corners agree within the dither, two-sided scenes byte-identical |
 | I63 | changed | the field bake (`neon.frag` + `NEON_FIELD_BAKE`) was sent `uGlowSideSoftness`, whose only reader follows the bake's return, so Tizen's compiler removed it and the upload logged "not found"; the bake is no longer sent it - frames byte-identical, the other neon programs audited for the same |
 | V27 | fixed | below `resolutionScale` 1.0 the spotlight dithered into an RGBA8 buffer the blit then filtered, so the dark tail came back as blocky contours and texel-wide mottle; the buffer is half float and undithered, and the spotlight's own blit dithers per destination pixel - tail pixels off by over half a level 3,586 -> 49 and 6,472 -> 0 at 0.25, 1.0 byte-identical, scaled frames 1.04-1.08x (AMD 5300M) |
+| I64 | open | a registry record holds a raw `Framebuffer *` into its producer and nothing clears it when the producer dies (effect destructor, `Initialize`'s erase); reproduced as a SIGSEGV under `MallocScribble` |
+| I65 | open | `Publish` keys by pointer, `Find` by name: two Framebuffers with one name are both listed and only the first can be viewed (two neons: textures 13 and 17, `Find` always 13) |
+| I66 | open | the glow field and the ring field are published on a frame whose bake failed (`field.bake` stays set), as if current |
+| I67 | open | protected `publishBuffer` / `getBufferRegistry` are camelCase; `AGENTS.md` makes protected methods PascalCase |
+| I68 | open | `bufferView` and `bufferViewAttachment` are two fields, so a host changing the name alone looks up a pair nothing published and the view goes blank silently |
+| I69 | open | `GetBufferRegistry`'s doc still describes snapshot records; texture and size are now read live, only the placement is last frame's |
+| I70 | open | `publishBuffers` runs every glow frame for every host and re-evaluates `IsGlowCoverUnread`; records only, unmeasured, expected under the noise |
+| I71 | open | the C ABI setter takes a name of any length, the getter cannot return one past `EL_BUFFER_NAME_CAPACITY` |
+| I72 | open | a table's panel is stretched by a fractional factor: uneven texel widths, and 947 boundary pixels showing the neighbouring texel (up to 5 levels) on one panel |
+| I73 | open | `ChannelCount` covers twelve formats; any other reads "0 ch" and is shown as four channels, so a missing alpha reads white |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

@@ -5,6 +5,37 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-15 - The buffer registry and the debug buffer view; reviewed
+
+`181acdd` on `design_system_sharing_resources_between_renderers`. AMD Radeon
+Pro 5300M. I64 to I73 in [`review-findings.md`](review-findings.md) have the
+review's detail.
+
+- **What changed.** `EdgeLightingEffect` owns a `BufferRegistry`
+  (`core/buffer-registry.h`), handed to every renderer it registers and
+  cleared at the top of each `Render`. Each layer publishes READ-ONLY records
+  of the offscreen buffers it drew or read - a pointer to its own
+  `Framebuffer`, an attachment, and the box of the frame the buffer maps onto
+  when it maps onto one - so the name, texture and size are the
+  `Framebuffer`'s own, never copied. The neon publishes its emission table,
+  coverage tables, gather (both attachments), field, reduced buffer and ring
+  field; the lens flare and the spotlight their reduced buffers.
+  `DebugConfig::bufferView` (+ `bufferViewAttachment`, `bufferViewChannel`,
+  `bufferViewGain`) draws any of them one block per texel - in place, or as a
+  lower-left panel for a table (`debug-buffer-view.frag`); C ABI and both demos
+  follow. Nothing is lent for writing: the neon's buffers are caches, and a
+  pool of transient ones was weighed and set aside (only the flare's and the
+  spotlight's qualify, both absent at their default scale 1.0).
+- **Measured.** Every published buffer, viewed, matches the texel under each
+  pixel exactly (ten buffers, two scenes, panels included but for I72's
+  boundary pixels); no heap allocation per frame with a view on;
+  `neon-scale-check check` passes; `opaqueOnly` publishes nothing.
+- **Reviewed - ten items open.** The one to fix first is I64: a record can
+  outlive the `Framebuffer` it points at, reproduced as a SIGSEGV when a kept
+  debug layer draws after its effect is destroyed. I65 (one name, two buffers)
+  and I68 (a stale attachment) are reproduced too; I65 and I68 share a
+  decision - what the view's key is - and the rest are small.
+
 ## 2026-10-15 - V27: the spotlight's dark tail below scale 1.0
 
 Uncommitted. AMD Radeon Pro 5300M. V27 in
