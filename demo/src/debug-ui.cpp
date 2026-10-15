@@ -704,7 +704,7 @@ void DebugUI::Build(EdgeLighting::Config &cfg, EdgeLighting::EdgeLightingEffect 
     buildGeometrySection(cfg);
     buildLayerOrderSection(effect);
     buildNeonSection(cfg, active);
-    buildDebugSection(cfg);
+    buildDebugSection(cfg, effect);
     buildDropletsSection(cfg);
     buildLensFlareSection(cfg);
     buildSpotlightSection(cfg);
@@ -1074,7 +1074,7 @@ void DebugUI::buildNeonSection(EdgeLighting::Config &cfg,
     }
 }
 
-void DebugUI::buildDebugSection(EdgeLighting::Config &cfg)
+void DebugUI::buildDebugSection(EdgeLighting::Config &cfg, const EdgeLighting::EdgeLightingEffect &effect)
 {
     if (!ImGui::CollapsingHeader("Debug"))
     {
@@ -1120,6 +1120,72 @@ void DebugUI::buildDebugSection(EdgeLighting::Config &cfg)
             ImGui::SameLine();
             ImGui::ColorEdit4("##WireColor", &cfg.debug.wireframeColor.x,
                               ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview);
+        }
+
+        // The buffers the renderers published last frame (BufferRegistry):
+        // the list follows what the layers drew, so a buffer comes and goes
+        // with the config that allocates it.
+        // An attachment past the first is shown as "[n]" after its buffer's
+        // name, the only place the two are joined.
+        const EdgeLighting::BufferRegistry &registry = effect.GetBufferRegistry();
+        char preview[96] = "(none)";
+        if (!cfg.debug.bufferView.empty())
+        {
+            std::snprintf(preview, sizeof(preview), cfg.debug.bufferViewAttachment > 0 ? "%s [%d]" : "%s",
+                          cfg.debug.bufferView.c_str(), cfg.debug.bufferViewAttachment);
+        }
+        if (ImGui::BeginCombo("Buffer View##Debug", preview))
+        {
+            if (ImGui::Selectable("(none)", cfg.debug.bufferView.empty()))
+            {
+                cfg.debug.bufferView.clear();
+                cfg.debug.bufferViewAttachment = 0;
+            }
+            for (const EdgeLighting::PublishedBuffer &buffer : registry.GetBuffers())
+            {
+                const glm::ivec2 texels = buffer.GetTexels();
+                char name[96];
+                std::snprintf(name, sizeof(name), buffer.attachment > 0 ? "%s [%d]" : "%s", buffer.GetName(),
+                              buffer.attachment);
+                char label[160];
+                std::snprintf(label, sizeof(label), "%s  %dx%d, %d ch%s", name, texels.x, texels.y,
+                              buffer.GetChannels(), buffer.placed ? "" : ", panel");
+                const bool selected =
+                    cfg.debug.bufferView == buffer.GetName() && cfg.debug.bufferViewAttachment == buffer.attachment;
+                if (ImGui::Selectable(label, selected))
+                {
+                    cfg.debug.bufferView = buffer.GetName();
+                    cfg.debug.bufferViewAttachment = buffer.attachment;
+                }
+            }
+            ImGui::EndCombo();
+        }
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::SetTooltip("An offscreen buffer a layer drew this frame, one block per\n"
+                              "texel, magenta outline. In place over the area it maps\n"
+                              "onto (opaque - it replaces the frame there), or as a panel\n"
+                              "in the lower-left corner for a table.");
+        }
+        if (!cfg.debug.bufferView.empty())
+        {
+            if (!registry.Find(cfg.debug.bufferView, cfg.debug.bufferViewAttachment))
+            {
+                ImGui::TextDisabled("Not published this frame - nothing drawn.");
+            }
+            const char *channelItems[] = {"RGB", "Red", "Green", "Blue", "Alpha"};
+            int channel = static_cast<int>(cfg.debug.bufferViewChannel);
+            if (ImGui::Combo("Channel##BufferView", &channel, channelItems, IM_ARRAYSIZE(channelItems)))
+            {
+                cfg.debug.bufferViewChannel = static_cast<EdgeLighting::DebugBufferChannel>(channel);
+            }
+            ImGui::SliderFloat("Gain##BufferView", &cfg.debug.bufferViewGain, 0.01f, 100.0f, "%.2f",
+                               ImGuiSliderFlags_Logarithmic);
+            if (ImGui::IsItemHovered())
+            {
+                ImGui::SetTooltip("Multiplies what is shown before the display clamps it -\n"
+                                  "the neon's fields are pre-tone-map and run past 1.");
+            }
         }
 
         // The strip and the markers annotate the GLOW, so they follow its

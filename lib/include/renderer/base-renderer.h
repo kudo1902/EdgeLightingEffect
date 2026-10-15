@@ -2,6 +2,9 @@
 #define _EDGE_LIGHTING_BASE_RENDERER_H_
 
 #include "core/config.h"
+#include "core/buffer-registry.h"
+#include <memory>
+#include <utility>
 
 namespace EdgeLighting
 {
@@ -87,6 +90,56 @@ namespace EdgeLighting
         /// unreachable by every layer call. A host's own renderer returns
         /// @ref RendererLayer::CUSTOM.
         virtual RendererLayer GetLayer() const = 0;
+
+        /// Where this renderer publishes its offscreen buffers, and finds
+        /// those of the layers drawn before it - see @ref BufferRegistry.
+        /// @c EdgeLightingEffect::AddRenderer hands every renderer the
+        /// effect's own; a renderer driven without an effect has none, and
+        /// publishes and finds nothing.
+        void SetBufferRegistry(std::shared_ptr<BufferRegistry> registry) { mBufferRegistry = std::move(registry); }
+
+    protected:
+        /// Publish attachment @p attachment of @p buffer as a TABLE - a buffer
+        /// that maps onto no area of the frame - if this renderer has a
+        /// registry. Call it from @ref Render, once the buffer holds what this
+        /// frame used. Listed under the Framebuffer's own name.
+        void publishBuffer(const Framebuffer &buffer, int attachment = 0)
+        {
+            PublishedBuffer record;
+            record.buffer = &buffer;
+            record.attachment = attachment;
+            publish(record);
+        }
+
+        /// The same, for a buffer whose texels span the box @p origin,
+        /// @p size of the caller's framebuffer (px, from its lower-left
+        /// corner, y up) - the box its producer reads it over.
+        void publishBuffer(const Framebuffer &buffer, const glm::vec2 &origin, const glm::vec2 &size,
+                           int attachment = 0)
+        {
+            PublishedBuffer record;
+            record.buffer = &buffer;
+            record.attachment = attachment;
+            record.placed = true;
+            record.origin = origin;
+            record.size = size;
+            publish(record);
+        }
+
+        /// The registry, or nullptr - for a layer that reads what the layers
+        /// before it published this frame.
+        const BufferRegistry *getBufferRegistry() const { return mBufferRegistry.get(); }
+
+    private:
+        void publish(const PublishedBuffer &record)
+        {
+            if (mBufferRegistry)
+            {
+                mBufferRegistry->Publish(record);
+            }
+        }
+
+        std::shared_ptr<BufferRegistry> mBufferRegistry;
     };
 
 } // namespace EdgeLighting

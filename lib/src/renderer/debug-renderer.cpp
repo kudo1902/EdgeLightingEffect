@@ -22,6 +22,17 @@ namespace EdgeLighting
         constexpr float MARKER_RADIUS_FRAC = 0.06f;
         constexpr float MARKER_RADIUS_MAX = 12.0f;
 
+        /// The buffer view's outline: opaque magenta, so it reads against the
+        /// glow and is not mistaken for the green bounding box.
+        const glm::vec4 BUFFER_VIEW_BORDER_COLOR(1.0f, 0.0f, 1.0f, 1.0f);
+
+        /// A table's panel (a buffer with no box of the frame): its distance
+        /// from the viewport's lower-left corner, the share of the viewport
+        /// it may fill each way, and the least height it is stretched to.
+        constexpr float PANEL_MARGIN = 16.0f;
+        constexpr float PANEL_MAX_FRAC = 0.5f;
+        constexpr float PANEL_MIN_HEIGHT = 64.0f;
+
         /// Whether the LUT strip will be drawn this frame.
         ///
         /// @ref DebugRenderer::renderGradientLUTStrip is the ONLY thing that
@@ -51,7 +62,7 @@ namespace EdgeLighting
             LOG_E("Failed to compile/link DebugRenderer shaders.");
             return false;
         }
-        setupStopMarkerQuad();
+        setupUnitQuad();
         setupGeometry(mCurrentConfig);
         // Unconditional, unlike the bake in OnConfigChanged, and it is the
         // safety net that lets that one be gated: a host whose config never
@@ -116,7 +127,7 @@ namespace EdgeLighting
         // anything is lit - and seeing the configured extent with the neon off
         // is a good part of what it is for, so it survives both.
         //
-        // (`enable` above covers all three but NOT opaqueOnly, which is a mode
+        // (`enable` above covers every overlay but NOT opaqueOnly, which is a mode
         // of the neon renderer that happens to live in the same struct.)
         const bool glowVisible = config.neon.enable && !config.debug.opaqueOnly;
         // The same predicate the ring's bake and tick gate on, so the strip can
@@ -128,7 +139,19 @@ namespace EdgeLighting
         const bool wantMarkers = config.debug.showColorStops && glowVisible &&
                                  !config.neon.colorStops.empty();
         const bool wantBox = config.debug.showWireframe;
-        if (!wantStrip && !wantMarkers && !wantBox)
+        // A buffer some layer drawn before this one published this frame. No
+        // gate of its own beyond that: a layer that is off, or drew nothing -
+        // the neon under opaqueOnly - publishes nothing.
+        const BufferRegistry *registry = getBufferRegistry();
+        const PublishedBuffer *buffer = registry && !config.debug.bufferView.empty()
+                                            ? registry->Find(config.debug.bufferView,
+                                                             config.debug.bufferViewAttachment)
+                                            : nullptr;
+        if (buffer && buffer->GetTexture() == 0)
+        {
+            buffer = nullptr;
+        }
+        if (!wantStrip && !wantMarkers && !wantBox && !buffer)
         {
             return;
         }
@@ -150,7 +173,14 @@ namespace EdgeLighting
                                static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
         const glm::mat4 mvp = proj * glm::translate(glm::mat4(1.0f), glm::vec3(center, 0.0f));
 
-        // Box first, so the strip and the markers land on top of it rather
+        // The buffer first: in place it replaces the frame inside its box,
+        // and the other overlays annotate whatever is under them.
+        if (buffer && ensureBufferViewShader())
+        {
+            glDisable(GL_BLEND);
+            renderBufferView(proj, viewportWidth, viewportHeight, *buffer, config);
+        }
+        // Box next, so the strip and the markers land on top of it rather
         // than being crossed out by a line drawn through them.
         if (wantBox)
         {
@@ -173,8 +203,8 @@ namespace EdgeLighting
             renderColorStopMarkers(proj, center, halfRectW, halfRectH, config);
         }
 
-        // Restore a known blend state for following renderers (the box and
-        // strip passes disable blending).
+        // Restore a known blend state for following renderers (the view, box
+        // and strip passes disable blending).
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     }
@@ -252,25 +282,44 @@ namespace EdgeLighting
                mWireframeShader.IsValid();
     }
 
-    void DebugRenderer::setupStopMarkerQuad()
+    bool DebugRenderer::ensureBufferViewShader()
     {
-        // Unit quad for the per-stop markers ([-1,+1] on both axes). Each
-        // marker is drawn by scaling + translating this quad via uMVP so it
-        // lands at that stop's perimeter position; the marker fragment shader
-        // treats vPos in [-1,+1] as disc space.
+        if (!mBufferViewShader.IsValid() && !mBufferViewFailed)
+        {
+            // The neon vertex shader, like the markers: the unit quad scaled
+            // onto the box, vPos across it in [-1, +1].
+            mBufferViewShader = ShaderProgram(ShaderSource::NEON_VERT_SRC,
+                                              ShaderSource::DEBUG_BUFFER_VIEW_FRAG_SRC,
+                                              "DebugRenderer.BufferView");
+            mBufferViewFailed = !mBufferViewShader.IsValid();
+            if (mBufferViewFailed)
+            {
+                LOG_E("Failed to compile/link the DebugRenderer buffer view - it stays off.");
+            }
+        }
+        return mBufferViewShader.IsValid();
+    }
+
+    void DebugRenderer::setupUnitQuad()
+    {
+        // Unit quad ([-1,+1] on both axes) for the per-stop markers and the
+        // buffer view. Each marker is drawn by scaling + translating
+        // this quad via uMVP so it lands at that stop's perimeter position;
+        // the marker fragment shader treats vPos in [-1,+1] as disc space. The
+        // view scales it onto its box the same way.
         //
         // Unlike the strip and the box in setupGeometry, this one never
-        // changes: the geometry reaches it through the per-marker model
-        // matrix, not through the vertices. Hence uploaded once from
-        // Initialize and never revisited.
+        // changes: the geometry reaches it through each draw's model matrix,
+        // not through the vertices. Hence uploaded once from Initialize and
+        // never revisited.
         // clang-format off
         float unitQuad[] = {
             -1.0f,  1.0f,  -1.0f, -1.0f,   1.0f, -1.0f,
             -1.0f,  1.0f,   1.0f, -1.0f,   1.0f,  1.0f,
         };
         // clang-format on
-        mStopMarkerVertexArray.SetVertexData(unitQuad, sizeof(unitQuad));
-        mStopMarkerVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+        mUnitQuadVertexArray.SetVertexData(unitQuad, sizeof(unitQuad));
+        mUnitQuadVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
     }
 
     void DebugRenderer::setupGeometry(const Config &config)
@@ -304,6 +353,45 @@ namespace EdgeLighting
         // clang-format on
         mWireframeVertexArray.SetVertexData(boxVerts, sizeof(boxVerts));
         mWireframeVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+    }
+
+    void DebugRenderer::renderBufferView(const glm::mat4 &proj, int viewportWidth, int viewportHeight,
+                                         const PublishedBuffer &buffer, const Config &config)
+    {
+        // In place: the box the producer reads it over, in the caller's
+        // framebuffer px, y up - the space @p proj maps. A table maps onto no
+        // box, so it gets a panel in the lower-left corner: as large as fits
+        // in PANEL_MAX_FRAC of the viewport each way at one scale for both
+        // axes, then stretched to PANEL_MIN_HEIGHT so a table a few rows tall
+        // (the emission table's 2) still reads.
+        glm::vec2 origin = buffer.origin;
+        glm::vec2 size = buffer.size;
+        if (!buffer.placed)
+        {
+            const glm::vec2 viewport(static_cast<float>(viewportWidth), static_cast<float>(viewportHeight));
+            const glm::vec2 room = glm::max(viewport * PANEL_MAX_FRAC, glm::vec2(1.0f));
+            const glm::vec2 texels = glm::max(glm::vec2(buffer.GetTexels()), glm::vec2(1.0f));
+            const float fit = std::min(room.x / texels.x, room.y / texels.y);
+            size = texels * fit;
+            size.y = std::max(size.y, std::min(PANEL_MIN_HEIGHT, room.y));
+            origin = glm::vec2(PANEL_MARGIN);
+        }
+        const glm::mat4 model = glm::translate(glm::mat4(1.0f), glm::vec3(origin + size * 0.5f, 0.0f)) *
+                                glm::scale(glm::mat4(1.0f), glm::vec3(size * 0.5f, 1.0f));
+        mBufferViewShader.Use();
+        mBufferViewShader.SetUniform("uMVP", proj * model);
+        mBufferViewShader.SetUniform("uDestSize", size);
+        mBufferViewShader.SetUniform("uChannels", buffer.GetChannels());
+        mBufferViewShader.SetUniform("uChannel", static_cast<int>(config.debug.bufferViewChannel));
+        mBufferViewShader.SetUniform("uGain", config.debug.bufferViewGain);
+        mBufferViewShader.SetUniform("uBorderColor", BUFFER_VIEW_BORDER_COLOR);
+        // Bound by name: the texture is the producer's, and this layer only
+        // samples it.
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, buffer.GetTexture());
+        mBufferViewShader.SetUniform("uSource", 0);
+        mUnitQuadVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        mBufferViewShader.Unuse();
     }
 
     void DebugRenderer::renderGradientLUTStrip(const glm::mat4 &mvp, float time, const Config &config)
@@ -341,7 +429,7 @@ namespace EdgeLighting
                 glm::scale(glm::mat4(1.0f), glm::vec3(markerRadius, markerRadius, 1.0f));
             mStopMarkerShader.SetUniform("uMVP", proj * markerModel);
             mStopMarkerShader.SetUniform("uMarkerColor", stop.color);
-            mStopMarkerVertexArray.DrawArrays(GL_TRIANGLES, 6);
+            mUnitQuadVertexArray.DrawArrays(GL_TRIANGLES, 6);
         }
         mStopMarkerShader.Unuse();
     }

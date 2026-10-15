@@ -322,6 +322,23 @@ extern "C"
         EL_STOP_FIELD_A = 4         /**< Alpha channel. */
     } el_color_stop_field_e;
 
+    /** @brief Which channels @ref el_effect_set_debug_buffer_view shows.
+     *  @details Mirrors @c EdgeLighting::DebugBufferChannel. */
+    typedef enum el_debug_buffer_channel_e
+    {
+        EL_DEBUG_BUFFER_RGB = 0,   /**< The colour as stored, premultiplied, over black. One channel shows grey, two red and green. */
+        EL_DEBUG_BUFFER_RED = 1,   /**< One channel as grey; one the buffer does not have shows black. */
+        EL_DEBUG_BUFFER_GREEN = 2, /**< Likewise. */
+        EL_DEBUG_BUFFER_BLUE = 3,  /**< Likewise. */
+        EL_DEBUG_BUFFER_ALPHA = 4  /**< Likewise - the neon's coverages live here, encoded c / (1 + c). */
+    } el_debug_buffer_channel_e;
+
+    /** @brief Characters, NUL included, that hold the name of any buffer the
+     *         library's own renderers publish - the capacity to hand
+     *         @ref el_effect_get_buffer_name and
+     *         @ref el_effect_get_debug_buffer_view. */
+#define EL_BUFFER_NAME_CAPACITY 64
+
     /** @brief Bitmask selecting which renderer layers @ref el_effect_init_with_renderers
      *         registers on the effect.
      *  @details OR the flags for the layers you want. With a mask, registration

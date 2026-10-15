@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <filesystem>
 
 namespace
@@ -946,6 +947,69 @@ void DebugUI::buildDebugSection(el_effect_handle_t effect)
                               ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_AlphaPreview))
         {
             el_effect_set_debug_wireframe_color(effect, col[0], col[1], col[2], col[3]);
+        }
+    }
+
+    // The buffers the renderers published in the last render: the list
+    // follows what the layers drew, so a buffer comes and goes with the
+    // config that allocates it.
+    // An attachment past the first is shown as "[n]" after its buffer's name.
+    char current[EL_BUFFER_NAME_CAPACITY] = "";
+    int32_t currentAttachment = 0;
+    el_effect_get_debug_buffer_view(effect, current, EL_BUFFER_NAME_CAPACITY, &currentAttachment);
+    char preview[EL_BUFFER_NAME_CAPACITY + 16] = "(none)";
+    if (current[0])
+    {
+        std::snprintf(preview, sizeof(preview), currentAttachment > 0 ? "%s [%d]" : "%s", current,
+                      currentAttachment);
+    }
+    if (ImGui::BeginCombo("Buffer View##Debug", preview))
+    {
+        if (ImGui::Selectable("(none)", current[0] == '\0'))
+        {
+            el_effect_set_debug_buffer_view(effect, nullptr, 0);
+        }
+        int32_t count = 0;
+        el_effect_get_buffer_count(effect, &count);
+        for (int32_t i = 0; i < count; i++)
+        {
+            char name[EL_BUFFER_NAME_CAPACITY] = "";
+            int32_t attachment = 0, width = 0, height = 0, channels = 0;
+            el_bool_t placed = 0;
+            if (el_effect_get_buffer_name(effect, i, name, EL_BUFFER_NAME_CAPACITY) != EL_SUCCESS ||
+                el_effect_get_buffer_info(effect, i, &attachment, &width, &height, &channels, &placed) !=
+                    EL_SUCCESS)
+            {
+                continue;
+            }
+            char shown[EL_BUFFER_NAME_CAPACITY + 16];
+            std::snprintf(shown, sizeof(shown), attachment > 0 ? "%s [%d]" : "%s", name, attachment);
+            char label[EL_BUFFER_NAME_CAPACITY + 64];
+            std::snprintf(label, sizeof(label), "%s  %dx%d, %d ch%s", shown, width, height, channels,
+                          placed ? "" : ", panel");
+            const bool selected = std::strcmp(current, name) == 0 && currentAttachment == attachment;
+            if (ImGui::Selectable(label, selected))
+            {
+                el_effect_set_debug_buffer_view(effect, name, attachment);
+            }
+        }
+        ImGui::EndCombo();
+    }
+    if (current[0])
+    {
+        el_debug_buffer_channel_e channel = EL_DEBUG_BUFFER_RGB;
+        el_effect_get_debug_buffer_channel(effect, &channel);
+        const char *channelItems[] = {"RGB", "Red", "Green", "Blue", "Alpha"};
+        int ch = static_cast<int>(channel);
+        if (ImGui::Combo("Channel##BufferView", &ch, channelItems, IM_ARRAYSIZE(channelItems)))
+        {
+            el_effect_set_debug_buffer_channel(effect, static_cast<el_debug_buffer_channel_e>(ch));
+        }
+        float gain = 1.0f;
+        el_effect_get_debug_buffer_gain(effect, &gain);
+        if (ImGui::SliderFloat("Gain##BufferView", &gain, 0.01f, 100.0f, "%.2f", ImGuiSliderFlags_Logarithmic))
+        {
+            el_effect_set_debug_buffer_gain(effect, gain);
         }
     }
 

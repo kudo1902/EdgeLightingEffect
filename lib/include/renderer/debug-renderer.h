@@ -11,14 +11,17 @@ namespace EdgeLighting
 {
     /// Debug annotations for the neon layer.
     ///
-    /// Three overlays, each behind its own flag in @ref DebugConfig, drawn over
+    /// Four overlays, each behind its own flag in @ref DebugConfig, drawn over
     /// whatever is already on the target:
     ///   - the baked colour ring as a horizontal STRIP at the rect centre
     ///     (@c showGradientLUT),
     ///   - one filled DISC per colour stop at its perimeter position
-    ///     (@c showColorStops), and
+    ///     (@c showColorStops),
     ///   - a 1 px sharp BOUNDING BOX around the rect (@c showWireframe), which
-    ///     was its own renderer until this absorbed it.
+    ///     was its own renderer until this absorbed it, and
+    ///   - one published OFFSCREEN BUFFER, one block per texel - in place over
+    ///     the area of the frame it maps onto, or as a panel for a table
+    ///     (@c bufferView).
     ///
     /// Together they answer "is what I configured what is actually being
     /// drawn?" - the strip shows the ring the shader samples, the markers show
@@ -45,6 +48,12 @@ namespace EdgeLighting
     /// is describing - the colour stops, the ring width and its cross-fade, the
     /// hue rotation. That is deliberate: an annotation of another layer's state
     /// has to read that layer's state.
+    ///
+    /// The buffer view is the exception to reading only the config: a buffer
+    /// is another renderer's output, which no config describes, so this layer
+    /// finds it in the effect's @ref BufferRegistry - where it is listed only
+    /// once its producer has drawn this frame, which the order above already
+    /// guarantees for every layer but this one.
     class DebugRenderer : public BaseRenderer
     {
     public:
@@ -59,19 +68,34 @@ namespace EdgeLighting
 
     private:
         bool setupShaders();
-        /// Upload the static unit quad every colour-stop marker is drawn from.
-        /// Called once from @ref Initialize: the geometry reaches each marker
-        /// through its own model matrix, so unlike @ref setupGeometry's quads
-        /// the vertices never change.
-        void setupStopMarkerQuad();
+        /// Build the buffer view's program on its first use - an overlay off
+        /// by default should cost a host nothing, and a failure to build it
+        /// must not fail @ref Initialize and take the other overlays with it.
+        /// Tried once.
+        bool ensureBufferViewShader();
+        /// Upload the static unit quad every colour-stop marker, and the
+        /// buffer view, is drawn from. Called once from
+        /// @ref Initialize: the geometry reaches each draw through its own
+        /// model matrix, so unlike @ref setupGeometry's quads the vertices
+        /// never change.
+        void setupUnitQuad();
         /// Size the strip and the bounding box to the current geometry. The
-        /// markers are not here - see @ref setupStopMarkerQuad.
+        /// markers are not here - see @ref setupUnitQuad.
         void setupGeometry(const Config &config);
 
         // STATE OWNERSHIP: as in NeonRenderer - `Render` owns blend state and
         // sets it before each overlay, and restores a known mode on the way out
-        // because the two overlays want different ones. Neither retargets the
-        // framebuffer, so neither has anything to restore there.
+        // because the overlays want different ones. None retargets the
+        // framebuffer, so none has anything to restore there.
+
+        /// @p buffer, nearest-sampled, with a 1 px outline: over the box it is
+        /// placed at when it has one, else as a panel in the lower-left
+        /// corner. Caller guards on @c bufferView naming a buffer published
+        /// this frame.
+        /// @pre Blending disabled - in place, the view replaces the frame in
+        ///      its box rather than compositing over what was drawn from it.
+        void renderBufferView(const glm::mat4 &proj, int viewportWidth, int viewportHeight,
+                              const PublishedBuffer &buffer, const Config &config);
 
         /// The baked gradient LUT as a strip at the geometry centre.
         /// Caller guards on @c showGradientLUT.
@@ -96,8 +120,10 @@ namespace EdgeLighting
         ShaderProgram mLUTDebugShader;                                  ///< LUT strip (neon-lut-debug.frag).
         ShaderProgram mStopMarkerShader;                                ///< Per-stop marker (neon-stop-marker.frag).
         ShaderProgram mWireframeShader;                                 ///< Bounding box (wireframe.frag).
+        ShaderProgram mBufferViewShader;                                ///< Buffer view (debug-buffer-view.frag); built on first use.
+        bool mBufferViewFailed = false;                                 ///< mBufferViewShader failed to build: not tried again.
         VertexArray mLUTStripVertexArray{"DebugRenderer.LUTStrip"};     ///< Small centred quad, sized to the rect.
-        VertexArray mStopMarkerVertexArray{"DebugRenderer.StopMarker"}; ///< Unit quad ([-1,+1]), scaled per marker.
+        VertexArray mUnitQuadVertexArray{"DebugRenderer.UnitQuad"};     ///< Unit quad ([-1,+1]), scaled per marker and onto the buffer view's box.
         VertexArray mWireframeVertexArray{"DebugRenderer.Wireframe"};   ///< 4 corners, drawn as GL_LINE_LOOP.
         glm::vec2 mLUTStripHalfSize{0.0f};                              ///< Half extents of the strip in local px (matches mLUTStripVertexArray).
 

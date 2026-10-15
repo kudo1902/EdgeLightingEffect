@@ -285,7 +285,9 @@ namespace EdgeLighting
     /// a separate layer, @ref DebugRenderer, driven by @ref DebugConfig. The
     /// one debug field this renderer does read is
     /// @c DebugConfig::opaqueOnly, which selects which of its passes run and
-    /// so cannot live anywhere but in the schedule below.
+    /// so cannot live anywhere but in the schedule below. What it does hand
+    /// that layer is the records of its offscreen buffers, through the
+    /// effect's @ref BufferRegistry (@ref publishBuffers).
     class NeonRenderer : public BaseRenderer
     {
     public:
@@ -1617,6 +1619,19 @@ namespace EdgeLighting
         ///      full-resolution viewport are restored.
         void renderRingFieldCompositePass(const glm::mat4 &mvp, const UVMap &gatherUV, float gain,
                                           const Config &config);
+
+        /// After the passes, on a frame that drew the glow: publish every
+        /// offscreen buffer this frame drew or read, as it read it
+        /// (@ref BufferRegistry). Placed where the buffer maps onto the frame -
+        /// the gather (@p gatherRegion, one record per attachment), the glow's
+        /// field (where pass 1c reads it, @p fieldRead) and the reduced buffer
+        /// (@p scaledRegion); not placed for the tables - the emission table,
+        /// the glow coverage table and its segment table (when read), and the
+        /// ring's packed field (@p ringFieldRead). Each is listed under its
+        /// Framebuffer's own name. Records only: no GL call.
+        void publishBuffers(const glm::vec2 &centerFull, const BufferRegion &gatherRegion,
+                            const BufferRegion &scaledRegion, bool fieldRead, bool ringFieldRead,
+                            const Config &config);
 
     private:
         /// Bits of @c mFailedPrograms, one per program, each passed to

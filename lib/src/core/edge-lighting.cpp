@@ -14,7 +14,8 @@ namespace EdgeLighting
 {
 
     EdgeLightingEffect::EdgeLightingEffect()
-        : mAnimationManager(std::make_unique<AnimationManager>())
+        : mAnimationManager(std::make_unique<AnimationManager>()),
+          mBufferRegistry(std::make_shared<BufferRegistry>())
     {
     }
 
@@ -59,6 +60,8 @@ namespace EdgeLighting
 
     void EdgeLightingEffect::Render(int viewportWidth, int viewportHeight)
     {
+        // Only this frame's buffers: a layer that draws nothing lists nothing.
+        mBufferRegistry->Clear();
         float t = mClock.GetTime();
         for (auto &renderer : mRenderers)
         {
@@ -77,6 +80,7 @@ namespace EdgeLighting
     }
 
     const Config &EdgeLightingEffect::GetConfig() const { return mBaseConfig; }
+    const BufferRegistry &EdgeLightingEffect::GetBufferRegistry() const { return *mBufferRegistry; }
     const Config &EdgeLightingEffect::GetActiveConfig() const { return mActiveConfig; }
 
     void EdgeLightingEffect::Attach(const AnimationPtr &a) { mAnimationManager->Attach(a); }
@@ -103,6 +107,7 @@ namespace EdgeLighting
             return;
         }
 
+        renderer->SetBufferRegistry(mBufferRegistry);
         mRenderers.push_back(renderer);
         // Hand over the current composited config, not the base: a renderer
         // joining mid-animation should see what every other renderer sees.

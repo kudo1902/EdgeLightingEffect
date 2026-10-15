@@ -897,7 +897,7 @@ extern "C"
 
     /** @name Debug overlays and diagnostics
      *
-     *  Everything backed by the debug config, in one place. The three overlays
+     *  Everything backed by the debug config, in one place. The four overlays
      *  are drawn by a layer of their own, so they need @ref EL_RENDERER_DEBUG
      *  in the mask handed to @ref el_effect_init_with_renderers
      *  (@ref EL_RENDERER_ALL includes it). Without that layer these flags are
@@ -911,8 +911,9 @@ extern "C"
      *  @{ */
 
     /** @brief Master switch for the debug overlay layer.
-     *  @details Gates all three overlays at once - the gradient-LUT strip, the
-     *           colour-stop markers and the bounding box - without disturbing
+     *  @details Gates all four overlays at once - the gradient-LUT strip, the
+     *           colour-stop markers, the bounding box and the buffer view -
+     *           without disturbing
      *           which of them are individually selected. Defaults to enabled,
      *           as does the box, so a registered debug layer draws the box out
      *           of the box.
@@ -958,6 +959,65 @@ extern "C"
     EL_API el_result_e el_effect_get_debug_wireframe_color(el_effect_handle_t effect,
                                                            float *outR, float *outG, float *outB, float *outA);
 
+    /** @brief Draw one of the offscreen buffers the renderers published this
+     *         frame, by its name and colour attachment (0 but for a buffer
+     *         with several - see @ref el_effect_get_buffer_info) - or none,
+     *         for a @c NULL or empty name.
+     *  @details One flat block per texel with a 1 px magenta outline, drawn
+     *           opaque under the other overlays: in place over the area of
+     *           the frame the buffer maps onto (a reduced-resolution buffer,
+     *           the neon's gather or field), or as a panel in the lower-left
+     *           corner for a table that maps onto none. List what can be named
+     *           with @ref el_effect_get_buffer_count and
+     *           @ref el_effect_get_buffer_name. A name nothing published this
+     *           frame draws nothing.
+     *
+     *           It shows the buffer, not the frame: the neon's reduced buffer
+     *           has no line (the edge ring draws it) and no soft edges for the
+     *           one-sided cut or the cutoffs (its blit applies them). */
+    EL_API el_result_e el_effect_set_debug_buffer_view(el_effect_handle_t effect, const char *name,
+                                                       int32_t attachment);
+    /** @brief The name and attachment @ref el_effect_set_debug_buffer_view
+     *         set, the name into @p outName (@p capacity chars, NUL included;
+     *         empty when none).
+     *  @returns @ref EL_ERROR_INVALID_PARAMETER, and an empty string, when it
+     *           does not fit - @ref EL_BUFFER_NAME_CAPACITY always does for a
+     *           name the library publishes. */
+    EL_API el_result_e el_effect_get_debug_buffer_view(el_effect_handle_t effect, char *outName, int32_t capacity,
+                                                       int32_t *outAttachment);
+
+    /** @brief Which channels the buffer view shows. Defaults to
+     *         @ref EL_DEBUG_BUFFER_RGB. */
+    EL_API el_result_e el_effect_set_debug_buffer_channel(el_effect_handle_t effect, el_debug_buffer_channel_e channel);
+    EL_API el_result_e el_effect_get_debug_buffer_channel(el_effect_handle_t effect, el_debug_buffer_channel_e *outChannel);
+
+    /** @brief Multiply what the buffer view shows before the display clamps it
+     *         - for a buffer whose values are not in [0, 1] (the neon's
+     *         pre-tone-map fields) or too faint to read. Defaults to 1. */
+    EL_API el_result_e el_effect_set_debug_buffer_gain(el_effect_handle_t effect, float gain);
+    EL_API el_result_e el_effect_get_debug_buffer_gain(el_effect_handle_t effect, float *outGain);
+
+    /** @brief How many offscreen buffers the renderers published in the last
+     *         @ref el_effect_render - 0 before the first.
+     *  @details The list is rebuilt by every render, as each layer draws: a
+     *           layer that is off, or drew nothing, publishes nothing. */
+    EL_API el_result_e el_effect_get_buffer_count(el_effect_handle_t effect, int32_t *outCount);
+    /** @brief The name of published buffer @p index, into @p outName
+     *         (@p capacity chars, NUL included) - what
+     *         @ref el_effect_set_debug_buffer_view takes.
+     *  @returns @ref EL_ERROR_INVALID_PARAMETER for an index out of range, or
+     *           a name that does not fit (then an empty string). */
+    EL_API el_result_e el_effect_get_buffer_name(el_effect_handle_t effect, int32_t index, char *outName,
+                                                 int32_t capacity);
+    /** @brief What published buffer @p index is: which colour attachment of
+     *         the named buffer (two records share a name when it has several),
+     *         its size in texels, its channel count (1, 2, 3 or 4; 0 if
+     *         unknown), and whether it maps onto an area of the frame - drawn
+     *         in place - rather than being a table drawn as a panel. */
+    EL_API el_result_e el_effect_get_buffer_info(el_effect_handle_t effect, int32_t index, int32_t *outAttachment,
+                                                 int32_t *outWidth, int32_t *outHeight, int32_t *outChannels,
+                                                 el_bool_t *outPlaced);
+
     /** @brief Draw ONLY the opaque fill and skip the neon emission entirely -
      *         no filament, no halo, no bloom.
      *  @details A diagnostic: it isolates the fill's silhouette so it can be
@@ -969,9 +1029,10 @@ extern "C"
      *           @c EL_OPAQUE_MODE_NONE, since then there is no fill to isolate
      *           and the frame comes out empty.
      *
-     *           Two of the three overlays suppress themselves while this is
-     *           set - the strip and the markers annotate the glow, and here
-     *           there is no glow to annotate. The bounding box does NOT, so a
+     *           The strip and the markers suppress themselves while this is
+     *           set - they annotate the glow, and here there is no glow to
+     *           annotate - and the neon publishes no buffer for the buffer
+     *           view to show. The bounding box does NOT, so a
      *           fill-only frame still carries it unless you clear
      *           @ref el_effect_set_debug_show_wireframe or mute the layer with
      *           @ref el_effect_set_debug_enabled. */

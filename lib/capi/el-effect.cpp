@@ -1,4 +1,5 @@
 #include "capi-internal.h"
+#include <cstring>
 
 namespace
 {
@@ -2238,6 +2239,159 @@ el_result_e el_effect_get_debug_wireframe_color(el_effect_handle_t effect, float
     *outB = effect->config.debug.wireframeColor.b;
     *outA = effect->config.debug.wireframeColor.a;
     LOG_D("effect=%p, r=%f, g=%f, b=%f, a=%f", (void *)effect, *outR, *outG, *outB, *outA);
+    return EL_SUCCESS;
+}
+
+namespace
+{
+    /// Copy @p name into @p out, NUL included, if it fits in @p capacity
+    /// chars; else an empty string (when there is room for one) and false.
+    bool CopyName(const char *name, char *out, int32_t capacity)
+    {
+        const size_t length = std::strlen(name);
+        if (capacity < 1 || length + 1 > static_cast<size_t>(capacity))
+        {
+            if (capacity >= 1)
+            {
+                out[0] = '\0';
+            }
+            return false;
+        }
+        std::memcpy(out, name, length + 1);
+        return true;
+    }
+
+    /// Published buffer @p index of the last render, or nullptr.
+    const EdgeLighting::PublishedBuffer *PublishedAt(el_effect_handle_t effect, int32_t index)
+    {
+        if (!effect->impl || index < 0)
+        {
+            return nullptr;
+        }
+        const std::vector<EdgeLighting::PublishedBuffer> &buffers = effect->impl->GetBufferRegistry().GetBuffers();
+        return static_cast<size_t>(index) < buffers.size() ? &buffers[static_cast<size_t>(index)] : nullptr;
+    }
+}
+
+el_result_e el_effect_set_debug_buffer_view(el_effect_handle_t effect, const char *name, int32_t attachment)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_set_debug_buffer_view");
+    if (attachment < 0)
+    {
+        LOG_E("el_effect_set_debug_buffer_view: attachment %d is negative", attachment);
+        return EL_ERROR_INVALID_PARAMETER;
+    }
+    const std::string view(name ? name : "");
+    if (effect->config.debug.bufferView == view && effect->config.debug.bufferViewAttachment == attachment)
+    {
+        return EL_SUCCESS;
+    }
+    effect->config.debug.bufferView = view;
+    effect->config.debug.bufferViewAttachment = attachment;
+    LOG_D("effect=%p, name=%s, attachment=%d", (void *)effect, name ? name : "(none)", attachment);
+    return EL_SUCCESS;
+}
+
+el_result_e el_effect_get_debug_buffer_view(el_effect_handle_t effect, char *outName, int32_t capacity,
+                                            int32_t *outAttachment)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_get_debug_buffer_view");
+    VALIDATE_OUT_PTR(outName, "el_effect_get_debug_buffer_view");
+    VALIDATE_OUT_PTR(outAttachment, "el_effect_get_debug_buffer_view");
+    if (!CopyName(effect->config.debug.bufferView.c_str(), outName, capacity))
+    {
+        LOG_E("el_effect_get_debug_buffer_view: capacity %d is too small", capacity);
+        return EL_ERROR_INVALID_PARAMETER;
+    }
+    *outAttachment = effect->config.debug.bufferViewAttachment;
+    LOG_D("effect=%p, name=%s, attachment=%d", (void *)effect, outName, *outAttachment);
+    return EL_SUCCESS;
+}
+
+el_result_e el_effect_set_debug_buffer_channel(el_effect_handle_t effect, el_debug_buffer_channel_e channel)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_set_debug_buffer_channel");
+    if (channel < EL_DEBUG_BUFFER_RGB || channel > EL_DEBUG_BUFFER_ALPHA)
+    {
+        LOG_E("el_effect_set_debug_buffer_channel: channel %d out of range", (int)channel);
+        return EL_ERROR_INVALID_PARAMETER;
+    }
+    SET_AND_LOG(effect->config.debug.bufferViewChannel, static_cast<EdgeLighting::DebugBufferChannel>(channel),
+                "effect=%p, channel=%d", (void *)effect, (int)channel);
+}
+
+el_result_e el_effect_get_debug_buffer_channel(el_effect_handle_t effect, el_debug_buffer_channel_e *outChannel)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_get_debug_buffer_channel");
+    VALIDATE_OUT_PTR(outChannel, "el_effect_get_debug_buffer_channel");
+    *outChannel = static_cast<el_debug_buffer_channel_e>(effect->config.debug.bufferViewChannel);
+    LOG_D("effect=%p, channel=%d", (void *)effect, (int)*outChannel);
+    return EL_SUCCESS;
+}
+
+el_result_e el_effect_set_debug_buffer_gain(el_effect_handle_t effect, float gain)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_set_debug_buffer_gain");
+    SET_AND_LOG(effect->config.debug.bufferViewGain, gain, "effect=%p, gain=%f", (void *)effect, gain);
+}
+
+el_result_e el_effect_get_debug_buffer_gain(el_effect_handle_t effect, float *outGain)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_get_debug_buffer_gain");
+    VALIDATE_OUT_PTR(outGain, "el_effect_get_debug_buffer_gain");
+    *outGain = effect->config.debug.bufferViewGain;
+    LOG_D("effect=%p, gain=%f", (void *)effect, *outGain);
+    return EL_SUCCESS;
+}
+
+el_result_e el_effect_get_buffer_count(el_effect_handle_t effect, int32_t *outCount)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_get_buffer_count");
+    VALIDATE_OUT_PTR(outCount, "el_effect_get_buffer_count");
+    *outCount = effect->impl ? static_cast<int32_t>(effect->impl->GetBufferRegistry().GetBuffers().size()) : 0;
+    return EL_SUCCESS;
+}
+
+el_result_e el_effect_get_buffer_name(el_effect_handle_t effect, int32_t index, char *outName, int32_t capacity)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_get_buffer_name");
+    VALIDATE_OUT_PTR(outName, "el_effect_get_buffer_name");
+    const EdgeLighting::PublishedBuffer *buffer = PublishedAt(effect, index);
+    if (!buffer)
+    {
+        LOG_E("el_effect_get_buffer_name: index %d out of range", index);
+        return EL_ERROR_INVALID_PARAMETER;
+    }
+    if (!CopyName(buffer->GetName(), outName, capacity))
+    {
+        LOG_E("el_effect_get_buffer_name: capacity %d is too small for '%s'", capacity, buffer->GetName());
+        return EL_ERROR_INVALID_PARAMETER;
+    }
+    return EL_SUCCESS;
+}
+
+el_result_e el_effect_get_buffer_info(el_effect_handle_t effect, int32_t index, int32_t *outAttachment,
+                                      int32_t *outWidth, int32_t *outHeight, int32_t *outChannels,
+                                      el_bool_t *outPlaced)
+{
+    VALIDATE_EFFECT_PTR(effect, "el_effect_get_buffer_info");
+    VALIDATE_OUT_PTR(outAttachment, "el_effect_get_buffer_info");
+    VALIDATE_OUT_PTR(outWidth, "el_effect_get_buffer_info");
+    VALIDATE_OUT_PTR(outHeight, "el_effect_get_buffer_info");
+    VALIDATE_OUT_PTR(outChannels, "el_effect_get_buffer_info");
+    VALIDATE_OUT_PTR(outPlaced, "el_effect_get_buffer_info");
+    const EdgeLighting::PublishedBuffer *buffer = PublishedAt(effect, index);
+    if (!buffer)
+    {
+        LOG_E("el_effect_get_buffer_info: index %d out of range", index);
+        return EL_ERROR_INVALID_PARAMETER;
+    }
+    const glm::ivec2 texels = buffer->GetTexels();
+    *outAttachment = buffer->attachment;
+    *outWidth = texels.x;
+    *outHeight = texels.y;
+    *outChannels = buffer->GetChannels();
+    *outPlaced = buffer->placed ? 1 : 0;
     return EL_SUCCESS;
 }
 

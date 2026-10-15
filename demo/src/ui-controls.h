@@ -465,7 +465,8 @@ namespace EdgeLightingDemo
                   << "  gradientLUT " << (d.showGradientLUT ? "ON" : "OFF")
                   << ", colorStops " << (d.showColorStops ? "ON" : "OFF")
                   << ", opaqueOnly " << (d.opaqueOnly ? "ON" : "OFF")
-                  << ", wireframe " << (d.showWireframe ? "ON" : "OFF") << "\n";
+                  << ", wireframe " << (d.showWireframe ? "ON" : "OFF")
+                  << ", bufferView " << (d.bufferView.empty() ? "OFF" : d.bufferView.c_str()) << "\n";
         std::cout << "=======================================================\n";
         std::cout << std::defaultfloat << std::flush;
     }

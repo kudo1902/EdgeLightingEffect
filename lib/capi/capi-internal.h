@@ -100,6 +100,12 @@ static_assert(static_cast<int>(EdgeLighting::ColorStopField::G) == EL_STOP_FIELD
 static_assert(static_cast<int>(EdgeLighting::ColorStopField::B) == EL_STOP_FIELD_B);
 static_assert(static_cast<int>(EdgeLighting::ColorStopField::A) == EL_STOP_FIELD_A);
 
+static_assert(static_cast<int>(EdgeLighting::DebugBufferChannel::RGB) == EL_DEBUG_BUFFER_RGB);
+static_assert(static_cast<int>(EdgeLighting::DebugBufferChannel::RED) == EL_DEBUG_BUFFER_RED);
+static_assert(static_cast<int>(EdgeLighting::DebugBufferChannel::GREEN) == EL_DEBUG_BUFFER_GREEN);
+static_assert(static_cast<int>(EdgeLighting::DebugBufferChannel::BLUE) == EL_DEBUG_BUFFER_BLUE);
+static_assert(static_cast<int>(EdgeLighting::DebugBufferChannel::ALPHA) == EL_DEBUG_BUFFER_ALPHA);
+
 // el_renderer_flags_e's layer bits ARE RendererLayer's values, so a flag
 // converts to a layer by a cast once it is known to name exactly one layer.
 static_assert(static_cast<uint32_t>(EdgeLighting::RendererLayer::NEON) == EL_RENDERER_NEON);

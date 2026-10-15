@@ -870,6 +870,10 @@ namespace EdgeLighting
                                    glm::vec2(static_cast<float>(viewportWidth), static_cast<float>(viewportHeight)));
             mBlitQuad.DrawArrays(GL_TRIANGLES, 6);
             mBlitShader.Unuse();
+
+            // The blit stretched it over the whole viewport.
+            publishBuffer(mScaledBuffer, glm::vec2(0.0f),
+                          glm::vec2(static_cast<float>(viewportWidth), static_cast<float>(viewportHeight)));
         }
 
         // Restore the blend state convention the other renderers leave behind.

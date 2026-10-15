@@ -410,11 +410,42 @@ overlays to work.
 **`debug.wireframeColor`** (default opaque green `(0, 1, 0, 1)`)
 Colour of that line.
 
+**`debug.bufferView`** (default empty - off)
+Draws one of the offscreen buffers the layers published this frame, by its
+`Framebuffer`'s name and `debug.bufferViewAttachment` (0 but for the neon's
+gather, whose attachment 1 holds the segments' hue and coverage).
+`EdgeLightingEffect::GetBufferRegistry()` lists them (C ABI:
+`el_effect_get_buffer_count` / `el_effect_get_buffer_name`); a layer that is
+off or drew nothing publishes nothing, and a name nothing published draws
+nothing. Each texel is a flat block of pixels, with a 1 px magenta outline.
+A buffer that maps onto an area of the frame - the neon's reduced buffer
+(`NeonRenderer.Scaled`), its gather and field, the flare's and spotlight's
+reduced buffers - is drawn in place over that area, opaque, so it replaces
+the frame there (2 x 2 px per texel at `resolutionScale` 0.5). A table - the
+neon's emission table, glow coverage tables and the edge ring's packed field
+- is drawn as a panel in the lower-left corner.
+
+It shows what the producer stored, not the frame. The neon's reduced buffer
+has no line (the edge ring draws it at full resolution) and none of the
+one-sided cut's or cutoffs' soft edges (the blit applies them); the neon's
+coverages are stored as `c / (1 + c)` in alpha; its fields are pre-tone-map
+and run past 1. Only a layer drawn before the debug layer can be shown, which
+the default order guarantees.
+
+**`debug.bufferViewChannel`** (default `RGB`)
+`RGB` shows the colour as stored, premultiplied, over black - a one-channel
+buffer as grey, a two-channel one as red and green. `RED`, `GREEN`, `BLUE` and
+`ALPHA` show one channel as grey; one the buffer lacks shows black.
+
+**`debug.bufferViewGain`** (default 1)
+Multiplies what the view shows before the display clamps it - for the fields,
+or a faint buffer.
+
 The strip and the markers are suppressed when the neon layer is off or
 `debug.opaqueOnly` is set - there is no glow to annotate in either case. The
 bounding box annotates the *geometry*, which is there regardless, so it
-survives both. All three draw at full resolution, whatever
-`neon.resolutionScale` is.
+survives both. All four draw at full resolution, whatever
+`neon.resolutionScale` is - the buffer view by repeating each texel.
 
 All are demo-time debug aids; leave off in production.
 

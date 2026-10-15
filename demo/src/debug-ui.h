@@ -89,8 +89,10 @@ private:
     void buildNeonSection(EdgeLighting::Config &cfg,
                           const EdgeLighting::Config &active);
     /// Overlays drawn by DebugRenderer. Takes no `active` config: these are
-    /// plain toggles, with nothing an animation could be driving.
-    void buildDebugSection(EdgeLighting::Config &cfg);
+    /// plain toggles, with nothing an animation could be driving. Takes the
+    /// effect for the buffers its renderers published last frame, which the
+    /// buffer view picks from.
+    void buildDebugSection(EdgeLighting::Config &cfg, const EdgeLighting::EdgeLightingEffect &effect);
     void buildDropletsSection(EdgeLighting::Config &cfg);
     void buildLensFlareSection(EdgeLighting::Config &cfg);
     void buildSpotlightSection(EdgeLighting::Config &cfg);

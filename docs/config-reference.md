@@ -303,15 +303,35 @@ the four coverage terms:
 
 | Field | Unit | Default | Effect |
 |---|---|---|---|
-| `enable` | bool | `true` | Mute for the three overlays only |
+| `enable` | bool | `true` | Mute for the four overlays (buffer view included) only |
 | `showGradientLUT` | bool | `false` | Baked ring as centre strip (`neon-lut-debug.frag`). Own `GradientRingLUT` copy, gated by same predicate as draw so they cannot drift |
 | `showColorStops` | bool | `false` | Disc per stop at perimeter pos (`neon-stop-marker.frag`) |
 | `showWireframe` | bool | `true` | 1 px `GL_LINE_LOOP` sharp box (`wireframe.frag`). Extent, not rounded outline, so it compares against the neon trace. Draws over glow (layer is last) |
 | `wireframeColor` | linear `vec4` | `(0,1,0,1)` | Box color |
+| `bufferView` | `std::string` | `""` | `Framebuffer` name of a buffer in `EdgeLightingEffect::GetBufferRegistry()` this frame (`"NeonRenderer.Scaled"`, `"LensFlare.Scaled"`, ...); empty or unpublished = nothing. `texelFetch`, one block per texel, 1 px magenta outline (`debug-buffer-view.frag`), opaque. Placed buffers (reduced buffers, neon gather/field) IN PLACE over their box; tables (emission, glow cover, ring field atlas) as a lower-left PANEL, at most half the viewport each way, min 64 px tall. Program built on first use |
+| `bufferViewAttachment` | int | `0` | Colour attachment of `bufferView`; 1 is the neon gather's segment hue + coverage (`NeonRenderer.Gather` [1]) |
+| `bufferViewChannel` | `DebugBufferChannel` | `RGB` | `RGB` (1 ch as grey, 2 ch as red/green), or one of `RED`/`GREEN`/`BLUE`/`ALPHA` as grey (absent channel = black) |
+| `bufferViewGain` | float | `1.0` | Multiplies the shown value before the clamp - the neon fields are pre-tone-map and run past 1 |
 | `opaqueOnly` | bool | `false` | Neon debug mode (read by `NeonRenderer`, not the overlay): fill only, skip filament/halo/bloom. Suppresses strip + markers (no glow to annotate), box survives. No-op when `opaqueMode == NONE`. Not in C API. Safe to toggle per-frame (no rebuild) |
 
 Strip + markers annotate the glow: suppressed when neon off or `opaqueOnly`.
-Box annotates geometry: survives both. Always full-res.
+Box annotates geometry: survives both. The buffer view has no gate of its own:
+a layer that is off or drew nothing (neon under `opaqueOnly`) publishes
+nothing. Always full-res. Draw order: buffer view, box, strip, markers.
+
+Published buffers (`BufferRegistry`, cleared at the top of every
+`EdgeLightingEffect::Render`, filled as each layer draws - so only a layer
+drawn before the debug layer can be viewed):
+
+| Name | Producer | Placed | Published when |
+|---|---|---|---|
+| `NeonRenderer.Emission` | neon P0 | panel (`numSamples` x 2 of `NEON_MAX_LOOP_SAMPLES` x 2) | baked at all |
+| `NeonRenderer.GlowCover` / `NeonRenderer.GlowCoverSegments` | neon P0b / P0s | panel | the shading reads the table (not a uniform ring); segment table only when allocated |
+| `NeonRenderer.Gather` [0] / [1] | neon P1a | gather region | glow drawn; attachment 1 (segments' hue + coverage) only with segments |
+| `NeonRenderer.Field` | neon P1f | field region (from its bake) | P1c read it or P1f baked it this frame |
+| `NeonRenderer.Scaled` | neon P1b / P1c | reduced buffer's region | glow drawn |
+| `NeonRenderer.RingField` | neon P1r | panel (packed strips) | P2r read it or P1r baked it this frame |
+| `LensFlare.Scaled` / `Spotlight.Scaled` | flare / spotlight | whole viewport | scaled path ran |
 
 ## DropletsConfig -> DropletsRenderer
 

@@ -2285,6 +2285,9 @@ namespace EdgeLighting
         // onto the reduced one. Set with the regions below.
         UVMap gatherUVFull;
         UVMap scaledUV;
+        // The regions those maps are onto, for publishBuffers.
+        BufferRegion gatherRegion;
+        BufferRegion scaledRegion;
 
         // What the offscreen phase has to draw this frame. The light blocks
         // are packed first, because the emission table's staleness reads
@@ -2416,10 +2419,9 @@ namespace EdgeLighting
             const bool gatherCurrent = mGather.cache.drawn && mGather.buffer.IsValid() &&
                                        gatherInputs == mGather.cache.inputs &&
                                        AnnulusCovers(mGather.cache.bounds, mGatherBounds);
-            const BufferRegion gatherRegion =
-                gatherCurrent ? mGather.cache.region
-                              : GetBufferRegion(mGatherBounds.outer, centerFull, viewportWidth, viewportHeight,
-                                                GetGatherScale(config, scale), false);
+            gatherRegion = gatherCurrent ? mGather.cache.region
+                                         : GetBufferRegion(mGatherBounds.outer, centerFull, viewportWidth,
+                                                           viewportHeight, GetGatherScale(config, scale), false);
             gatherUV = GetRegionUVMap(gatherRegion, scale);
             gatherUVFull = GetRegionUVMap(gatherRegion, 1.0f);
             // The region and its maps are computed either way: the passes
@@ -2449,8 +2451,7 @@ namespace EdgeLighting
             // composite fragment reads the field texel under it.
             if (glowReady)
             {
-                const BufferRegion scaledRegion =
-                    GetBufferRegion(mScaledOuter, centerFull, viewportWidth, viewportHeight, scale, true);
+                scaledRegion = GetBufferRegion(mScaledOuter, centerFull, viewportWidth, viewportHeight, scale, true);
                 scaledUV = GetRegionUVMap(scaledRegion, 1.0f);
                 if (!reuseOffscreen)
                 {
@@ -2544,6 +2545,8 @@ namespace EdgeLighting
             {
                 renderRingPass(fullResMvp, gatherUVFull, time, config);
             }
+            publishBuffers(centerFull, gatherRegion, scaledRegion, field.use || field.bake,
+                           ringField.use || ringField.bake, config);
         }
 
         // Restore a known blend state for following renderers.
@@ -4851,6 +4854,48 @@ namespace EdgeLighting
         bindGatherBuffer(mRingFieldCompositeShader, gatherUV);
         mRingMesh.Draw();
         mRingFieldCompositeShader.Unuse();
+    }
+
+    void NeonRenderer::publishBuffers(const glm::vec2 &centerFull, const BufferRegion &gatherRegion,
+                                      const BufferRegion &scaledRegion, bool fieldRead, bool ringFieldRead,
+                                      const Config &config)
+    {
+        // In pass order. A buffer this frame did not allocate has texture 0,
+        // which the registry drops, so nothing here has to test for one.
+        if (mEmission.bake.baked)
+        {
+            publishBuffer(mEmission.buffer);
+        }
+        // The coverage table only where the shading reads it - a ring lit
+        // uniformly keeps the last one it baked, unread, until Update
+        // releases it.
+        if (!IsGlowCoverUnread(mEffectiveSegments, config))
+        {
+            publishBuffer(mGlowCover.buffer);
+            publishBuffer(mGlowCover.segBuffer);
+        }
+        // Region origins are rect-local full-res px: from the rect's centre.
+        // The gather's second attachment holds the segments' hue and coverage.
+        const glm::vec2 gatherOrigin = centerFull + gatherRegion.origin;
+        publishBuffer(mGather.buffer, gatherOrigin, gatherRegion.size);
+        publishBuffer(mGather.buffer, gatherOrigin, gatherRegion.size, 1);
+        if (fieldRead)
+        {
+            // Where pass 1c reads it: the region its bake recorded, in scaled
+            // px. A bake at another scale or centre is never read, since
+            // either change re-bakes before the composite runs again.
+            const float scale = GetClampedResolutionScale(config);
+            const glm::vec2 texels(mGlowField.buffer.GetWidth(), mGlowField.buffer.GetHeight());
+            publishBuffer(mGlowField.buffer, centerFull + mGlowField.origin / scale,
+                          texels / (mGlowField.texelScale * scale));
+        }
+        publishBuffer(mScaledBuffer, centerFull + scaledRegion.origin, scaledRegion.size);
+        // Four strips packed into an atlas (RingFieldLayout), so no one box
+        // of the frame - a table.
+        if (ringFieldRead)
+        {
+            publishBuffer(mRingField.buffer);
+        }
     }
 
 }

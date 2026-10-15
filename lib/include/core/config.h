@@ -4,6 +4,7 @@
 #include "renderer/neon-tuning.h" // MAX_SEGMENT_BOOSTS + MAX_ARCS shared with the shaders
 #include <glm/glm.hpp>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace EdgeLighting
@@ -693,14 +694,27 @@ namespace EdgeLighting
         bool operator!=(const NeonConfig &o) const { return !(*this == o); }
     } NeonConfig;
 
+    /// Which channels @c DebugConfig::bufferView shows. Append new values at
+    /// the end: mirrored by @c el_debug_buffer_channel_e.
+    typedef enum class DebugBufferChannel
+    {
+        RGB,   ///< The colour as stored, premultiplied, over black. A one-channel buffer shows grey, a two-channel one red and green.
+        RED,   ///< One channel as grey; a channel the buffer does not have shows black.
+        GREEN, ///< Likewise.
+        BLUE,  ///< Likewise.
+        ALPHA  ///< Likewise - the neon's coverages live here, encoded c / (1 + c).
+    } DebugBufferChannel;
+
     /// Debug configuration - everything that exists to inspect the effect
     /// rather than to be part of it.
     ///
     /// Two kinds live here, and they reach the frame differently:
     ///
-    ///   - @c showGradientLUT / @c showColorStops / @c showWireframe are
-    ///     ANNOTATIONS, drawn on top of the neon layer by @ref DebugRenderer.
-    ///     Nothing in the neon renderer knows about them.
+    ///   - @c showGradientLUT / @c showColorStops / @c showWireframe /
+    ///     @c bufferView are ANNOTATIONS, drawn on top of the neon layer by
+    ///     @ref DebugRenderer. Nothing in the other renderers knows about
+    ///     them - they publish their buffers whatever this says, and the
+    ///     debug layer finds the one @c bufferView names.
     ///   - @c opaqueOnly is a debug MODE of the neon layer: it changes which
     ///     of that renderer's passes run. @ref NeonRenderer reads it directly.
     ///
@@ -719,7 +733,7 @@ namespace EdgeLighting
         /// did. This is the mute for turning the whole layer off without
         /// disturbing which overlays were selected.
         ///
-        /// Applies to the three overlays only. @c opaqueOnly is a mode of the
+        /// Applies to the four overlays only. @c opaqueOnly is a mode of the
         /// neon renderer, not something this layer draws, so it is not gated
         /// by this flag.
         bool enable = true;
@@ -748,6 +762,44 @@ namespace EdgeLighting
         /// dark backdrop and against most glow colours, and it is obviously
         /// not part of the effect.
         glm::vec4 wireframeColor = glm::vec4(0.0f, 1.0f, 0.0f, 1.0f);
+
+        /// Draw one of the offscreen buffers the renderers published this frame
+        /// (@ref BufferRegistry), by its Framebuffer's name -
+        /// "NeonRenderer.Scaled", "NeonRenderer.Gather", "LensFlare.Scaled",
+        /// ... - and @c bufferViewAttachment; or nothing when empty or when
+        /// nothing of that name was published this frame.
+        /// @c EdgeLightingEffect::GetBufferRegistry lists them.
+        ///
+        /// One flat block of pixels per texel, no filtering, with a 1 px
+        /// magenta outline, drawn opaque before the other overlays:
+        ///   - a buffer that maps onto an area of the frame (the reduced
+        ///     buffers, the neon's gather and field) is drawn IN PLACE over
+        ///     that area, replacing the frame there - at a resolution scale of
+        ///     0.5 each texel is a 2 x 2 block;
+        ///   - a table (the neon's emission and coverage tables, the edge
+        ///     ring's packed field) is drawn as a PANEL in the lower-left
+        ///     corner, stretched to at most half the viewport each way.
+        ///
+        /// A buffer shows what its producer stored, not the frame: the neon's
+        /// reduced buffer has no line (the edge ring draws it) and none of the
+        /// one-sided cut's or the cutoffs' soft edges (the blit applies them);
+        /// the fields are pre-tone-map, so @c bufferViewGain brings them into
+        /// range. Only a layer drawn BEFORE this one can be shown - the default
+        /// order puts this one last.
+        std::string bufferView;
+
+        /// Which colour attachment of @c bufferView: 0 but for a Framebuffer
+        /// with several - the neon's gather keeps the segments' hue and
+        /// coverage in attachment 1.
+        int bufferViewAttachment = 0;
+
+        /// Which channels @c bufferView shows.
+        DebugBufferChannel bufferViewChannel = DebugBufferChannel::RGB;
+
+        /// Multiplies what @c bufferView shows before it is clamped to the
+        /// display - for a buffer whose values are not in [0, 1] (the neon's
+        /// fields) or are too faint to read.
+        float bufferViewGain = 1.0f;
 
         /// Render ONLY the @c NeonConfig::opaqueMode fill and skip the neon
         /// emission entirely - no filament, no halo, no bloom. Isolates the
@@ -782,6 +834,10 @@ namespace EdgeLighting
                    showColorStops == o.showColorStops &&
                    showWireframe == o.showWireframe &&
                    wireframeColor == o.wireframeColor &&
+                   bufferView == o.bufferView &&
+                   bufferViewAttachment == o.bufferViewAttachment &&
+                   bufferViewChannel == o.bufferViewChannel &&
+                   bufferViewGain == o.bufferViewGain &&
                    opaqueOnly == o.opaqueOnly;
         }
         bool operator!=(const DebugConfig &o) const { return !(*this == o); }

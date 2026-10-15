@@ -338,6 +338,10 @@ namespace EdgeLighting
             mBlitShader.SetUniform("uSource", 0);
             mVertexArray.DrawArrays(GL_TRIANGLES, 6);
             mBlitShader.Unuse();
+
+            // The blit stretched it over the whole viewport.
+            publishBuffer(mScaledBuffer, glm::vec2(0.0f),
+                          glm::vec2(static_cast<float>(viewportWidth), static_cast<float>(viewportHeight)));
         }
 
         // Restore the default alpha blend state for any following renderers -
