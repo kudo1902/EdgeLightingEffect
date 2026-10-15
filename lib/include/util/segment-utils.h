@@ -82,29 +82,47 @@ namespace EdgeLighting
         /// With no preserved entries this is exactly @c segmentBoosts, so the
         /// pre-preserved behaviour is unchanged.
         ///
-        /// @p out is @c clear()ed and its capacity reused, so a renderer that
-        /// passes the same scratch buffer every frame does no heap allocation
-        /// after warmup.
+        /// @p out is overwritten IN PLACE: each segment is copy-assigned over
+        /// the element already at its index, which reuses that element's
+        /// @c colorStops storage, new elements are appended only past the old
+        /// size, and the tail is erased. So a renderer that passes the same
+        /// buffer every frame allocates nothing while the segment count holds
+        /// and no segment gains stops - every frame of a segment animation.
+        /// A @c clear() and @c push_back would copy every segment's stops into
+        /// fresh storage instead (I75).
         inline void FillEffectiveSegments(const NeonConfig &neon,
                                           std::vector<SegmentBoost> &out)
         {
-            out.clear();
+            const size_t cap = static_cast<size_t>(NeonConfig::MAX_SEGMENT_BOOSTS_CAP);
+            size_t n = 0;
+            auto put = [&out, &n](const SegmentBoost &s) {
+                if (n < out.size())
+                {
+                    out[n] = s;
+                }
+                else
+                {
+                    out.push_back(s);
+                }
+                ++n;
+            };
             for (const PreservedSegment &p : neon.preservedSegmentBoosts)
             {
-                if (static_cast<int>(out.size()) >= NeonConfig::MAX_SEGMENT_BOOSTS_CAP)
+                if (n >= cap)
                 {
-                    return;
+                    break;
                 }
-                out.push_back(p.segment);
+                put(p.segment);
             }
             for (const SegmentBoost &s : neon.segmentBoosts)
             {
-                if (static_cast<int>(out.size()) >= NeonConfig::MAX_SEGMENT_BOOSTS_CAP)
+                if (n >= cap)
                 {
-                    return;
+                    break;
                 }
-                out.push_back(s);
+                put(s);
             }
+            out.erase(out.begin() + static_cast<std::ptrdiff_t>(n), out.end());
         }
     } // namespace SegmentUtils
 } // namespace EdgeLighting

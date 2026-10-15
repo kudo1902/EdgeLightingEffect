@@ -666,6 +666,17 @@ namespace EdgeLighting
 
         bool operator==(const NeonConfig &o) const
         {
+            return intensity == o.intensity && EqualsIgnoringIntensity(o);
+        }
+        bool operator!=(const NeonConfig &o) const { return !(*this == o); }
+
+        /// Every field but @c intensity, compared as @c operator== compares
+        /// them. This is the ONE field list - @c operator== adds the intensity
+        /// to it - so a new field goes here. For the neon's "only the intensity
+        /// moved" test (I56), which compares without copying the config and
+        /// every vector in it (I75).
+        bool EqualsIgnoringIntensity(const NeonConfig &o) const
+        {
             return enable == o.enable &&
                    resolutionScale == o.resolutionScale &&
                    numSamples == o.numSamples &&
@@ -676,7 +687,6 @@ namespace EdgeLighting
                    opaqueOutsideCutoff == o.opaqueOutsideCutoff &&
                    lineWidth == o.lineWidth &&
                    filamentFalloff == o.filamentFalloff &&
-                   intensity == o.intensity &&
                    glowRadius == o.glowRadius &&
                    bloomStrength == o.bloomStrength &&
                    glowSide == o.glowSide &&
@@ -691,7 +701,6 @@ namespace EdgeLighting
                    arcs == o.arcs &&
                    colorTransitionDuration == o.colorTransitionDuration;
         }
-        bool operator!=(const NeonConfig &o) const { return !(*this == o); }
     } NeonConfig;
 
     /// Which channels @c DebugConfig::bufferView shows. Append new values at

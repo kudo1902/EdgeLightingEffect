@@ -1701,9 +1701,11 @@ namespace EdgeLighting
         /// are filled, and the shader stops there.
         UniformBuffer mLoopSamplesBlock{"NeonRenderer.LoopSamplesBlock"};
 
-        /// Reusable scratch for the merged transient+preserved segment list
-        /// (Config::FillEffectiveSegments). Held as a member so the per-frame
-        /// UBO pack / dirty check do no heap allocation after warmup.
+        /// The merged transient+preserved segment list
+        /// (SegmentUtils::FillEffectiveSegments), refilled in place on every
+        /// segment change. Held as a member so that refill reuses each
+        /// element's colour-stop storage: a moving segment allocates nothing
+        /// while the count holds (I75).
         std::vector<SegmentBoost> mEffectiveSegments;
 
         /// Baked colour ring (@c NeonConfig::gradientLutSize x 1 RGBA8, sampled

@@ -5591,6 +5591,221 @@ the driver instead.
 
 ---
 
+## Thirty-fourth pass (heap allocations on steady frames)
+
+A trace of the `alloc` lines that
+[`tools/layer-check`](../tools/layer-check/README.md) reports - S0 of
+[`resource-sharing-plan.md`](resource-sharing-plan.md) - at `7d3e953` on
+`design_system_sharing_resources_between_renderers`. The plan's section 7.1
+found steady frames allocating (2 on a still neon frame, 9 under a rotating
+hue with 40 every fourth frame, 22 and 72 for all five layers) and left the
+source untraced. One item, I75. Apple M2 Pro, Debug; the Release library's
+counts are the same on every scene.
+
+How it was traced: a scratch copy of `layer-check` records a `backtrace()` in
+its `operator new` for every counted allocation and resolves it - `atos` for
+the binary, `dladdr` for the system images. It also counts every `glDraw*` and
+`glBindFramebuffer` call, and can `glFlush` after each counted frame. The
+probe and its scripts stay outside the tree. The trace changed nothing in the
+library or the tool; the fix, at the end of I75, did.
+
+### I75. Most of what `layer-check` counts is the GL driver's; the library allocates on three config-change paths - FIXED
+
+**What the counter sees.** The tool replaces the global `operator new`. On
+macOS that replacement binds for every image in the process, Apple's GL stack
+included, and that stack is C++ (`AppleMetalOpenGLRenderer`, `AGXMetalG14X`).
+So the `alloc` lines also count the driver's allocations inside the library's
+GL calls, on any thread. In 60 of the 62 scenes, library code allocates
+nothing and every count is the driver's. The other two allocate in library
+code, and only on frames that change the config.
+
+**The driver's share** follows the GL work exactly:
+
+| mechanism | size | where, in the driver | how often |
+| --------- | ---- | -------------------- | --------- |
+| a draw | 24 B | `gldRenderVertexArray` | every `glDrawArrays` (`VertexArray::DrawArrays`) |
+| a render pass | 40 B | `AGX::PassiveResourceGroupUsage::bindPassiveRes`, under `-[AGXG14XFamilyCommandBuffer renderCommandEncoderWithDescriptor:]` | each time drawing moves to another framebuffer |
+| a command buffer | 128 B, then 24 B per GL object it touches | `GLDContextRec::getCommandBuffer`; then `GLRResourceList::addResource` (a hash-set node) from `setRenderSamplersAndTextures`, `setRenderVertexBuffers`, `setRenderUniformBuffers`, `addRenderPassResources` and `gldClearFramebufferData` | each command buffer the driver starts |
+| a texture sub-upload | 12-16 | `glTexSubImage2D`: a Metal blit encoder (`copyFromBuffer:`), a compute context, AGX mempools | each `Texture2D::SetSubData` |
+
+The per-draw row matches the draw counter exactly, frame by frame, in all 62
+scenes. A still neon frame makes 2 draws (`renderBlitPass`,
+`renderRingFieldCompositePass`); droplets add 1 (`DropletsRenderer::Render`);
+the debug overlays add 6 (the strip, one disc per colour stop in
+`renderColorStopMarkers` - 4 here - and the wireframe); a hue makes 5 (adding
+the emission table, the gather and the field composite); all five layers make
+13. A frame that draws only the caller's framebuffer opens no render pass:
+the previous frame's is still open, since nothing flushes.
+
+**The spikes are command buffers.** The tool never swaps or flushes, so the
+driver starts a new command buffer on its own schedule: every 2 to 7 frames
+in the moving scenes, never in eight frames on a still one. The frame that
+starts one registers every object it touches again - 30 under a hue, 49 for
+all five layers. With a `glFlush` after each frame, which is what a host's
+swap does, every frame starts one, and the steady counts become the spike
+values: still neon 15 a frame, droplets 17, debug overlays 26, hue 40, all
+five layers 72. So the counts in the plan are lower than a real host's, and
+periodic only because of the harness. The plan's table resolves as:
+
+| scene | per frame | made of |
+| ----- | --------- | ------- |
+| still neon | 2 | 2 draws |
+| droplets | 3 | 3 draws |
+| debug overlays | 8 | 8 draws |
+| rotating hue | 9; 40 | 5 draws + 4 passes; spike: + a command buffer and 30 objects |
+| arc wipe | 12-15; 39-41 | 6-9 draws + 5 passes + 1-4 objects; spike: + a command buffer and 27-29 objects |
+| all five layers below 1.0 | 22; 72 | 13 draws + 9 passes; spike: + a command buffer and 49 objects |
+| intensity pulse | 24-29; 47-48 | **5 library** + 9 draws + 5 passes + 5-10 objects; spike: + a command buffer and 27 objects |
+| travelling segment | 20-32; 44-54 | **3 library** + 9 draws + 7 passes + 1-13 objects; spike: + a command buffer and 24-34 objects |
+| colour-stop cross-fade | 43; 75 | 9 draws + 6 passes + 28 in the two rings' `glTexSubImage2D` (16 from `NeonRenderer::Update`, 12 from `DebugRenderer::Update`, both through `GradientRingLUT::Tick`); spike: + a command buffer and 31 objects |
+
+Three other things the counter sees are not the library's either:
+
+- **The first counted frame** (17 on a still neon frame, not 2). The counted
+  loop draws into a new `OffscreenCapture`, so that frame starts a command
+  buffer and a render pass, and releases the last capture's texture (2 x 40 B,
+  `AGX::Mempool::FreeIntervalList::push` under `-[AGXG14XFamilyTexture dealloc]`).
+- **The cross-fade's second frame** (160 to 237, different on every run). The
+  process's first ring upload builds a built-in pipeline through the Metal
+  compiler service, partly on a libdispatch worker thread - and the counter
+  counts every thread. `layer-check diff` will list this line as changed
+  between any two runs.
+- **An occasional single 24-48 B allocation** from
+  `GLRResourceList::initWithCapacity`, when the driver takes a resource list
+  from its pool for a new command buffer (all layers: 72 or 73).
+
+**The library's share** is three sites, all under
+`NeonRenderer::OnConfigChanged`, so none of them runs on a still or hue frame.
+Each copies or rebuilds a container whose elements own heap memory.
+
+1. **`OnlyIntensityMoved`** (anonymous namespace, `neon-renderer.cpp`) copies
+   the whole `NeonConfig` to compare everything but the intensity. That is
+   one allocation per non-empty vector in it, nested ones included:
+   `colorStops`, `arcs`, `segmentBoosts`, `preservedSegmentBoosts`, and each
+   arc's and segment's own `colorStops`. The default scene makes 2 (four
+   stops, 80 B; one arc, 48 B). It runs on every config change that moves the
+   intensity and not the geometry - every frame of an intensity animation.
+2. **`NeonRenderer::setupRingGeometry`** builds its three meshes in local
+   `std::vector<float>`s (`ringVerts`, `blitVerts`, `gatherVerts`: 192, 384
+   and 192 B), so 3 allocations per call. It runs under
+   `geometryDirty || emissionDirty`: every frame of an intensity, bloom, glow
+   radius, line width, falloff, cutoff or shape animation, and of an arc or
+   segment brightness that moves `GetGlowEmissionBound`. Not under an arc wipe
+   or a travelling segment. `setupGeometry`, under the same gate, builds into
+   stack arrays and allocates nothing.
+3. **`SegmentUtils::FillEffectiveSegments`** (`util/segment-utils.h`)
+   `clear()`s its output and `push_back`s a copy of every segment, and
+   `SegmentBoost::colorStops` is a vector. That is one allocation per segment
+   with stops (preserved ones included) on every `segmentsDirty` - every frame
+   a segment moves. The `segments` scene makes 3 (one stop each, 20 B). The
+   function's doc comment, and `mEffectiveSegments`'s in `neon-renderer.h`,
+   say the reused buffer makes it allocation-free after warm-up. That holds
+   only for segments without stops.
+
+**Fix.** For the library, each fix changes a container and keeps every value,
+so all three are byte-identical:
+
+1. Compare without the copy. Split `NeonConfig::operator==` into
+   `EqualsIgnoringIntensity` (every field but `intensity`), with `operator==`
+   as `intensity == o.intensity && EqualsIgnoringIntensity(o)`. There is still
+   one field list, and it is exact for a NaN too. Within `neon-renderer.cpp`
+   alone: set `mCurrentConfig`'s intensity to the new one around a plain `==`
+   and restore it, which gives the same answer for every non-NaN intensity.
+2. Build into stack arrays, as `setupGeometry` does. The capacities are exact
+   maxima - `PushAnnulus` emits at most four rectangles, 48 floats - so
+   `PushRect` and `PushAnnulus` would write into a fixed 48- or 96-float
+   buffer with a count instead of a vector. Or keep the three vectors as
+   members and `clear()` them, which keeps their capacity.
+3. Assign in place. Copy-assign each segment over the element already at its
+   index (`out[n] = s`, which reuses that element's `colorStops` capacity),
+   `push_back` only past the current size, and `erase` the tail. This
+   allocates nothing while the count holds, which it does on every frame of a
+   segment animation.
+
+For the driver, the library cannot stop these short of drawing less. Some of
+it goes without moving a pixel:
+
+- Plan section 3.6's shared gradient ring deletes the debug layer's own
+  upload: 12 per cross-fade frame.
+- `renderColorStopMarkers` draws one disc per stop. One draw with the discs in
+  stop order would be byte-identical (blending follows primitive order within
+  a draw) and save 3 a frame with four stops, debug overlays only. Not worth
+  it for the allocations alone.
+- Each render pass a later step removes saves one allocation, plus one per
+  object only that pass touched, on frames that start a command buffer.
+
+The tool should stop calling these the library's (its README and the comment
+at its counted loop both say the counts are the library's alone):
+
+- Classify each counted allocation by its caller: the first frame above
+  `operator new` outside libc++. In the main image it goes on `alloc` (the
+  library's line); in a GL driver image, on a separate `alloc-driver` line.
+  `backtrace()` plus a test against the main image's address range, as the
+  probe did.
+- Count only the calling thread.
+- Optionally `glFlush` after each counted frame, so the driver's line follows
+  a host's per-frame command buffer rather than the driver's own schedule.
+  That also makes it repeatable.
+
+With that, the library's line reads 0 on every scene but the intensity pulse
+(5) and the travelling segment (3), and 0 everywhere once the three fixes
+land. Plan rule 5 ("steady state allocates nothing") can then be checked as
+written, with the driver's line beside it as a count of draws and passes.
+`layer-check diff` is the gate for the fixes: every hash identical. The plan's
+section 7.1 needs the same correction: the source is traced, the library makes
+none of the counted allocations on a still or hue frame, and the bar for S2
+onward is the library's count, not the driver's. `CLAUDE.md`'s claim for the
+registry holds: the ten `view/` scenes allocate nothing in library code.
+
+**Fixed (2026-10-16, uncommitted), all three, and the tool.**
+
+1. `NeonConfig::EqualsIgnoringIntensity` holds the field list.
+   `operator==` is `intensity == o.intensity && EqualsIgnoringIntensity(o)`,
+   and `OnlyIntensityMoved` calls it on the two configs in place.
+2. `setupRingGeometry` builds into `AnnulusVerts`, a 96-float stack array
+   with a count, which `PushRect` and `PushAnnulus` now take. That is two
+   annuli, the blit's mesh.
+3. `FillEffectiveSegments` copy-assigns over the elements already in its
+   output, appends past them, and erases the tail. Its comment and
+   `mEffectiveSegments`' now say when that allocates: when the count grows
+   or a segment gains stops.
+
+`layer-check` files each allocation by caller, as proposed: `alloc` for the
+main image, `alloc-driver` for any other. It counts only the thread that runs
+the frame, and `report --flush` ends each counted frame in a `glFlush`. On the
+M2 every allocation filed as the driver's came from `AppleMetalOpenGLRenderer`,
+`AGXMetalG14X` or `Metal`. `diff` warns when two reports counted differently.
+
+Measured on an Apple M2 Pro, Debug:
+
+| scene | `alloc`, the library | `alloc-driver`, no flush | `alloc-driver`, `--flush` |
+| ----- | -------------------- | ------------------------ | ------------------------- |
+| still neon at 0.5 | 0 (was 0) | 2 | 15-16 |
+| rotating hue at 0.5 | 0 (was 0) | 9; 40 | 40 |
+| intensity pulse at 0.5 | 0 (was 5) | 19-24; 42-43 | 46 |
+| travelling segment at 0.5 | 0 (was 3) | 17-29; 41-51 | 52 |
+| all five layers below 1.0 | 0 (was 0) | 22; 72 | 72 |
+
+"Was" is the old library under the new tool. The driver's counts did not move
+with the fix. Every other scene's `alloc` was 0 before and after, the ten
+`view/` scenes included. The driver columns leave out each scene's first
+counted frame, which is higher for the reason above. Counting only the
+calling thread made the cross-fade's second frame repeatable: 157 on three
+runs, where all threads had read 160 to 237. The Release build's `alloc` is
+0 on every scene too, and its driver line matches Debug's on the scenes
+above.
+`layer-check diff` against the report from before any change: all 248 hashes
+identical. `neon-scale-check check` and `partition` pass.
+
+Not covered: frames driven by an attached animation (`AnimationManager`), and
+frames through the C ABI (`el_effect_update` passes staging to `SetConfig`
+every frame). `layer-check` has no scene for either. The thirty-third pass
+measured no allocation with a view on, on the AMD Radeon Pro 5300M, so that
+driver presumably does not allocate through `operator new` per draw. Not
+re-checked there.
+
+---
+
 ## What is left
 
 The second pass's R1 to R6 have all landed, and so have the third pass's V8,
@@ -5601,7 +5816,7 @@ tenth passes are one item each and all four are fixed, as are the eleventh's one
 the twelfth's four and the fourteenth's V15; its I25 is documented rather than
 fixed, and the fifteenth's V16 is open. The sixteenth pass fixed I26, I27, I29
 and I30, and documented I28 and V17. The seventeenth fixed I31 and I32. The
-eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, the thirtieth V26, the thirty-first I63, and the thirty-second V27. The thirty-third, a review of the buffer registry, opened I64 to I73, and I64 is fixed since. Three items from the
+eighteenth opened V18, and the nineteenth fixed V19 and V20 and opened V21, since fixed too. The twentieth fixed I33 and I34, the twenty-first I39 to I46 (I39 closing I2), the twenty-second I47, I48 and I49, the twenty-third I50, I51 and I52, the twenty-fourth I53, I54, I55, I56 and I57, the twenty-fifth I58, the twenty-sixth V23 and R7, the twenty-seventh V24, the twenty-eighth I59, I60, I61 and I62, the twenty-ninth V25, the thirtieth V26, the thirty-first I63, and the thirty-second V27. The thirty-third, a review of the buffer registry, opened I64 to I73, and I64 is fixed since. The thirty-fourth, a trace of the heap allocations `layer-check` counts on steady frames, opened I75, fixed since. Three items from the
 first pass - V5, I5 and I8 - remain deliberately open, each with the reasoning recorded next to
 the code rather than only here, plus V9 from the third (I12's remainder closed
 with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
@@ -5675,6 +5890,7 @@ with the 2026-10-09 docs cleanup), I13 from the fourth, and I18 from the sixth:
 | I71 | open | the C ABI setter takes a name of any length, the getter cannot return one past `EL_BUFFER_NAME_CAPACITY` |
 | I72 | open | a table's panel is stretched by a fractional factor: uneven texel widths, and 947 boundary pixels showing the neighbouring texel (up to 5 levels) on one panel |
 | I73 | open | `ChannelCount` covers twelve formats; any other reads "0 ch" and is shown as four channels, so a missing alpha reads white |
+| I75 | fixed | `layer-check`'s `alloc` lines were mostly Apple's GL driver (one per draw, one per render pass, one per object on each new command buffer - every frame under a host's swap); the library's own were three config-change sites in `NeonRenderer::OnConfigChanged` (`OnlyIntensityMoved`'s config copy, `setupRingGeometry`'s vectors, `FillEffectiveSegments`' stop copies): 5 a frame under an intensity pulse, 3 under a travelling segment, 0 on still and hue frames; all three fixed byte-identically, and the tool now files each allocation by caller (`alloc` the library's, 0 on every scene; `alloc-driver`), on the calling thread, with `--flush` |
 
 One item that is deliberately NOT on this list, so nobody adds it: `Texture`'s
 virtual destructor, measured in I9. It costs every LUT a vptr for a dispatch

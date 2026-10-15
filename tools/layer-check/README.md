@@ -15,7 +15,7 @@ another checkout's library, as `neon-scale-check` does. See `CMakeLists.txt`.
 ## Modes
 
 ```bash
-layer-check report --out after.txt
+layer-check report --out after.txt [--only SUBSTRING] [--flush]
 ```
 
 Renders every scene through all five renderers, at 1280 x 720, and writes one
@@ -25,7 +25,8 @@ line per fact:
 | ---- | ---- |
 | `hash SCENE FRAME HEX` | FNV-1a 64 of the frame's RGBA, for each of the 4 frames after the config is set (dt 1/60) |
 | `mem SCENE TEX BUF` | bytes of GL textures and buffers alive after those frames, from `glTexImage2D` / `glBufferData` |
-| `alloc SCENE TOTAL F0 ... F7` | C++ heap allocations (`operator new`) in each of 8 more frames - the GL driver's included (below) |
+| `alloc SCENE TOTAL F0 ... F7` | C++ heap allocations (`operator new`) the library made in each of 8 more frames |
+| `alloc-driver SCENE TOTAL F0 ... F7` | the same for the GL driver, inside the library's GL calls (below) |
 | `published NAME#N WxH chC` | what the all-layers frame published to the buffer registry |
 
 The scenes:
@@ -40,18 +41,33 @@ The scenes:
 - All five layers at once below 1.0.
 - The debug view on every buffer that frame publishes.
 
-**The allocation counts are not the library's alone.** The tool replaces the
-global `operator new`, and on macOS that also catches Apple's GL stack, which
-is C++. It counts:
+**Allocations are counted by caller.** The tool replaces the global
+`operator new`, and on macOS that also catches Apple's GL stack, which is
+C++. So each allocation is filed by the first frame above `operator new`
+outside libc++:
+- in the main image - the library, linked in statically - on `alloc`;
+- in any other image, on `alloc-driver`. On an Apple M2 Pro these are all
+  Apple's GL stack: `AppleMetalOpenGLRenderer`, `AGXMetalG14X` and `Metal`.
+
+Only the thread that runs the frame counts; the driver also allocates on
+worker threads of its own. `alloc` should read 0 on every scene: steady
+frames allocate nothing in the library (review finding I75). `alloc-driver`
+follows the GL work (I75 again):
 - 24 B per draw;
 - 40 B per change of framebuffer;
-- a burst whenever the driver starts a command buffer. That happens every few
-  frames here, since the tool never flushes.
+- a burst whenever the driver starts a command buffer: 128 B, then 24 B per
+  GL object it touches.
 
-A still frame's count equals its number of draws. The colour-stop cross-fade
-scene's first counted frame also varies between runs: the process's first
-ring upload builds a Metal pipeline. So `diff` lists that line however little
-changed. Separating the library's share is proposed in review finding I75.
+Without a flush the driver starts a command buffer every few frames, on its
+own schedule, so the driver line is periodic. A still frame then counts its
+draws. `--flush` calls `glFlush` after each counted frame, as a host's swap
+would, and every frame starts one. The driver line is then steady, and higher:
+15 a frame for a still neon frame, 40 under a rotating hue, 72 with all five
+layers. Without `--flush` the colour-stop cross-fade scene's second counted
+frame reads 157: the process's first ring upload builds a Metal pipeline. That
+count used to vary between runs (160-237), because the driver builds part of
+the pipeline on a worker thread; counted on the calling thread alone it is the
+same every run.
 
 `--only SUBSTRING` runs only the scenes whose id contains it. The library's
 own log goes to stdout, so give `--out`.
@@ -62,6 +78,9 @@ layer-check diff before.txt after.txt
 
 Exits 1 if any frame hash differs or a scene is missing from either report.
 It also lists every change in memory or allocations, but those do not fail it.
+It warns when the two reports counted allocations differently: one with
+`--flush` and one without, or one from before the count was split by caller,
+whose `alloc` lines hold the driver's too.
 Hashes are only comparable within one GPU and one build type: Debug and
 Release libraries differ on a few frames, from CPU float math in uniforms.
 

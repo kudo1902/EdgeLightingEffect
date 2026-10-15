@@ -9,9 +9,10 @@
 // shader cache is for: Initialize and first-frame time, and every shader
 // compile, by source.
 //
-//   layer-check report [--out FILE] [--only SUBSTRING]
+//   layer-check report [--out FILE] [--only SUBSTRING] [--flush]
 //                                        every scene, or those whose id has SUBSTRING;
-//                                        FILE defaults to stdout
+//                                        FILE defaults to stdout; --flush calls glFlush
+//                                        after each counted frame, as a host's swap would
 //   layer-check diff A B                 exit 1 if any frame hash differs
 //   layer-check startup [--fail-stage NAME]
 //
@@ -24,6 +25,9 @@
 #include "scenes.h"
 
 #include <GLFW/glfw3.h>
+
+#include <dlfcn.h>
+#include <execinfo.h>
 
 #include <algorithm>
 #include <chrono>
@@ -43,20 +47,101 @@
 using namespace EdgeLighting;
 
 // -----------------------------------------------------------------------------
-// Heap allocations, counted only inside the window a measurement opens and
-// never inside a GL hook below, whose own bookkeeping would otherwise count.
+// Heap allocations, counted only inside the window a measurement opens, only on
+// the thread that opened it, and never inside a GL hook below, whose own
+// bookkeeping would otherwise count.
+//
+// The replaced operator new binds for every image in the process, and on macOS
+// Apple's GL stack is C++: the GL calls the library makes allocate too (I75 -
+// 24 B per draw on an Apple M2 Pro, 40 B per render pass, and a burst per
+// command buffer). So each allocation is filed by its CALLER, the first frame
+// above operator new outside libc++: the library's when that frame is in the
+// main image (the library is linked in statically), the driver's when it is in
+// any other.
 // -----------------------------------------------------------------------------
 namespace
 {
-    long gNewCount = 0;
-    bool gCountingNews = false;
-    bool gInHook = false;
+    typedef struct AllocCounts
+    {
+        long library = 0; ///< Called from the main image: the library (or this tool, outside its hooks).
+        long driver = 0;  ///< Called from any other image: the GL driver.
+    } AllocCounts;
 
-    void *CountedAlloc(std::size_t size)
+    AllocCounts gNewCounts;
+    /// Per thread, so only the thread that opens the window counts: the driver
+    /// also allocates on its own worker threads, on its own schedule.
+    thread_local bool gCountingNews = false;
+    bool gInHook = false;
+    const void *gMainImage = nullptr; ///< Load address of the main image; see AllocCallerIsLibrary.
+
+    const int MAX_CALLER_FRAMES = 64;
+
+    /// Whether @p fname names libc++ (or libstdc++): a frame there is not the
+    /// caller. A std::string or a nothrow new allocates from inside the
+    /// standard library's own image, on behalf of whoever called it.
+    bool IsStandardLibraryImage(const char *fname)
+    {
+        return fname && (std::strstr(fname, "libc++") || std::strstr(fname, "libstdc++"));
+    }
+
+    /// Whether the allocation whose operator new returns to @p caller was made
+    /// by code in the main image. Walks the stack from @p caller up, past any
+    /// frames in the standard library's image, to the first frame outside it.
+    /// Templates the library instantiates (std::vector's growth) are compiled
+    /// into the main image, so they count as its own.
+    bool AllocCallerIsLibrary(void *caller)
+    {
+        void *frames[MAX_CALLER_FRAMES];
+        int depth = backtrace(frames, MAX_CALLER_FRAMES);
+        // Find the caller in the trace: the frames below it are this file's
+        // own (operator new, and this function), however they were inlined.
+        int k = 0;
+        while (k < depth && frames[k] != caller)
+        {
+            ++k;
+        }
+        if (k == depth)
+        {
+            // Not in the trace (a frame chain the unwinder could not follow):
+            // judge the caller alone. Not seen on the M2.
+            frames[0] = caller;
+            k = 0;
+            depth = 1;
+        }
+        for (; k < depth; ++k)
+        {
+            Dl_info info;
+            if (dladdr(frames[k], &info) == 0)
+            {
+                return false;
+            }
+            if (info.dli_fbase == gMainImage)
+            {
+                return true;
+            }
+            if (!IsStandardLibraryImage(info.dli_fname))
+            {
+                return false;
+            }
+        }
+        return false;
+    }
+
+    void *CountedAlloc(std::size_t size, void *caller)
     {
         if (gCountingNews && !gInHook)
         {
-            ++gNewCount;
+            // In a hook while classifying, should dladdr itself allocate.
+            gInHook = true;
+            if (AllocCallerIsLibrary(caller))
+            {
+                ++gNewCounts.library;
+            }
+            else
+            {
+                ++gNewCounts.driver;
+            }
+            gInHook = false;
         }
         void *p = std::malloc(size ? size : 1);
         if (!p)
@@ -67,8 +152,8 @@ namespace
     }
 } // namespace
 
-void *operator new(std::size_t size) { return CountedAlloc(size); }
-void *operator new[](std::size_t size) { return CountedAlloc(size); }
+void *operator new(std::size_t size) { return CountedAlloc(size, __builtin_return_address(0)); }
+void *operator new[](std::size_t size) { return CountedAlloc(size, __builtin_return_address(0)); }
 void operator delete(void *p) noexcept { std::free(p); }
 void operator delete[](void *p) noexcept { std::free(p); }
 void operator delete(void *p, std::size_t) noexcept { std::free(p); }
@@ -695,11 +780,11 @@ namespace
         std::vector<uint64_t> hashes;
         size_t textureBytes = 0;
         size_t bufferBytes = 0;
-        std::vector<long> allocations; ///< Per counted frame.
+        std::vector<AllocCounts> allocations; ///< Per counted frame.
         std::vector<std::string> published;
     } SceneResult;
 
-    SceneResult RunScene(const LayerScene &scene)
+    SceneResult RunScene(const LayerScene &scene, bool flush)
     {
         SceneResult result;
         EdgeLightingEffect effect;
@@ -728,8 +813,12 @@ namespace
         }
 
         // Steady frames, counted without the capture's own read-back: the
-        // configs are built before the window opens, so only the library's
-        // allocations count.
+        // configs are built before the window opens, so what counts is the
+        // library's own allocations and the GL driver's under its calls, each
+        // filed by caller (CountedAlloc). With @p flush each frame ends in a
+        // glFlush, outside the window, so the driver starts a command buffer
+        // every frame as it would under a host's swap - rather than every few
+        // frames on its own schedule, which makes its count periodic.
         std::vector<Config> configs;
         for (int f = 0; f < COUNTED_FRAMES; ++f)
         {
@@ -740,7 +829,7 @@ namespace
         result.allocations.reserve(COUNTED_FRAMES);
         for (int f = 0; f < COUNTED_FRAMES; ++f)
         {
-            gNewCount = 0;
+            gNewCounts = AllocCounts{};
             gCountingNews = true;
             if (perFrame)
             {
@@ -749,7 +838,11 @@ namespace
             effect.Update(DT);
             effect.Render(WIDTH, HEIGHT);
             gCountingNews = false;
-            result.allocations.push_back(gNewCount);
+            if (flush)
+            {
+                glFlush();
+            }
+            result.allocations.push_back(gNewCounts);
         }
         capture.End();
         return result;
@@ -758,13 +851,30 @@ namespace
     // -------------------------------------------------------------------------
     // Modes.
     // -------------------------------------------------------------------------
-    int Report(const char *outPath, const char *only)
+    /// One report line of per-frame allocation counts: the total, then each
+    /// frame's.
+    std::string AllocLine(const char *kind, const std::string &scene, const std::vector<AllocCounts> &frames,
+                          long AllocCounts::*field)
+    {
+        long total = 0;
+        std::string perFrame;
+        for (const AllocCounts &n : frames)
+        {
+            total += n.*field;
+            perFrame += " " + std::to_string(n.*field);
+        }
+        return std::string(kind) + " " + scene + " " + std::to_string(total) + perFrame + "\n";
+    }
+
+    int Report(const char *outPath, const char *only, bool flush)
     {
         std::ostringstream out;
         out << "# layer-check report\n";
         out << "# GL renderer: " << RendererName() << "\n";
         out << "# frame " << WIDTH << "x" << HEIGHT << ", " << HASHED_FRAMES << " hashed frames per scene at dt 1/60, "
             << COUNTED_FRAMES << " counted\n";
+        out << "# allocations by caller: alloc the library's, alloc-driver the GL driver's; calling thread only; "
+            << (flush ? "glFlush after each counted frame" : "no flush") << "\n";
 
         std::vector<LayerScene> scenes = BuildScenes();
 
@@ -798,7 +908,7 @@ namespace
             {
                 continue;
             }
-            const SceneResult r = RunScene(scene);
+            const SceneResult r = RunScene(scene, flush);
             for (size_t f = 0; f < r.hashes.size(); ++f)
             {
                 char hex[24];
@@ -806,14 +916,8 @@ namespace
                 out << "hash " << scene.id << " " << f << " " << hex << "\n";
             }
             out << "mem " << scene.id << " " << r.textureBytes << " " << r.bufferBytes << "\n";
-            long allocTotal = 0;
-            std::string perFrame;
-            for (long n : r.allocations)
-            {
-                allocTotal += n;
-                perFrame += " " + std::to_string(n);
-            }
-            out << "alloc " << scene.id << " " << allocTotal << perFrame << "\n";
+            out << AllocLine("alloc", scene.id, r.allocations, &AllocCounts::library);
+            out << AllocLine("alloc-driver", scene.id, r.allocations, &AllocCounts::driver);
             if (scene.id == "all@0.5+hue")
             {
                 for (const std::string &p : r.published)
@@ -845,7 +949,9 @@ namespace
     {
         std::map<std::string, std::string> hashes; ///< "scene frame" -> hex
         std::map<std::string, std::pair<long long, long long>> memory;
-        std::map<std::string, long> allocations;
+        std::map<std::string, long> allocations;       ///< alloc: the library's.
+        std::map<std::string, long> driverAllocations; ///< alloc-driver.
+        std::string allocHeader; ///< How the counts were taken; empty before they were split by caller.
         std::string renderer;
     } ParsedReport;
 
@@ -876,16 +982,20 @@ namespace
                 in >> scene >> tex >> buf;
                 report.memory[scene] = {tex, buf};
             }
-            else if (kind == "alloc")
+            else if (kind == "alloc" || kind == "alloc-driver")
             {
                 std::string scene;
                 long n = 0;
                 in >> scene >> n;
-                report.allocations[scene] = n;
+                (kind == "alloc" ? report.allocations : report.driverAllocations)[scene] = n;
             }
             else if (line.rfind("# GL renderer: ", 0) == 0)
             {
                 report.renderer = line.substr(15);
+            }
+            else if (line.rfind("# allocations by caller: ", 0) == 0)
+            {
+                report.allocHeader = line.substr(25);
             }
         }
         return true;
@@ -936,15 +1046,28 @@ namespace
                             entry.second.first, it->second.first, entry.second.second, it->second.second);
             }
         }
-        for (const auto &entry : a.allocations)
+        // A report from before the split counts the driver's allocations on
+        // its alloc lines too, and the driver's count follows the flush.
+        if (a.allocHeader != b.allocHeader)
         {
-            auto it = b.allocations.find(entry.first);
-            if (it != b.allocations.end() && it->second != entry.second)
-            {
-                std::printf("allocations: %s %ld -> %ld over %d frames\n", entry.first.c_str(), entry.second,
-                            it->second, COUNTED_FRAMES);
-            }
+            std::printf("warning: allocations were counted differently (%s / %s) - not comparable\n",
+                        a.allocHeader.empty() ? "library and driver together" : a.allocHeader.c_str(),
+                        b.allocHeader.empty() ? "library and driver together" : b.allocHeader.c_str());
         }
+        auto listAllocations = [](const char *what, const std::map<std::string, long> &before,
+                                  const std::map<std::string, long> &after) {
+            for (const auto &entry : before)
+            {
+                auto it = after.find(entry.first);
+                if (it != after.end() && it->second != entry.second)
+                {
+                    std::printf("%s: %s %ld -> %ld over %d frames\n", what, entry.first.c_str(), entry.second,
+                                it->second, COUNTED_FRAMES);
+                }
+            }
+        };
+        listAllocations("library allocations", a.allocations, b.allocations);
+        listAllocations("driver allocations", a.driverAllocations, b.driverAllocations);
         std::printf("%zu frames compared: %d differ, %d missing\n", a.hashes.size(), differing, missing);
         std::printf("%s\n", differing == 0 && missing == 0 ? "PASS" : "FAIL");
         return differing == 0 && missing == 0 ? 0 : 1;
@@ -1018,7 +1141,7 @@ namespace
     int Usage()
     {
         std::fprintf(stderr,
-                     "usage: layer-check report [--out FILE] [--only SUBSTRING]\n"
+                     "usage: layer-check report [--out FILE] [--only SUBSTRING] [--flush]\n"
                      "       layer-check diff A B\n"
                      "       layer-check startup [--fail-stage NAME]   (NAME: a ShaderSource constant, e.g. NEON_VERT_SRC)\n");
         return 2;
@@ -1040,11 +1163,16 @@ int main(int argc, char **argv)
     const char *outPath = nullptr;
     const char *failStage = nullptr;
     const char *only = nullptr;
+    bool flush = false;
     for (int i = 2; i < argc; ++i)
     {
         if (std::strcmp(argv[i], "--out") == 0 && i + 1 < argc)
         {
             outPath = argv[++i];
+        }
+        else if (std::strcmp(argv[i], "--flush") == 0)
+        {
+            flush = true;
         }
         else if (std::strcmp(argv[i], "--fail-stage") == 0 && i + 1 < argc)
         {
@@ -1060,11 +1188,16 @@ int main(int argc, char **argv)
         }
     }
 
+    Dl_info self;
+    if (dladdr(reinterpret_cast<void *>(&Usage), &self) != 0)
+    {
+        gMainImage = self.dli_fbase;
+    }
     InitGL();
     int rc = 2;
     if (mode == "report")
     {
-        rc = Report(outPath, only);
+        rc = Report(outPath, only, flush);
     }
     else if (mode == "startup")
     {

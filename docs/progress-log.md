@@ -5,6 +5,32 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-16 - I75: steady frames allocate nothing in the library, and layer-check says whose allocations it counts
+
+Uncommitted, on `design_system_sharing_resources_between_renderers`, measured
+against `b03a9c3`. Apple M2 Pro, Debug build. I75 in
+[`review-findings.md`](review-findings.md) has the trace and the numbers.
+
+- **Library.** The three allocation sites on neon config-change paths are
+  gone, each without changing a value:
+  - `OnlyIntensityMoved` compares in place, through
+    `NeonConfig::EqualsIgnoringIntensity`, which now holds the field list.
+  - `setupRingGeometry` builds into stack arrays.
+  - `FillEffectiveSegments` assigns over the elements it already holds.
+- **Tool.** `layer-check` files each allocation by caller. `alloc` is the
+  library's; `alloc-driver` is any other image's, which on the M2 is always
+  Apple's GL stack. It counts only the thread that runs the frame.
+  `report --flush` ends each counted frame in a `glFlush`.
+- **Measured.**
+  - `alloc` reads 0 on every scene. It was 5 a frame under an intensity
+    pulse and 3 under a travelling segment.
+  - All 248 hashes are identical to `b03a9c3`.
+  - The driver's line is unchanged. With `--flush` it is steady: 15 a frame
+    for still neon, 40 under a hue, 72 with all five layers.
+  - `neon-scale-check check` and `partition` pass.
+- **Docs.** Plan section 7.1 and the S2 bar now say the counts were traced,
+  and the bar is `alloc` 0.
+
 ## 2026-10-15 - Sharing plan S0 and S1: the five-layer baseline, and one compile per shader stage
 
 Uncommitted, on `design_system_sharing_resources_between_renderers`, measured

@@ -1075,12 +1075,28 @@ namespace EdgeLighting
             return glm::max(glm::vec2(hw + dist - inset, hh + dist - inset), glm::vec2(0.0f));
         }
 
+        /// The most floats PushAnnulus appends: four rectangles of two
+        /// triangles, two floats a vertex.
+        constexpr size_t ANNULUS_MAX_FLOATS = 4 * 12;
+
+        /// Vertices for up to two annuli, on the stack - the most one mesh of
+        /// NeonRenderer::setupRingGeometry holds (the blit's), so the capacity
+        /// is exact and building a mesh allocates nothing. setupGeometry builds
+        /// into stack arrays for the same reason: both run on every frame of an
+        /// intensity animation (I75).
+        typedef struct AnnulusVerts
+        {
+            float data[2 * ANNULUS_MAX_FLOATS];
+            size_t count = 0;
+        } AnnulusVerts;
+
         /// Append the two triangles of the rectangle [l, r] x [b, t], wound
         /// counter-clockwise like every other strip in this renderer.
-        inline void PushRect(std::vector<float> &v, float l, float b, float r, float t)
+        inline void PushRect(AnnulusVerts &v, float l, float b, float r, float t)
         {
             const float quad[] = {l, t, l, b, r, b, l, t, r, b, r, t};
-            v.insert(v.end(), std::begin(quad), std::end(quad));
+            std::copy(std::begin(quad), std::end(quad), v.data + v.count);
+            v.count += std::size(quad);
         }
 
         /// Append the region inside the centred box @p outer and outside the
@@ -1095,7 +1111,8 @@ namespace EdgeLighting
         /// calls that share a box share its edges bit for bit. That is what
         /// lets NeonRenderer::setupRingGeometry split the screen between the
         /// ring and the blit with no pixel drawn by both and none by neither.
-        inline void PushAnnulus(std::vector<float> &v, glm::vec2 outer, glm::vec2 inner)
+        /// At most ANNULUS_MAX_FLOATS floats, so an AnnulusVerts takes two.
+        inline void PushAnnulus(AnnulusVerts &v, glm::vec2 outer, glm::vec2 inner)
         {
             if (outer.x <= 0.0f || outer.y <= 0.0f)
             {
@@ -1317,16 +1334,16 @@ namespace EdgeLighting
         /// Whether @p next differs from @p prev in NeonConfig::intensity and
         /// nothing else the neon reads (its own sub-config and the geometry):
         /// the one change that leaves the hue-invariant fields standing, scaled
-        /// (LazyBake, I56).
+        /// (LazyBake, I56). Compares in place: it runs on every frame of an
+        /// intensity animation, and a copy of the config to compare allocated
+        /// once per vector in it (I75).
         inline bool OnlyIntensityMoved(const Config &prev, const Config &next)
         {
             if (next.geometry != prev.geometry || next.neon.intensity == prev.neon.intensity)
             {
                 return false;
             }
-            NeonConfig same = next.neon;
-            same.intensity = prev.neon.intensity;
-            return same == prev.neon;
+            return next.neon.EqualsIgnoringIntensity(prev.neon);
         }
 
         /// Whether the edge ring's shading can be factored into its own field
@@ -3786,12 +3803,10 @@ namespace EdgeLighting
         // premultiplied-over, so a pixel drawn twice would composite twice;
         // build these two anywhere but here, from separately computed values,
         // and that guarantee goes.
-        std::vector<float> ringVerts;
-        ringVerts.reserve(48);
+        AnnulusVerts ringVerts;
         PushAnnulus(ringVerts, ringOuter, ringHole);
 
-        std::vector<float> blitVerts;
-        blitVerts.reserve(96);
+        AnnulusVerts blitVerts;
         PushAnnulus(blitVerts, blitOuter, ringOuter); // outside the ring
         PushAnnulus(blitVerts, ringHole, blitHole);   // inside it
 
@@ -3809,17 +3824,16 @@ namespace EdgeLighting
         const glm::vec2 gatherHole = (holeBoth.x > 0.0f && holeBoth.y > 0.0f)
                                          ? glm::max(holeBoth - glm::vec2(gatherPad), glm::vec2(0.0f))
                                          : glm::vec2(0.0f);
-        std::vector<float> gatherVerts;
-        gatherVerts.reserve(48);
+        AnnulusVerts gatherVerts;
         PushAnnulus(gatherVerts, gatherOuter * scale, gatherHole * scale);
         mGatherBounds = Annulus{gatherOuter, gatherHole};
 
         // GL_DYNAMIC_DRAW and no SetAttribPointer, as in setupGeometry - and
         // for its reason too: this runs under geometryDirty, which an
         // intensity animation sets every frame.
-        mGatherMesh.Upload(gatherVerts.data(), gatherVerts.size());
-        mRingMesh.Upload(ringVerts.data(), ringVerts.size());
-        mBlitMesh.Upload(blitVerts.data(), blitVerts.size());
+        mGatherMesh.Upload(gatherVerts.data, gatherVerts.count);
+        mRingMesh.Upload(ringVerts.data, ringVerts.count);
+        mBlitMesh.Upload(blitVerts.data, blitVerts.count);
     }
 
     NeonRenderer::RingFieldLayout NeonRenderer::computeRingFieldLayout(const Annulus &ring,

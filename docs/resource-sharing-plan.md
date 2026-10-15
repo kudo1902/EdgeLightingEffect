@@ -457,9 +457,9 @@ and I65 to I73.
 - **ASan**: the I64 probe extended to kept renderers after the effect and to
   one renderer in two effects - clean.
 - **Debug view**: texel-exact against S0.
-- **Allocations**: no more of the library's own per frame than S0. Most of
-  what the tool counts is the GL driver's (section 7.1), so the bar is set on
-  the library's share.
+- **Allocations**: none in the library on any steady frame - `layer-check`'s
+  `alloc` line 0 on every scene, as since I75 (section 7.1). The driver's own
+  line, `alloc-driver`, is listed but not a bar.
 - **Frames**: identical to S0.
 
 **S3 - two phases** (3.3).
@@ -567,28 +567,36 @@ Settled by the owner on 2026-10-15, each as recommended.
   | all five layers below 1.0 | 6.4 MB |
 
   Buffers are 43 KB in every scene.
-- **The allocation counts are mostly the GL driver's.** The tool replaces the
-  global `operator new`. On macOS that also catches Apple's GL stack, which
-  is C++. Traced in a separate session, I75 (written there, not yet merged
-  into this branch):
+- **The allocation counts were traced: almost all of them are the GL
+  driver's** (I75 in [`review-findings.md`](review-findings.md)). The tool
+  replaces the global `operator new`. On macOS that also catches Apple's GL
+  stack, which is C++:
   - 24 B per draw;
   - 40 B each time drawing moves to another framebuffer;
-  - a burst whenever the driver starts a command buffer - every few frames
-    here, because the tool never flushes. A host's swap would start one
-    every frame.
+  - 128 B whenever the driver starts a command buffer, plus 24 B per GL
+    object it touches. That was every few frames here, because the tool never
+    flushed. A host's swap starts one every frame.
 
-  Checked here: on still frames the count equals the draw count exactly -
-  2 for still neon, 3 with droplets, 8 with the debug overlays.
+  On still frames S0's count was the draw count exactly: 2 for still neon,
+  3 with droplets, 8 with the debug overlays.
 
-  The library itself allocates only on three neon config-change paths, so
-  in intensity-pulse and travelling-segment frames:
+  The library itself allocated in three places, all on neon config-change
+  paths. So only intensity-pulse frames (5 a frame) and travelling-segment
+  frames (3) did:
   - `OnlyIntensityMoved`'s config copy;
   - `setupRingGeometry`'s local vectors;
   - `FillEffectiveSegments`'s re-copy.
 
-  It allocates nothing on still or hue frames. I75 proposes a fix for each,
-  and splitting the tool's count into library and driver. Until that split
-  exists, S2 and later steps compare S0's counts scene by scene.
+  It allocated nothing on still or hue frames, nor with the debug view on.
+  All three are fixed since, with all 248 hashes identical. The tool now
+  files each allocation by caller:
+  - `alloc` is the library's. It reads 0 on every scene.
+  - `alloc-driver` is the driver's.
+
+  It counts only the thread that runs the frame. `report --flush` makes the
+  driver's line steady: 15 a frame for still neon, 40 under a hue, 72 with all
+  five layers. So S2 and later steps hold rule 5 as written: `alloc` 0 on
+  every scene.
 
 ### 7.2 S1 - the context and the shader cache
 
@@ -620,7 +628,9 @@ the cache as `ShaderCache::WithDefines`.
   one frame read 222 against S0's 220. That is the driver: that frame's ring
   upload is the process's first, and it builds a Metal pipeline whose
   allocations vary by run (160-237 in I75). A third run read 225. `diff`
-  will always list that line.
+  will always list that line. (Since I75's fix the tool counts only the
+  thread that runs the frame, and that frame's `alloc-driver` reads 157 on
+  every run.)
 - **Not measured**: the AMD 5300M, and the target device. Linking one shader
   object into several programs is standard GL and GLES 3.0 behaviour, but a
   driver that mishandled it would show here first. A renderer can always be
