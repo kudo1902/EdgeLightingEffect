@@ -62,7 +62,10 @@ namespace EdgeLighting
         /// @param deltaTime Seconds since the last frame.
         void Update(float deltaTime);
 
-        /// @brief Render all active renderers in registration order.
+        /// @brief Draw every renderer, in two phases: each one's offscreen
+        ///        passes (@ref BaseRenderer::Prepare), then each one onto the
+        ///        caller's framebuffer (@ref BaseRenderer::Render), both in
+        ///        compositing order.
         /// @param viewportWidth  Current framebuffer width in pixels.
         /// @param viewportHeight Current framebuffer height in pixels.
         void Render(int viewportWidth, int viewportHeight);

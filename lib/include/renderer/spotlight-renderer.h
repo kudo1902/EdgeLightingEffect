@@ -121,6 +121,19 @@ namespace EdgeLighting
 
         virtual bool Initialize() override;
         virtual void Update(float deltaTime, float time, const Config &config) override;
+
+    protected:
+        /// The scaled path's offscreen half: the lamps, screened, into
+        /// @c mScaledBuffer, which Render's blit screens onto the caller's
+        /// framebuffer. Nothing at scale 1.0 (or with a clipped lamp, which
+        /// pins it there), where the lamps draw straight onto the caller's
+        /// framebuffer in @ref Render.
+        virtual void RenderOffscreen(int viewportWidth, int viewportHeight, float time,
+                                     const Config &config) override;
+
+    public:
+        /// The scaled path's blit, or at scale 1.0 the lamps themselves, onto
+        /// the caller's framebuffer, screened.
         virtual void Render(int viewportWidth, int viewportHeight, float time, const Config &config) override;
         virtual void OnConfigChanged(const Config &config) override;
         virtual RendererLayer GetLayer() const override { return RendererLayer::SPOTLIGHT; }
@@ -209,6 +222,13 @@ namespace EdgeLighting
         /// a pixel in any verification scene.
         void buildStrips(const SpotlightConfig &spotlight);
 
+        /// Every lamp's strip, screened, onto whatever target is bound:
+        /// @c mScaledBuffer when @p scaled, else the caller's framebuffer. The
+        /// one draw both paths share; the viewport transform alone carries the
+        /// scale, and @c uDither, the one uniform that differs, follows
+        /// @p scaled and the buffer's format.
+        void renderLampsPass(bool scaled, int viewportWidth, int viewportHeight, const Config &config);
+
     private:
         ShaderProgram mShaderProgram;
         /// Scaled path only: composites the scaled buffer back at full res,
@@ -225,6 +245,10 @@ namespace EdgeLighting
         /// @c mScaledBuffer's record in the effect's registry, placed over the
         /// whole viewport the blit stretches it across. DEBUG.
         BufferHandle mScaledRecord = -1;
+        /// Whether this frame's @ref RenderOffscreen drew @c mScaledBuffer -
+        /// false when its allocation failed, so the blit composites nothing
+        /// rather than a stale buffer.
+        bool mScaledDrawn = false;
         /// Index into SCALED_FORMATS (the .cpp) of the best format the driver
         /// has not refused for @c mScaledBuffer, where the walk resumes. Kept
         /// beside the buffer rather than in it because the buffer is released

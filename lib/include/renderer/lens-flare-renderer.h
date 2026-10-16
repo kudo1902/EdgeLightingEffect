@@ -39,6 +39,17 @@ namespace EdgeLighting
 
         virtual bool Initialize() override;
         virtual void Update(float deltaTime, float time, const Config &config) override;
+
+    protected:
+        /// The scaled path's offscreen half: the flare into @c mScaledBuffer,
+        /// which Render's blit composites. Nothing at scale 1.0, where the
+        /// flare draws straight onto the caller's framebuffer in @ref Render.
+        virtual void RenderOffscreen(int viewportWidth, int viewportHeight, float time,
+                                     const Config &config) override;
+
+    public:
+        /// The scaled path's blit, or at scale 1.0 the flare itself, onto the
+        /// caller's framebuffer, premultiplied over.
         virtual void Render(int viewportWidth, int viewportHeight, float time, const Config &config) override;
         virtual void OnConfigChanged(const Config &config) override;
         virtual RendererLayer GetLayer() const override { return RendererLayer::LENS_FLARE; }
@@ -46,6 +57,13 @@ namespace EdgeLighting
     private:
         bool setupShaders();
         void setupGeometry();
+
+        /// The flare, premultiplied over, onto whatever target is bound at
+        /// @p targetWidth x @p targetHeight: @c mScaledBuffer at @p scale, or
+        /// the caller's framebuffer at 1.0. The one draw both paths share,
+        /// with the only two uniforms that differ between them.
+        void renderFlarePass(int targetWidth, int targetHeight, float scale, int viewportWidth, int viewportHeight,
+                             float time, const Config &config);
 
         /// Bake the per-ghost distance + colour table into @c mGhostBlock.
         ///
@@ -70,6 +88,10 @@ namespace EdgeLighting
         /// @c mScaledBuffer's record in the effect's registry, placed over the
         /// whole viewport the blit stretches it across. DEBUG.
         BufferHandle mScaledRecord = -1;
+        /// Whether this frame's @ref RenderOffscreen drew @c mScaledBuffer -
+        /// false when its allocation failed, so the blit composites nothing
+        /// rather than a stale buffer.
+        bool mScaledDrawn = false;
         /// Per-ghost distance + colour table (std140 GhostBlock). Filled by
         /// @ref bakeGhostBlock when its three inputs move, and bound every
         /// frame by @ref Render.

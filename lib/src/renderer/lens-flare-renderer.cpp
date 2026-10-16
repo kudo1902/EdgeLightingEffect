@@ -181,158 +181,109 @@ namespace EdgeLighting
     {
     }
 
+    void LensFlareRenderer::RenderOffscreen(int viewportWidth, int viewportHeight, float time, const Config &config)
+    {
+        mScaledDrawn = false;
+        // Only the scaled path draws offscreen: at 1.0 the flare goes straight
+        // onto the caller's framebuffer, in Render. Asked through the shared
+        // predicate so it cannot disagree with the release gate in
+        // OnConfigChanged about which configs want the buffer.
+        if (!config.lensFlare.enable || !UsesScaledBuffer(config))
+        {
+            return;
+        }
+        const float scale = GetClampedFlareScale(config);
+        const int bufW = std::max(static_cast<int>(static_cast<float>(viewportWidth) * scale), 1);
+        const int bufH = std::max(static_cast<int>(static_cast<float>(viewportHeight) * scale), 1);
+
+        // The render target this renderer was handed - framebuffer AND
+        // viewport, saved as a pair because both have to go back. The
+        // framebuffer is not always the window's: an offscreen frame capture
+        // (@ref OffscreenCapture) binds a real FBO, so returning to 0 would
+        // redirect every later draw to the window. Read BEFORE the resize
+        // below. Same shape, same reasoning, as NeonRenderer::RenderOffscreen.
+        const RenderTargetState prevTarget = RenderTargetState::Capture();
+
+        // mScaledBuffer is a reduced-size copy of the viewport, so a host
+        // scissor box - in the CALLER's window coordinates - lands on the
+        // wrong texels of it. The clear and the flare draw would skip
+        // everything outside the box, and the blit would then read the region
+        // the box maps DOWN to, which is a different region again and one
+        // nothing wrote this frame. See GLUtils::NoScissorScope. The host's
+        // clip is back before Render's blit, the one draw it describes.
+        GLUtils::NoScissorScope noScissor(true);
+
+        // Resize destroys the attachment on its failure path, so a failure
+        // leaves mScaledBuffer holding id 0 - and Bind would then bind the
+        // CALLER'S framebuffer, with only Framebuffer::ClearBuffer's own
+        // no-attachment guard standing between that and erasing everything
+        // already drawn this frame (a clear is not clipped by the viewport).
+        // Under an OffscreenCapture that target is the capture. Do not lean on
+        // that guard - bail here. Nothing has been drawn, and the only state
+        // touched so far is the scissor enable, which noScissor puts back as
+        // this return unwinds - so returning leaves the frame exactly as it
+        // was found, and Render, finding nothing drawn, composites nothing.
+        if (!mScaledBuffer.Resize(bufW, bufH))
+        {
+            return;
+        }
+        // Bind, then clear to transparent black. Keep the two adjacent:
+        // ClearBuffer acts on whatever is BOUND, so the bind is its
+        // precondition rather than a nicety - see Framebuffer::ClearBuffer,
+        // which also carries the reason the clear touches no context state
+        // (it used to save, overwrite and restore GL_COLOR_CLEAR_VALUE every
+        // frame on this path). The scissor guard above is the other half of
+        // making this clear land where it is meant to.
+        mScaledBuffer.Bind();
+        mScaledBuffer.ClearBuffer();
+
+        renderFlarePass(bufW, bufH, scale, viewportWidth, viewportHeight, time, config);
+
+        // Back to the caller's target and viewport, both at once, and the
+        // host's clip.
+        noScissor.Restore();
+        prevTarget.Restore();
+        mScaledDrawn = true;
+
+        // The blit stretches it over the whole viewport. Redrawn every frame
+        // it is used.
+        MarkBufferCurrent(mScaledRecord, glm::vec2(0.0f),
+                          glm::vec2(static_cast<float>(viewportWidth), static_cast<float>(viewportHeight)), true);
+
+        // The blend state every renderer hands back.
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    }
+
     void LensFlareRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
     {
+        // This frame's offscreen pass, unless Prepare already ran it.
+        EnsurePrepared(viewportWidth, viewportHeight, time, config);
         if (!config.lensFlare.enable)
         {
             return;
         }
 
-        // ONE schedule serves both resolution paths. `scaled` changes only
-        // where the flare lands and whether the blit runs - not the order, not
-        // the blend timeline, and not the uniforms, bar the two that say which
-        // resolution is being drawn into.
-        const float scale = GetClampedFlareScale(config);
-        // Past the enable return above, this is `scale < 1.0` - asked through
-        // the shared predicate so it cannot disagree with the release gate in
-        // OnConfigChanged about which configs want the buffer.
-        const bool scaled = UsesScaledBuffer(config);
-        const int bufW = std::max(static_cast<int>(static_cast<float>(viewportWidth) * scale), 1);
-        const int bufH = std::max(static_cast<int>(static_cast<float>(viewportHeight) * scale), 1);
-
-        // The render target this renderer was handed - framebuffer AND
-        // viewport, saved as a pair because the blit has to put both back. The
-        // framebuffer is not always the window's: an offscreen frame capture
-        // (@ref OffscreenCapture) binds a real FBO, so returning to 0 would
-        // redirect the composite to the window. Read BEFORE the resize below.
-        //
-        // SCALED PATH ONLY, because it is the only one that retargets: on the
-        // direct path the flare draws straight onto the caller's framebuffer
-        // and there is nothing to come back to. Same shape, same reasoning, as
-        // NeonRenderer::Render.
-        RenderTargetState prevTarget;
-
-        // SCALED PATH ONLY: mScaledBuffer is a reduced-size copy of the
-        // viewport, so a host scissor box - in the CALLER's window coordinates
-        // - lands on the wrong texels of it. The clear and the flare draw
-        // would skip everything outside the box, and the blit would then read
-        // the region the box maps DOWN to, which is a different region again
-        // and one nothing wrote this frame. See GLUtils::NoScissorScope.
-        //
-        // The direct path takes none of this - `scaled` false short-circuits
-        // even the query - because there the flare draws straight onto the
-        // caller's framebuffer and the host's clip is exactly what it asked
-        // for. Ended explicitly below rather than at the end of this function,
-        // because unlike the neon renderer's the composite that has to see
-        // that clip restored lives in this same scope.
-        GLUtils::NoScissorScope noScissor(scaled);
-
-        if (scaled)
+        // ONE schedule serves both resolution paths. The scaled path drew the
+        // flare into mScaledBuffer in RenderOffscreen and composites it here;
+        // the direct path draws it here. `scaled` changes only where the flare
+        // lands and whether the blit runs - not the blend, and not the
+        // uniforms, bar the two that say which resolution is being drawn into.
+        if (UsesScaledBuffer(config))
         {
-            prevTarget = RenderTargetState::Capture();
-
-            // Resize destroys the attachment on its failure path, so a failure
-            // leaves mScaledBuffer holding id 0 - and Bind would then bind the
-            // CALLER'S framebuffer, with only Framebuffer::ClearBuffer's own
-            // no-attachment guard standing between that and erasing everything
-            // already drawn this frame (a clear is not clipped by the
-            // viewport). Under an OffscreenCapture that target is the capture.
-            // Do not lean on that guard - bail here. Nothing has been
-            // drawn here, and the only state touched so far is the scissor
-            // enable, which noScissor puts back as this return unwinds - so
-            // returning leaves the frame exactly as it was found.
-            if (!mScaledBuffer.Resize(bufW, bufH))
+            // Nothing drawn: the buffer failed to allocate. Composite nothing
+            // rather than a stale buffer, and touch no state.
+            if (!mScaledDrawn)
             {
                 return;
             }
-            // Bind, then clear to transparent black. Keep the two adjacent:
-            // ClearBuffer acts on whatever is BOUND, so the bind is its
-            // precondition rather than a nicety - see Framebuffer::ClearBuffer,
-            // which also carries the reason the clear touches no context state
-            // (it used to save, overwrite and restore GL_COLOR_CLEAR_VALUE
-            // every frame on this path). The scissor guard above is the other
-            // half of making this clear land where it is meant to.
-            mScaledBuffer.Bind();
-            mScaledBuffer.ClearBuffer();
-        }
-
-        // Premultiplied "over": alpha = brightest channel, so the flare
-        // occludes cleanly under its cores and blends additively in the
-        // low-brightness ghost wings. The same blend serves the draw into the
-        // scaled buffer and the blit that composites it back.
-        glEnable(GL_BLEND);
-        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-
-        mFlareShader.Use();
-
-        // The only two scale-dependent uniforms in the whole program. The
-        // shader normalises everything by uResolution, so handing it the
-        // buffer size reproduces the identical flare at lower resolution; the
-        // sun rides the perimeter in full-res gl_FragCoord space, so it scales
-        // into the buffer by the same factor. Both are identities at 1.0,
-        // which is what keeps the direct path bit-identical to the
-        // single-pass renderer this replaced.
-        const glm::vec2 resolution(static_cast<float>(bufW), static_cast<float>(bufH));
-        glm::vec2 sunPosFrag = GeometryUtils::GetSunFragPosition(config.lensFlare, config.geometry,
-                                                                 viewportWidth, viewportHeight);
-        sunPosFrag *= scale;
-
-        mFlareShader.SetUniform("uResolution", resolution);
-        mFlareShader.SetUniform("uSunPos", sunPosFrag);
-        mFlareShader.SetUniform("uSunColor", config.lensFlare.color);
-        mFlareShader.SetUniform("uIntensity", config.lensFlare.intensity);
-        mFlareShader.SetUniform("uSpread", config.lensFlare.spread);
-        mFlareShader.SetUniform("uGhostSpacing", config.lensFlare.ghostSpacing);
-        mFlareShader.SetUniform("uGhostSize", config.lensFlare.ghostSize);
-
-        // ghostOffset / ghostColor / ghostTint reach the shader only through
-        // this block, so there are no uniforms of their own to set. The bake
-        // itself has moved to OnConfigChanged - it is a pure function of those
-        // three fields, so running it here meant re-deriving the same table
-        // every frame of every flare. Only the bind is per-frame, because the
-        // binding point is global context state rather than something this
-        // renderer can assume it still owns.
-        mGhostBlock.BindBase(GHOST_BLOCK_BINDING);
-
-        // Support bounds for the two compactly-supported ghost terms, so the
-        // shader can skip each where it is provably zero. Both are pure
-        // functions of ghostSize, which makes them exactly the kind of work
-        // that belongs here rather than in every one of the viewport's
-        // fragments - the same split the neon emission pre-pass is built on.
-        mFlareShader.SetUniform("uBloomRadius", GetGhostBloomRadius(config.lensFlare.ghostSize));
-        mFlareShader.SetUniform("uRingFloor", GetGhostRingFloor(config.lensFlare.ghostSize));
-        mFlareShader.SetUniform("uFlareCenter", config.lensFlare.flareCenter);
-        mFlareShader.SetUniform("uSize", config.lensFlare.size);
-
-        constexpr float TWO_PI = 6.28318530717958647692f;
-        mFlareShader.SetUniform("uRotation", time * config.lensFlare.rotationRate * TWO_PI);
-        // Quantise the [0, 1] density into an integer slot count for the
-        // shader; the shader needs an integer so `abs(sin(a * N/2))` closes
-        // cleanly at 2 PI. MAX_RAY_SLOTS caps the top of the range so
-        // extreme densities stay artist-friendly (rays too thin to see).
-        constexpr int MAX_RAY_SLOTS = 80;
-        float clampedDensity = std::clamp(config.lensFlare.rayDensity, 0.0f, 1.0f);
-        int slots = std::max(1, static_cast<int>(std::round(clampedDensity * MAX_RAY_SLOTS)));
-        mFlareShader.SetUniform("uRayDensity", static_cast<float>(slots));
-
-        mVertexArray.DrawArrays(GL_TRIANGLES, 6);
-
-        mFlareShader.Unuse();
-
-        if (scaled)
-        {
-            // The host's clip comes back BEFORE the composite, not after: this
-            // is the one draw here that lands on the caller's framebuffer in
-            // the caller's coordinates, so it is the one draw the scissor box
-            // describes correctly. Everything above it went into a buffer the
-            // box does not address.
-            noScissor.Restore();
-
-            // Back to the caller's target and viewport, both at once, then
-            // composite. Bilinear upscaling of premultiplied alpha is
-            // fringe-free; the blit shader is a plain texture read over
-            // whatever is on the target already.
-            prevTarget.Restore();
+            // Premultiplied "over", as the flare was drawn: bilinear
+            // upscaling of premultiplied alpha is fringe-free, and the blit
+            // shader is a plain texture read over whatever is on the target
+            // already. Set here, not inherited from the flare draw - every
+            // other layer's offscreen pass has run since.
+            glEnable(GL_BLEND);
+            glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
             mBlitShader.Use();
             mBlitShader.SetUniform("uMVP", glm::mat4(1.0f));
@@ -340,19 +291,16 @@ namespace EdgeLighting
             mBlitShader.SetUniform("uSource", 0);
             mVertexArray.DrawArrays(GL_TRIANGLES, 6);
             mBlitShader.Unuse();
-
-            // The blit stretched it over the whole viewport. Redrawn every
-            // frame it is used.
-            MarkBufferCurrent(mScaledRecord, glm::vec2(0.0f),
-                              glm::vec2(static_cast<float>(viewportWidth), static_cast<float>(viewportHeight)),
-                              true);
+        }
+        else
+        {
+            renderFlarePass(viewportWidth, viewportHeight, 1.0f, viewportWidth, viewportHeight, time, config);
         }
 
         // Restore the default alpha blend state for any following renderers -
         // the same hand-back every other renderer does. This one is registered
-        // last in the demo, so the premultiplied mode it sets above used to
-        // leak out of the effect entirely and land on whatever the host drew
-        // next.
+        // last in the demo, so the premultiplied mode it sets used to leak out
+        // of the effect entirely and land on whatever the host drew next.
         glEnable(GL_BLEND);
         glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
     }
@@ -441,6 +389,73 @@ namespace EdgeLighting
         // clang-format on
         mVertexArray.SetVertexData(ndc, sizeof(ndc));
         mVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
+    }
+
+    void LensFlareRenderer::renderFlarePass(int targetWidth, int targetHeight, float scale, int viewportWidth,
+                                            int viewportHeight, float time, const Config &config)
+    {
+        // Premultiplied "over": alpha = brightest channel, so the flare
+        // occludes cleanly under its cores and blends additively in the
+        // low-brightness ghost wings. Render's blit composites the scaled
+        // buffer back with the same blend.
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+
+        mFlareShader.Use();
+
+        // The only two scale-dependent uniforms in the whole program. The
+        // shader normalises everything by uResolution, so handing it the
+        // buffer size reproduces the identical flare at lower resolution; the
+        // sun rides the perimeter in full-res gl_FragCoord space, so it scales
+        // into the buffer by the same factor. Both are identities at 1.0,
+        // which is what keeps the direct path bit-identical to the
+        // single-pass renderer this replaced.
+        const glm::vec2 resolution(static_cast<float>(targetWidth), static_cast<float>(targetHeight));
+        glm::vec2 sunPosFrag = GeometryUtils::GetSunFragPosition(config.lensFlare, config.geometry,
+                                                                 viewportWidth, viewportHeight);
+        sunPosFrag *= scale;
+
+        mFlareShader.SetUniform("uResolution", resolution);
+        mFlareShader.SetUniform("uSunPos", sunPosFrag);
+        mFlareShader.SetUniform("uSunColor", config.lensFlare.color);
+        mFlareShader.SetUniform("uIntensity", config.lensFlare.intensity);
+        mFlareShader.SetUniform("uSpread", config.lensFlare.spread);
+        mFlareShader.SetUniform("uGhostSpacing", config.lensFlare.ghostSpacing);
+        mFlareShader.SetUniform("uGhostSize", config.lensFlare.ghostSize);
+
+        // ghostOffset / ghostColor / ghostTint reach the shader only through
+        // this block, so there are no uniforms of their own to set. The bake
+        // itself has moved to OnConfigChanged - it is a pure function of those
+        // three fields, so running it here meant re-deriving the same table
+        // every frame of every flare. Only the bind is per-frame, because the
+        // binding point is global context state rather than something this
+        // renderer can assume it still owns.
+        mGhostBlock.BindBase(GHOST_BLOCK_BINDING);
+
+        // Support bounds for the two compactly-supported ghost terms, so the
+        // shader can skip each where it is provably zero. Both are pure
+        // functions of ghostSize, which makes them exactly the kind of work
+        // that belongs here rather than in every one of the viewport's
+        // fragments - the same split the neon emission pre-pass is built on.
+        mFlareShader.SetUniform("uBloomRadius", GetGhostBloomRadius(config.lensFlare.ghostSize));
+        mFlareShader.SetUniform("uRingFloor", GetGhostRingFloor(config.lensFlare.ghostSize));
+        mFlareShader.SetUniform("uFlareCenter", config.lensFlare.flareCenter);
+        mFlareShader.SetUniform("uSize", config.lensFlare.size);
+
+        constexpr float TWO_PI = 6.28318530717958647692f;
+        mFlareShader.SetUniform("uRotation", time * config.lensFlare.rotationRate * TWO_PI);
+        // Quantise the [0, 1] density into an integer slot count for the
+        // shader; the shader needs an integer so `abs(sin(a * N/2))` closes
+        // cleanly at 2 PI. MAX_RAY_SLOTS caps the top of the range so
+        // extreme densities stay artist-friendly (rays too thin to see).
+        constexpr int MAX_RAY_SLOTS = 80;
+        float clampedDensity = std::clamp(config.lensFlare.rayDensity, 0.0f, 1.0f);
+        int slots = std::max(1, static_cast<int>(std::round(clampedDensity * MAX_RAY_SLOTS)));
+        mFlareShader.SetUniform("uRayDensity", static_cast<float>(slots));
+
+        mVertexArray.DrawArrays(GL_TRIANGLES, 6);
+
+        mFlareShader.Unuse();
     }
 
     void LensFlareRenderer::bakeGhostBlock(const LensFlareConfig &flare)

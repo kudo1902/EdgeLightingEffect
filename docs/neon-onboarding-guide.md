@@ -456,9 +456,10 @@ fast on-chip memory, and only write a tile out to main memory when the pass
 ends. Switching to another render target and back forces a store and a reload
 of the whole target, which costs bandwidth.
 
-**In this code.** `NeonRenderer::Render` runs in two phases: first every pass
-that draws into its own buffers, then everything that draws onto the caller's
-framebuffer, in one unbroken run. That ordering exists for tilers.
+**In this code.** A frame runs in two phases: first every pass that draws into
+a layer's own buffers (`Prepare`, for every layer), then everything that draws
+onto the caller's framebuffer (`Render`, for every layer), in one unbroken run.
+That ordering exists for tilers.
 
 ### 1.12 Resolution scaling and smoothness
 
@@ -552,7 +553,8 @@ Update(dt) ------------> clock.Update(dt) -> animations.Update(clockDt)
                           if active changed: --------------------------> OnConfigChanged(active)
                         for each renderer: --------------------------> Update(dt, clockTime, active)
 
-Render(w, h) ---------> for each renderer, in layer order: ----------> Render(w, h, clockTime, active)
+Render(w, h) ---------> for each renderer, in layer order: ----------> Prepare(w, h, clockTime, active)
+                        then for each renderer, in layer order: -----> Render(w, h, clockTime, active)
 ```
 
 Points that matter for the neon:
@@ -581,7 +583,8 @@ Every layer subclasses `BaseRenderer` (`lib/include/renderer/base-renderer.h`):
 | `Initialize()` | once | compile the always-needed programs, allocate the emission table, build geometry and LUTs |
 | `OnConfigChanged(cfg)` | on a real change | mark what is stale and rebuild it (Part 5.3) |
 | `Update(dt, t, cfg)` | every frame | advance the colour cross-fade |
-| `Render(w, h, t, cfg)` | every frame | run the pass schedule (Part 5.5) |
+| `Prepare(w, h, t, cfg)` | every frame, before any layer's `Render` | phase 1 of the pass schedule, the offscreen passes (`RenderOffscreen`, Part 5.5) |
+| `Render(w, h, t, cfg)` | every frame | phase 2, onto the caller's framebuffer (Part 5.5); runs phase 1 itself if nothing called `Prepare` |
 | `GetLayer()` | any time | returns `RendererLayer::NEON` |
 
 `AddRenderer` calls `OnConfigChanged` once immediately, so a renderer must
@@ -1434,11 +1437,12 @@ upload moves the ring's upload count, which is part of P0's key, so the next
 ### 5.5 `Render(w, h, time, config)`: the pass schedule
 
 ```
-Render
+RenderOffscreen                                  // phase 1: run by Prepare, or by Render if nothing called it
+ |- mFramePlan.glowReady = false
  |- return if !neon.enable
  |- scale = GetClampedResolutionScale()          // (0, 1]; at 1.0 the reduced buffer is full size
  |- centerFull = the rect's centre in full-res px, y flipped
- |- if debug.opaqueOnly: [blend over] fill (P2a); restore blend; return
+ |- return if debug.opaqueOnly                   // Render draws the fill alone
  |- glowReady = ensureGlowPrograms()             // compile on first use
  |      && (IsGlowCoverUnread()
  |          || (ensureGlowCoverProgram() && ensureGlowCoverFillProgram() && ensureGlowCoverBuffer()))
@@ -1466,22 +1470,32 @@ Render
  |    if ringField.bake: [blend off] P1r ring field bake -> mRingField.buffer
  |    if captured: prevTarget.Restore()          // back to the caller's FBO + viewport
  |- mOffscreen.reusable = glowReady && !field.use
- |
- |  ===== phase 2: the caller's framebuffer =====
+ |- mFramePlan = { glowReady, centerFull, gatherUVFull, scaledUV, ringField }
+ |- if glowReady: publishBuffers()               // mark this frame's buffers current in the registry
+ '- leave GL_BLEND on with GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA
+
+        ... every other layer's Prepare ...
+
+Render                                           // phase 2: the caller's framebuffer
+ |- EnsurePrepared()                             // phase 1 now, if no Prepare came this frame
+ |- return if !neon.enable
  |- [blend ON: GL_ONE, GL_ONE_MINUS_SRC_ALPHA]
- |- if opaqueMode != NONE: P2a fill
- |- if glowReady:
+ |- if opaqueMode != NONE: P2a fill              // alone under debug.opaqueOnly
+ |- if mFramePlan.glowReady:
+ |    re-bind the segment and arc blocks         // other layers ran in between
  |    fullResMvp = ortho(0, w, 0, h) * translate(centerFull)   // ONE transform, handed to both
  |    P2b blit
  |    ringField.use ? P2r ring field composite : P2c ring
  '- leave GL_BLEND on with GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA
 ```
 
-Every offscreen pass runs before anything touches the caller's framebuffer,
-so that target is drawn in one unbroken run (Part 1.11). `Render` owns the
-blend state; each pass owns its program, and the two table passes (P0, P0b)
-restore the target they change. The rest of phase 1 binds one buffer after
-another and comes back once, through `prevTarget`.
+Every offscreen pass of every layer runs before anything touches the caller's
+framebuffer, so that target is drawn in one unbroken run (Part 1.11).
+`EdgeLightingEffect::Render` calls `Prepare` on every layer, then `Render` on
+every layer; what phase 2 needs from phase 1 crosses in `mFramePlan`. The two
+phases own the blend state between them; each pass owns its program, and the
+two table passes (P0, P0b) restore the target they change. The rest of phase 1
+binds one buffer after another and comes back once, through `prevTarget`.
 
 `isEmissionTableStale` is true before the first bake, when any input P0 binds
 has moved since the last one - `hueRotationRate` and the clamped `numSamples`

@@ -65,7 +65,28 @@ namespace EdgeLighting
         /// @param config     Current active configuration.
         virtual void Update(float deltaTime, float time, const Config &config) = 0;
 
-        /// Draws the renderer's visual layer.
+        /// The OFFSCREEN half of a frame: every pass this renderer draws into
+        /// buffers of its own (@ref RenderOffscreen), and nothing onto the
+        /// caller's framebuffer. @c EdgeLightingEffect::Render calls it on
+        /// every renderer before it calls @ref Render on any, so the caller's
+        /// target is drawn in one unbroken run per frame - on a tiling GPU each
+        /// switch away from it and back stores its tiles out and loads them in
+        /// again - and so any renderer's @ref Render can read what any
+        /// renderer's Prepare made, wherever the two sit in the compositing
+        /// order (docs/resource-sharing-plan.md 3.3).
+        ///
+        /// Takes the arguments the frame's @ref Render will take. Restores the
+        /// framebuffer and viewport it was handed, and hands back blending on
+        /// with @c GL_SRC_ALPHA, @c GL_ONE_MINUS_SRC_ALPHA when it drew, as
+        /// @ref Render does. A renderer with nothing offscreen does nothing
+        /// here. Calling it is optional: a @ref Render that finds no Prepare
+        /// for its frame runs the offscreen passes itself, so a renderer drawn
+        /// on its own, without an effect, draws exactly as before.
+        void Prepare(int viewportWidth, int viewportHeight, float time, const Config &config);
+
+        /// Draws the renderer's visual layer onto the caller's framebuffer - the
+        /// on-screen half of the frame, after @ref Prepare (which it runs
+        /// itself when nothing called it this frame).
         ///
         /// @pre The GL viewport is @c (0, 0, viewportWidth, viewportHeight).
         ///      Renderers may rely on this and may restore it by reconstruction
@@ -117,6 +138,26 @@ namespace EdgeLighting
         void SetResourceContext(std::shared_ptr<ResourceContext> context);
 
     protected:
+        /// What @ref Prepare draws: this renderer's offscreen passes, into
+        /// buffers of its own. Nothing by default - a renderer that draws only
+        /// onto the caller's framebuffer, or a host's own renderer that still
+        /// does everything in @ref Render, leaves it alone and works as before;
+        /// it only misses the ordering.
+        ///
+        /// A renderer that overrides it calls @ref EnsurePrepared first thing
+        /// in its @ref Render, and keeps whatever its on-screen passes need
+        /// from it in members.
+        virtual void RenderOffscreen(int /*viewportWidth*/, int /*viewportHeight*/, float /*time*/,
+                                     const Config & /*config*/)
+        {
+        }
+
+        /// For the @ref Render of a renderer with offscreen passes, before
+        /// anything else, early returns included: runs @ref RenderOffscreen
+        /// when no @ref Prepare came since the last @ref Render - the renderer
+        /// is being drawn on its own - and marks the frame's Prepare consumed.
+        void EnsurePrepared(int viewportWidth, int viewportHeight, float time, const Config &config);
+
         /// A program linking the vertex stage @p vertSrc and the fragment
         /// stage @p fragSrc - with @p fragDefines spliced in after its
         /// #version line when given (@c ShaderCache::WithDefines) - each taken
@@ -188,6 +229,9 @@ namespace EdgeLighting
         /// @ref BufferHandle. Filled by the constructor, so no frame allocates.
         std::vector<OwnedBuffer> mOwnedBuffers;
         std::shared_ptr<ResourceContext> mResourceContext;
+        /// Set by @ref Prepare, consumed by @ref EnsurePrepared: whether this
+        /// frame's offscreen passes have run.
+        bool mPrepared = false;
     };
 
 } // namespace EdgeLighting

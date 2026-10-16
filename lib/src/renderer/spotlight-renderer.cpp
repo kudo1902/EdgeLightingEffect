@@ -647,206 +647,91 @@ namespace EdgeLighting
     {
     }
 
-    void SpotlightRenderer::Render(int viewportWidth, int viewportHeight, float, const Config &config)
+    void SpotlightRenderer::RenderOffscreen(int viewportWidth, int viewportHeight, float, const Config &config)
     {
+        mScaledDrawn = false;
+        // Only the scaled path draws offscreen: at 1.0 - and whenever an
+        // enabled clipped lamp pins the scale there - the lamps go straight
+        // onto the caller's framebuffer, in Render.
+        if (!config.spotlight.enable || mVertexCount <= 0 || viewportWidth <= 0 || viewportHeight <= 0 ||
+            !UsesScaledBuffer(config))
+        {
+            return;
+        }
+        const float scale = GetClampedSpotScale(config);
+        const int bufW = std::max(static_cast<int>(static_cast<float>(viewportWidth) * scale), 1);
+        const int bufH = std::max(static_cast<int>(static_cast<float>(viewportHeight) * scale), 1);
+
+        // The render target this renderer was handed - framebuffer AND
+        // viewport, saved as a pair because both have to go back. The
+        // framebuffer is not always the window's: an offscreen frame capture
+        // binds a real FBO, so returning to 0 would redirect every later draw
+        // to the window. Read BEFORE the resize below. Same shape, same
+        // reasoning, as LensFlareRenderer::RenderOffscreen.
+        const RenderTargetState prevTarget = RenderTargetState::Capture();
+
+        // mScaledBuffer is a reduced-size copy of the viewport, so a host
+        // scissor box - in the CALLER's window coordinates - lands on the
+        // wrong texels of it. See GLUtils::NoScissorScope.
+        GLUtils::NoScissorScope noScissor(true);
+
+        // Resize destroys the attachment on its failure path, so a failure
+        // would leave mScaledBuffer holding id 0 and Bind would then bind the
+        // CALLER'S framebuffer - with ClearBuffer about to wipe it. Bail
+        // instead: nothing has been drawn, noScissor puts the scissor enable
+        // back as this return unwinds, and Render, finding nothing drawn,
+        // composites nothing.
+        if (!resizeScaledBuffer(bufW, bufH))
+        {
+            return;
+        }
+        // Bind, then clear to transparent black. Keep the two adjacent:
+        // ClearBuffer acts on whatever is BOUND.
+        mScaledBuffer.Bind();
+        mScaledBuffer.ClearBuffer();
+
+        renderLampsPass(true, viewportWidth, viewportHeight, config);
+
+        // Back to the caller's target and viewport, both at once, and the
+        // host's clip.
+        noScissor.Restore();
+        prevTarget.Restore();
+        mScaledDrawn = true;
+
+        // The blit stretches it over the whole viewport. Redrawn every frame
+        // it is used.
+        MarkBufferCurrent(mScaledRecord, glm::vec2(0.0f),
+                          glm::vec2(static_cast<float>(viewportWidth), static_cast<float>(viewportHeight)), true);
+
+        // The blend state every renderer hands back. glBlendFunc sets the RGB
+        // and alpha factors to the same pair, so it also undoes the lamps'
+        // glBlendFuncSeparate.
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    }
+
+    void SpotlightRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
+    {
+        // This frame's offscreen pass, unless Prepare already ran it.
+        EnsurePrepared(viewportWidth, viewportHeight, time, config);
         if (!config.spotlight.enable || mVertexCount <= 0 ||
             viewportWidth <= 0 || viewportHeight <= 0)
         {
             return;
         }
 
-        const float scale = GetClampedSpotScale(config);
-        const bool scaled = UsesScaledBuffer(config);
-        const int bufW = std::max(static_cast<int>(static_cast<float>(viewportWidth) * scale), 1);
-        const int bufH = std::max(static_cast<int>(static_cast<float>(viewportHeight) * scale), 1);
-
-        // The render target this renderer was handed - framebuffer AND
-        // viewport, saved as a pair because the blit has to put both back. The
-        // framebuffer is not always the window's: an offscreen frame capture
-        // binds a real FBO, so returning to 0 would redirect the composite to
-        // the window. Read BEFORE the resize below.
-        //
-        // SCALED PATH ONLY, because it is the only one that retargets. Same
-        // shape, same reasoning, as LensFlareRenderer::Render.
-        RenderTargetState prevTarget;
-
-        // SCALED PATH ONLY: mScaledBuffer is a reduced-size copy of the
-        // viewport, so a host scissor box - in the CALLER's window coordinates
-        // - lands on the wrong texels of it. See GLUtils::NoScissorScope.
-        GLUtils::NoScissorScope noScissor(scaled);
-
-        if (scaled)
+        if (UsesScaledBuffer(config))
         {
-            prevTarget = RenderTargetState::Capture();
-
-            // Resize destroys the attachment on its failure path, so a failure
-            // would leave mScaledBuffer holding id 0 and Bind would then bind
-            // the CALLER'S framebuffer - with ClearBuffer about to wipe it.
-            // Bail instead: nothing has been drawn, and noScissor puts the
-            // scissor enable back as this return unwinds.
-            if (!resizeScaledBuffer(bufW, bufH))
+            // Nothing drawn: the buffer failed to allocate. Composite nothing
+            // rather than a stale buffer, and touch no state.
+            if (!mScaledDrawn)
             {
                 return;
             }
-            // Bind, then clear to transparent black. Keep the two adjacent:
-            // ClearBuffer acts on whatever is BOUND.
-            mScaledBuffer.Bind();
-            mScaledBuffer.ClearBuffer();
-        }
-
-        // A y-FLIPPED ortho: note bottom and top are swapped relative to the
-        // one the other renderers build. That is what lets the VBO hold app
-        // coordinates verbatim - top-left origin, +y down, the same space as
-        // Config::geometry.position - instead of framebuffer coordinates, so
-        // the buffer depends only on Config::spotlight and a resize costs this
-        // uniform rather than a rebuild.
-        //
-        // The flip reverses triangle winding, which used to be written off
-        // here as harmless because nothing in THIS library enables
-        // GL_CULL_FACE. That was the wrong half of the question - the host owns
-        // that state, and on a shared surface view so does whatever else draws
-        // into the context. buildStrips winds for the flip, so the strips come
-        // out front-facing under the default GL_CCW / GL_BACK configuration
-        // like every other layer, rather than being the one piece of geometry
-        // a culling host deletes; see it for the measurement. The other ways a
-        // host can cull (GL_FRONT, a GL_CW front face) are not covered anywhere
-        // in this library, so they are the caller's to settle before it calls
-        // Render. No other handedness has to be kept in step, since the
-        // fragment stage reads no gl_FragCoord.
-        const glm::mat4 mvp = glm::ortho(0.0f, static_cast<float>(viewportWidth),
-                                         static_cast<float>(viewportHeight), 0.0f,
-                                         -1.0f, 1.0f);
-
-        // SCREENED, colour and alpha alike - `dst + src * (1 - dst)` - and the
-        // only separate-alpha blend in the library.
-        //
-        // COLOUR is GL_ONE_MINUS_DST_COLOR / GL_ONE. Light still only adds - a
-        // lamp never darkens what is under it - but the sum now APPROACHES full
-        // scale instead of crossing it. That is the whole point: spotlight.frag's
-        // highlight shoulder keeps ONE lamp under 1.0 and cannot see the
-        // others, so under the GL_ONE / GL_ONE this used to be, two beams
-        // crossing at ~0.6 each summed to ~1.2 and the RGBA8 target clipped
-        // the overlap to a flat white disc with a hard rim - V12a in
-        // docs/review-findings.md. Screened, the same pair reads ~0.84 and
-        // shades smoothly through the crossing, and the blend costs exactly
-        // what the add did.
-        //
-        // Still ORDER-INDEPENDENT: 1 - (1 - a)(1 - b) is symmetric and
-        // associative, so the lamp order in the config cannot change the
-        // image, and the scaled path below - lamps screened into a cleared
-        // buffer, the buffer screened onto the target - makes the same
-        // composite as the direct path up to the buffer's rounding.
-        //
-        // What it gives up against the add, measured at 3840x2160:
-        //   - nothing over a transparent clear, which is the Tizen surface: a
-        //     lone lamp is byte-identical there, colour and alpha;
-        //   - a lamp adds LESS over anything already lit - up to 9 levels at a
-        //     default lamp's core over the demo's (0.03, 0.03, 0.05) clear, and
-        //     more over a bright neon glow, which the add clipped as well;
-        //   - it screens per CHANNEL, so a coloured overlap drifts towards
-        //     white: two 2700 K beams cross at green/red 0.80 against 0.72 for
-        //     one beam alone (the clipped sum read 0.87).
-        // Putting the hue-preserving shoulder on the SUM instead - every lamp
-        // evaluating the lamps it overlaps - was built and measured against
-        // this and rejected: 2.5x to 9.3x the GPU time on overlapping rigs, and
-        // a crease wherever two differently coloured beams cross. See V12a.
-        //
-        // ALPHA is GL_ONE_MINUS_DST_ALPHA / GL_ONE: the coverage composites the
-        // same way the colour does, so N overlapping lamps saturate towards 1
-        // whatever order they are in. And it has to be WRITTEN at all, which it
-        // once was not. Every other layer writes a coverage alpha; the
-        // spotlight wrote 0 and so left the surface transparent wherever it was
-        // the only thing that drew. On a desktop window that is invisible - the
-        // window is opaque and nobody reads the alpha back. On an embedded
-        // surface it is fatal: a compositor or hardware video plane finishes
-        // the frame with `out = ui.rgb * ui.a + video * (1 - ui.a)`, and every
-        // lit spotlight pixel is multiplied by zero. That is the Tizen report -
-        // the layer missing over a playing video while neon, droplets and the
-        // flare (all of which write coverage) came through.
-        //
-        // Measured offscreen at 640x360 over a transparent clear, before the
-        // fix: one lamp lit 72,615 pixels of colour and 0 pixels of alpha, and
-        // composited to nothing at all.
-        //
-        // One host-state assumption the add did not make: (1 - dst) is a
-        // weight only while the destination is in [0, 1]. Every target this
-        // library owns is RGBA8, but a host that hands Render a FLOAT
-        // framebuffer already holding values above 1 turns the factor negative,
-        // and the layer subtracts light there.
-        glEnable(GL_BLEND);
-        glBlendFuncSeparate(GL_ONE_MINUS_DST_COLOR, GL_ONE, GL_ONE_MINUS_DST_ALPHA, GL_ONE);
-
-        mShaderProgram.Use();
-
-        // ONE uniform differs between the two paths, and it is not geometry.
-        // The ortho is over APP coordinates, and the viewport transform alone
-        // carries the scale: the same vertex lands at scale * its app pixel in
-        // a scale-sized buffer. The fragment stage then reads only vLocal,
-        // which interpolates in full-res lamp pixels, against flat per-lamp
-        // values that are full-res pixels too - so its LIGHT never learns
-        // which buffer it is shading into. That is what makes 1.0
-        // bit-identical.
-        //
-        // What does differ is where the output is dithered. At 1.0 this pass
-        // writes the caller's 8-bit target and dithers its own output. Below
-        // it, into a half-float buffer, the dither is the blit's: this pass
-        // writes the light undithered, the blit reads it bilinearly and adds
-        // the noise once per destination pixel. Dithered here instead, the
-        // noise would be one buffer texel - 1 / scale px - wide and the
-        // filter would average it into blotches; and an RGBA8 buffer rounds
-        // the tail to one-level plateaus before any noise downstream can
-        // help. See SCALED_FORMATS for what that looked like. On the RGBA8
-        // fallback this pass dithers as before and the blit adds its own.
-        const bool blitDithersAlone = scaled && SCALED_FORMATS[mScaledFormat].holdsSubLevels;
-        mShaderProgram.SetUniform("uMVP", mvp);
-        mShaderProgram.SetUniform("uDither", blitDithersAlone ? 0.0f : 1.0f);
-
-        // The clip area, in the SAME app coordinates the ortho above maps -
-        // which is what keeps the sentence two comments up true. A clip is a
-        // region of the app's own space, not of the buffer being rasterised
-        // into, so neither of these VALUES changes with the scale; the
-        // fragment stage reaches them through vApp, a varying, rather than
-        // through gl_FragCoord, which would have needed the scale.
-        //
-        // The uniforms, though - not the resulting edge. The mask is evaluated
-        // per fragment, so on a reduced buffer its boundary is resolved at
-        // that buffer's texel pitch and the blit smears it. That is why an
-        // enabled clipped lamp pins the scale to 1.0 rather than being one
-        // more scale-invariant term: see GetClampedSpotScale for the numbers
-        // and for why the neon's fix could not be reused. Past that pin, the
-        // two paths below are only ever reached with NO lamp clipped, which is
-        // what keeps uDither the only uniform that differs between them.
-        //
-        // Uploaded unconditionally, including when no lamp is clipped. The
-        // per-lamp opt-in is baked into the strips as a vertex attribute (see
-        // buildStrips), so these two uniforms are inert rather than wrong when
-        // nothing reads them, and skipping them would only buy a branch here
-        // in exchange for a stale value the first frame a lamp opts in. There
-        // is no area-level enable that could gate them either.
-        const ClipSolve clipSolve = DeriveClip(config.spotlight.clipArea);
-        mShaderProgram.SetUniform("uClipRect",
-                                  glm::vec4(clipSolve.center.x, clipSolve.center.y,
-                                            clipSolve.half.x, clipSolve.half.y));
-        mShaderProgram.SetUniform("uClipParams",
-                                  glm::vec3(clipSolve.radius, clipSolve.softness,
-                                            clipSolve.keepInside ? 1.0f : 0.0f));
-
-        mVertexArray.DrawArrays(GL_TRIANGLES, mVertexCount);
-
-        mShaderProgram.Unuse();
-
-        if (scaled)
-        {
-            // The host's clip comes back BEFORE the composite: this is the one
-            // draw here that lands on the caller's framebuffer in the caller's
-            // coordinates, so it is the one draw the scissor box describes
-            // correctly. Everything above it went into a buffer the box does
-            // not address.
-            noScissor.Restore();
-
             // Back to the caller's target and viewport, both at once, then
             // composite. The buffer holds the lamps' screened colour and
-            // coverage, and the blend above is still in force, so this blit is
+            // coverage, and the blend is the lamps' own, set again here since
+            // every other layer's offscreen pass has run since - so this blit is
             // a bilinear read, dithered (spotlight-blit.frag), SCREENED onto
             // whatever is already there - colour and alpha alike. That is what
             // carries the coverage through to the caller's framebuffer, which
@@ -862,7 +747,8 @@ namespace EdgeLighting
             // add this used to be a real difference: overlapping lamps clamped
             // in the buffer before the target saw them. Nothing screened
             // reaches 1.0.)
-            prevTarget.Restore();
+            glEnable(GL_BLEND);
+            glBlendFuncSeparate(GL_ONE_MINUS_DST_COLOR, GL_ONE, GL_ONE_MINUS_DST_ALPHA, GL_ONE);
 
             mBlitShader.Use();
             mBlitShader.SetUniform("uMVP", glm::mat4(1.0f));
@@ -872,12 +758,10 @@ namespace EdgeLighting
                                    glm::vec2(static_cast<float>(viewportWidth), static_cast<float>(viewportHeight)));
             mBlitQuad.DrawArrays(GL_TRIANGLES, 6);
             mBlitShader.Unuse();
-
-            // The blit stretched it over the whole viewport. Redrawn every
-            // frame it is used.
-            MarkBufferCurrent(mScaledRecord, glm::vec2(0.0f),
-                              glm::vec2(static_cast<float>(viewportWidth), static_cast<float>(viewportHeight)),
-                              true);
+        }
+        else
+        {
+            renderLampsPass(false, viewportWidth, viewportHeight, config);
         }
 
         // Restore the blend state convention the other renderers leave behind.
@@ -1311,5 +1195,150 @@ namespace EdgeLighting
         glBufferSubData(GL_ARRAY_BUFFER, 0,
                         static_cast<GLsizeiptr>(mStripVerts.size() * sizeof(StripVertex)),
                         mStripVerts.data());
+    }
+
+    void SpotlightRenderer::renderLampsPass(bool scaled, int viewportWidth, int viewportHeight,
+                                            const Config &config)
+    {
+        // A y-FLIPPED ortho: note bottom and top are swapped relative to the
+        // one the other renderers build. That is what lets the VBO hold app
+        // coordinates verbatim - top-left origin, +y down, the same space as
+        // Config::geometry.position - instead of framebuffer coordinates, so
+        // the buffer depends only on Config::spotlight and a resize costs this
+        // uniform rather than a rebuild.
+        //
+        // The flip reverses triangle winding, which used to be written off
+        // here as harmless because nothing in THIS library enables
+        // GL_CULL_FACE. That was the wrong half of the question - the host owns
+        // that state, and on a shared surface view so does whatever else draws
+        // into the context. buildStrips winds for the flip, so the strips come
+        // out front-facing under the default GL_CCW / GL_BACK configuration
+        // like every other layer, rather than being the one piece of geometry
+        // a culling host deletes; see it for the measurement. The other ways a
+        // host can cull (GL_FRONT, a GL_CW front face) are not covered anywhere
+        // in this library, so they are the caller's to settle before it calls
+        // Render. No other handedness has to be kept in step, since the
+        // fragment stage reads no gl_FragCoord.
+        const glm::mat4 mvp = glm::ortho(0.0f, static_cast<float>(viewportWidth),
+                                         static_cast<float>(viewportHeight), 0.0f,
+                                         -1.0f, 1.0f);
+
+        // SCREENED, colour and alpha alike - `dst + src * (1 - dst)` - and the
+        // only separate-alpha blend in the library.
+        //
+        // COLOUR is GL_ONE_MINUS_DST_COLOR / GL_ONE. Light still only adds - a
+        // lamp never darkens what is under it - but the sum now APPROACHES full
+        // scale instead of crossing it. That is the whole point: spotlight.frag's
+        // highlight shoulder keeps ONE lamp under 1.0 and cannot see the
+        // others, so under the GL_ONE / GL_ONE this used to be, two beams
+        // crossing at ~0.6 each summed to ~1.2 and the RGBA8 target clipped
+        // the overlap to a flat white disc with a hard rim - V12a in
+        // docs/review-findings.md. Screened, the same pair reads ~0.84 and
+        // shades smoothly through the crossing, and the blend costs exactly
+        // what the add did.
+        //
+        // Still ORDER-INDEPENDENT: 1 - (1 - a)(1 - b) is symmetric and
+        // associative, so the lamp order in the config cannot change the
+        // image, and the scaled path below - lamps screened into a cleared
+        // buffer, the buffer screened onto the target - makes the same
+        // composite as the direct path up to the buffer's rounding.
+        //
+        // What it gives up against the add, measured at 3840x2160:
+        //   - nothing over a transparent clear, which is the Tizen surface: a
+        //     lone lamp is byte-identical there, colour and alpha;
+        //   - a lamp adds LESS over anything already lit - up to 9 levels at a
+        //     default lamp's core over the demo's (0.03, 0.03, 0.05) clear, and
+        //     more over a bright neon glow, which the add clipped as well;
+        //   - it screens per CHANNEL, so a coloured overlap drifts towards
+        //     white: two 2700 K beams cross at green/red 0.80 against 0.72 for
+        //     one beam alone (the clipped sum read 0.87).
+        // Putting the hue-preserving shoulder on the SUM instead - every lamp
+        // evaluating the lamps it overlaps - was built and measured against
+        // this and rejected: 2.5x to 9.3x the GPU time on overlapping rigs, and
+        // a crease wherever two differently coloured beams cross. See V12a.
+        //
+        // ALPHA is GL_ONE_MINUS_DST_ALPHA / GL_ONE: the coverage composites the
+        // same way the colour does, so N overlapping lamps saturate towards 1
+        // whatever order they are in. And it has to be WRITTEN at all, which it
+        // once was not. Every other layer writes a coverage alpha; the
+        // spotlight wrote 0 and so left the surface transparent wherever it was
+        // the only thing that drew. On a desktop window that is invisible - the
+        // window is opaque and nobody reads the alpha back. On an embedded
+        // surface it is fatal: a compositor or hardware video plane finishes
+        // the frame with `out = ui.rgb * ui.a + video * (1 - ui.a)`, and every
+        // lit spotlight pixel is multiplied by zero. That is the Tizen report -
+        // the layer missing over a playing video while neon, droplets and the
+        // flare (all of which write coverage) came through.
+        //
+        // Measured offscreen at 640x360 over a transparent clear, before the
+        // fix: one lamp lit 72,615 pixels of colour and 0 pixels of alpha, and
+        // composited to nothing at all.
+        //
+        // One host-state assumption the add did not make: (1 - dst) is a
+        // weight only while the destination is in [0, 1]. Every target this
+        // library owns is RGBA8, but a host that hands Render a FLOAT
+        // framebuffer already holding values above 1 turns the factor negative,
+        // and the layer subtracts light there.
+        glEnable(GL_BLEND);
+        glBlendFuncSeparate(GL_ONE_MINUS_DST_COLOR, GL_ONE, GL_ONE_MINUS_DST_ALPHA, GL_ONE);
+
+        mShaderProgram.Use();
+
+        // ONE uniform differs between the two paths, and it is not geometry.
+        // The ortho is over APP coordinates, and the viewport transform alone
+        // carries the scale: the same vertex lands at scale * its app pixel in
+        // a scale-sized buffer. The fragment stage then reads only vLocal,
+        // which interpolates in full-res lamp pixels, against flat per-lamp
+        // values that are full-res pixels too - so its LIGHT never learns
+        // which buffer it is shading into. That is what makes 1.0
+        // bit-identical.
+        //
+        // What does differ is where the output is dithered. At 1.0 this pass
+        // writes the caller's 8-bit target and dithers its own output. Below
+        // it, into a half-float buffer, the dither is the blit's: this pass
+        // writes the light undithered, the blit reads it bilinearly and adds
+        // the noise once per destination pixel. Dithered here instead, the
+        // noise would be one buffer texel - 1 / scale px - wide and the
+        // filter would average it into blotches; and an RGBA8 buffer rounds
+        // the tail to one-level plateaus before any noise downstream can
+        // help. See SCALED_FORMATS for what that looked like. On the RGBA8
+        // fallback this pass dithers as before and the blit adds its own.
+        const bool blitDithersAlone = scaled && SCALED_FORMATS[mScaledFormat].holdsSubLevels;
+        mShaderProgram.SetUniform("uMVP", mvp);
+        mShaderProgram.SetUniform("uDither", blitDithersAlone ? 0.0f : 1.0f);
+
+        // The clip area, in the SAME app coordinates the ortho above maps -
+        // which is what keeps the sentence two comments up true. A clip is a
+        // region of the app's own space, not of the buffer being rasterised
+        // into, so neither of these VALUES changes with the scale; the
+        // fragment stage reaches them through vApp, a varying, rather than
+        // through gl_FragCoord, which would have needed the scale.
+        //
+        // The uniforms, though - not the resulting edge. The mask is evaluated
+        // per fragment, so on a reduced buffer its boundary is resolved at
+        // that buffer's texel pitch and the blit smears it. That is why an
+        // enabled clipped lamp pins the scale to 1.0 rather than being one
+        // more scale-invariant term: see GetClampedSpotScale for the numbers
+        // and for why the neon's fix could not be reused. Past that pin, the
+        // two paths below are only ever reached with NO lamp clipped, which is
+        // what keeps uDither the only uniform that differs between them.
+        //
+        // Uploaded unconditionally, including when no lamp is clipped. The
+        // per-lamp opt-in is baked into the strips as a vertex attribute (see
+        // buildStrips), so these two uniforms are inert rather than wrong when
+        // nothing reads them, and skipping them would only buy a branch here
+        // in exchange for a stale value the first frame a lamp opts in. There
+        // is no area-level enable that could gate them either.
+        const ClipSolve clipSolve = DeriveClip(config.spotlight.clipArea);
+        mShaderProgram.SetUniform("uClipRect",
+                                  glm::vec4(clipSolve.center.x, clipSolve.center.y,
+                                            clipSolve.half.x, clipSolve.half.y));
+        mShaderProgram.SetUniform("uClipParams",
+                                  glm::vec3(clipSolve.radius, clipSolve.softness,
+                                            clipSolve.keepInside ? 1.0f : 0.0f));
+
+        mVertexArray.DrawArrays(GL_TRIANGLES, mVertexCount);
+
+        mShaderProgram.Unuse();
     }
 }

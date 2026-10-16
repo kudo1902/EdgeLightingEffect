@@ -71,6 +71,15 @@ namespace EdgeLighting
         // layer that draws nothing has nothing current.
         mResourceContext->GetBufferRegistry().BeginFrame();
         float t = mClock.GetTime();
+        // Two phases (docs/resource-sharing-plan.md 3.3): every layer's
+        // offscreen passes first, then every layer onto the caller's
+        // framebuffer, so that target is drawn in one unbroken run - and any
+        // layer's Render can read what any layer's Prepare made. Both in
+        // layer order.
+        for (auto &renderer : mRenderers)
+        {
+            renderer->Prepare(viewportWidth, viewportHeight, t, mActiveConfig);
+        }
         for (auto &renderer : mRenderers)
         {
             renderer->Render(viewportWidth, viewportHeight, t, mActiveConfig);

@@ -5,9 +5,41 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
-## 2026-10-16 - Sharing plan S2: registry v2, and I64's open case and I65-I73 closed
+## 2026-10-16 - Sharing plan S3: the two-phase frame
 
 Uncommitted, on `design_system_sharing_resources_between_renderers`, measured
+against S2 (`d6d2175`). AMD Radeon Pro 5300M. Section 7.4 of
+[`resource-sharing-plan.md`](resource-sharing-plan.md) has the detail.
+
+- **Built.**
+  - `EdgeLightingEffect::Render` calls `Prepare` on every renderer, then
+    `Render` on every renderer.
+  - `Prepare` is a non-virtual wrapper around the protected
+    `RenderOffscreen`. `Render` calls `EnsurePrepared` first, so a renderer
+    drawn alone still draws its whole frame.
+  - The neon's passes 0 to 1r moved to `RenderOffscreen`; `mFramePlan`
+    carries what passes 2a to 2r read.
+  - The flare's and the spotlight's scaled draws moved there too. Their
+    blits stayed in `Render` and set their own blend.
+  - The neon's `Render` re-binds its segment and arc blocks.
+  - Records go current in `Prepare`.
+- **Measured.**
+  - All 248 `layer-check` frames identical to S2.
+  - `check` and `partition` pass; the ASan probe is clean.
+  - No slower anywhere, Release at 1080p, S2/S3 geomean:
+    - hue frames 0.990;
+    - still frames 1.005, over 12 rounds;
+    - flare, spotlight and all-layer frames 0.992.
+  - Sub-0.1 ms still frames on the AMD are bimodal in either build, so they
+    take 12 rounds, not 4. Four rounds read a false 0.56x on one figure.
+- **Open.**
+  - The point of the change is a tiler, which this GPU is not. The M2 and
+    the target device are not measured.
+  - Next is S4, read declarations.
+
+## 2026-10-16 - Sharing plan S2: registry v2, and I64's open case and I65-I73 closed
+
+Committed as `d6d2175`, on `design_system_sharing_resources_between_renderers`, measured
 against S1 (`b03a9c3`). AMD Radeon Pro 5300M, Debug build. Section 7.3 of
 [`resource-sharing-plan.md`](resource-sharing-plan.md) has the detail.
 

@@ -40,7 +40,7 @@ namespace EdgeLighting
         /// @c +hole on each axis. An annulus carries no position of its own, and
         /// being symmetric it reads the same with y up or y down. To place one
         /// in the caller's framebuffer, add the rect's centre there -
-        /// @c centerFull in @ref NeonRenderer::Render, viewport px from the
+        /// @c centerFull in @ref NeonRenderer::RenderOffscreen, viewport px from the
         /// lower-left corner, y up - so the box covers
         /// <tt>centerFull - outer</tt> to <tt>centerFull + outer</tt>, as
         /// GetBufferRegion and @ref NeonRenderer::computeRingFieldLayout do.
@@ -142,7 +142,7 @@ namespace EdgeLighting
         ///
         /// It sends the region's lower-left corner to uv 0 and its upper-right
         /// corner to uv 1: <tt>scale = 1 / (size * pxScale)</tt>,
-        /// <tt>offset = -origin / size</tt>. @ref NeonRenderer::Render builds
+        /// <tt>offset = -origin / size</tt>. @ref NeonRenderer::RenderOffscreen builds
         /// three a frame - the gather buffer from scaled px, the gather buffer
         /// from full-res px, the reduced buffer from full-res px - and the
         /// shaders take them as @c uGatherUVScale / @c uGatherUVOffset
@@ -323,37 +323,49 @@ namespace EdgeLighting
         /// GLOW_COVER_RELEASE_SECONDS of frame time - here and not in
         /// @ref Render, which must not delete a framebuffer.
         /// @param deltaTime  Seconds since the last frame; the release timer's step.
-        /// @param time       Unused: the neon reads time in @ref Render.
+        /// @param time       Unused: the neon reads time in its passes.
         /// @param config     The active configuration.
         virtual void Update(float deltaTime, float time, const Config &config) override;
 
-        /// Draws the neon, as a schedule of passes in two phases. Nothing when
-        /// @c NeonConfig::enable is off.
+    protected:
+        /// Phase 1 of the neon's frame, run by @ref Prepare (or by @ref Render
+        /// when nothing prepared it): the passes into its own buffers, each
+        /// only when stale - the emission table (P0), the glow coverage table
+        /// (P0b), the gather (P1a), the glow's field bake (P1f), the reduced
+        /// buffer - shaded (P1b) or composited from the field (P1c) - and the
+        /// ring's field bake (P1r). On a frame where nothing they read moved,
+        /// none of it runs and the frame never leaves the caller's framebuffer.
+        /// Leaves what phase 2 reads in @c mFramePlan, and marks the buffers
+        /// the frame used current in the effect's registry. Nothing when
+        /// @c NeonConfig::enable is off or under @c DebugConfig::opaqueOnly.
         ///
-        /// Phase 1, offscreen, each pass only when stale: the emission table
-        /// (P0), the glow coverage table (P0b), the gather (P1a), the glow's
-        /// field bake (P1f), the reduced buffer - shaded (P1b) or composited
-        /// from the field (P1c) - and the ring's field bake (P1r). On a frame
-        /// where nothing they read moved, none of it runs and the frame never
-        /// leaves the caller's framebuffer. Phase 2, onto the caller's
-        /// framebuffer, premultiplied over: the opaque fill (P2a), the blit
-        /// (P2b), the edge ring - shaded (P2c) or from its field (P2r). The
-        /// passes in their declaration order below, and
-        /// docs/neon-shader-outputs.html, show each one.
+        /// @par GL state
+        /// Restores the framebuffer and the viewport it was handed - whatever
+        /// framebuffer that is, never framebuffer 0 - and lifts the host's
+        /// scissor only for its passes. Returns with @c GL_BLEND on and
+        /// @c GL_SRC_ALPHA, @c GL_ONE_MINUS_SRC_ALPHA.
+        virtual void RenderOffscreen(int viewportWidth, int viewportHeight, float time,
+                                     const Config &config) override;
+
+    public:
+        /// Phase 2 of the neon's frame, onto the caller's framebuffer,
+        /// premultiplied over: the opaque fill (P2a), the blit (P2b), the edge
+        /// ring - shaded (P2c) or from its field (P2r) - from what phase 1
+        /// (@ref RenderOffscreen) left in @c mFramePlan, running phase 1 first
+        /// when nothing prepared this frame. Nothing when
+        /// @c NeonConfig::enable is off. The passes in their declaration order
+        /// below, and docs/neon-shader-outputs.html, show each one.
         ///
         /// With @c DebugConfig::opaqueOnly, the fill alone. A program that
         /// fails to build leaves the frame the fill alone too.
         ///
         /// @par GL state
-        /// Restores the framebuffer and the viewport it was handed - whatever
-        /// framebuffer that is, never framebuffer 0 - and lifts the host's
-        /// scissor only for its offscreen passes. Owns blending: a frame that
-        /// draws returns with @c GL_BLEND on and @c GL_SRC_ALPHA,
-        /// @c GL_ONE_MINUS_SRC_ALPHA (a disabled layer touches nothing).
-        /// It sets nothing else the host owns, so the host supplies: no face
-        /// culling (or a front face the meshes' winding survives), a full
-        /// colour and alpha write mask, @c GL_FUNC_ADD, and depth test and
-        /// write off.
+        /// Owns blending: a frame that draws returns with @c GL_BLEND on and
+        /// @c GL_SRC_ALPHA, @c GL_ONE_MINUS_SRC_ALPHA (a disabled layer
+        /// touches nothing). It sets nothing else the host owns, so the host
+        /// supplies: no face culling (or a front face the meshes' winding
+        /// survives), a full colour and alpha write mask, @c GL_FUNC_ADD, and
+        /// depth test and write off.
         /// @pre The GL viewport is (0, 0, @p viewportWidth, @p viewportHeight)
         ///      - see @ref BaseRenderer::Render; and @ref OnConfigChanged has
         ///      run for any change to @p config, which the effect does before
@@ -373,7 +385,7 @@ namespace EdgeLighting
         /// band (the geometry and the fill's own mode and cutoffs), the LUTs
         /// (which guard themselves). The light blocks
         /// and the glow coverage table's pieces are only marked dirty here;
-        /// @ref Render repacks and re-bakes them.
+        /// @ref RenderOffscreen repacks and re-bakes them.
         ///
         /// Also clears what the change makes stale: the offscreen phase's
         /// reuse on any change to the neon or the geometry, and both fields
@@ -603,7 +615,7 @@ namespace EdgeLighting
         /// gather computes.
         ///
         /// @par When the buffer still answers
-        /// @ref NeonRenderer::Render skips pass 1a, and reads the buffer
+        /// @ref NeonRenderer::RenderOffscreen skips pass 1a, and reads the buffer
         /// through @c region, when all of these hold:
         ///   - @c drawn - the last gather succeeded;
         ///   - @c mGather.buffer is still allocated - it is released when the
@@ -683,7 +695,7 @@ namespace EdgeLighting
         /// | otherwise                                  | nothing; sets @c settled | the config just changed: shade directly, bake next frame if it holds |
         ///
         /// @par Who calls what
-        ///   - @ref NeonRenderer::Render calls @ref Decide once a frame, and
+        ///   - @ref NeonRenderer::RenderOffscreen calls @ref Decide once a frame, and
         ///     only for a config the field can serve and a field not
         ///     @c unavailable; then, after a bake, @ref OnBaked.
         ///   - @ref NeonRenderer::OnConfigChanged calls @ref Invalidate on any
@@ -855,10 +867,10 @@ namespace EdgeLighting
             /// @c NeonConfig::arcs and nothing else, so @ref OnConfigChanged gates
             /// it on exactly those two. It accumulates rather than being assigned,
             /// because that call can run more than once before the next
-            /// @ref Render - see the note there.
+            /// @ref RenderOffscreen - see the note there.
             ///
             /// Starts true because @ref Initialize does not pack - the first
-            /// @ref Render is what fills them.
+            /// @ref RenderOffscreen is what fills them.
             bool dirty = true;
         } LightBlocks;
 
@@ -1063,7 +1075,7 @@ namespace EdgeLighting
         {
             /// The edge ring's field (pass 1r): Fa, R16F - Fa and Fs, RG16F, with
             /// segments - at full resolution over the ring alone, packed as
-            /// @c mRingField.layout. Only for a config @ref Render finds eligible
+            /// @c mRingField.layout. Only for a config @ref RenderOffscreen finds eligible
             /// (a colour-stop alpha time cannot move). Released with the conditions
             /// that want it - see OnConfigChanged.
             Framebuffer buffer{"NeonRenderer.RingField"};
@@ -1086,7 +1098,7 @@ namespace EdgeLighting
         {
             /// Whether the offscreen phase's buffers - @c mGather.buffer and
             /// @c mScaledBuffer, at every scale - still hold exactly what this
-            /// frame's passes 1a and 1b would draw into them, so @ref Render can
+            /// frame's passes 1a and 1b would draw into them, so @ref RenderOffscreen can
             /// skip both and never leave the caller's framebuffer.
             ///
             /// The gather has a skip of its own since I55 (@ref GatherCache), which
@@ -1103,7 +1115,7 @@ namespace EdgeLighting
             /// change to the neon's config or the geometry (pass 1b reads too much
             /// of the former for a narrower gate to be worth its risk), but not on
             /// another layer's, which nothing here reads and an animation of which
-            /// would otherwise clear it every frame; set by @ref Render on every
+            /// would otherwise clear it every frame; set by @ref RenderOffscreen on every
             /// frame whose offscreen phase drew or reused both, unless the reduced
             /// buffer holds the field's composite rather than the shading (I56: the
             /// frame the intensity stops on redraws pass 1b exactly); and honoured
@@ -1145,7 +1157,7 @@ namespace EdgeLighting
 
         /// What one frame did with each offscreen buffer, for
         /// @ref publishBuffers: which it used - so their records are current -
-        /// and which it wrote - so their versions move. Filled by @ref Render
+        /// and which it wrote - so their versions move. Filled by @ref RenderOffscreen
         /// from its own decisions, never re-derived.
         typedef struct BufferUse
         {
@@ -1159,6 +1171,20 @@ namespace EdgeLighting
             bool ringFieldRead = false;    ///< The ring's field holds this frame's, as @c fieldRead.
             bool ringFieldWritten = false; ///< Pass 1r ran and succeeded.
         } BufferUse;
+
+        /// What phase 1 (@ref RenderOffscreen) leaves for phase 2
+        /// (@ref Render): the values its passes on the caller's framebuffer
+        /// read, as phase 1 decided them. Rewritten every frame phase 1 runs;
+        /// @c glowReady is cleared first thing, so a disabled or fill-only
+        /// frame composites no glow.
+        typedef struct FramePlan
+        {
+            bool glowReady = false;     ///< The glow's buffers hold this frame's: the blit and the ring draw.
+            glm::vec2 centerFull{0.0f}; ///< The rect's centre, caller's framebuffer px, y up - what the one full-res transform is built from.
+            UVMap gatherUVFull;         ///< Full-res rect-local px -> gather buffer uv, for the ring (P2c / P2r).
+            UVMap scaledUV;             ///< Full-res rect-local px -> reduced buffer uv, for the blit (P2b).
+            LazyBake::Decision ringField; ///< Whether the ring composites its field (P2r) rather than shading (P2c), and the gain.
+        } FramePlan;
 
         // --- Programs: built once, on first use ------------------------------
         /// Build @p program from @p fragSrc over neon.vert, with @p define
@@ -1459,7 +1485,8 @@ namespace EdgeLighting
         /// to texture 0 whether or not it is read.
         void bindGatherBuffer(ShaderProgram &shader, const UVMap &gatherUV);
 
-        // --- The passes, in the order Render runs them -----------------------
+        // --- The passes, in the order the frame runs them ------------------
+        // P0 to P1r in RenderOffscreen (Prepare), P2a to P2r in Render.
         // The order is the frame's (docs/neon-shader-outputs.html), and the
         // .cpp defines them in the same order - keep the three in step. The
         // data dependency is the real contract: pass 0 bakes the
@@ -1478,7 +1505,7 @@ namespace EdgeLighting
         // relies on are stated in its @pre below.
         //
         // The passes take the pieces of the frame transform they actually use.
-        // @ref Render derives them once, in SCALED space, so the gather quad
+        // @ref RenderOffscreen derives them once, in SCALED space, so the gather quad
         // and the sample positions agree; the opaque fill is the exception and
         // takes the viewport height, since it always draws at full resolution
         // on the caller's framebuffer.
@@ -1517,7 +1544,7 @@ namespace EdgeLighting
         /// gather region's projection from pass 1's scaled rect-local space.
         /// Takes no time:
         /// the loop reads time only through the emission table. Leaves the
-        /// buffer bound; @ref Render restores the target.
+        /// buffer bound; @ref RenderOffscreen restores the target.
         /// @pre Blending disabled - the buffer is data.
         /// @return false if the buffer could not be allocated, in which case
         ///         every later glow pass must be skipped.
@@ -1540,7 +1567,7 @@ namespace EdgeLighting
         /// @p scale, which pass 1c reads it over - reading the gather through
         /// @p gatherUV, as pass 1b reads it. R16F, Fa alone - RG16F, Fa and Fs,
         /// with segments (GetFieldFormat). Leaves the buffer bound;
-        /// @ref Render restores the target.
+        /// @ref RenderOffscreen restores the target.
         /// @pre Blending disabled; pass 1a has run or its buffer is current.
         /// @return false if the buffer could not be allocated - the field is
         ///         then never used.
@@ -1551,8 +1578,8 @@ namespace EdgeLighting
         /// pass's result, so it must run after it - into @c mScaledBuffer,
         /// @p texels drawn through @p mvp (its region's projection) with
         /// @c mShadeShader, reading @c mGather.buffer through @p gatherUV. Clears that
-        /// buffer and leaves it bound; @ref Render restores the target before
-        /// pass 2a.
+        /// buffer and leaves it bound; @ref RenderOffscreen restores the target
+        /// before phase 2.
         /// @pre Blending DISABLED: the buffer was just cleared and the quad
         ///      covers each texel once, so over would only have added zero, for
         ///      a destination read per texel.
@@ -1595,7 +1622,7 @@ namespace EdgeLighting
         /// box quad @c mRingField.box, not the ring, so every texel of every
         /// strip is baked. Reads
         /// the gather through the full-res map @p gatherUV. Leaves the buffer
-        /// bound; @ref Render restores the target.
+        /// bound; @ref RenderOffscreen restores the target.
         /// @pre Blending disabled; pass 1a has run or its buffer is current.
         /// @return false if the buffer could not be allocated.
         bool renderRingFieldPass(const UVMap &gatherUV, float time, const Config &config);
@@ -1713,7 +1740,7 @@ namespace EdgeLighting
         unsigned int mFailedPrograms = 0;
 
         /// A config change since the last frame moved NeonConfig::intensity.
-        /// Set by @ref OnConfigChanged, consumed by the next @ref Render: the
+        /// Set by @ref OnConfigChanged, consumed by the next @ref RenderOffscreen: the
         /// fields serve a scaled intensity only while it moves (LazyBake).
         bool mIntensityMoving = false;
 
@@ -1800,6 +1827,7 @@ namespace EdgeLighting
         GlowField mGlowField;      ///< P1f, read by P1c - see @ref GlowField.
         RingField mRingField;      ///< P1r, read by P2r - see @ref RingField.
         OffscreenState mOffscreen; ///< Whether P1a and P1b can be skipped - see @ref OffscreenState.
+        FramePlan mFramePlan;      ///< What phase 1 left for phase 2 this frame - see @ref FramePlan.
 
         /// Pass 1b's target: the composited colour, one attachment at the
         /// reduced scale - full size at 1.0 - covering what the blit reads

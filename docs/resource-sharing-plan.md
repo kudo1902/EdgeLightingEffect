@@ -6,8 +6,9 @@ The owner settled every decision
 the same day, each one as recommended (section 5). The steps start with the
 shared shader cache.
 
-**Built so far: S0 and S1 (2026-10-15, committed as `7d3e953`), and S2
-(2026-10-16, uncommitted).** Section 7 has what each measured.
+**Built so far: S0 and S1 (2026-10-15, committed as `7d3e953`), S2
+(2026-10-16, `d6d2175`) and S3 (2026-10-16, uncommitted).** Section 7 has what
+each measured.
 
 **The owner's goals (2026-10-15).** Three uses for sharing:
 
@@ -687,4 +688,62 @@ Where the build departs from 3.2, and why:
 Not measured: the M2 and the target device. Nothing here is a GPU path - the
 registry is CPU records - but the panel sizing changes what the debug view
 draws.
+
+### 7.4 S3 - the two-phase frame
+
+`BaseRenderer::Prepare`, `RenderOffscreen` and `EnsurePrepared`;
+`EdgeLightingEffect::Render` calls `Prepare` on every renderer, then `Render`
+on every renderer. The neon's passes 0 to 1r are its `RenderOffscreen`, and
+what its passes on the caller's framebuffer read crosses in `mFramePlan`. The
+flare's and the spotlight's scaled draws are theirs, with the blits left in
+`Render`. Measured on an AMD Radeon Pro 5300M against S2 (`d6d2175`).
+
+- **Frames**: all 248 identical to S2, Debug build.
+- `neon-scale-check check` and `partition` pass.
+- **A renderer drawn alone** - the S2 probe's kept renderers drawn without an
+  effect - draws through `EnsurePrepared`; clean under AddressSanitizer.
+- **Timing**, Release, 1920 x 1080, wall-clock between `glFinish` calls; ratio
+  is S2 / S3, so above 1 is faster:
+
+  | frames | rounds | geomean | range |
+  | ------ | ------ | ------- | ----- |
+  | `neon-scale-check time --mode hue`, 12 scenes x 3 scales | 4 | 0.990 | 0.92-1.08 |
+  | the same, still, 5 scenes x 2 scales | 12 | 1.005 | 0.91-1.22 |
+  | flare and five-lamp fan at 0.5 and 1.0; neon at 0.5 still and hue; all layers at 0.5 still and hue | 4 | 0.992 | 0.96-1.01 |
+
+  A first still run over 4 rounds read 0.89, down to 0.56 on one figure.
+  The cause was noise, not the change. On the AMD a still frame under
+  ~0.1 ms comes out at either ~0.05 or ~0.10 ms, from run to run, in either
+  build: S2's `glow_inside` at 0.5 read 0.046, 0.087, 0.047 and 0.058. Twelve
+  alternating rounds over the figures that moved put every median within
+  noise.
+
+  This GPU is not a tiler, so it can only show that the frame got no slower.
+  The saving the two phases are for - one store of the caller's target per
+  frame - shows on a tiler: the M2 or the target device. Even there it
+  applies only where a layer other than the neon has an offscreen pass: the
+  flare or the spotlight below 1.0. The neon's own frame was already in two
+  phases.
+
+Where the build departs from 3.3, and why:
+
+- **`Prepare` is not virtual.** It sets a flag and calls the protected virtual
+  `RenderOffscreen`. A renderer with offscreen passes calls `EnsurePrepared`
+  first thing in its `Render`, which runs `RenderOffscreen` itself when no
+  `Prepare` came. So a renderer drawn without an effect still draws its whole
+  frame, and an override cannot forget the flag.
+- **A `Render` sets every piece of state it reads.** Between a renderer's
+  `Prepare` and its `Render`, every other layer's `Prepare` runs.
+  - The flare's and the spotlight's blits used to inherit their blend from
+    the draw into their own buffer; they now set it.
+  - The neon's edge ring used to read the segment and arc blocks as
+    `packLightBlocks` bound them; `Render` binds them again.
+  - Nothing collides today: the neon uses binding points 0 to 2, the flare 3.
+  - A `Prepare` that draws hands back blending on with `GL_SRC_ALPHA`,
+    `GL_ONE_MINUS_SRC_ALPHA`, as every `Render` does.
+- **Records go current in `Prepare`.** That way a layer's `Render` can read
+  them wherever the layer sits in the order.
+
+The tiler measurement is open: `neon-scale-check time` and the layer timing
+probe on the M2, with the flare and the spotlight at 0.5.
 

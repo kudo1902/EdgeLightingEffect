@@ -207,6 +207,12 @@ was made. (The comparison page's own timings are still merged by minimum - see
 step 3 below - because they come from interleaved runs of only two builds; read
 them as the page's figures, not as a before / after measurement.)
 
+On the AMD 5300M a still frame under ~0.1 ms is bimodal: the same build reads
+~0.05 or ~0.10 ms from run to run (the sharing plan's S3 measured `glow_inside`
+at 0.5 as 0.046, 0.087, 0.047 and 0.058 over four rounds of one build). Four
+rounds can then show a 0.56x "regression" that twelve alternating rounds put at
+1.0 - use twelve or more for still frames that small.
+
 ## `generate --set cover` and `diff`
 
 ```bash

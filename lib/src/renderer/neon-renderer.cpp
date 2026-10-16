@@ -2165,8 +2165,10 @@ namespace EdgeLighting
         }
     }
 
-    void NeonRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
+    void NeonRenderer::RenderOffscreen(int viewportWidth, int viewportHeight, float time, const Config &config)
     {
+        // Nothing for Render to composite until the glow's passes below say so.
+        mFramePlan.glowReady = false;
         if (!config.neon.enable)
         {
             return;
@@ -2177,19 +2179,21 @@ namespace EdgeLighting
         const bool intensityMoving = mIntensityMoving;
         mIntensityMoving = false;
 
-        // Render is a pass schedule and nothing else: derive the transform,
+        // The frame is a pass schedule and nothing else: derive the regions,
         // then one call per pass. Each pass owns its own shader and, where it
-        // retargets, its own framebuffer restore. Blend state is owned HERE.
+        // retargets, its own framebuffer restore. Blend state is owned by this
+        // method and Render.
         //
-        // TWO PHASES, in this order: everything that renders OFFSCREEN first
-        // (the emission and coverage tables, the gather, pass 1b and the field
-        // bakes), then everything that lands on the caller's framebuffer (the
-        // fill, the blit, the edge ring). So the caller's target is drawn in
-        // one unbroken run per frame. On a tile-based GPU every switch away
-        // from it and back stores its tiles out and loads them in again, and
-        // the fill used to go first and force exactly that whenever an
-        // offscreen pass followed it. The fill depends on nothing offscreen
-        // and only has to land under the glow, so moving it costs nothing.
+        // TWO PHASES, in this order: everything that renders OFFSCREEN - the
+        // emission and coverage tables, the gather, pass 1b and the field
+        // bakes - here, in Prepare; then everything that lands on the caller's
+        // framebuffer - the fill, the blit, the edge ring - in Render, after
+        // every layer's Prepare. So the caller's target is drawn in one
+        // unbroken run per frame. On a tile-based GPU every switch away from
+        // it and back stores its tiles out and loads them in again, and the
+        // fill used to go first and force exactly that whenever an offscreen
+        // pass followed it. The fill depends on nothing offscreen and only has
+        // to land under the glow, so moving it costs nothing.
         // ONE path at every resolution scale, 1.0 included: the glow is
         // shaded into a reduced buffer - full size at 1.0 - blitted back, and
         // the edge ring re-shaded at full resolution. (There used to be a
@@ -2209,11 +2213,11 @@ namespace EdgeLighting
         const glm::vec2 centerFull(config.geometry.position.x + halfRectW,
                                    static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
 
-        // Debug: the fill and nothing else. What lands on
-        // screen is the opaque silhouette by itself - which is how the fill's
-        // square corner at cornerRadius 0 gets compared against the emission's
-        // round one. DebugRenderer honours the same flag, so the overlays do
-        // not reappear over a fill-only frame.
+        // Debug: the fill and nothing else - Render's, so nothing offscreen.
+        // What lands on screen is the opaque silhouette by itself - which is
+        // how the fill's square corner at cornerRadius 0 gets compared against
+        // the emission's round one. DebugRenderer honours the same flag, so
+        // the overlays do not reappear over a fill-only frame.
         //
         // The one field this renderer reads out of DebugConfig. It lives there
         // because it is a debug control, and it is read HERE because it is a
@@ -2223,14 +2227,6 @@ namespace EdgeLighting
         // uploads no UBO and bakes no table it would never sample.
         if (config.debug.opaqueOnly)
         {
-            if (config.neon.opaqueMode != OpaqueMode::NONE)
-            {
-                glEnable(GL_BLEND);
-                glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
-                renderFillPass(viewportWidth, viewportHeight, config);
-            }
-            glEnable(GL_BLEND);
-            glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
             return;
         }
 
@@ -2498,6 +2494,41 @@ namespace EdgeLighting
         mOffscreen.reusable = glowReady && !field.use;
         mOffscreen.viewport = glm::ivec2(viewportWidth, viewportHeight);
 
+        // What Render's passes read: the decisions above, kept rather than
+        // rederived, since the regions and their maps are this frame's only
+        // as this method placed them (a held gather region among them).
+        mFramePlan.glowReady = glowReady;
+        mFramePlan.centerFull = centerFull;
+        mFramePlan.gatherUVFull = gatherUVFull;
+        mFramePlan.scaledUV = scaledUV;
+        mFramePlan.ringField = ringField;
+
+        if (glowReady)
+        {
+            // A field is this frame's when the composite read it or a bake
+            // just wrote it - never after a bake that failed (I66). Marked
+            // here rather than after the composites, so a layer's Render can
+            // read them wherever it sits in the order.
+            bufferUse.fieldRead = field.use || bufferUse.fieldWritten;
+            bufferUse.ringFieldRead = ringField.use || bufferUse.ringFieldWritten;
+            publishBuffers(centerFull, gatherRegion, scaledRegion, bufferUse, config);
+        }
+
+        // Hand back the blend state every renderer leaves behind: the passes
+        // above end with it disabled.
+        glEnable(GL_BLEND);
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+    }
+
+    void NeonRenderer::Render(int viewportWidth, int viewportHeight, float time, const Config &config)
+    {
+        // This frame's offscreen phase, unless Prepare already ran it.
+        EnsurePrepared(viewportWidth, viewportHeight, time, config);
+        if (!config.neon.enable)
+        {
+            return;
+        }
+
         // ===== Caller's framebuffer ==========================================
         // Premultiplied-alpha "over": final = src.rgb + dst * (1 - src.a), for
         // every pass from here on, so each composites cleanly over the last.
@@ -2506,14 +2537,23 @@ namespace EdgeLighting
 
         // --- Pass 2a: opaque-mode background fill ---------------------------
         // Full-res on the caller's framebuffer, under the glow: before the
-        // blit and the ring.
+        // blit and the ring. Alone under DebugConfig::opaqueOnly, which leaves
+        // the plan's glowReady off.
         if (config.neon.opaqueMode != OpaqueMode::NONE)
         {
             renderFillPass(viewportWidth, viewportHeight, config);
         }
 
-        if (glowReady)
+        if (mFramePlan.glowReady)
         {
+            // The ring reads the segment and arc blocks, bound by
+            // packLightBlocks in the offscreen phase - and every other layer's
+            // offscreen phase has run since. Binding points are context state
+            // any of them could have repointed, so they are re-asserted here,
+            // unconditionally, as packLightBlocks does.
+            mLightBlocks.segment.BindBase(SEGMENT_BLOCK_BINDING);
+            mLightBlocks.arc.BindBase(ARC_BLOCK_BINDING);
+
             // --- Pass 2b / 2c: the blit and the edge ring. They cover
             // disjoint areas (setupRingGeometry), so their order between
             // themselves does not matter for the result.
@@ -2526,24 +2566,21 @@ namespace EdgeLighting
             // expression gave the same bits too, until someone edited one
             // of them; a single matrix cannot drift. tools/neon-scale-check
             // `partition` tests the result.
+            const glm::vec2 centerFull = mFramePlan.centerFull;
             const glm::mat4 fullResMvp =
                 glm::ortho(0.0f, static_cast<float>(viewportWidth), 0.0f, static_cast<float>(viewportHeight),
                            -1.0f, 1.0f) *
                 glm::translate(glm::mat4(1.0f), glm::vec3(centerFull, 0.0f));
-            renderBlitPass(fullResMvp, centerFull, scaledUV, config);
-            if (ringField.use)
+            renderBlitPass(fullResMvp, centerFull, mFramePlan.scaledUV, config);
+            if (mFramePlan.ringField.use)
             {
-                renderRingFieldCompositePass(fullResMvp, gatherUVFull, ringField.gain, config);
+                renderRingFieldCompositePass(fullResMvp, mFramePlan.gatherUVFull, mFramePlan.ringField.gain,
+                                             config);
             }
             else
             {
-                renderRingPass(fullResMvp, gatherUVFull, time, config);
+                renderRingPass(fullResMvp, mFramePlan.gatherUVFull, time, config);
             }
-            // A field is this frame's when the composite read it or a bake
-            // just wrote it - never after a bake that failed (I66).
-            bufferUse.fieldRead = field.use || bufferUse.fieldWritten;
-            bufferUse.ringFieldRead = ringField.use || bufferUse.ringFieldWritten;
-            publishBuffers(centerFull, gatherRegion, scaledRegion, bufferUse, config);
         }
 
         // Restore a known blend state for following renderers.

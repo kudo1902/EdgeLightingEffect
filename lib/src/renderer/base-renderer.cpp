@@ -15,6 +15,12 @@ namespace EdgeLighting
         unregisterOwned();
     }
 
+    void BaseRenderer::Prepare(int viewportWidth, int viewportHeight, float time, const Config &config)
+    {
+        mPrepared = true;
+        RenderOffscreen(viewportWidth, viewportHeight, time, config);
+    }
+
     void BaseRenderer::SetResourceContext(std::shared_ptr<ResourceContext> context)
     {
         if (context == mResourceContext)
@@ -27,6 +33,15 @@ namespace EdgeLighting
         {
             registerOwned(owned);
         }
+    }
+
+    void BaseRenderer::EnsurePrepared(int viewportWidth, int viewportHeight, float time, const Config &config)
+    {
+        if (!mPrepared)
+        {
+            RenderOffscreen(viewportWidth, viewportHeight, time, config);
+        }
+        mPrepared = false;
     }
 
     ShaderProgram BaseRenderer::BuildProgram(const char *vertSrc, const char *fragSrc, const char *name,
