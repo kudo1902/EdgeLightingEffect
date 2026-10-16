@@ -1747,8 +1747,7 @@ namespace EdgeLighting
         /// reader of the glow product applies too.
         /// @pre Premultiplied-over blending, and the caller's framebuffer and
         ///      full-resolution viewport are restored.
-        void renderBlitPass(const glm::mat4 &mvp, const EdgeMask &mask, const UVMap &scaledUV,
-                            const Config &config);
+        void renderBlitPass(const glm::mat4 &mvp, const EdgeMask &mask, const UVMap &scaledUV);
 
         /// Pass 2c: the edge ring. Re-shades the ring at FULL resolution with
         /// @c mRingShader, which takes the gather's result from

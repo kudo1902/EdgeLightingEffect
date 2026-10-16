@@ -5,6 +5,35 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-16 - Third review: the branch against main
+
+On `design_system_sharing_resources_between_renderers`, uncommitted, on top of
+`bcf51e2`. A third deep review filed 7 findings; all are fixed. AMD Radeon Pro
+5300M.
+
+- **The whole branch moves no pixel.** `layer-check` now builds standalone
+  against `main`, which has no buffer registry: it leaves out what a registry
+  would list, its report says `# registry: none`, and `diff` skips the other
+  report's `view/` frames. All 208 frames `main` renders are byte-identical to
+  the branch's. Every scene holds 1 KB less texture (the debug layer's own
+  colour ring, gone since S5b) and 144 bytes less buffer (the quads shared
+  since S5a, the debug layer's included now); allocations are the same.
+- **Fixed.**
+  - A renderer shared with another effect that fails to initialise here -
+    late, or in `Initialize` - goes back to the context it came from, not to
+    none: that effect still draws it.
+  - Registry slots live in a `std::deque`, so a record pointer from `Find`
+    stays valid when another renderer registers later.
+  - The debug layer draws its markers and buffer view with the shared
+    fullscreen quad; `renderBlitPass` lost a parameter it no longer read.
+  - The onboarding guide's renderer contract (Part 2.3), its shader
+    assembly listing (now with `neon-mask.glsl`), and every comment that
+    still named `WithDefine`.
+- **Measured.** All 256 `layer-check` frames identical to `bcf51e2`'s report;
+  `check`'s table unchanged; `partition` passes. Under ASan the probe's 29
+  checks pass, among them the shared renderer handed back on both failure
+  paths, and a `Find` pointer surviving 64 later registrations.
+
 ## 2026-10-16 - Review fixes on the sharing branch
 
 On `design_system_sharing_resources_between_renderers`. Two deep reviews of

@@ -27,8 +27,9 @@
 // resolution, onto the target), at every scale - 1.0 included, which takes
 // the same path with a full-size reduced buffer. See
 // NeonRenderer::ensurePathPrograms. The one variant NeonRenderer
-// splices in after the version line (WithDefine) is NEON_FIELD_BAKE, the
-// hue-invariant field's bake; see neon-field.frag.
+// builds from it, spliced in after the version line by the shader cache
+// (ShaderCache::WithDefines), is NEON_FIELD_BAKE, the hue-invariant field's
+// bake; see neon-field.frag.
 out vec4 fragColor;
 
 uniform float uLineWidth;

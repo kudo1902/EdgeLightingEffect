@@ -45,7 +45,9 @@ namespace EdgeLighting
 
         /// The NDC quad every renderer of the effect draws a whole-target pass
         /// with (an identity MVP): the neon's emission bake and its ALL-mode
-        /// fill, the lens flare and its blit, the spotlight's blit. Built on
+        /// fill, the lens flare and its blit, the spotlight's blit - and the
+        /// debug layer's stop markers and buffer view, which place the same
+        /// [-1, +1] quad with a model matrix of their own. Built on
         /// the first call, so a GL context must be current then. Renderers take
         /// it through @c BaseRenderer::GetFullscreenQuad, which falls back to
         /// a quad of their own without a context.

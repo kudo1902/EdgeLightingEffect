@@ -11,7 +11,9 @@
 #       cmake -S tools/layer-check -B build/layer-check-other -G Ninja -DEL_ROOT=/path/to/checkout
 #   EL_ROOT must already be built in EL_ROOT/build (libedge-lighting.a and
 #   libglad.a). The tool takes the public headers and the generated
-#   shaders.h from EL_ROOT, so they match that library.
+#   shaders.h from EL_ROOT, so they match that library. EL_ROOT may be main
+#   (no buffer registry: the report leaves out what one would list) or any
+#   checkout from the sharing plan's S2 on - see README.md.
 #
 # See README.md.
 

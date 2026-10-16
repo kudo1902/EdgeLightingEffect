@@ -45,8 +45,10 @@ namespace EdgeLighting
                 // Out of the context too, as AddRenderer does for a late one:
                 // a renderer the host still holds would otherwise keep its
                 // buffer keys in this effect's registry, listed though it is
-                // not drawn, and refuse them to a replacement.
-                (*it)->SetResourceContext(nullptr);
+                // not drawn, and refuse them to a replacement. Back to the
+                // context it came from, if any - another effect that shares
+                // it still draws it, and its records belong in that registry.
+                (*it)->SetResourceContext(takePriorContext(it->get()));
                 it = mRenderers.erase(it);
                 ++mRendererGeneration;
                 allOk = false;
@@ -58,6 +60,7 @@ namespace EdgeLighting
         }
         // A renderer the erase above dropped has left the context's registry
         // with its records, whether the erase freed it or the host holds it.
+        mPriorContexts.clear();
         // From here on AddRenderer has to initialise what it is handed - this
         // loop is not coming round again for it.
         mInitialized = true;
@@ -152,14 +155,22 @@ namespace EdgeLighting
         //
         // The context goes first, so a renderer initialised here builds its
         // programs from the stages the others compiled, like the rest, and
-        // its buffers are listed from the moment it joins.
+        // its buffers are listed from the moment it joins. The one it leaves
+        // - another effect's, when the host shares the renderer - is kept, so
+        // a renderer that fails here goes back to it rather than to none: that
+        // effect still draws it.
+        std::shared_ptr<ResourceContext> prior = renderer->getResourceContext();
         renderer->SetResourceContext(mResourceContext);
         if (mInitialized && !renderer->Initialize())
         {
-            renderer->SetResourceContext(nullptr);
+            renderer->SetResourceContext(std::move(prior));
             LOG_E("EdgeLightingEffect: renderer registered after Initialize failed "
                   "to initialize - not added.");
             return;
+        }
+        if (!mInitialized && prior)
+        {
+            mPriorContexts.emplace_back(renderer.get(), prior);
         }
 
         mRenderers.push_back(renderer);
@@ -169,6 +180,20 @@ namespace EdgeLighting
         // Renderers gate their own rebuilds on shader validity, so this is also
         // safe on the pre-Initialize path where nothing is compiled yet.
         renderer->OnConfigChanged(mActiveConfig);
+    }
+
+    std::shared_ptr<ResourceContext> EdgeLightingEffect::takePriorContext(const BaseRenderer *renderer)
+    {
+        for (auto it = mPriorContexts.begin(); it != mPriorContexts.end(); ++it)
+        {
+            if (it->first == renderer)
+            {
+                std::shared_ptr<ResourceContext> prior = it->second.lock();
+                mPriorContexts.erase(it);
+                return prior;
+            }
+        }
+        return nullptr;
     }
 
     const std::vector<std::shared_ptr<BaseRenderer>> &EdgeLightingEffect::GetRenderers() const

@@ -12,6 +12,15 @@ Configure the repo with `-DEDGE_LIGHTING_BUILD_TOOLS=ON`; the binary is
 `build/tools/layer-check/layer-check`. It can also build standalone against
 another checkout's library, as `neon-scale-check` does. See `CMakeLists.txt`.
 
+Standalone, it builds against `main` and against any checkout from S2 of the
+sharing plan on. `main` has no buffer registry, so against it the tool leaves
+out the `published` lines and the `view/` scenes, and its report says
+`# registry: none`; `diff` then skips the other report's `view/` frames and
+says how many. The branch's first registry, between `main` and S2, had another
+API and is not supported: for a "before" there, copy a binary aside (below).
+Measured on an AMD Radeon Pro 5300M, Release: all 208 frames `main` renders
+are byte-identical to this branch's at `bcf51e2`.
+
 ## Modes
 
 ```bash
@@ -63,7 +72,8 @@ own log goes to stdout, so give `--out`.
 layer-check diff before.txt after.txt
 ```
 
-Exits 1 if any frame hash differs or a scene is missing from either report.
+Exits 1 if any frame hash differs or a scene is missing from either report -
+but for the `view/` scenes when one report was made without a registry.
 It also lists every change in memory or allocations, but those do not fail it.
 Hashes are only comparable within one GPU and one build type: Debug and
 Release libraries differ on a few frames, from CPU float math in uniforms.

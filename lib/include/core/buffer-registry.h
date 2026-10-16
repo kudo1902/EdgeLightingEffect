@@ -3,8 +3,8 @@
 
 #include <glm/glm.hpp>
 #include <cstdint>
+#include <deque>
 #include <string_view>
-#include <vector>
 
 namespace EdgeLighting
 {
@@ -187,11 +187,19 @@ namespace EdgeLighting
         }
 
         /// The record registered under @p key, current or not, or nullptr.
+        ///
+        /// The pointer stays valid for the registry's life: a registration
+        /// adds a slot without moving the others. It points at a SLOT,
+        /// though, not at the buffer: once that record is removed the slot
+        /// reads @c IsRegistered false, and a later registration may reuse it
+        /// for another key. A reader that keeps the pointer across frames
+        /// checks @c IsRegistered and the key, or simply calls Find each frame.
         const BufferRecord *Find(std::string_view key) const;
 
         /// Every slot, in registration order. A free slot is in the list with
-        /// @c BufferRecord::IsRegistered false - skip it.
-        const std::vector<BufferRecord> &GetRecords() const { return mRecords; }
+        /// @c BufferRecord::IsRegistered false - skip it. A deque, so a slot
+        /// never moves (see @ref Find).
+        const std::deque<BufferRecord> &GetRecords() const { return mRecords; }
 
         /// How many slots hold a record.
         int GetRecordCount() const { return mRecordCount; }
@@ -207,7 +215,10 @@ namespace EdgeLighting
         int insert(const char *key, BufferRecord record);
 
     private:
-        std::vector<BufferRecord> mRecords;
+        /// The slots. A deque rather than a vector: a registration grows it
+        /// without moving a slot, so no record pointer a reader holds
+        /// (@ref Find) dangles because another renderer joined.
+        std::deque<BufferRecord> mRecords;
         int mRecordCount = 0;
         /// The last @c BufferRecord::version handed out.
         uint64_t mLastVersion = 0;

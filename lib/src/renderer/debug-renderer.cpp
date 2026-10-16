@@ -53,7 +53,11 @@ namespace EdgeLighting
             LOG_E("Failed to compile/link DebugRenderer shaders.");
             return false;
         }
-        setupUnitQuad();
+        // The quad the markers and the buffer view draw - the effect's
+        // fullscreen quad, [-1, +1] on both axes, placed by each draw's model
+        // matrix - built here, with the GL context current, if no renderer
+        // has asked for it yet.
+        GetFullscreenQuad();
         setupGeometry(mCurrentConfig);
         return true;
     }
@@ -247,28 +251,6 @@ namespace EdgeLighting
         return mBufferViewShader.IsValid();
     }
 
-    void DebugRenderer::setupUnitQuad()
-    {
-        // Unit quad ([-1,+1] on both axes) for the per-stop markers and the
-        // buffer view. Each marker is drawn by scaling + translating
-        // this quad via uMVP so it lands at that stop's perimeter position;
-        // the marker fragment shader treats vPos in [-1,+1] as disc space. The
-        // view scales it onto its box the same way.
-        //
-        // Unlike the strip and the box in setupGeometry, this one never
-        // changes: the geometry reaches it through each draw's model matrix,
-        // not through the vertices. Hence uploaded once from Initialize and
-        // never revisited.
-        // clang-format off
-        float unitQuad[] = {
-            -1.0f,  1.0f,  -1.0f, -1.0f,   1.0f, -1.0f,
-            -1.0f,  1.0f,   1.0f, -1.0f,   1.0f,  1.0f,
-        };
-        // clang-format on
-        mUnitQuadVertexArray.SetVertexData(unitQuad, sizeof(unitQuad));
-        mUnitQuadVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
-    }
-
     void DebugRenderer::setupGeometry(const Config &config)
     {
         // Centred on the geometry origin so it sits inside the rounded box.
@@ -361,7 +343,7 @@ namespace EdgeLighting
         glActiveTexture(GL_TEXTURE0);
         glBindTexture(GL_TEXTURE_2D, buffer.GetTexture());
         mBufferViewShader.SetUniform("uSource", 0);
-        mUnitQuadVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        GetFullscreenQuad().DrawArrays(GL_TRIANGLES, 6);
         mBufferViewShader.Unuse();
     }
 
@@ -404,7 +386,7 @@ namespace EdgeLighting
                 glm::scale(glm::mat4(1.0f), glm::vec3(markerRadius, markerRadius, 1.0f));
             mStopMarkerShader.SetUniform("uMVP", proj * markerModel);
             mStopMarkerShader.SetUniform("uMarkerColor", stop.color);
-            mUnitQuadVertexArray.DrawArrays(GL_TRIANGLES, 6);
+            GetFullscreenQuad().DrawArrays(GL_TRIANGLES, 6);
         }
         mStopMarkerShader.Unuse();
     }

@@ -8,6 +8,7 @@
 #include "core/read-list.h"
 #include <vector>
 #include <memory>
+#include <utility>
 
 namespace EdgeLighting
 {
@@ -134,6 +135,12 @@ namespace EdgeLighting
         /// immediately, so its first frame is not a blank one. A renderer
         /// already registered is refused (logged): it would draw twice a frame.
         ///
+        /// The renderer joins this effect's @c ResourceContext, its buffer
+        /// records with it. One that fails to initialise - here, or in
+        /// @ref Initialize - goes back to the context it was in before, if
+        /// any: a renderer the host shares with another effect stays listed
+        /// there, where it is still drawn.
+        ///
         /// @param renderer Shared pointer to a @ref BaseRenderer subclass.
         void AddRenderer(std::shared_ptr<BaseRenderer> renderer);
 
@@ -218,6 +225,10 @@ namespace EdgeLighting
 
     private:
         void refreshActiveConfig();
+        /// The context @p renderer was in when it joined before
+        /// @ref Initialize (@c mPriorContexts), forgotten here; nullptr if it
+        /// had none, or that context is gone.
+        std::shared_ptr<ResourceContext> takePriorContext(const BaseRenderer *renderer);
 
     private:
         Config mBaseConfig;   ///< Authored config - what SetConfig sets.
@@ -252,6 +263,13 @@ namespace EdgeLighting
         /// schedule's read diagnostics compare, rather than the renderers'
         /// addresses, which a new renderer can reuse.
         uint64_t mRendererGeneration = 0;
+        /// The context each renderer added before @ref Initialize was in when
+        /// it joined - another effect's, for a renderer the host shares between
+        /// two - so @ref Initialize can hand one that fails back to it rather
+        /// than to none. Weak: this effect must not keep the other's context
+        /// alive. Emptied by @ref Initialize; a late renderer keeps its own on
+        /// the stack in @ref AddRenderer.
+        std::vector<std::pair<const BaseRenderer *, std::weak_ptr<ResourceContext>>> mPriorContexts;
         Clock mClock;
         std::unique_ptr<AnimationManager> mAnimationManager;
         std::vector<std::shared_ptr<BaseRenderer>> mRenderers;

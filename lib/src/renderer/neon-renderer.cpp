@@ -2621,7 +2621,7 @@ namespace EdgeLighting
                 glm::ortho(0.0f, static_cast<float>(viewportWidth), 0.0f, static_cast<float>(viewportHeight),
                            -1.0f, 1.0f) *
                 glm::translate(glm::mat4(1.0f), glm::vec3(centerFull, 0.0f));
-            renderBlitPass(fullResMvp, GetEdgeMask(config, viewportHeight), mFramePlan.scaledUV, config);
+            renderBlitPass(fullResMvp, GetEdgeMask(config, viewportHeight), mFramePlan.scaledUV);
             if (mFramePlan.ringField.use)
             {
                 renderRingFieldCompositePass(fullResMvp, mFramePlan.gatherUVFull, mFramePlan.ringField.gain,
@@ -4803,15 +4803,15 @@ namespace EdgeLighting
         mFillShader.Unuse();
     }
 
-    void NeonRenderer::renderBlitPass(const glm::mat4 &mvp, const EdgeMask &mask, const UVMap &scaledUV,
-                                      const Config &config)
+    void NeonRenderer::renderBlitPass(const glm::mat4 &mvp, const EdgeMask &mask, const UVMap &scaledUV)
     {
         // Bilinear upscaling of premultiplied alpha is fringe-free; the blit
         // shader composites over whatever is on the target already (the black
         // fill if opaque, the original background otherwise).
         //
         // It also applies the one-sided cut and the inside/outside cutoffs,
-        // which is why it takes a config at all. Neither can be made in the
+        // from @p mask - GetEdgeMask's, the values a glow reader takes - and
+        // reads nothing else of the config. Neither can be made in the
         // gather: that runs at resolutionScale and the bilinear upsample smears
         // any edge it draws across 1/scale destination pixels in both
         // directions, which put glow on the dark side of the line and softened

@@ -18,12 +18,25 @@
 // See README.md.
 
 #include "core/edge-lighting.h"
-#include "core/buffer-registry.h"
 #include "util/capture-util.h"
 #include "shaders.h"
 #include "scenes.h"
 
 #include <GLFW/glfw3.h>
+
+// The buffer registry - what the effect publishes, and the debug view that
+// shows it - came with the resource-sharing branch; main has none. Built
+// standalone against such a checkout, the tool still reports every frame, the
+// memory and the allocations, and leaves out the "published" lines and the
+// "view/" scenes (its report says "# registry: none", and diff skips those
+// scenes). A checkout from the branch's first registry, before S2 replaced its
+// API, is not supported: copy a binary aside instead (README).
+#if __has_include("core/buffer-registry.h")
+#include "core/buffer-registry.h"
+#define LAYER_CHECK_REGISTRY 1
+#else
+#define LAYER_CHECK_REGISTRY 0
+#endif
 
 #include <algorithm>
 #include <chrono>
@@ -100,7 +113,9 @@ namespace
     const KnownSource KNOWN_SOURCES[] = {
         {"BLACK_RECT_FRAG_SRC", ShaderSource::BLACK_RECT_FRAG_SRC},
         {"BLIT_FRAG_SRC", ShaderSource::BLIT_FRAG_SRC},
+#if LAYER_CHECK_REGISTRY
         {"DEBUG_BUFFER_VIEW_FRAG_SRC", ShaderSource::DEBUG_BUFFER_VIEW_FRAG_SRC},
+#endif
         {"DROPLETS_FRAG_SRC", ShaderSource::DROPLETS_FRAG_SRC},
         {"LENS_FLARE_FRAG_SRC", ShaderSource::LENS_FLARE_FRAG_SRC},
         {"LENS_FLARE_VERT_SRC", ShaderSource::LENS_FLARE_VERT_SRC},
@@ -122,7 +137,7 @@ namespace
     };
 
     /// The ShaderSource constant @p source was made from. A renderer may put a
-    /// #define in after the #version line (NeonRenderer's WithDefine), which
+    /// #define in after the #version line (the shader cache's WithDefines), which
     /// leaves the source's tail as it was, so the tail names it: "+def" marks
     /// such a variant.
     std::string LabelFor(const std::string &source)
@@ -704,6 +719,7 @@ namespace
         std::vector<std::string> published;
     } SceneResult;
 
+#if LAYER_CHECK_REGISTRY
     /// A record as the reports name it: its Framebuffer's name, "#", its
     /// attachment - "NeonRenderer.Gather#1" for the key
     /// "NeonRenderer.Gather[1]". The form S0's reports used, kept so reports
@@ -722,6 +738,7 @@ namespace
         }
         return id + "#" + std::to_string(record.attachment);
     }
+#endif
 
     SceneResult RunScene(const LayerScene &scene)
     {
@@ -742,6 +759,7 @@ namespace
 
         result.textureBytes = LiveTextureBytes();
         result.bufferBytes = LiveBufferBytes();
+#if LAYER_CHECK_REGISTRY
         const BufferRegistry &registry = effect.GetBufferRegistry();
         for (const BufferRecord &record : registry.GetRecords())
         {
@@ -755,6 +773,7 @@ namespace
                           record.GetChannels());
             result.published.push_back(line);
         }
+#endif
 
         // Steady frames, counted without the capture's own read-back: the
         // configs are built before the window opens, so only the library's
@@ -792,11 +811,13 @@ namespace
         std::ostringstream out;
         out << "# layer-check report\n";
         out << "# GL renderer: " << RendererName() << "\n";
+        out << "# registry: " << (LAYER_CHECK_REGISTRY ? "yes" : "none") << "\n";
         out << "# frame " << WIDTH << "x" << HEIGHT << ", " << HASHED_FRAMES << " hashed frames per scene at dt 1/60, "
             << COUNTED_FRAMES << " counted\n";
 
         std::vector<LayerScene> scenes = BuildScenes();
 
+#if LAYER_CHECK_REGISTRY
         // One scene per buffer the all-layers frame publishes: the debug view
         // on it, drawn over that same frame.
         {
@@ -824,6 +845,7 @@ namespace
                 scenes.push_back(s);
             }
         }
+#endif
 
         for (const LayerScene &scene : scenes)
         {
@@ -880,6 +902,10 @@ namespace
         std::map<std::string, std::pair<long long, long long>> memory;
         std::map<std::string, long> allocations;
         std::string renderer;
+        /// False for a report made against a library with no buffer registry
+        /// ("# registry: none"): it has no "view/" scenes. Reports from before
+        /// the line existed all had one.
+        bool registry = true;
     } ParsedReport;
 
     bool Parse(const char *path, ParsedReport &report)
@@ -920,6 +946,10 @@ namespace
             {
                 report.renderer = line.substr(15);
             }
+            else if (line == "# registry: none")
+            {
+                report.registry = false;
+            }
         }
         return true;
     }
@@ -936,15 +966,33 @@ namespace
             std::printf("warning: different GPUs (%s / %s) - hashes are not comparable\n", a.renderer.c_str(),
                         b.renderer.c_str());
         }
+        // A report made with no buffer registry has no "view/" scenes, so
+        // the other one's are not missing - they cannot be compared.
+        const bool viewsComparable = a.registry && b.registry;
+        int skippedViews = 0;
+        const auto skipView = [&](const std::string &frame)
+        {
+            if (viewsComparable || frame.rfind("view/", 0) != 0)
+            {
+                return false;
+            }
+            ++skippedViews;
+            return true;
+        };
         int differing = 0;
         int missing = 0;
+        size_t compared = 0;
         for (const auto &entry : a.hashes)
         {
             auto it = b.hashes.find(entry.first);
+            compared += it != b.hashes.end() ? 1 : 0;
             if (it == b.hashes.end())
             {
-                std::printf("missing in B: %s\n", entry.first.c_str());
-                ++missing;
+                if (!skipView(entry.first))
+                {
+                    std::printf("missing in B: %s\n", entry.first.c_str());
+                    ++missing;
+                }
             }
             else if (it->second != entry.second)
             {
@@ -954,7 +1002,7 @@ namespace
         }
         for (const auto &entry : b.hashes)
         {
-            if (a.hashes.count(entry.first) == 0)
+            if (a.hashes.count(entry.first) == 0 && !skipView(entry.first))
             {
                 std::printf("missing in A: %s\n", entry.first.c_str());
                 ++missing;
@@ -978,7 +1026,12 @@ namespace
                             it->second, COUNTED_FRAMES);
             }
         }
-        std::printf("%zu frames compared: %d differ, %d missing\n", a.hashes.size(), differing, missing);
+        if (skippedViews > 0)
+        {
+            std::printf("skipped %d buffer-view frames: one report was made without a buffer registry\n",
+                        skippedViews);
+        }
+        std::printf("%zu frames compared: %d differ, %d missing\n", compared, differing, missing);
         std::printf("%s\n", differing == 0 && missing == 0 ? "PASS" : "FAIL");
         return differing == 0 && missing == 0 ? 0 : 1;
     }
@@ -1000,7 +1053,9 @@ namespace
         // programs), the debug view on a buffer (its program): the frame that
         // builds every program a host can need, but the opaque fill's.
         Config c = AllLayers();
+#if LAYER_CHECK_REGISTRY
         c.debug.bufferView = "NeonRenderer.Scaled";
+#endif
         effect.SetConfig(c);
         const auto t1 = std::chrono::high_resolution_clock::now();
         effect.Update(DT);

@@ -488,11 +488,12 @@ The final source of `neon.frag` is assembled in this order:
 
 ```
 #version 330 core                  <- @GLSL_VERSION@: "330 core" on macOS, "300 es" elsewhere
-[#define NEON_FIELD_BAKE]          <- only for the field bake variant, spliced in at RUNTIME by WithDefine()
+[#define NEON_FIELD_BAKE]          <- only for the field bake variant, spliced in at RUNTIME by ShaderCache::WithDefines()
 <contents of neon-tuning.h>        <- @NEON_TUNING@: shared constants, verbatim
 <contents of neon-common.glsl>     <- @NEON_COMMON@: starts with "precision highp float;"
 <contents of neon-pieces.glsl>     <- @NEON_PIECES@: the corner geometry and the coverage table's read
 <contents of neon-sdf.glsl>        <- @NEON_SDF@: sdRoundBox, sdRoundBoxFwidth, the band boundaries
+<contents of neon-mask.glsl>       <- @NEON_MASK@: the edge mask - GLOW_SIDE_*, NeonEdge, the cut and cutoff factors
 <contents of neon-grade.glsl>      <- @NEON_GRADE@: the tone map and the output dither
 <contents of neon.frag>
 ```
@@ -502,8 +503,9 @@ contents straight after. The coverage bake (`neon-glow-cover.frag`, P0b) takes
 the tuning header, then `#define NEON_GLOW_COVER_BAKE`, then `neon-pieces.glsl`,
 then its own source; its fill (`neon-glow-cover-fill.frag`, P0f) the same with
 `NEON_GLOW_COVER_FILL`. `neon-blit.frag` and `neon-field.frag` take the tuning
-header, `neon-grade.glsl` and `neon-sdf.glsl`; `black-rect.frag` takes only
-`neon-sdf.glsl`.
+header, `neon-grade.glsl`, `neon-sdf.glsl` and then `neon-mask.glsl` - the field
+under `NEON_FIELD_RING` only, the ring composite that applies the mask;
+`black-rect.frag` takes only `neon-sdf.glsl`.
 
 - **The tuning header** (`neon-tuning.h`) is plain `#define`s, so it compiles
   identically as C++ and as GLSL. That is how the CPU and the shader share
@@ -523,11 +525,17 @@ header, `neon-grade.glsl` and `neon-sdf.glsl`; `black-rect.frag` takes only
   half of its layout code each program compiles. `neon-sdf.glsl` and
   `neon-grade.glsl` are the rounded-box SDF and the tone map / dither, one copy
   each for every program that draws the glow's edge or grades its output.
+  `neon-mask.glsl` is the glow's EDGE MASK - the one-sided cut and the
+  cutoffs, as coverage after the tone map (`neonEdge`, `neonSideCut`,
+  `neonInsideCutoff`, `neonOutsideCutoff`, `neonEdgeMask`): one copy for the
+  edge ring, the blit and the ring field's composite, and for any layer that
+  reads the glow product (`NeonRenderer::GLOW_KEY`).
 - **Variants.** `neon.frag` is also compiled as the field bake from one source,
-  and `neon-field.frag` as the ring field's composite. `WithDefine` in
-  `neon-renderer.cpp` inserts `#define NEON_FIELD_BAKE` (or `NEON_FIELD_RING`)
-  right after the `#version` line, which must stay first. Part 7.4 lists what
-  each program includes.
+  and `neon-field.frag` as the ring field's composite. `ShaderCache::WithDefines`
+  (`gl/shader-cache.h`, through `BaseRenderer::BuildProgram`) inserts
+  `#define NEON_FIELD_BAKE` (or `NEON_FIELD_RING`) right after the `#version`
+  line, which must stay first; each variant is a stage of its own in the
+  cache. Part 7.4 lists what each program includes.
 - **Editing a shader or a tuning header re-runs configure automatically** on
   the next build, because `CMAKE_CONFIGURE_DEPENDS` lists them all.
 - **Adding a new shader file** means updating three places: both lists in
@@ -585,9 +593,15 @@ Every layer subclasses `BaseRenderer` (`lib/include/renderer/base-renderer.h`):
 | `Initialize()` | once | compile the always-needed programs, allocate the emission table, build geometry and LUTs |
 | `OnConfigChanged(cfg)` | on a real change | mark what is stale and rebuild it (Part 5.3) |
 | `Update(dt, t, cfg)` | every frame | advance the colour cross-fade |
-| `Prepare(w, h, t, cfg)` | every frame, before any layer's `Render` | phase 1 of the pass schedule, the offscreen passes (`RenderOffscreen`, Part 5.5) |
-| `Render(w, h, t, cfg)` | every frame | phase 2, onto the caller's framebuffer (Part 5.5); runs phase 1 itself if nothing called `Prepare` |
+| `RenderOffscreen(w, h, t, cfg)` (protected) | every frame, before any layer's on-screen half | phase 1 of the pass schedule, the offscreen passes (Part 5.5) |
+| `RenderOnscreen(w, h, t, cfg)` (protected) | every frame | phase 2, onto the caller's framebuffer (Part 5.5) |
 | `GetLayer()` | any time | returns `RendererLayer::NEON` |
+
+A renderer overrides the two halves; it does not override `Render`.
+`BaseRenderer::Render` is not virtual: it runs `RenderOffscreen` unless the
+effect already did this frame (through `Prepare`, which only the effect can
+call - every layer's offscreen half before any layer's on-screen half), then
+`RenderOnscreen`. So a renderer drawn without an effect draws its whole frame.
 
 `AddRenderer` calls `OnConfigChanged` once immediately, so a renderer must
 accept it before `Initialize` (the neon stores the config and builds from it

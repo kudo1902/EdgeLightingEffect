@@ -267,6 +267,12 @@ namespace EdgeLighting
         /// runs both halves.
         void Prepare(int viewportWidth, int viewportHeight, float time, const Config &config);
 
+        /// The context this renderer is in, or nullptr - for the effect, which
+        /// hands a renderer that fails to initialise after joining it back to
+        /// the context it came from (another effect's, when the host shares
+        /// one renderer between two).
+        const std::shared_ptr<ResourceContext> &getResourceContext() const { return mResourceContext; }
+
         /// One buffer this renderer registered: what it was registered with,
         /// and its slot in the current context's registry
         /// (@c BufferRegistry::INVALID_SLOT with no context, or when that

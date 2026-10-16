@@ -86,14 +86,10 @@ namespace EdgeLighting
         /// must not fail @ref Initialize and take the other overlays with it.
         /// Tried once.
         bool ensureBufferViewShader();
-        /// Upload the static unit quad every colour-stop marker, and the
-        /// buffer view, is drawn from. Called once from
-        /// @ref Initialize: the geometry reaches each draw through its own
-        /// model matrix, so unlike @ref setupGeometry's quads the vertices
-        /// never change.
-        void setupUnitQuad();
         /// Size the strip and the bounding box to the current geometry. The
-        /// markers are not here - see @ref setupUnitQuad.
+        /// markers and the buffer view are not here: they draw the effect's
+        /// fullscreen quad (@c GetFullscreenQuad, [-1, +1] on both axes), each
+        /// placed by its own model matrix.
         void setupGeometry(const Config &config);
 
         // STATE OWNERSHIP: as in NeonRenderer - `Render` owns blend state and
@@ -138,7 +134,6 @@ namespace EdgeLighting
         ShaderProgram mBufferViewShader;                              ///< Buffer view (debug-buffer-view.frag); built on first use.
         bool mBufferViewFailed = false;                               ///< mBufferViewShader failed to build: not tried again.
         VertexArray mLUTStripVertexArray{"DebugRenderer.LUTStrip"};   ///< Small centred quad, sized to the rect.
-        VertexArray mUnitQuadVertexArray{"DebugRenderer.UnitQuad"};   ///< Unit quad ([-1,+1]), scaled per marker and onto the buffer view's box.
         VertexArray mWireframeVertexArray{"DebugRenderer.Wireframe"}; ///< 4 corners, drawn as GL_LINE_LOOP.
         glm::vec2 mLUTStripHalfSize{0.0f};                            ///< Half extents of the strip in local px (matches mLUTStripVertexArray).
     };
