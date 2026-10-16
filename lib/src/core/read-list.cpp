@@ -40,10 +40,10 @@ namespace EdgeLighting
     }
 
     const std::vector<BaseRenderer *> &PrepareSchedule::Build(
-        const std::vector<std::shared_ptr<BaseRenderer>> &renderers, const ReadList &reads,
-        const BufferRegistry &registry)
+        const std::vector<std::shared_ptr<BaseRenderer>> &renderers, uint64_t rendererGeneration,
+        const ReadList &reads, const BufferRegistry &registry)
     {
-        const bool check = changedSinceChecked(renderers, reads, registry);
+        const bool check = changedSinceChecked(rendererGeneration, reads, registry);
 
         mOrder.clear();
         for (const std::shared_ptr<BaseRenderer> &renderer : renderers)
@@ -129,15 +129,12 @@ namespace EdgeLighting
         return mOrder;
     }
 
-    bool PrepareSchedule::changedSinceChecked(const std::vector<std::shared_ptr<BaseRenderer>> &renderers,
-                                              const ReadList &reads, const BufferRegistry &registry)
+    bool PrepareSchedule::changedSinceChecked(uint64_t rendererGeneration, const ReadList &reads,
+                                              const BufferRegistry &registry)
     {
         const std::vector<BufferRead> &list = reads.GetReads();
-        bool context = mCheckedRecordCount != registry.GetRecordCount() || mCheckedRenderers.size() != renderers.size();
-        for (size_t i = 0; !context && i < renderers.size(); ++i)
-        {
-            context = mCheckedRenderers[i] != renderers[i].get();
-        }
+        const bool context = !mChecked || mCheckedRendererGeneration != rendererGeneration ||
+                             mCheckedRecordGeneration != registry.GetGeneration();
         bool readsChanged = mCheckedReads.size() != list.size();
         for (size_t i = 0; !readsChanged && i < list.size(); ++i)
         {
@@ -152,12 +149,9 @@ namespace EdgeLighting
         // new since the last check, so a problem that stayed is not logged
         // again because another read changed.
         diagnose(reads, registry, context ? nullptr : &mCheckedReads);
-        mCheckedRecordCount = registry.GetRecordCount();
-        mCheckedRenderers.clear();
-        for (const std::shared_ptr<BaseRenderer> &renderer : renderers)
-        {
-            mCheckedRenderers.push_back(renderer.get());
-        }
+        mChecked = true;
+        mCheckedRendererGeneration = rendererGeneration;
+        mCheckedRecordGeneration = registry.GetGeneration();
         mCheckedReads = list;
         return true;
     }
@@ -169,19 +163,29 @@ namespace EdgeLighting
         for (size_t i = 0; i < list.size(); ++i)
         {
             const BufferRead &read = list[i];
-            // One line per key, however many layers read it; none for a read
-            // the last check already saw.
-            const bool repeated = std::any_of(list.begin(), list.begin() + static_cast<std::ptrdiff_t>(i),
-                                              [&](const BufferRead &earlier)
-                                              { return std::strcmp(earlier.key, read.key) == 0; });
+            // None for a read the last check already saw. Of the rest, a key
+            // nothing answers is logged once however many layers read it, and
+            // a DEBUG read once per reader: that one is the READER's problem,
+            // so another layer reading the same key first - the debug view,
+            // which may - must not hide it.
             const bool seen = checked && std::find(checked->begin(), checked->end(), read) != checked->end();
-            if (repeated || seen)
+            if (seen)
             {
                 continue;
             }
+            const auto earlier = list.begin() + static_cast<std::ptrdiff_t>(i);
+            const bool keyRepeated = std::any_of(list.begin(), earlier, [&](const BufferRead &other)
+                                                 { return std::strcmp(other.key, read.key) == 0; });
+            const bool readerRepeated =
+                std::any_of(list.begin(), earlier, [&](const BufferRead &other)
+                            { return other.reader == read.reader && std::strcmp(other.key, read.key) == 0; });
             const unsigned int layer = read.reader ? static_cast<unsigned int>(read.reader->GetLayer()) : 0u;
             if (!read.complete)
             {
+                if (keyRepeated)
+                {
+                    continue;
+                }
                 LOG_W("ReadList: layer 0x%x reads '%s...', longer than any buffer key can be (%d chars) - "
                       "nothing produces it.",
                       layer, read.key, BUFFER_KEY_CAPACITY - 1);
@@ -190,12 +194,16 @@ namespace EdgeLighting
             const BufferRecord *record = registry.Find(read.key);
             if (!record)
             {
+                if (keyRepeated)
+                {
+                    continue;
+                }
                 LOG_W("ReadList: layer 0x%x reads '%s', and no registered buffer has that key - it binds "
                       "nothing.",
                       layer, read.key);
                 continue;
             }
-            if (record->visibility == BufferVisibility::DEBUG && read.reader &&
+            if (!readerRepeated && record->visibility == BufferVisibility::DEBUG && read.reader &&
                 read.reader->GetLayer() != RendererLayer::DEBUG)
             {
                 LOG_W("ReadList: layer 0x%x reads '%s', a DEBUG buffer - an intermediate its producer may "

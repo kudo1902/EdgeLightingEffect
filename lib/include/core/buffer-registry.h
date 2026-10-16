@@ -76,12 +76,16 @@ namespace EdgeLighting
         /// last marked it current in; 0 for never. Read through
         /// @ref BufferRegistry::IsCurrent.
         uint64_t frame = 0;
-        /// Counts the frames it was marked current with bytes that changed
-        /// since the last - a consumer keys a cache of its own on it, as the
-        /// neon's emission table keys on @c BaseLUT::GetUploadCount. Never
-        /// lower than the number of real changes; a producer may count a pass
+        /// Moves whenever its bytes may have changed: on registration, and on
+        /// every frame it is marked current with bytes that changed since the
+        /// last - a consumer keys a cache of its own on it, as the neon's
+        /// emission table keys on @c BaseLUT::GetUploadCount. Drawn from one
+        /// counter for the whole registry, so it only grows and no value
+        /// repeats: a key registered again - a renderer replaced, or one
+        /// joining from another context - never hands back a version a
+        /// consumer cached under that key. A producer may move it for a pass
         /// that happened to write the same bytes.
-        uint32_t version = 0;
+        uint64_t version = 0;
         /// Whether @c origin and @c size say where it lies on the caller's
         /// framebuffer: its texels span that box evenly, the way its producer
         /// reads them. False for a table (a LUT, an atlas) that maps onto no
@@ -192,6 +196,11 @@ namespace EdgeLighting
         /// How many slots hold a record.
         int GetRecordCount() const { return mRecordCount; }
 
+        /// Moves on every registration and every removal, so two equal values
+        /// mean the same records - unlike the count, which a removal and a
+        /// registration leave where it was.
+        uint64_t GetGeneration() const { return mGeneration; }
+
     private:
         /// Stores @p record under @p key, past the checks both
         /// @ref Register overloads share.
@@ -200,6 +209,11 @@ namespace EdgeLighting
     private:
         std::vector<BufferRecord> mRecords;
         int mRecordCount = 0;
+        /// The last @c BufferRecord::version handed out.
+        uint64_t mLastVersion = 0;
+        /// Moves on every registration and every removal: what a listing, or
+        /// the read diagnostics, compare to see whether the records changed.
+        uint64_t mGeneration = 0;
         /// Frames begun so far; starts at 1 so a record never marked (frame 0)
         /// is never current.
         uint64_t mFrame = 1;

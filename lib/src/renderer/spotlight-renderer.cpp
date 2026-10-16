@@ -729,16 +729,17 @@ namespace EdgeLighting
             {
                 return;
             }
-            // Back to the caller's target and viewport, both at once, then
-            // composite. The buffer holds the lamps' screened colour and
-            // coverage, and the blend is the lamps' own, set again here since
-            // every other layer's offscreen pass has run since - so this blit is
-            // a bilinear read, dithered (spotlight-blit.frag), SCREENED onto
-            // whatever is already there - colour and alpha alike. That is what
-            // carries the coverage through to the caller's framebuffer, which
-            // is the whole point of writing it; a blit under the old
-            // GL_ONE_MINUS_SRC_ALPHA would instead have let the buffer's new
-            // alpha eat the destination it is supposed to be adding to.
+            // Composite: RenderOffscreen has put the caller's target and
+            // viewport back already. The buffer holds the lamps' screened
+            // colour and coverage, and the blend is the lamps' own, set again
+            // here since every other layer's offscreen pass has run since - so
+            // this blit is a bilinear read, dithered (spotlight-blit.frag),
+            // SCREENED onto whatever is already there - colour and alpha
+            // alike. That is what carries the coverage through to the
+            // caller's framebuffer, which is the whole point of writing it; a
+            // blit under the old GL_ONE_MINUS_SRC_ALPHA would instead have let
+            // the buffer's new alpha eat the destination it is supposed to be
+            // adding to.
             //
             // Because the screen is associative, screening the lamps into a
             // cleared buffer and then the buffer onto the target is the same

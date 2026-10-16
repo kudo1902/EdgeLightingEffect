@@ -23,8 +23,8 @@ namespace EdgeLighting
         // below and the member definitions spell them the same way.
         using NeonDetail::Annulus;
         using NeonDetail::BufferRegion;
-        using NeonDetail::UVMap;
         using NeonDetail::GlowCoverLayout;
+        using NeonDetail::UVMap;
 
         /// The size a disabled cutoff is handed to the shaders as, px. Disabled
         /// cutoffs collapse to this huge sentinel so the shader's smoothstep /
@@ -1355,13 +1355,30 @@ namespace EdgeLighting
         /// found" on NeonRenderer.Field. Everything else here also feeds the
         /// discards above the grade, so the bake keeps it.
         /// @pre @p shader is in use.
+        /// The edge mask's cut and cutoffs for @p config, full-res px - all of
+        /// @ref NeonRenderer::EdgeMask but the rect, which a caller places on
+        /// its own framebuffer (@ref NeonRenderer::GetEdgeMask) or takes from
+        /// uploadShapeUniforms. The one place these numbers are read out of
+        /// the config, for the blit, a glow reader and neon.frag alike.
+        inline NeonRenderer::EdgeMask GetEdgeMaskCuts(const Config &config)
+        {
+            NeonRenderer::EdgeMask mask;
+            mask.glowSide = static_cast<int>(config.neon.glowSide);
+            mask.glowSideSoftness = config.neon.glowSideSoftness;
+            mask.insideCutoff = GetCutoffSize(config.neon.insideCutoff);
+            mask.insideCutoffSoftness = config.neon.insideCutoff.softness;
+            mask.outsideCutoff = GetCutoffSize(config.neon.outsideCutoff);
+            mask.outsideCutoffSoftness = config.neon.outsideCutoff.softness;
+            return mask;
+        }
+
         inline void UploadEdgeMaskUniforms(ShaderProgram &shader, float scale, const Config &config,
                                            bool cutSoftness)
         {
             // The same numbers the blit and a glow reader take
-            // (NeonRenderer::GetEdgeMask), at this program's scale. The rect
-            // itself comes from uploadShapeUniforms, scaled the same way.
-            const NeonRenderer::EdgeMask mask = NeonRenderer::GetEdgeMask(config, 0);
+            // (GetEdgeMaskCuts), at this program's scale. The rect itself
+            // comes from uploadShapeUniforms, scaled the same way.
+            const NeonRenderer::EdgeMask mask = GetEdgeMaskCuts(config);
             shader.SetUniform("uGlowSide", mask.glowSide);
             if (cutSoftness)
             {
@@ -2060,16 +2077,10 @@ namespace EdgeLighting
 
     NeonRenderer::EdgeMask NeonRenderer::GetEdgeMask(const Config &config, int viewportHeight)
     {
-        EdgeMask mask;
+        EdgeMask mask = GetEdgeMaskCuts(config);
         mask.rectCenter = GeometryUtils::GetRectCenter(config.geometry, viewportHeight);
         mask.rectSize = glm::vec2(config.geometry.width, config.geometry.height);
         mask.cornerRadius = GeometryUtils::GetEffectiveCornerRadius(config.geometry);
-        mask.glowSide = static_cast<int>(config.neon.glowSide);
-        mask.glowSideSoftness = config.neon.glowSideSoftness;
-        mask.insideCutoff = GetCutoffSize(config.neon.insideCutoff);
-        mask.insideCutoffSoftness = config.neon.insideCutoff.softness;
-        mask.outsideCutoff = GetCutoffSize(config.neon.outsideCutoff);
-        mask.outsideCutoffSoftness = config.neon.outsideCutoff.softness;
         return mask;
     }
 

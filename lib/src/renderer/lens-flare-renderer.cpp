@@ -343,9 +343,9 @@ namespace EdgeLighting
         // held that for the life of the effect.
         //
         // Cheap to get wrong in only one direction, and this is the safe one:
-        // @ref Render re-Resizes before it binds, so a release of a buffer that
-        // turns out to be wanted again costs one allocation on the next drawn
-        // frame and nothing else. Resize's own early-out then keeps it
+        // @ref RenderOffscreen re-Resizes before it binds, so a release of a
+        // buffer that turns out to be wanted again costs one allocation on the
+        // next drawn frame and nothing else. Resize's own early-out then keeps it
         // allocated for as long as the size and format hold.
         //
         // Here rather than in Render because Render must not be the thing that

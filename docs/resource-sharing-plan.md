@@ -742,8 +742,10 @@ Where the build departs from 3.3, and why:
   - Since the review fixes of 2026-10-16, `Render` is not virtual either, and
     `EnsurePrepared` is gone: `BaseRenderer::Render` runs `RenderOffscreen`
     when no `Prepare` came, then the protected `RenderOnscreen` each renderer
-    overrides. An override can no longer return before phase 1, or leave the
-    flag set for the next frame.
+    overrides. An override can no longer return before phase 1. And
+    `Prepare` is private, the effect's alone (a friend), which always follows
+    it with that frame's `Render`, so no caller can prepare a frame, skip its
+    `Render` and leave the flag for the next.
 - **A `Render` sets every piece of state it reads.** Between a renderer's
   `Prepare` and its `Render`, every other layer's `Prepare` runs.
   - The flare's and the spotlight's blits used to inherit their blend from

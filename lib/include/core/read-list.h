@@ -29,7 +29,9 @@ namespace EdgeLighting
         /// The buffer's key (@ref BufferRecord::key), cut to fit when a reader
         /// named a longer one - see @c complete.
         char key[BUFFER_KEY_CAPACITY] = {};
-        const BaseRenderer *reader = nullptr; ///< Identity only, compared, never dereferenced here.
+        /// Compared by identity; dereferenced only by the schedule's
+        /// diagnostics, within the frame that declared it.
+        const BaseRenderer *reader = nullptr;
         ReadPhase phase = ReadPhase::RENDER;
         /// False when the key the reader named did not fit in
         /// @ref BUFFER_KEY_CAPACITY: no buffer can have it, so nothing produces
@@ -90,10 +92,11 @@ namespace EdgeLighting
     /// logged once, not every frame, not again for every frame of an
     /// animation that leaves the reads alone, and not again because another
     /// read changed:
-    ///   - a read of a key no registered buffer has;
+    ///   - a read of a key no registered buffer has, once per key;
     ///   - a read of a @c DEBUG buffer by any layer but the debug layer: an
     ///     intermediate whose contents its producer may change with any
-    ///     optimisation (@ref BufferVisibility);
+    ///     optimisation (@ref BufferVisibility) - once per reader, whoever
+    ///     else reads the key;
     ///   - a cycle.
     ///
     /// Owned by the effect: the order is of the effect's renderers. Steady
@@ -102,17 +105,18 @@ namespace EdgeLighting
     {
     public:
         /// This frame's order. @p renderers is the effect's list, in
-        /// compositing order; @p reads this frame's; @p registry who produces
-        /// each key. The result is valid until the next call.
+        /// compositing order, and @p rendererGeneration moves whenever a
+        /// renderer joins or leaves it; @p reads this frame's; @p registry who
+        /// produces each key. The result is valid until the next call.
         const std::vector<BaseRenderer *> &Build(const std::vector<std::shared_ptr<BaseRenderer>> &renderers,
-                                                 const ReadList &reads, const BufferRegistry &registry);
+                                                 uint64_t rendererGeneration, const ReadList &reads,
+                                                 const BufferRegistry &registry);
 
     private:
         /// Whether the reads, the renderers or the registry differ from what
         /// the diagnostics last ran on; if so, runs them (@ref diagnose) and
         /// records what they ran on.
-        bool changedSinceChecked(const std::vector<std::shared_ptr<BaseRenderer>> &renderers, const ReadList &reads,
-                                 const BufferRegistry &registry);
+        bool changedSinceChecked(uint64_t rendererGeneration, const ReadList &reads, const BufferRegistry &registry);
         /// Logs the reads no registered buffer answers, and the DEBUG buffers
         /// a layer other than the debug layer reads - skipping any read in
         /// @p checked, the list the last check saw (nullptr: check them all).
@@ -128,10 +132,14 @@ namespace EdgeLighting
         std::vector<uint8_t> mEdges;
         std::vector<int> mInDegree;
         std::vector<uint8_t> mPlaced;
-        /// What the diagnostics last ran on.
+        /// What the diagnostics last ran on. Generations, not the renderers'
+        /// addresses or the record count: a renderer destroyed and another
+        /// allocated at its address, or a record removed and another
+        /// registered, would leave those as they were.
         std::vector<BufferRead> mCheckedReads;
-        std::vector<const BaseRenderer *> mCheckedRenderers;
-        int mCheckedRecordCount = -1;
+        uint64_t mCheckedRendererGeneration = 0;
+        uint64_t mCheckedRecordGeneration = 0;
+        bool mChecked = false;
     };
 
 } // namespace EdgeLighting

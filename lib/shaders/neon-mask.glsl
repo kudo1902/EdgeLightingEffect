@@ -74,50 +74,65 @@ struct NeonEdge
 // NeonRenderer::setupGeometry mirrors this for the quad's hole. A disabled
 // side arrives as a huge sentinel and saturates its smoothstep to exactly 1.
 //
-// neonEdgeSide fills the cut's half (d, sideSoft, sideBack); neonEdge both.
+// neonEdgeSide fills the cut's half (d, sideSoft, sideBack) and leaves both
+// cutoffs NEUTRALISED - each factor exactly 1 - so an edge built by it alone
+// is whole, not half-filled; neonEdge, or neonEdgeCutoffs after it, sets the
+// cutoffs for real.
 NeonEdge neonEdgeSide(float d, float aa, float sideSoftness)
 {
     NeonEdge e;
     e.d        = d;
     e.sideSoft = max(sideSoftness, aa);
     e.sideBack = 0.5 * aa;
+    e.inHalf   = 0.5 * aa;
+    e.outHalf  = 0.5 * aa;
+    e.inMid    = CUTOFF_NEUTRALISED;
+    e.outMid   = CUTOFF_NEUTRALISED;
+    e.dIn      = CUTOFF_NEUTRALISED;
+    e.dOut     = -CUTOFF_NEUTRALISED;
     return e;
 }
 
 // The cutoffs' half of neonEdge: their ramps, midpoints and distances, filled
-// into @p e, which neonEdgeSide began.
-void neonEdgeCutoffs(inout NeonEdge e, vec2 p, vec2 halfSize, float r, float aa, int glowSide,
+// into @p e, which neonEdgeSide began. A side that is not LIVE keeps the
+// neutral distance - no distance computed - and its factor is exactly 1:
+// neonEdge passes the sides glowSide does not cull, as neon.frag always has (a
+// disabled side's sentinel saturates its ramp through the arithmetic);
+// neonEdgeMask passes only the sides that bind, so the blit computes no
+// distance a dead side would throw away.
+void neonEdgeCutoffs(inout NeonEdge e, vec2 p, vec2 halfSize, float r, float aa, bool inLive, bool outLive,
                      float inCutoff, float inSoftness, float outCutoff, float outSoftness)
 {
     e.inHalf  = 0.5 * max(inSoftness,  aa);
     e.outHalf = 0.5 * max(outSoftness, aa);
     e.inMid   = inCutoff  + 0.5 * max(inSoftness,  0.0);
     e.outMid  = outCutoff + 0.5 * max(outSoftness, 0.0);
-    if (glowSide == GLOW_SIDE_INSIDE)
-    {
-        e.dOut = -CUTOFF_NEUTRALISED;
-    }
-    else
+    if (outLive)
     {
         e.dOut = bandOuterDistance(p, e.d, halfSize, r, e.outMid);
     }
-    if (glowSide == GLOW_SIDE_OUTSIDE)
+    else
     {
-        e.dIn = CUTOFF_NEUTRALISED;
+        e.dOut = -CUTOFF_NEUTRALISED;
+    }
+    if (inLive)
+    {
+        e.dIn = bandInnerDistance(e.d, e.inMid);
     }
     else
     {
-        e.dIn = bandInnerDistance(e.d, e.inMid);
+        e.dIn = CUTOFF_NEUTRALISED;
     }
 }
 
 // The whole edge: the cut's half (neonEdgeSide) and the cutoffs'
-// (neonEdgeCutoffs).
+// (neonEdgeCutoffs), neutralising the side glowSide culls.
 NeonEdge neonEdge(vec2 p, float d, vec2 halfSize, float r, float aa, int glowSide, float sideSoftness,
                   float inCutoff, float inSoftness, float outCutoff, float outSoftness)
 {
     NeonEdge e = neonEdgeSide(d, aa, sideSoftness);
-    neonEdgeCutoffs(e, p, halfSize, r, aa, glowSide, inCutoff, inSoftness, outCutoff, outSoftness);
+    neonEdgeCutoffs(e, p, halfSize, r, aa, glowSide != GLOW_SIDE_OUTSIDE, glowSide != GLOW_SIDE_INSIDE,
+                    inCutoff, inSoftness, outCutoff, outSoftness);
     return e;
 }
 
@@ -167,10 +182,11 @@ bool neonEdgeMaskLive(int glowSide, float inCutoff, float outCutoff)
 // nothing is live. Call it in uniform control flow (it takes a derivative).
 //
 // The cutoffs only where one binds - enabled, on a side the cut does not
-// cull. Otherwise both their factors are exact 1s, so they are skipped rather
-// than computed, and a one-sided glow without cutoffs pays the cut alone, as
-// the blit always has (its branch was measured a straight saving). Both
-// conditions are of uniforms, so control flow stays uniform.
+// cull - and of those only the side that binds: a dead side's factor is an
+// exact 1, so it is not computed. A one-sided glow without cutoffs pays the
+// cut alone, and one cutoff pays for its own side, as the blit did before
+// this chunk (its branches were measured a straight saving). Every condition
+// is of uniforms, so control flow stays uniform.
 float neonEdgeMask(vec2 p, vec2 halfSize, float r, int glowSide, float sideSoftness, float inCutoff,
                    float inSoftness, float outCutoff, float outSoftness)
 {
@@ -186,7 +202,7 @@ float neonEdgeMask(vec2 p, vec2 halfSize, float r, int glowSide, float sideSoftn
     bool cutOut = glowSide != GLOW_SIDE_INSIDE  && outCutoff < 0.5 * CUTOFF_NEUTRALISED;
     if (cutIn || cutOut)
     {
-        neonEdgeCutoffs(e, p, halfSize, r, aa, glowSide, inCutoff, inSoftness, outCutoff, outSoftness);
+        neonEdgeCutoffs(e, p, halfSize, r, aa, cutIn, cutOut, inCutoff, inSoftness, outCutoff, outSoftness);
         mask *= neonInsideCutoff(e);
         mask *= neonOutsideCutoff(e);
     }

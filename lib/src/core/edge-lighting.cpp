@@ -48,6 +48,7 @@ namespace EdgeLighting
                 // not drawn, and refuse them to a replacement.
                 (*it)->SetResourceContext(nullptr);
                 it = mRenderers.erase(it);
+                ++mRendererGeneration;
                 allOk = false;
             }
             else
@@ -96,7 +97,7 @@ namespace EdgeLighting
         // unbroken run - and any layer's Render can read what any layer's
         // Prepare made. Render in layer order; Prepare too, but for a Prepare
         // that reads another layer's product, which runs after its producer.
-        for (BaseRenderer *renderer : mPrepareSchedule.Build(mRenderers, reads, registry))
+        for (BaseRenderer *renderer : mPrepareSchedule.Build(mRenderers, mRendererGeneration, reads, registry))
         {
             renderer->Prepare(viewportWidth, viewportHeight, t, mActiveConfig);
         }
@@ -162,6 +163,7 @@ namespace EdgeLighting
         }
 
         mRenderers.push_back(renderer);
+        ++mRendererGeneration;
         // Hand over the current composited config, not the base: a renderer
         // joining mid-animation should see what every other renderer sees.
         // Renderers gate their own rebuilds on shader validity, so this is also

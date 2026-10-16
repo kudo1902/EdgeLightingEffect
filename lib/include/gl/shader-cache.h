@@ -2,6 +2,7 @@
 #define _EDGE_LIGHTING_SHADER_CACHE_H_
 
 #include "gl/shader-program.h"
+#include <cstdint>
 #include <cstring>
 #include <memory>
 #include <string>
@@ -37,18 +38,21 @@ namespace EdgeLighting
         /// request - from any renderer - compiles it again. @p programName
         /// only attributes that log.
         ///
-        /// @p source must outlive the cache: a @c ShaderSource constant, which
-        /// is static. The cache keeps the pointer, not a copy. Two pointers to
-        /// the same text are one stage - every translation unit that includes
-        /// shaders.h has a pointer of its own, so a match is by content too.
+        /// A stage is matched by its TEXT, not by @p source's address: every
+        /// translation unit that includes shaders.h has a pointer of its own,
+        /// and a host renderer may build from a string that is gone by the
+        /// next request. The cache keeps neither the pointer nor a copy - the
+        /// sources add up to ~700 KB - but the text's length and a 64-bit hash
+        /// of it, so @p source need only live through this call. Two different
+        /// texts of one length share a hash with odds of about 2^-64.
         const ShaderObject &Get(GLenum type, const char *source, const char *defines, const char *programName)
         {
             const char *names = defines ? defines : "";
             const size_t length = std::strlen(source);
+            const uint64_t hash = HashText(source, length);
             for (const std::unique_ptr<Entry> &entry : mEntries)
             {
-                if (entry->type == type && entry->length == length && entry->defines == names &&
-                    (entry->source == source || std::memcmp(entry->source, source, length) == 0))
+                if (entry->type == type && entry->length == length && entry->hash == hash && entry->defines == names)
                 {
                     return entry->object;
                 }
@@ -56,7 +60,7 @@ namespace EdgeLighting
 
             std::unique_ptr<Entry> entry(new Entry());
             entry->type = type;
-            entry->source = source;
+            entry->hash = hash;
             entry->length = length;
             entry->defines = names;
             const char *stage = type == GL_VERTEX_SHADER ? "vertex" : "fragment";
@@ -110,15 +114,26 @@ namespace EdgeLighting
         }
 
     private:
+        /// 64-bit FNV-1a of @p length chars of @p text.
+        static uint64_t HashText(const char *text, size_t length)
+        {
+            uint64_t hash = 14695981039346656037ull;
+            for (size_t i = 0; i < length; ++i)
+            {
+                hash = (hash ^ static_cast<unsigned char>(text[i])) * 1099511628211ull;
+            }
+            return hash;
+        }
+
         /// One stage. Held by pointer, so the reference @ref Get returns stays
         /// valid while the vector grows.
         typedef struct Entry
         {
             GLenum type = 0;
-            const char *source = nullptr; ///< The caller's static text, not a copy.
-            size_t length = 0;            ///< strlen(source), compared before the text.
-            std::string defines;          ///< As requested; "" for none.
-            ShaderObject object;          ///< Invalid if the compile failed.
+            uint64_t hash = 0;   ///< HashText of the source as requested, before the defines.
+            size_t length = 0;   ///< strlen of that source, compared before the hash.
+            std::string defines; ///< As requested; "" for none.
+            ShaderObject object; ///< Invalid if the compile failed.
         } Entry;
 
         std::vector<std::unique_ptr<Entry>> mEntries;

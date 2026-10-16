@@ -7,9 +7,11 @@ hold the detail.
 
 ## 2026-10-16 - Review fixes on the sharing branch
 
-On `design_system_sharing_resources_between_renderers`, uncommitted, on top
-of `b0c05e3`. A deep review of `main...HEAD` filed 15 findings; all are
-fixed. AMD Radeon Pro 5300M.
+On `design_system_sharing_resources_between_renderers`. Two deep reviews of
+`main...HEAD` filed 15 findings, then 13 more against the fixed tree; all 28
+are fixed. The first round is committed as `d1cd962` (its blit timing, below,
+finished after that commit); the second is uncommitted on top of it. AMD
+Radeon Pro 5300M.
 
 - **Lifetimes.**
   - A renderer that fails `Initialize` leaves the effect's context with it,
@@ -35,6 +37,30 @@ fixed. AMD Radeon Pro 5300M.
   the neon, the fill, the droplets and the debug overlays. One private
   `addOwned` behind the three `RegisterBuffer` overloads. Braced discards.
   Stale docs on the debug view, the layer order and the PUBLIC glow record.
+- **The second review.**
+  - The shader cache matched a stage by the caller's pointer and
+    `memcmp`'d it later, so a host renderer building from a temporary string
+    read freed memory. Under ASan, the committed cache hits a
+    heap-use-after-free on exactly that. It now keys on the text's length and
+    a 64-bit hash: no pointer kept, and no copy (the sources are ~700 KB).
+    `layer-check startup` counts the same 22 compiles and 19 links as
+    `b0c05e3`.
+  - `Prepare` is private, the effect's alone. Public, it let a caller prepare
+    a frame, skip its `Render`, and have the next lone `Render` composite
+    stale buffers.
+  - A record's `version` comes from one registry-wide counter, so a key
+    registered again never repeats a value a consumer cached.
+    `IsBufferWanted` is false for a buffer whose key the registry refused.
+  - The read diagnostics warn about a DEBUG read once per reader, even when
+    the debug view read the key first. They re-check on generation counters
+    (renderer list, registry), not on addresses a new renderer can reuse.
+  - The mask: the blit skips a cutoff side that does not bind (one cutoff
+    no longer computes both distances, as before S6a). `neonEdgeSide` leaves
+    the cutoffs neutral rather than undefined. The ring's scaled upload no
+    longer builds a centre for a 0 px viewport.
+  - Docs that still placed marks in `Render`, or described layer-order
+    reads: `MarkBufferCurrent`, the debug layer, the spotlight and flare
+    comments, `implementation.md`'s renderer contract.
 - **Found while probing.** `BaseRenderer`'s inline default constructor made
   a host renderer that includes only `base-renderer.h` fail to compile, since
   S5a: it destroys a `unique_ptr<VertexArray>` of an incomplete type. The
@@ -43,10 +69,35 @@ fixed. AMD Radeon Pro 5300M.
   - All 256 `layer-check` frames are identical to S6b, and so are the
     allocation and memory lines. `check` and `partition` pass, and `check`'s
     table is unchanged.
-  - Under ASan, a probe of the lifetime and phase cases passes. The glow
-    product reader is still within 1 level on four configs.
-  - TIMING
-- **Open.** Nothing measured on the M2 or the target device.
+  - Under ASan, a probe of 20 checks passes: the lifetime and phase cases,
+    the cache with freed sources, `IsBufferWanted` on a refused key,
+    versions across a re-registration, and the per-reader DEBUG warning. The
+    glow product reader is still within 1 level on four configs.
+  - After the second round, the 256 frames are identical to `d1cd962`'s
+    report (and so to S6b's), as are the allocation and memory lines;
+    `check`'s table is unchanged and `partition` passes.
+  - The one-sided blit, timed against S5b (`02bfedc`, before S6a) and S6b
+    (`b0c05e3`), with the first round's mask split.
+    Release, 1920 x 1080, 12 rounds with the build order rotated, medians.
+    The blit's own timer (`--passes`, a ratio on this GPU):
+
+    | scene | scale | S5b | S6b | fixed |
+    | ----- | ----- | --- | ---- | ----- |
+    | `card_outside` | 0.5 | 0.348 | 0.459 | 0.349 |
+    | `card_outside` | 0.25 | 0.341 | 0.457 | 0.341 |
+    | `glow_inside` | 0.5 | 0.139 | 0.166 | 0.137 |
+    | `glow_inside` | 0.25 | 0.138 | 0.168 | 0.137 |
+
+    S6a had made the one-sided blit 1.2-1.3x slower; the split puts it back
+    within 1% of S5b. At 1.0 the gap was smaller (1.07x on `card_outside`,
+    none on `glow_inside`) and is gone too. The whole `card_outside` frame
+    went from 0.200 to 0.167 ms at 0.5 (wall-clock). `default` and
+    `bounded_band`, which have no mask or both cutoffs, did not move beyond
+    noise.
+- **Open.**
+  - The single-cutoff blit's saving is unmeasured: no gate scene has one
+    cutoff.
+  - Nothing measured on the M2 or the target device.
 
 ## 2026-10-16 - Sharing plan S6c: the pilot, built and dropped
 

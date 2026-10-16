@@ -83,17 +83,20 @@ meaningful, but must still gate their own rebuilds (§5).
 
 ## 4. The renderer contract
 
-Subclass `BaseRenderer` ([`renderer/base-renderer.h`](../lib/include/renderer/base-renderer.h)),
-four pure virtuals and one optional one:
+Subclass `BaseRenderer` ([`renderer/base-renderer.h`](../lib/include/renderer/base-renderer.h)):
+five pure virtuals and two optional overrides. `Render` and `Prepare` are not
+virtual - `Render` runs `RenderOffscreen` itself unless the effect's `Prepare`
+ran it this frame, and `Prepare` is the effect's alone.
 
 | Method | When | Job |
 |---|---|---|
 | `Initialize()` | once | Compile shaders, allocate GL objects. Returning false makes the orchestrator drop the renderer. |
+| `GetLayer()` | any time | Which layer it is (`RendererLayer`); a host's own renderer returns `CUSTOM`. The layer calls find renderers by it. |
 | `OnConfigChanged(cfg)` | on change | Re-bake whatever the changed fields feed. Dirty-gated internally. |
 | `Update(dt, t, cfg)` | every frame | Time-based state that is not drawing (e.g. the neon's colour cross-fade). |
-| `RenderOffscreen(w, h, t, cfg)` (protected, optional) | every frame, through `Prepare`, before any layer's `Render` | Draw into the renderer's own buffers only. The neon's tables, gather and reduced buffer; the flare's and spotlight's reduced buffers below 1.0. `Render` runs it itself on a frame no `Prepare` came. |
-| `RenderOnscreen(w, h, t, cfg)` (protected) | every frame, through `Render` (non-virtual) | Draw onto the caller's framebuffer. |
-| `CollectReads(cfg, out)` (optional) | every frame, before any `Prepare` | Declare every other renderer's buffer this one will bind, by key and phase. Only the debug view declares one today. |
+| `RenderOffscreen(w, h, t, cfg)` (protected, optional) | every frame, through `Prepare`, before any layer's `Render` | Draw into the renderer's own buffers only. The neon's tables, gather and reduced buffer; the flare's and spotlight's reduced buffers below 1.0. `Render` runs it itself when drawn without an effect. Marks its buffers current (`MarkBufferCurrent`). |
+| `RenderOnscreen(w, h, t, cfg)` (protected, pure) | every frame, through `Render` | Draw onto the caller's framebuffer. |
+| `CollectReads(cfg, out)` (optional) | every frame, before any `Prepare` | Declare every other renderer's buffer this one will bind, by key and phase. Only the debug layer declares any today: its buffer view's selection and the neon's colour ring. |
 
 Five renderers ship, registered by the demo in this order - which is also the
 compositing order, since they blend onto one another in the order they draw:

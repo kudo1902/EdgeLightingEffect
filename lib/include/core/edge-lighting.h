@@ -248,6 +248,10 @@ namespace EdgeLighting
         /// The order @ref Render calls @c Prepare in, from the frame's reads -
         /// see @ref PrepareSchedule.
         PrepareSchedule mPrepareSchedule;
+        /// Moves whenever a renderer joins or leaves @c mRenderers - what the
+        /// schedule's read diagnostics compare, rather than the renderers'
+        /// addresses, which a new renderer can reuse.
+        uint64_t mRendererGeneration = 0;
         Clock mClock;
         std::unique_ptr<AnimationManager> mAnimationManager;
         std::vector<std::shared_ptr<BaseRenderer>> mRenderers;

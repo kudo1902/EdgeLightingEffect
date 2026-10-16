@@ -122,9 +122,10 @@ namespace EdgeLighting
         const bool wantMarkers = config.debug.showColorStops && glowVisible &&
                                  !config.neon.colorStops.empty();
         const bool wantBox = config.debug.showWireframe;
-        // A buffer some layer drawn before this one marked current this frame.
-        // No gate of its own beyond that: a layer that is off, or drew nothing
-        // - the neon under opaqueOnly - marks nothing.
+        // A buffer some layer marked current this frame - in its offscreen
+        // half, so any layer's, wherever it sits in the order. No gate of its
+        // own beyond that: a layer that is off, or drew nothing - the neon
+        // under opaqueOnly - marks nothing.
         const BufferRecord *buffer =
             registry && !config.debug.bufferView.empty() ? registry->Find(config.debug.bufferView) : nullptr;
         if (buffer && !registry->IsCurrent(*buffer))
@@ -205,7 +206,6 @@ namespace EdgeLighting
         {
             setupGeometry(config);
         }
-
     }
 
     bool DebugRenderer::setupShaders()

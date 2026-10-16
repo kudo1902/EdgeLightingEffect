@@ -149,8 +149,11 @@ namespace EdgeLighting
         {
             return false;
         }
+        // A reader of this key reads the record the registry listed, so a
+        // buffer it refused - its key held by another renderer's - is never
+        // what is wanted.
         const OwnedBuffer &owned = mOwnedBuffers[size_t(handle)];
-        return owned.key[0] != '\0' && mResourceContext->GetReadList().IsWanted(owned.key);
+        return owned.slot != BufferRegistry::INVALID_SLOT && mResourceContext->GetReadList().IsWanted(owned.key);
     }
 
     BufferHandle BaseRenderer::addOwned(OwnedBuffer owned, const char *name, int keyAttachment)

@@ -54,9 +54,10 @@ namespace EdgeLighting
     /// cross-fade included, and a strip shown mid-fade shows the fade's
     /// current state rather than snapping to the new stops. A buffer
     /// is another renderer's output, which no config describes, so this layer
-    /// finds it in the effect's @ref BufferRegistry - where it is current only
-    /// once its producer has drawn this frame, which the order above already
-    /// guarantees for every layer but this one.
+    /// finds it in the effect's @ref BufferRegistry - where it is current once
+    /// its producer's offscreen half has run this frame, which every layer's
+    /// has before any layer's on-screen half: any layer's buffer can be shown,
+    /// wherever this one sits in the order.
     class DebugRenderer : public BaseRenderer
     {
     public:
@@ -65,8 +66,10 @@ namespace EdgeLighting
 
         virtual bool Initialize() override;
         virtual void Update(float deltaTime, float time, const Config &config) override;
-        /// The buffer view's selection (@c DebugConfig::bufferView), read in
-        /// @ref Render, while the overlays are on.
+        /// Both buffers this layer binds in @ref Render, while the overlays are
+        /// on: the buffer view's selection (@c DebugConfig::bufferView), and
+        /// the neon's colour ring (@c NeonRenderer::GRADIENT_RING_KEY) while
+        /// the LUT strip is shown.
         virtual void CollectReads(const Config &config, ReadList &out) const override;
         virtual void OnConfigChanged(const Config &config) override;
         virtual RendererLayer GetLayer() const override { return RendererLayer::DEBUG; }
@@ -129,15 +132,15 @@ namespace EdgeLighting
 
     private:
         Config mCurrentConfig;
-        ShaderProgram mLUTDebugShader;                                  ///< LUT strip (neon-lut-debug.frag).
-        ShaderProgram mStopMarkerShader;                                ///< Per-stop marker (neon-stop-marker.frag).
-        ShaderProgram mWireframeShader;                                 ///< Bounding box (wireframe.frag).
-        ShaderProgram mBufferViewShader;                                ///< Buffer view (debug-buffer-view.frag); built on first use.
-        bool mBufferViewFailed = false;                                 ///< mBufferViewShader failed to build: not tried again.
-        VertexArray mLUTStripVertexArray{"DebugRenderer.LUTStrip"};     ///< Small centred quad, sized to the rect.
-        VertexArray mUnitQuadVertexArray{"DebugRenderer.UnitQuad"};     ///< Unit quad ([-1,+1]), scaled per marker and onto the buffer view's box.
-        VertexArray mWireframeVertexArray{"DebugRenderer.Wireframe"};   ///< 4 corners, drawn as GL_LINE_LOOP.
-        glm::vec2 mLUTStripHalfSize{0.0f};                              ///< Half extents of the strip in local px (matches mLUTStripVertexArray).
+        ShaderProgram mLUTDebugShader;                                ///< LUT strip (neon-lut-debug.frag).
+        ShaderProgram mStopMarkerShader;                              ///< Per-stop marker (neon-stop-marker.frag).
+        ShaderProgram mWireframeShader;                               ///< Bounding box (wireframe.frag).
+        ShaderProgram mBufferViewShader;                              ///< Buffer view (debug-buffer-view.frag); built on first use.
+        bool mBufferViewFailed = false;                               ///< mBufferViewShader failed to build: not tried again.
+        VertexArray mLUTStripVertexArray{"DebugRenderer.LUTStrip"};   ///< Small centred quad, sized to the rect.
+        VertexArray mUnitQuadVertexArray{"DebugRenderer.UnitQuad"};   ///< Unit quad ([-1,+1]), scaled per marker and onto the buffer view's box.
+        VertexArray mWireframeVertexArray{"DebugRenderer.Wireframe"}; ///< 4 corners, drawn as GL_LINE_LOOP.
+        glm::vec2 mLUTStripHalfSize{0.0f};                            ///< Half extents of the strip in local px (matches mLUTStripVertexArray).
     };
 
 } // namespace EdgeLighting

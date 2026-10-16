@@ -183,8 +183,10 @@ namespace EdgeLighting
             return INVALID_SLOT;
         }
         std::memcpy(record.key, key, length + 1);
+        record.version = ++mLastVersion;
 
         ++mRecordCount;
+        ++mGeneration;
         for (size_t i = 0; i < mRecords.size(); ++i)
         {
             if (!mRecords[i].IsRegistered())
@@ -205,6 +207,7 @@ namespace EdgeLighting
         }
         mRecords[size_t(slot)] = BufferRecord();
         --mRecordCount;
+        ++mGeneration;
     }
 
     void BufferRegistry::MarkCurrent(int slot, bool changed)
@@ -215,7 +218,7 @@ namespace EdgeLighting
         }
         BufferRecord &record = mRecords[size_t(slot)];
         record.frame = mFrame;
-        record.version += changed ? 1u : 0u;
+        record.version = changed ? ++mLastVersion : record.version;
         record.placed = false;
     }
 
@@ -227,7 +230,7 @@ namespace EdgeLighting
         }
         BufferRecord &record = mRecords[size_t(slot)];
         record.frame = mFrame;
-        record.version += changed ? 1u : 0u;
+        record.version = changed ? ++mLastVersion : record.version;
         record.placed = true;
         record.origin = origin;
         record.size = size;
