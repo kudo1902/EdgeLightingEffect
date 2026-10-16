@@ -2099,8 +2099,8 @@ namespace EdgeLighting
         // it does not need the store to exist yet, which is why this can run
         // before the uploads below.
         //
-        // @ref setupFullscreenQuad keeps its own paired call: that one uploads
-        // exactly once and never returns, so there is nothing to separate.
+        // The fullscreen quad is not here: it is the effect's
+        // (GetFullscreenQuad), built with its own paired call once.
         mGlowMesh.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
         mFillMesh.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
         mRingMesh.vertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
@@ -2120,7 +2120,10 @@ namespace EdgeLighting
         setupRingGeometry(mCurrentConfig);
         bakeLUTs(mCurrentConfig);
 
-        setupFullscreenQuad();
+        // The fullscreen quad the emission bake and the ALL-mode fill draw:
+        // built here, the first time any renderer of the effect asks, rather
+        // than in the middle of the first frame.
+        GetFullscreenQuad();
         mInitialized = true;
         return true;
     }
@@ -3372,29 +3375,6 @@ namespace EdgeLighting
         mLightBlocks.arc.SetData(&arcBlock, sizeof(arcBlock));
     }
 
-    void NeonRenderer::setupFullscreenQuad()
-    {
-        // Static NDC quad, shared by the three passes that cover their whole
-        // target with an identity MVP: the emission bake, the opaque-mode
-        // fill at OpaqueMode::ALL (whose shader derives its shape from
-        // gl_FragCoord, not aPos - every narrower mode is bounded by
-        // @ref setupFillGeometry's ring instead). The blit used
-        // to share it; it now draws mBlitMesh.
-        //
-        // Unlike setupGeometry's quad this one never changes - it is in NDC,
-        // so it is independent of the geometry, the viewport and the
-        // resolution scale alike. Hence uploaded once from Initialize and
-        // never revisited.
-        // clang-format off
-        float ndc[] = {
-            -1.0f,  1.0f,  -1.0f, -1.0f,   1.0f, -1.0f,
-            -1.0f,  1.0f,   1.0f, -1.0f,   1.0f,  1.0f,
-        };
-        // clang-format on
-        mFullscreenVertexArray.SetVertexData(ndc, sizeof(ndc));
-        mFullscreenVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
-    }
-
     void NeonRenderer::setupGeometry(const Config &config)
     {
         // Size the quad to cover the lit region: rect + the glow's margin, so
@@ -4141,7 +4121,7 @@ namespace EdgeLighting
         mEmissionShader.SetUniform("uSegmentLUT", 1);
         mArcLUT.Bind(2);
         mEmissionShader.SetUniform("uArcLUT", 2);
-        mFullscreenVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        GetFullscreenQuad().DrawArrays(GL_TRIANGLES, 6);
         mEmissionShader.Unuse();
 
         // Hand the framebuffer and viewport back exactly as found. Blend mode
@@ -4192,7 +4172,7 @@ namespace EdgeLighting
             if (pieces == GLOW_COVER_ALL_PIECES)
             {
                 shader.SetUniform("uMVP", glm::mat4(1.0f));
-                mFullscreenVertexArray.DrawArrays(GL_TRIANGLES, 6);
+                GetFullscreenQuad().DrawArrays(GL_TRIANGLES, 6);
                 return;
             }
             // Only the dirty pieces, each band's straight and corner as one
@@ -4225,7 +4205,7 @@ namespace EdgeLighting
                     glm::translate(glm::mat4(1.0f), glm::vec3((x0 + x1) / width - 1.0f, (y0 + y1) / height - 1.0f, 0.0f)) *
                     glm::scale(glm::mat4(1.0f), glm::vec3((x1 - x0) / width, (y1 - y0) / height, 1.0f));
                 shader.SetUniform("uMVP", rect);
-                mFullscreenVertexArray.DrawArrays(GL_TRIANGLES, 6);
+                GetFullscreenQuad().DrawArrays(GL_TRIANGLES, 6);
             }
         };
 
@@ -4777,7 +4757,7 @@ namespace EdgeLighting
         }
         else
         {
-            mFullscreenVertexArray.DrawArrays(GL_TRIANGLES, 6);
+            GetFullscreenQuad().DrawArrays(GL_TRIANGLES, 6);
         }
         mFillShader.Unuse();
     }

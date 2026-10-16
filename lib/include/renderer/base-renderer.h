@@ -12,6 +12,7 @@ namespace EdgeLighting
     class Framebuffer;
     class ResourceContext;
     class ShaderProgram;
+    class VertexArray;
 
     /// A renderer's own index of a buffer it registered
     /// (@ref BaseRenderer::RegisterBuffer) - stable for the renderer's life,
@@ -220,6 +221,14 @@ namespace EdgeLighting
         /// reads what other layers made.
         const BufferRegistry *GetBufferRegistry() const;
 
+        /// The fullscreen NDC quad (@c ResourceContext::GetFullscreenQuad), for
+        /// a pass that covers its whole target with an identity MVP - six
+        /// vertices, attribute 0, @c GL_TRIANGLES. The context's, shared by
+        /// every renderer of the effect; without a context, one of this
+        /// renderer's own, built on the first call. Ask for it at draw time
+        /// rather than keeping the reference: it changes with the context.
+        const VertexArray &GetFullscreenQuad();
+
         /// Whether any renderer of the effect declared a read of buffer
         /// @p handle this frame (@ref CollectReads) - for a producer that
         /// makes a product only on demand. Valid from the top of the frame,
@@ -252,6 +261,9 @@ namespace EdgeLighting
         /// @ref BufferHandle. Filled by the constructor, so no frame allocates.
         std::vector<OwnedBuffer> mOwnedBuffers;
         std::shared_ptr<ResourceContext> mResourceContext;
+        /// The fullscreen quad of a renderer drawn without a context - see
+        /// @ref GetFullscreenQuad. Null until one is asked for.
+        std::unique_ptr<VertexArray> mOwnFullscreenQuad;
         /// Set by @ref Prepare, consumed by @ref EnsurePrepared: whether this
         /// frame's offscreen passes have run.
         bool mPrepared = false;

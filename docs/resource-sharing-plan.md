@@ -7,8 +7,9 @@ the same day, each one as recommended (section 5). The steps start with the
 shared shader cache.
 
 **Built so far: S0 and S1 (2026-10-15, committed as `7d3e953`), S2
-(2026-10-16, `d6d2175`), S3 (2026-10-16, `d9e1d95`) and S4 (2026-10-16,
-uncommitted).** Section 7 has what each measured.
+(2026-10-16, `d6d2175`), S3 (2026-10-16, `d9e1d95`), S4 (2026-10-16,
+`7584bdb`) and S5's first half, the shared quad (2026-10-16, uncommitted).**
+Section 7 has what each measured.
 
 **The owner's goals (2026-10-15).** Three uses for sharing:
 
@@ -802,4 +803,34 @@ Where the build departs from 3.4, and why:
 
 Not timed. The per-frame work is a few virtual calls and a pass over a list
 of at most a few reads, and the allocation counts are unchanged.
+
+### 7.6 S5a - the shared quad
+
+`ResourceContext::GetFullscreenQuad` builds one NDC quad, on first request,
+and `ResourceContext::BuildFullscreenQuad` is the one definition of its six
+vertices. `BaseRenderer::GetFullscreenQuad` hands out the context's, or the
+renderer's own when it has no context. Three quads were replaced: the neon's
+`mFullscreenVertexArray`, the flare's `mVertexArray` and the spotlight's
+`mBlitQuad`, along with `setupFullscreenQuad`, `setupGeometry` and
+`setupBlitGeometry`. Each renderer asks for the quad in `Initialize`, so it is
+built there rather than in a frame. Measured on an AMD Radeon Pro 5300M
+against S4 (`7584bdb`).
+
+- **Frames**: all 248 identical to S4.
+- **Memory**: 96 bytes less in every scene - the two quads' vertex buffers -
+  with two vertex arrays fewer. As 3.6 said, that was never the point: the
+  point is one definition of the quad.
+- **Allocations**: unchanged in every scene.
+- **Without an effect**, a renderer builds and draws with its own quad. A
+  probe drew each standalone and inside an effect:
+  - a neon at 0.5 with the ALL fill (the emission bake and the fill draw the
+    quad);
+  - a flare at 0.5 and at 1.0;
+  - a spotlight at 0.5.
+
+  All four were byte-identical.
+- `neon-scale-check check` and `partition` pass.
+
+The second half, the debug strip reading the neon's live gradient ring, is
+S5b.
 

@@ -1,6 +1,7 @@
 #include "renderer/base-renderer.h"
 #include "core/resource-context.h"
 #include "gl/framebuffer.h"
+#include "gl/vertex-array.h"
 #include "util/log-util.h"
 #include <string>
 #include <utility>
@@ -109,6 +110,20 @@ namespace EdgeLighting
     const BufferRegistry *BaseRenderer::GetBufferRegistry() const
     {
         return mResourceContext ? &mResourceContext->GetBufferRegistry() : nullptr;
+    }
+
+    const VertexArray &BaseRenderer::GetFullscreenQuad()
+    {
+        if (mResourceContext)
+        {
+            return mResourceContext->GetFullscreenQuad();
+        }
+        if (!mOwnFullscreenQuad)
+        {
+            mOwnFullscreenQuad = std::make_unique<VertexArray>("BaseRenderer.FullscreenQuad");
+            ResourceContext::BuildFullscreenQuad(*mOwnFullscreenQuad);
+        }
+        return *mOwnFullscreenQuad;
     }
 
     bool BaseRenderer::IsBufferWanted(BufferHandle handle) const

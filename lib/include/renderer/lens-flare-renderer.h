@@ -56,7 +56,6 @@ namespace EdgeLighting
 
     private:
         bool setupShaders();
-        void setupGeometry();
 
         /// The flare, premultiplied over, onto whatever target is bound at
         /// @p targetWidth x @p targetHeight: @c mScaledBuffer at @p scale, or
@@ -96,7 +95,6 @@ namespace EdgeLighting
         /// @ref bakeGhostBlock when its three inputs move, and bound every
         /// frame by @ref Render.
         UniformBuffer mGhostBlock{"LensFlare.GhostBlock"};
-        VertexArray mVertexArray{"LensFlare"};
 
         /// The flare config behind the current @c mGhostBlock contents.
         ///

@@ -178,7 +178,6 @@ namespace EdgeLighting
                       "attribute pointers use sizeof(StripVertex) as the stride.");
 
         bool setupShaders();
-        void setupBlitGeometry();
 
         /// Allocate @c mScaledBuffer at @p width x @p height in the best
         /// format the driver will render to - half float, else RGBA8 - and
@@ -256,10 +255,6 @@ namespace EdgeLighting
         /// path: 0 in half float, 1 in RGBA8.
         size_t mScaledFormat = 0;
         VertexArray mVertexArray{"SpotlightRenderer"};
-        /// Fullscreen NDC quad for the blit. A second VAO rather than a reuse
-        /// of @c mVertexArray: that one carries the five-attribute strip
-        /// layout, and the blit wants a bare vec2 at location 0.
-        VertexArray mBlitQuad{"Spotlight.Blit"};
 
         /// The spotlight config behind the current VBO contents. A whole
         /// @c SpotlightConfig rather than hand-picked fields: it carries its

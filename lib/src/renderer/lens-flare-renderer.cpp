@@ -167,7 +167,9 @@ namespace EdgeLighting
             LOG_E("Failed to compile/link LensFlareRenderer shaders.");
             return false;
         }
-        setupGeometry();
+        // The fullscreen quad the flare and its blit draw - the effect's,
+        // built here if no renderer has asked for it yet.
+        GetFullscreenQuad();
         // mCurrentFlare is whatever the last OnConfigChanged left - the effect
         // calls it on registration, so by here it is usually the host's real
         // config rather than the defaults. Either way the block is filled from
@@ -289,7 +291,7 @@ namespace EdgeLighting
             mBlitShader.SetUniform("uMVP", glm::mat4(1.0f));
             mScaledBuffer.BindTexture(0);
             mBlitShader.SetUniform("uSource", 0);
-            mVertexArray.DrawArrays(GL_TRIANGLES, 6);
+            GetFullscreenQuad().DrawArrays(GL_TRIANGLES, 6);
             mBlitShader.Unuse();
         }
         else
@@ -377,20 +379,6 @@ namespace EdgeLighting
         return true;
     }
 
-    void LensFlareRenderer::setupGeometry()
-    {
-        // Static fullscreen NDC quad; shader shapes everything from
-        // gl_FragCoord + uniforms, so the geometry never needs a rebuild.
-        // clang-format off
-        float ndc[] = {
-            -1.0f,  1.0f,  -1.0f, -1.0f,   1.0f, -1.0f,
-            -1.0f,  1.0f,   1.0f, -1.0f,   1.0f,  1.0f,
-        };
-        // clang-format on
-        mVertexArray.SetVertexData(ndc, sizeof(ndc));
-        mVertexArray.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
-    }
-
     void LensFlareRenderer::renderFlarePass(int targetWidth, int targetHeight, float scale, int viewportWidth,
                                             int viewportHeight, float time, const Config &config)
     {
@@ -453,7 +441,7 @@ namespace EdgeLighting
         int slots = std::max(1, static_cast<int>(std::round(clampedDensity * MAX_RAY_SLOTS)));
         mFlareShader.SetUniform("uRayDensity", static_cast<float>(slots));
 
-        mVertexArray.DrawArrays(GL_TRIANGLES, 6);
+        GetFullscreenQuad().DrawArrays(GL_TRIANGLES, 6);
 
         mFlareShader.Unuse();
     }

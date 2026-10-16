@@ -5,9 +5,31 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
-## 2026-10-16 - Sharing plan S4: read declarations
+## 2026-10-16 - Sharing plan S5a: one fullscreen quad
 
 Uncommitted, on `design_system_sharing_resources_between_renderers`, measured
+against S4 (`7584bdb`). AMD Radeon Pro 5300M, Debug build. Section 7.6 of
+[`resource-sharing-plan.md`](resource-sharing-plan.md) has the detail.
+
+- **Built.**
+  - The effect's `ResourceContext` holds one fullscreen NDC quad, with a
+    single definition, `BuildFullscreenQuad`.
+  - The neon, the flare and the spotlight draw it through
+    `BaseRenderer::GetFullscreenQuad`, which falls back to a quad of the
+    renderer's own without an effect.
+  - Their three copies are gone.
+- **Measured.**
+  - All 248 `layer-check` frames identical to S4.
+  - 96 bytes of buffers less in every scene; allocations unchanged.
+  - `check` and `partition` pass.
+  - Without an effect, the neon, flare and spotlight each draw
+    byte-identically to the same renderer inside one.
+- **Open.** S5b: the debug strip reading the neon's live gradient ring. That
+  needs the registry's texture kind, which S2 deferred.
+
+## 2026-10-16 - Sharing plan S4: read declarations
+
+Committed as `7584bdb`, on `design_system_sharing_resources_between_renderers`, measured
 against S3 (`d9e1d95`). AMD Radeon Pro 5300M, Debug build. Section 7.5 of
 [`resource-sharing-plan.md`](resource-sharing-plan.md) has the detail.
 

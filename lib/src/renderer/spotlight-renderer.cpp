@@ -632,7 +632,10 @@ namespace EdgeLighting
             return false;
         }
 
-        setupBlitGeometry();
+        // The fullscreen quad the scaled path's blit draws - the effect's,
+        // built here rather than in the middle of the first scaled frame,
+        // where the upload would be a stall blamed on the scale.
+        GetFullscreenQuad();
 
         // mCurrentSpotlight is whatever the last OnConfigChanged left - the
         // effect calls it on registration, so by here it is usually the host's
@@ -756,7 +759,7 @@ namespace EdgeLighting
             mBlitShader.SetUniform("uSource", 0);
             mBlitShader.SetUniform("uViewportSize",
                                    glm::vec2(static_cast<float>(viewportWidth), static_cast<float>(viewportHeight)));
-            mBlitQuad.DrawArrays(GL_TRIANGLES, 6);
+            GetFullscreenQuad().DrawArrays(GL_TRIANGLES, 6);
             mBlitShader.Unuse();
         }
         else
@@ -818,22 +821,6 @@ namespace EdgeLighting
                                    ShaderSource::SPOTLIGHT_BLIT_FRAG_SRC,
                                    "SpotlightRenderer.Blit");
         return mShaderProgram.IsValid() && mBlitShader.IsValid();
-    }
-
-    void SpotlightRenderer::setupBlitGeometry()
-    {
-        // Static fullscreen NDC quad for the scaled path's composite. Built
-        // unconditionally alongside the blit shader, for the same reason: a
-        // buffer upload in the middle of the first scaled frame is a stall
-        // where it will be blamed on the scale.
-        // clang-format off
-        const float ndc[] = {
-            -1.0f,  1.0f,  -1.0f, -1.0f,   1.0f, -1.0f,
-            -1.0f,  1.0f,   1.0f, -1.0f,   1.0f,  1.0f,
-        };
-        // clang-format on
-        mBlitQuad.SetVertexData(ndc, sizeof(ndc));
-        mBlitQuad.SetAttribPointer(0, 2, GL_FLOAT, 2 * sizeof(float), 0);
     }
 
     bool SpotlightRenderer::resizeScaledBuffer(int width, int height)

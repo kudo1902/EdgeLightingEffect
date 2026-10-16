@@ -1335,12 +1335,6 @@ namespace EdgeLighting
         void packLightBlockData(const Config &config);
 
         // --- Geometry: the meshes the passes draw ----------------------------
-        /// Upload the static NDC quad the fullscreen passes draw. Called once
-        /// from @ref Initialize: the quad is in clip space, so unlike
-        /// @ref setupGeometry's it is independent of the geometry, the
-        /// viewport and the resolution scale, and never needs rebuilding.
-        void setupFullscreenQuad();
-
         /// Build @c mGlowMesh, pass 1b's quad - the rect plus the glow's reach,
         /// in scaled rect-local px, with a hole where the glow cannot reach -
         /// and the margins, corner skips and inner reach the shading fades and
@@ -1800,7 +1794,6 @@ namespace EdgeLighting
         Mesh mRingMesh{"NeonRenderer.Ring"};                           ///< The edge ring's annulus, FULL-RES rect-local px; see setupRingGeometry.
         Mesh mBlitMesh{"NeonRenderer.BlitArea"};                       ///< The lit area outside the ring, the same; empty whenever nothing there can be lit.
         Mesh mGatherMesh{"NeonRenderer.GatherArea"};                   ///< The gather pass's quad - pass 1b's and the ring's, padded - in SCALED rect-local px.
-        VertexArray mFullscreenVertexArray{"NeonRenderer.Fullscreen"}; ///< NDC quad: emission bake, and the ALL-mode opaque fill when a clear cannot stand in.
         Annulus mGlowBounds;                                           ///< Pass 1b's quad; setupGeometry.
         Annulus mGatherBounds;                                         ///< The gather quad; setupRingGeometry.
         Annulus mRingBounds;                                           ///< The edge ring; setupRingGeometry.
