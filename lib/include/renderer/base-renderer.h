@@ -9,6 +9,7 @@
 
 namespace EdgeLighting
 {
+    class BaseLUT;
     class Framebuffer;
     class ResourceContext;
     class ShaderProgram;
@@ -204,6 +205,11 @@ namespace EdgeLighting
         BufferHandle RegisterBuffer(const Framebuffer &buffer, int attachment = 0,
                                     BufferVisibility visibility = BufferVisibility::DEBUG);
 
+        /// The same, for a LUT, under @p key - a LUT has no name of its own.
+        /// Listed, never current, until its first bake uploads an image.
+        BufferHandle RegisterBuffer(const BaseLUT &lut, const char *key,
+                                    BufferVisibility visibility = BufferVisibility::DEBUG);
+
         /// Marks buffer @p handle current this frame as a TABLE - a buffer
         /// that maps onto no area of the frame: its content describes this
         /// frame, written by it (@p changed) or a cache checked and found to
@@ -244,7 +250,8 @@ namespace EdgeLighting
         typedef struct OwnedBuffer
         {
             char key[BUFFER_KEY_CAPACITY] = {}; ///< Empty when the key did not fit: never listed.
-            const Framebuffer *buffer = nullptr;
+            const Framebuffer *buffer = nullptr; ///< Or...
+            const BaseLUT *lut = nullptr;        ///< ...this: exactly one is set.
             int attachment = 0;
             BufferVisibility visibility = BufferVisibility::DEBUG;
             int slot = BufferRegistry::INVALID_SLOT;

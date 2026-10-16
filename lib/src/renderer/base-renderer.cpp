@@ -89,6 +89,21 @@ namespace EdgeLighting
         return static_cast<BufferHandle>(mOwnedBuffers.size() - 1);
     }
 
+    BufferHandle BaseRenderer::RegisterBuffer(const BaseLUT &lut, const char *key, BufferVisibility visibility)
+    {
+        OwnedBuffer owned;
+        owned.lut = &lut;
+        owned.visibility = visibility;
+        if (!MakeBufferKey(key, 0, owned.key))
+        {
+            LOG_E("BaseRenderer: LUT key '%s' does not fit in %d chars - never listed.", key ? key : "",
+                  BUFFER_KEY_CAPACITY);
+        }
+        registerOwned(owned);
+        mOwnedBuffers.push_back(owned);
+        return static_cast<BufferHandle>(mOwnedBuffers.size() - 1);
+    }
+
     void BaseRenderer::MarkBufferCurrent(BufferHandle handle, bool changed)
     {
         if (mResourceContext && handle >= 0 && static_cast<size_t>(handle) < mOwnedBuffers.size())
@@ -141,8 +156,10 @@ namespace EdgeLighting
         owned.slot = BufferRegistry::INVALID_SLOT;
         if (mResourceContext && owned.key[0] != '\0')
         {
-            owned.slot = mResourceContext->GetBufferRegistry().Register(this, owned.key, *owned.buffer,
-                                                                        owned.attachment, owned.visibility);
+            BufferRegistry &registry = mResourceContext->GetBufferRegistry();
+            owned.slot = owned.lut ? registry.Register(this, owned.key, *owned.lut, owned.visibility)
+                                   : registry.Register(this, owned.key, *owned.buffer, owned.attachment,
+                                                       owned.visibility);
         }
     }
 

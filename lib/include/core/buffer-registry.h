@@ -8,6 +8,7 @@
 
 namespace EdgeLighting
 {
+    class BaseLUT;
     class BaseRenderer;
     class Framebuffer;
 
@@ -31,14 +32,15 @@ namespace EdgeLighting
     } BufferVisibility;
 
     /// One offscreen buffer a renderer owns, as the registry lists it: which
-    /// attachment of which of the producer's Framebuffers, under which key,
-    /// for whom, and - once its owner has said so this frame - where on the
-    /// caller's framebuffer it lies.
+    /// attachment of which of the producer's Framebuffers - or which of its
+    /// LUTs - under which key, for whom, and - once its owner has said so this
+    /// frame - where on the caller's framebuffer it lies.
     ///
-    /// It REFERS to the Framebuffer rather than copying from it: the texture,
-    /// size and format are the Framebuffer's own, read through the accessors
-    /// below, so nothing here can disagree with it - a buffer released since
-    /// reads texture 0, one reallocated reads its new size.
+    /// It REFERS to the Framebuffer or the LUT rather than copying from it:
+    /// the texture, size and format are the owner's own, read through the
+    /// accessors below, so nothing here can disagree with it - a buffer
+    /// released since reads texture 0, one reallocated reads its new size, a
+    /// LUT not yet baked reads texture 0.
     ///
     /// A record, not a share: the producer owns the buffer, allocates and
     /// releases it, and is the only thing that writes it. A consumer binds the
@@ -63,8 +65,12 @@ namespace EdgeLighting
         /// The renderer that owns it - identity only, never dereferenced.
         /// nullptr on a free slot.
         const BaseRenderer *producer = nullptr;
-        const Framebuffer *buffer = nullptr; ///< The producer's own.
-        int attachment = 0;                  ///< Which colour attachment of it.
+        /// The producer's own - a Framebuffer and one colour attachment of
+        /// it, or a LUT (@c attachment then 0). Exactly one of the two is set
+        /// on a registered record.
+        const Framebuffer *buffer = nullptr;
+        const BaseLUT *lut = nullptr;
+        int attachment = 0; ///< Which colour attachment of @c buffer.
         BufferVisibility visibility = BufferVisibility::DEBUG;
         /// The registry frame (@ref BufferRegistry::BeginFrame) its producer
         /// last marked it current in; 0 for never. Read through
@@ -139,6 +145,10 @@ namespace EdgeLighting
         int Register(const BaseRenderer *producer, const char *key, const Framebuffer &buffer, int attachment,
                      BufferVisibility visibility);
 
+        /// The same, for a LUT: a texture its owner bakes on the CPU and
+        /// uploads, a table by nature.
+        int Register(const BaseRenderer *producer, const char *key, const BaseLUT &lut, BufferVisibility visibility);
+
         /// Removes the record in @p slot; its slot is reused by a later
         /// registration. Ignores @ref INVALID_SLOT.
         void Unregister(int slot);
@@ -171,6 +181,11 @@ namespace EdgeLighting
 
         /// How many slots hold a record.
         int GetRecordCount() const { return mRecordCount; }
+
+    private:
+        /// Stores @p record under @p key, past the checks both
+        /// @ref Register overloads share.
+        int insert(const char *key, BufferRecord record);
 
     private:
         std::vector<BufferRecord> mRecords;

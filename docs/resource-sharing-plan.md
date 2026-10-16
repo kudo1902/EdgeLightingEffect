@@ -8,8 +8,8 @@ shared shader cache.
 
 **Built so far: S0 and S1 (2026-10-15, committed as `7d3e953`), S2
 (2026-10-16, `d6d2175`), S3 (2026-10-16, `d9e1d95`), S4 (2026-10-16,
-`7584bdb`) and S5's first half, the shared quad (2026-10-16, uncommitted).**
-Section 7 has what each measured.
+`7584bdb`), S5a, the shared quad (2026-10-16, `186bc48`), and S5b, the
+gradient ring (2026-10-16, uncommitted).** Section 7 has what each measured.
 
 **The owner's goals (2026-10-15).** Three uses for sharing:
 
@@ -833,4 +833,39 @@ against S4 (`7584bdb`).
 
 The second half, the debug strip reading the neon's live gradient ring, is
 S5b.
+
+### 7.7 S5b - the gradient ring
+
+The registry gained the LUT kind S2 deferred. A record refers to a `BaseLUT`,
+which now exposes its size and format (`GetWidth`, `GetHeight`,
+`GetInternalFormat`). `BaseRenderer::RegisterBuffer(lut, key)` registers one.
+
+- The neon registers `mGradientLUT` as `NeonRenderer.GradientRing`
+  (`NeonRenderer::GRADIENT_RING_KEY`), `DEBUG`. It marks the ring current on
+  every frame the glow is on, as a new version whenever the ring was uploaded
+  since.
+- The debug layer declares the read and draws its strip from that texture,
+  and only while it is current.
+- Its own `GradientRingLUT` is gone, with the bake, the cross-fade tick and
+  `mStripVisible`.
+
+Measured on an AMD Radeon Pro 5300M against S5a (`186bc48`).
+
+- **Frames**: none of the 248 differs from S5a. The stop-fade scene is among
+  them: a strip visible through a whole fade tracked it in lockstep before,
+  so it reads the same.
+- **One new scene**: the debug view of `NeonRenderer.GradientRing`, which
+  S5a's report cannot have. Its 4 frames are the only lines `diff` reports.
+- **Memory**: textures 1,024 bytes less in every scene - the debug layer's
+  256 x 1 RGBA8 ring, which `Initialize` baked whether or not the strip was
+  ever shown. Buffers and allocations are unchanged.
+- **The intended change** (decision 5), by a probe. The timeline: stops A,
+  then stops B with a 1 s fade, captured 0.5 s in. The comparison is a strip
+  visible throughout against one switched on 0.25 s into the fade:
+  - S5a: they differ in 17,280 channels, up to 115 levels. The re-shown
+    strip snapped to the new stops while the glow was mid-fade.
+  - S5b: identical. The strip shows the ring the glow samples.
+
+  The strip visible throughout is byte-identical between S5a and S5b.
+- `neon-scale-check check` and `partition` pass.
 

@@ -5,9 +5,35 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
-## 2026-10-16 - Sharing plan S5a: one fullscreen quad
+## 2026-10-16 - Sharing plan S5b: the debug strip reads the neon's live ring
 
 Uncommitted, on `design_system_sharing_resources_between_renderers`, measured
+against S5a (`186bc48`). AMD Radeon Pro 5300M, Debug build. Section 7.7 of
+[`resource-sharing-plan.md`](resource-sharing-plan.md) has the detail.
+
+- **Built.**
+  - The registry can list a LUT.
+  - The neon registers its colour ring as `NeonRenderer.GradientRing` and
+    marks it current whenever the glow is on.
+  - The debug layer's strip reads that ring through the registry, and
+    declares the read.
+  - The debug layer's own ring - bake, tick and snap-on-re-show - is gone.
+- **Measured.**
+  - None of the 248 `layer-check` frames differs from S5a. One new scene is
+    the view of the ring.
+  - 1 KB of textures less per scene; allocations unchanged.
+  - `check` and `partition` pass.
+  - The intended change: a strip switched on mid-fade now matches one
+    visible throughout, byte for byte. Before, it snapped to the new stops:
+    17,280 channels off, up to 115 levels.
+- **Open.**
+  - S5 is done.
+  - Next is S6: the neon's glow as a public product (P-a), the shared mask
+    chunk, and droplets lit by the glow.
+
+## 2026-10-16 - Sharing plan S5a: one fullscreen quad
+
+Committed as `186bc48`, on `design_system_sharing_resources_between_renderers`, measured
 against S4 (`7584bdb`). AMD Radeon Pro 5300M, Debug build. Section 7.6 of
 [`resource-sharing-plan.md`](resource-sharing-plan.md) has the detail.
 

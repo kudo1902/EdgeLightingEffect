@@ -1,4 +1,5 @@
 #include "renderer/debug-renderer.h"
+#include "renderer/neon-renderer.h"
 #include "util/geometry-utils.h"
 #include "shaders.h"
 #include "util/log-util.h"
@@ -35,21 +36,9 @@ namespace EdgeLighting
         constexpr float PANEL_MAX_FRAC = 0.5f;
         constexpr float PANEL_MIN_HEIGHT = 64.0f;
 
-        /// Whether the LUT strip will be drawn this frame.
-        ///
-        /// @ref DebugRenderer::renderGradientLUTStrip is the ONLY thing that
-        /// samples @c mGradientLUT, so this is also the condition under which
-        /// the ring is worth maintaining at all - the bake and the cross-fade
-        /// tick both gate on it. This renderer keeps its own ring rather than
-        /// borrowing the neon one (that separation is the point - see the
-        /// class note), which means every frame of a colour cross-fade blended
-        /// and re-uploaded a SECOND ring for an overlay that is off by
-        /// default and invisible even when the whole debug layer is on.
-        ///
-        /// One predicate, shared by the gate and the draw, so the two cannot
-        /// drift: a gate that stopped matching would show a stale ring the
-        /// moment the strip was switched on, which is exactly the sort of bug
-        /// a debug overlay must not have.
+        /// Whether the LUT strip will be drawn this frame: the overlays on, the
+        /// strip asked for, and a glow to annotate. One predicate for the read
+        /// declaration (CollectReads) and the draw, so the two cannot drift.
         inline bool IsStripVisible(const Config &config)
         {
             return config.debug.enable && config.debug.showGradientLUT &&
@@ -66,46 +55,15 @@ namespace EdgeLighting
         }
         setupUnitQuad();
         setupGeometry(mCurrentConfig);
-        // Unconditional, unlike the bake in OnConfigChanged, and it is the
-        // safety net that lets that one be gated: a host whose config never
-        // changes after registration gets no OnConfigChanged with a valid
-        // shader, so this is the only bake the strip would ever have. Seeding
-        // it here costs one ring at startup and makes "the strip is visible"
-        // imply "the ring is uploaded" for the life of the renderer.
-        mGradientLUT.Bake(mCurrentConfig.neon.colorStops, mCurrentConfig.neon.blendSpace,
-                          mCurrentConfig.neon.gradientLutSize,
-                          mCurrentConfig.neon.colorTransitionDuration);
-        // What that bake was for, so a later reveal is judged against it
-        // rather than against the flag's initial value.
-        mStripVisible = IsStripVisible(mCurrentConfig);
         return true;
     }
 
     void DebugRenderer::Update(float deltaTime, float, const Config &config)
     {
-        // Advances this renderer's own copy of the ring cross-fade. It is
-        // handed the same deltaTime as the neon renderer's copy and was baked
-        // from the same stops, so the two stay in step frame for frame - which
-        // is what makes the strip a preview of the glow rather than of some
-        // near-miss of it.
-        //
-        // Only while the strip is actually on screen, though. A tick during a
-        // fade is a full ring blend plus a texture upload, and with the strip
-        // hidden nothing samples the result.
-        //
-        // Hiding it does not strand the ring, because the bake is gated on the
-        // same predicate. A fade in flight when the strip is hidden simply
-        // PAUSES - mDisplay holds, and the tick resumes it on re-show. Stops
-        // that change while it is hidden are not baked at all, so the re-show
-        // is itself a config change that bakes them - and bakes them with no
-        // fade, because a cross-fade from a ring nobody has seen for the last
-        // however-many seconds is not a preview of anything. See
-        // @c mStripVisible. Either way the strip is showing the ring for the
-        // current stops from the frame it reappears.
-        if (IsStripVisible(config))
-        {
-            mGradientLUT.Tick(deltaTime);
-        }
+        // Nothing per frame: the strip reads the neon's own ring
+        // (NeonRenderer::GRADIENT_RING_KEY), which the neon ticks.
+        (void)deltaTime;
+        (void)config;
     }
 
     void DebugRenderer::CollectReads(const Config &config, ReadList &out) const
@@ -115,6 +73,11 @@ namespace EdgeLighting
         if (config.debug.enable && !config.debug.bufferView.empty())
         {
             out.Add(this, config.debug.bufferView, ReadPhase::RENDER);
+        }
+        // The strip samples the neon's live colour ring.
+        if (IsStripVisible(config))
+        {
+            out.Add(this, NeonRenderer::GRADIENT_RING_KEY, ReadPhase::RENDER);
         }
     }
 
@@ -142,19 +105,27 @@ namespace EdgeLighting
         // (`enable` above covers every overlay but NOT opaqueOnly, which is a mode
         // of the neon renderer that happens to live in the same struct.)
         const bool glowVisible = config.neon.enable && !config.debug.opaqueOnly;
-        // The same predicate the ring's bake and tick gate on, so the strip can
-        // never be drawn from a ring those two decided not to maintain.
-        // (Re-tests debug.enable, which the early return above already
-        // guarantees - the helper is self-contained because its other two
-        // callers have no such early return.)
-        const bool wantStrip = IsStripVisible(config);
+        // The same predicate the read declaration uses (CollectReads), so the
+        // strip never binds a ring the frame did not declare. (Re-tests
+        // debug.enable, which the early return above already guarantees - the
+        // helper is self-contained because CollectReads has no such return.)
+        //
+        // The ring the strip shows is the neon's own, current on every frame
+        // the glow is drawn - so the strip shows exactly what the glow samples.
+        const BufferRegistry *registry = GetBufferRegistry();
+        const BufferRecord *ring =
+            IsStripVisible(config) && registry ? registry->Find(NeonRenderer::GRADIENT_RING_KEY) : nullptr;
+        if (ring && !registry->IsCurrent(*ring))
+        {
+            ring = nullptr;
+        }
+        const bool wantStrip = ring != nullptr;
         const bool wantMarkers = config.debug.showColorStops && glowVisible &&
                                  !config.neon.colorStops.empty();
         const bool wantBox = config.debug.showWireframe;
         // A buffer some layer drawn before this one marked current this frame.
         // No gate of its own beyond that: a layer that is off, or drew nothing
         // - the neon under opaqueOnly - marks nothing.
-        const BufferRegistry *registry = GetBufferRegistry();
         const BufferRecord *buffer =
             registry && !config.debug.bufferView.empty() ? registry->Find(config.debug.bufferView) : nullptr;
         if (buffer && !registry->IsCurrent(*buffer))
@@ -203,7 +174,7 @@ namespace EdgeLighting
         {
             // Unblended: the strip overwrites the glow so it stays readable.
             glDisable(GL_BLEND);
-            renderGradientLUTStrip(mvp, time, config);
+            renderGradientLUTStrip(mvp, *ring, time, config);
         }
         if (wantMarkers)
         {
@@ -237,38 +208,6 @@ namespace EdgeLighting
             setupGeometry(config);
         }
 
-        // Self-guarding (see GradientRingLUT::Bake), so within a visible strip
-        // it is called unconditionally - which is what keeps this copy of the
-        // ring in step with the neon renderer's: both are offered every config
-        // change and both re-bake on exactly the ones that move the gradient.
-        //
-        // Gated on the strip being drawn at all, though, because unlike the
-        // neon renderer's ring this one has exactly one consumer and it is an
-        // overlay that is off by default. A bake is a full ring plus a texture
-        // upload; spending that on a hidden strip buys nothing. Becoming
-        // visible is itself a config change, so the bake it needs arrives with
-        // it - see the note in @ref Update for what a fade does across the gap.
-        const bool stripVisible = IsStripVisible(config);
-        if (stripVisible)
-        {
-            // Zero duration on the RISING EDGE, so a re-show lands on the
-            // current stops immediately. The gate above means stop changes
-            // made while the strip was hidden were never baked, so the
-            // catch-up bake arriving here would otherwise cross-fade from
-            // whatever was last on screen - a ring that can be arbitrarily
-            // stale - and the strip would spend colorTransitionDuration
-            // previewing colours the glow settled away from long ago. The
-            // strip's whole claim is that it is a preview of the glow.
-            //
-            // Only ever a snap where there is something new to snap TO: Bake
-            // returns early when the gradient inputs have not moved, so a
-            // hide/show over an unchanged ring never reaches the duration at
-            // all and a fade paused by the hide resumes as before.
-            const float fadeDuration = mStripVisible ? config.neon.colorTransitionDuration : 0.0f;
-            mGradientLUT.Bake(config.neon.colorStops, config.neon.blendSpace,
-                              config.neon.gradientLutSize, fadeDuration);
-        }
-        mStripVisible = stripVisible;
     }
 
     bool DebugRenderer::setupShaders()
@@ -428,7 +367,8 @@ namespace EdgeLighting
         mBufferViewShader.Unuse();
     }
 
-    void DebugRenderer::renderGradientLUTStrip(const glm::mat4 &mvp, float time, const Config &config)
+    void DebugRenderer::renderGradientLUTStrip(const glm::mat4 &mvp, const BufferRecord &ring, float time,
+                                               const Config &config)
     {
         // Overwrites the neon output within the strip rect so the baked ring is
         // readable regardless of the glow's tone-mapped brightness, which is
@@ -438,7 +378,10 @@ namespace EdgeLighting
         mLUTDebugShader.SetUniform("uStripHalfSize", mLUTStripHalfSize);
         mLUTDebugShader.SetUniform("uTime", time);
         mLUTDebugShader.SetUniform("uHueRotationRate", config.neon.hueRotationRate);
-        mGradientLUT.Bind(0);
+        // Bound by name: the texture is the neon's, and this layer only
+        // samples it, with the sampler state the neon gave it.
+        glActiveTexture(GL_TEXTURE0);
+        glBindTexture(GL_TEXTURE_2D, ring.GetTexture());
         mLUTDebugShader.SetUniform("uGradientLUT", 0);
         mLUTStripVertexArray.DrawArrays(GL_TRIANGLES, 6);
         mLUTDebugShader.Unuse();

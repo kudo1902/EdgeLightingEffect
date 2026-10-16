@@ -299,6 +299,13 @@ namespace EdgeLighting
         /// registry lists them all from the moment the renderer joins an
         /// effect, each current only on the frames that use it.
         NeonRenderer();
+
+        /// The key the colour ring every pass samples is registered under
+        /// (@ref BufferRegistry): @c mGradientLUT, a gradientLutSize x 1 RGBA8
+        /// table, current on every frame the glow is drawn - the debug layer's
+        /// LUT strip reads it there, so the strip shows the very ring the glow
+        /// samples, cross-fade included. DEBUG: it is an input, not a product.
+        static constexpr const char *GRADIENT_RING_KEY = "NeonRenderer.GradientRing";
         /// Releases every GL object it holds, through their RAII wrappers; the
         /// context they were created in must be current.
         virtual ~NeonRenderer() = default;
@@ -1153,6 +1160,10 @@ namespace EdgeLighting
             BufferHandle field = -1;             ///< @c mGlowField.buffer, placed where pass 1c reads it.
             BufferHandle scaled = -1;            ///< @c mScaledBuffer, placed.
             BufferHandle ringField = -1;         ///< @c mRingField.buffer, a table: four strips packed, no one box.
+            BufferHandle gradientRing = -1;      ///< @c mGradientLUT, a table, under @ref GRADIENT_RING_KEY.
+            /// The ring's upload count at its last mark: a change since is a
+            /// new version of the record.
+            uint32_t gradientRingUploads = 0;
         } BufferRecords;
 
         /// What one frame did with each offscreen buffer, for

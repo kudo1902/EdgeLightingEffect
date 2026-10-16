@@ -390,8 +390,10 @@ turning the layer off without losing which overlays you had selected.
 **`debug.showGradientLUT`** (default false)
 Draws the baked gradient LUT as a horizontal strip across the centre of the
 rectangle. Handy to eyeball what colours the shader is actually sampling
-from. The overlay bakes its own copy of the ring from the same inputs, so it
-tracks the cross-fade the glow is running.
+from. The strip samples the glow's own ring (`NeonRenderer.GradientRing` in
+the buffer registry), so it shows the cross-fade the glow is running, on the
+same frame - including a strip switched on mid-fade. Drawn only while the
+neon draws its glow.
 
 **`debug.showColorStops`** (default false)
 Draws a coloured dot at each colour-stop position on the perimeter so you

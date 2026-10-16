@@ -4,7 +4,6 @@
 #include "renderer/base-renderer.h"
 #include "gl/shader-program.h"
 #include "gl/vertex-array.h"
-#include "renderer/gradient-ring-lut.h"
 #include <glm/glm.hpp>
 
 namespace EdgeLighting
@@ -30,9 +29,10 @@ namespace EdgeLighting
     ///
     /// This is a separate renderer rather than a mode of @ref NeonRenderer so
     /// that the neon pass schedule carries no debug shaders, buffers or
-    /// branches at all. The cost of the split is one extra baked ring (see
-    /// @c mGradientLUT); the benefit is that a host which never enables these
-    /// pays nothing, and the neon renderer's passes are only the effect.
+    /// branches at all. The strip samples the neon's own ring, which the neon
+    /// registers (@c NeonRenderer::GRADIENT_RING_KEY) rather than draws; a host
+    /// which never enables these pays nothing, and the neon renderer's passes
+    /// are only the effect.
     ///
     /// REGISTER IT AFTER @ref NeonRenderer. It draws no depth and does not
     /// clear, so it annotates whatever the neon layer has already composited;
@@ -45,11 +45,14 @@ namespace EdgeLighting
     /// the other overlays annotate the glow and must follow it.
     ///
     /// Reads @c Config::debug for what to draw and @c Config::neon for what it
-    /// is describing - the colour stops, the ring width and its cross-fade, the
-    /// hue rotation. That is deliberate: an annotation of another layer's state
-    /// has to read that layer's state.
+    /// is describing - the colour stops, the hue rotation. That is deliberate:
+    /// an annotation of another layer's state has to read that layer's state.
     ///
-    /// The buffer view is the exception to reading only the config: a buffer
+    /// The strip and the buffer view are the exceptions to reading only the
+    /// config. The strip samples the neon's colour ring itself, from the
+    /// registry - so it shows the ring the glow samples on the same frame,
+    /// cross-fade included, and a strip shown mid-fade shows the fade's
+    /// current state rather than snapping to the new stops. A buffer
     /// is another renderer's output, which no config describes, so this layer
     /// finds it in the effect's @ref BufferRegistry - where it is current only
     /// once its producer has drawn this frame, which the order above already
@@ -100,10 +103,12 @@ namespace EdgeLighting
         void renderBufferView(const glm::mat4 &proj, int viewportWidth, int viewportHeight,
                               const BufferRecord &buffer, const Config &config);
 
-        /// The baked gradient LUT as a strip at the geometry centre.
-        /// Caller guards on @c showGradientLUT.
+        /// The neon's colour ring, @p ring (@c NeonRenderer::GRADIENT_RING_KEY),
+        /// as a strip at the geometry centre. Caller guards on
+        /// @c showGradientLUT and on the ring being current this frame.
         /// @pre Blending disabled - the strip overwrites the glow beneath it.
-        void renderGradientLUTStrip(const glm::mat4 &mvp, float time, const Config &config);
+        void renderGradientLUTStrip(const glm::mat4 &mvp, const BufferRecord &ring, float time,
+                                    const Config &config);
 
         /// One filled disc per colour stop at its perimeter position.
         /// Caller guards on @c showColorStops + a non-empty list.
@@ -129,37 +134,6 @@ namespace EdgeLighting
         VertexArray mUnitQuadVertexArray{"DebugRenderer.UnitQuad"};     ///< Unit quad ([-1,+1]), scaled per marker and onto the buffer view's box.
         VertexArray mWireframeVertexArray{"DebugRenderer.Wireframe"};   ///< 4 corners, drawn as GL_LINE_LOOP.
         glm::vec2 mLUTStripHalfSize{0.0f};                              ///< Half extents of the strip in local px (matches mLUTStripVertexArray).
-
-        /// This renderer's OWN copy of the baked colour ring, from the same
-        /// @c Config::neon inputs @ref NeonRenderer bakes from - so the strip
-        /// previews the ring the glow is actually sampling, cross-fade and all,
-        /// without either renderer reaching into the other.
-        ///
-        /// The duplicate bake is the price of the separation: one extra
-        /// gradientLutSize x 1 RGBA8 texture, baked only when the stops change
-        /// (@ref GradientRingLUT self-guards) and only while this renderer is
-        /// registered. Sharing the neon renderer's instead would mean handing
-        /// out a reference to its internals and ordering the two renderers'
-        /// bakes against each other - far more coupling than a 1 KB texture is
-        /// worth.
-        GradientRingLUT mGradientLUT;
-
-        /// Whether the strip was visible at the last bake, i.e. whether the
-        /// ring currently in @c mGradientLUT is one a viewer actually saw.
-        ///
-        /// Read for exactly one decision: a bake that arrives on the strip's
-        /// rising edge SNAPS instead of cross-fading. The bake is gated on
-        /// visibility, so stop changes made while the strip was hidden are not
-        /// baked at all - and the catch-up bake on re-show would otherwise
-        /// fade from a ring that may be many seconds stale, leaving the strip
-        /// previewing colours the glow settled away from long ago. A fade is
-        /// only meaningful between two rings the viewer saw.
-        ///
-        /// It cannot cause a false snap, because @ref GradientRingLUT::Bake
-        /// self-guards: with nothing to re-bake the fade duration is never
-        /// consulted, so a hide/show across an unchanged gradient still
-        /// RESUMES a paused cross-fade rather than snapping it.
-        bool mStripVisible = false;
     };
 
 } // namespace EdgeLighting

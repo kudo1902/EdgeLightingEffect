@@ -304,7 +304,7 @@ the four coverage terms:
 | Field | Unit | Default | Effect |
 |---|---|---|---|
 | `enable` | bool | `true` | Mute for the four overlays (buffer view included) only |
-| `showGradientLUT` | bool | `false` | Baked ring as centre strip (`neon-lut-debug.frag`). Own `GradientRingLUT` copy, gated by same predicate as draw so they cannot drift |
+| `showGradientLUT` | bool | `false` | The neon's own baked ring (`NeonRenderer.GradientRing`, from the registry) as centre strip (`neon-lut-debug.frag`), cross-fade included. Drawn only while the ring is current - the glow on |
 | `showColorStops` | bool | `false` | Disc per stop at perimeter pos (`neon-stop-marker.frag`) |
 | `showWireframe` | bool | `true` | 1 px `GL_LINE_LOOP` sharp box (`wireframe.frag`). Extent, not rounded outline, so it compares against the neon trace. Draws over glow (layer is last) |
 | `wireframeColor` | linear `vec4` | `(0,1,0,1)` | Box color |
@@ -330,6 +330,7 @@ it - so only a layer drawn before the debug layer can be viewed):
 | `NeonRenderer.Field` | neon P1f | field region (from its bake) | P1c read it, or P1f baked it this frame and the bake succeeded |
 | `NeonRenderer.Scaled` | neon P1b / P1c | reduced buffer's region | glow drawn |
 | `NeonRenderer.RingField` | neon P1r | panel (packed strips) | P2r read it, or P1r baked it this frame and the bake succeeded |
+| `NeonRenderer.GradientRing` | neon's `mGradientLUT` (a LUT, baked on the CPU) | panel (`gradientLutSize` x 1) | the glow is on (`neon.enable`, not `opaqueOnly`); the debug strip reads it |
 | `LensFlare.Scaled` / `Spotlight.Scaled` | flare / spotlight | whole viewport | scaled path ran |
 
 ## DropletsConfig -> DropletsRenderer

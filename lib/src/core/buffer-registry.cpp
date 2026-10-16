@@ -1,5 +1,6 @@
 #include "core/buffer-registry.h"
 #include "gl/framebuffer.h"
+#include "renderer/base-lut.h"
 #include "util/log-util.h"
 #include <cstdio>
 #include <cstring>
@@ -78,12 +79,30 @@ namespace EdgeLighting
         }
     }
 
-    unsigned int BufferRecord::GetTexture() const { return buffer ? buffer->GetTextureId(attachment) : 0; }
+    unsigned int BufferRecord::GetTexture() const
+    {
+        if (buffer)
+        {
+            return buffer->GetTextureId(attachment);
+        }
+        return lut && lut->IsValid() ? lut->GetId() : 0;
+    }
     glm::ivec2 BufferRecord::GetTexels() const
     {
-        return buffer ? glm::ivec2(buffer->GetWidth(), buffer->GetHeight()) : glm::ivec2(0);
+        if (buffer)
+        {
+            return glm::ivec2(buffer->GetWidth(), buffer->GetHeight());
+        }
+        return lut ? glm::ivec2(lut->GetWidth(), lut->GetHeight()) : glm::ivec2(0);
     }
-    int BufferRecord::GetInternalFormat() const { return buffer ? buffer->GetInternalFormat() : 0; }
+    int BufferRecord::GetInternalFormat() const
+    {
+        if (buffer)
+        {
+            return buffer->GetInternalFormat();
+        }
+        return lut ? lut->GetInternalFormat() : 0;
+    }
     int BufferRecord::GetChannels() const { return ChannelCount(GetInternalFormat()); }
 
     bool MakeBufferKey(const char *name, int attachment, char (&out)[BUFFER_KEY_CAPACITY])
@@ -130,8 +149,28 @@ namespace EdgeLighting
     int BufferRegistry::Register(const BaseRenderer *producer, const char *key, const Framebuffer &buffer,
                                  int attachment, BufferVisibility visibility)
     {
+        BufferRecord record;
+        record.producer = producer;
+        record.buffer = &buffer;
+        record.attachment = attachment;
+        record.visibility = visibility;
+        return insert(key, record);
+    }
+
+    int BufferRegistry::Register(const BaseRenderer *producer, const char *key, const BaseLUT &lut,
+                                 BufferVisibility visibility)
+    {
+        BufferRecord record;
+        record.producer = producer;
+        record.lut = &lut;
+        record.visibility = visibility;
+        return insert(key, record);
+    }
+
+    int BufferRegistry::insert(const char *key, BufferRecord record)
+    {
         const size_t length = key ? std::strlen(key) : 0;
-        if (!producer || length == 0 || length >= static_cast<size_t>(BUFFER_KEY_CAPACITY))
+        if (!record.producer || length == 0 || length >= static_cast<size_t>(BUFFER_KEY_CAPACITY))
         {
             LOG_E("BufferRegistry: key '%s' refused - %s.", key ? key : "",
                   length == 0 ? "empty" : "longer than BUFFER_KEY_CAPACITY allows");
@@ -143,13 +182,7 @@ namespace EdgeLighting
                   key);
             return INVALID_SLOT;
         }
-
-        BufferRecord record;
         std::memcpy(record.key, key, length + 1);
-        record.producer = producer;
-        record.buffer = &buffer;
-        record.attachment = attachment;
-        record.visibility = visibility;
 
         ++mRecordCount;
         for (size_t i = 0; i < mRecords.size(); ++i)

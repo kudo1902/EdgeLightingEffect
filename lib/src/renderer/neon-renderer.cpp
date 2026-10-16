@@ -2050,6 +2050,7 @@ namespace EdgeLighting
         mBufferRecords.field = RegisterBuffer(mGlowField.buffer);
         mBufferRecords.scaled = RegisterBuffer(mScaledBuffer);
         mBufferRecords.ringField = RegisterBuffer(mRingField.buffer);
+        mBufferRecords.gradientRing = RegisterBuffer(mGradientLUT, GRADIENT_RING_KEY);
     }
 
     bool NeonRenderer::Initialize()
@@ -2232,6 +2233,14 @@ namespace EdgeLighting
         {
             return;
         }
+
+        // The colour ring every pass samples, as this frame samples it: baked
+        // by OnConfigChanged, cross-faded by Update, both before this. Marked
+        // whenever the glow is on - a frame whose glow programs failed still
+        // has a ring - and a new version whenever it was uploaded since.
+        const uint32_t ringUploads = mGradientLUT.GetUploadCount();
+        MarkBufferCurrent(mBufferRecords.gradientRing, ringUploads != mBufferRecords.gradientRingUploads);
+        mBufferRecords.gradientRingUploads = ringUploads;
 
         // The programs the glow draws with, compiled on the first frame -
         // see ensureGlowPrograms. A failure is logged once and the

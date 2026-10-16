@@ -79,6 +79,13 @@ namespace EdgeLighting
         /// @c NeonRenderer::isEmissionTableStale.
         uint32_t GetUploadCount() const { return mUploadCount; }
 
+        /// The image's size in texels, and its internal format - always
+        /// @c GL_RGBA8 (see @ref Upload) - once one is uploaded; 0 before. For
+        /// a reader that lists the LUT (@c BufferRegistry), not for sampling.
+        int GetWidth() const { return mUploaded ? mTextureWidth : 0; }
+        int GetHeight() const { return mUploaded ? mTextureHeight : 0; }
+        GLint GetInternalFormat() const { return mUploaded ? GL_RGBA8 : 0; }
+
     protected:
         BaseLUT() = default;
         /// Protected + non-virtual: subclasses destruct normally, polymorphic
