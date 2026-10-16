@@ -1358,15 +1358,19 @@ namespace EdgeLighting
         inline void UploadEdgeMaskUniforms(ShaderProgram &shader, float scale, const Config &config,
                                            bool cutSoftness)
         {
-            shader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
+            // The same numbers the blit and a glow reader take
+            // (NeonRenderer::GetEdgeMask), at this program's scale. The rect
+            // itself comes from uploadShapeUniforms, scaled the same way.
+            const NeonRenderer::EdgeMask mask = NeonRenderer::GetEdgeMask(config, 0);
+            shader.SetUniform("uGlowSide", mask.glowSide);
             if (cutSoftness)
             {
-                shader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness * scale);
+                shader.SetUniform("uGlowSideSoftness", mask.glowSideSoftness * scale);
             }
-            shader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff) * scale);
-            shader.SetUniform("uInsideCutoffSoftness", config.neon.insideCutoff.softness * scale);
-            shader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff) * scale);
-            shader.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness * scale);
+            shader.SetUniform("uInsideCutoff", mask.insideCutoff * scale);
+            shader.SetUniform("uInsideCutoffSoftness", mask.insideCutoffSoftness * scale);
+            shader.SetUniform("uOutsideCutoff", mask.outsideCutoff * scale);
+            shader.SetUniform("uOutsideCutoffSoftness", mask.outsideCutoffSoftness * scale);
         }
 
         static_assert(GLOW_COVER_MIN_WIDTH - 2 - 2 * GLOW_COVER_OVERHANG - 2 * GLOW_COVER_CORNER_OVERHANG >=
@@ -2051,6 +2055,45 @@ namespace EdgeLighting
         mBufferRecords.scaled = RegisterBuffer(mScaledBuffer);
         mBufferRecords.ringField = RegisterBuffer(mRingField.buffer);
         mBufferRecords.gradientRing = RegisterBuffer(mGradientLUT, GRADIENT_RING_KEY);
+        // The reduced buffer a second time, as the product: its contract is
+        // GLOW_KEY's (neon-renderer.h), not the intermediate's.
+        mBufferRecords.glow = RegisterBuffer(mScaledBuffer, GLOW_KEY, BufferVisibility::PUBLIC);
+    }
+
+    NeonRenderer::EdgeMask NeonRenderer::GetEdgeMask(const Config &config, int viewportHeight)
+    {
+        EdgeMask mask;
+        mask.rectCenter = GetRectCenter(config.geometry, viewportHeight);
+        mask.rectSize = glm::vec2(config.geometry.width, config.geometry.height);
+        mask.cornerRadius = GeometryUtils::GetEffectiveCornerRadius(config.geometry);
+        mask.glowSide = static_cast<int>(config.neon.glowSide);
+        mask.glowSideSoftness = config.neon.glowSideSoftness;
+        mask.insideCutoff = GetCutoffSize(config.neon.insideCutoff);
+        mask.insideCutoffSoftness = config.neon.insideCutoff.softness;
+        mask.outsideCutoff = GetCutoffSize(config.neon.outsideCutoff);
+        mask.outsideCutoffSoftness = config.neon.outsideCutoff.softness;
+        return mask;
+    }
+
+    void NeonRenderer::UploadEdgeMask(ShaderProgram &shader, const EdgeMask &mask)
+    {
+        shader.SetUniform("uRectSize", mask.rectSize);
+        shader.SetUniform("uCornerRadius", mask.cornerRadius);
+        shader.SetUniform("uRectCenter", mask.rectCenter);
+        shader.SetUniform("uGlowSide", mask.glowSide);
+        shader.SetUniform("uGlowSideSoftness", mask.glowSideSoftness);
+        shader.SetUniform("uInsideCutoff", mask.insideCutoff);
+        shader.SetUniform("uInsideCutoffSoftness", mask.insideCutoffSoftness);
+        shader.SetUniform("uOutsideCutoff", mask.outsideCutoff);
+        shader.SetUniform("uOutsideCutoffSoftness", mask.outsideCutoffSoftness);
+    }
+
+    glm::vec2 NeonRenderer::GetRectCenter(const RectGeometry &geometry, int viewportHeight)
+    {
+        // Viewport y runs down in Config but up in the projection, so the
+        // centre is mirrored about the viewport height.
+        return glm::vec2(geometry.position.x + geometry.width * 0.5f,
+                         static_cast<float>(viewportHeight) - geometry.position.y - geometry.height * 0.5f);
     }
 
     bool NeonRenderer::Initialize()
@@ -2205,17 +2248,13 @@ namespace EdgeLighting
         // config uses 1.0, and it went with I57.)
         const float scale = GetClampedResolutionScale(config);
 
-        // The rect centre in the caller's framebuffer, full-res px. Viewport y
-        // runs down in Config but up in the projection, so the centre is
-        // mirrored about the viewport height. The offscreen passes draw
-        // through their own region projections (GetBufferRegion,
-        // GetRegionProjection) in SCALED space, so the quads, the rect size and
-        // the loop samples all agree; the passes on the caller's framebuffer
-        // share one full-res transform, built below.
-        const float halfRectW = config.geometry.width * 0.5f;
-        const float halfRectH = config.geometry.height * 0.5f;
-        const glm::vec2 centerFull(config.geometry.position.x + halfRectW,
-                                   static_cast<float>(viewportHeight) - config.geometry.position.y - halfRectH);
+        // The rect centre in the caller's framebuffer, full-res px, y up
+        // (GetRectCenter). The offscreen passes draw through their own region
+        // projections (GetBufferRegion, GetRegionProjection) in SCALED space,
+        // so the quads, the rect size and the loop samples all agree; the
+        // passes on the caller's framebuffer share one full-res transform,
+        // built in Render.
+        const glm::vec2 centerFull = GetRectCenter(config.geometry, viewportHeight);
 
         // Debug: the fill and nothing else - Render's, so nothing offscreen.
         // What lands on screen is the opaque silhouette by itself - which is
@@ -2583,7 +2622,7 @@ namespace EdgeLighting
                 glm::ortho(0.0f, static_cast<float>(viewportWidth), 0.0f, static_cast<float>(viewportHeight),
                            -1.0f, 1.0f) *
                 glm::translate(glm::mat4(1.0f), glm::vec3(centerFull, 0.0f));
-            renderBlitPass(fullResMvp, centerFull, mFramePlan.scaledUV, config);
+            renderBlitPass(fullResMvp, GetEdgeMask(config, viewportHeight), mFramePlan.scaledUV, config);
             if (mFramePlan.ringField.use)
             {
                 renderRingFieldCompositePass(fullResMvp, mFramePlan.gatherUVFull, mFramePlan.ringField.gain,
@@ -4771,7 +4810,7 @@ namespace EdgeLighting
         mFillShader.Unuse();
     }
 
-    void NeonRenderer::renderBlitPass(const glm::mat4 &mvp, const glm::vec2 &centerFull, const UVMap &scaledUV,
+    void NeonRenderer::renderBlitPass(const glm::mat4 &mvp, const EdgeMask &mask, const UVMap &scaledUV,
                                       const Config &config)
     {
         // Bilinear upscaling of premultiplied alpha is fringe-free; the blit
@@ -4810,18 +4849,11 @@ namespace EdgeLighting
         mBlitShader.SetUniform("uMVP", mvp);
         mBlitShader.SetUniform("uUVScale", scaledUV.scale);
         mBlitShader.SetUniform("uUVOffset", scaledUV.offset);
-        mBlitShader.SetUniform("uRectSize", glm::vec2(config.geometry.width, config.geometry.height));
-        mBlitShader.SetUniform("uCornerRadius", GeometryUtils::GetEffectiveCornerRadius(config.geometry));
-        mBlitShader.SetUniform("uRectCenter", centerFull);
-        mBlitShader.SetUniform("uGlowSide", static_cast<int>(config.neon.glowSide));
-        mBlitShader.SetUniform("uGlowSideSoftness", config.neon.glowSideSoftness);
-        // The four values renderShadePass gives neon.frag, without the scale. A
+        // The edge mask, as a reader of the glow product takes it: the cutoff
+        // values renderShadePass gives neon.frag, without the scale. A
         // disabled side goes up as the sentinel, and the shader works out for
         // itself which side glowSide subsumes, exactly as neon.frag does.
-        mBlitShader.SetUniform("uInsideCutoff", GetCutoffSize(config.neon.insideCutoff));
-        mBlitShader.SetUniform("uInsideCutoffSoftness", config.neon.insideCutoff.softness);
-        mBlitShader.SetUniform("uOutsideCutoff", GetCutoffSize(config.neon.outsideCutoff));
-        mBlitShader.SetUniform("uOutsideCutoffSoftness", config.neon.outsideCutoff.softness);
+        UploadEdgeMask(mBlitShader, mask);
 
         // Just bind it. The filter is requested through Resize in pass 1b
         // (renderShadePass), so this pass sets no texture parameters at all.
@@ -4917,6 +4949,10 @@ namespace EdgeLighting
                               texels / (mGlowField.texelScale * scale), use.fieldWritten);
         }
         MarkBufferCurrent(mBufferRecords.scaled, centerFull + scaledRegion.origin, scaledRegion.size,
+                          use.scaledWritten);
+        // The same texture as the product (GLOW_KEY): what passes 1b / 1c left
+        // there is exactly its contract - see neon-renderer.h.
+        MarkBufferCurrent(mBufferRecords.glow, centerFull + scaledRegion.origin, scaledRegion.size,
                           use.scaledWritten);
         // Four strips packed into an atlas (RingFieldLayout), so no one box
         // of the frame - a table.

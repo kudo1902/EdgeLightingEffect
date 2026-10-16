@@ -306,6 +306,84 @@ namespace EdgeLighting
         /// LUT strip reads it there, so the strip shows the very ring the glow
         /// samples, cross-fade included. DEBUG: it is an input, not a product.
         static constexpr const char *GRADIENT_RING_KEY = "NeonRenderer.GradientRing";
+
+        /// The key the neon's GLOW is published under (@ref BufferRegistry):
+        /// a PUBLIC product (docs/resource-sharing-plan.md 3.5, P-a) - what a
+        /// layer that wants the glow reads. Never read @c NeonRenderer.Scaled
+        /// for it: that is the same texture today, listed as the DEBUG
+        /// intermediate it is, and nothing promises it stays the product.
+        ///
+        /// @par What its texels mean
+        /// Premultiplied RGBA: the glow's halo and bloom, tone-mapped, alpha
+        /// the brightest channel - the glow as the blit composites it, but
+        /// BEFORE the edge mask (the one-sided cut and the cutoffs) and WITHOUT
+        /// the filament, which the edge ring draws at full resolution. A reader
+        /// applies the mask itself: neon-mask.glsl's @c neonEdgeMask, with
+        /// @ref GetEdgeMask's inputs (@ref UploadEdgeMask). Past the mask's
+        /// ramps, and a guard band beyond them, texels are 0 rather than
+        /// unmasked glow, and so is the quad's interior hole, where the glow is
+        /// provably under half a level. While @c NeonConfig::intensity
+        /// animates it may hold the glow's field composite (I56): within 2
+        /// levels of the shading on the default look, 6 on a 1.5 bloom.
+        ///
+        /// @par Where they lie
+        /// At @c NeonConfig::resolutionScale - full size at 1.0 - over the box
+        /// its record is placed at (@c BufferRecord::origin / @c size, the
+        /// caller's framebuffer px, y up): a pixel centre p reads
+        /// uv = (p - origin) / size. Outside the box the glow is 0. RGBA16F, or
+        /// RGBA8 where the driver will not render half float; LINEAR and
+        /// clamp-to-edge, which a reader must not change.
+        ///
+        /// @par When
+        /// Current on every frame the glow is drawn - @c NeonConfig::enable,
+        /// not @c DebugConfig::opaqueOnly, programs built - and made in the
+        /// neon's @c Prepare, so read it in a @c Render (@c ReadPhase::RENDER)
+        /// or in a @c Prepare the schedule runs after the neon's
+        /// (@c ReadPhase::PREPARE). Its version moves on a frame pass 1b or 1c
+        /// wrote it; a frame that reused it keeps the version.
+        ///
+        /// @par What it constrains
+        /// The reduced buffer has to keep holding exactly this. An optimisation
+        /// that moves the halo or the bloom out of it, masks it, or skips pass
+        /// 1b on a frame the record is marked current (I74 would: it must
+        /// leave the record not current there) breaks every reader. Change the
+        /// contract here and in CLAUDE.md's neon section first.
+        static constexpr const char *GLOW_KEY = "NeonRenderer.Glow";
+
+        /// The glow's edge mask - the one-sided cut and the inside / outside
+        /// cutoffs - as the inputs neon-mask.glsl's @c neonEdgeMask takes, in
+        /// FULL-RES px: what a reader of @ref GLOW_KEY multiplies into the
+        /// product, at a pixel's position relative to @c rectCenter. The blit
+        /// takes the same values.
+        typedef struct EdgeMask
+        {
+            glm::vec2 rectCenter{0.0f};        ///< The rect's centre, caller's framebuffer px, y up.
+            glm::vec2 rectSize{0.0f};          ///< Its width and height, px.
+            float cornerRadius = 0.0f;         ///< The effective corner radius, px.
+            int glowSide = 0;                  ///< @c GlowSide as its ordinal - neon-mask.glsl's GLOW_SIDE_*.
+            float glowSideSoftness = 0.0f;     ///< The cut's feather, px.
+            float insideCutoff = 0.0f;         ///< @c Cutoff::size, or a huge sentinel when disabled.
+            float insideCutoffSoftness = 0.0f; ///< Its feather, px.
+            float outsideCutoff = 0.0f;        ///< The same, outside.
+            float outsideCutoffSoftness = 0.0f;
+        } EdgeMask;
+
+        /// The edge mask for @p config on a caller's framebuffer
+        /// @p viewportHeight px tall (the centre's y is mirrored into GL's
+        /// y-up). A function of the config alone, so a reader computes it from
+        /// the config it is handed rather than asking the neon.
+        static EdgeMask GetEdgeMask(const Config &config, int viewportHeight);
+
+        /// Sets @p mask on @p shader, in use, under the names neon-blit.frag
+        /// declares: @c uRectCenter, @c uRectSize, @c uCornerRadius,
+        /// @c uGlowSide, @c uGlowSideSoftness, @c uInsideCutoff,
+        /// @c uInsideCutoffSoftness, @c uOutsideCutoff, @c uOutsideCutoffSoftness.
+        /// A reader that declares the same set uploads through here.
+        static void UploadEdgeMask(ShaderProgram &shader, const EdgeMask &mask);
+
+        /// The rect's centre on a caller's framebuffer @p viewportHeight px
+        /// tall: full-res px, y mirrored up out of Config's y-down convention.
+        static glm::vec2 GetRectCenter(const RectGeometry &geometry, int viewportHeight);
         /// Releases every GL object it holds, through their RAII wrappers; the
         /// context they were created in must be current.
         virtual ~NeonRenderer() = default;
@@ -1161,6 +1239,7 @@ namespace EdgeLighting
             BufferHandle scaled = -1;            ///< @c mScaledBuffer, placed.
             BufferHandle ringField = -1;         ///< @c mRingField.buffer, a table: four strips packed, no one box.
             BufferHandle gradientRing = -1;      ///< @c mGradientLUT, a table, under @ref GRADIENT_RING_KEY.
+            BufferHandle glow = -1;              ///< @c mScaledBuffer again, as the PUBLIC product @ref GLOW_KEY, placed like @c scaled.
             /// The ring's upload count at its last mark: a change since is a
             /// new version of the record.
             uint32_t gradientRingUploads = 0;
@@ -1664,11 +1743,12 @@ namespace EdgeLighting
         /// along the lit side. Draws through @p mvp, the full-res transform
         /// @ref Render builds once for this pass and pass 2c together - the
         /// partition depends on both using one matrix, and reads the reduced
-        /// buffer through @p scaledUV. @p centerFull is the rect centre in
-        /// gl_FragCoord's y-up space, mirrored as @ref renderFillPass mirrors it.
+        /// buffer through @p scaledUV. @p mask is the cut and the cutoffs, the
+        /// centre in gl_FragCoord's y-up space (@ref GetEdgeMask) - what a
+        /// reader of the glow product applies too.
         /// @pre Premultiplied-over blending, and the caller's framebuffer and
         ///      full-resolution viewport are restored.
-        void renderBlitPass(const glm::mat4 &mvp, const glm::vec2 &centerFull, const UVMap &scaledUV,
+        void renderBlitPass(const glm::mat4 &mvp, const EdgeMask &mask, const UVMap &scaledUV,
                             const Config &config);
 
         /// Pass 2c: the edge ring. Re-shades the ring at FULL resolution with

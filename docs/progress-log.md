@@ -5,9 +5,35 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
-## 2026-10-16 - Sharing plan S6a: one copy of the glow's edge mask
+## 2026-10-16 - Sharing plan S6b: the glow as a public product
 
 Uncommitted, on `design_system_sharing_resources_between_renderers`, measured
+against S6a (`b9a2781`). AMD Radeon Pro 5300M, Debug build. Section 7.9 of
+[`resource-sharing-plan.md`](resource-sharing-plan.md) has the detail.
+
+- **Built.**
+  - `NeonRenderer.Glow` (`NeonRenderer::GLOW_KEY`) publishes the reduced
+    buffer a second time, as a PUBLIC product. Its contract is in
+    `neon-renderer.h` and `CLAUDE.md`: premultiplied, tone-mapped halo and
+    bloom, before the edge mask, without the filament, over the placed box.
+  - `NeonRenderer::GetEdgeMask` / `UploadEdgeMask` / `GetRectCenter` are the
+    CPU side a reader needs, and the blit and the ring's scaled upload now
+    take the same numbers from them.
+  - `BaseRenderer::RegisterBuffer(buffer, key, visibility)` registers a
+    product under its own key.
+- **Measured.**
+  - None of the 252 `layer-check` frames differs from S6a; one new scene is
+    the view of the product.
+  - `check` and `partition` pass; memory and allocations unchanged.
+  - A host renderer reading the product with `neonEdgeMask` reproduced the
+    neon's frame within 1 level (the blit's dither) away from the edge ring,
+    on four configs including one-sided glows and cutoffs.
+- **Next.** S6c, the pilot: droplets lit by the glow, behind a
+  `DropletsConfig` field whose default leaves the frame identical.
+
+## 2026-10-16 - Sharing plan S6a: one copy of the glow's edge mask
+
+Committed as `b9a2781`, on `design_system_sharing_resources_between_renderers`, measured
 against S5b (`02bfedc`). AMD Radeon Pro 5300M, Debug build. Section 7.8 of
 [`resource-sharing-plan.md`](resource-sharing-plan.md) has the detail.
 

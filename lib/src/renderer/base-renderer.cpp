@@ -89,6 +89,23 @@ namespace EdgeLighting
         return static_cast<BufferHandle>(mOwnedBuffers.size() - 1);
     }
 
+    BufferHandle BaseRenderer::RegisterBuffer(const Framebuffer &buffer, const char *key, BufferVisibility visibility,
+                                              int attachment)
+    {
+        OwnedBuffer owned;
+        owned.buffer = &buffer;
+        owned.attachment = attachment;
+        owned.visibility = visibility;
+        if (!MakeBufferKey(key, 0, owned.key))
+        {
+            LOG_E("BaseRenderer: key '%s' does not fit in %d chars - never listed.", key ? key : "",
+                  BUFFER_KEY_CAPACITY);
+        }
+        registerOwned(owned);
+        mOwnedBuffers.push_back(owned);
+        return static_cast<BufferHandle>(mOwnedBuffers.size() - 1);
+    }
+
     BufferHandle BaseRenderer::RegisterBuffer(const BaseLUT &lut, const char *key, BufferVisibility visibility)
     {
         OwnedBuffer owned;

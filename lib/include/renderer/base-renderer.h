@@ -205,6 +205,12 @@ namespace EdgeLighting
         BufferHandle RegisterBuffer(const Framebuffer &buffer, int attachment = 0,
                                     BufferVisibility visibility = BufferVisibility::DEBUG);
 
+        /// The same under @p key rather than the Framebuffer's name - for a
+        /// PRODUCT, whose key names its contract rather than the buffer that
+        /// happens to hold it today (the neon's @c NeonRenderer::GLOW_KEY).
+        BufferHandle RegisterBuffer(const Framebuffer &buffer, const char *key, BufferVisibility visibility,
+                                    int attachment = 0);
+
         /// The same, for a LUT, under @p key - a LUT has no name of its own.
         /// Listed, never current, until its first bake uploads an image.
         BufferHandle RegisterBuffer(const BaseLUT &lut, const char *key,

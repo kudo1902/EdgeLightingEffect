@@ -329,6 +329,7 @@ it - so only a layer drawn before the debug layer can be viewed):
 | `NeonRenderer.Gather` / `NeonRenderer.Gather[1]` | neon P1a | gather region | glow drawn; attachment 1 (segments' hue + coverage) only with segments |
 | `NeonRenderer.Field` | neon P1f | field region (from its bake) | P1c read it, or P1f baked it this frame and the bake succeeded |
 | `NeonRenderer.Scaled` | neon P1b / P1c | reduced buffer's region | glow drawn |
+| `NeonRenderer.Glow` | the same texture, PUBLIC: the glow product, whose contract is `NeonRenderer::GLOW_KEY`'s | reduced buffer's region | glow drawn |
 | `NeonRenderer.RingField` | neon P1r | panel (packed strips) | P2r read it, or P1r baked it this frame and the bake succeeded |
 | `NeonRenderer.GradientRing` | neon's `mGradientLUT` (a LUT, baked on the CPU) | panel (`gradientLutSize` x 1) | the glow is on (`neon.enable`, not `opaqueOnly`); the debug strip reads it |
 | `LensFlare.Scaled` / `Spotlight.Scaled` | flare / spotlight | whole viewport | scaled path ran |

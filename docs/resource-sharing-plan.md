@@ -9,8 +9,9 @@ shared shader cache.
 **Built so far: S0 and S1 (2026-10-15, committed as `7d3e953`), S2
 (2026-10-16, `d6d2175`), S3 (2026-10-16, `d9e1d95`), S4 (2026-10-16,
 `7584bdb`), S5a, the shared quad (2026-10-16, `186bc48`), S5b, the
-gradient ring (2026-10-16, `02bfedc`), and S6a, the mask chunk (2026-10-16,
-uncommitted).** Section 7 has what each measured.
+gradient ring (2026-10-16, `02bfedc`), S6a, the mask chunk (2026-10-16,
+`b9a2781`), and S6b, the glow product (2026-10-16, uncommitted).** Section 7
+has what each measured.
 
 **The owner's goals (2026-10-15).** Three uses for sharing:
 
@@ -912,4 +913,60 @@ Measured on an AMD Radeon Pro 5300M against S5b (`02bfedc`):
 
 `black-rect.frag` keeps its own band logic: the fill's cutoffs are the fill's
 own config, and its edge is the fill's silhouette, not the glow's coverage.
+
+### 7.9 S6b - the glow product
+
+`NeonRenderer::GLOW_KEY` (`NeonRenderer.Glow`) is the glow as a PUBLIC
+product, P-a.
+
+- **The record.** `mScaledBuffer` registered a second time, PUBLIC, under
+  the key that names the contract, beside its DEBUG record
+  `NeonRenderer.Scaled`. It is placed and marked like that record, on every
+  frame the glow is drawn. `BaseRenderer::RegisterBuffer(buffer, key,
+  visibility)` registers a Framebuffer under a key of its own for this.
+- **The contract** is written beside the key in `neon-renderer.h` and in
+  `CLAUDE.md`'s neon section:
+  - what the texels mean (premultiplied, tone-mapped halo and bloom, before
+    the mask, without the filament, 0 past the ramps' guard band and in the
+    interior hole, the field's composite under an intensity animation);
+  - where they lie (the placed box; RGBA16F or RGBA8, LINEAR,
+    clamp-to-edge);
+  - when (current with the glow, made in `Prepare`);
+  - what it constrains (I74 would have to leave it not current on a frame it
+    skips pass 1b).
+- **The CPU side.** `NeonRenderer::GetEdgeMask(config, viewportHeight)`
+  returns the mask's inputs in full-res px. `UploadEdgeMask(shader, mask)`
+  sets them under the blit's uniform names. `GetRectCenter` is the centre
+  both use.
+  - The blit now uploads through `UploadEdgeMask`, so a reader and the blit
+    cannot disagree.
+  - The scaled upload the ring and the field composite take
+    (`UploadEdgeMaskUniforms`) reads the same struct.
+  - `RenderOffscreen`'s `centerFull` comes from `GetRectCenter`.
+
+Measured on an AMD Radeon Pro 5300M against S6a (`b9a2781`):
+
+- **Frames**: none of the 252 differs from S6a. The diff's only lines are
+  the new scene, the debug view of `NeonRenderer.Glow`.
+- **Memory and allocations**: unchanged - the record is one more slot and
+  one more store a frame.
+- `neon-scale-check check` and `partition` pass.
+- **The contract**, by a probe: a host renderer (`CUSTOM`) reads the
+  product through the registry, declares the read, and draws
+  `product * neonEdgeMask` over the frame, unblended. It uses the record's
+  placement, `GetEdgeMask` / `UploadEdgeMask`, and `neon-mask.glsl`
+  concatenated after `neon-sdf.glsl` and `neon-tuning.h`. At every pixel 24
+  px or more from the edge, clear of the edge ring, it matched the neon's own
+  frame within 1 level (the blit's dither) - 828,880 px per config:
+
+  | config | lit px | worst |
+  | ------ | ------ | ----- |
+  | default | 778,946 | 1 |
+  | `glowSide` OUTSIDE, softness 4 | 594,457 | 1 |
+  | `glowSide` INSIDE | 184,492 | 1 |
+  | cutoffs inside 20/6, outside 30/10 | 35,803 | 1 |
+
+  The product was current on every frame read.
+
+What is left of S6 is the pilot, S6c: droplets lit by the glow.
 
