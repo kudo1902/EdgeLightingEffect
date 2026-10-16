@@ -5,6 +5,47 @@ and what is open. Each entry names the commits it covers; the headers under
 `lib/include/` stay the source of truth, and the topic documents linked here
 hold the detail.
 
+## 2026-10-16 - The branch against main: speed, startup, memory
+
+The working tree (`bcf51e2` plus the third review's fixes) against `main`
+(`7543a50`). AMD Radeon Pro 5300M, Release, 1920 x 1080, 12 rounds with the
+build order alternating, medians of each figure's per-round minimum (5 runs
+of 40 frames). The frames are byte-identical (previous entry).
+
+- **Neon frames** (`neon-scale-check time`, six scenes x scales 1, 0.5,
+  0.25), main / branch, above 1 = branch faster:
+
+  | mode | geomean | range |
+  | ---- | ------- | ----- |
+  | still | 0.975 | 0.83-1.55 |
+  | hue | 0.969 | 0.86-1.02 |
+  | intensity | 0.985 | 0.86-1.10 |
+  | arc-wipe | 0.997 | 0.96-1.03 |
+  | segment-travel | 1.008 | 0.94-1.09 |
+
+  The moving frames (0.5-2.2 ms) are flat. The still and hue frames
+  (0.05-0.6 ms) lean a few percent slower, but their per-round values
+  overlap almost entirely (the branch slower in ~70% of pairs), and still
+  frames under 0.15 ms are bimodal here. The all-layer harness below reads
+  the same neon frames the other way, 1.03-1.04. So the difference is under
+  the noise, either way.
+- **All layers** (five renderers, a larger rect): geomean 1.026, range
+  1.00-1.10. The five-lamp fan at 0.5 is the one clear move, 0.235 -> 0.214
+  ms (1.10x), and steadier: 0.20-0.23 across rounds against 0.20-0.27.
+  Everything else is 1.00-1.04.
+- **Startup** (`layer-check startup`, 5 rounds, the buffer view left out of
+  the branch's first frame so both build the same programs): 36 shader
+  compiles -> 21 (`neon.vert` 15 -> 1, `neon.frag` 2 -> 1). That saves almost
+  no time: compiles 76 -> 75 ms, since `neon.vert` is tiny and this driver
+  finishes a compile on the first draw. Initialize 24.1 -> 22.1 ms. Links
+  are the same 18 but take 36.5 -> 41.8 ms. First frame 882 -> 896 ms, ranges
+  862-931 and 887-918: no change.
+- **Memory**: every scene holds 1 KB less texture and 144 bytes less buffer;
+  allocations per frame are identical.
+- **Not measured**: a tiler. The two-phase frame is for one, and only the M2
+  or the target device can show what it saves. This GPU can only show that
+  nothing got slower.
+
 ## 2026-10-16 - Third review: the branch against main
 
 On `design_system_sharing_resources_between_renderers`, uncommitted, on top of
